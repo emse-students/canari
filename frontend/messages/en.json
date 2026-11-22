@@ -133,6 +133,18 @@
   "chat_search_placeholder": "Search…",
   "chat_new_channel_title": "New channel",
   "chat_new_discussion_title": "New discussion",
+  "chat_outbox_queue_unreadable": "Messages waiting to be sent cannot be read on this device right now: they are kept and sent once they can be read again.",
+  "chat_outbox_native_queue_unreachable": "Replies sent from your notifications cannot be read right now: they are held and shown as not sent, with a retry. Messages you send from the app still go.",
+  "chat_outbox_lines_unreadable": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} message waiting to be sent could not be read back. Check your latest messages and type it again if it is missing.",
+        "countPlural=other": "{count} messages waiting to be sent could not be read back. Check your latest messages and type them again if they are missing."
+      }
+    }
+  ],
   "chat_new_discussion_label": "New discussion",
   "chat_new_channel_label": "New channel",
   "chat_manage_community_roles_label": "Manage communities and roles",
@@ -3066,7 +3078,7 @@
   "form_respondent_source_declared": "declared",
   "form_respondent_field_cursus_from_account": "Year and programme read from the account (certified)",
   "form_respondent_cursus_from_account_note": "A member does not answer this question: all of their years and programmes, read from their account, come with their answer (a person with several reveals them all) and they are told before sending. A guest fills it in. Beware: in a small group, a year and a programme can be enough to recognise the person.",
-  "form_respondent_cursus_from_account_needs_cursus": "Also tick \"Year and programme\": a guest has to fill it in, and without that box the reading from the account is ignored.",
+  "form_respondent_cursus_from_account_ticks_cursus": "This box also ticks \"Year and programme\": a guest, with no account, fills it in. Unticking \"Year and programme\" unticks this box too.",
   "form_option_conflict_anonymous_account_fields": "An anonymous form can read only the year and programme from an account: a name, a status or a campus read from it would name the person. The status and the campus can be asked; the name never.",
   "form_respondent_declared_title": "About you",
   "form_respondent_declared_hint": "Asked by the organiser, and kept with your answer.",
@@ -4924,6 +4936,11 @@
   "form_view_edit_locked_note": "Sets the price paid: can no longer be changed.",
   "form_view_my_answers_title": "Your answers",
   "form_view_my_answer_row": "Answer of {date}",
+  "form_view_answer_view": "View",
+  "form_view_answer_view_banner": "Your answer of {date}, read-only.",
+  "form_view_answer_view_close": "Close",
+  "form_view_already_answered_title": "You have already answered",
+  "form_view_already_answered_anonymous_note": "This form is anonymous: Canari keeps no link between your account and your answer, so it cannot show it back to you.",
   "form_responses_edited_at": "changed on {date}",
   "form_criterion_any_tier": "Any membership tier",
   "form_criterion_no_formations": "No track is known yet.",
@@ -6657,5 +6674,9 @@
   "attachment_chip_pdf": "PDF",
   "attachment_chip_event": "Event",
   "attachment_event_open": "See the event",
-  "pdf_open_named_document_label": "Open {name}"
+  "pdf_open_named_document_label": "Open {name}",
+  "webview_outdated_title": "Update Android System WebView",
+  "webview_outdated_body": "Canari cannot start: the Android System WebView component of this phone is too old. Update it from the Play Store, then reopen Canari.",
+  "webview_outdated_button": "Open the Play Store",
+  "webview_outdated_version": "Detected version: {version}"
 }

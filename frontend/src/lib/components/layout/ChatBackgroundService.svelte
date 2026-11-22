@@ -126,7 +126,11 @@
   import type { MessagingContext } from '$lib/composables/useMessaging.svelte';
   import { readGroupMembersOnceReady, registerReelSendHost } from '$lib/reels/reelSendBridge';
   import { whenMlsReady } from '$lib/composables/session/mlsReadiness';
-  import { adoptOutboxPublishedUpload, endOutboxPublishWait } from '$lib/utils/chat/outbox';
+  import {
+    adoptNativeOutboxEntries,
+    adoptOutboxPublishedUpload,
+    endOutboxPublishWait,
+  } from '$lib/utils/chat/outbox';
   import { MlsSessionVacantError } from '$lib/mls-client';
   import type { IStorage, StoredMessage } from '$lib/db';
   import { deliveryUrl } from '$lib/utils/apiUrl';
@@ -2148,6 +2152,12 @@
               onDated: (id, receivedAt) =>
                 dateBackgroundSentRow(globalConvs.conversations, id, receivedAt),
             }).catch((e) => appendLog(`[OUTBOX_MIRROR] Resume reconcile failed: ${String(e)}`));
+            // What the native side queued while we were away - a reply typed in the shade, an entry
+            // its drain gave up on - becomes the page's now, not at the next cold start: after the
+            // reconcile, so a delivered one is gone first (`adoptNativeOutboxEntries`).
+            await adoptNativeOutboxEntries().catch((e) =>
+              console.error(`[OUTBOX_MIRROR] Resume adoption failed: ${String(e)}`)
+            );
           }
           stepDone('outbox');
           // WP-XP-5: the user may have answered the native ring while we were away. Held BEFORE the

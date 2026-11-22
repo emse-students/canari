@@ -316,6 +316,20 @@ describe('recordNativeReadElsewhere', () => {
     });
   });
 
+  // This device's own reader opening the conversation is the cancel's third trigger.
+  it('hands over the reading of THIS device, under the same command', async () => {
+    isAndroidTauriRuntime.mockReturnValue(true);
+    invoke.mockResolvedValue(true);
+
+    await recordNativeReadElsewhere('g1', 'read_here', 50, 'server');
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('record_read_elsewhere', {
+      groupId: 'g1',
+      at: 50,
+      serverClock: true,
+      reason: 'read_here',
+    });
+  });
+
   it('invokes nothing off Android, where there is no native banner', async () => {
     isAndroidTauriRuntime.mockReturnValue(false);
 

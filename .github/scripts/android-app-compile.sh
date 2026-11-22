@@ -103,3 +103,19 @@ for t in "${tasks[@]}"; do
   fi
 done
 echo "OK ${tasks[*]} ran and succeeded"
+
+# THE RUST TASKS MUST BE REAL. The tauri CLI compiles only the FIRST target itself; every other ABI
+# is built by Gradle's `rustBuild<Arch><Profile>` task, which must be a `BuildTask` that runs
+# `tauri android android-studio-script`. They were empty `DefaultTask`s from 2026-04 to 2026-11 and
+# every release shipped arm64 only, with nothing red. This gate never RUNS them (it would build the
+# whole app), so it asks Gradle what each one IS. cicd.md#the-android-release-build-packages-both-abis-because-gradle-builds-them-2026-11-21
+for t in rustBuildArmDebug rustBuildArmRelease rustBuildArm64Release; do
+  type_out="$(cd "$android" && ./gradlew --no-daemon --console=plain -q ":app:help" --task "$t" 2>&1)" || {
+    echo "$type_out"; echo "::error::Gradle does not know :app:${t}"; exit 1; }
+  if ! grep -qE "^[[:space:]]+BuildTask \(" <<<"$type_out"; then
+    echo "$type_out"
+    echo "::error:::app:${t} is not a BuildTask - the 32-bit library would never be built (buildSrc/.../BuildTask.kt, RustPlugin.kt)"
+    exit 1
+  fi
+done
+echo "OK rustBuildArmDebug, rustBuildArmRelease and rustBuildArm64Release are BuildTasks"
