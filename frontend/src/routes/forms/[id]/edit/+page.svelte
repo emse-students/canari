@@ -3,6 +3,7 @@
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
   import { questionImageRefusalMessage } from '$lib/forms/questionImage';
   import { formCodeMessage, formItemsProblem } from '$lib/forms/answerBounds';
+  import { questionItemsOf } from '$lib/forms/formBlocks';
   import { formWindowInvalid } from '$lib/forms/formWindow';
   import { describeApiRefusal, refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
   import { SocialApiError } from '$lib/associations/api';
@@ -456,7 +457,7 @@
   );
   const summary = $derived(
     formSummary({
-      questionCount: items.length,
+      questionCount: questionItemsOf(items).length,
       requiresPayment,
       basePrice,
       priceMatrix,

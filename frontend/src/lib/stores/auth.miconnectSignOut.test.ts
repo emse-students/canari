@@ -225,17 +225,28 @@ describe('from sign-in to sign-out', () => {
     // The sign-out also empties the cache's `share_out/` (the decrypted file the last share out
     // left there), in either mobile app erases a share INTO Canari (`incomingShareSignOut`: the
     // epoch first, then the claim) and the share sheet's suggested conversations (`clearShareTargets`,
-    // both phones since lot S5 on iOS); every OTHER native call is the one that ends MiConnect.
+    // both phones since lot S5 on iOS) and what the message notifications handed the system
+    // (`clear_conversation_shortcuts`, both phones since the iPhone's communication notifications,
+    // with the erase it owes on disk: `notification_shortcuts_erase_owed`, and its settle);
+    // every OTHER native call is the one that ends MiConnect.
     const shareOut = 'plugin:gallery|discard_shared_out';
     const suggestions = 'plugin:gallery|clear_share_targets';
+    const conversations = 'plugin:gallery|clear_conversation_shortcuts';
     const shareIn = ['advance_share_epoch', 'read_and_clear_pending_share'];
+    const owedErase = ['notification_shortcuts_erase_owed', 'settle_notification_shortcuts_erase'];
     expect(invokeMock.mock.calls.filter(([cmd]) => cmd === shareOut)).toHaveLength(1);
     expect(invokeMock.mock.calls.filter(([cmd]) => cmd === suggestions)).toHaveLength(1);
+    expect(invokeMock.mock.calls.filter(([cmd]) => cmd === conversations)).toHaveLength(1);
     expect(
       invokeMock.mock.calls.map(([cmd]) => cmd).filter((cmd) => shareIn.includes(cmd))
     ).toEqual(shareIn);
     const ending = invokeMock.mock.calls.filter(
-      ([cmd]) => cmd !== shareOut && cmd !== suggestions && !shareIn.includes(cmd)
+      ([cmd]) =>
+        cmd !== shareOut &&
+        cmd !== suggestions &&
+        cmd !== conversations &&
+        !shareIn.includes(cmd) &&
+        !owedErase.includes(cmd)
     );
     expect(ending).toHaveLength(1);
     const url = new URL((ending[0]![1] as { url: string }).url);

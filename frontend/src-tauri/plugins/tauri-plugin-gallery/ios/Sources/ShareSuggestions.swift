@@ -29,6 +29,10 @@ enum ShareSuggestions {
   /// The donation group. Written by nothing else; `iosShareExtension.test.ts` pins it.
   static let groupIdentifier = "fr.emse.canari.share-suggestions"
 
+  /// The notification extension's donation group (`NotificationService.messageNotificationsGroup`,
+  /// another bundle, so spelled twice; `iosCommunicationNotifications.test.ts` holds the two).
+  static let messageNotificationsGroup = "fr.emse.canari.message-notifications"
+
   /// The page's ids are `c:<conversation id>` (`shareTargetsNative.ts`), as on Android.
   static let idPrefix = "c:"
   static let maxIdLength = 200
@@ -116,12 +120,31 @@ enum ShareSuggestions {
     }
   }
 
+  /// Deletes every interaction the notification extension donated for its COMMUNICATION
+  /// notifications (owner, 2026-11-21) - the sender's name and face, the conversation's id and
+  /// name - at sign-out, behind `clear_conversation_shortcuts`, the iOS twin of Android's
+  /// `chat_<group>` shortcuts. Answers 0: the platform deletes a group without counting it, and the
+  /// extension, another process, keeps no count. On [queue], after any publish or clear in flight.
+  static func clearMessageNotifications(done: @escaping (Result<Int, Failure>) -> Void) {
+    queue.async {
+      if let code = deleteGroup(messageNotificationsGroup) {
+        GalleryLog.log.error(
+          "[ShareSuggestions] clearMessageNotifications: the donations were not deleted (code \(code, privacy: .public))")
+        done(.failure(.deleteFailed(code)))
+        return
+      }
+      GalleryLog.log.notice("[ShareSuggestions] clearMessageNotifications: the donation group is deleted")
+      done(.success(0))
+    }
+  }
+
   /// Deletes the donation group, waiting for the platform's answer (this runs on [queue], never
-  /// the main thread). Returns the error code, or nil on success.
-  private static func deleteGroup() -> Int? {
+  /// the main thread). Returns the error code, or nil on success. The suggestions' own group unless
+  /// told otherwise - never everything the system learned of the app.
+  private static func deleteGroup(_ group: String = groupIdentifier) -> Int? {
     let finished = DispatchSemaphore(value: 0)
     var failure: Int?
-    INInteraction.delete(with: groupIdentifier) { error in
+    INInteraction.delete(with: group) { error in
       if let error = error {
         failure = (error as NSError).code
       }

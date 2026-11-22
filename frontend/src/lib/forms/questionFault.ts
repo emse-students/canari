@@ -1,5 +1,6 @@
 import { SocialApiError } from '$lib/associations/api';
 import { GRID_MAX_ROWS, duplicateLabels, gridRowLabels } from '$lib/forms/answerBounds';
+import { formBlockProblem, isFormBlock } from '$lib/forms/formBlocks';
 import { PRODUCT_GRID_TYPE } from '$lib/forms/productGridContract';
 import {
   productGridDefinitionMessage,
@@ -22,18 +23,26 @@ export function firstEmptyConditionQuestion(
 }
 
 /**
- * The first grid that `formItemsProblem` refuses: a label twice among its rows or columns, or too
- * many rows - opened so the "En double" mark under the field is visible.
+ * The first item that `formItemsProblem` refuses: a grid with a label twice among its rows or
+ * columns, or too many rows - opened so the "En double" mark under the field is visible - or an
+ * empty text or image block, opened on the line that says what it lacks.
  */
 export function firstItemsFaultQuestion(
   items: readonly {
     id: string;
     type?: string;
+    label?: string;
+    description?: string;
+    imageUrl?: string;
     rows?: readonly ({ value?: string } | string)[];
     options?: readonly { label?: string }[];
   }[]
 ): string | null {
   for (const item of items) {
+    if (isFormBlock(item)) {
+      if (formBlockProblem(item)) return item.id;
+      continue;
+    }
     if (item.type !== 'matrix_single' && item.type !== 'matrix_multiple') continue;
     const rows = gridRowLabels(item.rows as any).filter(Boolean);
     const columns = (item.options ?? []).filter((o) => o.label?.trim()).map((o) => o.label!);
