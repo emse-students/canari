@@ -36,6 +36,7 @@
   import { showsCursusSource } from '$lib/forms/respondentSource';
   import { m } from '$lib/paraglide/messages';
   import Select from '$lib/components/ui/Select.svelte';
+  import { questionItemsOf } from '$lib/forms/formBlocks';
   import {
     emptyIdentityFilter,
     formationWord,
@@ -74,7 +75,8 @@
 
   const anonymous = $derived(form.anonymous ?? false);
   const requiresPayment = $derived(form.requiresPayment ?? false);
-  const items = $derived(form.items ?? []);
+  // The QUESTIONS: a text or image block takes no answer, so no column, filter or result.
+  const items = $derived(questionItemsOf(form.items));
   const grids = $derived(productGridQuestions(items));
   const summary = $derived(
     responsesSummary(submissions, anonymous, (sub) => {
