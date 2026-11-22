@@ -51,6 +51,7 @@
         "@types/node": "^26.6.6",
         "@types/qrcode": "^1.5.6",
         "@vitest/coverage-v8": "^5.1.0",
+        "acorn": "8.19.0",
         "emoji-picker-element-data": "1.8.0",
         "fake-indexeddb": "^6.2.8",
         "happy-dom": "^21.0.4",
