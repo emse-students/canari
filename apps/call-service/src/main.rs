@@ -816,6 +816,13 @@ enum SignalMessage {
         /// Mesh: the user whose socket died; its seat is kept for the grace.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         peer: Option<String>,
+        /// How that socket ended, as the server recorded it ([`Disposition::as_str`]: a
+        /// `transport-error` reset, a `keepalive-lost` half-open socket, a `send-failed` reader
+        /// that stopped reading...). The one witness that saw the other party's socket die tells
+        /// the party left behind WHY, so its own report can name it. Absent when unknown; a client
+        /// older than the field ignores it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        disposition: Option<String>,
     },
     /// P2P only, server -> client: the `Join` was refused, and why, so the client fails at once
     /// with a reason instead of waiting out its Join timeout.
@@ -1350,13 +1357,13 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
     if let (Some(room_id), RoomMode::P2p) = (session.room_id.clone(), session.mode) {
         // The FIRST cause on the record decides: a socket already replaced (sibling, resume) holds
         // no seat, and both calls below then find nothing to do.
-        let keeps_seat = session
+        let seat_kept_by = session
             .ledger
             .as_ref()
             .and_then(|l| l.disposition())
-            .is_some_and(Disposition::keeps_p2p_seat);
-        if keeps_seat {
-            p2p_go_away(&state, &room_id, &peer_id);
+            .filter(|d| d.keeps_p2p_seat());
+        if let Some(disposition) = seat_kept_by {
+            p2p_go_away(&state, &room_id, &peer_id, disposition);
         } else {
             p2p_leave(&state, &room_id, &peer_id);
         }
@@ -2343,9 +2350,7 @@ fn p2p_join(
         );
         p2p_send(
             &notify_tx,
-            SignalMessage::PeerAway {
-                peer: Some(other.user_id),
-            },
+            peer_away(Some(other.user_id), other.ledger.disposition()),
             &room_id,
             peer_id,
         );
@@ -2563,9 +2568,7 @@ fn p2p_resume(
             OtherSeat::Away(away) => {
                 p2p_send(
                     &notify_tx,
-                    SignalMessage::PeerAway {
-                        peer: Some(away.user_id),
-                    },
+                    peer_away(Some(away.user_id), away.ledger.disposition()),
                     &room_id,
                     peer_id,
                 );
@@ -2591,9 +2594,18 @@ fn p2p_tell_departure(
     }
 }
 
+/// The `PeerAway` frame naming `peer`, carrying how its socket ended when the record knows it.
+fn peer_away(peer: Option<String>, disposition: Option<Disposition>) -> SignalMessage {
+    SignalMessage::PeerAway {
+        peer,
+        disposition: disposition.map(|d| d.as_str().to_string()),
+    }
+}
+
 /// A p2p socket died WITHOUT a Close frame: its seat stays, ABSENT, for the grace; the others are
-/// told `PeerAway`; and the grace's end frees the seat unless the device resumed it meanwhile.
-fn p2p_go_away(state: &Arc<AppState>, room_id: &str, peer_id: &str) {
+/// told `PeerAway`, with the `disposition` that ended it; and the grace's end frees the seat
+/// unless the device resumed it meanwhile.
+fn p2p_go_away(state: &Arc<AppState>, room_id: &str, peer_id: &str, disposition: Disposition) {
     let Some(room) = state.p2p_rooms.get(room_id).map(|r| r.value().clone()) else {
         warn!(
             "[call] {} lost its socket but p2p room {} is already gone",
@@ -2607,13 +2619,16 @@ fn p2p_go_away(state: &Arc<AppState>, room_id: &str, peer_id: &str) {
     };
     let grace = state.p2p_seat_grace;
     info!(
-        "[call] p2p seat away room={} peer={} grace_s={} told={} - kept for a resume",
+        "[call] p2p seat away room={} peer={} disposition={} grace_s={} told={} - kept for a resume",
         room_id,
         peer_id,
+        disposition.as_str(),
         grace.as_secs(),
         departure.tell.len()
     );
-    p2p_tell_departure(room_id, &departure, |peer| SignalMessage::PeerAway { peer });
+    p2p_tell_departure(room_id, &departure, |peer| {
+        peer_away(peer, Some(disposition))
+    });
     let state = state.clone();
     let room_id = room_id.to_string();
     let peer_id = peer_id.to_string();
@@ -4016,6 +4031,24 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&SignalMessage::PeerLeft { peer: None }).unwrap(),
             r#"{"type":"PeerLeft"}"#
+        );
+    }
+
+    /// `PeerAway` names how the other party's socket ended, and the field stays OFF the wire when
+    /// unknown: an old client reads the frame it always read, a new one reads the cause.
+    #[test]
+    fn peer_away_carries_the_disposition_only_when_known() {
+        assert_eq!(
+            serde_json::to_string(&peer_away(
+                Some("bob".into()),
+                Some(Disposition::TransportError)
+            ))
+            .unwrap(),
+            r#"{"type":"PeerAway","peer":"bob","disposition":"transport-error"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&peer_away(None, None)).unwrap(),
+            r#"{"type":"PeerAway"}"#
         );
     }
 }

@@ -264,6 +264,7 @@ import { prepareQueuedChatReel } from '$lib/utils/chat/prepareQueuedChatReel';
 import {
   getCallSystemMessageContext,
   handleCallSignalForChat,
+  forgetCallRecordServerTime,
   patchCallRecordServerTime,
   recordCallEnded,
   recordCallStarted,
@@ -2317,7 +2318,8 @@ export async function loginImpl(
         callId: string,
         at: CallEndTime,
         outcome?: CallEndReason,
-        starterId?: string
+        starterId?: string,
+        failed?: boolean
       ) =>
         recordCallEnded(
           getCallSystemMessageContext(),
@@ -2325,8 +2327,10 @@ export async function loginImpl(
           callId,
           at,
           outcome,
-          starterId ?? ctx.getUserId()
+          starterId ?? ctx.getUserId(),
+          failed === true
         ),
+      onCallEndUnsent: (callId: string) => forgetCallRecordServerTime(callId),
       onCallEndAnswered: (groupId: string, callId: string, serverTimestamp: number) =>
         patchCallRecordServerTime(getCallSystemMessageContext(), groupId, callId, serverTimestamp),
     });

@@ -628,6 +628,8 @@
   "call_relay_disabled": "Appel impossible : aucune connexion directe, et ce serveur n'utilise pas de relais d'appel.",
   "call_relay_withheld": "Appel impossible : aucune connexion directe, et le relais d'appel du serveur est indisponible pour le moment.",
   "call_reconnecting": "Reconnexion...",
+  "call_peer_lost": "{name} a perdu la connexion…",
+  "call_peer_lost_unnamed": "Votre correspondant a perdu la connexion…",
   "call_minimize_label": "Réduire l'appel",
   "call_speaker_label": "Haut-parleur",
   "call_earpiece_label": "Écouteur",
@@ -4595,6 +4597,9 @@
   "chat_system_call_not_answered": "Appel sans réponse",
   "chat_system_call_declined": "Appel refusé",
   "chat_system_call_busy": "Contact occupé",
+  "chat_system_call_not_connected": "Appel non abouti",
+  "chat_system_call_connection_failed": "Appel non abouti : la connexion n'a pas pu s'établir",
+  "chat_system_call_back": "Rappeler",
   "chat_system_call_duration_under_minute": "moins d'une minute",
   "chat_system_call_duration_one_minute": "1 minute",
   "chat_system_call_duration_minutes": [

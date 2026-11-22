@@ -587,6 +587,8 @@
   "call_relay_disabled": "Call failed: no direct connection, and this server does not use a call relay.",
   "call_relay_withheld": "Call failed: no direct connection, and the server's call relay is unavailable right now.",
   "call_reconnecting": "Reconnecting...",
+  "call_peer_lost": "{name} lost the connection…",
+  "call_peer_lost_unnamed": "The other person lost the connection…",
   "call_minimize_label": "Minimize call",
   "call_speaker_label": "Speaker",
   "call_earpiece_label": "Earpiece",
@@ -4563,6 +4565,9 @@
   "chat_system_call_not_answered": "Call not answered",
   "chat_system_call_declined": "Call declined",
   "chat_system_call_busy": "Contact busy",
+  "chat_system_call_not_connected": "Call not completed",
+  "chat_system_call_connection_failed": "Call failed: the connection could not be established",
+  "chat_system_call_back": "Call back",
   "chat_system_call_duration_under_minute": "less than a minute",
   "chat_system_call_duration_one_minute": "1 minute",
   "chat_system_call_duration_minutes": [
