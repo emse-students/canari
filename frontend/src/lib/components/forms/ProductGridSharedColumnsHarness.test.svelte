@@ -9,9 +9,10 @@
     initial: ColumnSetQuestion[];
     onItems: (items: ColumnSetQuestion[]) => void;
     ordered?: Record<string, string[]>;
+    orderedReady?: boolean;
   }
 
-  let { initial, onItems, ordered = {} }: Props = $props();
+  let { initial, onItems, ordered = {}, orderedReady = true }: Props = $props();
   let items = $state(untrack(() => initial));
   $effect(() => onItems($state.snapshot(items) as ColumnSetQuestion[]));
 </script>
@@ -24,6 +25,7 @@
       questions={items}
       questionId={item.id}
       orderedByQuestion={ordered}
+      {orderedReady}
     />
   </section>
 {/each}

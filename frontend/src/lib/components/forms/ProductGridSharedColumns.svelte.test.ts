@@ -44,13 +44,22 @@ const question = (id: string, productGrid: EditorProductGrid): ColumnSetQuestion
   productGrid,
 });
 
-function render(items: ColumnSetQuestion[], ordered: Record<string, string[]> = {}) {
+function render(
+  items: ColumnSetQuestion[],
+  ordered: Record<string, string[]> = {},
+  orderedReady = true
+) {
   const state = { items };
   const target = document.createElement('div');
   document.body.appendChild(target);
   const component = mount(Harness, {
     target,
-    props: { initial: items, ordered, onItems: (i: ColumnSetQuestion[]) => (state.items = i) },
+    props: {
+      initial: items,
+      ordered,
+      orderedReady,
+      onItems: (i: ColumnSetQuestion[]) => (state.items = i),
+    },
   });
   mounted.push(() => unmount(component));
   flushSync();
@@ -69,6 +78,25 @@ const columnLabels = (items: ColumnSetQuestion[], id: string) =>
 const paid = { isPublic: false, requiresPayment: true };
 
 describe('the grid editor - shared columns', () => {
+  it('waits for the ordered cells: sharing and using a set are off until they are known', async () => {
+    const shared = shopGrid('Tote');
+    shared.columnSet = { id: 'set1', name: 'Tailles' };
+    const { target, state } = render(
+      [question('a', shopGrid('Sweat')), question('b', shared)],
+      {},
+      false
+    );
+    const a = section(target, 'a');
+    expect(hid(a, 'column-set-waiting')).not.toBeNull();
+    type(hid(a, 'column-set-new-name') as HTMLInputElement, 'Tailles');
+    expect((hid(a, 'column-set-share') as HTMLButtonElement).disabled).toBe(true);
+    expect((hid(a, 'column-set-use') as HTMLButtonElement).disabled).toBe(true);
+    (hid(a, 'column-set-use') as HTMLButtonElement).click();
+    await tick();
+    expect(confirmMock).not.toHaveBeenCalled();
+    expect(state.items.find((i) => i.id === 'a')!.productGrid!.columnSet ?? null).toBeNull();
+  });
+
   it('sharing offers the grids that already hold the same sizes, and joins them on a yes', async () => {
     const { target, state } = render([
       question('a', shopGrid('Sweat')),

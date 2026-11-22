@@ -76,6 +76,7 @@
     formTiers = null,
     orderedCells = [],
     allOrderedCells = {},
+    orderedReady = true,
     isPublic = false,
     gridProblem = null,
   }: {
@@ -127,6 +128,8 @@
     orderedCells?: string[];
     /** Every priced grid's ordered cells by question id: a shared column warns on any grid's orders. */
     allOrderedCells?: Record<string, string[]>;
+    /** False while the ordered cells are not known yet: the grid's shared columns wait for it. */
+    orderedReady?: boolean;
     /** A public form: a priced grid's guest pays "everyone else". */
     isPublic?: boolean;
     /** The sentence of a refused save about this priced grid. */
@@ -582,6 +585,7 @@
         questions={allItems}
         questionId={item.id}
         orderedByQuestion={allOrderedCells}
+        {orderedReady}
         {isPublic}
         problem={gridProblem}
         title={item.label}

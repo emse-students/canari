@@ -117,6 +117,12 @@
     questionId?: string;
     /** Every grid's ordered cells, by question id: a shared column warns on any grid's orders. */
     orderedByQuestion?: Record<string, string[]>;
+    /**
+     * Whether the ordered cells are known. Sharing or joining columns re-keys a grid by label, which
+     * would silently re-key columns carrying orders if they had not loaded: until true, those
+     * actions are off.
+     */
+    orderedReady?: boolean;
   }
 
   let {
@@ -132,6 +138,7 @@
     questions = [],
     questionId = undefined,
     orderedByQuestion = {},
+    orderedReady = true,
   }: Props = $props();
 
   const TAG = 'ProductGridEditor';
@@ -255,6 +262,10 @@
   async function shareThese() {
     const name = shareName.trim();
     if (!name) return;
+    if (!orderedReady) {
+      Log.w(TAG, 'share refused: the ordered cells are not known yet');
+      return;
+    }
     shareColumns(grid, name);
     shareName = '';
     const withOrders = new Set(
@@ -279,6 +290,10 @@
   async function useShared(setId: string) {
     const set = availableSets.find((s) => s.id === setId);
     if (!set) return;
+    if (!orderedReady) {
+      Log.w(TAG, 'use refused: the ordered cells are not known yet');
+      return;
+    }
     const replacesOrdered = grid.columns.some(
       (c) =>
         !set.columns.some((s) => s.id === c.id) && axisEntryHasOrders(orderedCells, 'columns', c.id)
@@ -575,6 +590,11 @@
           </div>
         {:else}
           <p class="text-text-muted text-xs">{m.form_pgrid_colset_share_hint()}</p>
+          {#if !orderedReady}
+            <p class="text-text-muted text-xs" data-testid="column-set-waiting">
+              {m.form_pgrid_colset_waiting()}
+            </p>
+          {/if}
           <div class="flex flex-wrap items-center gap-2">
             <Input
               class="min-w-0 flex-1"
@@ -586,7 +606,7 @@
             />
             <Button
               variant="secondary"
-              disabled={!shareName.trim()}
+              disabled={!shareName.trim() || !orderedReady}
               onclick={() => void shareThese()}
               data-testid="column-set-share">{m.form_pgrid_colset_share()}</Button
             >
@@ -602,6 +622,7 @@
                 <Button
                   variant="soft"
                   size="compact"
+                  disabled={!orderedReady}
                   onclick={() => void useShared(set.id)}
                   data-testid="column-set-use"
                   >{m.form_pgrid_colset_use_option({

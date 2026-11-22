@@ -3422,8 +3422,26 @@
   "form_pgrid_close_hint": "Click a cell to close a combination that does not exist (Cream in XS, say). The buyer sees it struck through.",
   "form_pgrid_colset_apply_ordered_confirm": "Answers already exist on this grid's columns. Past orders keep their label and price, but the shared columns replace these ones. Continue?",
   "form_pgrid_colset_apply_ordered_confirm_button": "Replace",
-  "form_pgrid_colset_in_use": "Shared columns \"{name}\": {count} grids. Any change to the columns applies to all of them.",
-  "form_pgrid_colset_join_matching_confirm": "{count} other grids have exactly the same columns. Share them too?",
+  "form_pgrid_colset_in_use": [
+    {
+      "declarations": ["input name", "input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Shared columns \"{name}\": {count} grid. Any change to the columns applies to it.",
+        "countPlural=other": "Shared columns \"{name}\": {count} grids. Any change to the columns applies to all of them."
+      }
+    }
+  ],
+  "form_pgrid_colset_join_matching_confirm": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} other grid has exactly the same columns. Share them too?",
+        "countPlural=other": "{count} other grids have exactly the same columns. Share them too?"
+      }
+    }
+  ],
   "form_pgrid_colset_join_matching_confirm_button": "Share all",
   "form_pgrid_colset_join_matching_only_this": "This one only",
   "form_pgrid_colset_leave": "Stop sharing",
@@ -3433,7 +3451,17 @@
   "form_pgrid_colset_share_hint": "The same columns for several grids: edit them once, they change everywhere.",
   "form_pgrid_colset_title": "Shared columns",
   "form_pgrid_colset_use": "Use shared columns",
-  "form_pgrid_colset_use_option": "{name} ({count} columns)",
+  "form_pgrid_colset_use_option": [
+    {
+      "declarations": ["input name", "input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{name} ({count} column)",
+        "countPlural=other": "{name} ({count} columns)"
+      }
+    }
+  ],
+  "form_pgrid_colset_waiting": "Sharing columns is available once the answers already given on this form have been read. Reload the page if this lasts.",
   "form_pgrid_column_label": "Column {n}",
   "form_pgrid_column_placeholder": "Size",
   "form_pgrid_corner": "Rows \\ Columns",

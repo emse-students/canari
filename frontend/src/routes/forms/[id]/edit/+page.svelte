@@ -200,6 +200,12 @@
   let items = $state<any[]>([]);
   /** Per priced grid, the cells some answer ordered: removing their row or column warns first. */
   let orderedCells = $state<Record<string, string[]>>({});
+  /**
+   * Whether `orderedCells` is KNOWN: set once the answers were read (or there are none to read). The
+   * shared-columns actions re-key a grid's columns by label, which is only safe knowing which cells
+   * are ordered, so they wait for this - and stay off if the read failed.
+   */
+  let orderedReady = $state(false);
 
   /**
    * Reads which grid cells were ordered, when the form holds a priced grid that has answers. A
@@ -207,9 +213,13 @@
    */
   async function loadOrderedCells(id: string, f: Form) {
     const gridIds = (f.items ?? []).filter((i) => i.type === PRODUCT_GRID_TYPE).map((i) => i.id);
-    if (gridIds.length === 0 || !f.submissionCount) return;
+    if (gridIds.length === 0 || !f.submissionCount) {
+      orderedReady = true;
+      return;
+    }
     try {
       orderedCells = orderedProductGridCells(await getSubmissions(id), gridIds);
+      orderedReady = true;
     } catch (e) {
       console.warn('[forms] the ordered grid cells could not be read; removals will not warn:', e);
     }
@@ -1014,6 +1024,7 @@
       {isPublic}
       {gridFault}
       {orderedCells}
+      {orderedReady}
       onPricedGridAdded={() =>
         applyMultipleSubmissions(multipleSubmissionsAfterGridAdded(multipleSubmissions()))}
       onPricedGridGone={() =>
