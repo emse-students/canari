@@ -92,6 +92,11 @@ cancel it instead - the payment's record keeps its Lydia Business either way
 `pending` answer is cancelled first by `cancelSubmission`'s rules, its Lydia request settled, so a
 request left payable never lands on a deleted answer; one that cannot be settled is a 409
 `PREVIOUS_PAYMENT_OPEN`, worded for the manager.
+**Until 2026-11-22 the refusal never reached the manager**: TypeORM's postgres driver answers a
+`DELETE ... RETURNING` with `[rows, rowCount]`, the service read that pair as the rows, so its length
+was always 2 and a delete the guard refused was answered as done while the answer stayed. It reads the
+pair now; `anonymous-answer-batches.integration.spec.ts` deletes a paid answer against PostgreSQL and
+expects the 409 and the row still there.
 
 ## Key component: forms/[id]/+page.svelte
 
@@ -967,13 +972,14 @@ what is displayed:
 | | Named form | Anonymous form |
 |---|---|---|
 | `submissions.userId` / `email` | the submitter | **NULL** |
-| `submissions.createdAt` | the instant | **cut to the UTC day** - a precise clock would re-join the two tables by order alone |
+| `submissions.createdAt` (and `updatedAt`, `paymentRequestedAt`) | the instant | **the UTC day its batch was released** - a precise clock would re-join the two tables by order alone |
+| when the answer is stored | in the request | **in a batch** ([below](#an-anonymous-forms-answers-are-released-in-batches-2026-11-21)) |
 | "has this account answered" | a `submissions` row | `form_respondents (formId, userId)`, which names **no answer and no time** |
 | Responses list and XLSX | newest first, name columns | **random-id order**, no name column, date without time |
 
-The registry insert and the answer are ONE transaction (`ON CONFLICT DO NOTHING ... RETURNING` is
-what refuses a second answer from the same account). `allowMultipleSubmissions` still works and then
-registers nobody.
+The registry insert is written in the request (`ON CONFLICT DO NOTHING ... RETURNING` is what refuses
+a second answer from the same account); the answer is not written beside it. `allowMultipleSubmissions`
+still works and then registers nobody.
 
 **Free only, refused where it is chosen** (the shared option rule,
 [below](#which-options-rule-each-other-out-one-rule-in-either-order-2026-11-06)): a payment names its
@@ -991,6 +997,68 @@ What it does NOT hide, stated so nobody over-reads it: an audience restriction (
 for a promo or a formation on a small group re-identifies its answerer by itself. The fill page says
 only what is stored, not more. Database history (WAL, backups) taken while the answer was written is
 outside this mechanism.
+
+## An anonymous form's answers are released in batches (2026-11-21)
+
+**The lesson, general**: what is stored must not pair an account with an answer - and "what is stored"
+includes what the database itself keeps about each write (system columns, physical order, a column's
+default clock), not only the columns this service declares. Splitting two writes apart is not enough
+on its own either: two writes made one after the other are still neighbours, on a form quiet enough.
+So the answer is never written near the registry row; it is written later, with others.
+
+**The mechanism** (`anonymous-answer-batches.ts`, migration 178, principle 1 first):
+
+1. The request writes the registry row and HOLDS the answer apart in `form_answers_held` - its content
+   and nothing that names or dates it (no account, no address, no timestamp, a random id).
+2. Once `ANONYMOUS_BATCH_SIZE` (5) answers of a form wait, they are released whatever the form's
+   state. The submit that brought the count there releases them right after its own transaction
+   commits: ONE transaction of their own, under the form's lock (`lockFormSeats`), writes them into
+   `submissions` in ONE insert, in a cryptographically random order, with new random ids, dated the
+   release's UTC day, and deletes the held rows. A registry row never shares that write.
+3. Fewer than 5 wait and the form takes no more answers (closed by its manager, an end date that came,
+   an opening moved later, or FULL): that short tail is released **once per form**
+   (`form_anonymous_tail_released`, a durable fact). It **joins the answers released on the form's
+   latest release day**: that group is deleted and written again, with new ids, in the SAME shuffled
+   insert as the tail, which takes its date - one write, one date, no physical order of old then new.
+   **What this does NOT hide from the form's manager** ([principle 1](../../../principes.md), "vos
+   messages sont à vous", is the measure): the manager sees the waiting count live and may close the
+   form at will, and the answer that fills a full form releases its own tail. A manager who compares
+   the list of answers before and after that moment can tell which answers the tail added - a group
+   of fewer than 5. There are at most TWO such groups per form: the tail of the first stop (a close
+   or the form filling up, released once), and the tail its retirement releases (step 4), whatever
+   came before - a form closed, reopened, answered twice more and then archived gives the second. The
+   database rows and their order say nothing more than that list does; what the list shows is the
+   real bound.
+4. A retired form (archived or deleted) releases everything still waiting, joining the same way: no
+   answer is lost.
+5. The release is a predicate over durable state (`ReleaseMode`: open, closed, retired), looked at by:
+   the submit, the close (`setClosed`), a manager's read or export of the answers, `retireForms` (always
+   inside a transaction - `releaseHeldAnswersUnderLock` refuses to run without one,
+   `HeldAnswersOutsideTransactionError`), and the hourly sweep `AnonymousAnswerReleaseScheduler`, which
+   logs why each form is due and how many answers it found. A full batch found there accuses nothing:
+   the sweep reads outside the lock and may only have raced the submit that was about to release it; a
+   release that failed was already logged as an error where it ran. Each is idempotent. A release that
+   fails during a manager's close, read or export is logged as an error and the action is still
+   answered: the answers stay held for the sweep.
+6. A manager's delete of an answer on an anonymous form takes the same form lock, inside a
+   transaction: a release joining that answer's group either ran before (the answer is gone under its
+   old id: 404, and the list shows it under its new one) or runs after (the delete removed it, and the
+   release never writes it back).
+
+| Question | Answer |
+|---|---|
+| Does the organiser see an answer at once? | **No, on an anonymous form.** Up to 4 answers wait while the form is open. The responses screen says so: "Réponses en attente : N. Sur un formulaire anonyme, elles s'affichent par groupes de 5, et les dernières à la clôture du formulaire." (`GET /api/forms/:id/held-answers`, managers only, read after the answers). The creation hint says it too. |
+| Does a waiting answer count? | Yes: the capacity check and `submissionCount` count it (both counts read in one snapshot), and the one-answer rule holds from the request (the registry). A form it fills takes no more answers, so its tail is released as at a close. |
+| What does the respondent get back? | `{ held: true }`, no submission id: an id handed back now would pair the request with the row its batch writes later. |
+| When are fewer than 5 answers released? | Once per form, when it stops taking answers, joined to the latest group; afterwards, only when 5 are waiting or the form is archived or deleted. The waiting count is shown to the organiser. |
+| What does the database keep of a released held row, or of a joined group written again? | Its old version until vacuum: `form_answers_held` and `submissions` are both vacuumed as soon as a row is gone (migration 178). WAL and backups taken meanwhile are outside this mechanism, as above. |
+
+Tests: `anonymous-answer-batches.integration.spec.ts` (PostgreSQL: the batch is one write no registry
+row shares, no instant stored, a joining group written in the same insert in the order asked, the tail
+released once, a full form, a delete racing a release moving each answer once, the refusal outside a
+transaction, the sweep and `retireForms`, a delete racing a joining release, the rewrite's column
+list against the table), the unit specs of the submit and of a failing release during
+a manager's action, and `FormsManagerList.svelte.test.ts` (the notice).
 
 ## A public form is answered without an account (2026-09-30)
 
