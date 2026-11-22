@@ -67,11 +67,13 @@ import {
   adoptOrphanedMirrorEntries,
   MirrorAdoptionError,
   mirrorHoldsSentLines,
+  nativeLinesWaitFor,
   reportNativeQueueUnreachable,
   syncOutboxMirror,
   type MirrorAdoptionSide,
   type MirrorClaims,
 } from '$lib/utils/chat/outboxMirror';
+import { onConversationStored } from '$lib/db/conversationStored';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { isTransportFailure } from '$lib/utils/transportFailure';
@@ -277,11 +279,16 @@ export function terminalFailureCause(entry: OutboxEntry): string {
  */
 export function ownRowOfQueuedText(entry: OutboxEntry, userId: string): StoredMessage | null {
   if (entry.kind !== 'text' && entry.kind !== 'reply') return null;
+  // THE ENVELOPE AN OWN SEND STORES (`sendChatMessage`), never the raw text: a raw body loses a
+  // reply's quote for good, and a text that happens to be JSON would be read back as another kind.
+  const quote = entry.replyTo
+    ? { id: entry.replyTo.id, senderId: entry.replyTo.senderId, content: entry.replyTo.preview }
+    : undefined;
   return {
     id: entry.id,
     conversationId: entry.conversationId,
     senderId: userId.toLowerCase(),
-    content: entry.text ?? '',
+    content: serializeEnvelope(mkTextEnvelope(entry.text ?? '', quote)),
     timestamp: entry.sentAt,
   };
 }
@@ -1027,6 +1034,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * runs it again.
    */
   let startPass: Promise<void> | null = null;
+  /** The last claim pass queued ({@link claimNativeEntries}): every pass runs after it settles. */
+  let claimChain: Promise<unknown> = Promise.resolve();
   /** Whether the member was told of the current run of failed start passes (once per run). */
   let unreachableTold = false;
   /**
@@ -1303,7 +1312,21 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * while the mirror still names it native, and writes the mirror (`always`) or only when a hold or
    * a line found already sent asks for one. Unclaimed entries are drawn failed, with their Retry.
    */
-  async function claimNativeEntries(always: boolean): Promise<string[]> {
+  function claimNativeEntries(always: boolean): Promise<string[]> {
+    // ONE PASS AT A TIME (review of #3969, P1). Two passes that both read the mirror and the queue
+    // before either wrote would both adopt the same line - the second re-inserting an entry the
+    // flush had sent and deleted in between, so it went twice. Chained, each pass reads what the
+    // one before it wrote: the queue it filled and the mirror it claimed. A failed pass releases
+    // the chain, and its caller still sees the failure.
+    const run = claimChain.then(
+      () => claimNativeEntriesNow(always),
+      () => claimNativeEntriesNow(always)
+    );
+    claimChain = run.catch(() => undefined);
+    return run;
+  }
+
+  async function claimNativeEntriesNow(always: boolean): Promise<string[]> {
     if (!storage) return [];
     const adopted = await adoptOrphanedMirrorEntries(storage, deviceKey(), deps.userId, claims);
     // A claim an earlier pass failed is tried again here, adoption or not - and a line found
@@ -1426,6 +1449,22 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   if (typeof window !== 'undefined') {
     document.addEventListener('visibilitychange', onVisible);
   }
+
+  // A NATIVE LINE LEFT FOR WANT OF ITS CONVERSATION'S ROW IS ADOPTED BY THAT ROW'S WRITE (review of
+  // #3969, S2) - a Welcome, a discovery, a restore - not at the next return to the front, which may
+  // be hours away. Chained behind any pass running (`claimNativeEntries`); a map scan per row
+  // written otherwise.
+  const unsubscribeConversationStored = onConversationStored((conversationId) => {
+    if (disposed || !nativeLinesWaitFor(conversationId)) return;
+    log(
+      `[OUTBOX] ${conversationId.slice(0, 8)}… is stored now - the native line(s) waiting for it are adopted`
+    );
+    void claimNativeEntries(false).catch((e: unknown) =>
+      log(
+        `[OUTBOX] adoption on the row of ${conversationId.slice(0, 8)}… failed - the next pass adopts: ${String(e)}`
+      )
+    );
+  });
 
   // Cross-tab half of the leader gate: the leader drains on a follower's behalf, and the follower
   // settles the echo it is still showing as `pending` once the leader reports the send.
@@ -5235,6 +5274,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
 
     async adoptNativeEntries(): Promise<number> {
       if (!storage) return 0;
+      // Behind the start pass and any pass running (`claimNativeEntries` chains them).
       const adopted = await claimNativeEntries(false);
       if (adopted.length > 0) {
         log(
@@ -5372,6 +5412,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       backoffTimer = null;
       unsubscribeTabOutbox();
       unsubscribeReconnect();
+      unsubscribeConversationStored();
       if (typeof window !== 'undefined') {
         document.removeEventListener('visibilitychange', onVisible);
       }

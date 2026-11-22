@@ -137,10 +137,22 @@ let mirrorWrites: Promise<boolean> = Promise.resolve(true);
 const sentNativeLines = new Set<string>();
 
 /**
- * Native lines left unadopted because their conversation is not stored on this device yet - kept so
- * the line saying so is written once per page life, not once per start pass and return to the front.
+ * Native lines left unadopted because their conversation is not stored on this device yet, by line
+ * id, with that conversation: the line saying so is written once per page life, and the write of
+ * that conversation's row adopts them ({@link nativeLinesWaitFor}, `conversationStored.ts`).
  */
-const waitingForConversation = new Set<string>();
+const waitingForConversation = new Map<string, string>();
+
+/**
+ * Whether a native line was left unadopted for want of `conversationId`'s row - so its write is
+ * what adopts it. Read by the outbox controller on every row written: a map scan, no I/O.
+ */
+export function nativeLinesWaitFor(conversationId: string): boolean {
+  for (const groupId of waitingForConversation.values()) {
+    if (groupId === conversationId) return true;
+  }
+  return false;
+}
 
 /** Whether a mirror line found already sent still waits for the write that drops it. */
 export function mirrorHoldsSentLines(): boolean {
@@ -541,12 +553,16 @@ export async function adoptOrphanedMirrorEntries(
       });
       if (stored === undefined) continue;
       if (stored === null) {
+        // Said ONCE per page life, and truthfully: the write of that row adopts it - a Welcome, a
+        // discovery, a restore. A conversation this device deleted is never written again, and what
+        // its line then becomes is an open question (`open-questions.md`, "A native line naming a
+        // conversation this device no longer stores").
         if (!waitingForConversation.has(orphan.id)) {
-          waitingForConversation.add(orphan.id);
-          appendLog(
-            `[OUTBOX_MIRROR] Orphan ${orphan.id.slice(0, 8)}… names ${orphan.groupId.slice(0, 8)}…, not stored on this device yet - not adopted, the line stays native until a pass finds it`
+          console.warn(
+            `[OUTBOX_MIRROR] Orphan ${orphan.id.slice(0, 8)}… names ${orphan.groupId.slice(0, 8)}…, which this device does not store - not adopted, kept native in the mirror; adopted when that conversation's row is written, never if it was deleted here`
           );
         }
+        waitingForConversation.set(orphan.id, orphan.groupId);
         continue;
       }
     }
