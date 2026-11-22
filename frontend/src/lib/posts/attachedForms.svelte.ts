@@ -8,18 +8,30 @@ export interface AttachedFormSource {
   title?: string;
 }
 
-/** One attached form as its card draws it: the title, and whether this reader has answered. */
+/**
+ * One attached form as its card draws it: the title, and whether this reader has answered -
+ * `null` when that could not be read. UNKNOWN IS NOT "NOT ANSWERED": a read that got no answer
+ * (a stalled request) says nothing about the reader, and the card must not claim it did.
+ */
 export interface AttachedFormInfo {
   id: string;
   title: string;
-  submitted: boolean;
+  submitted: boolean | null;
   opensAt?: string | null;
 }
 
-/** The two reads a card makes per form - injected so the loader is testable without a server. */
+/**
+ * The ONE read a card makes per form, coalesced across the page by `formSummaryOf`. Resolves `null`
+ * when the server answered but left the form out (not readable by this reader); rejects when no
+ * answer came.
+ */
 export interface AttachedFormReads {
-  getForm(id: string): Promise<{ id: string; title: string; opensAt?: string | null }>;
-  checkSubmission(id: string): Promise<{ hasSubmitted: boolean }>;
+  readSummary(id: string): Promise<{
+    id: string;
+    title: string;
+    opensAt?: string | null;
+    hasSubmitted: boolean;
+  } | null>;
 }
 
 /** Posts already accused of a duplicate form: the list is rebuilt on every change, the accusation is not. */
@@ -66,8 +78,8 @@ export function attachedFormSources(
  * nothing reactive reads; and what is drawn is derived from the post's own list, so its order is the
  * post's and its length can only be the post's.
  *
- * A form whose read fails stays a placeholder for this card's life and is not asked again - the
- * card's previous behaviour, now logged.
+ * A form whose read fails is drawn with its state unknown (or stays a placeholder when the post
+ * carries no title) for this card's life and is not asked again.
  *
  * @param sources The forms the card's post names now ({@link attachedFormSources}).
  * @param reads The form reads (`$lib/forms/api` in the app).
@@ -84,14 +96,13 @@ export function attachedFormsLoader(
   async function load(src: AttachedFormSource): Promise<void> {
     // ALWAYS READ, even when the post already names the title: the post's `forms` entry carries no
     // `opensAt`, and a card without it can neither say "opens on ..." nor offer its reminder bell.
-    let title = src.title;
-    let opensAt: string | null | undefined;
+    let summary: Awaited<ReturnType<AttachedFormReads['readSummary']>>;
     try {
-      const form = await reads.getForm(src.id);
-      title ||= form.title;
-      opensAt = form.opensAt;
+      summary = await reads.readSummary(src.id);
     } catch (e) {
-      if (!title) {
+      // NO ANSWER: a transport failure. With a title the card is drawn, its state UNKNOWN (null),
+      // never "not answered"; the form page re-checks on open.
+      if (!src.title) {
         console.error(
           `[POSTS] attached form ${src.id} could not be read - left as a placeholder`,
           e
@@ -99,20 +110,23 @@ export function attachedFormsLoader(
         return;
       }
       console.warn(
-        `[POSTS] attached form ${src.id}: opening date could not be read - drawn as open`,
+        `[POSTS] attached form ${src.id}: no answer for its state - drawn with the state unknown`,
         e
       );
+      answered.set(src.id, { id: src.id, title: src.title, submitted: null });
+      return;
     }
-    let submitted = false;
-    try {
-      submitted = (await reads.checkSubmission(src.id)).hasSubmitted;
-    } catch (e) {
-      console.warn(
-        `[POSTS] attached form ${src.id}: whether this reader answered could not be read - drawn as not answered`,
-        e
-      );
+    if (!summary) {
+      // The server ANSWERED and the form is not readable by this reader: that is an answer.
+      console.warn(`[POSTS] attached form ${src.id} is not readable by this reader - not drawn`);
+      return;
     }
-    answered.set(src.id, { id: src.id, title, submitted, opensAt });
+    answered.set(src.id, {
+      id: src.id,
+      title: src.title || summary.title,
+      submitted: summary.hasSubmitted,
+      opensAt: summary.opensAt,
+    });
   }
 
   // Derived ONCE: the effect and the derived value below share it.
