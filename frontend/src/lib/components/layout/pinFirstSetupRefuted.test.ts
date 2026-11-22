@@ -84,7 +84,7 @@ describe('a failure that proves a local state exists refutes "first setup"', () 
     expect(applyPinFailureBody()!).toContain('evaluateRecoverable(uid, code)');
   });
 
-  it('routes all three failure handlers through it', () => {
+  it('routes every failure handler through it (stored PIN, submit, biometric, recovery)', () => {
     // The stored-PIN path, the interactive submit, and the biometric fallback. A count, because
     // their bodies differ and only the dispatch is shared; the PIN recovery's removed-device route is the fourth caller.
     expect(source.match(/applyPinFailure\(/g) ?? []).toHaveLength(5);
@@ -142,6 +142,12 @@ describe('a recovery answered pin_not_set becomes a first setup', () => {
     const handled = recover.slice(branch, recover.indexOf('}', branch));
     expect(handled).toContain('showRecoverModal = false;');
     expect(handled).toContain('enterFirstPinSetup(uid);');
+  });
+
+  it('dismissAuthPrompts closes the recovery modal too, so a session expiry never leaves it over /login', () => {
+    const dismiss = body('function dismissAuthPrompts(');
+    expect(dismiss).toContain('showRecoverModal = false;');
+    expect(dismiss).toContain('showPinModal = false;');
   });
 
   it('enterFirstPinSetup draws the first-setup gate and drops the PIN proof', () => {

@@ -1108,6 +1108,7 @@
     pinGateRetry = null;
     showBiometricSheet = false;
     showPinModal = false;
+    showRecoverModal = false;
     pinLoading = false;
     pinStep = '';
   }
