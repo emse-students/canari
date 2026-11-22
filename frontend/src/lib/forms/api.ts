@@ -17,6 +17,11 @@ export interface FormOption {
    */
   priceModifier: number;
   id?: string;
+  /**
+   * The "Autre" option of a choice question: picking it lets the respondent type what they mean
+   * (the text is kept under `otherKey(item.id)`, `answerText.ts`). At most one per question.
+   */
+  other?: boolean;
 }
 
 export interface FormItem {
@@ -33,6 +38,8 @@ export interface FormItem {
    * enough (decided 2026-11-06, D5). Read only for `matrix_single` / `matrix_multiple`.
    */
   requireEveryRow?: boolean;
+  /** A choice question that takes an optional free comment (kept under `commentKey(id)`). */
+  allowComment?: boolean;
   scale?: {
     min: number;
     max: number;
@@ -860,6 +867,8 @@ export interface ExportLabels {
   guest: string;
   /** Header of the "last changed" column, written on a form that allows changes or holds a changed answer. */
   edited: string;
+  /** The word after a question's label in the header of its free-comment column (`Question - Comment`). */
+  comment: string;
   /** The words of the respondent's identity columns, mirrored by `export-labels.ts`. */
   identity: IdentityExportLabels;
   /**
@@ -921,6 +930,7 @@ export function exportLabels(): ExportLabels {
     email: m.form_guest_identity_email(),
     guest: m.form_submitter_guest(),
     edited: m.form_export_col_edited(),
+    comment: m.form_export_col_comment(),
     identity: {
       promo: m.form_respondent_promo_label(),
       formation: m.form_respondent_formation_label(),

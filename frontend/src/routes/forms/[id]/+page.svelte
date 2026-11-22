@@ -83,6 +83,7 @@
     visibleItems as visibleItemsOf,
     type MissingAnswer,
   } from '$lib/forms/fillAnswers';
+  import { commentKey, otherKey } from '$lib/forms/answerText';
   import { useFormWindow } from '$lib/forms/useFormWindow.svelte';
   import { gridRequiredSwitchOn } from '$lib/forms/gridRequiredGate';
   import {
@@ -1532,6 +1533,8 @@
             {item}
             index={(numbers.get(item.id) ?? 1) - 1}
             bind:value={selections[item.id]}
+            bind:other={selections[otherKey(item.id)]}
+            bind:comment={selections[commentKey(item.id)]}
             disabled={readOnly || isNotOpenYet || isClosed || lockedItems.has(item.id)}
             formId={form.id}
             currency={form.currency}

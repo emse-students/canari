@@ -282,4 +282,52 @@ describe('FormQuestion - a file on its way', () => {
     const without = render({ id: 'q2', label: 'Nom', required: false, type: 'short_text' }, '');
     expect(without.target.querySelector('img')).toBeNull();
   });
+
+  describe('the "Autre" text and the free comment', () => {
+    const withOther = (over: Partial<FormItem> = {}): FormItem => ({
+      id: 'q',
+      label: 'Couleur',
+      required: false,
+      type: 'single_choice',
+      options: [
+        { id: 'oth', label: 'Autre', priceModifier: 0, other: true },
+        { id: 'red', label: 'Rouge', priceModifier: 0 },
+      ],
+      ...over,
+    });
+
+    it('draws no text box until "Autre" is picked, then hands the text back', () => {
+      const notes = { other: undefined as unknown, comment: undefined as unknown };
+      const { target } = render(withOther(), '', {
+        onNotes: (n: typeof notes) => Object.assign(notes, n),
+      });
+      expect(target.querySelector('[data-testid="choice-other"]')).toBeNull();
+      const radios = [...target.querySelectorAll<HTMLInputElement>('input[type="radio"]')];
+      // "Autre" is drawn LAST whatever its place in the stored options.
+      const labels = [...target.querySelectorAll('label')].map((l) => l.textContent?.trim());
+      expect(labels.slice(-2)).toEqual(['Rouge', 'Autre']);
+      radios[1].click();
+      flushSync();
+      const box = target.querySelector<HTMLInputElement>('[data-testid="choice-other"]')!;
+      expect(box).not.toBeNull();
+      box.value = 'Vert';
+      box.dispatchEvent(new Event('input'));
+      flushSync();
+      expect(notes.other).toBe('Vert');
+    });
+
+    it('draws the comment box only on a question that takes one, and hands it back', () => {
+      const without = render(withOther(), '');
+      expect(without.target.querySelector('[data-testid="choice-comment"]')).toBeNull();
+      const notes = { other: undefined as unknown, comment: undefined as unknown };
+      const { target } = render(withOther({ allowComment: true }), '', {
+        onNotes: (n: typeof notes) => Object.assign(notes, n),
+      });
+      const box = target.querySelector<HTMLTextAreaElement>('[data-testid="choice-comment"]')!;
+      box.value = 'Merci';
+      box.dispatchEvent(new Event('input'));
+      flushSync();
+      expect(notes.comment).toBe('Merci');
+    });
+  });
 });

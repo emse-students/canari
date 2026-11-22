@@ -188,4 +188,67 @@ describe('FormsService.exportSubmissions', () => {
       await expect(service.exportSubmissions('f1', LABELS)).rejects.toThrow(/fileDeleted/);
     });
   });
+
+  describe('a choice question with a comment and an "Autre"', () => {
+    const COLOUR = {
+      id: 'q_col',
+      label: 'Couleur',
+      required: false,
+      type: 'single_choice',
+      allowComment: true,
+      options: [
+        { id: 'red', label: 'Rouge' },
+        { id: 'oth', label: 'Autre', other: true },
+      ],
+    };
+    const WORDS: ExportLabels = { ...LABELS, comment: 'Commentaire' };
+
+    async function sheet(service: FormsService, labels: ExportLabels) {
+      const { buffer } = await service.exportSubmissions('f1', labels);
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
+      const rows = workbook.worksheets[0];
+      return [1, 2, 3].map((n) => (rows.getRow(n).values as unknown[]).slice(1));
+    }
+
+    it('writes the comment in its own column and the "Autre" text inside the answer cell', async () => {
+      const service = makeService({
+        requiresPayment: false,
+        items: [COLOUR],
+        submissions: [
+          submission({
+            id: 's1',
+            answers: { q_col: 'oth', 'q_col#other': 'Vert', 'q_col#comment': 'Merci' },
+          }),
+          submission({ id: 's2', answers: { q_col: 'red' } }),
+        ],
+      });
+      const [head, first, second] = await sheet(service, WORDS);
+      expect(head.slice(3)).toEqual(['Couleur', 'Couleur - Commentaire']);
+      expect(first.slice(3)).toEqual(['Autre: Vert', 'Merci']);
+      expect(second.slice(3)).toEqual(['Rouge', '']);
+    });
+
+    it('exports without the comment column when an older client sent no word for it', async () => {
+      const service = makeService({
+        requiresPayment: false,
+        items: [COLOUR],
+        submissions: [submission({ answers: { q_col: 'red', 'q_col#comment': 'Merci' } })],
+      });
+      const [head, first] = await sheet(service, LABELS);
+      expect(head.slice(3)).toEqual(['Couleur']);
+      expect(first.slice(3)).toEqual(['Rouge']);
+    });
+
+    it('keeps the column of a comment that was given while the switch was on', async () => {
+      const service = makeService({
+        requiresPayment: false,
+        items: [{ ...COLOUR, allowComment: false }],
+        submissions: [submission({ answers: { q_col: 'red', 'q_col#comment': 'Avant' } })],
+      });
+      const [head, first] = await sheet(service, WORDS);
+      expect(head.slice(3)).toEqual(['Couleur', 'Couleur - Commentaire']);
+      expect(first.slice(3)).toEqual(['Rouge', 'Avant']);
+    });
+  });
 });

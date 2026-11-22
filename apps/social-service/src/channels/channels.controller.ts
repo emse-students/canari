@@ -122,20 +122,20 @@ export class ChannelsController {
   @UseGuards(NginxAuthGuard)
   @Get('workspaces/boot-reads')
   listCommunityBootReads(@Headers('x-user-id') xUserId: string, @Query('ids') ids?: string) {
-    const list = (ids ?? '')
-      .split(',')
-      .map((id) => id.trim())
-      .filter((id) => id.length > 0);
-    if (list.length === 0) {
-      throw new HttpException('ids is required', HttpStatus.BAD_REQUEST);
-    }
-    if (list.length > COMMUNITY_BOOT_READS_MAX) {
-      throw new HttpException(
-        `at most ${COMMUNITY_BOOT_READS_MAX} ids per request`,
-        HttpStatus.BAD_REQUEST
-      );
-    }
-    return this.service.listCommunityBootReads(xUserId.trim().toLowerCase(), list);
+    return this.service.listCommunityBootReads(xUserId.trim().toLowerCase(), parseBatchIds(ids));
+  }
+
+  /**
+   * The key-group version of several communities in one answer (`?ids=a,b,c`, at most
+   * {@link COMMUNITY_BOOT_READS_MAX}): a digest of the key-group reference and the roster a roster
+   * pass reads, so a device whose last converged pass started from the same digest skips both reads
+   * (`ChannelService.listKeyGroupVersions`). A client older than this route never asks it; a client
+   * newer than the server meets a 404 and runs every pass, as before.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get('workspaces/key-group-versions')
+  listKeyGroupVersions(@Headers('x-user-id') xUserId: string, @Query('ids') ids?: string) {
+    return this.service.listKeyGroupVersions(xUserId.trim().toLowerCase(), parseBatchIds(ids));
   }
 
   /** Persists the order of a community's salons for every member. Needs MANAGE_CHANNEL. */
@@ -968,4 +968,25 @@ export class ChannelsController {
       body.granted === true
     );
   }
+}
+
+/**
+ * The `?ids=a,b,c` of a batched community read, trimmed and emptied of blanks; refused (400) when
+ * it names none or more than {@link COMMUNITY_BOOT_READS_MAX} - the bound the client chunks to.
+ */
+function parseBatchIds(ids: string | undefined): string[] {
+  const list = (ids ?? '')
+    .split(',')
+    .map((id) => id.trim())
+    .filter((id) => id.length > 0);
+  if (list.length === 0) {
+    throw new HttpException('ids is required', HttpStatus.BAD_REQUEST);
+  }
+  if (list.length > COMMUNITY_BOOT_READS_MAX) {
+    throw new HttpException(
+      `at most ${COMMUNITY_BOOT_READS_MAX} ids per request`,
+      HttpStatus.BAD_REQUEST
+    );
+  }
+  return list;
 }
