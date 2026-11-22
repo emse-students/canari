@@ -49,7 +49,7 @@ describe('the outbox nudge', () => {
       'manager.notify(OUTBOX_NUDGE_NOTIF_ID, notif)'
     );
     const settle = body(service, 'private fun settleOutboxNudgeLocked(');
-    expect(settle).toContain('val queued = readOutboxMirrorOrNull(context)?.size');
+    expect(settle).toContain('val queued = readOutboxQueuedOrNull(context)?.size');
     expect(settle).toContain('OutboxNudge.decide(queued, asked)');
     expect(settle).toContain('withdrawOutboxNudge(manager, where)');
     expect(settle).toContain('postOutboxNudge(context, manager)');

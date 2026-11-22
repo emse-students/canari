@@ -27,7 +27,7 @@ import {
   lastResortDeadline,
 } from '../entities/key-package.entity';
 import { OneTimeKeyPackage, usableOneTimePackage } from '../entities/one-time-key-package.entity';
-import { parsePushOutcome, pushPresenceLine } from '../utils/push-coverage';
+import { parseNotificationState, parsePushOutcome, pushPresenceLine } from '../utils/push-coverage';
 import { GroupMember } from '../entities/group-member.entity';
 import { Group } from '../entities/group.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
@@ -331,6 +331,8 @@ export class DevicesController {
       deviceAppVersion?: string;
       /** What the device's last push registration came to - see `parsePushOutcome`. */
       pushOutcome?: unknown;
+      /** What the OS lets notifications do - see `parseNotificationState`. Absent from old clients. */
+      notificationState?: unknown;
     },
     @Headers('x-user-id') headerUserId?: string
   ) {
@@ -372,6 +374,7 @@ export class DevicesController {
     const deviceOs = sanitizeOptionalDeviceOs(body.deviceOs);
     const deviceAppVersion = sanitizeOptionalDeviceAppVersion(body.deviceAppVersion);
     const pushOutcome = parsePushOutcome(body.pushOutcome);
+    const notification = parseNotificationState(body.notificationState);
 
     // Enforce the per-user device limit (M5) against LIVE devices - see countLiveDevices for what
     // that means and why the old row count was the wrong quantity. The device being registered is
@@ -400,6 +403,13 @@ export class DevicesController {
     }
 
     const traceId = this.makeTraceId('reg-device');
+    if (notification.state === 'invalid') {
+      // A client stated something outside the allowlist: stored as unknown, said once per call.
+      this.logger.warn(
+        `[REGISTER_DEVICE][${traceId}] NOTIFICATION_STATE_INVALID user=${userId} device=${deviceId} ` +
+          `- stored as unknown`
+      );
+    }
 
     this.logger.log(
       `[REGISTER_DEVICE][${traceId}] START user=${userId} device=${deviceId} kpLen=${keyPackagePayload.length}` +
@@ -438,6 +448,12 @@ export class DevicesController {
         deviceOs,
         deviceAppVersion,
         pushOutcome: pushOutcome === 'unstated' ? null : pushOutcome,
+        // unknown and invalid are NULL: nothing stated is never read as granted.
+        notificationState:
+          notification.state === 'unknown' || notification.state === 'invalid'
+            ? null
+            : notification.state,
+        notificationChannels: notification.channels,
       },
       crypto.randomUUID()
     );
@@ -585,7 +601,17 @@ export class DevicesController {
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
     @Body()
-    body: { deviceName?: string; deviceOs?: string; deviceAppVersion?: string },
+    body: {
+      deviceName?: string;
+      deviceOs?: string;
+      deviceAppVersion?: string;
+      /**
+       * What the OS lets notifications do - `parseNotificationState`. Sent when the state CHANGES
+       * (a permission answered, a switch flipped in the settings), so the daily count does not
+       * read a stale one until the next unlock.
+       */
+      notificationState?: unknown;
+    },
     @Headers('x-user-id') headerUserId?: string
   ) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
@@ -598,7 +624,23 @@ export class DevicesController {
     const deviceOs = sanitizeOptionalDeviceOs(body.deviceOs);
     const deviceAppVersion = sanitizeOptionalDeviceAppVersion(body.deviceAppVersion);
 
-    if (deviceName === undefined && deviceOs === undefined && deviceAppVersion === undefined) {
+    const notification =
+      body.notificationState === undefined ? null : parseNotificationState(body.notificationState);
+    if (notification?.state === 'invalid' || notification?.state === 'unknown') {
+      // STATED and unreadable: a current client sent it, so the caller is told - unlike
+      // register-device, where an old client's silence is ordinary.
+      this.logger.warn(
+        `[DEVICE_METADATA] NOTIFICATION_STATE_INVALID user=${safeUserId} device=${safeDeviceId}`
+      );
+      throw new BadRequestException('notificationState is not readable');
+    }
+
+    if (
+      deviceName === undefined &&
+      deviceOs === undefined &&
+      deviceAppVersion === undefined &&
+      notification === null
+    ) {
       throw new BadRequestException('At least one metadata field is required');
     }
 
@@ -618,6 +660,14 @@ export class DevicesController {
     if (deviceOs !== undefined) keyPackage.deviceOs = deviceOs;
     if (deviceAppVersion !== undefined) {
       keyPackage.deviceAppVersion = deviceAppVersion;
+    }
+    if (notification) {
+      keyPackage.notificationState = notification.state;
+      keyPackage.notificationChannels = notification.channels;
+      this.logger.log(
+        `[DEVICE_METADATA] user=${safeUserId} device=${safeDeviceId} notificationState=${notification.state}` +
+          ` channels=${notification.channels ?? 'none'}`
+      );
     }
     await this.keyPackageRepo.save(keyPackage);
 
