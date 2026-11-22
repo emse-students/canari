@@ -578,6 +578,22 @@ absent from production for a week. Then make `announcedFields` required on the m
 `assertJoinAnnounced`, the branch above, `predatesAnonymousCursusJoin`, the constant, their tests and this
 entry.
 
+### Removal once `minClientVersion` passes `1.8.0` - a form editor that cannot word `PRODUCT_GRID_COLUMN_SET_DIVERGED` (2026-11-22)
+
+**Site:** `productGridColumnSetRefusal` (`apps/social-service/src/forms/product-grid-contract.ts`, run by
+`normaliseProductGridItems`), the refusal text of `product-grid.ts`.
+**What it humours:** product grids may share a column set ([forms](frontend/modules/forms.md#product-grids-may-share-their-columns-owner-2026-11-21)).
+An editor older than `1.8.0` opens such a form, edits a column of ONE grid and keeps the `columnSet` it
+round-tripped: the grids of the set now differ, so the save is refused `PRODUCT_GRID_COLUMN_SET_DIVERGED`
+(`itemId` of the second grid). That build has no sentence for the code and prints the server's English
+text instead of a Paraglide message, and cannot offer "stop sharing" to resolve it. An older editor that
+DROPS the field simply leaves the set. Neither writes a wrong price or answer.
+**The cost while it stands:** an organiser on such a build is stopped with an English sentence until they
+update or edit from a current build; nothing is lost.
+**Removal condition:** `minClientVersion` on both estates passes `1.8.0`. Nothing in the code is a shim
+(the refusal is the contract's own, worded by the current editor), so removing the entry means only
+deleting this paragraph and the "older editors" sentence of the forms page.
+
 ### Removal with step 3 of sealed names, behind the floor - a group invite link with no name in its fragment (2026-11-21)
 
 - **The shim.** A group invite card (`/g/join/<token>`, the in-chat card of a pasted link) reads the

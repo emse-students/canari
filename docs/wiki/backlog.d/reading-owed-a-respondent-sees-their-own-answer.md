@@ -1,6 +1,8 @@
 ## Reading owed - a respondent sees their own answer, read-only, on a phone
 
-target: 1.7.3
+target: 1.8.0
+
+_2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
 Built ([forms](../frontend/modules/forms.md#a-respondent-sees-their-own-answer-owner-2026-11-21)):
 the check's `myAnswers`, the read-only answer of a named form (pending cash and several answers

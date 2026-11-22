@@ -1,6 +1,8 @@
 ## P2 - an organiser can test a form only by opening it: "Tester l'envoi" in the preview (A)
 
-target: 1.7.3
+target: 1.8.0
+
+_2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 

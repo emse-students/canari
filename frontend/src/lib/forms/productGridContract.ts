@@ -65,10 +65,23 @@ export interface ProductGridPricing {
   prices: Record<string, Record<string, number>>;
 }
 
+/**
+ * A column set a grid belongs to: the same columns (the sizes of a shop) kept ONCE for every grid
+ * of the form that names its id. `columns` stays the grid's own stored copy - every reader (answers,
+ * prices, lines, exports, an older app) reads it unchanged - and the set only says which grids must
+ * keep identical copies ({@link productGridColumnSetRefusal}).
+ */
+export interface ProductGridColumnSet {
+  id: string;
+  name: string;
+}
+
 /** What a `product_grid` question stores, under `item.productGrid`. */
 export interface ProductGrid {
   rows: ProductGridAxisEntry[];
   columns: ProductGridAxisEntry[];
+  /** Absent or null: the columns are this grid's alone (every grid stored before the sets). */
+  columnSet?: ProductGridColumnSet | null;
   /** 1 draws a checkbox, more a stepper. */
   maxPerCell: number;
   /** Combinations that do not exist ("no Creme in XS"), as `productGridCellKey`s. */
@@ -160,6 +173,8 @@ export const PRODUCT_GRID_DEFINITION_CODES = [
   'PRODUCT_GRID_GUEST_PRICE_MISSING',
   'PRODUCT_GRID_PRICES_INCOMPLETE',
   'PRODUCT_GRID_PRICE_INVALID',
+  'PRODUCT_GRID_COLUMN_SET_INVALID',
+  'PRODUCT_GRID_COLUMN_SET_DIVERGED',
 ] as const;
 export type ProductGridDefinitionCode = (typeof PRODUCT_GRID_DEFINITION_CODES)[number];
 
@@ -264,6 +279,59 @@ function axisRefusal(
   return null;
 }
 
+/** A grid's column set, when it names one: an id of the axis pattern and a readable name. */
+function columnSetRefusal(raw: unknown): ProductGridRefusal<ProductGridDefinitionCode> | null {
+  if (raw === undefined || raw === null) return null;
+  if (!isPlainObject(raw)) return { code: 'PRODUCT_GRID_COLUMN_SET_INVALID' };
+  const { id, name } = raw;
+  if (typeof id !== 'string' || !PRODUCT_GRID_ID_PATTERN.test(id)) {
+    return { code: 'PRODUCT_GRID_COLUMN_SET_INVALID', detail: String(id) };
+  }
+  if (
+    typeof name !== 'string' ||
+    name.trim() === '' ||
+    name.trim().length > PRODUCT_GRID_LABEL_MAX
+  ) {
+    return { code: 'PRODUCT_GRID_COLUMN_SET_INVALID', detail: id };
+  }
+  return null;
+}
+
+/**
+ * The grids of a form that name the same column set must hold the SAME columns - ids, labels and
+ * order - and the same set name: a set is kept once, so no grid may drift from it. Judged on grids
+ * the per-grid check already accepted; the first grid naming a set is its reference, the first
+ * later grid that differs is the one refused. Null when every set is consistent.
+ */
+export function productGridColumnSetRefusal(
+  items: readonly { id?: string; type?: string; productGrid?: unknown }[]
+): {
+  itemId: string | null;
+  refusal: ProductGridRefusal<'PRODUCT_GRID_COLUMN_SET_DIVERGED'>;
+} | null {
+  const reference = new Map<string, string>();
+  for (const item of items) {
+    if (item.type !== PRODUCT_GRID_TYPE || !isPlainObject(item.productGrid)) continue;
+    const grid = item.productGrid;
+    const set = grid.columnSet;
+    if (!isPlainObject(set) || typeof set.id !== 'string') continue;
+    const signature = JSON.stringify([
+      String(set.name).trim(),
+      (grid.columns as ProductGridAxisEntry[]).map((c) => [c.id, c.label.trim()]),
+    ]);
+    const first = reference.get(set.id);
+    if (first === undefined) {
+      reference.set(set.id, signature);
+    } else if (first !== signature) {
+      return {
+        itemId: item.id ?? null,
+        refusal: { code: 'PRODUCT_GRID_COLUMN_SET_DIVERGED', detail: set.id },
+      };
+    }
+  }
+  return null;
+}
+
 function tiersRefusal(raw: unknown): ProductGridRefusal<ProductGridDefinitionCode> | null {
   if (raw === null) return null;
   if (!isPlainObject(raw)) return { code: 'PRODUCT_GRID_TIER_INVALID' };
@@ -307,6 +375,8 @@ export function productGridItemRefusal(
     axisRefusal(grid.rows, PRODUCT_GRID_MAX_ROWS) ??
     axisRefusal(grid.columns, PRODUCT_GRID_MAX_COLUMNS);
   if (axis) return axis;
+  const set = columnSetRefusal(grid.columnSet);
+  if (set) return set;
   const rows = grid.rows as ProductGridAxisEntry[];
   const columns = grid.columns as ProductGridAxisEntry[];
   const max = grid.maxPerCell;

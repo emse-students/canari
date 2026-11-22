@@ -78,6 +78,8 @@
     formTiers?: ProductGridTierDimension | null;
     /** Per priced grid, the cells already ordered in an answer (edit page only). */
     orderedCells?: Record<string, string[]>;
+    /** False while `orderedCells` is not known yet (edit page): shared columns wait for it. */
+    orderedReady?: boolean;
     /** A public form: a priced grid's guest pays "everyone else". */
     isPublic?: boolean;
     /** The priced grid a refused save is about, and its sentence - drawn under that grid. */
@@ -100,6 +102,7 @@
     onPricedGridGone,
     formTiers = null,
     orderedCells = {},
+    orderedReady = true,
     isPublic = false,
     gridFault = null,
   }: Props = $props();
@@ -258,6 +261,8 @@
           onLeftPricedGrid={onPricedGridGone}
           {formTiers}
           orderedCells={orderedCells[_item.id] ?? []}
+          allOrderedCells={orderedCells}
+          {orderedReady}
           {isPublic}
           gridProblem={gridFault?.itemId === _item.id ? (gridFault?.message ?? null) : null}
         />

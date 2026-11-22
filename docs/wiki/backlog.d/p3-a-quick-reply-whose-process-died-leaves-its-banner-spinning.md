@@ -1,6 +1,8 @@
 ## P3 - a quick reply whose process died before its decision leaves its banner spinning
 
-target: 1.7.3
+target: 1.8.0
+
+_2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
 Residual of #3912 (round-10 review, 2026-11-21, Android). A quick reply from a conversation banner is
 decided in the process that received the action: its drain, then either the success (cancel and

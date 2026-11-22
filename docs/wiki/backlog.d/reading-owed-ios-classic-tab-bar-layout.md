@@ -1,6 +1,8 @@
 ## Reading owed - the feed on an iPhone below iOS 26 (the classic tab bar), dark mode
 
-target: 1.7.3
+target: 1.8.0
+
+_2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
 **Why.** The owner's report of 2026-11-22 (a user's iPhone without Liquid Glass, dark mode) showed a
 black band between the header and the tab pill, the first tab clipped and a gap above an opaque bottom

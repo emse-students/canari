@@ -1,6 +1,8 @@
 ## P3 - Android logs `checkKeystoreHealth: Keystore lost - background push disabled` at ERROR during an ordinary sign-out and sign-in (S17, 2026-11-20)
 
-target: 1.7.3
+target: 1.8.0
+
+_2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
 Read on the Mi 9T, `1.7.2-alpha.2`, sitting S17 of 2026-11-20: `E/CanariApp: checkKeystoreHealth: Keystore lost - background push disabled` is logged TWICE during an ordinary sign-out and sign-in, right after `endForSignOut: erasing the push secret`. The keystore was not lost: the app had just erased the secret itself, so the health check reads its own erasure as a loss. **A false ERROR**, which accuses a healthy phone and teaches the reader to skip the real one (noise is never acceptable).
 

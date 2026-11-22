@@ -1,6 +1,8 @@
 ## Reading owed - a reaction to my message notifies while the app is open, and goes with its conversation (2026-11-21)
 
-target: 1.7.3
+target: 1.8.0
+
+_2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
 **What is built** (#3792, the salon seed case, and this change): the reaction frame is the second
 trigger a reaction has, a salon reaction that opens its sender's new seed session is parked and raised
