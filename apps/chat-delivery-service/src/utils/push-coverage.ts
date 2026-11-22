@@ -43,8 +43,15 @@ const PUSH_PLATFORMS = ['android', 'ios'] as const;
  * web states no outcome); all 13 native `1.7.2` devices held their row or stated `no-token`. The
  * id's prefix is written by the runtime itself at mint time and never changes, so it answers the
  * question asked here for every build, old ones included.
+ *
+ * THE CLIENT'S HALF OF THIS CONTRACT IS PINNED by `frontend/src/lib/services/deviceIdPrefix.test.ts`
+ * (the app mints `tauri-`, the browser `web-`), and a device minted under any other format is never
+ * silently dropped: the daily line counts it apart and accuses it ({@link PUSH_COVERAGE_UNSEEN_SQL}).
  */
 export const NATIVE_DEVICE_ID_PREFIX = 'tauri-';
+
+/** The prefix of a device id minted by a browser (`WebMlsService`), which registers no push. */
+export const WEB_DEVICE_ID_PREFIX = 'web-';
 
 /** Whether `deviceId` was minted by the native app, the only client that registers a push token. */
 export function mintedByNativeApp(deviceId: string): boolean {
@@ -62,15 +69,12 @@ export function mintedByNativeApp(deviceId: string): boolean {
  * field), so the WARN carries the evidence separating the branches and a reading needs no log access.
  * `auth_sessions."deviceId"` has no index; a daily report does not add one.
  */
-export const PUSH_COVERAGE_SQL = `
-WITH launched AS (
-  SELECT k."userId", k."deviceId", k."deviceOs" AS "os",
-         COALESCE(k."deviceAppVersion", 'unstated') AS "build",
-         (k."pushOutcome" IS NOT DISTINCT FROM 'no-token') AS "noOsToken",
-         COALESCE(k."pushOutcome", 'unstated') AS "outcome"
-    FROM key_package k
-   WHERE k."deviceOs" IN (${PUSH_PLATFORMS.map((p) => `'${p}'`).join(', ')})
-     AND k."deviceId" LIKE '${NATIVE_DEVICE_ID_PREFIX}%'
+/**
+ * A key package `k` of a phone OS that RAN inside the window: reset past the ladder's grace, not
+ * banned, holding a live session of its own account. ONE predicate for the counted population
+ * ({@link PUSH_COVERAGE_SQL}, native ids) and the one counted apart ({@link PUSH_COVERAGE_UNSEEN_SQL}).
+ */
+const PHONE_RAN_IN_WINDOW = `k."deviceOs" IN (${PUSH_PLATFORMS.map((p) => `'${p}'`).join(', ')})
      AND k."createdAt" > $1
      AND k."createdAt" <= $2
      AND NOT EXISTS (SELECT 1 FROM revoked_device r
@@ -78,7 +82,17 @@ WITH launched AS (
                         AND r."revokedAt" > $3)
      AND EXISTS (SELECT 1 FROM auth_sessions s
                   WHERE s."deviceId" = k."deviceId" AND s."userId" = k."userId"
-                    AND s."expiresAt" > $4)
+                    AND s."expiresAt" > $4)`;
+
+export const PUSH_COVERAGE_SQL = `
+WITH launched AS (
+  SELECT k."userId", k."deviceId", k."deviceOs" AS "os",
+         COALESCE(k."deviceAppVersion", 'unstated') AS "build",
+         (k."pushOutcome" IS NOT DISTINCT FROM 'no-token') AS "noOsToken",
+         COALESCE(k."pushOutcome", 'unstated') AS "outcome"
+    FROM key_package k
+   WHERE k."deviceId" LIKE '${NATIVE_DEVICE_ID_PREFIX}%'
+     AND ${PHONE_RAN_IN_WINDOW}
 ), unheld AS (
   SELECT l.*, NOT EXISTS (SELECT 1 FROM push_token t
                            WHERE t."userId" = l."userId" AND t."deviceId" = l."deviceId") AS "noRow"
@@ -92,6 +106,27 @@ SELECT u."os", u."build", count(*)::int AS "devices",
   FROM unheld u
  GROUP BY u."os", u."build"
  ORDER BY u."os", u."build"`;
+
+/**
+ * The phone-OS devices that ran in the same window and that {@link PUSH_COVERAGE_SQL} does NOT
+ * count, because the app did not mint their id: `web` (a phone browser - no push by design) and
+ * `other` (neither prefix). `other` is never expected - every id since the first build is `tauri-` or
+ * `web-` (production, 2026-11-22: 0 of 757 phone-OS key packages) - so a non-zero `other` is a
+ * native build whose id format this count no longer sees, and the report ACCUSES it rather than
+ * dropping it in silence. Same parameters as {@link PUSH_COVERAGE_SQL}.
+ */
+export const PUSH_COVERAGE_UNSEEN_SQL = `
+SELECT count(*) FILTER (WHERE k."deviceId" LIKE '${WEB_DEVICE_ID_PREFIX}%')::int AS "web",
+       count(*) FILTER (WHERE k."deviceId" NOT LIKE '${WEB_DEVICE_ID_PREFIX}%')::int AS "other"
+  FROM key_package k
+ WHERE k."deviceId" NOT LIKE '${NATIVE_DEVICE_ID_PREFIX}%'
+   AND ${PHONE_RAN_IN_WINDOW}`;
+
+/** The one row of {@link PUSH_COVERAGE_UNSEEN_SQL}. */
+export interface PushCoverageUnseen {
+  web: number;
+  other: number;
+}
 
 /** One (platform, build) row of the count. */
 export interface PushCoverageRow {
@@ -114,7 +149,7 @@ function tallyOutcomes(outcomes: readonly string[] | null | undefined): string {
     .join(' ');
 }
 
-/** The parameters of {@link PUSH_COVERAGE_SQL}, in order. */
+/** The parameters of {@link PUSH_COVERAGE_SQL} and {@link PUSH_COVERAGE_UNSEEN_SQL}, in order. */
 export function pushCoverageParams(now: number = Date.now()): [Date, Date, Date, Date] {
   return [
     new Date(now - PUSH_COVERAGE_WINDOW_MS),
@@ -128,23 +163,37 @@ export function pushCoverageParams(now: number = Date.now()): [Date, Date, Date,
  * The daily count: ONE plain line for the whole fleet, then one WARN per (platform, build) whose
  * devices ran and did not register. Zero is the steady state - every older build read 0 on
  * 2026-11-15 by this very predicate - so any other number is a device whose notifications are lost,
- * named by the build that lost them. Read-only; every replica prints its own.
+ * named by the build that lost them. The plain line also states the phone-OS devices NOT counted
+ * (phone browsers, and ids of no known format - the latter accused at WARN: a native device the
+ * count cannot see). Read-only; every replica prints its own.
  */
 export async function reportPushCoverage(
   db: Pick<DataSource, 'query'>,
   logger: Pick<Logger, 'log' | 'warn'>,
   now: number = Date.now()
 ): Promise<PushCoverageRow[]> {
-  const rows = ((await db.query(PUSH_COVERAGE_SQL, pushCoverageParams(now))) ??
-    []) as PushCoverageRow[];
+  const params = pushCoverageParams(now);
+  const rows = ((await db.query(PUSH_COVERAGE_SQL, params)) ?? []) as PushCoverageRow[];
+  const [unseen] = ((await db.query(PUSH_COVERAGE_UNSEEN_SQL, params)) ??
+    []) as PushCoverageUnseen[];
+  const web = unseen?.web ?? 0;
+  const other = unseen?.other ?? 0;
   const devices = rows.reduce((n, r) => n + r.devices, 0);
   const without = rows.reduce((n, r) => n + r.withoutPush, 0);
   const noOsToken = rows.reduce((n, r) => n + r.noOsToken, 0);
   logger.log(
     `[PUSH_COVERAGE] native devices that ran in 24 h: ${devices}, holding no push registration ` +
       `${PUSH_REGISTRATION_GRACE_MS / 60_000} min after: ${without}, given no push token by their OS ` +
-      `(known, [PUSH_UNAVAILABLE]): ${noOsToken}`
+      `(known, [PUSH_UNAVAILABLE]): ${noOsToken}; not counted: phone browsers ${web} ` +
+      `(no push by design), ids of no known format ${other}`
   );
+  if (other > 0) {
+    logger.warn(
+      `[PUSH_COVERAGE] ${other} phone-OS device(s) ran with an id neither '${NATIVE_DEVICE_ID_PREFIX}' ` +
+        `nor '${WEB_DEVICE_ID_PREFIX}' - a native build whose id format this count no longer sees: ` +
+        `its push coverage is unmeasured (NATIVE_DEVICE_ID_PREFIX, utils/push-coverage.ts)`
+    );
+  }
   for (const r of rows) {
     if (r.withoutPush === 0) continue;
     logger.warn(

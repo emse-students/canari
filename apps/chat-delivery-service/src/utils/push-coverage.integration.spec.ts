@@ -129,6 +129,10 @@ maybe('push-coverage predicate against PostgreSQL', () => {
     // (production, 2026-11-22: the whole `1.7.2` line was these).
     await phone('u11', 'web-u11', { os: 'android' });
     await phone('u12', 'web-u12', { os: 'ios' });
+    // COUNTED APART, accused: a phone whose id the app does not mint - a format the count cannot see.
+    await phone('u13', 'mobile-u13', { os: 'android' });
+    // KEPT out of both: a phone browser that did not run inside the window.
+    await phone('u14', 'web-u14', { os: 'ios', minutesAgo: 2 * 24 * 60 });
   });
 
   afterAll(async () => {
@@ -158,7 +162,12 @@ maybe('push-coverage predicate against PostgreSQL', () => {
         outcomes: ['unstated'],
       },
     ]);
-    expect(logger.warn).toHaveBeenCalledTimes(2);
+    // The two builds, and the id of no known format; the two browsers are said on the plain line.
+    expect(logger.warn).toHaveBeenCalledTimes(3);
+    expect(logger.log).toHaveBeenCalledWith(
+      expect.stringMatching(/not counted: phone browsers 2 .*no known format 1$/)
+    );
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('1 phone-OS device(s) ran'));
     expect(await q(`SELECT count(*)::int AS n FROM push_token`)).toEqual([{ n: 1 }]);
   });
 });

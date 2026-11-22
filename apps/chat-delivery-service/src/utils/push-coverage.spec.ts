@@ -1,6 +1,7 @@
 /// <reference types="jest" />
 import {
   PUSH_COVERAGE_SQL,
+  PUSH_COVERAGE_UNSEEN_SQL,
   PUSH_COVERAGE_WINDOW_MS,
   PUSH_REGISTRATION_GRACE_MS,
   reportPushCoverage,
@@ -14,15 +15,24 @@ import {
 describe('reportPushCoverage', () => {
   const NOW = Date.parse('2026-11-15T20:00:00Z');
   const logger = () => ({ log: jest.fn(), warn: jest.fn() });
-  const db = (rows: unknown[]) => ({ query: jest.fn(async (): Promise<never> => rows as never) });
+  /** The counted rows for {@link PUSH_COVERAGE_SQL}, the one uncounted row for the other read. */
+  const db = (rows: unknown[], unseen: { web: number; other: number } = { web: 0, other: 0 }) => ({
+    query: jest.fn(
+      async (sql: string): Promise<never> =>
+        (sql === PUSH_COVERAGE_UNSEEN_SQL ? [unseen] : rows) as never
+    ),
+  });
 
-  it('reads once, read-only, with the window, the ladder grace, the ban cutoff and now', async () => {
+  it('reads twice, read-only, with the window, the ladder grace, the ban cutoff and now', async () => {
     const d = db([]);
     await reportPushCoverage(d, logger(), NOW);
-    expect(d.query).toHaveBeenCalledTimes(1);
+    expect(d.query).toHaveBeenCalledTimes(2);
     const [sql, params] = d.query.mock.calls[0] as unknown as [string, Date[]];
     expect(sql).toBe(PUSH_COVERAGE_SQL);
-    expect(sql).not.toMatch(/\b(INSERT|UPDATE|DELETE)\b/i);
+    expect(d.query.mock.calls[1]).toEqual([PUSH_COVERAGE_UNSEEN_SQL, params]);
+    for (const read of [PUSH_COVERAGE_SQL, PUSH_COVERAGE_UNSEEN_SQL]) {
+      expect(read).not.toMatch(/\b(INSERT|UPDATE|DELETE)\b/i);
+    }
     expect(params[0].getTime()).toBe(NOW - PUSH_COVERAGE_WINDOW_MS);
     expect(params[1].getTime()).toBe(NOW - PUSH_REGISTRATION_GRACE_MS);
     expect(params[3].getTime()).toBe(NOW);
@@ -51,7 +61,9 @@ describe('reportPushCoverage', () => {
       l,
       NOW
     );
-    expect(l.log).toHaveBeenCalledWith(expect.stringMatching(/ran in 24 h: 66, .*: 24, .*: 0$/));
+    expect(l.log).toHaveBeenCalledWith(
+      expect.stringMatching(/ran in 24 h: 66, .*: 24, .*: 0; not counted/)
+    );
     expect(l.warn).toHaveBeenCalledTimes(2);
     expect(l.warn).toHaveBeenCalledWith(
       expect.stringContaining('os=android build=1.6.12 without=14/38')
@@ -95,6 +107,23 @@ describe('reportPushCoverage', () => {
     );
   });
 
+  it('the phones it does NOT count are said: browsers plainly, an unknown id format ACCUSED', async () => {
+    // Both reads ask about the same population (one predicate), split by who minted the id.
+    expect(PUSH_COVERAGE_UNSEEN_SQL).toContain(`k."deviceId" NOT LIKE 'tauri-%'`);
+    expect(PUSH_COVERAGE_UNSEEN_SQL).toMatch(/k\."createdAt" > \$1\s+AND k\."createdAt" <= \$2/);
+    const browsers = logger();
+    await reportPushCoverage(db([], { web: 43, other: 0 }), browsers, NOW);
+    expect(browsers.log).toHaveBeenCalledWith(
+      expect.stringMatching(/not counted: phone browsers 43 .*no known format 0$/)
+    );
+    expect(browsers.warn).not.toHaveBeenCalled();
+    const unknown = logger();
+    await reportPushCoverage(db([], { web: 0, other: 2 }), unknown, NOW);
+    expect(unknown.warn).toHaveBeenCalledWith(
+      expect.stringContaining('2 phone-OS device(s) ran with an id neither')
+    );
+  });
+
   it('zero is the steady state: one line, no accusation', async () => {
     const l = logger();
     await reportPushCoverage(
@@ -113,7 +142,9 @@ describe('reportPushCoverage', () => {
       l,
       NOW
     );
-    expect(l.log).toHaveBeenCalledWith(expect.stringMatching(/: 0, given no push token .*: 2$/));
+    expect(l.log).toHaveBeenCalledWith(
+      expect.stringMatching(/: 0, given no push token .*: 2; not counted/)
+    );
     expect(l.warn).not.toHaveBeenCalled();
   });
 });

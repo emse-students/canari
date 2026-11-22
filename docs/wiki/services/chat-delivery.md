@@ -2093,7 +2093,12 @@ id). The device id's prefix is the fact for "is this the app": a client mints it
 `<platform>-<userId>-...` with its MLS runtime, `tauri` or `web` (`BaseMlsService.generateDeviceId`),
 and never changes it. So `PUSH_COVERAGE_SQL` and `pushPresenceLine` now ask about `tauri-` ids only
 (`NATIVE_DEVICE_ID_PREFIX`, `mintedByNativeApp`); a phone browser is never counted and never printed
-as `[PUSH_MISSING]` (83 WARN lines for 45 accounts on 2026-11-21, every one a browser). **The earlier
+as `[PUSH_MISSING]` (83 WARN lines for 45 accounts on 2026-11-21, every one a browser). **Nothing is
+dropped in silence**: the daily line also states the phone-OS devices it does not count
+(`PUSH_COVERAGE_UNSEEN_SQL`, the same window predicate) - phone browsers plainly, and ids of neither
+prefix at WARN, since such an id is a native build whose coverage the count no longer measures
+(production, 2026-11-22: 0 of 757 phone-OS key packages). The client's half of the contract is
+pinned by `frontend/src/lib/services/deviceIdPrefix.test.ts`. **The earlier
 readings carry the same error and are not re-measured here**: the `unstated` devices of the `1.7.0`
 line (2026-11-20) and the `1.6.12` populations above were very likely phone browsers too - the web
 bundle reports the version production serves - and `key_package` keeps only each device's latest row,
