@@ -39,6 +39,13 @@ the banner answered. Mechanism:
    cours` for good. Then the same, signing OUT instead of killing: the in-app log reads
    `[QuickReply] sign-out: the account's unsettled replies are settled`.
 
+**2026-11-21: a banner can now stay on screen while the app is in front.** Opening the app used to
+cancel every message banner, so the reading above could never have a banner to type into (Mi 9T,
+`1.7.3-alpha.3`: gone a second after the app came up). Since the owner's decision "N'effacer que les
+lues" ([social-service](../services/social-service.md)) a banner for a conversation nobody opened
+stays: post it with the app in the background, bring the app up WITHOUT opening that conversation,
+and type the reply in the banner's field.
+
 **Readings of 2026-11-21 on `1.7.3-alpha.3` (Mi 9T, dev, `dev.0d2bc4b`): rows 1, 2, 3 and 5 OWED, row 4 PASS.**
 The precondition of rows 1-3 and 5 - a banner on screen while the app is in front - could not be
 produced on this build, three ways tried: (a) with the app in front the push is never shown

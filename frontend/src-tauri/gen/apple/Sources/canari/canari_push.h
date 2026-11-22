@@ -37,7 +37,7 @@ void CanariPushSetup(void);
 /// again. A no-op when Firebase is not linked.
 void CanariSyncFcmTokenIfApnsReady(void);
 
-/// Dismisses message notifications when the app comes to the foreground.
+/// On activation: retires the ring alerts the open app takes over and recomputes the badge. It removes NO conversation banner (owner, 2026-11-21).
 void CanariPushCancelMessageNotifications(void);
 
 /// Re-registers the message quick actions in the language currently mirrored in push_context.json,

@@ -1489,6 +1489,8 @@ export async function discoverMissingGroups(params: {
             key,
             groupId: convo.id,
             saveConversation,
+            // A server tombstone, or an exclusion a 403 re-checked: the server's own answer.
+            confirmed: true,
           });
           log(`[DISCOVERY] UI group "${label}" ${fate.reason} - marked removed`);
           continue;
