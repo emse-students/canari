@@ -6571,7 +6571,7 @@ original URL for older clients
 
 ### Changed - the rig's sign-in answers the MiConnect terms page
 
-`login.mjs` recognises the terms page that blueprint `45-consent.yaml` will add after the password and ticks its one box, so a harness login no longer stalls on it; the stage logic moved to `tools/cross-client-harness/idpform.mjs` with a self-test ([backlog](docs/wiki/backlog.d/p1-the-miconnect-terms-stage-reaches-production-with-the-next-stable-three.md)).
+`login.mjs` recognises the terms page that blueprint `45-consent.yaml` will add after the password and ticks its one box, so a harness login no longer stalls on it; the stage logic moved to `tools/cross-client-harness/idpform.mjs` with a self-test (backlog (entry deleted 2026-11-22, read in [authentik](docs/wiki/infrastructure/authentik.md#the-terms-of-use-are-a-stage-of-the-authorization-flow-2026-10-16))).
 
 ### Fixed - a community whose answerer holds nothing is no longer asked for its history at every launch
 
@@ -7029,7 +7029,7 @@ The ten-minute deadline cut the one re-apply that rescues a 30/31 boot; it now b
 
 ### Changed - the MiConnect terms-of-use stage is held out of production
 
-By the user's decision, this release does not apply the terms stage to MiConnect: the blueprint waits in `blueprints/held/`, is named at every apply, and every service keeps the implicit-consent flow; the `/legal/miconnect` page stays ([backlog](docs/wiki/backlog.d/p1-the-miconnect-terms-stage-reaches-production-with-the-next-stable-three.md)).
+By the user's decision, this release does not apply the terms stage to MiConnect: the blueprint waits in `blueprints/held/`, is named at every apply, and every service keeps the implicit-consent flow; the `/legal/miconnect` page stays (backlog (entry deleted 2026-11-22, read in [authentik](docs/wiki/infrastructure/authentik.md#the-terms-of-use-are-a-stage-of-the-authorization-flow-2026-10-16))).
 
 ### Fixed - a focused field in a modal no longer settles under its submit button
 
