@@ -901,6 +901,19 @@ desktop; labels 17.17:1, asterisk 7.26:1, placeholder 6.72:1 at worst (the card)
 a dark design over an `automatic` theme breaks only in the scheme its author was not using. The pin
 also darkens the admin interface, which is the same brand.
 
+**Checkbox rows read as ONE left-aligned row (2026-11-22).** The card centres by inheritance, and
+`.pf-c-check` / `.pf-c-radio` sit in no `.pf-c-form__group`, so a row inherited `text-align: center`:
+on the terms stage (390 px) the box hugged the left edge, its long label centred in the narrower
+column beside it, and the helper "Obligatoire." - a `<p>` PatternFly auto-places in the box's own
+narrow column - fell under the box. Driven on a throwaway instance built from the real blueprints
+(`password-login`, then `/application/o/authorize/`; a preview flow bound to the enrolment
+`-ask-affiliations` stage for the four checkboxes): after, box and label are one row, the helper
+sits in the label's column, the row spans the card like the paragraph above it, which is now
+left-aligned (a six-line centred block has a ragged edge on both sides). The empty second helper
+`<p>` authentik always renders is hidden. Selectors stay bare compound ones (they must match inside
+the stage's shadow root); logo, titles and buttons stay centred. Contrast is untouched: no colour
+changed.
+
 **`.pf-c-login` is a GRID in this Authentik, and overriding its display is what clips the card on a
 phone** (measured on the Mi 9T, 2026-09-25). The `display: flex` above turned `ak-locale-select`,
 the header, the card and the footer into ONE ROW; on the error page that row outgrew a 393 px
