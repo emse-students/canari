@@ -4846,7 +4846,7 @@ export class FormsService {
     // A form that stopped taking answers delivers the ones still waiting for their batch first.
     if (form?.anonymous) await this.releaseOrAccuse(formId, 'read');
     // An anonymous form lists in the order of a random id, never of arrival: the order of insertion
-    // is a clock the day-precision `createdAt` was cut to hide.
+    // is a clock the week-precision `createdAt` was cut to hide.
     const subs = overCapacityFirst(
       await this.submissionRepo.find({
         where: { formId },
@@ -4966,7 +4966,8 @@ export class FormsService {
     // A title Excel refuses ("19/11") made the whole export a 500 (2026-11-13).
     const sheet = workbook.addWorksheet(safeWorksheetName(form.title));
 
-    // An anonymous form's sheet has no name columns and only a DAY: the time was never stored.
+    // An anonymous form's sheet has no name columns and only a WEEK: its date is the Monday that
+    // starts it (`anonymousAnswerWeekSql`), under the header the client sends for it ("Semaine du").
     const headers: Partial<ExcelJS.Column>[] = [
       {
         header: labels.date,

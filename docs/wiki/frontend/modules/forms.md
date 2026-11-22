@@ -1064,10 +1064,10 @@ what is displayed:
 | | Named form | Anonymous form |
 |---|---|---|
 | `submissions.userId` / `email` | the submitter | **NULL** |
-| `submissions.createdAt` (and `updatedAt`, `paymentRequestedAt`) | the instant | **the UTC day its batch was released** - a precise clock would re-join the two tables by order alone |
+| `submissions.createdAt` (and `updatedAt`, `paymentRequestedAt`) | the instant | **the ISO week its batch was released** (Monday 00:00 UTC, [below](#an-anonymous-answer-keeps-only-its-week-2026-11-22)) - a precise clock would re-join the two tables by order alone |
 | when the answer is stored | in the request | **in a batch** ([below](#an-anonymous-forms-answers-are-released-in-batches-2026-11-21)) |
 | "has this account answered" | a `submissions` row | `form_respondents (formId, userId)`, which names **no answer and no time** |
-| Responses list and XLSX | newest first, name columns | **random-id order**, no name column, date without time |
+| Responses list and XLSX | newest first, name columns | **random-id order**, no name column, the week ("semaine du 16 nov.", XLSX column "Semaine du") |
 
 The registry insert is written in the request (`ON CONFLICT DO NOTHING ... RETURNING` is what refuses
 a second answer from the same account); the answer is not written beside it. `allowMultipleSubmissions`
@@ -1090,6 +1090,30 @@ for a promo or a formation on a small group re-identifies its answerer by itself
 only what is stored, not more. Database history (WAL, backups) taken while the answer was written is
 outside this mechanism.
 
+## An anonymous answer keeps only its week (2026-11-22)
+
+**Owner, 2026-11-22** ([decision 10](../../backlog.d/owner-decisions-of-2026-11-22.md), charter
+[principle 1](../../../principes.md), "vos messages sont à vous"): an answer to an anonymous form keeps
+its WEEK, never its day. Until then a batch was dated with its UTC day, and a day on which a single
+person answered was a "group of one" the manager could read beside the answer and put a name on.
+
+- **Server, ONE rule**: `anonymousAnswerWeekSql` (`anonymous-answer-batches.ts`) is
+  `date_trunc('week', ...)` - Monday 00:00 on the UTC wall clock the `timestamp` columns hold. The
+  release writes it into `createdAt`, `updatedAt` and `paymentRequestedAt` (`RELEASED_ROW`), and a
+  short tail joins every answer whose week is the latest one, whatever day the older precision gave
+  it. The release is the only write path of an anonymous answer's dates: the submit holds the answer
+  (`form_answers_held`, no time at all), and every later write of a stored row (payment moves,
+  fulfilment flags, an edit) is refused or unreachable on an anonymous form.
+- **Stored rows**: migration 181 cuts every anonymous answer's three dates to its week in ONE
+  `UPDATE` (one `xmin` for every rewritten row, no row re-inserted or re-ordered), idempotent. It is
+  a backfill of user data, so it is HELD for the owner's approval line
+  ([cicd](../../cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01)).
+- **Client**: the responses table heads the column "Semaine" and reads each answer as "semaine du
+  16 nov." (`answerWeek.ts`, which computes the Monday itself so the label means a week whatever the
+  value); the XLSX export heads it "Semaine du" (`exportLabels({ anonymous })`) above the Monday's
+  date. A store build older than this sends "Date & heure" over the same Monday: no more is shown,
+  only a less exact header.
+
 ## An anonymous form's answers are released in batches (2026-11-21)
 
 **The lesson, general**: what is stored must not pair an account with an answer - and "what is stored"
@@ -1106,11 +1130,11 @@ So the answer is never written near the registry row; it is written later, with 
    state. The submit that brought the count there releases them right after its own transaction
    commits: ONE transaction of their own, under the form's lock (`lockFormSeats`), writes them into
    `submissions` in ONE insert, in a cryptographically random order, with new random ids, dated the
-   release's UTC day, and deletes the held rows. A registry row never shares that write.
+   release's ISO week (`anonymousAnswerWeekSql`), and deletes the held rows. A registry row never shares that write.
 3. Fewer than 5 wait and the form takes no more answers (closed by its manager, an end date that came,
    an opening moved later, or FULL): that short tail is released **once per form**
-   (`form_anonymous_tail_released`, a durable fact). It **joins the answers released on the form's
-   latest release day**: that group is deleted and written again, with new ids, in the SAME shuffled
+   (`form_anonymous_tail_released`, a durable fact). It **joins the answers released in the form's
+   latest release week**: that group is deleted and written again, with new ids, in the SAME shuffled
    insert as the tail, which takes its date - one write, one date, no physical order of old then new.
    **What this does NOT hide from the form's manager** ([principle 1](../../../principes.md), "vos
    messages sont à vous", is the measure): the manager sees the waiting count live and may close the

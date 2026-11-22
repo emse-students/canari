@@ -18,6 +18,7 @@ import { flushSync, mount, unmount } from 'svelte';
 import type { FormItem, Submission } from '$lib/forms/api';
 import FormSubmissionsTable from './FormSubmissionsTable.svelte';
 import { m } from '$lib/paraglide/messages';
+import { formatAnonymousAnswerWeek } from '$lib/forms/answerWeek';
 
 const mounted: (() => void)[] = [];
 
@@ -76,13 +77,19 @@ const submission = (over: Partial<Submission> = {}): Submission => ({
   ...over,
 });
 
-function render(items: FormItem[], submissions: Submission[], requiresPayment = true) {
+function render(
+  items: FormItem[],
+  submissions: Submission[],
+  requiresPayment = true,
+  anonymous = false
+) {
   const component = mount(FormSubmissionsTable, {
     target: document.body,
     props: {
       formId: 'f1',
       items,
       requiresPayment,
+      anonymous,
       submissions,
       deletingId: null,
       onDelete: vi.fn(),
@@ -347,5 +354,21 @@ describe('the responses table of a form that asks for no money', () => {
     expect(table().querySelector('[data-testid="answer-comment"]')?.textContent?.trim()).toBe(
       'Merci'
     );
+  });
+});
+
+describe("an anonymous form's date, rendered", () => {
+  it('reads as the week of the answer, under a week header, never as a day or a time', () => {
+    // A Thursday: the week it belongs to began on Monday 2026-11-16.
+    const createdAt = '2026-11-19T00:00:00.000Z';
+    render([WHY], [submission({ userId: null, createdAt })], false, true);
+
+    const headers = [...table().querySelectorAll('thead th')].map((th) => th.textContent?.trim());
+    expect(headers).toContain(m.form_list_col_week());
+    expect(headers).not.toContain(m.form_list_col_date());
+    const row = table().querySelector('tbody tr')!.textContent ?? '';
+    expect(row).toContain(formatAnonymousAnswerWeek(createdAt));
+    expect(row).not.toContain('19/11');
+    expect(row).not.toMatch(/\d{1,2}:\d{2}/);
   });
 });

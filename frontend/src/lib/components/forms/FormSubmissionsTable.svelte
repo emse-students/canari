@@ -6,6 +6,7 @@
   import { reportClipped } from '$lib/actions/reportClipped';
   import { statusClass, statusLabel } from '$lib/forms/paymentStatus';
   import { isGuestAnswer } from '$lib/forms/responsesView';
+  import { formatAnonymousAnswerWeek } from '$lib/forms/answerWeek';
   import {
     downloadFormAnswerFile,
     fileAnswerWords,
@@ -69,8 +70,9 @@
      */
     requiresPayment: boolean;
     /**
-     * An anonymous form's rows have no author and only a DAY: the name column is not drawn (it would
-     * be one blank down the whole table) and the time is not shown (it was never stored).
+     * An anonymous form's rows have no author and only a WEEK: the name column is not drawn (it would
+     * be one blank down the whole table) and the date reads as its week (`answerWeek.ts`), never a day
+     * or a time (neither is stored).
      */
     anonymous?: boolean;
     submissions: Submission[];
@@ -172,11 +174,11 @@
     else clippedCells.delete(key);
   }
 
-  /** Formats an ISO date string as "DD/MM/YYYY HH:MM", or as a bare day on an anonymous form. */
+  /** Formats an ISO date string as "DD/MM/YYYY HH:MM", or as its week on an anonymous form. */
   function formatDate(iso: string): string {
+    if (anonymous) return formatAnonymousAnswerWeek(iso);
     const d = new Date(iso);
     const p = (n: number) => String(n).padStart(2, '0');
-    if (anonymous) return `${p(d.getUTCDate())}/${p(d.getUTCMonth() + 1)}/${d.getUTCFullYear()}`;
     return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
   }
 
@@ -327,7 +329,9 @@
     <thead>
       <tr class="text-text-muted border-cn-border border-b text-left text-xs font-bold">
         <th class="w-10 pb-2"><span class="sr-only">{m.form_list_answers_show()}</span></th>
-        <th class="pr-4 pb-2 whitespace-nowrap">{m.form_list_col_date()}</th>
+        <th class="pr-4 pb-2 whitespace-nowrap"
+          >{anonymous ? m.form_list_col_week() : m.form_list_col_date()}</th
+        >
         {#if !anonymous}
           <th class="pr-4 pb-2 whitespace-nowrap">{m.form_list_col_name()}</th>
         {/if}

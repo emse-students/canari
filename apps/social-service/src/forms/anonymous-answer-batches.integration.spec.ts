@@ -1,5 +1,6 @@
 /**
- * AN ANONYMOUS FORM'S ANSWERS ARE STORED IN BATCHES, against a REAL PostgreSQL (migration 178).
+ * AN ANONYMOUS FORM'S ANSWERS ARE STORED IN BATCHES, against a REAL PostgreSQL (migration 178), and
+ * dated by their WEEK only (migration 181, owner 2026-11-22).
  *
  * `FormsService.submit`, `setClosed` and `getSubmissions` run for real, and so do the sweep and
  * `retireForms`. What only a database shows: the batch moves in ONE write that no registry row shares
@@ -29,6 +30,7 @@ import { PurchaseRecordService } from '../users/purchase-record.service';
 import { FormsService } from './forms.service';
 import {
   ANONYMOUS_BATCH_SIZE,
+  anonymousAnswerWeekSql,
   HeldAnswersOutsideTransactionError,
   releaseHeldAnswers,
   releaseHeldAnswersUnderLock,
@@ -227,9 +229,12 @@ maybe('anonymous answers stored in batches, against PostgreSQL (migration 178)',
     expect(await writes(formId)).toBe(1);
     expect(await sharedWithRegistry()).toBe(0);
 
-    // Nothing stored carries the instant: every date of the row is the release's UTC day.
+    // Nothing stored carries the instant, nor the day: every date of the row is the start of the
+    // release's ISO week, a Monday at 00:00 (owner, 2026-11-22).
     const clocks: { exact: string }[] = await ds.query(
-      `SELECT count(*) FILTER (WHERE "createdAt" <> date_trunc('day', "createdAt")
+      `SELECT count(*) FILTER (WHERE "createdAt" <> date_trunc('week', "createdAt")
+                                  OR extract(isodow FROM "createdAt") <> 1
+                                  OR "createdAt" <> ${anonymousAnswerWeekSql()}
                                   OR "updatedAt" <> "createdAt"
                                   OR "paymentRequestedAt" <> "createdAt") AS exact
          FROM submissions WHERE "formId" = $1`,
@@ -490,6 +495,117 @@ maybe('anonymous answers stored in batches, against PostgreSQL (migration 178)',
     expect(result).toEqual({ archived: 1, deleted: 0 });
     expect(await held(formId)).toBe(0);
     expect(await stored(formId)).toBe(1);
+  });
+
+  it('a tail joins every answer released in the latest WEEK, whatever its day, in one write', async () => {
+    const formId = await makeForm();
+    await answer(formId, 2 * ANONYMOUS_BATCH_SIZE + 2);
+    expect(await stored(formId)).toBe(2 * ANONYMOUS_BATCH_SIZE);
+    // The two batches as the day precision stored them: on two days of one week.
+    await ds.query(
+      `UPDATE submissions SET "createdAt" = date_trunc('week', "createdAt") + interval '2 days'
+        WHERE id IN (SELECT id FROM submissions WHERE "formId" = $1 ORDER BY id LIMIT $2)`,
+      [formId, ANONYMOUS_BATCH_SIZE]
+    );
+    await ds.query(
+      `UPDATE submissions SET "createdAt" = date_trunc('week', "createdAt") + interval '3 days'
+        WHERE "formId" = $1 AND "createdAt" = date_trunc('week', "createdAt")`,
+      [formId]
+    );
+
+    await service.setClosed(formId, true, OWNER, false);
+    expect(await held(formId)).toBe(0);
+    expect(await stored(formId)).toBe(2 * ANONYMOUS_BATCH_SIZE + 2);
+    // Both days joined the tail: one write, and one date, the week's Monday.
+    expect(await writes(formId)).toBe(1);
+    const dates: { at: string; monday: boolean }[] = await ds.query(
+      `SELECT DISTINCT "createdAt"::text AS at,
+              "createdAt" = date_trunc('week', "createdAt") AS monday
+         FROM submissions WHERE "formId" = $1`,
+      [formId]
+    );
+    expect(dates).toHaveLength(1);
+    expect(dates[0].monday).toBe(true);
+  });
+
+  it('migration 181 cuts every anonymous answer to its week in ONE write, and is idempotent', async () => {
+    const anonymousForm = await makeForm();
+    const namedForm = await makeForm({ anonymous: false });
+    const repo = ds.getRepository(Submission);
+    // Day-precision and exact clocks, as rows stored before this file could hold them. 2026-11-16 is
+    // a Monday; 2026-11-22 the Sunday ending its week; 2026-11-23 the next Monday.
+    const cases: [string, string][] = [
+      ['2026-11-19 00:00:00', '2026-11-16 00:00:00'],
+      ['2026-11-22 23:59:59', '2026-11-16 00:00:00'],
+      ['2026-11-23 09:15:00', '2026-11-23 00:00:00'],
+      ['2027-01-01 00:00:00', '2026-12-28 00:00:00'],
+    ];
+    const ids: string[] = [];
+    for (const [at] of cases) {
+      const row = await repo.save(
+        repo.create({
+          formId: anonymousForm,
+          userId: null,
+          answers: {},
+          totalPaid: 0,
+          paymentStatus: 'free',
+        } as Partial<Submission>)
+      );
+      ids.push(row.id);
+      await ds.query(
+        `UPDATE submissions SET "createdAt" = $2, "updatedAt" = $2, "paymentRequestedAt" = $2
+          WHERE id = $1`,
+        [row.id, at]
+      );
+    }
+    const named = await repo.save(
+      repo.create({
+        formId: namedForm,
+        userId: member(9999),
+        answers: {},
+        totalPaid: 0,
+        paymentStatus: 'free',
+      } as Partial<Submission>)
+    );
+    await ds.query(`UPDATE submissions SET "createdAt" = '2026-11-19 14:03:07' WHERE id = $1`, [
+      named.id,
+    ]);
+
+    const migration = readFileSync(
+      join(__dirname, '../migrations/181_anonymous_answers_keep_the_week.sql'),
+      'utf8'
+    );
+    await ds.query(migration);
+    await ds.query('RESET lock_timeout');
+
+    const after: { id: string; c: string; u: string; p: string; x: string }[] = await ds.query(
+      `SELECT id, "createdAt"::text AS c, "updatedAt"::text AS u, "paymentRequestedAt"::text AS p,
+              xmin::text AS x
+         FROM submissions WHERE id = ANY($1::uuid[])`,
+      [ids]
+    );
+    const byId = new Map(after.map((row) => [row.id, row]));
+    cases.forEach(([, week], i) => {
+      const row = byId.get(ids[i])!;
+      expect([row.c, row.u, row.p]).toEqual([week, week, week]);
+    });
+    // ONE statement: every rewritten row carries the same write.
+    expect(new Set(after.map((row) => row.x)).size).toBe(1);
+    // A named form's answer keeps its instant.
+    expect(
+      (
+        await ds.query(`SELECT "createdAt"::text AS c FROM submissions WHERE id = $1`, [named.id])
+      )[0].c
+    ).toBe('2026-11-19 14:03:07');
+
+    // A second run writes nothing: no row gets a new version.
+    await ds.query(migration);
+    await ds.query('RESET lock_timeout');
+    const again: { x: string }[] = await ds.query(
+      `SELECT DISTINCT xmin::text AS x FROM submissions WHERE id = ANY($1::uuid[])`,
+      [ids]
+    );
+    expect(again).toEqual([{ x: after[0].x }]);
   });
 
   it('after every path above, no stored anonymous answer shares a write with the registry', async () => {
