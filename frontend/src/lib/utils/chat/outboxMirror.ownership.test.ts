@@ -399,6 +399,31 @@ describe('OutboxController.adoptNativeEntries - the return to the front', () => 
     expect(storage._queue.has('stuck')).toBe(true);
   });
 
+  it('says an adopted refusal as the refusal, once, and the Retry clears the native verdict', async () => {
+    connectivity.reset();
+    tauri.mirror = [line('refused', { unsendable: true, unsendableCause: 'refused' })];
+    const storage = makeStorage();
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { outbox, sendMessage } = controllerOver(storage);
+    await outbox.adoptNativeEntries();
+    expect(storage._queue.get('refused')?.nativeRefusal).toBe('refused');
+    outbox.flush();
+    await vi.waitFor(() =>
+      expect(errors.mock.calls.some((c) => String(c[0]).includes('refused it for good'))).toBe(true)
+    );
+    expect(errors.mock.calls.some((c) => String(c[0]).includes('5xx'))).toBe(false);
+    errors.mockRestore();
+
+    outbox.retryUpload('refused');
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(storage._queue.has('refused')).toBe(false));
+    expect(storage.updateOutboxEntry).toHaveBeenCalledWith(
+      'refused',
+      expect.objectContaining({ serverErrors: 0, nativeRefusal: undefined }),
+      'key'
+    );
+  });
+
   // Review of #3929: a failed claim leaves the line native in the mirror, where a background drain
   // may send it - so the page does not send it either until a mirror write holding it lands. The
   // server's messageId dedup is never what prevents the second send.

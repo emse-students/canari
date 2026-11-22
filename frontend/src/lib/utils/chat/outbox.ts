@@ -250,6 +250,24 @@ export function isServerFailureTerminal(entry: OutboxEntry): boolean {
 }
 
 /**
+ * What a terminal entry ({@link isServerFailureTerminal}) failed on, in words: the native drain's
+ * TYPED verdict when it was adopted from a line marked unsendable (`nativeRefusal`), the 5xx run
+ * otherwise. Both park at the same count; only this field tells which one happened.
+ */
+export function terminalFailureCause(entry: OutboxEntry): string {
+  switch (entry.nativeRefusal) {
+    case 'refused':
+      return 'the server refused it for good when the background service sent it (a final 4xx)';
+    case 'not_encryptable':
+      return 'the background service could not encrypt it for good (group not held here, device removed, or a malformed frame)';
+    case 'unrecorded':
+      return 'the background service marked it unsendable (its build recorded no cause)';
+    case undefined:
+      return `the server answered 5xx on ${entry.serverErrors} attempts in a row`;
+  }
+}
+
+/**
  * The author's own row a queued TEXT or REPLY stands for, built from the entry alone - its text is
  * encrypted in it, so the entry is enough to show what will be sent. `null` for every other kind: a
  * control frame has no row, and a file's placeholder needs what only its send path knows.
@@ -2715,6 +2733,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           serverErrors: 0,
           nextAttemptAt: 0,
           unavailableAnswers: unavailableRunStart(stored.unavailableAnswers ?? 0),
+          // The native verdict was about the attempt the member is retrying: a later failure is
+          // said as its own (a payload field, so present only when there is one to clear).
+          ...(stored.nativeRefusal ? { nativeRefusal: undefined } : {}),
         },
         deviceKey()
       )
@@ -2826,10 +2847,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     parked.delete(entry.id);
     // FAILED ON 5xx, read from the DURABLE count: after a reload as well as in this page life.
     if (!resumed && isServerFailureTerminal(entry)) {
-      return parkServerFailure(
-        entry,
-        `the server answered 5xx on ${entry.serverErrors} attempts in a row`
-      );
+      return parkServerFailure(entry, terminalFailureCause(entry));
     }
     // Reset elsewhere (a retry in another tab wrote the count back): it goes again, said once.
     if (serverFailed.delete(entry.id)) {

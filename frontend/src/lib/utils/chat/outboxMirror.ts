@@ -36,6 +36,7 @@
  */
 
 import type { IStorage, OutboxEntry, StoredMessage } from '$lib/db';
+import { asNativeRefusal } from '$lib/db/outboxCodec';
 import {
   MAX_CONSECUTIVE_SERVER_ERRORS,
   buildOutboxProto,
@@ -80,6 +81,13 @@ export interface OutboxMirrorEntry {
    * with its Retry ({@link adoptMirrorEntry}). Never written by this side.
    */
   unsendable?: boolean;
+  /**
+   * WHY the native drain marked the line {@link unsendable}, typed where the answer was read
+   * (`UnsendableCause` in the Android service): `refused` or `not_encryptable`. Absent on a line a
+   * build before the field marked - adopted then as `unrecorded`, never guessed. Carried by the
+   * page's write like the mark itself (`NATIVE_VERDICTS`, `outbox_mirror.rs`).
+   */
+  unsendableCause?: string;
   /**
    * `"page"` on every line this side wrote - stamped by `store_outbox_mirror`, not here. Absent on a
    * line the native side queued, and on one written before the stamp existed: both are adopted, and
@@ -316,12 +324,15 @@ export function adoptMirrorEntry(
     adoptedFromMirror: true as const,
   };
   // Typed entries only: a control frame has no Retry to park it behind.
+  // The cause travels with the entry, so its failure is said as what it was - never as the 5xx run
+  // its parked count otherwise reads as.
   const parked = entry.unsendable
     ? (() => {
+        const nativeRefusal = asNativeRefusal(entry.unsendableCause) ?? 'unrecorded';
         appendLog(
-          `[OUTBOX_MIRROR] Orphan ${entry.id.slice(0, 8)}… was marked unsendable by the native drain - adopted failed, with its Retry`
+          `[OUTBOX_MIRROR] Orphan ${entry.id.slice(0, 8)}… was marked unsendable by the native drain (${nativeRefusal}) - adopted failed, with its Retry`
         );
-        return { serverErrors: MAX_CONSECUTIVE_SERVER_ERRORS };
+        return { serverErrors: MAX_CONSECUTIVE_SERVER_ERRORS, nativeRefusal };
       })()
     : {};
 
