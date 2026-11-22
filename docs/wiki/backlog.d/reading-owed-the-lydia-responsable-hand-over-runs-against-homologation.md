@@ -38,3 +38,5 @@ failures on purpose: a member without MANAGE_PAYOUT_ACCOUNT is not in the picker
 Responsable from the roster is asked to type the association's name, and the removal says at ERROR that
 the number keeps its rights. Write the reading into
 [device-verification](../device-verification.md) and delete this file.
+
+**2026-11-22: UNREAD.** `LYDIA_RESPONSABLE_HANDOVER_ENABLED` is `false` on main and on dev `1.7.3-alpha.5`; the flip's pull request is not merged, so no call can reach the sandbox.
