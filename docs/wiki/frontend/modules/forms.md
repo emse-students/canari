@@ -1504,7 +1504,11 @@ would be a separate decision.
    and the cursus stays ticked in `guestFields` (a guest has no account and is asked it, `declared`).
    `askedOfMember` (server and client) removes the cursus from what a MEMBER is asked, so a declared
    cursus from a member is refused `FORM_GUEST_IDENTITY_NOT_ASKED` - the cursus is never joined AND
-   declared for the same person. The box without the cursus ticked joins nothing (`respondentSettingsPayload`).
+   declared for the same person. **The box implies the chip** (iPhone, `1.7.3-alpha.4`: the box ticked alone
+   was dropped at save with nothing said): ticking the box ticks "Promo et formation" with it, unticking
+   "Promo et formation" unticks the box (`coherentChoices`), the note under the box says so, and
+   `respondentSettingsPayload` asks the cursus whenever the box is in the set - so the editor never shows
+   a tick the save does not keep.
 2. **The snapshot's `source` is per snapshot, so a mixed one says which key is the account's.** A member
    whose form joins the cursus only: `{ source: 'account', cursus }`. A member whose form also asks status
    or campus: `{ source: 'declared', status, campus, cursus, fromAccount: ['cursus'] }` - `source` names what
