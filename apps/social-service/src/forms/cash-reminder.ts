@@ -4,11 +4,16 @@
  * hourly job moves it to `expired` and the seat is lost - and nothing told the member it was coming.
  *
  * ONE NOTICE, NOT A NAG (principle 3, "your attention is not for sale"): one bell row per answer,
- * claimed on the row (`cashReminderNotifiedAt`), in the `forms` category the member may mute. No
- * push: a cash deadline is days long and read in the app; a push key needs the native tables.
+ * claimed on the row (`cashReminderNotifiedAt`), and no push - a cash deadline is days long and read
+ * in the app, and a push key needs the native tables. Its push category is therefore `null`
+ * (`NOTIFICATION_TYPE_CATEGORY` files a type's PUSH, and there is none), and its bell row is
+ * always written (`BELL_ROW_GATE` withholds only suggestion and engagement content): it is about
+ * the reader's own answer, and it comes once.
  *
  * WHEN, from the row alone: `cashReminderDueAt`, written by `submit` beside the expiry, so the job
- * compares one stored instant with the database's `now()` - the same shape as the expiry itself.
+ * compares one stored instant with the database's `now()` - the same shape as the expiry itself. A
+ * row with none (written by an older image during a rolling deploy) is due {@link CASH_REMINDER_LEAD_MS}
+ * before its expiry, read so by the due query.
  */
 
 /** How long before the expiry the notice comes, at most: a day, the time to reach the organiser. */

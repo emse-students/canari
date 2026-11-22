@@ -82,12 +82,14 @@ import {
 import {
   PAYMENT_IN_PROGRESS,
   PAYMENT_NOT_RESUMABLE,
+  PAYMENT_PRICE_CHANGED,
   resumableWhere,
   resumeRowRefusal,
+  type PaymentCancelOrigin,
   type ResumableAnswer,
   type ResumeRowRefusal,
 } from './payment-resume';
-import { cashReminderDueAt, type DueCashReminder } from './cash-reminder';
+import { CASH_REMINDER_LEAD_MS, cashReminderDueAt, type DueCashReminder } from './cash-reminder';
 import { Submission } from './entities/submission.entity';
 import { OpeningReminder } from '../openings/entities/opening-reminder.entity';
 import {
@@ -2598,7 +2600,7 @@ export class FormsService {
     );
     const resumable =
       !submission && maySubmit && !formFull && isFormOpen(form) && acceptsOnline(form)
-        ? await this.resumableAnswerOf(formId, userId)
+        ? await this.resumableAnswerOf(form, userId)
         : null;
     return {
       hasSubmitted: !!submission,
@@ -2617,18 +2619,71 @@ export class FormsService {
     };
   }
 
-  /** The caller's newest answer a payment resume may take up (`resumableWhere`), or null. */
-  private async resumableAnswerOf(formId: string, userId: string): Promise<ResumableAnswer | null> {
+  /**
+   * The caller's newest answer a payment resume may take up (`resumableWhere`), or null - and only
+   * if the route would take it: the person may still answer the form, and the stored answer still
+   * prices at what it was charged (`assertResumeQuote`). A refusal there offers nothing; the page
+   * shows the empty form, as it would to anyone answering anew.
+   */
+  private async resumableAnswerOf(form: Form, userId: string): Promise<ResumableAnswer | null> {
     const row = await this.submissionRepo.findOne({
-      where: resumableWhere(formId, userId),
+      where: resumableWhere(form.id, userId),
       order: { createdAt: 'DESC' },
-      select: { id: true, totalPaid: true, paymentStatus: true },
+      select: { id: true, totalPaid: true, paymentStatus: true, answers: true },
     });
     if (!row) return null;
+    try {
+      await this.assertResumeQuote(form, row, userId);
+    } catch (err: unknown) {
+      if (!(err instanceof HttpException) || err.getStatus() >= 500) throw err;
+      const code = (err.getResponse() as { code?: string })?.code ?? err.getStatus();
+      this.logger.debug(
+        `[Forms] check ${formTag(form)}: answer ${row.id} is not offered for a resume (${code})`
+      );
+      return null;
+    }
     this.logger.debug(
-      `[Forms] check ${formId.slice(0, 8)}: answer ${row.id} (${row.paymentStatus}) may resume its payment`
+      `[Forms] check ${formTag(form)}: answer ${row.id} (${row.paymentStatus}) may resume its payment`
     );
     return { submissionId: row.id, amountCents: row.totalPaid };
+  }
+
+  /**
+   * A RESUME SELLS ONLY WHAT A FRESH SUBMIT WOULD: the stored answer is judged again by the submit's
+   * own rules, for this person NOW. The audience rule (`assertMaySubmit`: a cotisation taken since,
+   * a condition the form gained), then the whole price (`priceAnswer`: a combination closed since is
+   * `FORM_COMBINATION_UNAVAILABLE`, a required question added since is `FORM_ANSWER_MISSING`), and a
+   * total that differs from what the answer was charged is `PAYMENT_PRICE_CHANGED` (409). Each is a
+   * typed refusal the page answers by sending the member to fill the form again.
+   */
+  private async assertResumeQuote(
+    form: Form,
+    row: Pick<Submission, 'id' | 'answers' | 'totalPaid'>,
+    userId: string
+  ): Promise<void> {
+    const items = form.items ?? [];
+    const answers: Record<string, any> = { ...(row.answers ?? {}) };
+    const selections = answerSelections(items, answers);
+    const facts = await this.factsFor(form, userId, selections);
+    this.assertMaySubmit(form, facts);
+    const visible = visibleItemIds(items, facts);
+    const visibleAnswers: Record<string, string[]> = {};
+    for (const [questionId, value] of Object.entries(selections)) {
+      if (visible.has(questionId)) visibleAnswers[questionId] = value;
+    }
+    const { totalCents } = this.priceAnswer(form, facts, visible, visibleAnswers, answers, {
+      ...answers,
+    });
+    if (totalCents !== row.totalPaid) {
+      this.logger.log(
+        `[Forms] resume of ${row.id} refused: the answer prices at ${totalCents} cents now, ` +
+          `${row.totalPaid} when it was given (${formTag(form)})`
+      );
+      throw new ConflictException({
+        code: PAYMENT_PRICE_CHANGED,
+        message: 'The price of this answer has changed: fill in the form again.',
+      });
+    }
   }
 
   /**
@@ -2719,114 +2774,17 @@ export class FormsService {
       )
     );
     const storedFileAnswers = fileAnswers.filter((file) => visible.has(file.itemId));
-    const pricedQuestions = pricedQuestionIds(form.priceMatrix);
-    // The WHOLE price, once per cursus, and the cheapest wins (D32): the base cell and every grid's
-    // lines below are read from that ONE cursus, so what is stored is what was charged.
-    const quote = quoteSubmission(
+    const { totalCents, lines } = this.priceAnswer(
       form,
-      { ...facts, answers: visibleAnswers },
+      facts,
       visible,
-      input.answers ?? {}
+      visibleAnswers,
+      input.answers ?? {},
+      storedAnswers
     );
-    const { baseCents } = quote.quote;
-    this.logger.debug(
-      `[FORMS] submit ${formTag(form)} priced on ${describeCursus(quote)} ` +
-        `total=${quote.cents ?? 'unavailable'}`
-    );
-    // The cell the manager marked as not existing. A refusal, not a price of zero - and refused
-    // here rather than in `assertMaySubmit` because only the visible answers decide the cell.
-    if (baseCents === null) {
-      this.logger.debug(`[FORMS] submit refused by an unavailable grid cell ${formTag(form)}`);
-      throw new ForbiddenException({
-        code: FORM_COMBINATION_UNAVAILABLE,
-        message: 'This combination is not available on this form.',
-      });
-    }
-
-    // Validation & Price Calculation
-    let totalCents = baseCents;
-    const lineItems: any[] = [];
-    const currency = form.currency.toLowerCase();
-
-    if (baseCents > 0) {
-      lineItems.push({
-        price_data: {
-          currency,
-          product_data: { name: `${form.title} (Registration)` },
-          unit_amount: baseCents,
-        },
-        quantity: 1,
-      });
-    }
-
-    // The priced grids' lines, computed HERE from the stored grid and this person's category - never
-    // from an amount a client sent - and snapshotted on the row (`submissions.lines`, migration 137).
-    const gridLines: ProductGridLine[] = [];
-    for (const item of form.items) {
-      // A question this submitter never saw neither charges them nor blocks them.
-      if (!visible.has(item.id)) continue;
-      const answer = input.answers[item.id];
-      // A priced grid is judged by its own rule (declared cells, 0..maxPerCell, no closed cell) with
-      // a CODED refusal - an app that cannot draw it sends a non-object and is told to update
-      // (`PRODUCT_GRID_ANSWER_MISSING`). An untouched grid (no answer, `{}`) is accepted and stores
-      // nothing; what is stored otherwise is the answer as judged: the ordered cells only. A grid
-      // switched "Obligatoire" demands ONE unit of its own, refused like any required question
-      // (owner, 2026-11-13: no rule over the whole order).
-      if (isProductGridItem(item)) {
-        const priced = priceProductGridAnswer(item, answer, quote.view);
-        if (item.required && !productGridOrdered(priced.answer)) {
-          this.logger.debug(
-            `[FORMS] submit refused: required grid ${item.id} holds no unit ${formTag(form)}`
-          );
-          throw formRefusal(FORM_ANSWER_MISSING, `Missing required field: ${item.label}`, item.id);
-        }
-        if (priced.units > 0) storedAnswers[item.id] = priced.answer;
-        else delete storedAnswers[item.id];
-        gridLines.push(...priced.lines);
-        continue;
-      }
-      if (item.required && !isQuestionAnswered(item, answer)) {
-        throw formRefusal(FORM_ANSWER_MISSING, `Missing required field: ${item.label}`, item.id);
-      }
-
-      // A question the grid prices on has already been paid for by the cell it selected. Adding its
-      // modifier on top would charge the same choice twice, silently, in the direction that
-      // overcharges - so it is skipped here rather than trusted to be zero in the document.
-      if (
-        answer &&
-        isChoiceQuestion(item) &&
-        item.options?.length &&
-        !pricedQuestions.has(item.id)
-      ) {
-        totalCents = this.calculateModifiers(item, answer, totalCents, lineItems, currency);
-      }
-    }
-    const lines = gridLines.length > 0 ? gridLines : null;
     // What the price depends on NOW, kept with the row it prices (migration 166): an answer change
     // reads it, so a supplement removed later still locks its question here (`rowLockedItemIds`).
     const priceLockedItemIds = priceSnapshot(form);
-    if (lines) {
-      const gridCents = productGridTotalCents(lines);
-      totalCents += gridCents;
-      this.logger.debug(
-        `[FORMS] submit ${formTag(form)}: ${lines.length} grid line(s), ` +
-          `${gridCents} cents, total ${totalCents} cents`
-      );
-      // Refused BEFORE any row is written, whichever the payment method: a total above what one
-      // payment may carry is no order anybody can pay, and a row must never hold it.
-      if (totalCents > PROVIDER_MAX_AMOUNT_CENTS) {
-        this.logger.warn(
-          `[FORMS] grid order refused: total=${totalCents} cents above ${PROVIDER_MAX_AMOUNT_CENTS} ` +
-            `${formTag(form)}`
-        );
-        throw amountOutOfRange(
-          PROVIDER_MIN_AMOUNT_CENTS,
-          PROVIDER_MAX_AMOUNT_CENTS,
-          `Total amount (${(totalCents / 100).toFixed(2)} ${currency.toUpperCase()}) is above the ` +
-            `payable maximum ${(PROVIDER_MAX_AMOUNT_CENTS / 100).toFixed(2)} ${currency.toUpperCase()}.`
-        );
-      }
-    }
 
     // C1+C2: the capacity check and the submission upsert are ONE transaction, serialised on the
     // form's row lock, so two concurrent requests cannot both pass the capacity check (C2) nor both
@@ -3050,6 +3008,7 @@ export class FormsService {
         existingPending.paymentRequestId = null;
         existingPending.stripeSessionId = null;
         existingPending.paymentStatus = 'pending';
+        existingPending.paymentCancelledBy = null;
         savedSubmission = await manager.save(existingPending);
         // A new payment request is about to be issued for this row, so its hold restarts with it,
         // on the database clock like every other read of it (`seat-hold.ts`).
@@ -3202,6 +3161,8 @@ export class FormsService {
         message: 'This form is paid in cash only.',
       });
     }
+    // Who may answer, and at what price, judged NOW and before anything is cancelled at Lydia.
+    await this.assertResumeQuote(form, row, callerId);
     // The old request, settled at Lydia before anything new exists. A row naming none (its request
     // was never issued, `releaseUnissuedRow`) has nothing payable to settle.
     if (row.paymentRequestId || row.stripeSessionId) {
@@ -3257,6 +3218,7 @@ export class FormsService {
         paymentRequestId: null,
         stripeSessionId: null,
         paymentSettledBy: null,
+        paymentCancelledBy: null,
         paymentRequestedAt: () => 'now()',
       });
       this.logger.log(
@@ -3272,6 +3234,126 @@ export class FormsService {
       successUrl: input.successUrl,
       cancelUrl: input.cancelUrl,
     });
+  }
+
+  /**
+   * THE PRICE OF ONE ANSWER, by the submit's own rules: the whole quote once per cursus, the
+   * cheapest wins (D32), then every visible question's supplement and every priced grid's lines,
+   * computed here from the form and the person's facts - never from a client amount. Shared by
+   * `submit` and `resumePayment` (which re-quotes the stored answer, so a resume never sells what a
+   * fresh submit would refuse). Refuses as a submit does: an unavailable cell
+   * (`FORM_COMBINATION_UNAVAILABLE`), a required question left empty, a total above the payable
+   * maximum. `storedAnswers` receives each grid's answer as judged.
+   */
+  private priceAnswer(
+    form: Form,
+    facts: PricingFacts,
+    visible: Set<string>,
+    visibleAnswers: Record<string, string[]>,
+    answers: Record<string, any>,
+    storedAnswers: Record<string, any>
+  ): { totalCents: number; lines: ProductGridLine[] | null } {
+    const pricedQuestions = pricedQuestionIds(form.priceMatrix);
+    // The WHOLE price, once per cursus, and the cheapest wins (D32): the base cell and every grid's
+    // lines below are read from that ONE cursus, so what is stored is what was charged.
+    const quote = quoteSubmission(form, { ...facts, answers: visibleAnswers }, visible, answers);
+    const { baseCents } = quote.quote;
+    this.logger.debug(
+      `[FORMS] submit ${formTag(form)} priced on ${describeCursus(quote)} ` +
+        `total=${quote.cents ?? 'unavailable'}`
+    );
+    // The cell the manager marked as not existing. A refusal, not a price of zero - and refused
+    // here rather than in `assertMaySubmit` because only the visible answers decide the cell.
+    if (baseCents === null) {
+      this.logger.debug(`[FORMS] submit refused by an unavailable grid cell ${formTag(form)}`);
+      throw new ForbiddenException({
+        code: FORM_COMBINATION_UNAVAILABLE,
+        message: 'This combination is not available on this form.',
+      });
+    }
+
+    // Validation & Price Calculation
+    let totalCents = baseCents;
+    const lineItems: any[] = [];
+    const currency = form.currency.toLowerCase();
+
+    if (baseCents > 0) {
+      lineItems.push({
+        price_data: {
+          currency,
+          product_data: { name: `${form.title} (Registration)` },
+          unit_amount: baseCents,
+        },
+        quantity: 1,
+      });
+    }
+
+    // The priced grids' lines, computed HERE from the stored grid and this person's category - never
+    // from an amount a client sent - and snapshotted on the row (`submissions.lines`, migration 137).
+    const gridLines: ProductGridLine[] = [];
+    for (const item of form.items) {
+      // A question this submitter never saw neither charges them nor blocks them.
+      if (!visible.has(item.id)) continue;
+      const answer = answers[item.id];
+      // A priced grid is judged by its own rule (declared cells, 0..maxPerCell, no closed cell) with
+      // a CODED refusal - an app that cannot draw it sends a non-object and is told to update
+      // (`PRODUCT_GRID_ANSWER_MISSING`). An untouched grid (no answer, `{}`) is accepted and stores
+      // nothing; what is stored otherwise is the answer as judged: the ordered cells only. A grid
+      // switched "Obligatoire" demands ONE unit of its own, refused like any required question
+      // (owner, 2026-11-13: no rule over the whole order).
+      if (isProductGridItem(item)) {
+        const priced = priceProductGridAnswer(item, answer, quote.view);
+        if (item.required && !productGridOrdered(priced.answer)) {
+          this.logger.debug(
+            `[FORMS] submit refused: required grid ${item.id} holds no unit ${formTag(form)}`
+          );
+          throw formRefusal(FORM_ANSWER_MISSING, `Missing required field: ${item.label}`, item.id);
+        }
+        if (priced.units > 0) storedAnswers[item.id] = priced.answer;
+        else delete storedAnswers[item.id];
+        gridLines.push(...priced.lines);
+        continue;
+      }
+      if (item.required && !isQuestionAnswered(item, answer)) {
+        throw formRefusal(FORM_ANSWER_MISSING, `Missing required field: ${item.label}`, item.id);
+      }
+
+      // A question the grid prices on has already been paid for by the cell it selected. Adding its
+      // modifier on top would charge the same choice twice, silently, in the direction that
+      // overcharges - so it is skipped here rather than trusted to be zero in the document.
+      if (
+        answer &&
+        isChoiceQuestion(item) &&
+        item.options?.length &&
+        !pricedQuestions.has(item.id)
+      ) {
+        totalCents = this.calculateModifiers(item, answer, totalCents, lineItems, currency);
+      }
+    }
+    const lines = gridLines.length > 0 ? gridLines : null;
+    if (lines) {
+      const gridCents = productGridTotalCents(lines);
+      totalCents += gridCents;
+      this.logger.debug(
+        `[FORMS] submit ${formTag(form)}: ${lines.length} grid line(s), ` +
+          `${gridCents} cents, total ${totalCents} cents`
+      );
+      // Refused BEFORE any row is written, whichever the payment method: a total above what one
+      // payment may carry is no order anybody can pay, and a row must never hold it.
+      if (totalCents > PROVIDER_MAX_AMOUNT_CENTS) {
+        this.logger.warn(
+          `[FORMS] grid order refused: total=${totalCents} cents above ${PROVIDER_MAX_AMOUNT_CENTS} ` +
+            `${formTag(form)}`
+        );
+        throw amountOutOfRange(
+          PROVIDER_MIN_AMOUNT_CENTS,
+          PROVIDER_MAX_AMOUNT_CENTS,
+          `Total amount (${(totalCents / 100).toFixed(2)} ${currency.toUpperCase()}) is above the ` +
+            `payable maximum ${(PROVIDER_MAX_AMOUNT_CENTS / 100).toFixed(2)} ${currency.toUpperCase()}.`
+        );
+      }
+    }
+    return { totalCents, lines };
   }
 
   /** The typed 409 of a resume refused from the row, logged at INFO (a second tab is expected). */
@@ -3333,6 +3415,8 @@ export class FormsService {
     let connectAccountId: string | undefined;
     // Whether that revert already ran (the bridge's re-issue below runs it itself).
     let reverted = false;
+    // Whether an issuing call was SENT: a failure after it may have left a request at Lydia.
+    let sent = false;
     try {
       // If the form belongs to an association, route payment via its connected account
       if (form.associationId) {
@@ -3412,6 +3496,7 @@ export class FormsService {
         );
       let res;
       try {
+        sent = true;
         res = await issueOn(connectAccountId, idempotencyKey);
       } catch (err: unknown) {
         const cause = lydiaReadinessRefusal(err);
@@ -3447,7 +3532,8 @@ export class FormsService {
       const requestId: string | null = typeof data.requestId === 'string' ? data.requestId : null;
 
       if (!sessionUrl) {
-        await this.releaseUnissuedRow(submissionId);
+        // Core answered, but with no URL: whether Lydia created a request is not known.
+        await this.releaseUnissuedRow(submissionId, 'issue-unknown');
         return {
           message: data.message || 'Payment service did not return a checkout URL',
           submissionId: submissionId,
@@ -3477,8 +3563,13 @@ export class FormsService {
       }
       return { checkoutUrl: sessionUrl, submissionId: submissionId };
     } catch (err: unknown) {
-      // No request was issued, so nothing is payable: the row stops holding a seat for it.
-      await this.releaseUnissuedRow(submissionId);
+      // No request is NAMED, so the row stops holding a seat. Refused before anything was sent, or
+      // answered with a refusal (a 4xx), nothing exists at Lydia; any other failure after the call
+      // was sent (a timeout, a 5xx) leaves its outcome unknown, recorded so a resume is not offered.
+      await this.releaseUnissuedRow(
+        submissionId,
+        sent && !answeredWithRefusal(err) ? 'issue-unknown' : 'unissued'
+      );
       const cause = lydiaReadinessRefusal(err);
       if (cause && connectAccountId && !reverted) {
         await this.associationsService.revertLydiaReadinessAfterRefusal(connectAccountId, cause, {
@@ -3818,12 +3909,27 @@ export class FormsService {
    * row naming no request would otherwise read as "being issued" to the next retry. A row that DOES
    * name a request is left alone.
    */
-  private async releaseUnissuedRow(submissionId: string): Promise<void> {
+  private async releaseUnissuedRow(
+    submissionId: string,
+    origin: 'unissued' | 'issue-unknown' = 'unissued'
+  ): Promise<void> {
     const outcome = await this.moveLockedSubmission(submissionId, 'pending', 'cancelled', {
       named: (s) => !s.paymentRequestId && !s.stripeSessionId,
+      cancelledBy: origin,
     });
     if (typeof outcome === 'object') {
-      this.logger.log(`[Forms] submission ${submissionId} released: no payment request was issued`);
+      if (origin === 'issue-unknown') {
+        // Not an answer from Lydia: the call was sent and failed, so a request may exist that this
+        // row does not name. The answer is released (it holds no seat) and NOT offered for a resume.
+        this.logger.warn(
+          `[Forms] submission ${submissionId} released: the issuing call failed after it was sent - ` +
+            `its outcome at Lydia is unknown, no resume is offered`
+        );
+      } else {
+        this.logger.log(
+          `[Forms] submission ${submissionId} released: no payment request was issued`
+        );
+      }
     }
   }
 
@@ -4081,9 +4187,10 @@ export class FormsService {
       }
     }
     // Only while the row still names the request just settled: a retry may have issued another.
+    // The submitter's own cancel may be resumed; a manager's is a decision, never offered back.
     return this.applyPendingCancel(
       submissionId,
-      'its submitter or a manager',
+      submission.userId === callerId ? 'member' : 'manager',
       (s) =>
         s.paymentRequestId === submission.paymentRequestId &&
         s.stripeSessionId === submission.stripeSessionId
@@ -4213,6 +4320,7 @@ export class FormsService {
   ): Promise<boolean> {
     const outcome = await this.moveLockedSubmission(submissionId, 'pending', 'cancelled', {
       named: (s) => s.stripeSessionId === sessionId,
+      cancelledBy: 'provider',
     });
     if (typeof outcome === 'object') {
       this.logger.log(
@@ -4428,7 +4536,7 @@ export class FormsService {
     // Under the row lock, the row must still name the very request that was read settled-refused.
     const { ok } = await this.applyPendingCancel(
       submissionId,
-      'the provider',
+      'provider',
       (row) => named(row) && row.stripeSessionId === sessionId
     );
     return { ok, outcome: state };
@@ -4437,18 +4545,19 @@ export class FormsService {
   /** Moves a `pending` row to `cancelled` (see `moveLockedSubmission`) and logs the outcome. */
   private async applyPendingCancel(
     submissionId: string,
-    by: string,
+    origin: PaymentCancelOrigin,
     named?: (submission: Submission) => boolean
   ): Promise<{ ok: boolean }> {
     const outcome = await this.moveLockedSubmission(submissionId, 'pending', 'cancelled', {
       named,
+      cancelledBy: origin,
     });
     if (outcome === 'missing') {
       this.logger.warn(`[Forms] cancel: submission ${submissionId} not found`);
       return { ok: false };
     }
     if (typeof outcome === 'object') {
-      this.logger.log(`[Forms] Submission ${submissionId} cancelled by ${by}`);
+      this.logger.log(`[Forms] Submission ${submissionId} cancelled by ${origin}`);
     }
     return { ok: true };
   }
@@ -4467,7 +4576,16 @@ export class FormsService {
     submissionId: string,
     from: string,
     to: string,
-    { formId, named }: { formId?: string; named?: (submission: Submission) => boolean } = {}
+    {
+      formId,
+      named,
+      cancelledBy,
+    }: {
+      formId?: string;
+      named?: (submission: Submission) => boolean;
+      /** Who or what cancels, recorded with a move to `cancelled` (`PaymentCancelOrigin`). */
+      cancelledBy?: PaymentCancelOrigin;
+    } = {}
   ): Promise<{ moved: Submission } | 'missing' | 'not-in-state' | 'other-request'> {
     return this.submissionRepo.manager.transaction('READ COMMITTED', async (manager) => {
       const submission = await manager.findOne(Submission, {
@@ -4489,6 +4607,7 @@ export class FormsService {
         return 'other-request';
       }
       submission.paymentStatus = to;
+      if (cancelledBy) submission.paymentCancelledBy = cancelledBy;
       await manager.save(submission);
       return { moved: submission };
     });
@@ -4541,6 +4660,7 @@ export class FormsService {
     await this.assertFormManager(formId, callerId, isGlobalAdmin);
     const outcome = await this.moveLockedSubmission(submissionId, 'pending_cash', 'cancelled', {
       formId,
+      cancelledBy: 'manager',
     });
     if (outcome === 'missing') throw new NotFoundException('Submission not found');
     return { ok: true };
@@ -4562,9 +4682,12 @@ export class FormsService {
         WHERE s."paymentStatus" = 'pending_cash'
           AND s."userId" IS NOT NULL
           AND s."cashReminderNotifiedAt" IS NULL
-          AND s."cashReminderDueAt" <= now()
+          AND COALESCE(s."cashReminderDueAt", s."cashExpiresAt" - make_interval(secs => $1)) <= now()
           AND s."cashExpiresAt" > now()
-          AND f."deletedAt" IS NULL`
+          AND f."deletedAt" IS NULL`,
+      // A row written by an older image during a rolling deploy carries no due date: it is owed
+      // its notice by the rule's longest lead, the value migration 179 backfilled.
+      [CASH_REMINDER_LEAD_MS / 1000]
     );
     this.logger.debug(`[Forms] cash reminders due: ${rows.length}`);
     return rows;
@@ -5185,4 +5308,13 @@ export class FormsService {
     await this.formRepo.update(formId, { imageMediaId: null, imageUrl: null });
     return this.formRepo.findOne({ where: { id: formId } });
   }
+}
+
+/**
+ * Whether the issuing call was ANSWERED with a refusal (a 4xx from core): nothing was created at
+ * Lydia. A timeout, a reset or a 5xx is no such answer - the request may exist (`releaseUnissuedRow`).
+ */
+function answeredWithRefusal(err: unknown): boolean {
+  const status = axios.isAxiosError(err) ? err.response?.status : undefined;
+  return status !== undefined && status >= 400 && status < 500;
 }

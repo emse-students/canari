@@ -181,4 +181,19 @@ describe('the form page offers to resume a released payment', () => {
     expect(card()).toBeNull();
     expect(opened).toEqual([]);
   });
+
+  it('sends the member to fill the form again when the price changed since', async () => {
+    let checks = 0;
+    api.check = () =>
+      Promise.resolve(checks++ === 0 ? { ...offered } : { ...fresh, resumable: null });
+    api.resume = vi.fn(() =>
+      Promise.reject(new SocialApiError('price changed', 'PAYMENT_PRICE_CHANGED', 409))
+    );
+    await render();
+    resumeButton()!.click();
+    await settle();
+    expect(document.body.textContent).toContain(m.form_payment_resume_price_changed());
+    expect(card()).toBeNull();
+    expect(opened).toEqual([]);
+  });
 });

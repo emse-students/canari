@@ -66,6 +66,9 @@ export function providerRefusalMessage(err: unknown): string | null {
   if (err instanceof SocialApiError && err.code === PAYMENT_NOT_RESUMABLE) {
     return m.form_payment_not_resumable();
   }
+  if (err instanceof SocialApiError && err.code === PAYMENT_PRICE_CHANGED) {
+    return m.form_payment_resume_price_changed();
+  }
   if (err instanceof SocialApiError && err.code === AMOUNT_OUT_OF_RANGE && err.amountBounds) {
     const { minCents, maxCents } = err.amountBounds;
     const min = formatAmount(minCents);
@@ -324,3 +327,9 @@ export const PAYMENT_IN_PROGRESS = 'PAYMENT_IN_PROGRESS';
 
 /** The body `code` of the 409 a resume gets on an answer with no payment to resume (`payment-resume.ts`). */
 const PAYMENT_NOT_RESUMABLE = 'PAYMENT_NOT_RESUMABLE';
+
+/**
+ * The body `code` of the 409 a resume gets when the stored answer no longer prices at what it was
+ * charged (`payment-resume.ts`): the member fills the form again, as anyone would.
+ */
+const PAYMENT_PRICE_CHANGED = 'PAYMENT_PRICE_CHANGED';

@@ -1,4 +1,4 @@
-import { In, IsNull, MoreThan, Raw, type FindOptionsWhere } from 'typeorm';
+import { In, IsNull, MoreThan, Not, Raw, type FindOptionsWhere } from 'typeorm';
 import type { Submission } from './entities/submission.entity';
 import { PENDING_HOLD_CUTOFF_SQL } from './seat-hold';
 
@@ -34,11 +34,45 @@ export const PAYMENT_IN_PROGRESS = 'PAYMENT_IN_PROGRESS';
  */
 export const PAYMENT_NOT_RESUMABLE = 'PAYMENT_NOT_RESUMABLE';
 
+/**
+ * The `code` of the 409 a resume gets when the stored answer no longer prices at what it was charged
+ * (the form's prices or supplements changed since): a resume never sells at another price than a
+ * fresh submit would, so the member fills the form again. An answer whose combination closed is the
+ * submit's own `FORM_COMBINATION_UNAVAILABLE`, and the client treats both alike.
+ */
+export const PAYMENT_PRICE_CHANGED = 'PAYMENT_PRICE_CHANGED';
+
 /** The typed refusals of a resume that come from the row alone. */
 export type ResumeRowRefusal = typeof PAYMENT_IN_PROGRESS | typeof PAYMENT_NOT_RESUMABLE;
 
+/**
+ * WHO OR WHAT CANCELLED an online answer's payment (`submissions.paymentCancelledBy`, migration
+ * 179), written with the move to `cancelled`:
+ *
+ * - `member`: the submitter cancelled their own pending payment (`cancelSubmission`);
+ * - `manager`: a form manager cancelled it (or deleted the answer) - a decision, never offered back;
+ * - `provider`: Lydia reported or read the request declined, cancelled or expired;
+ * - `unissued`: the request was refused before Lydia created anything (`releaseUnissuedRow`);
+ * - `issue-unknown`: the issuing call failed after it was SENT (a timeout, a 5xx, an answer with no
+ *   URL), so a request may exist at Lydia that the row does not name - resuming would risk a second
+ *   payable request for one answer, so it is not offered (the follow-up that settles it by its
+ *   order_ref is in the backlog entry).
+ *
+ * NULL on a row cancelled before 179: its origin is unknown and it is treated as resumable.
+ */
+export type PaymentCancelOrigin = 'member' | 'manager' | 'provider' | 'unissued' | 'issue-unknown';
+
+/** The cancel origins a resume never undoes (see {@link PaymentCancelOrigin}). */
+export const UNRESUMABLE_CANCEL_ORIGINS: readonly PaymentCancelOrigin[] = [
+  'manager',
+  'issue-unknown',
+];
+
 /** What of a row the rule reads. */
-export type ResumableRow = Pick<Submission, 'paymentStatus' | 'paymentMethod' | 'totalPaid'>;
+export type ResumableRow = Pick<
+  Submission,
+  'paymentStatus' | 'paymentMethod' | 'totalPaid' | 'paymentCancelledBy'
+>;
 
 /**
  * Why this row cannot be resumed, judged on the row alone, or null when it may be.
@@ -51,12 +85,20 @@ export function resumeRowRefusal(row: ResumableRow, holdLive: boolean): ResumeRo
   // request Lydia can read, and a free answer owes nothing.
   if (row.paymentMethod !== null || !(row.totalPaid > 0)) return PAYMENT_NOT_RESUMABLE;
   if (row.paymentStatus === 'pending') return holdLive ? PAYMENT_IN_PROGRESS : null;
+  if (
+    row.paymentStatus === 'cancelled' &&
+    row.paymentCancelledBy !== null &&
+    UNRESUMABLE_CANCEL_ORIGINS.includes(row.paymentCancelledBy as PaymentCancelOrigin)
+  ) {
+    return PAYMENT_NOT_RESUMABLE;
+  }
   return RESUMABLE_PAYMENT_STATUSES.includes(row.paymentStatus) ? null : PAYMENT_NOT_RESUMABLE;
 }
 
 /**
  * The caller's answers on a form that `resumeRowRefusal` admits, as a TypeORM `where` (an OR):
- * online, charged, and cancelled, expired, or pending past its hold. What `GET forms/:id/check`
+ * online, charged, and expired, cancelled by anything but a manager or an issue of unknown outcome,
+ * or pending past its hold. What `GET forms/:id/check`
  * reads to offer "Reprendre le paiement".
  */
 export function resumableWhere(formId: string, userId: string): FindOptionsWhere<Submission>[] {
@@ -67,7 +109,14 @@ export function resumableWhere(formId: string, userId: string): FindOptionsWhere
     totalPaid: MoreThan(0),
   };
   return [
-    { ...base, paymentStatus: In([...RESUMABLE_PAYMENT_STATUSES]) },
+    { ...base, paymentStatus: 'expired' },
+    // A cancel whose origin is unknown (before 179) or one a resume may undo; never a manager's.
+    { ...base, paymentStatus: 'cancelled', paymentCancelledBy: IsNull() },
+    {
+      ...base,
+      paymentStatus: 'cancelled',
+      paymentCancelledBy: Not(In([...UNRESUMABLE_CANCEL_ORIGINS])),
+    },
     {
       ...base,
       paymentStatus: 'pending',

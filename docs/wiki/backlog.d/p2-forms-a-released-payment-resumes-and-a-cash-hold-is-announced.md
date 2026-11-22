@@ -18,3 +18,10 @@ sandbox (an answer cancelled at Lydia, resumed, paid with a test card; the respo
 `Annulé` -> `En attente` -> `Payé` on one row), and the cash notice read in the bell on a phone (a dev
 cash answer whose `cashReminderDueAt` has passed). The integration spec
 (`cash-reminder.integration.spec.ts`) runs in CI's `test-social-integration` only.
+
+**Owed in a follow-up pull request (review of #3949, item 5):** an issue whose outcome is unknown (a
+timeout or a 5xx after the call was sent) is released `issue-unknown` and NOT offered for a resume, so
+the resume cannot repeat it; but such a row - from a submit as well - may still have a payable request
+at Lydia that it does not name. Write the order_ref (and the Business) on the row BEFORE the issuing
+call, and settle such a row by it (`payments/request-state` by `orderRef` already exists for the
+boutique's `product` order_refs; it needs the forms grammar), then lift the `issue-unknown` exclusion.

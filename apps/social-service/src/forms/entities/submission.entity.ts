@@ -92,6 +92,15 @@ export class Submission {
   paymentSettledBy: string | null;
 
   /**
+   * Who or what moved this online answer to `cancelled` (migration 179, `PaymentCancelOrigin` in
+   * `payment-resume.ts`): what tells a manager's cancel, never offered back to the member, from a
+   * payment that simply did not go through. NULL on every other status and on a row cancelled
+   * before 179; cleared when a resume reopens the answer.
+   */
+  @Column({ type: 'varchar', length: 16, nullable: true })
+  paymentCancelledBy: string | null;
+
+  /**
    * The order_ref of the CURRENT Lydia request (migration 120), written when it is issued: what a
    * refund of this answer's payment is sent with. NULL before 120 - such a payment cannot be refunded
    * from Canari. `select: false`: no read of a submission carries it unless it asks by name.

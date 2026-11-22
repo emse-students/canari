@@ -2388,14 +2388,36 @@ checkout does (the in-progress block, the read on return). The return pages (`/f
 no other list of a member's own answers to carry it.
 
 **What may be resumed** (`payment-resume.ts`, one rule for the offer and the route): the caller's OWN
-answer, online (`paymentMethod` null), charged (`totalPaid > 0`), and `cancelled`, `expired`, or
-`pending` past its hold (its request died with D1; the five-minute job has not said so yet). The offer
-also needs the form open, a free seat, online payment accepted and nothing else answering for the
-person. A cash answer is the manager's (`validate-cash` / `cancel-cash`) and is never resumed.
+answer, online (`paymentMethod` null), charged (`totalPaid > 0`), and `expired`, `pending` past its
+hold (its request died with D1; the five-minute job has not said so yet), or `cancelled` by anything
+but a manager or an issue of unknown outcome. The offer also needs the form open, a free seat, online
+payment accepted and nothing else answering for the person. A cash answer is the manager's
+(`validate-cash` / `cancel-cash`) and is never resumed.
 
-**The amount is the answer's own `totalPaid`**, as quoted at submit: the SAME answer is paid, so a price
-changed since does not reprice it (decided by the lead, reversible; a reprice would need the submit's
-whole quote over the stored answers).
+**Who cancelled is recorded** (`submissions.paymentCancelledBy`, migration 179, `PaymentCancelOrigin`):
+`member` (the submitter's own cancel), `manager` (a form manager's cancel or delete - a DECISION, never
+offered back as a payment that failed), `provider` (Lydia read or reported the request declined,
+cancelled or expired), `unissued` (refused before Lydia created anything) and `issue-unknown` (below).
+A row cancelled before 179 carries NULL: its origin was never recorded, and it is treated as
+resumable rather than guessed.
+
+**A resume sells only what a fresh submit would** (review of #3949, superseding the first draft's "the
+stored amount, never repriced"): before anything is cancelled at Lydia, the stored answer is judged
+again for this person NOW (`assertResumeQuote`) - the audience rule (`assertMaySubmit`), then the
+submit's own whole price (`priceAnswer`, extracted from `submit`, one implementation). A combination
+closed since is the submit's `FORM_COMBINATION_UNAVAILABLE`, a required question added since is
+`FORM_ANSWER_MISSING`, and a total that differs from the `totalPaid` the answer was charged is
+`PAYMENT_PRICE_CHANGED` (409). The check runs the same judgement, so such an answer is not offered;
+a refusal the page meets anyway is worded and the page reads the offer again, leaving the empty form
+to fill. Equal totals mean the request charges exactly what the answer says it costs.
+
+**An issue whose outcome is unknown is not resumed.** `issueOnlineRequest` records whether the
+issuing call was SENT: a failure before it, or a refusal ANSWERED by core (a 4xx), created nothing and
+releases the row `unissued`; a timeout, a reset, a 5xx or an answer with no URL may have left a request
+at Lydia the row does not name, and releases it `issue-unknown` (logged at WARN), which is never
+offered for a resume - resuming it would make a second payable request for one answer repeatable.
+Settling such a row by the order_ref written BEFORE the call is the follow-up named in the backlog
+entry; until then the member answers anew, as before this feature.
 
 **The state machine of an online answer** (`resumePayment`, `submit`, `markPaid`, the callbacks):
 
@@ -2410,8 +2432,11 @@ whole quote over the stored answers).
 | same | resume, R1 open or unreadable | unchanged, 409 `PREVIOUS_PAYMENT_OPEN` |
 | same | resume on a full or closed form, or the person answered again since | unchanged, `FORM_FULL` / `FORM_CLOSED` / `ALREADY_ANSWERED` |
 | `pending` within its hold (another click, another tab) | resume | unchanged, 409 `PAYMENT_IN_PROGRESS` |
-| `pending` naming no request | R2 cannot be issued | `cancelled` (`releaseUnissuedRow`), resumable again |
+| `pending` naming no request | R2 refused before or by core (nothing created) | `cancelled`, `unissued` (`releaseUnissuedRow`), resumable again |
 | `pending` naming R2 | a late callback about R1 | unchanged: a cancel is `other-request`, a confirm is accused at ERROR and reads R2 |
+| any resumable row | resume, the person no longer admitted, or the answer no longer priced at `totalPaid` | unchanged, 403 audience code / `FORM_COMBINATION_UNAVAILABLE` / 409 `PAYMENT_PRICE_CHANGED` |
+| `pending` naming no request | the issuing call fails after it was sent | `cancelled`, `issue-unknown`: never resumed |
+| `pending` | a manager cancels it | `cancelled`, `manager`: never resumed |
 | `paid`, `free`, `refunded`, `paid_over_capacity`, any cash row | resume | unchanged, 409 `PAYMENT_NOT_RESUMABLE` |
 
 **Never two payable requests for one answer.** R1 is settled at Lydia BEFORE anything else
@@ -2460,15 +2485,19 @@ answers, 8 still waiting, 3 expired.
   not announced the moment it is taken. The hourly cash tick (`expireStaleCashPayments`) first reads the
   answers due (`dueCashReminders`: still `pending_cash`, a member's, `cashReminderDueAt <= now()` and
   `cashExpiresAt > now()` on the database clock, not told, form not deleted), then expires - the same
-  tick and clock the expiry reads, so an answer due is told before the run that expires it.
+  tick and clock the expiry reads, so an answer due is told before the run that expires it. An answer
+  an older image wrote during the rolling deploy carries no due date; the query reads it as due 24
+  hours before its expiry (`COALESCE`, the backfill's value), so none is missed.
 - **Once, from durable state**: each answer is CLAIMED (`claimCashReminder`, a conditional `UPDATE` of
   `cashReminderNotifiedAt` that exactly one run wins, and only while the answer still waits for cash),
   then its bell row is written; a failed write RELEASES the claim at ERROR so the next hour retries. A
   try per answer.
 - **One notice, not a nag** (principle 3, "Votre attention n'est pas à vendre"): one bell row of type
   `form_cash_expiring` (the association as actor, the form's title as text, a tap opens the form), and
-  NO push: a push key needs the native tables, and a deadline days long is read in the app. Its bell
-  gate is `reader` (the member's own answer). The client floor is `1.8.0`
+  NO push: a push key needs the native tables, and a deadline days long is read in the app. Its push
+  category is therefore `null` (`NOTIFICATION_TYPE_CATEGORY` files a type's push, and there is none),
+  and its bell row is always written (`BELL_ROW_GATE` withholds only suggestion and engagement
+  content): it is about the reader's own answer, and it comes once. The client floor is `1.8.0`
   (`notification-client-floor.ts`): no older build is sent a type it cannot draw.
 - **Backfill**: the answers already waiting get a due date 24 hours before their expiry; an expiry less
   than a day away is told at the first hourly run after the deploy.

@@ -3348,6 +3348,7 @@
   "form_view_payment_resume_button": "Resume the payment",
   "form_payment_resume_in_progress": "A payment of this answer is already in progress: finish it on Lydia, or try again once it has expired, at most 30 minutes after it was started.",
   "form_payment_not_resumable": "This answer has no payment to resume.",
+  "form_payment_resume_price_changed": "The price of this answer has changed since: fill in the form again.",
   "form_view_payment_ended_note": "The payment request expired or was cancelled: you can try again.",
   "form_view_payment_in_progress_note": "Payment in progress on Lydia: confirm it on Lydia's page or in the Lydia app, then come back here - this page updates when you return.",
   "form_view_payment_reopen": "Reopen the payment page",

@@ -24,7 +24,11 @@ import {
   overCapacityFirst,
   seatHoldingWhere,
 } from './seat-hold';
-import { PAYMENT_IN_PROGRESS, PAYMENT_NOT_RESUMABLE } from './payment-resume';
+import {
+  PAYMENT_IN_PROGRESS,
+  PAYMENT_NOT_RESUMABLE,
+  PAYMENT_PRICE_CHANGED,
+} from './payment-resume';
 
 /**
  * AN ONLINE `pending` ROW HOLDS ITS SEAT FOR A BOUNDED TIME, AND A PAYMENT THAT LANDS AFTER IS
@@ -54,6 +58,8 @@ describe('FormsService - the seat a pending payment holds', () => {
     stripeSessionId?: string | null;
     paymentRequestId?: string | null;
     paymentSettledBy?: string | null;
+    /** Who cancelled the payment (migration 179, `PaymentCancelOrigin`). */
+    paymentCancelledBy?: string | null;
     cotisationGrantedAt?: Date | null;
     purchaseRecordedAt?: Date | null;
     organiserNotifiedAt?: Date | null;
@@ -70,6 +76,7 @@ describe('FormsService - the seat a pending payment holds', () => {
     paymentRequestId: null,
     stripeSessionId: null,
     paymentSettledBy: null,
+    paymentCancelledBy: null,
   };
 
   function makeStore(opts: {
@@ -92,6 +99,8 @@ describe('FormsService - the seat a pending payment holds', () => {
     pricingFacts?: unknown;
     /** The manager's close, or a past end date: the form takes no new answer (`assertFormOpen`). */
     closedAt?: Date | null;
+    /** Who may answer (`assertMaySubmit`); default open to everyone. */
+    submitCondition?: unknown;
   }) {
     let now = T0;
     // A seeded row naming a request was issued to the form's Business ('vendor'), as `submit` writes.
@@ -109,7 +118,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       cotisationVariantKey: null,
       basePrice: opts.basePrice ?? 0,
       priceMatrix: opts.priceMatrix ?? null,
-      submitCondition: null,
+      submitCondition: opts.submitCondition ?? null,
       anonymous: false,
       isPublic: opts.isPublic ?? false,
       allowMultipleSubmissions: opts.allowMultipleSubmissions ?? false,
@@ -128,6 +137,11 @@ describe('FormsService - the seat a pending payment holds', () => {
       if (expected instanceof FindOperator) {
         // The resume's offer (`resumableWhere`): an online, charged row - read as Postgres would.
         if (expected.type === 'isNull') return row[key] === null || row[key] === undefined;
+        // `Not(In(...))`: SQL's NOT IN, which a NULL never satisfies.
+        if (expected.type === 'not') {
+          const inner = (expected as unknown as { _value: unknown })._value;
+          return row[key] !== null && row[key] !== undefined && !matchesValue(row, key, inner);
+        }
         if (expected.type === 'in') return (expected.value as unknown[]).includes(row[key]);
         if (expected.type === 'moreThan') return (row[key] as number) > (expected.value as number);
         // Otherwise the hold, and it must be the ONE fragment the expiry job also uses - its two
@@ -2335,7 +2349,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       });
     const resume = (service: FormsService, caller = 'u1') =>
       service.resumePayment('ans', caller, { payerEmail: 'payer@example.org' });
-    const lydia = (rows: Row[], over: { maxSubmissions?: number | null; closedAt?: Date } = {}) =>
+    const lydia = (rows: Row[], over: Partial<Parameters<typeof makeStore>[0]> = {}) =>
       makeStore({ maxSubmissions: 2, basePrice: 1500, provider: 'lydia', rows, ...over });
 
     it.each([
@@ -2490,14 +2504,114 @@ describe('FormsService - the seat a pending payment holds', () => {
       expect(core.calls).toEqual([]);
     });
 
-    it('releases the answer again when the new request cannot be issued, so it may be resumed', async () => {
+    it('releases the answer again when the new request is REFUSED, so it may be resumed', async () => {
       const { service, rows, core } = lydia([released()]);
-      core.createAnswer = new Error('core down');
+      // An answer from core (a 4xx, as axios reports it): nothing was created at Lydia.
+      core.createAnswer = Object.assign(new Error('refused'), {
+        isAxiosError: true,
+        response: { status: 400, data: { code: 'PAYMENT_PROVIDER_REFUSED' } },
+      });
       await expect(resume(service)).rejects.toBeDefined();
-      expect(rows[0]).toMatchObject({ paymentStatus: 'cancelled', paymentRequestId: null });
+      expect(rows[0]).toMatchObject({
+        paymentStatus: 'cancelled',
+        paymentRequestId: null,
+        paymentCancelledBy: 'unissued',
+      });
       core.createAnswer = null;
       await expect(resume(service)).resolves.toMatchObject({ submissionId: 'ans' });
       expect(rows[0].paymentStatus).toBe('pending');
+    });
+
+    // A RESUME SELLS ONLY WHAT A FRESH SUBMIT WOULD (review of #3949): judged again, NOW.
+    it('refuses a person the form is no longer open to, before cancelling anything', async () => {
+      const { service, rows, core } = lydia([released()], {
+        submitCondition: { promo: [2024] },
+      });
+      await expect(resume(service)).rejects.toMatchObject({ status: 403 });
+      expect(core.calls).toEqual([]);
+      expect(rows[0].paymentStatus).toBe('expired');
+    });
+
+    it('refuses an answer whose price changed since, typed, issuing nothing', async () => {
+      const { service, rows, core } = lydia([released()], { basePrice: 2000 });
+      await expect(resume(service)).rejects.toMatchObject({
+        response: { code: PAYMENT_PRICE_CHANGED },
+      });
+      expect(core.calls).toEqual([]);
+      expect(rows[0].paymentStatus).toBe('expired');
+    });
+
+    it('refuses an answer whose combination closed since, with the submit code', async () => {
+      const { service, core } = lydia([released()], {
+        priceMatrix: {
+          dimensions: [
+            { id: 'd1', kind: 'promo', buckets: [{ id: 'b1', label: '1A', values: [2026] }] },
+          ],
+          cells: { b1: 1500, _others: null },
+        },
+      });
+      await expect(resume(service)).rejects.toMatchObject({
+        response: { code: 'FORM_COMBINATION_UNAVAILABLE' },
+      });
+      expect(core.calls).toEqual([]);
+    });
+
+    // A MANAGER'S CANCEL IS A DECISION: never offered back as a payment that failed.
+    it.each([
+      ['a manager', 'manager', PAYMENT_NOT_RESUMABLE],
+      ['an issue whose outcome at Lydia is unknown', 'issue-unknown', PAYMENT_NOT_RESUMABLE],
+    ])('refuses a payment cancelled by %s', async (_label, origin, code) => {
+      const { service, core } = lydia([
+        released({ paymentStatus: 'cancelled', paymentCancelledBy: origin }),
+      ]);
+      await expect(resume(service)).rejects.toMatchObject({ response: { code } });
+      expect(core.calls).toEqual([]);
+    });
+
+    it.each(['member', 'provider', 'unissued', null])(
+      'resumes a payment cancelled by %s, and clears the origin',
+      async (origin) => {
+        const { service, rows } = lydia([
+          released({ paymentStatus: 'cancelled', paymentCancelledBy: origin }),
+        ]);
+        await resume(service);
+        expect(rows[0]).toMatchObject({ paymentStatus: 'pending', paymentCancelledBy: null });
+      }
+    );
+
+    it('records who cancelled: the submitter, a manager, the provider', async () => {
+      const own = lydia([released({ paymentStatus: 'pending', paymentRequestedAt: T0 })]);
+      own.core.cancelAnswer = 'cancelled';
+      await own.service.cancelSubmission('ans', 'u1', false);
+      expect(own.rows[0]).toMatchObject({
+        paymentStatus: 'cancelled',
+        paymentCancelledBy: 'member',
+      });
+
+      const managed = lydia([released({ paymentStatus: 'pending', paymentRequestedAt: T0 })]);
+      managed.core.cancelAnswer = 'cancelled';
+      await managed.service.cancelSubmission('ans', 'admin', true);
+      expect(managed.rows[0]).toMatchObject({
+        paymentStatus: 'cancelled',
+        paymentCancelledBy: 'manager',
+      });
+    });
+
+    // A TIMED-OUT ISSUE may have left a request at Lydia the row does not name: released, and NOT
+    // offered for a resume (it would make a second payable request for one answer repeatable).
+    it('releases an answer whose issuing call failed after it was sent as issue-unknown', async () => {
+      const { service, rows, core } = lydia([released()]);
+      core.createAnswer = new Error('socket hang up');
+      await expect(resume(service)).rejects.toBeDefined();
+      expect(rows[0]).toMatchObject({
+        paymentStatus: 'cancelled',
+        paymentRequestId: null,
+        paymentCancelledBy: 'issue-unknown',
+      });
+      await expect(resume(service)).rejects.toMatchObject({
+        response: { code: PAYMENT_NOT_RESUMABLE },
+      });
+      expect(core.calls.filter((c) => c.route === 'create-checkout-session')).toHaveLength(1);
     });
 
     // THE WEBHOOK RACE: Lydia's callbacks about the OLD request land after the new one exists.
@@ -2563,6 +2677,17 @@ describe('FormsService - the seat a pending payment holds', () => {
         ],
         ['a closed form', () => [released()], { closedAt: ago(1000) }],
         ['a cash answer', () => [released({ paymentMethod: 'cash' })], {}],
+        [
+          "a manager's cancel",
+          () => [released({ paymentStatus: 'cancelled', paymentCancelledBy: 'manager' })],
+          {},
+        ],
+        ['an answer whose price changed', () => [released()], { basePrice: 2000 }],
+        [
+          'a person the form is closed to',
+          () => [released()],
+          { submitCondition: { promo: [2024] } },
+        ],
       ])('offers nothing for %s', async (_label, rowsOf, over) => {
         const { service } = lydia(rowsOf(), over);
         await expect(service.hasSubmission('f1', 'u1')).resolves.toMatchObject({

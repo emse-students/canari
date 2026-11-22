@@ -114,6 +114,7 @@ maybe('the cash hold notice against PostgreSQL (migration 179)', () => {
   it('adds the two columns and backfills a waiting answer 24 hours before its expiry, twice over', async () => {
     await q(`ALTER TABLE submissions DROP COLUMN "cashReminderDueAt"`);
     await q(`ALTER TABLE submissions DROP COLUMN "cashReminderNotifiedAt"`);
+    await q(`ALTER TABLE submissions DROP COLUMN "paymentCancelledBy"`);
     await q(
       `INSERT INTO submissions (id, "formId", "userId", "paymentStatus", "paymentMethod", "cashExpiresAt")
        VALUES ('00000000-0000-4000-8000-0000000ca5a1', $1, $2, 'pending_cash', 'cash', now() + interval '3 days'),
@@ -137,6 +138,12 @@ maybe('the cash hold notice against PostgreSQL (migration 179)', () => {
       { status: 'paid', lead: null, told: null },
       { status: 'pending_cash', lead: 24 * 3600, told: null },
     ]);
+    const [cancelOrigin] = await q(
+      `SELECT data_type, character_maximum_length AS len FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'submissions'
+          AND column_name = 'paymentCancelledBy'`
+    );
+    expect(cancelOrigin).toEqual({ data_type: 'character varying', len: 16 });
   });
 
   it('selects only a member answer still waiting, due, not expired, not told, of a live form', async () => {
@@ -173,18 +180,27 @@ maybe('the cash hold notice against PostgreSQL (migration 179)', () => {
       expires: `now() + interval '10 hours'`,
       due: `now() - interval '1 hour'`,
     });
+    // Written by an older image during the rolling deploy: no due date, owed 24 hours ahead.
+    await answer('00000000-0000-4000-8000-0000000ca518', {
+      expires: `now() + interval '10 hours'`,
+    });
+    await answer('00000000-0000-4000-8000-0000000ca519', {
+      expires: `now() + interval '3 days'`,
+    });
     const due = await forms.dueCashReminders();
-    expect(due).toEqual([
-      {
-        submissionId: '00000000-0000-4000-8000-0000000ca511',
-        userId: MEMBER,
-        formId: FORM,
-        formTitle: 'Gala',
-        associationId: ASSO,
-        associationName: 'BDE',
-        associationLogoUrl: null,
-      },
+    expect(due.map((d) => d.submissionId).sort()).toEqual([
+      '00000000-0000-4000-8000-0000000ca511',
+      '00000000-0000-4000-8000-0000000ca518',
     ]);
+    expect(due.find((d) => d.submissionId.endsWith('ca511'))).toEqual({
+      submissionId: '00000000-0000-4000-8000-0000000ca511',
+      userId: MEMBER,
+      formId: FORM,
+      formTitle: 'Gala',
+      associationId: ASSO,
+      associationName: 'BDE',
+      associationLogoUrl: null,
+    });
   });
 
   it('is claimed exactly once, never on an answer no longer waiting for cash, and again after a release', async () => {
