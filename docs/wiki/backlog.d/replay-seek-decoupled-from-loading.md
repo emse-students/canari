@@ -24,3 +24,5 @@ is a live that flipped and paused, played from start to end with no touch, on th
 **Mi 9T sitting, `1.7.3-alpha.6` (2026-11-22): the backward drag PASSES on Android.** A 393 s replay, real touch drags on the bar
 while it played: 63.6 s to 18.1 s (45 s back) and 41 s to 11.5 s (30 s back); each landed, kept playing, and the buffered window
 followed the playhead. The iPhone and desktop halves of this entry (and #3963's iOS drag) stay owed, so the entry stays.
+
+**2026-11-22, desktop reading on `1.7.3-alpha.6` (dev, Chrome, a 2:33 replay in the CanaReels viewer): the backward drag PASSES (#3963).** From 67.5 s a pointer drag on "Position dans la video" to 37.5 s (30 s back) landed at 37.4 s and kept playing; from 60.1 s back to 35.1 s (25 s) landed at 35.2 s. The console shows `[VideoPlayer] seek to 57.4 s is before the buffered window - refetched` then `[LIVE_REPLAY] ... seek to 57390 ms -> segment 28` down the drag: the un-clamped path. Taken at 60-67 s into playback, with the buffer window already moving. The iPhone reading is still owed.

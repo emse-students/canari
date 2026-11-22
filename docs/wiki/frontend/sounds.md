@@ -331,6 +331,7 @@ Opus, 48 kHz, ONE channel (read). The numbers: `recordingLoudness.test.ts` runs 
 14 kHz tones) through the recording tap and the one playback law, and **the law lands a note at -14 LUFS, raised by
 at most +6 dB, peak under -1 dBFS - so a note measured near -24 LUFS plays at -18, and a quiet one (tones at -30 dBFS,
 -34 LUFS) plays at -28**: the "-18 +/- 2" acceptance is not a property of the law. `monoRecording.test.ts` pins the
-destination's one-channel `speakers` average and that it keeps a 14 kHz tone. `recordingConstraints.test.ts` pins the
+destination's configuration (one explicit channel, `speakers` interpretation); the averaging and the 12 kHz cutoff are the
+engine's and the encoder's, read on a phone for the channel count only. `recordingConstraints.test.ts` pins the
 pair: `incall` asks the call's own constraints, `none` asks `RECORDING_AUDIO_CONSTRAINTS`; the page never sets an OS
 audio mode (`CallSoundHoldTest.kt` holds the call's).

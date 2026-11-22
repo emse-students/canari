@@ -52,10 +52,12 @@ describe('MinesweeperCell computed transition', () => {
   });
 
   /**
-   * The engine here resolves the custom property through the cascade but leaves `calc()` standing
-   * (`calc(180ms * 0.5)`), so the one product it leaves is evaluated; any other shape is a failure.
+   * An engine may resolve the custom property and leave `calc()` standing (`calc(180ms * 0.5)`, as
+   * here) or return a plain length (`0.09s`); both are read, any other shape fails.
    */
   function milliseconds(computed: string): number {
+    const plain = /^([\d.]+)(m?)s$/.exec(computed);
+    if (plain) return Number(plain[1]) * (plain[2] ? 1 : 1000);
     const m = /^calc\(([\d.]+)ms \* ([\d.]+)\)$/.exec(computed);
     if (!m) throw new Error(`unexpected computed transition-duration: ${computed}`);
     return Number(m[1]) * Number(m[2]);

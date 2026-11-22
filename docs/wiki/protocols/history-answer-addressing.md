@@ -544,6 +544,10 @@ beside a pre-release to send the real frame, so `systemMessageHandler.askId.test
 twice from one sender: one `HISTORY_DIGEST` keyless line, nothing pulled, answered or stored. The live read stays
 impossible until a `1.6.x` client can be installed.
 
+**Open measurement:** the floor is enforced in the client only, so a build below `1.7.0` that has not met the gate can still
+send a keyless ask and the frame carries no build to name. How many senders are still below the floor is not measured; that
+count decides when the `history-ask-without-answer-key` line can go.
+
 ### What proves the register ask and the state-only push
 
 - `registerOwed.test.ts` - the entry: durable, per account, bounded FIFO, an unreadable list reads
