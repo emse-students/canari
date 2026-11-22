@@ -140,12 +140,23 @@ async function reportIfChanged(): Promise<void> {
   const report = await notificationStateReport();
   if (!report) return;
   // The account may have switched or signed out while the snapshot was read: its sender is not ours.
-  if (send !== sender) return;
+  if (send !== sender) {
+    console.debug(
+      '[Push] notification state read dropped: superseded by a later arm (which re-reads) or disarmed'
+    );
+    return;
+  }
   const key = JSON.stringify(report);
   if (key === lastReported) return;
   try {
     await send(report);
-    if (send === sender) lastReported = key;
+    if (send === sender) {
+      lastReported = key;
+    } else {
+      console.debug(
+        '[Push] notification state sent but not remembered: superseded by a later arm or disarmed (an arm re-reads)'
+      );
+    }
     console.info('[Push] notification state changed - reported', report.permission);
   } catch (err) {
     console.warn('[Push] notification state change not reported - the next event retries', err);
