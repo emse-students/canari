@@ -49,6 +49,11 @@ describe('the settled-keyboard geometry report (canari_ios.mm)', () => {
       'vvOffsetTop=',
       'vvPageTop=',
       'composerTop=',
+      // The thread's half (the photo DM, 1.7.3-alpha.4): off its end, or a range short of its padding.
+      'threadTop=',
+      'threadMax=',
+      'threadPad=',
+      'lastRowBottom=',
     ])
       expect(native).toContain(field);
   });
@@ -56,5 +61,12 @@ describe('the settled-keyboard geometry report (canari_ios.mm)', () => {
   it('reads the composer footer the chat actually renders', () => {
     expect(native).toContain(`document.querySelector('.chat-composer-footer')`);
     expect(composer).toContain('class="chat-composer-footer"');
+  });
+
+  it('reads the thread pane the chat actually renders, and its rows by their id', () => {
+    const chatArea = readFileSync('src/lib/components/chat/ChatArea.svelte', 'utf8');
+    expect(native).toContain(`document.querySelector('.chat-messages-scroll')`);
+    expect(chatArea).toContain('class="chat-messages-scroll ');
+    expect(native).toContain(`querySelectorAll('[id^=\\"msg-\\"]')`);
   });
 });

@@ -93,20 +93,28 @@ describe('GuestIdentitySettings', () => {
     expect(target.textContent).toContain(m.form_respondent_settings_hint_anonymous());
   });
 
-  it('warns about small groups once the cursus is read from the account, and says what it needs', () => {
+  it('warns about small groups once the cursus is read from the account, and says it ticks the cursus', () => {
     const joined = render({
       isPublic: false,
       anonymous: true,
       choices: ['cursus', 'cursusFromAccount'],
     });
-    expect(
-      joined.target.querySelector('[data-testid="cursus-from-account-note"]')?.textContent
-    ).toContain(m.form_respondent_cursus_from_account_note());
-    const alone = render({ isPublic: false, anonymous: true, choices: ['cursusFromAccount'] });
-    expect(
-      alone.target.querySelector('[data-testid="cursus-from-account-note"]')?.textContent
-    ).toContain(m.form_respondent_cursus_from_account_needs_cursus());
+    const note = joined.target.querySelector('[data-testid="cursus-from-account-note"]');
+    expect(note?.textContent).toContain(m.form_respondent_cursus_from_account_note());
+    expect(note?.textContent).toContain(m.form_respondent_cursus_from_account_ticks_cursus());
     const off = render({ isPublic: false, anonymous: true, choices: ['cursus'] });
     expect(off.target.querySelector('[data-testid="cursus-from-account-note"]')).toBeNull();
+  });
+
+  it('ticks "Promo et formation" with the account reading, and unticks the reading with it', () => {
+    const { target, state } = render({ isPublic: false, anonymous: true });
+    const [cursus, , , fromAccount] = boxes(target);
+    fromAccount.click();
+    flushSync();
+    expect(state.choices).toEqual(['cursusFromAccount', 'cursus']);
+    expect(cursus.getAttribute('aria-pressed')).toBe('true');
+    cursus.click();
+    flushSync();
+    expect(state.choices).toEqual([]);
   });
 });

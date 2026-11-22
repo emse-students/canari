@@ -208,6 +208,13 @@ static void CanariObserveDocumentScrollRange(void) {
 /// clamp above never touches); or the page laid the composer out at 186 itself (`composerTop` 186,
 /// both scrolls 0). This line separates the three on the next build, from the bench's syslog alone,
 /// since a store build's WebView cannot be inspected (docs/wiki/device-verification.md).
+///
+/// THE THREAD'S HALF (iPhone 12, `1.7.3-alpha.4`, 2026-11-22): in a DM ending in portrait photos the
+/// thread rose 176 pt while the composer rose 278, leaving the last photo 71 pt under the composer,
+/// identically in three runs - and Android passes. Two causes fit and only the thread's own numbers
+/// separate them: the pane is NOT at the end of its range (`threadTop` < `threadMax`: the bottom was
+/// left - a flag that fell, or a scroll write the engine clamped), or it IS and the range itself ends
+/// short of the padding (`threadTop` = `threadMax` with `lastRowBottom` past `composerTop`).
 static void CanariReportSettledKeyboardGeometry(WKWebView *webView) {
   UIScrollView *scrollView = webView.scrollView;
   CGFloat offset = scrollView.contentOffset.y;
@@ -215,12 +222,18 @@ static void CanariReportSettledKeyboardGeometry(WKWebView *webView) {
   CGFloat bounds = CGRectGetHeight(scrollView.bounds);
   NSString *js =
       @"(function(){var s=document.scrollingElement,v=window.visualViewport,"
-       "f=document.querySelector('.chat-composer-footer');"
+       "f=document.querySelector('.chat-composer-footer'),"
+       "t=document.querySelector('.chat-messages-scroll'),"
+       "rs=t?t.querySelectorAll('[id^=\"msg-\"]'):[],l=rs.length?rs[rs.length-1]:null;"
        "function r(n){return Math.round(n*10)/10}"
        "return 'scrollY='+r(window.scrollY)+' scrollHeight='+(s?r(s.scrollHeight):'none')+"
        "' innerHeight='+r(window.innerHeight)+' vvHeight='+(v?r(v.height):'none')+"
        "' vvOffsetTop='+(v?r(v.offsetTop):'none')+' vvPageTop='+(v?r(v.pageTop):'none')+"
-       "' composerTop='+(f?r(f.getBoundingClientRect().top):'none')})()";
+       "' composerTop='+(f?r(f.getBoundingClientRect().top):'none')+"
+       "' threadTop='+(t?r(t.scrollTop):'none')+"
+       "' threadMax='+(t?r(t.scrollHeight-t.clientHeight):'none')+"
+       "' threadPad='+(t?getComputedStyle(t).paddingBottom:'none')+"
+       "' lastRowBottom='+(l?r(l.getBoundingClientRect().bottom):'none')})()";
   [webView evaluateJavaScript:js
             completionHandler:^(id result, NSError *error) {
               if (error != nil || ![result isKindOfClass:[NSString class]]) {
