@@ -70,8 +70,10 @@ use crate::commands::mls_account_state::{
     mls_other_accounts_present, rollback_user_mls_reset, stage_user_mls_reset,
 };
 use crate::commands::native_push_log::take_native_push_log;
+use crate::commands::notification_delivery_state::notification_delivery_state;
 use crate::commands::notifications::{
-    notify_native_message, record_read_elsewhere, store_avatar_mirror,
+    cancel_conversation_notifications, end_conversation_notifications, notify_native_message,
+    record_read_elsewhere, store_avatar_mirror,
 };
 use crate::commands::nse_outcomes::take_nse_outcomes;
 use crate::commands::outbox_mirror::{read_outbox_mirror, store_outbox_mirror};
@@ -89,7 +91,8 @@ use crate::commands::push::{
     take_background_joins, take_fcm_cache, take_key_group_push_joins, unclaimed_quick_replies,
 };
 use crate::commands::push_registration::{
-    complete_owed_push_token_deletion, end_push_registration,
+    complete_owed_push_token_deletion, end_push_registration, notification_shortcuts_erase_owed,
+    settle_notification_shortcuts_erase,
 };
 use crate::commands::storage::{
     clear_app_data, delete_user_database, get_installer_package, get_local_storage_usage,
@@ -1906,8 +1909,11 @@ pub fn run() {
             store_push_secret,
             claim_device_notices,
             preclaim_device_notices,
+            notification_delivery_state,
             end_push_registration,
             complete_owed_push_token_deletion,
+            notification_shortcuts_erase_owed,
+            settle_notification_shortcuts_erase,
             clear_app_data,
             delete_user_database,
             delete_user_mls_state,
@@ -1955,6 +1961,8 @@ pub fn run() {
             discard_picked_file,
             notify_native_message,
             record_read_elsewhere,
+            cancel_conversation_notifications,
+            end_conversation_notifications,
             store_avatar_mirror,
             store_display_names,
             store_conversation_nicknames,

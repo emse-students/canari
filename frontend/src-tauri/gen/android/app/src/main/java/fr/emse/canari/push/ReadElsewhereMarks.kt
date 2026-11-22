@@ -29,7 +29,7 @@ package fr.emse.canari.push
  * `cancel` exactly as it lags a `notify`, so once this process has removed a banner, the shade's
  * copy of it is stale and nothing may rebuild on it, weigh it or cancel it a second time. The record
  * goes with the banner: removed by a read ([recordThenCancel]), any other cancel ([withdraw]) or the
- * user's own dismissal ([forget], [forgetAll]) - each under this lock with the cancel it follows, so
+ * user's own dismissal ([forget], [clear]) - each under this lock with the cancel it follows, so
  * no post falls between the two.
  *
  * ONE LOCK, [lock], held by a post from the moment it reads the banner it re-injects to the moment
@@ -198,7 +198,7 @@ class ReadElsewhereMarks<M>(
     private val withdrawn = HashSet<String>()
 
     /**
-     * Every banner was removed at once ([forgetAll]): from then on the shade holds nothing this
+     * Every banner was removed at once ([clear], at a sign-out): from then on the shade holds nothing this
      * process did not post and record, so it is never asked again. Guarded by [lock].
      */
     private var allWithdrawn = false
@@ -211,15 +211,14 @@ class ReadElsewhereMarks<M>(
     private val reactionsWithdrawn = HashSet<String>()
 
     /**
-     * Every reaction notification was swept at once ([forgetAll]: the app's start sweeps them with
-     * the message banners), and only the conversations in [reactionsPostedSinceSweep] posted one
+     * Every reaction notification was swept at once ([clear], at a sign-out), and only the conversations in [reactionsPostedSinceSweep] posted one
      * since. Guarded by [lock].
      */
     private var reactionsSwept = false
 
     /**
      * The REACTION notification id each conversation posted since the last sweep (or since this
-     * process started): [forgetAll] cancels them BY ID, as it does the message banners - the
+     * process started): [clear] cancels them BY ID, as it does the message banners - the
      * caller's sweep reads a shade that lags a `notify`. Guarded by [lock].
      */
     private val reactionsPostedSinceSweep = HashMap<String, Int>()
@@ -250,7 +249,7 @@ class ReadElsewhereMarks<M>(
      *
      * With no banner known ([Withdrawal.NONE]) and nothing to keep, [stableId] is still cancelled -
      * a cancel by id is ordered after its `notify` by the system, so a banner the record lost sight
-     * of (posted just before a [forgetAll]) cannot outlive a dismissal. A dismissal that must keep a
+     * of (posted just before a [clear]) cannot outlive a dismissal. A dismissal that must keep a
      * pending reply cannot cancel what it cannot see. A banner the platform [holds] is re-posted
      * EMPTY through [repost] - every line it showed is dismissed - and kept ([Withdrawal.HELD], see
      * the class comment).
@@ -323,7 +322,7 @@ class ReadElsewhereMarks<M>(
 
     /**
      * A reaction of [conversationId] was posted as [notifId]: the shade answers again from now on, and
-     * the next [forgetAll] cancels it by id.
+     * the next [clear] cancels it by id.
      */
     fun reactionPosted(conversationId: String, notifId: Int) {
         synchronized(lock) {
@@ -481,43 +480,53 @@ class ReadElsewhereMarks<M>(
     }
 
     /**
-     * Drops every record: every message banner is removed at once (the app came to the front). Each
-     * RECORDED banner is [cancel]led by its id here, under the lock: the caller's sweep of the shade
-     * misses a banner posted just before it (the shade lags a `notify`), and once this returns the
-     * shade is never asked again - so that banner would stand for good. The system orders a cancel
-     * by id after its `notify`. A banner the platform [holds] is re-posted EMPTY through [repost]
-     * (given its conversation: the app is in front, every line was seen) and KEPT recorded instead -
-     * the class comment's rule. Every REACTION notification is swept by the caller too, so none is
-     * rebuilt on the shade's stale copy ([reactionBaseOf]).
+     * The conversation ENDED (deleted, left, excluded, its salon or community gone): its banner goes
+     * UNCONDITIONALLY - whatever it holds, a pending reply, a line with no server instant, a banner
+     * the platform holds after an inline answer - and the record forgets the conversation, its mark
+     * included. NO MARK IS RECORDED: an ending is not a read, and a mark is a process-lifetime
+     * fact that suppresses later posts, so a conversation the account comes back to (a rejoin, a
+     * sign-in after a sign-out) must start from nothing.
+     *
+     * Both the recorded banner's id and [stableId] are cancelled - a cancel by id is ordered after
+     * its `notify` by the system, so a banner posted just before this cannot outlive it.
      *
      * @return the ids cancelled.
      */
-    fun forgetAll(
-        holds: (notifId: Int) -> Boolean,
-        repost: (conversationId: String, held: Banner<M>, kept: List<M>) -> Banner<M>?,
-        cancel: (notifId: Int) -> Unit,
-    ): List<Int> = synchronized(lock) {
-        val cancelled = mutableListOf<Int>()
-        val kept = HashMap<String, Banner<M>>()
-        for ((conversationId, banner) in posted) {
-            if (holds(banner.notifId)) {
-                // The app is in front: every line was seen, so the re-post that ends the hold is EMPTY.
-                kept[conversationId] = repost(conversationId, banner, emptyList()) ?: banner
-            } else {
-                cancel(banner.notifId)
-                cancelled += banner.notifId
-            }
+    fun end(conversationId: String, stableId: Int?, cancel: (notifId: Int) -> Unit): List<Int> =
+        synchronized(lock) {
+            val cancelled = linkedSetOf<Int>()
+            posted[conversationId]?.let { cancelled += it.notifId }
+            if (stableId != null) cancelled += stableId
+            for (id in cancelled) cancel(id)
+            marks.remove(conversationId)
+            withdrawnLocked(conversationId)
+            cancelled.toList()
         }
-        posted.clear()
-        posted.putAll(kept)
-        withdrawn.clear()
-        allWithdrawn = true
-        // The caller's sweep removed every reaction notification too - and the ones this process
-        // posted are cancelled BY ID, ordered after their `notify`, like the banners above.
+
+    /**
+     * Drops every record and cancels each recorded banner and reaction notification BY ID, under the
+     * lock: the account that owned them SIGNED OUT, and nothing it showed may reach the next one. The
+     * caller's sweep of the shade misses what was posted just before it (the shade lags a `notify`),
+     * and once this returns the shade is never asked again - the system orders a cancel by id after
+     * its `notify`, so the recorded ids are the ones that cannot be missed. Marks go too: they are
+     * the previous account's reads.
+     *
+     * @return the ids cancelled.
+     */
+    fun clear(cancel: (notifId: Int) -> Unit): List<Int> = synchronized(lock) {
+        val cancelled = mutableListOf<Int>()
+        for (banner in posted.values) {
+            cancel(banner.notifId)
+            cancelled += banner.notifId
+        }
         for (reactionId in reactionsPostedSinceSweep.values) {
             cancel(reactionId)
             cancelled += reactionId
         }
+        posted.clear()
+        marks.clear()
+        withdrawn.clear()
+        allWithdrawn = true
         reactionsWithdrawn.clear()
         reactionsPostedSinceSweep.clear()
         reactionsSwept = true

@@ -27,6 +27,7 @@
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import {
     getSubmissions,
+    getHeldAnswers,
     deleteForm,
     setFormClosed,
     deleteSubmission,
@@ -113,6 +114,23 @@
   let submissionsData = $state<Record<string, Submission[] | 'loading' | 'error'>>({});
   /** Cash payments awaiting validation, per form that accepts cash. */
   let pendingCash = $state<Record<string, PendingCashSubmission[]>>({});
+  /** An anonymous form's answers waiting for their batch, read with its answers. */
+  let heldAnswers = $state<Record<string, { held: number; batchSize: number }>>({});
+
+  /**
+   * Reads how many answers of an anonymous form wait for their batch - AFTER its answers, whose read
+   * releases a closed form's. A failure leaves the notice out, logged: the answers shown are right.
+   */
+  async function loadHeldAnswers(formId: string) {
+    const form = forms.find((f) => f.id === formId);
+    if (!form?.anonymous) return;
+    try {
+      heldAnswers = { ...heldAnswers, [formId]: await getHeldAnswers(formId) };
+      Log.d('forms.held', `form ${formId.slice(0, 8)}: ${heldAnswers[formId].held} answer(s) wait`);
+    } catch (e) {
+      console.error(`[FORMS] reading the waiting answers of form ${formId.slice(0, 8)} failed:`, e);
+    }
+  }
 
   function setForms(next: Form[]) {
     forms = next;
@@ -227,6 +245,7 @@
       console.error(`[FORMS] re-reading the answers of form ${form.id.slice(0, 8)} failed:`, e);
       showToast(m.form_list_responses_error());
     }
+    await loadHeldAnswers(form.id);
     if (scoped && form.allowCashPayment) await loadPendingCash([form]);
   }
 
@@ -241,7 +260,9 @@
     } catch (e) {
       console.error(`[FORMS] loading the answers of form ${formId.slice(0, 8)} failed:`, e);
       submissionsData = { ...submissionsData, [formId]: 'error' };
+      return;
     }
+    await loadHeldAnswers(formId);
   }
 
   /** The form a `?responses=` link last opened, so one link opens its accordion once. */
@@ -575,6 +596,17 @@
 
           {#if expandedForms[form.id]}
             <div class="border-cn-border border-t-2 px-4 py-4 @md:px-5">
+              {#if form.anonymous && (heldAnswers[form.id]?.held ?? 0) > 0}
+                <p
+                  class="bg-cn-surface-alt text-text-muted mb-3 rounded-2xl px-4 py-3 text-sm"
+                  data-testid="responses-held"
+                >
+                  {m.form_responses_held_notice({
+                    count: heldAnswers[form.id].held,
+                    size: heldAnswers[form.id].batchSize,
+                  })}
+                </p>
+              {/if}
               {#if submissionsData[form.id] === 'loading'}
                 <div class="flex justify-center py-4">
                   <div

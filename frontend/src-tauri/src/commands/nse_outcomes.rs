@@ -74,6 +74,7 @@ const STAGES: &[&str] = &[
     "locality",
     "catchup",
     "attach",
+    "donate",
 ];
 /// The keys a line may carry, in the order they are re-serialised. `n` is the run's sequence in its
 /// process (the number its file names carry): a counter from 1, no more personal than `pid`, and the

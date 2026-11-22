@@ -52,6 +52,8 @@
   import Button from '$lib/components/ui/Button.svelte';
   import FormHeader from '$lib/components/forms/FormHeader.svelte';
   import FormQuestion from '$lib/components/forms/FormQuestion.svelte';
+  import FormBlock from '$lib/components/forms/FormBlock.svelte';
+  import { isFormBlock, questionItemsOf, questionNumbers } from '$lib/forms/formBlocks';
   import FormViewerTier from '$lib/components/forms/FormViewerTier.svelte';
   import ProductGridQuestion from '$lib/components/forms/ProductGridQuestion.svelte';
   import ProductGridOrderBar from '$lib/components/forms/ProductGridOrderBar.svelte';
@@ -1067,10 +1069,14 @@
       calculateTotal() > 0 &&
       !(form.allowCashPayment && paymentMethodChoice === 'cash')
   );
-  const totalCount = $derived(visibleItems.length);
+  /** The visible QUESTIONS: a text or image block is read, never answered, so it counts nowhere. */
+  const visibleQuestions = $derived(questionItemsOf(visibleItems));
+  /** Each visible question's number, counting questions only. */
+  const numbers = $derived(questionNumbers(visibleItems));
+  const totalCount = $derived(visibleQuestions.length);
   const answeredCount = $derived.by(() => {
     if (!form) return 0;
-    return visibleItems.filter((item) => isItemAnswered(item, selections[item.id])).length;
+    return visibleQuestions.filter((item) => isItemAnswered(item, selections[item.id])).length;
   });
   /**
    * Whether this estate stores each priced grid's own switch: off ([LEGACY], an estate older than
@@ -1506,9 +1512,12 @@
 
     <!-- ── Questions ── -->
     <div class="space-y-3 sm:space-y-4">
-      {#each visibleItems as item, qi (item.id)}
-        <!-- A priced grid draws its own card: the product photo spans it, the price sits by the title. -->
-        {#if isProductGrid(item) && item.productGrid}
+      {#each visibleItems as item (item.id)}
+        <!-- A text or image block: what the organiser says between the questions, no answer. -->
+        {#if isFormBlock(item)}
+          <FormBlock {item} formTitle={form.title} />
+          <!-- A priced grid draws its own card: the product photo spans it, the price sits by the title. -->
+        {:else if isProductGrid(item) && item.productGrid}
           <ProductGridQuestion
             {item}
             grid={item.productGrid}
@@ -1521,7 +1530,7 @@
         {:else}
           <FormQuestion
             {item}
-            index={qi}
+            index={(numbers.get(item.id) ?? 1) - 1}
             bind:value={selections[item.id]}
             disabled={readOnly || isNotOpenYet || isClosed || lockedItems.has(item.id)}
             formId={form.id}

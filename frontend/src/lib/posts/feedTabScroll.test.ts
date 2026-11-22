@@ -21,6 +21,20 @@ describe('centredTabScrollLeft', () => {
     expect(centredTabScrollLeft(row, { left: 16 + 160 - 40, width: 100 }, 40, MAX)).toBe(60);
   });
 
+  it('shows the LEADING edge of a tab wider than the row, never its middle', () => {
+    // A 340 px tab at 100-440 in the content, row 300 px: centring would clip its first 20 px.
+    expect(centredTabScrollLeft(row, { left: 16 + 100, width: 340 }, 0, 200)).toBe(100);
+  });
+
+  it('keeps the fade width clear before the leading edge of a tab wider than the row', () => {
+    expect(centredTabScrollLeft(row, { left: 16 + 100, width: 340 }, 0, 200, 32)).toBe(68);
+  });
+
+  it('keeps a tab that fits, even a wide one, centred and whole (no lead applied)', () => {
+    // 290 px in a 300 px row: centred is 5 px each side; a lead would push it under the trailing fade.
+    expect(centredTabScrollLeft(row, { left: 16 + 100, width: 290 }, 0, 200, 32)).toBe(95);
+  });
+
   it('leaves a row that does not overflow at 0', () => {
     expect(centredTabScrollLeft(row, { left: 200, width: 100 }, 0, 0)).toBe(0);
   });

@@ -13,8 +13,8 @@ import { describe, expect, it } from 'vitest';
  * same message recognises itself there and refreshes without alerting again. That closed the
  * side-by-side duplicate (2026-09-18) and it closes nothing here, because the shade answers a
  * strictly weaker question than the one that matters. "Is it still showing" goes false when the user
- * swipes - and when `MainActivity.onResume` cancels every message notification, which it does on
- * every launch. "Has the user been told" stays true through both.
+ * swipes - and (until 2026-11-21) when `MainActivity.onResume` cancelled every message notification, which
+ * it did on every launch. "Has the user been told" stays true through both.
  *
  * So a message redelivered after a dismissal looked, to the builder, exactly like a first arrival.
  * And the launch is precisely when a redelivery happens: a push the app was never awake to
@@ -228,7 +228,7 @@ describe('the builder records what it posted and keeps the stamps current', () =
     expect(fn.slice(0, 700)).not.toContain('.name');
   });
 
-  it("forgets the record on the user's swipe of THAT banner, and when every banner is cleared", () => {
+  it("forgets the record on the user's swipe of THAT banner, and opening the app clears none", () => {
     // ONE builder of a conversation banner sets the delete intent, and BOTH posts - the message
     // and the pending reply's re-post (device reading of #3912: the re-post had none) - use it.
     expect(source.split('.setDeleteIntent(').length - 1).toBe(1);
@@ -277,47 +277,64 @@ describe('the builder records what it posted and keeps the stamps current', () =
     ]);
     expect(source).toContain('putExtra(EXTRA_BANNER_NOTIF_ID, notifId)');
     expect(source).toContain('if (READ_ELSEWHERE.forget(groupId, notifId)) {');
-    // The cancels and the forget are one step under the lock a post holds.
-    const all = source.slice(source.indexOf('fun cancelAllMessageNotifications('));
-    const lock = all.indexOf('synchronized(READ_ELSEWHERE.lock) {');
-    expect(lock).toBeGreaterThan(-1);
-    expect(all.indexOf('manager.cancel(sbn.id)')).toBeGreaterThan(-1);
-    expect(lock).toBeLessThan(all.indexOf('manager.cancel(sbn.id)'));
-    // ...and what the record holds is cancelled by id there too (round-7 review, S1) - except a
-    // banner the platform holds, updated and kept (round-12 review, S-a).
-    const forget = all.indexOf('READ_ELSEWHERE.forgetAll(');
-    expect(forget).toBeGreaterThan(-1);
-    expect(forget).toBeLessThan(all.indexOf('CallRingPlayer.rings'));
-    // ONE snapshot answers every "held?" of the sweep (round-13 review).
-    expect(all).toContain(
-      'val heldIds = snapshot.filter { isHeldByDirectReply(it.notification) }.map { it.id }.toSet()'
+    // OPENING THE APP CLEARS NO CONVERSATION BANNER (owner, 2026-11-21: "N'effacer que les lues"):
+    // the blanket sweep of the messages, mentions and reactions channels is gone, with the
+    // forget-all of the record and the generic-banner ledger that rode on it. A banner goes with its
+    // conversation - read here, read elsewhere, answered, ended - never with the app coming up.
+    expect(source).not.toContain('fun cancelAllMessageNotifications(');
+    expect(source).not.toContain('READ_ELSEWHERE.forgetAll(');
+    // The ledger is cleared in ONE place: the sign-out (`clearAccountNotifications`).
+    expect(source.split('GENERIC_BANNERS.allCleared()').length - 1).toBe(1);
+    expect(source.slice(source.indexOf('fun clearAccountNotifications('))).toContain(
+      'GENERIC_BANNERS.allCleared()'
     );
-    expect(all.slice(forget, forget + 400)).toContain('holds = { it in heldIds }');
-    expect(all).toContain(
-      'if (isHeldByDirectReply(sbn.notification)) held += sbn.id else manager.cancel(sbn.id)'
+    expect(source).not.toContain('releaseUnrecordedHold');
+    const retire = source.slice(source.indexOf('fun retireTakenOverNotifications('));
+    const retireBody = retire.slice(0, retire.indexOf('\n        }\n'));
+    // What it still retires is what the open app takes over: rings, and the open-the-app notices.
+    expect(retireBody).toContain('channelId == CHANNEL_CALLS');
+    expect(retireBody).toContain(
+      'OUTBOX_NUDGE_NOTIF_ID, NEW_DEVICE_NOTIF_ID, WAKE_UNAVAILABLE_NOTIF_ID'
     );
-    // THE RECORD FIRST, then the FRESH copy (round-14 review, B2): a banner forgetAll re-posted
-    // and kept may read as released at once, and must not be cancelled under its record.
-    const release = all.indexOf('for (id in held) releaseUnrecordedHold(context, manager, id)');
-    expect(release).toBeGreaterThan(forget);
-    expect(all).not.toContain('cancelledByRecord');
-    const unrecorded = source.slice(source.indexOf('private fun releaseUnrecordedHold('));
-    const recorded = unrecorded.indexOf(
-      'if (groupId != null && READ_ELSEWHERE.bannerOf(groupId) { null } != null) return'
+    for (const forbidden of [
+      'CHANNEL_MESSAGES',
+      'CHANNEL_MENTIONS',
+      'CHANNEL_REACTIONS',
+      'READ_ELSEWHERE',
+    ]) {
+      expect(retireBody).not.toContain(forbidden);
+    }
+  });
+
+  // BLOCK review of #3951: an ENDING is not a read. It has its own native entry, which records NO
+  // mark (a mark outlives the session and would silence a rejoined conversation); a SIGN-OUT takes
+  // down everything the account showed, since opening the app no longer sweeps; EVERY cancel path
+  // refreshes the summary and the badge, the early returns included.
+  it('ends a conversation with its own entry, clears at sign-out and refreshes the summary in a finally', () => {
+    const end = source.slice(source.indexOf('fun endConversationNotifications('));
+    const endBody = end.slice(0, end.indexOf('\n        }\n'));
+    expect(endBody).toContain('READ_ELSEWHERE.end(groupId, stableId)');
+    expect(endBody).toContain('cancelReactionNotification(prefs, manager, groupId)');
+    expect(endBody).not.toContain('recordThenCancel');
+    expect(endBody).not.toContain('READ_ELSEWHERE.record');
+    expect(source).toContain('fun endConversationFromWebSocket(');
+    expect(source).not.toContain('fun reconcileConversationNotifications(');
+    expect(source).not.toContain('"conversation_ended" ->');
+
+    const signOut = readFileSync(resolve(dirname(SERVICE), 'PushRegistrationEnd.kt'), 'utf8');
+    const endForSignOut = signOut.slice(signOut.indexOf('fun endForSignOutFromRust('));
+    expect(endForSignOut).toContain(
+      'CanariFirebaseMessagingService.clearAccountNotifications(context)'
     );
-    const fresh = unrecorded.indexOf('if (!holdsDirectReply(manager, notifId)) {');
-    expect(recorded).toBeGreaterThan(-1);
-    expect(fresh).toBeGreaterThan(recorded);
-    expect(fresh).toBeLessThan(unrecorded.indexOf('rebuildBanner('));
-    // The app is in front: the re-post that ends a hold is EMPTY (round-15 review, S2).
-    expect(unrecorded).toContain('rebuildBanner(context, manager, groupId)(banner, emptyList())');
-    const marksSource = readFileSync(
-      resolve(dirname(SERVICE), 'push/ReadElsewhereMarks.kt'),
-      'utf8'
+    expect(endForSignOut.indexOf('clearAccountNotifications')).toBeLessThan(
+      endForSignOut.indexOf('eraseSecret(context)')
     );
-    expect(marksSource).toContain(
-      'kept[conversationId] = repost(conversationId, banner, emptyList()) ?: banner'
-    );
+
+    const cancel = source.slice(source.indexOf('fun cancelConversationNotification('));
+    const cancelBody = cancel.slice(0, cancel.indexOf('\n        }\n'));
+    const fin = cancelBody.slice(cancelBody.lastIndexOf('} finally {'));
+    expect(fin).toContain('refreshBadgeSummary(context, justCancelled = notifId)');
+    expect(cancelBody.split('refreshBadgeSummary(').length - 1).toBe(1);
   });
 
   // Round-13 review (S1): a channel switch cancels the old post - an app cancel, dropped on a

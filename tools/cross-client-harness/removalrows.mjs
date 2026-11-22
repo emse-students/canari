@@ -310,9 +310,9 @@ function communityNarration(row, ids) {
 /**
  * The owner seat that SENDS the row's one salon message (`removals.mjs` `send`), named by that
  * message's own ids: the view following the new row of a salon holding exactly the row's messages,
- * the echo sent and settled under the server's id, the unsent ledger cleared, and - once per page
- * life - the proof that the server echoes a client id. `0 waiting repeat(s)` is pinned: a repeat that
- * was waiting is a send that went twice. The owner's OTHER devices ask it for the new community's
+ * the echo sent and settled under the server's id, and the unsent ledger cleared (the repeat-proof
+ * line it once also forgave went with `salonRepeatProof.ts`, retired 2026-11-22). The owner's OTHER
+ * devices ask it for the new community's
  * history (the seed it minted for that message), and it answers each of them once with at least one
  * seed; an answer to any other device stays dirt.
  *
@@ -337,11 +337,6 @@ function senderNarration(row, ids) {
     at(L, String.raw`\[SALON-ECHO\] ${cid}… sending`, m),
     at(L, String.raw`\[SALON-ECHO\] ${settled}`, m),
     at(D, String.raw`\[SALON-UNSENT\] ${P} entr\(y/ies\) forgotten: the server holds them`, m),
-    at(
-      L,
-      String.raw`\[SALON-REPEAT\] the server echoed client id ${cid}\.\.\.: a repeated send is answered with its row - 0 waiting repeat\(s\) released`,
-      1
-    ),
     // One needle per device, each answered once.
     ...(ids.ownerDeviceIds ?? []).map((d) =>
       at(

@@ -1,5 +1,10 @@
 /// <reference types="jest" />
 import {
+  INSTALLED_APP_DEVICE_PREFIX,
+  parseNotificationState,
+  pushPresenceLine,
+  PUSH_BROWSER_ONLY_SQL,
+  PUSH_UNKNOWN_ID_SQL,
   PUSH_COVERAGE_SQL,
   PUSH_COVERAGE_WINDOW_MS,
   PUSH_REGISTRATION_GRACE_MS,
@@ -19,7 +24,7 @@ describe('reportPushCoverage', () => {
   it('reads once, read-only, with the window, the ladder grace, the ban cutoff and now', async () => {
     const d = db([]);
     await reportPushCoverage(d, logger(), NOW);
-    expect(d.query).toHaveBeenCalledTimes(1);
+    expect(d.query).toHaveBeenCalledTimes(3);
     const [sql, params] = d.query.mock.calls[0] as unknown as [string, Date[]];
     expect(sql).toBe(PUSH_COVERAGE_SQL);
     expect(sql).not.toMatch(/\b(INSERT|UPDATE|DELETE)\b/i);
@@ -48,7 +53,9 @@ describe('reportPushCoverage', () => {
       l,
       NOW
     );
-    expect(l.log).toHaveBeenCalledWith(expect.stringMatching(/ran in 24 h: 66, .*: 24, .*: 0$/));
+    expect(l.log).toHaveBeenCalledWith(
+      expect.stringMatching(/ran in 24 h: 66, .*: 24, .*: 0, .*: 0$/)
+    );
     expect(l.warn).toHaveBeenCalledTimes(2);
     expect(l.warn).toHaveBeenCalledWith(
       expect.stringContaining('os=android build=1.6.12 without=14/38')
@@ -99,7 +106,7 @@ describe('reportPushCoverage', () => {
       l,
       NOW
     );
-    expect(l.log).toHaveBeenCalledTimes(1);
+    expect(l.log).toHaveBeenCalledTimes(2);
     expect(l.warn).not.toHaveBeenCalled();
   });
 
@@ -110,7 +117,128 @@ describe('reportPushCoverage', () => {
       l,
       NOW
     );
-    expect(l.log).toHaveBeenCalledWith(expect.stringMatching(/: 0, given no push token .*: 2$/));
+    expect(l.log).toHaveBeenCalledWith(
+      expect.stringMatching(/: 0, given no push token .*: 2, registered .*: 0$/)
+    );
     expect(l.warn).not.toHaveBeenCalled();
+  });
+});
+
+describe('the coverage counts the INSTALLED app only (2026-11-21)', () => {
+  it('filters on the tauri- id prefix, so a mobile browser reporting android is no phone', () => {
+    expect(INSTALLED_APP_DEVICE_PREFIX).toBe('tauri-');
+    expect(PUSH_COVERAGE_SQL).toContain(`k."deviceId" LIKE 'tauri-%'`);
+    expect(PUSH_BROWSER_ONLY_SQL).toContain(`k."deviceId" NOT LIKE 'tauri-%'`);
+    expect(PUSH_BROWSER_ONLY_SQL).not.toMatch(/\b(INSERT|UPDATE|DELETE)\b/i);
+  });
+
+  it('ACCUSES a phone-OS device whose id is neither tauri- nor web-, never drops it in silence', async () => {
+    const l = { log: jest.fn(), warn: jest.fn() };
+    const d = {
+      query: jest.fn(async (sql: string): Promise<never> => {
+        if (sql === PUSH_UNKNOWN_ID_SQL) return [{ other: 2 }] as never;
+        return [] as never;
+      }),
+    };
+    await reportPushCoverage(d, l, Date.now());
+    expect(PUSH_UNKNOWN_ID_SQL).toContain(`k."deviceId" NOT LIKE 'tauri-%'`);
+    expect(PUSH_UNKNOWN_ID_SQL).toContain(`k."deviceId" NOT LIKE 'web-%'`);
+    expect(PUSH_UNKNOWN_ID_SQL).not.toMatch(/\b(INSERT|UPDATE|DELETE)\b/i);
+    expect(l.warn).toHaveBeenCalledWith(expect.stringContaining('2 phone-OS device(s)'));
+  });
+
+  it('says the browser-only members as information at log, never as a warning', async () => {
+    const l = { log: jest.fn(), warn: jest.fn() };
+    const query = jest
+      .fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ members: 17 }]);
+    await reportPushCoverage({ query } as never, l, Date.now());
+    expect(l.log).toHaveBeenCalledWith(
+      expect.stringMatching(/only through a mobile browser.*: 17$/)
+    );
+    expect(l.warn).not.toHaveBeenCalled();
+  });
+
+  it('prints no [PUSH_MISSING] for a browser device that reports android', () => {
+    const base = { userId: 'u', build: '1.7.0', held: false, outcome: 'none', deviceOs: 'android' };
+    expect(pushPresenceLine({ ...base, deviceId: 'web-u-1-a' })).toBeNull();
+    expect(pushPresenceLine({ ...base, deviceId: 'tauri-u-1-a' })).not.toBeNull();
+  });
+
+  it('counts registered-but-permission-off as its own category, accused by build', async () => {
+    const l = { log: jest.fn(), warn: jest.fn() };
+    const query = jest
+      .fn()
+      .mockResolvedValueOnce([
+        {
+          os: 'android',
+          build: '1.7.3',
+          devices: 10,
+          withoutPush: 0,
+          noOsToken: 0,
+          permissionOff: 2,
+        },
+      ])
+      .mockResolvedValueOnce([{ members: 0 }]);
+    await reportPushCoverage({ query } as never, l, Date.now());
+    expect(l.log).toHaveBeenCalledWith(expect.stringContaining('[PUSH_PERMISSION_OFF]): 2'));
+    expect(l.warn).toHaveBeenCalledTimes(1);
+    expect(l.warn).toHaveBeenCalledWith(
+      expect.stringContaining('[PUSH_PERMISSION_OFF] os=android build=1.7.3 off=2/10')
+    );
+    expect(PUSH_COVERAGE_SQL).toContain(`"notificationState" IN ('off', 'not-asked'`);
+  });
+});
+
+describe('parseNotificationState', () => {
+  const android = (o: object) => ({
+    permission: 'granted',
+    enabled: true,
+    channels: { messages: 'high', posts: 'default' },
+    ...o,
+  });
+
+  it('absent is unknown, never on - an old client says nothing', () => {
+    expect(parseNotificationState(undefined)).toEqual({ state: 'unknown', channels: null });
+    expect(parseNotificationState(null).state).toBe('unknown');
+  });
+
+  it.each([
+    [android({}), 'on', 'messages=high posts=default'],
+    [android({ permission: 'denied', enabled: false }), 'off', 'messages=high posts=default'],
+    [android({ enabled: false }), 'off', 'messages=high posts=default'],
+    [
+      android({ channels: { messages: 'none', posts: 'high' } }),
+      'channel-off',
+      'messages=none posts=high',
+    ],
+    [{ permission: 'not-determined', enabled: false }, 'not-asked', null],
+    [{ permission: 'denied', enabled: false, alerts: false }, 'off', null],
+    [{ permission: 'granted', enabled: true, alerts: false }, 'alerts-off', null],
+    [{ permission: 'provisional', enabled: true, alerts: true }, 'on', null],
+  ])('%j is %s', (raw, state, channels) => {
+    expect(parseNotificationState(raw)).toEqual({ state, channels });
+  });
+
+  it('a permitted device that does not state `enabled` is unknown, not on', () => {
+    expect(parseNotificationState({ permission: 'granted' }).state).toBe('unknown');
+  });
+
+  it.each([
+    'granted',
+    [],
+    { permission: 'maybe', enabled: true },
+    { permission: 'granted', enabled: 'yes' },
+    { permission: 'granted', enabled: true, alerts: 1 },
+    { permission: 'granted', enabled: true, channels: { messages: 'loud' } },
+    { permission: 'granted', enabled: true, channels: 'x' },
+  ])('%j is invalid, and stores nothing', (raw) => {
+    expect(parseNotificationState(raw)).toEqual({ state: 'invalid', channels: null });
+  });
+
+  it('ignores a channel it was not asked about', () => {
+    const r = parseNotificationState(android({ channels: { messages: 'low', evil: 'x' } }));
+    expect(r.channels).toBe('messages=low');
   });
 });

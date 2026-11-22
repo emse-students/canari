@@ -720,10 +720,50 @@ function historyAskId(
 }
 
 /**
+ * Why a history ask with no usable `answerKey` is refused, as a TYPE - the one call site that tells
+ * it from a defect reads this, never the line's prose.
+ */
+export const KEYLESS_HISTORY_ASK = 'history-ask-without-answer-key' as const;
+
+/** Asks already said once: (tag, sender, conversation) - a peer repeats its ask on every resume. */
+const keylessAsksSaid = new Set<string>();
+
+/** Forgets which keyless asks were said: they name senders of the account that logs out. */
+export function resetKeylessHistoryAsks(): void {
+  keylessAsksSaid.clear();
+}
+
+/**
+ * Says, ONCE per sender and conversation, that an ask without an `answerKey` was refused.
+ *
+ * STAYS AT ERROR, DEDUPLICATED (owner's 2026-11-22 log, a `HISTORY_DIGEST` line; review of #3958).
+ * The frame cannot say who sent it: a device below the `1.7.0` floor that has not met the update gate
+ * (the floor is enforced IN THE CLIENT ONLY, legacy-compatibility.md) still sends keyless asks, but a
+ * CURRENT build sending one would be a defect or a forgery, and nothing in the frame (it carries no
+ * build) separates the two. A line that cannot rule out a bug must accuse, so it is not demoted; it is
+ * said once per (tag, sender, conversation) because a peer asks again on each resume, and it names
+ * both possible causes. Cleared on logout: it names senders of the account that left.
+ */
+function noteKeylessHistoryAsk(
+  tag: string,
+  senderNorm: string,
+  convoKey: string,
+  log: (msg: string) => void
+): void {
+  const key = `${tag}|${senderNorm}|${convoKey}`;
+  log(`[${tag}] ${KEYLESS_HISTORY_ASK}: ask without a well-formed answer key ignored`);
+  if (keylessAsksSaid.has(key)) return;
+  keylessAsksSaid.add(key);
+  console.error(
+    `[${tag}] ${KEYLESS_HISTORY_ASK} from ${senderNorm} for ${convoKey.slice(0, 8)}… - a build below the 1.7.0 floor that has not met the update gate, or a defect or forgery (the frame names no build, so it cannot tell); refused, answered nothing`
+  );
+}
+
+/**
  * The `answerKey` of a history ask, or `null` when it carries none usable - and then the ask is
- * MALFORMED, never an older client: every build since option B (#3775, first in the stable `v1.7.0`)
- * mints one, and the floor is past it (docs/wiki/legacy-compatibility.md history). An answer must be
- * sealed to the asker's key, so an ask without one is answered nothing, as one with no id is (D211).
+ * from a build older than option B (#3775, first in the stable `v1.7.0`) that the client-side floor
+ * has not reached yet ({@link noteKeylessHistoryAsk}). An answer must be sealed to the asker's key,
+ * so an ask without one is answered nothing, as one with no id is (D211).
  */
 function historyAskKey(
   data: any,
@@ -734,12 +774,7 @@ function historyAskKey(
 ): string | null {
   const answerKey = parseHistoryAnswerKey(data?.answerKey);
   if (answerKey !== undefined) return answerKey;
-  // At error: every build at the floor (`1.7.0`) mints a key for each ask, so a keyless one is a
-  // defect or a forgery, never an older client (docs/wiki/legacy-compatibility.md).
-  console.error(
-    `[${tag}] No answer key from ${senderNorm} for ${convoKey.slice(0, 8)}… - every build since option B mints one, so the ask is malformed - ignored`
-  );
-  log(`[${tag}] ask without a well-formed answer key ignored`);
+  noteKeylessHistoryAsk(tag, senderNorm, convoKey, log);
   return null;
 }
 
@@ -1462,6 +1497,7 @@ export async function handleSystemEvent(
         key: convoKey,
         groupId: convo.id,
         saveConversation,
+        confirmed: true,
       });
       log(`[INFO] Group deleted by ${senderNorm} - conversation marked removed`);
     }

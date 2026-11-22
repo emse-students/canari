@@ -83,7 +83,7 @@ make_repo() {
   mkdir -p "$dir/.github/scripts" "$dir/.github/workflows" "$dir/frontend/src/lib/x" "$dir/docs/wiki/backlog.d" \
     "$dir/apps/core-service/src/a"
   cp "$repo_root/.github/scripts/local-ci.sh" "$repo_root/.github/scripts/ci-scopes.sh" \
-    "$repo_root/.github/scripts/checks.sh" "$dir/.github/scripts/"
+    "$repo_root/.github/scripts/checks.sh" "$repo_root/.github/scripts/machine-slot.mjs" "$dir/.github/scripts/"
   echo "name: CI" >"$dir/.github/workflows/ci.yml"
   echo "export const a = 1;" >"$dir/frontend/src/lib/x/mod.ts"
   echo "test" >"$dir/frontend/src/lib/x/mod.test.ts"

@@ -28,7 +28,7 @@
      * "not now", 502/503/504 - a deploy). The label says so instead of a bare "en attente"; `null`
      * keeps it. Never a failure: the send goes on its own.
      */
-    waitingOn?: 'network' | 'server' | null;
+    waitingOn?: 'network' | 'server' | 'turn' | null;
     /** User IDs who have read the message, derived from the conversation's read watermarks. */
     readBy: string[];
     /** When true, renders outside the bubble (delivery/read indicators). */
@@ -176,7 +176,9 @@
             ? m.msg_waiting_for_server()
             : waitingOn === 'network'
               ? m.msg_waiting_for_network()
-              : m.msg_en_attente()}
+              : waitingOn === 'turn'
+                ? m.msg_waiting_for_previous()
+                : m.msg_en_attente()}
           <!-- A salon text held for the server keeps its author's hand on it (review of #3189). -->
           {@render sendActions(false)}
         </span>

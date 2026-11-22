@@ -2,6 +2,7 @@ import * as ExcelJS from 'exceljs';
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { FormsService } from './forms.service';
 import type { ExportLabels } from './export-labels';
+import { heldRowOf } from './held-answer.spec-fixture';
 
 /**
  * AN ANONYMOUS FORM KEEPS NO AUTHOR, AND THE PROOF IS WHAT IS WRITTEN.
@@ -40,7 +41,13 @@ describe('FormsService - anonymous forms', () => {
   function makeService(opts: { form?: Record<string, unknown>; inserted?: unknown[] } = {}) {
     const saved: Record<string, unknown>[] = [];
     const manager: any = {
-      query: jest.fn(() => Promise.resolve(opts.inserted ?? [{ formId: 'f1' }])),
+      // An anonymous answer is HELD for its batch (`anonymous-answer-batches.ts`): what it holds is
+      // what this spec reads as stored.
+      query: jest.fn((sql: string, params: unknown[]) => {
+        const held = heldRowOf(sql, params);
+        if (held) saved.push(held);
+        return Promise.resolve(opts.inserted ?? [{ formId: 'f1' }]);
+      }),
       create: jest.fn((_entity: unknown, row: Record<string, unknown>) => row),
       save: jest.fn((row: Record<string, unknown>) => {
         saved.push(row);
@@ -56,7 +63,11 @@ describe('FormsService - anonymous forms', () => {
     const submissionRepo: any = {
       find: jest.fn(() => Promise.resolve([])),
       count: jest.fn(() => Promise.resolve(0)),
-      manager: { transaction: jest.fn((_l: string, fn: any) => fn(manager)), query: jest.fn() },
+      manager: {
+        transaction: jest.fn((_l: string, fn: any) => fn(manager)),
+        // Nothing waits for its batch outside a submit (`heldAnswerCount`).
+        query: jest.fn(() => Promise.resolve([{ n: '0' }])),
+      },
     };
     const respondentRepo: any = { count: jest.fn(() => Promise.resolve(0)) };
     const pricingFacts: any = {
@@ -87,22 +98,25 @@ describe('FormsService - anonymous forms', () => {
   }
 
   describe('submit', () => {
-    it('stores the answer with no account, no address and a time cut to the day', async () => {
-      const { service, saved } = makeService();
-      await service.submit('f1', {
+    it('holds the answer for its batch with no account, no address and no time', async () => {
+      const { service, saved, manager } = makeService();
+      const reply = await service.submit('f1', {
         userId: 'u-alice',
         email: 'alice@example.org',
         answers: { q1: 'bof' },
       });
+      // Nothing is written to `submissions` by the request: the batch writes it later.
+      expect(manager.save).not.toHaveBeenCalled();
+      expect(reply).toEqual({ held: true });
       expect(saved).toHaveLength(1);
       const row = saved[0];
-      expect(row.userId).toBeNull();
-      expect(row.email).toBeUndefined();
-      expect(JSON.stringify(row)).not.toContain('u-alice');
-      expect(JSON.stringify(row)).not.toContain('alice@example.org');
-      const at = row.createdAt as Date;
-      expect([at.getUTCHours(), at.getUTCMinutes(), at.getUTCSeconds()]).toEqual([0, 0, 0]);
-      expect(row.updatedAt).toBe(row.createdAt);
+      expect(row.answers).toEqual({ q1: 'bof' });
+      const [sql, params] = manager.query.mock.calls.find(([q]: [string]) =>
+        q.includes('INSERT INTO form_answers_held')
+      );
+      expect(sql).not.toMatch(/userId|email|createdAt|At"/);
+      expect(JSON.stringify(params)).not.toContain('u-alice');
+      expect(JSON.stringify(params)).not.toContain('alice@example.org');
     });
 
     it('records WHO answered in the registry, which names no answer', async () => {
@@ -227,6 +241,47 @@ describe('FormsService - anonymous forms', () => {
       await expect(
         service.update('f1', input({ anonymous: undefined, requiresPayment: true }), 'u1', false)
       ).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('a release that fails during a manager action', () => {
+    // The answers stay held, safely, and the hourly sweep releases them: the manager's close, read
+    // and export are still answered, and the failure is logged as one.
+    function failing() {
+      const made = makeService({ form: baseForm({ closedAt: new Date(Date.now() - 60_000) }) });
+      made.submissionRepo.manager.query = jest.fn(() => Promise.resolve([{ n: '2' }]));
+      made.submissionRepo.manager.transaction = jest.fn(() =>
+        Promise.reject(new Error('lock timeout'))
+      );
+      const error = jest.spyOn((made.service as any).logger, 'error').mockImplementation(() => {});
+      return { ...made, error };
+    }
+
+    it('still lists the answers', async () => {
+      const { service, error } = failing();
+      await expect(service.getSubmissions('f1')).resolves.toEqual([]);
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining('they stay held'),
+        expect.any(Error)
+      );
+    });
+
+    it('still exports the answers', async () => {
+      const { service, error } = failing();
+      await expect(service.exportSubmissions('f1', LABELS)).resolves.toMatchObject({
+        extension: 'xlsx',
+      });
+      expect(error).toHaveBeenCalled();
+    });
+
+    it('still closes the form', async () => {
+      const { service, error, formRepo } = failing();
+      formRepo.update = jest.fn(() => Promise.resolve());
+      jest.spyOn(service, 'assertFormManager').mockResolvedValue(baseForm() as any);
+      await expect(service.setClosed('f1', true, 'u1', false)).resolves.toMatchObject({
+        windowState: 'closed',
+      });
+      expect(error).toHaveBeenCalled();
     });
   });
 
