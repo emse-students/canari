@@ -12,7 +12,9 @@ jest.mock('./utils/join-ask-announce', () => ({ finishJoinAskWorkInFlight: jest.
  * waits. Reversed, a push made by the last announcement would be handed to a writer already drained.
  */
 describe('finishWorkOwedBeforeExit', () => {
-  it('finishes the join-ask work, THEN drains the push delivery record', async () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it('finishes the join-ask work, THEN the send batches in flight, THEN drains the push delivery record', async () => {
     const order: string[] = [];
     let finishAsks: () => void = () => {};
     (finishJoinAskWorkInFlight as jest.Mock).mockImplementation(
@@ -25,6 +27,9 @@ describe('finishWorkOwedBeforeExit', () => {
           };
         })
     );
+    jest.spyOn(PUSH_DELIVERY_RECORDER, 'finishBatchesInFlight').mockImplementation(async () => {
+      order.push('batches handed over');
+    });
     const drain = jest
       .spyOn(PUSH_DELIVERY_RECORDER, 'drainForExit')
       .mockImplementation(async () => {
@@ -37,6 +42,11 @@ describe('finishWorkOwedBeforeExit', () => {
     finishAsks();
     await owed;
 
-    expect(order).toEqual(['join-asks started', 'join-asks done', 'record drained']);
+    expect(order).toEqual([
+      'join-asks started',
+      'join-asks done',
+      'batches handed over',
+      'record drained',
+    ]);
   });
 });

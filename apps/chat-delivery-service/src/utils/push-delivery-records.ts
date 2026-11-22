@@ -303,6 +303,8 @@ export class PushDeliveryRecorder {
   private readonly pendingTallies = new Map<PushDeliveryKind, PushDeliveryTally>();
   private readonly pendingFetches = new Map<string, { userId: string; deviceId: string }>();
   private readonly pendingRoutes = new Set<string>();
+  /** Send batches still waiting on their pushes, which will hand a tally over when they settle. */
+  private readonly batchesInFlight = new Set<Promise<void>>();
   private firstTrace: string | null = null;
   private foldedBatches = 0;
   private manager: EntityManager | null = null;
@@ -345,6 +347,36 @@ export class PushDeliveryRecorder {
   /** Resolves once everything handed over so far is written, or its loss logged. */
   async settled(): Promise<void> {
     while (this.running) await this.running;
+  }
+
+  /**
+   * Tracks a send batch whose pushes are still in flight and which hands its tally over when they
+   * settle (the message fan-out, whose pushes are fire-and-forget): {@link finishBatchesInFlight}
+   * waits for it at exit, so its counts and stamps reach the writer before the writer is drained.
+   * Tracked for its settlement only - the batch logs its own failures.
+   */
+  trackBatch(batch: Promise<unknown>): void {
+    const settled = batch.then(
+      () => undefined,
+      () => undefined
+    );
+    this.batchesInFlight.add(settled);
+    void settled.finally(() => this.batchesInFlight.delete(settled));
+  }
+
+  /**
+   * The exit's first step for the record (`finishWorkOwedBeforeExit`, before {@link drainForExit}):
+   * says SYNCHRONOUSLY how many send batches are still waiting on their pushes - so a SIGKILL during
+   * the wait still leaves the line - then waits for them, so each hands its tally over. Says nothing
+   * when none is in flight.
+   */
+  async finishBatchesInFlight(): Promise<void> {
+    const owed = [...this.batchesInFlight];
+    if (owed.length === 0) return;
+    this.logger.log(
+      `[PUSH_RECORD] exit - ${owed.length} send batch(es) still waiting on their pushes - waiting for them`
+    );
+    await Promise.all(owed);
   }
 
   /**

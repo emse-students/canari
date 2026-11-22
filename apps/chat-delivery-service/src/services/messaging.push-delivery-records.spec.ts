@@ -234,5 +234,51 @@ describe('MessagingService - the push delivery record', () => {
       ]);
       expect(writes(/"lastPushSentAt"/).map(([, p]) => p)).toEqual([[['t-d1', 't-d3']]]);
     });
+
+    it('a SIGTERM while the fan-out is still sending WAITS for its pushes, then writes its record', async () => {
+      jest
+        .spyOn(service, 'describeQueuedFrame')
+        .mockImplementation(async (q: QueuedMessage) => input(q.id));
+      pushTokenRepo.find.mockImplementation(
+        async ({ where }: { where: { userId: string; deviceId: string } }) => [
+          token(`t-${where.deviceId}`, where.userId, where.deviceId, 'android'),
+        ]
+      );
+      let fcmAnswers: () => void = () => {};
+      const fcmGate = new Promise<void>((resolve) => {
+        fcmAnswers = resolve;
+      });
+      fcmSend.mockImplementation(async () => {
+        await fcmGate;
+        return 'id';
+      });
+      const deliverQueuedRows = (
+        service as unknown as {
+          deliverQueuedRows: (
+            rows: QueuedMessage[],
+            online: Map<string, boolean>,
+            silent: boolean,
+            durable: boolean,
+            traceId: string
+          ) => Promise<number>;
+        }
+      ).deliverQueuedRows.bind(service);
+
+      // The fan-out returns before its pushes settle - the SIGTERM lands in that window.
+      await deliverQueuedRows([queued(1), queued(2)], new Map(), false, true, 'tr');
+      let batchesDone = false;
+      const exit = PUSH_DELIVERY_RECORDER.finishBatchesInFlight().then(() => {
+        batchesDone = true;
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(batchesDone).toBe(false);
+
+      fcmAnswers();
+      await exit;
+      await PUSH_DELIVERY_RECORDER.drainForExit();
+
+      expect(writes(/push_delivery_daily/)).toHaveLength(1);
+      expect(writes(/"lastPushSentAt"/).map(([, p]) => p)).toEqual([[['t-d1', 't-d2']]]);
+    });
   });
 });

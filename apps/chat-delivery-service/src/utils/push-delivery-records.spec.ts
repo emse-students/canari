@@ -281,6 +281,37 @@ describe('push delivery records', () => {
       );
     });
 
+    it('at exit, SAYS how many send batches are still sending, then waits until each handed its tally over', async () => {
+      jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => {});
+      const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+      const recorder = new PushDeliveryRecorder();
+      const query = jest.fn().mockResolvedValue([]);
+      let pushesSettle: () => void = () => {};
+      const pushes = new Promise<void>((resolve) => {
+        pushesSettle = resolve;
+      });
+      // The fan-out's shape: the batch hands its tally over once its pushes settled.
+      recorder.trackBatch(
+        pushes.then(() => recorder.record(managerOf(query), batch('message', 't1'), 'tr-1'))
+      );
+      // A batch whose pushes failed is waited for too, and never rejects the exit.
+      recorder.trackBatch(Promise.reject(new Error('fcm down')));
+
+      const exit = recorder.finishBatchesInFlight();
+      expect(String(log.mock.calls[0][0])).toBe(
+        '[PUSH_RECORD] exit - 2 send batch(es) still waiting on their pushes - waiting for them'
+      );
+      pushesSettle();
+      await exit;
+      await recorder.drainForExit();
+
+      expect(
+        query.mock.calls.filter(([sql]) => String(sql).includes('push_delivery_daily'))
+      ).toHaveLength(1);
+      await recorder.finishBatchesInFlight();
+      expect(log).toHaveBeenCalledTimes(2);
+    });
+
     it('at exit, says nothing when nothing is pending', async () => {
       const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
       await new PushDeliveryRecorder().drainForExit();

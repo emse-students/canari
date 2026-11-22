@@ -7441,12 +7441,15 @@ export class MessagingService {
       // The pushes are fire-and-forget (FCM takes 2-5 s per device), so their sum is printed when
       // the last one settles. Failures and missing tokens already logged themselves per device.
       const attempted = tally.pushes.length;
-      void Promise.all(tally.pushes).then(() => {
-        this.logger.log(
-          `[PUSH_SEND][${traceId}] FCM sent batch pushed=${tally.pushed} of ${attempted} offline device(s) mode=wake:${tally.woken}`
-        );
-        this.recordDeliveries(tally.delivery, traceId);
-      });
+      // TRACKED, so a SIGTERM waits for the batch to hand its record over before the writer drains.
+      PUSH_DELIVERY_RECORDER.trackBatch(
+        Promise.all(tally.pushes).then(() => {
+          this.logger.log(
+            `[PUSH_SEND][${traceId}] FCM sent batch pushed=${tally.pushed} of ${attempted} offline device(s) mode=wake:${tally.woken}`
+          );
+          this.recordDeliveries(tally.delivery, traceId);
+        })
+      );
     }
     return sent;
   }

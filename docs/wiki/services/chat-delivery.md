@@ -2139,8 +2139,10 @@ naming what it dropped (`[PUSH_RECORD] the writer failed - DROPPED trace=... kin
 holds the connection and never answers - stalls the writer with no line at all: everything handed
 over after it piles up in memory, folded, unwritten, and the sends it counts are not affected. No
 timer bounds it; a deadline here would be a guess about the database. At a release's SIGTERM,
-`drainOnSigterm` finishes the join-ask work and then calls `PUSH_DELIVERY_RECORDER.drainForExit()`,
-which FIRST logs, synchronously, what is not yet written (`[PUSH_RECORD] exit - not yet written:
+`drainOnSigterm` finishes the join-ask work, then waits for the message fan-out batches still
+sending (each is TRACKED with `trackBatch`, since the fan-out returns before its pushes settle;
+`finishBatchesInFlight` logs `[PUSH_RECORD] exit - N send batch(es) still waiting on their pushes`),
+and only then calls `PUSH_DELIVERY_RECORDER.drainForExit()`, which FIRST logs, synchronously, what is not yet written (`[PUSH_RECORD] exit - not yet written:
 attempted message:N social:M, K fetched device(s); write in flight: ...`) and only then waits for the
 writer - so a stalled write killed by the SIGKILL after the grace period still leaves that line. A
 process killed without a SIGTERM loses what was pending, unlogged.
