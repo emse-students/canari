@@ -84,6 +84,8 @@ export function toFormItemsPayload(items: any[], gridSwitch: boolean): FormItem[
     const { productGrid, ...rest } = item;
     return {
       ...rest,
+      // A comment is a choice question's: a question turned into another type does not carry it.
+      ...(!pricesOptions && item.allowComment ? { allowComment: false } : {}),
       ...(item.type === PRODUCT_GRID_TYPE && productGrid
         ? {
             productGrid: productGridPayload(productGrid),

@@ -506,6 +506,18 @@ build reads those four headers in French.
 fields, and the `[LEGACY]` line is absent from production for a week. Then make `identity` required
 in `parseExportLabels`, delete the constant, its branch, its test and this entry.
 
+### Removal once `minClientVersion` passes the release carrying the choice comment - an export asked without the comment word (2026-11-22)
+
+**Site:** `FormsService.exportSubmissions` (`apps/social-service/src/forms/forms.service.ts`), where
+`labels.comment` is absent while a question takes a comment or an answer holds one, logged
+`[LEGACY] export of ... without the comment word`.
+**What it humours:** a store build older than the choice comment sends no word for the `Question -
+Commentaire` header. Refusing it would lock that organiser out of the export (lead, 2026-11-22).
+**The cost while it stands:** one branch; the export of such a form lacks the comment columns.
+**Removal condition:** `minClientVersion` on both estates passes the first stable carrying the choice
+comment, and the `[LEGACY]` line is absent for a week. Then make `comment` required where the column
+is written, delete the branch, its test and this entry.
+
 ### Removal once `minClientVersion` passes `1.7.0` - an answer from a build that cannot draw the declared questions (2026-11-16)
 
 **Site:** `predatesDeclaredFields` and the `olderClient` branch of `declaredIdentityFor`

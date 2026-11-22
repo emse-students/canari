@@ -1,4 +1,4 @@
-import { answerText, type AnswerWords } from './answerText';
+import { answerText, commentText, otherText, type AnswerWords } from './answerText';
 import type { FormItem, Submission } from './api';
 import {
   PRODUCT_GRID_AWAITING_CASH_STATUSES,
@@ -151,7 +151,10 @@ function searchText(
   anonymous: boolean
 ): string {
   const name = anonymous ? '' : submitterName(sub);
-  const answers = items.map((item) => answerText(sub.answers?.[item.id], item, words, sub.lines));
+  const answers = items.flatMap((item) => [
+    answerText(sub.answers?.[item.id], item, words, sub.lines, otherText(sub.answers, item.id)),
+    commentText(sub.answers, item.id),
+  ]);
   return [name, sub.reference ?? '', ...answers].join(' ');
 }
 

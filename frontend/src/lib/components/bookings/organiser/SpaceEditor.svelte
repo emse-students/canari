@@ -501,6 +501,7 @@
   bind:items={draft.items}
   requiresPayment={false}
   offerPricedGrid={false}
+  offerChoiceNotes={false}
   offerBlocks={false}
   {tiers}
   {formations}

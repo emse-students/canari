@@ -321,4 +321,31 @@ describe('the responses table of a form that asks for no money', () => {
     const card = document.querySelector('ul.sm\\:hidden > li')!;
     expect(card.textContent).not.toContain(m.form_status_free());
   });
+
+  it('opens the panel for a comment left beside a short answer, and shows it under the answer', () => {
+    const asso = item({
+      ...ASSO,
+      allowComment: true,
+      options: [
+        { id: 'o1', label: "Humani'Mines", priceModifier: 0 },
+        { id: 'oth', label: 'Autre', priceModifier: 0, other: true },
+      ],
+    });
+    render(
+      [asso],
+      [
+        submission({
+          answers: { asso: 'oth', 'asso#other': 'Club photo', 'asso#comment': 'Merci' },
+        }),
+      ],
+      false
+    );
+    expect(table().textContent).toContain('Autre: Club photo');
+    const control = table().querySelector('tbody button') as HTMLButtonElement;
+    expect(control.disabled).toBe(false);
+    openFirstPanel();
+    expect(table().querySelector('[data-testid="answer-comment"]')?.textContent?.trim()).toBe(
+      'Merci'
+    );
+  });
 });
