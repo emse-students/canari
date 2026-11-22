@@ -22,13 +22,15 @@ import { m } from '$lib/paraglide/messages';
 import {
   buildConversationRow,
   findSelfConversation,
+  retaggedAsSelf,
   resolveConversationListPresentation,
   restoredConversationRow,
   selfConversationIdentity,
   toConversationMeta,
 } from './conversations';
 import { ensureConversationForServerGroup } from './serverGroupConversation';
-import { createSelfConversation } from './groupCreation';
+import { createSelfConversation, devicesKnowingSelf } from './groupCreation';
+import { readSelfConversationDeviceCover } from './selfConversationLossNotice';
 
 const ME = 'a1'.repeat(32);
 const SELF_GROUP = 'e4c1f0aa-0000-4000-8000-00000000005e';
@@ -122,6 +124,35 @@ describe('discovery of a self group the server lists', () => {
     expect(conversations.get(SELF_GROUP)).not.toHaveProperty('directPeerId');
   });
 
+  it('a row this device holds under another type is re-typed as "Mes notes", its messages kept', async () => {
+    // Built from a Welcome while the group read failed: an ordinary group row.
+    const asGroup = buildConversationRow({
+      id: SELF_GROUP,
+      lifecycle: 'active',
+      identity: { conversationType: 'group', contactName: ME, displayName: ME },
+    });
+    asGroup.messages = [{ id: 'm1' } as Conversation['messages'][number]];
+    const conversations = new Map<string, Conversation>([[SELF_GROUP, asGroup]]);
+    const saveConversation = vi.fn(async () => {});
+
+    const outcome = await ensureConversationForServerGroup(
+      { groupId: SELF_GROUP, name: null, isGroup: false, kind: 'self' },
+      {
+        mlsService: { getLocalGroups: () => [SELF_GROUP] } as unknown as IMlsService,
+        userId: ME,
+        conversations,
+        saveConversation,
+        owedExits: new Set<string>(),
+        log: vi.fn(),
+      }
+    );
+
+    expect(outcome).toBe('existed');
+    expect(conversations.get(SELF_GROUP)?.conversationType).toBe('self');
+    expect(conversations.get(SELF_GROUP)?.messages).toHaveLength(1);
+    expect(saveConversation).toHaveBeenCalledWith(SELF_GROUP);
+  });
+
   it('the same row WITHOUT the kind (a server before 056) is a 1:1 with no peer, and skipped', async () => {
     const conversations = new Map<string, Conversation>();
     const outcome = await ensureConversationForServerGroup(
@@ -180,7 +211,9 @@ describe('opening "Mes notes"', () => {
     const d = deps();
     expect(await createSelfConversation(d.args)).toEqual({ ok: true, key: SELF_GROUP });
 
-    expect(d.mlsService.createRemoteGroup).toHaveBeenCalledWith(null, false, 'self');
+    expect(d.mlsService.createRemoteGroup).toHaveBeenCalledWith(null, false, 'self', {
+      replaceUnheld: false,
+    });
     expect(d.mlsService.registerMember).toHaveBeenCalledWith(SELF_GROUP, ME);
     expect(d.conversations.get(SELF_GROUP)?.conversationType).toBe('self');
     expect(d.selectConversation).toHaveBeenCalledWith(SELF_GROUP);
@@ -196,15 +229,101 @@ describe('opening "Mes notes"', () => {
   it('another device already holds it: refused as arriving, and nothing is deleted server-side', async () => {
     const d = deps();
     d.mlsService.createRemoteGroup.mockRejectedValueOnce(
-      new SelfConversationExistsError('f00dfeed-0000-4000-8000-000000000001')
+      new SelfConversationExistsError('f00dfeed-0000-4000-8000-000000000001', 1)
     );
 
     expect(await createSelfConversation(d.args)).toEqual({
       ok: false,
       reason: 'self-conversation-arriving',
     });
+    expect(d.mlsService.createRemoteGroup).toHaveBeenCalledTimes(1);
     expect(d.mlsService.createGroup).not.toHaveBeenCalled();
     expect(d.mlsService.deleteGroupOnServer).not.toHaveBeenCalled();
     expect(d.conversations.size).toBe(0);
+  });
+
+  it("the live one is THIS device's: its row is put right and opened, nothing created", async () => {
+    const d = deps();
+    d.mlsService.createGroup(SELF_GROUP);
+    d.mlsService.createGroup.mockClear();
+    d.mlsService.createRemoteGroup.mockRejectedValueOnce(
+      new SelfConversationExistsError(SELF_GROUP, 0)
+    );
+
+    expect(await createSelfConversation(d.args)).toEqual({ ok: true, key: SELF_GROUP });
+    expect(d.mlsService.createRemoteGroup).toHaveBeenCalledTimes(1);
+    expect(d.mlsService.createGroup).not.toHaveBeenCalled();
+    expect(d.conversations.get(SELF_GROUP)?.conversationType).toBe('self');
+    expect(d.selectConversation).toHaveBeenCalledWith(SELF_GROUP);
+  });
+
+  it('nobody holds the live one: the server is asked ONCE to replace it, and the new one opens', async () => {
+    const d = deps();
+    d.mlsService.createRemoteGroup.mockRejectedValueOnce(
+      new SelfConversationExistsError('f00dfeed-0000-4000-8000-000000000001', 0)
+    );
+
+    expect(await createSelfConversation(d.args)).toEqual({ ok: true, key: SELF_GROUP });
+    expect(d.mlsService.createRemoteGroup).toHaveBeenNthCalledWith(1, null, false, 'self', {
+      replaceUnheld: false,
+    });
+    expect(d.mlsService.createRemoteGroup).toHaveBeenNthCalledWith(2, null, false, 'self', {
+      replaceUnheld: true,
+    });
+    expect(d.conversations.get(SELF_GROUP)?.conversationType).toBe('self');
+  });
+
+  it('a replacement the server still refuses (a device was admitted meanwhile) is arriving, not a loop', async () => {
+    const d = deps();
+    d.mlsService.createRemoteGroup
+      .mockRejectedValueOnce(new SelfConversationExistsError(SELF_GROUP, 0))
+      .mockRejectedValueOnce(new SelfConversationExistsError(SELF_GROUP, 1));
+
+    expect(await createSelfConversation(d.args)).toEqual({
+      ok: false,
+      reason: 'self-conversation-arriving',
+    });
+    expect(d.mlsService.createRemoteGroup).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('which other devices "Mes notes" is given', () => {
+  it('only those whose build stated the capability', () => {
+    expect(
+      devicesKnowingSelf([
+        { deviceId: 'new', selfConversationVersion: 1 },
+        { deviceId: 'old', selfConversationVersion: 0 },
+      ]).map((d) => d.deviceId)
+    ).toEqual(['new']);
+  });
+
+  it('a re-typed row keeps what it carried', () => {
+    const row = retaggedAsSelf(
+      buildConversationRow({
+        id: SELF_GROUP,
+        lifecycle: 'active',
+        identity: { conversationType: 'group', contactName: '', displayName: 'x' },
+        lastMessageAt: 7,
+      })
+    );
+    expect(row.conversationType).toBe('self');
+    expect(row.lastMessageAt).toBe(7);
+  });
+});
+
+describe('the loss notice of "Mes notes"', () => {
+  it('speaks while the account has one device, not once it has two', async () => {
+    expect(await readSelfConversationDeviceCover(async () => [{ deviceId: 'a' }])).toBe('single');
+    expect(
+      await readSelfConversationDeviceCover(async () => [{ deviceId: 'a' }, { deviceId: 'b' }])
+    ).toBe('several');
+  });
+
+  it('says nothing when the device list cannot be read - a failure is not an answer', async () => {
+    expect(
+      await readSelfConversationDeviceCover(async () => {
+        throw new Error('offline');
+      })
+    ).toBe('unknown');
   });
 });

@@ -206,6 +206,7 @@
       variant="reel"
       {src}
       streamed
+      seekAnywhere
       disableRemotePlayback
       class="h-full w-full"
       safeBottom={playerSafeBottom}

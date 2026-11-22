@@ -10,6 +10,8 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  InternalServerErrorException,
+  Query,
   UseGuards,
   Logger,
   Headers,
@@ -23,6 +25,7 @@ import {
   GROUP_KIND_SELF,
   Group,
   type GroupKind,
+  isSelfConversation,
 } from '../entities/group.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { GroupMember } from '../entities/group-member.entity';
@@ -36,6 +39,7 @@ import {
 } from '../utils/group-membership';
 import { RefusalCode, refusalBody } from '../utils/refusal-codes';
 import { cutUserId } from '../utils/log-repeat';
+import { countOtherSelfHolders, deviceKnowsSelfConversation } from '../utils/self-conversation';
 import {
   canonicalUserId,
   sanitizeIdentityValue,
@@ -215,6 +219,8 @@ export class GroupsController {
       isGroup?: boolean;
       creatorDeviceId?: string;
       kind?: string;
+      /** `kind: 'self'` only: end a live self group no other device holds, then write a new one. */
+      replaceUnheld?: boolean;
     },
     @Headers('x-user-id') headerUserId?: string
   ) {
@@ -261,6 +267,26 @@ export class GroupsController {
         throw new BadRequestException(`Device is not addressable: ${addressable.reason}`);
       }
     }
+    // THE CREATOR'S DEVICE HOLDS IT FROM THE FIRST EPOCH, so it must state the capability every other
+    // device of the account is held to (`utils/self-conversation.ts`).
+    if (
+      kind === GROUP_KIND_SELF &&
+      !(await deviceKnowsSelfConversation(this.groupRepo.manager, {
+        userId: safeCreatorId,
+        deviceId: safeCreatorDeviceId,
+      }))
+    ) {
+      this.logger.warn(
+        `[CREATE_GROUP][${traceId}] REFUSED kind=self device=${cutUserId(safeCreatorId)}:${safeCreatorDeviceId.slice(0, 12)} - its registration does not state the "Mes notes" capability; no group row was written`
+      );
+      throw new ForbiddenException(
+        refusalBody(
+          RefusalCode.SELF_CONVERSATION_DEVICE_UNAWARE,
+          'this device has not stated that it knows "Mes notes"',
+          { deviceIds: [safeCreatorDeviceId] }
+        )
+      );
+    }
 
     const groupId = crypto.randomUUID();
     // THE NAME IS NOT PRINTED, AND THE LENGTH IS WHAT THE LINE WAS ACTUALLY FOR. The server stores
@@ -275,7 +301,13 @@ export class GroupsController {
     let newGroup: Group;
     if (kind === GROUP_KIND_SELF) {
       // `caller` is set: refused above otherwise.
-      newGroup = await this.insertSelfGroup(groupId, caller!, traceId);
+      newGroup = await this.insertSelfGroup(
+        groupId,
+        caller!,
+        safeCreatorDeviceId,
+        body.replaceUnheld === true,
+        traceId
+      );
     } else {
       newGroup = this.groupRepo.create({
         id: groupId,
@@ -345,47 +377,100 @@ export class GroupsController {
   }
 
   /**
-   * Writes the account's notes conversation, or refuses because one is already live.
+   * Writes the account's notes conversation, or refuses because one is already live - with the facts
+   * the asking device decides on.
    *
    * **THE DATABASE DECIDES, NEVER A READ BEFORE THE WRITE.** The insert is `ON CONFLICT DO NOTHING`
    * against the unique partial index on (`createdBy`) over live self rows (migration 056): two devices
    * creating at the same instant both reach it, one row lands, and the other insert returns nothing.
-   * That device is answered 409 `SELF_CONVERSATION_EXISTS` naming the live group, and joins it by the
-   * ordinary own-device Welcome; nothing of its attempt is left behind.
+   *
+   * **A 409 IS NEVER A DEAD END.** It names the live group (`groupId`, never null: a row that ended
+   * between the insert and the read is a slot freed, so the insert is tried again) and
+   * `otherHolders`, the devices of the account other than the caller's that hold it
+   * ({@link countOtherSelfHolders}). The client then opens it (it holds that group itself), waits for
+   * the own-device Welcome (another device holds it), or asks again with `replaceUnheld`: a group no
+   * other device holds is ended - re-read UNDER ITS SEAT LOCK, so a device admitted meanwhile keeps it
+   * ({@link tombstoneGroupsIf}) - and a new one written. Its ciphertexts were readable by no device
+   * that is left, so ending it loses nothing anyone could read.
    *
    * The row: `isGroup = false` (one person, never a group chat - the CHECK says so), no name (the
    * client draws "Mes notes" itself; the server never composes a title for it, since a frame to one's
    * own devices is always silent), the caller as `createdBy`.
    */
-  private async insertSelfGroup(groupId: string, caller: string, traceId: string): Promise<Group> {
-    const inserted = await this.groupRepo
-      .createQueryBuilder()
-      .insert()
-      .into(Group)
-      .values({ id: groupId, isGroup: false, createdBy: caller, kind: GROUP_KIND_SELF })
-      .orIgnore()
-      .returning(['id'])
-      .execute();
-    if (((inserted.raw as unknown[] | undefined) ?? []).length > 0) {
+  private async insertSelfGroup(
+    groupId: string,
+    caller: string,
+    callerDeviceId: string,
+    replaceUnheld: boolean,
+    traceId: string
+  ): Promise<Group> {
+    this.logger.log(
+      `[CREATE_GROUP][${traceId}] self conversation asked owner=${cutUserId(caller)} replaceUnheld=${replaceUnheld}`
+    );
+    const manager = this.groupRepo.manager;
+    // Bounded by the facts, not a clock: each pass either writes, refuses, or found the live row
+    // ended - and a second ended row in a row is a defect, reported below.
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const inserted = await this.groupRepo
+        .createQueryBuilder()
+        .insert()
+        .into(Group)
+        .values({ id: groupId, isGroup: false, createdBy: caller, kind: GROUP_KIND_SELF })
+        .orIgnore()
+        .returning(['id'])
+        .execute();
+      if (((inserted.raw as unknown[] | undefined) ?? []).length > 0) {
+        this.logger.log(
+          `[CREATE_GROUP][${traceId}] self conversation written group=${groupId} owner=${cutUserId(caller)}`
+        );
+        return this.groupRepo.findOneOrFail({ where: { id: groupId } });
+      }
+      const live = await this.groupRepo.findOne({
+        where: { createdBy: caller, kind: GROUP_KIND_SELF, deletedAt: IsNull() },
+        select: { id: true },
+      });
+      if (!live) {
+        this.logger.log(
+          `[CREATE_GROUP][${traceId}] self conversation slot freed between the insert and the read - inserting again (attempt ${attempt})`
+        );
+        continue;
+      }
+      const otherHolders = await countOtherSelfHolders(manager, live.id, caller, callerDeviceId);
+      if (replaceUnheld && otherHolders === 0) {
+        const { ended } = await tombstoneGroupsIf(
+          manager,
+          this.redis,
+          [live.id],
+          async (tx, id) => (await countOtherSelfHolders(tx, id, caller, callerDeviceId)) === 0
+        );
+        if (ended.length === 1) {
+          this.logger.warn(
+            `[CREATE_GROUP][${traceId}] self conversation ${live.id} ENDED owner=${cutUserId(caller)} - no other device of the account held it, and the asking device holds it no more; writing a new one`
+          );
+          continue;
+        }
+        this.logger.log(
+          `[CREATE_GROUP][${traceId}] self conversation ${live.id} kept - a device of the account was admitted before it could end`
+        );
+      }
+      const holders = replaceUnheld
+        ? await countOtherSelfHolders(manager, live.id, caller, callerDeviceId)
+        : otherHolders;
       this.logger.log(
-        `[CREATE_GROUP][${traceId}] self conversation written group=${groupId} owner=${cutUserId(caller)}`
+        `[CREATE_GROUP][${traceId}] REFUSED kind=self owner=${cutUserId(caller)} - a live notes conversation exists (${live.id}, otherHolders=${holders}); no group row was written`
       );
-      return this.groupRepo.findOneOrFail({ where: { id: groupId } });
+      throw new ConflictException(
+        refusalBody(
+          RefusalCode.SELF_CONVERSATION_EXISTS,
+          'This account already holds a live self conversation.',
+          { groupId: live.id, otherHolders: holders }
+        )
+      );
     }
-    const live = await this.groupRepo.findOne({
-      where: { createdBy: caller, kind: GROUP_KIND_SELF, deletedAt: IsNull() },
-      select: { id: true },
-    });
-    this.logger.warn(
-      `[CREATE_GROUP][${traceId}] REFUSED kind=self owner=${cutUserId(caller)} - a live notes conversation exists (${live?.id ?? 'ended since the insert'}); no group row was written`
+    this.logger.error(
+      `[CREATE_GROUP][${traceId}] self conversation NOT written owner=${cutUserId(caller)} - the slot was taken and freed three times in a row`
     );
-    throw new ConflictException(
-      refusalBody(
-        RefusalCode.SELF_CONVERSATION_EXISTS,
-        'This account already holds a live self conversation.',
-        { groupId: live?.id ?? null }
-      )
-    );
+    throw new InternalServerErrorException('The self conversation could not be written');
   }
 
   @UseGuards(HeaderAuthGuard)
@@ -491,12 +576,31 @@ export class GroupsController {
    */
   async deleteGroup(
     @Param('groupId') groupId: string,
-    @Headers('x-user-id') headerUserId?: string
+    @Headers('x-user-id') headerUserId?: string,
+    @Query('kind') statedKind?: string
   ) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
     const header = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
     const caller = header ? canonicalUserId(header) : null;
     const manager = this.groupRepo.manager;
+    // "MES NOTES" IS ENDED ONLY BY A BUILD THAT KNOWS WHAT IT ENDS: one before the self kind reads it
+    // as an ordinary group, and its delete would take the notes from every device of the account
+    // (legacy-compatibility.md, "Mes notes"). A current client says `?kind=self`; nothing else does.
+    const kindRow = await this.groupRepo.findOne({
+      where: { id: safeGroupId },
+      select: { id: true, kind: true },
+    });
+    if (isSelfConversation(kindRow) && statedKind !== GROUP_KIND_SELF) {
+      this.logger.warn(
+        `[DELETE_GROUP] REFUSED ${safeGroupId.slice(0, 8)}… caller=${caller ? cutUserId(caller) : 'none'} - a self conversation, and the request does not say it knows the kind; nothing deleted`
+      );
+      throw new ForbiddenException(
+        refusalBody(
+          RefusalCode.SELF_CONVERSATION_KIND_UNSTATED,
+          'this conversation can only be deleted by a client that knows it is "Mes notes"'
+        )
+      );
+    }
     if (caller && (await this.isCreatorsUnseatedGroup(manager, safeGroupId, caller))) {
       // RE-READ UNDER THE SEAT LOCK, in the transaction that ends it: a seat or a device written
       // since the read above makes this group someone's conversation, and the shortcut is refused.

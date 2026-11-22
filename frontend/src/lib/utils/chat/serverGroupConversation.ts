@@ -5,6 +5,7 @@ import {
   findDirectConversationByPeer,
   isRawId,
   resolveDirectPeerId,
+  retaggedAsSelf,
   selfConversationIdentity,
 } from './conversations';
 import { holdsGroupState } from './groupUsability';
@@ -860,6 +861,26 @@ export async function ensureConversationForServerGroup(
   // holds a perfectly good row for - and creating a second one is the duplicate-DM defect that
   // `mergeDirectConversationDuplicates` exists to clean up afterwards.
   const known = [...conversations.entries()].find(([, c]) => c.id === groupId);
+  // A SELF GROUP HELD UNDER ANOTHER TYPE is put right before anything reads it as a group: its row was
+  // built while the server's `kind` could not be read (a Welcome whose group read failed), and every
+  // group path below - the label repair, the name statements - would act on "Mes notes" as a group.
+  if (known && group.kind === 'self') {
+    if (known[1].conversationType !== 'self') {
+      conversations.set(known[0], retaggedAsSelf(known[1]));
+      log(
+        `[DISCOVERY] ${groupIdShort(groupId)} held as ${known[1].conversationType ?? 'group'} - re-typed as the self conversation`
+      );
+      if (saveConversation) {
+        try {
+          await saveConversation(known[0]);
+        } catch (e) {
+          log(`[WARN] Self conversation persistence failed for ${groupId}: ${String(e)}`);
+        }
+      }
+    }
+    await recordGroupStart(known[0], group, conversations, saveConversation);
+    return 'existed';
+  }
   if (known) {
     // What a rename still owes first: once the server's copy is written, the list in hand is the
     // one stale fact, and the label repair would report a disagreement the write has just ended.

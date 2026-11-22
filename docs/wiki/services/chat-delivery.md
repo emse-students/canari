@@ -2039,12 +2039,71 @@ the server could say a phone was silent, which is how a third of a build went un
   OS gives no token, already reported by `[PUSH_UNAVAILABLE]`), at WARN otherwise, naming the side -
   `registered` accuses a server-side deletion, any failure the client's attempt.
 - `[PUSH_COVERAGE]` (daily, and in the initial sweep): one line for the fleet, and one WARN per
-  `(os, build)` whose phones ran and hold no row ten minutes after - zero is the steady state. A
+  `(os, build)` whose phones ran and hold no row ten minutes after - zero is the steady state. **Only
+  INSTALLED-app devices are counted** (id prefix `tauri-`, `INSTALLED_APP_DEVICE_PREFIX`, the
+  `BaseMlsService.platform` that mints the id): a mobile browser reports `android` or `ios` as its OS
+  and can never hold a push token, and about 93 `web-` devices had made the alarm mostly false
+  (2026-11-21). The members reachable only through a mobile browser are one INFORMATION line, never a
+  WARN, and no install prompt exists. A
   phone whose stated outcome is `no-token` is **counted apart** (`noOsToken`, on the log line, never
   a WARN): its state is known and no fix of ours changes it. A live session counts only when it is
   the device's OWN account's (`s."userId" = k."userId"`). Each WARN carries `last:`, the tally of
   what its unregistered phones last stated (`key_package."pushOutcome"`), so the branch is read from
   the report itself, with no access to the per-device lines.
+
+#### Registered is not permitted (2026-11-21)
+
+A production read of 2026-11-21 found two members with missing notifications: both phones registered,
+sessions live, nothing pruned, no provider failure. The cause was on the phone - the OS permission,
+or a maker's autostart and battery rules - and the row could not say so: the client went on
+registering after a denial, and `registered` only means a token was stored.
+
+**The phone now states what the OS lets its notifications do, to the server only** (owner,
+2026-11-21: no banner, no prompt). `register-device` carries `notificationState`
+(`{ permission, enabled, alerts?, channels? }`, built by `notificationReport.ts` from the one command
+below); `parseNotificationState` allowlists it into ONE category - `on`, `off` (permission denied or
+the app switched off), `not-asked` (iOS dialog never shown), `channel-off` (the messages or posts
+channel at importance `none`), `alerts-off` (iOS alerts disabled) - plus the Android channel
+importances. Both are written with the key package on every call (`key_package."notificationState"`,
+`"notificationChannels"`, migration 055, additive, nullable). **An old client states nothing: NULL,
+UNKNOWN, never granted**; an out-of-allowlist value is stored NULL with a WARN
+(`NOTIFICATION_STATE_INVALID`). It lives on `key_package` beside `pushOutcome`, not on `push_token`:
+the one write that carries it is `register-device`, and a device with no push row has no
+`push_token` row to hold it. The daily count adds `permissionOff` - devices that HOLD a row and state
+the OS will not show it - as its own figure and its own WARN, `[PUSH_PERMISSION_OFF]`, apart from
+`withoutPush`: the server delivered and the phone is silent.
+
+**The page reads it through ONE typed command, `notification_delivery_state`** (read-only, no prompt;
+`commands/notification_delivery_state.rs` pins the shape). The native side writes a snapshot
+(`notification_delivery_state.json`, app data directory) at every launch and return to the
+foreground - `NotificationDeliveryState.kt` on Android, `CanariWriteNotificationDeliveryState` in
+`canari_ios.mm` - and the command reads it; no snapshot is `None`, unknown. The answer is tagged by
+`platform`:
+
+- `android`: `notificationsEnabled`, `postNotificationsGranted`, `shouldShowRationale`, `channels: { messages, posts }`
+  (`none|min|low|default|high|unspecified|absent`), `isIgnoringBatteryOptimizations`, `manufacturer`.
+- `ios`: `authorization` (`not-determined|denied|granted|provisional|ephemeral`), `alert`, `sound`,
+  `badge`, `timeSensitive` (`enabled|disabled|not-supported`).
+
+**Stale state, and how it is kept fresh without a clock.** `register-device` runs at unlock and at
+renewal, so a state the user changes in between (first launch `not-asked`, then granted) would stay
+wrong until the next unlock. The native writer therefore runs OFF the main thread and, once the fresh
+snapshot is on disk, dispatches the page event `canari:notification-state` (a permission dialog closing,
+a switch flipped in the settings and the app coming back, a cold start). The page re-reads, and when the
+report differs from the last one sent it `PATCH`es `mls/devices/:userId/:deviceId/metadata` with
+`notificationState` (owner-bound, a state it cannot read is a 400; the row's other columns and
+`createdAt` are untouched). A failed send is logged and the next event retries. On a cold start the
+first read may find no snapshot yet: that is EXPECTED, logged at info by the Rust command, and
+the writer's event re-reads it - no register is ordered after a write by a clock.
+
+**Android `permission`.** `checkSelfPermission` answers DENIED before the first prompt too, so
+`granted` -> `granted`; else `denied` when the OS dialog was shown on this install (a durable page
+flag set when `requestPermission` answers) or the system offers a rationale (`shouldShowRationale`,
+only after a refusal); else `not-determined` (the server's `not-asked`). A phone refused before the
+flag existed and out of rationales reads `not-asked` - counted off all the same.
+
+The maker and battery fields are for the page's own use (the banner owed next) and are NOT reported
+to the server ([register](../compliance/register-of-processing.md)).
 
 **Re-measured 2026-11-17 (production read-only, still on `1.6.12`).** Same shape: of the phones that
 ran in 24 h, every older build holds a row (0 of 117), `1.6.12` does not on 15 of 75 Android and 12
@@ -2079,6 +2138,29 @@ Tests: `PushNotificationService.reconcile.test.ts`, `mlsDeliveryApi.pushRegister
 PostgreSQL) (server). **What closes the incident** is the `[PUSH_COVERAGE]` WARN
 lines reading zero for the build that ships this, and their `last:` tally naming the branch and
 the await if they do not ([the backlog entry](../backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)).
+
+**A phone BROWSER is not a phone, and the predicate counted it as one (production read-only,
+2026-11-22).** The daily line of 2026-11-21 read `android build=1.7.2 without=18/29` and
+`ios build=1.7.2 without=25/26`, all `last: unstated`, and looked like an 80 % regression of `1.7.2`.
+It was not: grouped by the device id's prefix, **all 43 were `web-` ids** - a browser on a phone,
+running the `1.7.2` web bundle - and every one of the 13 native `1.7.2` devices held its row (one
+stated `no-token`, counted apart). `deviceOs` answers "which OS": the web client fills it from the user
+agent (`detectRuntimeDeviceOs`), so a phone browser writes `android`/`ios`, and states no `pushOutcome`
+because the web registers no push - hence `unstated`. Across the whole table, no `web-` device has
+ever held a `push_token` row (365 phone-browser key packages; every one of the 366 rows is a `tauri-`
+id). The device id's prefix is the fact for "is this the app": a client mints its id once as
+`<platform>-<userId>-...` with its MLS runtime, `tauri` or `web` (`BaseMlsService.generateDeviceId`),
+and never changes it. The classifier is `INSTALLED_APP_DEVICE_PREFIX` / `isInstalledAppDevice`
+(migration-055 work landed the same filter first; browser-only members are its information line).
+**Nothing is dropped in silence**: ids of NEITHER prefix are counted by `PUSH_UNKNOWN_ID_SQL` and
+accused at WARN, since such an id is a native build whose coverage the count no longer measures
+(production, 2026-11-22: 0 of 757 phone-OS key packages). The client's half of the contract is
+pinned by `frontend/src/lib/services/deviceIdPrefix.test.ts`. **The earlier
+readings carry the same error and are not re-measured here**: the `unstated` devices of the `1.7.0`
+line (2026-11-20) and the `1.6.12` populations above were very likely phone browsers too - the web
+bundle reports the version production serves - and `key_package` keeps only each device's latest row,
+so that cannot be checked any more. The `in-progress:*` and other STATED outcomes are native by
+construction (only the app states one).
 
 #### Push delivery records - daily totals and the last delivery per device (2026-11-21)
 
@@ -2566,8 +2648,8 @@ on push receipt and down on read-state cancel with no separate counter to keep i
   `refreshBadgeSummary` rebuilds the group summary carrying that count via `setNumber(count)` (or
   cancels the summary when it hits 0). It is the single source of truth for both the summary and the
   badge, called after every message notification post (`showNotification`) and every cancel
-  (`cancelConversationNotification`); `cancelAllMessageNotifications` clears the summary and thus the
-  badge on app open. **THE COUNT IS CORRECTED BY THE CALLER, AND THAT IS NOT AN OPTIMISATION** -
+  (`cancelConversationNotification`); the app's coming to the front no longer clears conversation
+  banners (owner, 2026-11-21), so the summary and badge follow the conversations that remain. **THE COUNT IS CORRECTED BY THE CALLER, AND THAT IS NOT AN OPTIMISATION** -
   see [the banner its own badge refresh cancelled](#the-banner-its-own-badge-refresh-cancelled---fixed-2026-09-21). Numeric badges are honored by stock Android / Pixel / recent OEM launchers;
   some older launchers only show a dot (no third-party ShortcutBadger dependency).
 - **iOS** has two writers because the badge owner depends on process state:
@@ -2833,9 +2915,10 @@ told you.*
 
 **App-open cancel**
 
-When the app opens, `CanariPushCancelMessageNotifications` now clears every delivered chat
-notification — both the legacy flat-thread ones and the new per-conversation ones — by checking
-the `deepLink` prefix (`fr.emse.canari://chat`) in addition to the `threadIdentifier`.
+(Superseded 2026-11-21, owner: *"N'effacer que les lues"*.) When the app opens,
+`CanariPushCancelMessageNotifications` no longer clears chat notifications: it removes only a call's
+ring alert (`canariCallId` in `userInfo`) and the pending-sync notice. A conversation's banners go
+with the conversation - read here, read elsewhere, answered, ended.
 
 #### Shared deferred-retry engine (WP-XP-8)
 
@@ -3454,10 +3537,21 @@ and no workspace or channel. A unique partial index,
 NULL`, makes "one live self conversation per account" a fact of the database.
 
 **Creation is idempotent from that index, not from a read-then-write.** `POST /groups` with
-`kind: 'self'` inserts with `ON CONFLICT DO NOTHING RETURNING id`. If no row comes back, another
-device already won: the answer is `409 SELF_CONVERSATION_EXISTS` carrying the live `groupId`, and
-the client waits for the Welcome from that device instead of making a second group. No error message
-is parsed.
+`kind: 'self'` inserts with `ON CONFLICT DO NOTHING RETURNING id`. If no row comes back, the answer is
+`409 SELF_CONVERSATION_EXISTS` with the facts the asking device decides on, never a dead end: the live
+`groupId` (never null - a row that ended between the insert and the read freed the slot, and the
+insert runs again) and `otherHolders`, the account's OTHER devices with an `active` seat and a key
+package (`countOtherSelfHolders`). The client then:
+
+- **holds that group itself** (its row was typed otherwise, or never written): opens it, re-typed;
+- **sees another holder**: says it is arriving - that device's Welcome brings it;
+- **sees none**: asks once more with `replaceUnheld: true`. Nothing can ever bring that group here and
+  no device that is left can read it, so the server ENDS it (`tombstoneGroupsIf`, the no-holder fact
+  re-read under the group's seat lock, so a device admitted meanwhile keeps it) and writes a new one.
+  A holder that appeared answers the 409 again, read as arriving - two requests at most.
+
+The creating device must itself state the capability below (`403 SELF_CONVERSATION_DEVICE_UNAWARE`).
+No error message is parsed.
 
 **What it refuses**, each typed at the throw ([refusal codes](../../../apps/chat-delivery-service/src/utils/refusal-codes.ts)):
 
@@ -3475,11 +3569,24 @@ so a note never rings the other devices of its author.
 **Erasure.** A roster of one with `isGroup = false` is tombstoned like a 1:1. The index skips
 tombstones, so an erased account's `[deleted]` rows never collide.
 
-**Old clients** list it as a 1:1 whose peer they cannot resolve and skip it (`peer-unresolved`). The
-listing is not filtered by version.
+**Which device may hold it: a capability each device states.** A build before "Mes notes" Welcomed
+into a self group builds an ordinary `group` row named after the account and offers rename, invite and
+DELETE; its delete would end the notes on every device. So each `register-device` states
+`selfConversationVersion` (`key_package`, migration 056; written as stated on every call, 0 when
+absent), and ONE predicate, `selfConversationUnawareDevices` (`utils/self-conversation.ts`), keeps a
+device below it out at every door: no pending seat (`writePendingSeats`), no Admit, inline Welcome
+target or external join in a commit (refused whole, `403 SELF_CONVERSATION_DEVICE_UNAWARE`), no stored
+Welcome (`lockWelcomeSeat`), no relayed welcome request. A `DELETE mls/groups/:id` of a self group is
+refused unless the request says `?kind=self` (`403 SELF_CONVERSATION_KIND_UNSTATED`). The device list
+carries each device's capability, so a current creator never builds the Add the server would refuse.
+An older build still sees the group in its listing; with no `kind` it reads a 1:1 whose peer it cannot
+resolve and builds nothing from it. It joins once it updates and re-registers. The shim and its
+removal: [legacy-compatibility](../legacy-compatibility.md).
 
 Tests: `056_dm_groups_self_kind.integration.spec.ts` (PostgreSQL: the CHECK, the concurrent creation
-on two connections, the tombstone, the 400s), `admission.integration.spec.ts` (nobody else is
+on two connections, `otherHolders`, the creator's capability, the tombstone, the 400s; and on the full
+schema the unaware device left unseated, the delete without the kind refused, `replaceUnheld` ending
+only an unheld group), `admission.integration.spec.ts` (nobody else is
 admitted, the owner's own commit is), `calls.service.spec.ts`, `moderation.service.spec.ts`.
 
 ## Environment variables

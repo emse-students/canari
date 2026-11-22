@@ -6,6 +6,7 @@
 import { clearConversationControlRefusals } from './controlRefusals.svelte';
 import { SvelteMap } from 'svelte/reactivity';
 import { m } from '$lib/paraglide/messages';
+import { confirmEnding, recordRekey } from './endedConversations';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import type { IStorage, ConversationMeta } from '$lib/db';
 import {
@@ -123,6 +124,20 @@ export function toConversationMeta(
  */
 export function selfConversationIdentity(): ConversationIdentity {
   return { conversationType: 'self', contactName: '', displayName: '' };
+}
+
+/**
+ * `existing` RE-TYPED as "Mes notes", everything it carries kept (messages, marks, dates): the row of a
+ * self group this device was handed while it could not read the server's `kind` - a Welcome whose
+ * group read failed builds an ordinary `group` row - put right as soon as the kind is known.
+ */
+export function retaggedAsSelf(existing: Conversation): Conversation {
+  return buildConversationRow({
+    id: existing.id,
+    lifecycle: existing.lifecycle,
+    identity: selfConversationIdentity(),
+    existing,
+  });
 }
 
 /**
@@ -291,10 +306,26 @@ export async function retireConversation(params: {
   saveConversation?: (key: string) => Promise<void>;
   /** Extra fields to merge into the row, for callers that repair it in the same write. */
   patch?: Partial<Conversation>;
+  /**
+   * The ending is CONFIRMED by positive evidence (a Remove commit, an announced exclusion, a
+   * deletion the server reported): the row's notifications are then taken down. Left unset for a
+   * miss, which a Welcome may still undo - a stale notice is the safer error.
+   */
+  confirmed?: boolean;
 }): Promise<boolean> {
-  const { conversations, key, groupId, saveConversation, patch } = params;
+  const { conversations, key, groupId, saveConversation, patch, confirmed } = params;
   const convo = conversations.get(key);
-  if (!convo || convo.lifecycle === 'removed') return false;
+  if (!convo) return false;
+  // Confirmed BEFORE the already-removed return: discovery and the Remove commit race, and the
+  // outcome must not depend on which one wins. A patched id (recovery) is confirmed too.
+  // NO `await` MAY SIT between `confirmEnding` and the `conversations.set` below: the watcher
+  // reads a confirmation at the next look and drops it, so a look between the two would consume
+  // the fact before the row says `removed` (pinned by conversationEndingsWatch.svelte.test.ts).
+  if (confirmed) {
+    confirmEnding(convo.id);
+    if (patch?.id) confirmEnding(patch.id);
+  }
+  if (convo.lifecycle === 'removed') return false;
   conversations.set(key, { ...convo, ...patch, lifecycle: 'removed' });
   forgetGroupReconciliation(groupId);
   clearConversationControlRefusals(groupId);
@@ -388,8 +419,12 @@ export function markConversationDeletedRemotely(
   const key = findConversationKeyByGroupId(conversations, groupId);
   if (!key) return false;
   const convo = conversations.get(key);
-  if (!convo || convo.lifecycle === 'removed') return false;
-  void retireConversation({ conversations, key, groupId, saveConversation });
+  if (!convo) return false;
+  if (convo.lifecycle === 'removed') {
+    confirmEnding(convo.id);
+    return false;
+  }
+  void retireConversation({ conversations, key, groupId, saveConversation, confirmed: true });
   return true;
 }
 
@@ -981,6 +1016,7 @@ export async function mergeDirectConversationDuplicates(
           serverAnswer = 'the server had already deleted it';
         }
         await storage.deleteConversation(loser.id);
+        recordRekey(loser.id);
         mergedAway.add(loser.id);
         log(`[DM_MERGE] ${pair} merged, ${moved.length} row(s) moved, ${serverAnswer}`);
       } catch (error) {

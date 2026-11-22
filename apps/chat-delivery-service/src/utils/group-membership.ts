@@ -7,6 +7,7 @@ import { GroupMembershipInterval } from '../entities/group-membership-interval.e
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { Group } from '../entities/group.entity';
 import { canonicalUserId } from './sanitize';
+import { selfConversationUnawareDevices } from './self-conversation';
 import { RepeatCounter, cutUserId } from './log-repeat';
 import {
   bumpSeatGeneration,
@@ -199,7 +200,7 @@ export async function writePendingSeats(
     else await takeSharedSeatLock(m, groupId);
     const [group] = await m.getRepository(Group).find({
       where: { id: groupId },
-      select: { id: true, deletedAt: true, createdBy: true },
+      select: { id: true, deletedAt: true, createdBy: true, kind: true },
       lock: { mode: 'pessimistic_read' },
     });
     if (!group || group.deletedAt) return 'group_gone';
@@ -244,14 +245,34 @@ export async function writePendingSeats(
       m,
       deviceIds.map((deviceId) => ({ userId, deviceId }))
     );
-    const writable = deviceIds.filter((deviceId) => keyed.has(`${userId}:${deviceId}`));
-    if (writable.length < deviceIds.length) {
+    const keyedIds = deviceIds.filter((deviceId) => keyed.has(`${userId}:${deviceId}`));
+    if (keyedIds.length < deviceIds.length) {
       seatsLogger.warn(
         `[PENDING_SEATS] group=${groupId} user=${userId.slice(0, 8)} ` +
-          `${deviceIds.length - writable.length} device(s) NOT seated - no key package under the ` +
+          `${deviceIds.length - keyedIds.length} device(s) NOT seated - no key package under the ` +
           `seat lock (the account or device is being erased)`
       );
     }
+    // A SELF GROUP SEATS ONLY A DEVICE WHOSE BUILD KNOWS IT (`selfConversationUnawareDevices`): a seat
+    // is what raises the Add and the Welcome, and an older build Welcomed into "Mes notes" reads it as
+    // a group it may delete. Expected, not a fault - the device is seated once it updates and
+    // re-registers - so said as a plain line.
+    const unaware = new Set(
+      (
+        await selfConversationUnawareDevices(
+          m,
+          group,
+          keyedIds.map((deviceId) => ({ userId, deviceId }))
+        )
+      ).map((d) => d.deviceId)
+    );
+    if (unaware.size > 0) {
+      seatsLogger.log(
+        `[PENDING_SEATS] group=${groupId} user=${cutUserId(userId)} ${unaware.size} device(s) NOT ` +
+          `seated in a self group - their build does not state the "Mes notes" capability`
+      );
+    }
+    const writable = keyedIds.filter((deviceId) => !unaware.has(deviceId));
     if (writable.length > 0) {
       await m
         .createQueryBuilder()
@@ -855,16 +876,19 @@ export async function assertCallerHoldsSeat(
   log: Pick<Logger, 'warn'>,
   route: string,
   groupId: string,
-  callerUserId: string
+  callerUserId: string,
+  /** Handed the live group row read here, so a caller needing its `kind` reads it no second time. */
+  onGroup?: (group: Pick<Group, 'kind'>) => void
 ): Promise<SeatStanding> {
   if (!isGroupUuid(groupId)) {
     throw refuseNotAMember(log, route, groupId, callerUserId, ' groupFound=false');
   }
   const group = await repos.groups.findOne({
     where: { id: groupId, deletedAt: IsNull() },
-    select: { id: true, distributionWorkspaceId: true, distributionChannelId: true },
+    select: { id: true, distributionWorkspaceId: true, distributionChannelId: true, kind: true },
   });
   if (!group) throw refuseNotAMember(log, route, groupId, callerUserId, ' groupFound=false');
+  onGroup?.(group);
   if (isKeyDistributionGroup(group)) {
     throw refuseNotAMember(log, route, groupId, callerUserId, ' keyDistribution=true');
   }

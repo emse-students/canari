@@ -132,3 +132,29 @@ describe('FormItemDto.imageUrl - only the public route of an uploaded image', ()
     expect(failedProps(withImage({ imageAlt: 'x'.repeat(301) }))).toEqual(['imageAlt']);
   });
 });
+
+describe('FormItemDto label and description bounds', () => {
+  const item = (extra: Record<string, unknown>) =>
+    plainToInstance(FormItemDto, { label: 'Q', required: false, type: 'short_text', ...extra });
+
+  it('bounds the label and the help text', () => {
+    expect(failedProps(item({ label: 'x'.repeat(500) }))).toEqual([]);
+    expect(failedProps(item({ label: 'x'.repeat(501) }))).toEqual(['label']);
+    expect(failedProps(item({ description: 'x'.repeat(5000) }))).toEqual([]);
+    expect(failedProps(item({ description: 'x'.repeat(5001) }))).toEqual(['description']);
+  });
+});
+
+describe('FormItemDto.label on a block', () => {
+  const item = (type: string, label: string) =>
+    plainToInstance(FormItemDto, { label, required: false, type });
+
+  it('may be empty on a text or an image block: a heading and a caption are optional', () => {
+    expect(failedProps(item('text_block', ''))).toEqual([]);
+    expect(failedProps(item('image_block', ''))).toEqual([]);
+  });
+
+  it('is still required on every question', () => {
+    expect(failedProps(item('short_text', ''))).toEqual(['label']);
+  });
+});

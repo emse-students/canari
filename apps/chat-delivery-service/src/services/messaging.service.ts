@@ -97,6 +97,7 @@ import {
   type ExclusionWindow,
 } from '../utils/group-membership';
 import { RepeatCounter, cutDeviceId, cutUserId } from '../utils/log-repeat';
+import { selfConversationUnawareDevices } from '../utils/self-conversation';
 import {
   claimSentFrameReceipt,
   markSentFrameSettled,
@@ -3000,6 +3001,33 @@ export class MessagingService {
             });
             return false;
           });
+          // A SELF GROUP ("MES NOTES") TAKES IN ONLY A DEVICE WHOSE BUILD KNOWS IT - an Admit, the
+          // inline Welcome's target, or the committer of an external join: an older build would read
+          // the group as an ordinary one it may delete, and its delete ends the notes on every device
+          // ({@link selfConversationUnawareDevices}). Refused WHOLE, with the devices named: a current
+          // client never builds this commit (it reads the same capability off the device list).
+          // The committer's OWN devices only: another person is refused by the roster gate below
+          // (`enrolAdmittedPeople`), whatever their build.
+          const entering = [
+            ...admitted,
+            ...(welcome ? [{ userId: welcome.userId, deviceId: welcome.deviceId }] : []),
+            ...(frame.external ? [{ userId: committer, deviceId }] : []),
+          ].filter((d) => canonicalUserId(d.userId) === canonicalUserId(committer));
+          const unaware = await selfConversationUnawareDevices(m, group, entering);
+          if (unaware.length > 0) {
+            const named = unaware.map((d) => `${cutUserId(d.userId)}:${cutDeviceId(d.deviceId)}`);
+            this.logger.warn(
+              `[COMMIT][${traceId}] REJECT self_conversation_device_unaware group=${groupId} ` +
+                `devices=${named.join(',')} - their build does not state the "Mes notes" capability; nothing advanced`
+            );
+            throw new ForbiddenException(
+              refusalBody(
+                RefusalCode.SELF_CONVERSATION_DEVICE_UNAWARE,
+                'a device whose build does not know "Mes notes" cannot enter it',
+                { deviceIds: unaware.map((d) => d.deviceId) }
+              )
+            );
+          }
           // A WELCOME IS NEVER STORED FOR A GROUP THAT ENDED while this commit was in flight - the
           // device handed one asks for a group nobody can serve, on every reconnection. Read under a
           // row lock so the deletion and this write cannot interleave (the guard of
@@ -3020,7 +3048,7 @@ export class MessagingService {
             // ...AND THE TARGET STILL HOLDS ITS SEAT, re-read under the locks this transaction holds
             // before anything is written, so a removal or an eviction racing this commit serialises
             // with it ({@link lockWelcomeSeat}).
-            if (!(await this.lockWelcomeSeat(m, welcome, groupId, traceId, 'COMMIT'))) {
+            if (!(await this.lockWelcomeSeat(m, welcome, group, groupId, traceId, 'COMMIT'))) {
               throw new WelcomeSeatGone();
             }
           }
@@ -5254,12 +5282,24 @@ export class MessagingService {
   private async lockWelcomeSeat(
     m: EntityManager,
     target: WelcomeSeat,
+    group: Pick<Group, 'kind'>,
     groupId: string,
     traceId: string,
     tag: string,
     opts: { requireAdmitted?: boolean } = {}
   ): Promise<boolean> {
     if (!(await this.seatStandsFor(m, target, groupId, traceId, tag, opts))) return false;
+    // A SELF GROUP'S WELCOME REACHES ONLY A DEVICE WHOSE BUILD KNOWS IT: the Welcome is what makes an
+    // older build hold "Mes notes" as an ordinary group it may delete
+    // ({@link selfConversationUnawareDevices}).
+    if ((await selfConversationUnawareDevices(m, group, [target])).length > 0) {
+      this.logger.warn(
+        `[${tag}][${traceId}] REJECT welcome_target_self_unaware group=${groupId} ` +
+          `target=${cutUserId(target.userId)}:${cutDeviceId(target.deviceId)} - its build does not ` +
+          `state the "Mes notes" capability`
+      );
+      return false;
+    }
     // ...AND THE TARGET'S KEY PACKAGE, read `FOR SHARE` last: both stores insert the target's
     // pending row in this transaction, and a row inserted after an account erasure took the key
     // packages would outlive it ({@link heldKeyPackages}).
@@ -6754,13 +6794,37 @@ export class MessagingService {
     // ANY SEAT MAY ASK - an admitted member's new device, and above all a seat awaiting a member's
     // admission, whose ask this route IS - and nobody else: a caller with no seat learned which
     // member devices were online and had its ask stored and replayed (re-review of #2358).
+    let seatGroup: Pick<Group, 'kind'> | null = null;
     const standing = await assertCallerHoldsSeat(
       { groups: this.groupRepo, seats: this.groupMemberRepo },
       this.logger,
       'WELCOME_REQ',
       groupId,
-      canonicalUserId(requesterUserId)
+      canonicalUserId(requesterUserId),
+      (g) => (seatGroup = g)
     );
+    // A SELF GROUP IS ASKED FOR ONLY BY A DEVICE WHOSE BUILD KNOWS IT: relaying the ask would have a
+    // holder Add and Welcome a build that reads "Mes notes" as a group it may delete
+    // ({@link selfConversationUnawareDevices}).
+    if (
+      (
+        await selfConversationUnawareDevices(this.groupRepo.manager, seatGroup, [
+          { userId: canonicalUserId(requesterUserId), deviceId: requesterDeviceId },
+        ])
+      ).length > 0
+    ) {
+      this.logger.warn(
+        `[WELCOME_REQ][${traceId}] REFUSED self_conversation_device_unaware group=${groupId} ` +
+          `requester=${cutUserId(requesterUserId)}:${cutDeviceId(requesterDeviceId)}`
+      );
+      throw new ForbiddenException(
+        refusalBody(
+          RefusalCode.SELF_CONVERSATION_DEVICE_UNAWARE,
+          'a device whose build does not know "Mes notes" cannot enter it',
+          { deviceIds: [requesterDeviceId] }
+        )
+      );
+    }
 
     // Atomically pick one online group member that is not the requester.
     // Using a single server-side selection avoids the multi-connection race that
@@ -7090,6 +7154,8 @@ export class MessagingService {
           activeEpoch: true,
           distributionWorkspaceId: true,
           distributionChannelId: true,
+          // A self group's Welcome reaches only a device that knows the kind (`lockWelcomeSeat`).
+          kind: true,
         },
         lock: { mode: 'pessimistic_read' },
       });
@@ -7124,7 +7190,7 @@ export class MessagingService {
       // Welcome is an Add the gate refused, or one that never landed.
       if (
         welcome &&
-        !(await this.lockWelcomeSeat(manager, welcome, groupId, traceId, tag, {
+        !(await this.lockWelcomeSeat(manager, welcome, group, groupId, traceId, tag, {
           requireAdmitted: true,
         }))
       ) {

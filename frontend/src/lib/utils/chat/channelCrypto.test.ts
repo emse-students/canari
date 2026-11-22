@@ -45,8 +45,6 @@ const { GraineDistributionUnavailableError } = await import('$lib/utils/graine/s
 const { sendEncryptedChannelMessage, sendChannelReaction } =
   await import('$lib/utils/chat/channelCrypto');
 const { decodeAppMessage } = await import('$lib/proto/codec');
-const { salonRepeatIsSafe, resetSalonRepeatProofForTests } =
-  await import('$lib/utils/chat/salonRepeatProof');
 const { fromBase64 } = await import('$lib/utils/hex');
 
 const CHANNEL = 'channel_11111111-2222-3333-4444-555555555555';
@@ -135,16 +133,15 @@ describe('sendEncryptedChannelMessage', () => {
     expect('poll' in body).toBe(false);
   });
 
-  it('learns a repeat is safe ONLY from an answer that echoes its client id (migration 090)', async () => {
-    resetSalonRepeatProofForTests();
-    // An older server answers with its row and nothing else: nothing is proven.
-    sendMessage.mockResolvedValueOnce({ id: 'srv-1', createdAt: 1 });
-    await sendEncryptedChannelMessage(CHANNEL, PAYLOAD, 'msg-old');
-    expect(salonRepeatIsSafe()).toBe(false);
-
+  it('accuses an answer that does not echo its client id: that server predates migration 090', async () => {
+    const accused = vi.spyOn(console, 'error').mockImplementation(() => {});
     sendMessage.mockResolvedValueOnce({ id: 'srv-2', createdAt: 2, clientMessageId: 'msg-new' });
     await sendEncryptedChannelMessage(CHANNEL, PAYLOAD, 'msg-new');
-    expect(salonRepeatIsSafe()).toBe(true);
+    expect(accused).not.toHaveBeenCalled();
+
+    sendMessage.mockResolvedValueOnce({ id: 'srv-1', createdAt: 1 });
+    await sendEncryptedChannelMessage(CHANNEL, PAYLOAD, 'msg-old');
+    expect(accused).toHaveBeenCalledWith(expect.stringContaining('predates migration 090'));
   });
 });
 

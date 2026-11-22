@@ -9,6 +9,7 @@ import fr.emse.canari.push.ReadElsewhereMarks.ReadOutcome
 import fr.emse.canari.push.ReadElsewhereMarks.Withdrawal
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -37,7 +38,6 @@ class ReadElsewhereMarksTest {
     /** Nothing is held by the platform: every cancel goes, and nothing is re-posted to release one. */
     private val notHeld: (Int) -> Boolean = { false }
     private val noRepost: (Banner<Msg>, List<Msg>) -> Banner<Msg>? = { _, _ -> throw AssertionError("not held: nothing is re-posted") }
-    private val noRepostAll: (String, Banner<Msg>, List<Msg>) -> Banner<Msg>? = { _, _, _ -> throw AssertionError("not held: nothing is re-posted") }
 
     /**
      * The system's notification list for one conversation: a `notify` or a `cancel` only QUEUES, as
@@ -194,7 +194,7 @@ class ReadElsewhereMarksTest {
         assertEquals(listOf(m2), shade.read()?.messages)
 
         marks.post(shade, "g2", 1002, m1)
-        marks.forgetAll(holds = notHeld, repost = noRepostAll) {}
+        marks.clear {}
         assertNull(marks.bannerOf("g2") { null })
     }
 
@@ -436,24 +436,24 @@ class ReadElsewhereMarksTest {
     fun `after every banner was removed at once the shade is never asked again`() {
         val marks = marks()
         val shade = AsyncShade()
-        marks.forgetAll(holds = notHeld, repost = noRepostAll) {}
+        marks.clear {}
         assertNull(marks.bannerOf("g1") { fail("the shade is stale"); null })
         assertEquals(Withdrawal.NONE, marks.withdraw("g1", false, null, shade = { fail("the shade is stale"); null }, holds = notHeld, repost = noRepost) {})
         marks.post(shade, "g1", 1001, m1)
         assertEquals(listOf(m1), marks.bannerOf("g1") { null }?.messages)
     }
 
-    // Round-7 review (S1): `forgetAll` after a sweep of a shade that lagged a post left that banner
+    // Round-7 review (S1): `clear` after a sweep of a shade that lagged a post left that banner
     // standing, and invisible to every later dismissal. It cancels what it recorded, by id.
     @Test
-    fun `forgetAll cancels every recorded banner by id, one the shade has not shown included`() {
+    fun `clear cancels every recorded banner by id, one the shade has not shown included`() {
         val marks = marks()
         val shade = AsyncShade()
         marks.post(shade, "g1", 1001, m1)
         shade.drain()
         marks.post(shade, "g2", 1002, m2) // not drained: the shade has not shown it yet
         val cancelled = mutableListOf<Int>()
-        assertEquals(listOf(1001, 1002), marks.forgetAll(holds = notHeld, repost = noRepostAll) { shade.cancel(it); cancelled += it }.sorted())
+        assertEquals(listOf(1001, 1002), marks.clear { shade.cancel(it); cancelled += it }.sorted())
         assertEquals(listOf(1001, 1002), cancelled.sorted())
         shade.drain()
         assertNull(shade.read())
@@ -462,7 +462,7 @@ class ReadElsewhereMarksTest {
     @Test
     fun `a cancel with no banner known cancels the stable id, unless it must keep a pending reply`() {
         val marks = marks()
-        marks.forgetAll(holds = notHeld, repost = noRepostAll) {}
+        marks.clear {}
         val cancelled = mutableListOf<Int>()
         assertEquals(Withdrawal.NONE, marks.withdraw("g1", false, 1001, shade = { null }, holds = notHeld, repost = noRepost) { cancelled += it })
         assertEquals(listOf(1001), cancelled)
@@ -677,29 +677,6 @@ class ReadElsewhereMarksTest {
         assertEquals(listOf(1001), cancelled)
     }
 
-    // Round-12 review (S-a): the app coming to the front cancels every recorded banner - but a held
-    // one is updated and stays recorded, so a later read still cancels it.
-    @Test
-    fun `forgetAll updates a held banner and keeps it, and cancels the others`() {
-        val marks = marks()
-        marks.remember("g1", Banner(1001, "messages", listOf(answer)))
-        marks.remember("g2", Banner(1002, "messages", listOf(m1)))
-        val reposted = mutableListOf<String>()
-        val cancelled = marks.forgetAll(
-            holds = { it == 1001 },
-            repost = { conversationId, b, kept ->
-                reposted += conversationId
-                b.copy(messages = kept)
-            },
-        ) {}
-        assertEquals(listOf(1002), cancelled)
-        assertEquals(listOf("g1"), reposted)
-        assertEquals(null, marks.bannerOf("g2") { fail("the shade is never asked again"); null })
-        val gone = mutableListOf<Int>()
-        assertEquals(ReadOutcome.CANCELLED, marks.recordThenCancel("g1", Read(1L, serverClock = true), shade = { null }, holds = notHeld, repost = noRepost) { gone += it })
-        assertEquals(listOf(1001), gone)
-    }
-
     @Test
     fun `a held banner is also removed by a dismissal that keeps pending replies, having none`() {
         val marks = marks()
@@ -834,10 +811,10 @@ class ReadElsewhereMarksTest {
         assertEquals(ReadOutcome.UNREAD, marks.recordThenCancel("g3", read, shade = { null }, holds = { throw AssertionError("not covered: never asked") }, repost = noRepost) { fail("unread") })
     }
 
-    // Round-15 review (S2): a covered, dismissed or swept held banner is re-posted EMPTY - every line
+    // Round-15 review (S2): a covered or dismissed held banner is re-posted EMPTY - every line
     // it showed was read - and recorded so: the next post builds on nothing already read.
     @Test
-    fun `a held banner a read, a dismissal or the app's start covers is re-posted empty`() {
+    fun `a held banner a read or a dismissal covers is re-posted empty`() {
         val marks = marks()
         val drawn = mutableListOf<List<Msg>>()
         val repost: (Banner<Msg>, List<Msg>) -> Banner<Msg>? = { b, kept -> drawn += kept; b.copy(messages = kept) }
@@ -845,12 +822,9 @@ class ReadElsewhereMarksTest {
         assertEquals(ReadOutcome.HELD, marks.recordThenCancel("g1", Read(2_000L, serverClock = true), shade = { null }, holds = { true }, repost = repost) { fail("held") })
         marks.remember("g2", Banner(1002, "messages", listOf(m1)))
         assertEquals(Withdrawal.HELD, marks.withdraw("g2", false, 1002, shade = { null }, holds = { true }, repost = repost) { fail("held") })
-        marks.remember("g3", Banner(1003, "messages", listOf(m2)))
-        marks.forgetAll(holds = { true }, repost = { _, b, kept -> repost(b, kept) }) { fail("held") }
-        // g1 and g2, still recorded and held, are re-posted by the sweep too - empty as well.
-        assertEquals(5, drawn.size)
+        assertEquals(2, drawn.size)
         assertTrue(drawn.all { it.isEmpty() })
-        for (id in listOf("g1", "g2", "g3")) assertEquals(emptyList<Msg>(), marks.bannerOf(id) { null }?.messages)
+        for (id in listOf("g1", "g2")) assertEquals(emptyList<Msg>(), marks.bannerOf(id) { null }?.messages)
     }
 
     // Round-15 review (nit): a held banner that cannot be rebuilt (no template) was not posted, so
@@ -865,7 +839,7 @@ class ReadElsewhereMarksTest {
     }
 
     // Round-15 review (S4): a reaction post rebuilds from the shade, which lags a `cancel` - after a
-    // withdrawal, or the app's start sweep, it builds on nothing until it posted on that fresh base.
+    // withdrawal, or a sign-out, it builds on nothing until it posted on that fresh base.
     @Test
     fun `a reaction post after its withdrawal never rebuilds on the stale shade`() {
         val marks = marks()
@@ -875,8 +849,8 @@ class ReadElsewhereMarksTest {
         assertNull(marks.reactionBaseOf("g1") { stale })
         marks.reactionPosted("g1", 2001)
         assertEquals(stale, marks.reactionBaseOf("g1") { stale })
-        // The app's start sweeps every reaction: none is asked of the shade until it posts again.
-        marks.forgetAll(holds = notHeld, repost = noRepostAll) {}
+        // A sign-out clears every reaction: none is asked of the shade until it posts again.
+        marks.clear {}
         assertNull(marks.reactionBaseOf("g1") { stale })
         assertNull(marks.reactionBaseOf("g2") { stale })
         marks.reactionPosted("g2", 2002)
@@ -931,18 +905,73 @@ class ReadElsewhereMarksTest {
         assertEquals(emptyList<Msg>(), heldMarks.bannerOf("g1") { null }?.messages)
     }
 
-    // Round-16 review: the app's start cancels BY ID every reaction this process posted since the
-    // last sweep - the sweep's shade read lags a `notify`, as for the banners.
+    // Round-16 review: a sign-out cancels BY ID every reaction this process posted - the sweep's shade
+    // read lags a `notify`, as for the banners.
     @Test
-    fun `forgetAll cancels by id the reactions posted since the last sweep`() {
+    fun `clear cancels by id the reactions posted since the last sign-out`() {
         val marks = marks()
         marks.reactionPosted("g1", 2001)
         marks.reactionPosted("g2", 2002)
         val cancelled = mutableListOf<Int>()
-        marks.forgetAll(holds = notHeld, repost = noRepostAll) { cancelled += it }
+        marks.clear { cancelled += it }
         assertEquals(setOf(2001, 2002), cancelled.toSet())
         cancelled.clear()
-        marks.forgetAll(holds = notHeld, repost = noRepostAll) { cancelled += it }
+        marks.clear { cancelled += it }
         assertEquals(emptyList<Int>(), cancelled)
+    }
+
+    // Owner, 2026-11-21: an ENDING is not a read. It withdraws the banner unconditionally and leaves
+    // NO mark, because a mark outlives the session and would silence the conversation if the account
+    // came back to it.
+    @Test
+    fun `end cancels the recorded banner and the stable id and leaves no mark`() {
+        val marks = marks()
+        val shade = AsyncShade()
+        marks.post(shade, "g1", 1001, m1)
+        val cancelled = mutableListOf<Int>()
+        assertEquals(listOf(1001), marks.end("g1", 1001) { cancelled += it })
+        assertEquals(listOf(1001), cancelled)
+        assertNull(marks.of("g1"))
+        assertNull(marks.bannerOf("g1") { null })
+    }
+
+    @Test
+    fun `end withdraws a banner holding a pending reply or a line without a server instant`() {
+        val marks = marks()
+        val pending = Msg(null, null, pendingReply = true, replyId = "r0")
+        marks.remember("g1", Banner(1001, "messages", listOf(pending, Msg(sentAt = 5L, serverAt = 0L))))
+        val cancelled = mutableListOf<Int>()
+        marks.end("g1", 1001) { cancelled += it }
+        assertEquals(listOf(1001), cancelled)
+        assertNull(marks.bannerOf("g1") { null })
+    }
+
+    @Test
+    fun `end with no banner known cancels the stable id, and a rejoined conversation posts afresh`() {
+        val marks = marks()
+        val shade = AsyncShade()
+        val cancelled = mutableListOf<Int>()
+        assertEquals(listOf(1001), marks.end("g1", 1001) { cancelled += it })
+        assertEquals(listOf(1001), cancelled)
+        marks.post(shade, "g1", 1001, m1)
+        assertEquals(listOf(m1), marks.bannerOf("g1") { null }?.messages)
+        assertEquals(emptyList<Int>(), marks.end("g2", null) { fail("nothing to cancel") })
+    }
+
+    @Test
+    fun `end drops a mark an earlier read recorded`() {
+        val marks = marks()
+        marks.recordThenCancel("g1", Read(9_000L, serverClock = true), shade = { null }, holds = notHeld, repost = noRepost) {}
+        assertNotNull(marks.of("g1"))
+        marks.end("g1", null) {}
+        assertNull(marks.of("g1"))
+    }
+
+    @Test
+    fun `clear forgets every mark, so the next account starts from nothing`() {
+        val marks = marks()
+        marks.recordThenCancel("g1", Read(9_000L, serverClock = true), shade = { null }, holds = notHeld, repost = noRepost) {}
+        marks.clear {}
+        assertNull(marks.of("g1"))
     }
 }

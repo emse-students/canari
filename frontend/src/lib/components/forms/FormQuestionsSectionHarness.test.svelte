@@ -11,6 +11,8 @@
     onPricedGridAdded?: () => void;
     onPricedGridGone?: () => void;
     gridFault?: { itemId: string; message: string } | null;
+    offerBlocks?: boolean;
+    imageUploadFn?: (file: File) => Promise<string>;
   }
 
   let {
@@ -21,6 +23,8 @@
     onPricedGridAdded,
     onPricedGridGone,
     gridFault = null,
+    offerBlocks = true,
+    imageUploadFn,
   }: Props = $props();
   let items = $state(untrack(() => initial));
   $effect(() => onItems($state.snapshot(items)));
@@ -34,4 +38,6 @@
   {onPricedGridAdded}
   {onPricedGridGone}
   {gridFault}
+  {offerBlocks}
+  {imageUploadFn}
 />

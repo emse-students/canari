@@ -961,11 +961,25 @@ class MainActivity : TauriActivity() {
     override fun onResume() {
         super.onResume()
         isInForeground = true
+        // Off the main thread; the page is told once the fresh snapshot is on disk, so a permission
+        // answered in the system dialog or a switch flipped in the settings reaches the server now.
+        NotificationDeliveryState.writeAsync(this) {
+            runOnUiThread {
+                try {
+                    liveWebView?.evaluateJavascript(
+                        "window.dispatchEvent(new CustomEvent('canari:notification-state'));", null
+                    )
+                } catch (e: Exception) {
+                    Log.w("MainActivity", "notification-state event failed: ${e.javaClass.simpleName}") // log-safe: class name only
+                }
+            }
+        }
         MlsBackgroundWorker.resetFailureFlag(this)
         OutboxRetryWorker.resetFailureFlag(this)
-        // Opening the app clears lingering message notifications (read here or on another
-        // device) - the visible half of cross-device read-state sync.
-        CanariFirebaseMessagingService.cancelAllMessageNotifications(this)
+        // Opening the app does NOT clear message, mention or reaction banners (owner, 2026-11-21):
+        // each goes with its conversation, when it is read or ended. What the open app takes over
+        // - the rings, the wake notice - is retired here.
+        CanariFirebaseMessagingService.retireTakenOverNotifications(this)
         // The notification plugin's empty "Default" channel, created at its load (see the helper).
         CanariApplication.removePluginDefaultChannel(this)
         val opening = resumeOpening

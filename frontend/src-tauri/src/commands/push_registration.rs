@@ -38,6 +38,18 @@ pub(crate) const SIGNED_OUT_FILE: &str = "push_signed_out";
 /// `PushRegistrationEnd.kt` and `canari_push.mm` - change all three together.
 pub(crate) const DELETION_OWED_FILE: &str = "push_token_deletion_owed";
 
+/// "Has the system been told to forget what the notifications handed it since the sign-out?" - the
+/// iPhone's donated communication-notification interactions, Android's `chat_<group>` shortcuts:
+/// names and faces of the account that left (review of #3938). Written at the sign-out with the two
+/// marks above, BEFORE the context is stripped, and settled by the page once
+/// `clear_conversation_shortcuts` answered; while it says `owed` the erase is asked again at the next
+/// launch and before the next session's context is stored. So an app swiped away during the
+/// sign-out's FCM step, or a crash between the strip and the erase, still owes it on disk.
+///
+/// The file holds `owed <n>` or `done <n>`, `n` a count that only ever grows: a settle names the
+/// `n` it read before erasing, so an erase begun for one sign-out never settles a later one.
+pub(crate) const NOTIFICATION_ERASE_OWED_FILE: &str = "notification_shortcuts_erase_owed";
+
 /// The token the native side mirrors for `get_fcm_token`; the registration that ended named it.
 #[cfg_attr(not(any(target_os = "android", target_os = "ios")), allow(dead_code))]
 const FCM_TOKEN_FILE: &str = "fcm_token.txt";
@@ -66,17 +78,19 @@ pub(crate) fn end_push_registration_files(
     data_dir: &std::path::Path,
     extension_dir: Option<&std::path::Path>,
 ) -> Result<(), String> {
-    end_push_registration_files_then(data_dir, extension_dir, || {})
+    end_push_registration_files_then(data_dir, extension_dir, || {}).1
 }
 
 /// [`end_push_registration_files`], with `after_strip` run once the context has been stripped and
 /// [`PUSH_CONTEXT_LOCK`](crate::commands::push::push_context_guard) released: the window a sign-in
-/// can land in, which a test fills with one.
+/// can land in, which a test fills with one. Also answers the ERASE TICKET: the count this sign-out
+/// wrote into [`NOTIFICATION_ERASE_OWED_FILE`], `None` when that write failed - the page's erase
+/// carries it, and only a ticket proves which mark a later "nothing owed" is about.
 fn end_push_registration_files_then(
     data_dir: &std::path::Path,
     extension_dir: Option<&std::path::Path>,
     after_strip: impl FnOnce(),
-) -> Result<(), String> {
+) -> (Option<u64>, Result<(), String>) {
     log::info!("[PushEnd] ending this device's push registration");
     let mut first_error: Option<String> = None;
     let mut note = |what: &str, e: String| {
@@ -92,6 +106,13 @@ fn end_push_registration_files_then(
             note(&format!("{mark} not written"), e.to_string());
         }
     }
+    let erase_ticket = match mark_notification_erase_owed(data_dir) {
+        Ok(ticket) => Some(ticket),
+        Err(e) => {
+            note(&format!("{NOTIFICATION_ERASE_OWED_FILE} not written"), e);
+            None
+        }
+    };
     if let Err(e) = keep_device_context_only(data_dir, extension_dir) {
         note("push context not stripped", e);
     }
@@ -122,10 +143,11 @@ fn end_push_registration_files_then(
         );
     }
     log::info!("[PushEnd] {removed} push file(s) removed, {failures} failed");
-    match first_error {
+    let result = match first_error {
         Some(e) => Err(e),
         None => Ok(()),
-    }
+    };
+    (erase_ticket, result)
 }
 
 /// Rewrites `push_context.json` with [`DEVICE_CONTEXT_KEYS`] only, under the context lock. An absent
@@ -178,6 +200,117 @@ fn keep_device_context_only(
     )
 }
 
+/// What [`NOTIFICATION_ERASE_OWED_FILE`] says: `Some((owed, n))`, or `None` when absent. An
+/// unreadable or malformed file reads as owed with `n` 0 - nothing proves the erase was done.
+fn read_notification_erase(data_dir: &std::path::Path) -> Option<(bool, u64)> {
+    let text = match std::fs::read_to_string(data_dir.join(NOTIFICATION_ERASE_OWED_FILE)) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => {
+            log::error!(
+                "[PushEnd] {NOTIFICATION_ERASE_OWED_FILE} unreadable - the erase stays owed: {e}"
+            );
+            return Some((true, 0));
+        }
+    };
+    let parsed = text.trim().split_once(' ').and_then(|(state, n)| {
+        let n = n.parse::<u64>().ok()?;
+        match state {
+            "owed" => Some((true, n)),
+            "done" => Some((false, n)),
+            _ => None,
+        }
+    });
+    if parsed.is_none() {
+        log::error!("[PushEnd] {NOTIFICATION_ERASE_OWED_FILE} malformed - the erase stays owed");
+    }
+    Some(parsed.unwrap_or((true, 0)))
+}
+
+/// Writes `owed <n+1>` into [`NOTIFICATION_ERASE_OWED_FILE`], `n` the count it held (0 if none),
+/// and answers `n+1`, the sign-out's erase ticket.
+fn mark_notification_erase_owed(data_dir: &std::path::Path) -> Result<u64, String> {
+    let next = read_notification_erase(data_dir).map_or(0, |(_, n)| n) + 1;
+    std::fs::write(
+        data_dir.join(NOTIFICATION_ERASE_OWED_FILE),
+        format!("owed {next}"),
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(next)
+}
+
+/// The count of the erase owed, or `None` when none is.
+#[cfg_attr(not(any(target_os = "android", target_os = "ios")), allow(dead_code))]
+fn notification_erase_owed_in(data_dir: &std::path::Path) -> Option<u64> {
+    match read_notification_erase(data_dir) {
+        Some((true, n)) => Some(n),
+        _ => None,
+    }
+}
+
+/// Settles the erase owed as `n`, and answers whether it did: a file now owing another `n` (a later
+/// sign-out) is left owed.
+#[cfg_attr(not(any(target_os = "android", target_os = "ios")), allow(dead_code))]
+fn settle_notification_erase_in(data_dir: &std::path::Path, n: u64) -> Result<bool, String> {
+    if read_notification_erase(data_dir) != Some((true, n)) {
+        return Ok(false);
+    }
+    std::fs::write(
+        data_dir.join(NOTIFICATION_ERASE_OWED_FILE),
+        format!("done {n}"),
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+/// Whether a sign-out still owes the erase of what the notifications handed the system, as the
+/// count the settle must name (`None`: nothing owed). Read by the page at launch, before a session's
+/// context is stored, and by the sign-out's own erase. `None` off the phone platforms.
+#[tauri::command]
+pub(crate) fn notification_shortcuts_erase_owed(app: tauri::AppHandle) -> Option<u64> {
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        match app.path().app_data_dir() {
+            Ok(dir) => notification_erase_owed_in(&dir),
+            Err(e) => {
+                log::error!("[PushEnd] app_data_dir() failed - the owed erase is not known: {e}");
+                None
+            }
+        }
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let _ = app;
+        None
+    }
+}
+
+/// Settles the erase [`notification_shortcuts_erase_owed`] answered `owed` for, once
+/// `clear_conversation_shortcuts` answered. `false` (logged) when a later sign-out owes another.
+#[tauri::command]
+pub(crate) fn settle_notification_shortcuts_erase(
+    app: tauri::AppHandle,
+    owed: u64,
+) -> Result<bool, String> {
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+        let settled = settle_notification_erase_in(&dir, owed)?;
+        let seq = owed;
+        if settled {
+            log::info!("[PushEnd] the notifications' erase {seq} is done");
+        } else {
+            log::info!("[PushEnd] erase {seq} done, but a later sign-out owes another - left owed");
+        }
+        Ok(settled)
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let _ = (app, owed);
+        Ok(false)
+    }
+}
+
 /// Removes [`SIGNED_OUT_FILE`]: the server has just answered a registration, so this device is a
 /// push destination again. Called by `write_push_secret`, the one place that answer lands.
 pub(crate) fn clear_signed_out_mark(data_dir: &std::path::Path) -> Result<(), String> {
@@ -214,13 +347,26 @@ pub(crate) fn sign_out_cause_label(cause: &str) -> &'static str {
     }
 }
 
+/// What [`end_push_registration`] answers the page.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PushRegistrationEnd {
+    /// Whether the token deletion COMPLETED. `false` is not an error: the deletion is owed
+    /// ([`DELETION_OWED_FILE`] stays) and completes before anything registers again.
+    deleted: bool,
+    /// The count this sign-out wrote into [`NOTIFICATION_ERASE_OWED_FILE`] - `None` when that write
+    /// failed, and then the page's erase never skips (see `eraseNotificationShortcuts`).
+    erase_ticket: Option<u64>,
+    /// The first file step that failed, already logged; the native deletion was still attempted.
+    files_error: Option<String>,
+}
+
 /// Ends this device's push registration at a sign-out: [`end_push_registration_files`], then the
 /// native deletion of the OS token and of the platform-held push secret.
 ///
-/// Returns whether the token deletion COMPLETED. `false` is not an error: it means the deletion is
-/// owed ([`DELETION_OWED_FILE`] stays) and will be completed before anything registers again; the
-/// native side has logged why. `Err` means a file step failed, and the native deletion was still
-/// attempted. Always `Ok(true)` off the phone platforms, which have no push registration.
+/// Answers a [`PushRegistrationEnd`]: a failed file step is in it rather than an `Err`, so the erase
+/// ticket written before that failure still reaches the page. `Err` only when the app's data
+/// directory is not known. Off the phone platforms: deleted, no ticket, no error.
 ///
 /// `cause` is WHO DECIDED the sign-out (`SignOutCause` in `signOutCause.ts`: the PIN gate's button,
 /// the navbar, a revoked device...), logged first: a store build forwards no WebView console to
@@ -232,7 +378,7 @@ pub(crate) fn sign_out_cause_label(cause: &str) -> &'static str {
 pub(crate) async fn end_push_registration(
     app: tauri::AppHandle,
     cause: String,
-) -> Result<bool, String> {
+) -> Result<PushRegistrationEnd, String> {
     log::info!(
         "[PushEnd] sign-out decided by: {}",
         sign_out_cause_label(&cause)
@@ -248,18 +394,27 @@ pub(crate) async fn end_push_registration(
                     "[PushEnd] no App Group container - the extension's copies were not reached: {e}"
                 );
             }
-            end_push_registration_files(&data_dir, group.as_deref().ok())
+            end_push_registration_files_then(&data_dir, group.as_deref().ok(), || {})
         };
         #[cfg(target_os = "android")]
-        let files = end_push_registration_files(&data_dir, None);
+        let files = end_push_registration_files_then(&data_dir, None, || {});
+        let (erase_ticket, files) = files;
         let deleted = run_native(NativeStep::EndForSignOut).await;
-        files.map(|()| deleted)
+        Ok(PushRegistrationEnd {
+            deleted,
+            erase_ticket,
+            files_error: files.err(),
+        })
     }
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         let _ = app;
         log::debug!("[PushEnd] no push registration on this platform");
-        Ok(true)
+        Ok(PushRegistrationEnd {
+            deleted: true,
+            erase_ticket: None,
+            files_error: None,
+        })
     }
 }
 
@@ -394,7 +549,9 @@ fn completed(done: bool) -> &'static str {
 mod tests {
     use super::{
         clear_signed_out_mark, end_push_registration_files, end_push_registration_files_then,
-        sign_out_cause_label, DELETION_OWED_FILE, FCM_TOKEN_FILE, SIGNED_OUT_FILE, VOIP_TOKEN_FILE,
+        notification_erase_owed_in, settle_notification_erase_in, sign_out_cause_label,
+        DELETION_OWED_FILE, FCM_TOKEN_FILE, NOTIFICATION_ERASE_OWED_FILE, SIGNED_OUT_FILE,
+        VOIP_TOKEN_FILE,
     };
 
     /// A known cause prints as itself; anything else prints `unknown`, never the caller's text.
@@ -474,6 +631,7 @@ mod tests {
             })
             .unwrap();
         })
+        .1
         .unwrap();
         assert_eq!(
             std::fs::read_to_string(group.join(PUSH_CONTEXT_FILE)).unwrap(),
@@ -589,5 +747,65 @@ mod tests {
         std::fs::create_dir_all(group.join(EXTENSION_PUSH_SECRET_FILE).join("blocked")).unwrap();
         assert!(crate::commands::push::write_push_secret(&app, Some(&group), "fresh").is_err());
         assert!(app.join(SIGNED_OUT_FILE).exists());
+    }
+
+    /// The sign-out owes the notifications' erase, each sign-out under a count of its own; a settle
+    /// names its count, so an erase begun for one sign-out never settles the next one's (review of
+    /// #3938).
+    #[test]
+    fn the_notifications_erase_is_owed_until_settled_by_its_own_sign_out() {
+        let app = dir("erase-owed");
+        assert_eq!(notification_erase_owed_in(&app), None);
+        end_push_registration_files(&app, None).unwrap();
+        assert_eq!(notification_erase_owed_in(&app), Some(1));
+        // A second sign-out before the first erase settled: the stale settle leaves it owed.
+        end_push_registration_files(&app, None).unwrap();
+        assert_eq!(notification_erase_owed_in(&app), Some(2));
+        assert!(!settle_notification_erase_in(&app, 1).unwrap());
+        assert_eq!(notification_erase_owed_in(&app), Some(2));
+        assert!(settle_notification_erase_in(&app, 2).unwrap());
+        assert_eq!(notification_erase_owed_in(&app), None);
+        // The count survives the settle: the next sign-out owes 3, never a count already settled.
+        end_push_registration_files(&app, None).unwrap();
+        assert_eq!(notification_erase_owed_in(&app), Some(3));
+        assert!(!settle_notification_erase_in(&app, 2).unwrap());
+    }
+
+    /// The mark is written before the strip: no instant sees the context stripped with no erase
+    /// owed, so a crash between the strip and the erase still owes it.
+    #[test]
+    fn the_notifications_erase_is_owed_before_the_context_is_stripped() {
+        let app = dir("erase-before-strip");
+        std::fs::write(
+            app.join(PUSH_CONTEXT_FILE),
+            r#"{"userId":"u-1","deviceId":"d-1","baseUrl":"https://x"}"#,
+        )
+        .unwrap();
+        let mut owed_at_strip = None;
+        let (ticket, files) = end_push_registration_files_then(&app, None, || {
+            owed_at_strip = notification_erase_owed_in(&app);
+        });
+        files.unwrap();
+        assert_eq!(owed_at_strip, Some(1));
+        // The ticket is the count written: what the page's erase carries.
+        assert_eq!(ticket, Some(1));
+    }
+
+    /// A mark that could not be written gives NO ticket - and the page's erase then never skips.
+    #[test]
+    fn a_mark_not_written_gives_no_erase_ticket() {
+        let app = dir("erase-no-ticket");
+        std::fs::create_dir_all(app.join(NOTIFICATION_ERASE_OWED_FILE).join("blocked")).unwrap();
+        let (ticket, files) = end_push_registration_files_then(&app, None, || {});
+        assert_eq!(ticket, None);
+        assert!(files.is_err());
+    }
+
+    /// Nothing proves an unreadable mark was settled: it reads as owed.
+    #[test]
+    fn a_malformed_erase_mark_reads_as_owed() {
+        let app = dir("erase-malformed");
+        std::fs::write(app.join(NOTIFICATION_ERASE_OWED_FILE), "?").unwrap();
+        assert_eq!(notification_erase_owed_in(&app), Some(0));
     }
 }

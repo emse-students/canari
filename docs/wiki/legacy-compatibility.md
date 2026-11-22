@@ -142,7 +142,7 @@ sends, so it deploys only to an estate whose floor already reads `1.7.0`.**
 | Entry | Carried by | Disposition at `1.7.0` |
 | --- | --- | --- |
 | A salon invitation notice sent as a localized sentence (`CHANNEL_NOTICE_IDS_WRITER_ENABLED`, `channelNotice.ts`) | #3676, `v1.7.0` | **REMOVED**: the inviter always sends `{ "newUsers": [id] }`, which every floor build draws in the reader's language ([chat](frontend/modules/chat.md#a-salons-membership-notice-carries-ids-2026-11-16)). **Stays:** the legacy-sentence branch of `channelSystemEnvelope` - rows are never rewritten, so a salon archive holds sentence notices for ever |
-| An unsealed history answer, and an ask with no `answerKey` (`noteUnsealedAnswerOnce`, the answerer's unsealed branch in `sendBundleChunks`) | #3775, `v1.7.0` | **REMOVED**: an unsealed answer to a keyed ask is refused at error and nothing of it ingested; a `history_digest`, `history_range` or `history_pull` with no well-formed `answerKey` is malformed and answered nothing (as one with no `requestId` is, D211); `noteHistoryAsk` requires the secret, and only the join push stays unkeyed ([history-answer-addressing](protocols/history-answer-addressing.md#sealing-the-answer-to-the-asker---option-b-2026-11-17)). The withheld-device broadcast guard of `sendBundleChunks` went with it: an answer that cannot be addressed is now never sent at all |
+| An unsealed history answer, and an ask with no `answerKey` (`noteUnsealedAnswerOnce`, the answerer's unsealed branch in `sendBundleChunks`) | #3775, `v1.7.0` | **REMOVED**: an unsealed answer to a keyed ask is refused at error and nothing of it ingested; a `history_digest`, `history_range` or `history_pull` with no well-formed `answerKey` is malformed and answered nothing (as one with no `requestId` is, D211); `noteHistoryAsk` requires the secret, and only the join push stays unkeyed ([history-answer-addressing](protocols/history-answer-addressing.md#sealing-the-answer-to-the-asker---option-b-2026-11-17)). The withheld-device broadcast guard of `sendBundleChunks` went with it: an answer that cannot be addressed is now never sent at all. **Measured 2026-11-22:** a keyless `history_digest` still reached a `1.7.1` device, because the floor is enforced in the client only: a build below `1.7.0` that has not met the update gate can send one. The receiver says it ONCE per sender and conversation, typed `history-ask-without-answer-key`, AT ERROR (a current build sending one would be a defect or a forgery, and the frame carries no build to tell them apart); the line is the drain measure, and goes with the first floor that is enforced past it |
 | The bound on register asks said at warn (`REGISTER_ASKS_MAX`, `endSpentRegisterAsks`) | #3777, `v1.7.0` | **RAISED, not removed**: the bound stays (a server that cannot address), its end line is now at error, naming its causes - every floor responder answers or declines `register` when it can, so what reaches it is a defect or a server that cannot address; an unvouched asker is declined as `'withheld'` and ends at info |
 | The iOS fold of the app's former seed mirror (`fold_legacy_seed_mirror`, `push.rs`) | #3768, `v1.7.0` | **REPLACED**, as this entry prescribed: `seed_mirror_home` deletes `{app_data_dir}/graine_seeds.json` unread (`remove_graine_mirror`, under the mirror lock) - a store update skips versions, so the floor does not prove every install folded, and the App Group's copy already holds what the last lifecycle copy put there; the function and its tests are gone, and `migrate_legacy_files` deletes that copy at the first start instead of resealing it. **Accepted loss, said:** a seed the older foreground stored after its last lifecycle copy (a background task, a crash) is in the deleted file only, so that salon session's pushes show the generic banner until it rotates; the app still opens it ([channel-encryption section 27](protocols/channel-encryption.md#27-the-iphone-held-two-seed-mirrors-and-the-one-without-the-extensions-seeds-won---fixed-2026-11-17)) |
 | An unbounded booking space read by a build older than migration 153 (nothing to remove) | #3196, `v1.6.9` | **CLOSED**: entry deleted |
@@ -579,6 +579,28 @@ entry.
   the preview answering `groupName`; the server branch goes in the same pull request. **Accepted
   then:** a link minted before this build shows "a group" until it is re-shared. The `[LEGACY]` count
   is read first, so the cost is measured before it is paid.
+
+### Removal once `minClientVersion` passes the release carrying "Mes notes" - a self group kept from a build that does not know it (2026-11-22)
+
+- **The shim.** A build before "Mes notes" reads a self group (`dm_groups.kind = 'self'`, migration
+  056 of chat-delivery) as an ordinary group: Welcomed into it, it builds a `group` row named after
+  the account and offers rename, invite and DELETE - and its delete would end the notes on every
+  device of the account (charter principle 2). So every device states its build's capability on each
+  `register-device` (`key_package."selfConversationVersion"`, `SELF_CONVERSATION_VERSION = 1`), and a
+  device below it is given no pending seat (`writePendingSeats`), no Admit or external join in a
+  commit (refused whole, `SELF_CONVERSATION_DEVICE_UNAWARE`), no stored Welcome (`lockWelcomeSeat`)
+  and no relayed welcome request; a `DELETE mls/groups/:id` of a self group without `?kind=self` is
+  refused (`SELF_CONVERSATION_KIND_UNSTATED`). The creating client adds only its own devices that
+  stated it (`devicesKnowingSelf`). One predicate decides every door
+  (`apps/chat-delivery-service/src/utils/self-conversation.ts`).
+- **What the older build still sees.** Its group listing names the self group; with no `kind` it reads
+  a 1:1 whose peer it cannot resolve, and its listing pass builds nothing from it
+  (`peer-unresolved`). It never holds it, so it can neither open nor delete it. The device joins "Mes
+  notes" by itself once it updates: its next registration states the capability, and the next
+  registration writes its seat.
+- **Removal condition.** Once `minClientVersion` passes the stable carrying "Mes notes" (`1.8.0`), no
+  admitted build lacks the capability: the gates and the `?kind=self` check go, and the column with
+  them. The capability itself stays the way the next kind is introduced.
 
 ### Removal once both estates log `drained=0` - live segments an older release left in Garage (2026-11-09)
 

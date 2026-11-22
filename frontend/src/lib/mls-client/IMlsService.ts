@@ -921,15 +921,16 @@ export interface IMlsService {
    * (`FollowerTabCommitError`), whose state is a copy the leader never holds.
    */
   createGroup(groupId: string): Promise<void>;
-  /** Creates a new group on the delivery server and returns its assigned group ID; `null` = unnamed. */
   /**
-   * Creates the server's group row and enrols this device. `kind: 'self'` creates "Mes notes"
-   * (one live per account, else a typed `SelfConversationExistsError`).
+   * Creates the server's group row and enrols this device; `null` = unnamed. `kind: 'self'` creates
+   * "Mes notes" (one live per account, else a typed `SelfConversationExistsError`); `replaceUnheld`
+   * asks the server to end a live one no other device of the account holds, and write a new one.
    */
   createRemoteGroup(
     name: string | null,
     isGroup?: boolean,
-    kind?: 'conversation' | 'self'
+    kind?: 'conversation' | 'self',
+    opts?: { replaceUnheld?: boolean }
   ): Promise<string>;
   /**
    * Writes the current MLS state to THIS platform's durable store - the whole checkpoint, and the
@@ -1296,6 +1297,8 @@ export interface IMlsService {
       deviceName?: string;
       deviceOs?: string;
       deviceAppVersion?: string;
+      /** The "Mes notes" capability its build stated (`SELF_CONVERSATION_VERSION`), 0 if none. */
+      selfConversationVersion: number;
     }>
   >;
   /**
@@ -1746,8 +1749,10 @@ export interface IMlsService {
   /**
    * Deletes a group and all its messages from the delivery service. Resolves only on the delivery
    * service's own JSON 2xx; every other answer throws, a 404 included (the route never sends one).
+   * `kind: 'self'` says this client knows it deletes "Mes notes": the server refuses that delete
+   * from any request that does not say so (an older build).
    */
-  deleteGroupOnServer(groupId: string): Promise<void>;
+  deleteGroupOnServer(groupId: string, kind?: 'self'): Promise<void>;
   /** Removes a user from the server-side membership list of a group (no MLS commit). */
   removeMemberFromServer(groupId: string, userId: string): Promise<void>;
   /**

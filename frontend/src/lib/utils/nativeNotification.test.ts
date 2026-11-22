@@ -2,13 +2,18 @@ const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
 
 const isAndroidTauriRuntime = vi.fn();
+const isIosTauriRuntime = vi.fn(() => false);
 vi.mock('$lib/utils/appVersion', () => ({
   isAndroidTauriRuntime: () => isAndroidTauriRuntime(),
+  isIosTauriRuntime: () => isIosTauriRuntime(),
 }));
 
 import {
   composePlainNotificationText,
   recordNativeReadElsewhere,
+  handOverConversationEvent,
+  cancelNativeConversationNotifications,
+  endNativeConversationNotifications,
   notificationGroupName,
   notificationIsGroup,
   postNativeMessageNotification,
@@ -328,6 +333,80 @@ describe('recordNativeReadElsewhere', () => {
       serverClock: true,
       reason: 'read_here',
     });
+  });
+
+  // An ENDING is not a read: its own command, no mark (a mark would silence a rejoined conversation).
+  it('ends a conversation on Android through its own command, never a read mark', async () => {
+    isAndroidTauriRuntime.mockReturnValue(true);
+    invoke.mockResolvedValue(true);
+
+    expect(await endNativeConversationNotifications('channel_c1')).toBe(true);
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('end_conversation_notifications', {
+      groupId: 'channel_c1',
+      reason: 'conversation_ended',
+    });
+  });
+
+  it('ends a conversation on iOS by thread, accuses a refusal or a throw, and is a no-op elsewhere', async () => {
+    isAndroidTauriRuntime.mockReturnValue(false);
+    isIosTauriRuntime.mockReturnValue(true);
+    invoke.mockResolvedValue(true);
+    expect(await endNativeConversationNotifications('g1')).toBe(true);
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('cancel_conversation_notifications', {
+      groupId: 'g1',
+      reason: 'conversation_ended',
+    });
+    isIosTauriRuntime.mockReturnValue(false);
+    invoke.mockClear();
+    expect(await endNativeConversationNotifications('g1')).toBe(true);
+    expect(invoke).not.toHaveBeenCalled();
+
+    isAndroidTauriRuntime.mockReturnValue(true);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    invoke.mockResolvedValueOnce(false);
+    expect(await endNativeConversationNotifications('g1')).toBe(false);
+    invoke.mockRejectedValueOnce(new Error('no jni'));
+    expect(await endNativeConversationNotifications('g1')).toBe(false);
+    expect(error).toHaveBeenCalledTimes(2);
+    error.mockRestore();
+  });
+
+  // iOS keeps no mark: the native side removes the conversation's delivered notifications by thread.
+  it('hands an opened or ended conversation to the iOS notification centre', async () => {
+    isAndroidTauriRuntime.mockReturnValue(false);
+    isIosTauriRuntime.mockReturnValue(true);
+    invoke.mockResolvedValue(true);
+
+    expect(await handOverConversationEvent('g1', 'read_here', 10, 'server')).toBe(true);
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('cancel_conversation_notifications', {
+      groupId: 'g1',
+      reason: 'read_here',
+    });
+    isIosTauriRuntime.mockReturnValue(false);
+  });
+
+  it('accuses a refusal or a throw of the iOS hand-over, and says it failed', async () => {
+    isIosTauriRuntime.mockReturnValue(true);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    invoke.mockResolvedValueOnce(false);
+    expect(await cancelNativeConversationNotifications('g1', 'conversation_ended')).toBe(false);
+    invoke.mockRejectedValueOnce(new Error('no class'));
+    expect(await cancelNativeConversationNotifications('g1', 'conversation_ended')).toBe(false);
+    expect(error).toHaveBeenCalledTimes(2);
+    isIosTauriRuntime.mockReturnValue(false);
+    error.mockRestore();
+  });
+
+  it('invokes nothing on iOS commands off iOS', async () => {
+    isIosTauriRuntime.mockReturnValue(false);
+    expect(await cancelNativeConversationNotifications('g1', 'read_here')).toBe(false);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('has nothing to hand over off Android, and nothing failed', async () => {
+    isAndroidTauriRuntime.mockReturnValue(false);
+    expect(await handOverConversationEvent('g1', 'read_here', 10, 'server')).toBe(true);
+    expect(invoke).not.toHaveBeenCalled();
   });
 
   it('invokes nothing off Android, where there is no native banner', async () => {

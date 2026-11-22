@@ -20,7 +20,7 @@ Recorded so no question answered here is asked again. Each line names where its 
    backup ([backup](../frontend/backup.md)).
 4. **The existing notepads are migrated into the conversation, then deleted from the server.** Today
    they sit in `users.notesCiphertext` under a key the server holds (`users.notesKey`), which
-   principle 1 refuses ([the entry](mes-notes-notepad-migration-loss-notice-and-retention.md)).
+   principle 1 refuses ([the entry](mes-notes-notepad-migration-and-retention.md)).
 5. **Media keep the normal 90-day idle retention**, and the conversation says so.
 6. **Section navigation stays a CLOSED chantier**: this work only REMOVES the notepad entry point,
    it adds no new section ([section-navigation](../frontend/section-navigation.md)).

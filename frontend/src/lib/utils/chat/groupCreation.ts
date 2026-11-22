@@ -20,6 +20,7 @@ import {
   findDirectConversationByPeer,
   findSelfConversation,
   isRawId,
+  retaggedAsSelf,
   selfConversationIdentity,
 } from '$lib/utils/chat/conversations';
 import { isBlockedWith } from '$lib/users/blocks';
@@ -41,6 +42,7 @@ import { isTransportFailure } from '$lib/utils/transportFailure';
 import { AddAbortedError, addDevicesRebuildingOnRace } from './commitRace';
 import {
   MemberNotAdmittedError,
+  SELF_CONVERSATION_VERSION,
   SelfConversationExistsError,
   type GroupRosterAtGeneration,
 } from '$lib/mls-client/mlsDeliveryApi';
@@ -314,9 +316,15 @@ export async function createNewGroup(
  * account added in one commit with its Welcome. Only the server row and the identity differ: no
  * name, `isGroup: false`, one live per account.
  *
- * A live one on this device is opened, never created twice. One the server already holds and this
- * device does not (another device created it; the Welcome is on its way) is the typed refusal
- * `self-conversation-arriving`: nothing is written, and the Welcome brings the row.
+ * A live one on this device is opened, never created twice. When the server already holds one
+ * (`SelfConversationExistsError`), its facts decide - never a wait on a clock:
+ * - this device holds that group (its row was typed otherwise, or not written): the row is put
+ *   right and opened;
+ * - another device of the account holds it: `self-conversation-arriving`, and that device's
+ *   Welcome brings the row;
+ * - no other device holds it: nothing can ever bring it here, and its ciphertexts are readable by
+ *   no device that is left - the server is asked once to end it and write a new one
+ *   (`replaceUnheld`), and re-checks that under the group's seat lock.
  */
 export async function createSelfConversation(
   deps: GroupCreationDeps
@@ -328,11 +336,71 @@ export async function createSelfConversation(
     return { ok: true, key: held[0] };
   }
   deps.log('[SELF] no self conversation on this device - creating one');
-  return createOwnedGroup({ kind: 'self' }, deps);
+  let replaceUnheld = false;
+  for (;;) {
+    try {
+      return await createOwnedGroup({ kind: 'self', replaceUnheld }, deps);
+    } catch (e) {
+      // `createOwnedGroup` answers every other failure as a refusal; this one it hands back.
+      if (!(e instanceof SelfConversationExistsError)) throw e;
+      const short = e.groupId.slice(0, 8);
+      if (holdsGroupState(deps.mlsService, e.groupId)) {
+        deps.log(`[SELF] the live self conversation ${short}... is held here - its row put right`);
+        return openHeldSelfConversation(e.groupId, deps);
+      }
+      if (e.otherHolders > 0 || replaceUnheld) {
+        deps.log(
+          `[SELF] the live self conversation ${short}... is held by ${e.otherHolders} other device(s) - its Welcome brings it here`
+        );
+        return { ok: false, reason: 'self-conversation-arriving' };
+      }
+      deps.log(
+        `[SELF] the live self conversation ${short}... is held by no other device - asking the server to replace it`
+      );
+      replaceUnheld = true;
+    }
+  }
+}
+
+/**
+ * Opens the self group `groupId` this device holds, its row written - or re-typed - as "Mes notes":
+ * the answer to a 409 naming a group this device already has.
+ */
+async function openHeldSelfConversation(
+  groupId: string,
+  deps: GroupCreationDeps
+): Promise<ConversationOutcome> {
+  const known = [...deps.conversations.entries()].find(([, c]) => c.id === groupId);
+  const key = known?.[0] ?? groupId;
+  deps.conversations.set(
+    key,
+    known
+      ? retaggedAsSelf(known[1])
+      : buildConversationRow({
+          id: groupId,
+          lifecycle: 'active',
+          identity: selfConversationIdentity(),
+        })
+  );
+  await deps.saveConversation(key).catch((err: unknown) => {
+    deps.log(`[WARN] Self conversation persistence failed for ${groupId}: ${String(err)}`);
+  });
+  deps.selectConversation(key);
+  return { ok: true, key };
+}
+
+/**
+ * The devices of `devices` whose build stated the "Mes notes" capability - the only ones a self group
+ * is given (an older build reads it as a group it may delete; the server refuses its Add whole).
+ */
+export function devicesKnowingSelf<T extends { selfConversationVersion: number }>(
+  devices: readonly T[]
+): T[] {
+  return devices.filter((d) => d.selfConversationVersion >= SELF_CONVERSATION_VERSION);
 }
 
 /** What {@link createOwnedGroup} creates: a named (or unnamed) group chat, or "Mes notes". */
-type OwnedGroupSpec = { kind: 'group'; name: string } | { kind: 'self' };
+type OwnedGroupSpec = { kind: 'group'; name: string } | { kind: 'self'; replaceUnheld: boolean };
 
 /**
  * The one creation of a group this device owns from its first epoch - a group chat or "Mes notes":
@@ -363,7 +431,9 @@ async function createOwnedGroup(
     // `null` for an unnamed group: the server is never told a name the members did not choose.
     groupId =
       spec.kind === 'self'
-        ? await mlsService.createRemoteGroup(null, false, 'self') // one person: never a group chat
+        ? await mlsService.createRemoteGroup(null, false, 'self', {
+            replaceUnheld: spec.replaceUnheld,
+          }) // one person: never a group chat
         : await mlsService.createRemoteGroup(groupDisplayName || null, true); // true = multi-user group
     conversationKey = groupId;
     // MARKED BEFORE THE SERVER CAN LIST IT, released in the `finally` once the row is written or the
@@ -395,9 +465,18 @@ async function createOwnedGroup(
     // Best-effort: a network error fetching OUR own device list must not abort group creation
     // (other devices recover via their own welcome_request). `[]` => create the group with
     // the current device only.
-    const ownDevices = (await mlsService.fetchUserDevices(userId).catch(() => [])).filter(
+    const otherDevices = (await mlsService.fetchUserDevices(userId).catch(() => [])).filter(
       (d) => d.deviceId !== mlsService.getDeviceId()
     );
+    // "MES NOTES" IS GIVEN ONLY TO A DEVICE WHOSE BUILD KNOWS IT: an older build would read it as a
+    // group it may delete, and the server refuses its Add whole. Not a fault - it joins once it
+    // updates and re-registers - so said as a plain line.
+    const ownDevices = spec.kind === 'self' ? devicesKnowingSelf(otherDevices) : otherDevices;
+    if (ownDevices.length < otherDevices.length) {
+      log(
+        `[SELF] ${otherDevices.length - ownDevices.length} other device(s) not added - their build does not know "Mes notes" yet`
+      );
+    }
     log(
       `[GROUP] My other devices: ${ownDevices.length} (${ownDevices.map((d) => d.deviceId).join(', ')})`
     );
@@ -525,14 +604,11 @@ async function createOwnedGroup(
     });
     return { ok: true, key: conversationKey };
   } catch (e) {
-    // ANOTHER DEVICE OF THIS ACCOUNT ALREADY HOLDS "MES NOTES": the server wrote nothing for this
-    // attempt, so there is no orphan to delete - the Welcome that device sends brings the row.
+    // THE SERVER ALREADY HOLDS A LIVE "MES NOTES": it wrote nothing for this attempt, so there is no
+    // orphan to delete - handed back with its facts, which `createSelfConversation` decides on.
     if (e instanceof SelfConversationExistsError) {
-      log(
-        `[SELF] the server already holds a live self conversation (${e.groupId?.slice(0, 8) ?? 'ended since'}) - nothing created, its Welcome brings it here`
-      );
       globalMessaging.resetMessageCatchupState();
-      return { ok: false, reason: 'self-conversation-arriving' };
+      throw e;
     }
     log(`Group creation error: ${String(e)}`);
     console.error('[GROUP] createNewGroup failed:', e);
@@ -542,7 +618,11 @@ async function createOwnedGroup(
     // Best-effort: clean up the orphan remote group
     if (groupId) {
       try {
-        await mlsService.deleteGroupOnServer(groupId);
+        // A self group is deleted only by a request that says it knows the kind (the server refuses
+        // any other - an older build's delete).
+        await (spec.kind === 'self'
+          ? mlsService.deleteGroupOnServer(groupId, 'self')
+          : mlsService.deleteGroupOnServer(groupId));
       } catch (cleanupError) {
         // Non-blocking
         logBestEffortGroupDeleteFailure(groupId, cleanupError, 'failed group creation');

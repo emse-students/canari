@@ -17,8 +17,9 @@
 --
 -- ONE LIVE NOTES CONVERSATION PER ACCOUNT, said by the DATABASE: a unique partial index on the
 -- creator ("createdBy", the authenticated caller of the creation, canonical form) over live self
--- rows. Two devices creating at the same instant: the second insert fails 23505 and the route answers
--- 409 `SELF_CONVERSATION_EXISTS` with nothing written - durable state decides, never a clock.
+-- rows. Two devices creating at the same instant: the route inserts with `ON CONFLICT DO NOTHING`, so
+-- the second insert writes nothing and the route answers 409 `SELF_CONVERSATION_EXISTS` with the live
+-- row's id and whether another device holds it - durable state decides, never a clock.
 -- A tombstone ("deletedAt" set - a deletion, or the account's erasure, which tombstones a one-person
 -- roster and then rewrites "createdBy" to `[deleted]`) leaves the index, so a deleted notes
 -- conversation can be created again and two erased accounts never collide on `[deleted]`.
@@ -28,17 +29,28 @@
 -- no row; every existing row reads 'conversation'. The CHECK is added NOT VALID, then VALIDATEd (a
 -- scan under SHARE UPDATE EXCLUSIVE, which blocks no reader or writer). The index covers no existing
 -- row (none is 'self'). Nothing is deleted.
--- Reversible: a release that predates it never reads the column; `DROP INDEX
+-- Reversible: a release that predates it never reads the columns; `DROP INDEX
 -- idx_dm_groups_one_live_self_per_account; ALTER TABLE dm_groups DROP CONSTRAINT
--- chk_dm_groups_kind, DROP COLUMN "kind"` undoes it - every self row then reads as a 1:1 with no peer,
--- which the client skips (`peer-unresolved`).
+-- chk_dm_groups_kind, DROP COLUMN "kind"; ALTER TABLE key_package DROP COLUMN
+-- "selfConversationVersion"` undoes it. A release that predates it would then serve a self row as an
+-- ordinary 1:1 and seat every device of the account in it - so a rollback past 056 is only safe while
+-- no self row exists.
+--
+-- WHICH DEVICE MAY HOLD IT: `key_package."selfConversationVersion"`, what the device's build states on
+-- every `register-device` (0 when it states nothing). A build that does not know the self kind reads a
+-- self group it is Welcomed into as an ordinary group it may rename, invite into and DELETE - a delete
+-- that tombstones the notes on every device. So no seat, no Admit, no Welcome and no welcome request
+-- for a self group is accepted for a device below version 1, and a deletion of a self group is
+-- refused unless the request says it knows the kind (legacy-compatibility.md, "Mes notes").
+-- Written as stated on every registration, so an old build reinstalled on the same device id is
+-- version 0 again.
 -- Idempotent: IF NOT EXISTS throughout, the constraint guarded by name (synchronize creates the
 -- column in dev; this is for prod).
 --
--- LOCK TIMEOUT: ADD COLUMN takes ACCESS EXCLUSIVE on `dm_groups`, which the commit gate and the send
--- path read, and the index build takes SHARE. Neither rewrites the table, but the lock request would
--- still queue behind a long transaction and stall every reader behind it, so the migration gives up
--- after five seconds instead; the deploy then fails loudly and a re-run is safe. Asserted by
+-- LOCK TIMEOUT: ADD COLUMN takes ACCESS EXCLUSIVE on `dm_groups` and `key_package`, which the commit
+-- gate, the send path and every registration read, and the index build takes SHARE. None rewrites a
+-- table, but the lock request would still queue behind a long transaction and stall every reader
+-- behind it, so the migration gives up after five seconds instead; the deploy then fails loudly and a re-run is safe. Asserted by
 -- `migrations.lock-timeout.spec.ts`.
 SET lock_timeout = '5s';
 
@@ -64,6 +76,9 @@ BEGIN
 END $$;
 
 ALTER TABLE "dm_groups" VALIDATE CONSTRAINT chk_dm_groups_kind;
+
+ALTER TABLE "key_package"
+    ADD COLUMN IF NOT EXISTS "selfConversationVersion" SMALLINT NOT NULL DEFAULT 0;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_dm_groups_one_live_self_per_account
     ON "dm_groups" ("createdBy")

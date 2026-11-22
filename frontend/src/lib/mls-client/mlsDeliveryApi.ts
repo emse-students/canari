@@ -750,15 +750,28 @@ export class GroupDeletedError extends Error {
 }
 
 /**
+ * THE "MES NOTES" CAPABILITY THIS BUILD STATES on every `register-device` (server migration 056): a
+ * device below it is never seated, admitted or Welcomed into a self group, because a build that does
+ * not know the kind would read "Mes notes" as an ordinary group it may delete. Also the bar this
+ * build holds its own other devices to before adding them to one (`createOwnedGroup`).
+ * docs/wiki/legacy-compatibility.md
+ */
+export const SELF_CONVERSATION_VERSION = 1;
+
+/**
  * The server refused to create "Mes notes" because this account already holds a live one (409
  * `SELF_CONVERSATION_EXISTS`, the unique partial index of server migration 056). Nothing was
- * written; `groupId` is the live conversation, which this device joins by the ordinary own-device
- * Welcome another device of the account sends. `null` when the live row ended between the refused
- * insert and the server's read of it - creating again is then the answer.
+ * written. It carries the two facts the caller decides on (`createSelfConversation`): `groupId`, the
+ * live conversation (the server never answers without it), and `otherHolders`, how many OTHER
+ * devices of the account hold it - none means no Welcome can ever come, and the device may ask the
+ * server to replace it.
  */
 export class SelfConversationExistsError extends Error {
-  constructor(readonly groupId: string | null) {
-    super(`A self conversation is already live${groupId ? ` (${groupId})` : ''}`);
+  constructor(
+    readonly groupId: string,
+    readonly otherHolders: number
+  ) {
+    super(`A self conversation is already live (${groupId}, ${otherHolders} other holder(s))`);
     this.name = 'SelfConversationExistsError';
   }
 }
@@ -1607,6 +1620,8 @@ export class MlsDeliveryApi {
       deviceName?: string;
       deviceOs?: string;
       deviceAppVersion?: string;
+      /** The "Mes notes" capability its build stated (`SELF_CONVERSATION_VERSION`), 0 if none. */
+      selfConversationVersion: number;
     }>
   > {
     const devices = await this.readUserDevices(userId, false);
@@ -1617,6 +1632,7 @@ export class MlsDeliveryApi {
       deviceName: d.deviceName,
       deviceOs: d.deviceOs,
       deviceAppVersion: d.deviceAppVersion,
+      selfConversationVersion: d.selfConversationVersion,
     }));
   }
 
@@ -1657,6 +1673,7 @@ export class MlsDeliveryApi {
       deviceName?: string;
       deviceOs?: string;
       deviceAppVersion?: string;
+      selfConversationVersion: number;
     }>
   > {
     const res = await this.f(
@@ -1677,6 +1694,7 @@ export class MlsDeliveryApi {
       deviceName?: unknown;
       deviceOs?: unknown;
       deviceAppVersion?: unknown;
+      selfConversationVersion?: unknown;
     }>;
     return devices.map((d) => ({
       keyPackage: d.keyPackage,
@@ -1684,6 +1702,9 @@ export class MlsDeliveryApi {
       deviceName: typeof d.deviceName === 'string' ? d.deviceName : undefined,
       deviceOs: typeof d.deviceOs === 'string' ? d.deviceOs : undefined,
       deviceAppVersion: typeof d.deviceAppVersion === 'string' ? d.deviceAppVersion : undefined,
+      // A server before 056 states nothing: 0, the value of a build that knows nothing either.
+      selfConversationVersion:
+        typeof d.selfConversationVersion === 'number' ? d.selfConversationVersion : 0,
     }));
   }
 
@@ -1750,6 +1771,11 @@ export class MlsDeliveryApi {
      * server when it holds no registration for the device. Native only; the web registers none.
      */
     pushOutcome?: string;
+    /**
+     * What the OS lets this install's notifications do (`notificationStateReport`), stored with the
+     * device and counted by the daily coverage. Absent = unknown, which the server never reads as granted.
+     */
+    notificationState?: object;
   }): Promise<{ pushRegistered: boolean | null }> {
     return await this.underDeadline('register-device', async (signal) => {
       const response = await this.f(`${this.historyUrl}/api/mls/register-device`, {
@@ -1765,6 +1791,10 @@ export class MlsDeliveryApi {
           deviceOs: params.deviceOs,
           ...(params.deviceAppVersion ? { deviceAppVersion: params.deviceAppVersion } : {}),
           ...(params.pushOutcome ? { pushOutcome: params.pushOutcome } : {}),
+          ...(params.notificationState ? { notificationState: params.notificationState } : {}),
+          // THIS BUILD KNOWS "MES NOTES": stated on every registration, so the server seats this
+          // device in the account's self group and Welcomes it (server migration 056).
+          selfConversationVersion: SELF_CONVERSATION_VERSION,
         }),
       });
 
@@ -1835,7 +1865,12 @@ export class MlsDeliveryApi {
   async updateDeviceMetadata(
     userId: string,
     deviceId: string,
-    metadata: { deviceName?: string; deviceOs?: string; deviceAppVersion?: string }
+    metadata: {
+      deviceName?: string;
+      deviceOs?: string;
+      deviceAppVersion?: string;
+      notificationState?: object;
+    }
   ): Promise<{
     status: string;
     deviceName: string | null;
@@ -2274,40 +2309,46 @@ export class MlsDeliveryApi {
   async createRemoteGroup(
     name: string | null,
     isGroup: boolean,
-    kind: 'conversation' | 'self' = 'conversation'
+    kind: 'conversation' | 'self' = 'conversation',
+    opts: { replaceUnheld?: boolean } = {}
   ): Promise<string> {
-    try {
-      const res = await this.f(`${this.historyUrl}/api/mls/groups`, {
-        method: 'POST',
-        headers: await this.auth({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({
-          ...(name !== null ? { name } : {}),
-          createdBy: this.userId,
-          isGroup,
-          creatorDeviceId: this.deviceId,
-          ...(kind === 'self' ? { kind } : {}),
-        }),
-      });
-      // A notes conversation already live for this account: typed at the throw, carrying the id
-      // the server named, so the caller waits for its Welcome instead of reading prose.
-      if (res.status === 409 && kind === 'self') {
-        const body = (await res.json().catch(() => null)) as {
-          code?: unknown;
-          groupId?: unknown;
-        } | null;
-        if (body?.code === 'SELF_CONVERSATION_EXISTS') {
-          throw new SelfConversationExistsError(
-            typeof body.groupId === 'string' ? body.groupId : null
-          );
-        }
+    const res = await this.f(`${this.historyUrl}/api/mls/groups`, {
+      method: 'POST',
+      headers: await this.auth({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        ...(name !== null ? { name } : {}),
+        createdBy: this.userId,
+        isGroup,
+        creatorDeviceId: this.deviceId,
+        ...(kind === 'self' ? { kind } : {}),
+        ...(kind === 'self' && opts.replaceUnheld === true ? { replaceUnheld: true } : {}),
+      }),
+    });
+    // A notes conversation already live for this account: an ANSWER, typed at the throw with the
+    // facts the caller decides on, and never logged as a failure - it is the expected answer of a
+    // second device. A 409 without them is a server this build cannot read, and fails below.
+    if (res.status === 409 && kind === 'self') {
+      const body = (await res.json().catch(() => null)) as {
+        code?: unknown;
+        groupId?: unknown;
+        otherHolders?: unknown;
+      } | null;
+      if (
+        body?.code === 'SELF_CONVERSATION_EXISTS' &&
+        typeof body.groupId === 'string' &&
+        typeof body.otherHolders === 'number'
+      ) {
+        throw new SelfConversationExistsError(body.groupId, body.otherHolders);
       }
-      if (!res.ok) throw new Error('Failed to create remote group');
-      const data = await res.json();
-      return data.groupId as string;
-    } catch (e) {
-      console.error('Failed to create remote group', e);
-      throw e;
+      console.error('[MLS] createRemoteGroup: a self 409 without its facts', body?.code);
+      throw new Error('Failed to create remote group');
     }
+    if (!res.ok) {
+      console.error('[MLS] createRemoteGroup failed', res.status);
+      throw new Error('Failed to create remote group');
+    }
+    const data = await res.json();
+    return data.groupId as string;
   }
 
   /**
@@ -2731,8 +2772,9 @@ export class MlsDeliveryApi {
    * reported done with nothing deleted. Any non-2xx is `GroupExitRefusedError`, held by the caller;
    * a 2xx that is not the API's JSON is `NotFromApiError`, a transport failure.
    */
-  async deleteGroupOnServer(groupId: string): Promise<void> {
-    const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}`, {
+  async deleteGroupOnServer(groupId: string, kind?: 'self'): Promise<void> {
+    const query = kind === 'self' ? '?kind=self' : '';
+    const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}${query}`, {
       method: 'DELETE',
       headers: await this.auth(),
     });

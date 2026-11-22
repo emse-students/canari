@@ -466,6 +466,27 @@ describe('ReplayPlayer', () => {
     expect(source.readyState).toBe('ended');
   });
 
+  it('a seek BEHIND the buffered window the trim left refetches its segment and lands on target', async () => {
+    fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(24)(from));
+    const p = makePlayer();
+    p.start();
+    await flush();
+    for (const t of [6, 12, 18, 24, 30, 36, 47]) {
+      video.currentTime = t;
+      p.noteTime();
+      for (let i = 0; i < 10; i++) await flush();
+    }
+    expect(buffer().removed.length).toBeGreaterThan(0);
+    const windowStart = buffer().ranges[0][0];
+    expect(windowStart).toBeGreaterThan(20); // the trim cut everything behind the playhead
+    const before = buffer().appends.length;
+    video.currentTime = 5; // 5 s: segment 2 starts at 4 s, long gone from the buffer
+    p.noteSeeking();
+    for (let i = 0; i < 10; i++) await flush();
+    expect(buffer().appends.slice(before)).toContain('m2');
+    expect(video.currentTime).toBeCloseTo(5, 1);
+  });
+
   it('seeks outside the buffer to the LAST segment at or before the target and puts the playhead where it landed', async () => {
     fetchReplay.mockImplementation(async (_id: string, from?: number) => makePages(100)(from));
     const p = makePlayer();

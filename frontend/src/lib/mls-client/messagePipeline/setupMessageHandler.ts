@@ -88,6 +88,7 @@ import type { RowOwed } from '../rowsOwed';
 import { channelScope, workspaceScope } from '../distributionScope';
 import { workspaceForChannel } from '$lib/utils/graine/runtime';
 import { noteServerTime } from '$lib/utils/chat/serverClock';
+import { recordRekey } from '$lib/utils/chat/endedConversations';
 export type { MessageHandlerDeps } from './deps';
 
 /**
@@ -2064,6 +2065,8 @@ async function upsertConversation(
       // leaves the screen while its history moves, and a crash mid-move leaves the joined group's
       // row on disk for the next boot's merge to fold the rest into.
       const oldId = existing.id;
+      // The old id vanishes but the thread continues: say so, so its banners are not ended.
+      recordRekey(oldId);
       conversations.delete(newConvoKey);
       newConvoKey = joinedGroupId;
       conversations.set(newConvoKey, updated);

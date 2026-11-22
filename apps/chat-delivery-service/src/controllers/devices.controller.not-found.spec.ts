@@ -106,4 +106,40 @@ describe('DevicesController - a missing row is 404, a malformed request stays 40
     // It refuses on the body alone, before it ever looks for the row.
     expect(keyPackageRepo.findOne).not.toHaveBeenCalled();
   });
+  /**
+   * A state that changes between two unlocks is sent on this route (2026-11-21), so the daily count
+   * does not read a stale one: it is written WITHOUT touching the rest of the row.
+   */
+  it('stores a changed notification state on the device row, and only that', async () => {
+    const row = { userId: 'u1', deviceId: 'd1', deviceName: 'Mi 9T' } as Record<string, unknown>;
+    keyPackageRepo.findOne.mockResolvedValue(row as never);
+    await controller.updateDeviceMetadata(
+      'u1',
+      'd1',
+      {
+        notificationState: {
+          permission: 'granted',
+          enabled: true,
+          channels: { messages: 'none', posts: 'high' },
+        },
+      },
+      'u1'
+    );
+    expect(row.notificationState).toBe('channel-off');
+    expect(row.notificationChannels).toBe('messages=none posts=high');
+    expect(row.deviceName).toBe('Mi 9T');
+    expect(keyPackageRepo.save).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a stated notification state it cannot read, with a 400', async () => {
+    await expect(
+      controller.updateDeviceMetadata(
+        'u1',
+        'd1',
+        { notificationState: { permission: 'maybe' } },
+        'u1'
+      )
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(keyPackageRepo.save).not.toHaveBeenCalled();
+  });
 });
