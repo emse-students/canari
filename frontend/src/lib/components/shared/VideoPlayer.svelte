@@ -173,6 +173,13 @@
     /** `src` is a segmented stream's MSE URL, which must reach the element exactly as minted. */
     streamed?: boolean;
     /**
+     * The stream's owner re-fetches whatever a seek lands on (a live replay's `ReplayPlayer`), so the
+     * buffered part is a WINDOW around the playhead, never what the clip still holds: the seek is not
+     * clamped to `buffered.start(0)`. Without it a backward drag lands on the window's own start - the
+     * playhead stays put (iPhone 12, 1.7.3-alpha.5).
+     */
+    seekAnywhere?: boolean;
+    /**
      * The video's TOTAL length as its publisher declared it, in ms (a CanaReel's `post.durationMs`, a
      * conversation reel's `MediaRef.durationMs`). The seek line is fixed to it from the first frame
      * while the engine does not know a length yet (`barLength`), so it never maps onto what has
@@ -248,6 +255,7 @@
     posterFit = 'contain',
     onPlaybackBlocked,
     streamed = false,
+    seekAnywhere = false,
     declaredDurationMs = null,
     onOpen,
     openLabel,
@@ -707,7 +715,8 @@
     if (!video) return;
     const end = seekLength(video).seconds;
     if (end <= 0) return;
-    const floor = streamed ? streamSeekFloor(streamProgressOf(src), video.buffered) : 0;
+    const floor =
+      streamed && !seekAnywhere ? streamSeekFloor(streamProgressOf(src), video.buffered) : 0;
     if (seconds < floor) {
       Log.d('VideoPlayer', `seek to ${seconds.toFixed(1)} s clamped to ${floor.toFixed(1)} s`);
     }
