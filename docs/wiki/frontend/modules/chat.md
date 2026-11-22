@@ -5748,8 +5748,9 @@ scrolled by WebKit's own UI-process scrolling, so a programmatic write may land 
 as a `scroll` event this measurement would read as the reader going up), or a scroll range that ends
 short of the thread's padding. So the build REPORTS instead of guessing: the native settled-keyboard
 line carries `threadTop`, `threadMax`, `threadPad` and `lastRowBottom`, and `measureScroll` logs every
-fall of the flag (`left the bottom: ... finger up|down`). A fall with no finger on the pane is the flag
-read off a move that was not the reader's; the fix then is to let only a reader's input lower it. Owed:
+fall of the flag with NO finger on the pane (`left the bottom with no finger on the pane: ...`; a reader
+scrolling up is not logged). Such a fall during a rise is the flag read off a move that was not the
+reader's; the fix then is to let only a reader's input lower it. Owed:
 [the reading](../../backlog.d/reading-owed-a-dm-ending-in-photos-stays-at-its-end-when-the-keyboard-opens.md).
 
 ### A short thread sits at the bottom, and asks for its past at entry (2026-11-14)

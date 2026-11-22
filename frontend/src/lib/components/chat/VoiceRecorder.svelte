@@ -128,6 +128,8 @@
   }
 
   let session: Session | null = null;
+  /** Counts `beginRecording` attempts: each checks it is still the latest after every await. */
+  let attempt = 0;
   /** The microphone button, so an interruption can hand back the capture it holds. */
   let thumbEl = $state<HTMLButtonElement | null>(null);
   let tickId: number | null = null;
@@ -182,6 +184,11 @@
    * the device back rather than start a recording nobody is waiting for.
    */
   async function beginRecording() {
+    // THIS attempt's token: a release then a new press while the first `getUserMedia` is still
+    // pending makes a second attempt; the first finds the token moved after its await and gives its
+    // device back, so two recorders never run and no microphone is orphaned.
+    const mine = ++attempt;
+    const superseded = () => mine !== attempt || phase !== 'arming';
     console.debug('[VoiceRecorder] arming');
     // Held outside the `try`, so a failure at ANY step after the device opened gives back what was
     // opened (a recorder or a `start()` that throws used to leave the microphone held).
@@ -202,16 +209,23 @@
       );
       const opened = stream;
 
-      if (phase !== 'arming') {
+      if (superseded()) {
         console.debug('[VoiceRecorder] released before the microphone opened - closing it again');
         opened.getTracks().forEach((track) => track.stop());
         return;
       }
 
       // ONE CHANNEL, whatever the engine granted (iPhone, 1.7.3-alpha.4: AAC in two channels while
-      // mono was asked - WebKit implements no `channelCount`): `monoRecording.ts`.
-      const toRecord = monoRecordingStream(opened, recordingLoudnessDeps.createContext);
+      // mono was asked - WebKit implements no `channelCount`): `monoRecording.ts`. Resolved only
+      // once its context RUNS: a context that does not throws, and the branch below refuses.
+      const toRecord = await monoRecordingStream(opened, recordingLoudnessDeps.createContext);
       recorded = toRecord;
+      if (superseded()) {
+        console.debug('[VoiceRecorder] released while the downmix started - closing it again');
+        toRecord.release();
+        opened.getTracks().forEach((track) => track.stop());
+        return;
+      }
       const mimeType = pickRecorderMimeType();
       const recorder = mimeType
         ? new MediaRecorder(toRecord.stream, { mimeType })
@@ -286,6 +300,8 @@
         );
         stream.getTracks().forEach((track) => track.stop());
       }
+      // A superseded attempt only gives back what it opened: the newer press owns the bar.
+      if (mine !== attempt) return;
       showToast(m.chat_mic_permission_error());
       stopClock();
       dx = 0;
@@ -336,13 +352,9 @@
   // -- The gesture -----------------------------------------------------------
 
   function handlePointerDown(e: PointerEvent) {
-    // A press while a HOLD is still on with another pointer proves that hold's finger left without
-    // its end reaching the page (a permission prompt took it - `interruptHold`): the stale hold is
-    // thrown away, and this press starts afresh.
-    if (phase === 'holding' && pointerId !== null && e.pointerId !== pointerId) {
-      Log.w('VoiceRecorder', 'a new press found a hold whose pointer never ended: discarded');
-      finish(false, 'the hold lost its pointer');
-    }
+    // A second finger or a palm is not a press: only the primary pointer starts a hold, and one
+    // landing during a hold leaves it alone. A hold the prompt took ends on `interruptHold`'s events.
+    if (e.isPrimary === false) return;
     if (phase !== 'idle') return;
     // Secondary buttons open context menus; only the primary one is a press.
     if (e.pointerType === 'mouse' && e.button !== 0) return;

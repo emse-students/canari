@@ -43,15 +43,29 @@ export interface RecordedStream {
 export type CreateAudioContext = (sampleRate?: number) => AudioContext;
 
 /**
- * The stream a voice note records from `microphone`: the microphone itself when its track reports
- * mono, its one-channel downmix otherwise. Throws when the engine refuses the graph - the recorder
- * then reports the microphone as unusable, as for any other start that fails: a note recorded in a
- * layout that plays out of one side is not sent instead.
+ * The downmix's context did not reach `running`: its graph would record SILENCE, and a silent note
+ * sent is a note lost (principle 2). Typed, so the recorder's refusal branch releases everything and
+ * says the microphone is unusable, rather than sending nothing as if it were a message.
  */
-export function monoRecordingStream(
+export class DownmixNotRunningError extends Error {
+  constructor(readonly state: AudioContextState) {
+    super(`the one-channel downmix context is ${state}, not running`);
+    this.name = 'DownmixNotRunningError';
+  }
+}
+
+/**
+ * The stream a voice note records from `microphone`: the microphone itself when its track reports
+ * mono, its one-channel downmix otherwise - resolved only once that downmix's context RUNS (awaited
+ * `resume()`), so the recorder never starts on a graph that renders silence. Rejects when the engine
+ * refuses the graph or the context does not run ({@link DownmixNotRunningError}); everything it made
+ * is closed first. The recorder then reports the microphone as unusable, as for any other start that
+ * fails: neither a silent note nor one that plays out of one side is sent instead.
+ */
+export async function monoRecordingStream(
   microphone: MediaStream,
   createContext: CreateAudioContext
-): RecordedStream {
+): Promise<RecordedStream> {
   const settings = microphone.getAudioTracks?.()[0]?.getSettings?.() ?? {};
   const granted = audioLayoutOf(settings.channelCount);
   if (granted === 'mono') {
@@ -62,9 +76,22 @@ export function monoRecordingStream(
   const context = createContext(
     typeof trackRate === 'number' && trackRate > 0 ? trackRate : undefined
   );
+  let source: MediaStreamAudioSourceNode | null = null;
+  let sink: MediaStreamAudioDestinationNode | null = null;
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    context.onstatechange = null;
+    source?.disconnect();
+    sink?.stream.getTracks().forEach((track) => track.stop());
+    context
+      .close()
+      .catch((e: unknown) => Log.w('VoiceRecorder', 'the downmix context did not close', e));
+  };
   try {
-    const source = context.createMediaStreamSource(microphone);
-    const sink = context.createMediaStreamDestination();
+    source = context.createMediaStreamSource(microphone);
+    sink = context.createMediaStreamDestination();
     sink.channelCount = 1;
     sink.channelCountMode = 'explicit';
     sink.channelInterpretation = 'speakers';
@@ -77,37 +104,14 @@ export function monoRecordingStream(
     context.onstatechange = () => {
       Log.i('VoiceRecorder', `downmix context ${context.state}`);
     };
-    if (context.state !== 'running') {
-      context.resume().catch((e: unknown) => {
-        // The one way this graph records silence: said at the level that accuses.
-        console.error(
-          '[VoiceRecorder] the downmix context did not start: this note records silence',
-          e
-        );
-      });
-    }
-    let released = false;
-    return {
-      stream: sink.stream,
-      granted,
-      downmixed: true,
-      release() {
-        if (released) return;
-        released = true;
-        context.onstatechange = null;
-        source.disconnect();
-        sink.stream.getTracks().forEach((track) => track.stop());
-        context
-          .close()
-          .catch((e: unknown) => Log.w('VoiceRecorder', 'the downmix context did not close', e));
-      },
-    };
+    if (context.state !== 'running') await context.resume();
+    if (context.state !== 'running') throw new DownmixNotRunningError(context.state);
+    return { stream: sink.stream, granted, downmixed: true, release };
   } catch (e) {
-    context
-      .close()
-      .catch((closeError: unknown) =>
-        Log.w('VoiceRecorder', 'the refused downmix context did not close', closeError)
-      );
+    // The one way this graph would record silence, or a graph refused: said at the level that
+    // accuses, and nothing it made is left open.
+    console.error('[VoiceRecorder] the one-channel downmix did not start - nothing recorded:', e);
+    release();
     throw e;
   }
 }

@@ -46,8 +46,11 @@ measurement. Nothing native changed; the engines read the constraints, so a phon
    permission reset (reinstall), press and hold the microphone: the prompt appears; answer it. The
    recorder must NOT stay in `holding` with its clock running (`1.7.3-alpha.4`: stuck until the app was
    killed): the log reads `the press was interrupted while arming (window lost focus)` (or `pointer
-   capture lost`) and the bar is back; if neither arrived, the next press logs `a new press found a
-   hold whose pointer never ended: discarded` and records. The second press records and sends normally.
+   capture lost`) and the bar is back. The second press records and sends normally.
+7. **A banner does not end a hold (Mi 9T).** Hold the microphone, have the other phone send a message
+   so a heads-up notification drops over the app while the finger is down: the hold must go on (a
+   `blur` from the banner would end it - `the hold was interrupted (window lost focus)` in the log is a
+   FAIL), and the release sends. Once on the iPhone too, with a banner.
 
 **Sources** (the research of 2026-11-20): Telegram `audio.c` (30 kb/s Opus, 48 kHz, mono, no
 effects); Signal `AudioCodec.java` (AAC 32 kb/s, 44.1 kHz, mono, `MIC` source); RFC 7587 s3.1.1; EBU

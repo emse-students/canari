@@ -49,9 +49,13 @@ vi.mock('$lib/utils/audio/recordingLoudness', () => ({
  */
 const downmix = vi.hoisted(() => ({
   made: [] as { release: import('vitest').Mock<() => void>; stream: unknown }[],
+  /** Set: the downmix's context did not run, and the step rejects (`DownmixNotRunningError`). */
+  refuse: false,
 }));
 vi.mock('$lib/utils/audio/monoRecording', () => ({
-  monoRecordingStream: (microphone: unknown) => {
+  monoRecordingStream: async (microphone: unknown) => {
+    if (downmix.refuse)
+      throw new Error('the one-channel downmix context is suspended, not running');
     const made = { stream: microphone, granted: 'unknown', downmixed: true, release: vi.fn() };
     downmix.made.push(made);
     return made;
@@ -120,6 +124,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   taps.made = [];
   downmix.made = [];
+  downmix.refuse = false;
   trackStop.mockClear();
   FakeMediaRecorder.instances = [];
   FakeMediaRecorder.deferStop = false;
@@ -177,13 +182,14 @@ function thumb(): HTMLElement {
 }
 
 /** happy-dom may not implement `PointerEvent`; a mouse event carrying `pointerId` is equivalent. */
-function pointer(type: string, clientX: number, pointerId = 1): Event {
+function pointer(type: string, clientX: number, pointerId = 1, isPrimary = true): Event {
   const Ctor = (globalThis as Record<string, unknown>).PointerEvent as
     | typeof PointerEvent
     | undefined;
-  if (Ctor) return new Ctor(type, { bubbles: true, clientX, pointerId, isPrimary: true });
+  if (Ctor) return new Ctor(type, { bubbles: true, clientX, pointerId, isPrimary });
   const e = new MouseEvent(type, { bubbles: true, clientX });
   Object.defineProperty(e, 'pointerId', { value: pointerId });
+  Object.defineProperty(e, 'isPrimary', { value: isPrimary });
   Object.defineProperty(e, 'pointerType', { value: 'touch' });
   return e;
 }
@@ -620,24 +626,20 @@ describe('VoiceRecorder - a permission prompt takes the finger', () => {
     expect(FakeMediaRecorder.instances).toHaveLength(0);
   });
 
-  it('a hold that started with no signal at all is ended by the next press, which records afresh', async () => {
+  it('a second finger landing during a hold leaves the hold alone (no second recorder)', async () => {
     pressIntoPrompt();
-    // The worst case: the prompt answered, and NOTHING said the finger had gone.
     await answerPrompt();
     expect(phaseNow()).toBe('holding');
 
-    // The next touch is a new pointer: the stale hold is thrown away and this press records.
-    thumb().dispatchEvent(pointer('pointerdown', 300, 2));
+    thumb().dispatchEvent(pointer('pointerdown', 300, 2, false));
     await vi.advanceTimersByTimeAsync(0);
     flushSync();
-    expect(harness.cancel).toHaveBeenCalledTimes(1);
-    expect(harness.complete).not.toHaveBeenCalled();
-    expect(FakeMediaRecorder.instances).toHaveLength(2);
     expect(phaseNow()).toBe('holding');
+    expect(harness.cancel).not.toHaveBeenCalled();
+    expect(FakeMediaRecorder.instances).toHaveLength(1);
 
     await vi.advanceTimersByTimeAsync(MIN_RECORDING_MS + 100);
-    thumb().dispatchEvent(pointer('pointerup', 300, 2));
-    flushSync();
+    releaseAt(300);
     expect(harness.complete).toHaveBeenCalledTimes(1);
   });
 
@@ -690,5 +692,68 @@ describe('VoiceRecorder - one channel', () => {
     releaseAt(300);
     expect(downmix.made[0].release).toHaveBeenCalled();
     expect(trackStop).toHaveBeenCalled();
+  });
+});
+
+/**
+ * A RELEASE THEN A NEW PRESS WHILE THE FIRST MICROPHONE IS STILL OPENING (review of #3955): each
+ * `beginRecording` carries its own token, checked after every await, so the first attempt gives its
+ * device back and only the second records - never two recorders, never a microphone left open.
+ */
+describe('VoiceRecorder - one attempt at a time', () => {
+  beforeEach(() => {
+    harness = mountRecorder();
+  });
+
+  it('release, press again, then the FIRST microphone opens: only the second records', async () => {
+    const opens: ((s: unknown) => void)[] = [];
+    navigator.mediaDevices.getUserMedia = vi
+      .fn()
+      .mockImplementation(() => new Promise((resolve) => opens.push(resolve)));
+    const firstStop = vi.fn();
+    const first = { stop: firstStop, label: '', getSettings: () => ({}) };
+
+    thumb().dispatchEvent(pointer('pointerdown', 300));
+    flushSync();
+    releaseAt(300);
+    thumb().dispatchEvent(pointer('pointerdown', 300));
+    flushSync();
+    expect(opens).toHaveLength(2);
+
+    // The first attempt's microphone arrives while the second press is arming.
+    opens[0]({ getTracks: () => [first], getAudioTracks: () => [first] });
+    await vi.advanceTimersByTimeAsync(0);
+    flushSync();
+    expect(firstStop).toHaveBeenCalled();
+    expect(FakeMediaRecorder.instances).toHaveLength(0);
+    expect(document.querySelector('.voice-recorder')?.getAttribute('data-phase')).toBe('arming');
+
+    opens[1](fakeStream());
+    await vi.advanceTimersByTimeAsync(0);
+    flushSync();
+    expect(FakeMediaRecorder.instances).toHaveLength(1);
+    expect(document.querySelector('.voice-recorder')?.getAttribute('data-phase')).toBe('holding');
+  });
+});
+
+/**
+ * A DOWNMIX WHOSE CONTEXT DOES NOT RUN WOULD RECORD SILENCE (review of #3955): the step rejects, the
+ * recorder never starts, the microphone goes back and the refusal toast is the answer - a silent note
+ * is never sent.
+ */
+describe('VoiceRecorder - a downmix that does not run', () => {
+  beforeEach(() => {
+    harness = mountRecorder();
+  });
+
+  it('records nothing, gives the microphone back and goes idle', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    downmix.refuse = true;
+    await press(300);
+    expect(FakeMediaRecorder.instances).toHaveLength(0);
+    expect(taps.made).toHaveLength(0);
+    expect(trackStop).toHaveBeenCalled();
+    expect(document.querySelector('.voice-recorder')?.getAttribute('data-phase')).toBe('idle');
+    expect(harness.complete).not.toHaveBeenCalled();
   });
 });

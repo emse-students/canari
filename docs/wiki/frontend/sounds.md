@@ -288,9 +288,11 @@ anything else, two or nothing reported, is recorded through the engine's own dow
 the spec's L/R average). The recorder AND the loudness tap read that stream, so the playback
 normalisation measures the file that is sent. Its `AudioContext` lives exactly as long as the note, in
 the foreground, and is closed with the device (the rule at the top of this page); its state is logged
-when made and on every `statechange`, and a context that will not start is an `error` line, since it
-is the one way this graph records silence. A graph the engine refuses fails the start like any
-other (the microphone toast), never a stereo note instead.
+when made and on every `statechange`. **The recorder starts only once the context RUNS**: the step
+awaits `resume()`, and a context still not `running` after it rejects with `DownmixNotRunningError`
+(an `error` line) - that graph would record silence. The rejection, like a graph the engine refuses,
+fails the start through the recorder's refusal branch (everything released, the microphone toast):
+neither a silent note nor a stereo one is sent instead.
 
 **The capture line says what the engine does not implement** (`voiceNoteCaptureReport.ts`): each
 setting prints its value, `unsupported` when the engine lists no such constraint
@@ -312,9 +314,10 @@ running, no slide, no bin - until the app was killed. `VoiceRecorder` now ends a
 proof that the finger's gesture is over: `lostpointercapture` on the microphone, `blur` on the window
 (an alert over the app), the page hidden. While arming that is a release before the microphone
 opened (the device is handed back when `getUserMedia` resolves, nothing recorded); while holding, a
-discard. If none of them arrives, the next press on the microphone carries a NEW pointer id, which
-proves the old hold lost its finger: it is discarded (a `warn`) and the press records afresh. A
-keyboard start (no finger) and a locked recording are not touched. Pinned by
+discard. A second finger or a palm (a non-primary pointer) is ignored and never ends a hold. Each
+start carries its own attempt token, checked after every await, so a release then a new press while
+the first microphone is still opening never runs two recorders. A keyboard start (no finger) and a
+locked recording are not touched. Pinned by
 `VoiceRecorder.gesture.svelte.test.ts` ("a permission prompt takes the finger").
 
 **Not changed, and why.** No bitrate is asked (the Mi 9T's AAC already reads 128 kb/s), no new

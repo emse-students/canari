@@ -31,9 +31,9 @@ separates them:
 - the `[CanariIOS] keyboard settled` syslog line now ends with the thread's half: `threadTop`,
   `threadMax`, `threadPad`, `lastRowBottom` (beside `composerTop`). `threadTop` below `threadMax` by ~102
   names the first cause; `threadTop` = `threadMax` with `lastRowBottom` past `composerTop` the second;
-- the in-app log says `[ChatArea] left the bottom: scrollTop ... (last placed ...), N px from the end,
-  finger up|down` on every fall of the stick-to-bottom flag - a fall with the finger UP during a rise is
-  the flag read off the engine's move, not the reader's.
+- the in-app log says `[ChatArea] left the bottom with no finger on the pane: scrollTop ... (last placed
+  ...), N px from the end` on every fall of the stick-to-bottom flag with no finger down - during a rise
+  that is the flag read off the engine's move, not the reader's (a reader scrolling up is not logged).
 
 **Owed on the iPhone, on the next `1.7.3` pre-release:** the same DM, keyboard opened three times; copy the
 `keyboard settled` lines (syslog) and the in-app log's `left the bottom` lines. The fix follows the line
