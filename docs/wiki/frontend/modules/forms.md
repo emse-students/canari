@@ -1003,35 +1003,44 @@ So the answer is never written near the registry row; it is written later, with 
 
 **The mechanism** (`anonymous-answer-batches.ts`, migration 178, principle 1 first):
 
-1. The request writes the registry row and HOLDS the answer in `form_answers_held` - its content and
-   nothing that names or dates it (no account, no address, no timestamp, a random id).
-2. Once `ANONYMOUS_BATCH_SIZE` (5) answers of a form wait, the submit that brought the count there
-   releases them right after its own transaction commits: ONE transaction of their own, under the
-   form's lock (`lockFormSeats`), inserts them into `submissions` in a cryptographically random order,
-   dated the release's UTC day, and deletes the held rows. A registry row never shares that write.
-3. Once the form takes no more answers (closed by its manager, an end date that came, an opening moved
-   later, archived), every waiting answer is released however few. Below the batch size they **join the
-   answers released on the form's latest release day**: those are rewritten in the same transaction
-   and the new ones take their date, so the last group is not smaller than the batch size - unless the
-   form never had that many answers, and then the group is every answer it has, the most any design
-   can give when the reader also holds the list of who answered.
-4. The release is a predicate over durable state, looked at by: the submit (a full batch), the close
-   (`setClosed`), a manager's read or export of the answers, `retireForms` (an archived form's answers
-   are released, never lost), and the hourly sweep `AnonymousAnswerReleaseScheduler` (an end date
-   that came, or a full batch whose release after its submit failed). Each is idempotent.
+1. The request writes the registry row and HOLDS the answer apart in `form_answers_held` - its content
+   and nothing that names or dates it (no account, no address, no timestamp, a random id).
+2. Once `ANONYMOUS_BATCH_SIZE` (5) answers of a form wait, they are released whatever the form's
+   state. The submit that brought the count there releases them right after its own transaction
+   commits: ONE transaction of their own, under the form's lock (`lockFormSeats`), writes them into
+   `submissions` in ONE insert, in a cryptographically random order, with new random ids, dated the
+   release's UTC day, and deletes the held rows. A registry row never shares that write.
+3. Fewer than 5 wait and the form takes no more answers (closed by its manager, an end date that came,
+   an opening moved later, or FULL): that short tail is released **once per form**
+   (`form_anonymous_tail_released`, a durable fact). It **joins the answers released on the form's
+   latest release day**: that group is deleted and written again, with new ids, in the SAME shuffled
+   insert as the tail, which takes its date - one write, one date, no physical order of old then new.
+   So the last group is not smaller than the batch size, unless the form never had that many answers,
+   and then the group is every answer it has, the most any design can give when the reader also holds
+   the list of who answered.
+4. A retired form (archived or deleted) releases everything still waiting, joining the same way: no
+   answer is lost.
+5. The release is a predicate over durable state (`ReleaseMode`: open, closed, retired), looked at by:
+   the submit, the close (`setClosed`), a manager's read or export of the answers, `retireForms` (always
+   inside a transaction - `releaseHeldAnswersUnderLock` refuses to run without one,
+   `HeldAnswersOutsideTransactionError`), and the hourly sweep `AnonymousAnswerReleaseScheduler`, which
+   logs why each form is due and WARNS, with its size, a full batch it finds (the release after its
+   submit failed). Each is idempotent. A release that fails during a manager's close, read or export is
+   logged as an error and the action is still answered: the answers stay held for the sweep.
 
 | Question | Answer |
 |---|---|
-| Does the organiser see an answer at once? | **No, on an anonymous form.** Up to 4 answers wait while the form is open. The responses screen says so: "Réponses en attente : N. Sur un formulaire anonyme, elles s'affichent par groupes de 5, et toutes à la clôture du formulaire." (`GET /api/forms/:id/held-answers`, managers only, read after the answers). The creation hint says it too. |
-| Does a waiting answer count? | Yes: the capacity check and `submissionCount` count it, and the one-answer rule holds from the request (the registry). |
+| Does the organiser see an answer at once? | **No, on an anonymous form.** Up to 4 answers wait while the form is open. The responses screen says so: "Réponses en attente : N. Sur un formulaire anonyme, elles s'affichent par groupes de 5, et les dernières à la clôture du formulaire." (`GET /api/forms/:id/held-answers`, managers only, read after the answers). The creation hint says it too. |
+| Does a waiting answer count? | Yes: the capacity check and `submissionCount` count it (both counts read in one snapshot), and the one-answer rule holds from the request (the registry). A form it fills takes no more answers, so its tail is released as at a close. |
 | What does the respondent get back? | `{ held: true }`, no submission id: an id handed back now would pair the request with the row its batch writes later. |
-| Can the organiser force a small group out? | Only by closing the form - which releases into the latest group, not as a group of its own. Closing and reopening repeatedly is the organiser's choice, and the count of waiting answers is shown to them. |
+| When are fewer than 5 answers released? | Once per form, when it stops taking answers, joined to the latest group; afterwards, only when 5 are waiting or the form is archived or deleted. The waiting count is shown to the organiser. |
 | What does the database keep of a released held row? | Its old version until vacuum: the table's autovacuum runs as soon as a row is gone (migration 178). WAL and backups taken meanwhile are outside this mechanism, as above. |
 
 Tests: `anonymous-answer-batches.integration.spec.ts` (PostgreSQL: the batch is one write no registry
-row shares, no instant stored, the close joins the latest group, a waiting answer holds its place, the
-sweep and `retireForms` release), the unit specs of the submit, and `FormsManagerList.svelte.test.ts`
-(the notice).
+row shares, no instant stored, a joining group written in the same insert in the order asked, the tail
+released once, a full form, a delete racing a release moving each answer once, the refusal outside a
+transaction, the sweep and `retireForms`), the unit specs of the submit and of a failing release during
+a manager's action, and `FormsManagerList.svelte.test.ts` (the notice).
 
 ## A public form is answered without an account (2026-09-30)
 

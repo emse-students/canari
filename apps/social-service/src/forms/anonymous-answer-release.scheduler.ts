@@ -7,10 +7,10 @@ import { formsWithDueHeldAnswers, releaseHeldAnswers } from './anonymous-answer-
 const TAG = '[FORMS_ANON_RELEASE]';
 
 /**
- * Delivers the anonymous answers of a form that stopped taking answers WITHOUT anybody acting - an
- * end date that came, an opening moved later - so they do not wait for the organiser to open the
- * responses (which releases them too, `FormsService.getSubmissions`), and a full batch whose
- * release right after its submit failed.
+ * Delivers the anonymous answers due WITHOUT anybody acting - a form whose end date came, whose
+ * opening moved later, that is full or archived (`formsWithDueHeldAnswers` says which, and each line
+ * says why) - and a full batch whose release right after its submit failed, which is WARNED with
+ * its size: that is the primary path having failed.
  *
  * The clock only decides when the predicate is LOOKED AT; what is due is a fact of the rows
  * (`formsWithDueHeldAnswers`), judged again under the form's lock by `releaseHeldAnswers`.
@@ -48,14 +48,21 @@ export class AnonymousAnswerReleaseScheduler {
       return 0;
     }
     let released = 0;
-    for (const formId of due) {
+    for (const { formId, reason, held } of due) {
+      const form = formId.slice(0, 8);
+      if (reason === 'full-batch') {
+        // A full batch should have left right after the submit that completed it: finding one here
+        // means that release failed, and the line says so with its size.
+        this.logger.warn(
+          `${TAG} form ${form}: a full batch of ${held} answer(s) was still held - its release after the submit failed`
+        );
+      } else {
+        this.logger.log(`${TAG} form ${form}: ${held} answer(s) due (${reason})`);
+      }
       try {
         released += await releaseHeldAnswers(this.dataSource.manager, formId);
       } catch (e) {
-        this.logger.error(
-          `${TAG} release failed for form ${formId.slice(0, 8)}; kept for the next run`,
-          e
-        );
+        this.logger.error(`${TAG} release failed for form ${form}; kept for the next run`, e);
       }
     }
     this.logger.log(`${TAG} ${released} answer(s) released over ${due.length} form(s)`);

@@ -11,6 +11,7 @@ import { FormReminder } from './entities/form-reminder.entity';
 import { OpeningReminder } from '../openings/entities/opening-reminder.entity';
 import { FormRespondent } from './entities/form-respondent.entity';
 import { FormAnswerHeld } from './entities/form-answer-held.entity';
+import { FormAnonymousTailReleased } from './entities/form-anonymous-tail-released.entity';
 import { FormFile } from './entities/form-file.entity';
 import { FormItemImage } from './entities/form-item-image.entity';
 import { FormItemImagesService } from './form-item-images.service';
@@ -42,6 +43,7 @@ import { LydiaReconciliationScheduler } from './lydia-reconciliation.scheduler';
       FormRespondent,
       // An anonymous answer waiting for its batch (migration 178).
       FormAnswerHeld,
+      FormAnonymousTailReleased,
       FormFile,
       FormItemImage,
       // The boutique attempts the Lydia reconciliation reads (`lydia-reconciliation.service.ts`).

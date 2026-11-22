@@ -19,7 +19,9 @@ export type RetireTarget = { formId: string } | { associationId: string };
  * its submissions pointing at nothing (29 orphans on prod and dev). An archived form leaves every
  * list and every respondent flow but stays loadable by its staff, so its submissions stay readable.
  *
- * Takes the caller's `manager` so an association's delete keeps its ONE transaction. A submission
+ * Takes the caller's `manager`, which MUST run a transaction (an association's delete keeps its ONE
+ * transaction; `FormsService.delete` opens one): the release of an anonymous form's waiting answers
+ * holds the form's lock and refuses to run without one (`HeldAnswersOutsideTransactionError`). A submission
  * written between the two statements makes the DELETE fail on the key - loudly, never an orphan.
  */
 export async function retireForms(
@@ -39,7 +41,7 @@ export async function retireForms(
   );
   for (const { id } of anonymous) {
     await lockFormSeats(manager, id);
-    await releaseHeldAnswersUnderLock(manager, id, true);
+    await releaseHeldAnswersUnderLock(manager, id, 'retired');
   }
 
   // `getQuery()` returns a bare `SELECT ...`: the parentheses `EXISTS` needs are written here.

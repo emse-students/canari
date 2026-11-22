@@ -1,4 +1,4 @@
-import { randomInt } from 'crypto';
+import { randomInt, randomUUID } from 'crypto';
 import { Logger } from '@nestjs/common';
 import type { EntityManager } from 'typeorm';
 import type { ProductGridLine } from './product-grid-contract';
@@ -13,26 +13,25 @@ import { FORM_WINDOW_OPEN, formWindowState } from './form-window';
  * What is stored must not pair an account with an answer - and that includes what the database
  * keeps about each write, not only the columns this service declares. The registry
  * (`form_respondents`) is written when the person answers, because it is what refuses a second
- * answer; the answer itself waits in `form_answers_held`, and moves into `submissions` together with
- * the other answers waiting on its form, in ONE write and in a random order. So every released
- * answer is one of a group of at least `ANONYMOUS_BATCH_SIZE`, and the group, not the person, is all
- * a stored row can be traced to.
+ * answer; the answer itself is held apart in `form_answers_held`, and moves into `submissions`
+ * together with the other answers waiting on its form, in ONE statement and in a random order. So
+ * every released answer is one of a group of at least `ANONYMOUS_BATCH_SIZE`, and the group, not the
+ * person, is all a stored row can be traced to.
  *
- * WHEN A BATCH IS RELEASED - a predicate over durable state, never a timer:
- * - `ANONYMOUS_BATCH_SIZE` answers wait: the submit that brings the count there releases them right
- *   after its own transaction commits, in a transaction of their own under the form's lock - never in
- *   the one that wrote a registry row, so no released row shares a write with one. Should that
- *   release fail, the batch stays held and the next submit, a close, a manager's read or the hourly
- *   sweep (which also looks for a full batch) releases it.
- * - the form no longer takes answers (closed, past its end date, not open yet, or archived): every
- *   waiting answer is released, however few. Below the batch size they JOIN the answers released on
- *   the form's latest release day (those are rewritten in the same write and keep that date, which the
- *   new ones take too), so the last group is not smaller than the batch size unless the form never
- *   had that many answers at all - and then the group is every answer it has, which is the most any
- *   design can give when the reader also holds the list of who answered.
+ * WHEN ANSWERS ARE RELEASED - a predicate over durable state, never a timer (`ReleaseMode`):
+ * - `ANONYMOUS_BATCH_SIZE` answers wait: released whatever the form's state. The submit that brings
+ *   the count there releases them right after its own transaction commits, in a transaction of their
+ *   own under the form's lock - never the one that wrote a registry row. Should that fail, the next
+ *   submit, a close, a manager's read or the hourly sweep releases them.
+ * - fewer wait and the form takes no more answers (closed, past its end date, not open yet, or full):
+ *   the short tail is released ONCE per form (`form_anonymous_tail_released`), joining the answers
+ *   released on the form's latest release day. Later, a short tail stays held until a batch is full
+ *   or the form is retired.
+ * - the form is retired (archived or deleted): everything waiting is released, joining as above.
  *
- * An answer is dated with the day its batch was released, never the day it was given: a day inside
- * a batch would split the group again.
+ * Joining means the joined group is DELETED and written again, with new random ids, in the SAME
+ * shuffled insert as the new answers: one write, one date, and no physical order of old then new.
+ * An answer is dated with the day its group was written, never the day it was given.
  */
 export const ANONYMOUS_BATCH_SIZE = 5;
 
@@ -47,8 +46,22 @@ export interface HeldAnswer {
   respondentIdentity: RespondentIdentity | null;
 }
 
-/** Why a release ran, for its log line only. */
-export type ReleaseReason = 'batch' | 'form-closed';
+/**
+ * What the form's state allows to be released: `open` - a full batch only; `closed` - also a short
+ * tail, once per form; `retired` - everything.
+ */
+export type ReleaseMode = 'open' | 'closed' | 'retired';
+
+/**
+ * `releaseHeldAnswersUnderLock` called outside a transaction: its lock would be released at once
+ * and its statements committed one by one, so two releases could both move the same answers.
+ */
+export class HeldAnswersOutsideTransactionError extends Error {
+  constructor() {
+    super('anonymous answers released outside a transaction: the form lock would not hold');
+    this.name = 'HeldAnswersOutsideTransactionError';
+  }
+}
 
 /**
  * How these lines name the form: they do not. A release runs inside a respondent's submit, and no
@@ -84,7 +97,7 @@ export async function heldAnswerCount(manager: EntityManager, formId: string): P
 }
 
 /** A uniformly random permutation (Fisher-Yates over a cryptographic source). */
-function shuffled<T>(items: readonly T[]): T[] {
+export function shuffled<T>(items: readonly T[]): T[] {
   const out = [...items];
   for (let i = out.length - 1; i > 0; i--) {
     const j = randomInt(i + 1);
@@ -93,73 +106,129 @@ function shuffled<T>(items: readonly T[]): T[] {
   return out;
 }
 
+/** The order rows are written in: `shuffled` in production; a spec passes a known one. */
+export type InsertOrder = <T>(items: readonly T[]) => T[];
+
 /**
- * Releases the form's waiting answers when the rule above says so, and answers how many moved.
- * The CALLER holds the form's lock (`lockFormSeats`) inside the transaction `manager` runs in, so no
- * submit adds to the batch while it moves. `final` is "the form takes no more answers".
+ * Releases the form's waiting answers as `mode` allows, and answers how many moved. The CALLER holds
+ * the form's lock (`lockFormSeats`) inside the transaction `manager` runs in - asserted, since a plain
+ * manager would commit each statement apart and drop the lock at once.
  */
 export async function releaseHeldAnswersUnderLock(
   manager: EntityManager,
   formId: string,
-  final: boolean
+  mode: ReleaseMode,
+  order: InsertOrder = shuffled
 ): Promise<number> {
+  if (!manager.queryRunner?.isTransactionActive) throw new HeldAnswersOutsideTransactionError();
   const held: { id: string }[] = await manager.query(
     'SELECT id FROM form_answers_held WHERE "formId" = $1',
     [formId]
   );
   if (held.length === 0) return 0;
-  if (!final && held.length < ANONYMOUS_BATCH_SIZE) {
+  const tail = held.length < ANONYMOUS_BATCH_SIZE;
+  if (tail && mode === 'open') {
     logger.debug(`[FORMS] ${TAG}: ${held.length} answer(s) wait for their batch`);
     return 0;
   }
-  // Below the batch size, the last answers join the latest released group and take its date.
-  const joinsLatest = held.length < ANONYMOUS_BATCH_SIZE;
+  if (tail && mode === 'closed') {
+    const done: unknown[] = await manager.query(
+      'SELECT 1 FROM form_anonymous_tail_released WHERE "formId" = $1',
+      [formId]
+    );
+    if (done.length > 0) {
+      logger.debug(
+        `[FORMS] ${TAG}: ${held.length} answer(s) stay held - its short tail was released once`
+      );
+      return 0;
+    }
+  }
+  // A short tail JOINS the latest group, which is written again with it: one write, one date.
   const [{ day }]: { day: string }[] = await manager.query(
     `SELECT (COALESCE(
-       ${joinsLatest ? '(SELECT max("createdAt") FROM submissions WHERE "formId" = $1)' : 'NULL'},
+       ${tail ? '(SELECT max("createdAt") FROM submissions WHERE "formId" = $1)' : 'NULL'},
        date_trunc('day', now() AT TIME ZONE 'UTC')
      ))::text AS day`,
-    joinsLatest ? [formId] : []
+    tail ? [formId] : []
   );
-  let rewritten = 0;
-  if (joinsLatest) {
-    // The group they join is written again in THIS transaction, so it and the new answers are one
-    // write; the values do not change.
-    const result: [unknown[], number] = await manager.query(
-      `UPDATE submissions SET "updatedAt" = "updatedAt"
-        WHERE "formId" = $1 AND "createdAt" = $2::timestamp`,
-      [formId, day]
-    );
-    rewritten = Array.isArray(result) ? Number(result[1] ?? 0) : 0;
-  }
-  const order = shuffled(held.map((row) => row.id));
-  // Inserted in the shuffled order, so neither the physical order nor anything else of the write
-  // follows the order the answers were given in.
+  const joined: { id: string }[] = tail
+    ? await manager.query(
+        'SELECT id FROM submissions WHERE "formId" = $1 AND "createdAt" = $2::timestamp',
+        [formId, day]
+      )
+    : [];
+  // Every row gets a NEW random id: a held row's id, or a joined row's old one, would let an old
+  // version of either be matched to the row written now.
+  const rows = order([...held, ...joined].map((row) => ({ source: row.id, id: randomUUID() })));
   await manager.query(
-    `INSERT INTO submissions ("formId", "userId", answers, lines, "priceLockedItemIds",
+    `INSERT INTO submissions ("id", "formId", "userId", answers, lines, "priceLockedItemIds",
                               "respondentIdentity", "totalPaid", "paymentStatus", "paymentMethod",
                               "createdAt", "updatedAt", "paymentRequestedAt")
-     SELECT h."formId", NULL, h.answers, h.lines, h."priceLockedItemIds", h."respondentIdentity",
-            0, 'free', NULL, $2::timestamp, $2::timestamp, $2::timestamp
-       FROM unnest($1::uuid[]) WITH ORDINALITY AS o(id, n)
-       JOIN form_answers_held h ON h.id = o.id
+     SELECT o.id, src."formId", NULL, src.answers, src.lines, src."priceLockedItemIds",
+            src."respondentIdentity", 0, 'free', NULL, $3::timestamp, $3::timestamp, $3::timestamp
+       FROM unnest($1::uuid[], $2::uuid[]) WITH ORDINALITY AS o(source, id, n)
+       JOIN LATERAL (
+         SELECT h."formId", h.answers, h.lines, h."priceLockedItemIds", h."respondentIdentity"
+           FROM form_answers_held h WHERE h.id = o.source
+         UNION ALL
+         SELECT s."formId", s.answers, s.lines, s."priceLockedItemIds", s."respondentIdentity"
+           FROM submissions s WHERE s.id = o.source
+       ) src ON true
       ORDER BY o.n`,
-    [order, day]
+    [rows.map((row) => row.source), rows.map((row) => row.id), day]
   );
-  await manager.query('DELETE FROM form_answers_held WHERE id = ANY($1::uuid[])', [order]);
+  if (joined.length > 0) {
+    await manager.query('DELETE FROM submissions WHERE id = ANY($1::uuid[])', [
+      joined.map((row) => row.id),
+    ]);
+  }
+  await manager.query('DELETE FROM form_answers_held WHERE id = ANY($1::uuid[])', [
+    held.map((row) => row.id),
+  ]);
+  if (tail) {
+    await manager.query(
+      `INSERT INTO form_anonymous_tail_released ("formId") VALUES ($1) ON CONFLICT DO NOTHING`,
+      [formId]
+    );
+  }
   logger.log(
-    `[FORMS] ${TAG}: ${held.length} answer(s) released` +
-      (final ? ' (the form takes no more answers)' : '') +
-      (joinsLatest ? `, joining ${rewritten} released before` : '')
+    `[FORMS] ${TAG}: ${held.length} answer(s) released (${mode})` +
+      (joined.length > 0 ? `, written again with ${joined.length} released before` : '')
   );
   return held.length;
 }
 
+/** The release mode a form's stored state gives, read under its lock. Null: the form is gone. */
+async function releaseModeOf(
+  manager: EntityManager,
+  formId: string,
+  now: Date
+): Promise<ReleaseMode | null> {
+  const rows: {
+    opensAt: Date | null;
+    closedAt: Date | null;
+    deletedAt: Date | null;
+    maxSubmissions: number | null;
+    taken: string;
+  }[] = await manager.query(
+    `SELECT f."opensAt", f."closedAt", f."deletedAt", f."maxSubmissions",
+            (SELECT count(*) FROM submissions s WHERE s."formId" = f.id)
+          + (SELECT count(*) FROM form_answers_held h WHERE h."formId" = f.id) AS taken
+       FROM forms f WHERE f.id = $1`,
+    [formId]
+  );
+  const form = rows[0];
+  if (!form) return null;
+  if (form.deletedAt) return 'retired';
+  // A FULL form takes no more answers either (an anonymous form is free: every answer holds a seat).
+  const full = !!form.maxSubmissions && Number(form.taken) >= form.maxSubmissions;
+  return full || formWindowState(form, now) !== FORM_WINDOW_OPEN ? 'closed' : 'open';
+}
+
 /**
- * Releases the form's waiting answers if the form no longer takes answers (or a full batch waits),
- * in a transaction of its own under the form's lock. Idempotent: a second call finds nothing.
- * Called when a manager closes the form, before a manager reads or exports its answers, and by the
- * hourly sweep for a form whose end date came (`AnonymousAnswerReleaseScheduler`).
+ * Releases what the form's state allows, in a transaction of its own under the form's lock.
+ * Idempotent: a second call finds nothing to move. Called after a submit, when a manager closes the
+ * form or reads or exports its answers, and by the hourly sweep (`AnonymousAnswerReleaseScheduler`).
  */
 export async function releaseHeldAnswers(
   manager: EntityManager,
@@ -170,31 +239,45 @@ export async function releaseHeldAnswers(
   if ((await heldAnswerCount(manager, formId)) === 0) return 0;
   return manager.transaction('READ COMMITTED', async (m) => {
     await lockFormSeats(m, formId);
-    const rows: { opensAt: Date | null; closedAt: Date | null; deletedAt: Date | null }[] =
-      await m.query('SELECT "opensAt", "closedAt", "deletedAt" FROM forms WHERE id = $1', [formId]);
-    const form = rows[0];
-    if (!form) return 0;
-    const final = !!form.deletedAt || formWindowState(form, now) !== FORM_WINDOW_OPEN;
-    return releaseHeldAnswersUnderLock(m, formId, final);
+    const mode = await releaseModeOf(m, formId, now);
+    return mode ? releaseHeldAnswersUnderLock(m, formId, mode) : 0;
   });
 }
 
+/** Why the sweep found a form's waiting answers due. */
+export type DueReason = 'full-batch' | 'retired' | 'not-open' | 'full-form';
+
 /**
- * The forms whose waiting answers are due: a full batch (its submit's release failed), or a form
- * that no longer takes answers - an end date that came, an opening moved later, an archive. Read by
- * the sweep; each is then released in its own transaction, which judges it again under the lock.
+ * The forms whose waiting answers are due, and why: a full batch (its submit's release failed), an
+ * archived form, a form whose window is not open (an end date that came, an opening moved later), a
+ * full form. A form whose short tail was already released once is not due for a tail again. Each is
+ * then released in its own transaction, which judges it again under the lock.
  */
-export async function formsWithDueHeldAnswers(manager: EntityManager): Promise<string[]> {
-  const rows: { formId: string }[] = await manager.query(
-    `SELECT h."formId"
-       FROM form_answers_held h
-       JOIN forms f ON f.id = h."formId"
-      GROUP BY h."formId", f."deletedAt", f."closedAt", f."opensAt"
-     HAVING count(*) >= $1
-         OR f."deletedAt" IS NOT NULL
-         OR (f."closedAt" IS NOT NULL AND f."closedAt" <= now())
-         OR (f."opensAt" IS NOT NULL AND f."opensAt" > now())`,
+export async function formsWithDueHeldAnswers(
+  manager: EntityManager
+): Promise<{ formId: string; reason: DueReason; held: number }[]> {
+  const rows: { formId: string; reason: DueReason; held: string }[] = await manager.query(
+    `WITH w AS (
+       SELECT h."formId", count(*) AS held
+         FROM form_answers_held h GROUP BY h."formId"
+     )
+     SELECT w."formId", w.held,
+            CASE
+              WHEN w.held >= $1 THEN 'full-batch'
+              WHEN f."deletedAt" IS NOT NULL THEN 'retired'
+              WHEN t."formId" IS NOT NULL THEN NULL
+              WHEN (f."closedAt" IS NOT NULL AND f."closedAt" <= now())
+                OR (f."opensAt" IS NOT NULL AND f."opensAt" > now()) THEN 'not-open'
+              WHEN f."maxSubmissions" IS NOT NULL
+               AND (SELECT count(*) FROM submissions s WHERE s."formId" = f.id) + w.held
+                   >= f."maxSubmissions" THEN 'full-form'
+            END AS reason
+       FROM w
+       JOIN forms f ON f.id = w."formId"
+       LEFT JOIN form_anonymous_tail_released t ON t."formId" = w."formId"`,
     [ANONYMOUS_BATCH_SIZE]
   );
-  return rows.map((row) => row.formId);
+  return rows
+    .filter((row) => row.reason !== null)
+    .map((row) => ({ formId: row.formId, reason: row.reason, held: Number(row.held) }));
 }

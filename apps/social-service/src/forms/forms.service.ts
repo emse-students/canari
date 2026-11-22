@@ -1328,10 +1328,13 @@ export class FormsService {
    * waiting for their batch (`anonymous-answer-batches.ts`), which are answers like the others.
    */
   private async countActiveSubmissions(form: Pick<Form, 'id' | 'anonymous'>): Promise<number> {
-    const stored = await this.submissionRepo.count({ where: seatHoldingWhere(form.id) });
-    return form.anonymous
-      ? stored + (await heldAnswerCount(this.submissionRepo.manager, form.id))
-      : stored;
+    if (!form.anonymous) return this.submissionRepo.count({ where: seatHoldingWhere(form.id) });
+    // Both counts from ONE snapshot: a release between two reads would count its batch twice (held
+    // in the first, stored in the second) or not at all.
+    return this.submissionRepo.manager.transaction('REPEATABLE READ', async (m) => {
+      const stored = await m.count(Submission, { where: seatHoldingWhere(form.id) });
+      return stored + (await heldAnswerCount(m, form.id));
+    });
   }
 
   /**
@@ -2043,7 +2046,11 @@ export class FormsService {
    */
   async delete(formId: string, userId: string, isGlobalAdmin: boolean) {
     const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
-    await retireForms(this.formRepo.manager, { formId: form.id });
+    // ONE transaction: an anonymous form's waiting answers are released under its lock, which a plain
+    // manager would drop at once (`releaseHeldAnswersUnderLock` refuses to run without one).
+    await this.formRepo.manager.transaction('READ COMMITTED', (m) =>
+      retireForms(m, { formId: form.id })
+    );
     // A removed form cites nothing any more; an archived one still does, and keeps its images.
     const images = questionImageIds(form.items);
     if (images.length > 0) await this.formItemImages.releaseUncited(images, 'form deleted');
@@ -2081,9 +2088,9 @@ export class FormsService {
         ` was=${form.closedAt ? new Date(form.closedAt).toISOString() : 'open'}`
     );
     await this.formRepo.update({ id: formId }, { closedAt });
-    // A closed anonymous form delivers every answer still waiting for its batch, now.
-    if (closed && form.anonymous)
-      await releaseHeldAnswers(this.submissionRepo.manager, formId, now);
+    // A closed anonymous form delivers its waiting answers now, as its state allows. The close is
+    // done whatever happens here: a failed release stays held and the hourly sweep takes it.
+    if (closed && form.anonymous) await this.releaseOrAccuse(formId, 'close', now);
     // The state is judged HERE, on the server's clock: the row of a phone behind it follows this.
     return {
       id: formId,
@@ -4625,13 +4632,34 @@ export class FormsService {
   }
 
   /**
+   * Releases an anonymous form's waiting answers as its state allows, on behalf of a manager's
+   * action or read - which is answered whatever happens here. A failure is logged as one (the answers
+   * stay held, safely, and the hourly sweep releases them), never turned into the caller's 500.
+   */
+  private async releaseOrAccuse(
+    formId: string,
+    during: 'close' | 'read' | 'export',
+    now?: Date
+  ): Promise<void> {
+    try {
+      await releaseHeldAnswers(this.submissionRepo.manager, formId, now);
+    } catch (e) {
+      this.logger.error(
+        `[FORMS] releasing the waiting anonymous answers failed during a ${during} of form ` +
+          `${formId.slice(0, 8)}; they stay held for the sweep`,
+        e
+      );
+    }
+  }
+
+  /**
    * The anonymous answers of a form waiting for their batch, and the batch size: the responses
    * screen says how many are not listed yet and why. Read AFTER the release a read triggers, so a
    * closed form answers 0. Zero on a named form, which holds nothing.
    */
   async heldAnswers(formId: string): Promise<{ held: number; batchSize: number }> {
     const form = await this.formRepo.findOne({ where: { id: formId } });
-    if (form?.anonymous) await releaseHeldAnswers(this.submissionRepo.manager, formId);
+    if (form?.anonymous) await this.releaseOrAccuse(formId, 'read');
     const held = await heldAnswerCount(this.submissionRepo.manager, formId);
     return { held, batchSize: ANONYMOUS_BATCH_SIZE };
   }
@@ -4644,7 +4672,7 @@ export class FormsService {
   async getSubmissions(formId: string) {
     const form = await this.formRepo.findOne({ where: { id: formId } });
     // A form that stopped taking answers delivers the ones still waiting for their batch first.
-    if (form?.anonymous) await releaseHeldAnswers(this.submissionRepo.manager, formId);
+    if (form?.anonymous) await this.releaseOrAccuse(formId, 'read');
     // An anonymous form lists in the order of a random id, never of arrival: the order of insertion
     // is a clock the day-precision `createdAt` was cut to hide.
     const subs = overCapacityFirst(
@@ -4701,7 +4729,7 @@ export class FormsService {
     // A CSV is one grid sheet: a form without a grid is refused here, not written empty.
     assertExportFormatFits(format, gridWords);
     // As the responses list: a form that stopped taking answers delivers the waiting ones first.
-    if (form.anonymous) await releaseHeldAnswers(this.submissionRepo.manager, formId);
+    if (form.anonymous) await this.releaseOrAccuse(formId, 'export');
 
     // Same order as the responses list, a payment over capacity first.
     const submissions = overCapacityFirst(

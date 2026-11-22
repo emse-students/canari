@@ -27,7 +27,13 @@ import { FormRespondent } from './entities/form-respondent.entity';
 import { PurchaseRecord } from '../users/entities/purchase-record.entity';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { FormsService } from './forms.service';
-import { ANONYMOUS_BATCH_SIZE } from './anonymous-answer-batches';
+import {
+  ANONYMOUS_BATCH_SIZE,
+  HeldAnswersOutsideTransactionError,
+  releaseHeldAnswers,
+  releaseHeldAnswersUnderLock,
+} from './anonymous-answer-batches';
+import { lockFormSeats } from './seat-hold';
 import { AnonymousAnswerReleaseScheduler } from './anonymous-answer-release.scheduler';
 import { retireForms } from './retire-forms';
 
@@ -175,6 +181,7 @@ maybe('anonymous answers stored in batches, against PostgreSQL (migration 178)',
     const formId = await makeForm();
     const first = await answer(formId, ANONYMOUS_BATCH_SIZE - 1);
     expect(first.every((reply) => JSON.stringify(reply) === '{"held":true}')).toBe(true);
+    // A waiting answer is held apart: in `form_answers_held`, nowhere in `submissions`.
     expect(await stored(formId)).toBe(0);
     expect(await held(formId)).toBe(ANONYMOUS_BATCH_SIZE - 1);
     // The registry is written at once: it is what refuses a second answer.
@@ -215,11 +222,16 @@ maybe('anonymous answers stored in batches, against PostgreSQL (migration 178)',
     expect(await held(formId)).toBe(1);
   });
 
-  it('counts a waiting answer against the form capacity', async () => {
-    const formId = await makeForm({ maxSubmissions: 2 });
+  it('counts a waiting answer against the capacity, and a full form releases its tail', async () => {
+    const formId = await makeForm({ maxSubmissions: 3 });
     await answer(formId, 2);
-    await expect(answer(formId, 1)).rejects.toMatchObject({ response: { code: 'FORM_FULL' } });
     expect(await held(formId)).toBe(2);
+    // The answer that fills the form: a full form takes no more answers, so its tail is released.
+    await answer(formId, 1);
+    expect(await held(formId)).toBe(0);
+    expect(await stored(formId)).toBe(3);
+    expect(await writes(formId)).toBe(1);
+    await expect(answer(formId, 1)).rejects.toMatchObject({ response: { code: 'FORM_FULL' } });
   });
 
   it('on close, the last answers below a batch join the latest group, in one write', async () => {
@@ -239,6 +251,91 @@ maybe('anonymous answers stored in batches, against PostgreSQL (migration 178)',
       ])
     ).toBe(1);
     expect(await sharedWithRegistry()).toBe(0);
+  });
+
+  it('a joining group is written again in the SAME insert as the new answers, in its order', async () => {
+    const formId = await makeForm();
+    await answer(formId, ANONYMOUS_BATCH_SIZE + 2);
+    const before: { q: string }[] = await ds.query(
+      `SELECT answers->>'q1' AS q FROM submissions WHERE "formId" = $1`,
+      [formId]
+    );
+    await ds.query(`UPDATE forms SET "closedAt" = now() - interval '1 minute' WHERE id = $1`, [
+      formId,
+    ]);
+    // A known order instead of the random one: the 2 new answers FIRST, then the joined group. Kept
+    // in place, the old rows would come first in the table whatever order was asked.
+    await ds.transaction(async (m) => {
+      await lockFormSeats(m, formId);
+      await releaseHeldAnswersUnderLock(m, formId, 'closed', (rows) => [...rows]);
+    });
+    const byPlace: { q: string }[] = await ds.query(
+      `SELECT answers->>'q1' AS q FROM submissions WHERE "formId" = $1 ORDER BY ctid`,
+      [formId]
+    );
+    const old = new Set(before.map((row) => row.q));
+    expect(byPlace.map((row) => old.has(row.q))).toEqual([
+      false,
+      false,
+      ...Array(ANONYMOUS_BATCH_SIZE).fill(true),
+    ]);
+    expect(await writes(formId)).toBe(1);
+    // Every row is new: none keeps an id an older version of it carried.
+    const ids: { id: string }[] = await ds.query(`SELECT id FROM submissions WHERE "formId" = $1`, [
+      formId,
+    ]);
+    expect(ids).toHaveLength(ANONYMOUS_BATCH_SIZE + 2);
+  });
+
+  it('a short tail is released once per form; a later one waits for a batch or the retirement', async () => {
+    const formId = await makeForm();
+    await answer(formId, 2);
+    await service.setClosed(formId, true, OWNER, false);
+    expect(await held(formId)).toBe(0);
+    expect(await stored(formId)).toBe(2);
+
+    await service.setClosed(formId, false, OWNER, false);
+    await answer(formId, 1);
+    await service.setClosed(formId, true, OWNER, false);
+    expect(await held(formId)).toBe(1);
+    expect(await service.heldAnswers(formId)).toEqual({ held: 1, batchSize: ANONYMOUS_BATCH_SIZE });
+    // Not due for the sweep either.
+    await sweep.releaseOnce();
+    expect(await held(formId)).toBe(1);
+
+    // Retirement releases everything, joining the latest group in one write.
+    await service.delete(formId, OWNER, false);
+    expect(await held(formId)).toBe(0);
+    expect(await stored(formId)).toBe(3);
+    expect(await writes(formId)).toBe(1);
+  });
+
+  it('a delete racing a release moves each answer exactly once, in one write', async () => {
+    const formId = await makeForm();
+    await answer(formId, ANONYMOUS_BATCH_SIZE + 2);
+    await Promise.all([
+      service.delete(formId, OWNER, false),
+      releaseHeldAnswers(ds.manager, formId),
+      releaseHeldAnswers(ds.manager, formId),
+    ]);
+    expect(await held(formId)).toBe(0);
+    expect(await stored(formId)).toBe(ANONYMOUS_BATCH_SIZE + 2);
+    expect(
+      await n(`SELECT count(DISTINCT answers->>'q1') AS n FROM submissions WHERE "formId" = $1`, [
+        formId,
+      ])
+    ).toBe(ANONYMOUS_BATCH_SIZE + 2);
+    expect(await writes(formId)).toBe(1);
+  });
+
+  it('refuses to release outside a transaction, where the form lock would not hold', async () => {
+    const formId = await makeForm();
+    await answer(formId, 1);
+    await expect(releaseHeldAnswersUnderLock(ds.manager, formId, 'retired')).rejects.toBeInstanceOf(
+      HeldAnswersOutsideTransactionError
+    );
+    expect(await held(formId)).toBe(1);
+    await service.delete(formId, OWNER, false);
   });
 
   it('a form that never reached a batch delivers every answer once its end date came', async () => {
@@ -269,9 +366,14 @@ maybe('anonymous answers stored in batches, against PostgreSQL (migration 178)',
         [formId]
       );
     }
+    const warn = jest.spyOn(Logger.prototype, 'warn');
     await sweep.releaseOnce();
     expect(await held(formId)).toBe(0);
     expect(await stored(formId)).toBe(ANONYMOUS_BATCH_SIZE);
+    // The primary path failed: the sweep says so, with the batch's size.
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining(`a full batch of ${ANONYMOUS_BATCH_SIZE}`)
+    );
   });
 
   it('retiring a form whose answers wait archives it and releases them, never losing one', async () => {
@@ -286,7 +388,7 @@ maybe('anonymous answers stored in batches, against PostgreSQL (migration 178)',
   it('after every path above, no stored anonymous answer shares a write with the registry', async () => {
     expect(await sharedWithRegistry()).toBe(0);
     expect(await n(`SELECT count(*) AS n FROM form_answers_held`, [])).toBe(
-      2 + 1 // the capacity form and the second-answer form, both still open
+      1 // the second-answer form, still open
     );
   });
 });

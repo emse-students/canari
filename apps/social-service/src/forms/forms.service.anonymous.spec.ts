@@ -227,6 +227,47 @@ describe('FormsService - anonymous forms', () => {
     });
   });
 
+  describe('a release that fails during a manager action', () => {
+    // The answers stay held, safely, and the hourly sweep releases them: the manager's close, read
+    // and export are still answered, and the failure is logged as one.
+    function failing() {
+      const made = makeService({ form: baseForm({ closedAt: new Date(Date.now() - 60_000) }) });
+      made.submissionRepo.manager.query = jest.fn(() => Promise.resolve([{ n: '2' }]));
+      made.submissionRepo.manager.transaction = jest.fn(() =>
+        Promise.reject(new Error('lock timeout'))
+      );
+      const error = jest.spyOn((made.service as any).logger, 'error').mockImplementation(() => {});
+      return { ...made, error };
+    }
+
+    it('still lists the answers', async () => {
+      const { service, error } = failing();
+      await expect(service.getSubmissions('f1')).resolves.toEqual([]);
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining('they stay held'),
+        expect.any(Error)
+      );
+    });
+
+    it('still exports the answers', async () => {
+      const { service, error } = failing();
+      await expect(service.exportSubmissions('f1', LABELS)).resolves.toMatchObject({
+        extension: 'xlsx',
+      });
+      expect(error).toHaveBeenCalled();
+    });
+
+    it('still closes the form', async () => {
+      const { service, error, formRepo } = failing();
+      formRepo.update = jest.fn(() => Promise.resolve());
+      jest.spyOn(service, 'assertFormManager').mockResolvedValue(baseForm() as any);
+      await expect(service.setClosed('f1', true, 'u1', false)).resolves.toMatchObject({
+        windowState: 'closed',
+      });
+      expect(error).toHaveBeenCalled();
+    });
+  });
+
   describe('export', () => {
     it('has no name column, and lists in a random order rather than arrival order', async () => {
       const { service, submissionRepo } = makeService();

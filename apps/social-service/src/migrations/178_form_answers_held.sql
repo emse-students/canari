@@ -11,6 +11,9 @@
 --    `submissions` does: a form whose answers wait is archived, never removed (`retireForms`).
 -- 2. The table's autovacuum runs as soon as a row is gone: a released row's old version is cleared
 --    at the next autovacuum pass rather than left until the table grows.
+-- 3. `form_anonymous_tail_released`: the forms whose short tail (fewer answers than a batch) was
+--    released once, when the form stopped taking answers. A durable fact, never a clock: a later
+--    short tail of the same form waits for a full batch or the form's retirement.
 --
 -- Additive (a new table, no change to a stored row) and idempotent. Nothing is backfilled: every
 -- answer stored before this file stays where it is.
@@ -34,3 +37,7 @@ CREATE INDEX IF NOT EXISTS form_answers_held_form_idx ON form_answers_held ("for
 
 ALTER TABLE form_answers_held
   SET (autovacuum_vacuum_threshold = 0, autovacuum_vacuum_scale_factor = 0);
+
+CREATE TABLE IF NOT EXISTS form_anonymous_tail_released (
+  "formId" uuid PRIMARY KEY REFERENCES forms (id) ON DELETE CASCADE
+);

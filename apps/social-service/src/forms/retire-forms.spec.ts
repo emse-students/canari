@@ -49,6 +49,8 @@ function makeManager(affected: { update: number; delete: number }) {
   const manager: any = {
     // The anonymous forms among the targets, whose waiting answers are released first: none here.
     query: jest.fn(() => Promise.resolve([])),
+    // `FormsService.delete` retires inside a transaction (the release needs the form lock to hold).
+    transaction: jest.fn((_level: string, fn: (m: unknown) => unknown) => fn(manager)),
     // Order of use inside `retireForms`: update, its sub-query, delete, its sub-query.
     createQueryBuilder: jest.fn(() => {
       n += 1;

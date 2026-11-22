@@ -134,6 +134,9 @@ describe("FormsService - a question's image", () => {
     });
     // `retireForms` asks for the anonymous forms among those it retires first: none here.
     formRepo.manager.query = jest.fn(() => Promise.resolve([]));
+    formRepo.manager.transaction = jest.fn((_level: string, fn: (m: unknown) => unknown) =>
+      fn(formRepo.manager)
+    );
     await service.delete('f1', 'alice', false);
     expect(images.releaseUncited).toHaveBeenCalledWith([A], 'form deleted');
   });

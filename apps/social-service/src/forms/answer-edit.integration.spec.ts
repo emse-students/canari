@@ -536,7 +536,7 @@ maybe('a respondent changes their own answer, against PostgreSQL (migration 166)
     // The answer waits for its batch: released here as a closing form would, the form left open.
     await ds.transaction(async (m) => {
       await lockFormSeats(m, formId);
-      await releaseHeldAnswersUnderLock(m, formId, true);
+      await releaseHeldAnswersUnderLock(m, formId, 'closed');
     });
     const [anon] = await ds.query(`SELECT id FROM submissions WHERE "formId" = $1`, [formId]);
     expect(await refusal(service.editAnswer(formId, anon.id, ALICE, { 'q-name': 'M' }))).toEqual({
