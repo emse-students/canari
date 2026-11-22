@@ -10,6 +10,15 @@
 	     fails ("profile doesn't include the ... entitlement"). -->
 	<key>com.apple.developer.usernotifications.time-sensitive</key>
 	<true/>
+	<!-- Communication notifications (owner, 2026-11-21): the notification extension redraws a
+	     message from an INSendMessageIntent (the sender's face, the group's name, a sender a Focus
+	     may let through). Apple asks for the capability on the APP target only, beside
+	     NSUserActivityTypes = INSendMessageIntent in canari_iOS/Info.plist. Requires the
+	     "Communication Notifications" capability enabled on the fr.emse.canari App ID + a
+	     regenerated "Canari" provisioning profile, or codesign fails ("profile doesn't include the
+	     ... entitlement"). mobile.md "Communication notifications". -->
+	<key>com.apple.developer.usernotifications.communication</key>
+	<true/>
 	<!-- MUST mirror MOBILE_APP_LINK_HOSTS in src/lib/mobile/appSiteAssociation.ts, which is the
 	     canonical host list for BOTH platforms; appSiteAssociation.test.ts fails on drift.
 	     `www` is deliberately absent: it 301-redirects to the apex (including

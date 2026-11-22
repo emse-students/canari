@@ -124,8 +124,14 @@ describe('the iOS copy of push_context.json', () => {
         .map((m) => m[1].trim())
         .filter((target) => /^&?data_dir/.test(target))
         .filter((target) => /push_context|PUSH_CONTEXT_FILE/.test(target));
-      // Only the one writer names the file.
-      expect(direct, name).toEqual(name === 'push.rs' ? ['data_dir.join(PUSH_CONTEXT_FILE)'] : []);
+      // No direct write names the file: the one writer writes a temporary and RENAMES it over the
+      // file (review of #3938: a reader in another process never sees half of it).
+      expect(direct, name).toEqual([]);
+      const renamed = [...src.matchAll(/std::fs::rename\(&tmp, ([^)]+\))\)/g)]
+        .map((m) => m[1].trim())
+        .filter((target) => /^&?data_dir/.test(target))
+        .filter((target) => /PUSH_CONTEXT_FILE/.test(target));
+      expect(renamed, name).toEqual(name === 'push.rs' ? ['data_dir.join(PUSH_CONTEXT_FILE)'] : []);
     }
     // The edits that read the file into a `path` and patch it hand the result to the writer.
     for (const name of ['store_device_identity', 'set_push_context_locale']) {

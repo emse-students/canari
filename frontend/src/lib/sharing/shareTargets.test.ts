@@ -23,6 +23,7 @@ const {
   describeShareTargetsChange,
   conversationIdFromShareTarget,
   eraseAccountShortcuts,
+  honourOwedNotificationErase,
   publishShareTargets,
   resetShareTargetsStateForTests,
   shareTargetId,
@@ -49,6 +50,8 @@ function group(id: string, name: string, at: number, extra: Partial<Conversation
 const PUBLISH = 'plugin:gallery|publish_share_targets';
 const CLEAR = 'plugin:gallery|clear_share_targets';
 const CLEAR_CONVERSATIONS = 'plugin:gallery|clear_conversation_shortcuts';
+const OWED = 'notification_shortcuts_erase_owed';
+const SETTLE = 'settle_notification_shortcuts_erase';
 
 /** The native publish's answer when every stale suggestion was removed. */
 const CLEAN = { present: 1, leftover: 0 };
@@ -84,7 +87,9 @@ async function settle() {
 beforeEach(() => {
   platform = 'android';
   invoke.mockReset();
-  invoke.mockImplementation(async (cmd: string) => (cmd === PUBLISH ? CLEAN : 0));
+  invoke.mockImplementation(async (cmd: string) =>
+    cmd === PUBLISH ? CLEAN : cmd === OWED ? null : 0
+  );
   resetShareTargetsStateForTests();
 });
 
@@ -293,7 +298,7 @@ describe('clearing', () => {
   it('a sign-out issued while a publish is IN FLIGHT lands after it', async () => {
     const publish = deferred<typeof CLEAN>();
     invoke.mockImplementation((cmd: string) =>
-      cmd === PUBLISH ? publish.promise : Promise.resolve(0)
+      cmd === PUBLISH ? publish.promise : Promise.resolve(cmd === OWED ? null : 0)
     );
     syncShareTargets(input([group('a', 'A', 1)]), 'test');
     await settle();
@@ -306,13 +311,13 @@ describe('clearing', () => {
 
     publish.resolve(CLEAN);
     await erased;
-    expect(invoke.mock.calls.map(([c]) => c)).toEqual([PUBLISH, CLEAR, CLEAR_CONVERSATIONS]);
+    expect(invoke.mock.calls.map(([c]) => c)).toEqual([PUBLISH, CLEAR, OWED, CLEAR_CONVERSATIONS]);
   });
 
   it('a failed erase of the conversation shortcuts is said, never thrown', async () => {
     invoke.mockImplementation(async (cmd: string) => {
       if (cmd === CLEAR_CONVERSATIONS) throw new Error('kept on record');
-      return 0;
+      return cmd === OWED ? null : 0;
     });
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     await expect(eraseAccountShortcuts('signed out')).resolves.toBeUndefined();
@@ -338,10 +343,110 @@ describe('on iOS', () => {
     expect(calls(PUBLISH)[0][1]).toMatchObject({ targets: [{ id: 'c:a', label: 'A' }] });
   });
 
-  it('erases the suggestions at sign-out, and asks for no conversation shortcut it never had', async () => {
+  it('erases the suggestions AND the notification donations at sign-out (owner, 2026-11-21)', async () => {
+    // The notification extension donates an interaction per communication notification (a
+    // sender's name and face): the same command Android's conversation shortcuts use erases them.
     platform = 'ios';
     await eraseAccountShortcuts('signed out');
+    expect(invoke.mock.calls.map(([c]) => c)).toEqual([CLEAR, OWED, CLEAR_CONVERSATIONS]);
+  });
+
+  it('erases the notification donations only once the push registration has ended (review of #3938)', async () => {
+    // The end strips the extension's proof of an account; erased before it, a push landing in
+    // between would donate the leaving account's sender again.
+    platform = 'ios';
+    const pushEnded = deferred<number | null>();
+    const erased = eraseAccountShortcuts('signed out', pushEnded.promise);
+    await settle();
     expect(invoke.mock.calls.map(([c]) => c)).toEqual([CLEAR]);
+    pushEnded.resolve(null);
+    await erased;
+    expect(invoke.mock.calls.map(([c]) => c)).toEqual([CLEAR, OWED, CLEAR_CONVERSATIONS]);
+  });
+});
+
+describe('the notifications erase is owed on disk until done (review of #3938)', () => {
+  /** The native side owes erase `owed` (null: none), and records what was settled. */
+  function owing(owed: number | null, failErase = false) {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === OWED) return owed;
+      if (cmd === CLEAR_CONVERSATIONS && failErase) throw new Error('kept on record');
+      if (cmd === SETTLE) return true;
+      return 0;
+    });
+  }
+
+  it('the sign-out settles the erase it read as owed, once the native side answered', async () => {
+    platform = 'ios';
+    owing(4);
+    await eraseAccountShortcuts('signed out');
+    expect(invoke.mock.calls.map(([c]) => c)).toEqual([CLEAR, OWED, CLEAR_CONVERSATIONS, SETTLE]);
+    expect(calls(SETTLE)[0][1]).toEqual({ owed: 4 });
+  });
+
+  it('an erase that failed is left owed - never settled', async () => {
+    platform = 'ios';
+    owing(4, true);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await eraseAccountShortcuts('signed out');
+    expect(calls(SETTLE)).toHaveLength(0);
+    error.mockRestore();
+  });
+
+  it('at launch, an erase still owed is completed and settled', async () => {
+    platform = 'ios';
+    owing(2);
+    await honourOwedNotificationErase('launch');
+    expect(invoke.mock.calls.map(([c]) => c)).toEqual([OWED, CLEAR_CONVERSATIONS, SETTLE]);
+    expect(calls(SETTLE)[0][1]).toEqual({ owed: 2 });
+  });
+
+  it('at launch, nothing owed erases nothing', async () => {
+    platform = 'android';
+    owing(null);
+    await honourOwedNotificationErase('launch');
+    expect(invoke.mock.calls.map(([c]) => c)).toEqual([OWED]);
+  });
+
+  it('off the phone apps, nothing is asked', async () => {
+    platform = null;
+    await honourOwedNotificationErase('launch');
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('an owed mark that cannot be read is erased anyway, accused, and never settled', async () => {
+    platform = 'ios';
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === OWED) throw new Error('unreadable');
+      return 0;
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await honourOwedNotificationErase('launch');
+    expect(invoke.mock.calls.map(([c]) => c)).toEqual([OWED, CLEAR_CONVERSATIONS]);
+    expect(String(error.mock.calls[0]?.[0])).toContain('could not be read - erasing anyway');
+    error.mockRestore();
+  });
+
+  it('a sign-out erase whose ticket was settled meanwhile skips: the next account keeps its donations', async () => {
+    // A signs out with ticket 3; before A's erase runs (it waits for the FCM step), B's context is
+    // prepared, whose honour erases and settles mark 3. A's erase then finds nothing owed.
+    platform = 'ios';
+    owing(null);
+    await eraseAccountShortcuts('signed out', Promise.resolve(3));
+    expect(calls(CLEAR_CONVERSATIONS)).toHaveLength(0);
+  });
+
+  it('a sign-out whose mark was never written always erases, whatever ran in between', async () => {
+    // No ticket: nothing proves this sign-out's erase was done, even after a honour found nothing.
+    platform = 'ios';
+    owing(null);
+    const pushEnded = deferred<number | null>();
+    const late = eraseAccountShortcuts('signed out', pushEnded.promise);
+    await honourOwedNotificationErase('before the push context');
+    pushEnded.resolve(null);
+    await late;
+    expect(calls(CLEAR_CONVERSATIONS)).toHaveLength(1);
+    expect(calls(SETTLE)).toHaveLength(0);
   });
 });
 
