@@ -73,3 +73,5 @@ recorded through the lock gesture (press, slide right 90 pt, release), not hold-
 Seen on the way: a microphone permission prompt raised by the very first press left the recorder in
 `holding` with its timer running for minutes and no way out (slide, bin), until the app was ended;
 not reproduced, since the prompt appears once.
+
+**Mi 9T sitting, 1.7.3-alpha.5 (2026-11-22): PARTIAL, entry stays. Capture was observed with dumpsys audio during a recording; the iPhone half and any remaining rows are UNREAD.**

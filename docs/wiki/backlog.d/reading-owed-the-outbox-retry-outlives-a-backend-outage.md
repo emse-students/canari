@@ -56,3 +56,5 @@ the mirror holds an entry. Mechanism:
   refused entry's conversation was a removed one ("Cette conversation a été supprimée", no composer),
   where no failed line or Réessayer showed after opening the app, and the nudge was gone. A refused
   reply in a conversation that still exists was not produced.
+
+**Mi 9T sitting, 1.7.3-alpha.5 (2026-11-22): PARTIAL, entry stays. A Canari-only network block (not private DNS, which blocks the worker entirely) held one queued message; on unblock the worker ran, drained it and ended SUCCESS (one failed-then-success cycle, logcat CanariOutboxRetry/CanariFCM). UNREAD: more than one failed worker run before success.**

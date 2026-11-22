@@ -62,3 +62,5 @@ on the next foreground (`[QuickReply] the native side says a reply waits: 1 nati
 or `not told` WARN in the ring. **Not read:** the `acknowledge_quick_reply` boolean line itself (the ring is written in batches and
 ended 2 s after the take), a reply typed with the app IN FRONT, and the banner's `envoi en cours` state on iOS.
 A first attempt (reply typed, Send tapped at a stale coordinate while the field had grown) sent nothing, which is a rig slip, not an app fault.
+
+**Mi 9T sitting, 1.7.3-alpha.5 (2026-11-22): PARTIAL, entry stays. The front reply and its settlement were exercised on the Mi; the row where the page dies holding an unsettled reply stays UNREAD (a forced crash flipped the route instead of reproducing it). The per-row verdicts of the sitting were not carried through a context reset, so none is promoted to PASS; re-read on the next alpha.**
