@@ -29,10 +29,13 @@
  * marked {@link ENDED} and never ended twice.
  */
 
+import { SvelteSet } from 'svelte/reactivity';
+
 /** Ids whose row was re-keyed onto another id, noted since the watcher last looked. */
-const rekeyedAway = new Set<string>();
+// Reactive: the watcher's effect must wake on a fact written for a row the list did not change.
+const rekeyedAway = new SvelteSet<string>();
 /** Ids whose `removed` transition carried positive evidence, noted since the watcher last looked. */
-const confirmedEndings = new Set<string>();
+const confirmedEndings = new SvelteSet<string>();
 
 /** The facts the watcher is given besides the two lists. */
 export interface EndingFacts {
@@ -61,7 +64,7 @@ export function currentEndingFacts(): EndingFacts {
 export type KnownConversations = ReadonlyMap<string, string>;
 
 /** The memory of an id whose banners the watcher already ended (its row may still be `removed`). */
-export const ENDED = 'ended';
+const ENDED = 'ended';
 
 /** The minimal row the watcher reads. */
 export interface WatchedConversation {
@@ -131,9 +134,10 @@ export function watchEndings(
 }
 
 /**
- * The facts that outlive a look: a fact is dropped only once it has been USED - its id is absent or
- * `removed` in `next` - never merely because a look happened (the boot merge records the re-key long
- * before the loser leaves the map, after many awaits). Signed out, every fact is dropped.
+ * Settles the facts after a look. A re-key is dropped only once its old id is absent from `next`,
+ * never merely because a look happened (the boot merge records it long before the loser leaves the
+ * map, after many awaits). A confirmation is used by the look that sees it and dropped, so it
+ * cannot outlive a re-admission. Signed out, every fact is dropped.
  */
 export function settleEndingFacts(signedIn: boolean, next: KnownConversations): void {
   if (!signedIn) {
@@ -141,11 +145,10 @@ export function settleEndingFacts(signedIn: boolean, next: KnownConversations): 
     confirmedEndings.clear();
     return;
   }
-  for (const id of rekeyedAway) {
+  for (const id of new Set(rekeyedAway)) {
     if (!next.has(id)) rekeyedAway.delete(id);
   }
-  for (const id of confirmedEndings) {
-    const now = next.get(id);
-    if (now === undefined || now === 'removed') confirmedEndings.delete(id);
-  }
+  // A confirmation is used by the look that sees it: the row is `removed` (ended now), absent, or
+  // ACTIVE again - stale, a re-admission, and a fact that outlived it would end a later miss.
+  confirmedEndings.clear();
 }

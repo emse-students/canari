@@ -93,12 +93,7 @@
     appendLog,
   } from '$lib/stores/globalChatSingleton.svelte';
   import { resolveDisplayNames } from '$lib/utils/users/displayName';
-  import {
-    watchEndings,
-    snapshotConversations,
-    currentEndingFacts,
-    settleEndingFacts,
-  } from '$lib/utils/chat/endedConversations';
+  import { watchConversationEndings } from '$lib/utils/chat/conversationEndingsWatch.svelte';
   import { endNativeConversationNotifications } from '$lib/utils/nativeNotification';
   import { serializeEnvelope, mkSystemEnvelope } from '$lib/envelope';
   import type { ChatMessage, MessageBatchOrigin } from '$lib/types';
@@ -232,22 +227,16 @@
   // more (owner, 2026-11-21), so a conversation deleted, left, excluded from, or whose salon or
   // community is gone would keep its banner for good. Observed on the list every ending writes to,
   // rather than at each of its writers (`endedConversations.ts`); the event decides, never a timer.
-  let knownConversations: ReadonlyMap<string, string> = new Map();
-  $effect(() => {
-    const signedIn = globalSession.isLoggedIn;
-    const next = snapshotConversations(globalConvs.conversations.values());
-    // Signed out (a lost session clears the map in the same tick), nothing ended: `watchEndings`.
-    const watched = untrack(() =>
-      watchEndings(signedIn, knownConversations, next, currentEndingFacts())
-    );
-    knownConversations = watched.known;
-    settleEndingFacts(signedIn, next);
-    for (const id of watched.ended) {
-      appendLog(`[NOTIF] conversation ${id.slice(0, 12)} ended - its notifications go with it`);
+  // The native side logs the outcome (`endConversationNotifications: ... banner id=N`, -1 when none
+  // was recorded), so this page logs nothing: a conversation ended on an earlier run and purged now
+  // would otherwise log a second, empty "ended" line.
+  watchConversationEndings(
+    () => ({ signedIn: globalSession.isLoggedIn, rows: globalConvs.conversations.values() }),
+    (id) => {
       void endNativeConversationNotifications(id);
       void globalNotifs.dismissConversationReactions(id);
     }
-  });
+  );
 
   /** Last call id we started ringing for (dedupes effect re-runs). */
   let lastIncomingRingCallId = $state<string | null>(null);

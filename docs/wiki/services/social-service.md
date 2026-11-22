@@ -1057,8 +1057,9 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   the reaction notification and the summary's share go UNCONDITIONALLY, and **NO READ MARK is
   recorded** - an ending is not a read, a mark is a process-lifetime suppressor, and one written for
   an ending would silence the conversation if the account came back to it (`ReadElsewhereMarks.end`).
-  The event decides, never a timer. Logged on both sides: the page (`[NOTIF] conversation <id> ended`)
-  and Kotlin (`endConversationNotifications: ... ended, banner id=`).
+  The event decides, never a timer. Logged by the native side only (Kotlin `endConversationNotifications: ... ended, banner id=`,
+  -1 when none was recorded): the page logs nothing, since an id ended on an earlier run and purged
+  now would log an empty second line.
   **SIGNED OUT, NOTHING ENDED** (`watchEndings`): a lost session (the resume that finds no native
   session) clears the conversation map in the same tick `isLoggedIn` goes false, so every id
   "vanishes" although nothing ended; the watcher ends nothing while signed out and forgets what it

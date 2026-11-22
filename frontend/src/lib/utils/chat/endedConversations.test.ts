@@ -74,18 +74,27 @@ describe('endedConversationIds', () => {
 describe('ending facts', () => {
   const drain = () => settleEndingFacts(false, new Map());
 
-  it('survive a look that did not use them, and are dropped once used or at sign-out', () => {
+  it('a re-key survives looks until its old id leaves the map; a confirmation is dropped once used', () => {
     drain();
     recordRekey('old');
     confirmEnding('g1');
     // The boot merge records the re-key long before the loser leaves the map: still there.
-    settleEndingFacts(true, snap(['old'], ['g1', 'active']));
+    settleEndingFacts(true, snap(['old'], ['g1', 'removed']));
     expect([...currentEndingFacts().rekeyed]).toEqual(['old']);
-    expect([...currentEndingFacts().confirmed]).toEqual(['g1']);
-    // Used: the id is absent (re-key) or removed (confirmation).
-    settleEndingFacts(true, snap(['g1', 'removed']));
-    expect(currentEndingFacts().rekeyed.size).toBe(0);
+    // g1 was removed in that look: the confirmation was used.
     expect(currentEndingFacts().confirmed.size).toBe(0);
+    settleEndingFacts(true, snap(['new']));
+    expect(currentEndingFacts().rekeyed.size).toBe(0);
+  });
+
+  it('a confirmation seen on an ACTIVE row is stale and dropped, so it cannot end a later miss', () => {
+    drain();
+    confirmEnding('g1');
+    settleEndingFacts(true, snap(['g1', 'active']));
+    expect(currentEndingFacts().confirmed.size).toBe(0);
+  });
+
+  it('all facts are dropped at sign-out', () => {
     recordRekey('o2');
     confirmEnding('g2');
     drain();
