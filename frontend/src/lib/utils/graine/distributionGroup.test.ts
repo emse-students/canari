@@ -7,10 +7,11 @@ import {
 import { ChannelApiError } from '$lib/services/ChannelService';
 import { setGraineRuntime } from './runtime';
 import { workspaceScope } from '$lib/mls-client/distributionScope';
+import { forgetAllKeyGroupConvergence } from './keyGroupConvergence';
 
 const reconcile = vi.fn().mockResolvedValue([]);
 vi.mock('./rosterReconcile', () => ({
-  reconcileDistributionGroupRoster: (...args: unknown[]) => reconcile(...args),
+  reconcileDistributionGroupRosterReported: (...args: unknown[]) => reconcile(...args),
 }));
 
 beforeEach(() => {
@@ -1162,5 +1163,154 @@ describe('a held key group whose own leaf is gone', () => {
       'g-1',
       expect.stringContaining('key group behind its server')
     );
+  });
+});
+
+describe('ensureCommunityDistributionGroup - a converged pass on an unchanged key-group version is skipped', () => {
+  // The return of the live stream used to read the key-group reference and the roster of EVERY
+  // community to conclude "nobody to remove" (owner's log, 1.7.1: 2 325 of 5 050 requests). What is
+  // pinned: the reads are skipped only on the version read before a CONVERGED pass, with this
+  // device's tree where that pass left it - and run in full on any other difference.
+  const version = (v: string, overrides: Record<string, unknown> = {}) => ({
+    version: v,
+    groupId: 'g-1',
+    activeEpoch: 7,
+    baseEpoch: 7,
+    ...overrides,
+  });
+  const ref = {
+    groupId: 'g-1',
+    groupInfo: 'c29j',
+    baseEpoch: 7,
+    activeEpoch: 7,
+    memberDevices: ['dev-me'],
+  };
+  const runOn = (
+    mls: unknown,
+    channels: unknown,
+    v: unknown,
+    log: (m: string) => void = () => {}
+  ) => ensureCommunityDistributionGroup(mls as never, channels as never, 'ws-1', log, v as never);
+
+  beforeEach(() => {
+    setGraineRuntime({
+      storage: {} as never,
+      deviceKey: () => 'device-key',
+      userId: 'alice',
+      mlsService: {} as never,
+    });
+    forgetAllKeyGroupConvergence();
+    reconcile.mockResolvedValue({ removedUserIds: [], heldUserIds: ['alice'], converged: true });
+  });
+  afterEach(() => {
+    setGraineRuntime(null);
+    reconcile.mockResolvedValue([]);
+  });
+
+  /** A device holding the key group at the active epoch: `holdsGroupState` reads `getLocalGroups`. */
+  const current = () => makeHeldMls();
+
+  it('reads nothing on the second load of an unchanged community', async () => {
+    const mls = current();
+    const channels = makeChannels({ getDistributionGroup: vi.fn().mockResolvedValue(ref) });
+    const lines: string[] = [];
+
+    expect(await runOn(mls, channels, version('v1'), (m) => lines.push(m))).toBe(true);
+    expect(channels.getDistributionGroup).toHaveBeenCalledTimes(1);
+    expect(reconcile).toHaveBeenCalledTimes(1);
+
+    expect(await runOn(mls, channels, version('v1'), (m) => lines.push(m))).toBe(true);
+    // The second load: neither the reference nor the roster pass.
+    expect(channels.getDistributionGroup).toHaveBeenCalledTimes(1);
+    expect(reconcile).toHaveBeenCalledTimes(1);
+    expect(mls.registerDistributionGroup).toHaveBeenCalledWith(workspaceScope('ws-1'), 'g-1');
+    expect(lines.join(' | ')).toContain('roster pass skipped');
+  });
+
+  it('runs the pass when the version moved (a member left, a commit landed)', async () => {
+    const mls = current();
+    const channels = makeChannels({ getDistributionGroup: vi.fn().mockResolvedValue(ref) });
+    await runOn(mls, channels, version('v1'));
+    const lines: string[] = [];
+
+    await runOn(mls, channels, version('v2'), (m) => lines.push(m));
+
+    expect(channels.getDistributionGroup).toHaveBeenCalledTimes(2);
+    expect(reconcile).toHaveBeenCalledTimes(2);
+    expect(lines.join(' | ')).toContain('changed since the last converged pass');
+  });
+
+  it('runs the pass when this device is no longer where the converged pass left it', async () => {
+    const channels = makeChannels({ getDistributionGroup: vi.fn().mockResolvedValue(ref) });
+    await runOn(current(), channels, version('v1'));
+
+    // Behind the active epoch (a reload of mls.bin, a commit not drained): the pass, in full.
+    await runOn(makeHeldMls({ getEpoch: vi.fn().mockReturnValue(6) }), channels, version('v1'));
+    expect(channels.getDistributionGroup).toHaveBeenCalledTimes(2);
+  });
+
+  it('runs the pass when the device no longer holds the group, or was evicted from it', async () => {
+    const channels = makeChannels({ getDistributionGroup: vi.fn().mockResolvedValue(ref) });
+    await runOn(current(), channels, version('v1'));
+
+    await runOn(makeMls(), channels, version('v1'));
+    expect(channels.getDistributionGroup).toHaveBeenCalledTimes(2);
+    // The full pass above re-joined and converged on nothing (a fresh join is not converged).
+    await runOn(current(), channels, version('v1'));
+    expect(channels.getDistributionGroup).toHaveBeenCalledTimes(3);
+    await runOn(current(), channels, version('v1')); // converged again: recorded, then skipped
+    await runOn(
+      makeHeldMls({ isGroupActive: vi.fn().mockResolvedValue(false) }),
+      channels,
+      version('v1')
+    );
+    expect(channels.getDistributionGroup).toHaveBeenCalledTimes(4);
+  });
+
+  it('records nothing for a pass that did not converge - removal, unanswered question, stale base', async () => {
+    const mls = current();
+    const channels = makeChannels({ getDistributionGroup: vi.fn().mockResolvedValue(ref) });
+    reconcile.mockResolvedValue({ removedUserIds: ['bob'], heldUserIds: ['alice'] });
+    await runOn(mls, channels, version('v1'));
+    await runOn(mls, channels, version('v1'));
+    expect(channels.getDistributionGroup).toHaveBeenCalledTimes(2);
+
+    reconcile.mockResolvedValue({ removedUserIds: [], heldUserIds: ['alice'], converged: true });
+    const stale = makeChannels({
+      getDistributionGroup: vi.fn().mockResolvedValue({ ...ref, baseEpoch: 6 }),
+    });
+    await runOn(mls, stale, version('v3', { baseEpoch: 6 }));
+    await runOn(mls, stale, version('v3', { baseEpoch: 6 }));
+    expect(stale.getDistributionGroup).toHaveBeenCalledTimes(2);
+  });
+
+  it('a later pass that does not converge withdraws the record, whoever ran it', async () => {
+    const mls = current();
+    const channels = makeChannels({ getDistributionGroup: vi.fn().mockResolvedValue(ref) });
+    await runOn(mls, channels, version('v1'));
+    reconcile.mockResolvedValue({ removedUserIds: [], heldUserIds: null });
+    // A caller with no version (a salon creation, an in-session join): the full pass, not converged.
+    await run(mls, channels);
+    reconcile.mockResolvedValue({ removedUserIds: [], heldUserIds: ['alice'], converged: true });
+
+    await runOn(mls, channels, version('v1'));
+    expect(channels.getDistributionGroup).toHaveBeenCalledTimes(3);
+  });
+
+  it('with no version known (an older server) runs every pass, as before', async () => {
+    const mls = current();
+    const channels = makeChannels({ getDistributionGroup: vi.fn().mockResolvedValue(ref) });
+    await runOn(mls, channels, null);
+    await runOn(mls, channels, null);
+    expect(channels.getDistributionGroup).toHaveBeenCalledTimes(2);
+  });
+
+  it('forgets every record at sign-out: the next session runs its first passes in full', async () => {
+    const mls = current();
+    const channels = makeChannels({ getDistributionGroup: vi.fn().mockResolvedValue(ref) });
+    await runOn(mls, channels, version('v1'));
+    forgetAllKeyGroupConvergence();
+    await runOn(mls, channels, version('v1'));
+    expect(channels.getDistributionGroup).toHaveBeenCalledTimes(2);
   });
 });

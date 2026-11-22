@@ -451,8 +451,36 @@ export const COMMUNITY_BOOT_READS_MAX = 50;
 export interface CommunityBootReads {
   /** `workspaceId`'s salons: the answer this load held, handed out once; else the single route. */
   listChannels(workspaceId: string): Promise<ChannelDto[]>;
+  /**
+   * `workspaceId`'s key-group version ({@link KeyGroupVersion}), or null when none is known - an older
+   * server, a refused item, a failed request. The FIRST call asks every community of the load in one
+   * request (per {@link COMMUNITY_BOOT_READS_MAX}), so it is asked after MLS is ready and before any
+   * roster pass of this load reads; later calls share that answer. Never throws.
+   */
+  keyGroupVersion(workspaceId: string): Promise<KeyGroupVersion | null>;
   /** Forgets what THIS load held and no read took. Touches nothing else. */
   release(): void;
+}
+
+/**
+ * One community's key-group version (`GET /api/channels/workspaces/key-group-versions`): a digest of
+ * the key-group reference and the roster a roster pass reads, and the three numbers the skip compares
+ * with this device's own tree (`utils/graine/keyGroupConvergence.ts`).
+ */
+export interface KeyGroupVersion {
+  version: string;
+  groupId: string;
+  activeEpoch: number;
+  baseEpoch: number | null;
+}
+
+/** One item of the key-group versions answer, as the server sends it (refused: version null). */
+interface KeyGroupVersionDto {
+  workspaceId: string;
+  version: string | null;
+  groupId: string | null;
+  activeEpoch: number | null;
+  baseEpoch: number | null;
 }
 
 export class ChannelService {
@@ -790,7 +818,13 @@ export class ChannelService {
         }
       })
     );
+    // ASKED LAZILY, ON THE FIRST ROSTER PASS'S DEMAND - after MLS is ready, before that pass reads.
+    let versions: Promise<Map<string, KeyGroupVersion>> | null = null;
     return {
+      keyGroupVersion: async (workspaceId) => {
+        versions ??= this.readKeyGroupVersions(ids, log);
+        return (await versions).get(workspaceId) ?? null;
+      },
       listChannels: async (workspaceId) => {
         await pending;
         const item = held.get(workspaceId);
@@ -808,6 +842,56 @@ export class ChannelService {
         for (const id of ids) held.delete(id);
       },
     };
+  }
+
+  /**
+   * The key-group versions of `workspaceIds`, one request per {@link COMMUNITY_BOOT_READS_MAX}.
+   *
+   * NEVER THROWS: a request that fails - an older server answering 404, a dropped link - leaves its
+   * communities out of the map, and each of them then runs its full roster pass, which is what every
+   * pass did before the route existed. Said once per failed request through `log`, at warn: a route
+   * that never answers is the visible end of a server this client outran. A refused item (a
+   * community just left, one with no key group) is left out too; its full pass meets the refusal on
+   * its own route and handles it there.
+   */
+  async readKeyGroupVersions(
+    workspaceIds: readonly string[],
+    log: (message: string) => void
+  ): Promise<Map<string, KeyGroupVersion>> {
+    const ids = [...new Set(workspaceIds)];
+    const known = new Map<string, KeyGroupVersion>();
+    for (let i = 0; i < ids.length; i += COMMUNITY_BOOT_READS_MAX) {
+      const chunk = ids.slice(i, i + COMMUNITY_BOOT_READS_MAX);
+      try {
+        const res = await this.fetchWithAuth(
+          `${this.baseUrl}/api/channels/workspaces/key-group-versions?ids=${chunk.map(encodeURIComponent).join(',')}`
+        );
+        await this.handleError(res);
+        const body = (await readApiJson(res, 'GET key-group versions')) as {
+          items?: KeyGroupVersionDto[];
+        };
+        for (const item of body.items ?? []) {
+          if (
+            typeof item.version === 'string' &&
+            typeof item.groupId === 'string' &&
+            typeof item.activeEpoch === 'number'
+          ) {
+            known.set(item.workspaceId, {
+              version: item.version,
+              groupId: item.groupId,
+              activeEpoch: item.activeEpoch,
+              baseEpoch: typeof item.baseEpoch === 'number' ? item.baseEpoch : null,
+            });
+          }
+        }
+      } catch (e) {
+        log(
+          `[KEY_GROUP_VERSIONS] warn: the versions of ${chunk.length} communities could not be read - each runs its full roster pass: ${String(e)}`
+        );
+      }
+    }
+    Log.d('KEY_GROUP_VERSIONS', `${known.size}/${ids.length} community version(s) known`);
+    return known;
   }
 
   async listChannels(workspaceId: string) {

@@ -115,6 +115,7 @@
     forgetDeferredRemovals,
   } from '$lib/utils/graine/departureCommitter';
   import { forgetRevokedLeafAnswers } from '$lib/utils/graine/rosterReconcile';
+  import { forgetAllKeyGroupConvergence } from '$lib/utils/graine/keyGroupConvergence';
   import { isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
   import type { ConversationContext } from '$lib/composables/useConversations.svelte';
   import {
@@ -994,6 +995,8 @@
     salonGrants.clear();
     // ...and the revocation answers it was given, which the next account must ask for itself.
     forgetRevokedLeafAnswers();
+    // ...and the key-group versions its passes converged on, which vouch for its trees only.
+    forgetAllKeyGroupConvergence();
     // ...and the removals this device deferred to an actor, which a release is matched against.
     forgetDeferredRemovals();
     _loginInProgress = false;

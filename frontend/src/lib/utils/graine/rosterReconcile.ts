@@ -144,6 +144,13 @@ export interface RosterPassReport {
    * remove: nothing was staged, or the commit was definitively refused.
    */
   heldUserIds: string[] | null;
+  /**
+   * Set ONLY by a pass that read both inputs and found the tree agreeing with them - no member to
+   * remove, no revoked leaf - which is the one outcome a repetition on the same inputs would repeat
+   * word for word. What lets a load skip the next pass on an unchanged key-group version
+   * (`keyGroupConvergence.ts`); absent on every other outcome, a failed read included.
+   */
+  converged?: true;
 }
 
 /** {@link reconcileDistributionGroupRoster}, with the pass's {@link RosterPassReport}. Same lane. */
@@ -267,6 +274,8 @@ async function reconcileOnce(
   }
   let revokedLeaves: string[];
   let reused = false;
+  // An unanswered revocation question is no convergence: the next pass must ask it again.
+  let revocationAnswered = true;
   try {
     ({ revoked: revokedLeaves, reused } = await askRevokedLeaves(
       mlsService,
@@ -280,6 +289,7 @@ async function reconcileOnce(
       `[GRAINE] ${scopeLabel(scope)}: could not ask which of ${candidates.length} leaf/leaves belong to a revoked device (${String(e)}) - no device removed this pass`
     );
     revokedLeaves = [];
+    revocationAnswered = false;
   }
 
   if (diff.strayUserIds.length === 0 && revokedLeaves.length === 0) {
@@ -290,7 +300,9 @@ async function reconcileOnce(
     log(
       `[GRAINE] ${scopeLabel(scope)} distribution group agrees with its roster - ${diff.keptLeafCount} leaf/leaves, nobody to remove${reused ? ' (the revocation answer of an unchanged tree reused)' : ''}`
     );
-    return { removedUserIds: [], heldUserIds: leafUsers(tree) };
+    return revocationAnswered
+      ? { removedUserIds: [], heldUserIds: leafUsers(tree), converged: true }
+      : { removedUserIds: [], heldUserIds: leafUsers(tree) };
   }
 
   if (diff.strayUserIds.length === 0) {

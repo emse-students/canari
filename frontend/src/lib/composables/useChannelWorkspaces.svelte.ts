@@ -540,7 +540,13 @@ export function useChannelWorkspaces() {
     // any of its awaits; `removedSinceRequest` says it, once.
     const goneSinceRequest = () =>
       ledger.learnedSince(communityLedgerKey(sidebarWorkspace.id), epochAtRequest) === 'gone';
-    const keyGroupJoined = joinCommunityKeyGroup(ctx, workspaceId, session, goneSinceRequest).then(
+    const keyGroupJoined = joinCommunityKeyGroup(
+      ctx,
+      workspaceId,
+      session,
+      goneSinceRequest,
+      bootReads
+    ).then(
       () => ({ failed: false as const }),
       (error: unknown) => ({ failed: true as const, error })
     );
@@ -677,7 +683,8 @@ export function useChannelWorkspaces() {
     ctx: ChannelWorkspaceContext,
     workspaceId: string,
     session: number,
-    goneSinceRequest: () => boolean
+    goneSinceRequest: () => boolean,
+    bootReads: CommunityBootReads
   ): Promise<void> {
     if (!ctx.ensureMls) return;
     await whenMlsReady();
@@ -687,8 +694,15 @@ export function useChannelWorkspaces() {
     // A community removed live since the request is not joined again: its purge has just left the
     // group. Said by the caller (`loadCommunitySalons`), which asks the same question after this.
     if (goneSinceRequest()) return;
-    await ensureCommunityDistributionGroup(mls, service, workspaceId, ctx.log).catch((e: unknown) =>
-      leaveKeyGroupToMainTab(e, `the key group of ${workspaceId}`, ctx.log)
+    // THE VERSION IS READ HERE, AFTER MLS IS READY AND BEFORE THE PASS READS ANYTHING: the first
+    // community to reach this asks every community's in one request, and a pass that converges is
+    // recorded against the version read before it (`keyGroupConvergence.ts`). Never throws: no
+    // version known is the full pass.
+    const version = await bootReads.keyGroupVersion(workspaceId);
+    assertListingSession(session, `the key-group version of ${workspaceId}`);
+    if (goneSinceRequest()) return;
+    await ensureCommunityDistributionGroup(mls, service, workspaceId, ctx.log, version).catch(
+      (e: unknown) => leaveKeyGroupToMainTab(e, `the key group of ${workspaceId}`, ctx.log)
     );
   }
 
@@ -1793,9 +1807,13 @@ export function useChannelWorkspaces() {
    * BOUNDED BY THE TRANSITION, not a clock: ChatBackgroundService calls this only on the return from
    * a gap (`liveStreamGapEdge.ts`: a first connect is not one), so a listing costs one return. The
    * true bound: a flapping socket costs at most one listing per return, and a return landing while a
-   * listing runs owes at most ONE more (a flag, not a queue), so listings never overlap or stack. No
-   * membership version exists to compare: neither the reconnect handshake nor the unread answer
-   * carries a count or etag of the memberships.
+   * listing runs owes at most ONE more (a flag, not a queue), so listings never overlap or stack.
+   *
+   * WHAT A RETURN COSTS (since the key-group versions, 2026-11-22): the community rows and the salon listings (two requests for
+   * any number of communities), then ONE key-group version request, and the key-group reference and
+   * roster of only the communities whose version moved since their last converged pass
+   * (`keyGroupConvergence.ts`). Before, every return read both for every community: 2 325 of 5 050
+   * requests on the owner's phone over 131 resumes, each concluding "nobody to remove".
    */
   async function resyncAfterLiveStreamGap(ctx: ChannelWorkspaceContext): Promise<void> {
     ctx.log('[WORKSPACE-LOAD] live stream back after a gap - re-listing the communities');

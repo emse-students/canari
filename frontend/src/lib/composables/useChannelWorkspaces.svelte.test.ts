@@ -80,6 +80,7 @@ const listChannels = vi.fn();
 const releaseBootReads = vi.fn();
 const startCommunityBootReads = vi.fn(() => ({
   listChannels: (id: string) => listChannels(id),
+  keyGroupVersion: async () => null,
   release: releaseBootReads,
 }));
 const createWorkspace = vi.fn();
@@ -352,6 +353,7 @@ describe('useChannelWorkspaces - loadChannelWorkspacesFromBackend', () => {
     startCommunityBootReads.mockImplementationOnce(() => ({
       // The batch is still on the wire: no listing has been handed out yet.
       listChannels: () => new Promise<ChannelDto[]>((resolve) => answerListing.push(resolve)),
+      keyGroupVersion: async () => null,
       release: releaseBootReads,
     }));
     ensureCommunityDistributionGroup.mockClear();

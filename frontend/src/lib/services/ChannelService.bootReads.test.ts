@@ -230,3 +230,67 @@ describe('ChannelService - the batched salon listing of a load', () => {
     expect(COMMUNITY_BOOT_READS_MAX).toBe(Number(match![1]));
   });
 });
+
+describe('ChannelService - the key-group versions of a load', () => {
+  function serviceOnNetwork(answer: (url: string) => Response) {
+    const svc = new ChannelService();
+    const urls: string[] = [];
+    vi.spyOn(
+      svc as unknown as { fetchWithAuth: (url: string) => Promise<Response> },
+      'fetchWithAuth'
+    ).mockImplementation(async (url: string) => {
+      urls.push(url);
+      return answer(url);
+    });
+    return { svc, urls, log: vi.fn() };
+  }
+  const nine = Array.from({ length: 9 }, (_, i) => `w${i}`);
+  const versions = (url: string) => {
+    const ids = new URL(url, 'http://x').searchParams.get('ids')!.split(',');
+    return Response.json({
+      items: ids.map((workspaceId) =>
+        workspaceId === 'w8'
+          ? { workspaceId, version: null, groupId: null, activeEpoch: null, baseEpoch: null }
+          : {
+              workspaceId,
+              version: `v-${workspaceId}`,
+              groupId: `g-${workspaceId}`,
+              activeEpoch: 4,
+              baseEpoch: 4,
+            }
+      ),
+    });
+  };
+
+  it('asks every community of the load in ONE request, on the first demand, and shares it', async () => {
+    const { svc, urls, log } = serviceOnNetwork((url) =>
+      url.includes('/key-group-versions') ? versions(url) : Response.json({ items: [] })
+    );
+    const reads = svc.startCommunityBootReads(nine, log);
+    const before = urls.length;
+
+    const answers = await Promise.all(nine.map((id) => reads.keyGroupVersion(id)));
+
+    expect(urls.slice(before).filter((u) => u.includes('/key-group-versions'))).toHaveLength(1);
+    expect(answers[0]).toEqual({ version: 'v-w0', groupId: 'g-w0', activeEpoch: 4, baseEpoch: 4 });
+    // A refused item is no version: that community runs its full pass, which meets the refusal.
+    expect(answers[8]).toBeNull();
+    reads.release();
+  });
+
+  it('an older server (404) leaves every version unknown and says so once - every pass runs', async () => {
+    const { svc, log } = serviceOnNetwork((url) =>
+      url.includes('/key-group-versions')
+        ? new Response('not found', { status: 404 })
+        : Response.json({ items: [] })
+    );
+    const reads = svc.startCommunityBootReads(nine, log);
+
+    const answers = await Promise.all(nine.map((id) => reads.keyGroupVersion(id)));
+
+    expect(answers.every((a) => a === null)).toBe(true);
+    const warned = log.mock.calls.filter(([m]) => String(m).includes('[KEY_GROUP_VERSIONS]'));
+    expect(warned).toHaveLength(1);
+    expect(String(warned[0][0])).toContain('full roster pass');
+  });
+});
