@@ -4634,7 +4634,7 @@ export class FormsService {
         items: form.items as ResultsItem[],
       });
     });
-    this.logger.log(
+    this.logger.debug(
       `[FORMS] results of ${formId.slice(0, 8)}: ${results.totalAnswers} answers, ` +
         `${results.questions.length} questions`
     );

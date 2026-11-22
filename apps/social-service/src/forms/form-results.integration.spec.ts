@@ -120,6 +120,8 @@ maybe('form results against PostgreSQL', () => {
       t1: 'because',
     });
     await answer(formId, { c1: 'Blue', m1: ['d1'], s1: '5', x1: { Food: ['b'] }, g1: {}, t1: '' });
+    // A string where a list belongs is no pick, and no answered either.
+    await answer(formId, { m1: 'd1' });
     await answer(formId, { c1: 'autre: x', m1: 3, s1: 'n/a', x1: {}, g1: { 'r1:k1': 1 } });
     // Not a person's answer now: none of these may be counted.
     await answer(formId, { c1: 'o1', g1: { 'r1:k1': 9 } }, 'refunded');
@@ -142,7 +144,7 @@ maybe('form results against PostgreSQL', () => {
 
   it('counts every shape, and only the answers that count', async () => {
     const out = await run(formId, false);
-    expect(out.totalAnswers).toBe(4);
+    expect(out.totalAnswers).toBe(5);
     const by = Object.fromEntries(out.questions.map((q) => [q.id, q])) as any;
 
     expect(by.c1.answered).toBe(4);

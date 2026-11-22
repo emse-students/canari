@@ -5,6 +5,7 @@ import {
   COUNT_SQL,
   GRID_ORDERERS_SQL,
   GRID_SQL,
+  MULTIPLE_ANSWERED_SQL,
   MATRIX_SQL,
   MULTIPLE_SQL,
   SCALE_SQL,
@@ -81,6 +82,8 @@ function fake(total: number, answered: Record<string, number>) {
         return Object.entries(answered)
           .filter(([id]) => id !== 'g1')
           .map(([itemId, n]) => ({ itemId, n }));
+      case MULTIPLE_ANSWERED_SQL:
+        return answered.m1 === undefined ? [] : [{ itemId: 'm1', n: answered.m1 }];
       case SINGLE_SQL:
         return [
           { itemId: 'c1', value: 'o1', n: 3 },
@@ -104,7 +107,8 @@ function fake(total: number, answered: Record<string, number>) {
           { itemId: 'x1', row: 'Music', col: 'b', n: 1 },
         ];
       case GRID_SQL:
-        return [{ itemId: 'g1', cell: 'r1:k1', units: 7 }];
+        // A bigint sum reaches the code as a string.
+        return [{ itemId: 'g1', cell: 'r1:k1', units: '7' }];
       case GRID_ORDERERS_SQL:
         return answered.g1 ? [{ itemId: 'g1', n: answered.g1 }] : [];
       default:

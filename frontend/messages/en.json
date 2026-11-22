@@ -3190,7 +3190,6 @@
       }
     }
   ],
-  "form_responses_summary_empty": "This form has no question to summarise.",
   "form_results_loading": "Computing the summary...",
   "form_results_error": "The summary could not be loaded.",
   "form_results_retry": "Retry",

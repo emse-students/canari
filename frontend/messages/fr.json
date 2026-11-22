@@ -3222,7 +3222,6 @@
       }
     }
   ],
-  "form_responses_summary_empty": "Ce formulaire n'a aucune question à résumer.",
   "form_results_loading": "Calcul du résumé...",
   "form_results_error": "Le résumé n'a pas pu être chargé.",
   "form_results_retry": "Réessayer",

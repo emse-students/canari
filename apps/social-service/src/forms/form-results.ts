@@ -170,6 +170,14 @@ export const SINGLE_SQL = `SELECT a.item_id AS "itemId", a.val #>> '{}' AS value
   AND jsonb_typeof(a.val) = 'string' AND a.val #>> '{}' <> ''
   GROUP BY a.item_id, value`;
 
+/**
+ * Counted answers that gave a multiple-choice question a non-empty LIST, the shape `MULTIPLE_SQL`
+ * reads its picks from: a string there is no pick, so it must not enter the denominator either.
+ */
+export const MULTIPLE_ANSWERED_SQL = `SELECT a.item_id AS "itemId", count(*)::int AS n ${fromCounted()}
+  AND jsonb_typeof(a.val) = 'array' AND jsonb_array_length(a.val) > 0
+  GROUP BY a.item_id`;
+
 /** A multiple-choice answer is a list of option ids: one pick per element. */
 export const MULTIPLE_SQL = `SELECT a.item_id AS "itemId", v.value AS value, count(*)::int AS n
   ${fromCounted(ELEMENTS_OF('a.val', 'v(value)'))}
@@ -194,8 +202,11 @@ export const MATRIX_SQL = `SELECT a.item_id AS "itemId", r.row_label AS "row", c
   ${ELEMENTS_OF('r.cell', 'c(col)')}`)}
   GROUP BY a.item_id, r.row_label, c.col`;
 
-/** A priced grid is an object "row:column" -> quantity. */
-export const GRID_SQL = `SELECT a.item_id AS "itemId", g.cell_key AS cell, sum(g.qty)::int AS units
+/**
+ * A priced grid is an object "row:column" -> quantity. The sum is a `bigint` (pg hands it back as a
+ * string, which `num` reads), so a large quantity can never overflow an `int` and fail the read.
+ */
+export const GRID_SQL = `SELECT a.item_id AS "itemId", g.cell_key AS cell, sum(g.qty)::bigint AS units
   ${fromCounted(`CROSS JOIN LATERAL (
     SELECT e.cell_key,
       CASE WHEN jsonb_typeof(e.qty_json) = 'number' THEN (e.qty_json #>> '{}')::numeric ELSE 0 END AS qty
@@ -260,7 +271,7 @@ export function meetsAnonymityFloor(anonymous: boolean, answered: number): boole
 /**
  * The results of one form: a headline count and one entry per question that has results.
  *
- * Eight statements at most, each over the ids of one family of questions, whatever the form's size;
+ * Nine statements at most, each over the ids of one family of questions, whatever the form's size;
  * `query` is injected so the shaping is tested without a database, and the SQL by
  * `form-results.integration.spec.ts` against a real one.
  */
@@ -274,23 +285,26 @@ export async function computeFormResults(
     items.filter(types).map((item) => item.id);
 
   const [{ n: totalAnswers }] = await query(COUNT_SQL, [form.id]);
-  const nonGrid = items.filter((i) => kindOf(i) !== null && kindOf(i) !== 'grid').map((i) => i.id);
-
   const singleIds = byKind((i) => CHOICE_SINGLE.has(i.type ?? ''));
   const multipleIds = byKind((i) => i.type === 'multiple_choice');
   const scaleIds = byKind((i) => i.type === 'linear_scale');
   const matrixIds = byKind((i) => MATRIX_TYPES.has(i.type ?? ''));
   const gridIds = byKind((i) => i.type === 'product_grid');
+  // The questions `ANSWERED_SQL` counts: every family that is neither a grid, a list of picks, nor
+  // read from its own distribution.
+  const answeredIds = byKind((i) => kindOf(i) === 'text' || kindOf(i) === 'matrix');
 
-  const [answeredRows, single, multiple, scale, matrix, grid, orderers] = await Promise.all([
-    grouped(query, ANSWERED_SQL, form.id, nonGrid),
-    grouped(query, SINGLE_SQL, form.id, singleIds),
-    grouped(query, MULTIPLE_SQL, form.id, multipleIds),
-    grouped(query, SCALE_SQL, form.id, scaleIds),
-    grouped(query, MATRIX_SQL, form.id, matrixIds),
-    grouped(query, GRID_SQL, form.id, gridIds),
-    grouped(query, GRID_ORDERERS_SQL, form.id, gridIds),
-  ]);
+  const [answeredRows, multipleAnswered, single, multiple, scale, matrix, grid, orderers] =
+    await Promise.all([
+      grouped(query, ANSWERED_SQL, form.id, answeredIds),
+      grouped(query, MULTIPLE_ANSWERED_SQL, form.id, multipleIds),
+      grouped(query, SINGLE_SQL, form.id, singleIds),
+      grouped(query, MULTIPLE_SQL, form.id, multipleIds),
+      grouped(query, SCALE_SQL, form.id, scaleIds),
+      grouped(query, MATRIX_SQL, form.id, matrixIds),
+      grouped(query, GRID_SQL, form.id, gridIds),
+      grouped(query, GRID_ORDERERS_SQL, form.id, gridIds),
+    ]);
 
   const questions: QuestionResult[] = [];
   let suppressed = 0;
@@ -307,7 +321,9 @@ export async function computeFormResults(
           ? sumOf(scale.get(item.id)?.filter((row) => withinScale(item, num(row.value))))
           : CHOICE_SINGLE.has(item.type ?? '')
             ? sumOf(single.get(item.id))
-            : num(answeredRows.get(item.id)?.[0]?.n);
+            : item.type === 'multiple_choice'
+              ? num(multipleAnswered.get(item.id)?.[0]?.n)
+              : num(answeredRows.get(item.id)?.[0]?.n);
     if (!meetsAnonymityFloor(anonymous, answered)) {
       suppressed += 1;
       questions.push({ ...base, kind, suppressed: true });
