@@ -16,7 +16,8 @@ import {
  * The facts are reactive (`SvelteSet`s) and READ here, tracked: a confirmation arriving for a row
  * that is already `removed` writes no map entry, and without that read the effect would sleep until
  * some unrelated write - and a kill in between would lose the fact. Settling the facts is a write,
- * done untracked.
+ * done untracked: it re-runs the effect once (the sets it read changed), and that run writes
+ * nothing.
  *
  * Must be called during component initialisation, like any `$effect`.
  */

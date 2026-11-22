@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { flushSync } from 'svelte';
 import { SvelteMap } from 'svelte/reactivity';
+import { retireConversation } from './conversations';
 import { watchConversationEndings } from './conversationEndingsWatch.svelte';
 import { confirmEnding, recordRekey, settleEndingFacts } from './endedConversations';
 
@@ -60,6 +61,25 @@ describe('watchConversationEndings', () => {
     rows.delete('a');
     flushSync();
     expect(ended).toEqual([]);
+    cleanup();
+  });
+
+  it('retireConversation confirms and retires in ONE synchronous step: a look in between would drop the fact', async () => {
+    const { rows, ended, cleanup } = setup();
+    rows.set('k', { id: 'g1' });
+    flushSync();
+    // Not awaited: the first look runs only after the synchronous part, so it must see BOTH the
+    // `removed` row and the confirmation. An `await` between them would make it see the fact on an
+    // active row, drop it, and end nothing.
+    const done = retireConversation({
+      conversations: rows as never,
+      key: 'k',
+      groupId: 'g1',
+      confirmed: true,
+    });
+    flushSync();
+    expect(ended).toEqual(['g1']);
+    await done;
     cleanup();
   });
 });

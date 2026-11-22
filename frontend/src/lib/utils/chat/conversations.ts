@@ -279,6 +279,9 @@ export async function retireConversation(params: {
   if (!convo) return false;
   // Confirmed BEFORE the already-removed return: discovery and the Remove commit race, and the
   // outcome must not depend on which one wins. A patched id (recovery) is confirmed too.
+  // NO `await` MAY SIT between `confirmEnding` and the `conversations.set` below: the watcher
+  // reads a confirmation at the next look and drops it, so a look between the two would consume
+  // the fact before the row says `removed` (pinned by conversationEndingsWatch.svelte.test.ts).
   if (confirmed) {
     confirmEnding(convo.id);
     if (patch?.id) confirmEnding(patch.id);

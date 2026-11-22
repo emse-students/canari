@@ -227,12 +227,12 @@
   // more (owner, 2026-11-21), so a conversation deleted, left, excluded from, or whose salon or
   // community is gone would keep its banner for good. Observed on the list every ending writes to,
   // rather than at each of its writers (`endedConversations.ts`); the event decides, never a timer.
-  // The native side logs the outcome (`endConversationNotifications: ... banner id=N`, -1 when none
-  // was recorded), so this page logs nothing: a conversation ended on an earlier run and purged now
-  // would otherwise log a second, empty "ended" line.
+  // The page logs the DECISION; the native side logs the OUTCOME (`endConversationNotifications:
+  // ... banner id=N`, -1 when none was recorded), which is a different fact.
   watchConversationEndings(
     () => ({ signedIn: globalSession.isLoggedIn, rows: globalConvs.conversations.values() }),
     (id) => {
+      appendLog(`[NOTIF] conversation ${id.slice(0, 12)} ended - taking its notifications down`);
       void endNativeConversationNotifications(id);
       void globalNotifs.dismissConversationReactions(id);
     }

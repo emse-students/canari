@@ -1051,15 +1051,16 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
 
   **A conversation that ENDS takes its banners with it** - deleted, left, excluded, its salon or
   community gone: the page watches the conversation list every ending writes to
-  (`endedConversations.ts`, an effect in `ChatBackgroundService`; keyed by id, so a re-keyed row is
+  (`endedConversations.ts`; the effect lives in `conversationEndingsWatch.svelte.ts`, started by `ChatBackgroundService`; keyed by id, so a re-keyed row is
   not an ending) and hands each ended id to its OWN native entry (`end_conversation_notifications`,
   Kotlin `endConversationNotifications`): the banner (a pending reply and a held banner included),
   the reaction notification and the summary's share go UNCONDITIONALLY, and **NO READ MARK is
   recorded** - an ending is not a read, a mark is a process-lifetime suppressor, and one written for
   an ending would silence the conversation if the account came back to it (`ReadElsewhereMarks.end`).
-  The event decides, never a timer. Logged by the native side only (Kotlin `endConversationNotifications: ... ended, banner id=`,
-  -1 when none was recorded): the page logs nothing, since an id ended on an earlier run and purged
-  now would log an empty second line.
+  The event decides, never a timer. Two lines, two facts: the page logs the DECISION
+  (`[NOTIF] conversation <id> ended - taking its notifications down`, in the effect's `onEnded`),
+  and Kotlin logs the OUTCOME (`endConversationNotifications: ... ended, banner id=`, -1 when none
+  was recorded).
   **SIGNED OUT, NOTHING ENDED** (`watchEndings`): a lost session (the resume that finds no native
   session) clears the conversation map in the same tick `isLoggedIn` goes false, so every id
   "vanishes" although nothing ended; the watcher ends nothing while signed out and forgets what it
@@ -1072,7 +1073,7 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   until it is swiped away (nothing reads it any more; the residual is
   [a P3 entry](../backlog.d/banners-of-a-conversation-gone-before-the-watcher-saw-it.md)).
   **A `removed` ROW ENDS BANNERS ONLY ON POSITIVE EVIDENCE, AND A RE-KEY ENDS NONE** (4th review):
-  the watcher is handed two facts, never infers them, and remembers which ids it ENDED (an unconfirmed `removed` row stays not-ended, so a later purge or confirmation still ends it; facts are dropped when used, or at sign-out). `retireConversation({ confirmed: true })` is
+  the watcher is handed two facts, never infers them, and remembers which ids it ENDED (an unconfirmed `removed` row stays not-ended, so a later purge or confirmation still ends it; facts are dropped when used, or at sign-out; a confirmation is read at the NEXT look and dropped by it, so it must be written in the same synchronous step as the `removed` row). `retireConversation({ confirmed: true })` is
   passed by the writers holding a confirmed ending (a Remove commit, an announced exclusion, a
   group deletion the server reported or a peer announced); a miss (a send refused as evicted, a
   delivery-service refusal; `EVICTION_EVIDENCE[...].missed`) does not, because a Welcome can re-admit the row and a stale notice is the
