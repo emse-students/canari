@@ -60,3 +60,13 @@ full backup's `Manifest.db` holds only directory rows for the app domains and no
 files (35 on `1.7.2-alpha.1`). **Still owed:** the first launch after the update over an older build
 (the move's WARN, step 1), the share extension's path and the push half of step 2, and the downgrade
 path (step 5).
+
+**2026-11-21, on `1.7.3-alpha.3` (build 100700303, TestFlight update over `alpha.1`), iPhone 12, dev, sitting
+[S20](../device-verification.md#the-iphone-readings-of-2026-11-21-173-alpha3-the-invite-link-fragment-and-a-banner-reply):
+step 2's push half PASS, the rest still owed.** Pushes with the app suspended and with it killed (`ios.mjs terminate`)
+were decrypted by the extension (banner text readable; `[NSE_OUTCOME] ... outcome:decrypted` for the suspended ones;
+the app then ran from the same store with no error). **Still owed:** the first launch after the update over a PRE-store
+build (the `alpha.1` build already held `store/`, so the move had nothing to move: needs a `1.7.2` or older install
+first); the share extension (the system share sheet from Safari lists Canari and five conversation shortcuts, but a WDA tap
+on a cell closed the sheet with no extension screen and nothing reached the conversation, so no verdict either way);
+the `6/6` launch line on `alpha.3` (the Rust log file had already rotated when polled); the downgrade path.

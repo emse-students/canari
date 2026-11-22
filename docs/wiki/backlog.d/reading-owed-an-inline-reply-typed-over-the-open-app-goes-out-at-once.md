@@ -54,3 +54,11 @@ activity's start and the guard being held), which no sitting here could time.
   guard is released`, `handleReply: queued id=...`, `drainOutboxBackground: sent id=...` (HTTP 201),
   the banner kept with the answer (`answerReplyNotification: answered - KEPT_UNTIL_READ`); the
   peer's pane holds the reply.
+
+**2026-11-21, iPhone 12 on `1.7.3-alpha.3` ([S20](../device-verification.md#the-iphone-readings-of-2026-11-21-173-alpha3-the-invite-link-fragment-and-a-banner-reply)): the iOS road of the shared drain PASSES, the Mi 9T rows above stay owed.** The entry names no iPhone row; read here
+as the control for the shared `quickReplyDrain`: a banner reply typed in Notification Center with the app suspended was taken
+on the next foreground (`[QuickReply] the native side says a reply waits: 1 native reply(ies) taken`, then `[SEND] ... chars=24`,
+`queued (pending)`, outbox flush), reached the conversation once, sent (single tick), and the banner left the list; no `LOST`
+or `not told` WARN in the ring. **Not read:** the `acknowledge_quick_reply` boolean line itself (the ring is written in batches and
+ended 2 s after the take), a reply typed with the app IN FRONT, and the banner's `envoi en cours` state on iOS.
+A first attempt (reply typed, Send tapped at a stale coordinate while the field had grown) sent nothing, which is a rig slip, not an app fault.
