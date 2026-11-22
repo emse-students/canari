@@ -1590,7 +1590,12 @@ donate the leaving account's sender again. So:
   `honourOwedNotificationErase` completes one still owed **at launch** (the root layout) and
   **before a session's push context is stored** (`storeSessionPushContext`) - before the extension's
   proof of an account exists again. The wipe of a revoked device keeps the mark, as it keeps the
-  other two. Same mark and same honouring on Android, for the `chat_<group>` shortcuts.
+  other two. Same mark and same honouring on Android, for the `chat_<group>` shortcuts. A mark that
+  cannot be READ is erased anyway (never settled) with an `error` that says so. And a sign-out's
+  own erase that finds nothing owed while a honour has started since it was asked skips: that
+  honour, run before the next session's context, already took it, and erasing now would take the
+  next account's fresh donations (with no honour since, it still erases - the mark may never have
+  been written).
 - **A donation the sign-out overtook withdraws itself.** Each interaction carries its own id; when
   its donation completes, the extension reads the context again (`signedInUserId`) and, if it no
   longer names the donor, deletes exactly that interaction. A donation that completed before the
@@ -1602,7 +1607,9 @@ donate the leaving account's sender again. So:
   would still name the account that left's sender; an extension cannot suppress an alert push
   without the filtering entitlement (`LevelDecision`), so `blankSignedOutContent` delivers it with
   no title, body, face or sound, `passive` - what `applyCallControlContent` does for a call signal.
-  Blanked BEFORE the delete is asked, so an expiry meanwhile delivers the blank one.
+  Blanked BEFORE the delete is asked, so an expiry meanwhile delivers the blank one. **The expiry
+  blanks too**: a run that drew a message records whose account it names (`namesContentOf`), and
+  `serviceExtensionTimeWillExpire` blanks it when `signedInUserId` no longer names that account.
 - **Account deletion goes the same way.** `SettingsDangerZone` ends in `clearAuth('account-deleted')`
   and another tab's deletion in `clearAuthLocally`, both `clearAuthUnderway`: the same strip and the
   same erase.

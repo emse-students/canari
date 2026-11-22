@@ -106,6 +106,10 @@ class NotificationService: UNNotificationServiceExtension {
 
   private var contentHandler: ((UNNotificationContent) -> Void)?
   private var bestAttemptContent: UNMutableNotificationContent?
+  /// The account a decrypted message's best attempt names (its sender, its text), set once that
+  /// content is drawn - nil for every other run. Read by the expiry: an account that signed out
+  /// since gets the blank banner, not this one (review of #3938). Under `deliveryLock`.
+  private var namesContentOf: String?
   /// This run's outcome record (`NseOutcomeLog`), written once by `finish` or the expiry.
   private var trace: NseOutcomeLog.Trace?
   /// Orders `finish` against `serviceExtensionTimeWillExpire`, which iOS calls on ANOTHER thread
@@ -621,6 +625,15 @@ class NotificationService: UNNotificationServiceExtension {
     // RECORDED BEFORE THE HANDOFF: iOS may end the process the moment the content is handed back.
     // The cause of an expiry is the stage the run reached, read by `end` under its own lock.
     trace?.end(outcome: "expired")
+    deliveryLock.lock()
+    let named = namesContentOf
+    deliveryLock.unlock()
+    // A message drawn for an account that signed out since is blanked, as the donation's own
+    // completion does - read OUTSIDE the lock (a file read), applied under it by the blank.
+    if let named = named, Self.signedInUserId() != named {
+      NseLog.log.notice("[CanariNSE] time expired after a sign-out - the banner is blanked")
+      blankSignedOutContent()
+    }
     deliveryLock.lock()
     let handler = contentHandler
     contentHandler = nil
@@ -1812,6 +1825,9 @@ class NotificationService: UNNotificationServiceExtension {
       attachInitials(content: content, name: senderName)
     }
     applyBadgeCount(content: content, incomingThreadId: content.threadIdentifier)
+    deliveryLock.lock()
+    namesContentOf = ctx?.userId
+    deliveryLock.unlock()
     // THE PLAIN NOTIFICATION IS COMPLETE HERE, and it is what an expiry delivers. The communication
     // style is drawn on top of it, and that step calls `finish` (owner, 2026-11-21).
     applyCommunicationStyle(

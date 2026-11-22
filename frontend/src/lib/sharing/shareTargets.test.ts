@@ -413,6 +413,40 @@ describe('the notifications erase is owed on disk until done (review of #3938)',
     await honourOwedNotificationErase('launch');
     expect(invoke).not.toHaveBeenCalled();
   });
+
+  it('an owed mark that cannot be read is erased anyway, accused, and never settled', async () => {
+    platform = 'ios';
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === OWED) throw new Error('unreadable');
+      return 0;
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await honourOwedNotificationErase('launch');
+    expect(invoke.mock.calls.map(([c]) => c)).toEqual([OWED, CLEAR_CONVERSATIONS]);
+    expect(String(error.mock.calls[0]?.[0])).toContain('could not be read - erasing anyway');
+    error.mockRestore();
+  });
+
+  it("a late sign-out erase with nothing owed skips once the next session's honour took it", async () => {
+    // A signs out; before A's erase runs (it waits for the FCM step), B's context is prepared,
+    // whose honour erases and settles A's mark. A's erase then finds nothing owed: B's donations stay.
+    platform = 'ios';
+    owing(null);
+    const pushEnded = deferred<void>();
+    const late = eraseAccountShortcuts('signed out', pushEnded.promise);
+    await honourOwedNotificationErase('before the push context');
+    pushEnded.resolve();
+    await late;
+    expect(calls(CLEAR_CONVERSATIONS)).toHaveLength(0);
+  });
+
+  it('a sign-out erase with nothing owed and no honour since still erases', async () => {
+    platform = 'ios';
+    owing(null);
+    await eraseAccountShortcuts('signed out');
+    expect(calls(CLEAR_CONVERSATIONS)).toHaveLength(1);
+    expect(calls(SETTLE)).toHaveLength(0);
+  });
 });
 
 describe('off the phone apps', () => {

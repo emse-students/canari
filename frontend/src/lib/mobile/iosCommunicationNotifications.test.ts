@@ -158,6 +158,15 @@ describe('no donation outlives the account it named (review of #3938)', () => {
       /if let error = error \{[\s\S]*?ERROR[\s\S]*?\}[\s\S]*?self\.finish\(\)/
     );
     expect(withdrawn.match(/finish\(\)/g)?.length).toBe(1);
+    // The expiry blanks too, when the account the drawn message names signed out since.
+    const expiry = capture(
+      nse,
+      /override func serviceExtensionTimeWillExpire\(\) \{([\s\S]*?)\n {2}\}\n/
+    );
+    expect(expiry).toMatch(
+      /if let named = named, Self\.signedInUserId\(\) != named \{[\s\S]*?blankSignedOutContent\(\)[\s\S]*?let handler = contentHandler/
+    );
+    expect(nse).toContain('namesContentOf = ctx?.userId');
     const blank = capture(nse, /private func blankSignedOutContent\(\) \{([\s\S]*?)\n {2}\}\n/);
     expect(blank).toContain('deliveryLock.lock()');
     expect(blank).toContain('guard contentHandler != nil');
@@ -177,8 +186,8 @@ describe('no donation outlives the account it named (review of #3938)', () => {
     expect(auth).toContain('const pushEnded = endPushRegistration(options.cause);');
     expect(auth).toContain("void eraseAccountShortcuts('signed out', pushEnded);");
     const native = read(resolve(here, '../sharing/shareTargetsNative.ts'));
-    expect(native).toContain(
-      "return Promise.resolve(pushEnded).then(() => eraseNotificationShortcuts(reason, 'always'));"
+    expect(native).toMatch(
+      /return Promise\.resolve\(pushEnded\)\.then\(\(\) =>\s*eraseNotificationShortcuts\(reason, 'always', honouredAtSignOut\)/
     );
   });
 

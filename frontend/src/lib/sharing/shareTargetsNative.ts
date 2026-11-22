@@ -228,8 +228,20 @@ export function eraseAccountShortcuts(
 ): Promise<void> {
   if (!isMobileTauriRuntime()) return Promise.resolve();
   void clearShareTargets(reason, { force: true });
-  return Promise.resolve(pushEnded).then(() => eraseNotificationShortcuts(reason, 'always'));
+  // Counted NOW, at the sign-out: a session context prepared after it is what makes a late erase
+  // with nothing owed the next account's loss (see `eraseNotificationShortcuts`).
+  const honouredAtSignOut = honoursStarted;
+  return Promise.resolve(pushEnded).then(() =>
+    eraseNotificationShortcuts(reason, 'always', honouredAtSignOut)
+  );
 }
+
+/**
+ * How many {@link honourOwedNotificationErase} calls this process has started. A sign-out's erase
+ * that finds nothing owed AND a honour started since it was asked knows that honour took its erase
+ * - and that a donation made since is the NEXT account's (review of #3938).
+ */
+let honoursStarted = 0;
 
 /**
  * Completes the notifications' erase a sign-out left OWED (`notification_shortcuts_erase_owed`):
@@ -239,6 +251,7 @@ export function eraseAccountShortcuts(
  */
 export function honourOwedNotificationErase(reason: string): Promise<void> {
   if (!isMobileTauriRuntime()) return Promise.resolve();
+  honoursStarted++;
   return eraseNotificationShortcuts(reason, 'if-owed');
 }
 
@@ -247,19 +260,43 @@ export function honourOwedNotificationErase(reason: string): Promise<void> {
  * {@link honourOwedNotificationErase}, queued like every native call here. Reads the erase owed
  * BEFORE asking the native side and settles exactly that one after it answered, so an erase begun
  * for one sign-out never settles a later one's. An erase that failed stays owed.
+ *
+ * `honouredAtSignOut` (the sign-out's erase only): {@link honoursStarted} when the sign-out asked.
+ * Nothing owed and a honour started since means that honour - run before the next session's context
+ * was stored - already took this sign-out's erase, and erasing now would take the next account's
+ * fresh donations: skipped. Nothing owed with no honour since still erases (the mark may never
+ * have been written; the sign-out logged that).
  */
-function eraseNotificationShortcuts(reason: string, when: 'always' | 'if-owed'): Promise<void> {
+function eraseNotificationShortcuts(
+  reason: string,
+  when: 'always' | 'if-owed',
+  honouredAtSignOut?: number
+): Promise<void> {
   return enqueue(async () => {
     let owed: number | null = null;
+    let readFailed = false;
     try {
       owed = (await invoke<number | null>('notification_shortcuts_erase_owed')) ?? null;
     } catch (err) {
       // Nothing says whether one is owed: erasing is the safe side, and nothing can be settled.
-      console.error(`[share-targets] the owed erase could not be read (${reason})`, err);
+      readFailed = true;
+      console.error(
+        `[share-targets] the owed erase could not be read - erasing anyway, nothing settled (${reason})`,
+        err
+      );
     }
-    if (when === 'if-owed' && owed === null) {
-      Log.d('ShareTargets', `no conversation shortcuts erase owed (${reason})`);
-      return;
+    if (!readFailed && owed === null) {
+      if (when === 'if-owed') {
+        Log.d('ShareTargets', `no conversation shortcuts erase owed (${reason})`);
+        return;
+      }
+      if (honouredAtSignOut !== undefined && honoursStarted !== honouredAtSignOut) {
+        Log.i(
+          'ShareTargets',
+          `conversation shortcuts erase skipped - a later session's honour already took it (${reason})`
+        );
+        return;
+      }
     }
     try {
       const removed = await invoke<number>(galleryCommand('clearConversationShortcuts'));
