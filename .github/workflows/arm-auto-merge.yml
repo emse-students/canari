@@ -477,7 +477,12 @@ jobs:
           # answer is already yes there is nothing to wait for, so merge NOW - on the head the guard
           # judged and only if `CI passed` is green on it. The state is read as DATA
           # (`mergeStateStatus`), never from the prose of the refusal: CLEAN is mergeable, UNSTABLE is
-          # mergeable with a non-required check red or pending. Every other state fails loudly below.
+          # mergeable with a non-required check red or pending. UNKNOWN is "not computed yet", never an
+          # answer: GitHub recomputes the state after the base moves (measured on #3945: the base moved
+          # under attempt 1, attempt 2 read UNKNOWN and failed a ready, green pull request). It is
+          # merged on under the SAME reads, because GitHub computes mergeability synchronously on a
+          # merge request: a real conflict is refused by GitHub itself, as an answer, and the ruleset
+          # never judged this merge anyway. Every other state fails loudly below.
           # THE RULESET DOES NOT JUDGE THIS MERGE, THESE READS DO (review of #3244): the App is a
           # bypass actor of ruleset 22152902 (`bypass_mode: always`, it pushes the release bump), so
           # a merge it makes directly is not refused for a missing `CI passed`. `mergeStateStatus` is
@@ -496,7 +501,7 @@ jobs:
           fi
           why=''
           if [ "$pr_state" = 'OPEN' ] && [ "$pr_draft" = 'false' ] && [ "$head_now" = "$HEAD_SHA" ] &&
-            { [ "$merge_state" = 'CLEAN' ] || [ "$merge_state" = 'UNSTABLE' ]; }; then
+            { [ "$merge_state" = 'CLEAN' ] || [ "$merge_state" = 'UNSTABLE' ] || [ "$merge_state" = 'UNKNOWN' ]; }; then
             ci="$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs?check_name=CI%20passed&per_page=100" \
               --jq '[.check_runs[] | select(.name == "CI passed" and .app.slug == "github-actions" and .head_sha == $ENV.HEAD_SHA)] | sort_by(.id) | last | .conclusion // "absent"')"
             if [ "$ci" = 'success' ]; then
