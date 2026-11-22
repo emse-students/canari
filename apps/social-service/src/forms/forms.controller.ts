@@ -438,6 +438,22 @@ export class FormsController {
     return this.service.editAnswer(id, submissionId, xUserId, dto.answers);
   }
 
+  /**
+   * How many answers of an anonymous form wait for their batch (`anonymous-answer-batches.ts`), and
+   * the batch size, so the responses screen can say why they are not listed yet. Requires form owner
+   * or MANAGE_FORMS flag, like the answers themselves.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get(':id/held-answers')
+  async getHeldAnswers(
+    @Param('id') id: string,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    await this.service.assertFormManager(id, xUserId, ga === 'true');
+    return this.service.heldAnswers(id);
+  }
+
   /** Returns all submissions for the specified form. Requires form owner or MANAGE_FORMS flag. */
   @UseGuards(NginxAuthGuard)
   @Get(':id/submissions')

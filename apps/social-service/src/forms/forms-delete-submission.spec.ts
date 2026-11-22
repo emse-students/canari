@@ -14,7 +14,8 @@ function serviceWith(rows: {
   before?: string;
 }) {
   const service = Object.create(FormsService.prototype) as FormsService;
-  const query = jest.fn(async () => rows.deleted);
+  // The shape TypeORM's postgres driver answers a DELETE with: the rows, then the count.
+  const query = jest.fn(async () => [rows.deleted, rows.deleted.length]);
   const findOne = jest
     .fn()
     .mockResolvedValueOnce({ id: 's1', formId: 'f1', paymentStatus: rows.before ?? 'cancelled' })

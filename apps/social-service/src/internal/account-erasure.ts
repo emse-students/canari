@@ -255,6 +255,22 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'submissions.priceLockedItemIds': NO_ACCOUNT(
     "the ids of the form's questions an answer's price depended on (migration 166)"
   ),
+  // An anonymous form's answer waiting for its batch (migration 178): written with no account by
+  // construction, like the anonymous submission it becomes, so no account's erasure can find it.
+  'form_answers_held.answers': {
+    action: 'kept',
+    reason:
+      "an anonymous form's answer waiting for its batch (migration 178): written with no account, so no account's erasure reaches it",
+  },
+  'form_answers_held.lines': NO_ACCOUNT(
+    'the priced lines of an anonymous answer waiting for its batch (migration 178)'
+  ),
+  'form_answers_held.priceLockedItemIds': NO_ACCOUNT(
+    "the ids of the form's questions an anonymous waiting answer's price depended on (migration 178)"
+  ),
+  'form_answers_held.respondentIdentity': NO_ACCOUNT(
+    'the declared fields (or account cursus) of an anonymous waiting answer, never an id (migration 178)'
+  ),
   'forms.guestFields': NO_ACCOUNT(
     'the names of the fields a form asks whoever it cannot read from an account (migrations 138, 174)'
   ),
