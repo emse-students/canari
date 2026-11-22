@@ -47,6 +47,12 @@
   import { PRODUCT_GRID_TYPE } from '$lib/forms/productGridContract';
   import { gridRequiredSwitchOn } from '$lib/forms/gridRequiredGate';
   import { newProductGrid, type ProductGridTierDimension } from '$lib/forms/productGridEditor';
+  import {
+    formBlockProblem,
+    isFormBlockType,
+    IMAGE_BLOCK_TYPE,
+    TEXT_BLOCK_TYPE,
+  } from '$lib/forms/formBlocks';
   import { m } from '$lib/paraglide/messages';
   import { Log } from '$lib/utils/Log';
 
@@ -183,8 +189,35 @@
 
   /** How the card names its type: both survey grids are the one "Grille de choix". */
   const currentType = $derived(editorKindEntry(item.type));
+  /**
+   * A text or image block (`formBlocks.ts`): no number, no type menu, no answer settings - a heading
+   * or caption, its paragraph or its image, and the row's move, copy and remove like any card.
+   */
+  const isBlock = $derived(isFormBlockType(item.type));
+  /** What would refuse this block at save, said under it while the organiser can still fix it. */
+  const blockProblem = $derived(isBlock ? formBlockProblem(item) : null);
+  /** The description affordance is a question's help text; a text block's paragraph is its own field. */
+  const offersDescription = $derived(!isBlock);
+  /** An image: on any question, and as an image block's whole content - never on a text block. */
+  const offersImage = $derived(imageUploadFn !== undefined && item.type !== TEXT_BLOCK_TYPE);
+  /** The title field of a block: an optional heading, or an optional caption. Null on a question. */
+  const blockTitleLabel = $derived(
+    item.type === TEXT_BLOCK_TYPE
+      ? m.form_block_text_heading_placeholder()
+      : item.type === IMAGE_BLOCK_TYPE
+        ? m.form_block_image_caption_placeholder()
+        : null
+  );
+  /** What a folded block's row reads: its heading or caption, else the start of its paragraph. */
+  const rowTitle = $derived(
+    isBlock ? item.label?.trim() || (item.description ?? '').trim().split('\n')[0] || '' : ''
+  );
+  /** A question's type menu never offers a block: a question does not turn into content. */
   const typeSections = $derived(
-    questionKindSections(editorQuestionFamilies(authorableTypes), { currentType: item.type })
+    questionKindSections(
+      editorQuestionFamilies(authorableTypes.filter((t) => !isFormBlockType(t.value))),
+      { currentType: item.type }
+    )
   );
   const cardMenuSections = questionCardMenuSections();
   /** The audience panel is open exactly when the condition is switched on. */
@@ -250,7 +283,8 @@
   }
 
   if (item.type === PRODUCT_GRID_TYPE && !item.productGrid) item.productGrid = newProductGrid();
-  if (!item.scale) item.scale = { min: 1, max: 5 };
+  // A block carries no scale: it would only be dropped by the payload and the server.
+  if (!item.scale && !isFormBlockType(item.type)) item.scale = { min: 1, max: 5 };
   if (!item.options) item.options = [];
   item.options = item.options.map((opt: any) => ({ ...opt, id: opt.id || crypto.randomUUID() }));
   if (!item.rows) item.rows = [];
@@ -358,22 +392,28 @@
         data-row-button
         type="button"
         onclick={onExpand}
-        aria-label={m.form_builder_open_question_aria({
-          n: questionIndex ?? 1,
-          title: item.label || m.form_builder_title_placeholder(),
-        })}
+        aria-label={isBlock
+          ? m.form_block_open_aria({ kind: currentType?.label() ?? '', title: rowTitle })
+          : m.form_builder_open_question_aria({
+              n: questionIndex ?? 1,
+              title: item.label || m.form_builder_title_placeholder(),
+            })}
         class="focus-visible:ring-accent/60 flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-lg px-1.5 py-2 text-left outline-none focus-visible:ring-2"
       >
+        {#if !isBlock}
+          <span
+            class="text-text-muted bg-cn-border/50 text-2xs shrink-0 rounded-md px-1.5 py-0.5 font-bold tabular-nums"
+            >{questionIndex}</span
+          >
+        {/if}
         <span
-          class="text-text-muted bg-cn-border/50 text-2xs shrink-0 rounded-md px-1.5 py-0.5 font-bold tabular-nums"
-          >{questionIndex}</span
-        >
-        <span
-          class="min-w-0 flex-1 truncate text-sm font-semibold {item.label
+          class="min-w-0 flex-1 truncate text-sm font-semibold {item.label || rowTitle
             ? 'text-text-main'
             : 'text-text-muted/60 italic'}"
-          >{item.label ||
-            m.form_builder_title_placeholder()}{#if item.required && drawsRequired}<span
+          >{isBlock
+            ? rowTitle || currentType?.label()
+            : item.label ||
+              m.form_builder_title_placeholder()}{#if item.required && drawsRequired && !isBlock}<span
               class="ml-0.5 text-red-500"
               data-testid="required-mark">*</span
             >{/if}</span
@@ -406,44 +446,58 @@
       >
         <GripVertical size={16} />
       </span>
-      <span
-        class="text-text-muted bg-cn-border/50 text-2xs shrink-0 rounded-md px-1.5 py-0.5 font-bold tabular-nums"
-        >{questionIndex}</span
-      >
+      {#if !isBlock}
+        <span
+          class="text-text-muted bg-cn-border/50 text-2xs shrink-0 rounded-md px-1.5 py-0.5 font-bold tabular-nums"
+          >{questionIndex}</span
+        >
+      {/if}
       <input
         bind:this={titleEl}
         type="text"
         bind:value={item.label}
-        aria-label={m.form_builder_question_label()}
-        placeholder={m.form_builder_title_placeholder()}
+        aria-label={blockTitleLabel ?? m.form_builder_question_label()}
+        placeholder={blockTitleLabel ?? m.form_builder_title_placeholder()}
         class="border-cn-border text-text-main placeholder:text-text-muted/50 focus:border-accent-icon min-w-0 flex-1 border-b-2 bg-transparent px-1 py-1.5 text-base font-semibold outline-none sm:text-lg"
       />
-      <button
-        bind:this={typeAnchor}
-        id="type-picker-{item.id}"
-        type="button"
-        aria-label="{m.form_builder_type_label()}: {currentType?.label() ?? item.type}"
-        aria-haspopup="listbox"
-        aria-expanded={showTypePicker}
-        onclick={() => {
-          if (showTypePicker) {
-            showTypePicker = false;
-            return;
-          }
-          typeAsSheet = opensAsSheet();
-          showTypePicker = true;
-        }}
-        class="border-cn-border text-text-main focus:border-accent-icon flex min-h-11 shrink-0 cursor-pointer items-center gap-1.5 rounded-xl border-2 bg-(--cn-surface) px-2 text-left text-xs font-medium outline-none"
-      >
-        {#if currentType}
-          {@const CurIcon = currentType.Icon}
-          <CurIcon size={15} class="text-text-muted shrink-0" />
-          <span class="hidden max-w-32 truncate sm:inline">{currentType.label()}</span>
-        {:else}
-          <span>{item.type}</span>
-        {/if}
-        <ChevronDown size={13} class="text-text-muted/60 shrink-0" />
-      </button>
+      {#if isBlock && currentType}
+        {@const BlockIcon = currentType.Icon}
+        <!-- A block's kind is fixed: said, not offered as a menu. -->
+        <span
+          class="text-text-muted flex min-h-11 shrink-0 items-center gap-1.5 px-2 text-xs font-medium"
+          data-testid="block-kind"
+        >
+          <BlockIcon size={15} class="shrink-0" />
+          <span class="hidden sm:inline">{currentType.label()}</span>
+        </span>
+      {:else}
+        <button
+          bind:this={typeAnchor}
+          id="type-picker-{item.id}"
+          type="button"
+          aria-label="{m.form_builder_type_label()}: {currentType?.label() ?? item.type}"
+          aria-haspopup="listbox"
+          aria-expanded={showTypePicker}
+          onclick={() => {
+            if (showTypePicker) {
+              showTypePicker = false;
+              return;
+            }
+            typeAsSheet = opensAsSheet();
+            showTypePicker = true;
+          }}
+          class="border-cn-border text-text-main focus:border-accent-icon flex min-h-11 shrink-0 cursor-pointer items-center gap-1.5 rounded-xl border-2 bg-(--cn-surface) px-2 text-left text-xs font-medium outline-none"
+        >
+          {#if currentType}
+            {@const CurIcon = currentType.Icon}
+            <CurIcon size={15} class="text-text-muted shrink-0" />
+            <span class="hidden max-w-32 truncate sm:inline">{currentType.label()}</span>
+          {:else}
+            <span>{item.type}</span>
+          {/if}
+          <ChevronDown size={13} class="text-text-muted/60 shrink-0" />
+        </button>
+      {/if}
     </div>
 
     <FloatingSurface
@@ -468,7 +522,16 @@
 
     <!-- Optional description and image: one row of affordances, each opening its own field -->
     <div class="mb-3 space-y-3">
-      {#if item.description !== undefined}
+      {#if item.type === TEXT_BLOCK_TYPE}
+        <!-- A text block's paragraph: the form description's Markdown (bold, lists, links). -->
+        <Textarea
+          bind:value={item.description}
+          rows={4}
+          aria-label={m.form_block_text_paragraph_label()}
+          placeholder={m.form_block_text_paragraph_placeholder()}
+        />
+        <p class="text-text-muted text-xs">{m.form_block_text_markdown_hint()}</p>
+      {:else if offersDescription && item.description !== undefined}
         <div class="relative">
           <Textarea
             bind:value={item.description}
@@ -503,7 +566,7 @@
               aria-label={m.form_builder_image_alt_placeholder()}
             />
             <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-              {#if imageUploadFn !== undefined}
+              {#if offersImage}
                 <label
                   class="text-text-muted hover:text-text-main flex cursor-pointer items-center gap-1 text-xs font-semibold whitespace-nowrap transition-colors {uploadingImage
                     ? 'pointer-events-none opacity-50'
@@ -538,9 +601,9 @@
         </div>
       {/if}
 
-      {#if item.description === undefined || (!item.imageUrl && imageUploadFn !== undefined)}
+      {#if (offersDescription && item.description === undefined) || (!item.imageUrl && offersImage)}
         <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
-          {#if item.description === undefined}
+          {#if offersDescription && item.description === undefined}
             <button
               type="button"
               onclick={() => {
@@ -552,7 +615,7 @@
               {m.form_builder_add_desc()}
             </button>
           {/if}
-          {#if !item.imageUrl && imageUploadFn !== undefined}
+          {#if !item.imageUrl && offersImage}
             <label
               class="text-text-muted hover:text-text-main flex cursor-pointer items-center gap-1 text-xs font-semibold transition-colors {uploadingImage
                 ? 'pointer-events-none opacity-50'
@@ -574,9 +637,14 @@
       {#if imageUploadError}
         <p class="text-xs text-red-500" role="alert">{imageUploadError}</p>
       {/if}
+      {#if blockProblem}
+        <p class="text-text-muted text-xs" data-testid="block-problem">{blockProblem}</p>
+      {/if}
     </div>
 
-    {#if isPricedGrid && item.productGrid}
+    {#if isBlock}
+      <!-- A block has no answer to configure: no options, no conditions, never required. -->
+    {:else if isPricedGrid && item.productGrid}
       <ProductGridEditor
         grid={item.productGrid}
         {tiers}
@@ -603,71 +671,73 @@
       {/if}
     {/if}
 
-    <!-- "Plus d'options": the two conditions, rare, folded unless one is set. -->
-    <div class="mt-4 border-t border-black/5 pt-2 dark:border-white/5">
-      <button
-        type="button"
-        aria-expanded={moreOpen}
-        onclick={() => (moreOpen = !moreOpen)}
-        data-testid="more-options"
-        class="text-text-muted hover:text-text-main flex min-h-11 w-full items-center gap-2 rounded-lg px-1 text-left text-xs font-bold"
-      >
-        <SlidersHorizontal size={14} aria-hidden="true" class="shrink-0" />
-        <span class="flex-1">{m.form_card_more_options()}</span>
-        <ChevronDown
-          size={14}
-          aria-hidden="true"
-          class="shrink-0 transition-transform {moreOpen ? 'rotate-180' : ''}"
-        />
-      </button>
-      {#if moreOpen}
-        <div class="space-y-4 pt-2 pb-1" data-testid="more-options-panel">
-          {#if eligibleConditionSources.length > 0}
-            <div>
-              <div class="mb-2 flex items-center gap-1.5">
-                <GitBranch size={13} class="text-text-muted/70 shrink-0" />
-                <span class="text-text-muted text-2xs font-bold"
-                  >{m.form_builder_conditional_label()}</span
-                >
-              </div>
-              <div class="flex flex-wrap items-center gap-2">
-                <Picker
-                  label={m.form_builder_conditional_label()}
-                  value={item.dependsOn ?? ''}
-                  options={conditionSourceOptions}
-                  onValueChange={(v) => {
-                    item.dependsOn = v;
-                    item.dependsValue = '';
-                  }}
-                  triggerClass={conditionTriggerClass}
-                />
-                {#if item.dependsOn}
-                  <span class="text-text-muted shrink-0 text-xs">=</span>
+    <!-- "Plus d'options": the two conditions, rare, folded unless one is set. A block has none. -->
+    {#if !isBlock}
+      <div class="mt-4 border-t border-black/5 pt-2 dark:border-white/5">
+        <button
+          type="button"
+          aria-expanded={moreOpen}
+          onclick={() => (moreOpen = !moreOpen)}
+          data-testid="more-options"
+          class="text-text-muted hover:text-text-main flex min-h-11 w-full items-center gap-2 rounded-lg px-1 text-left text-xs font-bold"
+        >
+          <SlidersHorizontal size={14} aria-hidden="true" class="shrink-0" />
+          <span class="flex-1">{m.form_card_more_options()}</span>
+          <ChevronDown
+            size={14}
+            aria-hidden="true"
+            class="shrink-0 transition-transform {moreOpen ? 'rotate-180' : ''}"
+          />
+        </button>
+        {#if moreOpen}
+          <div class="space-y-4 pt-2 pb-1" data-testid="more-options-panel">
+            {#if eligibleConditionSources.length > 0}
+              <div>
+                <div class="mb-2 flex items-center gap-1.5">
+                  <GitBranch size={13} class="text-text-muted/70 shrink-0" />
+                  <span class="text-text-muted text-2xs font-bold"
+                    >{m.form_builder_conditional_label()}</span
+                  >
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
                   <Picker
                     label={m.form_builder_conditional_label()}
-                    value={item.dependsValue ?? ''}
-                    options={conditionValueOptions}
-                    onValueChange={(v) => (item.dependsValue = v)}
+                    value={item.dependsOn ?? ''}
+                    options={conditionSourceOptions}
+                    onValueChange={(v) => {
+                      item.dependsOn = v;
+                      item.dependsValue = '';
+                    }}
                     triggerClass={conditionTriggerClass}
                   />
-                {/if}
+                  {#if item.dependsOn}
+                    <span class="text-text-muted shrink-0 text-xs">=</span>
+                    <Picker
+                      label={m.form_builder_conditional_label()}
+                      value={item.dependsValue ?? ''}
+                      options={conditionValueOptions}
+                      onValueChange={(v) => (item.dependsValue = v)}
+                      triggerClass={conditionTriggerClass}
+                    />
+                  {/if}
+                </div>
               </div>
-            </div>
-          {/if}
-          <!-- Audience condition: shown to some people only, and only when switched on. -->
-          <Toggle
-            label={m.form_show_if_toggle()}
-            hint={m.form_show_if_hint()}
-            bind:checked={() => conditionsOn, () => toggleConditions()}
-          />
-          {#if conditionsOn}
-            <div data-testid="audience-panel">
-              <AudienceConditionEditor bind:condition={item.showIf} {tiers} {formations} />
-            </div>
-          {/if}
-        </div>
-      {/if}
-    </div>
+            {/if}
+            <!-- Audience condition: shown to some people only, and only when switched on. -->
+            <Toggle
+              label={m.form_show_if_toggle()}
+              hint={m.form_show_if_hint()}
+              bind:checked={() => conditionsOn, () => toggleConditions()}
+            />
+            {#if conditionsOn}
+              <div data-testid="audience-panel">
+                <AudienceConditionEditor bind:condition={item.showIf} {tiers} {formations} />
+              </div>
+            {/if}
+          </div>
+        {/if}
+      </div>
+    {/if}
 
     <!-- The settings row: required, reorder on touch, the "..." menu, collapse. -->
     <div
@@ -675,7 +745,7 @@
       role="toolbar"
       aria-label={m.form_builder_settings_row_aria()}
     >
-      {#if drawsRequired}
+      {#if drawsRequired && !isBlock}
         <button
           type="button"
           onclick={() => (item.required = !item.required)}

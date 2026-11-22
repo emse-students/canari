@@ -51,6 +51,7 @@ import {
   type FormDraftState,
 } from './form-draft-revision';
 import { plainToInstance } from 'class-transformer';
+import { normaliseFormBlocks, questionItemsOf, withoutBlockAnswers } from './form-blocks';
 import { validate, type ValidationError } from 'class-validator';
 
 /** Every constraint a validation refused, nested ones (a question, an option) included, as the pipe says them. */
@@ -991,6 +992,14 @@ export class FormsService {
     assertUniqueItemIds(input.items);
     assertFormItemsShape(input.items);
     input = { ...input, items: normaliseChoiceNotes(input.items) };
+    // A text or image block keeps a block's fields alone, and no question may depend on one.
+    input = {
+      ...input,
+      items: normaliseFormBlocks(input.items, {
+        submitCondition: input.submitCondition,
+        priceMatrix: input.priceMatrix,
+      }),
+    };
     this.assertFormOptionsCoherent(input);
     this.assertPublicConfigValid(input);
     assertMultipleChoiceGridOneGroup(
@@ -1586,14 +1595,24 @@ export class FormsService {
     // A choice question's comment and "Autre" mark are normalised BEFORE anything reads the list
     // (`choice-notes.ts`); an absent list keeps the stored one untouched.
     if (input.items !== undefined) input = { ...input, items: normaliseChoiceNotes(input.items) };
-    // The questions the form WILL have: an absent list keeps the stored one, file questions included.
-    const items = input.items ?? form.items;
     // Only the questions this edit SENDS are judged, against the stored ones: a duplicate already
     // stored never blocks an edit that leaves the questions' ids as they are.
     if (input.items !== undefined) {
       assertUniqueItemIds(input.items, form.items);
       assertFormItemsShape(input.items);
+      // A text or image block keeps a block's fields alone, and no question may depend on one.
+      // The condition and grid the form WILL hold: the sent ones, else the stored ones.
+      input = {
+        ...input,
+        items: normaliseFormBlocks(input.items, {
+          submitCondition:
+            input.submitCondition !== undefined ? input.submitCondition : form.submitCondition,
+          priceMatrix: input.priceMatrix !== undefined ? input.priceMatrix : form.priceMatrix,
+        }),
+      };
     }
+    // The questions the form WILL have: an absent list keeps the stored one, file questions included.
+    const items = input.items ?? form.items;
     // The form as this edit WILL save it: an absent field keeps the stored value, for every field a
     // rule reads, or an edit sending only `isPublic: true` would publish a stored cotisation grant or
     // an audience restriction nobody re-checked - and a rule judged on the edit alone would depend on
@@ -1866,6 +1885,9 @@ export class FormsService {
         message: 'A form revision is the editor payload, as one JSON object.',
       });
     }
+    // A revision is the editor payload, stored as is in `form_drafts`, never in `forms.items`: it
+    // reaches `items` only through `publishChanges` -> `validatedRevision` -> `update`, which runs
+    // `normaliseFormBlocks`, so a block is judged exactly once, where it becomes a form's own.
     // A question image the revision cites is bound to this form NOW, under the saver's id: an image
     // uploaded before the form existed (the create page) is then this form's, and a co-manager
     // publishing the revision later is not refused it as somebody else's upload.
@@ -2700,7 +2722,14 @@ export class FormsService {
 
     // A grid's answer is a map of rows, judged against the question's own rows and columns and
     // stripped of its empty rows - from here on, `answers` holds it in that form (D1).
-    input = { ...input, answers: withNormalisedGridAnswers(form.items ?? [], input.answers ?? {}) };
+    // A block takes no answer: a key naming one is dropped before anything below reads the answers.
+    input = {
+      ...input,
+      answers: withNormalisedGridAnswers(
+        form.items ?? [],
+        withoutBlockAnswers(form.items, input.answers ?? {}, `submit ${formTag(form)}`)
+      ),
+    };
 
     // The files this answer cites: their SHAPE here, their ownership inside the transaction below
     // (`FormFilesService.attach`), where it is checked and taken in one write. A form that cannot
@@ -3455,7 +3484,10 @@ export class FormsService {
   ): Promise<{ stored: Record<string, unknown>; newFiles: { itemId: string; fileId: string }[] }> {
     const items = form.items ?? [];
     const locked = rowLockedItemIds(form, row);
-    const sent = withNormalisedGridAnswers(items, answersIn);
+    const sent = withNormalisedGridAnswers(
+      items,
+      withoutBlockAnswers(items, answersIn, `edit ${tag}`)
+    );
     const merged: Record<string, unknown> = { ...sent };
     for (const itemId of locked) {
       if (itemId in sent && !sameAnswer(sent[itemId], row.answers?.[itemId])) {
@@ -4806,12 +4838,14 @@ export class FormsService {
     // A choice question's free comment is a column of its own, right after its answer: the answer
     // column stays one value per row to count, and the comment is read beside it. Written when the
     // question takes a comment now or an answer holds one from when it did (`choice-notes.ts`).
-    const wantedCommentColumns = form.items
+    // One column per QUESTION: a text or image block takes no answer, so it has no column.
+    const questions = questionItemsOf<FormItemLike>(form.items);
+    const wantedCommentColumns = questions
       .filter(
-        (item: FormItemLike) =>
+        (item) =>
           item.allowComment || submissions.some((s) => commentText(s.answers, item.id) !== '')
       )
-      .map((item: FormItemLike) => item.id);
+      .map((item) => item.id);
     // A store build older than the comment sends no word for the column: the organiser still gets
     // the export, without it, rather than none at all (`docs/wiki/legacy-compatibility.md`).
     const commentColumns = new Set<string>(labels.comment ? wantedCommentColumns : []);
@@ -4821,7 +4855,7 @@ export class FormsService {
           `choice comment): ${wantedCommentColumns.length} comment column(s) left out`
       );
     }
-    form.items.forEach((item: FormItemLike) => {
+    questions.forEach((item) => {
       headers.push({ header: item.label, key: item.id, width: 30 });
       if (commentColumns.has(item.id)) {
         headers.push({
@@ -4885,7 +4919,7 @@ export class FormsService {
       if (editedColumn) row.editedAt = sub.editedAt ? new Date(sub.editedAt) : null;
 
       // A priced grid reads from the row's lines - what was charged - before the grid as it is now.
-      form.items.forEach((item: FormItemLike) => {
+      questions.forEach((item) => {
         row[item.id] = answerText(
           sub.answers[item.id],
           item,

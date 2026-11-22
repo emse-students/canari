@@ -5,6 +5,7 @@ import type { FormItem } from './api';
 import { commentKey, otherKey } from './answerText';
 import { hasOrderedUnits, isProductGrid } from './productGridFill';
 import { FILLABLE_QUESTION_TYPE_VALUES } from './questionTypes';
+import { isFormBlock } from './formBlocks';
 
 /**
  * WHAT A PERSON FILLING A FORM HAS ANSWERED - the rules the fill page applies, taken out of it.
@@ -22,6 +23,8 @@ export type Selections = Record<string, any>;
 export function initialSelections(items: FormItem[]): Selections {
   const initial: Selections = {};
   for (const item of items) {
+    // A text or image block takes no answer: it has no selection to hold.
+    if (isFormBlock(item)) continue;
     if (item.type === 'multiple_choice') {
       initial[item.id] = [];
     } else if (isProductGrid(item)) {
@@ -120,7 +123,8 @@ export function firstMissingAnswer(
   gridSwitch: boolean
 ): MissingAnswer | null {
   for (const item of items) {
-    if (!item.required) continue;
+    // A block is never required (the server refuses one that says so); skipped all the same.
+    if (!item.required || isFormBlock(item)) continue;
     if (!gridSwitch && isProductGrid(item)) continue;
     const value = selections[item.id];
     const itemId = item.id;
@@ -266,6 +270,8 @@ export function pricedQuestionsAwaitingAnswer(
 export function visibleAnswers(visible: FormItem[], selections: Selections): Selections {
   const out: Selections = {};
   for (const item of visible) {
+    // A text or image block is never answered: nothing of it is sent (the server drops it besides).
+    if (isFormBlock(item)) continue;
     const value = selections[item.id];
     const notes = noteAnswers(item, selections);
     if (isProductGrid(item)) {

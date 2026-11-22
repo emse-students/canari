@@ -124,6 +124,26 @@ describe('FormsService.exportSubmissions', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('refunded'));
   });
 
+  // A text or image block takes no answer: no column, wherever it sits among the questions.
+  it('draws no column for a text or an image block', async () => {
+    const service = makeService({
+      requiresPayment: false,
+      items: [
+        { id: 'b_intro', label: 'Programme', required: false, type: 'text_block' },
+        ASSO,
+        {
+          id: 'b_poster',
+          label: '',
+          required: false,
+          type: 'image_block',
+          imageUrl: '/api/media/public/11111111-1111-4111-8111-111111111111',
+        },
+      ],
+      submissions: [submission()],
+    });
+    expect(await headers(service)).toEqual(['Date', 'Prenom', 'Nom de famille', 'Ton association']);
+  });
+
   describe('a file question', () => {
     const CV = { id: 'q_cv', label: 'Ton CV', required: false, type: 'file' };
     const FILE_A = '11111111-1111-4111-8111-111111111111';
