@@ -8,7 +8,7 @@
  * repair re-reads the salon's history - which by design raises nothing, since a page of history must
  * never announce a reaction. So the one live frame was consumed by the unreadable path and the repair
  * that later opened it was, by construction, not live: neither trigger drew the reaction (Mi 9T,
- * `1.7.0-alpha.10`, 2026-11-18; [backlog](../../../../../docs/wiki/backlog.d/p2-a-salon-reaction-that-opens-its-sender-s-new-seed-session-is-never-notified-in-the-foreground.md)).
+ * `1.7.0-alpha.10`, 2026-11-18; [backlog](../../../../../docs/wiki/frontend/mobile.md#the-frame-trigger-of-a-reaction-2026-11-17)).
  *
  * THE FACT "THIS ROW ARRIVED LIVE" IS CARRIED, NOT GUESSED. The live path parks the row's id with the
  * decision it could not take ({@link oweLiveDecision}); whichever reader opens THAT row first takes it

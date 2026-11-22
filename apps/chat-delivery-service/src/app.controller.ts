@@ -47,6 +47,7 @@ import { announceExpiredAsks, trackJoinAskWork } from './utils/join-ask-announce
 import { checkDatabaseClockAgreement } from './utils/clock-agreement';
 import { reportOrphanDevices } from './utils/orphan-devices';
 import { reportPushCoverage } from './utils/push-coverage';
+import { deleteStalePushTokens } from './utils/push-envelope';
 import { deleteSentFrameReceiptsBefore } from './utils/sent-frame-receipt';
 import { deleteUninvitedEntriesPastRetention } from './utils/uninvited-entries';
 import { takeSafeBrowsingRefusalCount } from './utils/safe-browsing';
@@ -1601,12 +1602,11 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   private async cleanupStalePushTokens() {
     const PUSH_TOKEN_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
     const cutoff = new Date(Date.now() - PUSH_TOKEN_MAX_AGE_MS);
-    const result = await this.pushTokenRepo.delete({
-      updatedAt: LessThan(cutoff),
-    });
-    if (result.affected && result.affected > 0) {
+    // In ("userId", "deviceId") lock order, so the sweep never deadlocks with a send's stamp.
+    const deleted = await deleteStalePushTokens(this.pushTokenRepo.manager, cutoff);
+    if (deleted > 0) {
       this.logger.log(
-        `[CRON] cleanupStalePushTokens: deleted ${result.affected} token(s) not renewed in 90 days`
+        `[CRON] cleanupStalePushTokens: deleted ${deleted} token(s) not renewed in 90 days`
       );
     }
   }

@@ -2139,6 +2139,128 @@ PostgreSQL) (server). **What closes the incident** is the `[PUSH_COVERAGE]` WARN
 lines reading zero for the build that ships this, and their `last:` tally naming the branch and
 the await if they do not ([the backlog entry](../backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)).
 
+#### Push delivery records - daily totals and the last delivery per device (2026-11-21)
+
+**Why.** A read-only production diagnosis on 2026-11-21 could not answer "was member X's
+notification sent, and did it arrive?". The batch path printed only a total
+(`[PUSH_SEND] FCM sent batch pushed=N of M`), and every counter lived in container logs that reset
+at each deploy. The owner decided "totals + last delivery" the same day: two records, no content,
+kept in the database (migration `054`, additive; `utils/push-delivery-records.ts`).
+
+**What is stored.**
+
+- `push_delivery_daily` - one counter per (UTC `day`, `kind`, `platform`, `outcome`, `code`). `kind`
+  is the send path: `message` (an MLS frame to an offline device, `sendFcmForQueued`), `social`
+  (`sendPushToUser`: posts, comments, reactions, salons, reminders), `ring` (FCM or the iOS VoIP
+  push), `ring_end`, `welcome_request`. `outcome` is `attempted`, `accepted`, `failed` (under the
+  provider's `code`: the FCM `messaging/*` code, `none` when the throw carried none, `apns-voip/gone`
+  or `apns-voip/refused` for a VoIP ring - its HTTP status stays on the `[apns-voip]` line) or
+  `pruned` (the failure proved the token gone and it was removed, counted ON TOP of its `failed`).
+  On every row group `attempted = accepted + failed`. A device with no token, a muted category, a
+  wake withheld because its envelope could not be stored: nothing was asked of a provider, nothing
+  is counted. No account, no device: not personal data.
+- `push_token."lastPushSentAt"` - the last time a provider ACCEPTED a push for that registration.
+- `push_token."lastPushFetchedAt"` - the last time its native handler fetched what a push pointed at,
+  `GET /mls/push/fetch-proto` or `GET /mls/push/wake` (frame or envelope) - the server's own sight of
+  a push ARRIVING, which the diagnosis had to read from the edge access log. Stamped on every fetch
+  the PushSecret admitted, a `gone` answer included (the push still reached the handler). **Not
+  evidence for every push**: a full push whose ciphertext rode inline is never fetched, so the date
+  speaks for wakes and for frames carried by reference.
+- Both dates live on the registration row, so every deletion of it takes them: a session end, a
+  revocation, an invalid-token prune, the account's erasure. The registration's upsert names its
+  columns, so a re-registration keeps them.
+
+**Where they are written, and what it costs a send.** Each send path fills a `PushDeliveryTally` in
+memory while it sends (`attempted` before the provider call, then `accepted` or `failed` /
+`pruned`) - no I/O. Once the batch has settled, the ONE hook (`recordDeliveries` in
+`MessagingService` and `CallsService`) hands it to the process's one writer, `PUSH_DELIVERY_RECORDER`,
+and returns. It is called from a `finally`, so a token prune that throws (the provider said the token
+is gone, the DELETE failed) still records the batch - as `failed`, never `pruned`. A message fan-out
+hands over once, when its last push settled (beside the `FCM sent batch` line); a lone deferred push
+hands over its own. The fetch routes hand over the device the same way and answer at once: the
+handler's answer never waits on its registration row, which an envelope store, a send's stamp or an
+erasure may hold while the OS counts the handler's background budget.
+
+**What it costs the database.** The recorder writes ONE thing at a time per process and folds
+everything handed over meanwhile into the next write: the tallies of one kind into one tally, the
+fetched devices into one set. So each write is at most one counter upsert per kind (a handful of
+rows), one UPDATE stamping `lastPushSentAt` on the accepted registrations and one UPDATE stamping
+`lastPushFetchedAt` on the devices that fetched - on ONE pool connection, however many batches
+arrived. Without it, every batch was its own un-awaited autocommit upsert on the same few hot
+counter rows of the day, each holding a pool connection while it queued on the row lock. The bound
+is per process: N replicas write N at a time, which is what the deadlock rule below is for. **A write
+that fails logs `[PUSH_RECORD] ... NOT recorded|stamped` at WARN, naming what was lost, and never
+fails a send or a fetch.** No timer, no retry: the next write starts when the previous one ends. A
+throw out of the writer itself (a defect, every write's failure is caught inside it) is an ERROR
+naming what it dropped (`[PUSH_RECORD] the writer failed - DROPPED trace=... kinds=... fetched=N`).
+
+**What it does not survive, said rather than hidden.** A write that NEVER settles - a database that
+holds the connection and never answers - stalls the writer with no line at all: everything handed
+over after it piles up in memory, folded, unwritten, and the sends it counts are not affected. No
+timer bounds it; a deadline here would be a guess about the database. At a release's SIGTERM,
+`drainOnSigterm` finishes the join-ask work, then waits for the message fan-out batches still
+sending (each is TRACKED with `trackBatch`, since the fan-out returns before its pushes settle;
+`finishBatchesInFlight` logs `[PUSH_RECORD] exit - N send batch(es) still waiting on their pushes`),
+and only then calls `PUSH_DELIVERY_RECORDER.drainForExit()`, which FIRST logs, synchronously, what is not yet written (`[PUSH_RECORD] exit - not yet written:
+attempted message:N social:M, K fetched device(s); write in flight: ...`) and only then waits for the
+writer - so a stalled write killed by the SIGKILL after the grace period still leaves that line. A
+process killed without a SIGTERM loses what was pending, unlogged.
+
+**Why it cannot deadlock.** The counter rows are inserted in one order (platform, outcome, code,
+`WITH ORDINALITY ... ORDER BY`), so two replicas' writes over the same rows wait for each other.
+Both stamps lock their registrations in `("userId", "deviceId")` order with `FOR NO KEY UPDATE` (the
+strength the UPDATE itself takes, so it blocks no foreign-key check). Every other statement that
+locks SEVERAL `push_token` rows takes them in that order too: `deleteAccountPushTokens` and
+`storeEnvelopes` (one account, `deviceId` order) and the 90-day sweep `deleteStalePushTokens`, which
+locked in scan order until this change. The rest touch one row each, and a statement holding one
+lock cannot close a cycle. `GREATEST` keeps a date from going back when two writes commit out of
+order; the day and the dates are the DATABASE's clock (UTC), one for every replica.
+
+**The lead's queries** (read-only; production access is in the private operations notes). Member X,
+per device - the account id is the core-service user id:
+
+```sql
+SELECT "deviceId", platform, "createdAt" AS registered,
+       "lastPushSentAt"    AS last_sent,
+       "lastPushFetchedAt" AS last_fetched,
+       "wakeVersion"
+  FROM push_token
+ WHERE "userId" = :'user_id'
+ ORDER BY "lastPushSentAt" DESC NULLS LAST;
+```
+
+No row: the device holds no registration (see the coverage section above, and `[PUSH_MISSING]`).
+`last_sent` recent and `last_fetched` older than it on a wake-capable device: the provider took the
+push and the handler did not fetch it - the phone, the OS or the provider's delivery, not this server.
+
+The last seven days, per path and platform, failures by code:
+
+```sql
+SELECT "day", kind, platform,
+       sum(count) FILTER (WHERE outcome = 'attempted') AS attempted,
+       sum(count) FILTER (WHERE outcome = 'accepted')  AS accepted,
+       sum(count) FILTER (WHERE outcome = 'failed')    AS failed,
+       sum(count) FILTER (WHERE outcome = 'pruned')    AS pruned,
+       string_agg(code || '=' || count, ' ' ORDER BY count DESC)
+         FILTER (WHERE outcome = 'failed')             AS failures_by_code
+  FROM push_delivery_daily
+ WHERE "day" > (now() AT TIME ZONE 'UTC')::date - 7
+ GROUP BY "day", kind, platform
+ ORDER BY "day" DESC, kind, platform;
+```
+
+A measurement taken from these names roles and counts, never people, when it is written into this
+repository ([durable-rules](../durable-rules.md#a-measurement-taken-from-production-names-roles-and-counts-never-people---this-repository-is-public)).
+
+Tests: `utils/push-delivery-records.spec.ts` (the tally, the statements, the WARNs, the recorder
+folding a burst into one write), `services/messaging.push-delivery-records.spec.ts` (`sendPushToUser`
+and a fan-out hand over once per batch, a failed write changes no answer, a prune that throws still
+records), `services/calls.service.spec.ts` (a ring with a gone VoIP token, and its clear throwing),
+`controllers/push.controller.wake.spec.ts` (the fetch stamp on both routes, the answer not waiting
+for it), `migrations/054_push_delivery_records.integration.spec.ts` (the SQL against PostgreSQL:
+counts add, concurrent writes lose nothing, the recorder's burst lands whole, the stamp never goes
+back, the 90-day sweep, the erasure takes the dates).
+
 #### Transport — single gateway (FCM)
 
 Both platforms are delivered through **Firebase Cloud Messaging**; there is no direct
