@@ -25,15 +25,16 @@
          Chrome 111 or newer (Vite's default target, Tailwind 4, the MLS WASM module); on an older
          engine the page stays blank and nothing is reported, because it is not a crash. This is
          the one script that must parse on ANY engine, so it is ES5 only (webviewGuard.test.ts
-         parses it as ES5) and it runs before the bundle. Two triggers, neither a timer, and BOTH
-         need an engine below FLOOR: a "update the WebView" screen is never drawn for an engine
-         that is not old. (1) an Android WebView whose user agent names Chrome below FLOOR;
-         (2) a parse failure of the app's own /_app/ module before the layout mounted, on an
-         Android WebView below FLOOR. Anything else (a plain browser such as Samsung Internet or
-         old Chrome, a current or unknown engine) is a different defect: logged at error, nothing
-         drawn, because "update the WebView" would be wrong advice. Trigger 2 is best effort:
-         whether a failed import() rejection carries the /_app/ asset in its stack depends on the
-         engine, so it may not match on some; trigger 1 is what covers a WebView like the S8's. The layout calls window.__canariWebViewGuard.mounted(), which removes the screen if
+         parses it as ES5) and it runs before the bundle. Two triggers, neither a timer. (1) The
+         ONLY one that draws: an Android WebView whose user agent names Chrome below FLOOR, so the
+         "update the WebView" screen is never drawn for an engine that is not old. (2) LOG ONLY: a
+         parse failure of the app's own /_app/ module before the layout mounted, caught by error
+         and unhandledrejection listeners that are registered only when trigger 1 did not fire.
+         It is classified by type and source, never by message, and logged at error
+         ([webview-guard]); it never draws, because on an engine at or above FLOOR (or a plain
+         browser such as Samsung Internet) "update the WebView" would be wrong advice. Whether a
+         failed import() rejection carries the /_app/ asset in its stack depends on the engine, so
+         it may not match on some; trigger 1 is what covers a WebView like the S8's. The layout calls window.__canariWebViewGuard.mounted(), which removes the screen if
          the app runs after all. Its strings are a small table pinned to messages/fr.json and
          en.json by the same test. -->
     <script>
@@ -167,17 +168,16 @@
         }
         function onBundleFailure(major, webView) {
           if (settled) return;
-          if (webView && major !== null && major < FLOOR) {
-            show(String(major));
-          } else {
-            logError(
-              'the app bundle failed to parse, but this is not an Android WebView below the floor (' +
-                (webView ? 'WebView' : 'browser') +
-                ', Chrome ' +
-                (major === null ? 'unknown' : major) +
-                '): not an old WebView, no screen drawn'
-            );
-          }
+          // LOG ONLY: the listeners exist only on an engine the floor did not already catch (the
+          // startup code draws and returns before registering them on a WebView below FLOOR), so
+          // a parse failure reaching here is a defect to report, never an old WebView to name.
+          logError(
+            'the app bundle failed to parse on an engine at or above the floor (' +
+              (webView ? 'WebView' : 'browser') +
+              ', Chrome ' +
+              (major === null ? 'unknown' : major) +
+              '): logged only, no screen drawn'
+          );
         }
 
         window.__canariWebViewGuard = {

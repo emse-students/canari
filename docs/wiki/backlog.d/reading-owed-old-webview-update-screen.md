@@ -16,8 +16,9 @@ real engine. Owed, by the lead, on the pre-release:
 3. **If feasible**: an old engine for real (an emulator image with a WebView below 111, or the Mi 9T's
    WebView disabled in favour of an older one): the screen shows, the Play button opens the store page (the
    button is https, opened through `plugin:opener|open_url`).
-4. A page that fails to parse the bundle (a SyntaxError before mount) shows the screen: simulate by serving a
-   chunk with a syntax error from a local build.
+4. A page that fails to parse the bundle (a SyntaxError before mount) is LOGGED, never drawn (trigger 2 is log
+   only): simulate by serving a chunk with a syntax error from a local build on the current WebView, and read
+   `[webview-guard]` at error in the console; no screen appears.
 5. **The links, on the Mi 9T only** (a dev browser cannot read them): put the guard on screen there (a build
    with `FLOOR` above the phone's WebView, or an old WebView), press the button: the Play page of Android System
    WebView opens in the Play app or the browser, and Canari is NOT replaced by an error page.
