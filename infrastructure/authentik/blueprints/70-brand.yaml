@@ -255,6 +255,44 @@ entries:
             margin-bottom: 2rem;
         }
 
+        /* --- Checkbox and radio rows, and the text a stage reads out ---
+         * Everything above centres by INHERITANCE (`text-align: center` on the card), and
+         * `.pf-c-check` / `.pf-c-radio` sit inside no `.pf-c-form__group`, so a row inherited it:
+         * on the terms stage (45-consent.yaml, 390 px, 2026-11-22) the box hugged the far left
+         * while its long label centred itself in the narrower column beside it, and the helper
+         * "Obligatoire." - a `<p>` that PatternFly auto-places in the box's own narrow column -
+         * fell under the box, left-aligned. A row is a box and its text, so both go left, the
+         * helper takes the label's column, and the row spans the card exactly like the paragraph
+         * above it. Bare compound selectors, no ancestor: the rule has to match in the stage's
+         * own shadow root (see the buttons below). The information paragraph of such a stage is
+         * read, not scanned, so it is left-aligned too (centred, a six-line block has a ragged
+         * edge on both sides); titles, logo and buttons stay centred. The empty helper `<p>`
+         * authentik always renders after the real one is hidden: it only added a gap.
+         */
+        .pf-c-check, .pf-c-radio {
+            text-align: left;
+            column-gap: 0.75rem;
+            width: 100%;
+        }
+
+        .pf-c-check__label, .pf-c-radio__label {
+            text-align: left;
+        }
+
+        .pf-c-check .pf-c-form__helper-text, .pf-c-radio .pf-c-form__helper-text {
+            grid-column: 2;
+            text-align: left;
+            margin: 0;
+        }
+
+        .pf-c-check .pf-c-form__helper-text:empty, .pf-c-radio .pf-c-form__helper-text:empty {
+            display: none;
+        }
+
+        .pf-c-form > p {
+            text-align: left;
+        }
+
         /* --- Form fields --- */
         .pf-c-form__label, .pf-c-form__label-text {
             color: rgba(234, 246, 248, 0.85) !important;
