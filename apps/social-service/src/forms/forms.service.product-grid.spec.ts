@@ -876,3 +876,102 @@ describe('FormsService - two cursus (D32)', () => {
     );
   });
 });
+
+describe('FormsService - product grid: shared column sets (owner, 2026-11-21)', () => {
+  const SIZES = { id: 'tailles', name: 'Tailles' };
+  const sizesGrid = (rowLabel: string, rowId: string, cents: number, withSet = true) => ({
+    rows: [{ id: rowId, label: rowLabel }],
+    columns: [
+      { id: 'xs', label: 'XS' },
+      { id: 'm', label: 'M' },
+    ],
+    ...(withSet ? { columnSet: SIZES } : {}),
+    maxPerCell: 3,
+    closedCells: [],
+    pricing: { mode: 'single', tiers: null, prices: { _all: { '*': cents } } },
+  });
+  const shop = (withSet = true) => [
+    gridItem(sizesGrid('Sweat', 'sweat', 2800, withSet), { id: 'q-sweat', label: 'Sweat' }),
+    gridItem(sizesGrid('Tote', 'tote', 1200, withSet), { id: 'q-tote', label: 'Tote' }),
+  ];
+  const createInput = (items: unknown[]) =>
+    ({
+      title: 'Merch',
+      basePrice: 0,
+      currency: 'eur',
+      requiresPayment: true,
+      allowMultipleSubmissions: true,
+      ownerId: 'u-owner',
+      associationId: 'a1',
+      items,
+    }) as any;
+  const submit = (service: FormsService, answers: Record<string, unknown>) =>
+    service.submit('f1', { userId: 'u1', answers } as any);
+
+  it('stores two grids of one set, each with its own copy of the columns', async () => {
+    const { service } = makeService();
+    const form: any = await service.create(createInput(shop()));
+    for (const item of form.items) {
+      expect(item.productGrid.columnSet).toEqual(SIZES);
+      expect(item.productGrid.columns).toEqual([
+        { id: 'xs', label: 'XS' },
+        { id: 'm', label: 'M' },
+      ]);
+    }
+  });
+
+  it('a grid stored without a set is stored without one: no data rewrite', async () => {
+    const { service } = makeService();
+    const form: any = await service.create(createInput(shop(false)));
+    for (const item of form.items) expect(item.productGrid).not.toHaveProperty('columnSet');
+  });
+
+  it('refuses a set whose grids drifted, naming the grid that differs', async () => {
+    const { service } = makeService();
+    const items = shop();
+    (items[1].productGrid as any).columns.push({ id: 'l', label: 'L' });
+    const err: any = await service.create(createInput(items)).catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect(err.getResponse()).toMatchObject({
+      code: 'PRODUCT_GRID_COLUMN_SET_DIVERGED',
+      itemId: 'q-tote',
+    });
+  });
+
+  it('refuses a malformed set before any comparison', async () => {
+    const { service } = makeService();
+    const items = shop();
+    (items[0].productGrid as any).columnSet = { id: 'tailles', name: '' };
+    expect(await refusalCode(service.create(createInput(items)))).toBe(
+      'PRODUCT_GRID_COLUMN_SET_INVALID'
+    );
+  });
+
+  it('charges each grid at its own price, the shared column ids keying each grid alone', async () => {
+    const { service, saved } = makeService({ form: baseForm({ items: shop() }) });
+    await submit(service, {
+      'q-sweat': { 'sweat:xs': 1, 'sweat:m': 2 },
+      'q-tote': { 'tote:m': 3 },
+    });
+    expect(chargedCents()).toBe(3 * 2800 + 3 * 1200);
+    expect(saved[0].lines).toEqual([
+      expect.objectContaining({ itemId: 'q-sweat', colLabel: 'XS', quantity: 1, lineCents: 2800 }),
+      expect.objectContaining({ itemId: 'q-sweat', colLabel: 'M', quantity: 2, lineCents: 5600 }),
+      expect.objectContaining({ itemId: 'q-tote', colLabel: 'M', quantity: 3, lineCents: 3600 }),
+    ]);
+  });
+
+  it('a row of another grid is no cell here, even on a shared column', async () => {
+    const { service, saved } = makeService({ form: baseForm({ items: shop() }) });
+    expect(await refusalCode(submit(service, { 'q-tote': { 'sweat:m': 1 } }))).toBe(
+      'PRODUCT_GRID_UNKNOWN_CELL'
+    );
+    expect(saved).toHaveLength(0);
+  });
+
+  it('an old form without sets prices exactly as before', async () => {
+    const { service } = makeService({ form: baseForm({ items: shop(false) }) });
+    await submit(service, { 'q-sweat': { 'sweat:m': 1 }, 'q-tote': { 'tote:xs': 2 } });
+    expect(chargedCents()).toBe(2800 + 2 * 1200);
+  });
+});

@@ -1,6 +1,8 @@
 ## Reading owed - the "update Android System WebView" screen on an old engine (owner, 2026-11-21)
 
-target: 1.7.3
+target: 1.8.0
+
+_2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
 Built ([the guard](../frontend/mobile.md#an-old-android-system-webview-shows-an-update-screen-not-a-blank-page-owner-2026-11-21)):
 the ES5 guard in `app.html`, the `webview_outdated_*` strings, `window.__canariMounted`, and the startup

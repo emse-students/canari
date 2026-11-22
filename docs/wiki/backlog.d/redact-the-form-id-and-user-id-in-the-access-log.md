@@ -1,6 +1,8 @@
 ## P3 - the access log pairs a client address with an anonymous form's URL, and an address with a `userId`
 
-target: 1.7.3
+target: 1.8.0
+
+_2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
 Found in the review of the anonymous cursus join (owner decision of 2026-11-21, [forms](../frontend/modules/forms.md#an-anonymous-form-may-read-the-cursus-from-the-account-owner-2026-11-21)).
 Two linkages in the HTTP access log, both older than that feature and both outside any service log
