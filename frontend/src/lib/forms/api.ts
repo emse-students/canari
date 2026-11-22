@@ -17,6 +17,11 @@ export interface FormOption {
    */
   priceModifier: number;
   id?: string;
+  /**
+   * The "Autre" option of a choice question: picking it lets the respondent type what they mean
+   * (the text is kept under `otherKey(item.id)`, `answerText.ts`). At most one per question.
+   */
+  other?: boolean;
 }
 
 export interface FormItem {
@@ -33,6 +38,8 @@ export interface FormItem {
    * enough (decided 2026-11-06, D5). Read only for `matrix_single` / `matrix_multiple`.
    */
   requireEveryRow?: boolean;
+  /** A choice question that takes an optional free comment (kept under `commentKey(id)`). */
+  allowComment?: boolean;
   scale?: {
     min: number;
     max: number;
@@ -662,6 +669,76 @@ export async function getSubmissions(formId: string): Promise<Submission[]> {
 }
 
 /**
+ * One question's results, as the server aggregates them (`GET /forms/:id/results`, G-RESULTS;
+ * mirrors `apps/social-service/src/forms/form-results.ts`). `suppressed` is an ANONYMOUS form's
+ * question with too few answers to be detailed: it carries no figure at all.
+ */
+export type QuestionResult =
+  | { id: string; label: string; kind: ResultKind; suppressed: true }
+  | {
+      id: string;
+      label: string;
+      kind: 'choice';
+      suppressed: false;
+      multiple: boolean;
+      answered: number;
+      options: { id: string; label: string; count: number }[];
+      /** Picks that name no declared option (an "Autre" write-in, an answer older than a rename). */
+      unlisted: number;
+    }
+  | {
+      id: string;
+      label: string;
+      kind: 'scale';
+      suppressed: false;
+      answered: number;
+      min: number;
+      max: number;
+      distribution: { value: number; count: number }[];
+      mean: number | null;
+    }
+  | {
+      id: string;
+      label: string;
+      kind: 'matrix';
+      suppressed: false;
+      multiple: boolean;
+      answered: number;
+      columns: { id: string; label: string }[];
+      rows: { label: string; counts: number[] }[];
+    }
+  | {
+      id: string;
+      label: string;
+      kind: 'grid';
+      suppressed: false;
+      answered: number;
+      totalUnits: number;
+      columns: { id: string; label: string }[];
+      rows: { id: string; label: string; units: number[] }[];
+      closedCells: string[];
+    }
+  | { id: string; label: string; kind: 'text'; suppressed: false; answered: number };
+
+export type ResultKind = 'choice' | 'scale' | 'matrix' | 'grid' | 'text';
+
+/** A form's per-question results: the counted answers, the anonymity floor, one entry per question. */
+export interface FormResults {
+  totalAnswers: number;
+  anonymous: boolean;
+  /** The fewest answers an anonymous form's question needs before it is detailed; null otherwise. */
+  minAnswers: number | null;
+  questions: QuestionResult[];
+}
+
+/** The per-question results summary of a form, aggregated by the server (form manager only). */
+export async function getFormResults(formId: string): Promise<FormResults> {
+  const res = await apiFetch(`${socialUrl()}/api/forms/${encodeURIComponent(formId)}/results`);
+  if (!res.ok) throw await refusal(res, 'Failed to fetch the results');
+  return res.json();
+}
+
+/**
  * How many answers of an anonymous form wait for their batch, and the batch size (manager only). An
  * anonymous form's answers are stored in groups, all of them once the form is closed, so the
  * responses screen says why some are not listed yet.
@@ -755,6 +832,8 @@ export interface ExportLabels {
   guest: string;
   /** Header of the "last changed" column, written on a form that allows changes or holds a changed answer. */
   edited: string;
+  /** The word after a question's label in the header of its free-comment column (`Question - Comment`). */
+  comment: string;
   /** The words of the respondent's identity columns, mirrored by `export-labels.ts`. */
   identity: IdentityExportLabels;
   /**
@@ -816,6 +895,7 @@ export function exportLabels(): ExportLabels {
     email: m.form_guest_identity_email(),
     guest: m.form_submitter_guest(),
     edited: m.form_export_col_edited(),
+    comment: m.form_export_col_comment(),
     identity: {
       promo: m.form_respondent_promo_label(),
       formation: m.form_respondent_formation_label(),

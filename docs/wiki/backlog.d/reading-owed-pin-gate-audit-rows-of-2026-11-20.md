@@ -1,6 +1,8 @@
 ## Reading owed - the PIN gate's audit rows of 2026-11-20 (deadline, 429, confirmation, removed device)
 
-target: 1.7.3
+target: 1.8.0
+
+_2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
 _2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 

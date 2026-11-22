@@ -55,6 +55,13 @@ export interface ExportLabels {
    */
   edited?: string;
   /**
+   * The word that follows a question's label in the header of its free-comment column (`Question
+   * - Commentaire`, `choice-notes.ts`). Optional HERE: `exportSubmissions` leaves the comment columns
+   * out when it is absent (a build older than the comment cannot have sent it, [LEGACY] in
+   * `docs/wiki/legacy-compatibility.md`).
+   */
+  comment?: string;
+  /**
    * The words of the respondent's identity columns (`respondent-identity.ts`, owner 2026-11-16):
    * headers, and what each status and campus reads as. Optional HERE because a store build older
    * than the account fields sends none: `exportSubmissions` then writes the columns in
@@ -205,7 +212,7 @@ export function parseExportLabels(raw: string | undefined): ExportLabels {
     if (typeof label !== 'string')
       throw new BadRequestException(`export label for status "${status}" is not a string`);
 
-  for (const key of ['file', 'fileDeleted', 'email', 'guest', 'edited'] as const)
+  for (const key of ['file', 'fileDeleted', 'email', 'guest', 'edited', 'comment'] as const)
     if (labels[key] !== undefined && (typeof labels[key] !== 'string' || labels[key] === ''))
       throw new BadRequestException(`export label "${key}" must be a non-empty string`);
 

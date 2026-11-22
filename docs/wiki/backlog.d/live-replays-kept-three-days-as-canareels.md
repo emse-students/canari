@@ -1,6 +1,8 @@
 ## Live replays - a finished live is kept three days and shown as a CanaReel (owner, 2026-11-07; designed and decided 2026-11-09; built, on since 2026-11-19, the readings owed)
 
-target: 1.7.3
+target: 1.8.0
+
+_2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
