@@ -115,6 +115,7 @@ import { normaliseChoiceNotes, settleAnswerNotes } from './choice-notes';
 import type { AnswerFormatRule } from './answer-format';
 import {
   dropEmptyAnswers,
+  isPlainNumberText,
   normaliseAnswerFormats,
   settleAnswerFormats,
 } from './answer-format-rules';
@@ -3631,6 +3632,11 @@ export class FormsService {
 
     const visible = visibleItemIds(items, facts);
     const editable = new Set([...visible].filter((id) => !locked.has(id)));
+    // Formats are judged on the answers this edit CHANGES: an old answer that no longer fits (the
+    // format was added after it, or tightened) must not block the correction of another question.
+    const changed = new Set(
+      [...editable].filter((id) => !sameAnswer(merged[id], row.answers?.[id]))
+    );
     assertDeclaredOptionAnswers(items, merged as never, editable, form.priceMatrix);
     // As at submit, an answer the person cannot see is not kept - except a locked one, which is
     // what was priced and stays whatever their profile says today.
@@ -3649,7 +3655,7 @@ export class FormsService {
           ),
           new Set([...visible, ...locked])
         ),
-        editable
+        changed
       )
     );
     for (const item of items) {
@@ -5146,9 +5152,7 @@ export class FormsService {
         // A number reads as a NUMBER in the sheet (summable, sortable); a row stored before the
         // format, or by an app that sent text, whose answer is not one stays the text it was.
         row[item.id] =
-          item.format === 'number' && cell !== '' && Number.isFinite(Number(cell))
-            ? Number(cell)
-            : cell;
+          item.format === 'number' && isPlainNumberText(item, cell) ? Number(cell) : cell;
         if (commentColumns.has(item.id)) {
           row[commentKey(item.id)] = commentText(sub.answers, item.id);
         }

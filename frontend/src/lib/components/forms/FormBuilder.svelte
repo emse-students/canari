@@ -144,8 +144,9 @@
     /** The sentence of a refused save about this priced grid. */
     gridProblem?: string | null;
     /**
-     * Whether a choice question may take a free comment and an "Autre" option, and a short text a format. A builder whose
-     * answers are not stored by the forms service (a booking space) passes false.
+     * Whether a choice question may take a free comment and an "Autre" option, and a short text a
+     * format. A builder whose answers are not stored by the forms service (a booking space) passes
+     * false.
      */
     offerChoiceNotes?: boolean;
   } = $props();

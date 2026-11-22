@@ -2496,8 +2496,8 @@ from a phone or e-mail, and refuses a minimum above the maximum (`FORM_FORMAT_RA
 
 **One judgement, two sides.** `answer-format.ts` / `answerFormat.ts` is a declared byte-for-byte copy (like
 `answer-text.ts`): `judgeAnswerFormat(rule, raw)` returns the NORMALISED text to store or a `problem`
-(`not_a_number`, `not_an_integer`, `below_min`, `above_max`, `not_a_phone`, `not_an_email`). Number: optional minus,
-digits, `.` or `,` decimals, at most 15 digits, stored canonically (`3,50` -> `3.5`, `007` -> `7`). Phone: optional `+`,
+(`not_a_number`, `not_an_integer`, `ambiguous_separator` (more than one `.`/`,`), `below_min`, `above_max`, `not_a_phone`, `not_an_email`). Number: optional minus,
+digits, `.` or `,` decimals, at most 15 digits, stored as canonical decimal text, never an exponent (`3,50` -> `3.5`, `007` -> `7`, `0.0000001` stays as typed). Phone: optional `+`,
 7-15 digits, spaces/dots/dashes/brackets allowed, stored as typed (trimmed). E-mail: shape only (one `@`, dotted domain,
 254 characters) - the page cannot know more, and the existing guest e-mail check is unchanged.
 

@@ -19,6 +19,9 @@ describe('judgeAnswerFormat', () => {
     ['a decimal point is accepted', DECIMAL, '3.25', '3.25'],
     ['both bounds are inclusive', BOUNDED, '10', '10'],
     ['a zero stays a zero', WHOLE, '-0', '0'],
+    ['a tiny decimal never becomes an exponent', DECIMAL, '0.0000001', '0.0000001'],
+    ['trailing decimal zeros are dropped', DECIMAL, '2,500', '2.5'],
+    ['a negative decimal keeps its sign', DECIMAL, '-0,50', '-0.5'],
   ])('%s', (_name, rule, typed, stored) => {
     expect(judgeAnswerFormat(rule, typed)).toEqual({ ok: true, value: stored });
   });
@@ -26,7 +29,9 @@ describe('judgeAnswerFormat', () => {
   it.each([
     ['words are not a number', WHOLE, 'oui', 'not_a_number'],
     ['a trailing unit is not a number', WHOLE, '12 kg', 'not_a_number'],
-    ['two points are not a number', DECIMAL, '1.2.3', 'not_a_number'],
+    ['two points are ambiguous, not a number', DECIMAL, '1.2.3', 'ambiguous_separator'],
+    ['a thousands separator beside a decimal one', DECIMAL, '1,234.5', 'ambiguous_separator'],
+    ['two commas', DECIMAL, '1,2,3', 'ambiguous_separator'],
     ['more digits than a double keeps', WHOLE, '1234567890123456', 'not_a_number'],
     ['a decimal on a whole-number question', WHOLE, '3,5', 'not_an_integer'],
     ['under the minimum', BOUNDED, '0', 'below_min'],

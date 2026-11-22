@@ -39,6 +39,7 @@ export interface AnswerFormatRule {
 export type AnswerFormatProblem =
   | 'not_a_number'
   | 'not_an_integer'
+  | 'ambiguous_separator'
   | 'below_min'
   | 'above_max'
   | 'not_a_phone'
@@ -62,6 +63,9 @@ export function hasAnswerFormat(rule: AnswerFormatRule): boolean {
 
 /** A number as typed: an optional minus, digits, and a `.` or `,` decimal part. */
 function judgeNumber(rule: AnswerFormatRule, text: string): AnswerFormatVerdict {
+  // More than one separator ("1,234.5", "1.234,5", "1,2,3") cannot be read without guessing which
+  // one groups thousands: refused, never silently read as a decimal.
+  if ((text.match(/[.,]/g) ?? []).length > 1) return { ok: false, problem: 'ambiguous_separator' };
   const typed = text.replace(',', '.');
   if (!/^-?\d+(\.\d+)?$/.test(typed) || typed.replace(/\D/g, '').length > NUMBER_MAX_DIGITS) {
     return { ok: false, problem: 'not_a_number' };
@@ -70,8 +74,14 @@ function judgeNumber(rule: AnswerFormatRule, text: string): AnswerFormatVerdict 
   const value = Number(typed);
   if (typeof rule.min === 'number' && value < rule.min) return { ok: false, problem: 'below_min' };
   if (typeof rule.max === 'number' && value > rule.max) return { ok: false, problem: 'above_max' };
-  // `-0` reads as `0`: nobody typed a negative zero on purpose.
-  return { ok: true, value: String(value === 0 ? 0 : value) };
+  // The canonical DECIMAL TEXT, built from the digits: `String(Number(...))` would write an
+  // exponent ("0.0000001" -> "1e-7") that no reader of an answer expects. No leading zeros, no
+  // trailing decimal zeros, and `-0` reads as `0`: nobody typed a negative zero on purpose.
+  const [whole, fraction = ''] = typed.replace('-', '').split('.');
+  const integerPart = whole.replace(/^0+(?=\d)/, '');
+  const fractionPart = fraction.replace(/0+$/, '');
+  const magnitude = fractionPart ? `${integerPart}.${fractionPart}` : integerPart;
+  return { ok: true, value: value < 0 ? `-${magnitude}` : magnitude };
 }
 
 /** A phone number: an optional `+`, then 7 to 15 digits, with spaces, dots, dashes, brackets between. */

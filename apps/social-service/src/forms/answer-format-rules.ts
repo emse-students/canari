@@ -50,10 +50,11 @@ export function normaliseAnswerFormats<T extends FormattedItem>(
   items: readonly T[] | undefined
 ): T[] {
   return (items ?? []).map((item) => {
-    if (item.format == null && item.min == null && item.max == null && item.allowDecimals == null) {
-      return item;
-    }
+    const hasSettings = item.min != null || item.max != null || item.allowDecimals != null;
+    if (item.format == null && !hasSettings) return item;
     const { format, min, max, allowDecimals, ...rest } = item;
+    // `text` is the editor's name for "no format": the same as none, so it is dropped without a word.
+    if (format === 'text' && !hasSettings) return rest as unknown as T;
     const formatted = item.type === 'short_text' && hasAnswerFormat(item);
     if (!formatted) {
       logger.warn(`[ANSWER_FORMAT] save: format settings dropped from question ${item.id}`);
@@ -104,6 +105,16 @@ export function settleAnswerFormats(
     out[item.id] = verdict.value;
   }
   return out;
+}
+
+/**
+ * Whether a stored answer to a number question is a plain number the sheet may hold as one: the
+ * canonical text the judgement itself would store. A row from before the format keeps its text
+ * ("007", "0612345678", "1e3", "0x1A" are identifiers or codes, not quantities).
+ */
+export function isPlainNumberText(item: FormattedItem, cell: string): boolean {
+  const verdict = judgeAnswerFormat({ format: item.format, allowDecimals: true }, cell);
+  return verdict.ok && verdict.value === cell;
 }
 
 /**
