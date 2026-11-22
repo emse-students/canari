@@ -12,6 +12,7 @@ import {
 } from '$lib/mls-client/commitSubmission';
 import { userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import { setGraineRuntime } from './runtime';
+import { convergenceTicket, forgetAllKeyGroupConvergence } from './keyGroupConvergence';
 import { channelScope, workspaceScope } from '$lib/mls-client/distributionScope';
 import { UnpublishedBranchError } from '$lib/mls-client/publishedBranch';
 import { DEADLINE_MS, fetchUnderDeadline } from '$lib/utils/requestDeadline';
@@ -771,5 +772,75 @@ describe('a crafted credential in a key group', () => {
     await pass();
     expect(said()).toBe(2);
     expect(lines.join(' | ')).toContain('2 leaf/leaves outside the leaf-identity rule');
+  });
+});
+
+describe('a pass says it CONVERGED only when a repetition would do nothing', () => {
+  // What lets a load skip the next pass on an unchanged key-group version (`keyGroupConvergence.ts`).
+  const report = () =>
+    reconcileDistributionGroupRosterReported(channelService, workspaceScope('ws-1'), () => {});
+
+  it('an agreeing tree with the revocation question answered converged', async () => {
+    await expect(report()).resolves.toEqual({
+      removedUserIds: [],
+      heldUserIds: ['alice', 'bob'],
+      converged: true,
+    });
+  });
+
+  it('an agreeing tree whose revocation question went unanswered did not', async () => {
+    getRevokedLeaves.mockRejectedValue(new Error('502'));
+    expect((await report()).converged).toBeUndefined();
+  });
+
+  it('a pass that removed somebody, or a revoked device, did not', async () => {
+    listWorkspaceMembers.mockResolvedValue([{ userId: 'alice' }]);
+    expect((await report()).converged).toBeUndefined();
+    listWorkspaceMembers.mockResolvedValue([{ userId: 'alice' }, { userId: 'bob' }]);
+    forgetRevokedLeafAnswers();
+    getRevokedLeaves.mockResolvedValue(['bob:web-1']);
+    expect((await report()).converged).toBeUndefined();
+  });
+
+  it('a roster it could not read did not', async () => {
+    listWorkspaceMembers.mockRejectedValue(new Error('offline'));
+    expect((await report()).converged).toBeUndefined();
+  });
+});
+
+describe('a community pass that did not converge withdraws the convergence record, in the lane', () => {
+  // By construction, whoever ran it: the actor of a removal (`commitRemoval.ts`) and the departure
+  // committer call the lane directly, never `ensureCommunityDistributionGroup`.
+  beforeEach(() => forgetAllKeyGroupConvergence());
+
+  it('a converged pass leaves it; a removal, an unreadable roster, an unrecorded admission withdraw it', async () => {
+    // Counters are never cleared (only the session ends), so the assertions are on the delta.
+    const base = convergenceTicket('ws-1').withdrawn;
+    await reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'));
+    expect(convergenceTicket('ws-1').withdrawn).toBe(base);
+
+    listWorkspaceMembers.mockResolvedValueOnce([{ userId: 'alice' }]);
+    await reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'));
+    expect(convergenceTicket('ws-1').withdrawn).toBe(base + 1);
+
+    listWorkspaceMembers.mockRejectedValueOnce(new Error('offline'));
+    await reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'));
+    expect(convergenceTicket('ws-1').withdrawn).toBe(base + 2);
+
+    observeAdmissionState.mockRejectedValueOnce(new Error('ledger write failed'));
+    const report = await reconcileDistributionGroupRosterReported(
+      channelService,
+      workspaceScope('ws-1'),
+      () => {}
+    );
+    expect(report.converged).toBeUndefined();
+    expect(convergenceTicket('ws-1').withdrawn).toBe(base + 3);
+  });
+
+  it('a private salon pass touches no community record', async () => {
+    const base = convergenceTicket('ws-1').withdrawn;
+    listMembers.mockRejectedValueOnce(new Error('offline'));
+    await reconcileDistributionGroupRoster(channelService, channelScope('ws-1', 'chan-1'));
+    expect(convergenceTicket('ws-1').withdrawn).toBe(base);
   });
 });

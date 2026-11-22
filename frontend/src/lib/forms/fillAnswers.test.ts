@@ -279,3 +279,54 @@ describe('selectionsFromAnswers', () => {
     });
   });
 });
+
+describe('the comment and "Autre" texts of a choice question', () => {
+  const colour = q({
+    id: 'c',
+    type: 'single_choice',
+    allowComment: true,
+    options: [
+      { id: 'red', label: 'Rouge', priceModifier: 0 },
+      { id: 'oth', label: 'Autre', priceModifier: 0, other: true },
+    ],
+  });
+  const plain = q({
+    id: 'p',
+    type: 'single_choice',
+    options: [{ id: 'a', label: 'A', priceModifier: 0 }],
+  });
+
+  it('sends the comment and the text typed beside a picked "Autre", trimmed', () => {
+    expect(
+      visibleAnswers([colour], { c: 'oth', 'c#other': ' Vert ', 'c#comment': ' merci ' })
+    ).toEqual({ c: 'oth', 'c#other': 'Vert', 'c#comment': 'merci' });
+  });
+
+  it('leaves out a text left behind by a changed mind, and blank ones', () => {
+    expect(visibleAnswers([colour], { c: 'red', 'c#other': 'Vert', 'c#comment': '  ' })).toEqual({
+      c: 'red',
+    });
+  });
+
+  it('sends no comment for a question that takes none', () => {
+    expect(visibleAnswers([plain], { p: 'a', 'p#comment': 'x' })).toEqual({ p: 'a' });
+  });
+
+  it('keeps a comment given with no answer, as the question itself is optional', () => {
+    expect(visibleAnswers([colour], { c: '', 'c#comment': 'seulement ca' })).toEqual({
+      'c#comment': 'seulement ca',
+    });
+  });
+
+  it('leaves the text of a locked question out of an edit, as the question itself', () => {
+    const answers = { c: 'oth', 'c#other': 'Vert', 'c#comment': 'hi' };
+    expect(editedAnswers([colour], answers, ['c'])).toEqual({ 'c#comment': 'hi' });
+  });
+
+  it('reads the texts back from a stored answer', () => {
+    expect(selectionsFromAnswers([colour], { c: 'oth', 'c#other': 'Vert' })).toMatchObject({
+      c: 'oth',
+      'c#other': 'Vert',
+    });
+  });
+});

@@ -58,6 +58,11 @@
      */
     offerPricedGrid?: boolean;
     /**
+     * Whether a choice question may take a free comment and an "Autre" option: a builder whose
+     * answers the forms service does not store (a booking space) passes false.
+     */
+    offerChoiceNotes?: boolean;
+    /**
      * Whether the add wizard offers the text and image blocks (`formBlocks.ts`). A booking space
      * passes false: its questions take none (`item-block`).
      */
@@ -91,6 +96,7 @@
     fileHint,
     reveal = null,
     offerPricedGrid = true,
+    offerChoiceNotes = true,
     offerBlocks = true,
     onPricedGridAdded,
     onPricedGridGone,
@@ -228,6 +234,7 @@
           onRemove={() => removeItem(i)}
           showPriceModifier={requiresPayment}
           pricedByGrid={gridQuestionIds.includes(items[i]?.id)}
+          {offerChoiceNotes}
           questionIndex={numbers.get(_item.id) ?? i + 1}
           onMoveUp={() => moveItem(i, 'up')}
           onMoveDown={() => moveItem(i, 'down')}
