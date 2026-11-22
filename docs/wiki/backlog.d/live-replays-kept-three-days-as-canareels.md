@@ -6,6 +6,8 @@ _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
 _2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
+_2026-11-22, production, reading 9 ([reading](../device-verification.md#the-production-reading-of-2026-11-22-the-172-stable-26-hours-on)): **PARTIAL - the week is not over (it ends 2026-11-26) and holds ONE data point.** One replay exists (`kind = 'replay'`, 2026-11-19, 0.37 h declared, none due yet); the `live_segments` volume still holds one live folder, 666 files, 411 MiB, as on 2026-11-20 (about 1.1 GB per hour of live, inside the forecast's 0.9 to 1.4); the root filesystem is 39 % used, far from the 20 GB replay cap. Reading 9 closes with the week's figure read on or after 2026-11-26; reading 7 (`restic ls latest`) still waits for the backup account._
+
 _2026-11-20, production read after the `1.7.1` stable ([reading](../device-verification.md#the-production-reading-of-2026-11-20-the-171-stable-deploy)): **WP-R3 readings 3 and 5 PASS on production** (`drained=0 leftAlone=0` at the boot, so no `live/` key in Garage's listing; the `live_segments` volume holds one live folder, 666 files, 410 MiB), and **reading 7 is half read**: the 2026-11-20 03:00Z snapshot exists and verified, the backup's mount list is `garage_data`, `garage_meta`, `media_meta` and names no `live_segments`, but `restic ls latest` is refused to a deploy account (the repository and its password are the backup account's). **Owed: the backup account lists `latest` once, and the lead reads production's first-week replay bytes (reading 9).**_
 
 **Urgent (owner, 2026-11-19):** *"C'est assez urgent, il faudrait le faire dès que possible et l'activer en

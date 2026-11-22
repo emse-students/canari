@@ -20,3 +20,5 @@ at the next launch - never to unlock - and the chat-delivery log shows no `legac
 line for it.
 
 **2026-11-20, [S18](../device-verification.md#the-readings-of-2026-11-20-s18-172-alpha3-notice-previews-launcher-shortcuts-the-capture-line-live-screens-and-the-backup-domains) (`1.7.2-alpha.3`): NOT TAKEN.** The unreachable and 429 states cannot be induced on the bench phones; the rows stay owed to a browser on dev with DevTools offline.
+
+**2026-11-22, web rig (`1.7.3-alpha.5`, dev): rows 2 and 4 READ, PASS.** Offline in DevTools after the keypad was drawn, "Déverrouiller" ended in the unreachable text in 1.1 s and the same PIN unlocked once back online; the sign-in page shows "Se connecter avec un mot de passe". The 429 text, rows 1, 3 and 5 stay owed: they need a new test account, a device removed from another device, and an abandoned first setup.

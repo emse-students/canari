@@ -403,6 +403,17 @@ x the mean size.
 
 **Conclusion: the one-year lifetime costs a few GB a year at most - not a storage concern.**
 
+## Migration 176: the videos already posted became reels (read in production, 2026-11-22)
+
+`176_gallery_videos_become_reels.sql` (held, approved 2026-11-19) was applied by the `1.7.1` stable (2026-11-20
+03:57Z). **Read-only on production two days later:** 63 reels, 47 of them with a NULL `durationMs` (the marker of
+this migration's rows, exactly the 47 the pre-read of 2026-11-19 predicted) and 16 native; the earliest expiry is
+2027-10-05 and none is due, so the worker deleted nothing; `[REEL_GC]` stays silent when nothing is due, so its
+absence is the expected reading; the boot's `Reel backfill: 62 live reel blob(s), 0 refused, 0 not reached` leaves
+the refused-claims leak at zero. One single-video post still matches the allowlist: it is not among the 47 and its origin was not read.
+The reading is `SELECT kind, count(*) FROM posts GROUP BY 1` plus the `durationMs IS NULL` split, under
+`default_transaction_read_only=on`.
+
 ## The migration: `069_posts_reels.sql`
 
 Adds `kind varchar(16) NOT NULL DEFAULT 'post'`, `"durationMs" integer NULL`, `"expiresAt"
