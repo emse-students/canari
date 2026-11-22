@@ -9,28 +9,29 @@
 # stopped once more. A check whose verdict flips with the feed fails builds for nothing and teaches
 # its readers to delete the entry, which is the hole the check exists to close.
 #
-# THE RULE. Every entry names the package version it was written for (`purls:` or `covers:`; see
+# THE RULE. Every entry names the package version it was written for (`purls:`, see
 # `image-scan-allowlist.yaml`). An entry is judged on that `id package version` triple, against what
 # the scan JSON carries (`--list-all-pkgs`):
 #   - the triple is REPORTED                    -> the entry is needed. Silent.
 #   - NOT reported, package still in an image   -> a plain log line, no failure. The advisory was
-#       dropped, rescored below HIGH or lost its fixed version (the scan filters on both), but the package version the entry was reviewed on still ships, so the
+#       dropped, rescored below HIGH or lost its fixed version (the scan filters on both), but the
+#       package version the entry was reviewed on still ships, so the
 #       suppression still covers exactly what was assessed. The line names the database version.
 #   - NOT reported, package version in NO image -> DEAD, exit 1. The image moved: the reviewed code
 #       is gone, and a suppression left behind would hide that advisory on whatever replaced it.
-# HOW FAR THE SCOPE REACHES, honestly. A `purls:` entry is enforced by Trivy itself: one advisory id on
-# one package version, so a new version is outside it. A `paths:`-scoped or id-only entry is NOT:
-# Trivy ignores `covers:`, so such an entry still suppresses that id on ANY version at that path (or
-# anywhere), and `covers:` only tells THIS check what the entry was reviewed on. The inventory is also
-# pooled across all scanned images: a covered package present in another image keeps the entry alive.
-# Both are closed by putting the version into `purls:` (follow-up).
+# HOW FAR THE SCOPE REACHES. Every entry names the package version in `purls:`, which TRIVY enforces
+# (one advisory id on one package version; a new version is outside it), and `paths:` further
+# restricts it (the two combine as an AND). This check judges exactly that scope: an entry with `paths:`
+# is alive only on a package at those paths. An entry with a purl and no `paths:` is pooled across all
+# scanned images, as its `statement` names them.
 #
 # THE TEST THAT LIFTS A REFUSAL: delete the entry (the image no longer carries what it covers), or, if
 # you believe the image still carries it, show it - `trivy image --list-all-pkgs --format json <image>`
 # must list the package at that version; the scan inventory is the evidence, and it is wrong if not.
 #
 # Usage: image-allowlist-retirement.sh <scan json (one or many objects)> <covers file> [database note]
-#   covers file: one `<id> <package> <version>` per line (`image-scan.sh --allowlist-covers`)
+#   covers file: one `<id> <package> <version> <paths, comma-joined, or ->` per line
+#   (`image-scan.sh --allowlist-covers`)
 # Exit:  0 no entry is dead (kept-entry lines may have been printed); 1 one is dead, or the scan JSON is empty
 #        or the covers file names nothing (an empty answer is a silent registry, never proof).
 set -uo pipefail
@@ -42,18 +43,39 @@ db="${3:-an unreadable Trivy database}"
 [ -s "$json" ] || { echo "::error::the un-ignored scan printed nothing, so it cannot say whether any allowlist entry is still needed. Not granted."; exit 1; }
 [ -s "$covers" ] || { echo "::error::no allowlist entry names a package it covers, so there is nothing to check"; exit 1; }
 
-reported="$(jq -r '.Results[]?.Vulnerabilities[]? | "\(.VulnerabilityID) \(.PkgName) \(.InstalledVersion)"' "$json" | sort -u)"
-# Every `package version` the images carry; a package with a release is listed with and without it.
-inventory="$(jq -r '.Results[]?.Packages[]? | "\(.Name) \(.Version)", (select(.Release != null and .Release != "") | "\(.Name) \(.Version)-\(.Release)")' "$json" | sort -u)"
+# Both sets carry WHERE each package sits (its file path, and the scan target it came from), so an
+# entry scoped by `paths:` is judged only against packages at those paths: the same package name in
+# another image, or at another path, cannot keep it alive. A deb with an epoch is listed with and
+# without it (`purls:` carry no epoch; Trivy's installed version does), a release with and without.
+reported="$(jq -r '.Results[]? | .Target as $t | .Vulnerabilities[]? | ([.VulnerabilityID, .PkgName, .InstalledVersion, (.PkgPath // $t)] | @tsv), ([.VulnerabilityID, .PkgName, (.InstalledVersion | sub("^[0-9]+:"; "")), (.PkgPath // $t)] | @tsv)' "$json" | tr -d '\r' | sort -u)"
+inventory="$(jq -r '.Results[]? | .Target as $t | .Packages[]? | . as $p
+  | [($p.Version // ""), (if ($p.Release // "") != "" then "\($p.Version)-\($p.Release)" else empty end)] | .[] as $ver
+  | (if ($p.Epoch // 0) > 0 then ["\($p.Epoch):\($ver)", $ver] else [$ver] end) | .[] as $full
+  | [$p.Name, $full, ($p.FilePath // $t)], [$p.Name, $full, $t] | @tsv' "$json" | tr -d '\r' | sort -u)"
 [ -n "$inventory" ] || { echo "::error::the scan JSON lists no package (was it run without --list-all-pkgs?), so no entry can be judged. Not granted."; exit 1; }
+
+# present <rows> <key fields> <key> <globs>: is there a row whose first fields equal the key and whose
+# LAST field (a path or target) matches one of the comma-separated globs (`-` = any)?
+present() {
+  awk -F'\t' -v nk="$2" -v key="$3" -v globs="$4" '
+    BEGIN { n = split(globs, g, ","); for (i = 1; i <= n; i++) { r = g[i]; gsub(/[.]/, "[.]", r); gsub(/\*+/, ".*", r); re[i] = "^" r "$" } }
+    {
+      k = $1; for (j = 2; j <= nk; j++) k = k "\t" $j
+      if (k != key) next
+      if (globs == "-") { found = 1; exit }
+      for (i = 1; i <= n; i++) if ($NF ~ re[i]) { found = 1; exit }
+    }
+    END { exit !found }
+  ' <<<"$1"
+}
 
 dead=""
 unlisted=0
-while read -r id name version; do
+while read -r id name version globs; do
   [ -n "$id" ] || continue
-  if grep -qxF -- "$id $name $version" <<<"$reported"; then
+  if present "$reported" 3 "$(printf '%s\t%s\t%s' "$id" "$name" "$version")" "$globs"; then
     continue
-  elif grep -qxF -- "$name $version" <<<"$inventory"; then
+  elif present "$inventory" 2 "$(printf '%s\t%s' "$name" "$version")" "$globs"; then
     # A plain log line, never an annotation: it is expected, and a line every run prints as a warning
     # is noise. The causes are NOT told apart here: the scan runs with --severity HIGH,CRITICAL and
     # --ignore-unfixed, so a dropped advisory, a rescore below HIGH and a lost fixed version look alike.
@@ -61,7 +83,7 @@ while read -r id name version; do
     unlisted=$((unlisted + 1))
   else
     dead="$dead
-    $id on $name $version"
+    $id on $name $version$([ "$globs" = - ] || printf ' %s' "$globs")"
   fi
 done <"$covers"
 
