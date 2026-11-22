@@ -31,6 +31,12 @@ const CONTAINER = 'src/lib/components/layout/PageContainer.svelte';
 const PANEL = 'src/lib/components/posts/ConversationsMiniPanel.svelte';
 const CSS = 'src/app.css';
 const FEED = 'src/routes/posts/+page.svelte';
+/**
+ * A negative top margin written as a NUMBER or an arbitrary length, under any variant chain
+ * (`md:`, `max-md:`, `md:hover:`) and whatever quote or space precedes it - the half that drifts from
+ * `--page-column-top`. A token (`-mt-(--x)`) is not matched.
+ */
+const RAW_NEGATIVE_TOP = /(?<![\w-])(?:[\w-]+:)*-mt-(?:\d|\[)/;
 
 const read = (path: string) => withoutComments(readFileSync(path, 'utf8'));
 
@@ -62,8 +68,22 @@ describe('the page column and the aside that sticks to it read one number', () =
     // raw `-mt-6`, it is right only while the token says 1.5rem.
     const markup = read(FEED);
     expect(markup).toContain('-mt-(--page-column-top)');
-    expect(/(?:^|\s|')(?:md:|lg:|xl:)?-mt-\d/.test(markup)).toBe(false);
+    expect(RAW_NEGATIVE_TOP.test(markup)).toBe(false);
   });
+
+  it.each(['class="-mt-6"', "'sm:-mt-6'", 'max-md:-mt-6', '-mt-[24px]', 'md:hover:-mt-2'])(
+    'the raw-offset pattern catches %s',
+    (spelling) => {
+      expect(RAW_NEGATIVE_TOP.test(spelling)).toBe(true);
+    }
+  );
+
+  it.each(['-mt-(--page-column-top)', 'md:mt-0', 'sm:-mt-(--page-column-top)', 'pt-2'])(
+    'the raw-offset pattern leaves %s alone',
+    (spelling) => {
+      expect(RAW_NEGATIVE_TOP.test(spelling)).toBe(false);
+    }
+  );
 });
 
 describe('the no-glass path changes the paint of the chrome, never its geometry', () => {
