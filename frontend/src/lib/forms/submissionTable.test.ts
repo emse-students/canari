@@ -176,3 +176,36 @@ describe('submitterName', () => {
     );
   });
 });
+
+describe('answeredItems - a choice with a comment and an "Autre"', () => {
+  const colour = item({
+    id: 'c',
+    label: 'Couleur',
+    type: 'single_choice',
+    allowComment: true,
+    options: [
+      { id: 'red', label: 'Rouge', priceModifier: 0 },
+      { id: 'oth', label: 'Autre', priceModifier: 0, other: true },
+    ],
+  });
+
+  it('reads the typed text inside the answer and the comment beside it', () => {
+    const [answered] = answeredItems([colour], {
+      c: 'oth',
+      'c#other': 'Vert',
+      'c#comment': 'merci',
+    });
+    expect(answered).toMatchObject({ text: 'Autre: Vert', comment: 'merci' });
+  });
+
+  it('keeps a person who only left a comment', () => {
+    expect(answeredItems([colour], { 'c#comment': 'juste ca' })).toHaveLength(1);
+  });
+
+  it('opens the panel for a comment even when the answer is already a column', () => {
+    const [answered] = answeredItems([colour], { c: 'red', 'c#comment': 'merci' });
+    expect(panelAddsNothing([answered], [colour], () => false)).toBe(false);
+    const [plain] = answeredItems([colour], { c: 'red' });
+    expect(panelAddsNothing([plain], [colour], () => false)).toBe(true);
+  });
+});

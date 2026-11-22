@@ -2425,6 +2425,61 @@ rather than in the app therefore says something about App Link verification on t
 about the code - `adb shell pm get-app-links fr.emse.canari` is what settles it, and a scanner that
 renders the page in its own webview never consults the resolver at all.
 
+## A choice question's free comment and its "Autre" (owner, 2026-11-21, 1.8.0)
+
+**Decision** (owner, 2026-11-21, on a read-only survey of production: 21 forms, 668 answers - *"Oui, en 1.8.0"*).
+In one anonymous survey, 6 of 18 questions were a `long_text` "Commentaire" placed right after a yes/no, answered
+20-57% of the time, while only 1 of the 42 choice questions offered an "Autre". So a **single choice, a multiple
+choice and a drop-down** may now carry (1) an optional **free comment** per question, and (2) ONE **"Autre"
+option** whose picker may type what they mean. Charter: principle 2 (the essential is never lost - what a
+person says beside a choice is kept, and a build that cannot draw the new boxes still sends its choice), principle 1
+(an anonymous form stays anonymous: both texts are free text stored in the answer's own record, no new identity),
+principle 7 (one toggle each, nothing else to configure).
+
+**Model.**
+- Question: `allowComment?: boolean`. Option: `other?: boolean` (at most one per question). Both on choice types only;
+  `normaliseChoiceNotes` (`forms/choice-notes.ts`) corrects anything else at save and LOGS it, because the editor can
+  never draw such a payload (an old editor round-tripping a question turned into text; a hand-made call).
+- Answer: the choice stays an option id (or a list), so pricing, conditions and results are untouched. The two texts
+  ride in the same record under `<id>#comment` and `<id>#other` (`answer-text.ts`: `commentKey`, `otherKey`,
+  `noteKeyOwner`). They are NOT questions: `answerSelections` never sees them, so a condition keyed on the option
+  chosen treats "Autre" like any other option (its id is in `showIf.answer.optionIds` as usual) and ignores the text.
+- **Decision: the "Autre" text is ALLOWED, never required.** A client built before this draws "Autre" as a plain
+  option with no box and could not satisfy a requirement; requiring it would lock those clients out of the form.
+
+**Submit and edit** (`settleAnswerNotes`, run where hidden answers were already dropped). A text is stored, trimmed,
+only when its question is visible and (comment) the question takes one or (other) the answer really picks the "Autre"
+option; otherwise it is dropped and logged at debug. A text of a question the form does not declare is dropped. An
+empty text is the absence, like every unanswered question. The DTO counts the texts apart from the questions' cap
+(100 + 100). On an answer EDIT the `#other` of a price-locked question stays with its locked choice; the comment is
+free to change.
+
+**Every consumer of an answer, enumerated (2026-11-21).**
+
+| Consumer | What it does with the texts |
+| --- | --- |
+| XLSX export (`exportSubmissions`) | "Autre" reads `Autre: text` INSIDE the answer cell (one value per row to count); a comment gets its own column `<label> - <comment word>`, written when the question takes one or an answer holds one from when it did. The word is the client's (`ExportLabels.comment`, required like `file`: an app older than this one exporting such a form is refused with a clear 400 until updated). |
+| Responses table / panel (`submissionTable.ts`, `FormSubmissionsTable`) | the cell reads `Autre: text`; the comment shows under the answer in the detail panel, which opens whenever a comment exists (`panelAddsNothing`). A person who left ONLY a comment is listed. |
+| Responses search (`responsesView.ts`) | searches both texts. |
+| Results summary (`choiceResults`) | counts "Autre" as an option; the texts are not aggregated. |
+| Pricing / `calculateModifiers` / price grid / `answerSelections` / conditions | unchanged: they read the option id only. |
+| Organiser alert, guest receipt, payment, reminders | read no answer. |
+| Own-answer page and edit | the fill pages bind both texts; `selectionsFromAnswers` passes them through; `editedAnswers` leaves a locked question's `#other` out. |
+| Booking spaces | not offered (`offerChoiceNotes={false}` in the space editor): bookings answers are not stored by this service. |
+| Account erasure / retention | the texts are free text of the same class as a long answer, in the same record. |
+
+**Editor.** `ChoiceNotesEditor.svelte`, under a choice question's options (the card, not the add wizard): a switch
+"Option Autre" that adds or removes the one `other` option (the option stays editable in the options list; the
+switch reads whether one exists), and a switch "Commentaire libre". The fill card draws "Autre" last whatever its
+stored place, shows the text box only while "Autre" is picked, and sends neither text when it is empty or when
+"Autre" is no longer the answer.
+
+**Old clients.** An old app FILLING a form with these: draws "Autre" as a plain option, no comment box - nothing is
+lost, nothing blocks. An old app EDITING such a form round-trips both marks (its editor spreads unknown fields),
+so they survive its save. A new editor on a server older than this change (a store build reaches phones before
+production deploys): the whitelist drops both fields, the toggles read off again after the save - the same
+visible, harmless failure as any new field; no estate gate was added for it.
+
 ## Note on form management
 
 Association admins reach the same list, scoped to their association, through the associations
@@ -3192,10 +3247,10 @@ functions in `lib/forms/responsesView.ts`.
   `productGridTotals` moved into `product-grid-contract.ts` (copied byte for byte), and the export's
   "Totaux" sheet calls the same functions. A refunded, cancelled, expired or still-pending answer is
   in neither list, so it never counts (owner).
-- **"Résumé"**: a bar per option of every single choice, multiple choice and dropdown question
-  (refunded, cancelled and expired answers left out; a multiple choice counts once per ticked
-  option), plus pieces per product on a grid form. **Managers only** (owner): the whole screen is
-  - `getSubmissions` answers a form manager and nobody else - and the tab says so.
+- **"Résumé"**: since 2026-11-21 the SERVER's per-question results, not a count in the browser -
+  see [the per-question results summary](#the-per-question-results-summary-g-results-owner-2026-11-21).
+  **Managers only** (owner): the whole screen is - `getSubmissions` answers a form manager and
+  nobody else - and the tab says so.
 - **Exporter**: the row's export control is now a menu (`FormExportMenu.svelte`): *Excel* (the
   workbook), and on a grid form *CSV · Articles* and *CSV · Totaux*. A CSV is written by the server
   from the SAME sheet the workbook carries (`GET /forms/:id/export?format=articles-csv|totals-csv`,
@@ -3208,9 +3263,89 @@ functions in `lib/forms/responsesView.ts`.
   export, and `refunded` joined `PAYMENT_STATUSES`, so the file names that status in words too.
 
 Tests: `FormResponsesPanel.svelte.test.ts` (filters, search, the guest badge, the cards, the totals
-with and without unpaid cash, a closed cell, the bars, the refund control),
+with and without unpaid cash, a closed cell, the Résumé tab fed by the server, the refund control),
 `FormExportMenu.svelte.test.ts`, `product-grid-contract.spec.ts` (the counting rule) and
 `product-grid-export.spec.ts` (both CSVs read back, both refusals).
+
+## The per-question results summary (G-RESULTS, owner, 2026-11-21)
+
+**Decision.** Owner, 2026-11-21, on a read-only production survey of 21 forms and 668 answers (four
+forms with 101-126 answers, 2091 single-choice answers in all, every count rebuilt by hand in a
+spreadsheet): *"Oui, en 1.8.0"* for the per-question results summary, moved up from 1.10.0. The
+same answers refused an opens counter (*"Non, pas maintenant"*): **nothing here counts views**.
+The charter principle it touches is the FIRST, *your messages are yours* ([principes](../../../principes.md)):
+see the floor below.
+
+**What it is.** `GET /api/forms/:id/results`, answered by `FormsController.getResults` after
+`assertFormManager` - **the same rule as the responses list** (`getSubmissions`): a global admin, the
+holder of `MANAGE_FORMS` on the association, the owner of a personal form, and nobody else; a
+member who answered reads nothing. The "Résumé" tab (`FormResultsSummary.svelte`) draws it. The tab
+used to count choice questions in the browser from every answer the list had shipped; that function
+(`choiceResults`) is deleted.
+
+**Computed by SQL, never shipped.** `forms/form-results.ts` runs at most eight statements, each
+over the ids of ONE family of question, each one `jsonb_each(s.answers)` pass with a `GROUP BY`:
+the payload is a number per option, cell or scale step whatever the number of answers.
+
+| Question | What comes back |
+| --- | --- |
+| single choice, dropdown | a count per option, and `unlisted` (picks naming no declared option: an old label that matches nothing, or the "Autre" write-in another change adds - it needs no change here) |
+| multiple choice | a count per tick; `answered` is the people, so the percentages may pass 100 % |
+| linear scale | the count per step of `scale.min..max` (empty steps at 0), and the mean over the answers inside the scale |
+| matrix (single / multiple) | a rows x columns table of counts |
+| product grid | pieces per cell, the grid's total, and how many answers ordered anything; a closed cell nobody ordered stays struck through |
+| short / long text | the number of answers, and a link to the responses table. No word cloud |
+| file | nothing (it has no results) |
+
+**What counts** (`COUNTED_ANSWER_SQL`): paid, free, waiting for cash, paid over capacity, and an
+online payment still inside its 30-minute hold - the seat-hold rule. A refunded, cancelled or
+expired answer is not a person's answer now, so it never counts (what the browser tab already did).
+
+**The denominator is always said.** Every question carries `answered`, the counted answers that
+gave THAT question an answer, and a percentage is over it - never over the form's total, since a
+question behind a condition is answered by few. A single choice's `answered` is the sum of its own
+picks and a scale's the sum of its own in-range steps, so a stray stored shape (a number where a list
+belongs) can never make the bars disagree with the denominator they are divided by. The card says it
+in words; a multiple choice adds that the total may pass 100 %.
+
+**The anonymity floor** (`ANONYMOUS_MIN_ANSWERS = 5`, charter principle 1). On an ANONYMOUS form a
+question is detailed only once at least five answers gave it an answer; below that it arrives
+`suppressed: true` with no figure at all - not its count either, because a count of one says
+"somebody skipped it" about the only person who answered. The floor is per QUESTION, because that is
+the unit a stranger would read: a form of 40 answers where 2 people filled the optional comment has a
+thin comment question, and only that one is hidden.
+
+**There are NO cross-tabs.** No question split by another, none by promo, formation or status. A
+cross-tab is the way a floor of five over the whole becomes a cell of one, so the rule is not
+"apply the floor to each cell" (a suppressed cell reads as a missing number a subtraction recovers)
+but that the summary offers no cut that could reach one. If one is ever built it must name its own
+floor and the test that pins it.
+
+**The table keeps listing every answer (owner, 2026-11-22).** On an anonymous form the responses
+TABLE lists each answer to a manager, without a name or a time (`getSubmissions`), and it stays so:
+organisers need the table for orders and sign-ups, and the form is anonymous by account, not by
+content. The floor of five therefore applies to the SUMMARY only - the view that is quoted,
+screenshotted and shared - under principle 1 ([principes](../../../principes.md)); it does not
+restrict the table and must not be read as doing so.
+
+**Performance.** Measured on production, read-only, 2026-11-21: each statement over ALL 690 counted
+answers of every form (a form of 1000 answers is the same order) runs in 7-17 ms. The first draft
+looked answers up per question (`answers -> id`) and paid a function scan per row per question; the
+single `jsonb_each` pass removed it. **The survey-grid statement was compiled by the JIT** - the
+planner prices a nested `jsonb_each` at 1000 rows per level - taking 430-500 ms to run a 7 ms query,
+so `FormsService.getResults` runs in a read-only transaction with `SET LOCAL jit = off` (it ends with
+the transaction, the pooled connection is left as found). Production holds no linear-scale or
+survey-grid question yet, so those two statements are proven by `form-results.integration.spec.ts`
+(real Postgres, in CI) and by the same statements run over literal rows in a read-only session; the
+priced grid's totals were checked equal to the sum of the stored `lines` quantities (35 and 124).
+
+**Old clients.** The route is new and read by the tab only; an app older than this release does not
+call it and keeps its own client-side tab, which cannot disagree with the server since both exclude
+the same statuses. Nothing stored changes - **no migration**.
+
+Tests: `form-results.spec.ts` (every family's shape, the floor's boundary at 4 and 5, what counts),
+`form-results.integration.spec.ts` (the SQL on a real database), `forms.controller.results.spec.ts`
+(managers only), `resultsView.test.ts`, `FormResponsesPanel.svelte.test.ts`.
 
 ## The order bar rests on the bottom of the screen (2026-11-07)
 

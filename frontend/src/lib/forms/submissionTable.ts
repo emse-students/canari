@@ -1,4 +1,10 @@
-import { answerText, type AnswerGridLine, type AnswerWords } from './answerText';
+import {
+  answerText,
+  commentText,
+  otherText,
+  type AnswerGridLine,
+  type AnswerWords,
+} from './answerText';
 import type { FormItem } from './api';
 import { guestDisplayName } from './guestIdentity';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
@@ -66,7 +72,10 @@ export function answerColumns(items: FormItem[], max = ANSWER_COLUMNS_PAID): For
 /** A question paired with what one submitter answered to it. */
 export interface AnsweredItem {
   item: FormItem;
+  /** The answer as text; an "Autre" reads `Autre: what was typed`. Empty when only a comment was left. */
   text: string;
+  /** The free comment left beside the answer, empty when none (`answerText.ts`). */
+  comment?: string;
 }
 
 /**
@@ -90,8 +99,12 @@ export function answeredItems(
 ): AnsweredItem[] {
   if (!answers) return [];
   return items
-    .map((item) => ({ item, text: answerText(answers[item.id], item, words, lines) }))
-    .filter((answered) => answered.text !== '');
+    .map((item) => ({
+      item,
+      text: answerText(answers[item.id], item, words, lines, otherText(answers, item.id)),
+      comment: commentText(answers, item.id),
+    }))
+    .filter((answered) => answered.text !== '' || answered.comment !== '');
 }
 
 /**
@@ -120,7 +133,9 @@ export function panelAddsNothing(
   isClipped: (itemId: string) => boolean
 ): boolean {
   const drawn = new Set(columns.map((column) => column.id));
-  return answered.every((answer) => drawn.has(answer.item.id) && !isClipped(answer.item.id));
+  return answered.every(
+    (answer) => drawn.has(answer.item.id) && !answer.comment && !isClipped(answer.item.id)
+  );
 }
 
 /**

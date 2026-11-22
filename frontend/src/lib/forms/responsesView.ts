@@ -1,4 +1,4 @@
-import { answerText, type AnswerWords } from './answerText';
+import { answerText, commentText, otherText, type AnswerWords } from './answerText';
 import type { FormItem, Submission } from './api';
 import {
   PRODUCT_GRID_AWAITING_CASH_STATUSES,
@@ -14,10 +14,10 @@ import { submitterName } from './submissionTable';
 /**
  * WHAT THE RESPONSES SCREEN COUNTS, AS PURE FUNCTIONS (WP-G4, owner decisions of 2026-11-06).
  *
- * The screen reads one form's answers - `getSubmissions`, already in the browser - and derives four
- * things from them: the summary cards, the "Réponses" tab's filters and search, the "Totaux" tab's
- * order per grid, and the "Résumé" tab's bars. None of them fetches anything, and none of them
- * holds a rule of its own where a shared one exists: the grid totals are `productGridTotals` over
+ * The screen reads one form's answers - `getSubmissions`, already in the browser - and derives three
+ * things from them: the summary cards, the "Réponses" tab's filters and search, and the "Totaux"
+ * tab's order per grid. (The "Résumé" tab is NOT derived here: the server aggregates it,
+ * `resultsView.ts`.) None of them fetches anything, and none of them holds a rule of its own where a shared one exists: the grid totals are `productGridTotals` over
  * `productGridLinesOf` - the SAME two functions the export's "Totaux" sheet calls
  * (`product-grid-contract.ts`, copied byte for byte) - so the tab and the file cannot disagree.
  */
@@ -151,7 +151,10 @@ function searchText(
   anonymous: boolean
 ): string {
   const name = anonymous ? '' : submitterName(sub);
-  const answers = items.map((item) => answerText(sub.answers?.[item.id], item, words, sub.lines));
+  const answers = items.flatMap((item) => [
+    answerText(sub.answers?.[item.id], item, words, sub.lines, otherText(sub.answers, item.id)),
+    commentText(sub.answers, item.id),
+  ]);
   return [name, sub.reference ?? '', ...answers].join(' ');
 }
 
@@ -194,68 +197,4 @@ export function gridTotalsViews(
     item,
     totals: productGridTotals(item, lines),
   }));
-}
-
-/** The question types the "Résumé" tab draws bars for: one bar per option. */
-const CHOICE_TYPES = new Set(['single_choice', 'multiple_choice', 'dropdown']);
-
-/**
- * Answers the "Résumé" tab leaves out: settled the other way (refunded), or never completed
- * (cancelled, expired). Each says the person is not in, so their vote is not either.
- */
-const NOT_COUNTED_IN_SUMMARY = new Set(['refunded', 'cancelled', 'expired']);
-
-/** One bar: an option, how many answers chose it, and its share of those who answered. */
-export interface ChoiceBar {
-  label: string;
-  count: number;
-  /** Of the answers to this question, rounded, 0-100. */
-  percent: number;
-}
-
-/** One choice question's bars, and how many answers it had. */
-export interface ChoiceResult {
-  item: FormItem;
-  answered: number;
-  bars: ChoiceBar[];
-}
-
-/**
- * The "Résumé" tab's bars, per choice question. An answer names an option by its id (or, on an
- * older form, by its label); a multiple choice counts once per option ticked, so its bars may add
- * up past 100 %.
- */
-export function choiceResults(
-  items: readonly FormItem[],
-  subs: readonly Submission[]
-): ChoiceResult[] {
-  const counted = subs.filter((sub) => !NOT_COUNTED_IN_SUMMARY.has(sub.paymentStatus));
-  return items
-    .filter((item) => CHOICE_TYPES.has(item.type) && (item.options?.length ?? 0) > 0)
-    .map((item) => {
-      const options = item.options ?? [];
-      const counts = options.map(() => 0);
-      let answered = 0;
-      for (const sub of counted) {
-        const raw = sub.answers?.[item.id];
-        const values = (Array.isArray(raw) ? raw : raw == null || raw === '' ? [] : [raw]).map(
-          String
-        );
-        if (values.length === 0) continue;
-        answered += 1;
-        options.forEach((option, index) => {
-          if (values.includes(option.id ?? option.label) || values.includes(option.label))
-            counts[index] += 1;
-        });
-      }
-      return {
-        item,
-        answered,
-        bars: options.map((option, index) => ({
-          label: option.label,
-          count: counts[index],
-          percent: answered ? Math.round((100 * counts[index]) / answered) : 0,
-        })),
-      };
-    });
 }
