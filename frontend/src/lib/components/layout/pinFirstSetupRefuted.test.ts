@@ -86,8 +86,8 @@ describe('a failure that proves a local state exists refutes "first setup"', () 
 
   it('routes all three failure handlers through it', () => {
     // The stored-PIN path, the interactive submit, and the biometric fallback. A count, because
-    // their bodies differ and only the dispatch is shared.
-    expect(source.match(/applyPinFailure\(/g) ?? []).toHaveLength(4);
+    // their bodies differ and only the dispatch is shared; the PIN recovery's removed-device route is the fourth caller.
+    expect(source.match(/applyPinFailure\(/g) ?? []).toHaveLength(5);
   });
 
   it('asks neither a salt nor a recovery for an account deleted from this device', () => {
