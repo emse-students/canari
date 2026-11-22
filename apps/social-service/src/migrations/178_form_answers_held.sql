@@ -10,17 +10,21 @@
 --    no address, no timestamp. Its id is random. `formId` references the form WITHOUT a cascade, as
 --    `submissions` does: a form whose answers wait is archived, never removed (`retireForms`).
 -- 2. The table's autovacuum runs as soon as a row is gone: a released row's old version is cleared
---    at the next autovacuum pass rather than left until the table grows.
+--    at the next autovacuum pass rather than left until the table grows. `submissions` gets the same
+--    setting: a short tail rewrites the group it joins, and the old versions of that group are as
+--    much a trace as a released held row. A setting only (SHARE UPDATE EXCLUSIVE, no row touched);
+--    the table is small, so a pass after each change costs little.
 -- 3. `form_anonymous_tail_released`: the forms whose short tail (fewer answers than a batch) was
 --    released once, when the form stopped taking answers. A durable fact, never a clock: a later
 --    short tail of the same form waits for a full batch or the form's retirement.
 --
--- Additive (a new table, no change to a stored row) and idempotent. Nothing is backfilled: every
--- answer stored before this file stays where it is.
+-- Additive (new tables and a storage setting, no change to a stored row) and idempotent. Nothing is
+-- backfilled: every answer stored before this file stays where it is.
 --
 -- ROLLBACK. An image older than this file never reads the table; answers waiting in it are moved to
 -- `submissions` by releasing them first (close the form, or run the release of the new image). The
--- shape goes with `DROP TABLE form_answers_held` once it is empty.
+-- shape goes with `DROP TABLE form_answers_held` once it is empty; the setting with `ALTER TABLE
+-- submissions RESET (autovacuum_vacuum_threshold, autovacuum_vacuum_scale_factor)`.
 
 SET lock_timeout = '5s';
 
@@ -36,6 +40,9 @@ CREATE TABLE IF NOT EXISTS form_answers_held (
 CREATE INDEX IF NOT EXISTS form_answers_held_form_idx ON form_answers_held ("formId");
 
 ALTER TABLE form_answers_held
+  SET (autovacuum_vacuum_threshold = 0, autovacuum_vacuum_scale_factor = 0);
+
+ALTER TABLE submissions
   SET (autovacuum_vacuum_threshold = 0, autovacuum_vacuum_scale_factor = 0);
 
 CREATE TABLE IF NOT EXISTS form_anonymous_tail_released (

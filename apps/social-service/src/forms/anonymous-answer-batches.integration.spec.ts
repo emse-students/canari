@@ -16,7 +16,7 @@
  */
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { HttpException, Logger } from '@nestjs/common';
+import { HttpException, Logger, NotFoundException } from '@nestjs/common';
 import { Client } from 'pg';
 import { DataSource } from 'typeorm';
 import { Form } from './entities/form.entity';
@@ -32,6 +32,8 @@ import {
   HeldAnswersOutsideTransactionError,
   releaseHeldAnswers,
   releaseHeldAnswersUnderLock,
+  SUBMISSION_COLUMNS_A_RELEASE_LEAVES_UNSET,
+  SUBMISSION_COLUMNS_A_RELEASE_WRITES,
 } from './anonymous-answer-batches';
 import { lockFormSeats } from './seat-hold';
 import { AnonymousAnswerReleaseScheduler } from './anonymous-answer-release.scheduler';
@@ -175,6 +177,36 @@ maybe('anonymous answers stored in batches, against PostgreSQL (migration 178)',
       'respondentIdentity',
     ]);
     expect(columns.some((c) => c.data_type.startsWith('timestamp'))).toBe(false);
+    // Both tables are vacuumed as soon as a row is gone: a released held row, and a joined group
+    // written again, leave no old version waiting for the table to grow.
+    const options: { relname: string; reloptions: string[] }[] = await ds.query(
+      `SELECT c.relname, c.reloptions FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace
+        WHERE ns.nspname = $1 AND c.relname IN ('form_answers_held', 'submissions')
+        ORDER BY c.relname`,
+      [schema]
+    );
+    expect(options).toEqual(
+      ['form_answers_held', 'submissions'].map((relname) => ({
+        relname,
+        reloptions: expect.arrayContaining([
+          'autovacuum_vacuum_threshold=0',
+          'autovacuum_vacuum_scale_factor=0',
+        ]),
+      }))
+    );
+  });
+
+  it('the rewrite places every column of submissions: written, or left unset on purpose', async () => {
+    // The table here is the entity's (`synchronize`), which mirrors the migrations. A column added
+    // to it and to neither list fails this: a joining rewrite would otherwise drop it silently.
+    const columns: { column_name: string }[] = await ds.query(
+      `SELECT column_name FROM information_schema.columns
+        WHERE table_schema = $1 AND table_name = 'submissions'`,
+      [schema]
+    );
+    expect(columns.map((c) => c.column_name).sort()).toEqual(
+      [...SUBMISSION_COLUMNS_A_RELEASE_WRITES, ...SUBMISSION_COLUMNS_A_RELEASE_LEAVES_UNSET].sort()
+    );
   });
 
   it('holds answers below a batch, then stores the batch in one write no registry row shares', async () => {
@@ -328,6 +360,62 @@ maybe('anonymous answers stored in batches, against PostgreSQL (migration 178)',
     expect(await writes(formId)).toBe(1);
   });
 
+  /** A closed form with a full group stored and 2 answers waiting: a release joins that group. */
+  async function formWithATailToJoin(): Promise<{ formId: string; id: string; q: string }> {
+    const formId = await makeForm();
+    await answer(formId, ANONYMOUS_BATCH_SIZE + 2);
+    await ds.query(`UPDATE forms SET "closedAt" = now() - interval '1 minute' WHERE id = $1`, [
+      formId,
+    ]);
+    const [row]: { id: string; q: string }[] = await ds.query(
+      `SELECT id, answers->>'q1' AS q FROM submissions WHERE "formId" = $1 LIMIT 1`,
+      [formId]
+    );
+    return { formId, ...row };
+  }
+  const copies = (formId: string, q: string) =>
+    n(`SELECT count(*) AS n FROM submissions WHERE "formId" = $1 AND answers->>'q1' = $2`, [
+      formId,
+      q,
+    ]);
+  /** The manager's delete, as what it told: true deleted, false not found. */
+  const deleteAs = (id: string) =>
+    service.deleteSubmission(id, OWNER, false).then(
+      () => true,
+      (e: unknown) => {
+        if (e instanceof NotFoundException) return false;
+        throw e;
+      }
+    );
+
+  it('an answer delete racing a tail join: the deleted content never comes back, the manager is told the truth', async () => {
+    // Each order alone first. The delete before the release: gone, and the release does not bring it back.
+    const before = await formWithATailToJoin();
+    expect(await deleteAs(before.id)).toBe(true);
+    await releaseHeldAnswers(ds.manager, before.formId);
+    expect(await copies(before.formId, before.q)).toBe(0);
+    expect(await stored(before.formId)).toBe(ANONYMOUS_BATCH_SIZE + 1);
+    // The release before the delete: the answer lives under a new id, and the old id is not found.
+    const after = await formWithATailToJoin();
+    await releaseHeldAnswers(ds.manager, after.formId);
+    expect(await deleteAs(after.id)).toBe(false);
+    expect(await copies(after.formId, after.q)).toBe(1);
+
+    // Then both at once, a few times: whichever takes the form's lock first, what the manager was
+    // told is what the table holds.
+    for (let round = 0; round < 5; round++) {
+      const race = await formWithATailToJoin();
+      const [deleted] = await Promise.all([
+        deleteAs(race.id),
+        releaseHeldAnswers(ds.manager, race.formId),
+      ]);
+      expect(await copies(race.formId, race.q)).toBe(deleted ? 0 : 1);
+      expect(await held(race.formId)).toBe(0);
+      expect(await stored(race.formId)).toBe(ANONYMOUS_BATCH_SIZE + 2 - (deleted ? 1 : 0));
+      expect(await writes(race.formId)).toBe(1);
+    }
+  });
+
   it('refuses to release outside a transaction, where the form lock would not hold', async () => {
     const formId = await makeForm();
     await answer(formId, 1);
@@ -357,7 +445,7 @@ maybe('anonymous answers stored in batches, against PostgreSQL (migration 178)',
     expect(await sweep.releaseOnce()).toBe(0);
   });
 
-  it('the sweep releases a full batch whose release after its submit did not happen', async () => {
+  it('the sweep releases a full batch still waiting, and accuses nothing it cannot know', async () => {
     const formId = await makeForm();
     // As a crash between the submit's commit and its release would leave it.
     for (let i = 0; i < ANONYMOUS_BATCH_SIZE; i++) {
@@ -367,13 +455,17 @@ maybe('anonymous answers stored in batches, against PostgreSQL (migration 178)',
       );
     }
     const warn = jest.spyOn(Logger.prototype, 'warn');
+    const log = jest.spyOn(Logger.prototype, 'log');
+    warn.mockClear();
     await sweep.releaseOnce();
     expect(await held(formId)).toBe(0);
     expect(await stored(formId)).toBe(ANONYMOUS_BATCH_SIZE);
-    // The primary path failed: the sweep says so, with the batch's size.
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining(`a full batch of ${ANONYMOUS_BATCH_SIZE}`)
+    // Found, said with its size and reason - and accused of nothing: the sweep cannot tell a failed
+    // release from one a submit was about to run, and a failed one was accused where it failed.
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining(`${ANONYMOUS_BATCH_SIZE} answer(s) found waiting (full-batch)`)
     );
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it('retiring a form whose answers wait archives it and releases them, never losing one', async () => {

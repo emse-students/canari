@@ -3716,15 +3716,36 @@ export class FormsService {
   ): Promise<void> {
     const sub = await this.submissionRepo.findOne({ where: { id: submissionId } });
     if (!sub) throw new NotFoundException('Submission not found');
-    await this.assertFormManager(sub.formId, callerId, isGlobalAdmin);
+    const form = await this.assertFormManager(sub.formId, callerId, isGlobalAdmin);
+    if (form.anonymous) {
+      // Under the form's lock, like every release of its waiting answers: a release that writes this
+      // answer's group again (`anonymous-answer-batches.ts`) and this delete never interleave. Either
+      // the delete ran first and the release no longer sees the answer, or the release ran first, the
+      // answer lives on under a new id, and this id is truthfully not found.
+      const [gone] = (await this.submissionRepo.manager.transaction('READ COMMITTED', async (m) => {
+        await lockFormSeats(m, sub.formId);
+        return m.query('DELETE FROM submissions WHERE id = $1 RETURNING id', [submissionId]);
+      })) as [unknown[], number];
+      if (gone.length === 0) {
+        this.logger.log(
+          `[Forms] Submission ${submissionId} not deleted by ${callerId}: no longer under this id ` +
+            '(its anonymous group was written again)'
+        );
+        throw new NotFoundException('Submission not found');
+      }
+      this.logger.log(`[Forms] Submission ${submissionId} deleted by ${callerId}`);
+      return;
+    }
     if (sub.paymentStatus === 'pending') {
       // Settles the request at Lydia and moves the row to `cancelled`, or marks it paid.
       await this.cancelSubmission(submissionId, callerId, isGlobalAdmin);
     }
-    const deleted = (await this.submissionRepo.query(
+    // A DELETE answers `[rows, rowCount]` through TypeORM's postgres driver, never the rows alone:
+    // read as the rows, the result always had length 2, and a refused delete read as a deletion.
+    const [deleted] = (await this.submissionRepo.query(
       `DELETE FROM submissions WHERE id = $1 AND "paymentStatus" <> ALL($2::text[]) RETURNING id`,
       [submissionId, [...PAID_SUBMISSION_STATUSES, 'pending']]
-    )) as unknown[];
+    )) as [unknown[], number];
     if (deleted.length === 0) {
       const now = await this.submissionRepo.findOne({
         where: { id: submissionId },

@@ -1015,18 +1015,27 @@ So the answer is never written near the registry row; it is written later, with 
    (`form_anonymous_tail_released`, a durable fact). It **joins the answers released on the form's
    latest release day**: that group is deleted and written again, with new ids, in the SAME shuffled
    insert as the tail, which takes its date - one write, one date, no physical order of old then new.
-   So the last group is not smaller than the batch size, unless the form never had that many answers,
-   and then the group is every answer it has, the most any design can give when the reader also holds
-   the list of who answered.
+   **What this does NOT hide from the form's manager** ([principle 1](../../../principes.md), "vos
+   messages sont à vous", is the measure): the manager sees the waiting count live and may close the
+   form at will, and the answer that fills a full form releases its own tail. A manager who compares
+   the list of answers before and after that moment can tell which answers the tail added - a group
+   of fewer than 5, at most ONE such group per form, since the tail is released once. The database
+   rows and their order say nothing more than that list does; what the list shows is the real bound.
 4. A retired form (archived or deleted) releases everything still waiting, joining the same way: no
    answer is lost.
 5. The release is a predicate over durable state (`ReleaseMode`: open, closed, retired), looked at by:
    the submit, the close (`setClosed`), a manager's read or export of the answers, `retireForms` (always
    inside a transaction - `releaseHeldAnswersUnderLock` refuses to run without one,
    `HeldAnswersOutsideTransactionError`), and the hourly sweep `AnonymousAnswerReleaseScheduler`, which
-   logs why each form is due and WARNS, with its size, a full batch it finds (the release after its
-   submit failed). Each is idempotent. A release that fails during a manager's close, read or export is
-   logged as an error and the action is still answered: the answers stay held for the sweep.
+   logs why each form is due and how many answers it found. A full batch found there accuses nothing:
+   the sweep reads outside the lock and may only have raced the submit that was about to release it; a
+   release that failed was already logged as an error where it ran. Each is idempotent. A release that
+   fails during a manager's close, read or export is logged as an error and the action is still
+   answered: the answers stay held for the sweep.
+6. A manager's delete of an answer on an anonymous form takes the same form lock, inside a
+   transaction: a release joining that answer's group either ran before (the answer is gone under its
+   old id: 404, and the list shows it under its new one) or runs after (the delete removed it, and the
+   release never writes it back).
 
 | Question | Answer |
 |---|---|
@@ -1034,12 +1043,13 @@ So the answer is never written near the registry row; it is written later, with 
 | Does a waiting answer count? | Yes: the capacity check and `submissionCount` count it (both counts read in one snapshot), and the one-answer rule holds from the request (the registry). A form it fills takes no more answers, so its tail is released as at a close. |
 | What does the respondent get back? | `{ held: true }`, no submission id: an id handed back now would pair the request with the row its batch writes later. |
 | When are fewer than 5 answers released? | Once per form, when it stops taking answers, joined to the latest group; afterwards, only when 5 are waiting or the form is archived or deleted. The waiting count is shown to the organiser. |
-| What does the database keep of a released held row? | Its old version until vacuum: the table's autovacuum runs as soon as a row is gone (migration 178). WAL and backups taken meanwhile are outside this mechanism, as above. |
+| What does the database keep of a released held row, or of a joined group written again? | Its old version until vacuum: `form_answers_held` and `submissions` are both vacuumed as soon as a row is gone (migration 178). WAL and backups taken meanwhile are outside this mechanism, as above. |
 
 Tests: `anonymous-answer-batches.integration.spec.ts` (PostgreSQL: the batch is one write no registry
 row shares, no instant stored, a joining group written in the same insert in the order asked, the tail
 released once, a full form, a delete racing a release moving each answer once, the refusal outside a
-transaction, the sweep and `retireForms`), the unit specs of the submit and of a failing release during
+transaction, the sweep and `retireForms`, a delete racing a joining release, the rewrite's column
+list against the table), the unit specs of the submit and of a failing release during
 a manager's action, and `FormsManagerList.svelte.test.ts` (the notice).
 
 ## A public form is answered without an account (2026-09-30)

@@ -64,6 +64,56 @@ export class HeldAnswersOutsideTransactionError extends Error {
 }
 
 /**
+ * What a release writes into each `submissions` column, as SQL over `o` (the new id) and `src` (the
+ * held or joined row), `$3` being the release's day. Content is copied; everything that could name,
+ * price or date the answer more precisely than its group is written as the anonymous constant.
+ */
+const RELEASED_ROW: Readonly<Record<string, string>> = {
+  id: 'o.id',
+  formId: 'src."formId"',
+  userId: 'NULL',
+  answers: 'src.answers',
+  lines: 'src.lines',
+  priceLockedItemIds: 'src."priceLockedItemIds"',
+  respondentIdentity: 'src."respondentIdentity"',
+  totalPaid: '0',
+  paymentStatus: "'free'",
+  paymentMethod: 'NULL',
+  createdAt: '$3::timestamp',
+  updatedAt: '$3::timestamp',
+  paymentRequestedAt: '$3::timestamp',
+};
+
+/** The `submissions` columns a release writes (`RELEASED_ROW`). */
+export const SUBMISSION_COLUMNS_A_RELEASE_WRITES: readonly string[] = Object.keys(RELEASED_ROW);
+
+/**
+ * The `submissions` columns a release leaves at their default (NULL): an anonymous answer never
+ * carries them - no account, no guest, no payment, no grant, no edit (each refused on an anonymous
+ * form). The integration spec compares the two lists with the table, so a column added to
+ * `submissions` fails it until it is placed in one of them: a rewrite that silently dropped a new
+ * column would lose it from every joined answer.
+ */
+export const SUBMISSION_COLUMNS_A_RELEASE_LEAVES_UNSET: readonly string[] = [
+  'email',
+  'stripeSessionId',
+  'paymentRequestId',
+  'paymentSettledBy',
+  'lydiaOrderRef',
+  'lydiaVendorToken',
+  'cashExpiresAt',
+  'cotisationGrantedAt',
+  'purchaseRecordedAt',
+  'organiserNotifiedAt',
+  'guestReceiptHash',
+  'guestVisitorKey',
+  'guestLastName',
+  'guestFirstName',
+  'guestEmail',
+  'editedAt',
+];
+
+/**
  * How these lines name the form: they do not. A release runs inside a respondent's submit, and no
  * log line pairs a person with an anonymous form (forms.md); the count is what the line is for.
  */
@@ -161,11 +211,8 @@ export async function releaseHeldAnswersUnderLock(
   // version of either be matched to the row written now.
   const rows = order([...held, ...joined].map((row) => ({ source: row.id, id: randomUUID() })));
   await manager.query(
-    `INSERT INTO submissions ("id", "formId", "userId", answers, lines, "priceLockedItemIds",
-                              "respondentIdentity", "totalPaid", "paymentStatus", "paymentMethod",
-                              "createdAt", "updatedAt", "paymentRequestedAt")
-     SELECT o.id, src."formId", NULL, src.answers, src.lines, src."priceLockedItemIds",
-            src."respondentIdentity", 0, 'free', NULL, $3::timestamp, $3::timestamp, $3::timestamp
+    `INSERT INTO submissions (${SUBMISSION_COLUMNS_A_RELEASE_WRITES.map((c) => `"${c}"`).join(', ')})
+     SELECT ${Object.values(RELEASED_ROW).join(', ')}
        FROM unnest($1::uuid[], $2::uuid[]) WITH ORDINALITY AS o(source, id, n)
        JOIN LATERAL (
          SELECT h."formId", h.answers, h.lines, h."priceLockedItemIds", h."respondentIdentity"
