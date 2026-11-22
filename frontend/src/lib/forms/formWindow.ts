@@ -20,6 +20,9 @@ export const FORM_CLOSE_NOT_OPEN_YET = 'FORM_CLOSE_NOT_OPEN_YET';
  */
 export const FORM_CLOSING_DATE_PAST = 'FORM_CLOSING_DATE_PAST';
 
+/** The 409 refusing "Fixer une date" on a form closed, dated or unpublished meanwhile. */
+export const FORM_CLOSING_DATE_NOT_OPEN = 'FORM_CLOSING_DATE_NOT_OPEN';
+
 /**
  * Whether a form's window is impossible: both bounds typed (`datetime-local` strings, `''` for none)
  * and the end NOT after the opening. One bound alone is never invalid.

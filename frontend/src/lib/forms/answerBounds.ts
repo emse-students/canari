@@ -6,6 +6,7 @@ import { productGridRefusalMessage } from './productGridFill';
 import {
   FORM_CLOSE_BEFORE_OPEN,
   FORM_CLOSE_NOT_OPEN_YET,
+  FORM_CLOSING_DATE_NOT_OPEN,
   FORM_CLOSING_DATE_PAST,
 } from './formWindow';
 
@@ -100,6 +101,8 @@ export function formCodeMessage(code: string | null): string | null {
       return m.form_refusal_close_not_open_yet();
     case FORM_CLOSING_DATE_PAST:
       return m.form_refusal_closing_date_past();
+    case FORM_CLOSING_DATE_NOT_OPEN:
+      return m.form_refusal_closing_date_not_open();
     case FORM_ANSWER_MISSING:
       return m.form_refusal_answer_missing();
     case FORM_ANSWER_TOO_LONG:

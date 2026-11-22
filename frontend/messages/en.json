@@ -2945,6 +2945,7 @@
   "form_stale_open_kept_toast": "The form stays open.",
   "form_stale_open_dated_toast": "Closing date saved.",
   "form_stale_open_error": "Could not save your answer. Try again.",
+  "form_refusal_closing_date_not_open": "This form was closed or changed in the meantime: reload the page to see its state.",
   "form_refusal_closing_date_past": "The closing date must be in the future. To close now, use \"Close\".",
   "form_close_suggest_title": "With no closing date, this form stays open until you close it.",
   "form_close_suggest_accept": "Close on {date}",

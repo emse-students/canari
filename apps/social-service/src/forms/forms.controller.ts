@@ -242,10 +242,12 @@ export class FormsController {
   setClosingDate(
     @Param('id') id: string,
     @Headers('x-user-id') xUserId: string,
-    @Headers('x-global-admin') ga?: string,
-    @Body() dto?: SetClosingDateDto
+    @Body() dto: SetClosingDateDto,
+    @Headers('x-global-admin') ga?: string
   ) {
-    return this.service.setClosingDate(id, new Date(dto?.closedAt ?? NaN), xUserId, ga === 'true');
+    // A missing or malformed `closedAt` never gets here: the body is validated (400), not read as a
+    // past date.
+    return this.service.setClosingDate(id, new Date(dto.closedAt), xUserId, ga === 'true');
   }
 
   /** "Garder ouvert": answers the question put to a form left open, leaving the form as it is. */

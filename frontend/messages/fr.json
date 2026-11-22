@@ -2977,6 +2977,7 @@
   "form_stale_open_kept_toast": "Le formulaire reste ouvert.",
   "form_stale_open_dated_toast": "Date de clôture enregistrée.",
   "form_stale_open_error": "Impossible d'enregistrer votre réponse. Réessayez.",
+  "form_refusal_closing_date_not_open": "Ce formulaire a été fermé ou modifié entre-temps : rechargez la page pour voir son état.",
   "form_refusal_closing_date_past": "La date de clôture doit être dans le futur. Pour fermer maintenant, utilisez « Fermer ».",
   "form_close_suggest_title": "Sans date de clôture, ce formulaire restera ouvert jusqu'à ce que vous le fermiez.",
   "form_close_suggest_accept": "Fermer le {date}",

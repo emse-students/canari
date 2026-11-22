@@ -5,6 +5,7 @@ import { FORM_FINGERPRINT_SQL } from './form-draft-revision';
 import {
   FORM_CLOSE_BEFORE_OPEN,
   FORM_CLOSE_NOT_OPEN_YET,
+  FORM_CLOSING_DATE_NOT_OPEN,
   FORM_CLOSING_DATE_PAST,
   assertMayCloseAt,
   assertWindowOrdered,
@@ -266,12 +267,45 @@ describe('FormsService - closing and reopening a form', () => {
 
     it('refuses, typed, a date that is not in the future: closing now has its own button', async () => {
       const { service, formRepo } = makeService();
-      for (const past of [new Date(Date.now() - 1000), new Date(NaN)]) {
-        await expect(service.setClosingDate('f1', past, OWNER, false)).rejects.toMatchObject({
-          response: { code: FORM_CLOSING_DATE_PAST },
-        });
-      }
+      const past = new Date(Date.now() - 1000);
+      await expect(service.setClosingDate('f1', past, OWNER, false)).rejects.toMatchObject({
+        response: { code: FORM_CLOSING_DATE_PAST },
+      });
       expect(formRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses a missing or malformed date as a validation error, never as a past date', async () => {
+      const { service, formRepo } = makeService();
+      await expect(service.setClosingDate('f1', new Date(NaN), OWNER, false)).rejects.toMatchObject(
+        {
+          response: { message: 'closedAt must be a valid ISO 8601 date' },
+          status: 400,
+        }
+      );
+      expect(formRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('writes the date conditionally and refuses, typed, a form closed meanwhile', async () => {
+      const { service, formRepo } = makeService();
+      formRepo.update.mockImplementationOnce(() => Promise.resolve({ affected: 0 }));
+      await expect(service.setClosingDate('f1', inAWeek(), OWNER, false)).rejects.toMatchObject({
+        status: 409,
+        response: { code: FORM_CLOSING_DATE_NOT_OPEN },
+      });
+      const [where] = formRepo.update.mock.calls[0];
+      expect(where).toMatchObject({ id: 'f1', status: 'published' });
+      expect(Object.keys(where)).toEqual(expect.arrayContaining(['closedAt', 'deletedAt']));
+    });
+
+    it('clears the question put to a left-open form when it is closed, reopened or given a date', async () => {
+      const { service, formRepo } = makeService();
+      await service.setClosed('f1', true, OWNER, false);
+      await service.setClosed('f1', false, OWNER, false);
+      await service.setClosingDate('f1', inAWeek(), OWNER, false);
+      for (const [, values] of formRepo.update.mock.calls) {
+        expect(values).toMatchObject({ staleAskedAt: null, staleKeptAt: null });
+      }
+      expect(formRepo.update).toHaveBeenCalledTimes(3);
     });
 
     it('refuses a date that does not fall after the opening', async () => {

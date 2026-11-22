@@ -31,6 +31,7 @@ import {
   FORM_WINDOW_NOT_YET,
   FORM_WINDOW_OPEN,
   assertMayCloseAt,
+  FORM_CLOSING_DATE_NOT_OPEN,
   FORM_CLOSING_DATE_PAST,
   assertWindowOrdered,
   formWindowState,
@@ -1707,6 +1708,10 @@ export class FormsService {
     const closedAtAfter =
       closedAtRaw === undefined ? form.closedAt : closedAtRaw ? new Date(closedAtRaw) : null;
     assertWindowOrdered(opensAtRaw ? new Date(opensAtRaw) : null, closedAtAfter);
+    const closedAtChanged =
+      closedAtRaw !== undefined &&
+      (closedAtAfter?.getTime() ?? null) !==
+        (form.closedAt ? new Date(form.closedAt).getTime() : null);
     await this.assertEarlierOpeningConfirmed(
       form,
       opensAtRaw,
@@ -1739,6 +1744,9 @@ export class FormsService {
       currency: 'eur',
       opensAt: opensAtRaw ? new Date(opensAtRaw) : null,
       closedAt: closedAtAfter,
+      // An end moved by the edit closes or reopens the form: the question put to it starts over
+      // (`stale-open-forms.ts`).
+      ...(closedAtChanged ? { staleAskedAt: null, staleKeptAt: null } : {}),
       items: (input.items ?? form.items).map((item: any) => ({
         ...item,
         id: item.id || makeId('item'),
@@ -2073,7 +2081,9 @@ export class FormsService {
       `[FORMS] ${closed ? 'close' : 'reopen'} form=${formId.slice(0, 8)} by=${userId.slice(0, 8)}` +
         ` was=${form.closedAt ? new Date(form.closedAt).toISOString() : 'open'}`
     );
-    await this.formRepo.update({ id: formId }, { closedAt });
+    // A close or a reopening starts the question put to a left-open form over: nothing is asked
+    // about the earlier state any more (`stale-open-forms.ts`).
+    await this.formRepo.update({ id: formId }, { closedAt, staleAskedAt: null, staleKeptAt: null });
     // The state is judged HERE, on the server's clock: the row of a phone behind it follows this.
     return {
       id: formId,
@@ -2093,7 +2103,10 @@ export class FormsService {
     const form = await this.assertFormManager(formId, userId, isGlobalAdmin);
     if (form.deletedAt) throw new NotFoundException('Form not found');
     const now = new Date();
-    if (Number.isNaN(closedAt.getTime()) || closedAt.getTime() <= now.getTime()) {
+    if (Number.isNaN(closedAt.getTime())) {
+      throw new BadRequestException('closedAt must be a valid ISO 8601 date');
+    }
+    if (closedAt.getTime() <= now.getTime()) {
       throw formRefusal(
         FORM_CLOSING_DATE_PAST,
         'The closing date must be in the future: use "Clore le formulaire" to close it now.'
@@ -2103,7 +2116,19 @@ export class FormsService {
     this.logger.log(
       `[FORMS] closing date form=${formId.slice(0, 8)} by=${userId.slice(0, 8)} at=${closedAt.toISOString()}`
     );
-    await this.formRepo.update({ id: formId }, { closedAt });
+    // CONDITIONAL on the form still being open and published: a close committing since the read
+    // above (the manager's own, or another's) is never overwritten by a date.
+    const written = await this.formRepo.update(
+      { id: formId, closedAt: IsNull(), status: 'published', deletedAt: IsNull() },
+      { closedAt, staleAskedAt: null, staleKeptAt: null }
+    );
+    if (!written.affected) {
+      this.logger.log(`[FORMS] closing date form=${formId.slice(0, 8)} refused: not open any more`);
+      throw new ConflictException({
+        code: FORM_CLOSING_DATE_NOT_OPEN,
+        message: 'This form is closed, not published or already has an end: a date cannot be set.',
+      });
+    }
     return {
       id: formId,
       closedAt,

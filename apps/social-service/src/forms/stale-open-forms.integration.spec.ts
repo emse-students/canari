@@ -19,7 +19,11 @@ import { Client } from 'pg';
 import { DataSource } from 'typeorm';
 import { Form } from './entities/form.entity';
 import { Submission } from './entities/submission.entity';
+import { PostNotification } from '../posts/entities/post-notification.entity';
+import { AssociationMember } from '../associations/entities/association-member.entity';
+import { BELL_ROW_GATE } from '../posts/bell-row-gates';
 import { StaleOpenFormScheduler } from './stale-open-form.scheduler';
+import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import {
   STALE_OPEN_DUE_SQL,
   STALE_OPEN_FORM_DAYS,
@@ -46,8 +50,20 @@ maybe('the question put to a form left open against PostgreSQL (migration 180)',
   let admin: Client;
   let ds: DataSource;
   let scheduler: StaleOpenFormScheduler;
-  const told: { recipientIds: string[]; postId: string; type: string; skipPush?: boolean }[] = [];
-  let failFor: string | null = null;
+  /** The bell rows the sweep wrote, as `[postId, recipientId]`. */
+  const told = async () =>
+    (
+      (await ds.query(
+        `SELECT "postId", "recipientId" FROM post_notifications ORDER BY "postId", "recipientId"`
+      )) as { postId: string; recipientId: string }[]
+    ).map((r) => [r.postId, r.recipientId]);
+  /** Makes the insert of a form's bell rows fail, as a lost database would mid-transaction. */
+  const failFor = (formId: string | null) =>
+    ds
+      .query(`DELETE FROM stale_fail`)
+      .then(() =>
+        formId ? ds.query(`INSERT INTO stale_fail (id) VALUES ($1)`, [formId]) : undefined
+      );
   const q = (sql: string, params: unknown[] = []) => ds.query(sql, params);
 
   beforeAll(async () => {
@@ -57,7 +73,7 @@ maybe('the question put to a form left open against PostgreSQL (migration 180)',
     ds = new DataSource({
       type: 'postgres',
       url: URL,
-      entities: [Form, Submission],
+      entities: [Form, Submission, PostNotification, AssociationMember],
       synchronize: false,
       extra: { options: `-c search_path=${schema},public` },
     });
@@ -76,21 +92,17 @@ maybe('the question put to a form left open against PostgreSQL (migration 180)',
       ARCHIVED_ASSO,
     ]);
 
-    const notifications = {
-      createNotifications: jest.fn(
-        async (d: { recipientIds: string[]; postId: string; type: string; skipPush?: boolean }) => {
-          if (failFor === d.postId) throw new Error('rows not written');
-          told.push(d);
-          return d.recipientIds.length;
-        }
-      ),
-    };
-    const alerts = { recipientsOf: jest.fn(async (f: { ownerId: string }) => [f.ownerId, 'mgr']) };
-    scheduler = new StaleOpenFormScheduler(
-      ds.getRepository(Form),
-      alerts as never,
-      notifications as never
-    );
+    await q(`CREATE TABLE stale_fail (id text PRIMARY KEY)`);
+    await q(`CREATE FUNCTION stale_fail_guard() RETURNS trigger AS $$
+      BEGIN
+        IF EXISTS (SELECT 1 FROM stale_fail WHERE id = NEW."postId") THEN
+          RAISE EXCEPTION 'rows not written';
+        END IF;
+        RETURN NEW;
+      END $$ LANGUAGE plpgsql`);
+    await q(`CREATE TRIGGER stale_fail_guard BEFORE INSERT ON post_notifications
+      FOR EACH ROW EXECUTE FUNCTION stale_fail_guard()`);
+    scheduler = new StaleOpenFormScheduler(ds.getRepository(Form));
   });
 
   afterAll(async () => {
@@ -100,9 +112,8 @@ maybe('the question put to a form left open against PostgreSQL (migration 180)',
   });
 
   beforeEach(async () => {
-    told.length = 0;
-    failFor = null;
-    await q(`TRUNCATE submissions, forms`);
+    await failFor(null);
+    await q(`TRUNCATE submissions, forms, post_notifications, association_members`);
   });
 
   /** A form with its columns spelt out; defaults are a published, open, personal form. */
@@ -187,38 +198,59 @@ maybe('the question put to a form left open against PostgreSQL (migration 180)',
     });
   });
 
+  /** A member of ASSO with the given permission bits. */
+  const member = (userId: string, permissions: number, association: string = ASSO) =>
+    q(
+      `INSERT INTO association_members (id, "associationId", "userId", permissions)
+       VALUES (gen_random_uuid(), $1, $2, $3)`,
+      [association, userId, permissions]
+    );
+  const MANAGE_FORMS = AssociationPermissionFlag.MANAGE_FORMS;
+  /** A permission bit that is not MANAGE_FORMS. */
+  const OTHER_RIGHT = MANAGE_FORMS === 1 ? 2 : 1;
+
   describe('the sweep', () => {
-    it('asks each due form ONCE, writes one bell row per form to its managers and never pushes', async () => {
+    it('asks each due form ONCE, writing its bell rows to the managers alone', async () => {
       await form(1, { associationId: ASSO });
       await answer(id(1), ago(30));
+      // Two members hold MANAGE_FORMS; the form's creator ('owner') does not, and a member holding
+      // another right is no manager either.
+      await member('mgr-a', MANAGE_FORMS);
+      await member('mgr-b', MANAGE_FORMS | OTHER_RIGHT);
+      await member('owner', 0);
+      await member('bystander', OTHER_RIGHT);
       await form(2, { createdDaysAgo: 40 });
       await form(3);
       await answer(id(3), ago(3));
 
       const report = await scheduler.sweep(NOW);
-      expect(report).toEqual({ asked: 2, told: 4, released: 0 });
-      expect(told.map((t) => t.postId).sort()).toEqual([id(1), id(2)].sort());
-      for (const t of told) {
-        expect(t).toMatchObject({
-          type: 'form_stale_open',
-          recipientIds: ['owner', 'mgr'],
-          skipPush: true,
-        });
-      }
+      expect(report).toEqual({ asked: 2, told: 3, failed: 0 });
+      expect(await told()).toEqual([
+        [id(1), 'mgr-a'],
+        [id(1), 'mgr-b'],
+        [id(2), 'owner'],
+      ]);
       expect(await stamp(1)).toEqual(NOW);
       expect(await stamp(3)).toBeNull();
+    });
+
+    it('tells nobody of an association form whose managers are all gone, and still claims it', async () => {
+      await form(1, { associationId: ASSO });
+      await answer(id(1), ago(30));
+      await member('owner', 0);
+      expect(await scheduler.sweep(NOW)).toEqual({ asked: 1, told: 0, failed: 0 });
+      expect(await told()).toEqual([]);
     });
 
     it('is idempotent: a second sweep, a later day and a re-run ask nothing, whatever the clock', async () => {
       await form(1);
       await answer(id(1), ago(30));
       await scheduler.sweep(NOW);
-      told.length = 0;
 
-      expect(await scheduler.sweep(NOW)).toEqual({ asked: 0, told: 0, released: 0 });
+      expect(await scheduler.sweep(NOW)).toEqual({ asked: 0, told: 0, failed: 0 });
       // The silence goes on for months: the question is never put again by time alone.
       expect(await scheduler.sweep(new Date(NOW.getTime() + 90 * DAY))).toMatchObject({ asked: 0 });
-      expect(told).toEqual([]);
+      expect(await told()).toHaveLength(1);
     });
 
     it('lets two concurrent sweeps claim a form once', async () => {
@@ -226,14 +258,13 @@ maybe('the question put to a form left open against PostgreSQL (migration 180)',
       await answer(id(1), ago(30));
       const [a, b] = await Promise.all([scheduler.sweep(NOW), scheduler.sweep(NOW)]);
       expect(a.asked + b.asked).toBe(1);
-      expect(told).toHaveLength(1);
+      expect(await told()).toHaveLength(1);
     });
 
     it('asks again ONLY after an answer arrived and the whole window of silence has passed again', async () => {
       await form(1);
       await answer(id(1), ago(30));
       await scheduler.sweep(NOW);
-      told.length = 0;
 
       // A new answer arrives 5 days after the question: the form lives, nothing is asked at once...
       const answered = new Date(NOW.getTime() + 5 * DAY);
@@ -272,28 +303,31 @@ maybe('the question put to a form left open against PostgreSQL (migration 180)',
       expect(await scheduler.sweep(NOW)).toMatchObject({ asked: 0 });
     });
 
-    it('puts a claim back when the notice could not be written, and asks that form on the next sweep; the others are told', async () => {
+    it('claims nothing of a form whose rows could not be written, and asks it on the next sweep; the others are told', async () => {
       await form(1);
       await form(2);
       await answer(id(1), ago(30));
       await answer(id(2), ago(30));
-      failFor = id(1);
+      await failFor(id(1));
 
-      expect(await scheduler.sweep(NOW)).toEqual({ asked: 2, told: 2, released: 1 });
+      expect(await scheduler.sweep(NOW)).toEqual({ asked: 1, told: 1, failed: 1 });
+      // The claim and the rows are one transaction: the failure left NO claim to put back.
       expect(await stamp(1)).toBeNull();
       expect(await stamp(2)).toEqual(NOW);
 
-      failFor = null;
-      told.length = 0;
-      expect(await scheduler.sweep(NOW)).toMatchObject({ asked: 1 });
-      expect(told.map((t) => t.postId)).toEqual([id(1)]);
+      await failFor(null);
+      expect(await scheduler.sweep(NOW)).toMatchObject({ asked: 1, failed: 0 });
+      expect(await told()).toEqual([
+        [id(1), 'owner'],
+        [id(2), 'owner'],
+      ]);
     });
   });
 
   describe('the answers a manager can give', () => {
     it('shows the question until it is answered, and "keep open" hides it for good', async () => {
       await form(1);
-      await form(2);
+      await form(2, { createdDaysAgo: 1 });
       await answer(id(1), ago(30));
       await scheduler.sweep(NOW);
 
@@ -303,7 +337,8 @@ maybe('the question put to a form left open against PostgreSQL (migration 180)',
       expect(await keepFormOpen(ds.manager, id(1), NOW)).toBe(true);
       expect((await formsAskedStillOpen(ds.manager, [id(1)])).size).toBe(0);
       // Kept, it is not asked again by the passing of time.
-      expect(await scheduler.sweep(new Date(NOW.getTime() + 60 * DAY))).toMatchObject({ asked: 0 });
+      await scheduler.sweep(new Date(NOW.getTime() + 60 * DAY));
+      expect(await stamp(1)).toEqual(NOW);
     });
 
     it('shows the question again when a new answer re-arms it after a "keep open"', async () => {
@@ -328,6 +363,47 @@ maybe('the question put to a form left open against PostgreSQL (migration 180)',
         new Date(NOW.getTime() + DAY),
       ]);
       expect((await formsAskedStillOpen(ds.manager, [id(1)])).size).toBe(0);
+    });
+
+    /** Whether the form_stale_open bell gate admits `reader` to the row naming `meta` on `target`. */
+    const shown = async (target: string, reader: string, meta: unknown) =>
+      (
+        (await q(
+          `SELECT ${BELL_ROW_GATE.form_stale_open({ reader: '$2', target: '$1::uuid', meta: '$3::jsonb' })} AS ok`,
+          [target, reader, JSON.stringify(meta)]
+        )) as { ok: boolean }[]
+      )[0].ok;
+
+    it('starts the question over when a form is closed and reopened: the first rows stay hidden', async () => {
+      await form(1);
+      await answer(id(1), ago(30));
+      await scheduler.sweep(NOW);
+      const first = { askedAt: NOW.toISOString() };
+      expect(await shown(id(1), 'owner', first)).toBe(true);
+
+      // Closed, then reopened: the memory is cleared (what setClosed writes), and the old row hides.
+      await q(`UPDATE forms SET "staleAskedAt" = NULL, "staleKeptAt" = NULL WHERE id = $1`, [
+        id(1),
+      ]);
+      expect(await shown(id(1), 'owner', first)).toBe(false);
+
+      // Asked a second time: the new row shows, the first never comes back.
+      const later = new Date(NOW.getTime() + 40 * DAY);
+      expect(await scheduler.sweep(later)).toMatchObject({ asked: 1 });
+      expect(await shown(id(1), 'owner', { askedAt: later.toISOString() })).toBe(true);
+      expect(await shown(id(1), 'owner', first)).toBe(false);
+    });
+
+    it("shows an association form's question to its MANAGE_FORMS holders only, never to its creator without the right", async () => {
+      await form(1, { associationId: ASSO });
+      await answer(id(1), ago(30));
+      await member('mgr', MANAGE_FORMS);
+      await member('owner', 0);
+      await scheduler.sweep(NOW);
+      const meta = { askedAt: NOW.toISOString() };
+      expect(await shown(id(1), 'mgr', meta)).toBe(true);
+      expect(await shown(id(1), 'owner', meta)).toBe(false);
+      expect(await shown(id(1), 'stranger', meta)).toBe(false);
     });
   });
 });

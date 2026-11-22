@@ -2915,8 +2915,9 @@ closing date, 9 of them had had no answer for 14 days or more and 3 never got on
 closing date. Nothing ever told their managers. **The owner's answer** (2026-11-21, to the lead's
 questions): launch a stale-open-form nudge now, with the other launch-now forms; no opens counter.
 **Charter, principle 3 (your attention is not for sale)**, which is why this is ONE notice: a single
-bell row per manager per question, **no push**, no counter, never re-sent on a timer, told to the form's
-owner and its `MANAGE_FORMS` holders only, and it clears for all of them the moment one of them answers.
+bell row per manager per question, **no push**, no counter, never re-sent on a timer, told to the
+`MANAGE_FORMS` holders of an association's form (the owner of a personal one) only - an association's
+creator who does not hold the flag is not a manager (`managesForm`) - and it clears for all of them the moment one of them answers.
 
 ### Two things
 
@@ -2943,8 +2944,9 @@ owner and its `MANAGE_FORMS` holders only, and it clears for all of them the mom
 
 `forms."staleAskedAt"` (when the question was last asked) and `forms."staleKeptAt"` ("Garder ouvert"),
 both `select: false`, NULL on every form. `stale-open-forms.ts` holds the predicate (`STALE_OPEN_WHERE`),
-the claim (`STALE_OPEN_CLAIM_SQL`: the due forms `FOR UPDATE SKIP LOCKED`, stamped in ONE statement, so two
-replicas, a re-run or a restart cannot ask a form twice) and the read both the card and the bell row's gate
+the claim (`STALE_OPEN_CLAIM_SQL`: ONE due form `FOR UPDATE SKIP LOCKED`, stamped in the SAME transaction
+that writes its bell rows, so two replicas or a re-run cannot ask a form twice and a process dying mid-way
+loses no question) and the read both the card and the bell row's gate
 use (`staleOpenAskedSql`, so they clear together).
 
 - **Asked once.** A form with `staleAskedAt` set is never asked again by the passing of time.
@@ -2956,10 +2958,18 @@ use (`staleOpenAskedSql`, so they clear together).
   `closedAt`, which is not the predicate.
 - **"Silent"** is the newest of the form's creation, its last edit and its last answer: a manager editing
   is a sign of life, and a draft published today is not asked about on its first day.
-- **A notice that cannot be written releases its claim** (`releaseStaleOpenClaim`, conditional on the
-  claim still being the form's own), so a failed write is retried tomorrow instead of counted as asked.
+- **Claim and rows are one transaction** (as `BirthdayNotifier`): a notice that cannot be written, or a
+  process dying between the two, rolls the claim back and the form is asked at the next sweep. There is no
+  release path to forget.
+- **Closing, reopening or dating a form clears the memory** (`staleAskedAt`, `staleKeptAt`, on `setClosed`,
+  `setClosingDate` and an edit that moves the end). Each bell row names the `staleAskedAt` it was written for
+  (`meta.askedAt`) and the gate shows it only while that is the form's current one, so a re-asked form never
+  brings back the rows of its first question.
+- **"Fixer une date" is a conditional write** (`closedAt IS NULL`, published, not deleted): a close landing
+  since the read is refused 409 `FORM_CLOSING_DATE_NOT_OPEN`, and a missing or malformed date is a 400
+  validation, never read as a past one.
 - **The trigger is the app's own scheduled-job mechanism**: `StaleOpenFormScheduler`, a `@Cron('30 9 * * *')`
-  of social-service, like the other sweeps of `forms/` (not a workflow: `scheduled.yml` holds repository
+  (Europe/Paris) of social-service, like the other sweeps of `forms/` (not a workflow: `scheduled.yml` holds repository
   jobs, not service jobs; no fifth workflow).
 
 ### The notice, and how an old app renders it
@@ -2968,7 +2978,9 @@ A NEW bell type, `form_stale_open` (`postId` is the FORM, `text` its title), a b
 so none of the native tables. Its floor is **`1.8.0`** (`FORM_STALE_OPEN_MIN_CLIENT_VERSION`): the bell
 read serves it only to a build that draws it, so **an older app is never sent it and renders nothing
 unknown** ([legacy-compatibility](../../legacy-compatibility.md)). The bell row's gate (`BELL_ROW_GATE`)
-shows it while the reader still owns or manages the form AND the question is still put. An older app
+shows it while the reader is one of the recipients (`staleOpenRecipients`) AND the question is still put AND
+the row names the current question. **The card and the bell row need a client >= 1.8.0**: a 1.7.3 alpha
+draws neither (the card is the new `staleOpenAsk` field), so the sweep's first reading is on a 1.8.0 build. An older app
 still gets the new `staleOpenAsk` field on the list and ignores it; an old server sends none and the card
 never draws; the publish offer needs no server support (it writes the ordinary `closedAt`).
 

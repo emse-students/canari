@@ -221,13 +221,17 @@ export const BELL_ROW_GATE: Readonly<Record<NotificationType, BellRowGate>> = {
       WHERE bell_pcr.id = ${target} AND ${profileCorrectionPendingSql('bell_pcr')}))`,
   admin_report: ({ reader, target }) =>
     `(${isGlobalAdminSql(reader)} AND ${reportNoticeOwedSql(target)})`,
-  // The question put to a form left open (owner, 2026-11-21): shown to the form's owner and its
-  // `MANAGE_FORMS` holders (the recipients the sweep chose) while the question is STILL put - the
-  // form open, asked, not answered by a close, a date or "Garder ouvert" (`staleOpenAskedSql`).
-  form_stale_open: ({ reader, target }) => `EXISTS (SELECT 1 FROM forms bell_form
+  // The question put to a form left open (owner, 2026-11-21): shown to the recipients the sweep
+  // chose (`staleOpenRecipients`: the MANAGE_FORMS holders of an association's form, the owner of a
+  // personal one) while the question is STILL put - the form open, asked, not answered by a close,
+  // a date or "Garder ouvert" (`staleOpenAskedSql`) - and only the row of the CURRENT question: it
+  // names the `staleAskedAt` it was written for (`meta.askedAt`), so a form closed, reopened and
+  // asked again does not bring back the rows of the first question.
+  form_stale_open: ({ reader, target, meta }) => `EXISTS (SELECT 1 FROM forms bell_form
       WHERE bell_form.id = ${target} AND ${staleOpenAskedSql('bell_form')}
-        AND (bell_form."ownerId" = ${reader}
-          OR ${holdsFlagSql('bell_form."associationId"', reader, AssociationPermissionFlag.MANAGE_FORMS)}))`,
+        AND bell_form."staleAskedAt" = (${meta}->>'askedAt')::timestamptz
+        AND (CASE WHEN bell_form."associationId" IS NULL THEN bell_form."ownerId" = ${reader}
+          ELSE ${holdsFlagSql('bell_form."associationId"', reader, AssociationPermissionFlag.MANAGE_FORMS)} END))`,
 };
 
 /** The kinds whose row names something other than a post, re-asked by `targetBoundRowShownSql`. */

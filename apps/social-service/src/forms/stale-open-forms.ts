@@ -1,6 +1,7 @@
 import { Logger } from '@nestjs/common';
 import type { EntityManager } from 'typeorm';
 import { associationArchivedSql } from '../associations/association-archived';
+import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 
 /**
  * THE QUESTION PUT TO A FORM LEFT OPEN (owner, 2026-11-21; docs/wiki/frontend/modules/forms.md, "The
@@ -14,15 +15,19 @@ import { associationArchivedSql } from '../associations/association-archived';
  * form inside the rhythm it has shown.
  *
  * ALL OF THE STATE IS TWO COLUMNS OF `forms` (migration 180), and THE SWEEP'S CLAIM IS ITS ONLY
- * WRITE: {@link STALE_OPEN_CLAIM_SQL} selects the due forms `FOR UPDATE SKIP LOCKED` and stamps
- * `staleAskedAt` in one statement, so two replicas, a re-run or a crash cannot ask a form twice.
+ * WRITE: {@link STALE_OPEN_CLAIM_SQL} locks ONE due form `FOR UPDATE SKIP LOCKED` and stamps
+ * `staleAskedAt`, in the SAME transaction as the form's bell rows, so two replicas or a re-run
+ * cannot ask a form twice and a process dying mid-way loses no question.
  * - ASKED ONCE: a form whose `staleAskedAt` is set is never asked again by the passing of time.
  * - RE-ARMED ONLY BY AN ANSWER: it is asked again only when an answer arrived on or after the day of
  *   the last question (day granularity, UTC: an anonymous form stores the UTC DAY of its answers, so a
  *   same-day answer must count) AND the form is then silent for the whole window again. "Garder
  *   ouvert" therefore silences it until a new answer arrives, which is the only evidence that the
  *   form lives; it needs no state of its own for the sweep (`staleKeptAt` only hides the question).
- * - CLOSING, OR SETTING A DATE, ends it: both leave `closedAt` set, which is not the predicate.
+ * - CLOSING, OR SETTING A DATE, ends it: both leave `closedAt` set, which is not the predicate, and
+ *   both clear the memory (`staleAskedAt`, `staleKeptAt`), so a form reopened later is a new form to
+ *   this question and the bell rows of the earlier one (they name the earlier `staleAskedAt`) stay
+ *   hidden.
  *
  * WHAT "SILENT" MEANS: the newest of the form's creation, its last edit and its last answer. A
  * manager editing a form is a sign of life; a form nobody ever answered counts from its last touch,
@@ -62,19 +67,20 @@ export const STALE_OPEN_DUE_SQL = `SELECT f.id, f.title, f."ownerId", f."associa
   ORDER BY f."createdAt"`;
 
 /**
- * Claims the due forms: stamps `staleAskedAt` and answers each with the value it replaced, so a
- * failed notice can put it back ({@link releaseStaleOpenClaim}). `SKIP LOCKED`: a form another
- * replica holds is theirs.
+ * Claims ONE due form (`$3`): stamps `staleAskedAt` with `$1`, on the row it locks (`SKIP LOCKED`: a
+ * form another replica holds is theirs). Run INSIDE the transaction that also writes the form's bell
+ * rows, so the question is asked if and only if its notice exists: a process dying between the two
+ * loses neither (the whole transaction rolls back, and the next sweep finds the form due again).
  */
 export const STALE_OPEN_CLAIM_SQL = `WITH due AS (
-   SELECT f.id, f."staleAskedAt" AS previous
+   SELECT f.id
      FROM forms f
-    WHERE ${STALE_OPEN_WHERE}
+    WHERE f.id = $3::uuid AND ${STALE_OPEN_WHERE}
     FOR UPDATE OF f SKIP LOCKED)
  UPDATE forms f SET "staleAskedAt" = $1::timestamptz
    FROM due
   WHERE f.id = due.id
- RETURNING f.id, f.title, f."ownerId", f."associationId", due.previous AS "previousAskedAt"`;
+ RETURNING f.id, f.title, f."ownerId", f."associationId"`;
 
 /** One form the question was just claimed for. */
 export interface ClaimedStaleForm {
@@ -82,8 +88,6 @@ export interface ClaimedStaleForm {
   title: string;
   ownerId: string;
   associationId: string | null;
-  /** What `staleAskedAt` held before the claim: where a released claim puts it back. */
-  previousAskedAt: Date | null;
 }
 
 /**
@@ -98,33 +102,53 @@ function rowsOf<T>(result: unknown): T[] {
   return result as T[];
 }
 
-/** Claims every form the question is due for at `at`. Idempotent: a second call claims nothing. */
-export async function claimStaleOpenForms(
+/** The ids of the forms the question is due for at `at`, oldest first - read only, nothing claimed. */
+export async function dueStaleOpenFormIds(
   db: Pick<EntityManager, 'query'>,
   at: Date,
   days: number = STALE_OPEN_FORM_DAYS
-): Promise<ClaimedStaleForm[]> {
-  const claimed = rowsOf<ClaimedStaleForm>(await db.query(STALE_OPEN_CLAIM_SQL, [at, days]));
-  logger.log(`[STALE-OPEN] claimed ${claimed.length} form(s) at ${at.toISOString()}`);
-  return claimed;
+): Promise<string[]> {
+  const rows = rowsOf<{ id: string }>(await db.query(STALE_OPEN_DUE_SQL, [at, days]));
+  return rows.map((r) => r.id);
 }
 
 /**
- * Puts a claim back because the notice could not be written: the form is asked again by the next
- * sweep instead of being counted as asked. Conditional on the claim still being the form's own
- * (`staleAskedAt = at`), so a release never undoes a newer one.
+ * Claims one form at `at`, or answers `null` when it is no longer due or another replica holds it.
+ * Idempotent: a second call claims nothing. `db` is the manager of the caller's transaction.
  */
-export async function releaseStaleOpenClaim(
+export async function claimStaleOpenForm(
   db: Pick<EntityManager, 'query'>,
-  form: ClaimedStaleForm,
-  at: Date
-): Promise<void> {
-  await db.query(`UPDATE forms SET "staleAskedAt" = $2 WHERE id = $1 AND "staleAskedAt" = $3`, [
-    form.id,
-    form.previousAskedAt,
-    at,
-  ]);
-  logger.warn(`[STALE-OPEN] claim of form ${short(form.id)} released: its notice failed`);
+  formId: string,
+  at: Date,
+  days: number = STALE_OPEN_FORM_DAYS
+): Promise<ClaimedStaleForm | null> {
+  const [claimed] = rowsOf<ClaimedStaleForm>(
+    await db.query(STALE_OPEN_CLAIM_SQL, [at, days, formId])
+  );
+  logger.log(`[STALE-OPEN] claim form=${short(formId)} at=${at.toISOString()} taken=${!!claimed}`);
+  return claimed ?? null;
+}
+
+/**
+ * Who hears the question: for an ASSOCIATION's form, the members holding `MANAGE_FORMS` and nobody
+ * else - its creator who does not hold it is not a manager (owner, 2026-11-14, `managesForm`) and
+ * could not answer the question; for a PERSONAL form, its owner. The bell row's gate re-asks the
+ * same predicate (`BELL_ROW_GATE.form_stale_open`).
+ */
+export async function staleOpenRecipients(
+  db: Pick<EntityManager, 'query'>,
+  form: Pick<ClaimedStaleForm, 'ownerId' | 'associationId'>
+): Promise<string[]> {
+  if (!form.associationId) return [form.ownerId];
+  const rows = rowsOf<{ userId: string }>(
+    await db.query(
+      `SELECT m."userId" FROM association_members m
+        WHERE m."associationId" = $1 AND (m.permissions & $2::int) <> 0
+        ORDER BY m."userId"`,
+      [form.associationId, AssociationPermissionFlag.MANAGE_FORMS]
+    )
+  );
+  return rows.map((r) => r.userId);
 }
 
 /**
