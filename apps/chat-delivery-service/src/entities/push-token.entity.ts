@@ -122,6 +122,24 @@ export class PushToken {
   @Column({ type: 'integer', default: 0 })
   groupCallVersion: number;
 
+  /**
+   * The last time a provider (FCM, or APNs for an iOS VoIP ring) ACCEPTED a push for this device
+   * (migration 054). Stamped once per send batch, after the batch settled
+   * (`utils/push-delivery-records.ts`), never by the registration. Null: never accepted since the row
+   * was written, or since the column existed. Content-free by design - a date, nothing else.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  lastPushSentAt: Date | null;
+
+  /**
+   * The last time this device's native handler fetched what a push pointed at - `GET
+   * /mls/push/fetch-proto` or `GET /mls/push/wake` (migration 054): the server's own sight of a push
+   * ARRIVING. A full push whose ciphertext rode inline is never fetched, so this date is evidence for
+   * wakes and frames carried by reference, never for every push.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  lastPushFetchedAt: Date | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

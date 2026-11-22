@@ -207,6 +207,14 @@ export function useNotifications() {
   let incomingCallNotification: Notification | null = null;
   /** Tauri notification id of the active incoming-call notification, for cancellation. */
   let incomingCallNotifId: number | null = null;
+  /**
+   * The reaction notifications THIS PAGE raised through the plugin or the browser (iOS, desktop,
+   * web), per conversation, so opening the conversation takes them down - "the reaction's alert goes
+   * with its conversation" ({@link dismissConversationReactions}). Android's are the native
+   * builder's, cancelled there. A push-drawn one is not here: the page never held it.
+   */
+  type RaisedReaction = { key: string; id?: number; notification?: Notification };
+  const raisedReactions = new Map<string, RaisedReaction[]>();
 
   // ---------- Audio ----------
 
@@ -698,6 +706,63 @@ export function useNotifications() {
     });
   }
 
+  /** Forgets one held entry (its notification closed by itself), dropping an emptied conversation. */
+  function releaseRaisedReaction(conversationId: string, entry: RaisedReaction) {
+    const list = raisedReactions.get(conversationId);
+    if (!list) return;
+    const left = list.filter((r) => r !== entry);
+    if (left.length === 0) raisedReactions.delete(conversationId);
+    else raisedReactions.set(conversationId, left);
+  }
+
+  /**
+   * Takes down the reaction notifications this page raised for `conversationId` - the reader opened
+   * it, and the bubble now carries what the alert announced. Off Android only (see
+   * `raisedReactions`); idempotent, a notification already gone costs nothing.
+   *
+   * @returns how many were asked to go.
+   */
+  async function dismissConversationReactions(conversationId: string): Promise<number> {
+    const held = raisedReactions.get(conversationId);
+    if (!held) return 0;
+    raisedReactions.delete(conversationId);
+    const ids: { id: number }[] = [];
+    for (const r of held) {
+      if (r.id !== undefined) ids.push({ id: r.id });
+      try {
+        r.notification?.close();
+      } catch (e) {
+        console.warn(`[NOTIF] closing a reaction notification of ${conversationId} failed:`, e);
+      }
+    }
+    if (ids.length > 0) {
+      try {
+        await removeActive(ids);
+      } catch (e) {
+        console.warn(`[NOTIF] removing the reaction notifications of ${conversationId} failed:`, e);
+      }
+    }
+    console.log(
+      `[NOTIF] ${held.length} reaction notification(s) of ${conversationId} taken down - its reader opened it.`
+    );
+    return held.length;
+  }
+
+  /** Remembers a reaction notification the page raised, for {@link dismissConversationReactions}. */
+  function holdRaisedReaction(
+    channelId: string,
+    conversationId: string | undefined,
+    entry: RaisedReaction
+  ): RaisedReaction | null {
+    if (channelId !== CHANNEL_REACTIONS || !conversationId) return null;
+    // One entry per slot: a reactor's second reaction to one message REPLACES the first (same id or
+    // tag), so holding both would only duplicate it.
+    const list = (raisedReactions.get(conversationId) ?? []).filter((r) => r.key !== entry.key);
+    list.push(entry);
+    raisedReactions.set(conversationId, list);
+    return entry;
+  }
+
   /**
    * THE PLAIN BUILDERS - the plugin (iOS, desktop) and the browser's Notification API - shared by a
    * message and a reaction, so neither can drift from the other's permission, tap and sound rules.
@@ -725,6 +790,14 @@ export function useNotifications() {
             ...androidNotificationOptions(body, channelId),
             ...(idKey ? { id: stableNotifId(idKey) } : {}),
           });
+          // The plugin reports no close, so a plugin entry lives until its conversation is opened -
+          // one small id per reactor and message at most (`holdRaisedReaction` dedupes by slot).
+          if (idKey) {
+            holdRaisedReaction(channelId, conversationId, {
+              key: idKey,
+              id: stableNotifId(idKey),
+            });
+          }
           // THE CHOICE IS LOGGED BECAUSE IT IS INVISIBLE OTHERWISE. A channel does not appear on
           // the notification; it decides which of the reader's own switches apply to it, and the
           // only place it can be read back is `dumpsys notification`, with the phone in hand.
@@ -764,8 +837,16 @@ export function useNotifications() {
           }
         }
         return;
-      } catch {
-        /* fallback to web */
+      } catch (e) {
+        // NO FALLBACK TO THE BROWSER'S API: this is a Tauri runtime, where the plugin is the one
+        // builder (Android's is the native one, asked above), and the WebView's `Notification` would
+        // raise a SECOND, differently-identified system notification for the same event. The plugin
+        // throws only when its native side is unavailable or refuses (a missing permission is a
+        // `false` answer, handled above), which is a defect to see, not a path to route around.
+        console.error(
+          `[NOTIF] The notification plugin threw for ${convKey} (${e instanceof Error ? e.name : typeof e}) - nothing was raised: ${String(e)}`
+        );
+        return;
       }
     }
 
@@ -817,8 +898,21 @@ export function useNotifications() {
           if (conversationId) notifNav.navigate(conversationId);
           n.close();
         };
+        const held = holdRaisedReaction(channelId, conversationId, {
+          key: idKey ?? convKey,
+          notification: n,
+        });
+        // A notification that closed - by itself after 8 s, by a click, by the user - is no longer
+        // held: only an open one can be taken down with its conversation.
+        const release = () => {
+          if (held && conversationId) releaseRaisedReaction(conversationId, held);
+        };
+        n.onclose = release;
         console.log(`[NOTIF] Raised for ${convKey}.`);
-        setTimeout(() => n.close(), 8000);
+        setTimeout(() => {
+          n.close();
+          release();
+        }, 8000);
       } catch (e) {
         // A browser refuses a Notification for reasons a page cannot test for in advance, and an
         // empty catch here is indistinguishable from never having tried.
@@ -835,6 +929,7 @@ export function useNotifications() {
     requestSystemNotificationPermission,
     sendSystemNotification,
     sendReactionNotification,
+    dismissConversationReactions,
     startIncomingCallRingtone,
     stopIncomingCallRingtone,
     startBlinkingTitle,

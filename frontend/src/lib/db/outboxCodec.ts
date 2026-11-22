@@ -119,6 +119,7 @@ export function encodeOutboxSensitive(
     payload.controlProtoB64 = toBase64(entry.controlProto);
   }
   if (entry.take) payload.take = entry.take;
+  if (entry.adoptedFromMirror) payload.adoptedFromMirror = true;
   return payload;
 }
 
@@ -158,6 +159,7 @@ export function decodeOutboxEntry(clear: OutboxClearColumns, payload?: any): Out
         ? base64ToUint8(payload.controlProtoB64)
         : undefined,
     ...(payload?.take && Array.isArray(payload.take.sends) ? { take: payload.take } : {}),
+    ...(payload?.adoptedFromMirror === true ? { adoptedFromMirror: true as const } : {}),
   };
 }
 

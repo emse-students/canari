@@ -70,10 +70,12 @@ use crate::commands::mls_account_state::{
     mls_other_accounts_present, rollback_user_mls_reset, stage_user_mls_reset,
 };
 use crate::commands::native_push_log::take_native_push_log;
+use crate::commands::notification_delivery_state::notification_delivery_state;
 use crate::commands::notifications::{
     notify_native_message, record_read_elsewhere, store_avatar_mirror,
 };
 use crate::commands::nse_outcomes::take_nse_outcomes;
+use crate::commands::outbox_mirror::{read_outbox_mirror, store_outbox_mirror};
 use crate::commands::picked_files::discard_picked_file;
 use crate::commands::picked_files::take_picked_file;
 use crate::commands::push::{
@@ -83,10 +85,9 @@ use crate::commands::push::{
     get_push_diagnostic, get_voip_token, load_push_context, preclaim_device_notices,
     read_and_clear_outbox_sent, read_and_clear_pending_call_accept,
     read_and_clear_pending_notification_tap, read_and_clear_pending_quick_replies,
-    read_and_clear_read_watermarks, read_outbox_mirror, return_pending_quick_replies,
-    set_push_context_locale, store_device_identity, store_graine_seed, store_outbox_mirror,
-    store_push_context, store_push_secret, take_background_joins, take_fcm_cache,
-    take_key_group_push_joins, unclaimed_quick_replies,
+    read_and_clear_read_watermarks, return_pending_quick_replies, set_push_context_locale,
+    store_device_identity, store_graine_seed, store_push_context, store_push_secret,
+    take_background_joins, take_fcm_cache, take_key_group_push_joins, unclaimed_quick_replies,
 };
 use crate::commands::push_registration::{
     complete_owed_push_token_deletion, end_push_registration,
@@ -1906,6 +1907,7 @@ pub fn run() {
             store_push_secret,
             claim_device_notices,
             preclaim_device_notices,
+            notification_delivery_state,
             end_push_registration,
             complete_owed_push_token_deletion,
             clear_app_data,

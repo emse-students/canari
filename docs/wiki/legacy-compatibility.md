@@ -940,6 +940,23 @@ without `asOf`).
 **Removal condition:** when no estate older than the release carrying `rankedFeeds` is served (both
 estates deployed past 1.6.9), the client branch for `false` may go; the field stays, always `true`.
 
+### No date yet - own answers read back - `myAnswers` (2026-11-21)
+
+**Site:** the fill page's load (`frontend/src/routes/forms/[id]/+page.svelte`, `ownAnswersOf` in
+`frontend/src/lib/forms/ownAnswers.ts`); the server half is `myAnswers` in `GET /api/forms/:id/check?answers=1`.
+**Why.** A store build reaches phones days before production deploys, and a social-service older than
+the field ignores `answers=1` and answers the check without it.
+**What the client does.** An ABSENT `myAnswers` is "not served": the page reads the single answer
+through `GET :id/submission` as before, and lists only the changeable answers of a form taking several.
+Nothing is learned from a refusal. The branch ACCUSES: it logs at warn `[LEGACY] myAnswers not served`
+(`ownAnswersOf`), the line a reader of a device's in-app log sees. It is a client console line, which
+no estate collects, so it says THAT the branch ran, never how often. Pinned by
+`page.ownAnswer.svelte.test.ts` ("an estate older than myAnswers", the tag included).
+**Removal condition:** the branch serves only a new client talking to a social-service that predates
+`myAnswers`. It may go once every estate - dev AND production - runs a server that serves the field,
+that is once the **1.8.0 stable** is deployed on both (`gh release list` says when). The `getSubmission`
+route itself stays for older apps until their own floor.
+
 ### No date yet - an answer editor newer than its server - `formAnswerEdit` (2026-11-13)
 
 **Site:** `serverFormAnswerEdit()` (`frontend/src/lib/stores/appVersionCheck.svelte.ts`), read through
