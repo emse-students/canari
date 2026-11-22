@@ -20,6 +20,7 @@
   import { createEditSession } from '$lib/utils/chat/editSession.svelte';
   import { slide } from 'svelte/transition';
   import ChatHeader from './ChatHeader.svelte';
+  import SelfConversationLossNotice from './SelfConversationLossNotice.svelte';
   import ChatMessageGroups from './ChatMessageGroups.svelte';
   import ChatTypingBubble from './ChatTypingBubble.svelte';
   import JoinRequestRow from './JoinRequestRow.svelte';
@@ -1123,6 +1124,7 @@
       isReady: c.lifecycle === 'active',
       isGroup: convType === 'group',
       isDirect: convType === 'direct',
+      isSelf: convType === 'self',
     };
   });
 
@@ -1984,6 +1986,7 @@
         isReady={chatView?.isReady ?? false}
         {isChannel}
         isGroupConversation={chatView?.isGroup ?? false}
+        isSelfConversation={chatView?.isSelf ?? false}
         {imageMediaId}
         {onInviteMembers}
         {onBack}
@@ -2272,6 +2275,9 @@
               <CloudOff size={12} class="shrink-0" strokeWidth={2.5} />
               {m.chat_scrollback_main_tab()}
             </div>
+          {/if}
+          {#if chatView?.isSelf}
+            <SelfConversationLossNotice groupId={chatView.conversation.id} />
           {/if}
           <ChatMessageGroups
             {visibleMessageGroups}

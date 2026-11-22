@@ -17,5 +17,20 @@ Recorded so no question answered here is asked again. Each line names where its 
 7. **A shade reply whose conversation was deleted on the device is SHOWN, never dropped** (afternoon answer b): the conversation is recreated locally and the reply is shown as failed, with Delete. Charter principle 1, your messages are yours, and principle 2: a typed reply never vanishes without a trace. Planned in [the entry](a-shade-reply-to-a-deleted-conversation-is-shown-as-failed.md); the parked question in [open-questions](../open-questions.md) points here.
 8. **The media cache gets a default cap of 500 MB** (afternoon answer c): the Cache Storage bucket `canari-media-ciphertext-v1` is unbounded today. The member chooses 250 MB, 500 MB (default), 1 GB or unlimited. Eviction is LRU and NEVER evicts a sole copy: the server purges ephemeral media after 90 days idle, so an old cached copy may be the only one left. Charter principles 2 and 1, then simplicity. Planned in [the entry](the-media-cache-has-a-default-cap-of-500-mb.md).
 9. **There is no server re-touch before eviction** (afternoon answer d): the client never asks the server to refresh an object's idle stamp to make an eviction safe; the sole-copy rule of decision 8 is decided from what the device knows. Charter principle 4, independence, and the rule that durable state answers only the question it was written for ([CLAUDE.md](../../../CLAUDE.md)).
+10. **The personal notepad moves into `/chat` as "Mes notes", a conversation with oneself.** It
+   carries text, photos, files and voice notes through the existing encrypted paths
+   ([chat](../frontend/modules/chat.md#mes-notes---the-conversation-with-oneself-2026-11-22),
+   [chat-delivery](../services/chat-delivery.md#mes-notes---the-self-conversation)).
+11. **It is end-to-end MLS, like every conversation.** Charter principle 1 (*vos messages sont a
+   vous*) comes before principle 2 (*l'essentiel ne se perd pas*) ([principes](../../principes.md)):
+   the server holds nothing it can read. Principle 2 is served by a notice: while the account has a
+   single device, the conversation says that losing it loses the notes, and links the `.canari`
+   backup ([backup](../frontend/backup.md)).
+12. **The existing notepads are migrated into the conversation, then deleted from the server.** Today
+   they sit in `users.notesCiphertext` under a key the server holds (`users.notesKey`), which
+   principle 1 refuses ([the entry](mes-notes-notepad-migration-and-retention.md)).
+13. **Media keep the normal 90-day idle retention**, and the conversation says so.
+14. **Section navigation stays a CLOSED chantier**: this work only REMOVES the notepad entry point,
+   it adds no new section ([section-navigation](../frontend/section-navigation.md)).
 
 **Carried out, 2026-11-22 (`1.7.3` shipped):** the four readings entries above and the FORTIFY entry were deleted; every other entry still naming `1.7.3` was retargeted to `1.8.0`, the readings among them, and the readings rule applies to them from the first `1.8.0` alpha ([roadmap](../roadmap.md#log-of-replannings-and-milestones)).

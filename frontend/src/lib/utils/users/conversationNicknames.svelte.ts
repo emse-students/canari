@@ -1,4 +1,5 @@
 import { SvelteMap } from 'svelte/reactivity';
+import type { ConversationType } from '$lib/types';
 import { currentUserId } from '$lib/stores/userState.svelte';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { isBlockedWith } from '$lib/users/blocks';
@@ -555,7 +556,7 @@ export function noteSalonCommunities(
  */
 export function notificationNicknameScope(
   conversationKey: string,
-  conversationType?: 'direct' | 'group' | 'channel'
+  conversationType?: ConversationType
 ): string | null {
   if (!conversationKey) return null;
   if (conversationType !== 'channel' && !conversationKey.startsWith('channel_')) {

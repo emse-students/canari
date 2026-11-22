@@ -33,6 +33,8 @@ const SENTENCES: Record<ConversationRefusal, () => string> = {
   'follower-tab': () => m.chat_error_follower_tab(),
   'leader-gone': () => m.chat_error_main_tab_gone(),
   'leader-unavailable': () => m.chat_error_main_tab_unavailable(),
+  'self-conversation-arriving': () => m.conversation_self_arriving(),
+  'self-conversation-unsupported': () => m.conversation_self_unsupported(),
   'creation-failed': () => m.chat_modal_error_creation_failed(),
 };
 

@@ -608,6 +608,41 @@ deleting this paragraph and the "older editors" sentence of the forms page.
   then:** a link minted before this build shows "a group" until it is re-shared. The `[LEGACY]` count
   is read first, so the cost is measured before it is paid.
 
+### Removal once `minClientVersion` passes the release carrying "Mes notes" - a self group kept from a build that does not know it (2026-11-22)
+
+- **The shim.** A build before "Mes notes" reads a self group (`dm_groups.kind = 'self'`, migration
+  056 of chat-delivery) as an ordinary group: Welcomed into it, it builds a `group` row named after
+  the account and offers rename, invite and DELETE - and its delete would end the notes on every
+  device of the account (charter principle 2). So every device states its build's capability on each
+  `register-device` (`key_package."selfConversationVersion"`, `SELF_CONVERSATION_VERSION = 1`), and a
+  device below it is given no pending seat (`writePendingSeats`), no Admit or external join in a
+  commit (refused whole, `SELF_CONVERSATION_DEVICE_UNAWARE`), no stored Welcome (`lockWelcomeSeat`)
+  and no relayed welcome request; a `DELETE mls/groups/:id` of a self group without `?kind=self` is
+  refused (`SELF_CONVERSATION_KIND_UNSTATED`). The creating client adds only its own devices that
+  stated it (`devicesKnowingSelf`). One predicate decides every door
+  (`apps/chat-delivery-service/src/utils/self-conversation.ts`).
+- **What the older build still sees, and what it costs.** Its group listing names the self group;
+  with no `kind` it reads a 1:1 whose peer it cannot resolve, and its listing pass builds nothing from
+  it (`peer-unresolved`). It never holds it, so it can neither open nor delete it. **But it is not
+  silent:** on EVERY connection it finds a listed group it holds no state for and sends a
+  `requestReAdd` (welcome request) for it, which the server refuses to relay; the group is marked
+  not-ready, and its watchdog repeats the group meta, membership and roster reads for it. That is the
+  price of the gate - a few reads per connection per older device, no write and no loss - and it ends
+  when the device updates: its next registration states the capability, and the next registration
+  writes its seat.
+- **The other direction: a NEW client on an OLD server** (a store build ahead of production in the
+  stores-before-deploy window, or a server rolled back below 056). That server drops `kind: 'self'`
+  and writes an ordinary group that would seat every device - no "Mes notes" on any other device,
+  and devices would diverge on which group is theirs. So `createRemoteGroup` believes the notes only
+  from the answer's own `kind: 'self'`; any other answer is a typed `SelfConversationUnsupportedError`
+  carrying the ordinary group's id, and `createOwnedGroup` deletes that group as an ordinary one (no
+  `?kind=self`, which such a server does not read) and refuses the creation
+  (`self-conversation-unsupported`, "Mes notes n'est pas encore disponible sur le serveur"). Nothing
+  to remove: the check is the creation's ordinary reading of its answer.
+- **Removal condition.** Once `minClientVersion` passes the stable carrying "Mes notes" (`1.8.0`), no
+  admitted build lacks the capability: the gates and the `?kind=self` check go, and the column with
+  them. The capability itself stays the way the next kind is introduced.
+
 ### Removal once both estates log `drained=0` - live segments an older release left in Garage (2026-11-09)
 
 **Site:** `LiveSegmentsService.drainObjectStore`, run by `onApplicationBootstrap`

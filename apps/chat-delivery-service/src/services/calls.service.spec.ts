@@ -402,6 +402,44 @@ describe('CallsService', () => {
    * B12: the server's kill switch, `platform_config.calls_mode`. Every request that starts or joins
    * a call asks it; the ones that stop or record a call do not.
    */
+  /** "Mes notes" (migration 056): its only member is the caller's own account, nobody to call. */
+  describe('a self conversation', () => {
+    beforeEach(() => {
+      process.env.CALL_ROOM_SECRET = 'test-secret';
+      groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'caller' });
+      groupMemberRepo.find.mockResolvedValue([{ userId: 'caller' }]);
+      groupMemberRepo.manager.query.mockImplementation((sql: string) =>
+        sql.includes('dm_groups') ? Promise.resolve([{ kind: 'self' }]) : baseQuery(sql)
+      );
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    });
+    afterEach(() => {
+      delete process.env.CALL_ROOM_SECRET;
+      jest.restoreAllMocks();
+    });
+
+    it.each([
+      ['initiate', (s: CallsService) => s.initiateCall('caller', 'group-1')],
+      ['ring', (s: CallsService) => s.ringGroup('caller', 'group-1', 'call-1', false)],
+      ['ice', (s: CallsService) => s.getIceServers('caller', 'group-1', 'call-1')],
+    ])('refuses %s with 403 SELF_CONVERSATION', async (_name, act) => {
+      await expect(act(service)).rejects.toMatchObject({
+        response: { code: 'SELF_CONVERSATION' },
+      });
+    });
+
+    it('a stranger is answered not-a-member before the kind is read', async () => {
+      groupMemberRepo.findOne.mockResolvedValue(null);
+      await expect(service.initiateCall('stranger', 'group-1')).rejects.toThrow(
+        'Not a member of this group'
+      );
+      expect(groupMemberRepo.manager.query).not.toHaveBeenCalledWith(
+        expect.stringContaining('dm_groups'),
+        expect.anything()
+      );
+    });
+  });
+
   describe('the calls kill switch', () => {
     beforeEach(() => {
       process.env.CALL_ROOM_SECRET = 'test-secret';

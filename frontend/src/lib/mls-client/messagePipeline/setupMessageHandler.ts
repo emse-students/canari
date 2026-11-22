@@ -8,6 +8,7 @@ import {
   parseDirectPeerFromName,
   resolveDirectPeerId,
   restoredConversationRow,
+  selfConversationIdentity,
 } from '$lib/utils/chat/conversations';
 import { noteGroupTreeChanged } from '$lib/utils/chat/groupTreeMembers';
 import { decodeAppMessage, type IAppMessage } from '$lib/proto/codec';
@@ -1920,7 +1921,7 @@ async function runPendingRekey(
  */
 async function upsertConversation(
   joinedGroupId: string,
-  gData: { name?: string; isGroup?: boolean } | null,
+  gData: { name?: string; isGroup?: boolean; kind?: string } | null,
   senderNorm: string,
   userId: string,
   deps: MessageHandlerDeps,
@@ -1928,6 +1929,34 @@ async function upsertConversation(
 ): Promise<PendingRekey | null> {
   const { conversations, saveConversation } = deps;
   let pendingRekey: PendingRekey | null = null;
+
+  // "MES NOTES": another device of this account added this one. No peer to find - the server's
+  // `kind` says so, and the name/roster resolution below would read it as a 1:1 with an unresolved
+  // peer. The row is revived in place (a re-Welcome) or written fresh.
+  if (gData?.kind === 'self') {
+    const existing = conversations.get(joinedGroupId);
+    const lastMessageAt = existing?.lastMessageAt || seed;
+    conversations.set(
+      joinedGroupId,
+      buildConversationRow({
+        id: joinedGroupId,
+        lifecycle: 'active',
+        identity: selfConversationIdentity(),
+        imageMediaId: null,
+        ...(existing ? { existing } : {}),
+        ...(lastMessageAt !== undefined ? { lastMessageAt } : {}),
+      })
+    );
+    deps.log(
+      `[WELCOME] ${joinedGroupId.slice(0, 8)}… is this account's self conversation - joined from another own device (${existing ? 'revived' : 'new row'})`
+    );
+    await saveConversation(joinedGroupId).catch((e: unknown) => {
+      deps.log(
+        `[WELCOME] self conversation ${joinedGroupId} not persisted after the join: ${String(e)}`
+      );
+    });
+    return null;
+  }
 
   const groupName = gData?.name ?? senderNorm;
   const isGroupFromApi: boolean | null = typeof gData?.isGroup === 'boolean' ? gData.isGroup : null;
