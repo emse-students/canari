@@ -23,6 +23,7 @@ import {
   markConversationDeletedRemotely,
 } from './conversations';
 import { forgetGroupReconciliation } from './historyReconcile';
+import { currentEndingFacts, settleEndingFacts } from './endedConversations';
 
 vi.mock('./historyReconcile', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./historyReconcile')>();
@@ -37,6 +38,51 @@ const forgotten = () => vi.mocked(forgetGroupReconciliation).mock.calls.some(([g
 
 const makeConvo = (over: Partial<Conversation> = {}): Conversation =>
   ({ id: GROUP, name: 'G', messages: [], ...over }) as unknown as Conversation;
+
+describe('retireConversation - which endings take banners down', () => {
+  const confirmedNow = () => [...currentEndingFacts().confirmed];
+  beforeEach(() => settleEndingFacts(false, new Map()));
+
+  it('a confirmed retire hands its id to the watcher; a miss does not', async () => {
+    const miss = new SvelteMap<string, Conversation>([['k', makeConvo()]]);
+    await retireConversation({ conversations: miss, key: 'k', groupId: GROUP });
+    expect(confirmedNow()).toEqual([]);
+
+    const sure = new SvelteMap<string, Conversation>([['k', makeConvo()]]);
+    await retireConversation({ conversations: sure, key: 'k', groupId: GROUP, confirmed: true });
+    expect(confirmedNow()).toEqual([GROUP]);
+  });
+
+  it('a confirmation arriving for an already removed row still counts (no race on who wins)', async () => {
+    const conversations = new SvelteMap<string, Conversation>([['k', makeConvo()]]);
+    await retireConversation({ conversations, key: 'k', groupId: GROUP });
+    expect(confirmedNow()).toEqual([]);
+    expect(
+      await retireConversation({ conversations, key: 'k', groupId: GROUP, confirmed: true })
+    ).toBe(false);
+    expect(confirmedNow()).toEqual([GROUP]);
+  });
+
+  it('a patched id is confirmed too', async () => {
+    const conversations = new SvelteMap<string, Conversation>([['k', makeConvo({ id: 'old' })]]);
+    await retireConversation({
+      conversations,
+      key: 'k',
+      groupId: GROUP,
+      patch: { id: GROUP },
+      confirmed: true,
+    });
+    expect(confirmedNow().sort()).toEqual(['old', GROUP].sort());
+  });
+
+  it('a server-reported deletion is confirmed, also when the row is already removed', async () => {
+    const conversations = new SvelteMap<string, Conversation>([
+      ['k', makeConvo({ lifecycle: 'removed' })],
+    ]);
+    expect(markConversationDeletedRemotely(conversations, GROUP, USER)).toBe(false);
+    expect(confirmedNow()).toEqual([GROUP]);
+  });
+});
 
 describe('retireConversation', () => {
   beforeEach(() => {
