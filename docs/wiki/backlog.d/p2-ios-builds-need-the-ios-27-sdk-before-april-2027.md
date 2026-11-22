@@ -1,6 +1,8 @@
 ## P2 - iOS builds need the iOS 27 SDK before April 2027 (Apple's ITMS-90725 on build 100700011)
 
-target: 1.7.3
+target: 1.8.0
+
+_2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 

@@ -1,6 +1,8 @@
 ## Reading owed - the push delivery records count and stamp on dev, then on production
 
-target: 1.7.3
+target: 1.8.0
+
+_2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
 Built (owner, 2026-11-21: "totals + last delivery"): migration `054` adds `push_delivery_daily` and
 `push_token."lastPushSentAt"` / `"lastPushFetchedAt"`, written once per send batch and on every push

@@ -1,6 +1,6 @@
 ## The owner's decisions of 2026-11-14
 
-target: 1.7.3
+target: 1.8.0
 
 Recorded so no question answered here is asked again (owner: *"note mes réponses, je n'aime pas me
 répéter"*). Each line names where its detail lives.

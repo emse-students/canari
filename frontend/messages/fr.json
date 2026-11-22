@@ -2445,7 +2445,7 @@
   "asso_achats_grant_title": "Attribuer un produit",
   "asso_achats_grant_user_label": "Utilisateur",
   "asso_achats_grant_product_label": "Produit",
-  "asso_achats_grant_product_placeholder": "Choisir…",
+  "asso_achats_grant_product_placeholder": "Choisir...",
   "asso_achats_grant_amount_label": "Montant payé (€)",
   "asso_achats_grant_other_hint": "L'achat apparaîtra dans l'historique comme un paiement sur place.",
   "asso_achats_grant_cotisation_hint": "Le membre recevra la cotisation \"{name}\".",
@@ -3477,6 +3477,48 @@
   "form_pgrid_cell_open_aria": "{row} {column} : ouverte, cliquer pour fermer",
   "form_pgrid_cell_reopen_title": "Cliquer pour rouvrir",
   "form_pgrid_close_hint": "Cliquez une case pour fermer une combinaison qui n'existe pas (par exemple Crème en XS). L'acheteur la voit barrée.",
+  "form_pgrid_colset_apply_ordered_confirm": "Des réponses ont déjà été données sur les colonnes de cette grille. Les commandes passées gardent leur libellé et leur prix, mais les colonnes partagées remplacent celles-ci. Continuer ?",
+  "form_pgrid_colset_apply_ordered_confirm_button": "Remplacer",
+  "form_pgrid_colset_in_use": [
+    {
+      "declarations": ["input name", "input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Colonnes partagées « {name} » : {count} grille. Toute modification des colonnes s'y applique.",
+        "countPlural=other": "Colonnes partagées « {name} » : {count} grilles. Toute modification des colonnes s'applique à toutes."
+      }
+    }
+  ],
+  "form_pgrid_colset_join_matching_confirm": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} autre grille a exactement les mêmes colonnes. La partager aussi ?",
+        "countPlural=other": "{count} autres grilles ont exactement les mêmes colonnes. Les partager aussi ?"
+      }
+    }
+  ],
+  "form_pgrid_colset_join_matching_confirm_button": "Tout partager",
+  "form_pgrid_colset_join_matching_only_this": "Seulement celle-ci",
+  "form_pgrid_colset_leave": "Ne plus partager",
+  "form_pgrid_colset_name_label": "Nom des colonnes partagées",
+  "form_pgrid_colset_name_placeholder": "Nom, par exemple Tailles",
+  "form_pgrid_colset_share": "Partager ces colonnes",
+  "form_pgrid_colset_share_hint": "Les mêmes colonnes pour plusieurs grilles : modifiez-les une fois, elles changent partout.",
+  "form_pgrid_colset_title": "Colonnes partagées",
+  "form_pgrid_colset_use": "Utiliser des colonnes partagées",
+  "form_pgrid_colset_use_option": [
+    {
+      "declarations": ["input name", "input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{name} ({count} colonne)",
+        "countPlural=other": "{name} ({count} colonnes)"
+      }
+    }
+  ],
+  "form_pgrid_colset_waiting": "Le partage des colonnes est disponible une fois lues les réponses déjà données à ce formulaire. Rechargez la page si cela dure.",
   "form_pgrid_column_label": "Colonne {n}",
   "form_pgrid_column_placeholder": "Taille",
   "form_pgrid_corner": "Lignes \\ Colonnes",
@@ -3524,6 +3566,8 @@
   "form_pgrid_price_row": "Prix de la ligne {label}",
   "form_pgrid_problem_in_question": "« {label} » : {problem}",
   "form_pgrid_refusal_all_closed": "Toutes les cases sont fermées : rouvrez-en au moins une.",
+  "form_pgrid_refusal_column_set_diverged": "Deux grilles qui partagent les mêmes colonnes n'ont plus les mêmes : modifiez-les depuis l'une d'elles, ou arrêtez de les partager.",
+  "form_pgrid_refusal_column_set_invalid": "Les colonnes partagées de cette grille ont besoin d'un nom.",
   "form_pgrid_refusal_definition": "La grille est incomplète : chaque ligne et chaque colonne doit être remplie.",
   "form_pgrid_refusal_duplicate_label": "Deux lignes ou deux colonnes portent le même nom.",
   "form_pgrid_refusal_guest_price": "Formulaire public : donnez un prix à « Autres », c'est ce que paie un invité.",
@@ -4456,7 +4500,7 @@
   "profile_role_history_start_year_label": "Année début",
   "profile_role_history_end_year_label": "Année fin",
   "profile_role_history_add_button": "Ajouter un rôle passé",
-  "profile_role_history_choose_asso": "Choisir…",
+  "profile_role_history_choose_asso": "Choisir...",
   "shop_product_type_membership": "Cotiser",
   "shop_product_type_topup": "Recharger",
   "shop_product_type_buy": "Acheter",

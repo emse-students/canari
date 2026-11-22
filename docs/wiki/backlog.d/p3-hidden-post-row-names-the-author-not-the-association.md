@@ -1,6 +1,8 @@
 ## P3 - A hidden post's row names the author instead of the institution that published it (2026-11-18)
 
-target: 1.7.3
+target: 1.8.0
+
+_2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
