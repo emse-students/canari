@@ -14,6 +14,11 @@ which messages the class `CanariConversationNotifications` and so
 `iosBannersGoWithTheirConversation.test.ts`, and `nativeNotification.test.ts` for the page half. **It
 was compiled by nothing here: the iOS build is CI's.**
 
+An ending reaches its own entry on Android (no read mark); on iOS the same thread removal. Once the
+page's lists settled, `reconcile_conversation_notifications` (`reconcileWithActive:`) removes the chat
+banners of a thread that is not among the conversations that exist and, once per process, the legacy
+flat (`canari_messages`) or empty-thread chat banners no read can name; ring alerts are never touched.
+
 **The reading that closes it, on the iPhone 12, on the first pre-release carrying it:**
 
 1. A message banner delivered with the app in the background STAYS in Notification Center after the
@@ -22,6 +27,8 @@ was compiled by nothing here: the iOS build is CI's.**
    another conversation stays.
 3. A conversation deleted by its peer (or left) takes its banner with it.
 4. A call ring alert still goes when the app is brought up.
+5. A banner left by a conversation deleted while the app was CLOSED is gone after the app has opened
+   and its lists loaded (the reconcile), and a banner of a live conversation is NOT.
 
 **Expected merge conflict:** #3929 also edits `canari_push.mm` (the outbox parts); this change is the
 body of `CanariPushCancelMessageNotifications` and a new class at the end of the file, so a conflict

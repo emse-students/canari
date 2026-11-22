@@ -43,6 +43,20 @@ describe('iOS: a banner goes with its conversation, never with the app coming up
     expect(push).toContain('+ (BOOL)cancelForConversation:(NSString *)groupId;');
   });
 
+  // BLOCK review of #3951: a banner whose conversation is gone is found by FACT once the lists
+  // settled, and the legacy flat or empty-thread chat banners no read can ever name go once.
+  it('reconciles banners against the conversations that exist, and clears legacy flat ones once', () => {
+    const cls = bodyOf(push, '+ (BOOL)reconcileWithActive:(NSString *)activeIds {');
+    expect(push).toContain('+ (BOOL)reconcileWithActive:(NSString *)activeIds;');
+    expect(cls).toContain('![active containsObject:thread]');
+    expect(cls).toContain('static BOOL flatCleared = NO;');
+    expect(cls).toContain('userInfo[@"canariCallId"] != nil');
+    expect(cls).toContain('CanariSetBadgeCount(CanariCountUnreadConversations(notifications');
+    expect(rust).toContain('pub(crate) fn reconcile_conversation_notifications(');
+    expect(rust).toContain('reconcileWithActive: ns');
+    expect(lib).toContain('reconcile_conversation_notifications,');
+  });
+
   it('the Tauri command reaches that class through the runtime and is registered', () => {
     expect(rust).toContain('pub(crate) fn cancel_conversation_notifications(');
     expect(rust).toContain('AnyClass::get(c"CanariConversationNotifications")');

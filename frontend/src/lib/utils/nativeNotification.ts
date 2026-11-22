@@ -199,18 +199,13 @@ export async function postNativeReactionNotification(
  * from another device, an own salon `channel.read`, or `read_here` - THIS device's reader opening
  * it, which no push and no socket echo ever reports back (`openedConversationDismissal.ts`).
  */
-export type ReadElsewhereEvent =
-  | 'read_watermark'
-  | 'channel.read'
-  | 'read_here'
-  | 'conversation_ended';
+export type ReadElsewhereEvent = 'read_watermark' | 'channel.read' | 'read_here';
 
 /**
- * The mark of a conversation that ENDED (deleted, left, excluded, its salon or community gone): it
- * covers every line a banner can hold, so the banner and its reaction go. `Number.MAX_SAFE_INTEGER`
- * truncates losslessly into the command's `i64`.
+ * Why a conversation's notifications were taken down on iOS: a read, or its ENDING. An ending is
+ * not a read and never travels the read path - Android has its own command, and records no mark.
  */
-export const ENDED_CONVERSATION_MARK = Number.MAX_SAFE_INTEGER;
+export type NotificationTakedownReason = ReadElsewhereEvent | 'conversation_ended';
 
 /**
  * Tells the Android builder that this account read a conversation on another device, as this
@@ -269,7 +264,7 @@ export async function recordNativeReadElsewhere(
 
 /**
  * Takes down a conversation's delivered notifications on iOS - the page's reader opened it
- * (`read_here`) or it ended (`conversation_ended`). iOS posts under the conversation's thread, so
+ * (`read_here`) or it ended (`conversation_ended`; see {@link endNativeConversationNotifications}). iOS posts under the conversation's thread, so
  * the native side removes by thread and recomputes the badge; it keeps no read mark, because a
  * message newer than the reading cannot be on a banner of a conversation that is on screen.
  *
@@ -280,7 +275,7 @@ export async function recordNativeReadElsewhere(
  */
 export async function cancelNativeConversationNotifications(
   conversationId: string,
-  event: ReadElsewhereEvent
+  event: NotificationTakedownReason
 ): Promise<boolean> {
   if (!isIosTauriRuntime()) return false;
   try {
@@ -304,12 +299,11 @@ export async function cancelNativeConversationNotifications(
 }
 
 /**
- * The page's ONE hand-over of a conversation event to the native notification shade, whichever OS:
+ * The page's hand-over of a READ of a conversation to the native notification shade, whichever OS:
  * Android decides against a mark (`record_read_elsewhere`), iOS removes by thread. A runtime with no
  * native shade (web, desktop) answers `true`: there is nothing to hand over, and nothing failed.
  *
- * @param at the mark Android weighs lines against ({@link ENDED_CONVERSATION_MARK} for an ended
- *   conversation); `clock` says which clock it is on.
+ * @param at the mark Android weighs lines against; `clock` says which clock it is on.
  * @returns whether the work was queued where there is a native shade.
  */
 export async function handOverConversationEvent(
@@ -321,6 +315,75 @@ export async function handOverConversationEvent(
   if (isAndroidTauriRuntime()) return recordNativeReadElsewhere(conversationId, event, at, clock);
   if (isIosTauriRuntime()) return cancelNativeConversationNotifications(conversationId, event);
   return true;
+}
+
+/**
+ * Takes down EVERYTHING a conversation that ENDED (deleted, left, excluded, its salon or community
+ * gone) left in the shade: its message banner - a pending reply and a held banner included - its
+ * reaction notification and its share of the summary.
+ *
+ * **AN ENDING IS NOT A READ.** Android has its own command, which records NO read mark: a mark is a
+ * process-lifetime suppressor, and one written for an ending would silence the conversation if the
+ * account came back to it (a rejoin, a sign-in after a sign-out). iOS removes by thread, as for a
+ * read. Off a native shade: `true`, nothing invoked.
+ *
+ * @returns whether the work was queued where there is a native shade.
+ */
+export async function endNativeConversationNotifications(conversationId: string): Promise<boolean> {
+  if (isIosTauriRuntime())
+    return cancelNativeConversationNotifications(conversationId, 'conversation_ended');
+  if (!isAndroidTauriRuntime()) return true;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const queued = await invoke<boolean>('end_conversation_notifications', {
+      groupId: conversationId,
+      reason: 'conversation_ended',
+    });
+    if (!queued) {
+      console.error(
+        `[NOTIF] The native side refused to end the notifications of ${conversationId} - a banner for it may stay.`
+      );
+    }
+    return queued;
+  } catch (e) {
+    console.error(
+      `[NOTIF] Ending the notifications of ${conversationId} threw - a banner for it may stay: ${String(e)}`
+    );
+    return false;
+  }
+}
+
+/**
+ * Tells the native shade which conversations exist, so it ends the notifications of every other one
+ * (`reconcile_conversation_notifications`). Called ONLY once the page's lists have settled (the
+ * conversation list restored, the communities confirmed by a listing): a list still being drawn
+ * would end a live conversation's banner. Decided on facts - the ids that exist - never a timer.
+ * Off a native shade: `true`, nothing invoked.
+ *
+ * @returns whether the work was queued where there is a native shade.
+ */
+export async function reconcileNativeConversationNotifications(
+  activeIds: readonly string[]
+): Promise<boolean> {
+  const android = isAndroidTauriRuntime();
+  if (!android && !isIosTauriRuntime()) return true;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const queued = await invoke<boolean>('reconcile_conversation_notifications', {
+      activeIds: activeIds.join('\n'),
+    });
+    if (!queued) {
+      console.error(
+        '[NOTIF] The native side refused to reconcile its notifications - a banner of a gone conversation may stay.'
+      );
+    }
+    return queued;
+  } catch (e) {
+    console.error(
+      `[NOTIF] Reconciling the native notifications threw - a banner of a gone conversation may stay: ${String(e)}`
+    );
+    return false;
+  }
 }
 
 /**

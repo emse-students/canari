@@ -342,6 +342,127 @@ pub(crate) fn cancel_conversation_notifications(group_id: String, reason: String
     }
 }
 
+/// Android: a conversation ENDED (deleted, left, excluded, its salon or community gone) - withdraws
+/// its message banner, its reaction notification and the summary's share of them, UNCONDITIONALLY and
+/// without recording any read mark (`endConversationFromWebSocket`).
+///
+/// It is not a read, and must never travel the read path: a mark is a process-lifetime record that
+/// suppresses later posts at or below it, so an ending routed through [`record_read_elsewhere`] with
+/// a huge mark silenced the conversation for good once the account came back to it. Returns whether
+/// the work was queued; `false` off Android.
+#[tauri::command]
+pub(crate) fn end_conversation_notifications(group_id: String, reason: String) -> bool {
+    #[cfg(target_os = "android")]
+    {
+        use jni::objects::JValue;
+
+        with_native_builder(|env, class| {
+            let (group, why) = match (env.new_string(&group_id), env.new_string(&reason)) {
+                (Ok(group), Ok(why)) => (group, why),
+                (Err(e), _) | (_, Err(e)) => {
+                    log::error!(
+                        "[NOTIF] new_string failed: {e} - the ended conversation was NOT withdrawn"
+                    );
+                    return false;
+                }
+            };
+            match env
+                .call_static_method(
+                    class,
+                    "endConversationFromWebSocket",
+                    "(Ljava/lang/String;Ljava/lang/String;)Z",
+                    &[(&group).into(), (&why).into()],
+                )
+                .and_then(|v| v.z())
+            {
+                Ok(queued) => queued,
+                Err(e) => {
+                    log::error!(
+                        "[NOTIF] endConversationFromWebSocket failed: {e} - its banner may stay"
+                    );
+                    false
+                }
+            }
+        })
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (group_id, reason);
+        false
+    }
+}
+
+/// Android and iOS: takes down every delivered conversation notification whose conversation is NOT
+/// among `active_ids` (newline-separated ids: MLS group ids and `channel_<id>`).
+///
+/// The page's watcher of the conversation list only sees an ending that happens while it watches; a
+/// conversation that ended while the app was closed (or before this list was restored) left its
+/// banner behind with nothing to retire it. This is the fact-based answer: a banner whose
+/// conversation is not in the list the page has just settled on belongs to nothing. The caller sends
+/// it only once the list is complete (restored AND the community listing answered) - a partial list
+/// would take down live banners. Returns whether the work was queued.
+#[tauri::command]
+pub(crate) fn reconcile_conversation_notifications(active_ids: String) -> bool {
+    #[cfg(target_os = "android")]
+    {
+        with_native_builder(|env, class| {
+            let ids = match env.new_string(&active_ids) {
+                Ok(ids) => ids,
+                Err(e) => {
+                    log::error!("[NOTIF] new_string failed: {e} - notifications NOT reconciled");
+                    return false;
+                }
+            };
+            match env
+                .call_static_method(
+                    class,
+                    "reconcileConversationNotifications",
+                    "(Ljava/lang/String;)Z",
+                    &[(&ids).into()],
+                )
+                .and_then(|v| v.z())
+            {
+                Ok(queued) => queued,
+                Err(e) => {
+                    log::error!("[NOTIF] reconcileConversationNotifications failed: {e}");
+                    false
+                }
+            }
+        })
+    }
+    #[cfg(target_os = "ios")]
+    {
+        use objc2::msg_send;
+        use objc2::runtime::{AnyClass, AnyObject};
+        use std::ffi::CString;
+
+        let Ok(ids) = CString::new(active_ids.as_str()) else {
+            log::error!("[NOTIF] the active ids hold a NUL byte - notifications NOT reconciled");
+            return false;
+        };
+        let (Some(class), Some(str_class)) = (
+            AnyClass::get(c"CanariConversationNotifications"),
+            AnyClass::get(c"NSString"),
+        ) else {
+            log::error!("[NOTIF] CanariConversationNotifications is not loaded - notifications NOT reconciled");
+            return false;
+        };
+        objc2::rc::autoreleasepool(|_| {
+            // SAFETY: as `cancel_conversation_notifications`: a NUL-terminated C string that outlives
+            // the call, and a `+ (BOOL)` class method taking one NSString.
+            unsafe {
+                let ns: *mut AnyObject = msg_send![str_class, stringWithUTF8String: ids.as_ptr()];
+                msg_send![class, reconcileWithActive: ns]
+            }
+        })
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let _ = active_ids;
+        false
+    }
+}
+
 // --- The foreground's faces, handed to the notification's cache ---------------------------------
 
 /// The file name `CanariFirebaseMessagingService.avatarCacheFile` reads for `user_id`, without its

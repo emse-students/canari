@@ -47,3 +47,35 @@ export function endedConversationIds(
   }
   return ended;
 }
+
+/** The minimal community the reconcile reads: its salons by their raw channel id. */
+export interface WatchedWorkspace {
+  channels?: ReadonlyArray<{ id: string }>;
+}
+
+/**
+ * EVERY ID A NOTIFICATION CAN STILL BELONG TO, from facts only: each conversation row that is not
+ * `removed` (by its id AND its map key, which differ for a re-keyed row) and each salon of each
+ * community (`channel_<id>`, the key native banners are posted under).
+ *
+ * What the native side reconciles against once the page's lists have SETTLED, to retire the banner
+ * of a conversation that ended while the app was closed or before the list was restored: no watcher
+ * saw that ending, so it is found by comparing what is shown with what exists, never by a timer.
+ */
+export function liveNotificationIds(
+  rows: Iterable<readonly [string, WatchedConversation]>,
+  workspaces: Iterable<WatchedWorkspace>
+): string[] {
+  const live = new Set<string>();
+  for (const [key, row] of rows) {
+    if (row.lifecycle === 'removed') continue;
+    live.add(key);
+    if (row.id) live.add(row.id);
+  }
+  for (const workspace of workspaces) {
+    for (const channel of workspace.channels ?? []) {
+      if (channel.id) live.add(`channel_${channel.id}`);
+    }
+  }
+  return [...live].sort();
+}

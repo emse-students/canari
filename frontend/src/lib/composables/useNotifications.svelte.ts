@@ -214,6 +214,7 @@ export function useNotifications() {
    * builder's, cancelled there. A push-drawn one is not here: the page never held it.
    */
   type RaisedReaction = { key: string; id?: number; notification?: Notification };
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a registry of handles read only by imperative dismissals, nothing renders from it
   const raisedReactions = new Map<string, RaisedReaction[]>();
 
   // ---------- Audio ----------

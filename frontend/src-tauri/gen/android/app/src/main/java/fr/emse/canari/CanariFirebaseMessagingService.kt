@@ -1449,17 +1449,128 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
             } } finally {
                 decided?.let { context.recordShowOutcome(it, groupId, null, manager) }
+                // EVERY PATH REFRESHES THE SUMMARY, the early returns above included: a reaction
+                // cancelled alone, a banner kept for a newer line or a pending reply, a conversation
+                // with no banner - each can change what the summary and the launcher badge count, and
+                // only the fully cancelled path used to recompute them. Group summary + launcher badge
+                // (WP-XP-2): the unread count is recomputed and the summary dropped when no message
+                // notification remains. `justCancelled` because the cancel is asynchronous too: the
+                // shade can still report this conversation as active, which would keep a summary
+                // whose last child has just gone.
+                refreshBadgeSummary(context, justCancelled = notifId)
             }
             // The real posts this notification stood for are gone: none may cover a later refused
             // push (see [GenericBannerLedger.groupCleared]).
             synchronized(GENERIC_BANNERS_LOCK) { GENERIC_BANNERS.groupCleared(groupId) }
             Log.d(TAG, "cancelConversationNotification: notif removed group=${ConversationRef.of(groupId)} id=$notifId")
+        }
 
-            // Refresh the group summary + launcher badge (WP-XP-2): recompute the unread count and
-            // drop the summary when no message notification remains. `justCancelled` because the
-            // cancel above is asynchronous too: the shade can still report this conversation as
-            // active, which would keep a summary whose last child has just gone.
-            refreshBadgeSummary(context, justCancelled = notifId)
+        /**
+         * A conversation ENDED (deleted, left, excluded, its salon or community gone): withdraws its
+         * message banner, its reaction notification and the summary's share, UNCONDITIONALLY - a
+         * pending reply, a line with no server instant and a banner the platform holds after an inline
+         * answer included - and records NO read mark ([ReadElsewhereMarks.end]). An ending is not a
+         * read, so it never travels [cancelConversationNotification]: a mark outlives the process's
+         * session and would silence the conversation once the account came back to it.
+         *
+         * @return the notification id cancelled for the banner, or -1 when none.
+         */
+        internal fun endConversationNotifications(context: Context, groupId: String, reason: String): Int {
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val prefs = context.getSharedPreferences("canari_notif_ids", Context.MODE_PRIVATE)
+            var cancelledBanner = -1
+            synchronized(READ_ELSEWHERE.lock) {
+                // `getInt` rather than [getStableNotifId]: an ending never mints an id.
+                val stableId = prefs.getInt(groupId, -1).takeIf { it != -1 }
+                val ids = READ_ELSEWHERE.end(groupId, stableId) { manager.cancel(it) }
+                cancelledBanner = ids.firstOrNull() ?: -1
+                cancelReactionNotification(prefs, manager, groupId)
+            }
+            synchronized(GENERIC_BANNERS_LOCK) { GENERIC_BANNERS.groupCleared(groupId) }
+            refreshBadgeSummary(context, justCancelled = cancelledBanner)
+            Log.d(TAG, "endConversationNotifications: group=${ConversationRef.of(groupId)} banner id=$cancelledBanner withdrawn ($reason)") // log-safe: a notification id (integer) and a fixed reason label
+            return cancelledBanner
+        }
+
+        /**
+         * Everything a SIGN-OUT must take down of what the account showed: every message, mention and
+         * reaction notification and the summary, the records that remember them, the generic-banner
+         * ledger and the read marks. Opening the app no longer sweeps (owner, 2026-11-21), so nothing
+         * else would remove the previous account's lines - message text included - before the next
+         * account signed in (what iOS does: `removeAllDeliveredNotifications` at its sign-out).
+         */
+        internal fun clearAccountNotifications(context: Context) {
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            synchronized(READ_ELSEWHERE.lock) {
+                // By id from the record first (the shade lags a `notify`), then whatever the shade holds.
+                READ_ELSEWHERE.clear { manager.cancel(it) }
+                for (sbn in manager.activeNotifications) {
+                    val channelId = sbn.notification.channelId
+                    if (channelId == CHANNEL_MESSAGES || channelId == CHANNEL_MENTIONS || channelId == CHANNEL_REACTIONS) {
+                        manager.cancel(sbn.id)
+                    }
+                }
+            }
+            synchronized(GENERIC_BANNERS_LOCK) { GENERIC_BANNERS.allCleared() }
+            manager.cancel(GROUP_SUMMARY_ID)
+            Log.i(TAG, "clearAccountNotifications: every message, mention and reaction notification and the summary removed - the account signed out")
+        }
+
+        /**
+         * Ends every conversation this install holds a notification id for whose id is NOT among
+         * [activeIds]: their conversation is gone from the list the page just settled on. A
+         * conversation that ended while the app was closed, or before the page's list was restored,
+         * left a banner nothing else would retire. Reaction keys (`reaction:<id>`) and the counter
+         * are not conversations and are skipped.
+         *
+         * @return how many conversations were ended.
+         */
+        internal fun reconcileConversationNotifications(context: Context, activeIds: Set<String>): Int {
+            val prefs = context.getSharedPreferences("canari_notif_ids", Context.MODE_PRIVATE)
+            val orphans = prefs.all.entries
+                .filter { (key, value) -> value is Int && key != "__counter__" && ':' !in key && key !in activeIds }
+                .map { it.key }
+            for (groupId in orphans) endConversationNotifications(context, groupId, "reconciled: not in the conversation list")
+            Log.d(TAG, "reconcileConversationNotifications: ${orphans.size} conversation(s) not in the list of ${activeIds.size} ended")
+            return orphans.size
+        }
+
+        /** The WebView's hand-over of an ENDED conversation, on [WS_NOTIF_LANE] (`end_conversation_notifications`). */
+        @JvmStatic
+        fun endConversationFromWebSocket(groupId: String, reason: String): Boolean {
+            val context = CanariApplication.appContext()
+            if (context == null) {
+                Log.w(TAG, "endConversationFromWebSocket: no Application context - group=${ConversationRef.of(groupId)} NOT withdrawn ($reason)")
+                return false
+            }
+            WS_NOTIF_LANE.execute {
+                try {
+                    endConversationNotifications(context, groupId, reason)
+                } catch (e: Exception) {
+                    // EVERY SWALLOWED BRANCH LOGS: the banner of an ended conversation stays.
+                    Log.e(TAG, "endConversationFromWebSocket: failed for ${ConversationRef.of(groupId)}: ${throwableSite(e)}")
+                }
+            }
+            return true
+        }
+
+        /** The WebView's list of live conversations, to reconcile against (`reconcile_conversation_notifications`). */
+        @JvmStatic
+        fun reconcileConversationNotifications(activeIds: String): Boolean {
+            val context = CanariApplication.appContext()
+            if (context == null) {
+                Log.w(TAG, "reconcileConversationNotifications: no Application context - nothing reconciled")
+                return false
+            }
+            val active = activeIds.split('\n').filter { it.isNotEmpty() }.toSet()
+            WS_NOTIF_LANE.execute {
+                try {
+                    reconcileConversationNotifications(context, active)
+                } catch (e: Exception) {
+                    Log.e(TAG, "reconcileConversationNotifications: failed: ${throwableSite(e)}")
+                }
+            }
+            return true
         }
 
         /**
@@ -3257,9 +3368,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * @param serverClock whether [at] is on the server's clock (a DM or group mark from a current
          *   build) or the stamped one (a salon, whose stamp IS its server time, or an older `at`).
          * @param reason which event said so, for the log: a socket event of another device
-         *   (`read_watermark`, `channel.read`), `read_here` (THIS device's reader opened the
-         *   conversation), or `conversation_ended` (it was deleted, left or excluded, so `at` covers
-         *   every line and the banner and its reaction go).
+         *   (`read_watermark`, `channel.read`) or `read_here` (THIS device's reader opened the
+         *   conversation). An ENDED conversation is not a read: [endConversationFromWebSocket].
          * @return whether the work was queued; `false` only with no Application context.
          */
         @JvmStatic
@@ -3271,7 +3381,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
             val where = when (reason) {
                 "read_here" -> "read on this device"
-                "conversation_ended" -> "conversation ended (deleted, left or excluded)"
                 else -> "read on another device"
             }
             Log.d(TAG, "readElsewhereFromWebSocket: queued group=${ConversationRef.of(groupId)} at=$at clock=${if (serverClock) "server" else "stamped"} - $where ($reason)")

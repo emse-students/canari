@@ -13,7 +13,8 @@ import {
   recordNativeReadElsewhere,
   handOverConversationEvent,
   cancelNativeConversationNotifications,
-  ENDED_CONVERSATION_MARK,
+  endNativeConversationNotifications,
+  reconcileNativeConversationNotifications,
   notificationGroupName,
   notificationIsGroup,
   postNativeMessageNotification,
@@ -335,26 +336,53 @@ describe('recordNativeReadElsewhere', () => {
     });
   });
 
-  // An ended conversation (deleted, left, excluded) takes its banner and reaction with it: the mark
-  // covers every line a banner can hold.
-  it('hands over an ended conversation with a mark that covers every line', async () => {
+  // An ENDING is not a read: its own command, no mark (a mark would silence a rejoined conversation).
+  it('ends a conversation on Android through its own command, never a read mark', async () => {
     isAndroidTauriRuntime.mockReturnValue(true);
     invoke.mockResolvedValue(true);
 
-    expect(
-      await handOverConversationEvent(
-        'channel_c1',
-        'conversation_ended',
-        ENDED_CONVERSATION_MARK,
-        'server'
-      )
-    ).toBe(true);
-    expect(invoke).toHaveBeenCalledExactlyOnceWith('record_read_elsewhere', {
+    expect(await endNativeConversationNotifications('channel_c1')).toBe(true);
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('end_conversation_notifications', {
       groupId: 'channel_c1',
-      at: Number.MAX_SAFE_INTEGER,
-      serverClock: true,
       reason: 'conversation_ended',
     });
+  });
+
+  it('ends a conversation on iOS by thread, accuses a refusal or a throw, and is a no-op elsewhere', async () => {
+    isAndroidTauriRuntime.mockReturnValue(false);
+    isIosTauriRuntime.mockReturnValue(true);
+    invoke.mockResolvedValue(true);
+    expect(await endNativeConversationNotifications('g1')).toBe(true);
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('cancel_conversation_notifications', {
+      groupId: 'g1',
+      reason: 'conversation_ended',
+    });
+    isIosTauriRuntime.mockReturnValue(false);
+    invoke.mockClear();
+    expect(await endNativeConversationNotifications('g1')).toBe(true);
+    expect(invoke).not.toHaveBeenCalled();
+
+    isAndroidTauriRuntime.mockReturnValue(true);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    invoke.mockResolvedValueOnce(false);
+    expect(await endNativeConversationNotifications('g1')).toBe(false);
+    invoke.mockRejectedValueOnce(new Error('no jni'));
+    expect(await endNativeConversationNotifications('g1')).toBe(false);
+    expect(error).toHaveBeenCalledTimes(2);
+    error.mockRestore();
+  });
+
+  it('hands the ids that exist to the native reconcile, newline-separated', async () => {
+    isAndroidTauriRuntime.mockReturnValue(true);
+    invoke.mockResolvedValue(true);
+    expect(await reconcileNativeConversationNotifications(['a', 'channel_b'])).toBe(true);
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('reconcile_conversation_notifications', {
+      activeIds: 'a\nchannel_b',
+    });
+    invoke.mockClear();
+    isAndroidTauriRuntime.mockReturnValue(false);
+    expect(await reconcileNativeConversationNotifications(['a'])).toBe(true);
+    expect(invoke).not.toHaveBeenCalled();
   });
 
   // iOS keeps no mark: the native side removes the conversation's delivered notifications by thread.

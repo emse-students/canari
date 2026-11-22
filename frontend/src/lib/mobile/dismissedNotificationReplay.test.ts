@@ -283,7 +283,11 @@ describe('the builder records what it posted and keeps the stamps current', () =
     // conversation - read here, read elsewhere, answered, ended - never with the app coming up.
     expect(source).not.toContain('fun cancelAllMessageNotifications(');
     expect(source).not.toContain('READ_ELSEWHERE.forgetAll(');
-    expect(source).not.toContain('GENERIC_BANNERS.allCleared()');
+    // The ledger is cleared in ONE place: the sign-out (`clearAccountNotifications`).
+    expect(source.split('GENERIC_BANNERS.allCleared()').length - 1).toBe(1);
+    expect(source.slice(source.indexOf('fun clearAccountNotifications('))).toContain(
+      'GENERIC_BANNERS.allCleared()'
+    );
     expect(source).not.toContain('releaseUnrecordedHold');
     const retire = source.slice(source.indexOf('fun retireTakenOverNotifications('));
     const retireBody = retire.slice(0, retire.indexOf('\n        }\n'));
@@ -300,6 +304,37 @@ describe('the builder records what it posted and keeps the stamps current', () =
     ]) {
       expect(retireBody).not.toContain(forbidden);
     }
+  });
+
+  // BLOCK review of #3951: an ENDING is not a read. It has its own native entry, which records NO
+  // mark (a mark outlives the session and would silence a rejoined conversation); a SIGN-OUT takes
+  // down everything the account showed, since opening the app no longer sweeps; EVERY cancel path
+  // refreshes the summary and the badge, the early returns included.
+  it('ends a conversation with its own entry, clears at sign-out and refreshes the summary in a finally', () => {
+    const end = source.slice(source.indexOf('fun endConversationNotifications('));
+    const endBody = end.slice(0, end.indexOf('\n        }\n'));
+    expect(endBody).toContain('READ_ELSEWHERE.end(groupId, stableId)');
+    expect(endBody).toContain('cancelReactionNotification(prefs, manager, groupId)');
+    expect(endBody).not.toContain('recordThenCancel');
+    expect(endBody).not.toContain('READ_ELSEWHERE.record');
+    expect(source).toContain('fun endConversationFromWebSocket(');
+    expect(source).toContain('fun reconcileConversationNotifications(activeIds: String)');
+    expect(source).not.toContain('"conversation_ended" ->');
+
+    const signOut = readFileSync(resolve(dirname(SERVICE), 'PushRegistrationEnd.kt'), 'utf8');
+    const endForSignOut = signOut.slice(signOut.indexOf('fun endForSignOutFromRust('));
+    expect(endForSignOut).toContain(
+      'CanariFirebaseMessagingService.clearAccountNotifications(context)'
+    );
+    expect(endForSignOut.indexOf('clearAccountNotifications')).toBeLessThan(
+      endForSignOut.indexOf('eraseSecret(context)')
+    );
+
+    const cancel = source.slice(source.indexOf('fun cancelConversationNotification('));
+    const cancelBody = cancel.slice(0, cancel.indexOf('\n        }\n'));
+    const fin = cancelBody.slice(cancelBody.lastIndexOf('} finally {'));
+    expect(fin).toContain('refreshBadgeSummary(context, justCancelled = notifId)');
+    expect(cancelBody.split('refreshBadgeSummary(').length - 1).toBe(1);
   });
 
   // Round-13 review (S1): a channel switch cancels the old post - an app cancel, dropped on a

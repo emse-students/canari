@@ -6263,6 +6263,7 @@ static BOOL CanariCompleteOwedDeletionLocked(void) {
 /// into the notification extension too, which does not carry this class.
 @interface CanariConversationNotifications : NSObject
 + (BOOL)cancelForConversation:(NSString *)groupId;
++ (BOOL)reconcileWithActive:(NSString *)activeIds;
 @end
 
 @implementation CanariConversationNotifications
@@ -6273,6 +6274,63 @@ static BOOL CanariCompleteOwedDeletionLocked(void) {
     return NO;
   }
   CanariCancelConversationNotification(groupId, nil);
+  return YES;
+}
+
+/**
+ * Removes the delivered chat banners whose conversation no longer exists - the ending no watcher saw
+ * (the app was closed, or the list was not yet restored). `activeIds` is the newline-separated list
+ * the page settled on (MLS group ids and `channel_<id>`); the banner of a thread NOT among them
+ * belongs to nothing. The page sends it only once its lists are complete.
+ *
+ * ONCE per process it also removes the chat banners with no conversation to belong to - the flat
+ * `canari_messages` thread or an empty one, which an older build posted and which no read, answer
+ * or ending can ever name - found by that fact, never by a clock. Call rings and every non-chat
+ * notice are left alone (chat = the flat thread or a `fr.emse.canari://chat` deep link, as in
+ * CanariCountUnreadConversations). The badge is recomputed from what remains.
+ */
++ (BOOL)reconcileWithActive:(NSString *)activeIds {
+  NSMutableSet<NSString *> *active = [NSMutableSet set];
+  for (NSString *entry in [activeIds componentsSeparatedByString:@"\n"]) {
+    if (entry.length > 0) {
+      [active addObject:entry];
+    }
+  }
+  static BOOL flatCleared = NO;
+  BOOL clearFlat = !flatCleared;
+  flatCleared = YES;
+  UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
+  [center getDeliveredNotificationsWithCompletionHandler:^(
+              NSArray<UNNotification *> *_Nonnull notifications) {
+    NSMutableArray<NSString *> *ids = [NSMutableArray array];
+    NSUInteger orphans = 0;
+    NSUInteger flat = 0;
+    for (UNNotification *n in notifications) {
+      NSString *thread = n.request.content.threadIdentifier ?: @"";
+      NSString *deepLink = n.request.content.userInfo[@"deepLink"] ?: @"";
+      BOOL isFlat = thread.length == 0 || [thread isEqualToString:@"canari_messages"];
+      BOOL isChat = [thread isEqualToString:@"canari_messages"] ||
+                    [deepLink hasPrefix:@"fr.emse.canari://chat"];
+      if (!isChat || n.request.content.userInfo[@"canariCallId"] != nil) {
+        continue;
+      }
+      if (isFlat) {
+        if (clearFlat) {
+          [ids addObject:n.request.identifier];
+          flat++;
+        }
+      } else if (![active containsObject:thread]) {
+        [ids addObject:n.request.identifier];
+        orphans++;
+      }
+    }
+    if (ids.count > 0) {
+      [center removeDeliveredNotificationsWithIdentifiers:ids];
+    }
+    NSLog(@"[CanariPush] reconcile: %lu banner(s) of a gone conversation and %lu legacy flat banner(s) removed, %lu live conversation(s) known",
+          (unsigned long)orphans, (unsigned long)flat, (unsigned long)active.count); // log-safe: counts of removed banners, integers holding no content
+    CanariSetBadgeCount(CanariCountUnreadConversations(notifications, [NSSet setWithArray:ids]));
+  }];
   return YES;
 }
 

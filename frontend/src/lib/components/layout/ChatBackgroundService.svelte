@@ -93,10 +93,14 @@
     appendLog,
   } from '$lib/stores/globalChatSingleton.svelte';
   import { resolveDisplayNames } from '$lib/utils/users/displayName';
-  import { endedConversationIds, snapshotConversations } from '$lib/utils/chat/endedConversations';
   import {
-    ENDED_CONVERSATION_MARK,
-    handOverConversationEvent,
+    endedConversationIds,
+    liveNotificationIds,
+    snapshotConversations,
+  } from '$lib/utils/chat/endedConversations';
+  import {
+    endNativeConversationNotifications,
+    reconcileNativeConversationNotifications,
   } from '$lib/utils/nativeNotification';
   import { serializeEnvelope, mkSystemEnvelope } from '$lib/envelope';
   import type { ChatMessage, MessageBatchOrigin } from '$lib/types';
@@ -233,9 +237,26 @@
     knownConversations = next;
     for (const id of ended) {
       appendLog(`[NOTIF] conversation ${id.slice(0, 12)} ended - its notifications go with it`);
-      void handOverConversationEvent(id, 'conversation_ended', ENDED_CONVERSATION_MARK, 'server');
+      void endNativeConversationNotifications(id);
       void globalNotifs.dismissConversationReactions(id);
     }
+  });
+
+  // THE ENDING NO WATCHER SAW: a conversation that ended while the app was closed, or before the list
+  // was restored, left a banner nothing above retires. Once the conversation list is RESTORED and
+  // the communities CONFIRMED by a listing (each settling re-runs this), the native side ends every
+  // notification whose conversation is not among the ids that exist. Gated on both so a list still
+  // being drawn never ends a live conversation's banner; decided on facts, never a timer.
+  $effect(() => {
+    if (!globalSession.isLoggedIn) return;
+    if (!globalConvs.conversationsRestored) return;
+    if (!globalChannels.workspacesConfirmed || globalChannels.workspacesLoadError !== null) return;
+    const workspaces = globalChannels.channelWorkspaces;
+    const ids = untrack(() => liveNotificationIds(globalConvs.conversations.entries(), workspaces));
+    appendLog(
+      `[NOTIF] lists settled - reconciling the native notifications against ${ids.length} live conversation(s)`
+    );
+    void reconcileNativeConversationNotifications(ids);
   });
 
   /** Last call id we started ringing for (dedupes effect re-runs). */

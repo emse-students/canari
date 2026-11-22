@@ -869,7 +869,7 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   branch, so the usual case cancelled id -1.)
 - **The record goes with the banner, in ONE step with its cancel** (both under the lock - a post
   between them would be forgotten while it stands): a cancel by a read drops it, every other cancel
-  `withdraw`s it, (`forgetAll`, which the app's coming to the front used to call, has no caller since 2026-11-21), and the
+  `withdraw`s it, an ENDING `end`s it (below), a SIGN-OUT `clear`s every record, and the
   user's swipe does too, through the delete intent of a conversation banner
   (`ACTION_BANNER_DISMISSED`, then `forgetPostedBanner`) - otherwise the next post would bring back
   the lines the user dismissed.
@@ -882,13 +882,13 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   process with no record logs nothing (`forget` says whether it dropped one). A post whose dismissal
   broadcast has not been delivered yet still builds on the swiped lines once (they do not alert).
 - **A banner this process removed is not asked of the shade again** (`ReadElsewhereMarks.withdrawn`,
-  and every conversation after `forgetAll`): the shade lags a `cancel` as it lags a `notify`, so its
+  and every conversation after a sign-out's `clear`): the shade lags a `cancel` as it lags a `notify`, so its
   copy is stale. A second dismissal of the same banner - a salon's `channel.read` on the socket, then
   its `channel_read` push - finds nothing and says so at debug only (`no notif`), where it used to
   log a second `notif removed`; a post rebuilds on nothing, and the pending reply's re-post does not
   bring the banner back. Two cancels BY ID close what that blind spot could hide (round-7 review):
-  `forgetAll` cancels every banner it recorded by id under the lock (the sweep of the shade before
-  it misses one posted just before), and `withdraw` with no banner known and nothing to keep still
+  `clear` (the sign-out) cancels every banner it recorded by id under the lock (the sweep of the shade
+  beside it misses one posted just before), and `withdraw` with no banner known and nothing to keep still
   cancels the conversation's stable id, silently - the system orders a cancel by id after its
   `notify`, where a shade read is not ordered at all.
 - **The pending reply** (`repostReplyPending`) asks the record FIRST, under the lock, for both its
@@ -964,8 +964,7 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
     the post delay would meet the old record, so the duration would carry the ordering.
 
   The rule, with no assumption about latency: EVERY cancel of a recorded banner (a read's
-  `recordThenCancel`, a dismissal's `withdraw`, a delivery's `replyDelivered`, the answer, the app's
-  start in `forgetAll`) first asks the shade whether the platform holds it. A held banner is posted
+  `recordThenCancel`, a dismissal's `withdraw`, a delivery's `replyDelivered`, the answer) first asks the shade whether the platform holds it. A held banner is posted
   again, silently and through the one rebuild (`rebuildBanner`), which ends the hold, and it STAYS
   recorded. The next event asks again, and either finds it released and cancels it, or updates it
   again. None forgets it. WHAT THE RE-POST DRAWS IS WHAT THE RECORD HOLDS (round 15):
@@ -987,10 +986,10 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
     inline reply) posts on the held banner's channel instead. That post ends the hold, and the switch
     is left to the next post. Otherwise the switch's cancel would be dropped, and the re-enqueued old
     record would bury the new line.
-  - The app's start takes ONE shade snapshot for every "held?" (only the system sets the flag) and
-    leaves held banners out of its sweep. `releaseUnrecordedHold` then asks THE RECORD FIRST (round
-    14, B2): a banner it holds was re-posted and kept by `forgetAll`, and that re-post may land at
-    once and read as released - cancelling it then left a record of a banner that was gone. Only one
+  - (Until 2026-11-21 the app's start swept the shade with one snapshot for every "held?" and a
+    `releaseUnrecordedHold`; opening the app clears no conversation banner any more, so both are gone.)
+    <!-- the paragraph below described that sweep; what survives of it is the rule above -->
+    Only one
     the record does not hold (a fresh process) is decided by its FRESH shade copy: released since, it
     is cancelled; still held, it is re-posted empty and recorded under its conversation.
 
@@ -1019,9 +1018,6 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
     legacy reactor sending `sentAt` 0, can make the second post rebuild on the shade's copy from
     before the cancel (`reactionPosted` lets the shade answer again once a post went out, and both
     may still be queued). Closing it costs a full reaction record, for a window of milliseconds.
-  - **A reaction posted milliseconds before the app's start sweep.** It is not yet in the sweep's
-    snapshot and survives it. The app is open, nothing is lost, and `forgetAll`'s cancel by id
-    (round 16) covers every reaction this process recorded.
   - **A late read clears a newer lone reaction.** A read handed over after a reaction it predates
     removes that reaction's notification. This is inherent to the decision that the reaction's alert
     goes with the conversation: a reaction carries no server instant to weigh. The reaction itself
@@ -1056,13 +1052,27 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   **A conversation that ENDS takes its banners with it** - deleted, left, excluded, its salon or
   community gone: the page watches the conversation list every ending writes to
   (`endedConversations.ts`, an effect in `ChatBackgroundService`; keyed by id, so a re-keyed row is
-  not an ending) and hands each ended id to the same native cancel with a mark covering every line
-  (`conversation_ended`). The event decides, never a timer. Logged on both sides: the page
-  (`[NOTIF] conversation <id> ended`) and Kotlin (`readElsewhereFromWebSocket: queued ... conversation
-  ended`). **iOS does the same** (2026-11-22): its activation (`CanariPushCancelMessageNotifications`) removes only a
+  not an ending) and hands each ended id to its OWN native entry (`end_conversation_notifications`,
+  Kotlin `endConversationNotifications`): the banner (a pending reply and a held banner included),
+  the reaction notification and the summary's share go UNCONDITIONALLY, and **NO READ MARK is
+  recorded** - an ending is not a read, a mark is a process-lifetime suppressor, and one written for
+  an ending would silence the conversation if the account came back to it (`ReadElsewhereMarks.end`).
+  The event decides, never a timer. Logged on both sides: the page (`[NOTIF] conversation <id> ended`)
+  and Kotlin (`endConversationNotifications: ... withdrawn`).
+  **The ending no watcher saw** (the app was closed, or the list was not restored yet) is found by
+  FACT: once the conversation list is restored and the communities confirmed by a listing, the page
+  hands the native side the ids that exist (`liveNotificationIds`: rows not `removed` and
+  `channel_<id>` of every community salon) and `reconcile_conversation_notifications` ends every
+  banner whose conversation is not among them (Android: the ids in `canari_notif_ids`; iOS: the
+  delivered thread). **A sign-out takes the account's banners down** (`clearAccountNotifications`, run
+  by `PushRegistrationEnd.endForSignOutFromRust`: every message, mention and reaction notification,
+  the summary, the records and the read marks), since nothing else would before the next account.
+  Every cancel path, the early returns included, refreshes the summary and the badge (a `finally`).
+  **iOS does the same** (2026-11-22) (2026-11-22): its activation (`CanariPushCancelMessageNotifications`) removes only a
   call's ring alert and recomputes the badge; the page's `read_here` and `conversation_ended` reach
   `cancel_conversation_notifications`, which takes the conversation's delivered notifications down by
-  thread ([reading owed](../backlog.d/reading-owed-ios-banners-go-with-their-conversation.md)).
+  thread, and `reconcileWithActive:` removes the chat banners of a thread that exists no more and,
+  once per process, the legacy flat or empty-thread chat banners no read can ever name ([reading owed](../backlog.d/reading-owed-ios-banners-go-with-their-conversation.md)).
   In split-screen the activity does not resume either, so the page's hand-over is the only trigger there.
 - **THE REACTION'S ALERT GOES WITH THE CONVERSATION** (round-14 decision, replacing rounds 12-13,
   `cancelReactionNotification`). Whatever removes OR COVERS the conversation's message banner removes
@@ -1083,11 +1093,11 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
     and dismissal paths alike, so a reaction post cannot fall between the decision and the cancel.
   - A reaction post rebuilds on the shade, which lags a `cancel`: a reaction removed a moment before
     came back with the next one. The record now says when the shade's copy is stale
-    (`reactionWithdrawn` on every cancel, every reaction at the app's start sweep): the next post
+    (`reactionWithdrawn` on every cancel, every reaction at a sign-out's `clear`): the next post
     builds on nothing (`reactionBaseOf`), and the shade answers again once one was posted on that
-    fresh base (`reactionPosted`). The app's start also cancels BY ID every reaction this process
-    posted since the last sweep (`forgetAll`), as it does the banners: its sweep reads a shade that
-    lags a `notify` (round 16).
+    fresh base (`reactionPosted`). A sign-out cancels BY ID every reaction this process
+    posted (`clear`), as it does the banners: the sweep beside it reads a shade that lags a `notify`
+    (round 16).
 - **What a line counts as** (`lineOfMessage`, `ReadElsewhereMarks.Line.of`): its stamps, and an
   UNCOVERABLE line for the pending reply (`LINE_PENDING_REPLY`, marked explicitly - never by its
   name, which a peer may share: a read elsewhere says nothing about a send that has not gone out, and
