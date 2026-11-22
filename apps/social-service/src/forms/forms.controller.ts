@@ -23,6 +23,11 @@ import { CLIENT_VERSION_HEADER, clientVersionOf } from '../common/client-version
 import { Throttle } from '@nestjs/throttler';
 import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
 
+/** Most forms one `GET /forms/summaries` may name: a feed page holds fewer. */
+export const FORM_SUMMARIES_MAX = 50;
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** `confirm-payment` calls allowed per user and submission per minute (the return poll is 10). */
 export const CONFIRM_PAYMENT_PER_MINUTE = 12;
 import {
@@ -82,6 +87,35 @@ export class FormsController {
   @Get()
   list(@Headers('x-user-id') xUserId: string) {
     return this.service.list(xUserId);
+  }
+
+  /**
+   * The cards of the forms a feed page attaches, in ONE request (`?ids=a,b,c`, at most
+   * {@link FORM_SUMMARIES_MAX}): replaces a `GET :id` and a `GET :id/check` per form. Declared
+   * before `:id` so the literal wins. A form the reader may not read is absent from the answer.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get('summaries')
+  async summaries(
+    @Query('ids') ids: string | undefined,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    const list = (ids ?? '').split(',').filter(Boolean);
+    if (
+      list.length === 0 ||
+      list.length > FORM_SUMMARIES_MAX ||
+      !list.every((i) => UUID_RE.test(i))
+    )
+      throw new BadRequestException(
+        `ids must be 1 to ${FORM_SUMMARIES_MAX} comma-separated form ids`
+      );
+    return {
+      forms: await this.service.summaries(list, {
+        userId: xUserId,
+        isGlobalAdmin: ga === 'true',
+      }),
+    };
   }
 
   /**

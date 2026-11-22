@@ -1260,6 +1260,41 @@ export class FormsService {
   }
 
   /**
+   * What a feed page's attached-form cards draw, for MANY forms in ONE request: the title, the
+   * opening date and whether this reader answered - the very answers `get` and `hasSubmission`
+   * give, asked through them so no rule is copied. A form the reader may not read (deleted, a draft,
+   * an archived association) is OMITTED, the same absence `get` answers with a 404; the caller
+   * tells "absent from the answer" from "no answer".
+   */
+  async summaries(
+    ids: readonly string[],
+    viewer: { userId: string; isGlobalAdmin: boolean }
+  ): Promise<{ id: string; title: string; opensAt: Date | null; hasSubmitted: boolean }[]> {
+    const unique = [...new Set(ids)];
+    const rows = await Promise.all(
+      unique.map(async (id) => {
+        try {
+          const form = await this.get(id, viewer);
+          const check = await this.hasSubmission(id, viewer.userId);
+          return {
+            id,
+            title: form.title,
+            opensAt: form.opensAt ?? null,
+            hasSubmitted: check.hasSubmitted,
+          };
+        } catch (e) {
+          if (e instanceof NotFoundException) return null;
+          throw e;
+        }
+      })
+    );
+    this.logger.debug(
+      `[FORMS] summaries asked=${unique.length} served=${rows.filter((r) => r).length}`
+    );
+    return rows.filter((r): r is NonNullable<typeof r> => r !== null);
+  }
+
+  /**
    * Whether `viewer` may read form `id` at all - what `get` serves and what the form's agenda link
    * (`GET /forms/:id/calendar-link`) answers by: false for a form that does not exist (a deleted one
    * included), and see {@link readVerdict}.

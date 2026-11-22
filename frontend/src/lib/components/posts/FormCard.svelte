@@ -17,8 +17,8 @@
     /** Where the card goes. */
     href: string;
     title: string;
-    /** Whether the viewer has already answered. */
-    submitted: boolean;
+    /** Whether the viewer has already answered; `null` when that could not be read (drawn neutral). */
+    submitted: boolean | null;
     /** When the form opens; a past or empty value means it is open now. */
     opensAt?: string | null;
     /** Drawn large, with its call to action: the post's only attachment (`planPostAttachments`). */
@@ -34,7 +34,7 @@
    * (`planPostAttachments`). The reminder bell belongs to the card whenever the form is not open
    * yet and not answered, so a reader never has to open the form to be told when it opens.
    */
-  const notOpenYet = $derived(!submitted && formOpensAtIso(opensAt) !== null);
+  const notOpenYet = $derived(submitted === false && formOpensAtIso(opensAt) !== null);
 
   let subscribed = $state(false);
   let toggling = $state(false);
@@ -61,11 +61,13 @@
 
   /** The one subtitle line: answered, opening on a date, or open. */
   const status = $derived(
-    submitted
-      ? m.post_form_response_sent()
-      : notOpenYet && opensAt
-        ? m.post_form_opens_on_label({ date: formatFormOpensAt(opensAt) })
-        : m.link_preview_form_open()
+    submitted === null
+      ? undefined
+      : submitted
+        ? m.post_form_response_sent()
+        : notOpenYet && opensAt
+          ? m.post_form_opens_on_label({ date: formatFormOpensAt(opensAt) })
+          : m.link_preview_form_open()
   );
 
   async function toggleReminder() {
@@ -128,7 +130,7 @@
     subtitle={status}
     {tile}
     {hero}
-    heroAction={submitted || notOpenYet ? undefined : m.post_form_fill_label()}
+    heroAction={submitted !== false || notOpenYet ? undefined : m.post_form_fill_label()}
     trailing={notOpenYet ? bell : undefined}
   />
 </div>
