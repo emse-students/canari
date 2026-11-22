@@ -43,6 +43,21 @@ vi.mock('$lib/utils/audio/recordingLoudness', () => ({
   },
 }));
 
+/**
+ * The mono downmix, injected: its graph is pinned by `monoRecording.test.ts`; here, that the recorder
+ * records what it returns and releases it on every ending.
+ */
+const downmix = vi.hoisted(() => ({
+  made: [] as { release: import('vitest').Mock<() => void>; stream: unknown }[],
+}));
+vi.mock('$lib/utils/audio/monoRecording', () => ({
+  monoRecordingStream: (microphone: unknown) => {
+    const made = { stream: microphone, granted: 'unknown', downmixed: true, release: vi.fn() };
+    downmix.made.push(made);
+    return made;
+  },
+}));
+
 const CANCEL_SLIDE_PX = 96;
 const LOCK_SLIDE_PX = 72;
 const MIN_RECORDING_MS = 700;
@@ -104,6 +119,7 @@ let harness: Harness;
 beforeEach(() => {
   vi.useFakeTimers();
   taps.made = [];
+  downmix.made = [];
   trackStop.mockClear();
   FakeMediaRecorder.instances = [];
   FakeMediaRecorder.deferStop = false;
@@ -161,13 +177,13 @@ function thumb(): HTMLElement {
 }
 
 /** happy-dom may not implement `PointerEvent`; a mouse event carrying `pointerId` is equivalent. */
-function pointer(type: string, clientX: number): Event {
+function pointer(type: string, clientX: number, pointerId = 1): Event {
   const Ctor = (globalThis as Record<string, unknown>).PointerEvent as
     | typeof PointerEvent
     | undefined;
-  if (Ctor) return new Ctor(type, { bubbles: true, clientX, pointerId: 1, isPrimary: true });
+  if (Ctor) return new Ctor(type, { bubbles: true, clientX, pointerId, isPrimary: true });
   const e = new MouseEvent(type, { bubbles: true, clientX });
-  Object.defineProperty(e, 'pointerId', { value: 1 });
+  Object.defineProperty(e, 'pointerId', { value: pointerId });
   Object.defineProperty(e, 'pointerType', { value: 'touch' });
   return e;
 }
@@ -529,5 +545,150 @@ describe('VoiceRecorder - the loudness tap is closed on every ending', () => {
     expect(taps.made).toHaveLength(0);
     expect(trackStop).toHaveBeenCalled();
     expect(document.querySelector('.voice-recorder')?.getAttribute('data-phase')).toBe('idle');
+  });
+});
+
+/**
+ * A PERMISSION PROMPT TAKES THE FINGER (iPhone 12, `1.7.3-alpha.4`): on the FIRST press the system
+ * prompt took the touch, no `pointerup` nor `pointercancel` ever reached the page, and once the
+ * prompt was answered the recorder sat in `holding` for good - its clock running, neither the slide
+ * nor a bin able to end it, until the app was killed. Each test below plays one of the signals that
+ * prove the gesture is over, and asserts the hold ends without a send.
+ */
+describe('VoiceRecorder - a permission prompt takes the finger', () => {
+  let openMicrophone!: (s: unknown) => void;
+
+  beforeEach(() => {
+    harness = mountRecorder();
+    navigator.mediaDevices.getUserMedia = vi
+      .fn()
+      .mockReturnValueOnce(new Promise((resolve) => (openMicrophone = resolve)))
+      .mockResolvedValue(fakeStream());
+  });
+
+  /** Pressed: the prompt is up, `getUserMedia` pending. */
+  function pressIntoPrompt(): void {
+    thumb().dispatchEvent(pointer('pointerdown', 300));
+    flushSync();
+    expect(phaseNow()).toBe('arming');
+  }
+
+  /** The prompt answered: the microphone opens, after the gesture was taken. */
+  async function answerPrompt(): Promise<void> {
+    openMicrophone(fakeStream());
+    await vi.advanceTimersByTimeAsync(0);
+    flushSync();
+  }
+
+  const phaseNow = () => document.querySelector('.voice-recorder')?.getAttribute('data-phase');
+
+  it('the window losing focus to the prompt ends the press: nothing records, the device goes back', async () => {
+    pressIntoPrompt();
+    window.dispatchEvent(new Event('blur'));
+    flushSync();
+    expect(phaseNow()).toBe('idle');
+
+    await answerPrompt();
+    expect(phaseNow()).toBe('idle');
+    expect(FakeMediaRecorder.instances).toHaveLength(0);
+    expect(trackStop).toHaveBeenCalled();
+    expect(harness.complete).not.toHaveBeenCalled();
+  });
+
+  it('the pointer capture lost to the prompt ends the press the same way', async () => {
+    pressIntoPrompt();
+    thumb().dispatchEvent(pointer('lostpointercapture', 300));
+    flushSync();
+    expect(phaseNow()).toBe('idle');
+
+    await answerPrompt();
+    expect(FakeMediaRecorder.instances).toHaveLength(0);
+    expect(trackStop).toHaveBeenCalled();
+  });
+
+  it('the page hidden ends the press the same way', async () => {
+    pressIntoPrompt();
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+    try {
+      document.dispatchEvent(new Event('visibilitychange'));
+      flushSync();
+    } finally {
+      delete (document as unknown as Record<string, unknown>).visibilityState;
+    }
+    expect(phaseNow()).toBe('idle');
+    await answerPrompt();
+    expect(FakeMediaRecorder.instances).toHaveLength(0);
+  });
+
+  it('a hold that started with no signal at all is ended by the next press, which records afresh', async () => {
+    pressIntoPrompt();
+    // The worst case: the prompt answered, and NOTHING said the finger had gone.
+    await answerPrompt();
+    expect(phaseNow()).toBe('holding');
+
+    // The next touch is a new pointer: the stale hold is thrown away and this press records.
+    thumb().dispatchEvent(pointer('pointerdown', 300, 2));
+    await vi.advanceTimersByTimeAsync(0);
+    flushSync();
+    expect(harness.cancel).toHaveBeenCalledTimes(1);
+    expect(harness.complete).not.toHaveBeenCalled();
+    expect(FakeMediaRecorder.instances).toHaveLength(2);
+    expect(phaseNow()).toBe('holding');
+
+    await vi.advanceTimersByTimeAsync(MIN_RECORDING_MS + 100);
+    thumb().dispatchEvent(pointer('pointerup', 300, 2));
+    flushSync();
+    expect(harness.complete).toHaveBeenCalledTimes(1);
+  });
+
+  it('a focus lost while HOLDING discards the recording, never sends it', async () => {
+    pressIntoPrompt();
+    await answerPrompt();
+    await vi.advanceTimersByTimeAsync(MIN_RECORDING_MS + 100);
+    window.dispatchEvent(new Event('blur'));
+    flushSync();
+
+    expect(phaseNow()).toBe('idle');
+    expect(harness.complete).not.toHaveBeenCalled();
+    expect(harness.cancel).toHaveBeenCalledTimes(1);
+    expect(downmix.made[0].release).toHaveBeenCalled();
+  });
+
+  it('a LOCKED recording is no gesture: a focus lost leaves it recording', async () => {
+    pressIntoPrompt();
+    await answerPrompt();
+    moveTo(300 + LOCK_SLIDE_PX + 5);
+    window.dispatchEvent(new Event('blur'));
+    flushSync();
+    expect(phaseNow()).toBe('locked');
+    expect(harness.cancel).not.toHaveBeenCalled();
+  });
+
+  it('an up, then the capture released with it, is one ending, not two', async () => {
+    pressIntoPrompt();
+    await answerPrompt();
+    await vi.advanceTimersByTimeAsync(MIN_RECORDING_MS + 100);
+    releaseAt(300);
+    document
+      .querySelector('.voice-recorder-thumb')
+      ?.dispatchEvent(pointer('lostpointercapture', 300));
+    flushSync();
+    expect(harness.complete).toHaveBeenCalledTimes(1);
+    expect(harness.cancel).not.toHaveBeenCalled();
+  });
+});
+
+describe('VoiceRecorder - one channel', () => {
+  beforeEach(() => {
+    harness = mountRecorder();
+  });
+
+  it('records the stream the mono step returns, and releases it with the device', async () => {
+    await press(300);
+    expect(downmix.made).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(MIN_RECORDING_MS + 100);
+    releaseAt(300);
+    expect(downmix.made[0].release).toHaveBeenCalled();
+    expect(trackStop).toHaveBeenCalled();
   });
 });

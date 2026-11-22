@@ -5741,6 +5741,17 @@ falls and the reader is left above - the control, which fails on the old code.
 **Owed:** one reading on the owner's Pixel 6a (a reading-owed entry in the plan). Not refuted: other
 writers of `scrollTop` (`widenEntryWindow`, `loadOlderGroups`) were excluded by reading, not measured.
 
+**The iPhone does not pass (`1.7.3-alpha.4`, 2026-11-22, 3 of 3 identical):** the last portrait photo
+ends 71 pt under the composer - the thread rose 176 pt, the composer 278. Android passes. Two
+candidates, and the source cannot choose: the pane left above its end (on iOS an overflow scroller is
+scrolled by WebKit's own UI-process scrolling, so a programmatic write may land elsewhere and come back
+as a `scroll` event this measurement would read as the reader going up), or a scroll range that ends
+short of the thread's padding. So the build REPORTS instead of guessing: the native settled-keyboard
+line carries `threadTop`, `threadMax`, `threadPad` and `lastRowBottom`, and `measureScroll` logs every
+fall of the flag (`left the bottom: ... finger up|down`). A fall with no finger on the pane is the flag
+read off a move that was not the reader's; the fix then is to let only a reader's input lower it. Owed:
+[the reading](../../backlog.d/reading-owed-a-dm-ending-in-photos-stays-at-its-end-when-the-keyboard-opens.md).
+
 ### A short thread sits at the bottom, and asks for its past at entry (2026-11-14)
 
 The owner's Pixel 6a (`1.6.12`, 2026-11-14, the keyboard readings of that day, items 2 and 4): a

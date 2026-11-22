@@ -978,12 +978,26 @@
     // express the reader's intent to leave the live end, so it is the only thing that revises it.
     // Leaving the bottom takes a move UP: a growth seen here before the observer could follow it
     // must not drop the flag the observer is about to read (`stickToBottomAfterScroll`).
+    const wasNearBottom = isNearBottom;
     isNearBottom = stickToBottomAfterScroll({
       pinned: isPinnedToBottom(chatContainer),
       scrollTop: chatContainer.scrollTop,
-      wasNearBottom: isNearBottom,
+      wasNearBottom,
       previousScrollTop: lastMeasuredScrollTop,
     });
+    if (wasNearBottom && !isNearBottom) {
+      // ONE LINE PER FALL, with what separates the reader's move from the engine's (iPhone 12,
+      // 1.7.3-alpha.4: the photo DM ended 102 pt short of its end with the keyboard up): a fall
+      // with no finger on the pane is not a reader scrolling (chat.md, the flag is only the reader's).
+      const c = chatContainer;
+      Log.i(
+        'ChatArea',
+        `left the bottom: scrollTop ${Math.round(c.scrollTop)} (last placed ` +
+          `${lastMeasuredScrollTop === null ? 'none' : Math.round(lastMeasuredScrollTop)}), ` +
+          `${Math.round(c.scrollHeight - c.clientHeight - c.scrollTop)} px from the end, ` +
+          `finger ${threadTouch?.held ? 'down' : 'up'}`
+      );
+    }
     lastMeasuredScrollTop = chatContainer.scrollTop;
     lastVisibleAnchor = measureLastVisibleAnchor();
     updateStickyDateIndicator();

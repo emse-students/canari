@@ -276,6 +276,47 @@ pins: only `CallForegroundService.kt` sets `MODE_IN_COMMUNICATION`, no native co
 call, during a ring) and `audioSession.test.ts`. **Verified by compiling only**: the readings on
 both phones are [owed](../backlog.d/reading-owed-voice-notes-are-recorded-not-called.md).
 
+**One channel, whatever the engine granted (iPhone 12, `1.7.3-alpha.4`).** The note recorded on the
+iPhone was AAC in TWO channels: WebKit implements no `channelCount` (absent from
+`getSupportedConstraints()` and from `getSettings()`), so `{ ideal: 1 }` is ignored there, and with
+echo cancellation off WebKit captures through `RemoteIO`, which hands the built-in microphones over in
+two channels; its recorder writes the AAC file with the channel count it receives.
+[`monoRecording.ts`](../../../frontend/src/lib/utils/audio/monoRecording.ts) decides ONCE per note, from
+the track's REPORTED channel count: `1` is recorded as granted (Android, desktop Chromium - no graph);
+anything else, two or nothing reported, is recorded through the engine's own downmix,
+`MediaStreamSource -> MediaStreamAudioDestinationNode` pinned to one channel (`explicit`, `speakers`:
+the spec's L/R average). The recorder AND the loudness tap read that stream, so the playback
+normalisation measures the file that is sent. Its `AudioContext` lives exactly as long as the note, in
+the foreground, and is closed with the device (the rule at the top of this page); its state is logged
+when made and on every `statechange`, and a context that will not start is an `error` line, since it
+is the one way this graph records silence. A graph the engine refuses fails the start like any
+other (the microphone toast), never a stereo note instead.
+
+**The capture line says what the engine does not implement** (`voiceNoteCaptureReport.ts`): each
+setting prints its value, `unsupported` when the engine lists no such constraint
+(`getSupportedConstraints()`), `unreported` when it lists it and reported nothing - never a bare
+`undefined`, which on the iPhone proved nothing. It also prints `size=` (`sampleSize`, which WebKit
+exposes), `rec=mono-downmix|as-granted` and `exposed=[...]`, every setting the engine did report
+(the device and group ids left out). Expected on the iPhone: `echo=false noise=unsupported
+agc=unsupported rate=48000 size=16 ch=unsupported rec=mono-downmix`.
+
+**Other apps' audio is INTERRUPTED by a voice note on iOS, on purpose (owner, 2026-11-22).** Recording
+a note stops the music another app plays, as WhatsApp does, and the owner wants that behaviour: no
+code tries to mix with or duck other audio during a note. A reading that hears the music stop while
+recording is a PASS, not a defect. ([decision](../backlog.d/owner-decisions-of-2026-11-22.md))
+
+**The hold ends when a prompt takes the finger (iPhone 12, `1.7.3-alpha.4`).** On the FIRST note the
+microphone permission prompt took the touch: no `pointerup` nor `pointercancel` reached the page, the
+recorder went from `arming` to `holding` once the prompt was answered and stayed there - its clock
+running, no slide, no bin - until the app was killed. `VoiceRecorder` now ends a POINTER hold on any
+proof that the finger's gesture is over: `lostpointercapture` on the microphone, `blur` on the window
+(an alert over the app), the page hidden. While arming that is a release before the microphone
+opened (the device is handed back when `getUserMedia` resolves, nothing recorded); while holding, a
+discard. If none of them arrives, the next press on the microphone carries a NEW pointer id, which
+proves the old hold lost its finger: it is discarded (a `warn`) and the press records afresh. A
+keyboard start (no finger) and a locked recording are not touched. Pinned by
+`VoiceRecorder.gesture.svelte.test.ts` ("a permission prompt takes the finger").
+
 **Not changed, and why.** No bitrate is asked (the Mi 9T's AAC already reads 128 kb/s), no new
 loudness target and no high-pass: the research of 2026-11-20 ranked them after the processing, and
 they are taken only if the readings below fail their acceptance. A Bluetooth headset in HFP stays

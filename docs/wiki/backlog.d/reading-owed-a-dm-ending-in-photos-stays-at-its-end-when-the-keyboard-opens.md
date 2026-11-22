@@ -19,3 +19,22 @@ baseline of that measurement (`observeThreadGrowth`'s `onPlaced`). Mechanism:
 3. Back: the keyboard leaves and the thread is still at its last message. Repeat three times.
 4. If it jumps anyway, export the in-app log at once: the cause is then NOT the one fixed here
    (it logs nothing at the flag, so note the screen recording and the exact frame).
+
+**iPhone 12, `1.7.3-alpha.4` (TestFlight 100700304), 2026-11-22: FAIL, 3 of 3, identical.** A DM
+ending in portrait photos: with the keyboard up the last photo's bottom sits 71 pt UNDER the composer's
+top edge - the thread rose 176 pt while the composer rose 278 pt. The Android half passes. **The cause is
+not established**: two mechanisms fit, and the source cannot choose between them (a pane left 102 pt
+above its end - the flag fell, or a scroll write landed elsewhere under WebKit's own scrolling - or a
+scroll range that ends short of the padding). No fix is made blind; the next build reports what
+separates them:
+
+- the `[CanariIOS] keyboard settled` syslog line now ends with the thread's half: `threadTop`,
+  `threadMax`, `threadPad`, `lastRowBottom` (beside `composerTop`). `threadTop` below `threadMax` by ~102
+  names the first cause; `threadTop` = `threadMax` with `lastRowBottom` past `composerTop` the second;
+- the in-app log says `[ChatArea] left the bottom: scrollTop ... (last placed ...), N px from the end,
+  finger up|down` on every fall of the stick-to-bottom flag - a fall with the finger UP during a rise is
+  the flag read off the engine's move, not the reader's.
+
+**Owed on the iPhone, on the next `1.7.3` pre-release:** the same DM, keyboard opened three times; copy the
+`keyboard settled` lines (syslog) and the in-app log's `left the bottom` lines. The fix follows the line
+([chat](../frontend/modules/chat.md#the-flag-is-only-ever-the-readers-2026-11-21)).
