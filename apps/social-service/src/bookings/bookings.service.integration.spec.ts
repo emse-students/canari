@@ -2325,6 +2325,9 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       });
       const pictured = { ...q1, imageUrl: `/api/media/public/${randomUUID()}` };
       expect(await refusal(patch({ items: [pictured] }))).toEqual({ code: 'item-image' });
+      // A form's text or image block is no booking question.
+      const block = { id: 'b', label: 'Programme', required: false, type: 'text_block' };
+      expect(await refusal(patch({ items: [q1, block] }))).toEqual({ code: 'item-block' });
       await expect(patch({ items: [{ ...q1, imageUrl: '' }] })).resolves.toEqual({ ok: true });
       // An image a space ALREADY holds (stored before the refusal existed) is kept: its rename,
       // sending the questions back unchanged, still saves; a second, new image is still refused.
