@@ -21,6 +21,7 @@ import { unlockWithPin, type PinUnlockDeps } from './pinUnlock';
 import {
   PinSessionRefusedError,
   settlePinSessionRefusal,
+  routeOfRecoveryFailure,
   settleRevocationOfThisDevice,
   throwIfPinSessionRefused,
   type PinSessionRefusalDeps,
@@ -265,5 +266,65 @@ describe('wiring - every PIN request of the login AND of the recovery classifies
   it('both flows settle through the one answerPinSessionRefusal, and ask by the held refresh', () => {
     expect(count('answerPinSessionRefusal(')).toBeGreaterThanOrEqual(2);
     expect(count("refreshAnswerHeldByCaller('pin-route-refused')")).toBe(1);
+  });
+});
+
+describe('the recovery routes a refused session the way the login does', () => {
+  const refusal = new PinSessionRefusedError('pin-salt', 401);
+  const settle = (askSession: () => Promise<unknown>, settleRevocation: () => Promise<boolean>) =>
+    settlePinSessionRefusal(refusal, {
+      askSession,
+      settleRevocation,
+      stillListening: () => true,
+      releaseVerdict: vi.fn(),
+      unreachable: UNREACHABLE,
+      log: vi.fn(),
+    });
+
+  it('a gateway 401 with a dead session reaches the session-expired reaction', async () => {
+    const outcome = await settle(
+      () => Promise.reject(new SessionExpiredError()),
+      async () => false
+    );
+    expect(routeOfRecoveryFailure(outcome)).toEqual({ kind: 'session-expired' });
+  });
+
+  it('a recovery on a removed device ends at the revoked gate state', async () => {
+    const outcome = await settle(
+      () => Promise.reject(new SessionEndedByDeviceRevocationError({ userId: 'u', deviceId: 'd' })),
+      async () => true
+    );
+    expect(routeOfRecoveryFailure(outcome)).toEqual({ kind: 'removed', code: 'device_revoked' });
+  });
+
+  it('routes nothing for the failures the modal words itself', () => {
+    expect(
+      routeOfRecoveryFailure(new ServerUnreachableError(UNREACHABLE, new Error('x')))
+    ).toBeNull();
+    expect(routeOfRecoveryFailure(new Error('x'))).toBeNull();
+  });
+});
+
+describe('the login own revocation wipe is not a login that left', () => {
+  it('decides stillListening before the reset: no false "releasing its verdict" line', async () => {
+    let listening = true;
+    const log = vi.fn();
+    const releaseVerdict = vi.fn();
+    const outcome = await settlePinSessionRefusal(new PinSessionRefusedError('pin-salt', 401), {
+      askSession: () =>
+        Promise.reject(new SessionEndedByDeviceRevocationError({ userId: 'u', deviceId: 'd' })),
+      // The wipe signs the account out on purpose: after it, nobody "listens" any more.
+      settleRevocation: async () => {
+        listening = false;
+        return true;
+      },
+      stillListening: () => listening,
+      releaseVerdict,
+      unreachable: UNREACHABLE,
+      log,
+    });
+    expect(loginErrorCode(outcome)).toBe('device_revoked');
+    expect(releaseVerdict).not.toHaveBeenCalled();
+    expect(log.mock.calls.flat().join('\n')).not.toContain('releasing its verdict');
   });
 });

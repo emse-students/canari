@@ -68,6 +68,7 @@
   } from '$lib/composables/session/loginErrors';
   import { forgetPinSaltAhead } from '$lib/composables/session/pinSaltAhead';
   import { askPinStatus } from '$lib/composables/session/pinStatus';
+  import { routeOfRecoveryFailure } from '$lib/composables/session/pinSessionRefusal';
   import {
     getToken,
     clearAuth,
@@ -725,6 +726,13 @@
       appendLog(`[PIN_RECOVER] failed: ${String(e)}`);
       // Read from the TYPE: a reset waiting for the server is settled again, as at the gate.
       const uid = globalSession.userId || currentUserId();
+      // A DEAD SESSION OR A REMOVED DEVICE IS ROUTED AS THE LOGIN ROUTES IT (`routeOfRecoveryFailure`).
+      const route = routeOfRecoveryFailure(e);
+      if (route?.kind === 'session-expired') void handleSessionExpired();
+      if (route?.kind === 'removed') {
+        showRecoverModal = false;
+        applyPinFailure(uid || '', route.code);
+      }
       if (e instanceof LoginFailure && e.code === 'pin_reset_unsettled' && uid) {
         void settleUnsettledPinResetOf(uid);
       }

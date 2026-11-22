@@ -1,10 +1,19 @@
 import { m } from '$lib/paraglide/messages';
-import { SessionEndedByDeviceRevocationError, TransientAnswerError } from '$lib/stores/auth';
+import {
+  SessionEndedByDeviceRevocationError,
+  SessionExpiredError,
+  TransientAnswerError,
+} from '$lib/stores/auth';
 import { refusalOrigin } from '$lib/utils/apiJson';
 import { ServerUnreachableError, isServerUnreachable } from '$lib/utils/fetchOrUnreachable';
 import { LocalizedError } from '$lib/utils/localizedError';
 import { isTransportFailure } from '$lib/utils/transportFailure';
-import { LoginFailure } from './loginErrors';
+import {
+  LoginFailure,
+  loginErrorCode,
+  noKeypadNoticeFor,
+  type LoginErrorCode,
+} from './loginErrors';
 
 /**
  * A 401 OR 403 FROM A PIN ROUTE, WRITTEN BY OUR OWN SERVICE, IS AN ANSWER: THE SESSION THE REQUEST
@@ -110,13 +119,19 @@ export async function settlePinSessionRefusal(
     `[PIN] ${refusal.route} answered ${refusal.status} - the session was refused; asking the server why.`
   );
   let outcome: Error;
+  // DECIDED WHEN THE ANSWER ARRIVES, before the reset below: the login's own revocation wipe signs the
+  // account out on purpose, and reading `stillListening` after it would call that sign-out a login that
+  // left and announce a verdict nobody lost.
+  let listening = true;
   try {
     await deps.askSession();
+    listening = deps.stillListening();
     deps.log(
       `[PIN] ${refusal.route} refused a session the server says is alive - nothing explains it.`
     );
     outcome = new LoginFailure('other', m.auth_pin_check_unexpected());
   } catch (verdict: unknown) {
+    listening = deps.stillListening();
     const unreachable = unreachableOfSettle(verdict, deps.unreachable);
     if (unreachable) {
       deps.log(
@@ -130,7 +145,7 @@ export async function settlePinSessionRefusal(
       outcome = verdict instanceof Error ? verdict : new Error(String(verdict));
     }
   }
-  if (!deps.stillListening()) {
+  if (!listening) {
     deps.log(
       '[PIN] The login stopped while the session question was open - releasing its verdict.'
     );
@@ -169,4 +184,22 @@ export async function settleRevocationOfThisDevice(
   deps.stopIfSignedOut();
   deps.startOwnWipe();
   return deps.wipe();
+}
+
+/** Where a failed PIN recovery goes next: the one route the login's own outcomes take. */
+export type RecoveryFailureRoute =
+  | { kind: 'session-expired' }
+  | { kind: 'removed'; code: LoginErrorCode }
+  | null;
+
+/**
+ * Routes a failure of the PIN recovery the way the login routes it: a dead session goes to the
+ * app-wide session-expired reaction (sign-out, redirect - the verdict the recovery held is its to
+ * answer, never "recovery failed" with a session left dead), and a device removed from the account
+ * to the gate's no-keypad state. `null` for every other failure, which the modal words itself.
+ */
+export function routeOfRecoveryFailure(e: unknown): RecoveryFailureRoute {
+  if (e instanceof SessionExpiredError) return { kind: 'session-expired' };
+  const code = loginErrorCode(e);
+  return noKeypadNoticeFor(code) ? { kind: 'removed', code } : null;
 }
