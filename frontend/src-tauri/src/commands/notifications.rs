@@ -355,22 +355,39 @@ pub(crate) struct MessageAnnouncement {
     keys: Vec<String>,
 }
 
-/// iOS: the page asks, BEFORE it raises the one banner covering the messages of `conversation_id`
-/// at `instants`, whether any of them is still unannounced - the notification extension draws every
+/// One message a page banner covers: its sender and its instant, the two halves of its key in the
+/// announced-messages ledger with the conversation (`mobile::announced::announce_key`).
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+// Read on iOS only, where the ledger is.
+#[cfg_attr(not(target_os = "ios"), allow(dead_code))]
+pub(crate) struct AnnouncedMessageArg {
+    sender_id: String,
+    at: i64,
+}
+
+/// iOS: the page asks, BEFORE it raises the one banner covering `messages` of `conversation_id`,
+/// whether any of them is still unannounced - the notification extension draws every
 /// alert push and acknowledges nothing, so a cold launch or a resume redelivers what it already
 /// showed (`docs/wiki/frontend/ios-notification-ownership.md`). Every key is claimed in the same
-/// locked step. An `Err` is a ledger that could not be read or written, or a banner whose messages
-/// carry no instant: the page says so at ERROR. Off iOS there is no extension to share with: `Err`.
+/// locked step, over the ledger sealed under the install's native cache key. An `Err` is a ledger
+/// that could not be read or written, a cache key that cannot be read, or a banner whose messages
+/// carry no sender or instant: the page says so at ERROR. Off iOS there is no extension to share
+/// with: `Err`.
 #[tauri::command]
 pub(crate) fn claim_message_announcement(
+    app: tauri::AppHandle,
     conversation_id: String,
-    instants: Vec<i64>,
+    messages: Vec<AnnouncedMessageArg>,
 ) -> Result<MessageAnnouncement, String> {
     #[cfg(target_os = "ios")]
     {
         let dir = crate::app_group::app_group_dir()?;
+        let key = crate::native_cache::app_cache_key(&app)?;
+        let messages: Vec<(String, i64)> =
+            messages.into_iter().map(|m| (m.sender_id, m.at)).collect();
         let (claim, keys) =
-            crate::mobile::announced::page_claim_in(&dir, &conversation_id, &instants)?;
+            crate::mobile::announced::page_claim_in(&dir, &key, &conversation_id, &messages)?;
         Ok(MessageAnnouncement {
             raise: claim.raise(),
             fresh: claim.fresh,
@@ -381,7 +398,7 @@ pub(crate) fn claim_message_announcement(
     }
     #[cfg(not(target_os = "ios"))]
     {
-        let _ = (conversation_id, instants);
+        let _ = (app, conversation_id, messages);
         Err("no notification extension shares this ledger off iOS".to_string())
     }
 }

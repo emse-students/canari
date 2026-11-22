@@ -28,6 +28,7 @@
  */
 
 import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion';
+import type { AnnouncedMessage } from '$lib/utils/chat/announcedMessages';
 
 /**
  * What the native builder needs in order to render the same notification for both triggers.
@@ -74,13 +75,13 @@ export type NativeMessageNotification = {
    */
   covers: number;
   /**
-   * THE INSTANT OF EVERY INBOUND MESSAGE THE BANNER STANDS FOR - `sentAt` for a live frame, each of
-   * the flush's for a catch-up: the sender's for an MLS message, the server's `createdAt` for a
-   * salon, the instant the push carries too. On iOS these are the keys the page claims in the ledger
-   * it shares with the notification extension (`announcedMessages.ts`), so a message the extension
-   * already showed is not announced again. Not sent to the Android builder.
+   * EVERY INBOUND MESSAGE THE BANNER STANDS FOR, its sender and its instant - `sentAt` for a live
+   * frame, each of the flush's for a catch-up: the sender's for an MLS message, the server's
+   * `createdAt` for a salon, the instant the push carries too. On iOS these are the keys the page
+   * claims in the ledger it shares with the notification extension (`announcedMessages.ts`), so a
+   * message the extension already showed is not announced again. Not sent to the Android builder.
    */
-  instants: readonly number[];
+  announced: readonly AnnouncedMessage[];
   /**
    * WHETHER THE OPEN PROVED THE AUTHOR - a salon row under a Graine v2 session
    * (`openChannelMessageProving`); false for anything else, and the native builder reads it for a

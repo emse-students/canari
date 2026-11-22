@@ -11,6 +11,13 @@
  */
 import { isIosTauriRuntime } from '$lib/utils/appVersion';
 
+/**
+ * One message a banner stands for: its sender and its instant - the sender's for an MLS message,
+ * the server's `createdAt` for a salon, the instant the push carries too. With the conversation they
+ * are its key in the ledger, so two members writing in the same millisecond are two messages.
+ */
+export type AnnouncedMessage = { senderId: string; at: number };
+
 /** What the ledger answered for one banner (`claim_message_announcement`). */
 export type AnnouncementClaim = {
   /** Whether to raise: one message of the banner nobody announced is enough. */
@@ -61,20 +68,22 @@ export function announcementDecision(
 }
 
 /**
- * Claims the messages of `conversationId` at `instants` for ONE banner, on iOS only (no other
- * runtime has an extension drawing the same messages). Answers the claim, or `{ failure }` when
- * the ledger could not answer.
+ * Claims `messages` of `conversationId` for ONE banner, on iOS only (no other runtime has an
+ * extension drawing the same messages). Answers the claim, or `{ failure }` when the ledger could
+ * not answer.
  */
 export async function claimMessageAnnouncement(
   conversationId: string,
-  instants: readonly number[]
+  messages: readonly AnnouncedMessage[]
 ): Promise<{ claim: AnnouncementClaim } | { failure: string }> {
   if (!isIosTauriRuntime()) return { failure: 'not an iPhone' };
   try {
     const { invoke } = await import('@tauri-apps/api/core');
     const claim = await invoke<AnnouncementClaim>('claim_message_announcement', {
       conversationId,
-      instants: instants.filter((at) => Number.isFinite(at) && at > 0).map((at) => Math.trunc(at)),
+      messages: messages
+        .filter((m) => m.senderId !== '' && Number.isFinite(m.at) && m.at > 0)
+        .map((m) => ({ senderId: m.senderId, at: Math.trunc(m.at) })),
     });
     return { claim };
   } catch (e) {

@@ -6032,10 +6032,18 @@ static void CanariPresentForegroundPush(
 /// - `first`, nobody asked: NOT presented, and the claim is given back, so the page announces it if
 ///   the reader cannot see it land;
 /// - `first`, the page's own banner covers it: not presented;
+/// - `first`, its key no longer in the ledger (the bound dropped it, perhaps after the page stood
+///   down for it): PRESENTED, and recorded as the extension's again - at worst a double, never a
+///   loss;
 /// - `after-page`: the extension removed the page's banner of this message and replaces it, kept in
 ///   the list without a second alert.
 /// Returns NO for a push the extension did not claim (no stamp: an undecrypted message, a reaction,
-/// a post), which the caller presents as before.
+/// a post, a run whose expiry delivered it before the claim), which the caller presents as before.
+/// An unstamped push is never looked up in the ledger, and need not be: the extension claims only
+/// in the step that hands over the STAMPED content (`NotificationService.finish`), so no claim of
+/// that run exists without its stamp - and an MLS push carries its instant only inside the
+/// ciphertext, so its key could not be built here anyway. The ledger is sealed under the install's
+/// native cache key, read the way the extension reads it.
 static BOOL CanariSettleAnnouncedInFront(NSDictionary *userInfo,
                                          UNNotificationPresentationOptions *options) {
   NSString *announced =
@@ -6061,7 +6069,11 @@ static BOOL CanariSettleAnnouncedInFront(NSDictionary *userInfo,
     return NO;
   }
   NSString *dir = CanariAppGroupPath();
-  int32_t settled = dir == nil ? -1 : canari_announced_settle_in_front(dir.UTF8String, key.UTF8String);
+  int32_t settled =
+      dir == nil ? -1
+                 : canari_announced_settle_in_front(dir.UTF8String,
+                                                    CanariRetrieveNativeCacheKey().UTF8String,
+                                                    key.UTF8String);
   switch (settled) {
     case 1:
       NSLog(@"[CanariPush] [ANNOUNCED] push in front: the page stood down for this message - "
@@ -6078,12 +6090,17 @@ static BOOL CanariSettleAnnouncedInFront(NSDictionary *userInfo,
             @"presented");
       *options = UNNotificationPresentationOptionNone;
       break;
+    case 3:
+      NSLog(@"[CanariPush] [ANNOUNCED] push in front: its key left the ledger - presented, and "
+            @"recorded as the extension's again");
+      *options = shown;
+      break;
     default:
       // The claim STANDS, so the page stands down for this message: presenting the push is the only
       // way it is announced at all.
       NSLog(@"[CanariPush] [ANNOUNCED] ERROR push in front: the ledger could not be settled (%@) - "
             @"presented, since its claim stands",
-            dir == nil ? @"no App Group" : @"read or write failed");
+            dir == nil ? @"no App Group" : @"read, write or cache key failed");
       *options = shown;
       break;
   }

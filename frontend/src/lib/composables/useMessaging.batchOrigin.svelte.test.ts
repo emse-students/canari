@@ -114,13 +114,13 @@ describe('what a batch of messages IS decides whether it notifies', () => {
     await messaging.batchAddMessages(messages('a'), CONVO, ctx, 'arrival');
 
     await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
-    // ONE BANNER FOR THE FLUSH, AND IT NAMES EVERY MESSAGE IT STANDS FOR: on an iPhone each instant
-    // is claimed in the ledger the extension shares, so a flush of messages the extension already
-    // showed raises nothing (`announcedMessages.ts`).
+    // ONE BANNER FOR THE FLUSH, AND IT NAMES EVERY MESSAGE IT STANDS FOR: on an iPhone each
+    // message (its sender, its instant) is claimed in the ledger the extension shares, so a flush of
+    // messages the extension already showed raises nothing (`announcedMessages.ts`).
     const native = sendSystemNotification.mock.calls[0][4] as NativeMessageNotification;
     expect(native.covers).toBe(2);
-    expect(native.instants).toHaveLength(2);
-    expect(native.instants[1]).toBe(native.sentAt);
+    expect(native.announced).toHaveLength(2);
+    expect(native.announced[1]).toEqual({ senderId: native.senderId, at: native.sentAt });
   });
 
   it('stays silent for a restore, however new the rows look to this device', async () => {

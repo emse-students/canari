@@ -54,7 +54,7 @@ function message(instants: number[]): NativeMessageNotification {
     sentAt: instants[instants.length - 1],
     serverAt: 0,
     covers: instants.length,
-    instants,
+    announced: instants.map((at) => ({ senderId: 'delta', at })),
     authorProven: false,
     isGroup: true,
   };
@@ -77,11 +77,20 @@ afterEach(() => {
 
 describe('an iPhone announces a message once, whichever process draws it', () => {
   it('stands down for a message the extension already showed, and says so once', async () => {
-    answer = () => ({ raise: false, fresh: 0, byExtension: 1, byPage: 0, keys: [`${GROUP}:5`] });
+    answer = () => ({
+      raise: false,
+      fresh: 0,
+      byExtension: 1,
+      byPage: 0,
+      keys: [`${GROUP}:delta:5`],
+    });
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     await raise([5]);
     expect(invoked).toEqual([
-      { cmd: 'claim_message_announcement', args: { conversationId: GROUP, instants: [5] } },
+      {
+        cmd: 'claim_message_announcement',
+        args: { conversationId: GROUP, messages: [{ senderId: 'delta', at: 5 }] },
+      },
     ]);
     expect(sent).toEqual([]);
     const lines = log.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('[NOTIF]'));
@@ -96,21 +105,33 @@ describe('an iPhone announces a message once, whichever process draws it', () =>
       fresh: 1,
       byExtension: 1,
       byPage: 0,
-      keys: [`${GROUP}:5`, `${GROUP}:6`],
+      keys: [`${GROUP}:delta:5`, `${GROUP}:delta:6`],
     });
     vi.spyOn(console, 'log').mockImplementation(() => {});
     await raise([5, 6]);
-    expect(invoked[0].args).toEqual({ conversationId: GROUP, instants: [5, 6] });
+    expect(invoked[0].args).toEqual({
+      conversationId: GROUP,
+      messages: [
+        { senderId: 'delta', at: 5 },
+        { senderId: 'delta', at: 6 },
+      ],
+    });
     expect(sent).toHaveLength(1);
   });
 
   it("files the page's banner under the extension's thread and conversation field", async () => {
-    answer = () => ({ raise: true, fresh: 1, byExtension: 0, byPage: 0, keys: [`${GROUP}:5`] });
+    answer = () => ({
+      raise: true,
+      fresh: 1,
+      byExtension: 0,
+      byPage: 0,
+      keys: [`${GROUP}:delta:5`],
+    });
     vi.spyOn(console, 'log').mockImplementation(() => {});
     await raise([5]);
     expect(sent).toHaveLength(1);
     expect(sent[0].group).toBe(GROUP);
-    expect(sent[0].extra).toEqual({ groupId: GROUP, announces: `${GROUP}:5` });
+    expect(sent[0].extra).toEqual({ groupId: GROUP, announces: `${GROUP}:delta:5` });
   });
 
   it('raises, and accuses, when the ledger cannot answer - a message is never left unannounced', async () => {

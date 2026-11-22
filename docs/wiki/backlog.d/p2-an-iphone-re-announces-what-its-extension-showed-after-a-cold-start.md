@@ -64,8 +64,10 @@ repository.
 
 **The fix (branch `fix/ios-one-banner-per-message`), decided as a ledger, not as a single owner:**
 whether a catch-up row was pushed is the server's fact, not the page's, so "the page never announces a
-catch-up" would be a belief. Both processes claim `<conversation>:<instant>` in
-`announced_messages.json` (App Group, one `flock`, Rust `mobile::announced`); the page asks before it
+catch-up" would be a belief. Both processes claim `<conversation>:<sender>:<instant>` in
+`announced_messages.json` (App Group, sealed, one `flock` held with background time, Rust
+`mobile::announced`; the extension claims only in the step that hands its content over, so an expiry
+never delivers a banner whose claim stands unstamped - review of #3968); the page asks before it
 raises (`claim_message_announcement`) and stands down for what the extension drew; an ACTIVE app's
 `willPresent`, the one place a push is answered `None`, gives the extension's claim back in the same
 locked step (or presents the push when the page already stood down). Every page banner carries

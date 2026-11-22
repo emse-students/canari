@@ -53,12 +53,28 @@ describe('the decision the page takes from the shared ledger', () => {
 });
 
 describe('the ask', () => {
-  it('sends only usable instants, truncated to milliseconds', async () => {
+  it('sends only messages with a sender and a usable instant, truncated to milliseconds', async () => {
     invoked.length = 0;
     ios = true;
-    const asked = await claimMessageAnnouncement('g', [5.7, 0, -1, Number.NaN, 9]);
+    const asked = await claimMessageAnnouncement('g', [
+      { senderId: 'a', at: 5.7 },
+      { senderId: 'a', at: 0 },
+      { senderId: 'a', at: -1 },
+      { senderId: 'a', at: Number.NaN },
+      { senderId: '', at: 7 },
+      { senderId: 'b', at: 9 },
+    ]);
     expect(invoked).toEqual([
-      { cmd: 'claim_message_announcement', args: { conversationId: 'g', instants: [5, 9] } },
+      {
+        cmd: 'claim_message_announcement',
+        args: {
+          conversationId: 'g',
+          messages: [
+            { senderId: 'a', at: 5 },
+            { senderId: 'b', at: 9 },
+          ],
+        },
+      },
     ]);
     expect('claim' in asked && asked.claim.raise).toBe(true);
   });
@@ -66,7 +82,9 @@ describe('the ask', () => {
   it('is never asked off an iPhone', async () => {
     invoked.length = 0;
     ios = false;
-    expect(await claimMessageAnnouncement('g', [5])).toEqual({ failure: 'not an iPhone' });
+    expect(await claimMessageAnnouncement('g', [{ senderId: 'a', at: 5 }])).toEqual({
+      failure: 'not an iPhone',
+    });
     expect(invoked).toEqual([]);
   });
 });

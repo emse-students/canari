@@ -16,13 +16,12 @@ void canari_free_string(char *ptr);
 /// Free with canari_free_string. Reached through `CanariAppGroupPath` only.
 char *canari_app_group_store_dir(void);
 
-/// The key of one message in the announced-messages ledger (`mobile::announced`), NULL when it
-/// cannot be keyed. Free with canari_free_string.
-char *canari_announce_key(const char *conversation, long long at);
-
 /// An extension banner reaches an ACTIVE app: 1 present it (the page stood down for it), 0 its
-/// claim was given back, 2 the page's banner announces it, -1 ledger failure (the claim stands).
-int32_t canari_announced_settle_in_front(const char *data_dir, const char *key);
+/// claim was given back, 2 the page's banner announces it, 3 its key left the ledger (present it,
+/// recorded again), -1 ledger failure (the claim stands). The ledger is sealed under
+/// `cache_key_b64`, the install's native cache key.
+int32_t canari_announced_settle_in_front(const char *data_dir, const char *cache_key_b64,
+                                         const char *key);
 
 char *canari_native_decrypt_message(
     const unsigned char *state_ptr,

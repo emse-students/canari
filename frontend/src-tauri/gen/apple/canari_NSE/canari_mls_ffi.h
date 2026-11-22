@@ -94,12 +94,14 @@ unsigned char *canari_native_decrypt_media(const char *key_b64, const char *iv_b
 /// out_len by that call.
 void canari_free_bytes(unsigned char *ptr, size_t len);
 
-/// The key of one message in the announced-messages ledger (`mobile::announced`), NULL when it
-/// cannot be keyed. Free with canari_free_string.
-char *canari_announce_key(const char *conversation, long long at);
+/// The key of one message in the announced-messages ledger (`mobile::announced`):
+/// conversation, sender and instant. NULL when it cannot be keyed. Free with canari_free_string.
+char *canari_announce_key(const char *conversation, const char *sender, long long at);
 
-/// The extension draws the message `key`: 1 first, 0 after the page, -1 ledger failure.
-int32_t canari_announced_by_extension(const char *data_dir, const char *key);
+/// The extension draws the message `key`: 1 first, 0 after the page, -1 ledger failure. The
+/// ledger is sealed under `cache_key_b64`, the install's native cache key.
+int32_t canari_announced_by_extension(const char *data_dir, const char *cache_key_b64,
+                                      const char *key);
 
 /// Frees a string returned by any of the canari_native_* functions above.
 void canari_free_string(char *ptr);

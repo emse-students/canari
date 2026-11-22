@@ -17,7 +17,11 @@ import { startCallRing, stopCallRing } from '$lib/utils/callRing';
 import { callHoldsAppSound } from '$lib/utils/callSoundGate';
 import { scoreSound } from '$lib/utils/soundPalette';
 import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion';
-import { announcementDecision, claimMessageAnnouncement } from '$lib/utils/chat/announcedMessages';
+import {
+  announcementDecision,
+  claimMessageAnnouncement,
+  type AnnouncedMessage,
+} from '$lib/utils/chat/announcedMessages';
 import {
   composePlainNotificationText,
   postNativeMessageNotification,
@@ -667,7 +671,7 @@ export function useNotifications() {
       channelId: mentionsMe ? CHANNEL_MENTIONS : CHANNEL_MESSAGES,
       idKey: conversationId,
       conversationId,
-      instants: native?.instants,
+      announced: native?.announced,
     });
   }
 
@@ -777,7 +781,7 @@ export function useNotifications() {
    * @param p.conversationId where a tap leads - and, on iOS, the notification's thread, the one the
    *   extension files its banners of that conversation under, so taking a conversation's banners
    *   down by thread (`cancel_conversation_notifications`) takes the page's too.
-   * @param p.instants a MESSAGE banner's messages (`NativeMessageNotification.instants`): on iOS the
+   * @param p.announced a MESSAGE banner's messages (`NativeMessageNotification.announced`): on iOS the
    *   page asks the ledger it shares with the extension before raising (`announcedMessages.ts`).
    */
   async function postPlainNotification(p: {
@@ -787,9 +791,9 @@ export function useNotifications() {
     channelId: string;
     idKey?: string;
     conversationId?: string;
-    instants?: readonly number[];
+    announced?: readonly AnnouncedMessage[];
   }) {
-    const { convKey, title, body, channelId, idKey, conversationId, instants } = p;
+    const { convKey, title, body, channelId, idKey, conversationId, announced } = p;
     if (isTauriRuntime()) {
       try {
         if (await isPermissionGranted()) {
@@ -797,8 +801,8 @@ export function useNotifications() {
           // ONE NOTIFICATION PER MESSAGE ON AN IPHONE: asked after every other refusal, right
           // before the post, so a claim is never taken for a banner that is not raised.
           let announces = '';
-          if (ios && instants !== undefined) {
-            const asked = await claimMessageAnnouncement(conversationId, instants);
+          if (ios && announced !== undefined) {
+            const asked = await claimMessageAnnouncement(conversationId, announced);
             const decision = announcementDecision(
               convKey,
               'claim' in asked ? asked.claim : null,
@@ -819,7 +823,7 @@ export function useNotifications() {
             // THE EXTENSION'S THREAD AND ITS CONVERSATION FIELD: removal by conversation takes the
             // page's banners with the extension's (iPhone 12, `1.7.3-alpha.6`: a deleted group kept
             // the four banners the page had raised). `announces` lets the extension find this
-            // banner when it draws one of its messages later (`pageBannerCovers`).
+            // banner when it draws its one message later (`pageBannerStandsOnlyFor`).
             ...(ios
               ? {
                   group: conversationId,
