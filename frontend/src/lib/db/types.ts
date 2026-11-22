@@ -547,6 +547,14 @@ export interface OutboxEntry {
    * Retry clears it.
    */
   nativeRefusal?: NativeRefusal;
+  /**
+   * WHY THE PAGE'S OWN FLUSHER PARKED THIS ENTRY, written with the count that parks it - the TYPED
+   * cause, so a parked entry read back after a reload (or in another tab) says what it failed on
+   * instead of inferring it from `serverErrors`, which is the same number for every cause. Absent
+   * on a native refusal ({@link nativeRefusal} carries that one) and on an entry parked by a build
+   * that recorded none. Durable (encrypted payload); the member's Retry clears it.
+   */
+  parkedCause?: ParkedCause;
   createdAt: number;
 }
 
@@ -557,6 +565,12 @@ export interface OutboxEntry {
  * this device removed, a malformed proto); `unrecorded`, a line marked by a build that wrote no cause.
  */
 export type NativeRefusal = 'refused' | 'not_encryptable' | 'unrecorded';
+
+/**
+ * What the page's own flusher parked an entry on: `server_error`, a run of counted 5xx;
+ * `not_now`, a run of "the server is not serving" answers with no success between.
+ */
+export type ParkedCause = 'server_error' | 'not_now';
 
 /**
  * A group exit this device has DECIDED but not yet had answered by the server.
