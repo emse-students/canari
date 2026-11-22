@@ -575,6 +575,31 @@ describe('NotificationRow for the question put to a form left open', () => {
 });
 
 /**
+ * A MEMBER'S CASH ANSWER IS ABOUT TO EXPIRE (owner decision of 2026-11-21). The row stores the form's
+ * title; the sentence is this build's, and the row opens the form.
+ */
+describe('NotificationRow for a cash hold about to expire', () => {
+  const row: PostNotification = {
+    id: 'n-cash',
+    type: 'form_cash_expiring',
+    postId: 'f1',
+    actorId: 'system',
+    actorName: 'BDE',
+    text: 'Gala de printemps',
+    read: false,
+    createdAt: new Date().toISOString(),
+  };
+
+  it('says the cash answer expires soon on that form, and opens', () => {
+    const target = renderRow(row);
+    expect(target.textContent).toContain(m.notif_form_cash_expiring_text());
+    expect(target.textContent).toContain('Gala de printemps');
+    expect(target.textContent).not.toContain(m.notif_comment_text());
+    expect(target.querySelector('button')!.disabled).toBe(false);
+  });
+});
+
+/**
  * AN ASSOCIATION'S LYDIA PAYMENTS BECAME ACTIVE OR WERE PAUSED. The row stores the association's name;
  * the whole sentence is built here and no actor name precedes it.
  */
@@ -712,6 +737,7 @@ const EVERY_TYPE_THE_SERVER_EMITS = [
   'mention',
   'form_reminder',
   'form_paid_over_capacity',
+  'form_cash_expiring',
   'form_stale_open',
   'association_post',
   'followed_post',

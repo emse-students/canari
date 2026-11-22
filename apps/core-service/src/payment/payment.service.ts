@@ -5,6 +5,7 @@ import {
   LydiaPaymentProvider,
   type LydiaCashierRemoval,
   type LydiaCashierRole,
+  checkoutRequestInvalid,
 } from './lydia-payment-provider';
 import { verifyLydiaCallback, type LydiaCallbackVerdict } from './lydia-callback-verification';
 import { internalLydiaCallbackKeyUrl, internalSocialRequestConfig } from './social-internal-client';
@@ -312,7 +313,10 @@ export class PaymentService {
 function toGenericLineItem(item: WireLineItem): CheckoutLineItem {
   const priceData = item.price_data;
   if (!priceData || typeof priceData.unit_amount !== 'number' || !priceData.product_data?.name) {
-    throw new Error('Line item must specify price_data.{currency,unit_amount,product_data.name}');
+    // Refused before Lydia is called: typed, so the caller knows nothing was created there.
+    throw checkoutRequestInvalid(
+      'Line item must specify price_data.{currency,unit_amount,product_data.name}'
+    );
   }
   return {
     productName: priceData.product_data.name,

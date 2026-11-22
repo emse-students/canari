@@ -6,6 +6,7 @@ import {
   Post,
   HttpCode,
   Param,
+  BadGatewayException,
   BadRequestException,
   ConflictException,
   ForbiddenException,
@@ -38,6 +39,7 @@ import {
   LydiaCashierAddedUnconfirmedException,
   PAYMENT_PROVIDER_REFUSED,
   businessCreatedUnlinked,
+  checkoutRequestInvalid,
 } from './lydia-payment-provider';
 import { RouteParams, isUuidShaped } from '../common/route-params';
 
@@ -898,15 +900,18 @@ export class PaymentController {
     },
     @Headers('x-internal-secret') secret?: string
   ) {
+    // A 401/403 here is left UNTYPED on purpose: it is a misconfiguration of the caller (the
+    // internal secret), and social-service reads it as an outcome unknown - the reading that fails
+    // closed. Every refusal of the REQUEST below is the typed `CHECKOUT_REQUEST_INVALID`.
     assertInternalSecret(secret);
     if (!body || !body.lineItems || !Array.isArray(body.lineItems)) {
-      throw new BadRequestException('Invalid payload');
+      throw checkoutRequestInvalid('Invalid payload');
     }
     if (
       body.expireAfterSeconds !== undefined &&
       (!Number.isInteger(body.expireAfterSeconds) || body.expireAfterSeconds <= 0)
     ) {
-      throw new BadRequestException('Invalid expireAfterSeconds');
+      throw checkoutRequestInvalid('Invalid expireAfterSeconds');
     }
 
     if (!(await this.paymentService.isConfigured())) {
@@ -918,7 +923,7 @@ export class PaymentController {
       payerEmail &&
       (payerEmail.length > PAYER_EMAIL_MAX_LENGTH || !PAYER_EMAIL_RE.test(payerEmail))
     ) {
-      throw new BadRequestException('Invalid payerEmail');
+      throw checkoutRequestInvalid('Invalid payerEmail');
     }
 
     try {
@@ -940,9 +945,13 @@ export class PaymentController {
       // A typed refusal (the Lydia provider's PAYMENT_PROVIDER_REFUSED) is already the answer:
       // re-labelling it would bury both its code and its readable message.
       if (err instanceof HttpException) throw err;
+      // Anything else is NOT an answer from Lydia - a timeout, a reset, a 5xx, a 4xx that does not
+      // say refused (`postForm`) - so `request/do` may have created a request all the same. A 502,
+      // never a 400: social-service reads only a typed refusal code as "nothing was created"
+      // (`coreRefusedRequest`), and a 400 here once looked like one to every status-class reader.
       const msg = err instanceof Error ? err.message : String(err);
-      this.logger.error(`[Payments] create-checkout-session failed: ${msg}`);
-      throw new BadRequestException(`Payment error: ${msg}`);
+      this.logger.error(`[Payments] create-checkout-session failed, outcome unknown: ${msg}`);
+      throw new BadGatewayException(`Payment error: ${msg}`);
     }
   }
 

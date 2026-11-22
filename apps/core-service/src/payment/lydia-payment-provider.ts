@@ -42,6 +42,19 @@ export const PAYMENT_PROVIDER_REFUSED = 'PAYMENT_PROVIDER_REFUSED';
  */
 export const AMOUNT_OUT_OF_RANGE = 'AMOUNT_OUT_OF_RANGE';
 
+/**
+ * The `code` of a checkout core refused on its OWN reading, BEFORE any call to Lydia: a payload,
+ * an e-mail, a lifetime or a configuration it will not send (`checkoutRequestInvalid`). Nothing was
+ * created at Lydia, so social-service releases the attempt or the answer on it - as it does on
+ * `PAYMENT_PROVIDER_REFUSED` - instead of reading the untyped 400 as an outcome unknown.
+ */
+export const CHECKOUT_REQUEST_INVALID = 'CHECKOUT_REQUEST_INVALID';
+
+/** The typed 400 `CHECKOUT_REQUEST_INVALID`: a checkout refused before Lydia was called. */
+export function checkoutRequestInvalid(message: string): BadRequestException {
+  return new BadRequestException({ code: CHECKOUT_REQUEST_INVALID, message });
+}
+
 const HOMOLOGATION_BASE_URL = 'https://homologation.lydia-app.com';
 const PRODUCTION_BASE_URL = 'https://lydia-app.com';
 
@@ -654,12 +667,12 @@ export class LydiaPaymentProvider implements PaymentProvider {
    * here - only the provider_token and the target vendor_token, both already available.
    */
   async createCheckoutSession(params: CreateCheckoutSessionParams): Promise<CheckoutSessionResult> {
-    if (!this.providerToken) throw new BadRequestException('Lydia not configured');
+    if (!this.providerToken) throw checkoutRequestInvalid('Lydia not configured');
     if (!params.connectAccountId) {
-      throw new BadRequestException('Lydia checkout requires a target vendor_token');
+      throw checkoutRequestInvalid('Lydia checkout requires a target vendor_token');
     }
     if (!params.payerRecipient) {
-      throw new BadRequestException('Lydia request/do requires payerRecipient (email or phone)');
+      throw checkoutRequestInvalid('Lydia request/do requires payerRecipient (email or phone)');
     }
     const { value: recipient, type: recipientType } = params.payerRecipient;
 
@@ -704,7 +717,7 @@ export class LydiaPaymentProvider implements PaymentProvider {
       // sandbox 2026-10-15): a value that would silently drop the expiry is refused HERE instead.
       if (!Number.isInteger(params.expireAfterSeconds) || params.expireAfterSeconds <= 0) {
         this.logger.warn(`Lydia checkout refused: expire_time ${params.expireAfterSeconds}`);
-        throw new BadRequestException('expireAfterSeconds must be a positive whole number');
+        throw checkoutRequestInvalid('expireAfterSeconds must be a positive whole number');
       }
       fields.expire_time = String(params.expireAfterSeconds);
     }

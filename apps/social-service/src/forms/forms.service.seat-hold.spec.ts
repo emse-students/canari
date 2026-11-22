@@ -24,6 +24,11 @@ import {
   overCapacityFirst,
   seatHoldingWhere,
 } from './seat-hold';
+import {
+  PAYMENT_IN_PROGRESS,
+  PAYMENT_NOT_RESUMABLE,
+  PAYMENT_PRICE_CHANGED,
+} from './payment-resume';
 
 /**
  * AN ONLINE `pending` ROW HOLDS ITS SEAT FOR A BOUNDED TIME, AND A PAYMENT THAT LANDS AFTER IS
@@ -53,6 +58,8 @@ describe('FormsService - the seat a pending payment holds', () => {
     stripeSessionId?: string | null;
     paymentRequestId?: string | null;
     paymentSettledBy?: string | null;
+    /** Who cancelled the payment (migration 179, `PaymentCancelOrigin`). */
+    paymentCancelOrigin?: string | null;
     cotisationGrantedAt?: Date | null;
     purchaseRecordedAt?: Date | null;
     organiserNotifiedAt?: Date | null;
@@ -61,8 +68,19 @@ describe('FormsService - the seat a pending payment holds', () => {
     /** The Business the row's request was issued to (written with the request ids). */
     lydiaVendorToken?: string | null;
     answers?: Record<string, unknown>;
+    /** The priced grids' lines and the price questions, snapshotted at submit (137, 166). */
+    lines?: unknown[] | null;
+    priceLockedItemIds?: string[] | null;
   };
   type Flag = 'cotisationGrantedAt' | 'purchaseRecordedAt' | 'organiserNotifiedAt';
+  /** What a payment resume writes when it reopens a released answer (`resumePayment`). */
+  const RESUME_REOPENS = {
+    paymentStatus: 'pending',
+    paymentRequestId: null,
+    stripeSessionId: null,
+    paymentSettledBy: null,
+    paymentCancelOrigin: null,
+  };
 
   function makeStore(opts: {
     maxSubmissions: number | null;
@@ -84,6 +102,8 @@ describe('FormsService - the seat a pending payment holds', () => {
     pricingFacts?: unknown;
     /** The manager's close, or a past end date: the form takes no new answer (`assertFormOpen`). */
     closedAt?: Date | null;
+    /** Who may answer (`assertMaySubmit`); default open to everyone. */
+    submitCondition?: unknown;
   }) {
     let now = T0;
     // A seeded row naming a request was issued to the form's Business ('vendor'), as `submit` writes.
@@ -101,7 +121,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       cotisationVariantKey: null,
       basePrice: opts.basePrice ?? 0,
       priceMatrix: opts.priceMatrix ?? null,
-      submitCondition: null,
+      submitCondition: opts.submitCondition ?? null,
       anonymous: false,
       isPublic: opts.isPublic ?? false,
       allowMultipleSubmissions: opts.allowMultipleSubmissions ?? false,
@@ -118,12 +138,24 @@ describe('FormsService - the seat a pending payment holds', () => {
     /** Evaluates one value of a `where` against a row, the raw hold fragment included. */
     function matchesValue(row: Row, key: keyof Row, expected: unknown): boolean {
       if (expected instanceof FindOperator) {
-        // The only operator the service puts in a submission `where` is the hold, and it must be
-        // the ONE fragment the expiry job also uses - anything else is a new predicate.
+        // The resume's offer (`resumableWhere`): an online, charged row - read as Postgres would.
+        if (expected.type === 'isNull') return row[key] === null || row[key] === undefined;
+        // `Not(In(...))`: SQL's NOT IN, which a NULL never satisfies.
+        if (expected.type === 'not') {
+          const inner = (expected as unknown as { _value: unknown })._value;
+          return row[key] !== null && row[key] !== undefined && !matchesValue(row, key, inner);
+        }
+        if (expected.type === 'in') return (expected.value as unknown[]).includes(row[key]);
+        if (expected.type === 'moreThan') return (row[key] as number) > (expected.value as number);
+        // Otherwise the hold, and it must be the ONE fragment the expiry job also uses - its two
+        // halves `>` (still holding) and `<=` (past it) - anything else is a new predicate.
         expect(key).toBe('paymentRequestedAt');
         expect(expected.type).toBe('raw');
-        expect(expected.getSql?.('col')).toBe(`col > ${PENDING_HOLD_CUTOFF_SQL}`);
-        return row.paymentRequestedAt.getTime() > now.getTime() - HOLD_MS;
+        const sql = expected.getSql?.('col');
+        const past = `col <= ${PENDING_HOLD_CUTOFF_SQL}`;
+        expect([`col > ${PENDING_HOLD_CUTOFF_SQL}`, past]).toContain(sql);
+        const holding = row.paymentRequestedAt.getTime() > now.getTime() - HOLD_MS;
+        return sql === past ? !holding : holding;
       }
       return row[key] === expected;
     }
@@ -293,8 +325,17 @@ describe('FormsService - the seat a pending payment holds', () => {
             },
             update: async (_entity: unknown, id: string, values: Record<string, unknown>) => {
               await roundTrip();
-              expect(Object.keys(values)).toEqual(['paymentRequestedAt']);
-              expect((values.paymentRequestedAt as () => string)()).toBe('now()');
+              const { paymentRequestedAt, ...named } = values;
+              // A retry restarts the hold alone; a payment resume also reopens the row naming NO
+              // request (`resumePayment`), by named columns - those two shapes and no other.
+              const reopens = Object.keys(named).length > 0;
+              expect([{}, RESUME_REOPENS]).toContainEqual(named);
+              if (reopens) {
+                const before = byId(id).paymentStatus;
+                Object.assign(byId(id), named);
+                transitions.push(`${id}:${before}->pending`);
+              }
+              expect((paymentRequestedAt as () => string)()).toBe('now()');
               byId(id).paymentRequestedAt = now;
             },
           };
@@ -2295,6 +2336,482 @@ describe('FormsService - the seat a pending payment holds', () => {
       expect(error).toHaveBeenCalledTimes(1);
       expect(error).toHaveBeenCalledWith(expect.stringContaining('no account to grant it to'));
       expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('a payment resumed on the same answer (owner decision of 2026-11-21)', () => {
+    /** The caller's answer whose payment ended: its old request named by both ids. */
+    const released = (over: Partial<Row> = {}) =>
+      row({
+        id: 'ans',
+        paymentStatus: 'expired',
+        paymentRequestedAt: ago(2 * HOLD_MS),
+        paymentRequestId: '555',
+        stripeSessionId: 'uuid-old',
+        // What `submit` stored with the answer: no grid, and no question fixing the price.
+        lines: null,
+        priceLockedItemIds: [],
+        // A cancel names its origin since 179; Lydia's verdict is the ordinary one.
+        paymentCancelOrigin: over.paymentStatus === 'cancelled' ? 'provider' : null,
+        ...over,
+      });
+    const resume = (service: FormsService, caller = 'u1') =>
+      service.resumePayment('ans', caller, { payerEmail: 'payer@example.org' });
+    const lydia = (rows: Row[], over: Partial<Parameters<typeof makeStore>[0]> = {}) =>
+      makeStore({ maxSubmissions: 2, basePrice: 1500, provider: 'lydia', rows, ...over });
+
+    it.each([
+      ['expired', 'cancelled'],
+      ['cancelled', 'already-settled'],
+    ] as const)(
+      'issues a NEW request for the SAME %s answer, after settling the old one at Lydia',
+      async (status, cancelAnswer) => {
+        const { service, rows, core, transitions } = lydia([released({ paymentStatus: status })]);
+        core.cancelAnswer = cancelAnswer;
+        await expect(resume(service)).resolves.toEqual({
+          checkoutUrl: 'https://lydia.example/pay/1',
+          submissionId: 'ans',
+        });
+        const routes = core.calls.map((c) => c.route);
+        expect(routes[0]).toBe('cancel-request');
+        expect(routes[routes.length - 1]).toBe('create-checkout-session');
+        // The old request was settled while the row still named it, before anything was issued.
+        expect(core.calls[0].rowIdsThen).toEqual([['ans', '555', 'uuid-old']]);
+        const issued = core.calls[core.calls.length - 1];
+        // The answer's own amount, never a client figure, on the same row.
+        expect(issued.body.lineItems[0].price_data.unit_amount).toBe(1500);
+        expect(issued.body.metadata.submissionId).toBe('ans');
+        expect(issued.body.payerEmail).toBe('payer@example.org');
+        expect(issued.body.expireAfterSeconds).toBe(PAYMENT_REQUEST_LIFETIME_SECONDS);
+        // While it was being issued, the row named NO request: what a second click refuses on.
+        expect(issued.rowIdsThen).toEqual([['ans', null, null]]);
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({
+          paymentStatus: 'pending',
+          paymentRequestId: '1001',
+          stripeSessionId: 'uuid-1',
+          paymentRequestedAt: T0,
+        });
+        expect(transitions).toEqual([`ans:${status}->pending`]);
+      }
+    );
+
+    it('issues at once when the released answer names no request (it was never issued)', async () => {
+      const { service, core } = lydia([
+        released({ paymentStatus: 'cancelled', paymentRequestId: null, stripeSessionId: null }),
+      ]);
+      await resume(service);
+      expect(core.calls.map((c) => c.route)).toEqual(['create-checkout-session']);
+    });
+
+    it('resumes a pending answer whose hold has passed before the expiry job said so', async () => {
+      const { service, rows } = lydia([released({ paymentStatus: 'pending' })]);
+      await resume(service);
+      expect(rows[0]).toMatchObject({ paymentStatus: 'pending', paymentRequestId: '1001' });
+    });
+
+    // NEVER A SECOND CHARGE: the payer paid the old request in the Lydia app and never came back.
+    // Fails if the resume issues before reading the old request.
+    it('records the old request PAID and issues nothing when it was paid meanwhile', async () => {
+      const { service, rows, core } = lydia([released()]);
+      core.cancelAnswer = 'already-settled';
+      core.stateAnswer = 'paid';
+      await expect(resume(service)).resolves.toEqual({ submissionId: 'ans', alreadyPaid: true });
+      expect(core.calls.map((c) => c.route)).toEqual(['cancel-request', 'request-state']);
+      expect(rows[0]).toMatchObject({ paymentStatus: 'paid', paymentSettledBy: '555' });
+    });
+
+    it('refuses while the old request cannot be shown dead or paid (PREVIOUS_PAYMENT_OPEN)', async () => {
+      const { service, rows, core } = lydia([released()]);
+      core.cancelAnswer = 'already-settled';
+      core.stateAnswer = 'open';
+      await expect(resume(service)).rejects.toMatchObject({
+        response: { code: PREVIOUS_PAYMENT_OPEN },
+      });
+      expect(core.calls.map((c) => c.route)).not.toContain('create-checkout-session');
+      expect(rows[0].paymentStatus).toBe('expired');
+    });
+
+    // IDEMPOTENCE FROM DURABLE STATE: the row is `pending` once a resume took it, and that is what
+    // the second click reads - no clock, no in-memory flag.
+    it('refuses a second click once a checkout is live, typed, issuing nothing more', async () => {
+      const { service, core } = lydia([released()]);
+      await resume(service);
+      await expect(resume(service)).rejects.toMatchObject({
+        response: { code: PAYMENT_IN_PROGRESS },
+      });
+      expect(core.calls.filter((c) => c.route === 'create-checkout-session')).toHaveLength(1);
+    });
+
+    it('lets ONE of two simultaneous clicks through, and refuses the other', async () => {
+      const { service, core } = lydia([
+        released({ paymentStatus: 'cancelled', paymentRequestId: null, stripeSessionId: null }),
+      ]);
+      const results = await Promise.allSettled([resume(service), resume(service)]);
+      expect(results.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
+      const refused = results.find((r) => r.status === 'rejected') as PromiseRejectedResult;
+      expect(refused.reason).toMatchObject({ response: { code: PAYMENT_IN_PROGRESS } });
+      expect(core.calls.filter((c) => c.route === 'create-checkout-session')).toHaveLength(1);
+    });
+
+    it('refuses a payment still within its hold without asking Lydia anything', async () => {
+      const { service, core } = lydia([
+        released({ paymentStatus: 'pending', paymentRequestedAt: ago(60_000) }),
+      ]);
+      await expect(resume(service)).rejects.toMatchObject({
+        response: { code: PAYMENT_IN_PROGRESS },
+      });
+      expect(core.calls).toEqual([]);
+    });
+
+    it.each([
+      ['a paid answer', { paymentStatus: 'paid' }],
+      ['a refunded answer', { paymentStatus: 'refunded' }],
+      ['an answer waiting for cash', { paymentStatus: 'pending_cash', paymentMethod: 'cash' }],
+      ['an expired cash answer', { paymentStatus: 'expired', paymentMethod: 'cash' }],
+      ['a free answer', { paymentStatus: 'cancelled', totalPaid: 0 }],
+    ])('refuses %s as having nothing to resume', async (_label, over) => {
+      const { service, core } = lydia([released(over as Partial<Row>)]);
+      await expect(resume(service)).rejects.toMatchObject({
+        response: { code: PAYMENT_NOT_RESUMABLE },
+      });
+      expect(core.calls).toEqual([]);
+    });
+
+    it('answers the answer of another person as missing', async () => {
+      const { service, core } = lydia([released()]);
+      await expect(resume(service, 'u2')).rejects.toMatchObject({ status: 404 });
+      expect(core.calls).toEqual([]);
+    });
+
+    it('refuses on a closed form, as a submit is', async () => {
+      const { service, core } = lydia([released()], { closedAt: ago(1000) });
+      await expect(resume(service)).rejects.toMatchObject({ response: { code: 'FORM_CLOSED' } });
+      expect(core.calls).toEqual([]);
+    });
+
+    // The capacity, counted as a fresh submit counts it, under the form lock.
+    it('refuses on a full form, issuing nothing', async () => {
+      const { service, rows, core } = lydia(
+        [released(), row({ id: 'other', userId: 'u2', paymentStatus: 'paid' })],
+        { maxSubmissions: 1 }
+      );
+      await expect(resume(service)).rejects.toMatchObject({ response: { code: 'FORM_FULL' } });
+      expect(core.calls.map((c) => c.route)).not.toContain('create-checkout-session');
+      expect(rows[0].paymentStatus).toBe('expired');
+    });
+
+    it('refuses when the person has answered again since, before cancelling anything', async () => {
+      const { service, core } = lydia([
+        released(),
+        row({ id: 'newer', paymentStatus: 'paid', createdAt: T0 }),
+      ]);
+      await expect(resume(service)).rejects.toMatchObject({
+        response: { code: ALREADY_ANSWERED },
+      });
+      expect(core.calls).toEqual([]);
+    });
+
+    it('releases the answer again when the new request is REFUSED, so it may be resumed', async () => {
+      const { service, rows, core } = lydia([released()]);
+      // An answer from core (a 4xx, as axios reports it): nothing was created at Lydia.
+      core.createAnswer = Object.assign(new Error('refused'), {
+        isAxiosError: true,
+        response: { status: 400, data: { code: 'PAYMENT_PROVIDER_REFUSED' } },
+      });
+      await expect(resume(service)).rejects.toBeDefined();
+      expect(rows[0]).toMatchObject({
+        paymentStatus: 'cancelled',
+        paymentRequestId: null,
+        paymentCancelOrigin: 'unissued',
+      });
+      core.createAnswer = null;
+      await expect(resume(service)).resolves.toMatchObject({ submissionId: 'ans' });
+      expect(rows[0].paymentStatus).toBe('pending');
+    });
+
+    // A RESUME SELLS ONLY WHAT A FRESH SUBMIT WOULD (review of #3949): judged again, NOW.
+    it('refuses a person the form is no longer open to, before cancelling anything', async () => {
+      const { service, rows, core } = lydia([released()], {
+        submitCondition: { promo: [2024] },
+      });
+      await expect(resume(service)).rejects.toMatchObject({ status: 403 });
+      expect(core.calls).toEqual([]);
+      expect(rows[0].paymentStatus).toBe('expired');
+    });
+
+    it('refuses an answer whose price changed since, typed, issuing nothing', async () => {
+      const { service, rows, core } = lydia([released()], { basePrice: 2000 });
+      await expect(resume(service)).rejects.toMatchObject({
+        response: { code: PAYMENT_PRICE_CHANGED },
+      });
+      expect(core.calls).toEqual([]);
+      expect(rows[0].paymentStatus).toBe('expired');
+    });
+
+    it('refuses an answer whose combination closed since, with the submit code', async () => {
+      const { service, core } = lydia([released()], {
+        priceMatrix: {
+          dimensions: [
+            { id: 'd1', kind: 'promo', buckets: [{ id: 'b1', label: '1A', values: [2026] }] },
+          ],
+          cells: { b1: 1500, _others: null },
+        },
+      });
+      await expect(resume(service)).rejects.toMatchObject({
+        response: { code: 'FORM_COMBINATION_UNAVAILABLE' },
+      });
+      expect(core.calls).toEqual([]);
+    });
+
+    it('refuses an answer whose price questions or lines changed at the same total', async () => {
+      const moved = lydia([released({ priceLockedItemIds: ['size'] })]);
+      await expect(resume(moved.service)).rejects.toMatchObject({
+        response: { code: PAYMENT_PRICE_CHANGED },
+      });
+      const lined = lydia([released({ lines: [{ itemId: 'g', cents: 1500 }] })]);
+      await expect(resume(lined.service)).rejects.toMatchObject({
+        response: { code: PAYMENT_PRICE_CHANGED },
+      });
+      // Before 166 nothing was snapshotted: refused rather than guessed.
+      const old = lydia([released({ priceLockedItemIds: null })]);
+      await expect(resume(old.service)).rejects.toMatchObject({
+        response: { code: PAYMENT_PRICE_CHANGED },
+      });
+      expect([moved, lined, old].flatMap((st) => st.core.calls)).toEqual([]);
+    });
+
+    it('refuses on a form taking several answers, which check never offers', async () => {
+      const { service, core } = lydia([released()], { allowMultipleSubmissions: true });
+      await expect(resume(service)).rejects.toMatchObject({
+        response: { code: PAYMENT_NOT_RESUMABLE },
+      });
+      expect(core.calls).toEqual([]);
+    });
+
+    // A request named with no Business (before migration 120) can never be settled: not offered,
+    // and refused as not resumable rather than "try again in 30 minutes" forever.
+    it('refuses an answer whose old request records no Business', async () => {
+      const { service, core } = lydia([released({ lydiaVendorToken: null })]);
+      await expect(resume(service)).rejects.toMatchObject({
+        response: { code: PAYMENT_NOT_RESUMABLE },
+      });
+      expect(core.calls).toEqual([]);
+    });
+
+    // A MANAGER'S CANCEL IS A DECISION: never offered back as a payment that failed.
+    // FAIL CLOSED: an origin nothing recorded (before 179, or an older image during the rolling
+    // deploy) may be a manager's decision or a timed-out issue still payable at Lydia.
+    it.each([
+      ['a manager', 'manager', PAYMENT_NOT_RESUMABLE],
+      ['an issue whose outcome at Lydia is unknown', 'issue-unknown', PAYMENT_NOT_RESUMABLE],
+      ['nobody recorded (NULL)', null, PAYMENT_NOT_RESUMABLE],
+    ])('refuses a payment cancelled by %s', async (_label, origin, code) => {
+      const { service, core } = lydia([
+        released({ paymentStatus: 'cancelled', paymentCancelOrigin: origin }),
+      ]);
+      await expect(resume(service)).rejects.toMatchObject({ response: { code } });
+      expect(core.calls).toEqual([]);
+    });
+
+    it.each(['member', 'provider', 'unissued'])(
+      'resumes a payment cancelled by %s, and clears the origin',
+      async (origin) => {
+        const { service, rows } = lydia([
+          released({ paymentStatus: 'cancelled', paymentCancelOrigin: origin }),
+        ]);
+        await resume(service);
+        expect(rows[0]).toMatchObject({ paymentStatus: 'pending', paymentCancelOrigin: null });
+      }
+    );
+
+    it('records who cancelled: the submitter, a manager, the provider', async () => {
+      const own = lydia([released({ paymentStatus: 'pending', paymentRequestedAt: T0 })]);
+      own.core.cancelAnswer = 'cancelled';
+      await own.service.cancelSubmission('ans', 'u1', false);
+      expect(own.rows[0]).toMatchObject({
+        paymentStatus: 'cancelled',
+        paymentCancelOrigin: 'member',
+      });
+
+      const managed = lydia([released({ paymentStatus: 'pending', paymentRequestedAt: T0 })]);
+      managed.core.cancelAnswer = 'cancelled';
+      await managed.service.cancelSubmission('ans', 'admin', true);
+      expect(managed.rows[0]).toMatchObject({
+        paymentStatus: 'cancelled',
+        paymentCancelOrigin: 'manager',
+      });
+    });
+
+    // A TIMED-OUT ISSUE may have left a request at Lydia the row does not name: released, and NOT
+    // offered for a resume (it would make a second payable request for one answer repeatable).
+    it('releases an answer whose issuing call failed after it was sent as issue-unknown', async () => {
+      const { service, rows, core } = lydia([released()]);
+      core.createAnswer = new Error('socket hang up');
+      await expect(resume(service)).rejects.toBeDefined();
+      expect(rows[0]).toMatchObject({
+        paymentStatus: 'cancelled',
+        paymentRequestId: null,
+        paymentCancelOrigin: 'issue-unknown',
+      });
+      await expect(resume(service)).rejects.toMatchObject({
+        response: { code: PAYMENT_NOT_RESUMABLE },
+      });
+      expect(core.calls.filter((c) => c.route === 'create-checkout-session')).toHaveLength(1);
+    });
+
+    /** A failed call to core as axios reports one: `status` and `data` are core's answer. */
+    const coreAnswered = (status: number, data: Record<string, unknown>) =>
+      Object.assign(new Error(`Request failed with status code ${status}`), {
+        isAxiosError: true,
+        response: { status, data },
+      });
+
+    // CODE, NEVER A STATUS CLASS (review of #3949): core once answered a request/do whose answer
+    // timed out as an untyped 400 - Lydia may hold a payable request, so resuming would issue a
+    // second one for the same answer. Fails if any 4xx is read as "nothing was created".
+    it.each([
+      ['an untyped 400 (a request/do timeout, as core once answered it)', 400],
+      ['a 401', 401],
+      ["core's 502 for a request/do with no answer", 502],
+    ])('records %s as issue-unknown, and refuses to resume it', async (_label, status) => {
+      const { service, rows, core } = lydia([released()]);
+      core.createAnswer = coreAnswered(status, { message: 'Payment error: timeout' });
+      await expect(resume(service)).rejects.toBeDefined();
+      expect(rows[0]).toMatchObject({
+        paymentStatus: 'cancelled',
+        paymentRequestId: null,
+        paymentCancelOrigin: 'issue-unknown',
+      });
+      await expect(resume(service)).rejects.toMatchObject({
+        response: { code: PAYMENT_NOT_RESUMABLE },
+      });
+      expect(core.calls.filter((c) => c.route === 'create-checkout-session')).toHaveLength(1);
+    });
+
+    // The ONLY codes that promise nothing was created at Lydia (`CHECKOUT_REFUSAL_CODES`).
+    it.each([
+      'PAYMENT_PROVIDER_REFUSED',
+      'LYDIA_BUSINESS_NOT_VALIDATED',
+      'LYDIA_BUSINESS_BLOCKED',
+      'AMOUNT_OUT_OF_RANGE',
+      'CHECKOUT_REQUEST_INVALID',
+    ])('records a typed %s refusal as unissued', async (code) => {
+      const { service, rows, core } = lydia([released()]);
+      core.createAnswer = coreAnswered(400, { code, message: 'refused' });
+      await expect(resume(service)).rejects.toBeDefined();
+      expect(rows[0]).toMatchObject({
+        paymentStatus: 'cancelled',
+        paymentRequestId: null,
+        paymentCancelOrigin: 'unissued',
+      });
+    });
+
+    // A resume core refused before calling Lydia (no payer e-mail it would send) created nothing:
+    // the answer stays resumable, never `issue-unknown`.
+    it('keeps an answer resumable when core refuses the resume with CHECKOUT_REQUEST_INVALID', async () => {
+      const { service, rows, core } = lydia([released()]);
+      core.createAnswer = coreAnswered(400, {
+        code: 'CHECKOUT_REQUEST_INVALID',
+        message: 'Lydia request/do requires payerRecipient (email or phone)',
+      });
+      await expect(resume(service)).rejects.toMatchObject({ status: 400 });
+      expect(rows[0]).toMatchObject({
+        paymentStatus: 'cancelled',
+        paymentCancelOrigin: 'unissued',
+      });
+      core.createAnswer = null;
+      await expect(resume(service)).resolves.toMatchObject({ submissionId: 'ans' });
+      expect(rows[0].paymentStatus).toBe('pending');
+    });
+
+    // THE WEBHOOK RACE: Lydia's callbacks about the OLD request land after the new one exists.
+    // Neither may move the row, and the new payment is recorded once.
+    it('ignores late callbacks of the old request and records the new payment once', async () => {
+      const NEW_UUID = 'aabbccddeeff00112233445566778899';
+      const { service, rows, core, transitions, purchaseRecordService } = lydia([released()]);
+      await resume(service);
+      // Lydia's real uuid shape on the new request, so the callbacks below read it.
+      rows[0].stripeSessionId = NEW_UUID;
+      const error = jest.spyOn((service as any).logger, 'error');
+
+      // The old request's cancel/expire report: about a request the row no longer names.
+      await expect(
+        service.cancelPendingSubmission('ans', { requestId: '555' }, 'vendor')
+      ).resolves.toEqual({ ok: true, outcome: 'other-request' });
+      expect(rows[0].paymentStatus).toBe('pending');
+
+      // The old request's confirm: accused, and only the row's OWN (new, still open) request read.
+      core.stateAnswer = 'open';
+      await service.confirmPaymentFromCallback('ans', { vendorToken: 'vendor', requestId: '555' });
+      expect(core.calls[core.calls.length - 1].body).toEqual({
+        sessionId: NEW_UUID,
+        connectAccountId: 'vendor',
+      });
+      expect(rows[0].paymentStatus).toBe('pending');
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('names request 555'));
+
+      // The new request is paid: once, whatever replays follow.
+      core.stateAnswer = 'paid';
+      await service.confirmPaymentFromCallback('ans', { vendorToken: 'vendor', requestId: '1001' });
+      await service.confirmPaymentFromCallback('ans', { vendorToken: 'vendor', requestId: '555' });
+      await service.confirmPayment('ans');
+      expect(rows[0].paymentStatus).toBe('paid');
+      expect(transitions.filter((t) => t.endsWith('->paid'))).toEqual(['ans:pending->paid']);
+      expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
+    });
+
+    describe('what the form page is offered (check)', () => {
+      it('offers the released answer with its own amount', async () => {
+        const { service } = lydia([released()]);
+        await expect(service.hasSubmission('f1', 'u1')).resolves.toMatchObject({
+          hasSubmitted: false,
+          resumable: { submissionId: 'ans', amountCents: 1500 },
+        });
+      });
+
+      it.each([
+        [
+          'a live payment (answered, in progress)',
+          () => [released({ paymentStatus: 'pending', paymentRequestedAt: ago(60_000) })],
+          {},
+        ],
+        [
+          'an answer given since',
+          () => [released(), row({ id: 'newer', paymentStatus: 'paid', createdAt: T0 })],
+          {},
+        ],
+        [
+          'a full form',
+          () => [released(), row({ id: 'x', userId: 'u2', paymentStatus: 'paid' })],
+          { maxSubmissions: 1 },
+        ],
+        ['a closed form', () => [released()], { closedAt: ago(1000) }],
+        ['a cash answer', () => [released({ paymentMethod: 'cash' })], {}],
+        [
+          "a manager's cancel",
+          () => [released({ paymentStatus: 'cancelled', paymentCancelOrigin: 'manager' })],
+          {},
+        ],
+        ['an answer whose price changed', () => [released()], { basePrice: 2000 }],
+        [
+          'a person the form is closed to',
+          () => [released()],
+          { submitCondition: { promo: [2024] } },
+        ],
+        [
+          'a cancel whose origin nothing recorded',
+          () => [released({ paymentStatus: 'cancelled', paymentCancelOrigin: null })],
+          {},
+        ],
+        ['an old request with no Business', () => [released({ lydiaVendorToken: null })], {}],
+        ['a same-total price shift', () => [released({ priceLockedItemIds: ['size'] })], {}],
+      ])('offers nothing for %s', async (_label, rowsOf, over) => {
+        const { service } = lydia(rowsOf(), over);
+        await expect(service.hasSubmission('f1', 'u1')).resolves.toMatchObject({
+          resumable: null,
+        });
+      });
     });
   });
 

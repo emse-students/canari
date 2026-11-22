@@ -103,7 +103,7 @@ describe('notificationHref', () => {
 
   it('gives every known type a destination, bar the two resolved by slug', () => {
     // Compared with a hand-written count so a type removed from the set cannot pass silently.
-    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(53);
+    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(54);
     // The live moderation notices go nowhere: a cut live is deleted when it ends, and a suspension
     // or a withdrawal has no page.
     const liveModeration = ['live_cut', 'live_suspended', 'live_withdrawn', 'live_reinstated'];
@@ -117,6 +117,12 @@ describe('notificationHref', () => {
         liveModeration.includes(type);
       expect(notificationHref({ type, postId: 'x1' }) === null, type).toBe(noHref);
     }
+  });
+
+  it("opens the form of a member's cash answer about to expire (owner decision of 2026-11-21)", () => {
+    expect(notificationHref({ type: 'form_cash_expiring', postId: 'form-1' })).toBe(
+      '/forms/form-1'
+    );
   });
 
   it('opens the queue an admin notice announces an item in (owner, 2026-11-18)', () => {

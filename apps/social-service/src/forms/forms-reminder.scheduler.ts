@@ -22,6 +22,10 @@ import {
 import { FormsService } from './forms.service';
 import { LydiaReconciliationService } from './lydia-reconciliation.service';
 import type { NotificationType } from '../push/notification-client-floor';
+import type { DueCashReminder } from './cash-reminder';
+
+/** The bell type of the one notice before a cash hold expires (`cash-reminder.ts`). */
+export const FORM_CASH_EXPIRING_TYPE = 'form_cash_expiring';
 
 /** Retention durations for unbounded-growth data tables. */
 const GC_NOTIFICATION_DAYS = 90;
@@ -233,9 +237,15 @@ export class FormReminderScheduler {
     return false;
   }
 
-  /** Hourly cron - expires unvalidated cash submissions past their deadline. */
+  /**
+   * Hourly cron - tells each member ONCE that their cash hold is about to expire
+   * (`cash-reminder.ts`), then expires unvalidated cash submissions past their deadline. The notice
+   * runs first, on the same tick and the same clock, so an answer due and not yet expired is told
+   * before the run that expires it.
+   */
   @Cron('0 * * * *')
   async expireStaleCashPayments() {
+    await this.remindExpiringCashPayments();
     try {
       const count = await this.formsService.expireStalecashPayments();
       if (count > 0) {
@@ -244,6 +254,59 @@ export class FormReminderScheduler {
     } catch (e) {
       this.logger.warn('[CASH] Error expiring stale cash payments', e);
     }
+  }
+
+  /**
+   * One bell row per answer whose cash hold is about to expire: CLAIMED on the row first
+   * (`claimCashReminder`), written, and RELEASED when writing it failed so the next run retries -
+   * one notice, never two. A try per row: one failure never costs the others theirs. No push
+   * (`cash-reminder.ts`); the row opens the form, where the answer and its deadline are.
+   */
+  async remindExpiringCashPayments(): Promise<void> {
+    let due: DueCashReminder[];
+    try {
+      due = await this.formsService.dueCashReminders();
+    } catch (e: unknown) {
+      this.logger.warn('[CASH] could not read the cash reminders due', e);
+      return;
+    }
+    let told = 0;
+    for (const r of due) {
+      try {
+        if (!(await this.formsService.claimCashReminder(r.submissionId))) continue;
+      } catch (e: unknown) {
+        this.logger.warn(`[CASH] reminder claim failed for ${r.submissionId}`, e);
+        continue;
+      }
+      try {
+        await this.notifications.createNotification({
+          recipientId: r.userId,
+          type: FORM_CASH_EXPIRING_TYPE,
+          postId: r.formId,
+          ...this.formReminderActor(r),
+          text: r.formTitle ?? '',
+          skipPush: true,
+        });
+        told++;
+        this.logger.log(
+          `[CASH] reminder sent: userId=${r.userId.slice(0, 8)} submission=${r.submissionId.slice(0, 8)}`
+        );
+      } catch (e: unknown) {
+        this.logger.error(
+          `[CASH] reminder NOT written for ${r.submissionId} - released for the next run`,
+          e
+        );
+        await this.formsService
+          .releaseCashReminder(r.submissionId)
+          .catch((err: unknown) =>
+            this.logger.error(
+              `[CASH] reminder release failed for ${r.submissionId}: the member will not be told`,
+              err
+            )
+          );
+      }
+    }
+    if (due.length > 0) this.logger.log(`[CASH] reminders: ${told} sent of ${due.length} due`);
   }
 
   /** Set while `expireStalePendingPayments` runs, so a slow run is not overlapped by the next tick. */

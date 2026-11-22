@@ -174,6 +174,24 @@ describe('PaymentController.createCheckout', () => {
     expect(createCheckoutSession).not.toHaveBeenCalled();
   });
 
+  // Refused before Lydia: TYPED, so social-service releases the attempt instead of reading an
+  // untyped 400 as an outcome unknown.
+  it.each([
+    ['a malformed payerEmail', { payerEmail: 'a@b' }],
+    ['a payload with no lineItems', { lineItems: undefined }],
+    ['a zero lifetime', { expireAfterSeconds: 0 }],
+  ])('refuses %s with the typed CHECKOUT_REQUEST_INVALID', async (_label, over) => {
+    const controller = makeController(jest.fn());
+    await expect(
+      controller.createCheckout({
+        lineItems: [],
+        successUrl: 's',
+        cancelUrl: 'c',
+        ...(over as object),
+      } as Parameters<typeof controller.createCheckout>[0])
+    ).rejects.toMatchObject({ response: { code: provider.CHECKOUT_REQUEST_INVALID } });
+  });
+
   it('refuses a pathological payerEmail of 100k characters quickly', async () => {
     const controller = makeController(jest.fn());
     const started = Date.now();
@@ -206,6 +224,29 @@ describe('PaymentController.createCheckout', () => {
     expect(createCheckoutSession).toHaveBeenCalledWith(
       expect.objectContaining({ expireAfterSeconds: 1800 })
     );
+  });
+
+  // A request/do whose answer never came back may have created a request at Lydia: core must not
+  // answer it with the 400 a refusal is, or social-service offers a second payable request.
+  it('answers 502, never a 400, when the provider call times out', async () => {
+    const timeout = Object.assign(new Error('timeout of 15000ms exceeded'), {
+      code: 'ECONNABORTED',
+    });
+    const accuse = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const controller = makeController(jest.fn().mockRejectedValue(timeout));
+    const failure = controller.createCheckout({ lineItems: [], successUrl: 's', cancelUrl: 'c' });
+    await expect(failure).rejects.toBeInstanceOf(BadGatewayException);
+    await expect(failure).rejects.toThrow(/timeout/);
+    expect(accuse).toHaveBeenCalledWith(expect.stringContaining('outcome unknown'));
+    accuse.mockRestore();
+  });
+
+  it("passes a provider's typed refusal through as its own 400", async () => {
+    const refusal = new BadRequestException({ code: PAYMENT_PROVIDER_REFUSED, providerCode: '3' });
+    const controller = makeController(jest.fn().mockRejectedValue(refusal));
+    await expect(
+      controller.createCheckout({ lineItems: [], successUrl: 's', cancelUrl: 'c' })
+    ).rejects.toBe(refusal);
   });
 
   it.each([0, -1, 2.5])('refuses expireAfterSeconds %p before any provider call', async (v) => {

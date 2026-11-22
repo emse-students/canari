@@ -651,6 +651,12 @@ export async function checkSubmission(
    */
   productGridPrices?: ProductGridPrices;
   /**
+   * The caller's answer whose online payment ended without money and may be paid again
+   * ("Reprendre le paiement"), or null - the server decides (open form, a free seat, online
+   * accepted, nothing else answering for them). Absent from a server older than it: no action.
+   */
+  resumable?: ResumableAnswer | null;
+  /**
    * The caller's own answers, newest first, each with the questions that fixed its price - only
    * when asked (`withAnswers`). Always empty on an anonymous form (its rows name nobody). Absent from
    * a server older than it (2026-11-21): the page then draws what it drew before.
@@ -660,6 +666,35 @@ export async function checkSubmission(
   const query = opts.withAnswers ? '?answers=1' : '';
   const res = await apiFetch(`${socialUrl()}/api/forms/${formId}/check${query}`);
   if (!res.ok) throw await refusal(res, 'Failed to check submission status');
+  return res.json();
+}
+
+/** An answer whose payment may be resumed, as `GET forms/:id/check` names it. */
+export interface ResumableAnswer {
+  submissionId: string;
+  /** What the resumed payment charges: the answer's own total, in cents. */
+  amountCents: number;
+}
+
+/**
+ * PAYS THE CALLER'S RELEASED ANSWER AGAIN: a new Lydia request for the same answer, its previous
+ * payment cancelled, declined or expired. Answers what a submit answers - Lydia's page
+ * (`checkoutUrl`), or `alreadyPaid` when the previous request was found paid. A refusal carries its
+ * typed `code` (`PAYMENT_IN_PROGRESS`, `PAYMENT_NOT_RESUMABLE`, `FORM_FULL`, `FORM_CLOSED`...).
+ */
+export async function resumeSubmissionPayment(
+  submissionId: string,
+  payload: { payerEmail?: string; successUrl?: string; cancelUrl?: string }
+): Promise<{ submissionId: string; checkoutUrl?: string; alreadyPaid?: boolean }> {
+  const res = await apiFetch(
+    `${socialUrl()}/api/forms/submissions/${encodeURIComponent(submissionId)}/resume-payment`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }
+  );
+  if (!res.ok) throw await refusal(res, 'Failed to resume the payment');
   return res.json();
 }
 

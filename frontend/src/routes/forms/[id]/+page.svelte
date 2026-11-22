@@ -22,9 +22,12 @@
     confirmSubmissionPayment,
     editFormAnswer,
     getMyEditableAnswers,
+    resumeSubmissionPayment,
     type EditableAnswer,
     type Form,
+    type ResumableAnswer,
   } from '$lib/forms/api';
+  import { offersPaymentResume } from '$lib/forms/paymentResume';
   import {
     cursusSlicesOf,
     fillPriceState,
@@ -164,6 +167,13 @@
   const updatesOnReturn = isMobileTauri();
   /** The payment landed after the form filled up: final, and the organiser owes a refund. */
   let paidOverCapacity = $state(false);
+  /**
+   * The caller's answer whose payment ended without money and may be paid again, as the server
+   * named it (`GET forms/:id/check`), or null. "Reprendre le paiement" pays THAT answer, not a new one.
+   */
+  let resumable = $state<ResumableAnswer | null>(null);
+  /** Which send the payer's e-mail prompt is for: a new answer, or the resume of the released one. */
+  let payerPromptFor = $state<'submit' | 'resume'>('submit');
   let formFull = $state(false);
   /**
    * This submitter's slices of the pricing grid, from the server: one per distinct cursus (D32), the
@@ -395,6 +405,8 @@
     paymentRetry = null;
     pendingCheckout = null;
     paidOverCapacity = false;
+    resumable = null;
+    payerPromptFor = 'submit';
     formFull = false;
     slices = NO_PRICING_SLICE;
     missingAnswer = null;
@@ -524,6 +536,7 @@
       } = submission;
       submitted = hasSubmitted;
       formFull = full;
+      resumable = submission.resumable ?? null;
       slices = cursusSlicesOf(submission);
       hiddenItemIds = hidden ?? [];
       maySubmit = allowed ?? true;
@@ -715,6 +728,8 @@
       const check = await checkSubmission(formShown);
       if (form?.id !== formShown) return;
       formFull = check.formFull;
+      // The released answer may now be paid again on itself (`resumable`), rather than re-filled.
+      resumable = check.resumable ?? null;
       if (outcome === 'error') {
         submitted = check.hasSubmitted;
         if (!submitted) shownAnswer = null;
@@ -965,6 +980,84 @@
     }
   }
 
+  /** Whether "Reprendre le paiement" is offered now (`offersPaymentResume`). */
+  const resumeOffered = $derived(
+    offersPaymentResume({
+      resumable,
+      submitted,
+      paymentPending,
+      editing: !!editing,
+      closed: isClosed,
+      notOpenYet: isNotOpenYet,
+      paymentsPaused: !!form?.paymentsPaused,
+      preview,
+    })
+  );
+
+  /**
+   * PAYS THE RELEASED ANSWER AGAIN: a new Lydia request for the SAME answer (`resumeSubmissionPayment`),
+   * handed to Lydia exactly as a new answer's checkout is. A refusal is worded from its code (a payment
+   * already in progress, a full or closed form) and the server's offer is read again.
+   */
+  async function resumePayment(payerEmail?: string): Promise<void> {
+    const target = resumable;
+    if (!form || !target || submitting) return;
+    Log.d('FormView', `resume payment of ${target.submissionId}`);
+    if (!payerEmail && activePaymentProvider.current === 'lydia') {
+      payerPromptFor = 'resume';
+      askingPayerEmail = true;
+      return;
+    }
+    error = '';
+    submitting = true;
+    const formShown = form.id;
+    try {
+      const { formCheckoutCallbacks } = await import('$lib/utils/checkoutCallbacks');
+      const res = await resumeSubmissionPayment(target.submissionId, {
+        ...(payerEmail ? { payerEmail } : {}),
+        ...formCheckoutCallbacks(),
+      });
+      resumable = null;
+      if (res.checkoutUrl) {
+        // As after a submit: the watch starts BEFORE the hand-off (`handleSubmit`).
+        Log.d('FormView', 'resumed payment handed to Lydia, the answer waits for the return');
+        paymentRetry = null;
+        submitted = true;
+        paymentPending = true;
+        watchCheckout(res.submissionId, res.checkoutUrl);
+        const { navigateExternal } = await import('$lib/utils/openExternal');
+        await navigateExternal(res.checkoutUrl);
+      } else {
+        // The previous request was found PAID while settling it: no new one was issued.
+        Log.d('FormView', `resume answered without a checkout (alreadyPaid=${!!res.alreadyPaid})`);
+        submitted = true;
+        successMessage = res.alreadyPaid
+          ? m.form_view_submission_already_paid()
+          : m.form_view_submission_success();
+      }
+    } catch (e: unknown) {
+      Log.d('FormView', `resume refused status=${refusalStatus(e) ?? 'transport'}`);
+      win.adopt(e);
+      error = formSubmitRefusalMessage(e, m.form_guest_submit_failed());
+      // What the server offers NOW (a seat taken meanwhile, a payment started in another tab).
+      try {
+        const check = await checkSubmission(formShown);
+        if (form?.id !== formShown) return;
+        resumable = check.resumable ?? null;
+        formFull = check.formFull;
+        submitted = check.hasSubmitted;
+        paymentPending = check.hasSubmitted && check.paymentStatus === 'pending';
+      } catch (err) {
+        console.warn(
+          `[FormView] re-reading the answer after a refused resume failed status=${refusalStatus(err) ?? 'transport'}`,
+          err
+        );
+      }
+    } finally {
+      submitting = false;
+    }
+  }
+
   // ── Progress bar ─────────────────────────────────────────────────
   /**
    * The answer would pay ONLINE while the server reports the form's payments paused: the submit is
@@ -1101,9 +1194,14 @@
   <PayerEmailPrompt
     onSubmit={(email) => {
       askingPayerEmail = false;
-      void handleSubmit(email);
+      if (payerPromptFor === 'resume') void resumePayment(email);
+      else void handleSubmit(email);
+      payerPromptFor = 'submit';
     }}
-    onClose={() => (askingPayerEmail = false)}
+    onClose={() => {
+      askingPayerEmail = false;
+      payerPromptFor = 'submit';
+    }}
   />
 {/if}
 
@@ -1383,6 +1481,33 @@
             </p>
           {/if}
         </div>
+      </div>
+    {/if}
+
+    <!-- ── A released payment: the SAME answer is paid again, nothing to re-fill ── -->
+    {#if resumeOffered && resumable}
+      <div
+        class="border-amber-warn/30 bg-amber-warn/10 mb-4 flex flex-col gap-3 rounded-2xl border px-5 py-4 sm:flex-row sm:items-center"
+        role="status"
+        data-testid="form-payment-resume"
+      >
+        <div class="min-w-0 flex-1">
+          <p class="text-amber-warn-text font-semibold">{m.form_view_payment_resume_title()}</p>
+          <p class="text-text-muted mt-0.5 text-sm">
+            {m.form_view_payment_resume_note({
+              amount: formatCurrency(resumable.amountCents, form.currency),
+            })}
+          </p>
+        </div>
+        <Button
+          variant="primary"
+          class="shrink-0"
+          disabled={submitting}
+          loading={submitting}
+          onclick={() => void resumePayment()}
+        >
+          <CreditCard size={16} class="mr-1.5" />{m.form_view_payment_resume_button()}
+        </Button>
       </div>
     {/if}
 

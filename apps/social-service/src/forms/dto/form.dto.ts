@@ -675,6 +675,26 @@ export class SetClosingDateDto {
 }
 
 /**
+ * A payment resume (`FormsService.resumePayment`): what the new Lydia request needs and nothing of
+ * the answer, which is the row's own. The return URLs are the client's, checked against the same
+ * allowlist as a submit's (`resolveCheckoutCallbackUrl`).
+ */
+export class ResumePaymentDto {
+  /** Where Lydia sends the payment request. Forwarded to core-service, never persisted. */
+  @IsEmail()
+  @IsOptional()
+  payerEmail?: string;
+
+  @IsString()
+  @IsOptional()
+  successUrl?: string;
+
+  @IsString()
+  @IsOptional()
+  cancelUrl?: string;
+}
+
+/**
  * A respondent's change to their OWN answer (`FormsService.editAnswer`, migration 166): the answers
  * as the fill page holds them, validated like a submit's (`IsValidAnswers`). Nothing about payment
  * travels here - an edit never charges, refunds or re-prices (`answer-edit.ts`).

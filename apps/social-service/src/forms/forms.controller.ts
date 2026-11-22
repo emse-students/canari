@@ -38,6 +38,7 @@ import {
   SaveFormDraftDto,
   SetClosingDateDto,
   SubmitFormDto,
+  ResumePaymentDto,
 } from './dto/form.dto';
 import { FormsService } from './forms.service';
 import { parseExportLabels } from './export-labels';
@@ -600,6 +601,23 @@ export class FormsController {
   ) {
     await this.service.assertSubmissionAccess(submissionId, xUserId, ga === 'true');
     return this.service.confirmPayment(submissionId);
+  }
+
+  /**
+   * PAYS THE CALLER'S OWN RELEASED ANSWER AGAIN ("Reprendre le paiement", `FormsService.
+   * resumePayment`): a new Lydia request for the same answer, whose previous one was cancelled,
+   * declined or expired. Only the submitter: a manager has nothing to pay, and another person's
+   * answer is a 404. Answers what a submit answers (`checkoutUrl`, or `alreadyPaid`).
+   */
+  @UseGuards(NginxAuthGuard)
+  @Post('submissions/:submissionId/resume-payment')
+  @HttpCode(200)
+  resumePayment(
+    @Param('submissionId') submissionId: string,
+    @Headers('x-user-id') xUserId: string,
+    @Body() dto: ResumePaymentDto
+  ) {
+    return this.service.resumePayment(submissionId, xUserId, dto);
   }
 
   /** Cancels a pending submission. Requires the submitter or a form manager. */

@@ -92,6 +92,15 @@ export class Submission {
   paymentSettledBy: string | null;
 
   /**
+   * Who or what moved this online answer to `cancelled` (migration 179, `PaymentCancelOrigin` in
+   * `payment-resume.ts`): what tells a manager's cancel, never offered back to the member, from a
+   * payment that simply did not go through. NULL on every other status and on a row cancelled
+   * before 179; cleared when a resume reopens the answer.
+   */
+  @Column({ type: 'varchar', length: 16, nullable: true })
+  paymentCancelOrigin: string | null;
+
+  /**
    * The order_ref of the CURRENT Lydia request (migration 120), written when it is issued: what a
    * refund of this answer's payment is sent with. NULL before 120 - such a payment cannot be refunded
    * from Canari. `select: false`: no read of a submission carries it unless it asks by name.
@@ -106,6 +115,20 @@ export class Submission {
   /** When a cash payment expires if not validated (computed from form.cashPaymentExpiryDays). */
   @Column({ type: 'timestamptz', nullable: true })
   cashExpiresAt: Date | null;
+
+  /**
+   * When the member is owed ONE notice that their cash hold is about to expire (migration 179,
+   * `cash-reminder.ts`): written with `cashExpiresAt`, null on every other row.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  cashReminderDueAt: Date | null;
+
+  /**
+   * Set once that notice was written (migration 179): CLAIMED by a conditional `UPDATE` exactly one
+   * run wins, cleared again if writing it failed, so the member is told once and never twice.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  cashReminderNotifiedAt: Date | null;
 
   /**
    * When the CURRENT payment request was issued (migration 084): the seat hold of an online

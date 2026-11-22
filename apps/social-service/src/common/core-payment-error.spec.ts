@@ -8,6 +8,10 @@ import { AxiosError, AxiosHeaders } from 'axios';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import {
+  AMOUNT_OUT_OF_RANGE,
+  CHECKOUT_REFUSAL_CODES,
+  CHECKOUT_REQUEST_INVALID,
+  coreRefusedRequest,
   LYDIA_BUSINESS_BLOCKED,
   LYDIA_BUSINESS_NOT_VALIDATED,
   lydiaReadinessRefusal,
@@ -172,5 +176,82 @@ describe('error 5 / 2701 - a request/do refused on the Business itself (lot 2)',
     expect(Object.values(contract.social)).toEqual(
       expect.arrayContaining([PAYMENTS_NOT_ACTIVATED, PAYMENTS_BLOCKED, LYDIA_ENROLMENT_IN_FLIGHT])
     );
+  });
+});
+
+// Whether a failed create-checkout-session promises that nothing was created at Lydia. Decided on
+// core's typed CODE: a status class lied once, when core answered a request/do timeout as a 400.
+describe('coreRefusedRequest', () => {
+  it.each([
+    PAYMENT_PROVIDER_REFUSED,
+    LYDIA_BUSINESS_NOT_VALIDATED,
+    LYDIA_BUSINESS_BLOCKED,
+    AMOUNT_OUT_OF_RANGE,
+    CHECKOUT_REQUEST_INVALID,
+  ])('reads a 400 typed %s as refused', (code) => {
+    expect(coreRefusedRequest(coreAnswer(400, { code, message: 'refused' }))).toBe(true);
+  });
+
+  it.each([
+    [
+      'an untyped 400 (a request/do timeout, as core once answered it)',
+      400,
+      { message: 'Payment error: timeout' },
+    ],
+    ['a 400 with a code that promises nothing', 400, { code: 'SOMETHING_ELSE' }],
+    ['a 401 (the internal secret)', 401, { message: 'Unauthorized' }],
+    ["core's 502 for a request/do with no answer", 502, { message: 'Payment error: timeout' }],
+    ['a refusal code on a status that is not 400', 409, { code: PAYMENT_PROVIDER_REFUSED }],
+  ])('does not read %s as refused', (_label, status, data) => {
+    expect(coreRefusedRequest(coreAnswer(status, data))).toBe(false);
+  });
+
+  it('does not read a transport failure or an exception of this service as refused', () => {
+    expect(coreRefusedRequest(new Error('socket hang up'))).toBe(false);
+    expect(coreRefusedRequest(new BadRequestException({ code: PAYMENT_PROVIDER_REFUSED }))).toBe(
+      false
+    );
+  });
+
+  // Each code is one core-service really answers: a rename there would silently turn a refusal
+  // into "outcome unknown" here (safe, but never resumable), so the two sides are read together.
+  it('names only codes core-service exports from its Lydia provider', () => {
+    const provider = readFileSync(
+      join(
+        __dirname,
+        '..',
+        '..',
+        '..',
+        'core-service',
+        'src',
+        'payment',
+        'lydia-payment-provider.ts'
+      ),
+      'utf8'
+    );
+    for (const code of CHECKOUT_REFUSAL_CODES) {
+      expect(provider).toMatch(new RegExp(`export const \\w+ = '${code}'`));
+    }
+  });
+
+  // Every refusal core raises BEFORE calling Lydia must carry a typed code: an untyped one reads
+  // here as an outcome unknown, so a typo'd e-mail would hold a boutique attempt open and make a
+  // form answer never resumable. Reads the three places a checkout is refused before `postForm`.
+  it.each([
+    ['payment.controller.ts', 'async createCheckout(', '\n  /**'],
+    ['lydia-payment-provider.ts', 'async createCheckoutSession(', 'this.postForm'],
+    ['payment.service.ts', 'function toGenericLineItem(', '\n}'],
+  ])('core-service %s refuses a checkout before Lydia only with a typed code', (file, from, to) => {
+    const source = readFileSync(
+      join(__dirname, '..', '..', '..', 'core-service', 'src', 'payment', file),
+      'utf8'
+    );
+    const start = source.indexOf(from);
+    expect(start).toBeGreaterThanOrEqual(0);
+    const end = source.indexOf(to, start);
+    expect(end).toBeGreaterThan(start);
+    const body = source.slice(start, end);
+    expect(body).not.toMatch(/new BadRequestException\(\s*[`'"]/);
+    expect(body).not.toMatch(/throw new Error\(/);
   });
 });

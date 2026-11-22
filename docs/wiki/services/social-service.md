@@ -1180,6 +1180,11 @@ mark is handed over, moved or not, and a peer's is not), `nativeNotification.tes
 | GET | `/api/forms/:id/submissions` | List submissions (owner only) |
 | GET | `/api/forms/:id/held-answers` | An anonymous form's answers waiting for their batch, and the batch size (managers only; [forms](../frontend/modules/forms.md#an-anonymous-forms-answers-are-released-in-batches-2026-11-21)) |
 | POST | `/api/forms/:id/image` | Upload form banner image |
+| POST | `/api/forms/submissions/:submissionId/resume-payment` | Pay the caller's own released online answer again: a new Lydia request for the SAME answer, typed refusals `PAYMENT_IN_PROGRESS` / `PAYMENT_NOT_RESUMABLE` ([forms](../frontend/modules/forms.md#a-released-payment-is-resumed-on-the-same-answer-owner-decision-of-2026-11-21)) |
+
+The hourly cash tick (`expireStaleCashPayments`) first tells each member once, by a bell row
+`form_cash_expiring` and no push, that their cash hold is about to expire, then expires the holds
+([forms](../frontend/modules/forms.md#a-cash-hold-is-announced-once-before-it-expires-owner-decision-of-2026-11-21)).
 
 A form's `items` holds questions AND text or image blocks (`text_block`, `image_block`): a block is
 stored with a block's fields only, refused `FORM_BLOCK_INVALID` when it carries a question's setting,

@@ -2447,12 +2447,14 @@ export class ProductsService {
           }
         }
       } else {
-        // LOST, not answered (a timeout, a 5xx): Lydia may hold a request all the same, so the
-        // attempt stays open and is read by its order_ref - at the buyer's next attempt, return or
-        // the confirm callback - rather than closed on a guess.
+        // NOT a typed refusal, so nothing promises that Lydia created nothing: a transport failure
+        // or a timeout, core's 502 for a request/do with no answer, a 401/403 (the internal secret),
+        // or any answer `coreRefusedRequest` does not know. The attempt stays open and is read by
+        // its order_ref - at the buyer's next attempt, return or the confirm callback - rather than
+        // closed on a guess.
         this.logger.error(
-          `[SHOP] checkout ${checkout.id.slice(0, 8)}: request/do was lost, not answered - left open, ` +
-            `to be read at Lydia by its order_ref`
+          `[SHOP] checkout ${checkout.id.slice(0, 8)}: request/do outcome unknown, not a typed ` +
+            `refusal - left open, to be read at Lydia by its order_ref`
         );
       }
       throw mapCorePaymentError(err, this.logger, 'SHOP');
@@ -2635,8 +2637,10 @@ export class ProductsService {
 
   /**
    * Whether an open attempt naming no request is still inside the call that issues it: the issuing
-   * call to core gives up after 120 s, and `CHECKOUT_ISSUE_WINDOW_MS` covers it. Reading such an
-   * attempt at Lydia would race the request/do that is creating it.
+   * call to core goes through this module's `HttpService`, registered with a 120 s timeout
+   * (`HttpModule.register` in `associations.module.ts` - `internalCoreRequestConfig` sets none), and
+   * `CHECKOUT_ISSUE_WINDOW_MS` (3 min) covers it. Reading such an attempt at Lydia would race the
+   * request/do that is creating it.
    */
   private isBeingIssued(row: ProductCheckout): boolean {
     return (
