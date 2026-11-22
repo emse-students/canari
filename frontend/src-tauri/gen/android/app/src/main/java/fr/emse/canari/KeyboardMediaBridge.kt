@@ -40,6 +40,10 @@ object KeyboardMediaBridge {
     /** Skip payloads too large to bridge as a JS string (Gboard GIFs are far smaller). */
     private const val MAX_BYTES = 12 * 1024 * 1024
 
+    /** The error kinds an event may carry instead of data - the set `utils/keyboardMedia.ts` reads. */
+    private const val ERROR_TOO_LARGE = "too-large"
+    private const val ERROR_UNREADABLE = "unreadable"
+
     /** Whether the first wrap of this process was logged: the device reading's proof the hook is live. */
     @Volatile private var wrapLogged = false
 
@@ -97,10 +101,12 @@ object KeyboardMediaBridge {
                 val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
                 if (bytes == null || bytes.isEmpty()) {
                     Log.w(TAG, "empty content for $uri")
+                    dispatchErrorToWeb(webView, ERROR_UNREADABLE)
                     return@Thread
                 }
                 if (bytes.size > MAX_BYTES) {
                     Log.w(TAG, "content too large (${bytes.size} bytes) - skipped")
+                    dispatchErrorToWeb(webView, ERROR_TOO_LARGE)
                     return@Thread
                 }
                 val mime = resolver.getType(uri) ?: mimeHint ?: "image/gif"
@@ -111,8 +117,22 @@ object KeyboardMediaBridge {
                 dispatchToWeb(webView, mime, name, dataB64)
             } catch (e: Exception) {
                 Log.e(TAG, "readAndDispatch failed: ${e.javaClass.simpleName}")
+                dispatchErrorToWeb(webView, ERROR_UNREADABLE)
             }
         }, "canari-keyboard-media").start()
+    }
+
+    /**
+     * Tells the frontend a commit could not be bridged, so its dispatcher shows
+     * `keyboard_media_unreadable` instead of the GIF vanishing. [kind] is one of the fixed reasons
+     * below; the event carries no data.
+     */
+    private fun dispatchErrorToWeb(webView: WebView, kind: String) {
+        val script =
+            "window.dispatchEvent(new CustomEvent('canari-keyboard-media',{detail:{error:'$kind'}}))"
+        webView.post {
+            webView.evaluateJavaScript(script, null)
+        }
     }
 
     /** Dispatches the committed media to the frontend as a `canari-keyboard-media` DOM event. */

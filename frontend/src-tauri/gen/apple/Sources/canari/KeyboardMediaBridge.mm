@@ -153,6 +153,19 @@ static void DispatchToWeb(WKWebView *webView, NSString *mime, NSString *name, NS
   });
 }
 
+/// Tells the frontend an image arrived and could not be bridged, so its dispatcher can say so
+/// (`keyboard_media_unreadable`) instead of the image vanishing. `kind` is one of the fixed reasons
+/// `too-large` / `unreadable`; the event carries no data. The dispatcher applies its no-focus rule
+/// first, so an image copied outside any composer still shows no toast.
+static void DispatchErrorToWeb(WKWebView *webView, NSString *kind) {
+  NSString *script = [NSString stringWithFormat:
+                      @"window.dispatchEvent(new CustomEvent('canari-keyboard-media',{detail:{error:\"%@\"}}))",
+                      kind];
+  dispatch_async(dispatch_get_main_queue(), ^{
+    [webView evaluateJavaScript:script completionHandler:nil];
+  });
+}
+
 // ─── Pasteboard event handling ──────────────────────────────────────────────
 
 /// Called on `UIPasteboardChangedNotification` - the real event a 0.5 s `NSTimer` poll used to
@@ -180,9 +193,14 @@ static void OnPasteboardChanged(__unused NSNotification *note) {
   if (imageIdx == NSNotFound) return;
 
   NSData *data = ReadImageData(pb, imageIdx);
-  if (data == nil || data.length == 0) return;
+  if (data == nil || data.length == 0) {
+    NSLog(@"[KeyboardMediaBridge] image item could not be read - reported as unreadable");
+    DispatchErrorToWeb(webView, @"unreadable");
+    return;
+  }
   if (data.length > kMaxBytes) {
     NSLog(@"[KeyboardMediaBridge] image too large (%lu bytes), skipped", (unsigned long)data.length);
+    DispatchErrorToWeb(webView, @"too-large");
     return;
   }
 

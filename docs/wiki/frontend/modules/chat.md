@@ -5738,7 +5738,7 @@ action. The event goes to the innermost registered element containing the focuse
 | any other focused field (a channel poll, a reel caption, a profile field) | nothing | refused: toast `keyboard_media_refused`, and one `KeyboardMedia` line naming the surface (`data-media-surface` if an ancestor declares one, else the tag) |
 | no focused field | - | nothing attached, one line, **no toast**: no keyboard commits without an editor, so this is iOS seeing the app's own pasteboard write (an image copied in the app), and "GIFs cannot be added here" would be false |
 
-An unreadable payload toasts `keyboard_media_unreadable`. Before this, the chat page sent ANY
+An unreadable payload toasts `keyboard_media_unreadable`, and so does a native ERROR event: both bridges, instead of only logging, send `{ error: 'too-large' | 'unreadable' }` with no data when they received an image they could not hand over (empty, over 12 MiB, a read that threw). The focus rule comes first for errors too, so a too-large image copied on iOS outside any composer shows nothing. Before this, the chat page sent ANY
 dispatched image into the open conversation whatever had focus - an image copied on iOS included.
 Tested in `utils/keyboardMedia.test.ts`. Reliable IME `commitContent` needs a recent Android
 WebView; on devices where it is unavailable the in-app GIF picker still works.

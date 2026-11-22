@@ -17,6 +17,8 @@
  *   in the app fires the same notification the bridge observes) - telling the member "GIFs cannot be
  *   added here" after they copied a picture would be a false statement. Nothing is attached either;
  *   before 2026-11-22 the chat page sent such a copy into the open conversation.
+ * - a native error event (`{ error: 'too-large' | 'unreadable' }`, no data) toasts
+ *   `keyboard_media_unreadable` under the same focus rule, so a bridge failure is never silent.
  *
  * Docs: docs/wiki/frontend/modules/chat.md#android-keyboard-media-commitcontent
  */
@@ -27,11 +29,21 @@ import { Log } from '$lib/utils/Log';
 /** The event the native bridges dispatch on `window`. */
 export const KEYBOARD_MEDIA_EVENT = 'canari-keyboard-media';
 
-/** What the native bridge puts in the event's `detail`: the bytes as base64, with a MIME hint. */
+/**
+ * Why a native bridge could not hand the bytes over: the fixed set `KeyboardMediaBridge.kt` and
+ * `KeyboardMediaBridge.mm` send. An error event carries no data.
+ */
+type KeyboardMediaError = 'too-large' | 'unreadable';
+
+/**
+ * What the native bridge puts in the event's `detail`: the bytes as base64 with a MIME hint, or an
+ * `error` kind when it received an image it could not bridge.
+ */
 export interface KeyboardMediaDetail {
   mime?: string;
   name?: string;
   data?: string;
+  error?: KeyboardMediaError;
 }
 
 /** A composer that may take keyboard media. */
@@ -52,10 +64,7 @@ const targets = new Map<HTMLElement, KeyboardMediaTarget>();
  * Registers `el` as a composer taking keyboard media while focus is inside it. Returns the
  * unregister function. Registering the same element again replaces its target.
  */
-export function registerKeyboardMediaTarget(
-  el: HTMLElement,
-  target: KeyboardMediaTarget
-): () => void {
+function registerKeyboardMediaTarget(el: HTMLElement, target: KeyboardMediaTarget): () => void {
   targets.set(el, target);
   return () => {
     if (targets.get(el) === target) targets.delete(el);
@@ -63,7 +72,7 @@ export function registerKeyboardMediaTarget(
 }
 
 /** Rebuilds a `File` from the bridge payload; `null` when it carries no readable base64. */
-export function keyboardMediaFile(detail: KeyboardMediaDetail | null | undefined): File | null {
+function keyboardMediaFile(detail: KeyboardMediaDetail | null | undefined): File | null {
   if (!detail?.data) return null;
   try {
     const bin = atob(detail.data);
@@ -98,16 +107,18 @@ export function dispatchKeyboardMedia(
   detail: KeyboardMediaDetail | null | undefined,
   active: Element | null = document.activeElement
 ): KeyboardMediaOutcome {
-  const file = keyboardMediaFile(detail);
-  if (file === null) {
-    Log.w(TAG, 'committed content carried no readable data');
-    showToast(m.keyboard_media_unreadable());
-    return 'unreadable';
-  }
+  // Focus first, for data AND error events alike: with no focused field nobody asked to attach
+  // anything (on iOS, the app's own pasteboard write), so no toast may speak - not even a too-large one.
   const focused = active && active !== document.body ? active : null;
   if (focused === null) {
-    Log.w(TAG, `not attached: no focused field (${file.type}, ${file.size} bytes)`);
+    Log.w(TAG, `not attached: no focused field (${detail?.error ?? 'media'})`);
     return 'no-focus';
+  }
+  const file = detail?.error ? null : keyboardMediaFile(detail);
+  if (file === null) {
+    Log.w(TAG, `committed content not readable (${detail?.error ?? 'no data'})`);
+    showToast(m.keyboard_media_unreadable());
+    return 'unreadable';
   }
   const target = targetFor(focused);
   if (target === null) {

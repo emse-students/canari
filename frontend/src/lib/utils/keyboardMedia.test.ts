@@ -105,6 +105,56 @@ describe('the keyboard media dispatcher', () => {
     expect(accept).not.toHaveBeenCalled();
   });
 
+  it('a composer nested in another one takes the media, never its host', () => {
+    const host = vi.fn((_f: File) => true);
+    const { root } = composer(host, 'post');
+    const inner = document.createElement('div');
+    const field = document.createElement('textarea');
+    inner.appendChild(field);
+    root.appendChild(inner);
+    const innerAccept = vi.fn((_f: File) => true);
+    keyboardMediaTarget(inner, { surface: 'comment', accept: innerAccept });
+    field.focus();
+    expect(dispatchKeyboardMedia(GIF)).toBe('accepted');
+    expect(innerAccept).toHaveBeenCalledTimes(1);
+    expect(host).not.toHaveBeenCalled();
+  });
+
+  it('a registered element no longer in the document is skipped', () => {
+    const stale = vi.fn((_f: File) => true);
+    const { root, field } = composer(stale, 'chat');
+    // Detached without its action being destroyed (a teardown that has not run yet): the field it
+    // holds can still be the active element of nothing, so route from it explicitly.
+    root.remove();
+    expect(dispatchKeyboardMedia(GIF, field)).toBe('refused');
+    expect(stale).not.toHaveBeenCalled();
+    expect(showToast).toHaveBeenCalledWith(m.keyboard_media_refused());
+  });
+
+  it('by default reads document.activeElement, and the body is no focus at all', () => {
+    const accept = vi.fn((_f: File) => true);
+    composer(accept);
+    expect(document.activeElement).toBe(document.body);
+    expect(dispatchKeyboardMedia(GIF)).toBe('no-focus');
+    expect(accept).not.toHaveBeenCalled();
+    expect(showToast).not.toHaveBeenCalled();
+  });
+
+  it('a native error event in a focused composer says the GIF could not be read', () => {
+    const accept = vi.fn((_f: File) => true);
+    const { field } = composer(accept);
+    field.focus();
+    expect(dispatchKeyboardMedia({ error: 'too-large' })).toBe('unreadable');
+    expect(accept).not.toHaveBeenCalled();
+    expect(showToast).toHaveBeenCalledWith(m.keyboard_media_unreadable());
+  });
+
+  it('a native error event with nothing focused stays silent (an image copied on iOS)', () => {
+    expect(document.activeElement).toBe(document.body);
+    expect(dispatchKeyboardMedia({ error: 'too-large' })).toBe('no-focus');
+    expect(showToast).not.toHaveBeenCalled();
+  });
+
   it('the installed listener routes the native event, and stops once disposed', () => {
     const accept = vi.fn((_f: File) => true);
     const { field } = composer(accept);
