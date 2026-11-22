@@ -1,6 +1,6 @@
 ## Reading owed - a resume reads the key group only of a community that changed (2026-11-22)
 
-target: 1.7.3
+target: 1.8.0
 
 **What is built (#3960, held as a draft until the 1.7.3 stable is cut, so it ships in the release
 after it; the target is the earliest tier because a reading always is, and moves with the plan):**
