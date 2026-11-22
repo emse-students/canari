@@ -71,3 +71,10 @@ ended 2 s after the take), a reply typed with the app IN FRONT, and the banner's
 A first attempt (reply typed, Send tapped at a stale coordinate while the field had grown) sent nothing, which is a rig slip, not an app fault.
 
 **Mi 9T sitting, 1.7.3-alpha.5 (2026-11-22): PARTIAL, entry stays. The front reply and its settlement were exercised on the Mi; the row where the page dies holding an unsettled reply stays UNREAD (a forced crash flipped the route instead of reproducing it). The per-row verdicts of the sitting were not carried through a context reset, so none is promoted to PASS; re-read on the next alpha.**
+
+**Mi 9T sitting, `1.7.3-alpha.6` (2026-11-22): rows 1 to 3 PASS.** App in front on the feed, a peer's message raised a banner;
+answered from its inline field. Logcat: `handReplyToPage: route PAGE, the foreground guard holds - reply id=... handed over, the
+page told`, then `drawHandedSettlement: reply id=... held by the page - answered`; in-app log: `the native side says a reply waits:
+1 native reply(ies) taken`, `settled by the page's queue: sent`, `acknowledged: sent`. No `OutboxRetryWorker`, no
+`encryptQueuedMessages` refusal, no `non envoye`; the peer reads the reply once. **Rows 4 (background control) and 5 (a page that
+dies holding a reply) not taken: the entry stays.**

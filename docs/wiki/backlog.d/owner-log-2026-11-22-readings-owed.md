@@ -20,3 +20,9 @@ Owed, on a phone on dev (the log comparison needs a real device):
    it resumes. Server side: a measured count of senders still below the floor decides when the line can go.
 4. Scrolling up in a busy thread while messages arrive and send logs no `unread-pill anchor` warning.
 5. One `private salon ... not entered` line per salon per boot, not one per resume.
+
+**Mi 9T sitting, `1.7.3-alpha.6` (2026-11-22), read from the in-app log (IndexedDB ring, 10:44 to 11:12):** row 4 PASS - 30 messages
+arrived in a thread while the phone scrolled up twelve times: zero `unread-pill anchor` lines. Row 1: the sweep runs normally on this
+build (`retention sweep dropped 0 seed(s) ... held=43, live=42`); a cut mid-sweep needs a device holding far more seeds, NOT TAKEN.
+Row 2: the dev feed holds no post with an attached form, NOT TAKEN. Rows 3 and 5: no 1.6.x peer and no declined private salon on the
+bench, NOT TAKEN. The entry stays.

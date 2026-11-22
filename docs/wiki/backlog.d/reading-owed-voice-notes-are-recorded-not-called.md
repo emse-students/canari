@@ -77,3 +77,8 @@ not reproduced, since the prompt appears once.
 **Mi 9T sitting, 1.7.3-alpha.5 (2026-11-22): PARTIAL, entry stays. Capture was observed with dumpsys audio during a recording; the iPhone half and any remaining rows are UNREAD.**
 
 **2026-11-22, [I1 sitting](../device-verification.md#the-iphone-12-readings-of-2026-11-22-173-alpha5-the-backup-domains-the-banners-the-reactions-the-replay-bar-the-outage-drill) (`1.7.3-alpha.5`, iPhone 12): the iPhone's capture line is read:** `capture: echo=false noise=undefined agc=undefined rate=48000Hz ch=? device=builtin-or-other mime=audio/mp4 bps=192000`. WebKit reports only `echo` (false), so the call-style flags are neither shown nor refuted on the iPhone.
+
+**Mi 9T sitting, `1.7.3-alpha.6` (2026-11-22): rows 1 and 2 PASS on Android.** A held microphone button: `capture as recording (call phase
+none)` then `capture: echo=false noise=false agc=false rate=48000 size=16 ch=1 rec=as-granted ... mime=audio/mp4 bps=128000`.
+`dumpsys audio` while recording: requested and actual mode `MODE_NORMAL`, the record client `src:CAMCORDER`, never
+`VOICE_COMMUNICATION`. Rows 3 (sound), 4 (a call), 5 (a ring) and the iPhone half are not taken: the entry stays.
