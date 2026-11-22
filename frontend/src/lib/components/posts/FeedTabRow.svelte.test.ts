@@ -14,17 +14,21 @@ vi.mock('./ReelsEntryButton.svelte', async () => ({
 import FeedTabRow from './FeedTabRow.svelte';
 
 /** The row's layout, as the test sets it: 300 px of row over `content` px of tabs. */
-const layout = { content: 300 };
+const layout: { content: number; compact: number | null } = { content: 300, compact: null };
 let fontsReady: () => void = () => {};
 const resized: (() => void)[] = [];
 let mounted: Record<string, unknown> | null = null;
 
 beforeEach(() => {
   layout.content = 300;
+  layout.compact = null;
   vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockImplementation(function (
     this: HTMLElement
   ) {
-    return this.hasAttribute('data-feed-tabs') ? layout.content : 0;
+    if (!this.hasAttribute('data-feed-tabs')) return 0;
+    return this.hasAttribute('data-compact') && layout.compact !== null
+      ? layout.compact
+      : layout.content;
   });
   vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (
     this: HTMLElement
@@ -170,7 +174,7 @@ it('never draws an ink label on the glass: not before the pill is measured, not 
   expect(arriving.classList.contains('text-on-accent')).toBe(true);
 });
 
-it('keeps its labels tight enough for 360-390 px: 10 px padding, one text step down under 24rem', () => {
+it('keeps its labels tight enough for 360-390 px: 10 px padding, one text step down when the row is crowded', () => {
   mounted = mount(FeedTabRow, {
     target: document.body,
     props: { feed: 'all', onFeed: () => {}, authToken: 't' },
@@ -179,11 +183,60 @@ it('keeps its labels tight enough for 360-390 px: 10 px padding, one text step d
   const tab = document.querySelector<HTMLElement>('[data-feed-tab="all"]')!;
   expect(tab.className).toContain('px-2.5');
   expect(tab.className).not.toContain('px-3.5');
-  expect(tab.className).toContain('max-[24rem]:text-xs');
-  // A doubled font wraps the label inside the tab; it never runs off the row.
-  expect(tab.className).not.toContain('whitespace-nowrap');
-  expect(tab.className).toContain('min-w-0');
-  expect(tab.className.split(' ')).toContain('flex-1');
-  expect(tab.className).not.toContain('flex-auto');
-  expect(tab.className).toContain('[overflow-wrap:anywhere]');
+  expect(tab.className).toContain('group-data-compact/tabs:text-xs');
+  expect(tab.className).not.toContain('max-[24rem]');
+  expect(tab.className).not.toContain('snap-');
+  // A tab is as wide as its label asks (basis auto) and a label wraps BETWEEN words only: a
+  // hyphenated "Organisa-tions" came from equal thirds plus `overflow-wrap:anywhere` + `hyphens:auto`.
+  const classes = tab.className.split(' ');
+  expect(classes).not.toContain('whitespace-nowrap');
+  expect(classes).toContain('flex-auto');
+  expect(classes).not.toContain('flex-1');
+  expect(classes).toContain('min-w-min');
+  expect(classes).not.toContain('min-w-0');
+  expect(tab.className).not.toContain('overflow-wrap');
+  expect(tab.className).not.toContain('hyphens');
+});
+
+it('steps the text down only when the row overflows at the normal size, and back when room returns', () => {
+  layout.content = 340;
+  layout.compact = 280;
+  const row = render();
+  expect(row.hasAttribute('data-compact')).toBe(true);
+  // Room returns (a smaller font): measured at the NORMAL size again, so the step is released.
+  layout.content = 290;
+  resized.forEach((callback) => callback());
+  expect(row.hasAttribute('data-compact')).toBe(false);
+  layout.content = 340;
+  resized.forEach((callback) => callback());
+  expect(row.hasAttribute('data-compact')).toBe(true);
+});
+
+it('re-decides when only the TEXT changed (a font scale: same row width, wider tabs)', () => {
+  const row = render();
+  expect(row.hasAttribute('data-compact')).toBe(false);
+  layout.content = 340;
+  // The row itself did not resize: the callbacks registered by observing each tab fire.
+  resized.forEach((callback) => callback());
+  expect(row.hasAttribute('data-compact')).toBe(true);
+});
+
+it('re-decides once the web font has loaded', async () => {
+  const row = render();
+  layout.content = 340;
+  fontsReady();
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(row.hasAttribute('data-compact')).toBe(true);
+});
+
+it('logs a compact change once, not on every observer callback', () => {
+  const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+  layout.content = 340;
+  render();
+  const crowded = () => debug.mock.calls.filter((c) => String(c[0]).includes('crowded')).length;
+  expect(crowded()).toBe(1);
+  resized.forEach((callback) => callback());
+  resized.forEach((callback) => callback());
+  expect(crowded()).toBe(1);
 });

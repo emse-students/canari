@@ -34,17 +34,20 @@ async function settle() {
 }
 
 function readsWithHandControlledChecks() {
-  const checks = new Map<string, ReturnType<typeof deferred<{ hasSubmitted: boolean }>>[]>();
+  const pending = new Map<
+    string,
+    ReturnType<typeof deferred<{ id: string; title: string; hasSubmitted: boolean }>>[]
+  >();
   const reads: AttachedFormReads = {
-    getForm: vi.fn(async (id: string) => ({ id, title: `form ${id}` })),
-    checkSubmission: vi.fn((id: string) => {
-      const d = deferred<{ hasSubmitted: boolean }>();
-      checks.set(id, [...(checks.get(id) ?? []), d]);
+    readSummary: vi.fn((id: string) => {
+      const d = deferred<{ id: string; title: string; hasSubmitted: boolean }>();
+      pending.set(id, [...(pending.get(id) ?? []), d]);
       return d.promise;
     }),
   };
   const answerAll = (id: string) => {
-    for (const d of checks.get(id) ?? []) d.resolve({ hasSubmitted: false });
+    for (const d of pending.get(id) ?? [])
+      d.resolve({ id, title: `form ${id}`, hasSubmitted: false });
   };
   return { reads, answerAll };
 }
@@ -68,7 +71,7 @@ describe('attachedFormsLoader', () => {
     answerAll('B');
     await settle();
 
-    expect(reads.checkSubmission).toHaveBeenCalledTimes(2);
+    expect(reads.readSummary).toHaveBeenCalledTimes(2);
     expect(loader.infos.map((fi) => fi.id)).toEqual(['A', 'B']);
     cleanup();
   });
@@ -89,8 +92,7 @@ describe('attachedFormsLoader', () => {
     answerAll('A');
     await settle();
 
-    expect(reads.getForm).toHaveBeenCalledTimes(1);
-    expect(reads.checkSubmission).toHaveBeenCalledTimes(1);
+    expect(reads.readSummary).toHaveBeenCalledTimes(1);
     expect(loader.infos.map((fi) => fi.id)).toEqual(['A']);
     cleanup();
   });
@@ -114,6 +116,41 @@ describe('attachedFormsLoader', () => {
     await settle();
     expect(loader.infos.map((fi) => fi.id)).toEqual(['A', 'B']);
     cleanup();
+  });
+});
+
+describe('attachedFormsLoader - an unknown state is not an answer', () => {
+  it('a read that got no answer draws the card with submitted=null, never false', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const reads: AttachedFormReads = {
+      readSummary: vi.fn(async () => {
+        throw new Error('no response after 20000 ms');
+      }),
+    };
+    let loader!: ReturnType<typeof attachedFormsLoader>;
+    const cleanup = $effect.root(() => {
+      loader = attachedFormsLoader(() => [{ id: 'A', title: 'a' }], reads);
+    });
+    flushSync();
+    await settle();
+    expect(loader.infos).toEqual([{ id: 'A', title: 'a', submitted: null }]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('state unknown'), expect.anything());
+    cleanup();
+    warn.mockRestore();
+  });
+
+  it('a form the server answered but left out is not drawn', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const reads: AttachedFormReads = { readSummary: vi.fn(async () => null) };
+    let loader!: ReturnType<typeof attachedFormsLoader>;
+    const cleanup = $effect.root(() => {
+      loader = attachedFormsLoader(() => [{ id: 'A', title: 'a' }], reads);
+    });
+    flushSync();
+    await settle();
+    expect(loader.infos).toEqual([]);
+    cleanup();
+    warn.mockRestore();
   });
 });
 
@@ -150,8 +187,12 @@ describe('attachedFormSources', () => {
   it('reads the opening date even when the post already names the title', async () => {
     const future = new Date(Date.now() + 86_400_000).toISOString();
     const reads: AttachedFormReads = {
-      getForm: vi.fn(async (id: string) => ({ id, title: 'server title', opensAt: future })),
-      checkSubmission: vi.fn(async () => ({ hasSubmitted: false })),
+      readSummary: vi.fn(async (id: string) => ({
+        id,
+        title: 'server title',
+        opensAt: future,
+        hasSubmitted: false,
+      })),
     };
     let loader!: ReturnType<typeof attachedFormsLoader>;
     const cleanup = $effect.root(() => {

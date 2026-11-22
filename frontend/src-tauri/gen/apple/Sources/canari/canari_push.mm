@@ -1014,6 +1014,18 @@ static NSString *CanariReactionBody(NSString *emoji) {
   return [NSString stringWithFormat:CanariLocalized(@"notif.reaction.body"), safeEmoji];
 }
 
+/** The fixed notification ids: the table `CanariStableNotifId` never allocates from. */
+static const int kFixedNotifIds[] = {kPendingSyncNotifId, kQuickReplyNotSentNotifId};
+
+static BOOL CanariIsFixedNotifId(int candidate) {
+  for (size_t i = 0; i < sizeof(kFixedNotifIds) / sizeof(kFixedNotifIds[0]); i++) {
+    if (kFixedNotifIds[i] == candidate) {
+      return YES;
+    }
+  }
+  return NO;
+}
+
 static int CanariStableNotifId(NSString *groupId) {
   if (groupId.length == 0) {
     return 0;
@@ -1026,6 +1038,11 @@ static int CanariStableNotifId(NSString *groupId) {
   int next = (int)[prefs integerForKey:@"__counter__"];
   if (next < 1000) {
     next = 1000;
+  }
+  // Every fixed id is a request id of its own notice (`canari-<id>`): a conversation must never be
+  // handed one, or its banner would be retired or replaced by that notice. One table, one loop.
+  while (CanariIsFixedNotifId(next)) {
+    next++;
   }
   [prefs setObject:@(next) forKey:groupId];
   [prefs setInteger:next + 1 forKey:@"__counter__"];
@@ -5056,27 +5073,30 @@ static void CanariHandleFcmData(NSDictionary *data) {
 }
 
 void CanariPushCancelMessageNotifications(void) {
+  // OPENING THE APP REMOVES NO CONVERSATION BANNER (owner, 2026-11-21: "N'effacer que les lues"):
+  // a banner goes with ITS conversation - opened here (`CanariConversationNotifications`), read on
+  // another device or answered (`CanariCancelConversationNotification`), or ended. What the open app
+  // takes over is the ring alert of an incoming call (the in-app overlay rings now); a delivered
+  // alert names its call in `userInfo`, which no chat banner carries. The badge is recomputed from
+  // what remains, never zeroed.
   UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
   [center getDeliveredNotificationsWithCompletionHandler:^(
               NSArray<UNNotification *> *_Nonnull notifications) {
     NSMutableArray<NSString *> *ids = [NSMutableArray array];
+    // The pending-sync notice (`canari-<kPendingSyncNotifId>`) goes with the rings, as Android
+    // retires OUTBOX_NUDGE_NOTIF_ID: it only asks to open the app, which satisfies it.
+    NSString *pendingSyncId = [NSString stringWithFormat:@"canari-%d", kPendingSyncNotifId];
     for (UNNotification *n in notifications) {
-      NSString *thread = n.request.content.threadIdentifier;
-      NSString *deepLink = n.request.content.userInfo[@"deepLink"];
-      // WP-XP-7: per-conversation notifications use the groupId as threadIdentifier, not the
-      // old flat "canari_messages" thread. Also catch legacy notifications that have no thread
-      // (empty) or the old flat thread. The deepLink prefix check is a safety net.
-      BOOL isChatNotif = [thread isEqualToString:@"canari_messages"] || thread.length == 0 ||
-                         [deepLink hasPrefix:@"fr.emse.canari://chat"];
-      if (isChatNotif) {
+      if (n.request.content.userInfo[@"canariCallId"] != nil ||
+          [n.request.identifier isEqualToString:pendingSyncId]) {
         [ids addObject:n.request.identifier];
       }
     }
     if (ids.count > 0) {
       [center removeDeliveredNotificationsWithIdentifiers:ids];
+      NSLog(@"[CanariPush] activation: %lu ring alert(s) or open-the-app notice(s) removed",
+            (unsigned long)ids.count);
     }
-    // Clearing every message notification (app opened) drops the badge to 0 (WP-XP-2). Counted
-    // from what remains in the array already read, not by re-reading after an uncompleted removal.
     CanariSetBadgeCount(CanariCountUnreadConversations(notifications, [NSSet setWithArray:ids]));
   }];
 }
@@ -5221,7 +5241,7 @@ static void CanariHandleBackgroundFrame(NSDictionary *data, void (^done)(UIBackg
     // `canariCallId`) is taken off the lock screen too, so a call already over is not left ringing
     // there. Best effort: a background push can be dropped. The alert's `apns-expiration` only bounds APNs
     // store-and-forward; a DELIVERED banner stays until removed - here, or on app activation, where
-    // `CanariPushCancelMessageNotifications` clears it (its `deepLink` is a chat link).
+    // `CanariPushCancelMessageNotifications` clears it (it matches the `canariCallId` in its `userInfo`).
     if (callId.length > 0) {
       UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
       [center getDeliveredNotificationsWithCompletionHandler:^(
@@ -5282,8 +5302,9 @@ static void CanariHandleBackgroundFrame(NSDictionary *data, void (^done)(UIBackg
  * - the same allowlist a full silent frame meets, never a second one.
  *
  * One request, no retry, no timer beyond the request's own timeout. A failure is logged at ERROR with
- * its stage and acts on nothing: the one thing it loses is an own-device dismissal, and app activation
- * clears message notifications anyway (`CanariPushCancelMessageNotifications`). `done` is called
+ * its stage and acts on nothing: the one thing it loses is an own-device dismissal, and that IS a loss:
+ * opening the app clears no message banner any more (owner, 2026-11-21), so the banner stays until its
+ * conversation is read. The ERROR line below is the accusation, never a fallback. `done` is called
  * exactly once, on every path.
  */
 static void CanariHandleWakeBackgroundFrame(NSDictionary *data, void (^done)(UIBackgroundFetchResult)) {
@@ -6000,6 +6021,92 @@ static void CanariPresentForegroundPush(
   }];
 }
 
+/// ONE NOTIFICATION PER MESSAGE, AND THIS IS THE ONE PLACE THAT KNOWS AN EXTENSION BANNER WAS NOT
+/// SHOWN (docs/wiki/frontend/ios-notification-ownership.md). The extension claims every message it
+/// draws in the ledger the page shares (`announced_messages.json`, Rust `mobile::announced`) and
+/// stamps the outcome on the push (`canariAnnounced`, `canariAnnounceKey`). Killed or suspended, its
+/// banner is shown and its claim stands, so the page's catch-up stands down for it. A push reaching
+/// an ACTIVE app is answered here, and its claim is settled in the same locked step:
+/// - `first`, the page stood down for it (it asked since the claim): PRESENTED - its banner is the
+///   one announcement;
+/// - `first`, nobody asked: NOT presented, and the claim is given back, so the page announces it if
+///   the reader cannot see it land;
+/// - `first`, the page's own banner covers it: not presented;
+/// - `first`, its key no longer in the ledger (the bound dropped it, perhaps after the page stood
+///   down for it): PRESENTED, and recorded as the extension's again - at worst a double, never a
+///   loss;
+/// - `after-page`: the extension removed the page's banner of this message and replaces it, kept in
+///   the list without a second alert.
+/// Returns NO for a push the extension did not claim (no stamp: an undecrypted message, a reaction,
+/// a post, a run whose expiry delivered it before the claim), which the caller presents as before.
+/// An unstamped push is never looked up in the ledger, and need not be: the extension claims only
+/// in the step that hands over the STAMPED content (`NotificationService.finish`), so no claim of
+/// that run exists without its stamp - and an MLS push carries its instant only inside the
+/// ciphertext, so its key could not be built here anyway. The ledger is sealed under the install's
+/// native cache key, read the way the extension reads it.
+static BOOL CanariSettleAnnouncedInFront(NSDictionary *userInfo,
+                                         UNNotificationPresentationOptions *options) {
+  NSString *announced =
+      [userInfo[@"canariAnnounced"] isKindOfClass:[NSString class]] ? userInfo[@"canariAnnounced"] : nil;
+  NSString *key = [userInfo[@"canariAnnounceKey"] isKindOfClass:[NSString class]]
+                      ? userInfo[@"canariAnnounceKey"]
+                      : nil;
+  if (announced == nil || key.length == 0) {
+    return NO;
+  }
+  UNNotificationPresentationOptions shown = UNNotificationPresentationOptionBanner |
+                                            UNNotificationPresentationOptionSound |
+                                            UNNotificationPresentationOptionList;
+  if ([announced isEqualToString:@"after-page"]) {
+    NSLog(@"[CanariPush] [ANNOUNCED] push in front replaces the app's banner of its message - kept "
+          @"in the list, no second alert");
+    *options = UNNotificationPresentationOptionList;
+    return YES;
+  }
+  if (![announced isEqualToString:@"first"]) {
+    NSLog(@"[CanariPush] [ANNOUNCED] ERROR a push carries a stamp no extension writes - presented "
+          @"as before");
+    return NO;
+  }
+  NSString *dir = CanariAppGroupPath();
+  int32_t settled =
+      dir == nil ? -1
+                 : canari_announced_settle_in_front(dir.UTF8String,
+                                                    CanariRetrieveNativeCacheKey().UTF8String,
+                                                    key.UTF8String);
+  switch (settled) {
+    case 1:
+      NSLog(@"[CanariPush] [ANNOUNCED] push in front: the page stood down for this message - "
+            @"presented");
+      *options = shown;
+      break;
+    case 0:
+      NSLog(@"[CanariPush] [ANNOUNCED] push in front: not presented - its claim goes back to the "
+            @"page");
+      *options = UNNotificationPresentationOptionNone;
+      break;
+    case 2:
+      NSLog(@"[CanariPush] [ANNOUNCED] push in front: the app's banner announces this message - not "
+            @"presented");
+      *options = UNNotificationPresentationOptionNone;
+      break;
+    case 3:
+      NSLog(@"[CanariPush] [ANNOUNCED] push in front: its key left the ledger - presented, and "
+            @"recorded as the extension's again");
+      *options = shown;
+      break;
+    default:
+      // The claim STANDS, so the page stands down for this message: presenting the push is the only
+      // way it is announced at all.
+      NSLog(@"[CanariPush] [ANNOUNCED] ERROR push in front: the ledger could not be settled (%@) - "
+            @"presented, since its claim stands",
+            dir == nil ? @"no App Group" : @"read, write or cache key failed");
+      *options = shown;
+      break;
+  }
+  return YES;
+}
+
 @implementation CanariNotificationDelegate
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center
        willPresentNotification:(UNNotification *)notification
@@ -6047,6 +6154,12 @@ static void CanariPresentForegroundPush(
   //   `call_ring` rang CallKit beside its own banner.
   if (canari_ios_is_in_foreground()) {
     CanariPushProcessRemoteNotificationUserInfo(request.content.userInfo);
+    // A message the extension claimed in the announced-messages ledger is settled there.
+    UNNotificationPresentationOptions announced;  // written whenever the settle answers YES
+    if (CanariSettleAnnouncedInFront(request.content.userInfo, &announced)) {
+      completionHandler(announced);
+      return;
+    }
     // A push may share ONE identifier with a page post (a reaction): never answer None blind.
     CanariPresentForegroundPush(center, request.identifier, completionHandler);
   } else {
@@ -6357,6 +6470,27 @@ static BOOL CanariCompleteOwedDeletionLocked(void) {
     }
     return CanariCompleteOwedDeletionLocked();
   }
+}
+
+@end
+
+/// A conversation's banners go with the conversation: its reader opened it here (`read_here`) or it
+/// ended (`conversation_ended`). Reached from the page by `cancel_conversation_notifications`
+/// (`commands/notifications.rs`) through the Objective-C runtime, not a symbol - `libapp.a` is linked
+/// into the notification extension too, which does not carry this class.
+@interface CanariConversationNotifications : NSObject
++ (BOOL)cancelForConversation:(NSString *)groupId;
+@end
+
+@implementation CanariConversationNotifications
+
++ (BOOL)cancelForConversation:(NSString *)groupId {
+  if (groupId.length == 0) {
+    NSLog(@"[CanariPush] cancelForConversation: empty conversation id - nothing taken down");
+    return NO;
+  }
+  CanariCancelConversationNotification(groupId, nil);
+  return YES;
 }
 
 @end

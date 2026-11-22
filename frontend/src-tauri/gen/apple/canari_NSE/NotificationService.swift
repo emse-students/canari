@@ -1,4 +1,5 @@
 import CallKit
+import Intents
 import Security
 import UIKit
 import UserNotifications
@@ -105,8 +106,20 @@ class NotificationService: UNNotificationServiceExtension {
 
   private var contentHandler: ((UNNotificationContent) -> Void)?
   private var bestAttemptContent: UNMutableNotificationContent?
+  /// The account a decrypted message's best attempt names (its sender, its text), set once that
+  /// content is drawn - nil for every other run. Read by the expiry: an account that signed out
+  /// since gets the blank banner, not this one (review of #3938). Under `deliveryLock`.
+  private var namesContentOf: String?
   /// This run's outcome record (`NseOutcomeLog`), written once by `finish` or the expiry.
   private var trace: NseOutcomeLog.Trace?
+  /// The announced-messages key of the message this run draws (`noteAnnouncement`), claimed by
+  /// `finish` in the step that hands the content over (`claimAnnouncement`). Nil when the run draws
+  /// no keyable message.
+  private var announceKey: String?
+  /// The app's banners standing for exactly this message and nothing else (`applyBadgeCount`,
+  /// which reads the delivered list anyway): removed once this run's banner, claimed after the
+  /// page's, is handed over. A page banner covering other messages too is never removed.
+  private var pageTwinIds: [String] = []
   /// Orders `finish` against `serviceExtensionTimeWillExpire`, which iOS calls on ANOTHER thread
   /// while the decrypt may still be running: the content is handed back exactly once.
   private let deliveryLock = NSLock()
@@ -621,6 +634,15 @@ class NotificationService: UNNotificationServiceExtension {
     // The cause of an expiry is the stage the run reached, read by `end` under its own lock.
     trace?.end(outcome: "expired")
     deliveryLock.lock()
+    let named = namesContentOf
+    deliveryLock.unlock()
+    // A message drawn for an account that signed out since is blanked, as the donation's own
+    // completion does - read OUTSIDE the lock (a file read), applied under it by the blank.
+    if let named = named, Self.signedInUserId() != named {
+      NseLog.log.notice("[CanariNSE] time expired after a sign-out - the banner is blanked")
+      blankSignedOutContent()
+    }
+    deliveryLock.lock()
     let handler = contentHandler
     contentHandler = nil
     deliveryLock.unlock()
@@ -634,19 +656,42 @@ class NotificationService: UNNotificationServiceExtension {
   }
 
   /// Delivers the current best-attempt content exactly once, after writing the run's outcome.
+  ///
+  /// THE ANNOUNCED-MESSAGES CLAIM IS MADE HERE AND NOWHERE ELSE (review of #3968): under
+  /// `deliveryLock`, in the step that takes the handler, so the expiry - which delivers the content
+  /// UNSTAMPED - either went first and nothing is claimed (the app may then announce the message
+  /// again: a double, never a loss), or waits for this step and finds nothing to deliver. A claim
+  /// made earlier, during the decrypt, could be followed by the expiry's unstamped delivery: the
+  /// ledger would say "the extension's" while the app read no stamp, the page would stand down,
+  /// and an active app would answer the push `None` - the message seen nowhere. Nothing slow sits
+  /// between the claim and the handoff: the key and the directory are read BEFORE the lock, and the
+  /// page's twin is removed AFTER the handoff (a kill in between leaves a quiet double).
   private func finish() {
+    let key = announceKey
+    let dir = key == nil ? nil : Self.appGroupDir()
+    let cacheKey = key == nil ? "" : Self.retrieveNativeCacheKey()
     deliveryLock.lock()
     let handler = contentHandler
     contentHandler = nil
+    var afterPage = false
+    if handler != nil, let content = bestAttemptContent {
+      if let trace = trace {
+        let outcome = trace.outcome
+        trace.end(outcome: outcome ?? "fallback", cause: outcome == nil ? "no-outcome-set" : nil)
+      }
+      Self.holdSoundForCall(content)
+      if let key = key {
+        afterPage = claimAnnouncement(key: key, dir: dir, cacheKey: cacheKey, content: content)
+      }
+    }
     deliveryLock.unlock()
     guard let handler = handler, let content = bestAttemptContent else { return }
-    if let trace = trace {
-      let outcome = trace.outcome
-      trace.end(outcome: outcome ?? "fallback", cause: outcome == nil ? "no-outcome-set" : nil)
-    }
-    Self.holdSoundForCall(content)
     Self.logFiling(content, via: "finish")
     handler(content)
+    if afterPage, !pageTwinIds.isEmpty {
+      UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: pageTwinIds)
+      NseLog.log.notice("[CanariNSE] [ANNOUNCED] the app's banner of this message: \(self.pageTwinIds.count, privacy: .public) removed, replaced by this one")
+    }
   }
 
   /// Records why this run falls back - the FIRST cause found is the one kept, since every later
@@ -1257,6 +1302,12 @@ class NotificationService: UNNotificationServiceExtension {
         isGroup: isGroup, result: msg)
     }
 
+    // ONE NOTIFICATION PER MESSAGE: this banner is claimed in the ledger the app shares, keyed by
+    // the sender and the sender's instant - an undecrypted message has no instant, and is not
+    // claimed. The claim itself is made by `finish`, with the handoff (`claimAnnouncement`).
+    if let msg = decrypted {
+      noteAnnouncement(conversation: groupId, senderId: senderId, at: msg.sentAt)
+    }
     applyMessageContent(
       content: content, senderName: shownName, groupName: groupName, declaredGroup: isGroup,
       body: body,
@@ -1264,6 +1315,59 @@ class NotificationService: UNNotificationServiceExtension {
       level: Self.levelDecision(
         level: notifLevel, mentioned: decrypted?.mentionedUserIds, myUserId: ctx.userId,
         groupId: groupId))
+  }
+
+  /// Notes the message this run draws - `conversation`, its sender, its instant - for the claim
+  /// `finish` makes (`claimAnnouncement`). A message that cannot be keyed is said, and not claimed.
+  private func noteAnnouncement(conversation: String, senderId: String, at: Int64) {
+    guard let rawKey = canari_announce_key(conversation, senderId, at) else {
+      NseLog.log.notice("[CanariNSE] [ANNOUNCED] not claimed: the message carries no sender or instant - the app may announce it again")
+      return
+    }
+    announceKey = String(cString: rawKey)
+    canari_free_string(rawKey)
+  }
+
+  /// Claims `key` in the announced-messages ledger the app shares (`announced_messages.json`,
+  /// sealed, Rust `mobile::announced`; docs/wiki/frontend/ios-notification-ownership.md) and stamps
+  /// the outcome on `content`, where the app's `willPresentNotification` reads it. Called by
+  /// `finish` ONLY, under `deliveryLock`, once the handler is taken: the claim and its stamp reach
+  /// the app together or not at all - an expiry that delivered the content first finds no handler
+  /// here, and claims nothing.
+  ///
+  /// Returns true when the PAGE announced it first: this banner is then filed quietly (the reader
+  /// was alerted once already) and replaces the page's banner standing for exactly this message
+  /// (`pageTwinIds`). An extension cannot withhold an alert push without Apple's filtering
+  /// entitlement, so replacing is the only way to keep one row per message - and a page banner
+  /// covering other messages too is kept: at worst a double, never a loss.
+  private func claimAnnouncement(
+    key: String, dir: URL?, cacheKey: String, content: UNMutableNotificationContent
+  ) -> Bool {
+    guard let dir = dir else {
+      NseLog.log.error("[CanariNSE] [ANNOUNCED] ERROR not claimed: no App Group - the app may announce it again")
+      return false
+    }
+    switch canari_announced_by_extension(dir.path, cacheKey, key) {
+    case 1:
+      content.userInfo["canariAnnounceKey"] = key
+      content.userInfo["canariAnnounced"] = "first"
+      NseLog.log.notice("[CanariNSE] [ANNOUNCED] shown first by the extension")
+      return false
+    case 0:
+      content.userInfo["canariAnnounceKey"] = key
+      content.userInfo["canariAnnounced"] = "after-page"
+      content.sound = nil
+      if #available(iOS 15.0, *) { content.interruptionLevel = .passive }
+      if pageTwinIds.isEmpty {
+        NseLog.log.notice("[CanariNSE] [ANNOUNCED] the app announced it first, in a banner that also stands for other messages or is gone - this one is filed quietly beside it")
+      } else {
+        NseLog.log.notice("[CanariNSE] [ANNOUNCED] the app announced it first - this banner replaces the app's, quietly")
+      }
+      return true
+    default:
+      NseLog.log.error("[CanariNSE] [ANNOUNCED] ERROR the ledger could not be read or written - not claimed, the app may announce it again")
+      return false
+    }
   }
 
   /// How loud one MLS message may be, given the member's level for its conversation.
@@ -1795,10 +1899,15 @@ class NotificationService: UNNotificationServiceExtension {
     {
       attached = attachImage(content: content, fileUrl: mediaUrl, identifier: "media")
     }
-    if !attached, let ctx = ctx, !senderId.isEmpty,
-      let avatarUrl = fetchAvatar(ctx: ctx, userId: senderId)
-    {
-      attached = attachImage(content: content, fileUrl: avatarUrl, identifier: "avatar")
+    // The sender's face, for the attachment below AND for the communication style's avatar. Fetched
+    // only when no thumbnail took the attachment slot, exactly as before; otherwise read from the
+    // App Group cache alone, so the communication style adds no network request to this run.
+    var face: URL?
+    if let ctx = ctx, !senderId.isEmpty {
+      face = attached ? cachedAvatar(userId: senderId) : fetchAvatar(ctx: ctx, userId: senderId)
+    }
+    if !attached, let face = face {
+      attached = attachImage(content: content, fileUrl: face, identifier: "avatar")
     }
     // Last resort, and it must stay last: iOS renders only the first attachment, so a letter
     // replacing the picture the message is about would be a regression rather than a fallback.
@@ -1806,7 +1915,277 @@ class NotificationService: UNNotificationServiceExtension {
       attachInitials(content: content, name: senderName)
     }
     applyBadgeCount(content: content, incomingThreadId: content.threadIdentifier)
-    finish()
+    deliveryLock.lock()
+    namesContentOf = ctx?.userId
+    deliveryLock.unlock()
+    // THE PLAIN NOTIFICATION IS COMPLETE HERE, and it is what an expiry delivers. The communication
+    // style is drawn on top of it, and that step calls `finish` (owner, 2026-11-21).
+    applyCommunicationStyle(
+      senderId: senderId, senderName: senderName, groupId: groupId,
+      groupName: isGroup ? groupTitle : nil, face: face, mentionsMe: level.mentionsMe,
+      signedInUserId: ctx?.userId)
+  }
+
+  // MARK: - Communication notification (owner, 2026-11-21) ---------------------
+
+  /// The donation group of every interaction this extension donates. Written by nothing else; the
+  /// app deletes the group at sign-out (`ShareSuggestions.clearMessageNotifications`, behind
+  /// `clear_conversation_shortcuts`). `iosCommunicationNotifications.test.ts` holds the spellings.
+  static let messageNotificationsGroup = "fr.emse.canari.message-notifications"
+
+  /// The id a conversation is donated under: the share suggestions' `c:<conversation id>`
+  /// (`ShareSuggestions.idPrefix`), so a conversation the share sheet offers from a donated message
+  /// reaches the Share Extension in the shape it already reads (`ShareRules.suggestedTarget`).
+  static let conversationIdPrefix = "c:"
+
+  /// The `recipientCount` a group's mention declares: the member and the stand-in for the others -
+  /// the smallest group there is. `iosCommunicationNotifications.test.ts` pins it.
+  static let mentionedGroupRecipientCount = 2
+
+  /// Why a message notification is NOT made a communication notification, or nil when it is
+  /// eligible. Nothing failed in any of them, so each is said at `notice`, never `WARN`.
+  ///
+  /// `no-account-context` FIRST, and it is the one that guards the member (review of #3938): a donation
+  /// names a sender and carries a face, and one made while no account owns this device would outlive
+  /// the sign-out that erased the others - the next account would meet it in its share sheet and
+  /// Siri suggestions. The proof an account is signed in is `push_context.json` WHOLE - written at
+  /// sign-in, stripped of `baseUrl` at sign-out (`keep_device_context_only`) - which is exactly
+  /// `loadPushContext` answering. The payload alone proves nothing: a push can arrive after the
+  /// sign-out, while the server's deregistration lags.
+  static func communicationSkipReason(
+    signedInUserId: String?, senderId: String, senderName: String, groupId: String
+  ) -> String? {
+    if (signedInUserId ?? "").isEmpty { return "no-account-context" }
+    if groupId.isEmpty { return "no-conversation-id" }
+    if senderId.isEmpty { return "no-sender-id" }
+    if senderName.isEmpty { return "no-sender-name" }
+    return nil
+  }
+
+  /// The incoming `INSendMessageIntent` a message notification is redrawn from - what makes it a
+  /// COMMUNICATION notification: the sender's face as the banner's avatar, the group's name, and a
+  /// sender the member may let through a Focus.
+  ///
+  /// WHAT IT CARRIES (principle 1, docs/principes.md): the sender's id and the name and face the
+  /// banner already shows, the conversation's id and, for a group, the name its title already
+  /// shows. NEVER the message: `content` is nil, and the body stays the notification's own.
+  ///
+  /// A GROUP NEEDS A RECIPIENT. Apple draws a group only when `recipients` names someone besides the
+  /// sender and the member, and this extension does not know the members (the push names the sender
+  /// and the conversation only). So a group's one recipient stands for "the others": a person whose
+  /// handle is the conversation id and whose name is the group's, with no face. A direct message
+  /// has no recipient: the member is implied (Apple's own example).
+  static func messageIntent(
+    senderId: String, senderName: String, groupId: String, groupName: String?,
+    faceData: Data?, mentionsMe: Bool
+  ) -> INSendMessageIntent {
+    let conversationId = conversationIdPrefix + groupId
+    let sender = INPerson(
+      personHandle: INPersonHandle(value: senderId, type: .unknown),
+      nameComponents: nil,
+      displayName: senderName,
+      image: faceData.map { INImage(imageData: $0) },
+      contactIdentifier: nil,
+      customIdentifier: senderId)
+    var recipients: [INPerson]?
+    var speakableGroupName: INSpeakableString?
+    if let groupName = groupName {
+      recipients = [
+        INPerson(
+          personHandle: INPersonHandle(value: conversationId, type: .unknown),
+          nameComponents: nil,
+          displayName: groupName,
+          image: nil,
+          contactIdentifier: nil,
+          customIdentifier: conversationId,
+          isMe: false,
+          // Not a person: no contact suggestion is ever made from it (Apple's `.none`). Siri may
+          // still offer it among the app's conversations, as the share suggestions' groups are.
+          suggestionType: .none)
+      ]
+      speakableGroupName = INSpeakableString(spokenPhrase: groupName)
+    }
+    let intent = INSendMessageIntent(
+      recipients: recipients,
+      outgoingMessageType: .outgoingMessageText,
+      content: nil,
+      speakableGroupName: speakableGroupName,
+      conversationIdentifier: conversationId,
+      serviceName: nil,
+      sender: sender,
+      attachments: nil)
+    if mentionsMe {
+      // The proof `levelDecision` raised the banner on; it lets a mention through a Focus too.
+      let metadata = INSendMessageIntentDonationMetadata()
+      metadata.mentionsCurrentUser = true
+      // A metadata's `recipientCount` OVERRIDES the recipients array's count, and it is 0 unless
+      // set - a group's mention would be drawn as a direct message, its group name lost (review of
+      // #3938). The real count is unknown here (the push does not carry it, and must not), so a
+      // group says the smallest group: the member and one other.
+      metadata.recipientCount = groupName == nil ? 1 : mentionedGroupRecipientCount
+      intent.donationMetadata = metadata
+    }
+    return intent
+  }
+
+  /// Makes the plain notification a communication notification, then delivers (owner, 2026-11-21).
+  ///
+  /// Apple's order: donate the incoming interaction and, only once the donation completed, redraw
+  /// the content from the intent (`updating(from:)`). The donation's completion is the step's ONE
+  /// end - no clock: if it never comes, the system's own expiry (`serviceExtensionTimeWillExpire`)
+  /// delivers the plain notification, complete before this starts, and the trace's stage says
+  /// `donate`.
+  ///
+  /// A REFUSED DONATION OR A REFUSED REDRAW IS THE DEGRADED PATH, AND IT IS A SIGNAL: the plain
+  /// notification is delivered, and the line says `WARN` with the error's type, domain and code.
+  private func applyCommunicationStyle(
+    senderId: String, senderName: String, groupId: String, groupName: String?, face: URL?,
+    mentionsMe: Bool, signedInUserId: String?
+  ) {
+    if let reason = Self.communicationSkipReason(
+      signedInUserId: signedInUserId, senderId: senderId, senderName: senderName,
+      groupId: groupId)
+    {
+      NseLog.log.notice(
+        "[CanariNSE] communication style skipped reason=\(reason, privacy: .public) - the plain notification is delivered")
+      finish()
+      return
+    }
+    // The face the attachment used, else the initials disc the attachment would draw: a
+    // communication notification never lacks an avatar. Read from local files only. A face that
+    // was held but could not be read is said apart from one that was never held.
+    var faceData: Data?
+    var source = "initials-no-face"
+    if let face = face {
+      do {
+        faceData = try Data(contentsOf: face)
+        source = "avatar"
+      } catch {
+        source = "initials-face-unreadable"
+        NseLog.log.notice(
+          "[CanariNSE] communication style: the face file is unreadable (\(errorReason(error), privacy: .public)) - the initials are drawn")
+      }
+    }
+    if faceData == nil {
+      faceData = Self.initialsImagePng(name: senderName)
+    }
+    let isGroup = groupName != nil
+    let intent = Self.messageIntent(
+      senderId: senderId, senderName: senderName, groupId: groupId, groupName: groupName,
+      faceData: faceData, mentionsMe: mentionsMe)
+    let interaction = INInteraction(intent: intent, response: nil)
+    interaction.direction = .incoming
+    interaction.groupIdentifier = Self.messageNotificationsGroup
+    // Its own id, so a donation the sign-out overtook can withdraw exactly itself (below).
+    let donationId = UUID().uuidString
+    interaction.identifier = donationId
+    let donor = signedInUserId ?? ""
+    trace?.mark("donate")
+    NseLog.log.debug(
+      "[CanariNSE] communication style: donating isGroup=\(isGroup, privacy: .public) source=\(source, privacy: .public) group=\(groupId.prefix(8), privacy: .public)")
+    interaction.donate { error in
+      if let error = error {
+        let kind = String(describing: type(of: error))
+        NseLog.log.warning(
+          "[CanariNSE] WARN communication style not applied - the donation was refused (\(kind, privacy: .public) \(errorReason(error), privacy: .public)); the plain notification is delivered, the degraded path")
+        self.finish()
+      } else if Self.signedInUserId() != donor {
+        // THE SIGN-OUT OVERTOOK THE DONATION. The app writes the erase it owes and strips the
+        // context BEFORE it deletes the donation group (`push_registration.rs`,
+        // `eraseAccountShortcuts`), so a donation that completed before the strip is taken by that
+        // delete, and one completing after it is seen here - every order is covered, none by a
+        // clock. It withdraws itself, and the banner of the account that left is blanked: the iOS
+        // form of a push dropped after a sign-out (no filtering entitlement - see `LevelDecision`).
+        // The run is answered only once the withdrawal answered: answered before, the extension
+        // may be reaped with the delete still in flight (review of #3938).
+        NseLog.log.notice(
+          "[CanariNSE] communication style withdrawn - the account signed out during the donation; the banner is blanked")
+        self.blankSignedOutContent()
+        INInteraction.delete(with: [donationId]) { error in
+          if let error = error {
+            let kind = String(describing: type(of: error))
+            NseLog.log.error(
+              "[CanariNSE] ERROR a donation the sign-out overtook was not withdrawn (\(kind, privacy: .public) \(errorReason(error), privacy: .public)); the app's erase owed on disk takes it")
+          } else {
+            NseLog.log.debug("[CanariNSE] the overtaken donation is withdrawn")
+          }
+          self.finish()
+        }
+      } else {
+        self.adoptCommunicationContent(intent, isGroup: isGroup)
+        self.finish()
+      }
+    }
+  }
+
+  /// Blanks the best-attempt content of a run whose account signed out while it ran: no name, no
+  /// text, no face, no sound, passive - an extension cannot suppress an alert push, so this is the
+  /// nearest it comes to dropping one (`applyCallControlContent` does the same). Under
+  /// `deliveryLock`, and nothing when the run was already answered (an expiry delivered it).
+  private func blankSignedOutContent() {
+    deliveryLock.lock()
+    defer { deliveryLock.unlock() }
+    guard contentHandler != nil,
+      let blank = bestAttemptContent?.mutableCopy() as? UNMutableNotificationContent
+    else {
+      NseLog.log.notice("[CanariNSE] the run was already answered - nothing blanked")
+      return
+    }
+    blank.title = ""
+    blank.subtitle = ""
+    blank.body = ""
+    blank.sound = nil
+    blank.attachments = []
+    if #available(iOS 15.0, *) {
+      blank.interruptionLevel = .passive
+    }
+    bestAttemptContent = blank
+  }
+
+  /// The account `push_context.json` says is signed in, or nil when none is: the file absent,
+  /// unreadable, or stripped by a sign-out (no `baseUrl`). The JSON half of `loadPushContext`,
+  /// without its keychain read - asked again when a donation completes.
+  static func signedInUserId() -> String? {
+    guard let dir = appGroupDir(),
+      let data = try? Data(contentsOf: dir.appendingPathComponent(pushContextFile)),
+      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else { return nil }
+    let userId = json["userId"] as? String ?? ""
+    let deviceId = json["deviceId"] as? String ?? ""
+    let baseUrl = json["baseUrl"] as? String ?? ""
+    guard !userId.isEmpty, !deviceId.isEmpty, !baseUrl.isEmpty else { return nil }
+    return userId
+  }
+
+  /// Replaces the best-attempt content with its redraw from `intent`, unless the run was already
+  /// answered (an expiry delivered the plain one). Under `deliveryLock`, the lock that orders the
+  /// two deliveries, so neither can hand back a content the other is replacing.
+  private func adoptCommunicationContent(_ intent: INSendMessageIntent, isGroup: Bool) {
+    deliveryLock.lock()
+    defer { deliveryLock.unlock() }
+    guard contentHandler != nil, let plain = bestAttemptContent,
+      let base = plain.mutableCopy() as? UNMutableNotificationContent
+    else {
+      NseLog.log.notice("[CanariNSE] communication style: the run was already answered - nothing redrawn")
+      return
+    }
+    // The face moves to the banner's avatar: the attachment repeating it (photo or initials) goes,
+    // a media thumbnail stays.
+    base.attachments = plain.attachments.filter { $0.identifier != "avatar" }
+    do {
+      let updated = try base.updating(from: intent)
+      guard let redrawn = updated.mutableCopy() as? UNMutableNotificationContent else {
+        NseLog.log.warning(
+          "[CanariNSE] WARN communication style not applied - the redrawn content is not mutable; the plain notification is delivered, the degraded path")
+        return
+      }
+      bestAttemptContent = redrawn
+      NseLog.log.notice("[CanariNSE] communication style applied isGroup=\(isGroup, privacy: .public)")
+    } catch {
+      let kind = String(describing: type(of: error))
+      NseLog.log.warning(
+        "[CanariNSE] WARN communication style not applied - updating(from:) refused (\(kind, privacy: .public) \(errorReason(error), privacy: .public)); the plain notification is delivered, the degraded path")
+    }
   }
 
   /// Downloads and decrypts an image/GIF blob for a notification thumbnail (WP-XP-3), writing the
@@ -2015,11 +2394,16 @@ class NotificationService: UNNotificationServiceExtension {
     }
     content.threadIdentifier = "channel_\(channelId)"
     if let link = Self.chatLink(channelId, prefix: "channel_") { content.userInfo["deepLink"] = link }
-    // Same elevation the MLS path gives a mention (applyMessageContent): break through Focus.
-    // Requires the app's Time Sensitive Notifications entitlement - silently downgraded to .active
-    // without it. iOS has no notification-channel concept, so this is the whole Android twin of
-    // posting on `canari_mentions`.
+    // ONE NOTIFICATION PER MESSAGE, keyed by the sender and the message's server `createdAt` (ms),
+    // the instant the socket frame carries too - a blind banner announces its message all the same.
+    // Claimed by `finish`, with the handoff (`claimAnnouncement`).
+    let createdAt = Int64(Self.string(userInfo["createdAt"]) ?? "") ?? 0
+    noteAnnouncement(conversation: "channel_\(channelId)", senderId: senderId, at: createdAt)
     if mentionsMe, #available(iOS 15.0, *) {
+      // Same elevation the MLS path gives a mention (applyMessageContent): break through Focus.
+      // Requires the app's Time Sensitive Notifications entitlement - silently downgraded to .active
+      // without it. iOS has no notification-channel concept, so this is the whole Android twin of
+      // posting on `canari_mentions`.
       content.interruptionLevel = .timeSensitive
     }
     // The sender's face, exactly as the MLS path and both Android paths do it, once the open proved
@@ -2528,8 +2912,17 @@ class NotificationService: UNNotificationServiceExtension {
     let center = UNUserNotificationCenter.current()
     let sem = DispatchSemaphore(value: 0)
     var keys = Set<String>()
+    let announced = announceKey
+    var twins: [String] = []
     center.getDeliveredNotifications { delivered in
       for n in delivered {
+        // The app's banner standing for exactly the message this run draws: `finish` removes it if
+        // the claim finds the page first (`claimAnnouncement`). The page stamps the keys it covers
+        // (`useNotifications.svelte.ts`).
+        if let announced, Self.pageBannerStandsOnlyFor(n.request.content.userInfo, key: announced) {
+          twins.append(n.request.identifier)
+          continue
+        }
         let thread = n.request.content.threadIdentifier
         let deepLink = (n.request.content.userInfo["deepLink"] as? String) ?? ""
         let isChat = thread == "canari_messages" || deepLink.hasPrefix("fr.emse.canari://chat")
@@ -2539,11 +2932,24 @@ class NotificationService: UNNotificationServiceExtension {
       sem.signal()
     }
     _ = sem.wait(timeout: .now() + 2.0)
+    pageTwinIds = twins
     if !incomingThreadId.isEmpty {
       keys.insert(incomingThreadId)
     }
     content.badge = NSNumber(value: keys.count)
     NseLog.log.notice("[CanariNSE] applyBadgeCount: badge=\(keys.count, privacy: .public)")
+  }
+
+  /// Whether a delivered notification is the PAGE's banner standing for the message `key` AND
+  /// NOTHING ELSE: the notification plugin files the page's `extra` under `__EXTRA__`, and the page
+  /// writes there the space-separated keys its one banner covers (`announces`). A banner covering
+  /// other messages too is not this message's twin - removing it would take those messages out of
+  /// Notification Center with it.
+  static func pageBannerStandsOnlyFor(_ userInfo: [AnyHashable: Any], key: String) -> Bool {
+    guard let extra = userInfo["__EXTRA__"] as? [String: Any],
+      let announces = extra["announces"] as? String
+    else { return false }
+    return announces.split(separator: " ").map(String.init) == [key]
   }
 
   // MARK: - Shared App Group state --------------------------------------------
@@ -2730,9 +3136,20 @@ class NotificationService: UNNotificationServiceExtension {
     NseLog.log.notice("[CanariNSE] reportBlindBanner: HTTP \(http, privacy: .public) channel=\(channelId, privacy: .public) missing=\(fields, privacy: .public)")
   }
 
+  /// The cache file of a person's avatar in the App Group container.
+  private static func avatarCacheName(_ userId: String) -> String {
+    "avatar_\(sanitizeFilename(userId)).jpg"
+  }
+
+  /// The sender's avatar from the 24h App Group cache ONLY - never the network: for a run whose
+  /// attachment slot a thumbnail already took, where a fetch would spend the budget on no attachment.
+  private func cachedAvatar(userId: String) -> URL? {
+    cachedRemoteFile(name: Self.avatarCacheName(userId)) { nil }
+  }
+
   /// Fetches the sender avatar, caching it in the container. Returns a local file URL.
   private func fetchAvatar(ctx: PushContext, userId: String) -> URL? {
-    return cachedRemoteFile(name: "avatar_\(Self.sanitizeFilename(userId)).jpg") {
+    return cachedRemoteFile(name: Self.avatarCacheName(userId)) {
       guard let secret = self.loadPushSecret() else { return nil }
       let user = Self.encode(userId)
       let req = Self.encode(ctx.userId)
@@ -2831,6 +3248,21 @@ class NotificationService: UNNotificationServiceExtension {
   /// The letter is a COMPOSED CHARACTER, so a name starting with an emoji or a combining accent is
   /// not cut in half. Android takes the first UTF-16 unit and has that flaw.
   private static func initialsImageUrl(name: String) -> URL? {
+    guard let png = initialsImagePng(name: name) else { return nil }
+    let url = URL(fileURLWithPath: NSTemporaryDirectory())
+      .appendingPathComponent("initials-\(UUID().uuidString).png")
+    do {
+      try png.write(to: url, options: .atomic)
+    } catch {
+      NseLog.log.notice("[CanariNSE] initialsImage: write failed: \(errorReason(error), privacy: .public)")
+      return nil
+    }
+    return url
+  }
+
+  /// The disc of `initialsImageUrl` as PNG bytes - also the communication style's avatar when no
+  /// face is held (`applyCommunicationStyle`).
+  static func initialsImagePng(name: String) -> Data? {
     let letter = name.first.map { String($0).uppercased() } ?? "?"
     let format = UIGraphicsImageRendererFormat.default()
     format.scale = 1
@@ -2853,15 +3285,7 @@ class NotificationService: UNNotificationServiceExtension {
       NseLog.log.notice("[CanariNSE] initialsImage: PNG encoding failed - notification goes out without an icon")
       return nil
     }
-    let url = URL(fileURLWithPath: NSTemporaryDirectory())
-      .appendingPathComponent("initials-\(UUID().uuidString).png")
-    do {
-      try png.write(to: url, options: .atomic)
-    } catch {
-      NseLog.log.notice("[CanariNSE] initialsImage: write failed: \(errorReason(error), privacy: .public)")
-      return nil
-    }
-    return url
+    return png
   }
 
   /// Blocking HTTP request with a short timeout (the extension has a hard ~30s budget).

@@ -78,6 +78,11 @@
     pinStanding?: PinStanding;
     /** Called when the user clicks the "Rejoindre la communauté" button on a channel invitation card. */
     onJoinChannel?: (channelId: string) => void;
+    /**
+     * Called by the "Rappeler" button of a call record that never connected (`not-connected`): the
+     * call to place again, in this conversation. Absent where no call can be placed from here.
+     */
+    onCallBack?: () => void;
     /** IDs of pinned messages in this conversation. */
     pinnedIds?: string[];
     /** Timestamp (ms) when the current conversation was opened; messages newer than this animate in. */
@@ -130,6 +135,7 @@
     onReelPurged,
     pinStanding = { inChannel: false, canModerate: false },
     onJoinChannel,
+    onCallBack,
     pinnedIds = [],
     switchTime,
     currentUserId = '',
@@ -265,6 +271,7 @@
             onReply={onReply ? () => onReply?.(msg) : undefined}
             onForward={onForward ? () => onForward?.(msg) : undefined}
             {onJoinChannel}
+            {onCallBack}
             {onReact}
             {currentUserId}
             shouldAnimate={messageTime(msg) > switchTime}
@@ -352,6 +359,7 @@
               {groupPosition}
               senderHeaderShown={showSender}
               {onJoinChannel}
+              {onCallBack}
               onReply={onReply && !msg.awaitingServerId ? () => onReply?.(msg) : undefined}
               onForward={onForward && !msg.awaitingServerId ? () => onForward?.(msg) : undefined}
               {onNavigateToMessage}

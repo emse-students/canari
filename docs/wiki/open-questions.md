@@ -692,3 +692,25 @@ C5 already says what they read ([register](compliance/register-of-processing.md)
 policy should say it too is the owner's call. Moved here when its reading entry was deleted on the
 owner's decision of 2026-11-15 ("Supprimer cette lecture"), so the question is not lost with it.
 
+## A native line naming a conversation this device no longer stores (parked 2026-11-22)
+
+A reply typed in the notification shade is a line of the native outbox mirror until the page adopts
+it. Since #3969 the page adopts a text or a reply only together with its row, and a row needs its
+conversation stored: a line naming a conversation not stored yet stays native, and the write of that
+conversation's row adopts it (`conversationStored.ts`). A conversation this device **deleted** is
+never written again, so its line stays native for good: not sent (the server refuses a frame for a
+group the device left), not shown (the page has nowhere to draw it), and said once per page life at
+WARN (`not adopted, kept native in the mirror`). The native drain's own notification is the only
+place the member saw it fail.
+
+**DECIDED 2026-11-22 (owner): SHOW it** - the conversation is recreated locally and the reply is shown as failed, with Delete ([decisions](backlog.d/owner-decisions-of-2026-11-22.md), item 7; [entry](backlog.d/a-shade-reply-to-a-deleted-conversation-is-shown-as-failed.md)). The options below are kept as the record of what was weighed.
+
+- **Show it** (recommended, principle 2: the essential is never lost): restore the conversation as a
+  read-only "removed" row holding the failed message, with Delete. This creates a row the member
+  deleted, so it needs a decision.
+- **Drop it**, saying so: delete the mirror line and tell the member once ("a reply to a deleted
+  conversation was not sent"). This discards a text, so it is not taken by default.
+
+The case needs a reply typed in the shade for a conversation the member then deletes in the app
+before the page ever adopts it. It was not seen on the bench. The Mi 9T case of 2026-11-22 was a
+conversation stored a moment later, which the row-write adoption now covers.

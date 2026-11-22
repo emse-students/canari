@@ -111,16 +111,22 @@ B15 and B16, built together because the busy answer is one of the reasons.
   only makes the ringing row, and gives way to an end that won the race.
 - **The reason is a type, sent by the side that knows.** Hangup carries `end_reason`: `cancelled`
   (the caller hung up a ring), `declined` (the callee refused it), `not-answered` (the ring window
-  closed; also a call lost after its invite), `busy`. No reason = an answered call (duration) or a
-  hangup of a build from before the field.
+  closed; also a call lost after its invite), `busy`, and since 2026-11-22 `not-connected` (a 1:1
+  call answered whose media never connected, [below](#a-call-that-never-connected-is-said-and-written-so-2026-11-22)).
+  No reason = a call whose media connected (duration) or a hangup of a build from before the field;
+  a build older than `not-connected` reads that value as no reason, as it read the call before.
 - **Two call sites, disjoint by origin.** A fact that arrives from ANOTHER party (an MLS hangup, an
   invite) is written by `handleCallSignalForChat`; a fact this device caused (it hung up, declined,
   its ring timer closed, a busy answer arrived) is written through `CallChatNotifier.onCallEnded`.
-  `endCall(notify, reason, remoteOrigin)` skips the notifier when the MLS hangup is the other party's.
-- **Answered means the callee reached the room.** A caller in `calling` whose `peerArrived` is set
-  (`PeerReady`) has an ANSWERED call, even if its media never connected: no unanswered reason, a
-  duration. So the relay's `PeerLeft` (a local end) and the callee's MLS hangup (remote) reach the
-  one writer with the same fact, in either order. A failure after the invite left (`failCall`, a
+  `endCall(notify, reason, remoteOrigin, failed)` skips the notifier when the MLS hangup is the other
+  party's - except on a device that was in the 1:1 call, which writes its own fact (below).
+- **Answered means the callee reached the room; a call means its media connected.** A caller in
+  `calling` whose `peerArrived` is set (`PeerReady`) has an ANSWERED call. If its media never
+  connected (`connectedAt` null, 1:1 only), the call did not happen and is `not-connected` - never a
+  duration (until 2026-11-22 it was written as answered, "lasted less than a minute"). A device that
+  was IN the 1:1 call writes its record itself, from its own `connectedAt`, on every end path - the
+  other party's MLS hangup included - so the relay's `PeerLeft` and that hangup give the same record
+  in either order ([below](#a-call-that-never-connected-is-said-and-written-so-2026-11-22)). A failure after the invite left (`failCall`, a
   refused resume, a failed setup) is `not-answered` when nobody arrived, and ALWAYS sends the
   hangup now, so the other party's row is finalized.
 - **Reading by side.** The caller reads its own sentence (`chat_system_call_cancelled`,
@@ -634,7 +640,7 @@ design; the live end keeps its red X, since a confirmation modal exists.
   the caller's photo and name over the lock screen, Decline and Answer. Answer asks the keyguard to
   go first (`requestDismissKeyguard`), then sends the notification's own answer intent. **The screen
   never outlives its ring**: it closes with it (`cancelIncomingCallNotification` -> `finishFor`, and
-  `cancelAllMessageNotifications` on the app's resume); a launch that lands after the ring ended
+  `retireTakenOverNotifications` on the app's resume); a launch that lands after the ring ended
   (between `notify` and `onCreate`) asks `isRinging` and closes at once; and the screen bounds
   itself by the ring window (`CALL_RING_TIMEOUT_MS`). A second call while it shows (`singleTop`)
   replaces it through `onNewIntent` - unless that call no longer rings, in which case the first
@@ -735,7 +741,7 @@ when the native handover says an answer waits, `canari:call-accept` -
   the call id and that nonce as extras, its data the plain conversation link. `MainActivity`
   (`onCreate` on a fresh launch, `onNewIntent`) checks the nonce, forgets the record and writes the
   file from the RECORDED facts with the instant of the tap, atomically. A dismissed or ended ring
-  forgets its record (`cancelIncomingCallNotification`, `cancelAllMessageNotifications`).
+  forgets its record (`cancelIncomingCallNotification`, `retireTakenOverNotifications`).
 - **iOS**: CallKit's answer writes the file natively; the link it opens is navigation only.
 - **A link navigates and never answers**: `hooks.client.ts` reads no answer from a URL, whoever
   opened it (a parameter that looks like one is logged and ignored).
@@ -1498,6 +1504,33 @@ tunnel and nginx), then steps 8-11
 ([device-verification](../../device-verification.md#call-l1-a-11-dev-call-between-the-two-bench-phones---owed-on-both)).
 Not handled here: a phone that changes network WITHOUT its socket dropping relies on ICE alone
 (`disconnected` -> one restart); cellular handover is unmeasured (no SIM on the bench).
+
+## A call that never connected is said, and written so (2026-11-22)
+
+**What happened.** A 1:1 call answered from the native ring on Android `1.7.2` never connected. The
+callee did everything right (room ready, the offer received, the answer sent), then its ICE stayed
+`new` for 27 s: no remote candidate ever arrived. The relay's record of the CALLER's socket - read
+on production the next day - settled where they went: the caller sent its offer and then ZERO
+`IceCandidate` frames in 7.7 s (the relay relayed all of the callee's to it), and its socket was
+then reset without a Close frame (`transport-error`), never resumed. The server lost nothing; the
+caller's peer connection produced no candidate, most likely because its network was gone. On the
+callee the screen said "Connexion..." for those 27 s, and the record said "answered". Each of those
+is a gate that was missing, and this section is what closes them.
+
+| Field / line | Where | What it separates |
+| --- | --- | --- |
+| `cands_in=h<n>/s<n>/r<n>` and `cands_out=` in `[CALL_REPORT]` (`/p<n>` only when a peer-reflexive one was signalled; `-` with no peer connection) | `buildCallReport`, counted on the `CallLeg` (`candsIn` on arrival in the `IceCandidate` frame handler, so a buffered one is not counted twice; `candsOut` in `onicecandidate` only once `sendSignal` handed it to an OPEN socket - what was merely gathered is the `ICE gathering complete` line), reset per peer connection; a candidate line of no known type is a WARN on either side, never counted | a party that gathered nothing (`cands_out=h0/s0/r0` on ITS report) from candidates lost on the way (its `cands_out` > the other's `cands_in`) from candidates that arrived and failed (`cands_in` > 0, ICE `failed`) |
+| `[Call] first remote <type> candidate (<transport>, ice=<state>)` / `first local <type> candidate (<transport>) sent` | `countRemoteCandidate`, `onicecandidate` | when each kind of path became possible - one line per type, never per candidate, never an address |
+| `PeerAway.disposition` (`transport-error`, `stream-ended`, `send-failed`, `keepalive-lost`) and `[Call] the other party lost its signalling connection (relay: <cause>, media had/never connected)` | call-service `peer_away` (main.rs), `peerAwayCauseOf` (`callLeg.ts`) | HOW the other party's socket died, as the one witness that saw it recorded it (`Disposition::as_str`). Absent on the wire when unknown, so a client older than the field reads the frame it always read; this client logs `unstated` (an older relay) or `unrecognised` (a newer token), never the raw string |
+| `[Call] peer_lost=<bool> before the first connection (...)` and the `peer-lost` status | `CallService.peerLost`, `callStatusKind` | the screen and the Android ongoing notification say "<name> a perdu la connexion..." (`call_peer_lost`, `call_peer_lost_unnamed`) instead of a silent "Connexion..." while a 1:1 call's other party is away before any media; after a first connection it stays "Reconnexion...". On the CALLER too: it stays `calling` until its media connects, so a callee gone after answering would have read "ringing" |
+| `WARN remote <kind> still muted after 5s - no media received (ice= gathering= cands_in= cands_out= signalling= peer=)` | `mediaLayers` | which layer stopped, in the line that says no media came |
+| `[Call] ICE candidate error server=<host:port> code=<n>` (first per server and code) and `errors=<n>` on `ICE gathering complete` | `onicecandidateerror` | a STUN/TURN server that did not answer; the event's local address and error text are never logged |
+| record `not-connected` with a **Rappeler** button: "Appel non abouti : la connexion n'a pas pu s'etablir" when THIS device's end was a failure (`failCall`, a failed answer, a refused resume, a seat that went away and never came back), a neutral "Appel non abouti" for a person's quick hangup or the other side's end (`callEvent.failed`, local, never on the wire) | `endCall(notify, reason, remoteOrigin, failed)`, `buildCallOutcomeText`, `MessageBubble` (`onCallBack`, passed only where an audio call can be placed) | a call that did not happen from one that did, and a failure from a change of mind - by facts, never by text. A group call never uses it: one member's leg that never connected ends nothing for the others (`groupHangupEndsRecord`); a `not-connected` hangup never makes a missed-call row on a device that has none (its sender may be the callee) |
+| the record of a 1:1 call is written by the device that was IN it, from its own `connectedAt` | `ownsCallRecord` -> `utils/chat/callRecordOwner.ts`, read by `handleCallSignalForChat` before the service handles the same frame | the same record whether the relay's `PeerLeft` or the MLS hangup arrives first, and whatever the other side's build sends; the wire reason decides only on a device that was not in the call |
+
+**What is still owed.** The cause of a party that gathers nothing after a LONG ring is not read: a
+1:1 call rung 30-55 s on the bench phones, each side's `cands_out=` read, is the
+[backlog entry](../../backlog.d/call-long-ring-candidates-reading.md).
 
 ## The user's decisions of 2026-10-18
 

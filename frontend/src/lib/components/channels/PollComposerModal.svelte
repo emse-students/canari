@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Log } from '$lib/utils/Log';
+  import { SalonLaneHeldError, SalonTurnAbandonedError } from '$lib/utils/chat/messaging';
   import { X, ChartColumn } from '@lucide/svelte';
   import PollOptionsEditor from '$lib/components/posts/PollOptionsEditor.svelte';
   import {
@@ -78,8 +79,17 @@
       reset();
       onClose();
     } catch (e) {
+      // The session ended while the poll waited for its turn: nothing to say.
+      if (e instanceof SalonTurnAbandonedError) {
+        Log.d('poll.submit dropped: the session ended while it waited', e);
+        return;
+      }
       Log.d('poll.submit failed', e);
-      error = m.channel_poll_create_error();
+      // A message written before it is held: the poll is not queued unseen, the draft stays here.
+      error =
+        e instanceof SalonLaneHeldError
+          ? m.salon_post_waits_for_held_messages()
+          : m.channel_poll_create_error();
     } finally {
       submitting = false;
     }

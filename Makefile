@@ -343,6 +343,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/local-copy-guards.test.sh
 	@bash .github/scripts/tests/pre-commit-restage.test.sh
 	@bash .github/scripts/tests/local-ci.test.sh
+	@bash .github/scripts/tests/machine-slot.test.sh
 	@bash .github/scripts/tests/dev-reset-guards.test.sh
 	@bun test ./tools/dev-seed/
 	@bun test ./tools/play-vitals/
@@ -392,6 +393,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/no-nul-in-source.test.mjs
 	@bun .github/scripts/tests/ratchet-not-raised.test.mjs
 	@bun .github/scripts/tests/wry-main-pipe-patch.test.mjs
+	@bun .github/scripts/tests/android-keyboard-media-hook.test.mjs
 	@bun .github/scripts/tests/docs-merge-artefacts.test.mjs
 	@bun .github/scripts/tests/line-endings.test.mjs
 	@bun .github/scripts/tests/assert-frontend-build.test.mjs

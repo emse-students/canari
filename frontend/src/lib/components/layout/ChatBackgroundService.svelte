@@ -68,6 +68,7 @@
   } from '$lib/composables/session/loginErrors';
   import { forgetPinSaltAhead } from '$lib/composables/session/pinSaltAhead';
   import { askPinStatus } from '$lib/composables/session/pinStatus';
+  import { routeOfRecoveryFailure } from '$lib/composables/session/pinSessionRefusal';
   import {
     getToken,
     clearAuth,
@@ -93,6 +94,8 @@
     appendLog,
   } from '$lib/stores/globalChatSingleton.svelte';
   import { resolveDisplayNames } from '$lib/utils/users/displayName';
+  import { watchConversationEndings } from '$lib/utils/chat/conversationEndingsWatch.svelte';
+  import { endNativeConversationNotifications } from '$lib/utils/nativeNotification';
   import { serializeEnvelope, mkSystemEnvelope } from '$lib/envelope';
   import type { ChatMessage, MessageBatchOrigin } from '$lib/types';
   import PinModal from '$lib/components/auth/PinModal.svelte';
@@ -220,6 +223,21 @@
 
   // The PIN lock sits under the call's rung: while it is up, a call is the banner it covers.
   $effect(() => callView.setLocked(showPinModal));
+
+  // A CONVERSATION THAT ENDED TAKES ITS NOTIFICATIONS WITH IT. Opening the app clears no banner any
+  // more (owner, 2026-11-21), so a conversation deleted, left, excluded from, or whose salon or
+  // community is gone would keep its banner for good. Observed on the list every ending writes to,
+  // rather than at each of its writers (`endedConversations.ts`); the event decides, never a timer.
+  // The page logs the DECISION; the native side logs the OUTCOME (`endConversationNotifications:
+  // ... banner id=N`, -1 when none was recorded), which is a different fact.
+  watchConversationEndings(
+    () => ({ signedIn: globalSession.isLoggedIn, rows: globalConvs.conversations.values() }),
+    (id) => {
+      appendLog(`[NOTIF] conversation ${id.slice(0, 12)} ended - taking its notifications down`);
+      void endNativeConversationNotifications(id);
+      void globalNotifs.dismissConversationReactions(id);
+    }
+  );
 
   /** Last call id we started ringing for (dedupes effect re-runs). */
   let lastIncomingRingCallId = $state<string | null>(null);
@@ -708,6 +726,13 @@
       appendLog(`[PIN_RECOVER] failed: ${String(e)}`);
       // Read from the TYPE: a reset waiting for the server is settled again, as at the gate.
       const uid = globalSession.userId || currentUserId();
+      // A DEAD SESSION OR A REMOVED DEVICE IS ROUTED AS THE LOGIN ROUTES IT (`routeOfRecoveryFailure`).
+      const route = routeOfRecoveryFailure(e);
+      if (route?.kind === 'session-expired') void handleSessionExpired();
+      if (route?.kind === 'removed') {
+        showRecoverModal = false;
+        applyPinFailure(uid || '', route.code);
+      }
       if (e instanceof LoginFailure && e.code === 'pin_reset_unsettled' && uid) {
         void settleUnsettledPinResetOf(uid);
       }
@@ -1083,6 +1108,7 @@
     pinGateRetry = null;
     showBiometricSheet = false;
     showPinModal = false;
+    showRecoverModal = false;
     pinLoading = false;
     pinStep = '';
   }

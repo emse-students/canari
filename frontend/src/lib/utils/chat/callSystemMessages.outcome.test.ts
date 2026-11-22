@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { setCallRecordOwner } from '$lib/utils/chat/callRecordOwner';
 import { SvelteMap } from 'svelte/reactivity';
 
 vi.mock('$lib/utils/users/displayName', () => ({
@@ -21,6 +22,7 @@ vi.mock('$lib/stores/appVersionCheck.svelte', async (importOriginal) => ({
 
 import {
   handleCallSignalForChat,
+  forgetCallRecordServerTime,
   patchCallRecordServerTime,
   recordCallEnded,
   recordCallStarted,
@@ -109,6 +111,34 @@ describe('the ONE call-record writer (B15)', () => {
     await recordCallStarted(ctx, G, 'd1', 'caller', AT);
     await recordCallEnded(ctx, G, 'd1', AT, 'declined', 'caller');
     expect(rows()[0].text).toBe('Appel refusé');
+  });
+
+  it('a call answered but never connected reads the same on both sides, never a duration or a miss', async () => {
+    for (const [id, starter] of [
+      ['n1', 'me'],
+      ['n2', 'caller'],
+    ] as const) {
+      const { ctx, rows } = makeCtx();
+      await recordCallStarted(ctx, G, id, starter, AT);
+      await recordCallEnded(ctx, G, id, AT, 'not-connected', starter);
+      // A deliberate quick hangup: neutral, it claims no technical failure.
+      expect(rows()[0].text).toBe('Appel non abouti');
+      expect(rows()[0].callEvent?.outcome).toBe('not-connected');
+      expect(rows()[0].callEvent?.failed).toBeUndefined();
+    }
+  });
+
+  it('only a FAILURE says the connection could not be made', async () => {
+    const { ctx, rows } = makeCtx();
+    await recordCallStarted(ctx, G, 'f1', 'caller', AT);
+    await recordCallEnded(ctx, G, 'f1', AT, 'not-connected', 'caller', true);
+    expect(rows()[0].text).toBe("Appel non abouti : la connexion n'a pas pu s'établir");
+    expect(rows()[0].callEvent?.failed).toBe(true);
+    // `failed` means nothing on any other outcome.
+    const other = makeCtx();
+    await recordCallStarted(other.ctx, G, 'f2', 'me', AT);
+    await recordCallEnded(other.ctx, G, 'f2', AT, 'cancelled', 'me', true);
+    expect(other.rows()[0].callEvent?.failed).toBeUndefined();
   });
 
   it('an answered call keeps its duration', async () => {
@@ -213,6 +243,54 @@ describe('the signal path of the record', () => {
     await handleCallSignalForChat(b.ctx, 'me', G, hangup(R.CALL_END_REASON_CANCELLED), 'me', AT);
     expect(a.rows()).toHaveLength(0);
     expect(b.rows()).toHaveLength(0);
+  });
+
+  it('a device that was IN the call writes its own record: the hangup frame decides nothing there', async () => {
+    const { ctx, rows } = makeCtx();
+    await handleCallSignalForChat(ctx, 'caller', G, { callId: 'h1', offerSdp: 'START' }, 'me', AT);
+    setCallRecordOwner((id) => id === 'h1');
+    try {
+      await handleCallSignalForChat(
+        ctx,
+        'caller',
+        G,
+        hangup(R.CALL_END_REASON_NOT_CONNECTED),
+        'me',
+        AT
+      );
+    } finally {
+      setCallRecordOwner(null);
+    }
+    expect(rows()[0].callEvent?.endedAt).toBeUndefined();
+  });
+
+  it('a NOT CONNECTED hangup on a device with no row writes none: its sender is no starter', async () => {
+    const { ctx, rows } = makeCtx();
+    await handleCallSignalForChat(
+      ctx,
+      'callee',
+      G,
+      hangup(R.CALL_END_REASON_NOT_CONNECTED),
+      'me',
+      AT
+    );
+    expect(rows()).toHaveLength(0);
+  });
+
+  it("the other side's NOT CONNECTED hangup finalizes the started row as not connected", async () => {
+    const { ctx, rows } = makeCtx();
+    await handleCallSignalForChat(ctx, 'caller', G, { callId: 'h1', offerSdp: 'START' }, 'me', AT);
+    await handleCallSignalForChat(
+      ctx,
+      'caller',
+      G,
+      hangup(R.CALL_END_REASON_NOT_CONNECTED),
+      'me',
+      AT
+    );
+    expect(rows()).toHaveLength(1);
+    expect(rows()[0].callEvent?.outcome).toBe('not-connected');
+    expect(rows()[0].text).not.toContain('manqué');
   });
 
   it('an ordinary hangup with no row writes nothing', async () => {
@@ -325,10 +403,47 @@ describe('a call record is dated by its frame, never by when this device drained
     }
   });
 
+  it('a hangup whose send answered no server time drops its pending patch', async () => {
+    const { ctx, conversations } = makeCtx();
+    await recordCallEnded(
+      ctx,
+      G,
+      't9',
+      { timestamp: AT.timestamp, ownAct: true, awaitsServerTime: true },
+      'busy',
+      'me'
+    );
+    forgetCallRecordServerTime('t9');
+    // Nothing is pending any more: a late acceptance finds no patch to apply.
+    await patchCallRecordServerTime(ctx, G, 't9', 1_700_000_000_999);
+    const row = conversations.get(G)!.messages.find((x) => x.id === 'call-t9') as {
+      serverTimestamp?: number;
+    };
+    expect(row.serverTimestamp).toBeUndefined();
+  });
+
+  it('an own end that sends no hangup is never waited for: nothing is kept to patch', async () => {
+    const { ctx, conversations } = makeCtx();
+    // The other party's hangup ended a call this device was in: its own record, no send.
+    await recordCallEnded(ctx, G, 't8', { timestamp: AT.timestamp, ownAct: true }, 'busy', 'me');
+    await patchCallRecordServerTime(ctx, G, 't8', 1_700_000_000_999);
+    const row = conversations.get(G)!.messages.find((x) => x.id === 'call-t8') as {
+      serverTimestamp?: number;
+    };
+    expect(row.serverTimestamp).toBeUndefined();
+  });
+
   it("the own hangup's server time is patched onto a row its end created, never over a start", async () => {
     const { ctx, conversations, addMessageToChat } = makeCtx();
     // A missed call written by the end itself, with no server time yet.
-    await recordCallEnded(ctx, G, 't7', { timestamp: AT.timestamp, ownAct: true }, 'busy', 'me');
+    await recordCallEnded(
+      ctx,
+      G,
+      't7',
+      { timestamp: AT.timestamp, ownAct: true, awaitsServerTime: true },
+      'busy',
+      'me'
+    );
     expect(
       (addMessageToChat.mock.calls[0][3] as { serverTimestamp?: number }).serverTimestamp
     ).toBeUndefined();

@@ -1,6 +1,8 @@
 <script lang="ts">
   import { Minus, Monitor, Plus, Smartphone, X } from '@lucide/svelte';
   import CriterionEditor from '$lib/components/pricing/CriterionEditor.svelte';
+  import Button from '$lib/components/ui/Button.svelte';
+  import Input from '$lib/components/ui/Input.svelte';
   import Toggle from '$lib/components/ui/Toggle.svelte';
   import InfoTip from '$lib/components/ui/InfoTip.svelte';
   import GridAxesTable from './GridAxesTable.svelte';
@@ -12,6 +14,7 @@
   import { newDimension, type Bucket } from '$lib/pricing/priceMatrix';
   import {
     PRODUCT_GRID_ALL_TIER,
+    PRODUCT_GRID_LABEL_MAX,
     PRODUCT_GRID_MAX_PER_CELL,
     PRODUCT_GRID_MIN_PER_CELL,
     PRODUCT_GRID_OTHERS_TIER,
@@ -49,6 +52,20 @@
     type ProductGridTierDimension,
   } from '$lib/forms/productGridEditor';
   import { formatAmount } from '$lib/forms/fillAnswers';
+  import {
+    columnSetsOf,
+    gridsInSet,
+    gridsWithSameColumns,
+    joinColumnSet,
+    leaveColumnSet,
+    orderedCellsOfSet,
+    propagateColumnSet,
+    renameColumnSet,
+    shareColumns,
+    useColumnSet,
+    type ColumnSetInfo,
+    type ColumnSetQuestion,
+  } from '$lib/forms/productGridColumnSets';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
@@ -92,6 +109,20 @@
      * second step draws it; the cap per cell and the buyer's preview stay in the question card.
      */
     essentials?: boolean;
+    /**
+     * The form's questions and THIS grid's question id, for the shared columns: the sets other grids
+     * name, and the grids a shared edit is written to. Absent (the add wizard), the section is not drawn.
+     */
+    questions?: ColumnSetQuestion[];
+    questionId?: string;
+    /** Every grid's ordered cells, by question id: a shared column warns on any grid's orders. */
+    orderedByQuestion?: Record<string, string[]>;
+    /**
+     * Whether the ordered cells are known. Sharing or joining columns re-keys a grid by label, which
+     * would silently re-key columns carrying orders if they had not loaded: until true, those
+     * actions are off.
+     */
+    orderedReady?: boolean;
   }
 
   let {
@@ -104,6 +135,10 @@
     problem = null,
     title = '',
     essentials = false,
+    questions = [],
+    questionId = undefined,
+    orderedByQuestion = {},
+    orderedReady = true,
   }: Props = $props();
 
   const TAG = 'ProductGridEditor';
@@ -168,7 +203,7 @@
       tableFeedback = m.form_pgrid_remove_closes_every_cell();
       return;
     }
-    if (axisEntryHasOrders(orderedCells, axis, id)) {
+    if (axisEntryHasOrders(columnOrders, axis, id)) {
       Log.d(TAG, `the ${axis} entry to remove has orders: asking first`);
       const ok = await showConfirm(m.form_pgrid_remove_ordered_confirm(), {
         danger: true,
@@ -179,6 +214,7 @@
     if (removeAxisEntry(grid, axis, id) === 'closes_every_cell') {
       tableFeedback = m.form_pgrid_remove_closes_every_cell();
     }
+    if (axis === 'columns') columnsChanged();
   }
 
   /**
@@ -191,12 +227,91 @@
       grid[axis] = [];
       Log.d(TAG, `the blank ${axis} starter gives way to a pasted list`);
     }
-    return addAxisEntries(grid, axis, labels);
+    const result = addAxisEntries(grid, axis, labels);
+    if (axis === 'columns') columnsChanged();
+    return result;
   }
 
   function renameEntry(axis: ProductGridAxis, id: string, label: string) {
     const entry = grid[axis].find((e) => e.id === id);
     if (entry) entry.label = label;
+    if (axis === 'columns') columnsChanged();
+  }
+
+  // Shared columns: the same columns kept once for several grids of the form (a shop's sizes).
+  const columnOrders = $derived(
+    questionId
+      ? orderedCellsOfSet(questions, questionId, {
+          ...orderedByQuestion,
+          [questionId]: orderedCells,
+        })
+      : orderedCells
+  );
+  const availableSets = $derived<ColumnSetInfo[]>(
+    questionId ? columnSetsOf(questions, questionId) : []
+  );
+  const sharedCount = $derived(grid.columnSet ? gridsInSet(questions, grid.columnSet.id) : 0);
+  let shareName = $state('');
+
+  /** A column of this grid changed: a shared one is written to every other grid of its set. */
+  function columnsChanged() {
+    if (grid.columnSet) propagateColumnSet(questions, grid);
+  }
+
+  /** Makes this grid's columns a named set, and offers the grids that already hold the same ones. */
+  async function shareThese() {
+    const name = shareName.trim();
+    if (!name) return;
+    if (!orderedReady) {
+      Log.w(TAG, 'share refused: the ordered cells are not known yet');
+      return;
+    }
+    shareColumns(grid, name);
+    shareName = '';
+    const withOrders = new Set(
+      Object.entries(orderedByQuestion)
+        .filter(([, cells]) => cells.length > 0)
+        .map(([id]) => id)
+    );
+    const same = gridsWithSameColumns(questions, grid, withOrders);
+    if (same.length === 0) return;
+    Log.d(TAG, `${same.length} other grid(s) hold the same columns: asking whether to share them`);
+    const all = await showConfirm(
+      m.form_pgrid_colset_join_matching_confirm({ count: same.length }),
+      {
+        confirmLabel: m.form_pgrid_colset_join_matching_confirm_button(),
+        cancelLabel: m.form_pgrid_colset_join_matching_only_this(),
+      }
+    );
+    if (all) joinColumnSet(same, grid);
+  }
+
+  /** Puts this grid on a set another grid made. Answers on its own columns ask first. */
+  async function useShared(setId: string) {
+    const set = availableSets.find((s) => s.id === setId);
+    if (!set) return;
+    if (!orderedReady) {
+      Log.w(TAG, 'use refused: the ordered cells are not known yet');
+      return;
+    }
+    const replacesOrdered = grid.columns.some(
+      (c) =>
+        !set.columns.some((s) => s.id === c.id) && axisEntryHasOrders(orderedCells, 'columns', c.id)
+    );
+    if (replacesOrdered) {
+      Log.d(TAG, 'the columns being replaced have orders: asking first');
+      const ok = await showConfirm(m.form_pgrid_colset_apply_ordered_confirm(), {
+        danger: true,
+        confirmLabel: m.form_pgrid_colset_apply_ordered_confirm_button(),
+      });
+      if (!ok) return;
+    }
+    useColumnSet(grid, set);
+  }
+
+  function renameSet(name: string) {
+    renameColumnSet(grid, name);
+    columnsChanged();
   }
 
   // Categories: off, or one profile criterion.
@@ -450,97 +565,189 @@
       </label>
     {/if}
 
-    <!-- The table: the shared rows-and-columns editor, the cells and prices drawn here. -->
-    <GridAxesTable
-      rows={grid.rows}
-      columns={grid.columns}
-      isDuplicate={(axis, label) =>
-        (axis === 'rows' ? duplicateRows : duplicateColumns).has(productGridLabelKey(label))}
-      onRename={renameEntry}
-      onAddBlank={(axis) => addBlankEntry(grid, axis)}
-      onAddMany={addPasted}
-      onMove={(axis, from, to) => moveAxisEntry(grid, axis, from, to)}
-      onRemove={removeEntry}
-      maxOf={axisMax}
-      rowPlaceholder={m.form_pgrid_row_placeholder()}
-      columnPlaceholder={m.form_pgrid_column_placeholder()}
-    >
-      {#snippet afterCornerHeader()}
-        {#if mode === 'per_row'}
-          <th scope="col" class="text-text-muted w-24 px-1.5 pb-2 text-left text-xs font-bold"
-            >{m.form_pgrid_price_header()}</th
-          >
+    {#if questionId && !essentials}
+      <!-- Shared columns: one set of columns (the sizes) for several grids, edited once. -->
+      <div class="bg-cn-surface-alt mb-3 space-y-2 rounded-lg p-3" data-testid="column-set">
+        <p class="text-text-main text-xs font-bold">{m.form_pgrid_colset_title()}</p>
+        {#if grid.columnSet}
+          <p class="text-text-muted text-xs" data-testid="column-set-in-use">
+            {m.form_pgrid_colset_in_use({ name: grid.columnSet.name, count: sharedCount })}
+          </p>
+          <div class="flex flex-wrap items-center gap-2">
+            <Input
+              class="min-w-0 flex-1"
+              aria-label={m.form_pgrid_colset_name_label()}
+              value={grid.columnSet.name}
+              oninput={(e) => renameSet(e.currentTarget.value)}
+              maxlength={PRODUCT_GRID_LABEL_MAX}
+              data-testid="column-set-name"
+            />
+            <Button
+              variant="link"
+              onclick={() => leaveColumnSet(grid)}
+              data-testid="column-set-leave">{m.form_pgrid_colset_leave()}</Button
+            >
+          </div>
+        {:else}
+          <p class="text-text-muted text-xs">{m.form_pgrid_colset_share_hint()}</p>
+          {#if !orderedReady}
+            <p class="text-text-muted text-xs" data-testid="column-set-waiting">
+              {m.form_pgrid_colset_waiting()}
+            </p>
+          {/if}
+          <div class="flex flex-wrap items-center gap-2">
+            <Input
+              class="min-w-0 flex-1"
+              aria-label={m.form_pgrid_colset_name_label()}
+              placeholder={m.form_pgrid_colset_name_placeholder()}
+              bind:value={shareName}
+              maxlength={PRODUCT_GRID_LABEL_MAX}
+              data-testid="column-set-new-name"
+            />
+            <Button
+              variant="secondary"
+              disabled={!shareName.trim() || !orderedReady}
+              onclick={() => void shareThese()}
+              data-testid="column-set-share">{m.form_pgrid_colset_share()}</Button
+            >
+          </div>
+          {#if availableSets.length > 0}
+            <div
+              role="group"
+              aria-label={m.form_pgrid_colset_use()}
+              class="flex flex-wrap items-center gap-2"
+            >
+              <span class="text-text-muted text-xs">{m.form_pgrid_colset_use()}</span>
+              {#each availableSets as set (set.id)}
+                <Button
+                  variant="soft"
+                  size="compact"
+                  disabled={!orderedReady}
+                  onclick={() => void useShared(set.id)}
+                  data-testid="column-set-use"
+                  >{m.form_pgrid_colset_use_option({
+                    name: set.name,
+                    count: set.columns.length,
+                  })}</Button
+                >
+              {/each}
+            </div>
+          {/if}
         {/if}
-      {/snippet}
-      {#snippet headerRow()}
-        {#if mode === 'per_column'}
-          <tr>
-            <th
-              scope="row"
-              class="text-text-main bg-cn-surface sticky left-0 z-1 pr-2 pb-2 text-left text-xs font-bold"
+      </div>
+    {/if}
+
+    <!-- The table: the shared rows-and-columns editor, the cells and prices drawn here. -->
+    <!-- A shared grid's columns are written to its siblings by label: locked until the orders are known. -->
+    {#if grid.columnSet && !orderedReady}
+      <p class="text-text-muted mb-2 text-xs" data-testid="columns-waiting">
+        {m.form_pgrid_colset_waiting()}
+      </p>
+    {/if}
+    <fieldset
+      class="m-0 min-w-0 border-0 p-0"
+      disabled={!!grid.columnSet && !orderedReady}
+      data-testid="grid-table-lock"
+    >
+      <GridAxesTable
+        rows={grid.rows}
+        columns={grid.columns}
+        isDuplicate={(axis, label) =>
+          (axis === 'rows' ? duplicateRows : duplicateColumns).has(productGridLabelKey(label))}
+        onRename={renameEntry}
+        onAddBlank={(axis) => {
+          const added = addBlankEntry(grid, axis);
+          if (axis === 'columns') columnsChanged();
+          return added;
+        }}
+        onAddMany={addPasted}
+        onMove={(axis, from, to) => {
+          const moved = moveAxisEntry(grid, axis, from, to);
+          if (axis === 'columns') columnsChanged();
+          return moved;
+        }}
+        onRemove={removeEntry}
+        maxOf={axisMax}
+        rowPlaceholder={m.form_pgrid_row_placeholder()}
+        columnPlaceholder={m.form_pgrid_column_placeholder()}
+      >
+        {#snippet afterCornerHeader()}
+          {#if mode === 'per_row'}
+            <th scope="col" class="text-text-muted w-24 px-1.5 pb-2 text-left text-xs font-bold"
               >{m.form_pgrid_price_header()}</th
             >
-            {#each grid.columns as column (column.id)}
-              <td class="px-1 pb-2">
-                <span class="{priceBoxClass} justify-center">
-                  <input
-                    inputmode="decimal"
-                    class={priceInputClass}
-                    aria-label={m.form_pgrid_price_column({ label: column.label || '-' })}
-                    value={priceText(column.id)}
-                    onchange={(e) => commitPrice(column.id, e)}
-                  />
-                  <span class="text-text-muted text-xs" aria-hidden="true"
-                    >{m.form_pgrid_euro()}</span
-                  >
-                </span>
-              </td>
-            {/each}
-            <td></td>
-          </tr>
-        {/if}
-      {/snippet}
-      {#snippet afterRowLabel(row)}
-        {#if mode === 'per_row'}
-          <td class="px-1.5 py-0.5">
-            <span class={priceBoxClass}>
-              <input
-                inputmode="decimal"
-                class={priceInputClass}
-                aria-label={m.form_pgrid_price_row({ label: row.label || '-' })}
-                value={priceText(row.id)}
-                onchange={(e) => commitPrice(row.id, e)}
-              />
-              <span class="text-text-muted pl-0.5 text-xs" aria-hidden="true"
-                >{m.form_pgrid_euro()}</span
+          {/if}
+        {/snippet}
+        {#snippet headerRow()}
+          {#if mode === 'per_column'}
+            <tr>
+              <th
+                scope="row"
+                class="text-text-main bg-cn-surface sticky left-0 z-1 pr-2 pb-2 text-left text-xs font-bold"
+                >{m.form_pgrid_price_header()}</th
               >
-            </span>
-          </td>
-        {/if}
-      {/snippet}
-      {#snippet cell(row, column)}
-        {@const closed = isCellClosed(grid, row.id, column.id)}
-        <button
-          type="button"
-          aria-pressed={closed}
-          data-cell="{row.id}:{column.id}"
-          onclick={() => {
-            tableFeedback = '';
-            toggleClosedCell(grid, row.id, column.id);
-          }}
-          aria-label={closed
-            ? m.form_pgrid_cell_closed_aria({ row: row.label, column: column.label })
-            : m.form_pgrid_cell_open_aria({ row: row.label, column: column.label })}
-          title={closed ? m.form_pgrid_cell_reopen_title() : m.form_pgrid_cell_close_title()}
-          class="flex h-11 w-full min-w-18 items-center justify-center rounded-lg text-xs transition-colors max-sm:min-w-0 {closed
-            ? 'border-text-muted bg-cn-surface-alt text-text-main border border-dashed font-bold line-through'
-            : 'bg-cn-surface text-text-muted hover:bg-accent/15 border border-black/10 font-semibold dark:border-white/10'}"
-          ><span class="max-sm:hidden"
-            >{closed ? m.form_pgrid_cell_closed() : cellPriceLabel(row.id, column.id)}</span
-          >{#if closed}<X size={14} class="sm:hidden" aria-hidden="true" />{/if}</button
-        >
-      {/snippet}
-    </GridAxesTable>
+              {#each grid.columns as column (column.id)}
+                <td class="px-1 pb-2">
+                  <span class="{priceBoxClass} justify-center">
+                    <input
+                      inputmode="decimal"
+                      class={priceInputClass}
+                      aria-label={m.form_pgrid_price_column({ label: column.label || '-' })}
+                      value={priceText(column.id)}
+                      onchange={(e) => commitPrice(column.id, e)}
+                    />
+                    <span class="text-text-muted text-xs" aria-hidden="true"
+                      >{m.form_pgrid_euro()}</span
+                    >
+                  </span>
+                </td>
+              {/each}
+              <td></td>
+            </tr>
+          {/if}
+        {/snippet}
+        {#snippet afterRowLabel(row)}
+          {#if mode === 'per_row'}
+            <td class="px-1.5 py-0.5">
+              <span class={priceBoxClass}>
+                <input
+                  inputmode="decimal"
+                  class={priceInputClass}
+                  aria-label={m.form_pgrid_price_row({ label: row.label || '-' })}
+                  value={priceText(row.id)}
+                  onchange={(e) => commitPrice(row.id, e)}
+                />
+                <span class="text-text-muted pl-0.5 text-xs" aria-hidden="true"
+                  >{m.form_pgrid_euro()}</span
+                >
+              </span>
+            </td>
+          {/if}
+        {/snippet}
+        {#snippet cell(row, column)}
+          {@const closed = isCellClosed(grid, row.id, column.id)}
+          <button
+            type="button"
+            aria-pressed={closed}
+            data-cell="{row.id}:{column.id}"
+            onclick={() => {
+              tableFeedback = '';
+              toggleClosedCell(grid, row.id, column.id);
+            }}
+            aria-label={closed
+              ? m.form_pgrid_cell_closed_aria({ row: row.label, column: column.label })
+              : m.form_pgrid_cell_open_aria({ row: row.label, column: column.label })}
+            title={closed ? m.form_pgrid_cell_reopen_title() : m.form_pgrid_cell_close_title()}
+            class="flex h-11 w-full min-w-18 items-center justify-center rounded-lg text-xs transition-colors max-sm:min-w-0 {closed
+              ? 'border-text-muted bg-cn-surface-alt text-text-main border border-dashed font-bold line-through'
+              : 'bg-cn-surface text-text-muted hover:bg-accent/15 border border-black/10 font-semibold dark:border-white/10'}"
+            ><span class="max-sm:hidden"
+              >{closed ? m.form_pgrid_cell_closed() : cellPriceLabel(row.id, column.id)}</span
+            >{#if closed}<X size={14} class="sm:hidden" aria-hidden="true" />{/if}</button
+          >
+        {/snippet}
+      </GridAxesTable>
+    </fieldset>
     <p class="text-text-muted pt-1 text-xs">{m.form_pgrid_close_hint()}</p>
     {#if tableFeedback}
       <p class="text-red-err pt-1 text-xs font-semibold" role="status" data-testid="table-feedback">

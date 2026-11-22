@@ -587,6 +587,8 @@
   "call_relay_disabled": "Call failed: no direct connection, and this server does not use a call relay.",
   "call_relay_withheld": "Call failed: no direct connection, and the server's call relay is unavailable right now.",
   "call_reconnecting": "Reconnecting...",
+  "call_peer_lost": "{name} lost the connection…",
+  "call_peer_lost_unnamed": "The other person lost the connection…",
   "call_minimize_label": "Minimize call",
   "call_speaker_label": "Speaker",
   "call_earpiece_label": "Earpiece",
@@ -633,6 +635,8 @@
   "msg_en_attente": "Pending…",
   "msg_waiting_for_network": "Waiting for the network…",
   "msg_waiting_for_server": "Waiting for the server…",
+  "msg_waiting_for_previous": "Waiting for the previous message…",
+  "salon_post_waits_for_held_messages": "Messages in this salon are still waiting to be sent: try again once they have gone.",
   "msg_echec": "Failed",
   "msg_non_confirme": "Not confirmed",
   "msg_remettre_dans_le_champ": "Put back in the composer",
@@ -889,6 +893,8 @@
   "post_comment_as_association_caption": "Comment on behalf of {name}",
   "post_comment_add_image_label": "Add an image",
   "post_comment_media_error": "Could not attach that media to the comment.",
+  "keyboard_media_refused": "GIFs can't be added here.",
+  "keyboard_media_unreadable": "This GIF could not be read.",
   "post_media_expired_label": "Media expired.",
   "post_image_alt": "Post image",
   "post_zoom_image_label": "Enlarge media",
@@ -3032,7 +3038,7 @@
   "form_answer_edit_hint": "A signed-in person can reopen their answer and change it while the form is open. The questions that set the price stay locked: nothing is recalculated or refunded.",
   "form_answer_edit_hint_free": "A signed-in person can reopen their answer and change it while the form is open.",
   "form_anonymous_label": "Anonymous form",
-  "form_anonymous_hint": "Answers are stored without a name, an e-mail or an exact time: it is only known who has already answered, never what they answered. Free forms only, and permanent once the form is created.",
+  "form_anonymous_hint": "Answers are stored without a name, an e-mail or an exact time: it is only known who has already answered, never what they answered. They appear in small groups, and the last ones once the form is closed. Free forms only, and permanent once the form is created.",
   "form_anonymous_hint_fixed": "Chosen at creation: a form does not become anonymous, or named, afterwards.",
   "form_public_label": "Public form",
   "form_public_hint": "Anyone with the link can answer, without a Canari account, as many times as they like. To know who answered, ask guests for their last name, first name or e-mail below. A guest can pay (price, supplements, on-site payment, a price grid); on a grid by promo, programme or membership, they pay the \"others\" price. The payment e-mail is kept only if you ask for the e-mail.",
@@ -3170,6 +3176,7 @@
   "form_responses_filter_paid": "Paid",
   "form_responses_filter_unpaid": "Unpaid",
   "form_responses_filter_refunded": "Refunded",
+  "form_responses_held_notice": "Answers waiting: {count}. On an anonymous form they appear in groups of {size}, and the last ones once the form is closed.",
   "form_responses_no_match": "No response matches.",
   "form_responses_status_with_method": "{status} · {method}",
   "form_responses_method_online": "Lydia",
@@ -3443,6 +3450,48 @@
   "form_pgrid_cell_open_aria": "{row} {column}: open, click to close",
   "form_pgrid_cell_reopen_title": "Click to reopen",
   "form_pgrid_close_hint": "Click a cell to close a combination that does not exist (Cream in XS, say). The buyer sees it struck through.",
+  "form_pgrid_colset_apply_ordered_confirm": "Answers already exist on this grid's columns. Past orders keep their label and price, but the shared columns replace these ones. Continue?",
+  "form_pgrid_colset_apply_ordered_confirm_button": "Replace",
+  "form_pgrid_colset_in_use": [
+    {
+      "declarations": ["input name", "input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Shared columns \"{name}\": {count} grid. Any change to the columns applies to it.",
+        "countPlural=other": "Shared columns \"{name}\": {count} grids. Any change to the columns applies to all of them."
+      }
+    }
+  ],
+  "form_pgrid_colset_join_matching_confirm": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} other grid has exactly the same columns. Share them too?",
+        "countPlural=other": "{count} other grids have exactly the same columns. Share them too?"
+      }
+    }
+  ],
+  "form_pgrid_colset_join_matching_confirm_button": "Share all",
+  "form_pgrid_colset_join_matching_only_this": "This one only",
+  "form_pgrid_colset_leave": "Stop sharing",
+  "form_pgrid_colset_name_label": "Name of the shared columns",
+  "form_pgrid_colset_name_placeholder": "Name, for example Sizes",
+  "form_pgrid_colset_share": "Share these columns",
+  "form_pgrid_colset_share_hint": "The same columns for several grids: edit them once, they change everywhere.",
+  "form_pgrid_colset_title": "Shared columns",
+  "form_pgrid_colset_use": "Use shared columns",
+  "form_pgrid_colset_use_option": [
+    {
+      "declarations": ["input name", "input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{name} ({count} column)",
+        "countPlural=other": "{name} ({count} columns)"
+      }
+    }
+  ],
+  "form_pgrid_colset_waiting": "Sharing columns is available once the answers already given on this form have been read. Reload the page if this lasts.",
   "form_pgrid_column_label": "Column {n}",
   "form_pgrid_column_placeholder": "Size",
   "form_pgrid_corner": "Rows \\ Columns",
@@ -3490,6 +3539,8 @@
   "form_pgrid_price_row": "Price of row {label}",
   "form_pgrid_problem_in_question": "\"{label}\": {problem}",
   "form_pgrid_refusal_all_closed": "Every cell is closed: reopen at least one.",
+  "form_pgrid_refusal_column_set_diverged": "Two grids that share the same columns no longer have the same ones: change them from either grid, or stop sharing them.",
+  "form_pgrid_refusal_column_set_invalid": "This grid's shared columns need a name.",
   "form_pgrid_refusal_definition": "The grid is incomplete: every row and every column must be filled in.",
   "form_pgrid_refusal_duplicate_label": "Two rows or two columns have the same name.",
   "form_pgrid_refusal_guest_price": "Public form: give \"Others\" a price, it is what a guest pays.",
@@ -4569,6 +4620,9 @@
   "chat_system_call_not_answered": "Call not answered",
   "chat_system_call_declined": "Call declined",
   "chat_system_call_busy": "Contact busy",
+  "chat_system_call_not_connected": "Call not completed",
+  "chat_system_call_connection_failed": "Call failed: the connection could not be established",
+  "chat_system_call_back": "Call back",
   "chat_system_call_duration_under_minute": "less than a minute",
   "chat_system_call_duration_one_minute": "1 minute",
   "chat_system_call_duration_minutes": [
@@ -6503,7 +6557,22 @@
   "qfamily_choice": "Choice",
   "qfamily_grids": "Grids",
   "qfamily_other": "Other",
-  "form_add_wizard_title": "Which type of question?",
+  "qtype_text_block": "Text",
+  "qtype_image_block": "Image",
+  "qtype_desc_text_block": "A heading and a paragraph to read, not answered",
+  "qtype_desc_image_block": "A poster or a logo, not answered",
+  "qfamily_content": "Content (not a question)",
+  "form_block_text_empty": "A text block needs a heading or a paragraph.",
+  "form_block_image_missing": "An image block needs an image.",
+  "form_block_image_alt_default": "Image of the form \"{title}\"",
+  "form_refusal_block_invalid": "A text or image block is empty, or a question depends on a block. Fix it and try again.",
+  "form_block_open_aria": "Edit the {kind} block: {title}",
+  "form_block_text_heading_placeholder": "Heading (optional)",
+  "form_block_image_caption_placeholder": "Caption (optional)",
+  "form_block_text_paragraph_label": "Paragraph",
+  "form_block_text_paragraph_placeholder": "A programme, instructions, rules…",
+  "form_block_text_markdown_hint": "Formatted like the form description: **bold**, *italic*, lists with \"-\", links.",
+  "form_add_wizard_title": "What do you want to add?",
   "form_add_wizard_back": "Back to the question types",
   "form_add_wizard_label": "Question",
   "form_add_wizard_label_placeholder": "Your question",

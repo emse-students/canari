@@ -69,6 +69,7 @@
   import { bindPeerNames } from '$lib/utils/users/peerNameStore';
   import { bindLocalCopies } from '$lib/localCopies/localCopyStore.svelte';
   import { accountLiveness, clearAuthLocally } from '$lib/stores/auth';
+  import { honourOwedNotificationErase } from '$lib/sharing/shareTargetsNative';
   import { startDeletedAccountGuards } from '$lib/utils/deletedAccountGuards';
   import MlsFatalErrorBanner from '$lib/components/shared/MlsFatalErrorBanner.svelte';
   import PublishQueueBanner from '$lib/components/posts/PublishQueueBanner.svelte';
@@ -98,6 +99,7 @@
   } from '$lib/utils/swipeNavigation';
   import { onTouchGestureEnd } from '$lib/utils/touchGestureEnd';
   import { installPressedClickGuard } from '$lib/utils/pressedClickGuard';
+  import { installKeyboardMediaDispatcher } from '$lib/utils/keyboardMedia';
   import { claimTouchMove } from '$lib/utils/touchClaim';
   import { hasActiveTextSelection, onTextSelectionActive } from '$lib/utils/textSelection';
   import { onViewportChange, SWIPE_NAV_QUERY } from '$lib/utils/viewport';
@@ -187,6 +189,9 @@
     markRouterReady();
     // A click goes to the component the press began on, never to what a layout change put under it.
     const disposePressedClickGuard = installPressedClickGuard();
+    // A GIF committed by the soft keyboard goes to the focused composer, or the member is told it
+    // cannot go there: one owner for the whole app (utils/keyboardMedia.ts).
+    const disposeKeyboardMedia = installKeyboardMediaDispatcher();
     // A page that has just loaded holds no call: an ongoing-call service still up is the orphan of
     // the page before it (a reload mid-call). Once per page load (WP-C-BG-A).
     if (isAndroidTauriRuntime()) {
@@ -222,6 +227,9 @@
 
     // Reclaim the avatar bucket this client no longer writes. Idempotent, and free once it is gone.
     void purgeRetiredAvatarCache();
+    // A sign-out the app did not live to finish still owes the erase of what the message
+    // notifications handed the system (`honourOwedNotificationErase`). Nothing when none is owed.
+    void honourOwedNotificationErase('launch');
     // The per-install id older builds sent to KLIPY with every GIF search (`retiredKlipyCustomerId.ts`).
     dropRetiredKlipyCustomerId();
     // A DM read mark a killed process still owed goes to the outbox the moment one is registered,
@@ -248,6 +256,7 @@
     return () => {
       cancelRestore(); // a restore left running would keep its document key listener
       disposePressedClickGuard();
+      disposeKeyboardMedia();
       stopOwedDmMarkDrain();
       stopDeletedAccountGuards();
       disposeDynamicType();

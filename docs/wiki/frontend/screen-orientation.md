@@ -14,7 +14,7 @@ turning screens:
 - **a live keeps the broadcaster's orientation**: a viewer in portrait sees the whole landscape
   picture with bars, and goes full-screen landscape by turning the phone or with the button.
 
-The work is three steps, tracked in [the backlog entry](../backlog.d/rotation-on-video-and-camera-screens.md).
+The work is three steps, read and closed on 2026-11-22 (the backlog entry was deleted, [decisions](../backlog.d/owner-decisions-of-2026-11-22.md)).
 This page is the mechanism.
 
 ## Ownership - one stack of requests, released on unmount
@@ -317,7 +317,7 @@ Found by the adversarial review of 2026-11-09 and accepted as they are (no code)
 ## Readings owed on the phones
 
 Native is verified by COMPILING, which proves nothing about running. Each row on a pre-release, on the
-Mi 9T and the iPhone 12, is in [the backlog entry](../backlog.d/rotation-on-video-and-camera-screens.md#readings-owed-on-a-pre-release).
+Mi 9T and the iPhone 12, is in the verification tables (the backlog entry was deleted 2026-11-22).
 
 ## A turned phone is still a phone, and a full-screen place draws no chrome (2026-11-11)
 

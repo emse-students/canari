@@ -538,6 +538,16 @@ Welcome delivered without one leaves none - and read ONCE per Welcome, on succes
 that threw alike. A
 redelivered Welcome of a group already held joins nothing and asks nothing.
 
+**The ask of a pre-`1.7.0` client, pinned without one (2026-11-22, `1.7.3-alpha.6`).** No `1.6.x` build can be installed
+beside a pre-release to send the real frame, so `systemMessageHandler.askId.test.ts` feeds the handler the frame that
+`sendHistoryDigest` produced as tagged `v1.6.12` - `{ from, digest, since, requestId }`, no `answerKey` field at all -
+twice from one sender: one `HISTORY_DIGEST` keyless line, nothing pulled, answered or stored. The live read stays
+impossible until a `1.6.x` client can be installed.
+
+**Open measurement:** the floor is enforced in the client only, so a build below `1.7.0` that has not met the gate can still
+send a keyless ask and the frame carries no build to name. How many senders are still below the floor is not measured; that
+count decides when the `history-ask-without-answer-key` line can go.
+
 ### What proves the register ask and the state-only push
 
 - `registerOwed.test.ts` - the entry: durable, per account, bounded FIFO, an unreadable list reads

@@ -1094,8 +1094,8 @@ Notification Center over an open app was lost. The fix:
   selection), `androidQuickReplyHandoff.test.ts` (the route on the guard, the line written, recorded
   and drawn sending before the page is told, the settlement wiring), the Android cases of
   `quickReplyDrain.test.ts` (the sweep before any take), and `an_android_hand_over_*` and
-  `the_sweep_reads_the_waiting_ids_without_claiming_them` in `quick_reply_tests`. The reading:
-  [backlog](../backlog.d/reading-owed-an-inline-reply-typed-over-the-open-app-goes-out-at-once.md).
+  `the_sweep_reads_the_waiting_ids_without_claiming_them` in `quick_reply_tests`. Read on a phone (2026-11-22, `1.7.3-alpha.6`)
+  and pinned by `quickReplyDrain.test.ts` for the page that dies holding a reply.
 - `CanariHandleQuickReplyAction` asks the fact first (`canari_ios_page_holds_mls`, Rust
   `live_manager_in_process`).
 - When a manager is loaded, `CanariHandQuickReplyToPage` APPENDS the reply to
@@ -1484,7 +1484,7 @@ altool failure, a validation rejection included, still fails the step.
 
 - Decrypts MLS ciphertext via Rust FFI (`canari_native_decrypt_message`)
 - Decrypts media thumbnails via Rust FFI (`canari_native_decrypt_media`)
-- Builds visible notification content (title, body, attachment, category, badge)
+- Builds visible notification content (title, body, attachment, category, badge) and, for a DM or group message, redraws it as a communication notification (see "Communication notifications" below)
 - Writes decrypted messages to `fcm_message_cache.ndjson` in the App Group container, which the app drains into its own `app_data_dir` and pre-injects at boot (see "FCM message cache")
 - Runs the same background MLS decrypt ladder as Android (direct decrypt → catch-up-first for local groups → Welcome-race retry for genuinely absent ones → nothing at all when the locality is `UNKNOWN`)
 - Budget: ~30 seconds; 2 MB media cap
@@ -1500,6 +1500,168 @@ The NSE shares data with the main app via App Group `group.fr.emse.canari`:
 (`channel_keys.json`, the epoch-key mirror Graine replaced, had no reader left; the first run of a 2026-10-22 build deletes it.)
 
 The NSE does **not** write `mls.bin`, process Welcome pushes, or drain the outbox. Those remain app-process responsibilities.
+
+### Communication notifications (owner, 2026-11-21)
+
+**The decision.** A chat message on the iPhone is a *communication notification*, as WhatsApp's are:
+the banner shows the sender's face as its avatar and the group's name, and the member can let Canari
+(or chosen people) through a Focus. Posts, social notifications, reactions and salons stay as they
+were (salons: a community channel is not a conversation between people in Apple's sense - a
+reversible choice, taken because the owner named "messages"; one line in `dispatch` changes it).
+
+**The mechanism** (`canari_NSE/NotificationService.swift`, `applyMessageContent` ->
+`applyCommunicationStyle`), in Apple's order ([Implementing communication
+notifications](https://developer.apple.com/documentation/usernotifications/implementing-communication-notifications)):
+
+1. The plain notification is built exactly as before - title, subtitle, body, thread, category,
+   level, thumbnail or face attachment, badge. **It is complete before the step starts**, so an
+   expiry (`serviceExtensionTimeWillExpire`) delivers it whatever the step is doing.
+2. `messageIntent` builds an incoming `INSendMessageIntent`: the sender as an `INPerson` (handle and
+   custom id = their user id, the display name the banner already shows - the conversation nickname
+   when there is one -, the image = the face file the attachment used, else the initials disc as PNG
+   bytes); `conversationIdentifier` = `c:<groupId>`, the share suggestions' id, so a conversation the
+   share sheet offers from these donations reaches the Share Extension in the shape it reads; for a
+   group, `speakableGroupName` = the title the banner uses (an unnamed group's "Conversation de
+   groupe") and ONE recipient standing for "the others" (below); `content` nil. A proven mention of
+   the member sets `INSendMessageIntentDonationMetadata.mentionsCurrentUser`.
+3. `INInteraction(intent:)`, direction `.incoming`, group identifier
+   `fr.emse.canari.message-notifications`, `donate`. **Only in the donation's completion** is the
+   content redrawn: `adoptCommunicationContent` copies the plain content without the avatar
+   attachment (the face moves to the banner's left; a media thumbnail stays), calls
+   `updating(from: intent)`, and swaps the result in as the best attempt, under `deliveryLock` and
+   only while the run is unanswered. Then `finish`.
+
+**No clock, no new fetch.** The step's one end is the donation's completion; if it never comes,
+the system's expiry is the bound, it delivers the plain notification, and the trace's stage reads
+`donate` - so a donation that hangs is visible in `nse_outcomes`, not hidden behind a timeout. The
+face is read from local files only: the run that fetched the avatar for the attachment (unchanged,
+as before) hands that file over, and a run whose attachment slot a thumbnail took reads the 24h App
+Group cache alone (`cachedAvatar`) - it never fetches.
+
+**The degraded path, and it is a signal.** A refused donation or a refused `updating(from:)` delivers
+the plain notification (exactly the pre-2026-11-21 banner) and logs `WARN communication style not
+applied - ...` with the error's type, domain and code, never its text. A payload that names nobody to
+draw (no conversation id, no sender id, no sender name) is not a failure: `communication style
+skipped reason=...` at `notice`. The applied case logs `communication style applied isGroup=...`.
+No line carries a name or a message (`nativeLogContent.test.ts`).
+
+**A group's one recipient stands for the others.** Apple draws a group only when `recipients` names
+someone besides the sender and the member, and the extension does not know the members - the push
+names the sender and the conversation only, and adding the member list to it would hand Google and
+Apple what content-free push removes ([content-free push](../protocols/content-free-push.md)). So
+the one recipient is an `INPerson` whose handle is the conversation id and whose name is the group's,
+with no face. Reversible; the iPhone row "groups show their name" is its proof.
+
+**What the app declares.** `com.apple.developer.usernotifications.communication` in
+`canari_iOS.entitlements` - on the APP target only, as Apple asks; the extension's entitlements are
+unchanged - and `INSendMessageIntent` in `NSUserActivityTypes` (`canari_iOS/Info.plist`, already
+there for the share suggestions). Intents is autolinked by the extension's `import Intents`.
+**The App ID carries the capability - portal step DONE 2026-11-21.** The profiles are named,
+manual and stored as secrets (`APPLE_PROVISIONING_PROFILE`, see "iOS project"), so CI's signing
+cannot add one: the owner enabled "Communication Notifications" on `fr.emse.canari` in the Apple
+Developer portal, and the regenerated "Canari" distribution profile (expires 2027-07-11) replaced the
+secret on 2026-11-21; the bench development profile `app.mobileprovision` was regenerated too
+(expires 2027-11-21). Both carry the communication and time-sensitive entitlements. A profile
+regenerated later without the capability fails a release at codesign ("profile doesn't include the
+... entitlement") - the pull request's unsigned compile cannot see it.
+
+**Erased at sign-out, and none made after it (review of #3938).** The donations name senders and
+carry faces, so they leave with the account: `eraseAccountShortcuts` asks
+`clear_conversation_shortcuts` on iOS too (Android's command for its `chat_<group>` shortcuts),
+which deletes the donation group (`ShareSuggestions.clearMessageNotifications`,
+[sharing](sharing.md#share-suggestions-ios---lot-s5)). Deleting is not enough on its own: a push
+can still arrive after the sign-out (the server's deregistration lags), and its payload alone would
+donate the leaving account's sender again. So:
+
+- **No donation without a signed-in account.** The proof is `push_context.json` WHOLE in the App
+  Group - written at sign-in, stripped of `baseUrl` by the sign-out (`keep_device_context_only`).
+  Without it the step skips with `reason=no-account-context` (also the answer before the first
+  unlock, when the file cannot be read: no donation is the safe side).
+- **Strip first, erase second.** `clearAuthUnderway` hands `endPushRegistration`'s promise (which
+  strips the context and never rejects) to `eraseAccountShortcuts`, whose notifications' half runs
+  only once it settled.
+- **The erase is OWED ON DISK, not in that promise** (re-review of #3938). The promise settles only
+  after the FCM token deletion and a fresh token fetch - seconds offline - and an app swiped away
+  meanwhile never runs what is chained on it. So the sign-out writes
+  `notification_shortcuts_erase_owed` (`owed <n>`) with its two push marks, BEFORE the strip
+  (`end_push_registration_files`, `push_registration.rs`); the erase reads `n` before asking the
+  native side and settles exactly that `n` once it answered (`done <n>`, the count only grows, so an
+  erase begun for one sign-out never settles a later one's), and a failed erase stays owed.
+  `honourOwedNotificationErase` completes one still owed **at launch** (the root layout) and
+  **before a session's push context is stored** (`storeSessionPushContext`) - before the extension's
+  proof of an account exists again. The wipe of a revoked device keeps the mark, as it keeps the
+  other two. Same mark and same honouring on Android, for the `chat_<group>` shortcuts. A mark that
+  cannot be READ is erased anyway (never settled) with an `error` that says so. And a sign-out's
+  own erase carries its TICKET - the count `end_push_registration` wrote into the mark, answered in
+  `PushRegistrationEnd.eraseTicket` - and finds nothing owed only once that mark was settled (by a
+  honour run before the next session's context): it skips, since erasing now would take the next
+  account's fresh donations. A sign-out whose mark could not be written has no ticket and always
+  erases - nothing durable proves its erase was done. Both `push_context.json` files (the app's
+  and the App Group copy) are written tmp + rename, so a reader never takes half a file for a
+  signed-out one.
+- **A donation the sign-out overtook withdraws itself.** Each interaction carries its own id; when
+  its donation completes, the extension reads the context again (`signedInUserId`) and, if it no
+  longer names the donor, deletes exactly that interaction. A donation that completed before the
+  strip was taken by the group delete; one completing after it is seen here - every order is
+  covered, none by a clock. **The run is answered inside the delete's completion**, on its success
+  and its error alike (an error logs `ERROR` with its type): answered beside it, the extension could
+  be reaped with the delete still in flight.
+- **And its banner is blanked, the iOS form of a push dropped after a sign-out.** The plain banner
+  would still name the account that left's sender; an extension cannot suppress an alert push
+  without the filtering entitlement (`LevelDecision`), so `blankSignedOutContent` delivers it with
+  no title, body, face or sound, `passive` - what `applyCallControlContent` does for a call signal.
+  Blanked BEFORE the delete is asked, so an expiry meanwhile delivers the blank one. **The expiry
+  blanks too**: a run that drew a message records whose account it names (`namesContentOf`), and
+  `serviceExtensionTimeWillExpire` blanks it when `signedInUserId` no longer names that account.
+- **Account deletion goes the same way.** `SettingsDangerZone` ends in `clearAuth('account-deleted')`
+  and another tab's deletion in `clearAuthLocally`, both `clearAuthUnderway`: the same strip and the
+  same erase.
+
+**A group's mention declares its recipient count.** `INSendMessageIntentDonationMetadata.recipientCount`
+overrides the recipients array's count and is 0 unless set, which would draw a group's mention as a
+direct message. A mention in a group declares 2 (`mentionedGroupRecipientCount`: the member and the
+stand-in, the smallest group) and in a DM 1; the real count is not known here and is not sent.
+
+**The stand-in may surface in Siri's suggestions.** The recipient that stands for a group's other
+members is an `INPerson` named after the group, with `suggestionType: .none`, so iOS never proposes
+it as a contact. Siri may still offer it among Canari's conversations - as it may the share
+suggestions' groups - a known effect, said here so a reader of the phone does not take it for a
+person.
+
+**An unreadable face is said apart from a missing one.** The face file is read with a `do`/`catch`:
+`source=initials-no-face` when none was held, `initials-face-unreadable` (and a `notice` with the
+error's domain and code) when it was held and could not be read; the initials disc is drawn in both.
+
+**Principle 1 - "Vos messages sont à vous"** ([principes](../../principes.md), the first and the one that wins).
+What this adds, and where it goes:
+
+- **No request leaves the phone that did not before.** The step makes no network call; the face is a
+  file the extension already had.
+- **The donation stays on the device.** `INInteraction.donate` writes to the system's on-device
+  interaction store (what Siri suggestions, the share sheet and Focus read); Apple documents no
+  upload of a donation, and nothing here asks for one. What Apple says beyond that - Siri
+  suggestions synced between the member's own devices through iCloud, end-to-end encrypted - is
+  Apple's statement, not measured here.
+- **What the donation holds is what the banner already shows**: the sender's name and face, the
+  group's name, and two opaque ids. **Never the message**: `content` is nil. The banner's body, which
+  iOS already held before this change, is unchanged.
+- **What changes for the member**: those names may now be suggested by the system (share sheet,
+  Spotlight, Siri suggestions), as the iOS share suggestions' already are (register row C22, the
+  privacy policy's iPhone row - both updated), and they are erased at sign-out.
+
+**The share-suggestions setting does not stop these donations** - owner, 2026-11-21:
+*"Non, comme sur Android"*. "Suggestions dans le partage" covers the share suggestions only, as on Android, where
+the notifications' `chat_<group>` conversation shortcuts are published whatever the setting. Weighed
+against principle 1 ([principes](../../principes.md)): the donations hold no message and never leave the phone, the member is TOLD -
+register row C22 and the privacy policy's iPhone row say that message notifications hand iOS their
+sender's name and face whatever that setting, and that only a sign-out erases them - and turning the
+setting off still removes the share sheet's own suggestions.
+
+**What is NOT covered.** A banner the APP draws while it is alive (`canari_push.mm`
+`CanariShowMessageNotification`) stays plain; the extension draws the push banners.
+**Compiled by CI only; owed on the iPhone 12** - Focus with Canari allowed lets a message through,
+Focus without it holds it back, the avatar shows, groups (and their mentions) show their name, a signed-out phone donates nothing
+([backlog](../backlog.d/ios-communication-notifications.md)).
 
 ### The extension's copy of the state follows every write (2026-11-05)
 
@@ -1780,7 +1942,11 @@ never flashes), hidden - not unmounted - while the keyboard is up or a conversat
 hidden at `md` width like `md:hidden`. A tap `goto`s the place; the ROUTE drives the selection
 back (`selectTab`). What the bar covers is the plugin's `getTabBarInsets`, written to
 `--bottom-nav-reserve` - the one variable `.page-scroll-wrap`, `.mobile-nav-inset` and the
-keyboard's scroll padding reserve (`app.css`), whose web value is the old `4rem` + safe area.
+keyboard's scroll padding reserve (`app.css`), whose web value is the web bar's `3rem` + its 1px
+border + the safe area. Below iOS 26 the bar is the CLASSIC full-width `UITabBar` and its measured
+inset is its own height (83 on a notched iPhone), so an opaque classic bar sits flush on the content
+like the glass pill; which phone gets which chrome is tabled in
+[design-reference](design-reference.md) (the report of 2026-11-22, a `1.6.x` build).
 
 **Two limits taken knowingly, and one the patch removed:**
 - **Icons only, and VoiceOver names no tab** (user, 2026-09-29). The plugin's `title` is both the
@@ -2376,7 +2542,17 @@ being a SIGABRT from the looper callback, so read the frames below `cb_handler` 
 replaces, and asserts the `=0.57.1` pin and a lockfile entry with no registry `source`. The device
 reading is owed:
 [device-verification](../device-verification.md#wmp-the-wry-main-pipe-after-an-activity-destroy---owed-on-android).
-The fork is deleted once an upstream release carries every hunk.
+
+**One hunk is PERMANENT, so the fork is no longer deleted when upstream carries the main-pipe fixes.**
+`src/android/kotlin/RustWebView.kt` (a Kotlin template, not Rust) overrides
+`onCreateInputConnection` to hand the WebView's input connection to the app's `KeyboardMediaBridge`,
+which is what lets the soft keyboard commit a GIF. That is an app hook upstream will never carry,
+and it has to live in the TEMPLATE: wry's `build.rs` rewrites `gen/android/.../generated/` from it on
+every Android build, which is how the hook, first written in the generated copy, was lost for four
+months ([chat](modules/chat.md#android-keyboard-media-commitcontent)). Once an upstream release carries
+every main-pipe hunk, the fork stays as a re-applied template patch: the next rebase takes the
+upstream crate whole and re-applies this one hunk, which
+`.github/scripts/tests/android-keyboard-media-hook.test.mjs` fails without.
 
 ### A modal closed by its owner's state left the overlay stack, and the tab swipe stood down (2026-10-09)
 
@@ -3818,9 +3994,9 @@ updated in place, which keeps the class it was added with. Firebase's own Keycha
 - **The at-rest markers no longer travel either.** They stayed in the backup on purpose, so a
   restored data set without its key read as a typed state. Excluded together with the data they
   describe, they have nothing left to type; a backup older than 1.7.2 still carries both.
-- **The device reading** is owed on the iPhone 12
-  ([entry](../backlog.d/reading-owed-ios-local-data-out-of-backups.md), and for the App Group store
-  [its own](../backlog.d/reading-owed-ios-app-group-store-out-of-backups.md)).
+- **The device reading passed on `1.7.3-alpha.5` (iPhone 12, 2026-11-22):** `6/6` at three cold launches
+  and a `backup2` with no file in the app, the App Group or either extension domain; the per-file passes
+  it releases are deleted by [this entry](../backlog.d/reading-owed-ios-local-data-out-of-backups.md).
 
 ### The native caches are sealed at rest, and kept out of backups (2026-10-22)
 
@@ -4173,8 +4349,9 @@ needs "can a retry ever succeed".
   goes to `outbox_journal.ndjson` under its own short lock, and every holder of the mirror lock
   folds it in first -
   [chat-delivery](../services/chat-delivery.md#the-outbox-mirror-has-two-writers).
-  The readings: [backlog](../backlog.d/reading-owed-the-outbox-retry-outlives-a-backend-outage.md),
-  and for the warm page [backlog](../backlog.d/reading-owed-a-warm-page-keeps-and-adopts-a-shade-reply.md).
+  Read on a phone and pinned by tests (2026-11-22, `1.7.3-alpha.6`): the retry in
+  [the retry section](#the-retry-ends-on-durable-state-never-on-a-count-173), the warm page in
+  [chat-delivery](../services/chat-delivery.md#the-outbox-mirror-has-two-writers).
 
 **ONE ENTRY, ONE SEND.** `drainOutboxBackground` reads the mirror, encrypts, POSTs and only then
 rewrites it, so two drains overlapping both sent the same entry - measured the same day, the
@@ -4183,6 +4360,15 @@ generation. Every native read-modify-write of the mirror (the drain, after foldi
 `enqueueOutboxMirror` appends to) holds one process lock, `OUTBOX_LOCK`, taken before
 `MlsStateLock`; the second drain waits and reads the mirror the first one rewrote. The append
 itself takes only the journal's lock, so a shade reply is on disk before any drain's POSTs end.
+
+**Pinned by tests, not by a bench (reading of 2026-11-22, `1.7.3-alpha.6`).** A validated-network outage for one
+app cannot be produced on a bench (a per-app deny leaves the worker unscheduled, so no run happens) and the shared dev
+backend may not be made to answer 5xx, so the "several failed runs before a success" row is
+`OutboxRetryTest.kt` (`twenty-five failed runs in a row never end it...`: 25 retry decisions, no `NEVER` prospect, then
+a drained queue ends `DONE`); the in-front run ending its request is `a run in front ends its request`, the refused
+entry beside one that can go is `a refused entry is told and does not strand the ones that can still go`, and the
+refused entry adopted failed with its Retry is `outboxMirror.ownership.test.ts` (`an unsendable native line is adopted
+FAILED`).
 
 #### The outbox nudge
 
@@ -4254,9 +4440,9 @@ reply's own "not sent yet" line, and the nudge had no counterpart.
   through `android16-release` and `main`. Measured too: on the Mi 9T, a 9998 nudge standing on
   1.7.3-alpha.1 was gone after `adb install -r` of alpha.2, and the shade held no Canari
   notification at all. So no code cancels `FixedNotifIds.WORKER_FOREGROUND` BY ID
-  (`androidOutboxNudge.test.ts` fails on any `cancel` of it in the service or the two workers). The
-  app-open sweep cancels every messages-channel record by `sbn.id`, a standing 9998 included; the
-  platform refuses that cancel while the record is a foreground-service record.
+  (`androidOutboxNudge.test.ts` fails on any `cancel` of it in the service or the two workers). (Until 2026-11-21 an
+  app-open sweep cancelled every messages-channel record by `sbn.id`, a standing 9998 included, and the
+  platform refused that cancel while the record is a foreground-service record; the sweep is gone.)
 - **Residual.** The app's own `store_outbox_mirror` rewrite does not settle the nudge: a mirror the
   WebView empties in the background leaves the nudge up until the next drain, worker run or open.
 - **Read on the Mi 9T, 1.7.3-alpha.2**: the nudge goes up under 999 and leaves with the reply a
@@ -4302,6 +4488,8 @@ Notes on the adoption pass:
 - `read_outbox_mirror` deliberately does **not** clear the file: the mirror stays authoritative for the background service until the next rewrite.
 - The proto is decoded, not replayed opaquely, so an adopted entry becomes a first-class `text`/`reply` that the flusher re-encodes identically (same `messageId`, same `sentAt`). A `silent` entry stays `control` — sent verbatim and without a push, which is what silent means. Anything else logs and is left alone.
 - A delivered send is removed from the mirror by the native drain, so an entry still present was not delivered. Should one race through, `reconcileOutboxSent` deletes it moments later; adoption is idempotent on the stable `messageId` either way.
+- **No entry is queued without its row (2026-11-22).** A text or a reply is adopted ROW FIRST, ENTRY SECOND, and only once `getConversation` finds its conversation stored; otherwise the line stays native (one WARN per page life) and **the write of that conversation's row adopts it**: SQLite's `saveConversation`/`mergeConversation` announce every row (`db/conversationStored.ts`), and the outbox controller runs a pass when a waiting line names it. A conversation this device deleted is never written again; what its line becomes is [an open question](../open-questions.md#a-native-line-naming-a-conversation-this-device-no-longer-stores-parked-2026-11-22). The row is the ENVELOPE an own send stores (`ownRowOfQueuedText`: `serializeEnvelope(mkTextEnvelope(text, quote))`), never the raw text, so a reply keeps its quote and a JSON-looking text stays text. **Claim passes run one at a time** (`claimNativeEntries` chains the start pass, the return to the front and the row-write pass): two passes that read before either wrote re-inserted an entry a flush had sent in between. Until then the entry was queued first and the row written "best-effort": on the Mi 9T (1.7.3-alpha.6) a shade reply to a group whose Welcome this device had not yet processed had its row refused by SQLite's foreign key (`messages.conversation_id`), and the entry stayed queued alone - parked failed (the native drain had marked it unsendable on a 403), invisible and undeletable, and accused at ERROR (`is queued with no stored message`) on every page life for a day. The comment beside the write claimed the flusher would drop such an entry; it parks it. The order is safe because the mirror line is the durable record until the queue holds it: a tear between the two writes leaves the row, and the line is adopted at the next pass. An entry already left alone by an older build gets its row back from its own text in `restoreQueuedRow` (one accusing line, then nothing: the row exists). Pinned by `outboxMirror.ownership.test.ts`.
+- **An unsendable line carries its cause (2026-11-22).** The Android drain writes `unsendableCause` beside the mark, typed where the answer is read (`push/UnsendableCause.kt`: `refused` for a final 4xx, `not_encryptable` for a frame the batch could not encrypt for good), and `outbox_mirror.rs` keeps it through the page's write (`NATIVE_VERDICTS`). The page adopts it as `OutboxEntry.nativeRefusal` (encrypted payload; `unrecorded` for a line an older build marked), and `terminalFailureCause` says the failure as that cause. Before, the adopted entry, parked at the 5xx bound, was logged "the server answered 5xx on 5 attempts in a row" for what was a 403. The member's Retry clears it. Pinned by `QueuedSendAnswerTest.kt` (every NEVER cause has a verdict, no other has), `outboxMirror.adopt.test.ts` and `outboxMirror.ownership.test.ts`.
 
 #### The drain is a BATCH, and every part of its shape is load-bearing (WP-ANR-1, 2026-08-11)
 
@@ -4365,7 +4553,7 @@ uninstall and therefore that phone's identity and history.
 
 ### Keyboard media (Android)
 
-`KeyboardMediaBridge.kt` intercepts `InputConnection.commitContent` to handle GIF/sticker commits from the soft keyboard. Dispatches `canari-keyboard-media` DOM events picked up by `MainChatPage` → routed through the normal media pipeline.
+`KeyboardMediaBridge.kt` intercepts `InputConnection.commitContent` to handle GIF/sticker commits from the soft keyboard. Dispatches `canari-keyboard-media` DOM events routed by ONE dispatcher (`utils/keyboardMedia.ts`) to the focused composer, or refused with a toast → through the normal media pipeline. Its one hook is in the vendored wry template, not in `generated/`, which every Android build rewrites - the hook was lost that way for four months ([chat](modules/chat.md#android-keyboard-media-commitcontent)).
 
 ### OIDC login opens a dedicated in-app browser session (WP-OIDC-TAB-1, Android shipped and verified 2026-08-08; iOS verified on hardware 2026-08-27)
 
@@ -5234,6 +5422,12 @@ See [`cicd.md`](../cicd.md) for the full pipeline.
 ## Notification quick actions are on every Android message notification, whoever posts it (resolved 2026-09-18, audited 2026-10-10)
 
 The 2026-09-06 measurement (a notification posted by the WebView carried no actions, so check K's backgrounded case could not be performed) described a world with TWO builders. Since 2026-09-18 the WebSocket frame is a second TRIGGER for the ONE Kotlin builder ([nativeNotification.ts](../../../frontend/src/lib/utils/nativeNotification.ts) -> `notify_native_message` -> `showMessageNotification`, `quickActions = true` by default), so a backgrounded message carries Reply and Mark as read like a pushed one. The only conversations without them are reactions (`quickActions = false`) and salons (a \`channel_\` id), whose send is server-authoritative. What is still owed is the HAND: answering a backgrounded shade (NOTIF-6c).
+
+**A page that dies holding a reply is pinned by `quickReplyDrain.test.ts`** (`a reply taken by a session that died is
+settled by the next one`, 2026-11-22): the kill inside the 134 ms window between the hand-over and the page's
+settlement cannot be timed from a shell, so the next session is staged - its queue holding the id is acknowledged
+`pending` (`is held by the page (pending)`), an empty queue `lost` (the `LOST` error line), and a sign-out settles the
+account's unsettled replies (`sign-out: the account's unsettled replies are settled`).
 
 ## WP-RESTORE-1 - Zero-Tap Sign-In restoration (accepted 2026-08-26, built 2026-10-18)
 

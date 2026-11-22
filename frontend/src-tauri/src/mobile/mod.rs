@@ -12,6 +12,11 @@
     allow(dead_code)
 )]
 
+// One notification per message on an iPhone, whichever process draws it: the ledger the app and
+// its notification extension share in the App Group. iOS only - Android has one builder.
+#[cfg(any(target_os = "ios", test))]
+pub mod announced;
+
 #[cfg(any(target_os = "android", target_os = "ios", test))]
 pub mod background;
 

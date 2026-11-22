@@ -1,6 +1,8 @@
 ## P1 - push payloads carry nothing for Google and Apple (owner, recorded 2026-11-01; decided and built 2026-11-02, switch OFF; raised from P2 on 2026-11-10 by principle 1 of the charter)
 
-target: 1.7.3
+target: 1.8.0
+
+_2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
@@ -186,7 +188,7 @@ scheduled; an action that throws does not strand the ones behind it (`WakeOrderT
 clock as a recorder fired by hand, so no test asserts a wall clock).
 
 The one "could not be loaded" notification is cancelled by id when the app comes to the foreground
-(`cancelAllMessageNotifications`), and is not counted as an unread conversation. Its id, 9995, sits
+(`retireTakenOverNotifications`), and is not counted as an unread conversation. Its id, 9995, sits
 with every other fixed notification id in `FixedNotifIds`, which the conversation-id counter
 (`getStableNotifId`, from 1000, only growing) now steps over, so no conversation can be handed it.
 The server writes `[PUSH_WAKE] served|gone` per fetch, so **sends with `mode=wake` minus fetches

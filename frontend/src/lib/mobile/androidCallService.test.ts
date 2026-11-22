@@ -5,6 +5,7 @@ vi.mock('$lib/utils/sessionLog', () => ({
   appendLog: (msg: string) => logs.push(msg),
 }));
 
+import { m } from '$lib/paraglide/messages';
 import {
   NATIVE_CALL_EVENT,
   callStartsOnSpeaker,
@@ -137,6 +138,13 @@ describe('ongoingCallSpec - when the service holds the call', () => {
     expect(ongoingCallSpec('connecting', true, facts(null, false))).toMatchObject({
       connectedAtMs: null,
       speaker: false,
+    });
+  });
+
+  it('says the peer is lost before the first connection, with no chronometer', () => {
+    expect(ongoingCallSpec('peer-lost', true, facts(null, false))).toMatchObject({
+      text: m.call_peer_lost({ name: 'Bob' }),
+      connectedAtMs: null,
     });
   });
 

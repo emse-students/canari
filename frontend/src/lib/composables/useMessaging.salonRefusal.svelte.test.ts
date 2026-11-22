@@ -39,6 +39,7 @@ import {
   settleSalonListing,
 } from '$lib/utils/graine/salonSendGate';
 import { m } from '$lib/paraglide/messages';
+import { forgetSalonSendsOfEndedSession } from '$lib/utils/chat/messaging';
 
 const CHANNEL = 'channel_12cf41f3-0000-0000-0000-000000000000';
 
@@ -76,6 +77,8 @@ describe('a salon text send', () => {
     // The salon is LOADED for every test below unless one says otherwise (`salonSendGate`).
     resetSalonSendGate();
     openSalonSendGate(CHANNEL);
+    // A send a previous test left held would make every send here wait its turn behind it.
+    forgetSalonSendsOfEndedSession();
   });
 
   it('shows the row at once and re-keys it to the server id on the answer', async () => {
@@ -209,14 +212,20 @@ describe('a salon text send', () => {
     expect(rows(ctx)).toHaveLength(0);
   });
 
-  it('a gateway 5xx after the save is an UNKNOWN outcome too, not a refusal', async () => {
-    // A 502/504 may come from a proxy after the social service stored the row.
-    for (const status of [500, 502, 504]) {
+  it('a 5xx after the save is not a refusal: a 500 is unconfirmed, a 502/504 held for the server', async () => {
+    // A 502/504 may come from a proxy after the social service stored the row: "not now" (R05),
+    // held at once - every estate answers a repeat with its row (migration 090).
+    for (const [status, expected] of [
+      [500, 'unconfirmed'],
+      [502, 'pending'],
+      [504, 'pending'],
+    ] as const) {
+      forgetSalonSendsOfEndedSession();
       sendMock.mockRejectedValueOnce(new ApiRefusalError(status, null, 'gateway'));
       const { useMessaging } = await import('./useMessaging.svelte');
       const ctx = makeContext();
       await useMessaging().handleSendChat(ctx, `five-oh-${status}`);
-      expect(rows(ctx)[0]).toMatchObject({ status: 'unconfirmed', awaitingServerId: true });
+      expect(rows(ctx)[0]).toMatchObject({ status: expected, awaitingServerId: true });
     }
   });
 

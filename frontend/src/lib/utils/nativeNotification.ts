@@ -27,7 +27,8 @@
  * this session has not measured). It is the only builder those engines have.
  */
 
-import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
+import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion';
+import type { AnnouncedMessage } from '$lib/utils/chat/announcedMessages';
 
 /**
  * What the native builder needs in order to render the same notification for both triggers.
@@ -73,6 +74,14 @@ export type NativeMessageNotification = {
    * answer up to N pushes, not one (Mi 9T, 2026-10-06: `messages=5`, three pushes, one answered).
    */
   covers: number;
+  /**
+   * EVERY INBOUND MESSAGE THE BANNER STANDS FOR, its sender and its instant - `sentAt` for a live
+   * frame, each of the flush's for a catch-up: the sender's for an MLS message, the server's
+   * `createdAt` for a salon, the instant the push carries too. On iOS these are the keys the page
+   * claims in the ledger it shares with the notification extension (`announcedMessages.ts`), so a
+   * message the extension already showed is not announced again. Not sent to the Android builder.
+   */
+  announced: readonly AnnouncedMessage[];
   /**
    * WHETHER THE OPEN PROVED THE AUTHOR - a salon row under a Graine v2 session
    * (`openChannelMessageProving`); false for anything else, and the native builder reads it for a
@@ -202,6 +211,12 @@ export async function postNativeReactionNotification(
 export type ReadElsewhereEvent = 'read_watermark' | 'channel.read' | 'read_here';
 
 /**
+ * Why a conversation's notifications were taken down on iOS: a read, or its ENDING. An ending is
+ * not a read and never travels the read path - Android has its own command, and records no mark.
+ */
+export type NotificationTakedownReason = ReadElsewhereEvent | 'conversation_ended';
+
+/**
  * Tells the Android builder that this account read a conversation on another device, as this
  * WebView learned it over its socket, so it REMOVES the conversation's notification once the read
  * covers every line of it.
@@ -251,6 +266,97 @@ export async function recordNativeReadElsewhere(
     // Said at a level that accuses: the banner of a conversation already read may stay in the shade.
     console.error(
       `[NOTIF] Handing over the read of ${conversationId} elsewhere (${event}) threw - a banner for it may stay: ${String(e)}`
+    );
+    return false;
+  }
+}
+
+/**
+ * Takes down a conversation's delivered notifications on iOS - the page's reader opened it
+ * (`read_here`) or it ended (`conversation_ended`; see {@link endNativeConversationNotifications}). iOS posts under the conversation's thread, so
+ * the native side removes by thread and recomputes the badge; it keeps no read mark, because a
+ * message newer than the reading cannot be on a banner of a conversation that is on screen.
+ *
+ * One call per conversation EVENT, never a sweep: opening the app clears nothing (owner,
+ * 2026-11-21). Off iOS: `false`, nothing invoked.
+ *
+ * @returns whether the native side queued the removal.
+ */
+export async function cancelNativeConversationNotifications(
+  conversationId: string,
+  event: NotificationTakedownReason
+): Promise<boolean> {
+  if (!isIosTauriRuntime()) return false;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const queued = await invoke<boolean>('cancel_conversation_notifications', {
+      groupId: conversationId,
+      reason: event,
+    });
+    if (!queued) {
+      console.error(
+        `[NOTIF] The native side refused to take down the notifications of ${conversationId} (${event}) - a banner for it may stay.`
+      );
+    }
+    return queued;
+  } catch (e) {
+    console.error(
+      `[NOTIF] Taking down the notifications of ${conversationId} (${event}) threw - a banner for it may stay: ${String(e)}`
+    );
+    return false;
+  }
+}
+
+/**
+ * The page's hand-over of a READ of a conversation to the native notification shade, whichever OS:
+ * Android decides against a mark (`record_read_elsewhere`), iOS removes by thread. A runtime with no
+ * native shade (web, desktop) answers `true`: there is nothing to hand over, and nothing failed.
+ *
+ * @param at the mark Android weighs lines against; `clock` says which clock it is on.
+ * @returns whether the work was queued where there is a native shade.
+ */
+export async function handOverConversationEvent(
+  conversationId: string,
+  event: ReadElsewhereEvent,
+  at: number,
+  clock: 'server' | 'stamped'
+): Promise<boolean> {
+  if (isAndroidTauriRuntime()) return recordNativeReadElsewhere(conversationId, event, at, clock);
+  if (isIosTauriRuntime()) return cancelNativeConversationNotifications(conversationId, event);
+  return true;
+}
+
+/**
+ * Takes down EVERYTHING a conversation that ENDED (deleted, left, excluded, its salon or community
+ * gone) left in the shade: its message banner - a pending reply and a held banner included - its
+ * reaction notification and its share of the summary.
+ *
+ * **AN ENDING IS NOT A READ.** Android has its own command, which records NO read mark: a mark is a
+ * process-lifetime suppressor, and one written for an ending would silence the conversation if the
+ * account came back to it (a rejoin, a sign-in after a sign-out). iOS removes by thread, as for a
+ * read. Off a native shade: `true`, nothing invoked.
+ *
+ * @returns whether the work was queued where there is a native shade.
+ */
+export async function endNativeConversationNotifications(conversationId: string): Promise<boolean> {
+  if (isIosTauriRuntime())
+    return cancelNativeConversationNotifications(conversationId, 'conversation_ended');
+  if (!isAndroidTauriRuntime()) return true;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const queued = await invoke<boolean>('end_conversation_notifications', {
+      groupId: conversationId,
+      reason: 'conversation_ended',
+    });
+    if (!queued) {
+      console.error(
+        `[NOTIF] The native side refused to end the notifications of ${conversationId} - a banner for it may stay.`
+      );
+    }
+    return queued;
+  } catch (e) {
+    console.error(
+      `[NOTIF] Ending the notifications of ${conversationId} threw - a banner for it may stay: ${String(e)}`
     );
     return false;
   }

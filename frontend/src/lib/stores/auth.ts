@@ -347,6 +347,8 @@ export type SessionExpiredTarget = { pathname: string; search: string; hash: str
 type SessionExpiredHandler = (target: SessionExpiredTarget | null) => void;
 let _sessionExpiredHandler: SessionExpiredHandler | null = null;
 let _sessionExpiredNotified = false;
+/** Callers of {@link refreshAnswerHeldByCaller} awaiting their answer: a dead-session verdict is theirs. */
+let _verdictHeldByCaller = 0;
 /** The target of the verdict, kept for a handler that registers after it. */
 let _sessionExpiredTarget: SessionExpiredTarget | null = null;
 
@@ -503,6 +505,11 @@ export function setSessionExpiredHandler(fn: SessionExpiredHandler | null): void
  */
 function notifySessionExpired(): void {
   if (_sessionExpiredNotified || !currentUserId()) return;
+  // THE CALLER OF `refreshAnswerHeldByCaller` OWNS THIS VERDICT: it reads the refusal itself.
+  if (_verdictHeldByCaller > 0) {
+    alog('session dead - verdict held by the caller that asked');
+    return;
+  }
   _sessionExpiredNotified = true;
   _sessionExpiredTarget = currentTarget();
   awarn(
@@ -1506,7 +1513,7 @@ async function clearAuthUnderway(options: {
   // awaited - it never rejects and logs its own failures, and a deletion it cannot finish stays owed
   // on disk until it does. AFTER the handler, which reads the registration marker synchronously for
   // the server-side deregistration of a live session.
-  void endPushRegistration(options.cause);
+  const pushEnded = endPushRegistration(options.cause);
   // Whose account is leaving, read before the identity below is forgotten.
   const leavingUserId = currentUserId();
   // THE LOCAL IDENTITY GOES NOW, BEFORE THE FIRST AWAIT - never after the revocation below. The
@@ -1534,8 +1541,10 @@ async function clearAuthUnderway(options: {
   // And a share INTO Canari still waiting: it must never land in the account signed in next.
   void eraseIncomingShare('signed out');
   // And the shortcuts the phone holds for THIS account - the share sheet's suggestions and the
-  // notifications' conversation shortcuts, names and faces the next account must never see.
-  void eraseAccountShortcuts('signed out');
+  // notifications' conversation shortcuts, names and faces the next account must never see. The
+  // notifications' half after the push registration's end, which strips the extension's proof of an
+  // account first (`eraseAccountShortcuts`).
+  void eraseAccountShortcuts('signed out', pushEnded);
   // And the forms' edits this device kept for a save that has not landed: the next account must
   // neither see nor send them (owner, 2026-11-08).
   void eraseFormDraftCopies(leavingUserId, 'signed out');
@@ -1661,4 +1670,34 @@ export async function hasStoredSession(): Promise<boolean> {
     alog('session→F refresh✗');
     return false;
   }
+}
+
+/**
+ * Renews the access token like {@link refresh}, but a dead-session verdict is NOT announced: the
+ * rejection is the caller's to act on, and the app-wide session-expired reaction (the redirect to
+ * `/login`) does not run.
+ *
+ * For the PIN gate, which asks WHY a PIN route refused its session and shows the answer where the
+ * person already is (a removed device sees "Cet appareil a ete retire", not a bare sign-in page). The
+ * hold lasts as long as the call and no longer - it is the call's scope, never a clock. The verdict
+ * is still latched (`isRefreshCredentialProvenDead`, `revokedDeviceOfEndedSession`), so every later
+ * reader sees it, and the caller must answer it: a verdict dropped here is announced to nobody.
+ */
+export async function refreshAnswerHeldByCaller(why: string): Promise<string> {
+  _verdictHeldByCaller++;
+  try {
+    return await refresh(fetch, why);
+  } finally {
+    _verdictHeldByCaller--;
+  }
+}
+
+/**
+ * Announces a dead-session verdict that refreshAnswerHeldByCaller held, when its caller can no
+ * longer act on it (the login that held it was aborted, or the account signed out meanwhile): a
+ * verdict held for a listener that left would otherwise reach nobody until some later refresh.
+ * Nothing is announced when no verdict is latched, or while another caller still holds one.
+ */
+export function announceHeldVerdict(): void {
+  if (_refreshCredentialProvenDead && _verdictHeldByCaller === 0) notifySessionExpired();
 }

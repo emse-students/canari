@@ -53,6 +53,12 @@ import {
   type GatewaySocketOpen,
 } from '$lib/mls-client/gatewaySocketOpen';
 import { getToken, signOutGeneration } from '$lib/stores/auth';
+import { honourOwedNotificationErase } from '$lib/sharing/shareTargetsNative';
+import {
+  armNotificationStateReport,
+  disarmNotificationStateReport,
+  notificationStateReport,
+} from './notificationReport';
 import { pushOutcomeForReport, reconcilePushRegistration } from './PushNotificationService';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { toBase64, toHex, type MlsStateWriteLatch } from '$lib/utils/hex';
@@ -632,6 +638,7 @@ export class TauriMlsService extends BaseMlsService {
 
   /** Removes the page-lifecycle listeners this class registered, then the base teardown. */
   override destroy(): void {
+    disarmNotificationStateReport();
     if (this._pageHideHandler) {
       window.removeEventListener('pagehide', this._pageHideHandler);
       this._pageHideHandler = null;
@@ -1399,7 +1406,16 @@ export class TauriMlsService extends BaseMlsService {
   ): void {
     void after
       .then(() => getToken())
-      .then((pushToken: string) => {
+      .then(async (pushToken: string) => {
+        if (signOutGeneration() !== generation) {
+          console.log(
+            `[MLS][Tauri] push_context write after ${site} dropped - a sign-out began since it was asked`
+          );
+          return;
+        }
+        // What a previous account's notifications handed the system goes BEFORE this context
+        // exists: it is the proof the iPhone's extension donates on (review of #3938).
+        await honourOwedNotificationErase(`before the push context after ${site}`);
         if (signOutGeneration() !== generation) {
           console.log(
             `[MLS][Tauri] push_context write after ${site} dropped - a sign-out began since it was asked`
@@ -1910,6 +1926,8 @@ export class TauriMlsService extends BaseMlsService {
     const deviceAppVersion = getClientAppVersion();
     const deviceOs = detectRuntimeDeviceOs('desktop');
     const pushes = deviceOs === 'android' || deviceOs === 'ios';
+    // The OS's notification state, read here at every unlock and renewal; undefined is unknown.
+    const notificationState = pushes ? await notificationStateReport() : undefined;
     const answer = await this.delivery.registerDeviceKeyPackage({
       keyPackageBase64: base64,
       notAfterSecs: keyPackage.notAfterSecs,
@@ -1917,10 +1935,23 @@ export class TauriMlsService extends BaseMlsService {
       deviceOs,
       deviceAppVersion,
       ...(pushes ? { pushOutcome: pushOutcomeForReport() } : {}),
+      ...(notificationState ? { notificationState } : {}),
     });
     // The delivery service's push row is the fact a registration is owed against - this call runs at
     // every unlock and every key-package renewal, so a lost or never-written row is re-driven here.
-    if (pushes) reconcilePushRegistration(answer.pushRegistered);
+    if (pushes) {
+      reconcilePushRegistration(answer.pushRegistered);
+      // A state that changes between two unlocks reaches the server when the native side says so;
+      // this account's sender replaces any earlier one, and one re-read covers a cold-start event
+      // that fired before it existed.
+      void armNotificationStateReport(
+        (report) =>
+          this.delivery
+            .updateDeviceMetadata(this.userId, this.deviceId, { notificationState: report })
+            .then(() => undefined),
+        notificationState
+      );
+    }
   }
 
   /** Returns the list of MLS group IDs known locally, populated from Rust via `lister_groupes` at init time. */

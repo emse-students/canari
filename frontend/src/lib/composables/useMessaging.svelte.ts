@@ -9,6 +9,7 @@
 import { sendFrameFromThisTab } from '$lib/mls-client/frameFromAnyTab';
 import { isAppInForeground } from '$lib/utils/appForeground';
 import { isSalonMuted } from '$lib/utils/chat/salonUnread';
+import type { AnnouncedMessage } from '$lib/utils/chat/announcedMessages';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { SvelteMap, SvelteDate, SvelteSet } from 'svelte/reactivity';
 import { getToken, signOutGeneration } from '$lib/stores/auth';
@@ -22,6 +23,9 @@ import {
   forgetSalonSendsOfEndedSession,
   deliverSalonAttachment,
   quoteReference,
+  runInSalonTurn,
+  SalonLaneHeldError,
+  SalonTurnAbandonedError,
   type SendMessageDeps,
   addReaction,
   removeReaction,
@@ -1393,6 +1397,8 @@ export function useMessaging() {
     serverAt: number | undefined,
     /** How many inbound messages the ONE banner stands for - see `NativeMessageNotification.covers`. */
     covers: number,
+    /** The sender and instant of each of them - see `NativeMessageNotification.announced`. */
+    announced: readonly AnnouncedMessage[],
     /** Whether the open proved the banner's author - see `NativeMessageNotification.authorProven`. */
     authorProven: boolean,
     /** True on the re-entry that follows the read of a salon's level - see the salon branch below. */
@@ -1467,6 +1473,7 @@ export function useMessaging() {
             sentAt,
             serverAt,
             covers,
+            announced,
             authorProven,
             true
           );
@@ -1579,6 +1586,7 @@ export function useMessaging() {
           sentAt,
           serverAt: serverAt ?? 0,
           covers,
+          announced,
           authorProven,
         })
       );
@@ -2464,6 +2472,7 @@ export function useMessaging() {
           resolvedTimestamp.getTime(),
           newMsg.serverTimestamp,
           1,
+          [{ senderId, at: resolvedTimestamp.getTime() }],
           options.authorProven === true
         )
       );
@@ -3093,6 +3102,7 @@ export function useMessaging() {
           lastInbound.serverTimestamp,
           // THE FLUSH RAISES ONE BANNER FOR N MESSAGES, and the server may have pushed each of them.
           inbound.length,
+          inbound.map((msg) => ({ senderId: msg.senderId, at: msg.timestamp.getTime() })),
           // The banner's message is the LAST one, so its proof is the one that names the speaker.
           authorProvenIds.has(lastInbound.id)
         );
@@ -4812,13 +4822,16 @@ export function useMessaging() {
     if (isChannelConversationId(targetName)) {
       try {
         if (env.kind === 'media') {
-          await sendEncryptedChannelMessage(
-            targetName,
-            encodeAppMessage({
-              ...mkMedia(forwardedMediaMsg(env.media, env.caption)),
-              messageId: crypto.randomUUID(),
-              sentAt: Date.now(),
-            })
+          // In the salon's lane, like a text: received after every message written before it.
+          await runInSalonTurn(targetName, 'forward', () =>
+            sendEncryptedChannelMessage(
+              targetName,
+              encodeAppMessage({
+                ...mkMedia(forwardedMediaMsg(env.media, env.caption)),
+                messageId: crypto.randomUUID(),
+                sentAt: Date.now(),
+              })
+            )
           );
           return { success: true };
         }
@@ -4827,6 +4840,17 @@ export function useMessaging() {
           return { success: false, error: m.chat_forward_error_nothing_to_forward() };
         return await sendChatMessage(channelText, targetName, null, makeSendDeps(ctx, convo));
       } catch (e) {
+        // A file forwarded behind a HELD message is refused, not queued unseen: the member is told
+        // and still holds it.
+        if (e instanceof SalonLaneHeldError) {
+          ctx.log(`[FORWARD] channel forward to "${targetName}" refused: the salon is held`);
+          return { success: false, error: m.salon_post_waits_for_held_messages() };
+        }
+        // The session ended while it waited: nothing to say to anyone.
+        if (e instanceof SalonTurnAbandonedError) {
+          console.debug(`[FORWARD] channel forward to "${targetName}" dropped: the session ended`);
+          return { success: false };
+        }
         // `sendChatMessage` RETURNS its refusal, already localized, rather than throwing it - so
         // anything reaching this catch is unexpected and has nothing to add beyond "it failed".
         ctx.log(`[FORWARD] channel forward failed for "${targetName}": ${String(e)}`);

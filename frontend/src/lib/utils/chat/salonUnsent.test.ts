@@ -124,6 +124,20 @@ describe('the unsent ledger across tabs', () => {
     expect(await ledger.takeOrphanedSalonTexts('me', SALON, new Set())).toHaveLength(1);
   });
 
+  it('re-recording an entry keeps its place: the ledger stays in the order the texts were written', async () => {
+    const { manager } = fakeLocks();
+    installLocks(manager);
+    const ledger = await load();
+    for (const id of ['t1', 't2', 't3']) {
+      ledger.recordUnsentSalonText('me', { messageId: id, conversationKey: SALON, text: id });
+    }
+    // A resume records each entry again, in whatever order its salon's gate let it through.
+    ledger.recordUnsentSalonText('me', { messageId: 't1', conversationKey: SALON, text: 't1' });
+
+    const taken = await ledger.takeOrphanedSalonTexts('me', SALON, new Set());
+    expect(taken.map((e) => e.messageId)).toEqual(['t1', 't2', 't3']);
+  });
+
   it('an entry written before owners existed has nobody to wait for and comes back', async () => {
     const { manager } = fakeLocks();
     installLocks(manager);

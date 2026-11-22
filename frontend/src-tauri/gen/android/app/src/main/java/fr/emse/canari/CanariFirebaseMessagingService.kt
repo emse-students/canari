@@ -48,6 +48,7 @@ import fr.emse.canari.push.ConversationNicknames
 import fr.emse.canari.push.ConversationRef
 import fr.emse.canari.push.ChannelReadMark
 import fr.emse.canari.push.ConversationShape
+import fr.emse.canari.push.UnsendableCause
 import fr.emse.canari.push.FallbackLine
 import fr.emse.canari.push.ForegroundGuard
 import fr.emse.canari.push.GenericBannerLedger
@@ -116,6 +117,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * native and outlive the page's own settlement of it.
          */
         val owner: String? = null,
+        /**
+         * WHY a drain marked it [unsendable] - an [UnsendableCause.wire], set with the mark and only
+         * with it. The page adopts the failure as that cause, not as the 5xx run its parked count
+         * otherwise reads as; the page's own write keeps it (`NATIVE_VERDICTS`, `outbox_mirror.rs`).
+         */
+        val unsendableCause: String? = null,
     )
 
     companion object {
@@ -709,59 +716,34 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         private val silentSkipExplained = AtomicBoolean(false)
 
         /**
-         * Cancels every displayed message notification (channel [CHANNEL_MESSAGES] + summary).
-         * Called when the app comes to the foreground (MainActivity.onResume): opening the app clears
-         * notifications for messages read here or elsewhere (visible part of the read-state sync).
+         * What the app's coming to the front retires - AND WHAT IT DOES NOT (owner, 2026-11-21:
+         * "N'effacer que les lues"). Opening the app used to cancel EVERY message, mention and
+         * reaction banner, read or not, so a banner for a conversation nobody had opened was gone a
+         * second after the app came up (Mi 9T, `1.7.3-alpha.3`). A message, mention or reaction banner
+         * now goes only when ITS CONVERSATION is read or ended - never because the app came up:
+         * opened on this device (the page's `read_here` hand-over, `readElsewhereFromWebSocket`), read
+         * on another (`read_watermark` / `channel.read` / the silent-from-self push), answered or
+         * marked read from the banner, and ended - deleted, left, excluded, the salon or community
+         * gone - by the page's observation of the conversation list (`conversation_ended`).
+         *
+         * What it still retires is what the open app TAKES OVER, each by the event that makes it so:
+         * - the incoming-call RINGS (channel [CHANNEL_CALLS]): the in-app overlay rings now, and the
+         *   ring's own screen must never outlive it;
+         * - the notices on the messages channel that INVITE TO OPEN THE APP, which opening satisfies:
+         *   the outbox nudge, "a new device was added", the wake-up push's "could not be loaded" (the
+         *   queue it asked to drain is draining now) and the background worker's failure notice.
+         *   None names a conversation, so no conversation event could ever retire them.
+         * No missed-call notification exists, so no call banner can stay behind. The group summary
+         * follows its children (`refreshBadgeSummary` at every conversation cancel).
          */
-        fun cancelAllMessageNotifications(context: Context) {
+        fun retireTakenOverNotifications(context: Context) {
             try {
                 val manager =
                     context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                // THE CANCELS AND THE FORGET ARE ONE STEP, under the lock a post holds from the banner it
-                // builds on to its record: a post between them would be forgotten while it stands, or
-                // rebuild on a banner already gone. The next post starts a new thread.
-                val idPrefs = context.getSharedPreferences("canari_notif_ids", Context.MODE_PRIVATE)
-                synchronized(READ_ELSEWHERE.lock) {
-                    // A banner the platform holds after an inline answer is NOT cancelled - the
-                    // cancel would be dropped and re-extend it ([ReadElsewhereMarks]'s class comment).
-                    // ONE snapshot answers every "held?" of this sweep: only the system sets the flag.
-                    val snapshot = manager.activeNotifications
-                    val heldIds = snapshot.filter { isHeldByDirectReply(it.notification) }.map { it.id }.toSet()
-                    val held = mutableListOf<Int>()
-                    for (sbn in snapshot) {
-                        // minSdk 28: every record carries the channel it was posted on.
-                        val channelId = sbn.notification.channelId
-                        // Only touch message notifications (leave social/forms alone; the mentions
-                        // and reactions channels are message tiers so they clear on open too). Ring
-                        // notifications are also cleared: once the app is open the in-app CallOverlay
-                        // rings.
-                        if (channelId == CHANNEL_MESSAGES ||
-                            channelId == CHANNEL_MENTIONS || channelId == CHANNEL_CALLS ||
-                            channelId == CHANNEL_REACTIONS
-                        ) {
-                            if (isHeldByDirectReply(sbn.notification)) held += sbn.id else manager.cancel(sbn.id)
-                            if (sbn.id !in held) {
-                                // EVERY REMOVAL SAYS WHY: this sweep removes a banner whose conversation
-                                // was NOT necessarily read (opening the app is the whole rule), and it
-                                // used to leave no line - a banner gone a second after the app came to
-                                // the front could not be told from a defect.
-                                val conversation = idPrefs.all.entries
-                                    .firstOrNull { (key, value) -> value == sbn.id && key != "__counter__" && ':' !in key }?.key
-                                Log.d(TAG, "cancelAllMessageNotifications: removed id=${sbn.id} channel=$channelId conversation=${ConversationRef.of(conversation)} - the app came to the foreground (opening the app clears every message notification, read or not)")
-                            }
-                        }
-                    }
-                    // What the record holds is cancelled BY ID too: the sweep above reads a shade that
-                    // lags a `notify`, and after this the shade is never asked again. A held one is
-                    // updated and kept.
-                    READ_ELSEWHERE.forgetAll(
-                        holds = { it in heldIds },
-                        repost = { conversationId, banner, kept -> rebuildBanner(context, manager, conversationId)(banner, kept) },
-                    ) { manager.cancel(it) }
-                    // A held banner the record did not hold (a fresh process): updated from the
-                    // shade's copy and recorded, so the next event for its conversation weighs it. One
-                    // the record holds was just handled by forgetAll and is left alone.
-                    for (id in held) releaseUnrecordedHold(context, manager, id)
+                // The rings' notifications, found by channel in the shade - the ring record below
+                // only knows the ones this process posted.
+                for (sbn in manager.activeNotifications) {
+                    if (sbn.notification.channelId == CHANNEL_CALLS) manager.cancel(sbn.id)
                 }
                 // Ring dedupe entries die with their notifications, so a re-ring can post again -
                 // and so does each ring's call screen, which must never outlive its ring. Under the
@@ -771,46 +753,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     IncomingCallActivity.finishFor(ringing, "the app came to the foreground")
                 }
                 CallRingAnswer.forgetAll(context)
-                // So do the real posts the generic-banner ledger remembered for refused pushes.
-                synchronized(GENERIC_BANNERS_LOCK) { GENERIC_BANNERS.allCleared() }
-                // The one "could not be loaded" notice of the wake-up push: the app is open, so the
-                // queue it asked to drain is draining. Named, not left to the channel sweep above,
-                // which an API below 26 does not filter by channel and a channel move would miss.
-                manager.cancel(WAKE_UNAVAILABLE_NOTIF_ID)
+                // The notices that ask to open the app: it is open.
+                for (id in listOf(OUTBOX_NUDGE_NOTIF_ID, NEW_DEVICE_NOTIF_ID, WAKE_UNAVAILABLE_NOTIF_ID, FixedNotifIds.BACKGROUND_FAILURE)) {
+                    manager.cancel(id)
+                }
+                Log.d(TAG, "retireTakenOverNotifications: rings and the open-the-app notices retired - message, mention and reaction banners stay until their conversation is read or ended")
             } catch (e: Exception) {
-                Log.w(TAG, "cancelAllMessageNotifications: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
+                Log.w(TAG, "retireTakenOverNotifications: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
             }
-        }
-
-        /**
-         * The swept banner [notifId] the platform held in the sweep's snapshot. THE RECORD IS ASKED
-         * FIRST (round-14 review): one it holds was re-posted and kept by `forgetAll` - its own
-         * re-post may land at once and read as released, and cancelling it then would leave a record
-         * of a banner that is gone. Only an UNRECORDED one is decided by the FRESH shade copy:
-         * released since, it is cancelled as the sweep would have; still held, it is rebuilt silently
-         * from that copy (the update that ends the hold) and recorded under its conversation, found
-         * by its stable id. A held banner whose conversation is not known here is left as it is,
-         * logged at WARN: its cancel would be dropped, and nothing could weigh it.
-         */
-        private fun releaseUnrecordedHold(context: Context, manager: NotificationManager, notifId: Int) {
-            val prefs = context.getSharedPreferences("canari_notif_ids", Context.MODE_PRIVATE)
-            val groupId = prefs.all.entries.firstOrNull { (key, value) -> value == notifId && key != "__counter__" && ':' !in key }?.key
-            if (groupId != null && READ_ELSEWHERE.bannerOf(groupId) { null } != null) return
-            if (!holdsDirectReply(manager, notifId)) {
-                manager.cancel(notifId)
-                Log.d(TAG, "releaseUnrecordedHold: id=$notifId released since the sweep - cancelled")
-                return
-            }
-            if (groupId == null) {
-                Log.w(TAG, "releaseUnrecordedHold: held banner id=$notifId names no conversation here - left as it is")
-                return
-            }
-            val banner = shadeBannerOf(manager, notifId) ?: run {
-                Log.d(TAG, "releaseUnrecordedHold: id=$notifId gone from the shade since the snapshot - nothing to re-post")
-                return
-            }
-            // The app is in front: every line was seen, so the re-post that ends the hold is EMPTY.
-            rebuildBanner(context, manager, groupId)(banner, emptyList())?.let { READ_ELSEWHERE.remember(groupId, it) }
         }
 
         // --- Shared with CanariNotificationActionReceiver (quick reply / mark as read) ---------
@@ -1542,17 +1492,90 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
             } } finally {
                 decided?.let { context.recordShowOutcome(it, groupId, null, manager) }
+                // EVERY PATH REFRESHES THE SUMMARY, the early returns above included: a reaction
+                // cancelled alone, a banner kept for a newer line or a pending reply, a conversation
+                // with no banner - each can change what the summary and the launcher badge count, and
+                // only the fully cancelled path used to recompute them. Group summary + launcher badge
+                // (WP-XP-2): the unread count is recomputed and the summary dropped when no message
+                // notification remains. `justCancelled` because the cancel is asynchronous too: the
+                // shade can still report this conversation as active, which would keep a summary
+                // whose last child has just gone.
+                refreshBadgeSummary(context, justCancelled = notifId)
             }
             // The real posts this notification stood for are gone: none may cover a later refused
             // push (see [GenericBannerLedger.groupCleared]).
             synchronized(GENERIC_BANNERS_LOCK) { GENERIC_BANNERS.groupCleared(groupId) }
             Log.d(TAG, "cancelConversationNotification: notif removed group=${ConversationRef.of(groupId)} id=$notifId")
+        }
 
-            // Refresh the group summary + launcher badge (WP-XP-2): recompute the unread count and
-            // drop the summary when no message notification remains. `justCancelled` because the
-            // cancel above is asynchronous too: the shade can still report this conversation as
-            // active, which would keep a summary whose last child has just gone.
-            refreshBadgeSummary(context, justCancelled = notifId)
+        /**
+         * A conversation ENDED (deleted, left, excluded, its salon or community gone): withdraws its
+         * message banner, its reaction notification and the summary's share, UNCONDITIONALLY - a
+         * pending reply, a line with no server instant and a banner the platform holds after an inline
+         * answer included - and records NO read mark ([ReadElsewhereMarks.end]). An ending is not a
+         * read, so it never travels [cancelConversationNotification]: a mark outlives the process's
+         * session and would silence the conversation once the account came back to it.
+         *
+         * @return the notification id cancelled for the banner, or -1 when none.
+         */
+        internal fun endConversationNotifications(context: Context, groupId: String, reason: String): Int {
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val prefs = context.getSharedPreferences("canari_notif_ids", Context.MODE_PRIVATE)
+            var cancelledBanner = -1
+            synchronized(READ_ELSEWHERE.lock) {
+                // `getInt` rather than [getStableNotifId]: an ending never mints an id.
+                val stableId = prefs.getInt(groupId, -1).takeIf { it != -1 }
+                val ids = READ_ELSEWHERE.end(groupId, stableId) { manager.cancel(it) }
+                cancelledBanner = ids.firstOrNull() ?: -1
+                cancelReactionNotification(prefs, manager, groupId)
+            }
+            synchronized(GENERIC_BANNERS_LOCK) { GENERIC_BANNERS.groupCleared(groupId) }
+            refreshBadgeSummary(context, justCancelled = cancelledBanner)
+            Log.d(TAG, "endConversationNotifications: group=${ConversationRef.of(groupId)} ended, banner id=$cancelledBanner (-1: none was recorded) ($reason)") // log-safe: a notification id (integer) and a fixed reason label
+            return cancelledBanner
+        }
+
+        /**
+         * Everything a SIGN-OUT must take down of what the account showed: every message, mention and
+         * reaction notification and the summary, the records that remember them, the generic-banner
+         * ledger and the read marks. Opening the app no longer sweeps (owner, 2026-11-21), so nothing
+         * else would remove the previous account's lines - message text included - before the next
+         * account signed in (what iOS does: `removeAllDeliveredNotifications` at its sign-out).
+         */
+        internal fun clearAccountNotifications(context: Context) {
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            synchronized(READ_ELSEWHERE.lock) {
+                // By id from the record first (the shade lags a `notify`), then whatever the shade holds.
+                READ_ELSEWHERE.clear { manager.cancel(it) }
+                for (sbn in manager.activeNotifications) {
+                    val channelId = sbn.notification.channelId
+                    if (channelId == CHANNEL_MESSAGES || channelId == CHANNEL_MENTIONS || channelId == CHANNEL_REACTIONS) {
+                        manager.cancel(sbn.id)
+                    }
+                }
+            }
+            synchronized(GENERIC_BANNERS_LOCK) { GENERIC_BANNERS.allCleared() }
+            manager.cancel(GROUP_SUMMARY_ID)
+            Log.i(TAG, "clearAccountNotifications: every message, mention and reaction notification and the summary removed - the account signed out")
+        }
+
+        /** The WebView's hand-over of an ENDED conversation, on [WS_NOTIF_LANE] (`end_conversation_notifications`). */
+        @JvmStatic
+        fun endConversationFromWebSocket(groupId: String, reason: String): Boolean {
+            val context = CanariApplication.appContext()
+            if (context == null) {
+                Log.w(TAG, "endConversationFromWebSocket: no Application context - group=${ConversationRef.of(groupId)} NOT withdrawn ($reason)")
+                return false
+            }
+            WS_NOTIF_LANE.execute {
+                try {
+                    endConversationNotifications(context, groupId, reason)
+                } catch (e: Exception) {
+                    // EVERY SWALLOWED BRANCH LOGS: the banner of an ended conversation stays.
+                    Log.e(TAG, "endConversationFromWebSocket: failed for ${ConversationRef.of(groupId)}: ${throwableSite(e)}")
+                }
+            }
+            return true
         }
 
         /**
@@ -2626,7 +2649,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // held here, this device removed from it, a malformed proto (NEVER, marked).
                     val prospect = failed[entry.id] ?: OutboxRetry.Prospect.NOT_YET
                     if (prospect == OutboxRetry.Prospect.NEVER) {
-                        remaining.add(entry.copy(unsendable = true))
+                        remaining.add(entry.copy(unsendable = true, unsendableCause = UnsendableCause.NOT_ENCRYPTABLE.wire))
                         Log.w(TAG, "drainOutboxBackground: id=${entry.id.take(8)} cannot be encrypted from this state - marked unsendable group=${ConversationRef.of(entry.groupId)}")
                     } else {
                         remaining.add(entry)
@@ -2648,7 +2671,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     Log.d(TAG, "drainOutboxBackground: ✓ sent id=${entry.id.take(8)} group=${ConversationRef.of(entry.groupId)}")
                 } else if (answer is QueuedSendAnswer.Outcome.Kept) {
                     // Refused for good: marked, so no later drain sends it again.
-                    remaining.add(if (answer.cause.prospect == OutboxRetry.Prospect.NEVER) entry.copy(unsendable = true) else entry)
+                    // Marked WITH its cause, typed here where the answer was read: the page says it.
+                    val verdict = UnsendableCause.of(answer.cause)
+                    remaining.add(if (verdict != null) entry.copy(unsendable = true, unsendableCause = verdict.wire) else entry)
                     prospects.add(answer.cause.prospect)
                     Log.w(TAG, "drainOutboxBackground: POST failed id=${entry.id.take(8)} -> stays queued (${answer.cause})") // log-safe: an enum constant's name (QueuedSendAnswer.KeptCause), no content
                     if (answer.cause.prospect == OutboxRetry.Prospect.BLOCKED) {
@@ -2962,6 +2987,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                             o.optBoolean("durable", true),
                             o.optBoolean("unsendable", false),
                             o.optString("owner").takeIf { it.isNotEmpty() },
+                            unsendableCause = o.optString("unsendableCause").takeIf { it.isNotEmpty() },
                         )
                     } catch (e: Exception) {
                         null
@@ -2977,6 +3003,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             put("silent", e.silent)
             put("durable", e.durable)
             if (e.unsendable) put("unsendable", true)
+            if (e.unsendable) e.unsendableCause?.let { put("unsendableCause", it) }
             e.owner?.let { put("owner", it) }
         }
 
@@ -3056,7 +3083,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * (safety net of the background send). Posted only if the outbox mirror, read under
          * [OUTBOX_LOCK], still holds an entry: a drain that emptied it meanwhile has the last word,
          * and the nudge is withdrawn instead ([OutboxNudge]). On the messages channel, so the app's
-         * open clears it too (cancelAllMessageNotifications in MainActivity.onResume).
+         * open retires it (`retireTakenOverNotifications`).
          *
          * THE ONLY COPY. It takes an explicit [context] rather than the Service-as-Context, so
          * workers and receivers that have no Service - [OutboxRetryWorker] calls it once durable
@@ -3422,8 +3449,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * @param serverClock whether [at] is on the server's clock (a DM or group mark from a current
          *   build) or the stamped one (a salon, whose stamp IS its server time, or an older `at`).
          * @param reason which event said so, for the log: a socket event of another device
-         *   (`read_watermark`, `channel.read`) or `read_here`, THIS device's reader opening the
-         *   conversation.
+         *   (`read_watermark`, `channel.read`) or `read_here` (THIS device's reader opened the
+         *   conversation). An ENDED conversation is not a read: [endConversationFromWebSocket].
          * @return whether the work was queued; `false` only with no Application context.
          */
         @JvmStatic
@@ -3433,7 +3460,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.w(TAG, "readElsewhereFromWebSocket: no Application context - group=${ConversationRef.of(groupId)} NOT recorded ($reason)")
                 return false
             }
-            val where = if (reason == "read_here") "read on this device" else "read on another device"
+            val where = when (reason) {
+                "read_here" -> "read on this device"
+                else -> "read on another device"
+            }
             Log.d(TAG, "readElsewhereFromWebSocket: queued group=${ConversationRef.of(groupId)} at=$at clock=${if (serverClock) "server" else "stamped"} - $where ($reason)")
             val read = ReadElsewhereMarks.Read(at, serverClock)
             WS_NOTIF_LANE.execute {

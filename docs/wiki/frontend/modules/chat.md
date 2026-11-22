@@ -930,8 +930,7 @@ subdivision flag's tag characters (U+E0020-U+E007F) survive in the app and not i
 A media envelope holds ONE file (several files are several messages), so there is no `N photos` line.
 **A reply quote already stored as `[Média]` stays as persisted:** it is written once, into the reply,
 and is not rebuilt. Tests: `envelope.mediaPreview.test.ts`, and `push_text.rs` / `proto_fields.rs`.
-**Owed: one look at the list and a banner on a phone** (backlog entry
-`reading-owed-media-preview-names-the-kind`); no reading has been taken.
+**Read on both phones (2026-11-22, `1.7.3-alpha.5`; Mi 9T 2026-11-20 in French, iPhone 12 in English):** the list row, the reply strip and the stored quote, and the native banner give the same words (`GIF`, `Video: caption`, `File: name`; a file with a caption drops its name, `Attachment: caption`).
 
 ### A photo or video with text fills its bubble, and a video keeps its shape (2026-10-02)
 
@@ -2339,8 +2338,8 @@ author's Retry (`resetUnavailableAnswers`); an attachment's run is its page life
 **Exactly once.** Every repeat carries the first attempt's client id: the DM receivers drop a
 second frame with a `messageId` they hold (`addMessageToChat`), and social-service answers a salon
 repeat with the row it stored (migration 090, `findByClientMessageId`). A salon repeat is held for
-the server only once a repeat is PROVEN safe (`salonRepeatProof.ts`); before, it is `unconfirmed`
-and now also waits for that proof. One lane per conversation keeps a DM entry off the wire twice,
+the server at once: the proof this page once waited for (`salonRepeatProof.ts`) was retired on
+2026-11-22, every estate carrying 090 since `v1.3.0` ([below](#a-salon-is-received-in-the-order-it-was-written-one-lane-per-salon-2026-11-22)). One lane per conversation keeps a DM entry off the wire twice,
 and a salon redelivery is serialised by `retrying` and cancels its own ladder step when it starts
 (`takeServerHoldStep`). The frame of a salon send - in the tab that composed it as in another -
 ends it (`forgetDeliveredSalonSend`, called by `channelEventHandler.ts` where the echo is re-keyed):
@@ -2376,6 +2375,123 @@ calls `forgetDeliveredSalonSend`), `salonEcho.test.ts` (`salonEchoSettleable`),
 `MessageMetadata.waitingOn.svelte.test.ts` (the label, and the held row's actions),
 `sqliteMigrations.test.ts` (v19), `outboxClearPatch.test.ts` (the count written in place). **Owed:** a deploy drill on dev with the two bench
 phones sending throughout (no "Echec", no "Non confirme", each message once on the peer).
+
+### A salon is received in the order it was written: one lane per salon (2026-11-22)
+
+**The defect** ([backlog](../../backlog.d/p3-salon-texts-held-by-a-502-are-posted-out-of-order.md)).
+Read twice on the iPhone 12 (S5 on `1.7.0-alpha.12`, then `1.7.3-alpha.5`): dev's social-service
+stopped about 80 s while `T1`..`T8` were written in one salon, and the server stored
+`T1 T6 T7 T8 T2 T3 T4 T5` - live, and again after a terminate and relaunch, since that IS the
+server's order. Each text arrived once and none failed, so R05's contract held; only the order broke.
+
+**Why.** Each held salon text owned its own retry: its ladder step (`holdForServer`), its debt to the
+reconnect, and a fresh text POSTed at once whatever waited before it. After the return, the first
+POST answered was whichever asked first: the texts typed after the restart (`T7`, `T8`), and the one
+whose step happened to end next (`T6`), went before `T2`..`T5`, still on 15 to 60 s steps. The DM and
+group outbox never had this: its lanes keep order by construction since WP-OFF-5 (above, and
+[offline-and-weak-network section 11](../offline-and-weak-network.md#11-wp-off-5-shipped-a-deadline-a-slow-state-and-lanes)).
+
+**The fix: the salon send gets the outbox's rule** (`utils/chat/salonSendLane.ts`, driven from
+`deliverSalonSend` in `utils/chat/messaging.ts`). Each salon has ONE ordered lane of its unsent
+messages, and only the first may be on the wire. A text written behind it is drawn `pending` and
+waits its turn (`WAITS ITS TURN` in the log); no timer, no reorder afterwards. The order is the
+order of WRITING, fixed where it is known:
+
+- a fresh text takes its place in `queueSalonSend` BEFORE its first await, so two taps in a row are
+  placed in tap order whatever their echo writes do;
+- what a past page life left is placed when the ledger is read (`reserveSalonLaneTurns`), in the
+  LEDGER's order - which `recordUnsentSalonText` now keeps when it re-records an entry instead of
+  moving it to the end - ahead of every text of this page life that has not taken its turn yet, and
+  behind the one that has (it may be on the server already).
+
+**A message holds its place exactly while the machine will send it again by itself**: in flight,
+waiting for its salon to load, owed to the reconnect, or held for the server. Each turn returns a
+typed outcome (`SalonTurn`: `holds`, or leaves with its `why`), classified in the branch that decides
+it rather than read back from the registries. It leaves - and the message written next is delivered
+at once (`releaseSalonTurn`) - when it is settled (its answer, or its frame: `forgetDeliveredSalonSend`),
+deleted, refused (`error`), or handed to its author (`unconfirmed`: the 12th "not now", an unknown
+outcome with the link up). That is the outbox's own rule for a parked entry: a message waiting on a
+HUMAN does not make the ones after it wait too, so a Retry of it later sends it at the END of the
+lane, after what was waiting. A message that leaves also stops being owed to the reconnect, so a
+refused text is never re-POSTed by a later reconnect. A text waiting its turn says so: "En attente du
+message precedent..." (`TextWait` `turn`, `msg_waiting_for_previous`).
+
+**A HEAD THAT NEVER ANSWERS HOLDS THE WHOLE SALON, by design - as the outbox's lane does.** A POST
+with no answer at all is bounded by the request deadline (WP-OFF-5), then classified like any other
+outcome; until then every text written after it waits. That is the price of the order, and the
+same price the DM path has paid since WP-OFF-5.
+
+**The traffic stays what it was, and typing speed decides nothing.** Before, a text written during an
+outage POSTed once and climbed its own ladder; now, a text written behind a head held for the server
+asks the HEAD again at once instead (`askHeldTurnAgain`, which takes the head's ladder step). So the
+outage costs the server no more requests than before, and a text typed after the return drains the
+salon immediately rather than waiting up to a minute for the head's next step: `T7` brings `T2`
+through, and `T3`..`T8` follow in order. **A "not now" answered to a turn asked from behind is NOT
+counted toward the head's `MAX_UNAVAILABLE_ANSWERS`** (`askedFromBehind`): only the head's own ladder
+steps and reconnects are. Counted, twelve texts typed in six seconds against an instant 502 handed the
+head to its author and let all twelve overtake it (review of #3964, B1). With nothing typed after the
+return, the head's ladder step or the reconnect drains the salon the same way. An uncounted "not
+now" still re-arms the head's step at its FULL current delay, so steady typing keeps postponing the
+next counted step - but every counted answer still comes from the head's own step or a reconnect, so
+the head stays bounded by `MAX_UNAVAILABLE_ANSWERS` once the typing stops.
+
+**The repeat proof is retired, because the order needs every unsent text to keep its place.**
+`salonRepeatProof.ts` made a send that MAY have landed (a POST lost as the link went down, an entry a
+past page life left, a "not now") wait `unconfirmed` until some answer of this page life echoed a
+client id, proving the server carries migration 090. With the lane, that wait broke the order exactly
+when it mattered: the proof starts unproven in every page life, so a reload during an outage handed
+`P1`..`P3` to their author and the first text typed after the return went first (`NEW P1 P2 P3`), and
+an outage before the page life's first send gave `D A B C` (review of #3964, S2). **The mechanism the
+proof guarded against is gone:** a social-service without migration 090. It shipped in `v1.3.0`
+(`apps/social-service/src/migrations/090_channel_message_client_id.sql`), the `prod-released` and
+`dev-deployed` markers both contain it, and Canari runs those two estates only. So every repeat now goes
+like a first send, and `channelCrypto.ts` ACCUSES an answer that does not echo its client id
+(`console.error`, "this server predates migration 090") instead of quietly learning from it.
+
+**Every salon post that is a message joins the lane.** A text and a salon attachment through
+`deliverSalonSend`; a POLL (`MainChatPage.handleCreatePoll`) and a FORWARDED FILE
+(`useMessaging.forwardMessage`; a forwarded text already goes through `sendChatMessage`) through
+`runInSalonTurn`: it waits for its turn, posts ONCE, and leaves whatever the answer - nothing sends it
+again by itself, so it holds its place only while in flight. **Such a post has no echo and no ledger
+entry, so it NEVER waits on a held message** (principle 2, the essential is never lost): queued behind
+a text held for the server or the link, it would sit unseen, and a reload would lose it. So it is
+REFUSED (`SalonLaneHeldError`) when the message ahead of it is held, or becomes held while it waits
+(`refuseWaitingPosts`); the poll modal keeps its draft open and says "Des messages de ce salon
+attendent encore d'etre envoyes : reessaie une fois qu'ils seront partis" (`salon_post_waits_for_held_messages`),
+and a forward says the same. Behind a message merely IN FLIGHT it waits for that answer, which the
+request deadline bounds. A session ending during the wait rejects it with `SalonTurnAbandonedError`,
+which both callers swallow silently (a debug line, no banner): the member signed out. This was chosen
+over a pending poll echo as the simplest path that loses nothing - an echo would need its own
+durable entry to survive a reload. **Deliberate exceptions:** an EDIT (`channelCrypto` edit, owed per key
+by `salonOwed.ts`) changes a message that already has its place, and every reader orders it by its
+own clock against the message it names (`editPrecedence.ts`), never by its row; a REACTION, PIN or VOTE
+likewise names its target. A MEMBER-ADDED NOTICE (`useChannelWorkspaces`) is posted by the admin's
+gesture of adding someone, not by anything this member wrote, so there is no written order for it to
+keep.
+
+**What can still overtake, said plainly.** A text typed while a PHOTO or video of the same salon is
+still UPLOADING goes before it: the attachment joins the lane only when its post is due, after the
+upload (WP-OFF-9's rule - a file uploading holds nothing back, as in the DM outbox). Lanes are per
+salon: two salons never wait on each other. The lanes are memory only; the durable order is the unsent
+ledger's.
+
+**The seal is untouched**: each attempt seals afresh, so a retried text spends a NEW `messageIndex`,
+and an edit or a reaction (outside the lane) can seal between two texts. The server's
+`messageIndex` order therefore says nothing about the written order, and nothing reads it as such.
+
+**MLS.** Nothing here touches the DM and group path: its lanes already hold a retrying or backing-off
+entry's successors, so an MLS application message cannot overtake an earlier one of the same group,
+across an epoch or not.
+
+Tests: `useMessaging.salonOrder.svelte.test.ts` - the drill against a fake server that is down then
+up (`T1`..`T8` stored in order, each once, no failure drawn - failing without the lane); the ladder
+and the reconnect each draining in order; a POST in flight holding the next; a refused head and a
+discarded head letting the next go; a past page life's entries POSTed in the ledger's order; and the
+review probes of #3964 in a fresh page life: B1 (`H X1..X12 Z`, failing when the answers asked from
+behind are counted), A (`A B C D`), C (`P1 P2 P3 NEW`), the "waiting for the previous message" sign,
+a poll waiting behind a held text, a refused poll leaving the lane. `salonSendLane.test.ts`,
+`salonUnsent.test.ts` (re-recording keeps the place), `channelCrypto.test.ts` (the accusation).
+**Owed:** the same drill on a phone (the backlog entry's reading).
 
 ### Everything the outbox swallows, it logs
 
@@ -5585,10 +5701,47 @@ connection to advertise image MIME types and, on commit, reads the content URI a
 rebuilds a `File`, and routes it through the normal media pipeline (`handleFilesSelected`), so a
 keyboard GIF is encrypted and sent like any picked file, in DMs, groups, and channels.
 
-The single hook lives in the auto-generated `RustWebView.onCreateInputConnection` (marked
-`CANARI CUSTOM PATCH`); all logic is in the non-generated `KeyboardMediaBridge`, so re-applying the
-patch after a `tauri android` regeneration is one line. Reliable IME `commitContent` needs a recent
-Android WebView; on devices where it is unavailable the in-app GIF picker still works.
+**The one hook, `RustWebView.onCreateInputConnection`, lives in the vendored wry TEMPLATE**
+(`frontend/src-tauri/patches/wry/src/android/kotlin/RustWebView.kt`, a `CANARI PATCH`), never in
+`gen/android/.../generated/RustWebView.kt`: wry's `build.rs` rewrites every file of `generated/`
+from its templates on each Android build, so the tracked copy is an OUTPUT, refreshed by a build and
+committed with it. All logic stays in the non-generated `KeyboardMediaBridge`, in the same package,
+which is why the template can name it unqualified.
+
+**The hook was lost for four months (2026-07-25 to 2026-11-22).** It was first written into the
+generated copy (`ebdc943366`, 2026-07-02, with a comment asking to *"re-apply after `tauri android`
+regeneration"*), and the next regeneration, committed as `3614a79518` ("fix"), erased it. The bridge
+kept compiling with no caller, the WebView advertised no image MIME type, and Gboard answered
+*"GIF non disponibles ici avec cette appli"* on every Android build since. A comment
+asking a human to re-apply a hunk after a tool rewrites the file is not a mechanism: the hook moved
+to the template, which no build rewrites, and
+`.github/scripts/tests/android-keyboard-media-hook.test.mjs` (in `make test-ci-scripts`) fails if
+the template or the tracked generated copy loses the override, if the override stops returning the
+bridge's wrapper of `super`'s connection, or if the bridge stops offering `image/gif`; it proves each
+check against the upstream class and against an override that drops the wrapper. The bridge logs
+`KeyboardMedia: input connection wrapped` once per process - the line that says on a device that the
+hook is live.
+
+**One dispatcher routes it (2026-11-22), and nothing is dropped silently.** With the hook live,
+Android advertises image types on EVERY editor of the WebView, so Gboard offers its GIF tab in any
+field. Each composer used to listen for `canari-keyboard-media` on its own, which would have left
+every unwired field taking the GIF and losing it. `utils/keyboardMedia.ts` is now the one owner: the
+root layout installs one window listener, and a composer registers with the `keyboardMediaTarget`
+action. The event goes to the innermost registered element containing the focused element:
+
+| Surface | Registered on | What a keyboard GIF does |
+| --- | --- | --- |
+| `chat` | `ChatComposer`'s footer | attached through `onFilesSelected`, the picked-file path (DM, group, channel) |
+| `chat-edit` | the same footer, while a message is edited | refused: toast `keyboard_media_refused` |
+| `comment` | `CommentComposer`'s field | staged through `stageMediaFile` |
+| `post` | `CreatePostForm`'s root | added through `addFiles`, the picked-file path |
+| any other focused field (a channel poll, a reel caption, a profile field) | nothing | refused: toast `keyboard_media_refused`, and one `KeyboardMedia` line naming the surface (`data-media-surface` if an ancestor declares one, else the tag) |
+| no focused field | - | nothing attached, one line, **no toast**: no keyboard commits without an editor, so this is iOS seeing the app's own pasteboard write (an image copied in the app), and "GIFs cannot be added here" would be false |
+
+An unreadable payload toasts `keyboard_media_unreadable`, and so does a native ERROR event: both bridges, instead of only logging, send `{ error: 'too-large' | 'unreadable' }` with no data when they received an image they could not hand over (empty, over 12 MiB, a read that threw). The focus rule comes first for errors too, so a too-large image copied on iOS outside any composer shows nothing. Before this, the chat page sent ANY
+dispatched image into the open conversation whatever had focus - an image copied on iOS included.
+Tested in `utils/keyboardMedia.test.ts`. Reliable IME `commitContent` needs a recent Android
+WebView; on devices where it is unavailable the in-app GIF picker still works.
 
 ### The thread sticks to its own bottom, and ONE boolean says whether it should (2026-09-22)
 
@@ -6493,7 +6646,7 @@ A salon text has no bubble and no queue entry (OFF-2 and OFF-3 are not built), a
 
 `sendChatMessage` (channel branch) draws a local ECHO row before the POST - `status: 'pending'`, then `'sending'` while in flight - using the same `ChatMessage.status` union and `MessageMetadata` labels as DMs and groups; no second model. The row is memory only (`skipDbSave`) and flagged `awaitingServerId`, because a salon message has TWO ids: the client UUID it is drawn under, and the one the server mints for its row (R4 in [offline-and-weak-network](../offline-and-weak-network.md)), which react/edit/delete/pin address. `utils/chat/salonEcho.ts` re-keys the echo to the server id IN PLACE - the row keeps `renderKey` (its client id), which `ChatMessageGroups` keys by, so it is updated, not remounted, and its entrance does not replay at delivery (2026-11-13, [keyboard-and-send-motion](../keyboard-and-send-motion.md); before that the `{#each}` key was `id` and the row WAS remounted) - on whichever answer comes first: the POST reply (`sendEncryptedChannelMessage` now resolves with the row id) or the `channel.message.created` frame, matched on the client UUID sealed inside the ciphertext (`channelEventHandler.ts`). A second answer is a no-op; if the server row is already in the list the echo is dropped, never drawn twice. A refusal sets `error` and the text STAYS in the row, with "Reessayer" (same payload, same client id) and "Supprimer" in the status line, which now shows an `error` on any own message, not only the last. Until re-keyed the row offers no reply/forward/react/edit/delete/pin, and it is not announced to the sibling tabs (`salonEcho` option of `addMessageToChat`); the re-key announces it. The composer keeps nothing once a row exists (`result.echoed`); WP-OFF-1's draft restore now covers only the case where no row could be drawn.
 
-**What settles it, and who may.** The frame re-keys an echo ONLY when its sender is this user (the client UUID inside the ciphertext is author-chosen, so another member could otherwise swap any awaiting row). The outcome of the POST is classified at the throw: a 4xx (`ApiRefusalError`) or an unsendable seal (`GraineSealUnavailableError`, nothing left the device) is an ANSWER and marks the row `error` (Retry/Delete); a throw with NO status, OR A 5xx, is an UNKNOWN outcome - a 502/504 may come from a gateway AFTER the social service stored the row - and the row becomes `unconfirmed` (2026-10-12, review of #1649): its own amber label ("Non confirme"), distinguishable from a failure, offering Delete, "Remettre dans le champ" (`takeBackSalonSend`: the row and its ledger entry go, the text returns to the composer through WP-OFF-1's `restoreFailedDraft`), and - since WP-OFF-3 - Retry. No clock, no heal: the frame or the next history load still settles it if the server did take it (`loadChannelHistory` re-keys any own echo whose client UUID, `DecodedChannelMessage.clientMessageId`, appears in the page, whatever its state; this also covers a reply that carried no id, typed `null` from `sendEncryptedChannelMessage` and logged as an error). **The server dedupes on the client id since WP-OFF-3 (migration 088)**: a repeat of the same `messageId` by the same author in the same salon is answered with the stored row, which is what makes Retry safe on an unknown outcome ([offline-and-weak-network](../offline-and-weak-network.md#16-wp-off-3-and-wp-off-4-built-a-salon-write-waits-for-the-link-and-a-repeat-is-one-row-2026-10-17)). A transport failure that leaves the device OFFLINE is `pending` and sent again on the reconnect - once an answer has proven the server answers a repeat with its row (`salonRepeatProof.ts`); before that it is `unconfirmed` like any unknown outcome, and goes on its own when the proof arrives. A Retry already in flight refuses a second click (`retrying` in `utils/chat/messaging.ts`; test "a double-click on Retry sends once").
+**What settles it, and who may.** The frame re-keys an echo ONLY when its sender is this user (the client UUID inside the ciphertext is author-chosen, so another member could otherwise swap any awaiting row). The outcome of the POST is classified at the throw: a 4xx (`ApiRefusalError`) or an unsendable seal (`GraineSealUnavailableError`, nothing left the device) is an ANSWER and marks the row `error` (Retry/Delete); a throw with NO status, OR A 5xx, is an UNKNOWN outcome - a 502/504 may come from a gateway AFTER the social service stored the row - and the row becomes `unconfirmed` (2026-10-12, review of #1649): its own amber label ("Non confirme"), distinguishable from a failure, offering Delete, "Remettre dans le champ" (`takeBackSalonSend`: the row and its ledger entry go, the text returns to the composer through WP-OFF-1's `restoreFailedDraft`), and - since WP-OFF-3 - Retry. No clock, no heal: the frame or the next history load still settles it if the server did take it (`loadChannelHistory` re-keys any own echo whose client UUID, `DecodedChannelMessage.clientMessageId`, appears in the page, whatever its state; this also covers a reply that carried no id, typed `null` from `sendEncryptedChannelMessage` and logged as an error). **The server dedupes on the client id since WP-OFF-3 (migration 088)**: a repeat of the same `messageId` by the same author in the same salon is answered with the stored row, which is what makes Retry safe on an unknown outcome ([offline-and-weak-network](../offline-and-weak-network.md#16-wp-off-3-and-wp-off-4-built-a-salon-write-waits-for-the-link-and-a-repeat-is-one-row-2026-10-17)). A transport failure that leaves the device OFFLINE is `pending` and sent again on the reconnect (the server answers a repeat with its row; the proof once awaited first was retired on 2026-11-22, [one lane per salon](#a-salon-is-received-in-the-order-it-was-written-one-lane-per-salon-2026-11-22)). A Retry already in flight refuses a second click (`retrying` in `utils/chat/messaging.ts`; test "a double-click on Retry sends once").
 
 **Tabs.** Only the leader receives the frame, so a FOLLOWER that composed the message learns the server row from the leader's `message_added`, which now carries the client UUID (`clientMessageId`, set by `channelEventHandler` for an own frame and by `applySalonEchoChange` on a re-key). The follower settles its echo under that id (`mergeAnnouncedMessage`) and forgets the send (`forgetDeliveredSalonSend`) instead of drawing the server row beside it; test: `salonEcho.test.ts` "shows ONE row, in both orders". **The unsent ledger is shared by every tab**, so each entry names the PAGE LIFE that wrote it, and that page life holds the Web Lock `canari.salon-unsent.owner.<id>` until its document goes away. A leftover is taken only when it is this page life's and no live send owns it, or its owner's lock is no longer held - the browser's release IS the proof of death, no heartbeat. The ledger is read BEFORE the locks are queried and only that read's entries can be taken (an entry is written after its owner's lock is requested, so a living writer is always in the snapshot that follows); read after, an entry a sibling or this life's own send wrote during the query was taken from a living writer. Without Web Locks a foreign entry is never taken, and that is logged; an entry written before owners existed is taken. Test: `salonUnsent.test.ts`.
 

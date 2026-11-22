@@ -20,6 +20,7 @@
   } from '$lib/forms/questionTypes';
   import { questionKindSections } from '$lib/forms/questionMenus';
   import { newQuestion, type DraftQuestion } from '$lib/forms/questionDraft';
+  import { isFormBlockType } from '$lib/forms/formBlocks';
   import { PRODUCT_GRID_TYPE } from '$lib/forms/productGridContract';
   import type { ProductGridTierDimension } from '$lib/forms/productGridEditor';
   import { m } from '$lib/paraglide/messages';
@@ -102,6 +103,13 @@
   function choose(key: string) {
     const picked = families.flatMap((f) => f.kinds).find((k) => k.kind === key);
     if (!picked) return;
+    // A text or image block has nothing a second step could ask: it goes in at once, and its card
+    // opens on the list, where its text is typed and its image uploaded.
+    if (isFormBlockType(picked.type)) {
+      Log.d(TAG, `adding a ${picked.type} block, no step 2`);
+      onAdd(newQuestion(picked.type));
+      return;
+    }
     Log.d(TAG, `step 2 for ${picked.kind}`);
     kind = picked;
     draft = newQuestion(picked.type);

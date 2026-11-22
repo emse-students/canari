@@ -147,3 +147,37 @@ describe('FormsController - the agenda link follows the form read', () => {
     });
   });
 });
+
+describe('FormsController.summaries - the batched card read', () => {
+  const VIEWER = { userId: 'u1', isGlobalAdmin: false };
+  const A = '11111111-1111-4111-8111-111111111111';
+  const B = '22222222-2222-4222-8222-222222222222';
+
+  function controllerWith(summaries: jest.Mock) {
+    return new FormsController(
+      { summaries } as never,
+      ...(([] as unknown[]).concat(Array(5).fill({})) as [never, never, never, never, never])
+    );
+  }
+
+  it('asks the service once for every id and wraps the answer', async () => {
+    const summaries = jest
+      .fn()
+      .mockResolvedValue([{ id: A, title: 'a', opensAt: null, hasSubmitted: true }]);
+    const out = await controllerWith(summaries).summaries(`${A},${B}`, VIEWER.userId);
+    expect(summaries).toHaveBeenCalledTimes(1);
+    expect(summaries).toHaveBeenCalledWith([A, B], VIEWER);
+    expect(out.forms).toHaveLength(1);
+  });
+
+  it.each([[undefined], [[A, B]], [''], ['not-a-uuid'], [Array(51).fill(A).join(',')]])(
+    'refuses %s with a 400 and asks nothing',
+    async (ids) => {
+      const summaries = jest.fn();
+      await expect(
+        controllerWith(summaries).summaries(ids as string | undefined, VIEWER.userId)
+      ).rejects.toThrow(/ids must be/);
+      expect(summaries).not.toHaveBeenCalled();
+    }
+  );
+});

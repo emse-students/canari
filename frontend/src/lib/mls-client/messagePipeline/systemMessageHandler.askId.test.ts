@@ -1,4 +1,8 @@
-import { handleSystemEvent } from './systemMessageHandler';
+import {
+  handleSystemEvent,
+  KEYLESS_HISTORY_ASK,
+  resetKeylessHistoryAsks,
+} from './systemMessageHandler';
 import {
   awaitProbe,
   digestIdentity,
@@ -179,15 +183,16 @@ describe('a history ask is read only with its request id (D211)', () => {
   });
 });
 
-/** The keyless-ask lines said at ERROR under `tag` (every floor build keys its asks: a defect). */
+/** The keyless-ask lines said (ERROR, once per sender: a bug or a forgery cannot be ruled out) under `tag`. */
 const keylessLine = (_ctx: ReturnType<typeof makeCtx>, tag: string) =>
   errorSpy.mock.calls
     .map((c) => String(c[0]))
-    .filter((l) => l.startsWith(`[${tag}] No answer key`));
+    .filter((l) => l.startsWith(`[${tag}] ${KEYLESS_HISTORY_ASK}`));
 let errorSpy: { mock: { calls: unknown[][] }; mockRestore: () => void };
 
 describe('a history ask is read only with its answer key (option B, the 1.7.0 floor)', () => {
   beforeEach(() => {
+    resetKeylessHistoryAsks();
     errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
   afterEach(() => errorSpy.mockRestore());
@@ -200,6 +205,43 @@ describe('a history ask is read only with its answer key (option B, the 1.7.0 fl
   it('a digest with no key is refused: no probe stored, nothing pulled or answered', async () => {
     const ctx = makeCtx();
     await handleSystemEvent('history_digest', keyless(DIGEST), ctx as any);
+    await flushMacrotask();
+
+    expect(keylessLine(ctx, 'HISTORY_DIGEST')).toHaveLength(1);
+    expect(pullFromOverheardDigest).not.toHaveBeenCalled();
+    expect(answerHistoryDigest).not.toHaveBeenCalled();
+    await expect(awaitProbe(GROUP, PEER, 0)).resolves.toBeNull();
+  });
+
+  it('says a repeated keyless ask from one sender ONCE, and a new sender again', async () => {
+    const ctx = makeCtx();
+    await handleSystemEvent('history_digest', keyless(DIGEST), ctx as any);
+    await handleSystemEvent('history_digest', keyless(DIGEST), ctx as any);
+    expect(keylessLine(ctx, 'HISTORY_DIGEST')).toHaveLength(1);
+  });
+
+  it('says the same sender again after a logout cleared what was said', async () => {
+    const ctx = makeCtx();
+    await handleSystemEvent('history_digest', keyless(DIGEST), ctx as any);
+    resetKeylessHistoryAsks();
+    await handleSystemEvent('history_digest', keyless(DIGEST), ctx as any);
+    expect(keylessLine(ctx, 'HISTORY_DIGEST')).toHaveLength(2);
+  });
+
+  it('the ask a pre-1.7.0 client really sent (v1.6.12 shape, no answerKey field) is refused ONCE', async () => {
+    // Built from `sendHistoryDigest` as tagged `v1.6.12`: `JSON.stringify({ from, digest, since,
+    // requestId })` - the key exists nowhere in that frame, not even as an empty string (reading
+    // `1.7.3-alpha.6`, #3958 row 3: no 1.6.x build can be installed beside the pre-release to send it).
+    const wire = JSON.stringify({
+      from: PEER,
+      digest: { mode: 'ids', ids: ['m1', 'm2'] },
+      since: 0,
+      requestId: ASK,
+    });
+    expect('answerKey' in JSON.parse(wire)).toBe(false);
+    const ctx = makeCtx();
+    await handleSystemEvent('history_digest', JSON.parse(wire), ctx as any);
+    await handleSystemEvent('history_digest', JSON.parse(wire), ctx as any);
     await flushMacrotask();
 
     expect(keylessLine(ctx, 'HISTORY_DIGEST')).toHaveLength(1);

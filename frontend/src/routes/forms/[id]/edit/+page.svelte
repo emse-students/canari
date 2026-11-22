@@ -3,6 +3,7 @@
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
   import { questionImageRefusalMessage } from '$lib/forms/questionImage';
   import { formCodeMessage, formItemsProblem } from '$lib/forms/answerBounds';
+  import { questionItemsOf } from '$lib/forms/formBlocks';
   import { formWindowInvalid } from '$lib/forms/formWindow';
   import { describeApiRefusal, refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
   import { SocialApiError } from '$lib/associations/api';
@@ -200,6 +201,12 @@
   let items = $state<any[]>([]);
   /** Per priced grid, the cells some answer ordered: removing their row or column warns first. */
   let orderedCells = $state<Record<string, string[]>>({});
+  /**
+   * Whether `orderedCells` is KNOWN: set once the answers were read (or there are none to read). The
+   * shared-columns actions re-key a grid's columns by label, which is only safe knowing which cells
+   * are ordered, so they wait for this - and stay off if the read failed.
+   */
+  let orderedReady = $state(false);
 
   /**
    * Reads which grid cells were ordered, when the form holds a priced grid that has answers. A
@@ -207,9 +214,13 @@
    */
   async function loadOrderedCells(id: string, f: Form) {
     const gridIds = (f.items ?? []).filter((i) => i.type === PRODUCT_GRID_TYPE).map((i) => i.id);
-    if (gridIds.length === 0 || !f.submissionCount) return;
+    if (gridIds.length === 0 || !f.submissionCount) {
+      orderedReady = true;
+      return;
+    }
     try {
       orderedCells = orderedProductGridCells(await getSubmissions(id), gridIds);
+      orderedReady = true;
     } catch (e) {
       console.warn('[forms] the ordered grid cells could not be read; removals will not warn:', e);
     }
@@ -456,7 +467,7 @@
   );
   const summary = $derived(
     formSummary({
-      questionCount: items.length,
+      questionCount: questionItemsOf(items).length,
       requiresPayment,
       basePrice,
       priceMatrix,
@@ -1014,6 +1025,7 @@
       {isPublic}
       {gridFault}
       {orderedCells}
+      {orderedReady}
       onPricedGridAdded={() =>
         applyMultipleSubmissions(multipleSubmissionsAfterGridAdded(multipleSubmissions()))}
       onPricedGridGone={() =>

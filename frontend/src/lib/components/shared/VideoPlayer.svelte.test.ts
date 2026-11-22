@@ -750,14 +750,14 @@ it('the reel variant draws its video over the WHOLE box, never at its intrinsic 
 
 // ------------------------------------------------------- a conversation's viewer (owner, 2026-11-10)
 
-function mountConversation(src = 'blob:conv', streamed = false) {
+function mountConversation(src = 'blob:conv', streamed = false, seekAnywhere = false) {
   vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue();
   vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
   const target = document.createElement('div');
   document.body.appendChild(target);
   const component = mount(VideoPlayer, {
     target,
-    props: { src, variant: 'conversation', soundScope: 'local', streamed },
+    props: { src, variant: 'conversation', soundScope: 'local', streamed, seekAnywhere },
   });
   mounted.push(() => unmount(component));
   flushSync();
@@ -1051,4 +1051,32 @@ it('a streamed video is never sought before what it still buffers', () => {
   expect(video.currentTime, '4 s was evicted: clamped to 12 s').toBe(12);
   press(150);
   expect(video.currentTime, 'inside what is held: exact').toBe(30);
+});
+
+/**
+ * A REPLAY RE-FETCHES WHAT A SEEK LANDS ON, so its buffer is a window around the playhead: a drag back
+ * out of the window must reach its target (iPhone 12, 1.7.3-alpha.5: the playhead stayed at the
+ * window's start, 4:28, whatever the drag).
+ */
+it('a seekAnywhere stream is sought before its buffered window, in both directions', () => {
+  const { target, video } = mountConversation('blob:replay-conv', true, true);
+  Object.defineProperty(video, 'buffered', {
+    configurable: true,
+    get: () => ({ length: 1, start: () => 12, end: () => 36 }),
+  });
+  const slider = target.querySelector<HTMLElement>('[role="slider"]')!;
+  slider.getBoundingClientRect = () => ({ left: 0, width: 200, top: 0, height: 32 }) as DOMRect;
+  const press = (x: number) => {
+    slider.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, clientX: x, pointerId: 1 })
+    );
+    slider.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 1 }));
+  };
+  withDuration(video, 40);
+  video.dispatchEvent(new Event('durationchange'));
+  flushSync();
+  press(150);
+  expect(video.currentTime).toBe(30);
+  press(20);
+  expect(video.currentTime, 'before the window: exact, not 12').toBe(4);
 });

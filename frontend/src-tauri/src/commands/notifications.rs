@@ -290,6 +290,167 @@ pub(crate) fn record_read_elsewhere(
     }
 }
 
+/// iOS: takes down a conversation's DELIVERED notifications - the page's reader opened it
+/// (`read_here`) or it ended (`conversation_ended`) - and recomputes the badge from what remains.
+///
+/// Opening the app removes nothing any more (owner, 2026-11-21: "N'effacer que les lues"): each
+/// banner goes with ITS conversation, and this is the event that says so on the device whose own
+/// reader is the one reading, which no push or socket echo reports back. A class message to
+/// `CanariConversationNotifications` (`canari_push.mm`) through the Objective-C runtime rather than
+/// a symbol, because this crate is linked into the notification extension too, which does not carry
+/// that class (see `push_registration.rs`). Returns whether the removal was asked; `false` off iOS,
+/// where the caller never calls (Android has [`record_read_elsewhere`]).
+#[tauri::command]
+pub(crate) fn cancel_conversation_notifications(group_id: String, reason: String) -> bool {
+    #[cfg(target_os = "ios")]
+    {
+        use objc2::msg_send;
+        use objc2::runtime::{AnyClass, AnyObject};
+        use std::ffi::CString;
+
+        let Ok(group) = CString::new(group_id.as_str()) else {
+            log::error!(
+                "[NOTIF] a conversation id with a NUL byte - nothing taken down ({reason})"
+            );
+            return false;
+        };
+        let (Some(class), Some(str_class)) = (
+            AnyClass::get(c"CanariConversationNotifications"),
+            AnyClass::get(c"NSString"),
+        ) else {
+            log::error!(
+                "[NOTIF] CanariConversationNotifications is not loaded - the notifications of a conversation ({reason}) stay"
+            );
+            return false;
+        };
+        objc2::rc::autoreleasepool(|_| {
+            // SAFETY: `stringWithUTF8String:` takes a NUL-terminated C string that outlives the call
+            // (`group`), and `cancelForConversation:` is a class method declared `+ (BOOL)` taking
+            // one NSString in canari_push.mm; it only schedules work on the notification centre.
+            unsafe {
+                let ns: *mut AnyObject = msg_send![str_class, stringWithUTF8String: group.as_ptr()];
+                let queued: bool = msg_send![class, cancelForConversation: ns];
+                log::debug!("[NOTIF] taking down the notifications of a conversation ({reason}): queued={queued}");
+                queued
+            }
+        })
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = (group_id, reason);
+        false
+    }
+}
+
+/// What the page's ask of the announced-messages ledger answered (`mobile::announced`).
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MessageAnnouncement {
+    /// Whether the page raises its banner: one message of it nobody announced is enough.
+    raise: bool,
+    fresh: usize,
+    by_extension: usize,
+    by_page: usize,
+    /// The keys the banner covers, stamped on it so the extension can replace it.
+    keys: Vec<String>,
+}
+
+/// One message a page banner covers: its sender and its instant, the two halves of its key in the
+/// announced-messages ledger with the conversation (`mobile::announced::announce_key`).
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+// Read on iOS only, where the ledger is.
+#[cfg_attr(not(target_os = "ios"), allow(dead_code))]
+pub(crate) struct AnnouncedMessageArg {
+    sender_id: String,
+    at: i64,
+}
+
+/// iOS: the page asks, BEFORE it raises the one banner covering `messages` of `conversation_id`,
+/// whether any of them is still unannounced - the notification extension draws every
+/// alert push and acknowledges nothing, so a cold launch or a resume redelivers what it already
+/// showed (`docs/wiki/frontend/ios-notification-ownership.md`). Every key is claimed in the same
+/// locked step, over the ledger sealed under the install's native cache key. An `Err` is a ledger
+/// that could not be read or written, a cache key that cannot be read, or a banner whose messages
+/// carry no sender or instant: the page says so at ERROR. Off iOS there is no extension to share
+/// with: `Err`.
+#[tauri::command]
+pub(crate) fn claim_message_announcement(
+    app: tauri::AppHandle,
+    conversation_id: String,
+    messages: Vec<AnnouncedMessageArg>,
+) -> Result<MessageAnnouncement, String> {
+    #[cfg(target_os = "ios")]
+    {
+        let dir = crate::app_group::app_group_dir()?;
+        let key = crate::native_cache::app_cache_key(&app)?;
+        let messages: Vec<(String, i64)> =
+            messages.into_iter().map(|m| (m.sender_id, m.at)).collect();
+        let (claim, keys) =
+            crate::mobile::announced::page_claim_in(&dir, &key, &conversation_id, &messages)?;
+        Ok(MessageAnnouncement {
+            raise: claim.raise(),
+            fresh: claim.fresh,
+            by_extension: claim.by_extension,
+            by_page: claim.by_page,
+            keys,
+        })
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = (app, conversation_id, messages);
+        Err("no notification extension shares this ledger off iOS".to_string())
+    }
+}
+
+/// Android: a conversation ENDED (deleted, left, excluded, its salon or community gone) - withdraws
+/// its message banner, its reaction notification and the summary's share of them, UNCONDITIONALLY and
+/// without recording any read mark (`endConversationFromWebSocket`).
+///
+/// It is not a read, and must never travel the read path: a mark is a process-lifetime record that
+/// suppresses later posts at or below it, so an ending routed through [`record_read_elsewhere`] with
+/// a huge mark silenced the conversation for good once the account came back to it. Returns whether
+/// the work was queued; `false` off Android.
+#[tauri::command]
+pub(crate) fn end_conversation_notifications(group_id: String, reason: String) -> bool {
+    #[cfg(target_os = "android")]
+    {
+        with_native_builder(|env, class| {
+            let (group, why) = match (env.new_string(&group_id), env.new_string(&reason)) {
+                (Ok(group), Ok(why)) => (group, why),
+                (Err(e), _) | (_, Err(e)) => {
+                    log::error!(
+                        "[NOTIF] new_string failed: {e} - the ended conversation was NOT withdrawn"
+                    );
+                    return false;
+                }
+            };
+            match env
+                .call_static_method(
+                    class,
+                    "endConversationFromWebSocket",
+                    "(Ljava/lang/String;Ljava/lang/String;)Z",
+                    &[(&group).into(), (&why).into()],
+                )
+                .and_then(|v| v.z())
+            {
+                Ok(queued) => queued,
+                Err(e) => {
+                    log::error!(
+                        "[NOTIF] endConversationFromWebSocket failed: {e} - its banner may stay"
+                    );
+                    false
+                }
+            }
+        })
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (group_id, reason);
+        false
+    }
+}
+
 // --- The foreground's faces, handed to the notification's cache ---------------------------------
 
 /// The file name `CanariFirebaseMessagingService.avatarCacheFile` reads for `user_id`, without its
