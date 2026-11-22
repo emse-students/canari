@@ -209,13 +209,15 @@ describe('FormsService.exportSubmissions', () => {
       expect(second.slice(3)).toEqual(['Rouge', '']);
     });
 
-    it('refuses the export when the client sent no word for the comment column', async () => {
+    it('exports without the comment column when an older client sent no word for it', async () => {
       const service = makeService({
         requiresPayment: false,
         items: [COLOUR],
-        submissions: [submission({ answers: { q_col: 'red' } })],
+        submissions: [submission({ answers: { q_col: 'red', 'q_col#comment': 'Merci' } })],
       });
-      await expect(service.exportSubmissions('f1', LABELS)).rejects.toThrow(/comment/);
+      const [head, first] = await sheet(service, LABELS);
+      expect(head.slice(3)).toEqual(['Couleur']);
+      expect(first.slice(3)).toEqual(['Rouge']);
     });
 
     it('keeps the column of a comment that was given while the switch was on', async () => {

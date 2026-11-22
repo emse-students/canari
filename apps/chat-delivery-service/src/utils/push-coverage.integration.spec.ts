@@ -36,7 +36,7 @@ const TABLES = `
   CREATE TABLE key_package (
     id uuid PRIMARY KEY, "userId" varchar(255) NOT NULL, "deviceId" varchar NOT NULL,
     "deviceOs" varchar(32), "deviceAppVersion" varchar(32), "pushOutcome" varchar(32),
-    "createdAt" timestamp NOT NULL, UNIQUE ("userId", "deviceId"));`;
+    "createdAt" timestamp NOT NULL, "notificationState" varchar(16), UNIQUE ("userId", "deviceId"));`;
 
 maybe('push-coverage predicate against PostgreSQL', () => {
   const schema = `push_coverage_it_${Date.now()}`;
@@ -54,6 +54,8 @@ maybe('push-coverage predicate against PostgreSQL', () => {
       session?: 'own' | 'other-account' | 'expired' | 'none';
       row?: boolean;
       banned?: boolean;
+      /** The `notificationState` the device stated on its last register-device. */
+      state?: string;
     } = {}
   ) => {
     await q(`INSERT INTO key_package VALUES ($1, $2, $3, $4, '1.7.0', $5, $6)`, [
@@ -64,6 +66,12 @@ maybe('push-coverage predicate against PostgreSQL', () => {
       opts.outcome ?? null,
       ago(opts.minutesAgo ?? 60),
     ]);
+    if (opts.state) {
+      await q(`UPDATE key_package SET "notificationState" = $1 WHERE "deviceId" = $2`, [
+        opts.state,
+        deviceId,
+      ]);
+    }
     const session = opts.session ?? 'own';
     if (session !== 'none') {
       await q(`INSERT INTO auth_sessions VALUES ($1, $2, $3, $4)`, [
@@ -125,6 +133,16 @@ maybe('push-coverage predicate against PostgreSQL', () => {
     await phone('u9', 'tauri-u9', { session: 'expired' });
     // KEPT: the only live session naming its device id belongs to ANOTHER account.
     await phone('u10', 'tauri-u10', { session: 'other-account' });
+    // COUNTED, permissionOff: holds its row and states the OS will not show a notification.
+    await phone('u11', 'tauri-u11', { row: true, state: 'off' });
+    // KEPT from the coverage: a mobile browser reporting android - a browser-only member.
+    await phone('u12', 'web-u12');
+    // KEPT: a browser too, but its member also holds an installed app (counted, holds its row, on).
+    await phone('u13', 'web-u13');
+    await phone('u13', 'tauri-u13', { row: true, state: 'on' });
+    // COUNTED browser-only: its only installed app is a desktop one, which no push reaches.
+    await phone('u14', 'web-u14');
+    await phone('u14', 'tauri-u14', { os: 'windows' });
   });
 
   afterAll(async () => {
@@ -139,9 +157,10 @@ maybe('push-coverage predicate against PostgreSQL', () => {
       {
         os: 'android',
         build: '1.7.0',
-        devices: 3,
+        devices: 5,
         withoutPush: 1,
         noOsToken: 1,
+        permissionOff: 1,
         // The no-token phone and the one holding its row are not in it: only the unregistered.
         outcomes: ['unauthorized:session-expired'],
       },
@@ -151,10 +170,14 @@ maybe('push-coverage predicate against PostgreSQL', () => {
         devices: 1,
         withoutPush: 1,
         noOsToken: 0,
+        permissionOff: 0,
         outcomes: ['unstated'],
       },
     ]);
-    expect(logger.warn).toHaveBeenCalledTimes(2);
-    expect(await q(`SELECT count(*)::int AS n FROM push_token`)).toEqual([{ n: 1 }]);
+    expect(logger.warn).toHaveBeenCalledTimes(3);
+    expect(await q(`SELECT count(*)::int AS n FROM push_token`)).toEqual([{ n: 3 }]);
+    expect(logger.log).toHaveBeenCalledWith(
+      expect.stringMatching(/only through a mobile browser.*: 2$/)
+    );
   });
 });

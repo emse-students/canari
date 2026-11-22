@@ -506,6 +506,18 @@ build reads those four headers in French.
 fields, and the `[LEGACY]` line is absent from production for a week. Then make `identity` required
 in `parseExportLabels`, delete the constant, its branch, its test and this entry.
 
+### Removal once `minClientVersion` passes the release carrying the choice comment - an export asked without the comment word (2026-11-22)
+
+**Site:** `FormsService.exportSubmissions` (`apps/social-service/src/forms/forms.service.ts`), where
+`labels.comment` is absent while a question takes a comment or an answer holds one, logged
+`[LEGACY] export of ... without the comment word`.
+**What it humours:** a store build older than the choice comment sends no word for the `Question -
+Commentaire` header. Refusing it would lock that organiser out of the export (lead, 2026-11-22).
+**The cost while it stands:** one branch; the export of such a form lacks the comment columns.
+**Removal condition:** `minClientVersion` on both estates passes the first stable carrying the choice
+comment, and the `[LEGACY]` line is absent for a week. Then make `comment` required where the column
+is written, delete the branch, its test and this entry.
+
 ### Removal once `minClientVersion` passes `1.7.0` - an answer from a build that cannot draw the declared questions (2026-11-16)
 
 **Site:** `predatesDeclaredFields` and the `olderClient` branch of `declaredIdentityFor`
@@ -935,6 +947,23 @@ unranked page 1 - which the server would refuse `400 RANKING_PAGE_INVALID` (a la
 without `asOf`).
 **Removal condition:** when no estate older than the release carrying `rankedFeeds` is served (both
 estates deployed past 1.6.9), the client branch for `false` may go; the field stays, always `true`.
+
+### No date yet - own answers read back - `myAnswers` (2026-11-21)
+
+**Site:** the fill page's load (`frontend/src/routes/forms/[id]/+page.svelte`, `ownAnswersOf` in
+`frontend/src/lib/forms/ownAnswers.ts`); the server half is `myAnswers` in `GET /api/forms/:id/check?answers=1`.
+**Why.** A store build reaches phones days before production deploys, and a social-service older than
+the field ignores `answers=1` and answers the check without it.
+**What the client does.** An ABSENT `myAnswers` is "not served": the page reads the single answer
+through `GET :id/submission` as before, and lists only the changeable answers of a form taking several.
+Nothing is learned from a refusal. The branch ACCUSES: it logs at warn `[LEGACY] myAnswers not served`
+(`ownAnswersOf`), the line a reader of a device's in-app log sees. It is a client console line, which
+no estate collects, so it says THAT the branch ran, never how often. Pinned by
+`page.ownAnswer.svelte.test.ts` ("an estate older than myAnswers", the tag included).
+**Removal condition:** the branch serves only a new client talking to a social-service that predates
+`myAnswers`. It may go once every estate - dev AND production - runs a server that serves the field,
+that is once the **1.8.0 stable** is deployed on both (`gh release list` says when). The `getSubmission`
+route itself stays for older apps until their own floor.
 
 ### No date yet - an answer editor newer than its server - `formAnswerEdit` (2026-11-13)
 

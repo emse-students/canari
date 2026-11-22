@@ -80,6 +80,13 @@ describe.each([
     '049_report_accusations.sql',
     /^\s*CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+"?report_accusations"?/im,
   ],
+  // `push_token` again: the push delivery record's two dates. The new table comes first, then the
+  // ALTER - the timeout must precede both.
+  [
+    '054_push_delivery_records.sql',
+    /^\s*CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+"?push_delivery_daily"?/im,
+  ],
+  ['054_push_delivery_records.sql', /^\s*ALTER\s+TABLE\s+"?push_token"?/im],
 ])('a migration that locks another hot table: %s', (file, alters) => {
   it('sets a lock_timeout before it alters the table', () => {
     const sql = read(file);
@@ -89,5 +96,19 @@ describe.each([
     expect(alter).toBeGreaterThanOrEqual(0);
     expect(timeout).toBeGreaterThanOrEqual(0);
     expect(timeout).toBeLessThan(alter);
+  });
+});
+
+describe('055_key_package_notification_state.sql', () => {
+  it('sets a lock_timeout before it alters key_package, which every invitation reads', () => {
+    const sql = read('055_key_package_notification_state.sql');
+    const timeout = sql.search(/^\s*SET\s+lock_timeout\s*=\s*'\d+s'\s*;/im);
+    const lock = sql.search(/^\s*ALTER\s+TABLE\s+"key_package"/im);
+    expect(lock).toBeGreaterThanOrEqual(0);
+    expect(timeout).toBeGreaterThanOrEqual(0);
+    expect(timeout).toBeLessThan(lock);
+    // Idempotent, so a re-run after a lock_timeout failure is safe.
+    expect(sql).toMatch(/ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+"notificationState"/i);
+    expect(sql).toMatch(/ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+"notificationChannels"/i);
   });
 });

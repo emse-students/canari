@@ -116,7 +116,7 @@ class CanariBootReceiver : BroadcastReceiver() {
      * through the JNI also warms it for the next background decrypt.
      */
     private fun drainPendingOutbox(context: Context) {
-        if (CanariFirebaseMessagingService.readOutboxMirror(context).isEmpty()) {
+        if (CanariFirebaseMessagingService.readOutboxQueuedOrNull(context)?.isEmpty() == true) {
             Log.d(TAG, "drainPendingOutbox: outbox empty")
             return
         }

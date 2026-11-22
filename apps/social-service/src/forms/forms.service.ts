@@ -147,7 +147,7 @@ import { formTierRefusal, type FormTierRank } from '../associations/tier-pricing
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { receivedStatus } from '../users/entities/purchase-record.entity';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
-import { toManagerView, toSubmitterView } from './submission.projection';
+import { toManagerView, toSubmitterView, type OwnAnswerView } from './submission.projection';
 import {
   askedFields,
   askedGuestFields,
@@ -2474,7 +2474,8 @@ export class FormsService {
    */
   async hasSubmission(
     formId: string,
-    userId: string
+    userId: string,
+    withAnswers = false
   ): Promise<{
     hasSubmitted: boolean;
     paymentStatus?: string;
@@ -2502,6 +2503,16 @@ export class FormsService {
      * `productGridPrices` above are [LEGACY] - the FIRST slice, for a page older than D32.
      */
     cursusSlices: CursusSlice[];
+    /**
+     * The caller's OWN answers, read-only (owner, 2026-11-21: "je voudrais pouvoir voir ma reponse,
+     * meme si l'editeur m'interdit de la modifier"), present only when asked (`withAnswers`, the fill
+     * page; the feed's cards do not ask). Every row `answerHoldingWhere` counts as an answer of THIS
+     * account, newest first, each with the questions that fixed its price (`lockedItemIds`). ALWAYS
+     * EMPTY on an anonymous form: its rows name nobody, so there is no "yours" to give back
+     * (principle 1); the fill page shows the device's own copy there instead. Absent from a server
+     * older than it, which the page reads as "not served" and draws what it drew before.
+     */
+    myAnswers?: OwnAnswerView[];
   }> {
     const form = await this.formRepo.findOne({ where: respondentFormWhere(formId) });
     if (!form)
@@ -2514,6 +2525,7 @@ export class FormsService {
         refusalCode: null,
         productGridPrices: {},
         cursusSlices: [],
+        ...(withAnswers ? { myAnswers: [] } : {}),
       };
 
     // Check global capacity independently of per-user state
@@ -2553,6 +2565,19 @@ export class FormsService {
         refusalCode,
         productGridPrices,
         cursusSlices,
+        ...(withAnswers
+          ? {
+              myAnswers: form.anonymous
+                ? this.noOwnAnswerOnAnonymous(form)
+                : this.ownAnswerViews(
+                    form,
+                    await this.submissionRepo.find({
+                      where: answerHoldingWhere(formId, { userId }),
+                      order: { createdAt: 'DESC' },
+                    })
+                  ),
+            }
+          : {}),
       };
 
     // An anonymous form's answers know no author, so "has this account answered" is read from the
@@ -2569,6 +2594,7 @@ export class FormsService {
         refusalCode,
         productGridPrices,
         cursusSlices,
+        ...(withAnswers ? { myAnswers: this.noOwnAnswerOnAnonymous(form) } : {}),
       };
     }
 
@@ -2579,12 +2605,11 @@ export class FormsService {
     // EVERY such row is read, as the guard reads them, and the one shown is the most decided
     // (`pickShownAnswer`): a legacy older `paid` behind a newer live `pending` showed "pending",
     // and the page offered a retry the server then refused with ALREADY_ANSWERED.
-    const submission = pickShownAnswer(
-      await this.submissionRepo.find({
-        where: answerHoldingWhere(formId, { userId }),
-        order: { createdAt: 'DESC' },
-      })
-    );
+    const ownRows = await this.submissionRepo.find({
+      where: answerHoldingWhere(formId, { userId }),
+      order: { createdAt: 'DESC' },
+    });
+    const submission = pickShownAnswer(ownRows);
     return {
       hasSubmitted: !!submission,
       paymentStatus: submission?.paymentStatus,
@@ -2598,7 +2623,31 @@ export class FormsService {
       refusalCode,
       productGridPrices,
       cursusSlices,
+      ...(withAnswers ? { myAnswers: this.ownAnswerViews(form, ownRows) } : {}),
     };
+  }
+
+  /**
+   * The caller's own rows as they may read them back (`toSubmitterView`, the allowlist), each with
+   * the questions that fixed its price (`rowLockedItemIds`, the edit's own rule): the page draws
+   * those with the lock line even where nothing may be changed. The rows were read with the
+   * caller's `userId`, so another account's row is never among them - it answers what an absent one
+   * does.
+   */
+  private ownAnswerViews(form: Form, rows: Submission[]): OwnAnswerView[] {
+    this.logger.debug(`[FORMS] own answers form=${form.id.slice(0, 8)} rows=${rows.length}`);
+    return rows.map((row) => ({
+      ...toSubmitterView(row),
+      lockedItemIds: [...rowLockedItemIds(form, row)],
+    }));
+  }
+
+  /** An anonymous form's rows name nobody: the server has no answer of the caller to give back. */
+  private noOwnAnswerOnAnonymous(form: Form): OwnAnswerView[] {
+    this.logger.debug(
+      `[FORMS] own answers form=${form.id.slice(0, 8)}: anonymous, none held by the server`
+    );
+    return [];
   }
 
   /**
@@ -3313,10 +3362,7 @@ export class FormsService {
       where: answerHoldingWhere(formId, { userId }),
       order: { createdAt: 'DESC' },
     });
-    return rows.map((row) => ({
-      ...toSubmitterView(row),
-      lockedItemIds: [...rowLockedItemIds(form, row)],
-    }));
+    return this.ownAnswerViews(form, rows);
   }
 
   /**
@@ -4791,16 +4837,20 @@ export class FormsService {
     // A choice question's free comment is a column of its own, right after its answer: the answer
     // column stays one value per row to count, and the comment is read beside it. Written when the
     // question takes a comment now or an answer holds one from when it did (`choice-notes.ts`).
-    const commentColumns = new Set(
-      form.items
-        .filter(
-          (item: FormItemLike) =>
-            item.allowComment || submissions.some((s) => commentText(s.answers, item.id) !== '')
-        )
-        .map((item: FormItemLike) => item.id)
-    );
-    if (commentColumns.size > 0 && !labels.comment) {
-      throw new BadRequestException('export label "comment" is required');
+    const wantedCommentColumns = form.items
+      .filter(
+        (item: FormItemLike) =>
+          item.allowComment || submissions.some((s) => commentText(s.answers, item.id) !== '')
+      )
+      .map((item: FormItemLike) => item.id);
+    // A store build older than the comment sends no word for the column: the organiser still gets
+    // the export, without it, rather than none at all (`docs/wiki/legacy-compatibility.md`).
+    const commentColumns = new Set<string>(labels.comment ? wantedCommentColumns : []);
+    if (wantedCommentColumns.length > 0 && !labels.comment) {
+      this.logger.debug(
+        `[LEGACY] export of ${formId.slice(0, 8)} without the comment word (a build older than the ` +
+          `choice comment): ${wantedCommentColumns.length} comment column(s) left out`
+      );
     }
     form.items.forEach((item: FormItemLike) => {
       headers.push({ header: item.label, key: item.id, width: 30 });
