@@ -1691,3 +1691,13 @@ export async function refreshAnswerHeldByCaller(why: string): Promise<string> {
     _verdictHeldByCaller--;
   }
 }
+
+/**
+ * Announces a dead-session verdict that refreshAnswerHeldByCaller held, when its caller can no
+ * longer act on it (the login that held it was aborted, or the account signed out meanwhile): a
+ * verdict held for a listener that left would otherwise reach nobody until some later refresh.
+ * Nothing is announced when no verdict is latched, or while another caller still holds one.
+ */
+export function announceHeldVerdict(): void {
+  if (_refreshCredentialProvenDead && _verdictHeldByCaller === 0) notifySessionExpired();
+}
