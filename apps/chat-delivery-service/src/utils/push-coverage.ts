@@ -39,6 +39,9 @@ const PUSH_PLATFORMS = ['android', 'ios'] as const;
  */
 export const INSTALLED_APP_DEVICE_PREFIX = 'tauri-';
 
+/** The device-id prefix of a browser (`WebMlsService`): no push by design. */
+export const BROWSER_DEVICE_PREFIX = 'web-';
+
 /** Whether `deviceId` names an installed app - the one test, shared by the SQL and the line. */
 export function isInstalledAppDevice(deviceId: string | undefined): boolean {
   return typeof deviceId === 'string' && deviceId.startsWith(INSTALLED_APP_DEVICE_PREFIX);
@@ -109,6 +112,7 @@ SELECT count(DISTINCT k."userId")::int AS "members"
   FROM key_package k
  WHERE k."deviceOs" IN (${PUSH_PLATFORMS.map((p) => `'${p}'`).join(', ')})
    AND k."deviceId" NOT LIKE '${INSTALLED_APP_DEVICE_PREFIX}%'
+   AND k."deviceId" LIKE '${BROWSER_DEVICE_PREFIX}%'
    AND k."createdAt" > $1
    AND NOT EXISTS (SELECT 1 FROM revoked_device r
                     WHERE r."userId" = k."userId" AND r."deviceId" = k."deviceId"
@@ -126,6 +130,29 @@ SELECT count(DISTINCT k."userId")::int AS "members"
                       AND EXISTS (SELECT 1 FROM auth_sessions s2
                                    WHERE s2."deviceId" = a."deviceId" AND s2."userId" = a."userId"
                                      AND s2."expiresAt" > $3))`;
+
+/**
+ * The phone-OS devices that ran in the window under an id of NEITHER known prefix. Never expected
+ * (production, 2026-11-22: 0 of 757 phone-OS key packages are neither `tauri-` nor `web-`), so a
+ * non-zero count is a native build whose id format {@link isInstalledAppDevice} no longer sees: its
+ * push coverage is unmeasured, and {@link reportPushCoverage} ACCUSES it instead of dropping it in
+ * silence. Same parameters as {@link PUSH_COVERAGE_SQL}. The client's half of the contract is pinned
+ * by `frontend/src/lib/services/deviceIdPrefix.test.ts`.
+ */
+export const PUSH_UNKNOWN_ID_SQL = `
+SELECT count(*)::int AS "other"
+  FROM key_package k
+ WHERE k."deviceOs" IN (${PUSH_PLATFORMS.map((p) => `'${p}'`).join(', ')})
+   AND k."deviceId" NOT LIKE '${INSTALLED_APP_DEVICE_PREFIX}%'
+   AND k."deviceId" NOT LIKE '${BROWSER_DEVICE_PREFIX}%'
+   AND k."createdAt" > $1
+   AND k."createdAt" <= $2
+   AND NOT EXISTS (SELECT 1 FROM revoked_device r
+                    WHERE r."userId" = k."userId" AND r."deviceId" = k."deviceId"
+                      AND r."revokedAt" > $3)
+   AND EXISTS (SELECT 1 FROM auth_sessions s
+                WHERE s."deviceId" = k."deviceId" AND s."userId" = k."userId"
+                  AND s."expiresAt" > $4)`;
 
 /** One (platform, build) row of the count. */
 export interface PushCoverageRow {
@@ -194,6 +221,18 @@ export async function reportPushCoverage(
     `[PUSH_COVERAGE] members reachable only through a mobile browser in 24 h (information, no ` +
       `push by design): ${browser[0]?.members ?? 0}`
   );
+  const [unknownIds] = ((await db.query(PUSH_UNKNOWN_ID_SQL, pushCoverageParams(now))) ??
+    []) as Array<{
+    other: number;
+  }>;
+  if ((unknownIds?.other ?? 0) > 0) {
+    logger.warn(
+      `[PUSH_COVERAGE] ${unknownIds.other} phone-OS device(s) ran with an id neither ` +
+        `'${INSTALLED_APP_DEVICE_PREFIX}' nor '${BROWSER_DEVICE_PREFIX}' - a native build whose id ` +
+        `format this count no longer sees: its push coverage is unmeasured ` +
+        `(INSTALLED_APP_DEVICE_PREFIX, utils/push-coverage.ts)`
+    );
+  }
   for (const r of rows) {
     if ((r.permissionOff ?? 0) > 0) {
       logger.warn(

@@ -2,6 +2,9 @@ import type { EncryptedGraineRow } from '$lib/db/types';
 import {
   boundGraineRetentionDays,
   GRAINE_RETENTION_FLOOR_DAYS,
+  resetGraineSweepState,
+  resumeGraineSweepIfOwed,
+  runGraineSweep,
   sweepExpiredGraineSeeds,
 } from './retention';
 import { cacheGraineSession, cachedGraineSession, setGraineRuntime } from './runtime';
@@ -52,6 +55,7 @@ let rows: EncryptedGraineRow[];
 let deleted: string[][];
 
 beforeEach(() => {
+  resetGraineSweepState();
   vi.useFakeTimers();
   vi.setSystemTime(NOW);
   liveGraineSessions.mockReset();
@@ -203,8 +207,66 @@ describe('sweepExpiredGraineSeeds', () => {
     expect(liveGraineSessions).toHaveBeenCalledTimes(2);
     expect((liveGraineSessions.mock.calls[0]![0] as string[]).length).toBe(500);
     expect((liveGraineSessions.mock.calls[1]![0] as string[]).length).toBe(1);
-    // Every chunk's verdict is applied, not just the last one's.
-    expect(deleted[0]).toHaveLength(501);
+    // Every chunk's verdict is applied as it arrives, not held until the last one.
+    expect(deleted.map((d) => d.length)).toEqual([500, 1]);
+  });
+
+  it('keeps what completed chunks proved, then resumes on the durable state', async () => {
+    rows = Array.from({ length: 1_100 }, (_, i) => mkRow(`s-${i}`, 400));
+    liveGraineSessions
+      .mockResolvedValueOnce({ live: [], retentionDays: 365 })
+      .mockRejectedValueOnce(new Error('timeout'));
+
+    await expect(sweepExpiredGraineSeeds()).resolves.toBe(500);
+    // The answered chunk was acted on; the unanswered ones were not touched.
+    expect(rows).toHaveLength(600);
+
+    liveGraineSessions.mockResolvedValue({ live: [], retentionDays: 365 });
+    await resumeGraineSweepIfOwed();
+    expect(rows).toHaveLength(0);
+
+    // Nothing owed any more: a further edge asks nothing.
+    liveGraineSessions.mockClear();
+    await resumeGraineSweepIfOwed();
+    expect(liveGraineSessions).not.toHaveBeenCalled();
+  });
+
+  it('runs the boot sweep and a resume as ONE flight', async () => {
+    rows = [mkRow('s-old', 400)];
+    let release!: () => void;
+    liveGraineSessions.mockImplementation(
+      () => new Promise((r) => (release = () => r({ live: [], retentionDays: 365 })))
+    );
+    const first = runGraineSweep();
+    const second = runGraineSweep();
+    await Promise.resolve();
+    release();
+    await Promise.all([first, second]);
+    expect(liveGraineSessions).toHaveBeenCalledTimes(1);
+  });
+
+  it('a sweep still running at logout neither blocks nor flags the next account', async () => {
+    rows = Array.from({ length: 600 }, (_, i) => mkRow(`s-${i}`, 400));
+    let failFirst!: () => void;
+    liveGraineSessions.mockImplementationOnce(
+      () => new Promise((_, reject) => (failFirst = () => reject(new Error('late'))))
+    );
+    const old = runGraineSweep();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    resetGraineSweepState(); // logout
+    failFirst();
+    await old;
+    // The old account's failure left nothing owed for the new one.
+    liveGraineSessions.mockClear();
+    await resumeGraineSweepIfOwed();
+    expect(liveGraineSessions).not.toHaveBeenCalled();
+
+    // And the new account's own sweep is not blocked by the old flight.
+    liveGraineSessions.mockResolvedValue({ live: [], retentionDays: 365 });
+    await runGraineSweep();
+    expect(liveGraineSessions).toHaveBeenCalled();
   });
 
   it('does nothing at all when the device holds no seeds', async () => {
