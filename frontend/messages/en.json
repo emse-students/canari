@@ -133,6 +133,18 @@
   "chat_search_placeholder": "Search…",
   "chat_new_channel_title": "New channel",
   "chat_new_discussion_title": "New discussion",
+  "chat_outbox_queue_unreadable": "Messages waiting to be sent cannot be read on this device right now: they are kept and sent once they can be read again.",
+  "chat_outbox_native_queue_unreachable": "Replies sent from your notifications cannot be read right now: they are held and shown as not sent, with a retry. Messages you send from the app still go.",
+  "chat_outbox_lines_unreadable": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} message waiting to be sent could not be read back. Check your latest messages and type it again if it is missing.",
+        "countPlural=other": "{count} messages waiting to be sent could not be read back. Check your latest messages and type them again if they are missing."
+      }
+    }
+  ],
   "chat_new_discussion_label": "New discussion",
   "chat_new_channel_label": "New channel",
   "chat_manage_community_roles_label": "Manage communities and roles",

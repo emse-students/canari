@@ -661,10 +661,13 @@ describe('the builder records what it posted and keeps the stamps current', () =
     }
     expect(branches.split('Log.w(TAG,').length - 1).toBe(3);
     expect(branches).not.toContain('Log.i(');
-    expect(branches).toContain('not distinguishable here');
+    // Since the page's mirror write keeps every native line (`outbox_mirror.rs`, 1.7.3), an absence
+    // has ONE cause left - the app adopted it - and the line says so rather than hedging.
+    expect(branches).toContain('adopted by the app, which sends or settles it');
+    expect(branches).not.toContain('rewritten by the app');
     const presence = source.slice(source.indexOf('internal fun mirrorPresence('));
     expect(presence.slice(0, 400)).toContain(
-      'readOutboxMirrorOrNull(context) ?: return@synchronized MirrorPresence.UNREADABLE'
+      'readOutboxQueuedOrNull(context) ?: return@synchronized MirrorPresence.UNREADABLE'
     );
     expect(source).toContain('readOutboxMirrorOrNull(context) ?: emptyList()');
   });

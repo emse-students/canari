@@ -299,6 +299,13 @@ static CanariDecryptedMessage *_Nullable CanariParseDecryptedJson(NSString *json
  * path delivered it would decide whether an absent device can ever learn about it.
  */
 @property(nonatomic, assign) BOOL durable;
+/**
+ * The line as it was read, nil for an entry queued here. A rewrite starts from it, so every field
+ * this file does not name survives: `owner` (the page's write replaces only the lines it stamped
+ * `"page"` and keeps every other, `outbox_mirror.rs`) and `unsendable` above all - dropped, a page
+ * line would read as native and outlive the page's own settlement of it.
+ */
+@property(nonatomic, copy) NSDictionary *fields;
 @end
 
 @implementation CanariOutboxEntry
@@ -2040,6 +2047,35 @@ void CanariScheduleOutboxRetryTask(void) {
 #endif
 }
 
+/**
+ * The C function Rust calls holding the lock. NO OBJC EXCEPTION MAY UNWIND THROUGH THE RUST FRAME
+ * that called it (undefined behaviour, and the mutex guard would never drop), so the work runs in
+ * `@try` and an exception is logged here and goes no further.
+ */
+static void CanariOutboxMirrorLockTrampoline(void *ctx) {
+  void (^work)(void) = (__bridge void (^)(void))ctx;
+  @try {
+    work();
+  } @catch (NSException *exception) {
+    // Its name only: a reason may quote the data the work held.
+    NSLog(@"[CanariPush] ERROR an ObjC exception inside the outbox mirror lock was stopped before "
+          @"the Rust frame: %@",
+          exception.name); // log-safe: an NSException name, never its reason
+  }
+}
+
+/**
+ * Runs `work` holding the outbox mirror lock - the ONE lock the page's Rust commands take too
+ * (`canari_with_outbox_mirror_lock`, `commands/outbox_mirror.rs`). Every read-modify-write of
+ * `outbox_pending.ndjson` runs inside it: a whole drain, which folds the journal first. Without it
+ * the page's write and a native one interleaved, and the later erased the earlier's line. NOT
+ * REENTRANT. An APPEND never takes it ([CanariAppendOutboxJournal]): a drain holds it through its
+ * POSTs, and a reply waiting behind them sat only in memory while iOS could suspend the app.
+ */
+static void CanariWithOutboxMirrorLock(void (^work)(void)) {
+  canari_with_outbox_mirror_lock((__bridge void *)work, CanariOutboxMirrorLockTrampoline);
+}
+
 static NSArray<CanariOutboxEntry *> *CanariReadOutboxMirror(void) {
   NSString *dir = CanariTauriDataDir();
   if (dir == nil) {
@@ -2079,38 +2115,72 @@ static NSArray<CanariOutboxEntry *> *CanariReadOutboxMirror(void) {
     // Defaults to YES: every entry the outbox mirrors carries conversation state, so a mirror file
     // written before this field existed must not be read as frames nobody may ever recover.
     entry.durable = o[@"durable"] == nil ? YES : [o[@"durable"] boolValue];
+    entry.fields = o;
     [entries addObject:entry];
   }
   return entries;
 }
 
+/// One outbox line, as the mirror and the journal hold it - the ONE serialiser of an entry, from
+/// the dictionary it was read from, so a field this code does not know survives. nil if unencodable.
+static NSString *CanariOutboxEntryLine(CanariOutboxEntry *e) {
+  NSMutableDictionary *obj = e.fields != nil ? [e.fields mutableCopy] : [NSMutableDictionary dictionary];
+  [obj addEntriesFromDictionary:@{
+    @"id" : e.entryId,
+    @"groupId" : e.groupId,
+    @"proto" : e.proto,
+    @"sentAt" : @(e.sentAt),
+    @"silent" : @(e.silent),
+    @"durable" : @(e.durable),
+  }];
+  NSData *data = [NSJSONSerialization dataWithJSONObject:obj options:0 error:nil];
+  return data == nil ? nil : [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+}
+
+/**
+ * Queues `entry` - the one way native code queues a frame. Into `outbox_journal.ndjson` under the
+ * Rust journal lock ALONE (`canari_outbox_journal_append`), never the mirror lock a drain holds
+ * through its POSTs: the line is on disk, synced, before this returns. The next holder of the
+ * mirror lock folds it in. NO, logged, when nothing was queued.
+ */
+static BOOL CanariAppendOutboxJournal(CanariOutboxEntry *entry) {
+  NSString *dir = CanariTauriDataDir();
+  NSString *line = CanariOutboxEntryLine(entry);
+  NSString *shortId = [entry.entryId substringToIndex:MIN((NSUInteger)8, entry.entryId.length)];
+  if (dir == nil || line == nil) {
+    NSLog(@"[CanariPush] ERROR outbox journal: id=%@ NOT queued - %@", shortId,
+          dir == nil ? @"no data dir" : @"the line could not be encoded");
+    return NO;
+  }
+  if (canari_outbox_journal_append(dir.UTF8String, line.UTF8String) != 1) {
+    NSLog(@"[CanariPush] ERROR outbox journal: id=%@ NOT queued - the append failed", shortId);
+    return NO;
+  }
+  return YES;
+}
+
+/// Rewrites the mirror with `remaining` (deletes it when empty) through Rust's ONE durable write
+/// (`canari_outbox_write_mirror`: a temp file, synced, renamed over, the directory synced), so a
+/// power loss never leaves a half mirror. A failure leaves the mirror as it was, logged: a delivered
+/// entry still in it is sent again, and the receiver drops it by its messageId.
 static void CanariRewriteOutboxMirror(NSArray<CanariOutboxEntry *> *remaining) {
   NSString *dir = CanariTauriDataDir();
   if (dir == nil) {
-    return;
-  }
-  NSString *path = [dir stringByAppendingPathComponent:kOutboxPendingFileName];
-  if (remaining.count == 0) {
-    [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+    NSLog(@"[CanariPush] ERROR rewriteOutboxMirror: no data dir - the mirror is left as it was");
     return;
   }
   NSMutableArray<NSString *> *lines = [NSMutableArray array];
   for (CanariOutboxEntry *e in remaining) {
-    NSDictionary *obj = @{
-      @"id" : e.entryId,
-      @"groupId" : e.groupId,
-      @"proto" : e.proto,
-      @"sentAt" : @(e.sentAt),
-      @"silent" : @(e.silent),
-      @"durable" : @(e.durable),
-    };
-    NSData *data = [NSJSONSerialization dataWithJSONObject:obj options:0 error:nil];
-    if (data != nil) {
-      [lines addObject:[[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding]];
+    NSString *line = CanariOutboxEntryLine(e);
+    if (line != nil) {
+      [lines addObject:line];
     }
   }
-  NSString *body = [[lines componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"];
-  [body writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+  NSString *body =
+      lines.count == 0 ? @"" : [[lines componentsJoinedByString:@"\n"] stringByAppendingString:@"\n"];
+  if (canari_outbox_write_mirror(dir.UTF8String, body.UTF8String) != 1) {
+    NSLog(@"[CanariPush] ERROR rewriteOutboxMirror: NOT written - the mirror is left as it was");
+  }
 }
 
 static void CanariAppendOutboxSent(NSArray<NSString *> *ids) {
@@ -2263,8 +2333,39 @@ static long long CanariSendQueuedMessagePush(CanariPushContext *ctx, NSString *s
   return receivedAt;
 }
 
+static int CanariDrainOutboxBackgroundLocked(
+    CanariPushContext *ctx, NSMutableDictionary<NSString *, NSNumber *> *receivedAtOut);
+
+/**
+ * Drains the outbox mirror HOLDING ITS LOCK for the whole read, encrypt, POST and rewrite - as
+ * Kotlin's drain holds `OUTBOX_LOCK`: a line appended, or written by the page, while the drain
+ * POSTs would otherwise be erased by its final rewrite, and two drains overlapping would both send
+ * the same entry. Its encrypt takes `g_mlsStateLock` under it with `tryLock`, which never waits.
+ */
 static int CanariDrainOutboxBackground(CanariPushContext *ctx,
                                        NSMutableDictionary<NSString *, NSNumber *> *receivedAtOut) {
+  __block int remaining = 0;
+  CanariWithOutboxMirrorLock(^{
+    remaining = CanariDrainOutboxBackgroundLocked(ctx, receivedAtOut);
+  });
+  return remaining;
+}
+
+static int CanariDrainOutboxBackgroundLocked(
+    CanariPushContext *ctx, NSMutableDictionary<NSString *, NSNumber *> *receivedAtOut) {
+  // What was appended meanwhile, into the mirror first (`canari_outbox_fold`): read after this, the
+  // journal holds only what is appended DURING this drain, which the next holder folds.
+  // A FOLD THAT FAILS STOPS THE DRAIN: nothing is sent or dropped on it, or a line dropped here could
+  // come back as native from a source the fold could not delete (`fold_into_mirror`).
+  NSString *foldDir = CanariTauriDataDir();
+  if (foldDir == nil || canari_outbox_fold(foldDir.UTF8String) != 1) {
+    NSLog(@"[CanariPush] ERROR drainOutbox: the outbox journal was not folded - nothing sent, the "
+          @"next holder of the mirror lock folds again");
+    // What is really queued, the journal included: 0 when nothing is (no phantom pending), 1 when it
+    // cannot even be read - unknown is not empty.
+    int queued = foldDir == nil ? -1 : canari_outbox_queued_count(foldDir.UTF8String);
+    return queued < 0 ? 1 : queued;
+  }
   NSArray<CanariOutboxEntry *> *entries = CanariReadOutboxMirror();
   if (entries.count == 0) {
     return 0;
@@ -2450,9 +2551,10 @@ static void CanariSendReadWatermark(NSString *groupId, long long at) {
   // one sent from the app, and must reach a device that was offline.
   entry.silent = YES;
   entry.durable = YES;
-  NSMutableArray<CanariOutboxEntry *> *entries = [CanariReadOutboxMirror() mutableCopy];
-  [entries addObject:entry];
-  CanariRewriteOutboxMirror(entries);
+  if (!CanariAppendOutboxJournal(entry)) {
+    NSLog(@"[CanariPush] ERROR sendReadWatermark: frame NOT queued - the mark stays local group=%@", groupId);
+    return;
+  }
   CanariDrainOutboxBackground(ctx, nil);
   NSLog(@"[CanariPush] sendReadWatermark: queued+drained at=%lld group=%@", at, groupId);
 }
@@ -2550,9 +2652,10 @@ static BOOL CanariSendQuickReplyNatively(CanariPushContext *ctx, NSString *group
   entry.sentAt = sentAt;
   entry.silent = NO;
   entry.durable = YES;
-  NSMutableArray<CanariOutboxEntry *> *entries = [CanariReadOutboxMirror() mutableCopy];
-  [entries addObject:entry];
-  CanariRewriteOutboxMirror(entries);
+  // ON DISK BEFORE ANY WAIT: the journal append never waits behind a drain's POSTs.
+  if (!CanariAppendOutboxJournal(entry)) {
+    return NO;
+  }
   NSLog(@"[CanariPush] handleQuickReplyAction: queued id=%@ group=%@",
         [messageId substringToIndex:MIN((NSUInteger)8, messageId.length)], groupId);
 

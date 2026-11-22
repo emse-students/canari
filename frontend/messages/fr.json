@@ -133,6 +133,18 @@
   "chat_search_placeholder": "Rechercher…",
   "chat_new_channel_title": "Nouveau canal",
   "chat_new_discussion_title": "Nouvelle discussion",
+  "chat_outbox_queue_unreadable": "Les messages en attente d'envoi ne peuvent pas être relus sur cet appareil pour l'instant : ils sont conservés et partiront dès qu'ils pourront être relus.",
+  "chat_outbox_native_queue_unreachable": "Les réponses envoyées depuis vos notifications ne peuvent pas être relues pour l'instant : elles sont retenues et affichées comme non envoyées, avec un bouton pour réessayer. Les messages envoyés depuis l'application partent normalement.",
+  "chat_outbox_lines_unreadable": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} message en attente d'envoi n'a pas pu être relu. Vérifiez vos derniers messages et retapez-le s'il manque.",
+        "countPlural=other": "{count} messages en attente d'envoi n'ont pas pu être relus. Vérifiez vos derniers messages et retapez-les s'ils manquent."
+      }
+    }
+  ],
   "chat_new_discussion_label": "Nouvelle discussion",
   "chat_new_channel_label": "Nouveau canal",
   "chat_manage_community_roles_label": "Gérer les communautés et rôles",
