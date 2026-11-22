@@ -239,6 +239,20 @@ describe('FormsService.exportSubmissions', () => {
       format: 'number',
     };
 
+    it('keeps an identifier-looking answer as the text it was, never a rewritten number', async () => {
+      const texts = ['007', '0612345678', '1e3', '0x1A'];
+      const service = makeService({
+        requiresPayment: false,
+        items: [AGE],
+        submissions: texts.map((text, n) => submission({ id: `s${n}`, answers: { q_age: text } })),
+      });
+      const { buffer } = await service.exportSubmissions('f1', LABELS);
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
+      const cells = texts.map((_t, n) => workbook.worksheets[0].getRow(n + 2).getCell(4).value);
+      expect(cells).toEqual(texts);
+    });
+
     it('writes a number as a number, a skipped answer as an empty cell, and legacy text as text', async () => {
       const service = makeService({
         requiresPayment: false,

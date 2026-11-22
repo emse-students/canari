@@ -2998,6 +2998,7 @@
   "form_builder_format_decimals": "Autoriser les décimales",
   "form_builder_format_range_invalid": "Le minimum de « {label} » dépasse son maximum.",
   "form_view_error_format_number": "« {label} » attend un nombre.",
+  "form_view_error_format_separator": "« {label} » est ambigu : écrivez le nombre sans séparateur de milliers.",
   "form_view_error_format_integer": "« {label} » attend un nombre entier.",
   "form_view_error_format_min": "« {label} » doit valoir au moins {min}.",
   "form_view_error_format_max": "« {label} » doit valoir au plus {max}.",

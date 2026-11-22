@@ -214,6 +214,8 @@ function formatMessage(fault: Extract<MissingAnswer, { kind: 'format' }>): strin
       return m.form_view_error_format_min({ label, min: fault.min ?? 0 });
     case 'above_max':
       return m.form_view_error_format_max({ label, max: fault.max ?? 0 });
+    case 'ambiguous_separator':
+      return m.form_view_error_format_separator({ label });
     case 'not_a_phone':
       return m.form_view_error_format_phone({ label });
     case 'not_an_email':

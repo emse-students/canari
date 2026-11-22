@@ -386,6 +386,43 @@ maybe('a respondent changes their own answer, against PostgreSQL (migration 166)
     expect(mine[0].lockedItemIds).toEqual(['q-meal']);
   });
 
+  it('judges a format only on the answers an edit CHANGES: an old non-fitting one never blocks another', async () => {
+    const items = [
+      { id: 'q-name', label: 'Nom', type: 'short_text', required: true },
+      { id: 'q-age', label: 'Age', type: 'short_text', required: false },
+    ];
+    const formId = await makeForm({ requiresPayment: false, allowCashPayment: false, items });
+    const sent: any = await service.submit(formId, {
+      userId: ALICE,
+      answers: { 'q-name': 'Ada', 'q-age': 'vingt' },
+    } as any);
+    // The organiser adds the format AFTER the answer: "vingt" no longer fits a number.
+    await ds
+      .getRepository(Form)
+      .update(formId, { items: [items[0], { ...items[1], format: 'number' }] } as any);
+
+    await service.editAnswer(formId, sent.submissionId, ALICE, {
+      'q-name': 'Ada L.',
+      'q-age': 'vingt',
+    });
+    expect((await row(sent.submissionId)).answers).toEqual({
+      'q-name': 'Ada L.',
+      'q-age': 'vingt',
+    });
+
+    // Changing the formatted answer itself is judged, and refused when it does not fit.
+    expect(
+      (
+        await refusal(
+          service.editAnswer(formId, sent.submissionId, ALICE, {
+            'q-name': 'Ada L.',
+            'q-age': 'trente',
+          })
+        )
+      ).code
+    ).toBe('FORM_ANSWER_FORMAT_INVALID');
+  });
+
   it('refuses a locked price question after payment, and changes the rest without touching the money', async () => {
     const formId = await makeForm();
     const sent: any = await service.submit(formId, {

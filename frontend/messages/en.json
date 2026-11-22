@@ -2966,6 +2966,7 @@
   "form_builder_format_decimals": "Allow decimals",
   "form_builder_format_range_invalid": "The minimum of \"{label}\" is above its maximum.",
   "form_view_error_format_number": "\"{label}\" expects a number.",
+  "form_view_error_format_separator": "\"{label}\" is ambiguous: write the number without a thousands separator.",
   "form_view_error_format_integer": "\"{label}\" expects a whole number.",
   "form_view_error_format_min": "\"{label}\" must be at least {min}.",
   "form_view_error_format_max": "\"{label}\" must be at most {max}.",

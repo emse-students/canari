@@ -54,6 +54,10 @@ describe('answer format rules', () => {
       });
     });
 
+    it('drops the `text` format of the editor without a word, as no format', () => {
+      expect(normaliseAnswerFormats([{ ...FREE, format: 'text' }])).toEqual([FREE]);
+    });
+
     it('leaves a question with no format settings untouched', () => {
       expect(normaliseAnswerFormats([FREE])).toEqual([FREE]);
     });
@@ -79,6 +83,15 @@ describe('answer format rules', () => {
         problem: 'below_min',
         min: 16,
         max: 99,
+      });
+    });
+
+    it('judges only the questions it is given: an old answer outside the set is left alone', () => {
+      expect(
+        settleAnswerFormats(items, { age: '12', tel: '06 12 34 56 78' }, new Set(['tel']))
+      ).toEqual({
+        age: '12',
+        tel: '06 12 34 56 78',
       });
     });
 
