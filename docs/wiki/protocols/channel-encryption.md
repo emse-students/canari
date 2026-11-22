@@ -5094,7 +5094,7 @@ seed file, and the app-alive path reads `CanariAppGroupPath()`.
 file, so this cause cannot reach it: [its own entry](../backlog.d/p2-android-blind-salon-banner-held-true.md).
 The bench run against a key group of production size, which this section does not cover, is
 [section 28](#28-a-salon-pushs-catch-up-against-a-key-group-of-production-size---measured-2026-11-17). What is owed for
-this fix is in [the reading](../backlog.d/reading-owed-ios-seed-mirror-one-copy.md).
+this fix is in the reading (entry deleted 2026-11-22, read).
 
 ## 28. A salon push's catch-up against a key group of production size - MEASURED 2026-11-17
 

@@ -72,7 +72,7 @@ Recorded so that no question answered here is asked again. The owner took them i
 38. **`1.8.0` ships in blocks** (`1.8.0`, `1.8.1`, `1.8.2`...), each a stable as soon as its block is ready, in the order of item 6. Nothing waits for the last chantier.
 39. **CanaQuiz:** the results export is a summary PDF. A player who returns after a question's time is over gets 0 for it ([entry](canaquiz-a-live-quiz-anyone-can-run.md)).
 40. **The usage dashboard is for platform admins only** ([entry](usage-dashboard-who-uses-canari-anonymously.md)).
-41. **The live card follows the feed tab:** under "Organisations", association lives only. "Pour toi" and "Campus" keep every live the reader may watch. Who may watch is unchanged (`1.7.2`, [entry](reading-owed-the-live-card-tab-and-poster-width.md)).
+41. **The live card follows the feed tab:** under "Organisations", association lives only. "Pour toi" and "Campus" keep every live the reader may watch. Who may watch is unchanged (`1.7.2`, entry (entry deleted 2026-11-22, read)).
 42. **Live replays went on in production before their texts, knowingly.** *"C'est assez urgent, il faudrait le faire dès que possible et l'activer en production"*, then *"Prod maintenant, textes juste après"*. `live_replays_mode` was set `on` in production and on dev on 2026-11-19 in the evening and read back through `GET /api/version` on both; the texts (CGU, privacy policy, register C19-C20, the pre-live screen) and `LIVE_RULES_VERSION` 3 followed in the next pull request ([live-replays](../live-replays.md#wp-r6-as-built-the-texts)).
 
 43. **The 15-day notice of the terms change (CGU art. 14, privacy policy section 12) is the owner's to send:** *"Je m'en occupe"*.

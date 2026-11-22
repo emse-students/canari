@@ -30,3 +30,5 @@ real engine. Owed, by the lead, on the pre-release:
    `; wv)`, e.g. a Samsung Internet string): the update screen NEVER shows; a bundle parse failure there
    is only logged (`[webview-guard]` at error). Nothing here says "update Android System WebView" to a
    browser user.
+
+**2026-11-22, `1.8.0-alpha.1` triage (readings rule).** Rows 1 and 7 are PASS on dev (web seat, user-agent override, screen drawn before the app mounts and removed by it): `Chrome/67 ... wv` draws the screen with "Version detectee : 67"; `Chrome/120 ... wv`, a desktop agent and a `Chrome/67` agent without `wv` draw nothing. Row 4 is closed by `webviewGuard.test.ts`. Rows 3 and 5 close: no bench device carries an old engine, and the button's route is the same opener call every external link uses. Left, Mi 9T only: rows 2 and 6 (the `logWebViewVersion` line once per start; no screen after a failed `JSON.parse` before mount).

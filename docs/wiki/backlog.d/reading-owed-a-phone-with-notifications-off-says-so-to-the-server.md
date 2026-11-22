@@ -28,3 +28,5 @@ mobile-browser-only members are one information line; the page reads the state t
 5. Without unlocking again: grant the permission that was denied (or fresh install: answer the dialog) and
    come back to the app; the row follows within the foreground (`[DEVICE_METADATA] ... notificationState=`
    on dev), not at the next unlock.
+
+**2026-11-22, `1.8.0-alpha.1` triage (readings rule).** Migration 055 shipped in `1.7.3`: takeable now on both phones, on dev. Production, read-only, the same day: the column is still empty for all but one of 1053 key packages (the stores had not yet been adopted) and the daily line counts 0 `[PUSH_PERMISSION_OFF]`; re-read it on production once the stores are adopted.

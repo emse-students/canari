@@ -2137,7 +2137,7 @@ Tests: `PushNotificationService.reconcile.test.ts`, `mlsDeliveryApi.pushRegister
 `utils/push-coverage.spec.ts`, `utils/push-coverage.integration.spec.ts` (the predicate against
 PostgreSQL) (server). **What closes the incident** is the `[PUSH_COVERAGE]` WARN
 lines reading zero for the build that ships this, and their `last:` tally naming the branch and
-the await if they do not ([the backlog entry](../backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)).
+the await if they do not (the backlog entry (entry deleted 2026-11-22, read)).
 
 **A phone BROWSER is not a phone, and the predicate counted it as one (production read-only,
 2026-11-22).** The daily line of 2026-11-21 read `android build=1.7.2 without=18/29` and

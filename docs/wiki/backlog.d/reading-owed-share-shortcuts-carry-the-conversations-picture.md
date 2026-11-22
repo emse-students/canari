@@ -42,3 +42,5 @@ picture in the notification header, and the clearing on sign-out.
 TypeScript half stays `shareTargets.test.ts`). Step 3 (the share sheet's direct row) is PASS. **What stays open, and only this:** step 1's
 real photo and step 3's "the face is not cropped inside the circle" - the bench accounts have no uploaded photo, and no test draws a
 bitmap. A reading with a peer who has a profile photo (Mi 9T or Pixel 6a) closes it.
+
+**2026-11-22, `1.8.0-alpha.1` triage (readings rule).** Nothing is left that a test can take. Left, Mi 9T: give a test account an uploaded profile photo on dev (a logged dev write), then read the launcher menu and the share sheet for a real photo, the face not cropped inside the circle.
