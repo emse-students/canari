@@ -115,6 +115,13 @@ import {
   type AnswerWords,
 } from './answer-text';
 import { normaliseChoiceNotes, settleAnswerNotes } from './choice-notes';
+import type { AnswerFormatRule } from './answer-format';
+import {
+  dropEmptyAnswers,
+  isPlainNumberText,
+  normaliseAnswerFormats,
+  settleAnswerFormats,
+} from './answer-format-rules';
 import { LEGACY_IDENTITY_EXPORT_LABELS, type ExportLabels } from './export-labels';
 import {
   conditionNamesProfile,
@@ -469,7 +476,7 @@ export interface SubmitClient {
 
 /** Dynamic form engine: creation, submission (with optional online checkout), exports, and submission lifecycle. */
 /** The part of a form item the XLSX export needs: a column header, its key, and how to read an answer. */
-type FormItemLike = AnswerQuestion & { id: string; label: string };
+type FormItemLike = AnswerQuestion & AnswerFormatRule & { id: string; label: string };
 
 /** The durable flags a landed payment's effects are claimed through (migrations 084 and 102). */
 type FulfilmentFlag = 'cotisationGrantedAt' | 'purchaseRecordedAt' | 'organiserNotifiedAt';
@@ -1009,7 +1016,7 @@ export class FormsService {
     }
     assertUniqueItemIds(input.items);
     assertFormItemsShape(input.items);
-    input = { ...input, items: normaliseChoiceNotes(input.items) };
+    input = { ...input, items: normaliseAnswerFormats(normaliseChoiceNotes(input.items)) };
     // A text or image block keeps a block's fields alone, and no question may depend on one.
     input = {
       ...input,
@@ -1653,7 +1660,9 @@ export class FormsService {
     }
     // A choice question's comment and "Autre" mark are normalised BEFORE anything reads the list
     // (`choice-notes.ts`); an absent list keeps the stored one untouched.
-    if (input.items !== undefined) input = { ...input, items: normaliseChoiceNotes(input.items) };
+    if (input.items !== undefined) {
+      input = { ...input, items: normaliseAnswerFormats(normaliseChoiceNotes(input.items)) };
+    }
     // Only the questions this edit SENDS are judged, against the stored ones: a duplicate already
     // stored never blocks an edit that leaves the questions' ids as they are.
     if (input.items !== undefined) {
@@ -2902,14 +2911,23 @@ export class FormsService {
     // neither charged nor required, so it is not kept either - it would read as a choice nobody
     // paid for. A question the form does not declare is kept as it always was.
     const declaredIds = new Set((form.items ?? []).map((item) => item.id));
-    const storedAnswers = settleAnswerNotes(
-      form.items ?? [],
-      Object.fromEntries(
-        Object.entries(input.answers ?? {}).filter(
-          ([key]) => !declaredIds.has(key) || visible.has(key)
-        )
-      ),
-      visible
+    // A short answer with a format is judged HERE, for a member and a guest alike, and stored in its
+    // normalised spelling; a skipped optional question is stored as ABSENT, never as ""
+    // (`answer-format-rules.ts`). A refusal is typed (`FORM_ANSWER_FORMAT_INVALID`), before any write.
+    const storedAnswers = dropEmptyAnswers(
+      settleAnswerFormats(
+        form.items ?? [],
+        settleAnswerNotes(
+          form.items ?? [],
+          Object.fromEntries(
+            Object.entries(input.answers ?? {}).filter(
+              ([key]) => !declaredIds.has(key) || visible.has(key)
+            )
+          ),
+          visible
+        ),
+        visible
+      )
     );
     const storedFileAnswers = fileAnswers.filter((file) => visible.has(file.itemId));
     const pricedQuestions = pricedQuestionIds(form.priceMatrix);
@@ -3685,18 +3703,31 @@ export class FormsService {
 
     const visible = visibleItemIds(items, facts);
     const editable = new Set([...visible].filter((id) => !locked.has(id)));
+    // Formats are judged on the answers this edit CHANGES: an old answer that no longer fits (the
+    // format was added after it, or tightened) must not block the correction of another question.
+    const changed = new Set(
+      [...editable].filter((id) => !sameAnswer(merged[id], row.answers?.[id]))
+    );
     assertDeclaredOptionAnswers(items, merged as never, editable, form.priceMatrix);
     // As at submit, an answer the person cannot see is not kept - except a locked one, which is
     // what was priced and stays whatever their profile says today.
     const declared = new Set(items.map((item) => item.id));
-    const stored = settleAnswerNotes(
-      items,
-      Object.fromEntries(
-        Object.entries(merged).filter(
-          ([key]) => !declared.has(key) || visible.has(key) || locked.has(key)
-        )
-      ),
-      new Set([...visible, ...locked])
+    // The submit's own rules over what is stored: formats judged on the questions that can change,
+    // empty answers stored as absent.
+    const stored = dropEmptyAnswers(
+      settleAnswerFormats(
+        items,
+        settleAnswerNotes(
+          items,
+          Object.fromEntries(
+            Object.entries(merged).filter(
+              ([key]) => !declared.has(key) || visible.has(key) || locked.has(key)
+            )
+          ),
+          new Set([...visible, ...locked])
+        ),
+        changed
+      )
     );
     for (const item of items) {
       if (!editable.has(item.id) || isProductGridItem(item)) continue;
@@ -5182,13 +5213,17 @@ export class FormsService {
 
       // A priced grid reads from the row's lines - what was charged - before the grid as it is now.
       questions.forEach((item) => {
-        row[item.id] = answerText(
+        const cell = answerText(
           sub.answers[item.id],
           item,
           words,
           sub.lines,
           otherText(sub.answers, item.id)
         );
+        // A number reads as a NUMBER in the sheet (summable, sortable); a row stored before the
+        // format, or by an app that sent text, whose answer is not one stays the text it was.
+        row[item.id] =
+          item.format === 'number' && isPlainNumberText(item, cell) ? Number(cell) : cell;
         if (commentColumns.has(item.id)) {
           row[commentKey(item.id)] = commentText(sub.answers, item.id);
         }

@@ -1,4 +1,5 @@
 import type { FormItem } from './api';
+import { hasAnswerFormat } from './answerFormat';
 import { PRODUCT_GRID_TYPE, productGridRequiredOnSave } from './productGridContract';
 import { editorProductGrid, productGridPayload } from './productGridEditor';
 import { formBlockPayload, isFormBlock } from './formBlocks';
@@ -75,6 +76,25 @@ const TYPES_WITH_PRICED_OPTIONS = ['single_choice', 'multiple_choice', 'dropdown
  * than the switch ([LEGACY], `gridRequiredSwitchOn`) - sends every grid `required: true`, the only
  * flag that server saves (it refuses anything else `PRODUCT_GRID_NOT_REQUIRED`).
  */
+/**
+ * A short text question's format as the API takes it: `number` with its bounds (cleared inputs are
+ * left out, not sent as empty text) and its decimals switch, `phone` and `email` alone; a question
+ * of any other type, or with no format, sends none - turned into another type it drops them here.
+ */
+function formatPayload(item: any): Record<string, unknown> {
+  const none = { format: undefined, min: undefined, max: undefined, allowDecimals: undefined };
+  if (item.type !== 'short_text' || !hasAnswerFormat(item)) return none;
+  if (item.format !== 'number') return { ...none, format: item.format };
+  const bound = (v: unknown) =>
+    v === '' || v == null || !Number.isFinite(Number(v)) ? undefined : Number(v);
+  return {
+    format: 'number',
+    min: bound(item.min),
+    max: bound(item.max),
+    allowDecimals: item.allowDecimals === true,
+  };
+}
+
 export function toFormItemsPayload(items: any[], gridSwitch: boolean): FormItem[] {
   return items.map((item) => {
     // A text or image block is sent with a block's fields alone (`formBlockPayload`).
@@ -86,6 +106,7 @@ export function toFormItemsPayload(items: any[], gridSwitch: boolean): FormItem[
       ...rest,
       // A comment is a choice question's: a question turned into another type does not carry it.
       ...(!pricesOptions && item.allowComment ? { allowComment: false } : {}),
+      ...formatPayload(item),
       ...(item.type === PRODUCT_GRID_TYPE && productGrid
         ? {
             productGrid: productGridPayload(productGrid),
