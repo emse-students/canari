@@ -4,6 +4,7 @@ import {
   parseNotificationState,
   pushPresenceLine,
   PUSH_BROWSER_ONLY_SQL,
+  PUSH_UNKNOWN_ID_SQL,
   PUSH_COVERAGE_SQL,
   PUSH_COVERAGE_WINDOW_MS,
   PUSH_REGISTRATION_GRACE_MS,
@@ -23,7 +24,7 @@ describe('reportPushCoverage', () => {
   it('reads once, read-only, with the window, the ladder grace, the ban cutoff and now', async () => {
     const d = db([]);
     await reportPushCoverage(d, logger(), NOW);
-    expect(d.query).toHaveBeenCalledTimes(2);
+    expect(d.query).toHaveBeenCalledTimes(3);
     const [sql, params] = d.query.mock.calls[0] as unknown as [string, Date[]];
     expect(sql).toBe(PUSH_COVERAGE_SQL);
     expect(sql).not.toMatch(/\b(INSERT|UPDATE|DELETE)\b/i);
@@ -129,6 +130,21 @@ describe('the coverage counts the INSTALLED app only (2026-11-21)', () => {
     expect(PUSH_COVERAGE_SQL).toContain(`k."deviceId" LIKE 'tauri-%'`);
     expect(PUSH_BROWSER_ONLY_SQL).toContain(`k."deviceId" NOT LIKE 'tauri-%'`);
     expect(PUSH_BROWSER_ONLY_SQL).not.toMatch(/\b(INSERT|UPDATE|DELETE)\b/i);
+  });
+
+  it('ACCUSES a phone-OS device whose id is neither tauri- nor web-, never drops it in silence', async () => {
+    const l = { log: jest.fn(), warn: jest.fn() };
+    const d = {
+      query: jest.fn(async (sql: string): Promise<never> => {
+        if (sql === PUSH_UNKNOWN_ID_SQL) return [{ other: 2 }] as never;
+        return [] as never;
+      }),
+    };
+    await reportPushCoverage(d, l, Date.now());
+    expect(PUSH_UNKNOWN_ID_SQL).toContain(`k."deviceId" NOT LIKE 'tauri-%'`);
+    expect(PUSH_UNKNOWN_ID_SQL).toContain(`k."deviceId" NOT LIKE 'web-%'`);
+    expect(PUSH_UNKNOWN_ID_SQL).not.toMatch(/\b(INSERT|UPDATE|DELETE)\b/i);
+    expect(l.warn).toHaveBeenCalledWith(expect.stringContaining('2 phone-OS device(s)'));
   });
 
   it('says the browser-only members as information at log, never as a warning', async () => {

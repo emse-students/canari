@@ -2,6 +2,16 @@
 
 target: 1.7.3
 
+_2026-11-22, production read-only: **the `unstated` population was phone BROWSERS, not phones, and
+`1.7.2` is not a regression.** The daily line of 2026-11-21 read `1.7.2` Android 18/29 and iOS 25/26
+without a row, all `last: unstated`; grouped by device id prefix, all 43 are `web-` ids (a browser on
+a phone writes `deviceOs` from its user agent and states no outcome) and every native `1.7.2` device
+holds its row or states `no-token`. No `web-` device has ever held a `push_token` row. The predicate
+and `[PUSH_MISSING]` now ask about `tauri-` ids only ([chat-delivery](../services/chat-delivery.md#the-servers-row-decides-whether-a-registration-is-owed-2026-11-15)).
+The `unstated` of the `1.7.0` line below were very likely browsers too (not re-measurable: one row per
+device). **What is left to read:** the daily `[PUSH_COVERAGE]` line after the `1.7.3` server deploy -
+no WARN, or a WARN whose `last:` tally names a native branch; then this entry closes._
+
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
 _2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
