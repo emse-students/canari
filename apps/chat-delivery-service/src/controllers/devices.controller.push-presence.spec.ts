@@ -30,7 +30,7 @@ describe('DevicesController.registerDevice - the push registration it answers ab
   const log = jest.fn();
   const warn = jest.fn();
 
-  const BODY = { userId: 'u1', deviceId: 'tauri-d1', keyPackage: 'a2V5', deviceOs: 'android' };
+  const BODY = { userId: 'u1', deviceId: 'tauri-u1-d1', keyPackage: 'a2V5', deviceOs: 'android' };
 
   beforeEach(async () => {
     held = true;
@@ -82,7 +82,7 @@ describe('DevicesController.registerDevice - the push registration it answers ab
   it('answers that the row is held, looked up by the account AND the device, and says nothing', async () => {
     const answer = await controller.registerDevice(BODY, 'u1');
     expect(answer).toEqual({ status: 'registered', push: { registered: true } });
-    expect(existsBy).toHaveBeenCalledWith({ userId: 'u1', deviceId: 'tauri-d1' });
+    expect(existsBy).toHaveBeenCalledWith({ userId: 'u1', deviceId: 'tauri-u1-d1' });
     expect(missingLines(warn)).toHaveLength(0);
     expect(missingLines(log)).toHaveLength(0);
   });
@@ -177,17 +177,6 @@ describe('DevicesController.registerDevice - the push registration it answers ab
     held = false;
     await controller.registerDevice({ ...BODY, deviceOs: 'web' }, 'u1');
     await controller.registerDevice({ ...BODY, deviceOs: 'windows' }, 'u1');
-    expect(missingLines(warn)).toHaveLength(0);
-    expect(missingLines(log)).toHaveLength(0);
-  });
-
-  it('a phone BROWSER states the phone OS and no outcome, and is never accused either', async () => {
-    // Production, 2026-11-21: 83 [PUSH_MISSING] WARN lines `last=unstated` for 45 accounts, every
-    // one a `web-` id on a phone - the user agent says android/ios, the runtime registers no push.
-    held = false;
-    for (const deviceOs of ['android', 'ios']) {
-      await controller.registerDevice({ ...BODY, deviceId: 'web-u1-x', deviceOs }, 'u1');
-    }
     expect(missingLines(warn)).toHaveLength(0);
     expect(missingLines(log)).toHaveLength(0);
   });

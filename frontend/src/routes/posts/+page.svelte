@@ -1027,11 +1027,17 @@
        tab order, and it never hides while focus is inside it (`tabsFocused`). `motion-reduce` drops
        the slide. While a search replaces the feed its content is hidden, so it is neither sticky
        nor padded. THE WRAPPER HAS NO BACKGROUND (owner, 2026-10-31): the row is a floating glass
-       pill over the cards, and the gaps between its pieces are the feed's, so touches pass through. -->
+       pill over the cards, and the gaps between its pieces are the feed's, so touches pass through.
+       ON A PHONE IT STARTS 8 PX UNDER THE HEADER, BY CANCELLING THE COLUMN'S TOP PADDING WITH THE SAME
+       TOKEN (`-mt-(--page-column-top)`). Before 1.6.9 nothing cancelled it, so the pill sat 32 px under
+       an opaque header - the empty band of the 2026-11-22 report from an iPhone without Liquid Glass;
+       a raw `-mt-6` equal to today's token would bring that band back on the day the token moves. -->
   <div
     class="pointer-events-none mb-1 transition-transform duration-200 ease-out motion-reduce:transition-none [&_button]:pointer-events-auto {searchQuery
       ? ''
-      : 'sticky top-0 z-10 -mt-6 pt-2 pb-3 md:mt-0'} {tabsHidden ? '-translate-y-full' : ''}"
+      : 'sticky top-0 z-10 -mt-(--page-column-top) pt-2 pb-3 md:mt-0'} {tabsHidden
+      ? '-translate-y-full'
+      : ''}"
     inert={tabsHidden}
     onfocusin={() => (tabsFocused = true)}
     onfocusout={(e) => {

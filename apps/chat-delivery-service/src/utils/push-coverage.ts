@@ -32,31 +32,26 @@ export const PUSH_COVERAGE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const PUSH_PLATFORMS = ['android', 'ios'] as const;
 
 /**
- * The prefix of a device id minted by the NATIVE client - the only client that registers a push
- * token. A client mints its id once as `<platform>-<userId>-...` (`BaseMlsService.generateDeviceId`),
- * where `platform` is the MLS runtime it runs: `tauri` for the app, `web` for a browser.
- *
- * WHY THE ID AND NOT `deviceOs`: `deviceOs` answers "which OS", and a browser on a phone states the
- * phone's (`detectRuntimeDeviceOs` reads the user agent), so `android`/`ios` never meant "the app".
- * Production, 2026-11-22: every one of the 43 `1.7.2` "phones without a push registration" of the
- * daily line was a phone BROWSER on the `1.7.2` web bundle (`web-` ids, `last: unstated` because the
- * web states no outcome); all 13 native `1.7.2` devices held their row or stated `no-token`. The
- * id's prefix is written by the runtime itself at mint time and never changes, so it answers the
- * question asked here for every build, old ones included.
- *
- * THE CLIENT'S HALF OF THIS CONTRACT IS PINNED by `frontend/src/lib/services/deviceIdPrefix.test.ts`
- * (the app mints `tauri-`, the browser `web-`), and a device minted under any other format is never
- * silently dropped: the daily line counts it apart and accuses it ({@link PUSH_COVERAGE_UNSEEN_SQL}).
+ * The device-id prefix of an INSTALLED app (`BaseMlsService.platform`: `tauri` for the app, `web` for
+ * a browser). A mobile browser reports `android` or `ios` as its OS and can never hold a push token,
+ * so the OS alone is not the population a push registration is owed by (2026-11-21: about 93 `web-`
+ * devices made the daily alarm mostly false).
  */
-export const NATIVE_DEVICE_ID_PREFIX = 'tauri-';
+export const INSTALLED_APP_DEVICE_PREFIX = 'tauri-';
 
-/** The prefix of a device id minted by a browser (`WebMlsService`), which registers no push. */
-export const WEB_DEVICE_ID_PREFIX = 'web-';
+/** The device-id prefix of a browser (`WebMlsService`): no push by design. */
+export const BROWSER_DEVICE_PREFIX = 'web-';
 
-/** Whether `deviceId` was minted by the native app, the only client that registers a push token. */
-export function mintedByNativeApp(deviceId: string): boolean {
-  return deviceId.startsWith(NATIVE_DEVICE_ID_PREFIX);
+/** Whether `deviceId` names an installed app - the one test, shared by the SQL and the line. */
+export function isInstalledAppDevice(deviceId: string | undefined): boolean {
+  return typeof deviceId === 'string' && deviceId.startsWith(INSTALLED_APP_DEVICE_PREFIX);
 }
+
+/**
+ * The notification states meaning "registered, but the OS will not show it" - see
+ * {@link parseNotificationState}.
+ */
+export const NOTIFICATION_OFF_STATES = ['off', 'not-asked', 'channel-off', 'alerts-off'] as const;
 
 /**
  * Per (platform, build): the native devices that ran inside the window, how many hold no row while
@@ -64,17 +59,24 @@ export function mintedByNativeApp(deviceId: string): boolean {
  * gave them no push token (`noOsToken`: the last outcome they stated, migration 052). The second is
  * a KNOWN state - no Play services, an APNs failure - accused once per process by
  * `[PUSH_UNAVAILABLE]` and not curable by registering again, so it is counted and never accused here.
+ * `permissionOff`: devices that DO hold a row but state the OS will not show a notification
+ * (`notificationState`, migration 055) - registered and still silent, the case the row cannot show.
+ * Only INSTALLED-app devices are counted ({@link INSTALLED_APP_DEVICE_PREFIX}).
  * `$1` window start, `$2` grace cutoff, `$3` ban cutoff, `$4` now (the session liveness instant).
  * `outcomes`: the last outcome each `withoutPush` device stated (`unstated` for a build before the
  * field), so the WARN carries the evidence separating the branches and a reading needs no log access.
  * `auth_sessions."deviceId"` has no index; a daily report does not add one.
  */
-/**
- * A key package `k` of a phone OS that RAN inside the window: reset past the ladder's grace, not
- * banned, holding a live session of its own account. ONE predicate for the counted population
- * ({@link PUSH_COVERAGE_SQL}, native ids) and the one counted apart ({@link PUSH_COVERAGE_UNSEEN_SQL}).
- */
-const PHONE_RAN_IN_WINDOW = `k."deviceOs" IN (${PUSH_PLATFORMS.map((p) => `'${p}'`).join(', ')})
+export const PUSH_COVERAGE_SQL = `
+WITH launched AS (
+  SELECT k."userId", k."deviceId", k."deviceOs" AS "os",
+         COALESCE(k."deviceAppVersion", 'unstated') AS "build",
+         (k."pushOutcome" IS NOT DISTINCT FROM 'no-token') AS "noOsToken",
+         COALESCE(k."pushOutcome", 'unstated') AS "outcome",
+         COALESCE(k."notificationState" IN (${NOTIFICATION_OFF_STATES.map((p) => `'${p}'`).join(', ')}), false) AS "permissionOff"
+    FROM key_package k
+   WHERE k."deviceOs" IN (${PUSH_PLATFORMS.map((p) => `'${p}'`).join(', ')})
+     AND k."deviceId" LIKE '${INSTALLED_APP_DEVICE_PREFIX}%'
      AND k."createdAt" > $1
      AND k."createdAt" <= $2
      AND NOT EXISTS (SELECT 1 FROM revoked_device r
@@ -82,17 +84,7 @@ const PHONE_RAN_IN_WINDOW = `k."deviceOs" IN (${PUSH_PLATFORMS.map((p) => `'${p}
                         AND r."revokedAt" > $3)
      AND EXISTS (SELECT 1 FROM auth_sessions s
                   WHERE s."deviceId" = k."deviceId" AND s."userId" = k."userId"
-                    AND s."expiresAt" > $4)`;
-
-export const PUSH_COVERAGE_SQL = `
-WITH launched AS (
-  SELECT k."userId", k."deviceId", k."deviceOs" AS "os",
-         COALESCE(k."deviceAppVersion", 'unstated') AS "build",
-         (k."pushOutcome" IS NOT DISTINCT FROM 'no-token') AS "noOsToken",
-         COALESCE(k."pushOutcome", 'unstated') AS "outcome"
-    FROM key_package k
-   WHERE k."deviceId" LIKE '${NATIVE_DEVICE_ID_PREFIX}%'
-     AND ${PHONE_RAN_IN_WINDOW}
+                    AND s."expiresAt" > $4)
 ), unheld AS (
   SELECT l.*, NOT EXISTS (SELECT 1 FROM push_token t
                            WHERE t."userId" = l."userId" AND t."deviceId" = l."deviceId") AS "noRow"
@@ -101,6 +93,7 @@ WITH launched AS (
 SELECT u."os", u."build", count(*)::int AS "devices",
        count(*) FILTER (WHERE u."noRow" AND NOT u."noOsToken")::int AS "withoutPush",
        count(*) FILTER (WHERE u."noRow" AND u."noOsToken")::int AS "noOsToken",
+       count(*) FILTER (WHERE NOT u."noRow" AND u."permissionOff")::int AS "permissionOff",
        array_agg(u."outcome" ORDER BY u."outcome")
          FILTER (WHERE u."noRow" AND NOT u."noOsToken") AS "outcomes"
   FROM unheld u
@@ -108,25 +101,58 @@ SELECT u."os", u."build", count(*)::int AS "devices",
  ORDER BY u."os", u."build"`;
 
 /**
- * The phone-OS devices that ran in the same window and that {@link PUSH_COVERAGE_SQL} does NOT
- * count, because the app did not mint their id: `web` (a phone browser - no push by design) and
- * `other` (neither prefix). `other` is never expected - every id since the first build is `tauri-` or
- * `web-` (production, 2026-11-22: 0 of 757 phone-OS key packages) - so a non-zero `other` is a
- * native build whose id format this count no longer sees, and the report ACCUSES it rather than
- * dropping it in silence. Same parameters as {@link PUSH_COVERAGE_SQL}.
+ * INFORMATION, NEVER AN ALARM: the members whose only devices that ran in the window are mobile
+ * browsers - they cannot be pushed by design, and no install prompt exists to change that. Same
+ * liveness and ban rules as {@link PUSH_COVERAGE_SQL}; `$1` window start, `$2` ban cutoff,
+ * `$3` now. A member who also holds a LIVE installed android/ios app (not revoked, with a live session) is
+ * not counted; a desktop install or a dead phone does not make a browser member reachable.
  */
-export const PUSH_COVERAGE_UNSEEN_SQL = `
-SELECT count(*) FILTER (WHERE k."deviceId" LIKE '${WEB_DEVICE_ID_PREFIX}%')::int AS "web",
-       count(*) FILTER (WHERE k."deviceId" NOT LIKE '${WEB_DEVICE_ID_PREFIX}%')::int AS "other"
+export const PUSH_BROWSER_ONLY_SQL = `
+SELECT count(DISTINCT k."userId")::int AS "members"
   FROM key_package k
- WHERE k."deviceId" NOT LIKE '${NATIVE_DEVICE_ID_PREFIX}%'
-   AND ${PHONE_RAN_IN_WINDOW}`;
+ WHERE k."deviceOs" IN (${PUSH_PLATFORMS.map((p) => `'${p}'`).join(', ')})
+   AND k."deviceId" NOT LIKE '${INSTALLED_APP_DEVICE_PREFIX}%'
+   AND k."deviceId" LIKE '${BROWSER_DEVICE_PREFIX}%'
+   AND k."createdAt" > $1
+   AND NOT EXISTS (SELECT 1 FROM revoked_device r
+                    WHERE r."userId" = k."userId" AND r."deviceId" = k."deviceId"
+                      AND r."revokedAt" > $2)
+   AND EXISTS (SELECT 1 FROM auth_sessions s
+                WHERE s."deviceId" = k."deviceId" AND s."userId" = k."userId"
+                  AND s."expiresAt" > $3)
+   AND NOT EXISTS (SELECT 1 FROM key_package a
+                    WHERE a."userId" = k."userId"
+                      AND a."deviceId" LIKE '${INSTALLED_APP_DEVICE_PREFIX}%'
+                      AND a."deviceOs" IN (${PUSH_PLATFORMS.map((p) => `'${p}'`).join(', ')})
+                      AND NOT EXISTS (SELECT 1 FROM revoked_device r2
+                                       WHERE r2."userId" = a."userId" AND r2."deviceId" = a."deviceId"
+                                         AND r2."revokedAt" > $2)
+                      AND EXISTS (SELECT 1 FROM auth_sessions s2
+                                   WHERE s2."deviceId" = a."deviceId" AND s2."userId" = a."userId"
+                                     AND s2."expiresAt" > $3))`;
 
-/** The one row of {@link PUSH_COVERAGE_UNSEEN_SQL}. */
-export interface PushCoverageUnseen {
-  web: number;
-  other: number;
-}
+/**
+ * The phone-OS devices that ran in the window under an id of NEITHER known prefix. Never expected
+ * (production, 2026-11-22: 0 of 757 phone-OS key packages are neither `tauri-` nor `web-`), so a
+ * non-zero count is a native build whose id format {@link isInstalledAppDevice} no longer sees: its
+ * push coverage is unmeasured, and {@link reportPushCoverage} ACCUSES it instead of dropping it in
+ * silence. Same parameters as {@link PUSH_COVERAGE_SQL}. The client's half of the contract is pinned
+ * by `frontend/src/lib/services/deviceIdPrefix.test.ts`.
+ */
+export const PUSH_UNKNOWN_ID_SQL = `
+SELECT count(*)::int AS "other"
+  FROM key_package k
+ WHERE k."deviceOs" IN (${PUSH_PLATFORMS.map((p) => `'${p}'`).join(', ')})
+   AND k."deviceId" NOT LIKE '${INSTALLED_APP_DEVICE_PREFIX}%'
+   AND k."deviceId" NOT LIKE '${BROWSER_DEVICE_PREFIX}%'
+   AND k."createdAt" > $1
+   AND k."createdAt" <= $2
+   AND NOT EXISTS (SELECT 1 FROM revoked_device r
+                    WHERE r."userId" = k."userId" AND r."deviceId" = k."deviceId"
+                      AND r."revokedAt" > $3)
+   AND EXISTS (SELECT 1 FROM auth_sessions s
+                WHERE s."deviceId" = k."deviceId" AND s."userId" = k."userId"
+                  AND s."expiresAt" > $4)`;
 
 /** One (platform, build) row of the count. */
 export interface PushCoverageRow {
@@ -135,6 +161,8 @@ export interface PushCoverageRow {
   devices: number;
   withoutPush: number;
   noOsToken: number;
+  /** Devices HOLDING a push row whose OS will not show the notification (migration 055). */
+  permissionOff: number;
   /** The last stated outcome of each `withoutPush` device; null when there is none. */
   outcomes?: string[] | null;
 }
@@ -149,7 +177,7 @@ function tallyOutcomes(outcomes: readonly string[] | null | undefined): string {
     .join(' ');
 }
 
-/** The parameters of {@link PUSH_COVERAGE_SQL} and {@link PUSH_COVERAGE_UNSEEN_SQL}, in order. */
+/** The parameters of {@link PUSH_COVERAGE_SQL}, in order. */
 export function pushCoverageParams(now: number = Date.now()): [Date, Date, Date, Date] {
   return [
     new Date(now - PUSH_COVERAGE_WINDOW_MS),
@@ -159,42 +187,60 @@ export function pushCoverageParams(now: number = Date.now()): [Date, Date, Date,
   ];
 }
 
+/** The parameters of {@link PUSH_BROWSER_ONLY_SQL}, in order. */
+export function pushBrowserOnlyParams(now: number = Date.now()): [Date, Date, Date] {
+  return [new Date(now - PUSH_COVERAGE_WINDOW_MS), activeRevocationCutoff(now), new Date(now)];
+}
+
 /**
  * The daily count: ONE plain line for the whole fleet, then one WARN per (platform, build) whose
  * devices ran and did not register. Zero is the steady state - every older build read 0 on
  * 2026-11-15 by this very predicate - so any other number is a device whose notifications are lost,
- * named by the build that lost them. The plain line also states the phone-OS devices NOT counted
- * (phone browsers, and ids of no known format - the latter accused at WARN: a native device the
- * count cannot see). Read-only; every replica prints its own.
+ * named by the build that lost them. Read-only; every replica prints its own.
  */
 export async function reportPushCoverage(
   db: Pick<DataSource, 'query'>,
   logger: Pick<Logger, 'log' | 'warn'>,
   now: number = Date.now()
 ): Promise<PushCoverageRow[]> {
-  const params = pushCoverageParams(now);
-  const rows = ((await db.query(PUSH_COVERAGE_SQL, params)) ?? []) as PushCoverageRow[];
-  const [unseen] = ((await db.query(PUSH_COVERAGE_UNSEEN_SQL, params)) ??
-    []) as PushCoverageUnseen[];
-  const web = unseen?.web ?? 0;
-  const other = unseen?.other ?? 0;
+  const rows = ((await db.query(PUSH_COVERAGE_SQL, pushCoverageParams(now))) ??
+    []) as PushCoverageRow[];
   const devices = rows.reduce((n, r) => n + r.devices, 0);
   const without = rows.reduce((n, r) => n + r.withoutPush, 0);
   const noOsToken = rows.reduce((n, r) => n + r.noOsToken, 0);
+  const permissionOff = rows.reduce((n, r) => n + (r.permissionOff ?? 0), 0);
   logger.log(
-    `[PUSH_COVERAGE] native devices that ran in 24 h: ${devices}, holding no push registration ` +
-      `${PUSH_REGISTRATION_GRACE_MS / 60_000} min after: ${without}, given no push token by their OS ` +
-      `(known, [PUSH_UNAVAILABLE]): ${noOsToken}; not counted: phone browsers ${web} ` +
-      `(no push by design), ids of no known format ${other}`
+    `[PUSH_COVERAGE] installed-app devices that ran in 24 h: ${devices}, holding no push ` +
+      `registration ${PUSH_REGISTRATION_GRACE_MS / 60_000} min after: ${without}, given no push ` +
+      `token by their OS (known, [PUSH_UNAVAILABLE]): ${noOsToken}, registered but the OS will ` +
+      `not show a notification ([PUSH_PERMISSION_OFF]): ${permissionOff}`
   );
-  if (other > 0) {
+  const browser = ((await db.query(PUSH_BROWSER_ONLY_SQL, pushBrowserOnlyParams(now))) ??
+    []) as Array<{ members: number }>;
+  logger.log(
+    `[PUSH_COVERAGE] members reachable only through a mobile browser in 24 h (information, no ` +
+      `push by design): ${browser[0]?.members ?? 0}`
+  );
+  const [unknownIds] = ((await db.query(PUSH_UNKNOWN_ID_SQL, pushCoverageParams(now))) ??
+    []) as Array<{
+    other: number;
+  }>;
+  if ((unknownIds?.other ?? 0) > 0) {
     logger.warn(
-      `[PUSH_COVERAGE] ${other} phone-OS device(s) ran with an id neither '${NATIVE_DEVICE_ID_PREFIX}' ` +
-        `nor '${WEB_DEVICE_ID_PREFIX}' - a native build whose id format this count no longer sees: ` +
-        `its push coverage is unmeasured (NATIVE_DEVICE_ID_PREFIX, utils/push-coverage.ts)`
+      `[PUSH_COVERAGE] ${unknownIds.other} phone-OS device(s) ran with an id neither ` +
+        `'${INSTALLED_APP_DEVICE_PREFIX}' nor '${BROWSER_DEVICE_PREFIX}' - a native build whose id ` +
+        `format this count no longer sees: its push coverage is unmeasured ` +
+        `(INSTALLED_APP_DEVICE_PREFIX, utils/push-coverage.ts)`
     );
   }
   for (const r of rows) {
+    if ((r.permissionOff ?? 0) > 0) {
+      logger.warn(
+        `[PUSH_PERMISSION_OFF] os=${r.os} build=${r.build} off=${r.permissionOff}/${r.devices} - ` +
+          `these devices hold a push registration and state that the OS will not show it: the ` +
+          `server delivers and the phone stays silent (permission, app switch or channel)`
+      );
+    }
     if (r.withoutPush === 0) continue;
     logger.warn(
       `[PUSH_COVERAGE] os=${r.os} build=${r.build} without=${r.withoutPush}/${r.devices} ` +
@@ -276,9 +322,7 @@ function outcomeTerm(outcome: string): string {
 
 /**
  * The line `register-device` prints about the device's push registration, or null when there is
- * nothing to say (the row is held, the device is not a phone, or it is a phone's BROWSER - see
- * {@link mintedByNativeApp}: a browser registers no push token by design, and accusing it printed a
- * WARN at every unlock of every phone browser, 83 lines for 45 accounts on 2026-11-21).
+ * nothing to say (the row is held, or the device is not a phone).
  *
  * Said at `log`, never accused - the three EXPECTED states:
  * - `none`: nothing since the sign-in; the registration follows this very call;
@@ -302,7 +346,8 @@ export function pushPresenceLine(args: {
 }): { level: 'log' | 'warn'; line: string } | null {
   if (args.held) return null;
   if (!PUSH_PLATFORMS.includes(args.deviceOs as (typeof PUSH_PLATFORMS)[number])) return null;
-  if (!mintedByNativeApp(args.deviceId)) return null;
+  // A browser reports android or ios and can never hold a push token: not a missing registration.
+  if (!isInstalledAppDevice(args.deviceId)) return null;
   const line =
     `[PUSH_MISSING] user=${args.userId} device=${args.deviceId} os=${args.deviceOs} ` +
     `build=${args.build ?? 'unstated'} last=${args.outcome}`;
@@ -316,4 +361,83 @@ export function pushPresenceLine(args: {
         ? 'the device registered and the row is gone: a server-side deletion'
         : 'the device ran and its registration did not reach the server'),
   };
+}
+
+/** What the OS says about the app's notification permission - the client's `NotificationPermission`. */
+const NOTIFICATION_PERMISSIONS: ReadonlySet<string> = new Set([
+  'granted',
+  'denied',
+  'not-determined',
+  'provisional',
+  'ephemeral',
+]);
+
+/** An Android channel's importance, by name - `absent` is a channel the OS does not hold. */
+const CHANNEL_IMPORTANCES: ReadonlySet<string> = new Set([
+  'none',
+  'min',
+  'low',
+  'default',
+  'high',
+  'unspecified',
+  'absent',
+]);
+
+/** The channels a device may state, in the order they are stored - an allowlist. */
+const NOTIFICATION_CHANNELS = ['messages', 'posts'] as const;
+
+/** The normalised notification state of one `register-device`. */
+export interface ParsedNotificationState {
+  /**
+   * `on`, one of {@link NOTIFICATION_OFF_STATES}, `unknown` (nothing stated, or not enough to say)
+   * or `invalid` (stated, and not in the allowlist). The last two are stored as NULL: an old client
+   * says nothing, and nothing is never read as "granted".
+   */
+  state: 'on' | (typeof NOTIFICATION_OFF_STATES)[number] | 'unknown' | 'invalid';
+  /** `messages=high posts=default`, or null when no channel was stated. */
+  channels: string | null;
+}
+
+/**
+ * Normalises what the client read from the OS (`notificationState` on `register-device`):
+ * `{ permission, enabled, alerts?, channels? }`. An ALLOWLIST, like {@link parsePushOutcome}: a
+ * client cannot write a value it likes, anything unreadable is `invalid`, absent is `unknown`.
+ *
+ * The category, most specific cause first: permission `not-determined` is `not-asked`, `denied` or
+ * `enabled === false` is `off`, a stated channel at importance `none` is `channel-off`, iOS
+ * `alerts === false` is `alerts-off`, else `on`. A permitted device needs a stated boolean `enabled`
+ * to be `on` - a missing one is `unknown`, never assumed.
+ */
+export function parseNotificationState(raw: unknown): ParsedNotificationState {
+  const invalid: ParsedNotificationState = { state: 'invalid', channels: null };
+  if (raw === undefined || raw === null) return { state: 'unknown', channels: null };
+  if (typeof raw !== 'object' || Array.isArray(raw)) return invalid;
+  const o = raw as Record<string, unknown>;
+  if (typeof o.permission !== 'string' || !NOTIFICATION_PERMISSIONS.has(o.permission)) {
+    return invalid;
+  }
+  if (o.enabled !== undefined && typeof o.enabled !== 'boolean') return invalid;
+  if (o.alerts !== undefined && typeof o.alerts !== 'boolean') return invalid;
+  const stated: string[] = [];
+  const importances: string[] = [];
+  if (o.channels !== undefined) {
+    if (typeof o.channels !== 'object' || o.channels === null || Array.isArray(o.channels)) {
+      return invalid;
+    }
+    const c = o.channels as Record<string, unknown>;
+    for (const name of NOTIFICATION_CHANNELS) {
+      const v = c[name];
+      if (v === undefined) continue;
+      if (typeof v !== 'string' || !CHANNEL_IMPORTANCES.has(v)) return invalid;
+      stated.push(`${name}=${v}`);
+      importances.push(v);
+    }
+  }
+  const channels = stated.length > 0 ? stated.join(' ') : null;
+  if (o.permission === 'not-determined') return { state: 'not-asked', channels };
+  if (o.permission === 'denied' || o.enabled === false) return { state: 'off', channels };
+  if (o.enabled !== true) return { state: 'unknown', channels };
+  if (importances.includes('none')) return { state: 'channel-off', channels };
+  if (o.alerts === false) return { state: 'alerts-off', channels };
+  return { state: 'on', channels };
 }

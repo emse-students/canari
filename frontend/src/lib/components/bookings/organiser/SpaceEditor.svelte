@@ -501,6 +501,7 @@
   bind:items={draft.items}
   requiresPayment={false}
   offerPricedGrid={false}
+  offerBlocks={false}
   {tiers}
   {formations}
   fileHint={m.bookings_builder_file_hint()}
