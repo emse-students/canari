@@ -2786,12 +2786,29 @@ answer is not offered; a refusal the page meets anyway is worded and the page re
 leaving the empty form to fill. An equal quote means the request sells exactly what the answer says.
 
 **An issue whose outcome is unknown is not resumed.** `issueOnlineRequest` records whether the
-issuing call was SENT: a failure before it, or a refusal ANSWERED by core (a 4xx), created nothing and
-releases the row `unissued`; a timeout, a reset, a 5xx or an answer with no URL may have left a request
-at Lydia the row does not name, and releases it `issue-unknown` (logged at WARN), which is never
-offered for a resume - resuming it would make a second payable request for one answer repeatable.
-Settling such a row by the order_ref written BEFORE the call is the follow-up named in the backlog
-entry; until then the member answers anew, as before this feature.
+issuing call was SENT: a failure before it, or a refusal core ANSWERED WITH A TYPED CODE, created
+nothing and releases the row `unissued`; everything else may have left a request at Lydia the row does
+not name, and releases it `issue-unknown` (logged at WARN), which is never offered for a resume -
+resuming it would make a second payable request for one answer repeatable. **The decision reads a
+CODE, never a status class** (`coreRefusedRequest`, `CHECKOUT_REFUSAL_CODES` in
+`apps/social-service/src/common/core-payment-error.ts`, review of #3949): only `PAYMENT_PROVIDER_REFUSED`,
+`LYDIA_BUSINESS_NOT_VALIDATED`, `LYDIA_BUSINESS_BLOCKED` and `AMOUNT_OUT_OF_RANGE` - each a 400 core
+answers on a fact it holds - mean "nothing created". An untyped 400, a 401, any 5xx, an answer with no
+URL and a transport failure are `issue-unknown`. Core used to answer a `request/do` whose answer never
+came (a timeout, a reset, a Lydia 5xx) as an untyped **400** `Payment error: ...`, which a "any 4xx"
+reader took for a refusal while Lydia held a payable request; it now answers **502**
+(`PaymentController.createCheckout`), and the boutique's `openCheckoutAttempt` reads the same
+classifier, so its attempt stays open on such an answer. Settling an `issue-unknown` row by the
+order_ref written BEFORE the call is the follow-up named in the backlog entry; until then the member
+answers anew, as before this feature.
+
+**The premise an orphan rests on**: a request Lydia created that the row does not name dies at Lydia
+before the hold that issued it ends - its lifetime is the hold minus `PAYMENT_REQUEST_EXPIRY_MARGIN_SECONDS`
+(120 s, `seat-hold.ts`), and core's `request/do` is bounded by `LYDIA_CALL_TIMEOUT_MS` (60 s) - but
+social-service's call to core (`internalCoreRequestConfig`) and core's calls back to social-service
+(`internalSocialRequestConfig`) carry NO axios timeout, so nothing on the Canari side bounds the wait
+end to end. The follow-up that writes the order_ref before the call removes the dependence on that
+premise.
 
 **The state machine of an online answer** (`resumePayment`, `submit`, `markPaid`, the callbacks):
 
@@ -2806,10 +2823,10 @@ entry; until then the member answers anew, as before this feature.
 | same | resume, R1 open or unreadable | unchanged, 409 `PREVIOUS_PAYMENT_OPEN` |
 | same | resume on a full or closed form, or the person answered again since | unchanged, `FORM_FULL` / `FORM_CLOSED` / `ALREADY_ANSWERED` |
 | `pending` within its hold (another click, another tab) | resume | unchanged, 409 `PAYMENT_IN_PROGRESS` |
-| `pending` naming no request | R2 refused before or by core (nothing created) | `cancelled`, `unissued` (`releaseUnissuedRow`), resumable again |
+| `pending` naming no request | R2 refused before the call, or by core with a typed refusal code (nothing created) | `cancelled`, `unissued` (`releaseUnissuedRow`), resumable again |
 | `pending` naming R2 | a late callback about R1 | unchanged: a cancel is `other-request`, a confirm is accused at ERROR and reads R2 |
 | any resumable row | resume, the person no longer admitted, or the answer no longer priced at `totalPaid` | unchanged, 403 audience code / `FORM_COMBINATION_UNAVAILABLE` / 409 `PAYMENT_PRICE_CHANGED` |
-| `pending` naming no request | the issuing call fails after it was sent | `cancelled`, `issue-unknown`: never resumed |
+| `pending` naming no request | the issuing call fails after it was sent with anything but a typed refusal | `cancelled`, `issue-unknown`: never resumed |
 | `pending` | a manager cancels it | `cancelled`, `manager`: never resumed |
 | `paid`, `free`, `refunded`, `paid_over_capacity`, any cash row | resume | unchanged, 409 `PAYMENT_NOT_RESUMABLE` |
 

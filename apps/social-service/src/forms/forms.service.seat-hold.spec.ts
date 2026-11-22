@@ -2660,6 +2660,52 @@ describe('FormsService - the seat a pending payment holds', () => {
       expect(core.calls.filter((c) => c.route === 'create-checkout-session')).toHaveLength(1);
     });
 
+    /** A failed call to core as axios reports one: `status` and `data` are core's answer. */
+    const coreAnswered = (status: number, data: Record<string, unknown>) =>
+      Object.assign(new Error(`Request failed with status code ${status}`), {
+        isAxiosError: true,
+        response: { status, data },
+      });
+
+    // CODE, NEVER A STATUS CLASS (review of #3949): core once answered a request/do whose answer
+    // timed out as an untyped 400 - Lydia may hold a payable request, so resuming would issue a
+    // second one for the same answer. Fails if any 4xx is read as "nothing was created".
+    it.each([
+      ['an untyped 400 (a request/do timeout, as core once answered it)', 400],
+      ['a 401', 401],
+      ["core's 502 for a request/do with no answer", 502],
+    ])('records %s as issue-unknown, and refuses to resume it', async (_label, status) => {
+      const { service, rows, core } = lydia([released()]);
+      core.createAnswer = coreAnswered(status, { message: 'Payment error: timeout' });
+      await expect(resume(service)).rejects.toBeDefined();
+      expect(rows[0]).toMatchObject({
+        paymentStatus: 'cancelled',
+        paymentRequestId: null,
+        paymentCancelOrigin: 'issue-unknown',
+      });
+      await expect(resume(service)).rejects.toMatchObject({
+        response: { code: PAYMENT_NOT_RESUMABLE },
+      });
+      expect(core.calls.filter((c) => c.route === 'create-checkout-session')).toHaveLength(1);
+    });
+
+    // The ONLY codes that promise nothing was created at Lydia (`CHECKOUT_REFUSAL_CODES`).
+    it.each([
+      'PAYMENT_PROVIDER_REFUSED',
+      'LYDIA_BUSINESS_NOT_VALIDATED',
+      'LYDIA_BUSINESS_BLOCKED',
+      'AMOUNT_OUT_OF_RANGE',
+    ])('records a typed %s refusal as unissued', async (code) => {
+      const { service, rows, core } = lydia([released()]);
+      core.createAnswer = coreAnswered(400, { code, message: 'refused' });
+      await expect(resume(service)).rejects.toBeDefined();
+      expect(rows[0]).toMatchObject({
+        paymentStatus: 'cancelled',
+        paymentRequestId: null,
+        paymentCancelOrigin: 'unissued',
+      });
+    });
+
     // THE WEBHOOK RACE: Lydia's callbacks about the OLD request land after the new one exists.
     // Neither may move the row, and the new payment is recorded once.
     it('ignores late callbacks of the old request and records the new payment once', async () => {

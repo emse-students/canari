@@ -95,17 +95,37 @@ export function lydiaReadinessRefusal(
 }
 
 /**
- * Whether a failed call to core-service was ANSWERED with a 4xx - a refusal about this request, so
- * nothing was issued - rather than lost (no response, a timeout, a 5xx), after which a request may
- * exist at the provider all the same. A status code is an answer; a transport failure is not.
- * Serves `create-checkout-session` only, where ANY 4xx means nothing was issued; reading or
- * cancelling an issued request needs to tell Lydia's refusal from core's own state, so those go
- * through `classifyCoreCallFailure` instead.
+ * The ONLY codes that mean a `create-checkout-session` was REFUSED and nothing was created at Lydia,
+ * each a typed 400 core answers on a fact it already holds:
+ * - `PAYMENT_PROVIDER_REFUSED`: Lydia ANSWERED `request/do` with an error code, or with an HTTP 4xx
+ *   outside core's `LYDIA_HTTP_NOT_A_REFUSAL` (`postForm`);
+ * - `LYDIA_BUSINESS_NOT_VALIDATED` / `LYDIA_BUSINESS_BLOCKED`: Lydia's error 5 / 2701, answered before
+ *   any request exists;
+ * - `AMOUNT_OUT_OF_RANGE`: core refused the amount before calling Lydia.
+ * Everything else core can answer - an untyped 400 (a payload or configuration core would not
+ * read), a 401, any 5xx (its 502 for a `request/do` with no answer) - is NOT that promise.
+ */
+export const CHECKOUT_REFUSAL_CODES: ReadonlySet<string> = new Set([
+  PAYMENT_PROVIDER_REFUSED,
+  LYDIA_BUSINESS_NOT_VALIDATED,
+  LYDIA_BUSINESS_BLOCKED,
+  AMOUNT_OUT_OF_RANGE,
+]);
+
+/**
+ * Whether a failed `create-checkout-session` was ANSWERED with a typed refusal
+ * (`CHECKOUT_REFUSAL_CODES`), so nothing was issued at Lydia. Decided on the CODE, never on a status
+ * class: core once answered a `request/do` timeout as an untyped 400, and a "any 4xx" reader took it
+ * for a refusal while Lydia held a payable request. Any other answer, and any transport failure, may
+ * leave a request at Lydia. Serves `create-checkout-session` only; reading or cancelling an issued
+ * request goes through `classifyCoreCallFailure`.
  */
 export function coreRefusedRequest(err: unknown): boolean {
   if (err instanceof HttpException) return false;
-  const status = (err as CoreAnswer | null)?.response?.status;
-  return typeof status === 'number' && status >= 400 && status < 500;
+  const answer = (err as CoreAnswer | null)?.response;
+  if (answer?.status !== 400) return false;
+  const code = coreCodeOf(err);
+  return typeof code === 'string' && CHECKOUT_REFUSAL_CODES.has(code);
 }
 
 /** Lydia error codes measured FINAL for one call: a refusal closes an attempt only from here. */

@@ -255,6 +255,7 @@ import { coreUrl } from '../internal/service-urls';
 import { internalCoreRequestConfig } from '../internal/core-request';
 import {
   amountOutOfRange,
+  coreRefusedRequest,
   mapCorePaymentError,
   lydiaReadinessRefusal,
   PROVIDER_MAX_AMOUNT_CENTS,
@@ -2779,7 +2780,7 @@ export class FormsService {
       return null;
     }
     try {
-      await this.assertResumeQuote(form, row, userId);
+      await this.assertResumeQuote(form, row, userId, 'check');
     } catch (err: unknown) {
       if (!(err instanceof HttpException) || err.getStatus() >= 500) throw err;
       const code = (err.getResponse() as { code?: string })?.code ?? err.getStatus();
@@ -2805,7 +2806,8 @@ export class FormsService {
   private async assertResumeQuote(
     form: Form,
     row: Pick<Submission, 'id' | 'answers' | 'totalPaid' | 'lines' | 'priceLockedItemIds'>,
-    userId: string
+    userId: string,
+    path: Exclude<PricingPath, 'submit'>
   ): Promise<void> {
     const items = form.items ?? [];
     const answers: Record<string, any> = { ...(row.answers ?? {}) };
@@ -2817,9 +2819,15 @@ export class FormsService {
     for (const [questionId, value] of Object.entries(selections)) {
       if (visible.has(questionId)) visibleAnswers[questionId] = value;
     }
-    const { totalCents, lines } = this.priceAnswer(form, facts, visible, visibleAnswers, answers, {
-      ...answers,
-    });
+    const { totalCents, lines } = this.priceAnswer(
+      form,
+      facts,
+      visible,
+      visibleAnswers,
+      answers,
+      { ...answers },
+      path
+    );
     // The WHOLE quote, not only its sum: a price moved from one line to another, or a question that
     // fixes the price now and did not then, is another sale at the same total. A row with no stored
     // snapshot (before migration 166) cannot be compared, and is refused rather than guessed.
@@ -2970,7 +2978,8 @@ export class FormsService {
       visible,
       visibleAnswers,
       input.answers ?? {},
-      storedAnswers
+      storedAnswers,
+      'submit'
     );
     // What the price depends on NOW, kept with the row it prices (migration 166): an answer change
     // reads it, so a supplement removed later still locks its question here (`rowLockedItemIds`).
@@ -3403,7 +3412,7 @@ export class FormsService {
       });
     }
     // Who may answer, and at what price, judged NOW and before anything is cancelled at Lydia.
-    await this.assertResumeQuote(form, row, callerId);
+    await this.assertResumeQuote(form, row, callerId, 'resume');
     // The old request, settled at Lydia before anything new exists. A row naming none (its request
     // was never issued, `releaseUnissuedRow`) has nothing payable to settle.
     if (row.paymentRequestId || row.stripeSessionId) {
@@ -3486,7 +3495,8 @@ export class FormsService {
    * `submit` and `resumePayment` (which re-quotes the stored answer, so a resume never sells what a
    * fresh submit would refuse). Refuses as a submit does: an unavailable cell
    * (`FORM_COMBINATION_UNAVAILABLE`), a required question left empty, a total above the payable
-   * maximum. `storedAnswers` receives each grid's answer as judged.
+   * maximum. `storedAnswers` receives each grid's answer as judged. `path` names the caller in
+   * every log line, so a re-quote from `check` or a resume never reads as a submit.
    */
   private priceAnswer(
     form: Form,
@@ -3494,7 +3504,8 @@ export class FormsService {
     visible: Set<string>,
     visibleAnswers: Record<string, string[]>,
     answers: Record<string, any>,
-    storedAnswers: Record<string, any>
+    storedAnswers: Record<string, any>,
+    path: PricingPath
   ): { totalCents: number; lines: ProductGridLine[] | null } {
     const pricedQuestions = pricedQuestionIds(form.priceMatrix);
     // The WHOLE price, once per cursus, and the cheapest wins (D32): the base cell and every grid's
@@ -3502,13 +3513,13 @@ export class FormsService {
     const quote = quoteSubmission(form, { ...facts, answers: visibleAnswers }, visible, answers);
     const { baseCents } = quote.quote;
     this.logger.debug(
-      `[FORMS] submit ${formTag(form)} priced on ${describeCursus(quote)} ` +
+      `[FORMS] ${path} ${formTag(form)} priced on ${describeCursus(quote)} ` +
         `total=${quote.cents ?? 'unavailable'}`
     );
     // The cell the manager marked as not existing. A refusal, not a price of zero - and refused
     // here rather than in `assertMaySubmit` because only the visible answers decide the cell.
     if (baseCents === null) {
-      this.logger.debug(`[FORMS] submit refused by an unavailable grid cell ${formTag(form)}`);
+      this.logger.debug(`[FORMS] ${path} refused by an unavailable grid cell ${formTag(form)}`);
       throw new ForbiddenException({
         code: FORM_COMBINATION_UNAVAILABLE,
         message: 'This combination is not available on this form.',
@@ -3548,7 +3559,7 @@ export class FormsService {
         const priced = priceProductGridAnswer(item, answer, quote.view);
         if (item.required && !productGridOrdered(priced.answer)) {
           this.logger.debug(
-            `[FORMS] submit refused: required grid ${item.id} holds no unit ${formTag(form)}`
+            `[FORMS] ${path} refused: required grid ${item.id} holds no unit ${formTag(form)}`
           );
           throw formRefusal(FORM_ANSWER_MISSING, `Missing required field: ${item.label}`, item.id);
         }
@@ -3578,14 +3589,14 @@ export class FormsService {
       const gridCents = productGridTotalCents(lines);
       totalCents += gridCents;
       this.logger.debug(
-        `[FORMS] submit ${formTag(form)}: ${lines.length} grid line(s), ` +
+        `[FORMS] ${path} ${formTag(form)}: ${lines.length} grid line(s), ` +
           `${gridCents} cents, total ${totalCents} cents`
       );
       // Refused BEFORE any row is written, whichever the payment method: a total above what one
       // payment may carry is no order anybody can pay, and a row must never hold it.
       if (totalCents > PROVIDER_MAX_AMOUNT_CENTS) {
         this.logger.warn(
-          `[FORMS] grid order refused: total=${totalCents} cents above ${PROVIDER_MAX_AMOUNT_CENTS} ` +
+          `[FORMS] ${path}: grid order refused: total=${totalCents} cents above ${PROVIDER_MAX_AMOUNT_CENTS} ` +
             `${formTag(form)}`
         );
         throw amountOutOfRange(
@@ -3807,11 +3818,12 @@ export class FormsService {
       return { checkoutUrl: sessionUrl, submissionId: submissionId };
     } catch (err: unknown) {
       // No request is NAMED, so the row stops holding a seat. Refused before anything was sent, or
-      // answered with a refusal (a 4xx), nothing exists at Lydia; any other failure after the call
-      // was sent (a timeout, a 5xx) leaves its outcome unknown, recorded so a resume is not offered.
+      // answered with a TYPED refusal (`coreRefusedRequest`), nothing exists at Lydia; any other
+      // failure after the call was sent (a timeout, a 5xx, an untyped 4xx) leaves its outcome
+      // unknown, recorded so a resume is not offered.
       await this.releaseUnissuedRow(
         submissionId,
-        sent && !answeredWithRefusal(err) ? 'issue-unknown' : 'unissued'
+        sent && !coreRefusedRequest(err) ? 'issue-unknown' : 'unissued'
       );
       const cause = lydiaReadinessRefusal(err);
       if (cause && connectAccountId && !reverted) {
@@ -5689,14 +5701,8 @@ export class FormsService {
   }
 }
 
-/**
- * Whether the issuing call was ANSWERED with a refusal (a 4xx from core): nothing was created at
- * Lydia. A timeout, a reset or a 5xx is no such answer - the request may exist (`releaseUnissuedRow`).
- */
-function answeredWithRefusal(err: unknown): boolean {
-  const status = axios.isAxiosError(err) ? err.response?.status : undefined;
-  return status !== undefined && status >= 400 && status < 500;
-}
+/** Which path prices an answer (`priceAnswer`): a submit, the form page's `check`, or a resume. */
+type PricingPath = 'submit' | 'check' | 'resume';
 
 /**
  * A value in ONE spelling whatever the key order: what a `jsonb` column returns (its keys reordered)

@@ -6,6 +6,7 @@ import {
   Post,
   HttpCode,
   Param,
+  BadGatewayException,
   BadRequestException,
   ConflictException,
   ForbiddenException,
@@ -940,9 +941,13 @@ export class PaymentController {
       // A typed refusal (the Lydia provider's PAYMENT_PROVIDER_REFUSED) is already the answer:
       // re-labelling it would bury both its code and its readable message.
       if (err instanceof HttpException) throw err;
+      // Anything else is NOT an answer from Lydia - a timeout, a reset, a 5xx, a 4xx that does not
+      // say refused (`postForm`) - so `request/do` may have created a request all the same. A 502,
+      // never a 400: social-service reads only a typed refusal code as "nothing was created"
+      // (`coreRefusedRequest`), and a 400 here once looked like one to every status-class reader.
       const msg = err instanceof Error ? err.message : String(err);
-      this.logger.error(`[Payments] create-checkout-session failed: ${msg}`);
-      throw new BadRequestException(`Payment error: ${msg}`);
+      this.logger.error(`[Payments] create-checkout-session failed, outcome unknown: ${msg}`);
+      throw new BadGatewayException(`Payment error: ${msg}`);
     }
   }
 

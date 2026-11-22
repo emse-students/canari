@@ -4774,20 +4774,38 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(t.calls).toHaveLength(0);
     });
 
-    it('releases an attempt core REFUSED to issue (a 4xx answer), so the retry is not blocked', async () => {
+    it('releases an attempt core REFUSED to issue (a typed refusal), so the retry is not blocked', async () => {
       const t = setup();
       (t.httpService.post as jest.Mock).mockImplementationOnce(() =>
         throwError(() =>
           Object.assign(new Error('refused'), {
-            response: { status: 400, data: { message: 'Lydia accepts payments from 0.50' } },
+            response: {
+              status: 400,
+              data: { code: 'PAYMENT_PROVIDER_REFUSED', message: 'Lydia error 3' },
+            },
           })
         )
       );
-      await expect(t.checkout()).rejects.toThrow('Lydia accepts payments from 0.50');
+      await expect(t.checkout()).rejects.toThrow('Lydia error 3');
       expect(t.checkouts.rows[0].status).toBe('cancelled');
       const retry = await t.checkout();
       expect(retry.checkoutId).toBe(t.checkouts.rows[1].id);
       expect(t.checkouts.rows[1].status).toBe('open');
+    });
+
+    // CODE, NEVER A STATUS CLASS: an untyped 400 is not core's promise that nothing was created
+    // (core once answered a request/do timeout that way). Fails if any 4xx releases the attempt.
+    it('leaves the attempt open on an untyped 400, to be read at Lydia by its order_ref', async () => {
+      const t = setup();
+      (t.httpService.post as jest.Mock).mockImplementationOnce(() =>
+        throwError(() =>
+          Object.assign(new Error('lost'), {
+            response: { status: 400, data: { message: 'Payment error: timeout' } },
+          })
+        )
+      );
+      await expect(t.checkout()).rejects.toBeDefined();
+      expect(t.checkouts.rows[0].status).toBe('open');
     });
 
     it.each([
