@@ -15,3 +15,5 @@ covers at once, so a feed of thirty replays no longer trips nginx's per-address 
    `Live poster <id>: 429` WARN and the covers all draw.
 
 **2026-11-20, [S18](../device-verification.md#the-readings-of-2026-11-20-s18-172-alpha3-notice-previews-launcher-shortcuts-the-capture-line-live-screens-and-the-backup-domains) (`1.7.2-alpha.3`): row 1 half read, PASS.** A member's personal live card shows under "Pour toi" and "Campus" and NOT under "Organisations". **Left:** an association's live under all three tabs, and row 2 (the covers without a 429 on a feed of about thirty replays).
+
+**2026-11-22, web rig (`1.7.3-alpha.5`, dev): row 1 PASS, row 2 half read.** An association live shows under "Organisations", "Pour toi" and "Campus" for a peer. Dev holds 17 replays, not about 30: a cold reload of "Campus" made 34 poster requests, all 200, no 429 and no `Live poster` WARN. Left: the same reading on a feed of about thirty replays ([readings](../device-verification.md#the-web-and-rig-readings-of-2026-11-22-173-alpha5-dev-the-live-studio-the-rediffusion-switch-the-live-card-the-salon-notice-the-pin-gate-offline)).
