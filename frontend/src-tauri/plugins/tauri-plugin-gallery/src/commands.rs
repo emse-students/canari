@@ -431,26 +431,27 @@ pub(crate) async fn clear_share_targets<R: Runtime>(app: AppHandle<R>) -> crate:
     }
 }
 
-/// Removes every `chat_<group>` conversation shortcut the message notifications published - at
-/// sign-out, beside `clear_share_targets`: they carry a conversation's name and a face, and nothing
-/// of an account stays with the system for the next one. Returns how many were removed. Android
-/// only, and the page never calls it on iOS: there the notification extension donates no intent
-/// and publishes no shortcut, so there is no such set to erase.
+/// Removes what the message notifications handed the system about conversations - at sign-out,
+/// beside `clear_share_targets`: they carry a sender's or a conversation's name and a face, and
+/// nothing of an account stays with the system for the next one. On Android the `chat_<group>`
+/// conversation shortcuts, and the answer is how many were removed; on iOS the interactions the
+/// notification extension donated for its communication notifications (one donation group), and
+/// the answer is 0: the platform deletes a group without counting it.
 #[command]
 pub(crate) async fn clear_conversation_shortcuts<R: Runtime>(
     app: AppHandle<R>,
 ) -> crate::Result<u32> {
     log::debug!("[gallery] clear_conversation_shortcuts");
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     {
         app.gallery()
             .clear_conversation_shortcuts()
             .map(|o| o.removed)
     }
-    #[cfg(not(target_os = "android"))]
+    #[cfg(not(mobile))]
     {
         let _ = app;
-        Err(crate::Error::AndroidOnly)
+        Err(crate::Error::Unsupported)
     }
 }
 

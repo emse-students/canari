@@ -2,6 +2,8 @@ import { Logger } from '@nestjs/common';
 import type { EntityManager } from 'typeorm';
 import { Form } from './entities/form.entity';
 import { Submission } from './entities/submission.entity';
+import { releaseHeldAnswersUnderLock } from './anonymous-answer-batches';
+import { lockFormSeats } from './seat-hold';
 
 const logger = new Logger('retireForms');
 
@@ -17,7 +19,9 @@ export type RetireTarget = { formId: string } | { associationId: string };
  * its submissions pointing at nothing (29 orphans on prod and dev). An archived form leaves every
  * list and every respondent flow but stays loadable by its staff, so its submissions stay readable.
  *
- * Takes the caller's `manager` so an association's delete keeps its ONE transaction. A submission
+ * Takes the caller's `manager`, which MUST run a transaction (an association's delete keeps its ONE
+ * transaction; `FormsService.delete` opens one): the release of an anonymous form's waiting answers
+ * holds the form's lock and refuses to run without one (`HeldAnswersOutsideTransactionError`). A submission
  * written between the two statements makes the DELETE fail on the key - loudly, never an orphan.
  */
 export async function retireForms(
@@ -28,6 +32,18 @@ export async function retireForms(
     'formId' in target
       ? (['id', target.formId] as const)
       : (['associationId', target.associationId] as const);
+  // An anonymous form's answers still waiting for their batch are released first, as for a closed
+  // form (`anonymous-answer-batches.ts`): a retired form takes no more answers, and once they are
+  // submissions the form is archived below rather than removed (their key would refuse it).
+  const anonymous: { id: string }[] = await manager.query(
+    `SELECT id FROM forms WHERE "${column}" = $1 AND anonymous AND "deletedAt" IS NULL`,
+    [value]
+  );
+  for (const { id } of anonymous) {
+    await lockFormSeats(manager, id);
+    await releaseHeldAnswersUnderLock(manager, id, 'retired');
+  }
+
   // `getQuery()` returns a bare `SELECT ...`: the parentheses `EXISTS` needs are written here.
   // Without them every call was a syntax error, unseen by a spec whose mock returned them.
   const hasSubmission = () =>

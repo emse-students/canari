@@ -240,7 +240,29 @@ describe('FormQuestion - a file on its way', () => {
     expect(target.querySelector('label span:last-child')!.className).toContain(
       'whitespace-pre-line'
     );
-    expect(target.querySelector('p')!.className).toContain('whitespace-pre-line');
+    // The help text goes through the form description's Markdown since 2026-11-21: one Enter is
+    // still one line break, so a description typed as plain lines reads as it did.
+    const help = target.querySelector('[data-testid="question-description"]')!;
+    expect(help.querySelector('br')).not.toBeNull();
+    expect(help.textContent).toContain('Aide un');
+    expect(help.textContent).toContain('Aide deux');
+  });
+
+  it('formats the help text like the form description, and draws raw HTML inert', () => {
+    const { target } = render(
+      {
+        id: 'q',
+        label: 'Menu',
+        description: '**Important** : <img src=x onerror="alert(1)"> [lien](javascript:alert(1))',
+        required: false,
+        type: 'short_text',
+      },
+      ''
+    );
+    const help = target.querySelector('[data-testid="question-description"]')!;
+    expect(help.querySelector('strong')?.textContent).toBe('Important');
+    expect(help.querySelector('[onerror]')).toBeNull();
+    expect(help.querySelector('a[href^="javascript"]')).toBeNull();
   });
 
   it('names the question in the alt when its author wrote none, and draws nothing without an image', () => {

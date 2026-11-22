@@ -17,6 +17,7 @@
   import { Log } from '$lib/utils/Log';
   import { associationLogoSrc } from '$lib/associations/api';
   import { questionImageAlt } from '$lib/forms/questionImage';
+  import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import { ANSWER_MAX_TEXT_LENGTH } from '$lib/forms/answerBounds';
 
   /**
@@ -265,10 +266,16 @@
     </span>
   </label>
 
-  {#if item.description}
-    <p class="text-text-muted mb-3 ml-6 text-xs leading-relaxed whitespace-pre-line">
-      {item.description}
-    </p>
+  {#if item.description?.trim()}
+    <!-- The form description's renderer (2026-11-21): one Markdown for everything an organiser
+         writes on a form. One Enter is still one line break (`normalizePostLineBreaks`), so a help
+         text typed as plain lines reads as it did; the ancestor override keeps it small and muted. -->
+    <div
+      class="[&_.post-markdown]:text-text-muted mb-3 ml-6 [&_.post-markdown]:text-xs"
+      data-testid="question-description"
+    >
+      <ProfileBioMarkdown source={item.description} />
+    </div>
   {/if}
 
   {#if questionImageSrc}

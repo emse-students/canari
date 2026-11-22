@@ -151,6 +151,16 @@ describe('ReplayPane', () => {
     expect(fetchReplay).toHaveBeenCalledTimes(1);
   });
 
+  it('hands the player seekAnywhere: the replay refetches a seek, its buffer is only a window', async () => {
+    const { target } = render(true, async () => page());
+    await settle();
+    expect(
+      target
+        .querySelector('[data-video-player-stub="blob:replay"]')
+        ?.getAttribute('data-seek-anywhere')
+    ).toBe('true');
+  });
+
   it('mounts no player on a page that is not on screen, and still marks itself a replay', async () => {
     const fetchReplay = vi.fn(async () => page());
     const { target } = render(false, fetchReplay);

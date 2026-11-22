@@ -2139,6 +2139,29 @@ PostgreSQL) (server). **What closes the incident** is the `[PUSH_COVERAGE]` WARN
 lines reading zero for the build that ships this, and their `last:` tally naming the branch and
 the await if they do not ([the backlog entry](../backlog.d/reading-owed-a-device-with-no-push-token-now-says-so.md)).
 
+**A phone BROWSER is not a phone, and the predicate counted it as one (production read-only,
+2026-11-22).** The daily line of 2026-11-21 read `android build=1.7.2 without=18/29` and
+`ios build=1.7.2 without=25/26`, all `last: unstated`, and looked like an 80 % regression of `1.7.2`.
+It was not: grouped by the device id's prefix, **all 43 were `web-` ids** - a browser on a phone,
+running the `1.7.2` web bundle - and every one of the 13 native `1.7.2` devices held its row (one
+stated `no-token`, counted apart). `deviceOs` answers "which OS": the web client fills it from the user
+agent (`detectRuntimeDeviceOs`), so a phone browser writes `android`/`ios`, and states no `pushOutcome`
+because the web registers no push - hence `unstated`. Across the whole table, no `web-` device has
+ever held a `push_token` row (365 phone-browser key packages; every one of the 366 rows is a `tauri-`
+id). The device id's prefix is the fact for "is this the app": a client mints its id once as
+`<platform>-<userId>-...` with its MLS runtime, `tauri` or `web` (`BaseMlsService.generateDeviceId`),
+and never changes it. The classifier is `INSTALLED_APP_DEVICE_PREFIX` / `isInstalledAppDevice`
+(migration-055 work landed the same filter first; browser-only members are its information line).
+**Nothing is dropped in silence**: ids of NEITHER prefix are counted by `PUSH_UNKNOWN_ID_SQL` and
+accused at WARN, since such an id is a native build whose coverage the count no longer measures
+(production, 2026-11-22: 0 of 757 phone-OS key packages). The client's half of the contract is
+pinned by `frontend/src/lib/services/deviceIdPrefix.test.ts`. **The earlier
+readings carry the same error and are not re-measured here**: the `unstated` devices of the `1.7.0`
+line (2026-11-20) and the `1.6.12` populations above were very likely phone browsers too - the web
+bundle reports the version production serves - and `key_package` keeps only each device's latest row,
+so that cannot be checked any more. The `in-progress:*` and other STATED outcomes are native by
+construction (only the app states one).
+
 #### Push delivery records - daily totals and the last delivery per device (2026-11-21)
 
 **Why.** A read-only production diagnosis on 2026-11-21 could not answer "was member X's
@@ -2625,8 +2648,8 @@ on push receipt and down on read-state cancel with no separate counter to keep i
   `refreshBadgeSummary` rebuilds the group summary carrying that count via `setNumber(count)` (or
   cancels the summary when it hits 0). It is the single source of truth for both the summary and the
   badge, called after every message notification post (`showNotification`) and every cancel
-  (`cancelConversationNotification`); `cancelAllMessageNotifications` clears the summary and thus the
-  badge on app open. **THE COUNT IS CORRECTED BY THE CALLER, AND THAT IS NOT AN OPTIMISATION** -
+  (`cancelConversationNotification`); the app's coming to the front no longer clears conversation
+  banners (owner, 2026-11-21), so the summary and badge follow the conversations that remain. **THE COUNT IS CORRECTED BY THE CALLER, AND THAT IS NOT AN OPTIMISATION** -
   see [the banner its own badge refresh cancelled](#the-banner-its-own-badge-refresh-cancelled---fixed-2026-09-21). Numeric badges are honored by stock Android / Pixel / recent OEM launchers;
   some older launchers only show a dot (no third-party ShortcutBadger dependency).
 - **iOS** has two writers because the badge owner depends on process state:
@@ -2892,9 +2915,10 @@ told you.*
 
 **App-open cancel**
 
-When the app opens, `CanariPushCancelMessageNotifications` now clears every delivered chat
-notification — both the legacy flat-thread ones and the new per-conversation ones — by checking
-the `deepLink` prefix (`fr.emse.canari://chat`) in addition to the `threadIdentifier`.
+(Superseded 2026-11-21, owner: *"N'effacer que les lues"*.) When the app opens,
+`CanariPushCancelMessageNotifications` no longer clears chat notifications: it removes only a call's
+ring alert (`canariCallId` in `userInfo`) and the pending-sync notice. A conversation's banners go
+with the conversation - read here, read elsewhere, answered, ended.
 
 #### Shared deferred-retry engine (WP-XP-8)
 

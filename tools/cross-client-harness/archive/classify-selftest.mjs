@@ -1529,7 +1529,6 @@ const FORGIVE_CASES = [
       ['log', '[05:26:22.108] [SALON-ECHO] ab82c4f0… sending'],
       ['log', '[05:26:22.279] [SALON-ECHO] ab82c4f0… settled as f8cb7516…'],
       ['debug', '[05:07:47.224] [SALON-UNSENT] 1 entr(y/ies) forgotten: the server holds them'],
-      ['log', '[05:07:47.230] [SALON-REPEAT] the server echoed client id 5244bda6...: a repeated send is answered with its row - 0 waiting repeat(s) released'],
       ['debug', '[05:08:01.946] [channelSettings.loadChannelAccess] channel_03fb2686…'],
       ['debug', '[05:08:03.612] [channelSettings.addAllowedUser] {"channelId":"channel_03fb2686…","userId":"c71e1a5b…"}'],
       ['log', '[05:08:03.748] [CHANNEL] #03fb2686… updated - canWrite=true writePolicy=everyone'],
@@ -1604,13 +1603,13 @@ const FORGIVE_CASES = [
     'a salon absorb that fell short of its bundle is not forgiven',
     [['debug', "[05:08:06.000] [GRAINE] absorbed 2/3 seed(s) (0 already held; endorsements verified: 2 from the tree, 0 from the server's published keys) from c71e1a5b in community d21b475f - salon(s) 03fb2686"]],
     SALON_SESSION_NARRATION,
-    { clean: false, unmatched: 23 },
+    { clean: false, unmatched: 22 },
   ],
   [
     'a salon absorb of seeds all already held is forgiven',
     [['debug', '[05:08:06.000] [GRAINE] absorbed 0/3 seed(s) (3 already held) from c71e1a5b in community d21b475f - salon(s) none']],
     SALON_SESSION_NARRATION,
-    { clean: true, unmatched: 22 },
+    { clean: true, unmatched: 21 },
   ],
   [
     // CONTROL: a proof signed in another group (a replay or a moved row) is a security signal no row is
@@ -1625,14 +1624,14 @@ const FORGIVE_CASES = [
     'a salon echo that failed is not forgiven',
     [['log', '[05:26:22.279] [SALON-ECHO] ab82c4f0… failed']],
     SALON_SESSION_NARRATION,
-    { clean: false, unmatched: 23 },
+    { clean: false, unmatched: 22 },
   ],
   [
     // CONTROL: the sibling that says the owed-ness could not be read is a finding.
     'a Welcome whose owed-ness could not be read is not forgiven',
     [['log', '[GRAINE] salon 8a6d6775 of d21b475f: whether a Welcome is owed to this device could not be read with the base - joining nothing this pass, so two doors are never opened at once']],
     SALON_SESSION_NARRATION,
-    { clean: false, unmatched: 23 },
+    { clean: false, unmatched: 22 },
   ],
   [
     // CONTROL: the same stray-tree sweep with a refusal in it is a finding, not the boot narrating.

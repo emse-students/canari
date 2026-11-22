@@ -351,7 +351,10 @@ async function stopRecovering(groupId: string, reason: string, deps: RecoveryDep
     key: entry[0],
     groupId,
     saveConversation: deps.saveConversation,
+    // The server's proof that the group is gone. `patch.id` may change the row's id: the
+    // retire confirms the patched id as well as the current one.
     patch: { id: groupId },
+    confirmed: true,
   });
 }
 

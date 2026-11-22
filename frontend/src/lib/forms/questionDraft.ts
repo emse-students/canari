@@ -3,6 +3,7 @@ import { ensureMatrixAxes } from './matrixEditor';
 import { PRODUCT_GRID_TYPE } from './productGridContract';
 import { newProductGrid } from './productGridEditor';
 import { isMatrixType } from './questionTypes';
+import { isFormBlockType, newFormBlock } from './formBlocks';
 
 /**
  * A NEW QUESTION, AND WHERE IT GOES - one factory for the add wizard and the card's type change.
@@ -29,6 +30,8 @@ export interface DraftQuestion {
  * somewhere to type; every other type starts with one blank option (dropped on save when unused).
  */
 export function newQuestion(type: string): DraftQuestion {
+  // A text or image block is no question: its own fields, no option or row (`formBlocks.ts`).
+  if (isFormBlockType(type)) return { ...newFormBlock(type), options: [], rows: [] };
   const id = crypto.randomUUID();
   Log.d('questionDraft', `new ${type} question`);
   if (type === PRODUCT_GRID_TYPE) {

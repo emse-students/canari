@@ -6,6 +6,7 @@ import { commentKey, otherKey } from './answerText';
 import { hasAnswerFormat, judgeAnswerFormat, type AnswerFormatProblem } from './answerFormat';
 import { hasOrderedUnits, isProductGrid } from './productGridFill';
 import { FILLABLE_QUESTION_TYPE_VALUES } from './questionTypes';
+import { isFormBlock } from './formBlocks';
 
 /**
  * WHAT A PERSON FILLING A FORM HAS ANSWERED - the rules the fill page applies, taken out of it.
@@ -23,6 +24,8 @@ export type Selections = Record<string, any>;
 export function initialSelections(items: FormItem[]): Selections {
   const initial: Selections = {};
   for (const item of items) {
+    // A text or image block takes no answer: it has no selection to hold.
+    if (isFormBlock(item)) continue;
     if (item.type === 'multiple_choice') {
       initial[item.id] = [];
     } else if (isProductGrid(item)) {
@@ -122,6 +125,8 @@ export function firstMissingAnswer(
   gridSwitch: boolean
 ): MissingAnswer | null {
   for (const item of items) {
+    // A block holds no answer: never required, never judged (the server refuses one that says so).
+    if (isFormBlock(item)) continue;
     // A typed answer that does not fit its question's format blocks the send, required or not - the
     // server judges it with the same code (`answerFormat.ts`) and is the one that decides.
     const faulty = formatFault(item, selections[item.id]);
@@ -311,6 +316,8 @@ export function pricedQuestionsAwaitingAnswer(
 export function visibleAnswers(visible: FormItem[], selections: Selections): Selections {
   const out: Selections = {};
   for (const item of visible) {
+    // A text or image block is never answered: nothing of it is sent (the server drops it besides).
+    if (isFormBlock(item)) continue;
     const value = selections[item.id];
     const notes = noteAnswers(item, selections);
     if (isProductGrid(item)) {

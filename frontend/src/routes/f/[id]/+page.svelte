@@ -40,6 +40,8 @@
   import { formatFormOpensAt } from '$lib/posts/postComposerDraft';
   import FormHeader from '$lib/components/forms/FormHeader.svelte';
   import FormQuestion from '$lib/components/forms/FormQuestion.svelte';
+  import FormBlock from '$lib/components/forms/FormBlock.svelte';
+  import { isFormBlock, questionNumbers } from '$lib/forms/formBlocks';
   import FormViewerTier from '$lib/components/forms/FormViewerTier.svelte';
   import ProductGridQuestion from '$lib/components/forms/ProductGridQuestion.svelte';
   import ProductGridOrderBar from '$lib/components/forms/ProductGridOrderBar.svelte';
@@ -118,6 +120,8 @@
   const isClosed = $derived(win.closed);
   // No profile half: the server refuses a public form whose questions depend on who answers.
   const visibleItems = $derived(form ? visibleItemsOf(form.items, selections) : []);
+  /** Each visible question's number, counting questions only: a block is not numbered. */
+  const numbers = $derived(questionNumbers(visibleItems));
   /** The slices the server sent: a guest has no cursus, so one (its "everyone else" row). */
   const slices = $derived(form ? cursusSlicesOf(form) : NO_PRICING_SLICE);
   /** What the answers cost so far, from the slice the server sent (a guest's is the whole grid). */
@@ -384,9 +388,12 @@
       {/if}
 
       <div class="space-y-3 sm:space-y-4">
-        {#each visibleItems as item, index (item.id)}
-          <!-- A priced grid draws its own card: the product photo spans it, the price sits by the title. -->
-          {#if isProductGrid(item) && item.productGrid}
+        {#each visibleItems as item (item.id)}
+          <!-- A text or image block: what the organiser says between the questions, no answer. -->
+          {#if isFormBlock(item)}
+            <FormBlock {item} formTitle={form.title} />
+            <!-- A priced grid draws its own card: the product photo spans it, the price sits by the title. -->
+          {:else if isProductGrid(item) && item.productGrid}
             <ProductGridQuestion
               {item}
               grid={item.productGrid}
@@ -399,7 +406,7 @@
           {:else}
             <FormQuestion
               {item}
-              {index}
+              index={(numbers.get(item.id) ?? 1) - 1}
               bind:value={selections[item.id]}
               bind:other={selections[otherKey(item.id)]}
               bind:comment={selections[commentKey(item.id)]}

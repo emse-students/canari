@@ -29,6 +29,8 @@ import { FormRespondent } from './entities/form-respondent.entity';
 import { PurchaseRecord } from '../users/entities/purchase-record.entity';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { FormsService } from './forms.service';
+import { releaseHeldAnswersUnderLock } from './anonymous-answer-batches';
+import { lockFormSeats } from './seat-hold';
 import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
 import {
   FORM_ANSWER_EDIT_OFF,
@@ -127,6 +129,10 @@ maybe('a respondent changes their own answer, against PostgreSQL (migration 166)
     );
     await ds.query(migration);
     await ds.query(migration);
+    // Where an anonymous answer waits for its batch (migration 178).
+    await ds.query(
+      readFileSync(join(__dirname, '../migrations/178_form_answers_held.sql'), 'utf8')
+    );
     await ds.query('RESET lock_timeout');
     // The respondent `where` reads the association's archive (`respondentFormWhere`).
     await ds.query(
@@ -564,6 +570,11 @@ maybe('a respondent changes their own answer, against PostgreSQL (migration 166)
       userId: ALICE,
       answers: { 'q-name': 'N', 'q-meal': 'm-none' },
     } as any);
+    // The answer waits for its batch: released here as a closing form would, the form left open.
+    await ds.transaction(async (m) => {
+      await lockFormSeats(m, formId);
+      await releaseHeldAnswersUnderLock(m, formId, 'closed');
+    });
     const [anon] = await ds.query(`SELECT id FROM submissions WHERE "formId" = $1`, [formId]);
     expect(await refusal(service.editAnswer(formId, anon.id, ALICE, { 'q-name': 'M' }))).toEqual({
       status: 403,

@@ -10,6 +10,7 @@
   import { PRODUCT_GRID_TYPE } from '$lib/forms/productGridContract';
   import type { ProductGridTierDimension } from '$lib/forms/productGridEditor';
   import { insertQuestion, type DraftQuestion } from '$lib/forms/questionDraft';
+  import { isFormBlockType, questionItemsOf, questionNumbers } from '$lib/forms/formBlocks';
   import { Log } from '$lib/utils/Log';
   import { ListChecks, Plus } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
@@ -61,6 +62,11 @@
      * answers the forms service does not store (a booking space) passes false.
      */
     offerChoiceNotes?: boolean;
+    /**
+     * Whether the add wizard offers the text and image blocks (`formBlocks.ts`). A booking space
+     * passes false: its questions take none (`item-block`).
+     */
+    offerBlocks?: boolean;
     /** A priced grid was added (or a question became one): the page switches several answers on. */
     onPricedGridAdded?: () => void;
     /**
@@ -89,6 +95,7 @@
     reveal = null,
     offerPricedGrid = true,
     offerChoiceNotes = true,
+    offerBlocks = true,
     onPricedGridAdded,
     onPricedGridGone,
     formTiers = null,
@@ -98,9 +105,11 @@
   }: Props = $props();
 
   const types = $derived(
-    offerPricedGrid
-      ? AUTHORABLE_QUESTION_TYPES
-      : AUTHORABLE_QUESTION_TYPES.filter((t) => t.value !== PRODUCT_GRID_TYPE)
+    AUTHORABLE_QUESTION_TYPES.filter(
+      (t) =>
+        (offerPricedGrid || t.value !== PRODUCT_GRID_TYPE) &&
+        (offerBlocks || !isFormBlockType(t.value))
+    )
   );
 
   let dragIndex = $state(-1);
@@ -121,7 +130,10 @@
     }
   });
 
-  const countLabel = $derived(m.form_questions_count({ count: items.length }));
+  // The badge counts QUESTIONS, and each card's number is its place among them: a text or an
+  // image block is not one (`formBlocks.ts`).
+  const countLabel = $derived(m.form_questions_count({ count: questionItemsOf(items).length }));
+  const numbers = $derived(questionNumbers(items));
 
   function openWizard(afterIndex: number | null) {
     Log.d('FormQuestionsSection', `add wizard opened, after ${afterIndex ?? 'the end'}`);
@@ -220,7 +232,7 @@
           showPriceModifier={requiresPayment}
           pricedByGrid={gridQuestionIds.includes(items[i]?.id)}
           {offerChoiceNotes}
-          questionIndex={i + 1}
+          questionIndex={numbers.get(_item.id) ?? i + 1}
           onMoveUp={() => moveItem(i, 'up')}
           onMoveDown={() => moveItem(i, 'down')}
           canMoveUp={i > 0}

@@ -2,6 +2,7 @@ import type { FormItem } from './api';
 import { hasAnswerFormat } from './answerFormat';
 import { PRODUCT_GRID_TYPE, productGridRequiredOnSave } from './productGridContract';
 import { editorProductGrid, productGridPayload } from './productGridEditor';
+import { formBlockPayload, isFormBlock } from './formBlocks';
 
 /**
  * What every form payload of this editor carries: it draws each priced grid's "Obligatoire" switch
@@ -96,6 +97,8 @@ function formatPayload(item: any): Record<string, unknown> {
 
 export function toFormItemsPayload(items: any[], gridSwitch: boolean): FormItem[] {
   return items.map((item) => {
+    // A text or image block is sent with a block's fields alone (`formBlockPayload`).
+    if (isFormBlock(item)) return formBlockPayload(item) as unknown as FormItem;
     const hasOptions = !TYPES_WITHOUT_OPTIONS.includes(item.type);
     const pricesOptions = TYPES_WITH_PRICED_OPTIONS.includes(item.type);
     const { productGrid, ...rest } = item;

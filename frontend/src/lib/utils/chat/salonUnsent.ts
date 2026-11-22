@@ -10,7 +10,7 @@
  * IT IS THE DURABLE HALF OF THE SALON QUEUE (WP-OFF-3). What is still here at the next start is a
  * message whose fate nobody observed, and it is SENT AGAIN under the same client id: the server
  * answers a repeat with the row it already holds (migration 090), so a message that did arrive is not
- * posted twice - once an answer has proven this server does (`salonRepeatProof.ts`). An entry carries what rebuilding the identical payload needs (`sentAt`, `replyTo`);
+ * posted twice. An entry carries what rebuilding the identical payload needs (`sentAt`, `replyTo`);
  * one written before those existed cannot be rebuilt as it was composed (its quote would be lost), so
  * it still goes back to the composer instead (`messaging.ts`, `resumeUnsentSalonSends`).
  *
@@ -110,11 +110,19 @@ function writeAll(userId: string, entries: UnsentSalonText[]): void {
   }
 }
 
-/** Records the text of a salon message about to be sent. */
+/**
+ * Records the text of a salon message about to be sent. A message already recorded keeps ITS PLACE:
+ * the ledger's order is the order the texts were written in, which the next page life sends them in
+ * (`salonSendLane.ts`), so re-recording a resumed entry must not move it behind a later one.
+ */
 export function recordUnsentSalonText(userId: string, entry: UnsentSalonText): void {
   claimOwnerLock();
   const owned = { ...entry, owner: SALON_UNSENT_PAGE_LIFE };
-  writeAll(userId, [...readAll(userId).filter((e) => e.messageId !== entry.messageId), owned]);
+  const all = readAll(userId);
+  const at = all.findIndex((e) => e.messageId === entry.messageId);
+  if (at >= 0) all[at] = owned;
+  else all.push(owned);
+  writeAll(userId, all);
 }
 
 /**

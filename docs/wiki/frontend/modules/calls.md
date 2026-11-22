@@ -634,7 +634,7 @@ design; the live end keeps its red X, since a confirmation modal exists.
   the caller's photo and name over the lock screen, Decline and Answer. Answer asks the keyguard to
   go first (`requestDismissKeyguard`), then sends the notification's own answer intent. **The screen
   never outlives its ring**: it closes with it (`cancelIncomingCallNotification` -> `finishFor`, and
-  `cancelAllMessageNotifications` on the app's resume); a launch that lands after the ring ended
+  `retireTakenOverNotifications` on the app's resume); a launch that lands after the ring ended
   (between `notify` and `onCreate`) asks `isRinging` and closes at once; and the screen bounds
   itself by the ring window (`CALL_RING_TIMEOUT_MS`). A second call while it shows (`singleTop`)
   replaces it through `onNewIntent` - unless that call no longer rings, in which case the first
@@ -735,7 +735,7 @@ when the native handover says an answer waits, `canari:call-accept` -
   the call id and that nonce as extras, its data the plain conversation link. `MainActivity`
   (`onCreate` on a fresh launch, `onNewIntent`) checks the nonce, forgets the record and writes the
   file from the RECORDED facts with the instant of the tap, atomically. A dismissed or ended ring
-  forgets its record (`cancelIncomingCallNotification`, `cancelAllMessageNotifications`).
+  forgets its record (`cancelIncomingCallNotification`, `retireTakenOverNotifications`).
 - **iOS**: CallKit's answer writes the file natively; the link it opens is navigation only.
 - **A link navigates and never answers**: `hooks.client.ts` reads no answer from a URL, whoever
   opened it (a parameter that looks like one is logged and ignored).

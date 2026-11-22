@@ -502,6 +502,7 @@
   requiresPayment={false}
   offerPricedGrid={false}
   offerChoiceNotes={false}
+  offerBlocks={false}
   {tiers}
   {formations}
   fileHint={m.bookings_builder_file_hint()}
