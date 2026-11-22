@@ -2377,6 +2377,71 @@ calls `forgetDeliveredSalonSend`), `salonEcho.test.ts` (`salonEchoSettleable`),
 `sqliteMigrations.test.ts` (v19), `outboxClearPatch.test.ts` (the count written in place). **Owed:** a deploy drill on dev with the two bench
 phones sending throughout (no "Echec", no "Non confirme", each message once on the peer).
 
+### A salon is received in the order it was written: one lane per salon (2026-11-22)
+
+**The defect** ([backlog](../../backlog.d/p3-salon-texts-held-by-a-502-are-posted-out-of-order.md)).
+Read twice on the iPhone 12 (S5 on `1.7.0-alpha.12`, then `1.7.3-alpha.5`): dev's social-service
+stopped about 80 s while `T1`..`T8` were written in one salon, and the server stored
+`T1 T6 T7 T8 T2 T3 T4 T5` - live, and again after a terminate and relaunch, since that IS the
+server's order. Each text arrived once and none failed, so R05's contract held; only the order broke.
+
+**Why.** Each held salon text owned its own retry: its ladder step (`holdForServer`), its debt to the
+reconnect, and a fresh text POSTed at once whatever waited before it. After the return, the first
+POST answered was whichever asked first: the texts typed after the restart (`T7`, `T8`), and the one
+whose step happened to end next (`T6`), went before `T2`..`T5`, still on 15 to 60 s steps. The DM and
+group outbox never had this: its lanes keep order by construction since WP-OFF-5 (above, and
+[offline-and-weak-network section 11](../offline-and-weak-network.md#11-wp-off-5-shipped-a-deadline-a-slow-state-and-lanes)).
+
+**The fix: the salon send gets the outbox's rule** (`utils/chat/salonSendLane.ts`, driven from
+`deliverSalonSend` in `utils/chat/messaging.ts`). Each salon has ONE ordered lane of its unsent
+messages, and only the first may be on the wire. A text written behind it is drawn `pending` and
+waits its turn (`WAITS ITS TURN` in the log); no timer, no reorder afterwards. The order is the
+order of WRITING, fixed where it is known:
+
+- a fresh text takes its place in `queueSalonSend` BEFORE its first await, so two taps in a row are
+  placed in tap order whatever their echo writes do;
+- what a past page life left is placed when the ledger is read (`reserveSalonLaneTurns`), in the
+  LEDGER's order - which `recordUnsentSalonText` now keeps when it re-records an entry instead of
+  moving it to the end - ahead of every text of this page life that has not taken its turn yet, and
+  behind the one that has (it may be on the server already).
+
+**A message holds its place exactly while the machine will send it again by itself**: in flight,
+waiting for its salon to load, owed to the reconnect, or held for the server. Each turn returns a
+typed outcome (`SalonTurn`: `holds`, or leaves with its `why`), classified in the branch that decides
+it rather than read back from the registries. It leaves - and the message written next is delivered
+at once (`releaseSalonTurn`) - when it is settled (its answer, or its frame: `forgetDeliveredSalonSend`),
+deleted, refused (`error`), or handed to its author (`unconfirmed`: the 12th "not now", a repeat not
+yet proven safe, an unknown outcome). That is the outbox's own rule for a parked entry: a message
+waiting on a HUMAN does not make the ones after it wait too, so a Retry of it later sends it at the
+END of the lane, after what was waiting. A message that leaves also stops being owed to the
+reconnect, so a refused text is never re-POSTed by a later reconnect.
+
+**The traffic stays what it was.** Before, a text written during an outage POSTed once and climbed its
+own ladder; now, a text written behind a head held for the server asks the HEAD again at once instead
+(`askHeldTurnAgain`, which takes the head's ladder step). So the outage costs the server no more
+requests than before, the head's run of "not now" is still counted toward `MAX_UNAVAILABLE_ANSWERS`
+(each is a real answer), and a text typed after the return drains the salon immediately rather than
+waiting up to a minute for the head's next step - exactly what the reading needed: `T7` brings `T2`
+through, and `T3`..`T8` follow in order. With nothing typed after the return, the head's ladder step
+or the reconnect drains it the same way.
+
+**Not changed, on purpose.** A salon ATTACHMENT joins the lane when its POST is due, after its upload
+(WP-OFF-9's rule: a file uploading holds nothing back). Lanes are per salon: two salons never wait on
+each other. The lanes are memory only; the durable order is the unsent ledger's. The sealing is
+untouched - each attempt seals afresh as before - and since only one POST per salon is on the wire,
+this device's `messageIndex` now also reaches the server in order.
+
+**MLS.** Nothing here touches the DM and group path: its lanes already hold a retrying or backing-off
+entry's successors, so an MLS application message cannot overtake an earlier one of the same group,
+across an epoch or not.
+
+Tests: `useMessaging.salonOrder.svelte.test.ts` (the drill against a fake server that is down then
+up: `T1`..`T8` stored in order, each once, no failure drawn - failing without the lane; the ladder and
+the reconnect each draining in order; a POST in flight holding the next; a refused head and a
+discarded head letting the next go; a past page life's entries POSTed in the ledger's order),
+`salonSendLane.test.ts`, `salonUnsent.test.ts` (re-recording keeps the place). **Owed:** the same
+drill on a phone (the backlog entry's reading).
+
 ### Everything the outbox swallows, it logs
 
 The queue is deliberately best-effort at every step - a storage write that fails must not take the

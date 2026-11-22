@@ -30,3 +30,7 @@ No timer is needed to fix it: the order is a fact the client already holds.
 
 **The reading that closes it:** the same drill (dev `social-service` stopped about 45 s, the phone writing a text
 every few seconds through the outage): the texts reach the peer in the order they were written.
+
+**2026-11-22, iPhone 12 on `1.7.3-alpha.5`: REPRODUCED, the reading FAILED.** Dev's `social-service` stopped about 80 s; `T1` written before, `T2` to `T6` during, `T7` and `T8` just after the restart; the salon read, live and again after a terminate and relaunch (the server's order): **T1, T6, T7, T8, T2, T3, T4, T5**. Each text once, no "Echec" or "Non confirme". Evidence outside the repository.
+
+**2026-11-22: the fix is built** - one ordered lane per salon (`salonSendLane.ts`, `deliverSalonSend`): only the first unsent text of a salon is on the wire, a text written behind a head held for the server asks the head again instead of POSTing itself, and a past page life's texts keep the ledger's order. The mechanism, what holds a place and what leaves it: [chat](../frontend/modules/chat.md#a-salon-is-received-in-the-order-it-was-written-one-lane-per-salon-2026-11-22). The drill is reproduced in `useMessaging.salonOrder.svelte.test.ts`, failing without the lane. **Owed: the reading above, on the next pre-release.**

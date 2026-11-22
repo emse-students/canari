@@ -61,6 +61,15 @@ import { isTransportFailure } from '$lib/utils/transportFailure';
 import { forgetOwedSalonWrite, oweSalonWrite } from './salonOwed';
 import { salonRepeatIsSafe, whenSalonRepeatIsSafe } from './salonRepeatProof';
 import {
+  clearSalonLanes,
+  joinSalonLane,
+  leaveSalonLane,
+  reserveSalonLaneTurns,
+  salonLanePosition,
+  salonLaneTurnAhead,
+  takeSalonLaneTurn,
+} from './salonSendLane';
+import {
   CHANNEL_MESSAGE_DELETED,
   writePolicyOfRefusal,
   type ChannelWritePolicy,
@@ -330,11 +339,20 @@ export function liveSalonSendIds(): ReadonlySet<string> {
  * did land. No clock decides any of it: the one ladder step a hold for the server arms only ASKS
  * again, and the answer decides.
  *
- * @returns `null` when nothing needs saying (sent, or held for the reconnect), else the
- *   member-facing sentence.
+ * EVERY DELIVERY TAKES ITS TURN IN ITS SALON'S LANE (`salonSendLane.ts`, 2026-11-22): a message
+ * written after one that is still unsent waits behind it - `pending`, no POST - and goes when that one
+ * is settled or handed to its author ({@link releaseSalonTurn}). The order of the salon is therefore
+ * the order it was written in, whatever the outage did to each message's retry.
+ *
+ * @returns `null` when nothing needs saying (sent, held for the reconnect, or waiting its turn),
+ *   else the member-facing sentence.
  */
 async function deliverSalonSend(messageId: string, send: SalonSend): Promise<string | null> {
   const { deps } = send;
+  // A first delivery is given its place; a repeat keeps the one it has, and one that had left (its
+  // author's Retry, a repeat once proven safe) goes to the end: it was handed back, and what waits
+  // in the lane now was not.
+  joinSalonLane(send.conversationKey, messageId);
   const reading = readSalonSendGate(send.channelId);
   if (reading.kind === 'wait') {
     deps.log(
@@ -350,18 +368,101 @@ async function deliverSalonSend(messageId: string, send: SalonSend): Promise<str
       `[SEND] channel send ${messageId.slice(0, 8)}... NOT sent: salon ${send.channelId.slice(0, 8)} cannot be loaded (reason=${gate.reason})`
     );
     deps.patchSalonEcho(send.conversationKey, messageId, { kind: 'state', status: 'error' });
+    releaseSalonTurn(messageId, deps, 'its salon cannot be loaded');
     return salonGateRefusalMessage(gate.reason);
   }
   if (reading.kind === 'wait') {
     deps.log(`[SEND] channel send ${messageId.slice(0, 8)}... released: its salon is loaded`);
   }
+  const ahead = salonLaneTurnAhead(messageId);
+  if (ahead !== null) {
+    deps.log(
+      `[SEND] channel send ${messageId.slice(0, 8)}... WAITS ITS TURN: ${ahead.slice(0, 8)}... was written before it in salon ${send.channelId.slice(0, 8)} and is not sent yet (${salonLanePosition(messageId)} ahead) - it goes when that one is settled or handed to its author`
+    );
+    deps.patchSalonEcho(send.conversationKey, messageId, { kind: 'state', status: 'pending' });
+    askHeldTurnAgain(ahead, messageId);
+    return null;
+  }
+  takeSalonLaneTurn(messageId);
+  let turn: SalonTurn;
+  try {
+    turn = await takeSalonTurn(messageId, send);
+  } catch (error: unknown) {
+    // Not a classified outcome: nothing will send it again by itself, so it must not hold the salon.
+    releaseSalonTurn(messageId, deps, `its attempt threw: ${String(error)}`);
+    throw error;
+  }
+  if (!turn.holds) releaseSalonTurn(messageId, deps, turn.why);
+  return turn.refusal;
+}
+
+/**
+ * What one turn of a salon send ended in: the member-facing sentence (`null`: nothing to say), and
+ * whether the message HOLDS its place in the lane - the machine sends it again by itself (held for
+ * the server, owed to the reconnect) - or leaves it (`why`: settled, gone, or waiting for its author).
+ * Classified where each outcome is decided, never inferred afterwards from the registries.
+ */
+type SalonTurn =
+  | { holds: true; refusal: null }
+  | { holds: false; refusal: string | null; why: string };
+
+const holdsTurn: SalonTurn = { holds: true, refusal: null };
+const leavesTurn = (why: string, refusal: string | null = null): SalonTurn => ({
+  holds: false,
+  refusal,
+  why,
+});
+
+/**
+ * Takes `messageId` out of its salon's lane - it is settled, given up, or waiting for its author -
+ * and nothing is owed to the reconnect for it any more. When it was the turn, the message written
+ * next is delivered now: the one event that lets it go, never a clock.
+ */
+function releaseSalonTurn(
+  messageId: string,
+  deps: Pick<SendMessageDeps, 'log'>,
+  why: string
+): void {
+  forgetOwedSalonWrite(sendKey(messageId));
+  const next = leaveSalonLane(messageId);
+  if (next === null) return;
+  deps.log(
+    `[SEND] salon lane: ${messageId.slice(0, 8)}... leaves its turn (${why}) - ${next.slice(0, 8)}..., written next, goes now`
+  );
+  void redeliverSalonSend(next, 'its turn in the salon lane');
+}
+
+/**
+ * A message was written behind `head`, which is held for the server: the head is asked again NOW
+ * instead of at its ladder step. That message would have POSTed once itself before the lane; the
+ * head's request takes its place, so the outage costs the server no more requests than it did, and
+ * the first one answered after the return drains the lane in order. Nothing is asked while the head
+ * is in flight or waits for anything but the server.
+ */
+function askHeldTurnAgain(head: string, behind: string): void {
+  const hold = serverHolds.get(head);
+  if (!hold?.step) return;
+  const send = salonSends.get(head);
+  send?.deps.log(
+    `[SEND] channel send ${head.slice(0, 8)}... held for the server is asked again now: ${behind.slice(0, 8)}... was written behind it`
+  );
+  takeServerHoldStep(head);
+  void redeliverSalonSend(head, `asked again for ${behind.slice(0, 8)}... written behind it`);
+}
+
+/**
+ * One turn of a salon send: the offline hold, the POST, and the classification of its answer
+ * ({@link deliverSalonSend} has already given it its turn).
+ */
+async function takeSalonTurn(messageId: string, send: SalonSend): Promise<SalonTurn> {
+  const { deps } = send;
   if (connectivity.isOffline) {
     deps.log(
       `[SEND] channel send ${messageId.slice(0, 8)}... HELD: this device is offline - sent on the reconnect`
     );
     deps.patchSalonEcho(send.conversationKey, messageId, { kind: 'state', status: 'pending' });
     oweOnReconnect(messageId);
-    return null;
+    return holdsTurn;
   }
   takeServerHoldStep(messageId);
   deps.patchSalonEcho(send.conversationKey, messageId, { kind: 'state', status: 'sending' });
@@ -381,7 +482,7 @@ async function deliverSalonSend(messageId: string, send: SalonSend): Promise<str
       serverId: row?.id ?? null,
       serverMs: row?.serverMs,
     });
-    return null;
+    return leavesTurn('sent');
   } catch (error: unknown) {
     // THE ONLY ONE OF THE PARKED SEND SITES THAT CARRIES AN HTTP STATUS, which is why it is the
     // only one this helper can close. `ChannelService.handleError` throws `ChannelApiError(status,
@@ -411,7 +512,10 @@ async function deliverSalonSend(messageId: string, send: SalonSend): Promise<str
         `[SEND] channel send ${messageId.slice(0, 8)}... NOT sent: salon ${send.channelId.slice(0, 8)} cannot be loaded in the leader tab (reason=${error.reason})`
       );
       deps.patchSalonEcho(send.conversationKey, messageId, { kind: 'state', status: 'error' });
-      return salonGateRefusalMessage(error.reason);
+      return leavesTurn(
+        'its salon cannot be loaded in the leader tab',
+        salonGateRefusalMessage(error.reason)
+      );
     }
     if (error instanceof GraineSealUnavailableError) {
       endServerHold(messageId);
@@ -419,7 +523,7 @@ async function deliverSalonSend(messageId: string, send: SalonSend): Promise<str
         `[SEND] channel send ${messageId.slice(0, 8)}… not sealed (reason=${error.reason}): ${String(error)}`
       );
       deps.patchSalonEcho(send.conversationKey, messageId, { kind: 'state', status: 'error' });
-      return sealUnavailableMessage(error.reason);
+      return leavesTurn('not sealed', sealUnavailableMessage(error.reason));
     }
     const status = refusalStatus(error);
     // "NOT NOW" (502, 503, 504, read from the status the throw carried): the service is not serving -
@@ -441,12 +545,12 @@ async function deliverSalonSend(messageId: string, send: SalonSend): Promise<str
           kind: 'state',
           status: 'unconfirmed',
         });
-        return m.chat_send_unconfirmed();
+        return leavesTurn('unconfirmed after the last "not now"', m.chat_send_unconfirmed());
       }
       if (salonRepeatIsSafe()) {
         deps.patchSalonEcho(send.conversationKey, messageId, { kind: 'state', status: 'pending' });
         holdForServer(messageId, send, error, answers);
-        return null;
+        return holdsTurn;
       }
       endServerHold(messageId);
       deps.log(
@@ -457,7 +561,7 @@ async function deliverSalonSend(messageId: string, send: SalonSend): Promise<str
         status: 'unconfirmed',
       });
       awaitRepeatProof(messageId);
-      return m.chat_send_unconfirmed();
+      return leavesTurn('unconfirmed until a repeat is proven safe', m.chat_send_unconfirmed());
     }
     // Any other outcome ends a hold for the server: an answer, or a link that went down.
     endServerHold(messageId);
@@ -476,14 +580,14 @@ async function deliverSalonSend(messageId: string, send: SalonSend): Promise<str
           status: 'unconfirmed',
         });
         awaitRepeatProof(messageId);
-        return m.chat_send_unconfirmed();
+        return leavesTurn('unconfirmed until a repeat is proven safe', m.chat_send_unconfirmed());
       }
       deps.log(
         `[SEND] channel send ${messageId.slice(0, 8)}… got no answer and the device is offline - sent again, same client id, on the reconnect: ${String(error)}`
       );
       deps.patchSalonEcho(send.conversationKey, messageId, { kind: 'state', status: 'pending' });
       oweOnReconnect(messageId);
-      return null;
+      return holdsTurn;
     }
     // NO ANSWER WITH THE LINK UP, OR A GATEWAY'S 5xx, IS NOT A REFUSAL. The request may have reached
     // the server (a 502/504 may come from a proxy AFTER the social service stored the row), and no
@@ -502,7 +606,7 @@ async function deliverSalonSend(messageId: string, send: SalonSend): Promise<str
         kind: 'state',
         status: 'unconfirmed',
       });
-      return m.chat_send_unconfirmed();
+      return leavesTurn('unconfirmed, its Retry offered', m.chat_send_unconfirmed());
     }
     // A REPEAT OF A MESSAGE DELETED SINCE ITS FIRST SEND LANDED (migration 090's tombstone): it was
     // posted, then removed by its author or a moderator. Nothing is left to send or to offer again.
@@ -514,7 +618,7 @@ async function deliverSalonSend(messageId: string, send: SalonSend): Promise<str
       stopAwaitingRepeatProof(messageId);
       clearUnsentSalonText(deps.userId, messageId);
       deps.patchSalonEcho(send.conversationKey, messageId, { kind: 'gone' });
-      return null;
+      return leavesTurn('deleted after it landed');
     }
     deps.log(
       `[SEND] channel send ${messageId.slice(0, 8)}… refused (status=${status}): ${String(error)}`
@@ -528,9 +632,10 @@ async function deliverSalonSend(messageId: string, send: SalonSend): Promise<str
         `[SEND] channel send ${messageId.slice(0, 8)}… refused by the write policy ${refusedBy}: the composer was stale, taken away`
       );
       deps.onChannelWriteRefused?.(send.conversationKey, refusedBy);
-      return writePolicyLine(refusedBy);
+      return leavesTurn('refused by the write policy', writePolicyLine(refusedBy));
     }
-    return (
+    return leavesTurn(
+      'refused',
       describeApiRefusal(status, m.channel_action_message_send()) ?? m.chat_send_error_generic()
     );
   }
@@ -629,8 +734,9 @@ export function takeBackSalonSend(messageId: string, userId: string): string | n
  */
 export function forgetDeliveredSalonSend(messageId: string, userId: string): void {
   stopAwaitingRepeatProof(messageId);
-  // Nothing is owed to the reconnect for a message the server holds.
-  forgetOwedSalonWrite(sendKey(messageId));
+  // Nothing is owed to the reconnect for a message the server holds, and the server holds it: the
+  // message written after it may go.
+  releaseSalonTurn(messageId, { log: console.log }, 'its frame proved it delivered');
   if (salonSends.delete(messageId)) clearUnsentSalonText(userId, messageId);
 }
 
@@ -649,6 +755,7 @@ export function forgetSalonSendsOfEndedSession(): void {
   for (const stop of awaitingRepeatProof.values()) stop();
   awaitingRepeatProof.clear();
   for (const id of serverHolds.keys()) endServerHold(id);
+  clearSalonLanes();
   // A resume still waiting on its salon's gate re-checks the session itself (`resumeOrphans`); its
   // entries stay in the ledger, so the next session of THAT account takes them.
   resumingSalonSends.clear();
@@ -656,9 +763,10 @@ export function forgetSalonSendsOfEndedSession(): void {
 
 /** Forgets a failed salon send the member discarded: its row is removed by the caller. */
 export function discardSalonSend(messageId: string, userId: string): void {
+  const send = salonSends.get(messageId);
   salonSends.delete(messageId);
-  forgetOwedSalonWrite(sendKey(messageId));
   stopAwaitingRepeatProof(messageId);
+  releaseSalonTurn(messageId, send?.deps ?? { log: console.log }, 'given up by its author');
   clearUnsentSalonText(userId, messageId);
 }
 
@@ -705,6 +813,10 @@ async function queueSalonSend(
   const echoReply: ChatMessage['replyTo'] = replyTo
     ? { id: replyTo.id, senderId: replyTo.senderId, content: replyTo.preview }
     : undefined;
+  // ITS PLACE IN THE SALON'S ORDER IS TAKEN HERE, before the first await: two texts tapped in a row
+  // are placed in the order they were tapped, whatever their echoes' writes do. A resumed entry was
+  // placed when it was taken from the ledger and keeps that place.
+  joinSalonLane(conversationKey, messageId);
   try {
     await deps.addMessageToChat(
       deps.userId,
@@ -723,6 +835,7 @@ async function queueSalonSend(
     deps.log(
       `[SEND] salon echo of ${messageId.slice(0, 8)}... could not be shown: ${String(error)}`
     );
+    releaseSalonTurn(messageId, deps, 'its row could not be drawn');
     return { echoed: false };
   }
   salonSends.set(messageId, send);
@@ -737,6 +850,7 @@ async function queueSalonSend(
       );
       deps.patchSalonEcho(conversationKey, messageId, { kind: 'state', status: 'unconfirmed' });
       awaitRepeatProof(messageId);
+      releaseSalonTurn(messageId, deps, 'unconfirmed until a repeat is proven safe');
       return { echoed: true, refusal: null };
     }
     return { echoed: true, refusal: await deliverSalonSend(messageId, send) };
@@ -795,6 +909,15 @@ async function resumeOrphans(
     recordUnsentSalonText(userId, o);
     resumingSalonSends.add(o.messageId);
   }
+  // THEIR PLACES IN EACH SALON'S ORDER ARE RESERVED NOW, in the ledger's order (the order they were
+  // written in), before any of them waits for its salon: the gates and the echo writes below resolve
+  // in whatever order they do, and none of that may decide which one the server receives first.
+  for (const key of new Set(resumable.map((o) => o.conversationKey))) {
+    reserveSalonLaneTurns(
+      key,
+      resumable.filter((o) => o.conversationKey === key).map((o) => o.messageId)
+    );
+  }
   void Promise.all(
     resumable.map(async (entry) => {
       try {
@@ -825,8 +948,12 @@ async function resumeOrphans(
           );
         }
       } finally {
-        // Registered in `salonSends` by now, or left in the ledger for the salon's next opening.
+        // Registered in `salonSends` by now, or left in the ledger for the salon's next opening -
+        // and then its reserved place must not hold the salon: the next opening reserves it again.
         resumingSalonSends.delete(entry.messageId);
+        if (!salonSends.has(entry.messageId)) {
+          releaseSalonTurn(entry.messageId, { log: console.log }, 'not resumed in this opening');
+        }
       }
     })
   ).catch((e: unknown) => console.error(`[SEND] resuming unanswered salon messages failed:`, e));

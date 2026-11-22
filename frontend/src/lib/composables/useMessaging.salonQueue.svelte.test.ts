@@ -48,7 +48,10 @@ import { ChannelApiError } from '$lib/services/ChannelService';
 import { deliverOwedSalonWrites, isSalonWriteOwed } from '$lib/utils/chat/salonOwed';
 import { clearAllUploads, textWaitOf, uploadViewOf } from '$lib/utils/chat/uploadProgress.svelte';
 import { MAX_UNAVAILABLE_ANSWERS, unavailableHoldMs } from '$lib/utils/chat/retryLadder';
-import { forgetDeliveredSalonSend } from '$lib/utils/chat/messaging';
+import {
+  forgetDeliveredSalonSend,
+  forgetSalonSendsOfEndedSession,
+} from '$lib/utils/chat/messaging';
 
 /** An answer of a server carrying migration 090: it echoes the client id, so a repeat is safe. */
 function proveRepeatsSafe() {
@@ -118,6 +121,9 @@ beforeEach(() => {
   resetSalonRepeatProofForTests();
   proveRepeatsSafe();
   clearAllUploads();
+  // A send a previous test left held is a message written earlier in the SAME salon: every send of
+  // this test would wait its turn behind it (`salonSendLane.ts`).
+  forgetSalonSendsOfEndedSession();
 });
 
 afterEach(() => {

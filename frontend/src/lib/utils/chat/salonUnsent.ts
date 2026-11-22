@@ -110,11 +110,19 @@ function writeAll(userId: string, entries: UnsentSalonText[]): void {
   }
 }
 
-/** Records the text of a salon message about to be sent. */
+/**
+ * Records the text of a salon message about to be sent. A message already recorded keeps ITS PLACE:
+ * the ledger's order is the order the texts were written in, which the next page life sends them in
+ * (`salonSendLane.ts`), so re-recording a resumed entry must not move it behind a later one.
+ */
 export function recordUnsentSalonText(userId: string, entry: UnsentSalonText): void {
   claimOwnerLock();
   const owned = { ...entry, owner: SALON_UNSENT_PAGE_LIFE };
-  writeAll(userId, [...readAll(userId).filter((e) => e.messageId !== entry.messageId), owned]);
+  const all = readAll(userId);
+  const at = all.findIndex((e) => e.messageId === entry.messageId);
+  if (at >= 0) all[at] = owned;
+  else all.push(owned);
+  writeAll(userId, all);
 }
 
 /**
