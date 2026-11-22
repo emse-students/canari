@@ -1780,7 +1780,11 @@ never flashes), hidden - not unmounted - while the keyboard is up or a conversat
 hidden at `md` width like `md:hidden`. A tap `goto`s the place; the ROUTE drives the selection
 back (`selectTab`). What the bar covers is the plugin's `getTabBarInsets`, written to
 `--bottom-nav-reserve` - the one variable `.page-scroll-wrap`, `.mobile-nav-inset` and the
-keyboard's scroll padding reserve (`app.css`), whose web value is the old `4rem` + safe area.
+keyboard's scroll padding reserve (`app.css`), whose web value is the web bar's `3rem` + its 1px
+border + the safe area. Below iOS 26 the bar is the CLASSIC full-width `UITabBar` and its measured
+inset is its own height (83 on a notched iPhone), so an opaque classic bar sits flush on the content
+like the glass pill; which phone gets which chrome is tabled in
+[design-reference](design-reference.md) (the report of 2026-11-22, a `1.6.x` build).
 
 **Two limits taken knowingly, and one the patch removed:**
 - **Icons only, and VoiceOver names no tab** (user, 2026-09-29). The plugin's `title` is both the
