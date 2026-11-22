@@ -4,6 +4,7 @@ import {
   ensureDistributionGroupFor,
   enterPrivateSalonGroup,
   rejoinBehindDistributionGroup,
+  resetDeclinedSalons,
 } from './distributionGroup';
 import { ChannelApiError } from '$lib/services/ChannelService';
 import { setGraineRuntime } from './runtime';
@@ -20,6 +21,7 @@ vi.mock('./rosterReconcile', () => ({
 }));
 
 beforeEach(() => {
+  resetDeclinedSalons();
   reconcile.mockClear();
 });
 
@@ -878,6 +880,27 @@ describe('a private salon is entered one way, and declining says so (G-D1)', () 
       expect(channels.getDistributionGroup).not.toHaveBeenCalled();
     });
   }
+
+  it('says a declined salon ONCE however many walks meet it, and again after access is regained and lost', async () => {
+    const lines: string[] = [];
+    const channels = makeChannels();
+    const declined = () => enter(channels, (m) => lines.push(m), { viewerHasAccess: false });
+
+    await declined();
+    await declined();
+    await declined();
+    expect(lines).toHaveLength(1);
+
+    // A logout forgets what was said: the next account's walk says it again.
+    resetDeclinedSalons();
+    await declined();
+    expect(lines).toHaveLength(2);
+
+    // Access regained (entered), then lost: the new refusal is a new fact.
+    await enter(channels, () => {}, { viewerHasAccess: true });
+    await declined();
+    expect(lines).toHaveLength(3);
+  });
 
   it('every moment that enters a salon goes through this entrance, into a real log', async () => {
     const { readFileSync } = await import('node:fs');

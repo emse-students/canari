@@ -1976,6 +1976,8 @@ Signing, the bump script, the secrets and every compile-check trick are on [cicd
 
 ## Associations and agenda -> [social-service](services/social-service.md)
 
+- **WHAT IS STORED MUST NOT PAIR AN ACCOUNT WITH AN ANSWER - INCLUDING WHAT THE DATABASE KEEPS ABOUT THE WRITE ITSELF.** A promise of anonymity is kept by the rows, and the rows include system columns, physical order and a column's default clock, not only the columns the code names. Two writes in one transaction are paired; two writes one after the other are neighbours. An anonymous answer is therefore never written near its registry row: it waits, and is stored with others in one write of their own ([forms](frontend/modules/forms.md#an-anonymous-forms-answers-are-released-in-batches-2026-11-21)).
+
 - **AN EXCLUDE CONSTRAINT GUARANTEES ONE WINNER, NOT A TYPED ANSWER FOR THE LOSERS.** Eight bare concurrent inserts on one booking slot: one winner, seven `40P01` deadlocks, zero `23P01`. A booking write takes `SELECT ... FOR UPDATE` on its resource first, so every loser meets a committed row and is told `23P01`; never classify a deadlock as "slot taken". And a CHECK that evaluates to NULL passes. [databases](infrastructure/databases.md#extensions-and-an-exclude-constraint-migration-087-2026-10-16), [bookings](bookings-chantier.md#wp-b1-as-built-2026-10-16)
 
 - **"THE SUBMITTER OR A MANAGER" IS NOT AN AUTHORISATION RULE ON A PAYMENT - IT IS THE ATTACK.** Whoever benefits from a state may never be the one allowed to assert it. A `paid` flag, a granted tag and a purchase record are established by the party that TOOK the money - a signature-verified webhook, or a manager recording cash on a form they manage - never by the person who owes it. [social-service](services/social-service.md)

@@ -691,4 +691,3 @@ all - neither the read grants of 2026-10-07 nor the comments switch that narrows
 C5 already says what they read ([register](compliance/register-of-processing.md)). Whether the public
 policy should say it too is the owner's call. Moved here when its reading entry was deleted on the
 owner's decision of 2026-11-15 ("Supprimer cette lecture"), so the question is not lost with it.
-
