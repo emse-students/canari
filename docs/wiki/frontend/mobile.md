@@ -4531,7 +4531,7 @@ uninstall and therefore that phone's identity and history.
 
 ### Keyboard media (Android)
 
-`KeyboardMediaBridge.kt` intercepts `InputConnection.commitContent` to handle GIF/sticker commits from the soft keyboard. Dispatches `canari-keyboard-media` DOM events picked up by `MainChatPage` (and a focused `CommentComposer`) → routed through the normal media pipeline. Its one hook is in the vendored wry template, not in `generated/`, which every Android build rewrites - the hook was lost that way for four months ([chat](modules/chat.md#android-keyboard-media-commitcontent)).
+`KeyboardMediaBridge.kt` intercepts `InputConnection.commitContent` to handle GIF/sticker commits from the soft keyboard. Dispatches `canari-keyboard-media` DOM events routed by ONE dispatcher (`utils/keyboardMedia.ts`) to the focused composer, or refused with a toast → through the normal media pipeline. Its one hook is in the vendored wry template, not in `generated/`, which every Android build rewrites - the hook was lost that way for four months ([chat](modules/chat.md#android-keyboard-media-commitcontent)).
 
 ### OIDC login opens a dedicated in-app browser session (WP-OIDC-TAB-1, Android shipped and verified 2026-08-08; iOS verified on hardware 2026-08-27)
 

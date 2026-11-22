@@ -44,6 +44,7 @@
   import { getSavedDisplayName } from '$lib/stores/user';
   import { showToast } from '$lib/stores/toast.svelte';
   import { Log } from '$lib/utils/Log';
+  import { keyboardMediaTarget } from '$lib/utils/keyboardMedia';
   import { m } from '$lib/paraglide/messages';
 
   /**
@@ -109,8 +110,6 @@
   let pendingPreviewUrl = $state<string | null>(null);
   let uploadingMedia = $state(false);
   let showGifPicker = $state(false);
-  /** True while the box is focused, so only the focused one handles a keyboard GIF. */
-  let inputFocused = $state(false);
   /** The picture that did not go up, kept for "Retry"; cleared by a new attempt or a dismissal. */
   let mediaFailure = $state<File | null>(null);
   /** The photo library is the native picker (the iOS app), never a file input (as the post composer's). */
@@ -271,29 +270,6 @@
     gifLoad = null;
   }
 
-  /** Rebuilds a File from a keyboard-committed GIF (base64, Android/iOS) and stages it. */
-  function handleKeyboardMedia(detail: { mime?: string; name?: string; data?: string }) {
-    // Every card on the feed mounts a composer and hears the event: only the focused one answers,
-    // and the others stay silent (one line per card per GIF would be noise).
-    if (!inputFocused) return;
-    if (!detail?.data) {
-      Log.w('CommentComposer', 'keyboard media event carried no data');
-      return;
-    }
-    Log.d('CommentComposer', `keyboard media committed: ${detail.mime ?? 'no mime'}`);
-    try {
-      const bin = atob(detail.data);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      const mime = detail.mime || 'image/gif';
-      const name = detail.name || `gif-${Date.now()}.${mime.split('/')[1] ?? 'gif'}`;
-      void stageMediaFile(new File([bytes], name, { type: mime }));
-    } catch (err) {
-      console.error('Failed to handle keyboard GIF', err);
-      showToast(m.post_comment_media_error());
-    }
-  }
-
   // --- Draft: per account and per post -----------------------------------------------------------
   let draftReady = $state(false);
 
@@ -306,10 +282,7 @@
     }
     draftReady = true;
 
-    const onKeyboardMedia = (e: Event) => handleKeyboardMedia((e as CustomEvent).detail ?? {});
-    window.addEventListener('canari-keyboard-media', onKeyboardMedia);
     return () => {
-      window.removeEventListener('canari-keyboard-media', onKeyboardMedia);
       gifAbort?.abort();
     };
   });
@@ -587,11 +560,14 @@
 
       <div
         class="focus-within:ring-accent/50 flex min-w-0 flex-1 items-end rounded-3xl bg-black/5 py-0.5 pr-0.5 pl-3.5 transition-all focus-within:bg-white focus-within:ring-2 dark:bg-white/10 dark:focus-within:bg-black/40"
-        onfocusin={() => {
-          inputFocused = true;
-          void ensureAssociations();
+        onfocusin={() => void ensureAssociations()}
+        use:keyboardMediaTarget={{
+          surface: 'comment',
+          accept: (file) => {
+            void stageMediaFile(file);
+            return true;
+          },
         }}
-        onfocusout={() => (inputFocused = false)}
       >
         <!-- Several lines now (it was `singleLine`), growing to about five and scrolling after: a
              long comment could not be read back or edited in one line. The send button and GIF sit

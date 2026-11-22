@@ -1031,15 +1031,10 @@
       }
     };
 
-    const handleKeyboardMediaEvent = (e: Event) => {
-      handleKeyboardMedia((e as CustomEvent).detail ?? {});
-    };
-
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('focus', handleWindowFocus);
     window.addEventListener('blur', handleWindowBlur);
     window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('canari-keyboard-media', handleKeyboardMediaEvent);
     // The app leaving the screen ends the reading: the pending read mark is delivered now rather
     // than at a window expiry the OS may never let run (a backgrounded phone suspends timers).
     const offScreenChange = onAppScreenChange((onScreen) => {
@@ -1064,7 +1059,6 @@
       window.removeEventListener('focus', handleWindowFocus);
       window.removeEventListener('blur', handleWindowBlur);
       window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('canari-keyboard-media', handleKeyboardMediaEvent);
     };
   });
 
@@ -1302,35 +1296,6 @@
         log(`[SEND] sendVoiceNote threw - the recording was NOT queued: ${String(e)}`);
       });
     });
-  }
-
-  /**
-   * Handles rich content committed by the soft keyboard (e.g. a Gboard GIF), delivered by
-   * the native KeyboardMediaBridge (Android `InputConnection.commitContent`, iOS `UIPasteboard`
-   * polling) as a `canari-keyboard-media` event. Rebuilds a File from the base64 payload and
-   * routes it through the normal media pipeline (encrypted upload), so a keyboard GIF behaves
-   * exactly like a picked file - in DMs, groups, and channels alike.
-   */
-  function handleKeyboardMedia(detail: { mime?: string; name?: string; data?: string }) {
-    if (!convs.selectedContact || !detail?.data) {
-      log(
-        `[keyboard-media] committed content ignored: ${convs.selectedContact ? 'no data' : 'no conversation open'}`
-      );
-      return;
-    }
-    log(
-      `[keyboard-media] committed ${detail.mime ?? 'no mime'}, ${detail.data.length} base64 chars`
-    );
-    try {
-      const bin = atob(detail.data);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      const mime = detail.mime || 'image/gif';
-      const name = detail.name || `gif-${Date.now()}.${mime.split('/')[1] ?? 'gif'}`;
-      handleFilesSelected([new File([bytes], name, { type: mime })]);
-    } catch (e) {
-      appendLog(`[keyboard-media] failed to handle committed content - ${e}`);
-    }
   }
 
   // ─── A share from another app lands in the composer of the conversation it was sent to ────────

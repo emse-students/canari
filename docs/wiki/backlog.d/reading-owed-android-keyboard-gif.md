@@ -12,4 +12,6 @@ The reading that closes it, on the first pre-release carrying the fix, on the Mi
 a DM between two test accounts, open Gboard's GIF tab and commit one. Gboard must NOT say "GIF non
 disponibles ici", logcat must show `KeyboardMedia: input connection wrapped` then
 `keyboard committed 1 item(s)` and `dispatching keyboard media`, and the GIF must arrive on the
-other account as an animated media message. Then the same in a post's comment box.
+other account as an animated media message. Then the same in a post's comment box and in the post
+composer, and once in a field that refuses (a message being edited): the toast "Les GIF ne peuvent
+pas etre ajoutes ici" and a `KeyboardMedia` line naming `chat-edit`.
