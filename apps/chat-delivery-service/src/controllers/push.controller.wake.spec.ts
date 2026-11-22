@@ -18,6 +18,7 @@ import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { MessagingService } from '../services/messaging.service';
 import type { PushMessageInput } from '../services/push-payload';
 import { serveEnvelope, sweepDeviceEnvelopes } from '../utils/push-envelope';
+import { PUSH_DELIVERY_RECORDER } from '../utils/push-delivery-records';
 
 jest.mock('../utils/push-envelope', () => ({
   serveEnvelope: jest.fn(),
@@ -42,7 +43,11 @@ describe('PushController - the wake-up push', () => {
     upsert: jest.fn().mockResolvedValue(undefined),
     findOne: jest.fn(),
     update: jest.fn(),
-    manager: { tag: 'the chat-delivery manager' },
+    manager: {
+      tag: 'the chat-delivery manager',
+      /** The `lastPushFetchedAt` stamp (migration 054); answered empty unless a test says otherwise. */
+      query: jest.fn().mockResolvedValue([]),
+    },
   };
   const queuedRepo = { findOne: jest.fn(), find: jest.fn(), save: jest.fn() };
   const emptyRepo = () => ({ findOne: jest.fn(), find: jest.fn(), save: jest.fn() });
@@ -96,7 +101,12 @@ describe('PushController - the wake-up push', () => {
     controller = module.get(PushController);
   });
 
-  afterEach(() => jest.restoreAllMocks());
+  afterEach(async () => {
+    // The fetch stamp is written after the answer, by the process's one recorder: let it finish so
+    // no write of one test lands in the next one's mocks.
+    await PUSH_DELIVERY_RECORDER.settled();
+    jest.restoreAllMocks();
+  });
 
   describe('POST mls/push/register', () => {
     const SID = '0f0f0f0f-0000-4000-8000-00000000a1b2';
@@ -346,6 +356,66 @@ describe('PushController - the wake-up push', () => {
       ).rejects.toBeInstanceOf(BadRequestException);
       await expect(fetch('1')).rejects.toBeInstanceOf(BadRequestException);
       expect(queuedRepo.findOne).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('lastPushFetchedAt (migration 054)', () => {
+    const E = '11111111-2222-4333-8444-555555555555';
+    const stamps = () =>
+      pushTokenRepo.manager.query.mock.calls.filter(([sql]) =>
+        String(sql).includes('"lastPushFetchedAt"')
+      );
+
+    it.each([
+      [
+        'a frame wake answered gone',
+        () => controller.fetchWakeFrame(Q, 'user-1', 'phone-1', 'false'),
+      ],
+      [
+        'an envelope wake answered gone',
+        () => controller.fetchWakeFrame(undefined, 'user-1', 'phone-1', undefined, E),
+      ],
+      [
+        'a fetch-proto of a row already acknowledged',
+        () => controller.fetchProtoForPush(`PushSecret ${SECRET}`, Q, 'user-1', 'phone-1'),
+      ],
+    ])('stamps the device on %s - the push reached its handler', async (_case, fetch) => {
+      queuedRepo.findOne.mockResolvedValue(null);
+      serve.mockResolvedValue({ kind: 'gone' });
+      await fetch();
+      await PUSH_DELIVERY_RECORDER.settled();
+      expect(stamps().map(([, params]) => params)).toEqual([[['user-1'], ['phone-1']]]);
+    });
+
+    it('answers WITHOUT waiting for the stamp, and a stamp that fails is accused, never the fetch', async () => {
+      queuedRepo.findOne.mockResolvedValue(null);
+      // The registration row is held elsewhere: the stamp waits, the answer must not.
+      let refuse: (e: Error) => void = () => {};
+      pushTokenRepo.manager.query.mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            refuse = reject;
+          })
+      );
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+      await expect(controller.fetchWakeFrame(Q, 'user-1', 'phone-1', 'false')).resolves.toEqual({
+        status: 'gone',
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(stamps()).toHaveLength(1);
+      refuse(new Error('connection terminated'));
+      await PUSH_DELIVERY_RECORDER.settled();
+      expect(warn.mock.calls.map(([m]) => String(m)).join(' ')).toContain(
+        'lastPushFetchedAt NOT stamped on 1 device(s) routes=wake'
+      );
+    });
+
+    it('stamps nothing when fetch-proto refuses the PushSecret', async () => {
+      await expect(
+        controller.fetchProtoForPush('PushSecret wrong', Q, 'user-1', 'phone-1')
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      await PUSH_DELIVERY_RECORDER.settled();
+      expect(stamps()).toEqual([]);
     });
   });
 

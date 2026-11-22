@@ -684,6 +684,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // THE CANCELS AND THE FORGET ARE ONE STEP, under the lock a post holds from the banner it
                 // builds on to its record: a post between them would be forgotten while it stands, or
                 // rebuild on a banner already gone. The next post starts a new thread.
+                val idPrefs = context.getSharedPreferences("canari_notif_ids", Context.MODE_PRIVATE)
                 synchronized(READ_ELSEWHERE.lock) {
                     // A banner the platform holds after an inline answer is NOT cancelled - the
                     // cancel would be dropped and re-extend it ([ReadElsewhereMarks]'s class comment).
@@ -703,6 +704,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                             channelId == CHANNEL_REACTIONS
                         ) {
                             if (isHeldByDirectReply(sbn.notification)) held += sbn.id else manager.cancel(sbn.id)
+                            if (sbn.id !in held) {
+                                // EVERY REMOVAL SAYS WHY: this sweep removes a banner whose conversation
+                                // was NOT necessarily read (opening the app is the whole rule), and it
+                                // used to leave no line - a banner gone a second after the app came to
+                                // the front could not be told from a defect.
+                                val conversation = idPrefs.all.entries
+                                    .firstOrNull { (key, value) -> value == sbn.id && key != "__counter__" && ':' !in key }?.key
+                                Log.d(TAG, "cancelAllMessageNotifications: removed id=${sbn.id} channel=$channelId conversation=${ConversationRef.of(conversation)} - the app came to the foreground (opening the app clears every message notification, read or not)")
+                            }
                         }
                     }
                     // What the record holds is cancelled BY ID too: the sweep above reads a shade that
@@ -3303,7 +3313,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * @param at the mark, in ms.
          * @param serverClock whether [at] is on the server's clock (a DM or group mark from a current
          *   build) or the stamped one (a salon, whose stamp IS its server time, or an older `at`).
-         * @param reason which socket event said so (`read_watermark`, `channel.read`), for the log.
+         * @param reason which event said so, for the log: a socket event of another device
+         *   (`read_watermark`, `channel.read`) or `read_here`, THIS device's reader opening the
+         *   conversation.
          * @return whether the work was queued; `false` only with no Application context.
          */
         @JvmStatic
@@ -3313,7 +3325,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 Log.w(TAG, "readElsewhereFromWebSocket: no Application context - group=${ConversationRef.of(groupId)} NOT recorded ($reason)")
                 return false
             }
-            Log.d(TAG, "readElsewhereFromWebSocket: queued group=${ConversationRef.of(groupId)} at=$at clock=${if (serverClock) "server" else "stamped"} - read on another device ($reason)")
+            val where = if (reason == "read_here") "read on this device" else "read on another device"
+            Log.d(TAG, "readElsewhereFromWebSocket: queued group=${ConversationRef.of(groupId)} at=$at clock=${if (serverClock) "server" else "stamped"} - $where ($reason)")
             val read = ReadElsewhereMarks.Read(at, serverClock)
             WS_NOTIF_LANE.execute {
                 try {

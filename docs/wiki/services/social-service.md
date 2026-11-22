@@ -1036,6 +1036,15 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   its watermark announces (`notifiedServerAt` on the server clock, `notifiedAt` on the sender's) as a
   mark, and only the peer lines that mark covers go. A message that arrived while the reply was being
   sent is newer and stays, and the banner is rebuilt silently with it.
+- **Coming to the front removes every message, mention, ring and reaction banner, read or not (by
+  design, `MainActivity.onResume` -> `cancelAllMessageNotifications`), and says so (2026-11-21).** A
+  banner posted in the background was gone about a second after the app came to the front on the Mi
+  9T (`1.7.3-alpha.3`) with no line saying why; this sweep was the remover (not the #3912 read
+  dismissal). Each removal now logs `cancelAllMessageNotifications: removed id=<n> channel=<c>
+  conversation=<ref, "?" when unknown> - the app came to the foreground`. Whether opening the app should clear a
+  conversation nobody read is a product question, not settled here: the unread badge still counts
+  it. A banner therefore cannot be on screen while the app is in front, which is why the inline-reply
+  reading over the open app needs the banner held by a direct reply (the sweep spares those).
 - **THE REACTION'S ALERT GOES WITH THE CONVERSATION** (round-14 decision, replacing rounds 12-13,
   `cancelReactionNotification`). Whatever removes OR COVERS the conversation's message banner removes
   its reaction notification too: an answer, a read that cancels the banner or finds it held after
