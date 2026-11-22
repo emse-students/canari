@@ -15,15 +15,12 @@
  * `cx` and `w` are REPLACED in place, so every later step and the invariant read the living page; the
  * dead page's observation is returned to the caller, which records it.
  */
-import { copyFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { Database } from 'bun:sqlite';
-import { join } from 'node:path';
 import { connect, evaluate, listTargets } from '../cdp.mjs';
 import { APP_TAB, awaitAppReady, client } from '../chat.mjs';
 import { armIfPhone } from '../device.mjs';
-import { chromeExpiresToUnixS, refreshCookieAtKill, storageLost } from '../killrows.mjs';
-import { BROWSERS, killBrowser, startBrowser } from '../launch.mjs';
+import { quotaDbOf, refreshInMemory, refreshOnDisk, siteCookies, STORAGE_PROBE } from '../cookiejar.mjs';
+import { refreshCookieAtKill, storageLost } from '../killrows.mjs';
+import { killBrowser, startBrowser } from '../launch.mjs';
 import { SITE } from '../site.mjs';
 import { consoleDump, watch } from '../watch.mjs';
 import { unlockClient } from './pingate.mjs';
@@ -51,18 +48,6 @@ async function browserOf(port) {
   return b;
 }
 
-/** True when the browser profile still holds its quota database - without it Chrome serves no storage. */
-const quotaDbOf = (device) => existsSync(join(BROWSERS[device.toLowerCase()].profile, 'Default', 'WebStorage', 'QuotaManager'));
-
-/** The error each storage call throws on this page, or null for each that answers. */
-const STORAGE_PROBE = `(async () => {
-  const err = async (f) => { try { await f(); return null; } catch (e) { return String(e).slice(0, 120); } };
-  return { idb: await err(() => indexedDB.databases()), estimate: await err(() => navigator.storage.estimate()) };
-})()`;
-
-/** How many cookies the browser holds for the site - read from the browser's jar, not the page. */
-const siteCookies = async (cx) => (await cx.send('Network.getCookies', { urls: [SITE] })).cookies?.length ?? null;
-
 /**
  * A REVIVAL THAT FAILED, WITH WHAT THE REVIVED PAGE SHOWED. KILL-2's second alpha.5 attempt
  * (2026-10-26) revived W1 on the sign-in page. The site's other cookies were still there, so the
@@ -84,36 +69,6 @@ async function failedRevival(cx, message) {
     state = `unreadable: ${String(e?.message ?? e).slice(0, 120)}`;
   }
   return Object.assign(new Error(`${message} [revived page: ${state}]`), { revivedConsole });
-}
-
-/** The refresh cookie's expiry in the browser's MEMORY (Unix seconds), or null when it holds none. */
-async function refreshInMemory(cx) {
-  const host = new URL(SITE).hostname;
-  const { cookies } = await cx.send('Network.getAllCookies');
-  return cookies.find((c) => c.name === 'canari_refresh' && c.domain === host)?.expires ?? null;
-}
-
-/**
- * The refresh cookie's expiry in the profile's cookie FILE (Unix seconds), or null when the file
- * holds none. Read only while the browser is dead: Chrome keeps the file locked while it runs. It is
- * read from a copy so that nothing this rig opens is ever the browser's own file.
- */
-function refreshOnDisk(device) {
-  const host = new URL(SITE).hostname;
-  const dir = mkdtempSync(join(tmpdir(), 'canari-jar-'));
-  try {
-    const copy = join(dir, 'Cookies');
-    copyFileSync(join(BROWSERS[device.toLowerCase()].profile, 'Default', 'Network', 'Cookies'), copy);
-    const db = new Database(copy, { readonly: true });
-    try {
-      const row = db.query("SELECT expires_utc FROM cookies WHERE name = 'canari_refresh' AND host_key = ?").get(host);
-      return chromeExpiresToUnixS(row?.expires_utc ?? null);
-    } finally {
-      db.close();
-    }
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
 }
 
 const appTabs = async (port) => (await listTargets(port).catch(() => [])).filter((t) => t.type === 'page' && String(t.url).includes(APP_TAB));
