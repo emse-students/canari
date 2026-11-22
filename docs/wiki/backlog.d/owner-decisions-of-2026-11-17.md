@@ -1,6 +1,6 @@
 ## The owner's decisions of 2026-11-17
 
-target: 1.7.3
+target: 1.8.0
 
 Recorded so no question answered here is asked again. Each line names where its detail lives. The
 lead's own reversible readings, taken under the owner's delegation, are marked as such.
@@ -100,7 +100,7 @@ the counts.
 - **Noise filed** (P3, `1.7.1`, none of them a regression shown since `1.6.12`):
   [a CSP refusal on every dev page load](p3-dev-logs-a-csp-inline-script-error-on-every-page-load.md),
   a dropped 1:1 logged as a key group (fixed in `1.7.1`, entry deleted),
-  and [the iPhone's landscape close circle clipped](p3-iphone-landscape-close-circle-clipped.md).
+  and [the iPhone's landscape close circle clipped](../device-verification.md).
 - **Seat counting for capped forms stays at submit, under the form's lock, for now.** A hold taken
   when the form is opened is refused (every browser that opens it blocks a seat, and a script can hold
   every seat of a public form); a 10-minute hold behind an explicit "Réserver ma place" button, one per

@@ -1,6 +1,8 @@
 ## P2 - Reading owed - a Gboard GIF committed in an Android chat arrives as an encrypted media
 
-target: 1.7.3
+target: 1.8.0
+
+_2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
 Built: the `onCreateInputConnection` hook that hands the WebView's input connection to
 `KeyboardMediaBridge` now lives in the vendored wry template, restored after four months of absence

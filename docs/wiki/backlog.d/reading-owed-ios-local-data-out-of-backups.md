@@ -1,6 +1,8 @@
 ## Delete the per-file backup passes the launch pass made redundant (the reading passed 2026-11-22)
 
-target: 1.7.3
+target: 1.8.0
+
+_2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
 The reading of [nothing local travels to another phone](../frontend/mobile.md#nothing-local-travels-to-another-phone-2026-11-20) passed on `1.7.3-alpha.5` (iPhone 12,
 [readings](../device-verification.md#the-iphone-12-readings-of-2026-11-22-173-alpha5-the-backup-domains-the-banners-the-reactions-the-replay-bar-the-outage-drill)):
