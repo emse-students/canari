@@ -24,6 +24,7 @@ export function watchConversationEndings(
   read: () => { signedIn: boolean; rows: Iterable<WatchedConversation> },
   onEnded: (id: string) => void
 ): void {
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- the watcher's own memory between two looks, written and read inside the effect only; making it reactive would re-run the effect on its own write
   let known: KnownConversations = new Map();
   $effect(() => {
     const { signedIn, rows } = read();
