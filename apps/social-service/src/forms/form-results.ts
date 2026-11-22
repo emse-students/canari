@@ -175,7 +175,7 @@ export const SINGLE_SQL = `SELECT a.item_id AS "itemId", a.val #>> '{}' AS value
  * reads its picks from: a string there is no pick, so it must not enter the denominator either.
  */
 export const MULTIPLE_ANSWERED_SQL = `SELECT a.item_id AS "itemId", count(*)::int AS n ${fromCounted()}
-  AND jsonb_typeof(a.val) = 'array' AND jsonb_array_length(a.val) > 0
+  AND CASE WHEN jsonb_typeof(a.val) = 'array' THEN jsonb_array_length(a.val) > 0 ELSE false END
   GROUP BY a.item_id`;
 
 /** A multiple-choice answer is a list of option ids: one pick per element. */
