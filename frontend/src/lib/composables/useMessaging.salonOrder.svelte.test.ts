@@ -37,7 +37,12 @@ import { openSalonSendGate, resetSalonSendGate } from '$lib/utils/graine/salonSe
 import { decodeAppMessage } from '$lib/proto/codec';
 import { ChannelApiError } from '$lib/services/ChannelService';
 import { clearAllUploads, textWaitOf } from '$lib/utils/chat/uploadProgress.svelte';
-import { forgetSalonSendsOfEndedSession, runInSalonTurn } from '$lib/utils/chat/messaging';
+import {
+  forgetSalonSendsOfEndedSession,
+  runInSalonTurn,
+  SalonLaneHeldError,
+  SalonTurnAbandonedError,
+} from '$lib/utils/chat/messaging';
 import { MAX_UNAVAILABLE_ANSWERS } from '$lib/utils/chat/retryLadder';
 import { resetOwedSalonWrites } from '$lib/utils/chat/salonOwed';
 
@@ -363,25 +368,76 @@ describe('the review probes of #3964', () => {
     expect(textWaitOf(second)).toBeUndefined();
   });
 
-  it('S3: a poll (or a forwarded file) waits its turn behind a held text, and goes after it', async () => {
+  it('S3: a poll behind a HELD text is refused, never queued unseen - and holds nothing up', async () => {
     const server = fakeServer();
     const { useMessaging } = await import('./useMessaging.svelte');
     const messaging = useMessaging();
     const ctx = makeContext();
 
     server.up = false;
-    await messaging.handleSendChat(ctx, 'before the poll');
+    await messaging.handleSendChat(ctx, 'held');
     const poll = vi.fn(async () => {
       server.stored.push('POLL');
     });
-    const posted = runInSalonTurn(CHANNEL, 'poll', poll);
-    await vi.advanceTimersByTimeAsync(1_000);
+    await expect(runInSalonTurn(CHANNEL, 'poll', poll)).rejects.toBeInstanceOf(SalonLaneHeldError);
     expect(poll).not.toHaveBeenCalled();
 
     server.up = true;
-    await vi.advanceTimersByTimeAsync(60_000);
+    await messaging.handleSendChat(ctx, 'after');
+    await vi.waitFor(() => expect(server.stored).toEqual(['held', 'after']));
+  });
+
+  it('S3: a poll behind a text IN FLIGHT waits for its answer, then goes after it', async () => {
+    let answer: (row: { id: string; clientMessageId: string }) => void = () => {};
+    sendMock.mockImplementationOnce(
+      (_c: string, _p: Uint8Array, clientId: string) =>
+        new Promise((resolve) => (answer = (row) => resolve({ ...row, clientMessageId: clientId })))
+    );
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const ctx = makeContext();
+    void useMessaging().handleSendChat(ctx, 'in flight');
+    const order: string[] = [];
+    const posted = runInSalonTurn(CHANNEL, 'poll', async () => {
+      order.push('POLL');
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(order).toEqual([]);
+
+    order.push('TEXT');
+    answer({ id: 'srv-text', clientMessageId: '' });
     await posted;
-    expect(server.stored).toEqual(['before the poll', 'POLL']);
+    expect(order).toEqual(['TEXT', 'POLL']);
+  });
+
+  it('S3: a poll waiting behind a text that then gets HELD is refused at that moment', async () => {
+    let fail: (e: unknown) => void = () => {};
+    sendMock.mockImplementationOnce(() => new Promise((_resolve, reject) => (fail = reject)));
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const ctx = makeContext();
+    void useMessaging().handleSendChat(ctx, 'about to be held');
+    await vi.waitFor(() => expect(sendMock).toHaveBeenCalledTimes(1));
+    const poll = vi.fn(async () => {});
+    const posted = runInSalonTurn(CHANNEL, 'poll', poll);
+    const refused = expect(posted).rejects.toBeInstanceOf(SalonLaneHeldError);
+
+    fail(new ChannelApiError(503, null, 'upstream unavailable'));
+    await refused;
+    expect(poll).not.toHaveBeenCalled();
+  });
+
+  it('B2: the session ending while a post waits rejects it as abandoned, and posts nothing', async () => {
+    sendMock.mockImplementationOnce(() => new Promise(() => {}));
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const ctx = makeContext();
+    void useMessaging().handleSendChat(ctx, 'never answered');
+    await vi.waitFor(() => expect(sendMock).toHaveBeenCalledTimes(1));
+    const poll = vi.fn(async () => {});
+    const posted = runInSalonTurn(CHANNEL, 'poll', poll);
+    const abandoned = expect(posted).rejects.toBeInstanceOf(SalonTurnAbandonedError);
+
+    forgetSalonSendsOfEndedSession();
+    await abandoned;
+    expect(poll).not.toHaveBeenCalled();
   });
 
   it('S3: a poll whose post is refused leaves the lane: the next text is not held by it', async () => {

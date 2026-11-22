@@ -23,6 +23,8 @@ import {
   deliverSalonAttachment,
   quoteReference,
   runInSalonTurn,
+  SalonLaneHeldError,
+  SalonTurnAbandonedError,
   type SendMessageDeps,
   addReaction,
   removeReaction,
@@ -4831,6 +4833,17 @@ export function useMessaging() {
           return { success: false, error: m.chat_forward_error_nothing_to_forward() };
         return await sendChatMessage(channelText, targetName, null, makeSendDeps(ctx, convo));
       } catch (e) {
+        // A file forwarded behind a HELD message is refused, not queued unseen: the member is told
+        // and still holds it.
+        if (e instanceof SalonLaneHeldError) {
+          ctx.log(`[FORWARD] channel forward to "${targetName}" refused: the salon is held`);
+          return { success: false, error: m.salon_post_waits_for_held_messages() };
+        }
+        // The session ended while it waited: nothing to say to anyone.
+        if (e instanceof SalonTurnAbandonedError) {
+          console.debug(`[FORWARD] channel forward to "${targetName}" dropped: the session ended`);
+          return { success: false };
+        }
         // `sendChatMessage` RETURNS its refusal, already localized, rather than throwing it - so
         // anything reaching this catch is unexpected and has nothing to add beyond "it failed".
         ctx.log(`[FORWARD] channel forward failed for "${targetName}": ${String(e)}`);

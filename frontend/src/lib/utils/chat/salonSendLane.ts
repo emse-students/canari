@@ -98,6 +98,11 @@ export function leaveSalonLane(messageId: string): string | null {
   return at === 0 ? lane[0] : null;
 }
 
+/** The ids queued in a salon's lane, in order (empty when it has none). */
+export function salonLaneMembers(conversationKey: string): readonly string[] {
+  return [...(lanes.get(conversationKey) ?? [])];
+}
+
 /** Forgets every lane: the session ended, and what is unanswered stays in its account's ledger. */
 export function clearSalonLanes(): void {
   lanes.clear();

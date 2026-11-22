@@ -59,12 +59,13 @@ import {
 } from './salonUnsent';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { isTransportFailure } from '$lib/utils/transportFailure';
-import { forgetOwedSalonWrite, oweSalonWrite } from './salonOwed';
+import { forgetOwedSalonWrite, isSalonWriteOwed, oweSalonWrite } from './salonOwed';
 import {
   clearSalonLanes,
   joinSalonLane,
   leaveSalonLane,
   reserveSalonLaneTurns,
+  salonLaneMembers,
   salonLanePosition,
   salonLaneTurnAhead,
   takeSalonLaneTurn,
@@ -358,6 +359,7 @@ async function deliverSalonSend(
     throw error;
   }
   if (!turn.holds) releaseSalonTurn(messageId, deps, turn.why);
+  else refuseWaitingPosts(send.conversationKey, messageId);
   return turn.refusal;
 }
 
@@ -420,7 +422,7 @@ function releaseSalonTurn(
  */
 const laneTasks = new Map<string, { resolve: () => void; reject: (e: unknown) => void }>();
 
-/** The session ended while a salon post waited for its turn: it is not sent. */
+/** The session ended while a salon post waited for its turn: it is not sent, and nothing is said. */
 export class SalonTurnAbandonedError extends Error {
   constructor() {
     super('the session ended while this salon post waited for its turn');
@@ -429,10 +431,51 @@ export class SalonTurnAbandonedError extends Error {
 }
 
 /**
+ * A salon post with no row of its own (a poll, a forwarded file) was not queued: a message written
+ * before it in the salon is HELD (for the server, or for the link). Such a post has no echo and no
+ * ledger entry, so queued behind a held message it would wait unseen and a reload would lose it -
+ * it is refused instead, and its author, who still holds it, sends it once the salon has drained.
+ */
+export class SalonLaneHeldError extends Error {
+  constructor(readonly head: string) {
+    super(`a message written before this post is held (${head.slice(0, 8)}...): not queued`);
+    this.name = 'SalonLaneHeldError';
+  }
+}
+
+/**
+ * Whether `head` waits for the server or the link rather than for an answer in flight: its ladder
+ * step is armed, or it is owed to the reconnect with no retry on the wire.
+ */
+function isHeldTurn(head: string): boolean {
+  if ((serverHolds.get(head)?.step ?? null) !== null) return true;
+  return isSalonWriteOwed(sendKey(head)) && !retrying.has(head);
+}
+
+/**
+ * `head` has just been HELD: every post with no row waiting behind it in its salon is refused
+ * ({@link SalonLaneHeldError}) rather than left to wait unseen for the server.
+ */
+function refuseWaitingPosts(conversationKey: string, head: string): void {
+  for (const id of salonLaneMembers(conversationKey)) {
+    const task = laneTasks.get(id);
+    if (!task) continue;
+    laneTasks.delete(id);
+    leaveSalonLane(id);
+    appendLog(
+      `[SEND] salon post ${id.slice(0, 12)}... refused: ${head.slice(0, 8)}..., written before it, is held - its author still holds it`
+    );
+    task.reject(new SalonLaneHeldError(head));
+  }
+}
+
+/**
  * Runs ONE salon post (`post`: a poll, a forwarded file) in its salon's lane, so it is received
  * after every message written before it, like a text. It waits for its turn, posts once, and leaves
  * the lane whatever the answer: nothing sends it again by itself, so it holds its place only while
- * in flight. Rejects with {@link SalonTurnAbandonedError} when the session ends during the wait.
+ * in flight. It has no echo and no ledger entry, so it never waits on a HELD message: it is refused
+ * with {@link SalonLaneHeldError} when one is ahead of it, or becomes held while it waits. Rejects
+ * with {@link SalonTurnAbandonedError} when the session ends during the wait.
  */
 export async function runInSalonTurn<T>(
   conversationKey: string,
@@ -442,6 +485,13 @@ export async function runInSalonTurn<T>(
   const id = `${label}:${crypto.randomUUID()}`;
   joinSalonLane(conversationKey, id);
   const ahead = salonLaneTurnAhead(id);
+  if (ahead !== null && isHeldTurn(ahead)) {
+    leaveSalonLane(id);
+    appendLog(
+      `[SEND] salon ${label} refused: ${ahead.slice(0, 8)}..., written before it, is held - its author still holds it`
+    );
+    throw new SalonLaneHeldError(ahead);
+  }
   if (ahead !== null) {
     appendLog(
       `[SEND] salon ${label} WAITS ITS TURN: ${ahead.slice(0, 8)}... was written before it (${salonLanePosition(id)} ahead)`

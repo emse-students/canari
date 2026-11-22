@@ -2430,7 +2430,10 @@ through, and `T3`..`T8` follow in order. **A "not now" answered to a turn asked 
 counted toward the head's `MAX_UNAVAILABLE_ANSWERS`** (`askedFromBehind`): only the head's own ladder
 steps and reconnects are. Counted, twelve texts typed in six seconds against an instant 502 handed the
 head to its author and let all twelve overtake it (review of #3964, B1). With nothing typed after the
-return, the head's ladder step or the reconnect drains the salon the same way.
+return, the head's ladder step or the reconnect drains the salon the same way. An uncounted "not
+now" still re-arms the head's step at its FULL current delay, so steady typing keeps postponing the
+next counted step - but every counted answer still comes from the head's own step or a reconnect, so
+the head stays bounded by `MAX_UNAVAILABLE_ANSWERS` once the typing stops.
 
 **The repeat proof is retired, because the order needs every unsent text to keep its place.**
 `salonRepeatProof.ts` made a send that MAY have landed (a POST lost as the link went down, an entry a
@@ -2449,8 +2452,17 @@ like a first send, and `channelCrypto.ts` ACCUSES an answer that does not echo i
 `deliverSalonSend`; a POLL (`MainChatPage.handleCreatePoll`) and a FORWARDED FILE
 (`useMessaging.forwardMessage`; a forwarded text already goes through `sendChatMessage`) through
 `runInSalonTurn`: it waits for its turn, posts ONCE, and leaves whatever the answer - nothing sends it
-again by itself, so it holds its place only while in flight; a session ending during the wait rejects
-it (`SalonTurnAbandonedError`). **Deliberate exceptions:** an EDIT (`channelCrypto` edit, owed per key
+again by itself, so it holds its place only while in flight. **Such a post has no echo and no ledger
+entry, so it NEVER waits on a held message** (principle 2, the essential is never lost): queued behind
+a text held for the server or the link, it would sit unseen, and a reload would lose it. So it is
+REFUSED (`SalonLaneHeldError`) when the message ahead of it is held, or becomes held while it waits
+(`refuseWaitingPosts`); the poll modal keeps its draft open and says "Des messages de ce salon
+attendent encore d'etre envoyes : reessaie une fois qu'ils seront partis" (`salon_post_waits_for_held_messages`),
+and a forward says the same. Behind a message merely IN FLIGHT it waits for that answer, which the
+request deadline bounds. A session ending during the wait rejects it with `SalonTurnAbandonedError`,
+which both callers swallow silently (a debug line, no banner): the member signed out. This was chosen
+over a pending poll echo as the simplest path that loses nothing - an echo would need its own
+durable entry to survive a reload. **Deliberate exceptions:** an EDIT (`channelCrypto` edit, owed per key
 by `salonOwed.ts`) changes a message that already has its place, and every reader orders it by its
 own clock against the message it names (`editPrecedence.ts`), never by its row; a REACTION, PIN or VOTE
 likewise names its target. A MEMBER-ADDED NOTICE (`useChannelWorkspaces`) is posted by the admin's

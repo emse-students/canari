@@ -675,6 +675,7 @@
   "msg_waiting_for_network": "En attente du réseau…",
   "msg_waiting_for_server": "En attente du serveur…",
   "msg_waiting_for_previous": "En attente du message précédent…",
+  "salon_post_waits_for_held_messages": "Des messages de ce salon attendent encore d'être envoyés : réessaie une fois qu'ils seront partis.",
   "msg_echec": "Échec",
   "msg_non_confirme": "Non confirmé",
   "msg_remettre_dans_le_champ": "Remettre dans le champ",
