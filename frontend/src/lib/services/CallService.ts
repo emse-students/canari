@@ -21,6 +21,7 @@ import {
 } from '../proto/codec';
 import EncryptionWorker from '../workers/encryption.worker?worker';
 import { appendLog } from '$lib/utils/sessionLog';
+import { flushAppLogAtMilestone } from '$lib/utils/appLog';
 import { resolveMlsPublicUrls } from '$lib/mls-client/mlsDeliveryHttp';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { countVideoInputs } from '$lib/reels/cameraAccess';
@@ -1259,6 +1260,7 @@ export class CallService {
     }
     this.tapAt = performance.now();
     const seq = ++this.callSetupSeq;
+    void flushAppLogAtMilestone('call start');
 
     try {
       this.callState.set('calling');
@@ -1419,6 +1421,7 @@ export class CallService {
     // `incomingHasVideo` is already false on an audio-only build; an explicit `video` is held too.
     const useVideo = CALLS_VIDEO_ENABLED && (video ?? this.incomingHasVideo);
     const seq = ++this.callSetupSeq;
+    void flushAppLogAtMilestone('call accept');
 
     try {
       if (!canUseRtpScriptTransform()) {
@@ -1708,6 +1711,7 @@ export class CallService {
   }
 
   private cleanup() {
+    void flushAppLogAtMilestone('call end');
     this.clearEndedSummaryTimer();
     // Any setup still awaiting belongs to the call ending here (`assertSetupLive`).
     this.callSetupSeq += 1;
@@ -2074,6 +2078,9 @@ export class CallService {
       return;
     }
     await pc.setRemoteDescription({ type: sdp.type, sdp: sdp.sdp });
+    if (sdp.type === 'offer' && (sdp.seq ?? 1) === 1) {
+      void flushAppLogAtMilestone('first offer received');
+    }
     await this.flushPendingRemoteIceCandidates(leg);
     if (sdp.type === 'answer') {
       leg.pendingOfferSeq = null;
@@ -2857,6 +2864,7 @@ export class CallService {
         `[Call]${leg.tag} ICE restart offer #${seq} (${pc.localDescription?.sdp?.length ?? 0} bytes) -> peer`
       );
       this.sendSignal({ type: 'Offer', sdp: wireDescription(pc.localDescription, seq) }, leg);
+      if (seq === 1) void flushAppLogAtMilestone('first offer sent');
     } catch (e) {
       if (leg.pc !== pc) return;
       this.failCall(`ICE restart offer could not be made: ${String(e)}`);
@@ -3387,7 +3395,10 @@ export class CallService {
           return;
         }
         if (callState === 'calling' || callState === 'incoming') this.callState.set('incall');
-        if (get(this.connectedAt) === null) this.connectedAt.set(Date.now());
+        if (get(this.connectedAt) === null) {
+          this.connectedAt.set(Date.now());
+          void flushAppLogAtMilestone('first connection');
+        }
         void pc
           .getStats()
           .then((stats) =>
