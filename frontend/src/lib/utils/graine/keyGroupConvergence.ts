@@ -52,8 +52,24 @@ import { isGraineReady, requireGraineRuntime } from './runtime';
  */
 const converged = new Map<string, string>();
 
-/** Withdrawals per community, ever: what a {@link convergenceTicket} is compared against. */
+/**
+ * Withdrawals per community, EVER - never cleared, not even at sign-out: a count that went back to
+ * zero would let a ticket taken before it match again (see {@link forgetAllKeyGroupConvergence}).
+ * One integer per account, device and community seen.
+ */
 const withdrawals = new Map<string, number>();
+
+/** Sessions ended on this page ({@link forgetAllKeyGroupConvergence}): the other half of a ticket. */
+let sessionsEnded = 0;
+
+/**
+ * What a load holds while its pass runs: the session it started in and the withdrawals counted so
+ * far. {@link recordKeyGroupConvergence} records only when both are still the same.
+ */
+export interface ConvergenceTicket {
+  session: number;
+  withdrawn: number;
+}
 
 /**
  * The record's key: the account, THIS DEVICE and the community. A record vouches for one device's
@@ -66,12 +82,12 @@ function keyOf(workspaceId: string): string | null {
 }
 
 /**
- * Taken by a load BEFORE its pass: the number of withdrawals so far, which
- * {@link recordKeyGroupConvergence} compares with the number when the pass ends.
+ * Taken by a load BEFORE its pass: the session and the withdrawals so far, which
+ * {@link recordKeyGroupConvergence} compares with both when the pass ends.
  */
-export function convergenceTicket(workspaceId: string): number {
+export function convergenceTicket(workspaceId: string): ConvergenceTicket {
   const key = keyOf(workspaceId);
-  return key ? (withdrawals.get(key) ?? 0) : 0;
+  return { session: sessionsEnded, withdrawn: key ? (withdrawals.get(key) ?? 0) : 0 };
 }
 
 /**
@@ -129,12 +145,18 @@ export async function convergedPassCanBeSkipped(
 export function recordKeyGroupConvergence(
   workspaceId: string,
   version: KeyGroupVersion,
-  ticket: number,
+  ticket: ConvergenceTicket,
   log: (message: string) => void
 ): void {
   const key = keyOf(workspaceId);
   if (!key) return;
-  if ((withdrawals.get(key) ?? 0) !== ticket) {
+  if (ticket.session !== sessionsEnded) {
+    log(
+      `[GRAINE] community ${workspaceId.slice(0, 8)}: roster pass converged in a session that has since ended - not recorded, the new session runs its own first pass`
+    );
+    return;
+  }
+  if ((withdrawals.get(key) ?? 0) !== ticket.withdrawn) {
     log(
       `[GRAINE] community ${workspaceId.slice(0, 8)}: roster pass converged, but another pass that did not converge ended while it ran - not recorded, the next load runs it in full`
     );
@@ -156,8 +178,16 @@ export function forgetKeyGroupConvergence(workspaceId: string): void {
   withdrawals.set(key, (withdrawals.get(key) ?? 0) + 1);
 }
 
-/** Drops every record: at sign-out (the next account runs its own passes), and for a test. */
+/**
+ * Drops every record and ENDS THE SESSION: at sign-out (the next session runs its own first passes,
+ * which put the revocation question again - the module doc's promise), and for a test.
+ *
+ * THE COUNTERS ARE KEPT AND THE SESSION IS COUNTED, because a load can straddle a sign-out: started
+ * before it, its pass ends after a sign-in on the same account and device. Clearing the counters
+ * would let its ticket match the new session's, so it would record into that session and skip the
+ * first pass the session owes; the ended session refuses it instead.
+ */
 export function forgetAllKeyGroupConvergence(): void {
   converged.clear();
-  withdrawals.clear();
+  sessionsEnded += 1;
 }

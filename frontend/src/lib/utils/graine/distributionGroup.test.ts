@@ -1386,15 +1386,39 @@ describe('ensureCommunityDistributionGroup - a converged pass on an unchanged ke
     expect(channels.getDistributionGroup).toHaveBeenCalledTimes(2);
   });
 
+  it('a load that straddles a sign-out and a sign-in on the same account and device records nothing into the new session', async () => {
+    let release: (v: unknown) => void = () => {};
+    const gate = new Promise((r) => (release = r));
+    const mls = current();
+    const lines: string[] = [];
+    reconcile.mockImplementationOnce(async () => {
+      await gate;
+      return { removedUserIds: [], heldUserIds: ['alice'], converged: true };
+    });
+    const channels = makeChannels({ getDistributionGroup: vi.fn().mockResolvedValue(ref) });
+    // Started in the old session; the sign-out ends it while the pass runs, and the sign-in that
+    // follows is the same account on the same device - the same record key.
+    const load = runOn(mls, channels, version('v1'), (m) => lines.push(m));
+    forgetAllKeyGroupConvergence();
+    release(null);
+    await load;
+    expect(lines.join(' | ')).toContain('session that has since ended');
+
+    // The new session's first load on the same version still owes, and runs, its full pass.
+    await runOn(mls, channels, version('v1'));
+    expect(channels.getDistributionGroup).toHaveBeenCalledTimes(2);
+  });
+
   it('a join that did not converge withdraws the record, whoever asked for it (the re-join of a group behind)', async () => {
     const mls = current();
     const channels = makeChannels({ getDistributionGroup: vi.fn().mockResolvedValue(ref) });
     await runOn(mls, channels, version('v1'));
-    expect(convergenceTicket('ws-1')).toBe(0);
+    // Counters are never cleared (only the session ends), so the assertion is on the delta.
+    const before = convergenceTicket('ws-1').withdrawn;
     // Through the join's own entry, as `rejoinBehindDistributionGroup` reaches it.
     reconcile.mockResolvedValueOnce({ removedUserIds: [], heldUserIds: null });
     await ensureDistributionGroupFor(mls as never, channels as never, workspaceScope('ws-1'));
-    expect(convergenceTicket('ws-1')).toBe(1);
+    expect(convergenceTicket('ws-1').withdrawn).toBe(before + 1);
 
     await runOn(mls, channels, version('v1'));
     expect(channels.getDistributionGroup).toHaveBeenCalledTimes(3);
