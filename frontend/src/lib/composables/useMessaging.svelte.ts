@@ -1396,6 +1396,8 @@ export function useMessaging() {
     serverAt: number | undefined,
     /** How many inbound messages the ONE banner stands for - see `NativeMessageNotification.covers`. */
     covers: number,
+    /** The instant of each of them - see `NativeMessageNotification.instants`. */
+    instants: readonly number[],
     /** Whether the open proved the banner's author - see `NativeMessageNotification.authorProven`. */
     authorProven: boolean,
     /** True on the re-entry that follows the read of a salon's level - see the salon branch below. */
@@ -1470,6 +1472,7 @@ export function useMessaging() {
             sentAt,
             serverAt,
             covers,
+            instants,
             authorProven,
             true
           );
@@ -1582,6 +1585,7 @@ export function useMessaging() {
           sentAt,
           serverAt: serverAt ?? 0,
           covers,
+          instants,
           authorProven,
         })
       );
@@ -2467,6 +2471,7 @@ export function useMessaging() {
           resolvedTimestamp.getTime(),
           newMsg.serverTimestamp,
           1,
+          [resolvedTimestamp.getTime()],
           options.authorProven === true
         )
       );
@@ -3096,6 +3101,7 @@ export function useMessaging() {
           lastInbound.serverTimestamp,
           // THE FLUSH RAISES ONE BANNER FOR N MESSAGES, and the server may have pushed each of them.
           inbound.length,
+          inbound.map((msg) => msg.timestamp.getTime()),
           // The banner's message is the LAST one, so its proof is the one that names the speaker.
           authorProvenIds.has(lastInbound.id)
         );

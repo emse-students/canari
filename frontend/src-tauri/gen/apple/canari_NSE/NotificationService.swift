@@ -112,6 +112,10 @@ class NotificationService: UNNotificationServiceExtension {
   private var namesContentOf: String?
   /// This run's outcome record (`NseOutcomeLog`), written once by `finish` or the expiry.
   private var trace: NseOutcomeLog.Trace?
+  /// The announced-messages key whose PAGE banner this run's banner replaces
+  /// (`claimAnnouncement`, after the page) - removed from the delivered list by `applyBadgeCount`,
+  /// which reads that list anyway. Nil for every other run.
+  private var replacesPageBannerOf: String?
   /// Orders `finish` against `serviceExtensionTimeWillExpire`, which iOS calls on ANOTHER thread
   /// while the decrypt may still be running: the content is handed back exactly once.
   private let deliveryLock = NSLock()
@@ -1271,13 +1275,58 @@ class NotificationService: UNNotificationServiceExtension {
         isGroup: isGroup, result: msg)
     }
 
+    // ONE NOTIFICATION PER MESSAGE: this banner is claimed in the ledger the app shares, keyed by
+    // the sender's instant - an undecrypted message has none, and is not claimed (`claimAnnouncement`).
+    let afterPage =
+      decrypted.map { claimAnnouncement(conversation: groupId, at: $0.sentAt, content: content) }
+      ?? false
     applyMessageContent(
       content: content, senderName: shownName, groupName: groupName, declaredGroup: isGroup,
       body: body,
       groupId: groupId, senderId: senderId, ctx: ctx, media: decrypted,
-      level: Self.levelDecision(
-        level: notifLevel, mentioned: decrypted?.mentionedUserIds, myUserId: ctx.userId,
-        groupId: groupId))
+      level: afterPage
+        ? LevelDecision(mentionsMe: false, quiet: true)
+        : Self.levelDecision(
+          level: notifLevel, mentioned: decrypted?.mentionedUserIds, myUserId: ctx.userId,
+          groupId: groupId))
+  }
+
+  /// Claims the message `conversation`:`at` in the announced-messages ledger the app shares
+  /// (`announced_messages.json`, Rust `mobile::announced`; docs/wiki/frontend/ios-notification-ownership.md)
+  /// and stamps the outcome on the content, where the app's `willPresentNotification` reads it.
+  /// Returns true when the PAGE announced it first: this banner then replaces the page's
+  /// (`replacesPageBannerOf`) and is filed quietly - the reader was already alerted once. An
+  /// extension cannot withhold an alert push without Apple's filtering entitlement, so replacing is
+  /// the only way to keep one row per message.
+  private func claimAnnouncement(
+    conversation: String, at: Int64, content: UNMutableNotificationContent
+  ) -> Bool {
+    guard let rawKey = canari_announce_key(conversation, at) else {
+      NseLog.log.notice("[CanariNSE] [ANNOUNCED] not claimed: the message carries no instant - the app may announce it again")
+      return false
+    }
+    let key = String(cString: rawKey)
+    canari_free_string(rawKey)
+    guard let dir = Self.appGroupDir() else {
+      NseLog.log.error("[CanariNSE] [ANNOUNCED] ERROR not claimed: no App Group - the app may announce it again")
+      return false
+    }
+    switch canari_announced_by_extension(dir.path, key) {
+    case 1:
+      content.userInfo["canariAnnounceKey"] = key
+      content.userInfo["canariAnnounced"] = "first"
+      NseLog.log.notice("[CanariNSE] [ANNOUNCED] shown first by the extension")
+      return false
+    case 0:
+      content.userInfo["canariAnnounceKey"] = key
+      content.userInfo["canariAnnounced"] = "after-page"
+      replacesPageBannerOf = key
+      NseLog.log.notice("[CanariNSE] [ANNOUNCED] the app announced it first - this banner replaces the app's, quietly")
+      return true
+    default:
+      NseLog.log.error("[CanariNSE] [ANNOUNCED] ERROR the ledger could not be read or written - not claimed, the app may announce it again")
+      return false
+    }
   }
 
   /// How loud one MLS message may be, given the member's level for its conversation.
@@ -2304,11 +2353,20 @@ class NotificationService: UNNotificationServiceExtension {
     }
     content.threadIdentifier = "channel_\(channelId)"
     if let link = Self.chatLink(channelId, prefix: "channel_") { content.userInfo["deepLink"] = link }
-    // Same elevation the MLS path gives a mention (applyMessageContent): break through Focus.
-    // Requires the app's Time Sensitive Notifications entitlement - silently downgraded to .active
-    // without it. iOS has no notification-channel concept, so this is the whole Android twin of
-    // posting on `canari_mentions`.
-    if mentionsMe, #available(iOS 15.0, *) {
+    // ONE NOTIFICATION PER MESSAGE, keyed by the message's server `createdAt` (ms), the instant the
+    // socket frame carries too - a blind banner announces its message all the same.
+    let createdAt = Int64(Self.string(userInfo["createdAt"]) ?? "") ?? 0
+    let afterPage = claimAnnouncement(
+      conversation: "channel_\(channelId)", at: createdAt, content: content)
+    if afterPage {
+      // Filed quietly in place of the app's banner: the reader was alerted once already.
+      content.sound = nil
+      if #available(iOS 15.0, *) { content.interruptionLevel = .passive }
+    } else if mentionsMe, #available(iOS 15.0, *) {
+      // Same elevation the MLS path gives a mention (applyMessageContent): break through Focus.
+      // Requires the app's Time Sensitive Notifications entitlement - silently downgraded to .active
+      // without it. iOS has no notification-channel concept, so this is the whole Android twin of
+      // posting on `canari_mentions`.
       content.interruptionLevel = .timeSensitive
     }
     // The sender's face, exactly as the MLS path and both Android paths do it, once the open proved
@@ -2817,8 +2875,16 @@ class NotificationService: UNNotificationServiceExtension {
     let center = UNUserNotificationCenter.current()
     let sem = DispatchSemaphore(value: 0)
     var keys = Set<String>()
+    let replaces = replacesPageBannerOf
+    var replaced: [String] = []
     center.getDeliveredNotifications { delivered in
       for n in delivered {
+        // The app's banner of the message this one announces again (`claimAnnouncement`): it goes,
+        // and is not counted. The page stamps the keys it covers (`useNotifications.svelte.ts`).
+        if let replaces, Self.pageBannerCovers(n.request.content.userInfo, key: replaces) {
+          replaced.append(n.request.identifier)
+          continue
+        }
         let thread = n.request.content.threadIdentifier
         let deepLink = (n.request.content.userInfo["deepLink"] as? String) ?? ""
         let isChat = thread == "canari_messages" || deepLink.hasPrefix("fr.emse.canari://chat")
@@ -2828,11 +2894,27 @@ class NotificationService: UNNotificationServiceExtension {
       sem.signal()
     }
     _ = sem.wait(timeout: .now() + 2.0)
+    if replaces != nil {
+      if !replaced.isEmpty {
+        center.removeDeliveredNotifications(withIdentifiers: replaced)
+      }
+      NseLog.log.notice("[CanariNSE] [ANNOUNCED] the app's banner of this message: \(replaced.count, privacy: .public) removed, replaced by this one")
+    }
     if !incomingThreadId.isEmpty {
       keys.insert(incomingThreadId)
     }
     content.badge = NSNumber(value: keys.count)
     NseLog.log.notice("[CanariNSE] applyBadgeCount: badge=\(keys.count, privacy: .public)")
+  }
+
+  /// Whether a delivered notification is the PAGE's banner covering the message `key`: the
+  /// notification plugin files the page's `extra` under `__EXTRA__`, and the page writes there the
+  /// space-separated keys its one banner covers (`announces`).
+  static func pageBannerCovers(_ userInfo: [AnyHashable: Any], key: String) -> Bool {
+    guard let extra = userInfo["__EXTRA__"] as? [String: Any],
+      let announces = extra["announces"] as? String
+    else { return false }
+    return announces.split(separator: " ").contains { $0 == key }
   }
 
   // MARK: - Shared App Group state --------------------------------------------

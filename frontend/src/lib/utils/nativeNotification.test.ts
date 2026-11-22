@@ -44,6 +44,7 @@ const NOTIF: NativeMessageNotification = {
   sentAt: 1_700_000_000_000,
   serverAt: 1_700_000_000_400,
   covers: 1,
+  instants: [1_700_000_000_000],
   authorProven: false,
   isGroup: false,
 };

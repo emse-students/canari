@@ -427,6 +427,73 @@ pub unsafe extern "C" fn canari_native_claim_device_notices(
     json_to_c_string(value)
 }
 
+/// The key of one message in the announced-messages ledger (`mobile::announced::announce_key`):
+/// `<conversation>:<instant>`, built here only so the extension, the app's Objective-C and the
+/// page's command spell it once. NULL when the message cannot be keyed (no conversation, no
+/// instant). Free with `canari_free_string`.
+#[no_mangle]
+pub unsafe extern "C" fn canari_announce_key(conversation: *const c_char, at: i64) -> *mut c_char {
+    if conversation.is_null() {
+        return std::ptr::null_mut();
+    }
+    super::announced::announce_key(&str_from_c_str(conversation), at)
+        .and_then(|key| CString::new(key).ok())
+        .map(CString::into_raw)
+        .unwrap_or(std::ptr::null_mut())
+}
+
+/// The notification extension draws the message `key` (`mobile::announced::claim_by_extension`)
+/// over the ledger in `data_dir` (the App Group store). Answers 1 when the extension is first, 0
+/// when the page announced it first, -1 when the ledger could not be read or written (the cause is
+/// in the app's log only: the extension has no Rust logger, and says the -1 itself).
+#[no_mangle]
+pub unsafe extern "C" fn canari_announced_by_extension(
+    data_dir: *const c_char,
+    key: *const c_char,
+) -> i32 {
+    if data_dir.is_null() || key.is_null() {
+        return -1;
+    }
+    let key = str_from_c_str(key);
+    match super::announced::with_ledger(&path_from_c_str(data_dir), |ledger| {
+        super::announced::claim_by_extension(ledger, &key)
+    }) {
+        Ok(super::announced::ExtensionClaim::First) => 1,
+        Ok(super::announced::ExtensionClaim::AfterPage) => 0,
+        Err(e) => {
+            log::error!("[NOTIF_LEDGER] the extension's claim was not recorded: {e}");
+            -1
+        }
+    }
+}
+
+/// An extension banner reaches the app while it is ACTIVE (`willPresentNotification`), where a
+/// message push is not presented on its own (`mobile::announced::settle_in_front`). Answers 1 when
+/// the page stood down for it (present the push), 0 when its claim was given back (do not present),
+/// 2 when the page's banner announces it (do not present), -1 when the ledger failed: the claim then
+/// STANDS, and the caller presents the push rather than let the page stand down for nothing.
+#[no_mangle]
+pub unsafe extern "C" fn canari_announced_settle_in_front(
+    data_dir: *const c_char,
+    key: *const c_char,
+) -> i32 {
+    if data_dir.is_null() || key.is_null() {
+        return -1;
+    }
+    let key = str_from_c_str(key);
+    match super::announced::with_ledger(&path_from_c_str(data_dir), |ledger| {
+        super::announced::settle_in_front(ledger, &key)
+    }) {
+        Ok(super::announced::InFront::PageAsked) => 1,
+        Ok(super::announced::InFront::Released) => 0,
+        Ok(super::announced::InFront::NotHeld) => 2,
+        Err(e) => {
+            log::error!("[NOTIF_LEDGER] an in-front push could not settle its claim: {e}");
+            -1
+        }
+    }
+}
+
 /// Decrypts an end-to-end-encrypted media blob (AES-256-GCM) for a notification thumbnail
 /// (WP-XP-3). `key_b64`/`iv_b64` are the CEK (32 bytes) + IV (12 bytes) in base64, extracted from
 /// the MLS-decrypted `MediaMsg`; `cipher_ptr`/`cipher_len` point at the `ciphertext||tag`

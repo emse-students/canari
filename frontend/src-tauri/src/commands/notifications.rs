@@ -342,6 +342,50 @@ pub(crate) fn cancel_conversation_notifications(group_id: String, reason: String
     }
 }
 
+/// What the page's ask of the announced-messages ledger answered (`mobile::announced`).
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MessageAnnouncement {
+    /// Whether the page raises its banner: one message of it nobody announced is enough.
+    raise: bool,
+    fresh: usize,
+    by_extension: usize,
+    by_page: usize,
+    /// The keys the banner covers, stamped on it so the extension can replace it.
+    keys: Vec<String>,
+}
+
+/// iOS: the page asks, BEFORE it raises the one banner covering the messages of `conversation_id`
+/// at `instants`, whether any of them is still unannounced - the notification extension draws every
+/// alert push and acknowledges nothing, so a cold launch or a resume redelivers what it already
+/// showed (`docs/wiki/frontend/ios-notification-ownership.md`). Every key is claimed in the same
+/// locked step. An `Err` is a ledger that could not be read or written, or a banner whose messages
+/// carry no instant: the page says so at ERROR. Off iOS there is no extension to share with: `Err`.
+#[tauri::command]
+pub(crate) fn claim_message_announcement(
+    conversation_id: String,
+    instants: Vec<i64>,
+) -> Result<MessageAnnouncement, String> {
+    #[cfg(target_os = "ios")]
+    {
+        let dir = crate::app_group::app_group_dir()?;
+        let (claim, keys) =
+            crate::mobile::announced::page_claim_in(&dir, &conversation_id, &instants)?;
+        Ok(MessageAnnouncement {
+            raise: claim.raise(),
+            fresh: claim.fresh,
+            by_extension: claim.by_extension,
+            by_page: claim.by_page,
+            keys,
+        })
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        let _ = (conversation_id, instants);
+        Err("no notification extension shares this ledger off iOS".to_string())
+    }
+}
+
 /// Android: a conversation ENDED (deleted, left, excluded, its salon or community gone) - withdraws
 /// its message banner, its reaction notification and the summary's share of them, UNCONDITIONALLY and
 /// without recording any read mark (`endConversationFromWebSocket`).
