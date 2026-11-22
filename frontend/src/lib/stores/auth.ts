@@ -347,6 +347,8 @@ export type SessionExpiredTarget = { pathname: string; search: string; hash: str
 type SessionExpiredHandler = (target: SessionExpiredTarget | null) => void;
 let _sessionExpiredHandler: SessionExpiredHandler | null = null;
 let _sessionExpiredNotified = false;
+/** Callers of {@link refreshAnswerHeldByCaller} awaiting their answer: a dead-session verdict is theirs. */
+let _verdictHeldByCaller = 0;
 /** The target of the verdict, kept for a handler that registers after it. */
 let _sessionExpiredTarget: SessionExpiredTarget | null = null;
 
@@ -503,6 +505,11 @@ export function setSessionExpiredHandler(fn: SessionExpiredHandler | null): void
  */
 function notifySessionExpired(): void {
   if (_sessionExpiredNotified || !currentUserId()) return;
+  // THE CALLER OF `refreshAnswerHeldByCaller` OWNS THIS VERDICT: it reads the refusal itself.
+  if (_verdictHeldByCaller > 0) {
+    alog('session dead - verdict held by the caller that asked');
+    return;
+  }
   _sessionExpiredNotified = true;
   _sessionExpiredTarget = currentTarget();
   awarn(
@@ -1662,5 +1669,25 @@ export async function hasStoredSession(): Promise<boolean> {
   } catch {
     alog('session→F refresh✗');
     return false;
+  }
+}
+
+/**
+ * Renews the access token like {@link refresh}, but a dead-session verdict is NOT announced: the
+ * rejection is the caller's to act on, and the app-wide session-expired reaction (the redirect to
+ * `/login`) does not run.
+ *
+ * For the PIN gate, which asks WHY a PIN route refused its session and shows the answer where the
+ * person already is (a removed device sees "Cet appareil a ete retire", not a bare sign-in page). The
+ * hold lasts as long as the call and no longer - it is the call's scope, never a clock. The verdict
+ * is still latched (`isRefreshCredentialProvenDead`, `revokedDeviceOfEndedSession`), so every later
+ * reader sees it, and the caller must answer it: a verdict dropped here is announced to nobody.
+ */
+export async function refreshAnswerHeldByCaller(why: string): Promise<string> {
+  _verdictHeldByCaller++;
+  try {
+    return await refresh(fetch, why);
+  } finally {
+    _verdictHeldByCaller--;
   }
 }

@@ -2663,6 +2663,9 @@ the list saves only the first listing after the next sign-in, which needs the ne
 copy of one account's communities waiting on a signed-out device is a disclosure with no gain. The
 in-memory list goes too (`forgetAccount` in the sign-out handler), which it never did before.
 
+**A PIN route answering 401/403 is the session being refused, never "unreachable" (2026-11-22).** `pin-salt` and `pin-check` raise a typed `PinSessionRefusedError` (`pinSessionRefusal.ts`) where they answer; the login asks the server why through `refreshAnswerHeldByCaller` (the dead-session verdict is held for the gate, so the app-wide redirect to `/login` does not close it first). The device removed by its owner is reset and the gate shows its no-keypad removed state (`device_revoked`); any other dead session signs out; a transport failure while asking stays unreachable.
+
+
 ## Mobile unlock flow (Tauri)
 
 Driven by `startLoginFlow()` in `components/layout/ChatBackgroundService.svelte`.

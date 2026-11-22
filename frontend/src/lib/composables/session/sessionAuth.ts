@@ -85,6 +85,8 @@ import {
 import {
   getToken,
   clearAuth,
+  refreshAnswerHeldByCaller,
+  SessionEndedByDeviceRevocationError,
   SessionExpiredError,
   SignOutInProgressError,
   isRefreshCredentialProvenDead,
@@ -198,6 +200,11 @@ import {
 import { askPinSaltAhead, forgetPinSaltAhead, takePinSaltAhead } from './pinSaltAhead';
 import { unlockWithPin, type PinCheckAnswer } from './pinUnlock';
 import { throwIfPinThrottled } from './pinThrottle';
+import {
+  PinSessionRefusedError,
+  settlePinSessionRefusal,
+  throwIfPinSessionRefused,
+} from './pinSessionRefusal';
 import { notePinProven } from '$lib/utils/pinFirstSetup';
 import {
   revokedWipeScope,
@@ -1702,11 +1709,37 @@ export async function loginImpl(
       // (`prefetchPinSaltImpl`); the check, the derivations and the order between them are
       // `unlockWithPin`'s, where they are exercised on their own (`pinUnlock.test.ts`).
       const userIdForPin = ctx.getUserId();
+      // A PIN ROUTE THAT REFUSES THE SESSION (401/403) IS AN ANSWER: the server is asked why, and the
+      // outcome is this device's removal (reset, shown as the gate's no-keypad state) or a sign-out -
+      // never "unreachable" (`pinSessionRefusal.ts`). The verdict is held for this login, so the
+      // app-wide session-expired redirect does not tear the gate down before it can say so.
+      const answeringPinSessionRefusal = async <T>(call: () => Promise<T>): Promise<T> => {
+        try {
+          return await call();
+        } catch (e) {
+          if (!(e instanceof PinSessionRefusedError)) throw e;
+          throw await settlePinSessionRefusal(e, {
+            askSession: () => refreshAnswerHeldByCaller('pin-route-refused'),
+            settleRevocation: async (verdict) => {
+              if (!(verdict instanceof SessionEndedByDeviceRevocationError)) return false;
+              const mine = storedDeviceIdOf(userIdForPin);
+              if (mine === null || !verdict.names(userIdForPin, mine)) return false;
+              stopIfSignedOut('pin-route-refused');
+              startOwnWipe();
+              return settleSessionEndByRevocationImpl(ctx, cb, userIdForPin);
+            },
+            log: cb.log,
+          });
+        }
+      };
       deviceKeyB64 = await untilSignedOut(
         unlockWithPin({
           intent: ctx.getPinIntent?.() ?? 'unlock',
           saltAhead: takePinSaltAhead(userIdForPin),
-          fetchSalt: () => fetchPinSalt(ctx, userIdForPin, accessToken, loginAbort.signal),
+          fetchSalt: () =>
+            answeringPinSessionRefusal(() =>
+              fetchPinSalt(ctx, userIdForPin, accessToken, loginAbort.signal)
+            ),
           computeVerifier: (salt) => computePinVerifier(userIdForPin, pin, salt),
           // ON A HARDWARE-HELD PHONE THE PIN DERIVES NOTHING THAT OPENS DATA: the key is read from the
           // keystore, and `unlockWithPin` installs it only once the server accepted the PIN - the same
@@ -1724,25 +1757,27 @@ export async function loginImpl(
             }
           },
           resolveDeviceId: () => mlsService.resolveDeviceId(userIdForPin),
-          checkPin: async ({ verifier, deviceId, salt, intent }) => {
-            const res = await pinServerRequest({
-              baseUrl: ctx.getHistoryBaseUrl(),
-              route: 'pin-check',
-              init: {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  Authorization: `Bearer ${accessToken}`,
+          checkPin: ({ verifier, deviceId, salt, intent }) =>
+            answeringPinSessionRefusal(async () => {
+              const res = await pinServerRequest({
+                baseUrl: ctx.getHistoryBaseUrl(),
+                route: 'pin-check',
+                init: {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${accessToken}`,
+                  },
+                  body: JSON.stringify({ userId: userIdForPin, verifier, deviceId, salt, intent }),
+                  signal: loginAbort.signal,
                 },
-                body: JSON.stringify({ userId: userIdForPin, verifier, deviceId, salt, intent }),
-                signal: loginAbort.signal,
-              },
-              unreachable: m.auth_pin_check_unreachable(),
-            });
-            await throwIfPinThrottled(res, cb.log);
-            if (!res.ok) throw new LocalizedError(m.auth_pin_check_unreachable());
-            return (await res.json()) as PinCheckAnswer;
-          },
+                unreachable: m.auth_pin_check_unreachable(),
+              });
+              await throwIfPinThrottled(res, cb.log);
+              throwIfPinSessionRefused(res, 'pin-check');
+              if (!res.ok) throw new LocalizedError(m.auth_pin_check_unreachable());
+              return (await res.json()) as PinCheckAnswer;
+            }),
           // Re-read first: the wipe waits for the MLS retirement, which a sign-out during this login
           // chains on this login's own end - a wipe started after one would wait on itself.
           wipeRevokedDevice: () => {
@@ -3260,6 +3295,7 @@ async function fetchPinSalt(
     unreachable: m.auth_pin_salt_unreachable(),
   });
   await throwIfPinThrottled(res, (msg) => console.info(msg));
+  throwIfPinSessionRefused(res, 'pin-salt');
   // A 409 is an ANSWER (the row changed while its salt was minted), classified here, at the throw.
   if (res.status === 409) {
     console.info(
