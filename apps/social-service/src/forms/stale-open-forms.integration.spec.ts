@@ -64,7 +64,17 @@ maybe('the question put to a form left open against PostgreSQL (migration 180)',
       .then(() =>
         formId ? ds.query(`INSERT INTO stale_fail (id) VALUES ($1)`, [formId]) : undefined
       );
-  const q = (sql: string, params: unknown[] = []) => ds.query(sql, params);
+  /**
+   * A Date parameter travels as its UTC ISO text: the driver would write it in the MACHINE's zone,
+   * and `submissions."createdAt"` is a zone-less `timestamp` that the predicate reads in the
+   * session's zone - so a run's verdict would depend on where it ran. The session is pinned to UTC
+   * below, and both ends then agree under any `TZ`.
+   */
+  const q = (sql: string, params: unknown[] = []) =>
+    ds.query(
+      sql,
+      params.map((p) => (p instanceof Date ? p.toISOString() : p))
+    );
 
   beforeAll(async () => {
     admin = new Client({ connectionString: URL });
@@ -75,7 +85,7 @@ maybe('the question put to a form left open against PostgreSQL (migration 180)',
       url: URL,
       entities: [Form, Submission, PostNotification, AssociationMember],
       synchronize: false,
-      extra: { options: `-c search_path=${schema},public` },
+      extra: { options: `-c search_path=${schema},public -c timezone=UTC` },
     });
     await ds.initialize();
     await ds.synchronize();
