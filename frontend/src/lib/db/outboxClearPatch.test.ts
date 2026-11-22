@@ -18,6 +18,11 @@ describe('isOutboxClearPatch', () => {
     expect(isOutboxClearPatch({ attempts: 1, text: 'x' })).toBe(false);
     expect(isOutboxClearPatch({})).toBe(false);
   });
+  it('reads an undefined payload field as a removal, an undefined clear column as no change', () => {
+    // The member's Retry of an adopted entry: the count reset AND the native verdict removed.
+    expect(isOutboxClearPatch({ serverErrors: 0, nativeRefusal: undefined })).toBe(false);
+    expect(isOutboxClearPatch({ attempts: 1, nextAttemptAt: undefined })).toBe(true);
+  });
 });
 
 describe('SqliteStorage.updateOutboxEntry', () => {

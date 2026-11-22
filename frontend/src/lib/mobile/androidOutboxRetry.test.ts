@@ -52,9 +52,23 @@ describe('the outbox retry', () => {
       'rewriteOutboxMirror(context, parked + remaining + entries.drop(index))'
     );
     expect(drain).toContain('val stillQueued: List<OutboxMirrorEntry> = parked + remaining');
-    expect(drain).toContain('entry.copy(unsendable = true)');
+    // Marked WITH its typed cause, at both places a drain gives up: the page words the failure
+    // from it (`terminalFailureCause`), never as the 5xx run its parked count reads as.
+    expect(drain).toContain(
+      'entry.copy(unsendable = true, unsendableCause = UnsendableCause.NOT_ENCRYPTABLE.wire)'
+    );
+    expect(drain).toContain('val verdict = UnsendableCause.of(answer.cause)');
+    expect(drain).toContain(
+      'if (verdict != null) entry.copy(unsendable = true, unsendableCause = verdict.wire) else entry'
+    );
     expect(service).toContain('if (e.unsendable) put("unsendable", true)');
+    expect(service).toContain(
+      'if (e.unsendable) e.unsendableCause?.let { put("unsendableCause", it) }'
+    );
     expect(service).toContain('o.optBoolean("unsendable", false)');
+    expect(service).toContain(
+      'unsendableCause = o.optString("unsendableCause").takeIf { it.isNotEmpty() }'
+    );
     // Told: the drain that marked it asks for the nudge.
     expect(service).toContain(
       'settleOutboxNudgeLocked(context, asked = tells, where = "drainOutboxBackground")'
