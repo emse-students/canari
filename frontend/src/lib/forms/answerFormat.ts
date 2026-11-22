@@ -18,8 +18,13 @@
  * string like every short answer, so no reader of a short answer changes.
  */
 
-/** The formats a short text question may carry; absent (or `text`) is a free answer. */
-const ANSWER_FORMATS = ['number', 'phone', 'email'] as const;
+/**
+ * The formats a short text question may carry; absent (or `text`) is a free answer.
+ *
+ * @public Read by the server's `forms/dto/form.dto.ts` (`@IsIn`); the screen copy keeps the
+ * export so the two stay byte-identical.
+ */
+export const ANSWER_FORMATS = ['number', 'phone', 'email'] as const;
 
 /** One of {@link ANSWER_FORMATS}. */
 type AnswerFormat = (typeof ANSWER_FORMATS)[number];
