@@ -18,6 +18,26 @@ vi.mock('$lib/associations/api', () => ({
 vi.mock('$lib/forms/api', async (original) => ({
   ...(await original<typeof import('$lib/forms/api')>()),
   validateCashSubmission: vi.fn(async () => ({ ok: true })),
+  getFormResults: vi.fn(async () => ({
+    totalAnswers: 3,
+    anonymous: false,
+    minAnswers: null,
+    questions: [
+      {
+        id: 'place',
+        label: 'Retrait',
+        kind: 'choice',
+        suppressed: false,
+        multiple: false,
+        answered: 3,
+        options: [
+          { id: 'local', label: 'Au local', count: 2 },
+          { id: 'foyer', label: 'Au foyer', count: 1 },
+        ],
+        unlisted: 0,
+      },
+    ],
+  })),
 }));
 
 import FormResponsesPanel from './FormResponsesPanel.svelte';
@@ -277,15 +297,24 @@ describe('the "Totaux" tab', () => {
 });
 
 describe('the "Résumé" tab', () => {
-  it('draws a bar per option, said to be for managers only, without the refunded answer', () => {
+  it('draws a bar per option from the server results, for managers only', async () => {
     const target = render();
     openTab(target, m.form_responses_tab_summary());
+    await vi.waitFor(() =>
+      expect(target.querySelector('[data-testid="result-choice"]')).toBeTruthy()
+    );
     expect(target.textContent).toContain(m.form_responses_summary_managers_only());
-    const result = target.querySelector('[data-testid="choice-result"]')!;
+    const result = target.querySelector('[data-testid="result-choice"]')!;
     const bars = [...result.querySelectorAll('li')].map((li) =>
       li.textContent!.replace(/\s+/g, ' ').trim()
     );
     expect(bars).toEqual(['Au local 2 · 67 %', 'Au foyer 1 · 33 %']);
+    // The denominator is said on the card, in words.
+    expect(result.textContent).toContain(
+      m.form_results_denominator_single({ answers: m.form_responses_summary_answers({ count: 3 }) })
+    );
+    const api = await import('$lib/forms/api');
+    expect(api.getFormResults).toHaveBeenCalledWith('f1');
   });
 });
 
