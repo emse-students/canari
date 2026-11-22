@@ -781,6 +781,30 @@ describe('OutboxController.adoptNativeEntries - the return to the front', () => 
     warn.mockRestore();
   });
 
+  // Re-review of #3969: a conversation read that failed dropped the line from the waiting set - its
+  // row-write trigger lost, its WARN said again. A failed read proves nothing: it keeps waiting.
+  it('a conversation read that fails keeps the line waiting, and says nothing again', async () => {
+    connectivity.reset();
+    tauri.mirror = [line('flaky', { groupId: 'g4' })];
+    const storage = makeStorage();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const said = () => warn.mock.calls.filter((c) => String(c[0]).includes('Orphan flaky')).length;
+    const { outbox, sendMessage } = controllerOver(storage);
+    await outbox.adoptNativeEntries();
+    expect(said()).toBe(1);
+
+    storage.getConversation.mockRejectedValueOnce(new Error('database is locked'));
+    await outbox.adoptNativeEntries();
+    expect(storage._queue.has('flaky')).toBe(false);
+
+    // Still waiting: the row's write adopts it, and nothing was said a second time.
+    storage._conversationRows.add('g4');
+    announceConversationStored('g4');
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+    expect(said()).toBe(1);
+    warn.mockRestore();
+  });
+
   it('adopts nothing and writes nothing when the mirror holds only the page lines', async () => {
     tauri.mirror = [line('p1', { owner: 'page' })];
     const storage = makeStorage([textEntry('p1')]);

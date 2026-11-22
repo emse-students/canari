@@ -564,7 +564,12 @@ export async function adoptOrphanedMirrorEntries(
         );
         return undefined;
       });
-      if (stored === undefined) continue;
+      if (stored === undefined) {
+        // A read that failed proves nothing: a line already waiting keeps waiting - its row-write
+        // trigger, and its WARN said once.
+        if (waitingForConversation.has(orphan.id)) stillWaiting.set(orphan.id, orphan.groupId);
+        continue;
+      }
       if (stored === null) {
         // Said ONCE per page life, and truthfully: the write of that row adopts it - a Welcome, a
         // discovery, a restore. A conversation this device deleted is never written again, and what
