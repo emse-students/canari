@@ -41,7 +41,7 @@ import {
   type GroupCallKeys,
 } from '$lib/utils/callKeys';
 import { GROUP_CALL_VERSION, roomTokenSeats } from '$lib/utils/callRoomToken';
-import { CallLeg, ONE_TO_ONE_LEG, peerUserOf } from './callLeg';
+import { CallLeg, ONE_TO_ONE_LEG, peerAwayCauseOf, peerUserOf } from './callLeg';
 import { callMediaKind, type CallTransformOptions } from '$lib/utils/callFrameAad';
 import {
   CallE2eBypassedError,
@@ -67,9 +67,14 @@ import {
   audioCodecOrder,
   buildCallReport,
   callReportEngine,
+  countCandidate,
   describeAudioCodecs,
+  describeCandidateCounts,
   describeSelectedPair,
   describeVideoStats,
+  emptyCandidateCounts,
+  iceCandidateKindOf,
+  iceServerHost,
   refusedCallReport,
   relayGapIsSuspect,
   type CallReportContext,
@@ -300,7 +305,7 @@ export type SignalFrame =
   | { type: 'Joined'; room_id?: string; resume_token?: string }
   | { type: 'PeerReady'; initiator: boolean; resumed?: boolean; peer?: string }
   | { type: 'PeerLeft'; peer?: string }
-  | { type: 'PeerAway'; peer?: string }
+  | { type: 'PeerAway'; peer?: string; disposition?: string }
   | { type: 'IceRestartRequest'; from?: string }
   | { type: 'MicSuspended'; suspended: boolean; from?: string }
   | { type: 'Refused'; reason: string }
@@ -593,6 +598,15 @@ export class CallService {
    * and while a call has not connected yet (that is `calling`, not reconnecting).
    */
   public reconnecting = writable<boolean>(false);
+  /**
+   * THE UI's "<name> a perdu la connexion..." flag (`m.call_peer_lost()`): `true` while the other
+   * party of a 1:1 call is AWAY (`PeerAway`: the relay saw its signalling socket die and holds its
+   * seat for a resume) BEFORE this call's media ever connected. {@link reconnecting} is the
+   * connected call's word; before the first connection the screen said a silent "Connexion..." for
+   * as long as the other side was gone (27 s, Android 1.7.2, 2026-11-22). Never set in a group
+   * call, whose tiles name each participant's own state.
+   */
+  public peerLost = writable<boolean>(false);
   /**
    * THE EVIDENCE behind the screen's "end-to-end encrypted": `true` once this call's worker has
    * encrypted one frame AND decrypted one, both posted from inside the transforms. Never set from a
@@ -1463,10 +1477,10 @@ export class CallService {
    *
    * @param reason Why a call that was never answered ended (typed, sent on the hangup). Left out,
    *   it is inferred from what this device was doing: a ring refused is 'declined', a ring the user
-   *   abandoned is 'cancelled'. An answered call carries none, and a call whose callee already
-   *   reached the room (`peerArrived`) is ANSWERED even if its media never connected: no outcome,
-   *   whatever `reason` says - so the record cannot depend on whether the relay's `PeerLeft` or the
-   *   MLS hangup arrives first (both reach the one writer with the same fact).
+   *   abandoned is 'cancelled'. A call whose media connected carries none. A 1:1 call whose
+   *   callee answered (or reached the room, `peerArrived`) but whose media NEVER connected is
+   *   `not-connected`, whatever `reason` says - so the record cannot depend on whether the relay's
+   *   `PeerLeft` or the MLS hangup arrives first (both reach the one writer with the same fact).
    * @param remoteOrigin True when the OTHER party ended it (its MLS hangup): the call-record writer
    *   already has that frame, so this device writes nothing.
    */
@@ -1484,12 +1498,22 @@ export class CallService {
     // a ring someone was actually rung by (a call that failed before its invite rang nobody), AND
     // whose callee never reached the room: `peerArrived` means it ANSWERED and the media had not
     // connected yet, which is an answered call (a duration), not an unanswered one.
+    // A 1:1 call ANSWERED (the callee tapped, or the relay paired the two) whose media never
+    // connected did not happen: it is written `not-connected`, never as an answered call with a
+    // duration (2026-11-22: 27 s of "Connexion..." then a record that read "answered"). Both ends
+    // compute it from their own connection, and the hangup carries it to the other.
+    const neverConnected =
+      !this.groupCall &&
+      get(this.connectedAt) === null &&
+      (state === 'incall' || (wasCalling && this.peerArrived));
     const outcome: CallEndReason | undefined =
       state === 'incoming'
         ? (reason ?? 'declined')
         : wasCalling && this.inviteSent && !this.peerArrived
           ? (reason ?? (notify ? 'cancelled' : 'not-answered'))
-          : undefined;
+          : neverConnected
+            ? 'not-connected'
+            : undefined;
     // No typed outcome is one of TWO facts, and the log names which: a ring that never left (a
     // call that failed before its invite: still `calling`, nobody arrived) rang nobody; anything
     // else was ANSWERED. One label for both read as a doubt on every answered call (#2706).
@@ -1678,6 +1702,7 @@ export class CallService {
     this.resumeInFlight = false;
     this.signalQueue = Promise.resolve();
     this.reconnecting.set(false);
+    this.peerLost.set(false);
     this.removeBackgroundHandler();
     this.syncCallPresence(false);
     this.callState.set('idle');
@@ -2032,6 +2057,25 @@ export class CallService {
     await configureCallAudioSenders(pc, this.callHasVideo, appendLog);
   }
 
+  /**
+   * Counts one candidate the other party trickled here (`cands_in=` of the report), once, as it
+   * ARRIVES - a buffered one is not counted again when it is applied - and names the first of each
+   * type with its transport, never its address. An end-of-candidates marker is not a candidate.
+   */
+  private countRemoteCandidate(leg: CallLeg, init: RTCIceCandidateInit): void {
+    if (!init.candidate) return;
+    const kind = iceCandidateKindOf(init.candidate);
+    if (!kind) {
+      appendLog(`[Call]${leg.tag} WARN a remote ICE candidate names no known type - not counted`);
+      return;
+    }
+    if (countCandidate(leg.candsIn, kind.type)) {
+      appendLog(
+        `[Call]${leg.tag} first remote ${kind.type} candidate (${kind.protocol}, ice=${leg.pc?.iceConnectionState ?? 'no-pc'})`
+      );
+    }
+  }
+
   /** Queues or applies a trickle ICE candidate from the leg's other party. */
   private async addRemoteIceCandidate(leg: CallLeg, init: RTCIceCandidateInit): Promise<void> {
     const pc = leg.pc;
@@ -2303,9 +2347,11 @@ export class CallService {
         return;
       case 'PeerAway':
         // NOT an end: the relay keeps its seat for a resume, and says `PeerReady { resumed }` or
-        // `PeerLeft` next.
+        // `PeerLeft` next. The relay says how that socket ended (`disposition`); this side reads
+        // the token, it never guesses one.
+        leg.awayCause = peerAwayCauseOf(frame.disposition);
         appendLog(
-          `[Call]${leg.tag} the other party lost its signalling connection - waiting for it`
+          `[Call]${leg.tag} the other party lost its signalling connection (relay: ${leg.awayCause}, media ${leg.mediaEverConnected ? 'had connected' : 'never connected'}) - waiting for it`
         );
         leg.away = true;
         // Its microphone report is about a device we can no longer hear from: no fresh evidence,
@@ -2331,9 +2377,12 @@ export class CallService {
         await this.handleRemoteDescription(leg, sdp);
         return;
       }
-      case 'IceCandidate':
-        await this.addRemoteIceCandidate(leg, JSON.parse(frame.candidate) as RTCIceCandidateInit);
+      case 'IceCandidate': {
+        const init = JSON.parse(frame.candidate) as RTCIceCandidateInit;
+        this.countRemoteCandidate(leg, init);
+        await this.addRemoteIceCandidate(leg, init);
         return;
+      }
       default:
         appendLog(`[Call] unexpected signalling frame ${frame.type} - ignored`);
     }
@@ -2447,6 +2496,7 @@ export class CallService {
     this.peerArrived = true;
     this.syncRingingOut('the callee answered (the relay paired the two)');
     leg.away = false;
+    leg.awayCause = null;
     this.clearRingTimer();
     leg.pairEpoch += 1;
     appendLog(
@@ -2831,12 +2881,46 @@ export class CallService {
       away ||= leg.away;
       mediaDown ||= leg.mediaEverConnected && ice !== 'connected' && ice !== 'completed';
     }
+    this.updatePeerLost();
     const next = get(this.callState) === 'incall' && (this.signallingLost || away || mediaDown);
     if (next === get(this.reconnecting)) return;
     appendLog(
       `[Call] reconnecting=${next} (signalling=${this.signallingLost ? 'lost' : 'up'} peer=${away ? 'away' : 'present'} ice=${ices.join(',') || 'none'})`
     );
     this.reconnecting.set(next);
+  }
+
+  /**
+   * Recomputes {@link peerLost}: a 1:1 call whose other party is away and whose media never
+   * connected. Logged on every change, so the screen's words are explained in the exported log.
+   */
+  private updatePeerLost(): void {
+    const leg = this.groupCall ? undefined : this.legs.get(ONE_TO_ONE_LEG);
+    const next = !!leg && leg.away && !leg.mediaEverConnected;
+    if (next === get(this.peerLost)) return;
+    appendLog(
+      `[Call] peer_lost=${next} before the first connection (${leg ? this.mediaLayers(leg) : 'no leg'})`
+    );
+    this.peerLost.set(next);
+  }
+
+  /**
+   * Every layer a call's media depends on, for ONE leg, in one fragment: ICE and its gathering, the
+   * candidates each way, this device's signalling and the other party's. A line that says "no
+   * media" with this names WHICH layer stopped - `ice=new cands_in=h0/s0/r0 peer=away(...)` is a
+   * party that never sent a candidate, not a network that dropped them.
+   */
+  private mediaLayers(leg: CallLeg): string {
+    const pc = leg.pc;
+    const peer = leg.away ? `away(${leg.awayCause ?? 'unstated'})` : 'present';
+    return [
+      `ice=${pc?.iceConnectionState ?? 'no-pc'}`,
+      `gathering=${pc?.iceGatheringState ?? '-'}`,
+      `cands_in=${describeCandidateCounts(pc ? leg.candsIn : null)}`,
+      `cands_out=${describeCandidateCounts(pc ? leg.candsOut : null)}`,
+      `signalling=${this.signallingLost ? 'lost' : 'up'}`,
+      `peer=${peer}`,
+    ].join(' ');
   }
 
   /** Wires decrypt transform before exposing the track to the UI (avoids black video). */
@@ -2947,7 +3031,7 @@ export class CallService {
     setTimeout(() => {
       if (track.readyState === 'live' && track.muted) {
         appendLog(
-          `[Call]${leg.tag} WARN remote ${track.kind} still muted after 5s - no media received`
+          `[Call]${leg.tag} WARN remote ${track.kind} still muted after 5s - no media received (${this.mediaLayers(leg)})`
         );
       }
     }, 5000);
@@ -3161,18 +3245,26 @@ export class CallService {
     leg.epoch = this.transformEpoch;
     if (!awaitingPeer) this.armCallReport(leg, pc);
 
-    const gathered = { host: 0, srflx: 0, relay: 0, prflx: 0 };
+    // Counted per peer connection, both directions: a rebuilt one starts from nothing.
+    const gathered = emptyCandidateCounts();
+    leg.candsOut = gathered;
+    leg.candsIn = emptyCandidateCounts();
     /** Gathering ended with no relay candidate and no working pair yet - see `onicecandidate`. */
     let relayGap = false;
+    /** `icecandidateerror`s of this peer connection: the first of each server and code is named. */
+    let candidateErrors = 0;
+    const candidateErrorsNamed = new Set<string>();
 
     pc.onicecandidate = (e) => {
       if (e.candidate) {
-        const type = e.candidate.type;
-        if (type && type in gathered) gathered[type as keyof typeof gathered]++;
+        const kind = iceCandidateKindOf(e.candidate.candidate);
+        if (kind && countCandidate(gathered, kind.type)) {
+          appendLog(`[Call]${leg.tag} first local ${kind.type} candidate (${kind.protocol}) sent`);
+        }
         this.sendSignal({ type: 'IceCandidate', candidate: JSON.stringify(e.candidate) }, leg);
       } else {
         appendLog(
-          `[Call]${leg.tag} ICE gathering complete (host=${gathered.host} srflx=${gathered.srflx} relay=${gathered.relay} ice=${pc.iceConnectionState})`
+          `[Call]${leg.tag} ICE gathering complete (host=${gathered.host} srflx=${gathered.srflx} relay=${gathered.relay} errors=${candidateErrors} ice=${pc.iceConnectionState})`
         );
         this.sendSignal(
           {
@@ -3192,6 +3284,20 @@ export class CallService {
     // On the negotiation queue like every other step, so an offer is never made while a frame
     // is half applied.
     pc.onnegotiationneeded = () => this.serialized('offer', () => this.offerIfNeeded(leg, pc));
+
+    // A STUN or TURN server that did not answer a gathering request: the first of each server and
+    // code is named (the server's host and port, and the STUN error code - never the local address
+    // the event also carries), the rest counted into the gathering line above.
+    pc.onicecandidateerror = (e) => {
+      const ev = e as RTCPeerConnectionIceErrorEvent;
+      candidateErrors += 1;
+      const key = `${iceServerHost(ev.url) ?? '?'} code=${ev.errorCode}`;
+      if (candidateErrorsNamed.has(key)) return;
+      candidateErrorsNamed.add(key);
+      appendLog(
+        `[Call]${leg.tag} ICE candidate error server=${key} (ice=${pc.iceConnectionState} gathering=${pc.iceGatheringState})`
+      );
+    };
 
     pc.onicegatheringstatechange = () => {
       appendLog(`[Call]${leg.tag} iceGatheringState=${pc.iceGatheringState}`);
@@ -3595,6 +3701,8 @@ export class CallService {
       engine: currentEngine(),
       ns: this.micSwitch?.reportState() ?? null,
       nsFallbacks: this.micSwitch?.fallbackCount() ?? null,
+      candsIn: leg.pc ? leg.candsIn : null,
+      candsOut: leg.pc ? leg.candsOut : null,
     };
   }
 

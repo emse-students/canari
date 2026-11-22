@@ -89,6 +89,7 @@ function fakeService(state: CallState, hasVideo: boolean) {
     connectedAt: writable<number | null>(1),
     endedAt: writable<number | null>(null),
     reconnecting: writable(false),
+    peerLost: writable(false),
     e2eProven: writable(false),
     localMicSuspended: writable(false),
     audioFocusHeld: writable(false),

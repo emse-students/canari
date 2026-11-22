@@ -111,6 +111,19 @@ describe('the ONE call-record writer (B15)', () => {
     expect(rows()[0].text).toBe('Appel refusé');
   });
 
+  it('a call answered but never connected reads the same on both sides, never a duration or a miss', async () => {
+    for (const [id, starter] of [
+      ['n1', 'me'],
+      ['n2', 'caller'],
+    ] as const) {
+      const { ctx, rows } = makeCtx();
+      await recordCallStarted(ctx, G, id, starter, AT);
+      await recordCallEnded(ctx, G, id, AT, 'not-connected', starter);
+      expect(rows()[0].text).toBe("Appel non abouti : la connexion n'a pas pu s'établir");
+      expect(rows()[0].callEvent?.outcome).toBe('not-connected');
+    }
+  });
+
   it('an answered call keeps its duration', async () => {
     const { ctx, rows } = makeCtx();
     await recordCallStarted(ctx, G, 'a1', 'caller', AT);
@@ -213,6 +226,22 @@ describe('the signal path of the record', () => {
     await handleCallSignalForChat(b.ctx, 'me', G, hangup(R.CALL_END_REASON_CANCELLED), 'me', AT);
     expect(a.rows()).toHaveLength(0);
     expect(b.rows()).toHaveLength(0);
+  });
+
+  it("the other side's NOT CONNECTED hangup finalizes the started row as not connected", async () => {
+    const { ctx, rows } = makeCtx();
+    await handleCallSignalForChat(ctx, 'caller', G, { callId: 'h1', offerSdp: 'START' }, 'me', AT);
+    await handleCallSignalForChat(
+      ctx,
+      'caller',
+      G,
+      hangup(R.CALL_END_REASON_NOT_CONNECTED),
+      'me',
+      AT
+    );
+    expect(rows()).toHaveLength(1);
+    expect(rows()[0].callEvent?.outcome).toBe('not-connected');
+    expect(rows()[0].text).not.toContain('manqué');
   });
 
   it('an ordinary hangup with no row writes nothing', async () => {

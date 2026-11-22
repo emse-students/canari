@@ -1780,6 +1780,9 @@
             convs.toggleSidePanel(isSelectedChannel ? 'settings' : 'conversation')}
           isHidden={convs.mobileView === 'list'}
           onJoinChannel={handleJoinChannel}
+          onCallBack={canStartAudioCall
+            ? () => void startCallForCurrentConversation(false)
+            : undefined}
           isLoadingHistory={convs.isLoadingHistory}
           isCatchingUpMessages={messaging.isMessageCatchupActive}
           isCatchupAnnounced={messaging.isCatchupOverlayVisible}

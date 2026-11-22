@@ -3,10 +3,14 @@ import type { CallStatusKind } from '$lib/stores/callView.svelte';
 
 /**
  * The status line of a call surface, for one {@link CallStatusKind}: the running duration while the
- * call is live, a word otherwise. Shared by the full screen and the top banner so the same moment
+ * call is live, a word otherwise - naming `peerName` when the other party is lost (`peer-lost`). Shared by the full screen and the top banner so the same moment
  * reads the same on both.
  */
-export function callStatusText(kind: CallStatusKind, duration: string): string {
+export function callStatusText(
+  kind: CallStatusKind,
+  duration: string,
+  peerName: string | undefined
+): string {
   switch (kind) {
     case 'incoming':
       return m.call_incoming_label();
@@ -14,6 +18,8 @@ export function callStatusText(kind: CallStatusKind, duration: string): string {
       return m.call_ringing_label();
     case 'connecting':
       return m.call_connecting_label();
+    case 'peer-lost':
+      return peerName ? m.call_peer_lost({ name: peerName }) : m.call_peer_lost_unnamed();
     case 'reconnecting':
       return m.call_reconnecting();
     case 'live':
@@ -69,6 +75,7 @@ export function callE2eLine(kind: CallStatusKind, proven: boolean): CallE2eLine 
     case 'ended':
       return proven ? 'proven' : 'none';
     case 'connecting':
+    case 'peer-lost':
     case 'reconnecting':
     case 'live':
       return proven ? 'proven' : 'verifying';

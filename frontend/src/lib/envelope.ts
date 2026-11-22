@@ -623,7 +623,13 @@ function readStartClocks(v: unknown): { startClocks: { server?: number; local: n
   };
 }
 
-const CALL_END_REASONS: readonly string[] = ['cancelled', 'declined', 'not-answered', 'busy'];
+const CALL_END_REASONS: readonly string[] = [
+  'cancelled',
+  'declined',
+  'not-answered',
+  'busy',
+  'not-connected',
+];
 
 function isCallEndReason(v: unknown): v is CallEndReason {
   return typeof v === 'string' && CALL_END_REASONS.includes(v);
@@ -641,6 +647,8 @@ export function buildCallOutcomeText(
   callerName: string
 ): string {
   if (outcome === 'declined') return m.chat_system_call_declined();
+  // Both sides answered it: neither missed a call, both had one that did not go through.
+  if (outcome === 'not-connected') return m.chat_system_call_not_connected();
   if (!isCaller) return m.chat_system_call_missed({ caller: callerName });
   switch (outcome) {
     case 'cancelled':

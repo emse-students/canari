@@ -93,6 +93,7 @@ function fakeService(state: CallState) {
     connectedAt: writable<number | null>(state === 'incall' ? 1 : null),
     endedAt: writable<number | null>(null),
     reconnecting: writable(false),
+    peerLost: writable(false),
     e2eProven: writable(false),
     localMicSuspended: writable(false),
     audioFocusHeld: writable(false),
@@ -446,6 +447,18 @@ describe('a microphone a system took (WP-C-BG-I)', () => {
     flushSync();
     expect(notice()).toBeNull();
     expect(announcer()?.textContent).toBe('');
+  });
+
+  it('says the other party is lost, not a silent connecting, when it went away before any media', async () => {
+    const service = fakeService('incall');
+    service.connectedAt.set(null);
+    await render(service);
+    flushSync();
+    expect(announcer()?.textContent).toBe(m.call_connecting_label());
+    service.peerLost.set(true);
+    flushSync();
+    expect(announcer()?.textContent).not.toBe(m.call_connecting_label());
+    expect(announcer()?.textContent).toMatch(/perdu la connexion|lost the connection/);
   });
 
   it('shows nothing while the call reconnects: that state is the more urgent one', async () => {

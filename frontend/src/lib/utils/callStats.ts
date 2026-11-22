@@ -161,6 +161,75 @@ export function relayGapIsSuspect(relayCount: number, ice: RTCIceConnectionState
   return relayCount === 0 && ice !== 'connected' && ice !== 'completed';
 }
 
+/** The ICE candidate types a signalled candidate may carry (RFC 8445 5.1.1). */
+export type IceCandidateType = 'host' | 'srflx' | 'prflx' | 'relay';
+
+/**
+ * How many ICE candidates of each type crossed the signalling in ONE direction, on one peer
+ * connection: `cands_out=` what this device gathered and sent, `cands_in=` what the other party's
+ * trickle delivered here (candidates carried inside a remote SDP are not counted: both ends of a
+ * Canari call trickle every one).
+ *
+ * WHY (2026-11-22, a callee that answered a 1:1 call from the native ring): ICE stayed `new` for
+ * 27 s and nothing said whether the other party had sent no candidate, sent some that never
+ * arrived, or sent some that failed. The relay's record counts frames per socket, but only this
+ * count, on BOTH clients' reports, separates "never gathered" from "never delivered".
+ */
+export interface IceCandidateCounts {
+  host: number;
+  srflx: number;
+  prflx: number;
+  relay: number;
+}
+
+/** A zeroed {@link IceCandidateCounts}, one per direction per peer connection. */
+export function emptyCandidateCounts(): IceCandidateCounts {
+  return { host: 0, srflx: 0, prflx: 0, relay: 0 };
+}
+
+/** One candidate's type and transport, read from its `candidate:` line - never its address. */
+export interface IceCandidateKind {
+  type: IceCandidateType;
+  protocol: string;
+}
+
+/**
+ * The type and transport of one signalled candidate, read from the SDP attribute itself
+ * (`candidate:<foundation> <component> <transport> <priority> <address> <port> typ <type> ...`),
+ * the one form both engines put on the wire. `null` for an end-of-candidates marker or a line
+ * that does not parse. The address and port are never returned: the log that carries the result
+ * is exported.
+ */
+export function iceCandidateKindOf(candidate: string | undefined): IceCandidateKind | null {
+  if (!candidate) return null;
+  const fields = candidate.replace(/^a=/, '').split(' ');
+  const typIdx = fields.indexOf('typ');
+  const type = typIdx > 0 ? fields[typIdx + 1] : undefined;
+  if (type !== 'host' && type !== 'srflx' && type !== 'prflx' && type !== 'relay') return null;
+  return { type, protocol: (fields[2] ?? '?').toLowerCase() };
+}
+
+/**
+ * Counts one candidate into `counts`. Returns `true` when it is the FIRST of its type in that
+ * direction - the one the log names, so a call's log says when each kind of path became possible
+ * without a line per candidate.
+ */
+export function countCandidate(counts: IceCandidateCounts, type: IceCandidateType): boolean {
+  counts[type] += 1;
+  return counts[type] === 1;
+}
+
+/**
+ * The report's `cands_in=` / `cands_out=` value: `h<host>/s<srflx>/r<relay>`, plus `/p<prflx>`
+ * only when one was signalled (a peer-reflexive candidate is learnt from a connectivity check,
+ * never normally trickled). `-` when no peer connection was built.
+ */
+export function describeCandidateCounts(counts: IceCandidateCounts | null): string {
+  if (!counts) return '-';
+  const base = `h${counts.host}/s${counts.srflx}/r${counts.relay}`;
+  return counts.prflx > 0 ? `${base}/p${counts.prflx}` : base;
+}
+
 /** The subset of a video `inbound-rtp` / `outbound-rtp` stats entry the video line reads. */
 type VideoRtpEntry = RtpCodecEntry & {
   frameWidth?: number;
@@ -280,6 +349,10 @@ export interface CallReportContext {
   ns: string | null;
   /** How many times this call's noise-suppression path failed (`CallMicSwitch.fallbackCount`). */
   nsFallbacks: number | null;
+  /** The other party's candidates trickled to this peer connection, by type. */
+  candsIn: IceCandidateCounts | null;
+  /** This peer connection's own candidates, gathered and sent, by type. */
+  candsOut: IceCandidateCounts | null;
 }
 
 /** What one reading measured, and the snapshot the next reading needs. */
@@ -288,10 +361,14 @@ export interface CallReport {
   snapshot: MediaSnapshot;
 }
 
-/** `turn:turn.cloudflare.com:3478?transport=udp` -> `turn.cloudflare.com:3478` (no query, no credential). */
-function turnHost(url: string | undefined): string | null {
+/**
+ * `turn:turn.cloudflare.com:3478?transport=udp` -> `turn.cloudflare.com:3478`: the host and port of
+ * an ICE server URL (`stun:`, `turn:`, `turns:`), no query and no credential. `null` for anything
+ * else - an `icecandidateerror` names the server it asked, and only that much reaches the log.
+ */
+export function iceServerHost(url: string | undefined | null): string | null {
   if (!url) return null;
-  const match = /^turns?:([^?]+)/.exec(url);
+  const match = /^(?:stun|stuns|turn|turns):([^?]+)/.exec(url);
   return match ? match[1] : null;
 }
 
@@ -314,8 +391,9 @@ function decryptFailuresOf(r: E2eWorkerReport): number {
  * Builds THE `[CALL_REPORT]` line of the revival plan (section 6, WP-C2): one per device, every
  * 10 s while in a call and once at its end, carrying the numbers a "the call connected but nobody
  * heard anything" report needs - `ring_ms` / `connect_ms`, `audio_level_in`, and `dec_frames` against
- * `dec_fail`, which separate a key mismatch from no media at all - and `relayed=`, the only field
- * that says whether a call cost TURN volume.
+ * `dec_fail`, which separate a key mismatch from no media at all - `cands_in` / `cands_out`, which
+ * separate a party that gathered nothing from candidates that never arrived - and `relayed=`, the
+ * only field that says whether a call cost TURN volume.
  *
  * Rates are computed between two readings on the stats' OWN timestamps, never on a wall clock, so
  * the same two reports always give the same line. Nothing in it names a person, an address, an
@@ -370,8 +448,10 @@ export function buildCallReport(
     `connect_ms=${ctx.connectMs === null ? '-' : Math.round(ctx.connectMs)}`,
     `engine=${ctx.engine}`,
     `ice=${ctx.ice}`,
+    `cands_in=${describeCandidateCounts(ctx.candsIn)}`,
+    `cands_out=${describeCandidateCounts(ctx.candsOut)}`,
     describeSelectedPair(stats),
-    `turn=${turnHost(localRelay?.url) ?? '-'}`,
+    `turn=${iceServerHost(localRelay?.url) ?? '-'}`,
     `out_kbps=${kbps(snapshot.bytesSent, previous?.bytesSent ?? 0)}`,
     `in_kbps=${kbps(snapshot.bytesReceived, previous?.bytesReceived ?? 0)}`,
     `loss_in_pct=${lossPct}`,
