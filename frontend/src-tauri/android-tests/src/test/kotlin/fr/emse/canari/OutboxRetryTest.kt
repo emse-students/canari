@@ -35,6 +35,23 @@ class OutboxRetryTest {
     }
 
     @Test
+    fun `twenty-five failed runs in a row never end it, never mark an entry unsendable, and a success drains`() {
+        // Reading `1.7.3-alpha.6`: several failed worker runs before a success cannot be produced on
+        // a bench (a per-app network deny leaves the job unscheduled, so no run happens at all).
+        // Each run is one drain: a transport failure or a server fault, alternating, on two entries.
+        repeat(25) { run ->
+            val left = drainLeaves(2, if (run % 2 == 0) null else 503)
+            assertEquals("run $run", Decision.RETRY, OutboxRetry.decide(left))
+            // Marking an entry unsendable is the NEVER prospect, and it is what tells the member.
+            assertFalse("run $run", left.any { it == Prospect.NEVER })
+            assertFalse("run $run", OutboxRetry.tells(left))
+        }
+        // Then the backend answers: both entries go, nothing is left, and the request ends.
+        assertEquals(Decision.DONE, OutboxRetry.decide(emptyList()))
+        assertFalse(OutboxRetry.tells(emptyList()))
+    }
+
+    @Test
     fun `a refused entry is told and does not strand the ones that can still go`() {
         // Alone, it ends the request - nothing left can go - and is told.
         assertEquals(Decision.DONE, OutboxRetry.decide(drainLeaves(1, 400)))

@@ -1,0 +1,3 @@
+### Changed - nine readings a bench could not take are automated tests, and the entries they closed are deleted
+
+The retention sweep's two log lines, a stalled or empty form summary, the keyless history ask of a pre-1.7.0 client, 25 failed outbox retries then a drain, the share shortcuts' late picture (the loop is now `ShareTargetsUpgrade`, tested on the JVM), the dig's computed transition, a banned winner's replay, a reply taken by a dead page, the voice note's constraints and downmix, and an unsendable adoption are each asserted ([readings](docs/wiki/device-verification.md)). One finding came out: the playback law does not land a quiet voice note at -18 LUFS ([sounds](docs/wiki/frontend/sounds.md#a-voice-note-is-a-recording-not-a-call-owner-2026-11-20)).
