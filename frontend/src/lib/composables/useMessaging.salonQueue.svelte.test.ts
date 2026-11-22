@@ -40,22 +40,14 @@ import {
   resetSalonSendGate,
 } from '$lib/utils/graine/salonSendGate';
 import { decodeAppMessage } from '$lib/proto/codec';
-import {
-  noteSalonSendAnswer,
-  resetSalonRepeatProofForTests,
-} from '$lib/utils/chat/salonRepeatProof';
 import { ChannelApiError } from '$lib/services/ChannelService';
-import { deliverOwedSalonWrites, isSalonWriteOwed } from '$lib/utils/chat/salonOwed';
+import { isSalonWriteOwed } from '$lib/utils/chat/salonOwed';
 import { clearAllUploads, textWaitOf, uploadViewOf } from '$lib/utils/chat/uploadProgress.svelte';
 import { MAX_UNAVAILABLE_ANSWERS, unavailableHoldMs } from '$lib/utils/chat/retryLadder';
-import { forgetDeliveredSalonSend } from '$lib/utils/chat/messaging';
-
-/** An answer of a server carrying migration 090: it echoes the client id, so a repeat is safe. */
-function proveRepeatsSafe() {
-  noteSalonSendAnswer('00000000-0000-4000-8000-0000000000ff', {
-    clientMessageId: '00000000-0000-4000-8000-0000000000ff',
-  });
-}
+import {
+  forgetDeliveredSalonSend,
+  forgetSalonSendsOfEndedSession,
+} from '$lib/utils/chat/messaging';
 
 const CHANNEL = 'channel_7a1d0c2e-0000-4000-8000-000000000001';
 const LEDGER_KEY = 'canari.salon-unsent.me';
@@ -114,10 +106,10 @@ beforeEach(() => {
   resetSalonSendGate();
   openSalonSendGate(CHANNEL.replace(/^channel_/, ''));
   openSalonSendGate(CHANNEL);
-  // Every test but the ones about the proof itself runs against a server known to carry 090.
-  resetSalonRepeatProofForTests();
-  proveRepeatsSafe();
   clearAllUploads();
+  // A send a previous test left held is a message written earlier in the SAME salon: every send of
+  // this test would wait its turn behind it (`salonSendLane.ts`).
+  forgetSalonSendsOfEndedSession();
 });
 
 afterEach(() => {
@@ -305,68 +297,6 @@ describe('what a past page life left unanswered', () => {
   });
 });
 
-describe('a repeat nobody asked for waits for the server to prove it safe', () => {
-  // Store builds meet the server WITHOUT migration 090 for days (production deploys once both
-  // stores serve the client), and that server posts a repeat twice. So no repeat goes unasked until
-  // an answer has echoed a client id.
-  beforeEach(() => resetSalonRepeatProofForTests());
-
-  it('a POST lost as the link went down is unconfirmed, then goes once an answer proves it', async () => {
-    sendMock.mockImplementationOnce(dropTheLink);
-    const { useMessaging } = await import('./useMessaging.svelte');
-    const ctx = makeContext();
-
-    await useMessaging().handleSendChat(ctx, 'maybe landed');
-    const clientId = rows(ctx)[0].id;
-    expect(rows(ctx)[0].status).toBe('unconfirmed');
-
-    // The reconnect alone sends nothing: the old server would post it a second time. Proven by
-    // STATE rather than by waiting a while: the send is not owed to the reconnect, and the
-    // reconnect's delivery (awaited here, so whatever it would send has been sent) finds nothing.
-    expect(isSalonWriteOwed(`send:${clientId}`)).toBe(false);
-    connectivity.notifyServerReachable();
-    await deliverOwedSalonWrites();
-    expect(sendMock).toHaveBeenCalledTimes(1);
-
-    sendMock.mockResolvedValueOnce({ id: 'srv-proven' });
-    proveRepeatsSafe();
-    await vi.waitFor(() => expect(rows(ctx)[0]).toMatchObject({ id: 'srv-proven' }));
-    expect(posted(1).messageId).toBe(clientId);
-  });
-
-  it('a send HELD offline before any POST still goes on the reconnect: nothing can have landed', async () => {
-    connectivity.notifyServerUnreachable('test');
-    sendMock.mockResolvedValue({ id: 'srv-held' });
-    const { useMessaging } = await import('./useMessaging.svelte');
-    const ctx = makeContext();
-
-    await useMessaging().handleSendChat(ctx, 'never left');
-    connectivity.notifyServerReachable();
-    await vi.waitFor(() => expect(rows(ctx)[0]).toMatchObject({ id: 'srv-held' }));
-    expect(sendMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('what a past page life left is drawn unconfirmed, and sent once an answer proves it', async () => {
-    const clientId = '3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a';
-    localStorage.setItem(
-      LEDGER_KEY,
-      JSON.stringify([{ messageId: clientId, conversationKey: CHANNEL, text: 'killed', sentAt: 3 }])
-    );
-    sendMock.mockResolvedValue({ id: 'srv-after-proof' });
-    const { useMessaging } = await import('./useMessaging.svelte');
-    const ctx = makeContext();
-
-    await useMessaging().resumeUnsentSends(ctx, null);
-    await vi.waitFor(() => expect(rows(ctx)[0]?.status).toBe('unconfirmed'));
-    expect(sendMock).not.toHaveBeenCalled();
-    expect(ledger().map((e) => e.messageId)).toEqual([clientId]);
-
-    proveRepeatsSafe();
-    await vi.waitFor(() => expect(rows(ctx)[0]).toMatchObject({ id: 'srv-after-proof' }));
-    expect(posted(0).messageId).toBe(clientId);
-  });
-});
-
 describe('a resume whose session ends while it waits', () => {
   it('leaves the entry in its account ledger: the next account never seals it', async () => {
     const clientId = '5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c';
@@ -543,21 +473,6 @@ describe('a salon send the server answered "not now" (R05)', () => {
     expect(rows(ctx)[0]).toMatchObject({ id: 'srv-by-hand', status: 'sent' });
     await vi.advanceTimersByTimeAsync(120_000);
     expect(sendMock).toHaveBeenCalledTimes(2);
-  });
-
-  it('before a repeat is PROVEN safe, a "not now" is unconfirmed, and goes once an answer proves it', async () => {
-    resetSalonRepeatProofForTests();
-    sendMock.mockRejectedValueOnce(notNow(504));
-    const { useMessaging } = await import('./useMessaging.svelte');
-    const ctx = makeContext();
-    await useMessaging().handleSendChat(ctx, 'maybe stored by a 504');
-    const clientId = rows(ctx)[0].id;
-    expect(rows(ctx)[0].status).toBe('unconfirmed');
-
-    sendMock.mockResolvedValueOnce({ id: 'srv-proven-after-504' });
-    proveRepeatsSafe();
-    await vi.waitFor(() => expect(rows(ctx)[0]).toMatchObject({ id: 'srv-proven-after-504' }));
-    expect(posted(1).messageId).toBe(clientId);
   });
 
   /**

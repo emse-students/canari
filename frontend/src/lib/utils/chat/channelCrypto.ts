@@ -24,7 +24,6 @@ import { GraineSignatureError } from '$lib/crypto/graineV2';
 import { rawChannelId } from '$lib/utils/graine/runtime';
 import { noteMissingSeed } from '$lib/utils/graine/repair';
 import { SvelteDate } from 'svelte/reactivity';
-import { noteSalonSendAnswer } from './salonRepeatProof';
 import { channelReactionOf } from './messageReactions';
 
 const channelService = new ChannelService();
@@ -447,8 +446,14 @@ export async function sendEncryptedChannelMessage(
       ? { silent: true }
       : { seedFrame: sealed.seedFrame, seedGroupId: sealed.seedGroupId }),
   });
-  // An answer echoing the client id proves this server answers a repeat with its row (090).
-  if (messageId) noteSalonSendAnswer(messageId, row);
+  // EVERY SERVER SINCE MIGRATION 090 (`v1.3.0`) ECHOES THE CLIENT ID, and the salon queue repeats a
+  // send on that fact (`messaging.ts`): an answer without it means a server that would post a
+  // repeat twice, which no estate should run any more - said where it is seen.
+  if (messageId && !echoesClientId(messageId, row)) {
+    console.error(
+      `[CHANNEL] send ${messageId.slice(0, 8)}... was answered WITHOUT its client id: this server predates migration 090 and would post a repeat of it twice`
+    );
+  }
   // The id the SERVER gave its row, which the sender's own echo is re-keyed to (WP-OFF-2).
   if (typeof row?.id === 'string' && row.id) {
     return { id: row.id, serverMs: parseServerTimestampMs(row.createdAt) };
@@ -457,6 +462,12 @@ export async function sendEncryptedChannelMessage(
     `[CHANNEL] send of ${channel.slice(0, 8)} was accepted but the reply carries no row id (got ${typeof row?.id})`
   );
   return null;
+}
+
+/** Whether a send's answer carries back the client id it was posted under (migration 090). */
+function echoesClientId(messageId: string, row: unknown): boolean {
+  const echoed = (row as { clientMessageId?: unknown } | null)?.clientMessageId;
+  return typeof echoed === 'string' && echoed.toLowerCase() === messageId.toLowerCase();
 }
 
 /**
