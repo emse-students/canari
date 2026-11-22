@@ -2479,7 +2479,9 @@ mod quick_reply_tests {
 
     const KEY: CacheKey = [7u8; 32];
 
-    /// The listener is one process-wide slot: the tests that set it run one at a time.
+    /// The listener is one process-wide slot: the tests that set it, AND every test whose take drops
+    /// another account's reply (which TELLS that slot it was lost), run one at a time - a drop from a
+    /// test running beside a listener lands in that listener's record.
     static LISTENER_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     static TOLD: std::sync::Mutex<Vec<(String, i32)>> = std::sync::Mutex::new(Vec::new());
 
@@ -2542,6 +2544,9 @@ mod quick_reply_tests {
 
     #[test]
     fn the_sweep_reads_the_waiting_ids_without_claiming_them() {
+        // Its take drops another account's r-g2 and tells the listener slot: serialised with the
+        // tests that set one (`LISTENER_LOCK`).
+        let _serial = LISTENER_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let dir = temp_dir("android-waiting");
         assert_eq!(quick_reply_ids_waiting_in(&dir, &KEY), Some(vec![]));
         hand_quick_reply_in(&dir, Some(&KEY), &reply("me", "g1"));
