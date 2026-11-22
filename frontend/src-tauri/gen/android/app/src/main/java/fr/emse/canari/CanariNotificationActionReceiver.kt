@@ -129,12 +129,21 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
         // decides on that, never on a guess.
         CanariFirebaseMessagingService.awaitReplyDelivery(messageId)
         try {
-            CanariFirebaseMessagingService.enqueueOutboxMirror(
+            val queued = CanariFirebaseMessagingService.enqueueOutboxMirror(
                 context,
                 CanariFirebaseMessagingService.OutboxMirrorEntry(
                     messageId, groupId, protoB64, sentAt, silent = false, durable = true
                 )
             )
+            if (!queued) {
+                // Nothing on disk holds it, so nothing will retry it: the banner says so.
+                Log.e(TAG, "handleReply: reply id=${messageId.take(8)} NOT queued (the journal append failed) - LOST, the banner says not sent group=${ConversationRef.of(groupId)}")
+                CanariFirebaseMessagingService.repostReplyPending(
+                    context, groupId, messageId, text, notifiedAt, notifiedServerAt,
+                    ReplyLine.NOT_SENT_RETYPE,
+                )
+                return
+            }
             Log.d(TAG, "handleReply: queued id=${messageId.take(8)} group=${ConversationRef.of(groupId)}")
 
             // Whether THIS reply went out - by this drain, or by another one meanwhile - not whether
@@ -161,9 +170,9 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
             }
             // Not delivered: NO cache entry, or the app would show as sent a message that never
             // left. The entry stays in outbox_pending.ndjson - where `adoptOrphanedMirrorEntries`
-            // (outboxMirror.ts) picks it up at the next login and turns it into a real TypeScript
-            // outbox entry plus a local message, instead of it being erased by the next
-            // `store_outbox_mirror`. Nothing is lost. But leaving it THERE was not enough, and the
+            // (outboxMirror.ts) picks it up at the next login or return to the front and turns it
+            // into a real TypeScript outbox entry plus a local message; the page's own mirror write
+            // keeps it meanwhile (`outbox_mirror.rs`). Nothing is lost. But leaving it THERE was not enough, and the
             // two things missing here were the whole of what the user saw:
             //  - the notification must be RE-POSTED. Android consumed the RemoteInput the moment
             //    this action fired and draws an indeterminate spinner it never resolves, so
@@ -174,16 +183,15 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
             // A drain may still deliver it before the re-post: the re-post asks under the record's
             // lock and hands back the receive time - the first-try success then runs here.
             // WORDED ON WHAT IS KNOWN, and at WARN in every case - each is a reply not seen
-            // delivered. Still in the mirror: its send failed. Absent: adopted by the app's outbox
-            // or erased by its whole rewrite (`store_outbox_mirror`, outside the outbox lock) - not
-            // distinguishable here, and nothing native will clear that pending line
+            // delivered. Still in the mirror: its send failed. Absent: adopted by the app's outbox,
+            // which sends or settles it, and nothing native will clear that pending line
             // ([backlog](docs/wiki/backlog.d/p3-a-quick-reply-whose-process-died-leaves-its-banner-spinning.md)).
             // Unreadable: unknown.
             when (CanariFirebaseMessagingService.mirrorPresence(context, messageId)) {
                 MirrorPresence.QUEUED ->
                     Log.w(TAG, "handleReply: reply id=${messageId.take(8)} not seen delivered by this drain, still queued (remaining=$remaining) - re-posted as pending, retry scheduled")
                 MirrorPresence.ABSENT ->
-                    Log.w(TAG, "handleReply: reply id=${messageId.take(8)} not seen delivered and absent from the mirror - adopted or rewritten by the app, not distinguishable here - re-posted as pending")
+                    Log.w(TAG, "handleReply: reply id=${messageId.take(8)} not seen delivered and absent from the mirror - adopted by the app, which sends or settles it - re-posted as pending")
                 MirrorPresence.UNREADABLE ->
                     Log.w(TAG, "handleReply: reply id=${messageId.take(8)} not seen delivered and the outbox mirror could not be read - whether it is queued is unknown - re-posted as pending")
             }
@@ -360,7 +368,7 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
             Log.e(TAG, "sendReadWatermark: nativeBuildReadWatermarkProto failed")
             return
         }
-        CanariFirebaseMessagingService.enqueueOutboxMirror(
+        val queued = CanariFirebaseMessagingService.enqueueOutboxMirror(
             context,
             CanariFirebaseMessagingService.OutboxMirrorEntry(
                 // Silent, but durable: a read watermark sent from the notification shade is the
@@ -369,6 +377,10 @@ class CanariNotificationActionReceiver : BroadcastReceiver() {
                 silent = true, durable = true
             )
         )
+        if (!queued) {
+            Log.e(TAG, "sendReadWatermark: frame NOT queued (the journal append failed) - the mark stays local group=${ConversationRef.of(groupId)}")
+            return
+        }
         CanariFirebaseMessagingService.drainOutboxBackground(context, service, pushCtx)
         Log.d(TAG, "sendReadWatermark: queued+drained at=$at serverAt=$serverAt group=${ConversationRef.of(groupId)}")
     }

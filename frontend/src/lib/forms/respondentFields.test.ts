@@ -6,6 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import { m } from '$lib/paraglide/messages';
 import {
+  coherentChoices,
   askedOfMember,
   cursusSourceText,
   declaredPayload,
@@ -100,10 +101,11 @@ describe('the editor saves one set of ticks as two lists', () => {
       respondentFields: ['cursus'],
       guestFields: ['cursus', 'status'],
     });
-    // The box without the cursus ticked joins nothing: a field nobody ticked is never read.
+    // The box implies the chip: a set holding the box alone still asks the cursus, so the tick
+    // the editor shows is never dropped at save (iPhone, 1.7.3-alpha.4).
     expect(respondentSettingsPayload(['status', 'cursusFromAccount'], form)).toEqual({
-      respondentFields: [],
-      guestFields: ['status'],
+      respondentFields: ['cursus'],
+      guestFields: ['cursus', 'status'],
     });
     // On a named form the box is not offered: it is never sent.
     expect(
@@ -112,6 +114,17 @@ describe('the editor saves one set of ticks as two lists', () => {
         anonymous: false,
       })
     ).toEqual({ respondentFields: ['cursus'], guestFields: ['cursus'] });
+  });
+
+  it('ticks the cursus with its account reading, and unticks the reading with the cursus', () => {
+    expect(coherentChoices(['status'], ['status', 'cursusFromAccount'])).toEqual([
+      'status',
+      'cursusFromAccount',
+      'cursus',
+    ]);
+    expect(coherentChoices(['cursus', 'cursusFromAccount'], ['cursusFromAccount'])).toEqual([]);
+    expect(coherentChoices(['cursus', 'cursusFromAccount'], ['cursus'])).toEqual(['cursus']);
+    expect(coherentChoices([], ['campus'])).toEqual(['campus']);
   });
 
   it('reads the join back as its own box on an anonymous form, as the cursus on a named one', () => {

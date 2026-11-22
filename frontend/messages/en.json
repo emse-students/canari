@@ -133,6 +133,18 @@
   "chat_search_placeholder": "Search…",
   "chat_new_channel_title": "New channel",
   "chat_new_discussion_title": "New discussion",
+  "chat_outbox_queue_unreadable": "Messages waiting to be sent cannot be read on this device right now: they are kept and sent once they can be read again.",
+  "chat_outbox_native_queue_unreachable": "Replies sent from your notifications cannot be read right now: they are held and shown as not sent, with a retry. Messages you send from the app still go.",
+  "chat_outbox_lines_unreadable": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} message waiting to be sent could not be read back. Check your latest messages and type it again if it is missing.",
+        "countPlural=other": "{count} messages waiting to be sent could not be read back. Check your latest messages and type them again if they are missing."
+      }
+    }
+  ],
   "chat_new_discussion_label": "New discussion",
   "chat_new_channel_label": "New channel",
   "chat_manage_community_roles_label": "Manage communities and roles",
@@ -3076,7 +3088,7 @@
   "form_respondent_source_declared": "declared",
   "form_respondent_field_cursus_from_account": "Year and programme read from the account (certified)",
   "form_respondent_cursus_from_account_note": "A member does not answer this question: all of their years and programmes, read from their account, come with their answer (a person with several reveals them all) and they are told before sending. A guest fills it in. Beware: in a small group, a year and a programme can be enough to recognise the person.",
-  "form_respondent_cursus_from_account_needs_cursus": "Also tick \"Year and programme\": a guest has to fill it in, and without that box the reading from the account is ignored.",
+  "form_respondent_cursus_from_account_ticks_cursus": "This box also ticks \"Year and programme\": a guest, with no account, fills it in. Unticking \"Year and programme\" unticks this box too.",
   "form_option_conflict_anonymous_account_fields": "An anonymous form can read only the year and programme from an account: a name, a status or a campus read from it would name the person. The status and the campus can be asked; the name never.",
   "form_respondent_declared_title": "About you",
   "form_respondent_declared_hint": "Asked by the organiser, and kept with your answer.",

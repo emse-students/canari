@@ -19,7 +19,10 @@ pub mod mls_account_state;
 // The Android push service's warnings and errors, carried into the app log (2026-11-04).
 pub mod native_push_log;
 pub mod notifications;
+// The native outbox mirror: the page writes its own lines, under the native writers' lock (2026-11-21).
+pub mod outbox_mirror;
 // The iOS notification extension's outcome log, carried into the app log (2026-11-01).
+pub mod notification_delivery_state;
 pub mod nse_outcomes;
 pub mod picked_files;
 pub mod push;

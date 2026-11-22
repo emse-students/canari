@@ -19,6 +19,7 @@
 import type { SignOutCause } from '$lib/stores/signOutCause';
 import { invoke } from '@tauri-apps/api/core';
 import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
+import { markPermissionPromptShown } from './notificationReport';
 import { detectRuntimeDeviceOs } from '$lib/mls-client/mlsPlatform';
 import { currentUserId } from '$lib/stores/user';
 import { isTauriRuntime } from '$lib/utils/openExternal';
@@ -773,6 +774,7 @@ export async function startPushService(
         });
         if (askNow) {
           const permission = await requestPermission();
+          markPermissionPromptShown();
           permissionGranted = permission === 'granted';
         } else {
           console.info('[Push] rationale declined - the OS permission dialog was not opened');
