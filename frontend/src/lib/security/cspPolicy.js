@@ -21,7 +21,7 @@
  *  - `script-src 'wasm-unsafe-eval'`: `WebAssembly.instantiate` of the MLS engine
  *    (`src/lib/wasm`, loaded by `mlsWasmLoader`) and of pdf.js's decoders. Without it every
  *    encrypted conversation stops. It allows compiling WebAssembly and nothing else - no `eval`.
- *  - NO `'unsafe-inline'` for scripts: the four inline scripts of `app.html` are allowed by their
+ *  - NO `'unsafe-inline'` for scripts: the five inline scripts of `app.html` are allowed by their
  *    hash ({@link inlineScriptHashes}), SvelteKit's own start script by the hash it adds, and an
  *    inline event handler (`onerror="..."` in an HTML string) is refused - none is left.
  *  - `style-src 'unsafe-inline'`: Svelte `style=` attributes and the HTML strings the PDF exports

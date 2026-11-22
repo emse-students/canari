@@ -230,10 +230,10 @@ describe('no script runs unless the policy names it (2026-10-22)', () => {
     // Hash, never nonce: a page is cached at the edge for 60 s, and a nonce would be shared by
     // every visitor of that minute.
     expect(csp.mode).toBe('hash');
-    // The theme, the safe-area inset, iOS Dynamic Type and the WASM preload: four scripts, four
-    // hashes. A fifth script without its hash would be refused on every page, before first paint.
+    // The theme, the old-WebView guard, the safe-area inset, iOS Dynamic Type and the WASM preload: five scripts, five
+    // hashes. A sixth script without its hash would be refused on every page, before first paint.
     const scriptCount = inlineScripts(appHtml).length;
-    expect(scriptCount).toBe(4);
+    expect(scriptCount).toBe(5);
     const hashes = inlineScriptHashes(appHtml);
     expect(hashes).toHaveLength(scriptCount);
     expect(csp.directives['script-src']).toEqual(['self', 'wasm-unsafe-eval', ...hashes]);
@@ -293,7 +293,7 @@ describe('the native WebView policy (tauri.conf.json, 2026-10-22)', () => {
 
   it("lets Tauri hash its embedded scripts, and keeps style-src's 'unsafe-inline' working", () => {
     // Tauri adds the hash of every inline script of the files it embeds to script-src - that is
-    // what allows app.html's four scripts and SvelteKit's start script. It would add the hashes of
+    // what allows app.html's five scripts and SvelteKit's start script. It would add the hashes of
     // inline <style> elements to style-src as well, and a hash in a source list makes the browser
     // IGNORE 'unsafe-inline' there - every Svelte `style=` attribute refused. So that one directive,
     // and only that one, is left alone.

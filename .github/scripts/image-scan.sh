@@ -27,8 +27,7 @@
 # Usage: image-scan.sh                    (`trivy` on PATH, and `docker` for a `dockerfile:` target;
 #                                          `TRIVY_CACHE_DIR` honoured)
 #        image-scan.sh --allowlist-ids    (the ids the retirement check reads; no network)
-#        image-scan.sh --allowlist-purls  (the `id package version` triples of the purl scopes; no network)
-#        image-scan.sh --allowlist-covers (every entry's `id package version`: purls and `covers:`; no network)
+#        image-scan.sh --allowlist-covers (every entry's `id package version paths`, from its purls; no network)
 #        image-scan.sh --upgraded-packages <Dockerfile> / --shipped-base <Dockerfile>  (the readers; no network)
 set -uo pipefail
 
@@ -43,49 +42,40 @@ allowlist_ids() {
   grep -oE "^[[:space:]]*-[[:space:]]*id:[[:space:]]*[\"']?(CVE|GHSA)-[A-Za-z0-9-]+" "$allowlist" |
     grep -oE '(CVE|GHSA)-[A-Za-z0-9-]+' | sort -u
 }
-# Every purl-scoped entry as `<id> <name> <version>`, one per line, the version percent-decoded.
-# An id alone cannot retire such an entry: one advisory can be allowlisted on two packages (brotli,
-# Alpine's `brotli-libs` and Debian's `libbrotli1`), and the id stays reported while either remains,
-# so the half that moved would sit in the file for ever. The retirement check asks about each PAIR,
-# and `image-scan-allowlist.test.mjs` compares these with a real YAML parse, as for the ids.
-allowlist_purls() {
+# Every entry's covered package as `<id> <name> <version> <globs>`, one per line, the version
+# percent-decoded and <globs> the entry's `paths:` joined by commas (`-` when it has none). Both come
+# from the entry's `purls:` - the ONLY scope Trivy enforces on a version, and combined with `paths:`
+# as an AND (measured with Trivy 0.75.0) - so what this check judges is what Trivy suppresses. An id
+# alone cannot retire an entry: one advisory can be allowlisted on two packages (brotli, Alpine's
+# `brotli-libs` and Debian's `libbrotli1`), so the check asks about each id + package + version, and
+# the paths keep a package of the same name in ANOTHER image from keeping the entry alive.
+# `image-scan-allowlist.test.mjs` compares this with a real YAML parse, and refuses an entry with no purl.
+allowlist_covers() {
   awk '
-    /^[[:space:]]*-[[:space:]]*id:/ { id = $0; sub(/^[^:]*:[[:space:]]*/, "", id); gsub(/["\047[:space:]]/, "", id) }
-    /^[[:space:]]*-[[:space:]]*["\047]?pkg:/ { p = $0; sub(/^[[:space:]]*-[[:space:]]*/, "", p); gsub(/["\047[:space:]]/, "", p); print id, p }
+    function flush(    i, g) {
+      if (id != "") for (i = 1; i <= np; i++) print id, purl[i], (ng ? globs : "-")
+      id = ""; np = 0; ng = 0; globs = ""; mode = ""
+    }
+    /^[[:space:]]*-[[:space:]]*id:/ { flush(); id = $0; sub(/^[^:]*:[[:space:]]*/, "", id); gsub(/["\047[:space:]]/, "", id); next }
+    /^[[:space:]]*paths:/ { mode = "paths"; next }
+    /^[[:space:]]*purls:/ { mode = "purls"; next }
+    /^[[:space:]]*[a-z]+:/ { mode = ""; next }
+    /^[[:space:]]*-[[:space:]]*["\047]?/ {
+      v = $0; sub(/^[[:space:]]*-[[:space:]]*/, "", v); gsub(/["\047[:space:]]/, "", v)
+      if (mode == "purls" && v ~ /^pkg:/) purl[++np] = v
+      else if (mode == "paths") { globs = (ng ? globs "," : "") v; ng++ }
+    }
+    END { flush() }
   ' "$allowlist" |
-    while read -r id purl; do
+    while read -r id purl globs; do
       nv="${purl%%\?*}"
       nv="${nv##*/}"
       version="${nv#*@}"
-      printf '%s %s %b\n' "$id" "${nv%%@*}" "${version//%/\\x}"
+      printf '%s %s %b %s\n' "$id" "${nv%%@*}" "${version//%/\x}" "$globs"
     done | sort -u
-}
-# Every entry's covered package as `<id> <name> <version>`: its purls (above) plus its `covers:`, a
-# one-line flow list of `name@version` for the entries scoped by path or by id alone. The retirement
-# check judges each triple; `image-scan-allowlist.test.mjs` refuses an entry that has neither.
-allowlist_covers() {
-  {
-    allowlist_purls
-    awk '
-      /^[[:space:]]*-[[:space:]]*id:/ { id = $0; sub(/^[^:]*:[[:space:]]*/, "", id); gsub(/["\047[:space:]]/, "", id) }
-      /^[[:space:]]*covers:/ {
-        s = $0; sub(/^[^:]*:[[:space:]]*/, "", s); gsub(/\[|\]|"|\047/, "", s)
-        n = split(s, a, /[[:space:]]*,[[:space:]]*/)
-        for (i = 1; i <= n; i++) {
-          x = a[i]; gsub(/[[:space:]]/, "", x); at = 0
-          for (j = length(x); j > 0; j--) if (substr(x, j, 1) == "@") { at = j; break }
-          if (at > 1) print id, substr(x, 1, at - 1), substr(x, at + 1)
-        }
-      }
-    ' "$allowlist"
-  } | sort -u
 }
 if [ "${1:-}" = '--allowlist-ids' ]; then
   allowlist_ids
-  exit 0
-fi
-if [ "${1:-}" = '--allowlist-purls' ]; then
-  allowlist_purls
   exit 0
 fi
 if [ "${1:-}" = '--allowlist-covers' ]; then
