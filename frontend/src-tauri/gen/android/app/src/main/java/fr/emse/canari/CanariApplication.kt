@@ -10,6 +10,7 @@ import android.content.IntentFilter
 import android.media.AudioAttributes
 import android.os.Build
 import android.util.Log
+import androidx.webkit.WebViewCompat
 import app.tauri.gallery.ConversationShortcuts
 import app.tauri.gallery.ShortcutIcons
 import fr.emse.canari.call.IncomingRing
@@ -71,6 +72,7 @@ class CanariApplication : Application() {
         processPendingPushSecret()
         checkKeystoreHealth()
         recordInstallerPackage()
+        logWebViewVersion()
         // Before any push can be handled by this process: the key that seals the native caches,
         // created here and nowhere else ([NativeCacheKey]).
         try {
@@ -148,6 +150,27 @@ class CanariApplication : Application() {
             Log.d(TAG, "recordInstallerPackage: installed by ${installer ?: "(none - sideload)"}")
         } catch (e: Exception) {
             Log.e(TAG, "recordInstallerPackage: exception: ${e.message}", e) // log-safe: message of a system or native call (Exception); this try parses and names no user input
+        }
+    }
+
+    /**
+     * Logs which Android System WebView this process renders with, at info level.
+     *
+     * A WebView older than the bundle's floor (Chrome 111, see `app.html`'s guard) draws a blank
+     * page and is not a crash, so no vitals report ever names it; this line is what an `adb logcat`
+     * of a reported phone shows. LOG ONLY, deliberately: the register-device payload is changing
+     * elsewhere, and the web guard already reads the same version from the user agent.
+     */
+    internal fun logWebViewVersion() {
+        try {
+            val pkg = WebViewCompat.getCurrentWebViewPackage(this)
+            if (pkg == null) {
+                Log.w(TAG, "logWebViewVersion: no WebView package is installed or enabled")
+            } else {
+                Log.i(TAG, "logWebViewVersion: ${pkg.packageName} ${pkg.versionName}") // log-safe: the WebView package name and version string, published by the system, no user data
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "logWebViewVersion: exception: ${e.javaClass.simpleName}")
         }
     }
 
