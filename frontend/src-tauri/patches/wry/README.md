@@ -13,9 +13,16 @@
 > `Cargo.lock`, `renovate.json` and `MOBILE.md` dropped - the last carries an example private address
 > the public-repo guard rejects, and no build reads it). Upstream fixed the `get_webview` panic on
 > `dev` (tauri-apps/wry#1846, `790ca0df48`, 2026-10-28, in no release - 0.57.1 still unwraps); the rest
-> is still upstream as of 2026-11-03. A vendored fork: an upstream release is rebased by hand, and
-> this fork is deleted once a release carries every hunk. Guarded by
-> `.github/scripts/tests/wry-main-pipe-patch.test.mjs`. Why: `docs/wiki/frontend/mobile.md#wry-main-pipe-patch`.
+> is still upstream as of 2026-11-03. **One hunk is PERMANENT**: `src/android/kotlin/RustWebView.kt`
+> overrides `onCreateInputConnection` to hand the WebView's input connection to the app's
+> `KeyboardMediaBridge` (a GIF committed by the soft keyboard) - an app hook upstream will never
+> carry, written in this TEMPLATE because `build.rs` rewrites `gen/android/.../generated/` from it on
+> every Android build (written there instead, it was lost for four months). A vendored fork: an
+> upstream release is rebased by hand, every hunk re-applied. **The fork can no longer simply be
+> deleted once a release carries the main-pipe hunks**: it stays, as a re-applied template patch, for
+> that Kotlin hunk. Guarded by `.github/scripts/tests/wry-main-pipe-patch.test.mjs` and
+> `.github/scripts/tests/android-keyboard-media-hook.test.mjs`. Why:
+> `docs/wiki/frontend/mobile.md#wry-main-pipe-patch`.
 
 <p align="center"><img height="100" src="https://raw.githubusercontent.com/tauri-apps/wry/refs/heads/dev/.github/splash.png" alt="WRY Webview Rendering library" /></p>
 

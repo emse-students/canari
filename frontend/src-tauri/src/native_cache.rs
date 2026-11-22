@@ -1,6 +1,7 @@
 //! The native caches, sealed at rest: the Graine seed mirror (`graine_seeds.json`), the push
-//! message cache (`fcm_message_cache*.ndjson`) and the push key-group join ledger
-//! (`key_group_push_joins.json`, group ids and salon scopes - `mobile/key_group_join.rs`).
+//! message cache (`fcm_message_cache*.ndjson`), the push key-group join ledger
+//! (`key_group_push_joins.json`, group ids and salon scopes - `mobile/key_group_join.rs`) and the
+//! iOS announced-messages ledger (`announced_messages.json` - `mobile/announced.rs`).
 //!
 //! **WHAT THESE FILES ARE.** Both exist so a phone can do something while the app is shut: the seed
 //! mirror lets the notification service derive a salon message key, and the push cache carries the
@@ -63,6 +64,11 @@ pub(crate) enum Purpose {
     /// receiver with the app in front. It holds what the user typed.
     #[cfg(any(target_os = "android", target_os = "ios", test))]
     QuickReply,
+    /// `announced_messages.json`, sealed whole (`mobile/announced.rs`): the keys of the messages
+    /// the app or its notification extension announced - conversation ids, sender ids and instants
+    /// the app's stores seal, in a file the extension reads and writes with the app shut.
+    #[cfg(any(target_os = "ios", test))]
+    AnnouncedLedger,
 }
 
 impl Purpose {
@@ -74,6 +80,8 @@ impl Purpose {
             Purpose::KeyGroupJoinLedger => b"canari/native-cache/v1/key-group-join-ledger",
             #[cfg(any(target_os = "android", target_os = "ios", test))]
             Purpose::QuickReply => b"canari/native-cache/v1/quick-reply",
+            #[cfg(any(target_os = "ios", test))]
+            Purpose::AnnouncedLedger => b"canari/native-cache/v1/announced-ledger",
         }
     }
 }

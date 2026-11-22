@@ -28,6 +28,7 @@ export function useCallModel(getService: () => CallService | null | undefined) {
   let connectedAt = $state<number | null>(null);
   let endedAt = $state<number | null>(null);
   let isReconnecting = $state(false);
+  let peerLost = $state(false);
   let e2eProven = $state(false);
   let localMicSuspended = $state(false);
   let audioFocusHeld = $state(false);
@@ -56,6 +57,7 @@ export function useCallModel(getService: () => CallService | null | undefined) {
       service.connectedAt.subscribe((v) => (connectedAt = v)),
       service.endedAt.subscribe((v) => (endedAt = v)),
       service.reconnecting.subscribe((v) => (isReconnecting = v)),
+      service.peerLost.subscribe((v) => (peerLost = v)),
       service.e2eProven.subscribe((v) => (e2eProven = v)),
       service.localMicSuspended.subscribe((v) => (localMicSuspended = v)),
       service.audioFocusHeld.subscribe((v) => (audioFocusHeld = v)),
@@ -92,7 +94,9 @@ export function useCallModel(getService: () => CallService | null | undefined) {
     return null;
   });
 
-  const kind = $derived<CallStatusKind>(callStatusKind(callState, connectedAt, isReconnecting));
+  const kind = $derived<CallStatusKind>(
+    callStatusKind(callState, connectedAt, isReconnecting, peerLost)
+  );
 
   // Repaint once a second while the timer runs, and at once when the app is visible again.
   $effect(() => {

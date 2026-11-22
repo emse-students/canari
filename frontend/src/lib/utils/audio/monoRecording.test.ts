@@ -123,3 +123,22 @@ describe('monoRecordingStream', () => {
     expect(fake.context.close).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * A STEREO INPUT IS RECORDED THROUGH A ONE-CHANNEL DESTINATION (reading `1.7.3-alpha.6`, voice row 3:
+ * the file read on a phone was one channel; the iPhone half is still owed). The averaging itself is
+ * the engine's own graph and no test here runs it, so what is pinned is this code's part: the
+ * destination is configured for exactly one channel, explicit, interpreted as `speakers`.
+ */
+describe('the downmix destination is configured for one channel', () => {
+  it('pins one explicit channel on the speakers interpretation', async () => {
+    const fake = fakeContext();
+    await monoRecordingStream(
+      microphone({ channelCount: 2, sampleRate: 48_000 }),
+      () => fake.context as unknown as AudioContext
+    );
+    expect(fake.sink.channelCount).toBe(1);
+    expect(fake.sink.channelCountMode).toBe('explicit');
+    expect(fake.sink.channelInterpretation).toBe('speakers');
+  });
+});

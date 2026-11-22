@@ -243,6 +243,11 @@
     authToken?: string;
     /** Called when the user clicks the "Rejoindre la communauté" button on a channel invitation card. */
     onJoinChannel?: (channelId: string) => void;
+    /**
+     * Called by the "Rappeler" button of a call record that never connected (`not-connected`): the
+     * call to place again, in this conversation. Absent where no call can be placed from here.
+     */
+    onCallBack?: () => void;
     /** When set, only users whose IDs are in this list appear in @mention suggestions. */
     mentionRoster?: MentionRosterMember[];
     /**
@@ -359,6 +364,7 @@
     onCancelReply,
     authToken = '',
     onJoinChannel,
+    onCallBack,
     onFilesSelected,
     onSendVoiceNote,
     pendingFiles = [],
@@ -2280,6 +2286,7 @@
             {onReply}
             {onForward}
             {onJoinChannel}
+            {onCallBack}
             onNavigateToMessage={navigateToMessage}
             {onReact}
             {onVotePoll}
