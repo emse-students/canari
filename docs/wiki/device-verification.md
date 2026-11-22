@@ -22,6 +22,14 @@ here and nothing else.**
 
 **A reading that needs a human hand on the phone and is not a regression is DEFERRED, not blocking** (owner, 2026-11-18, [decisions](backlog.d/owner-decisions-of-2026-11-18.md)): rotating the device, lighting a scene, a physical button - what WebDriverAgent and adb cannot do and no hand is at the bench for. The lead moves it to the next version's alpha alone, here and in its entry's `target:` line. A regression since the last stable stays blocking whatever it needs.
 
+## Readings closed on 2026-11-23 - no hand can take them
+
+Owner, 2026-11-23 ([decisions](backlog.d/owner-decisions-of-2026-11-23.md)): a reading the bench cannot take is closed with its reason and never queued for the owner.
+
+- The owner adding and removing himself as a Lydia Vendeur in production: it needs his own Lydia account on a real Business, and production payments are touched by nobody but him ([payments](frontend/modules/payments.md)). The removal path itself was measured on Lydia homologation (2026-10-30).
+- The owner handing the Lydia Responsable over in production, then taking it back: the same real Business and real account; the homologation run stays in the plan.
+- The feed on an iPhone below iOS 26 (the classic tab bar): the bench iPhone 12 runs iOS 26, so the bar never draws on it. The measure taken in desktop Chrome with the classic bar simulated stands ([design-reference](frontend/design-reference.md)).
+
 ## The readings triage of 2026-11-14 - what is kept, what each needs, and the sittings
 
 **The rule (owner, 2026-11-14):** the readings owed reach ZERO before a release; each is READ with evidence or

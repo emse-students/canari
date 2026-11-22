@@ -6,7 +6,6 @@ target: 1.10.0
 
 **Owed:**
 
-- the owner's own production trial of lot 3, adding himself as Vendeur of an association and removing himself ([reading](reading-owed-the-owner-adds-and-removes-himself-as-a-lydia-vendeur-on-production.md));
 - the SUCCESS path of a refund, measured once: a validated sandbox Business's payment, or the first production refund read in its logs (none could be made on 2026-10-31);
 - one switch that is OFF: the payer's refund notice (`LYDIA_REFUND_NOTIFICATIONS_ENABLED`);
 - one Business waits on the owner (decided 2026-10-31): **Le Cercle** is untouched, not even the read-only recording of its Responsable, until it is re-enrolled cleanly through Canari (it already has cashiers of its own). **Les Rootz** has no Lydia account, so nothing is re-enrolled (below).

@@ -1007,9 +1007,9 @@ gate closed by a spy, and run the ON paths against the shipped value. Removing i
 takes rights away. **Why it flipped before a production removal:** lot 3 shipped OFF until ONE removal
 was observed in production, a condition nothing could meet - every production association held only
 its Responsable, whose current number is never removed, so nothing was removable while adding was off.
-The removal path was measured on Lydia homologation (2026-10-30), and the owner takes the first
-production removal himself on 1.7.1
-([reading](../../backlog.d/reading-owed-the-owner-adds-and-removes-himself-as-a-lydia-vendeur-on-production.md)).
+The removal path was measured on Lydia homologation (2026-10-30), and the owner's own first
+production removal is a closed reading, no hand of ours can take it
+([closed readings](../../device-verification.md#readings-closed-on-2026-11-23---no-hand-can-take-them)).
 
 **Reading a removal in the logs** (core, then social; phones only by their last two digits):
 
@@ -1125,10 +1125,9 @@ screens could not name another person: one live Responsable per Business (`LYDIA
 `libs/contracts/lydia-refusal-codes.json`, asserted equal by each side's contract spec. It has never run
 against Lydia. Off, core answers the typed 409 `LYDIA_RESPONSABLE_HANDOVER_DISABLED` before any claim,
 the screen draws no button, and the departure refusal below is off too (refusing a departure while
-nothing lets the Responsable hand over would trap them). It flips once two readings are taken: a run on
-Lydia homologation and the owner's own trial in production
-([homologation](../../backlog.d/reading-owed-the-lydia-responsable-hand-over-runs-against-homologation.md),
-[production](../../backlog.d/reading-owed-the-owner-hands-the-lydia-responsable-over-in-production.md)).
+nothing lets the Responsable hand over would trap them). It flips once the run on Lydia homologation is read
+([homologation](../../backlog.d/reading-owed-the-lydia-responsable-hand-over-runs-against-homologation.md));
+the owner's own production trial is a closed reading ([closed readings](../../device-verification.md#readings-closed-on-2026-11-23---no-hand-can-take-them)).
 
 **Who may hand over: the live Responsable themselves, or a platform admin** - the same rule as the
 number change, the narrowest the wiki already holds. The route is the cashier screens'
