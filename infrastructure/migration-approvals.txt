@@ -99,3 +99,9 @@ apps/social-service/src/migrations/168_lydia_enrolled_businesses.sql 9c1494e1868
 apps/social-service/src/migrations/176_gallery_videos_become_reels.sql bd0aa7dc069558ba6b7a330c322b1478592fa5e65e99a32459b80f3caee15980
 apps/social-service/src/migrations/177_drop_stripe_leftovers.sql 70f4d411e75fd364e420177ad1f082cb070480909264f7386741ceb859b5b6db
 apps/core-service/src/migrations/027_drop_users_stripe_customer_id.sql 10e03cc5ffb007bf0832d82a310496fa905fb922069a42519643e4854cd4449b
+# 179 (#3949, the cash hold's one notice and the payment resume: three nullable columns on
+# submissions and an idempotent backfill of "cashReminderDueAt" for pending cash answers, under
+# lock_timeout): approved by the LEAD on 2026-11-22 under the owner's 2026-11-03 delegation, the
+# adversarial Opus reviews of #3949 passed on it. It runs on dev through the next pre-release before
+# any stable, in the order documented in #3979. Any edit holds it again.
+apps/social-service/src/migrations/179_cash_hold_reminder.sql 23735d98f022721e6153fb665707431c8f747c9d2662a56ce58e4f77a4c5478c

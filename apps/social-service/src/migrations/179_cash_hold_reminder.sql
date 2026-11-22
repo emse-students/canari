@@ -1,3 +1,6 @@
+-- canari:hold-for-owner - a backfill of the new "cashReminderDueAt" for pending cash answers; it
+-- touches no anonymous answer, which is free-only (never pending_cash).
+--
 -- Migration 179: the member is told ONCE before their cash hold expires, and a cancelled payment
 -- records who cancelled it (owner decision of 2026-11-21, "launch now: payment resume";
 -- docs/wiki/frontend/modules/forms.md, "A cash hold is announced once before it expires" and "A
