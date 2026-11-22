@@ -18,13 +18,20 @@ const yieldSpy = vi.hoisted(() => vi.fn(() => Promise.resolve()));
 vi.mock('./scheduling/yieldToMainThread', () => ({ yieldToMainThread: yieldSpy }));
 
 // The screen signal, driven by hand: `screen.change(false)` is the app leaving the screen.
-const screen = vi.hoisted(() => ({ change: (_onScreen: boolean) => {} }));
+const screen = vi.hoisted(() => ({ on: true, change: (_onScreen: boolean) => {} }));
 vi.mock('./appForeground', () => ({
+  isAppInForeground: () => screen.on,
   onAppScreenChange: (onChange: (onScreen: boolean) => void) => {
     screen.change = onChange;
     return () => {};
   },
 }));
+
+// Which shell this is, driven by hand: the unclean-end marker is kept on the mobile shells only.
+const shell = vi.hoisted(() => ({ mobile: false }));
+vi.mock('./appVersion', () => ({ isMobileTauriRuntime: () => shell.mobile }));
+
+const ON_SCREEN_KEY = 'canari_applog_on_screen';
 
 type AppLog = typeof import('./appLog');
 
@@ -80,14 +87,14 @@ afterEach(() => {
 describe('the batch', () => {
   it('writes nothing until it is asked to, then ONE record for the whole batch', async () => {
     appLog.captureConsoleLine('log', ['[QUEUE] one']);
-    appLog.captureConsoleLine('warn', ['[GRAINE] two']);
+    appLog.captureConsoleLine('info', ['[GRAINE] two']);
     await Promise.resolve();
     expect(await records()).toHaveLength(0);
 
     await appLog.flushAppLog();
     const stored = await records();
     expect(stored).toHaveLength(1);
-    expect(stored[0].text).toMatch(/ L \[QUEUE\] one\n.* W \[GRAINE\] two$/);
+    expect(stored[0].text).toMatch(/ L \[QUEUE\] one\n.* I \[GRAINE\] two$/);
   });
 
   it('flushes by itself once it holds FLUSH_LINES lines - by count, never by a clock', async () => {
@@ -409,5 +416,145 @@ describe('the device wipe', () => {
     expect(snapshot.persistence).toBe('discarded');
     expect(snapshot.text).not.toContain('[A] during');
     expect(error).not.toHaveBeenCalled();
+  });
+});
+
+describe('a crash must not take the lines that explain it (call killed during setup)', () => {
+  it('an ERROR line is on disk at once, with the batch before it; L, I and W lines are not', async () => {
+    appLog.captureConsoleLine('log', ['[A] quiet']);
+    appLog.captureConsoleLine('info', ['[A] quiet too']);
+    appLog.captureConsoleLine('warn', ['[A] a warning']);
+    await Promise.resolve();
+    expect(await records()).toHaveLength(0);
+
+    appLog.captureConsoleLine('error', ['[A] something is wrong']);
+    await appLog.flushAppLog();
+    const text = (await records()).map((r) => r.text).join('\n');
+    expect(text).toMatch(
+      /quiet[\s\S]*quiet too[\s\S]* W \[A\] a warning[\s\S]* E \[A\] something is wrong/
+    );
+  });
+
+  it('a storm of events cannot leave more than MAX_PERSISTED_RECORDS records, oldest first out', async () => {
+    const total = appLog.MAX_PERSISTED_RECORDS + 40;
+    for (let i = 0; i < total; i++) {
+      appLog.captureConsoleLine('error', [`[STORM] ${i}`]);
+      await appLog.flushAppLog();
+    }
+    const stored = await records();
+    expect(stored.length).toBeLessThanOrEqual(appLog.MAX_PERSISTED_RECORDS);
+    const text = stored.map((r) => r.text).join('\n');
+    expect(text).not.toContain('[STORM] 0\n');
+    expect(text).toContain(`[STORM] ${total - 1}`);
+  }, 60_000);
+
+  it('a storm of warnings coalesces: writes follow the write speed, never the line count', async () => {
+    const added = vi.spyOn(FakeObjectStore.prototype, 'add');
+    for (let i = 0; i < 100; i++) appLog.captureConsoleLine('error', [`[STORM] ${i}`]);
+    await appLog.flushAppLog();
+    // The first request starts a write that takes everything pending; none of the other 99 queued one.
+    expect(added.mock.calls.length).toBe(1);
+    const text = (await records()).map((r) => r.text).join('\n');
+    expect(text).toContain('[STORM] 99');
+  });
+
+  it('a milestone writes the batch and names itself in the log', async () => {
+    appLog.captureConsoleLine('log', ['[Call] ringing']);
+    await appLog.flushAppLogAtMilestone('call start');
+    const text = (await records()).map((r) => r.text).join('\n');
+    expect(text).toMatch(/\[Call\] ringing\n.* I \[APPLOG\] milestone: call start$/);
+  });
+
+  it('asks for no write when nothing is pending, and none once persistence has stopped', async () => {
+    const added = vi.spyOn(FakeObjectStore.prototype, 'add');
+    appLog.discardAppLog();
+    await appLog.flushAppLogAtMilestone('call end');
+    expect(added).not.toHaveBeenCalled();
+  });
+});
+
+describe('an unclean end is reported at the next boot', () => {
+  const tauri = () => {
+    shell.mobile = true;
+  };
+
+  beforeEach(() => {
+    localStorage.clear();
+    screen.on = true;
+  });
+
+  afterEach(() => {
+    shell.mobile = false;
+    localStorage.clear();
+  });
+
+  /** One process of the app: boots, logs, and is killed (the module state is thrown away). */
+  async function nextProcess(): Promise<void> {
+    appLog.discardAppLog();
+    vi.resetModules();
+    appLog = await import('./appLog');
+  }
+
+  it('a session killed ON screen is reported once, with the last written line', async () => {
+    tauri();
+    appLog.installAppLogFlushTriggers();
+    appLog.captureConsoleLine('log', ['[Call] before the death']);
+    await appLog.flushAppLog();
+    await nextProcess();
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    appLog.installAppLogFlushTriggers();
+    await vi.waitFor(() => expect(warn).toHaveBeenCalledTimes(1));
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /^\[APPLOG\] the previous session ended while on screen \(killed or crashed\) - last written line at \d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3}$/
+      )
+    );
+  });
+
+  it('a session that left the screen first is NOT reported - a background jetsam is normal', async () => {
+    tauri();
+    appLog.installAppLogFlushTriggers();
+    screen.change(false);
+    await nextProcess();
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    appLog.installAppLogFlushTriggers();
+    await appLog.flushAppLog();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('the marker is cleared at the leave-screen edge even when that flush is cut short', async () => {
+    tauri();
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    appLog.installAppLogFlushTriggers();
+    expect(localStorage.getItem(ON_SCREEN_KEY)).not.toBeNull();
+    appLog.captureConsoleLine('log', ['[A] before']);
+    await appLog.flushAppLog(); // the connection is open from here on
+    vi.spyOn(FakeDatabase.prototype, 'transaction').mockImplementationOnce(() => {
+      throw new DOMException('Transaction aborted', 'AbortError');
+    });
+    appLog.captureConsoleLine('log', ['[A] pending']);
+    screen.change(false);
+    await appLog.flushAppLog();
+    expect(localStorage.getItem(ON_SCREEN_KEY)).toBeNull();
+    screen.change(true);
+    expect(localStorage.getItem(ON_SCREEN_KEY)).not.toBeNull();
+  });
+
+  it('a boot while the app is off screen sets no marker', async () => {
+    tauri();
+    screen.on = false;
+    appLog.installAppLogFlushTriggers();
+    expect(localStorage.getItem(ON_SCREEN_KEY)).toBeNull();
+  });
+
+  it('is kept on the mobile shells only - a second browser tab or a desktop quit is not a crash', async () => {
+    appLog.installAppLogFlushTriggers();
+    await nextProcess();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    appLog.installAppLogFlushTriggers();
+    await appLog.flushAppLog();
+    expect(warn).not.toHaveBeenCalled();
   });
 });

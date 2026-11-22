@@ -52,6 +52,8 @@ vi.mock('$lib/users/blocks', async (importOriginal) => ({
   isBlockedWith: vi.fn(async () => false),
 }));
 vi.mock('$lib/utils/sessionLog', () => ({ appendLog: vi.fn() }));
+const milestones = vi.hoisted(() => vi.fn(async (_reason: string) => {}));
+vi.mock('$lib/utils/appLog', () => ({ flushAppLogAtMilestone: milestones }));
 vi.mock('$lib/stores/toast.svelte', () => ({ showToast: vi.fn() }));
 vi.mock('$lib/utils/callPresence', () => ({ publishCallPresence: vi.fn(async () => {}) }));
 vi.mock('$lib/utils/chat/callSystemMessages', () => ({
@@ -918,6 +920,10 @@ describe('a peer-to-peer call, client side', () => {
     const offers = ws.framesOfType('Offer');
     expect(offers).toHaveLength(1);
     expect(JSON.parse(offers[0].sdp as string).type).toBe('offer');
+    // The first offer is a milestone of the in-app log, once; a renegotiation is not a second one.
+    expect(milestones.mock.calls.filter(([r]) => r === 'first offer sent')).toHaveLength(1);
+    await pc.onnegotiationneeded!();
+    expect(milestones.mock.calls.filter(([r]) => r === 'first offer sent')).toHaveLength(1);
 
     ws.deliver({ type: 'Answer', sdp: JSON.stringify({ type: 'answer', sdp: 'v=0 answer' }) });
     await settle();

@@ -17,9 +17,17 @@
  * (`CanariDBLog`, the same database on web and in the Tauri WebView) as ONE new record per flush:
  * nothing already written is ever rewritten, so a flush writes what it adds and no more - unlike the
  * MLS state, which is rewritten whole. A flush happens when the batch reaches
- * {@link FLUSH_CHARS} or {@link FLUSH_LINES}, when the app leaves the screen, and before an export;
- * never on a timer. After the write, the oldest records are deleted until the total is under
- * {@link MAX_PERSISTED_CHARS}: the ring is bounded by SIZE.
+ * {@link FLUSH_CHARS} or {@link FLUSH_LINES}, when the app leaves the screen, before an export,
+ * on every ERROR line (a WARN rides along in the batch), and at a named milestone
+ * ({@link flushAppLogAtMilestone}); never on a timer. The last two exist because a process or
+ * WebContent kill loses the unwritten batch, which is exactly the lines that explain it: a call
+ * whose app died during setup left NO line from four minutes before the death. They are bounded by
+ * EVENTS, never by line volume: L, I and W lines never ask for a write, an error storm coalesces
+ * into one write in flight plus one queued, and the call lifecycle names about five milestones per
+ * call. After the write, the oldest records are deleted until the total is under
+ * {@link MAX_PERSISTED_CHARS} AND the count is under {@link MAX_PERSISTED_RECORDS}: the ring is
+ * bounded by SIZE and by RECORDS, so many small event writes cannot grow the (key, size) walk every
+ * write does.
  *
  * A WRITE CUT SHORT BY LEAVING THE SCREEN IS NOT A STORAGE FAILURE. WebKit aborts the IndexedDB
  * transactions in flight when it suspends a backgrounded WebView (it must not hold the SQLite lock
@@ -28,10 +36,23 @@
  * failure keeps its lines, drops the connection, and writes them when the app is back on screen.
  * Only a failure ON screen stops persistence.
  *
+ * AN UNCLEAN END IS REPORTED AT THE NEXT BOOT. A durable marker (`canari_applog_on_screen`, in
+ * `localStorage`: a synchronous write that needs no flush and no open database) is set while the
+ * app is on screen and cleared the moment it leaves, so a marker still set at boot means the
+ * previous session ended ON screen: killed or crashed, never "backgrounded then jetsammed" (on iOS
+ * that is normal, and the marker was cleared at the background edge, whether or not the
+ * leave-screen flush won its race). It is kept on the mobile shells only, the ones that speak the
+ * `canari:foreground` contract: two browser tabs share `localStorage` (a second tab would read the
+ * first one's marker as a crash), and a desktop window close or quit may fire neither
+ * `visibilitychange` nor `pagehide`. The report is ONE W line naming the last line that reached
+ * disk, which bounds when the
+ * session died.
+ *
  * IT NEVER LOGS THROUGH THE CONSOLE FROM INSIDE A CAPTURE (that would recurse); its own failures
  * are written as lines of the log itself and printed through the console outside the capture.
  */
-import { onAppScreenChange } from './appForeground';
+import { isAppInForeground, onAppScreenChange } from './appForeground';
+import { isMobileTauriRuntime } from './appVersion';
 import { renderLogPayload } from './Log';
 import { redactLogLine, type RedactedLine } from './appLogRedact';
 import { yieldToMainThread } from './scheduling/yieldToMainThread';
@@ -50,10 +71,18 @@ export const FLUSH_LINES = 200;
  * oldest pending lines go first, and the export says how many.
  */
 export const MAX_PENDING_CHARS = 256 * 1024;
+/**
+ * The ring's bound in RECORDS, beside the size bound: event-driven writes are small, and a storm
+ * of them would otherwise leave tens of thousands of records for every write to walk and sort.
+ * 64 full batches fit the size bound, so this is only reached by small ones.
+ */
+export const MAX_PERSISTED_RECORDS = 512;
 
 const DB_NAME = 'CanariDBLog';
 const STORE = 'chunks';
 const BY_CHARS = 'byChars';
+/** The durable "the app is on screen" marker. Present = set; see the module doc. */
+const ON_SCREEN_KEY = 'canari_applog_on_screen';
 
 const LEVEL_LETTER: Record<CapturedLevel, string> = { log: 'L', info: 'I', warn: 'W', error: 'E' };
 
@@ -83,6 +112,10 @@ let offScreen = false;
  * back on screen, so a suspended WebView is not asked again for every line that arrives.
  */
 let holdingForScreen = false;
+/** An event-driven flush is queued and has not started: another request would only add a write. */
+let eventFlushQueued = false;
+/** The marker could not be read or written: said once, not at every screen edge. */
+let markerFailureSaid = false;
 
 /** Turns one console call's arguments into the text of a line. */
 function renderArgs(args: readonly unknown[]): string {
@@ -121,6 +154,30 @@ function push(line: string): void {
 }
 
 /**
+ * Asks for a write now, for an event that matters (an ERROR line, a milestone). Coalesced:
+ * while one such request waits behind a running write, further requests add nothing, because the
+ * write that runs takes everything pending when it starts. So the write rate follows the write
+ * speed, never the line rate.
+ */
+function requestEventFlush(): void {
+  if (persistence !== 'ok' || holdingForScreen || eventFlushQueued || pending.length === 0) return;
+  eventFlushQueued = true;
+  void flushAppLog();
+}
+
+/**
+ * Writes the batch at a point whose lines the next minutes may need - a call starting, answering,
+ * its first offer, its first connection, its end - because the process can die before any other
+ * trigger fires. `reason` names the milestone: it is written as a line of its own, so a log that
+ * stops is read against the last milestone it reached. Never throws.
+ */
+export function flushAppLogAtMilestone(reason: string): Promise<void> {
+  captureConsoleLine('info', [`[APPLOG] milestone: ${reason}`]);
+  requestEventFlush();
+  return flushChain;
+}
+
+/**
  * Records one console call. Called by the console wrapper AFTER it printed, for the levels in
  * {@link CapturedLevel} only. Never throws: a log that can break the caller is worse than none.
  */
@@ -132,6 +189,7 @@ export function captureConsoleLine(level: CapturedLevel, args: readonly unknown[
     redactedValues += redactions;
     // eslint-disable-next-line svelte/prefer-svelte-reactivity -- read once, never stored
     push(`${stamp(new Date())} ${LEVEL_LETTER[level]} ${line}`);
+    if (level === 'error') requestEventFlush();
   } catch {
     droppedLines++;
   } finally {
@@ -188,7 +246,12 @@ function writeChunk(db: IDBDatabase, chunk: Chunk): Promise<number> {
       sizes.sort((a, b) => a[0] - b[0]);
       let total = sizes.reduce((sum, [, chars]) => sum + chars, 0);
       // The newest chunk is never evicted, even alone over the bound: it is what was just asked for.
-      for (let i = 0; i < sizes.length - 1 && total > MAX_PERSISTED_CHARS; i++) {
+      for (
+        let i = 0;
+        i < sizes.length - 1 &&
+        (total > MAX_PERSISTED_CHARS || sizes.length - i > MAX_PERSISTED_RECORDS);
+        i++
+      ) {
         store.delete(sizes[i][0]);
         total -= sizes[i][1];
         evicted++;
@@ -215,6 +278,7 @@ function dropConnection(): void {
  */
 export function flushAppLog(): Promise<void> {
   flushChain = flushChain.then(async () => {
+    eventFlushQueued = false;
     if (persistence !== 'ok' || pending.length === 0) return;
     const lines = pending;
     const chars = pendingChars;
@@ -367,17 +431,81 @@ export function discardAppLog(): void {
   dropConnection();
 }
 
+/** Says once that the marker is unusable; its absence would silence the unclean-end report. */
+function sayMarkerFailure(error: unknown): void {
+  if (markerFailureSaid) return;
+  markerFailureSaid = true;
+  const reason = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  console.warn(
+    `[APPLOG] the on-screen marker cannot be kept (${reason}) - an unclean end goes unreported`
+  );
+}
+
+/** Sets or clears the on-screen marker. Never throws. */
+function writeOnScreenMarker(onScreen: boolean): void {
+  try {
+    if (onScreen) localStorage.setItem(ON_SCREEN_KEY, '1');
+    else localStorage.removeItem(ON_SCREEN_KEY);
+  } catch (error) {
+    sayMarkerFailure(error);
+  }
+}
+
+/** Whether the previous session left the marker set. A storage that cannot be read reports false. */
+function readOnScreenMarker(): boolean {
+  try {
+    return localStorage.getItem(ON_SCREEN_KEY) !== null;
+  } catch (error) {
+    sayMarkerFailure(error);
+    return false;
+  }
+}
+
+/** The stamp of the last line that reached disk, or `unknown` when none can be read. */
+async function lastWrittenStamp(): Promise<string> {
+  try {
+    const db = await openDb();
+    const chunk = await new Promise<Chunk | undefined>((resolve, reject) => {
+      const cursor = db.transaction(STORE, 'readonly').objectStore(STORE).openCursor(null, 'prev');
+      cursor.onsuccess = () => resolve(cursor.result?.value as Chunk | undefined);
+      cursor.onerror = () => reject(cursor.error ?? new Error('log read failed'));
+    });
+    const lastLine = chunk ? chunk.text.slice(chunk.text.lastIndexOf('\n') + 1) : '';
+    return STORED_PREFIX_RE.exec(lastLine)?.[1].trim().slice(0, 23) ?? 'unknown';
+  } catch (error) {
+    console.warn('[APPLOG] the last written line could not be read', error);
+    return 'unknown';
+  }
+}
+
+/**
+ * At boot, once: a marker still set means the previous session ended on screen (see the module
+ * doc). One W line, written with the next batch.
+ */
+async function reportPreviousSessionEnd(): Promise<void> {
+  const last = await lastWrittenStamp();
+  console.warn(
+    `[APPLOG] the previous session ended while on screen (killed or crashed) - last written line at ${last}`
+  );
+}
+
 /**
  * Flushes when the app leaves the screen (backgrounded, tab hidden, page unloading): the moment
  * after which the process may be killed without another word. Records that it is off screen, which
  * is what classifies a write the suspension cuts short, and writes what such a write kept once the
- * app is back. Idempotent.
+ * app is back. Also keeps the on-screen marker and, in the Tauri runtime, reports a previous
+ * session that left it set. Idempotent.
  */
 export function installAppLogFlushTriggers(): void {
   if (lifecycleInstalled || typeof window === 'undefined') return;
   lifecycleInstalled = true;
+  // Read BEFORE this session sets its own marker.
+  const keepMarker = isMobileTauriRuntime();
+  if (keepMarker && readOnScreenMarker()) void reportPreviousSessionEnd();
+  if (keepMarker && isAppInForeground()) writeOnScreenMarker(true);
   onAppScreenChange((onScreen) => {
     offScreen = !onScreen;
+    if (keepMarker) writeOnScreenMarker(onScreen);
     if (!onScreen) {
       void flushAppLog();
       return;
@@ -390,6 +518,7 @@ export function installAppLogFlushTriggers(): void {
   });
   window.addEventListener('pagehide', () => {
     offScreen = true;
+    if (keepMarker) writeOnScreenMarker(false);
     void flushAppLog();
   });
 }
