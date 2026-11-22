@@ -714,3 +714,15 @@ place the member saw it fail.
 The case needs a reply typed in the shade for a conversation the member then deletes in the app
 before the page ever adopts it. It was not seen on the bench. The Mi 9T case of 2026-11-22 was a
 conversation stored a moment later, which the row-write adoption now covers.
+
+## The order of a delegated held migration's conditions (decided 2026-11-22, reversible)
+
+The 2026-11-03 delegation lets the lead merge a held migration's approval line once an Opus review has
+passed AND the migration "has run on dev through a pre-release". The second cannot come first: gate 6
+refuses every pre-release while a held migration on `main` lacks its line. The lead decided, in the
+owner's absence: the line is merged after the review; the next pre-release runs the migration on dev
+with its backup; the lead measures it there read-only before any stable; production is reached only by
+a stable, which is refused unless dev served that alpha. First applied to migration 181 (#3979).
+**For the owner:** confirm this order, or amend it (for example, require the owner's own merge of the
+line for a backfill of user data) ([cicd](cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01),
+[decisions](backlog.d/owner-decisions-of-2026-11-03-evening.md)).

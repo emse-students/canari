@@ -954,10 +954,14 @@ export interface ProductGridExportLabels {
   awaitingCash: string;
 }
 
-/** The labels this client would write an export in, resolved through Paraglide. */
-export function exportLabels(): ExportLabels {
+/**
+ * The labels this client would write an export in, resolved through Paraglide. An `anonymous`
+ * form's date column holds the Monday its answers' week starts on (`anonymousAnswerWeekSql`), so
+ * its header says "Semaine du", never "Date & heure": the cell is a week, not the day of an answer.
+ */
+export function exportLabels({ anonymous }: { anonymous: boolean }): ExportLabels {
   return {
-    date: m.form_list_col_date(),
+    date: anonymous ? m.form_export_col_week() : m.form_list_col_date(),
     firstName: m.form_export_col_first_name(),
     lastName: m.form_export_col_last_name(),
     amount: m.form_list_col_amount(),

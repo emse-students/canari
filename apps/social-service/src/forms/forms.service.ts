@@ -100,6 +100,7 @@ import { computeFormResults, type FormResults, type ResultsItem } from './form-r
 import { Submission } from './entities/submission.entity';
 import {
   ANONYMOUS_BATCH_SIZE,
+  anonymousAnswerWeekOf,
   heldAnswerCount,
   holdAnonymousAnswer,
   releaseHeldAnswers,
@@ -5414,7 +5415,7 @@ export class FormsService {
     // A form that stopped taking answers delivers the ones still waiting for their batch first.
     if (form?.anonymous) await this.releaseOrAccuse(formId, 'read');
     // An anonymous form lists in the order of a random id, never of arrival: the order of insertion
-    // is a clock the day-precision `createdAt` was cut to hide.
+    // is a clock the week-precision `createdAt` was cut to hide.
     const subs = overCapacityFirst(
       await this.submissionRepo.find({
         where: { formId },
@@ -5534,7 +5535,8 @@ export class FormsService {
     // A title Excel refuses ("19/11") made the whole export a 500 (2026-11-13).
     const sheet = workbook.addWorksheet(safeWorksheetName(form.title));
 
-    // An anonymous form's sheet has no name columns and only a DAY: the time was never stored.
+    // An anonymous form's sheet has no name columns and only a WEEK: its date is the Monday that
+    // starts it (`anonymousAnswerWeekSql`), under the header the client sends for it ("Semaine du").
     const headers: Partial<ExcelJS.Column>[] = [
       {
         header: labels.date,
@@ -5644,8 +5646,11 @@ export class FormsService {
 
     submissions.forEach((sub) => {
       const names = nameMap.get(sub.id) ?? { firstName: null, lastName: null };
+      const stored =
+        sub.createdAt instanceof Date ? sub.createdAt : new Date(sub.createdAt as string);
       const row: Record<string, unknown> = {
-        date: sub.createdAt instanceof Date ? sub.createdAt : new Date(sub.createdAt as string),
+        // An anonymous answer's date is its WEEK, whatever the stored value says (owner, 2026-11-22).
+        date: form.anonymous ? anonymousAnswerWeekOf(stored) : stored,
       };
       if (!form.anonymous) {
         // A guest's answer is named by what the guest typed, when the form asked for it.

@@ -55,17 +55,19 @@ function exportFileName(formId: string, title: string, format: SubmissionsExport
 /**
  * Downloads one export of a form. Every file is written by social-service in this client's words
  * (`exportLabels()`), and a CSV is the SAME sheet the workbook holds - one writer, so the three
- * files cannot disagree. A failure is logged and toasted; it never throws to the caller.
+ * files cannot disagree. An `anonymous` form's date column is headed by its week, the only date its
+ * answers keep. A failure is logged and toasted; it never throws to the caller.
  */
 export async function downloadFormExport(
   formId: string,
   title: string,
-  format: SubmissionsExportFormat
+  format: SubmissionsExportFormat,
+  anonymous: boolean
 ): Promise<void> {
-  Log.d('formExport', `export form=${formId.slice(0, 8)} format=${format}`);
+  Log.d('formExport', `export form=${formId.slice(0, 8)} format=${format} anonymous=${anonymous}`);
   try {
     await downloadDecryptedFile(
-      await exportSubmissions(formId, exportLabels(), format),
+      await exportSubmissions(formId, exportLabels({ anonymous }), format),
       exportFileName(formId, title, format)
     );
   } catch (e) {

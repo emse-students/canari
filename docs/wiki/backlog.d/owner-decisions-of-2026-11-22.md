@@ -33,4 +33,6 @@ Recorded so no question answered here is asked again. Each line names where its 
 14. **Section navigation stays a CLOSED chantier**: this work only REMOVES the notepad entry point,
    it adds no new section ([section-navigation](../frontend/section-navigation.md)).
 
+15. **An answer to an ANONYMOUS form keeps only its WEEK, never its day** (owner, 2026-11-22). If a single respondent answered on a given day, the manager saw a "group of one" for that day and could guess who answered. Charter principle 1, your messages are yours: the date stored beside an answer must not name the person who gave it. The server dates a released batch with the start of its ISO week (Monday 00:00 UTC, `anonymousAnswerWeekSql`), migration 181 cuts the answers already stored (held for the owner's approval line, a backfill of user data), and the manager's list and export show "semaine du 16 nov." ([forms](../frontend/modules/forms.md#an-anonymous-answer-keeps-only-its-week-2026-11-22)). Ships in `1.8.0`.
+
 **Carried out, 2026-11-22 (`1.7.3` shipped):** the four readings entries above and the FORTIFY entry were deleted; every other entry still naming `1.7.3` was retargeted to `1.8.0`, the readings among them, and the readings rule applies to them from the first `1.8.0` alpha ([roadmap](../roadmap.md#log-of-replannings-and-milestones)).
