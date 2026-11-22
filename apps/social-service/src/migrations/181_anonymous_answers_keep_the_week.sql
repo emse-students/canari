@@ -16,18 +16,20 @@
 -- (`SUBMISSION_COLUMNS_A_RELEASE_LEAVES_UNSET`). `form_answers_held` keeps no time at all. A named
 -- form's answers are not read.
 --
--- ONE STATEMENT, so every row it rewrites carries the same `xmin`: the rewrite itself pairs no answer
--- with another, nor with any registry row. No row is inserted again, deleted or given a new id.
+-- ONE STATEMENT, and EVERY anonymous answer is rewritten, so every one carries the same `xmin`
+-- afterwards. A row already at Monday 00:00 is rewritten too, on purpose: one the 2026-11-22 repair
+-- cut to a Monday, or a batch released on a Monday, would otherwise keep the `xmin` of that older
+-- write, and "kept its old version" would still say "answered on a Monday" (review of #3979). No row
+-- is inserted again, deleted or given a new id.
 --
--- Idempotent for CD: a row already at the start of its week is not written, so a second run writes
--- nothing (`IS DISTINCT FROM`, which a NULL cannot slip past). LOCKS: row locks on the rewritten
+-- Run once (the `schema_migrations` ledger). Run again by hand it is still harmless: the same values
+-- are written, and every anonymous answer again shares one `xmin`. LOCKS: row locks on the anonymous
 -- answers, released at COMMIT; a release of the same form waits for it, and the file gives up after
 -- 5 s rather than queue (the re-run is safe).
 --
 -- ROLLBACK: none, by design - the day and the time are what this file exists to forget. An image
 -- older than it reads a week start as an ordinary date, but dates the batches it releases with their
--- day again; once the newer image is back, those rows are cut by running the UPDATE below by hand
--- (it is idempotent, and touches nothing already cut).
+-- day again; once the newer image is back, those rows are cut by running the UPDATE below by hand.
 
 SET lock_timeout = '5s';
 
@@ -37,7 +39,4 @@ UPDATE submissions s
        "paymentRequestedAt" = date_trunc('week', s."paymentRequestedAt")
   FROM forms f
  WHERE f.id = s."formId"
-   AND f.anonymous
-   AND (s."createdAt" IS DISTINCT FROM date_trunc('week', s."createdAt")
-     OR s."updatedAt" IS DISTINCT FROM date_trunc('week', s."updatedAt")
-     OR s."paymentRequestedAt" IS DISTINCT FROM date_trunc('week', s."paymentRequestedAt"));
+   AND f.anonymous;

@@ -528,7 +528,7 @@ maybe('anonymous answers stored in batches, against PostgreSQL (migration 178)',
     expect(dates[0].monday).toBe(true);
   });
 
-  it('migration 181 cuts every anonymous answer to its week in ONE write, and is idempotent', async () => {
+  it('migration 181 cuts every anonymous answer to its week in ONE write, Mondays included', async () => {
     const anonymousForm = await makeForm();
     const namedForm = await makeForm({ anonymous: false });
     const repo = ds.getRepository(Submission);
@@ -539,6 +539,8 @@ maybe('anonymous answers stored in batches, against PostgreSQL (migration 178)',
       ['2026-11-22 23:59:59', '2026-11-16 00:00:00'],
       ['2026-11-23 09:15:00', '2026-11-23 00:00:00'],
       ['2027-01-01 00:00:00', '2026-12-28 00:00:00'],
+      // Already a week start: rewritten all the same, so its old write does not say "a Monday".
+      ['2026-11-16 00:00:00', '2026-11-16 00:00:00'],
     ];
     const ids: string[] = [];
     for (const [at] of cases) {
@@ -571,6 +573,9 @@ maybe('anonymous answers stored in batches, against PostgreSQL (migration 178)',
       named.id,
     ]);
 
+    const mondayBefore: string = (
+      await ds.query(`SELECT xmin::text AS x FROM submissions WHERE id = $1`, [ids[ids.length - 1]])
+    )[0].x;
     const migration = readFileSync(
       join(__dirname, '../migrations/181_anonymous_answers_keep_the_week.sql'),
       'utf8'
@@ -589,8 +594,10 @@ maybe('anonymous answers stored in batches, against PostgreSQL (migration 178)',
       const row = byId.get(ids[i])!;
       expect([row.c, row.u, row.p]).toEqual([week, week, week]);
     });
-    // ONE statement: every rewritten row carries the same write.
+    // ONE statement, and every anonymous answer rewritten: the Monday row shares the migration's write
+    // with every other row, and none keeps the write it had before.
     expect(new Set(after.map((row) => row.x)).size).toBe(1);
+    expect(after.map((row) => row.x)).not.toContain(mondayBefore);
     // A named form's answer keeps its instant.
     expect(
       (
@@ -598,14 +605,15 @@ maybe('anonymous answers stored in batches, against PostgreSQL (migration 178)',
       )[0].c
     ).toBe('2026-11-19 14:03:07');
 
-    // A second run writes nothing: no row gets a new version.
+    // Run again by hand (the ledger runs it once), it is harmless: same values, one write for all.
     await ds.query(migration);
     await ds.query('RESET lock_timeout');
-    const again: { x: string }[] = await ds.query(
-      `SELECT DISTINCT xmin::text AS x FROM submissions WHERE id = ANY($1::uuid[])`,
+    const again: { c: string; x: string }[] = await ds.query(
+      `SELECT "createdAt"::text AS c, xmin::text AS x FROM submissions WHERE id = ANY($1::uuid[])`,
       [ids]
     );
-    expect(again).toEqual([{ x: after[0].x }]);
+    expect(new Set(again.map((row) => row.x)).size).toBe(1);
+    expect(again.map((row) => row.c).sort()).toEqual(cases.map(([, week]) => week).sort());
   });
 
   it('after every path above, no stored anonymous answer shares a write with the registry', async () => {

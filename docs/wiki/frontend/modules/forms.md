@@ -1092,7 +1092,7 @@ outside this mechanism.
 
 ## An anonymous answer keeps only its week (2026-11-22)
 
-**Owner, 2026-11-22** ([decision 10](../../backlog.d/owner-decisions-of-2026-11-22.md), charter
+**Owner, 2026-11-22** ([decision 15](../../backlog.d/owner-decisions-of-2026-11-22.md), charter
 [principle 1](../../../principes.md), "vos messages sont à vous"): an answer to an anonymous form keeps
 its WEEK, never its day. Until then a batch was dated with its UTC day, and a day on which a single
 person answered was a "group of one" the manager could read beside the answer and put a name on.
@@ -1111,8 +1111,13 @@ person answered was a "group of one" the manager could read beside the answer an
 - **Client**: the responses table heads the column "Semaine" and reads each answer as "semaine du
   16 nov." (`answerWeek.ts`, which computes the Monday itself so the label means a week whatever the
   value); the XLSX export heads it "Semaine du" (`exportLabels({ anonymous })`) above the Monday's
-  date. A store build older than this sends "Date & heure" over the same Monday: no more is shown,
-  only a less exact header.
+  date. The export cuts the date to its week itself (`anonymousAnswerWeekOf`), so it never trusts the
+  stored value. A store build older than this shows the Monday as "16/11/2026" under "Date & heure":
+  no more is shown, only a less exact header, so no shim is owed
+  ([legacy-compatibility](../../legacy-compatibility.md#a-tolerated-degradation-an-older-build-heads-an-anonymous-answers-week-date--heure-owner-2026-11-22)).
+- **Every row is rewritten**: migration 181 rewrites EVERY anonymous answer, a Monday 00:00 one
+  included. One left as it was would keep the `xmin` of its older write, which still says "answered
+  on a Monday".
 
 ## An anonymous form's answers are released in batches (2026-11-21)
 

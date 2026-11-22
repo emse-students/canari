@@ -506,6 +506,20 @@ build reads those four headers in French.
 fields, and the `[LEGACY]` line is absent from production for a week. Then make `identity` required
 in `parseExportLabels`, delete the constant, its branch, its test and this entry.
 
+### A tolerated degradation: an older build heads an anonymous answer's week "Date & heure" (owner, 2026-11-22)
+
+- **What.** An anonymous form's answer keeps only its week (Monday 00:00, migration 181,
+  [forms](frontend/modules/forms.md#an-anonymous-answer-keeps-only-its-week-2026-11-22)). A build older
+  than `1.8.0` shows that Monday as a bare date ("16/11/2026") under "Date & heure" in its responses
+  table, and sends "Date & heure" as the export's header, where a current build says "semaine du 16
+  nov." and "Semaine du".
+- **Who.** Native apps older than `1.8.0`; the web app is always current.
+- **Why accepted knowingly.** Nothing is served differently and nothing more is shown: the server sends
+  and exports the same Monday to every build, so the old screen reveals no day the answer was given -
+  only a less exact header. No shim, no branch and no `[LEGACY]` line exist for it.
+- **What stays in the code, and its removal.** Nothing to remove. The entry goes once `minClientVersion`
+  passes `1.8.0` on both estates.
+
 ### Removal once `minClientVersion` passes the release carrying the choice comment - an export asked without the comment word (2026-11-22)
 
 **Site:** `FormsService.exportSubmissions` (`apps/social-service/src/forms/forms.service.ts`), where

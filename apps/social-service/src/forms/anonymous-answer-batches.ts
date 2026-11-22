@@ -49,6 +49,18 @@ export function anonymousAnswerWeekSql(instant = "now() AT TIME ZONE 'UTC'"): st
   return `date_trunc('week', ${instant})`;
 }
 
+/**
+ * {@link anonymousAnswerWeekSql} applied to a value already READ: the Monday 00:00 starting the week
+ * of a stored `timestamp`. The driver hands a `timestamp` (no zone) back as that wall clock in the
+ * process's zone, so the local getters recover the stored wall clock exactly, whatever the zone. A
+ * reader that SHOWS an anonymous answer's date (the export) passes it through this rather than trust
+ * the stored value: a row the cut has not reached yet still reads as its week.
+ */
+export function anonymousAnswerWeekOf(stored: Date): Date {
+  const sinceMonday = (stored.getDay() + 6) % 7; // getDay: Sunday 0 ... Saturday 6
+  return new Date(stored.getFullYear(), stored.getMonth(), stored.getDate() - sinceMonday);
+}
+
 const logger = new Logger('AnonymousAnswerBatches');
 
 /** One anonymous answer as it waits: its content, nothing that names or dates it. */

@@ -305,5 +305,25 @@ describe('FormsService - anonymous forms', () => {
       const header = (workbook.worksheets[0].getRow(1).values as unknown[]).slice(1).map(String);
       expect(header).toEqual(['Date', 'Avis']);
     });
+
+    it('writes the week of the answer, never the day the stored value holds', async () => {
+      const { service, submissionRepo } = makeService();
+      // A Thursday with a time, as a row the week cut has not reached could read: its week began on
+      // Monday 2026-11-16. Built with local fields, as the driver hands a zone-less `timestamp` back.
+      submissionRepo.find.mockResolvedValueOnce([
+        {
+          id: 's1',
+          userId: null,
+          answers: { q1: 'bof' },
+          createdAt: new Date(2026, 10, 19, 14, 3),
+        },
+      ]);
+      const { buffer } = await service.exportSubmissions('f1', LABELS);
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
+      const cell = workbook.worksheets[0].getRow(2).getCell(1);
+      expect(cell.numFmt).toBe('dd/mm/yyyy');
+      expect((cell.value as Date).getTime()).toBe(new Date(2026, 10, 16).getTime());
+    });
   });
 });

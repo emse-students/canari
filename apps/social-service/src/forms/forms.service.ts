@@ -85,6 +85,7 @@ import { computeFormResults, type FormResults, type ResultsItem } from './form-r
 import { Submission } from './entities/submission.entity';
 import {
   ANONYMOUS_BATCH_SIZE,
+  anonymousAnswerWeekOf,
   heldAnswerCount,
   holdAnonymousAnswer,
   releaseHeldAnswers,
@@ -5077,8 +5078,11 @@ export class FormsService {
 
     submissions.forEach((sub) => {
       const names = nameMap.get(sub.id) ?? { firstName: null, lastName: null };
+      const stored =
+        sub.createdAt instanceof Date ? sub.createdAt : new Date(sub.createdAt as string);
       const row: Record<string, unknown> = {
-        date: sub.createdAt instanceof Date ? sub.createdAt : new Date(sub.createdAt as string),
+        // An anonymous answer's date is its WEEK, whatever the stored value says (owner, 2026-11-22).
+        date: form.anonymous ? anonymousAnswerWeekOf(stored) : stored,
       };
       if (!form.anonymous) {
         // A guest's answer is named by what the guest typed, when the form asked for it.
