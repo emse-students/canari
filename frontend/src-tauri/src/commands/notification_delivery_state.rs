@@ -112,8 +112,9 @@ pub(crate) fn notification_delivery_state(
             Ok(Some(state)) => Some(state),
             Ok(None) => {
                 // EXPECTED, said at info: the first snapshot is written asynchronously at launch, so a
-                // read in the first moments of a cold start finds none. The writer then fires the page's
-                // `canari:notification-state` event, which re-reads and reports - nothing is ordered by a clock.
+                // read in the first moments of a cold start finds none. The page does not rely on the
+                // writer's event reaching a listener that early: arming its reporter re-reads once
+                // after `register-device`, and later events re-read again - nothing is ordered by a clock.
                 log::info!("[NotifState] no snapshot yet - the first native write has not landed (the page is told when it does)");
                 None
             }

@@ -126,43 +126,67 @@ export async function notificationStateReport(): Promise<NotificationStateReport
 /** The page's event after the native side wrote a fresh snapshot (launch, foreground, a dialog closing). */
 export const NOTIFICATION_STATE_EVENT = 'canari:notification-state';
 
+/** Sends one report for the CURRENT account's device; replaced at every `register-device`. */
+type StateSender = (report: NotificationStateReport) => Promise<void>;
+
+let sender: StateSender | null = null;
 let lastReported: string | null = null;
 let removeWatch: (() => void) | null = null;
+
+/** Reads the snapshot once and sends it when it differs from what the server was last told. */
+async function reportIfChanged(): Promise<void> {
+  const send = sender;
+  if (!send) return;
+  const report = await notificationStateReport();
+  if (!report) return;
+  // The account may have switched or signed out while the snapshot was read: its sender is not ours.
+  if (send !== sender) return;
+  const key = JSON.stringify(report);
+  if (key === lastReported) return;
+  try {
+    await send(report);
+    if (send === sender) lastReported = key;
+    console.info('[Push] notification state changed - reported', report.permission);
+  } catch (err) {
+    console.warn('[Push] notification state change not reported - the next event retries', err);
+  }
+}
 
 /**
  * Sends the state to the server WHEN IT CHANGES - the daily count would otherwise read, until the
  * next unlock, a state the user already changed (first launch `not-asked`, then granted). Driven by
- * the native event that follows a fresh snapshot, never a timer. `seed` is what `register-device`
- * just sent, so the first event does not repeat it. A failed send is logged and left: the next event
- * or the next `register-device` carries the state again.
+ * the native event that follows a fresh snapshot, never a timer.
+ *
+ * Called at every `register-device` with THAT account's sender and `seed`, what the registration
+ * just carried: the sender is swapped, never captured once, so an account switch without a page
+ * reload reports for the new account's device and not the first one's (a 403 per foreground). The
+ * native event of a cold start fires before this runs, when no sender exists to receive it; so the
+ * arming itself re-reads once and compares with the seed, which is what makes that event not lost.
+ * A failed send is logged and left: the next event or the next `register-device` carries it again.
  */
-export function watchNotificationState(
-  send: (report: NotificationStateReport) => Promise<void>,
+export function armNotificationStateReport(
+  send: StateSender,
   seed?: NotificationStateReport
-): void {
-  if (seed) lastReported = JSON.stringify(seed);
-  if (removeWatch || typeof window === 'undefined') return;
-  const onEvent = () => {
-    void (async () => {
-      const report = await notificationStateReport();
-      if (!report) return;
-      const key = JSON.stringify(report);
-      if (key === lastReported) return;
-      try {
-        await send(report);
-        lastReported = key;
-        console.info('[Push] notification state changed - reported', report.permission);
-      } catch (err) {
-        console.warn('[Push] notification state change not reported - the next event retries', err);
-      }
-    })();
-  };
-  window.addEventListener(NOTIFICATION_STATE_EVENT, onEvent);
-  removeWatch = () => window.removeEventListener(NOTIFICATION_STATE_EVENT, onEvent);
+): Promise<void> {
+  sender = send;
+  lastReported = seed ? JSON.stringify(seed) : null;
+  if (!removeWatch && typeof window !== 'undefined') {
+    const onEvent = () => void reportIfChanged();
+    window.addEventListener(NOTIFICATION_STATE_EVENT, onEvent);
+    removeWatch = () => window.removeEventListener(NOTIFICATION_STATE_EVENT, onEvent);
+  }
+  return reportIfChanged();
+}
+
+/** Stops reporting for the account that is leaving: its token must not PATCH anyone else's device. */
+export function disarmNotificationStateReport(): void {
+  sender = null;
+  lastReported = null;
 }
 
 /** Test seam: forgets the watcher's memory. */
 export function resetNotificationStateWatchForTest(): void {
+  sender = null;
   lastReported = null;
   removeWatch?.();
   removeWatch = null;

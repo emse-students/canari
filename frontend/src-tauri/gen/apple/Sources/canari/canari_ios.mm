@@ -1834,10 +1834,9 @@ static void CanariWriteNotificationDeliveryState(void) {
         // dialog or a switch flipped in Settings reaches the server now (event, never a clock).
         dispatch_async(dispatch_get_main_queue(), ^{
           WKWebView *webView = CanariFindWebView();
-          if (webView == nil) {
-            NSLog(@"[CanariIOS] notification state event not published: no WebView yet");
-            return;
-          }
+          // No WebView on a cold launch is EXPECTED and silent: the page's reporter re-reads the
+          // snapshot itself once `register-device` has answered, so no event is owed to it then.
+          if (webView == nil) return;
           [webView evaluateJavaScript:@"window.dispatchEvent(new CustomEvent('canari:notification-state'));"
                     completionHandler:nil];
         });

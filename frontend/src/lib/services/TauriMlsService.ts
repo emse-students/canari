@@ -53,7 +53,11 @@ import {
   type GatewaySocketOpen,
 } from '$lib/mls-client/gatewaySocketOpen';
 import { getToken, signOutGeneration } from '$lib/stores/auth';
-import { notificationStateReport, watchNotificationState } from './notificationReport';
+import {
+  armNotificationStateReport,
+  disarmNotificationStateReport,
+  notificationStateReport,
+} from './notificationReport';
 import { pushOutcomeForReport, reconcilePushRegistration } from './PushNotificationService';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { toBase64, toHex, type MlsStateWriteLatch } from '$lib/utils/hex';
@@ -633,6 +637,7 @@ export class TauriMlsService extends BaseMlsService {
 
   /** Removes the page-lifecycle listeners this class registered, then the base teardown. */
   override destroy(): void {
+    disarmNotificationStateReport();
     if (this._pageHideHandler) {
       window.removeEventListener('pagehide', this._pageHideHandler);
       this._pageHideHandler = null;
@@ -1926,8 +1931,10 @@ export class TauriMlsService extends BaseMlsService {
     // every unlock and every key-package renewal, so a lost or never-written row is re-driven here.
     if (pushes) {
       reconcilePushRegistration(answer.pushRegistered);
-      // A state that changes between two unlocks reaches the server when the native side says so.
-      watchNotificationState(
+      // A state that changes between two unlocks reaches the server when the native side says so;
+      // this account's sender replaces any earlier one, and one re-read covers a cold-start event
+      // that fired before it existed.
+      void armNotificationStateReport(
         (report) =>
           this.delivery
             .updateDeviceMetadata(this.userId, this.deviceId, { notificationState: report })

@@ -9,7 +9,8 @@ import {
   NOTIFICATION_STATE_EVENT,
   notificationStateForReport,
   resetNotificationStateWatchForTest,
-  watchNotificationState,
+  armNotificationStateReport,
+  disarmNotificationStateReport,
   notificationStateReport,
   readNotificationDeliveryState,
   type AndroidDeliveryState,
@@ -137,7 +138,7 @@ describe('the state is re-reported when it changes, driven by the native event',
 
   it('sends on a change, not on the state already reported, and not twice for one state', async () => {
     const send = vi.fn().mockResolvedValue(undefined);
-    watchNotificationState(send, notificationStateForReport(ANDROID, true));
+    void armNotificationStateReport(send, notificationStateForReport(ANDROID, true));
     invoke.mockResolvedValue(ANDROID);
     window.dispatchEvent(new CustomEvent(NOTIFICATION_STATE_EVENT));
     await flush();
@@ -154,7 +155,7 @@ describe('the state is re-reported when it changes, driven by the native event',
 
   it('keeps the old state when the send fails, so the next event retries', async () => {
     const send = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue(undefined);
-    watchNotificationState(send, notificationStateForReport(ANDROID, true));
+    void armNotificationStateReport(send, notificationStateForReport(ANDROID, true));
     invoke.mockResolvedValue({ ...ANDROID, notificationsEnabled: false });
     window.dispatchEvent(new CustomEvent(NOTIFICATION_STATE_EVENT));
     await flush();
@@ -165,10 +166,44 @@ describe('the state is re-reported when it changes, driven by the native event',
 
   it('says nothing when there is no snapshot', async () => {
     const send = vi.fn();
-    watchNotificationState(send);
+    void armNotificationStateReport(send);
     invoke.mockResolvedValue(null);
     window.dispatchEvent(new CustomEvent(NOTIFICATION_STATE_EVENT));
     await flush();
     expect(send).not.toHaveBeenCalled();
+  });
+
+  it('reports for the new account after a switch, never for the first one', async () => {
+    const sendA = vi.fn().mockResolvedValue(undefined);
+    const sendB = vi.fn().mockResolvedValue(undefined);
+    invoke.mockResolvedValue(ANDROID);
+    await armNotificationStateReport(sendA, notificationStateForReport(ANDROID, true));
+    // Account B registers on the same page: its sender replaces A's.
+    await armNotificationStateReport(sendB, notificationStateForReport(ANDROID, true));
+    invoke.mockResolvedValue({ ...ANDROID, notificationsEnabled: false });
+    window.dispatchEvent(new CustomEvent(NOTIFICATION_STATE_EVENT));
+    await flush();
+    expect(sendA).not.toHaveBeenCalled();
+    expect(sendB).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops reporting once the account signs out', async () => {
+    const send = vi.fn().mockResolvedValue(undefined);
+    invoke.mockResolvedValue(ANDROID);
+    await armNotificationStateReport(send, notificationStateForReport(ANDROID, true));
+    disarmNotificationStateReport();
+    invoke.mockResolvedValue({ ...ANDROID, notificationsEnabled: false });
+    window.dispatchEvent(new CustomEvent(NOTIFICATION_STATE_EVENT));
+    await flush();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('arming re-reads once, so a cold-start event fired before it is not lost', async () => {
+    const send = vi.fn().mockResolvedValue(undefined);
+    invoke.mockResolvedValue({ ...ANDROID, notificationsEnabled: false });
+    // The seed was read before the snapshot landed (unknown); no event reaches a listener yet.
+    await armNotificationStateReport(send, undefined);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0][0]).toMatchObject({ enabled: false });
   });
 });
