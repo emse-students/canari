@@ -1,4 +1,8 @@
-import { handleSystemEvent } from './systemMessageHandler';
+import {
+  handleSystemEvent,
+  KEYLESS_HISTORY_ASK,
+  resetKeylessHistoryAsksForTests,
+} from './systemMessageHandler';
 import {
   awaitProbe,
   digestIdentity,
@@ -179,16 +183,17 @@ describe('a history ask is read only with its request id (D211)', () => {
   });
 });
 
-/** The keyless-ask lines said at ERROR under `tag` (every floor build keys its asks: a defect). */
+/** The keyless-ask lines said (once per sender, as a warning naming a below-floor build) under `tag`. */
 const keylessLine = (_ctx: ReturnType<typeof makeCtx>, tag: string) =>
   errorSpy.mock.calls
     .map((c) => String(c[0]))
-    .filter((l) => l.startsWith(`[${tag}] No answer key`));
+    .filter((l) => l.startsWith(`[${tag}] ${KEYLESS_HISTORY_ASK}`));
 let errorSpy: { mock: { calls: unknown[][] }; mockRestore: () => void };
 
 describe('a history ask is read only with its answer key (option B, the 1.7.0 floor)', () => {
   beforeEach(() => {
-    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    resetKeylessHistoryAsksForTests();
+    errorSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
   afterEach(() => errorSpy.mockRestore());
 
@@ -206,6 +211,13 @@ describe('a history ask is read only with its answer key (option B, the 1.7.0 fl
     expect(pullFromOverheardDigest).not.toHaveBeenCalled();
     expect(answerHistoryDigest).not.toHaveBeenCalled();
     await expect(awaitProbe(GROUP, PEER, 0)).resolves.toBeNull();
+  });
+
+  it('says a repeated keyless ask from one sender ONCE, and a new sender again', async () => {
+    const ctx = makeCtx();
+    await handleSystemEvent('history_digest', keyless(DIGEST), ctx as any);
+    await handleSystemEvent('history_digest', keyless(DIGEST), ctx as any);
+    expect(keylessLine(ctx, 'HISTORY_DIGEST')).toHaveLength(1);
   });
 
   it('a pull with no key is refused: nothing is sent, sealed or in clear', async () => {

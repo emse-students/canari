@@ -1532,6 +1532,30 @@
   // scrolled, and a conversation switch must not carry the last thread's anchor into the next.
   let anchorConversationId: string | null = null;
   let anchorLoggedMissing = false;
+  /**
+   * Re-measures the reader's position and ONLY THEN judges it: the anchor is an id, and the id of a
+   * row that was swapped (a local id for the server's) or deleted is gone until the measure lands.
+   * The old warning ran on the SAME tick as the thread change - before the measure it says is
+   * missing - so it accused every swap (owner's log, 2026-11-22, 3 lines) while the pill kept
+   * counting correctly from the nearest row. It now fires only if the id is STILL gone after the
+   * re-measure, which means the measure itself failed to find a row.
+   */
+  function remeasureAnchor() {
+    void tick().then(() =>
+      requestAnimationFrame(() => {
+        lastVisibleAnchor = measureLastVisibleAnchor();
+        const resolved = resolveAnchor(
+          messageRows.map((msg) => msg.id),
+          lastVisibleAnchor
+        );
+        if (resolved.exact || anchorLoggedMissing) return;
+        anchorLoggedMissing = true;
+        console.warn(
+          `[ChatArea] unread-pill anchor ${lastVisibleAnchor?.id.slice(0, 8)} is not in the thread right after a re-measure - counting from row ${resolved.index}`
+        );
+      })
+    );
+  }
   $effect(() => {
     void messageRows;
     void visibleMessageGroups;
@@ -1543,23 +1567,8 @@
         lastVisibleAnchor = null;
       }
       if (isNearBottom) return;
-      void tick().then(() =>
-        requestAnimationFrame(() => (lastVisibleAnchor = measureLastVisibleAnchor()))
-      );
+      remeasureAnchor();
     });
-  });
-  // A vanished anchor is resolved to the nearest row, which is right but means the re-measure above
-  // has not landed yet; if it ever does not land, say so once instead of counting from a guess.
-  $effect(() => {
-    const resolved = resolveAnchor(
-      messageRows.map((msg) => msg.id),
-      lastVisibleAnchor
-    );
-    if (resolved.exact || anchorLoggedMissing) return;
-    anchorLoggedMissing = true;
-    console.warn(
-      `[ChatArea] unread-pill anchor ${lastVisibleAnchor?.id.slice(0, 8)} left the thread - counting from row ${resolved.index}`
-    );
   });
   // The page holding this composer unmounts on any route change (/chat <-> /communities, a profile
   // link, a notification's landing) while the drafts outlive it in `useMessaging`: an edit left open

@@ -2,6 +2,7 @@ import { isGraineReady, requireGraineRuntime, forgetGraineSeedCache } from './ru
 import { forgetAskedSession } from './repair';
 import { forgetGraineMirroredSessions } from './graineMirror';
 import { channelService } from '$lib/services/ChannelService';
+import { onAppForegroundChange } from '$lib/utils/appForeground';
 
 /**
  * Drops the Graine seeds whose messages the server no longer has.
@@ -109,55 +110,113 @@ export async function sweepExpiredGraineSeeds(): Promise<number> {
   }
   if (held.length === 0) return 0;
 
-  const live = new Set<string>();
-  let retentionDays = 0;
+  // PROGRESS IS DURABLE, NOT HELD IN A VARIABLE. Each chunk is judged and its expired seeds dropped
+  // before the next is asked: a chunk the server answered is a fact about those sessions alone, and
+  // the rows it condemned are gone from the store, so the NEXT sweep starts from a shorter list. A
+  // sweep abandoned at a late chunk used to throw away the answers of the earlier ones - and a device
+  // holding 1,100 seeds on a flaky link never shrank at all.
+  let dropped = 0;
+  let liveCount = 0;
   for (let i = 0; i < held.length; i += LIVE_QUERY_CHUNK) {
-    const chunk = held.slice(i, i + LIVE_QUERY_CHUNK).map((s) => s.sessionId);
+    const chunkRows = held.slice(i, i + LIVE_QUERY_CHUNK);
     let answer: { live: string[]; retentionDays: number };
     try {
-      answer = await channelService.liveGraineSessions(chunk);
+      answer = await channelService.liveGraineSessions(chunkRows.map((s) => s.sessionId));
     } catch (e) {
-      // A chunk that never got an answer must not be swept: the rest of this run would read its
-      // sessions as unnamed, which is precisely the "server said nothing" that means nothing.
+      // A chunk that never got an answer is not swept (silence means nothing), but the chunks that
+      // did answer have already been acted on, and the sweep is OWED until one run completes.
+      sweepOwed = true;
       console.warn(
-        `[GRAINE] retention sweep abandoned after ${i} of ${held.length} session(s): ${String(e)}`
+        `[GRAINE] retention sweep interrupted after ${i} of ${held.length} session(s) (${dropped} dropped so far), resumes on the next foreground or connection: ${String(e)}`
       );
-      return 0;
+      return dropped;
     }
-    for (const sessionId of answer.live) live.add(sessionId);
-    retentionDays = answer.retentionDays;
+    // A window below the floor (zero and negative included) would make every session look old
+    // enough, and the sweep would delete the seed of every salon this device has not yet posted in.
+    const windowDays = boundGraineRetentionDays(answer.retentionDays);
+    if (windowDays === null) {
+      sweepOwed = true;
+      return dropped;
+    }
+    const live = new Set(answer.live);
+    liveCount += live.size;
+    const cutoff = Date.now() - windowDays * DAY_MS;
+    const sessionIds = chunkRows
+      .filter((s) => !live.has(s.sessionId) && s.createdAt < cutoff)
+      .map((s) => s.sessionId);
+    if (sessionIds.length === 0) continue;
+
+    // Three stores, and none stands in for the others: the durable rows are what the app READS, the
+    // native mirror is what a background push reads, and the in-memory cache is what this tab answers
+    // from until it is reloaded. Leaving any one of them is a sweep that only looks complete.
+    try {
+      dropped += await storage.deleteGraineSessions(sessionIds);
+    } catch (e) {
+      sweepOwed = true;
+      console.warn(
+        `[GRAINE] retention sweep failed to drop ${sessionIds.length} expired seed(s): ${String(e)}`
+      );
+      return dropped;
+    }
+    forgetGraineSeedCache(sessionIds);
+    for (const sessionId of sessionIds) forgetAskedSession(sessionId, 'retention');
+    await forgetGraineMirroredSessions(sessionIds, userId);
   }
 
-  // A window below the floor (zero and negative included) would make every session look old
-  // enough, and the sweep would delete the seed of every salon this device has not yet posted in.
-  const windowDays = boundGraineRetentionDays(retentionDays);
-  if (windowDays === null) return 0;
-
-  const cutoff = Date.now() - windowDays * DAY_MS;
-  const doomed = held.filter((s) => !live.has(s.sessionId) && s.createdAt < cutoff);
-  if (doomed.length === 0) return 0;
-
-  const sessionIds = doomed.map((s) => s.sessionId);
-
-  // Three stores, and none stands in for the others: the durable rows are what the app READS, the
-  // native mirror is what a background push reads, and the in-memory cache is what this tab answers
-  // from until it is reloaded. Leaving any one of them is a sweep that only looks complete.
-  let dropped = 0;
-  try {
-    dropped = await storage.deleteGraineSessions(sessionIds);
-  } catch (e) {
-    console.warn(
-      `[GRAINE] retention sweep failed to drop ${sessionIds.length} expired seed(s): ${String(e)}`
-    );
-    return 0;
-  }
-
-  forgetGraineSeedCache(sessionIds);
-  for (const sessionId of sessionIds) forgetAskedSession(sessionId, 'retention');
-  await forgetGraineMirroredSessions(sessionIds, userId);
-
+  sweepOwed = false;
   console.info(
-    `[GRAINE] retention sweep dropped ${dropped} seed(s) older than ${windowDays} days whose messages are gone (held=${held.length}, live=${live.size})`
+    `[GRAINE] retention sweep dropped ${dropped} seed(s) whose messages are gone (held=${held.length}, live=${liveCount})`
   );
   return dropped;
+}
+
+/**
+ * True while a sweep started on this boot stopped before the last chunk. Module state is enough: it
+ * is not a decision about the seeds (the store is the truth about those), only about whether to
+ * ASK again, and a reload starts a fresh sweep anyway.
+ */
+let sweepOwed = false;
+let sweepRunning = false;
+
+/**
+ * Runs the sweep when the previous one left work owed, one at a time. Called on every foreground
+ * edge and every connection regained, so the retry is driven by the events that make a failed
+ * request likely to succeed - not by a timer.
+ */
+export async function resumeGraineSweepIfOwed(): Promise<void> {
+  if (!sweepOwed || sweepRunning || !isGraineReady()) return;
+  sweepRunning = true;
+  try {
+    await sweepExpiredGraineSeeds();
+  } catch (e) {
+    console.warn(`[GRAINE] retention sweep resume threw: ${String(e)}`);
+  } finally {
+    sweepRunning = false;
+  }
+}
+
+let resumeInstalled = false;
+
+/**
+ * Wires {@link resumeGraineSweepIfOwed} to the native foreground edge, the page becoming visible and
+ * the connection coming back. Idempotent; the handlers are inert while nothing is owed or no Graine
+ * runtime is wired, so they need no teardown on logout.
+ */
+export function installGraineSweepResume(): void {
+  if (resumeInstalled || typeof window === 'undefined') return;
+  resumeInstalled = true;
+  const resume = () => void resumeGraineSweepIfOwed();
+  onAppForegroundChange((foreground) => {
+    if (foreground) resume();
+  });
+  window.addEventListener('online', resume);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') resume();
+  });
+}
+
+/** Test seam: forgets the owed flag. */
+export function resetGraineSweepOwedForTests(): void {
+  sweepOwed = false;
+  sweepRunning = false;
 }

@@ -147,7 +147,7 @@ import { graineRepairHoldObserver, setGraineRuntime } from '$lib/utils/graine/ru
 import { clearParkedAsks } from '$lib/utils/graine/parkedAsks';
 import { handleDistributionFrame } from '$lib/utils/graine/frameHandler';
 import { distributionGapListener } from '$lib/utils/graine/distributionGroup';
-import { sweepExpiredGraineSeeds } from '$lib/utils/graine/retention';
+import { installGraineSweepResume, sweepExpiredGraineSeeds } from '$lib/utils/graine/retention';
 import {
   unregisterMlsStatePersister,
   activeMlsStatePersister,
@@ -2879,6 +2879,7 @@ export async function loginImpl(
     // question twice and race each other's deletes. Deliberately after the startup bench is closed
     // - it is maintenance, not startup, and nothing waits on it. Its own failures are logged and
     // swallowed inside; the catch here only exists because this call site cannot await it.
+    installGraineSweepResume();
     sweepExpiredGraineSeeds().catch((e: unknown) => {
       console.warn(`[GRAINE] retention sweep threw: ${String(e)}`);
     });
