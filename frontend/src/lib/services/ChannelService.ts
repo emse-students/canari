@@ -978,8 +978,8 @@ export class ChannelService {
 
   /**
    * POSTs one sealed salon row. Since migration 090 the answer carries back the `clientMessageId` it
-   * was posted under, which is how a client learns a repeat is answered with the stored row
-   * (`salonRepeatProof.ts`).
+   * was posted under, and a repeat of that id is answered with the stored row (`channelCrypto.ts`
+   * accuses an answer that does not echo it).
    */
   async sendMessage(
     channelId: string,

@@ -143,6 +143,8 @@ maybe('push-coverage predicate against PostgreSQL', () => {
     // COUNTED browser-only: its only installed app is a desktop one, which no push reaches.
     await phone('u14', 'web-u14');
     await phone('u14', 'tauri-u14', { os: 'windows' });
+    // ACCUSED, never counted: an id of neither known prefix - a native build the count cannot see.
+    await phone('u15', 'native-u15');
   });
 
   afterAll(async () => {
@@ -174,7 +176,8 @@ maybe('push-coverage predicate against PostgreSQL', () => {
         outcomes: ['unstated'],
       },
     ]);
-    expect(logger.warn).toHaveBeenCalledTimes(3);
+    expect(logger.warn).toHaveBeenCalledTimes(4);
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('1 phone-OS device(s)'));
     expect(await q(`SELECT count(*)::int AS n FROM push_token`)).toEqual([{ n: 3 }]);
     expect(logger.log).toHaveBeenCalledWith(
       expect.stringMatching(/only through a mobile browser.*: 2$/)

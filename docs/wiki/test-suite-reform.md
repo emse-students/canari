@@ -771,3 +771,53 @@ class again: eight parallel copies of the file all passed, the only heavy cases 
 a 120 s deadline and took 12-24 s at eight copies), and no other case went past 0.7 s. The one cheap lever taken: the
 "FLOOD by one sender" case put 20 entries against a bound of three; 8 proves the same eviction with a third of the
 real seals. The two big floods stay at full size, because their size IS the bound they prove.
+
+**Sixth reading, 2026-11-22: the cause is CONCURRENT RUNS, not the pool, and it is now bounded.** Eleven to
+thirteen files a run were timing out in the pre-push hook (`appVersionCheck.checkpointSkip` and
+`verdictSettled`, `ChatArea.scrollAnchor`, `wallTime`, `liveStanding`...), each green alone. Measured on the
+16-core, 31 GB workstation, with a per-test probe (a setup file recording each test's wall time and its
+worker's `process.cpuUsage()`; wall minus CPU is time the worker was not computing):
+
+| Question | Measurement | Verdict |
+| --- | --- | --- |
+| Where does in-test time go? | Full suite, 21,134 tests: 885 s inside tests, of which **253 s CPU and 632 s not running**. Of the 6 timeouts, all were the first or second test of a file, CPU 16-218 ms | waiting, not computing |
+| Is it CI? | 65 failed `ci.yml` runs read: **0** `Test timed out` lines | local only |
+| Is it vitest's pool (`availableParallelism() - 1` = 15)? | 79 slow files, alternated: 15 workers 0 and 2 failures, 8 workers 0, 4 workers 1 and 3 (and slower: 306-331 s against 161-186 s) | **refuted** |
+| Is it the machine? | Run queue **69-92 threads** on 16 cores, CPU 100 %, paging 4,000-27,000 pages/s; **five `local-ci.sh push` verifying at once**, three or four of them in `frontend-test-related`, each vitest with 15 workers | yes |
+| Reproduced? | The same 79 files, three copies AT ONCE (three pushes): **23 and 25 failures** per round, `wallTime`, `scrollAnchor` and `liveStanding` among them; the same three ONE AFTER ANOTHER: **1 and 7** | the lever |
+
+**Fixed in the hooks: one machine-wide slot for the checks that use every core** (`frontend-generated`,
+`frontend-lint`, `frontend-test`; `local-ci.sh` `uses_every_core`). A second push's heavy check waits for the
+first and says whom it waits for. **There is no queue**: on release every waiter tries to bind and the first
+wins, so a push can be overtaken at each heavy check; the guarantee is one holder at a time, which is what
+bounds the load. **No clock ends a hold**: a hung holder keeps the slot until it exits, so the waiter prints
+its pid and start time and the way out, `kill <pid>`, or `Stop-Process -Id <pid>` on Windows (the system then frees the address). A heavy check
+must never run another heavy check through `run_check`: it would wait for itself. The slot assumes one
+trust domain (one user's sessions): anything that can listen on the address can hold it. The slot is a listening socket
+(`.github/scripts/machine-slot.mjs`: a named pipe on Windows, an abstract socket on Linux): the kernel gives the
+address to one listener and takes it back when that process dies, so there is no stale lock and no clock; a
+waiter wakes on the holder's connection CLOSING. The commit tier does not take it (a few files, and a commit
+must not queue behind a suite). Guarded by `.github/scripts/tests/machine-slot.test.sh` (no grant while another holds, and a
+holder killed outright releasing it). **What it costs:** three serialized runs took 417-505 s against 223-230 s
+concurrently - but each concurrent run failed 6-9 tests, so its push was refused and ran again; the
+serialized total is the first one that is true. **What it does not cover:** load that is not a hook - another
+session's `bun run check`, an ad-hoc `vitest run`, Defender (2 cores while measured). The 7 failures of the
+second serialized round are that load; nothing in a test can absorb it.
+
+**Fixed in the tests: work that sat inside a deadline for no reason.**
+- `appVersionCheck.checkpointSkip` slept **2.4 s for real** in its last test (the failing probe walks
+  `fetchServerAppVersionReliable`'s ladder: two 1.2 s pauses) and paid its first import (2 s, waiting on the
+  runner's main process) in its first; `verdictSettled` the same import. The ladder now runs on faked
+  `setTimeout`, and the import is warmed in a `beforeAll`, as `presencePost` already did. In-test time
+  2367 / 28 / 29 / 2499 ms became 26 / 26 / 21 / 39 ms.
+- `nativeLogContent` walked and parsed every native source from disk TWICE, inside two tests (560 and 1341 ms
+  quiet, 5-9 s under load). The scan now runs once at collection, which no deadline covers: 0 ms in-test.
+
+**Not fixed, and why.** `ChatArea.scrollAnchor` is real CPU (0.8-1.3 s per test mounting a 61-row pane twice;
+the modelled geometry is under 85 ms of it, counted), so it fails only when the machine runs it five times
+slower - the slot is its lever. The other idle-dominated first tests (`MessageMediaRenderer.reel`,
+`useMessaging.reelTakeTo`, `user.profileCache`, `versionProbeOnUnlockPath`...) are the import-in-a-test class
+of the readings above; the probe names them, and each takes the same warm-up when it is next touched.
+**The probe, to re-measure:** a setup file that writes `{wall, cpu}` per test from `beforeEach`/`afterEach`,
+capturing `performance.now` before any test can fake it (faked timers otherwise report the fake clock),
+joined with the JSON reporter's durations.

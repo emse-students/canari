@@ -194,7 +194,7 @@ export function mergeAnnouncedMessage(
  */
 export function salonEchoSettleable(
   msg: Pick<ChatMessage, 'id' | 'status' | 'awaitingServerId'>,
-  waitOf: (messageId: string) => 'network' | 'server' | undefined
+  waitOf: (messageId: string) => 'network' | 'server' | 'turn' | undefined
 ): boolean {
   if (!msg.awaitingServerId) return false;
   if (msg.status === 'error' || msg.status === 'unconfirmed') return true;

@@ -59,6 +59,14 @@ object PushRegistrationEnd {
             return false
         }
         Log.i(TAG, "endForSignOut: erasing the push secret and deleting the FCM token")
+        // THE ACCOUNT'S BANNERS GO FIRST: opening the app no longer sweeps them, so what the account
+        // showed - message text included - would stand for the next account. A failure here must not
+        // keep the token deletion from running, and is accused.
+        try {
+            CanariFirebaseMessagingService.clearAccountNotifications(context)
+        } catch (e: Exception) {
+            Log.e(TAG, "endForSignOut: the account's notifications were NOT all removed: " + e.javaClass.simpleName) // log-safe: class name of a system call failure
+        }
         eraseSecret(context)
         forgetTokenMirror(context)
         return completeOwedDeletion(context)

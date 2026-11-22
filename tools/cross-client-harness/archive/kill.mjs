@@ -18,9 +18,9 @@ import { evaluate } from '../cdp.mjs';
 import { send } from '../chat.mjs';
 import { armFault } from '../fault.mjs';
 import { closeOverlays, openGroup } from '../groupnav.mjs';
+import { awaitCookieCommitted } from '../cookiejar.mjs';
 import { checkInvariant, receivedOn } from '../invariant.mjs';
-import { KILL3_WINDOWS, KILL_BLOCKED, KILL_ROWS, UNSENT_LABELS, WINDOWS, kill3Outcome, kill3WindowOf, revivedAccusations, kill3WindowsOwn, cookieCommitWaitMs, delayOf, killRunsOwn, panelMissing, removalBoundOwn, runCommits, runOutcome, stageKillsOwn, strayCommits, strayCommitsOwn, welcomeLines, welcomeOnceOwn, windowOf } from '../killrows.mjs';
-import { SITE } from '../site.mjs';
+import { KILL3_WINDOWS, KILL_BLOCKED, KILL_ROWS, UNSENT_LABELS, WINDOWS, kill3Outcome, kill3WindowOf, revivedAccusations, kill3WindowsOwn, delayOf, killRunsOwn, panelMissing, removalBoundOwn, runCommits, runOutcome, stageKillsOwn, strayCommits, strayCommitsOwn, welcomeLines, welcomeOnceOwn, windowOf } from '../killrows.mjs';
 import { activeSeats, onRoster } from '../ccrows.mjs';
 import {
   COMMIT_POST,
@@ -138,26 +138,6 @@ async function trafficBothWays(c, seat, other, i) {
 }
 
 /**
- * Waits until the browser's newest refresh cookie is committed to the profile's cookie file, so a
- * browser kill relaunches on the CURRENT token (`cookieCommitWaitMs`). Returns how long it waited;
- * throws when the browser holds no refresh cookie, a premise the row cannot play without.
- */
-async function awaitCookieCommitted(cx, label) {
-  const host = new URL(SITE).hostname;
-  let waitedMs = 0;
-  for (;;) {
-    const { cookies } = await cx.send('Network.getAllCookies');
-    const refresh = cookies.find((c) => c.name === 'canari_refresh' && c.domain === host);
-    const waitMs = cookieCommitWaitMs({ expiresSec: refresh?.expires ?? null, nowMs: Date.now() });
-    if (waitMs === null) throw new Error(`${label}: no refresh cookie for ${host} before the kill - the seat is not signed in`);
-    if (waitMs === 0) return waitedMs;
-    console.log(`[${id}] ${label}: waiting ${waitMs} ms for the newest refresh cookie to reach disk`);
-    await sleep(waitMs);
-    waitedMs += waitMs;
-  }
-}
-
-/**
  * One run: a refresh commit held on its side of the server, the kill after the drawn delay (or at the
  * fraction of the measured window), the revival, the outcome.
  */
@@ -166,7 +146,7 @@ async function killRun(c, i, { window = null, delayMs = 0, fraction = null, wind
   const seat = seats.seat[killer];
   const other = seats.seat.W2;
   // Before the commit is held, never after: the drawn delay places the kill, and nothing may stretch it.
-  const cookieWaitMs = spec.kill === 'browser' ? await awaitCookieCommitted(seat.cx, `${killer}#${i + 1}`) : null;
+  const cookieWaitMs = spec.kill === 'browser' ? await awaitCookieCommitted(seat.cx, `${killer}#${i + 1}`, id) : null;
   // THE WINDOW OPENS BEFORE THE EPOCH IS READ, and `strayCommits` sorts what landed in between by the
   // epoch it names - the reverse order counted a commit the epoch read had already seen (KILL-2 run 2).
   const runStart = now();
@@ -215,7 +195,7 @@ async function killRun(c, i, { window = null, delayMs = 0, fraction = null, wind
 async function kill3Run(c, i, { window, delayMs, prevEnd }) {
   const seat = seats.seat.W1;
   const other = seats.seat.W2;
-  const cookieWaitMs = await awaitCookieCommitted(seat.cx, `W1#${i + 1}`);
+  const cookieWaitMs = await awaitCookieCommitted(seat.cx, `W1#${i + 1}`, id);
   const runStart = now();
   const fromEpoch = serverView(c.group.id).activeEpoch;
   const strays = strayCommits(commitSequence(commitLines(c.group.id, prevEnd ?? runStart)), fromEpoch);

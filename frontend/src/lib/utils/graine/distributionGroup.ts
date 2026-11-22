@@ -375,6 +375,14 @@ async function republishStaleBase(
   );
 }
 
+/** The reason each declined private salon was last said to be declined. */
+const declinedSalons = new Map<string, string>();
+
+/** Forgets which declined salons were said: they are salons of the account that logs out. */
+export function resetDeclinedSalons(): void {
+  declinedSalons.clear();
+}
+
 /**
  * Enters `channelId`'s own distribution group when it is a PRIVATE salon, and says so when it does
  * not - the one way a salon is entered, from all three moments that reach it.
@@ -395,8 +403,9 @@ async function republishStaleBase(
  * WP-REGRANT-2's peer held a stale tree for a salon it was entitled to, was reloaded, and then put
  * no question to the server for 97 seconds - and nothing said whether the walk had skipped that
  * salon or never reached it. The two readings are opposite (a wrong `viewerHasAccess` against a walk
- * that did not run), and the line below is what separates them. It is emitted for every declined
- * private salon, from every moment, which is what makes its ABSENCE mean "the walk did not run".
+ * that did not run), and the line below is what separates them. It is emitted the first time each
+ * declined private salon is met, from every moment, which is what makes its ABSENCE mean "the walk did
+ * not reach it" (repeats are not said: see `declinedSalons`).
  *
  * @returns true when this device holds the salon's group afterwards; false when it was not entered,
  *   for any of the reasons named in the log.
@@ -421,6 +430,8 @@ export async function enterPrivateSalonGroup(
   if (!opts.isPrivate) return false;
 
   if (opts.viewerHasAccess && opts.ensureMls) {
+    // Access (re)gained: forget a past refusal, so losing it again is said again.
+    declinedSalons.delete(channelId);
     const mls = await opts.ensureMls();
     return ensureDistributionGroupFor(
       mls,
@@ -430,11 +441,19 @@ export async function enterPrivateSalonGroup(
     );
   }
 
+  // SAID ONCE PER SALON AND REASON, NOT ON EVERY WALK (owner's log, 2026-11-22: 129 times). Nothing
+  // is re-asked here - `viewerHasAccess` is the answer the workspace listing already carries, and the
+  // walk runs on every resume - so repeating the line told the reader nothing the first one had not.
+  // What the line exists for survives: it is emitted the first time each declined salon is met, so a
+  // salon with NO line was never reached; and a salon whose access is regained and lost again says
+  // so again (`declinedSalons` is cleared on entry).
+  const reason = opts.ensureMls
+    ? 'the server says this viewer has no access to it, so its GroupInfo would be refused'
+    : 'no MLS client on this load';
+  if (declinedSalons.get(channelId) === reason) return false;
+  declinedSalons.set(channelId, reason);
   opts.log(
-    `[GRAINE] private salon ${channelId.slice(0, 8)} of ${workspaceId.slice(0, 8)} not entered: ` +
-      (opts.ensureMls
-        ? 'the server says this viewer has no access to it, so its GroupInfo would be refused'
-        : 'no MLS client on this load')
+    `[GRAINE] private salon ${channelId.slice(0, 8)} of ${workspaceId.slice(0, 8)} not entered: ${reason} (said once until that changes)`
   );
   return false;
 }

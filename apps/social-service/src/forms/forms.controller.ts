@@ -23,6 +23,11 @@ import { CLIENT_VERSION_HEADER, clientVersionOf } from '../common/client-version
 import { Throttle } from '@nestjs/throttler';
 import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
 
+/** Most forms one `GET /forms/summaries` may name: a feed page holds fewer. */
+export const FORM_SUMMARIES_MAX = 50;
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** `confirm-payment` calls allowed per user and submission per minute (the return poll is 10). */
 export const CONFIRM_PAYMENT_PER_MINUTE = 12;
 import {
@@ -83,6 +88,40 @@ export class FormsController {
   @Get()
   list(@Headers('x-user-id') xUserId: string) {
     return this.service.list(xUserId);
+  }
+
+  /**
+   * The cards of the forms a feed page attaches, in ONE request (`?ids=a,b,c`, at most
+   * {@link FORM_SUMMARIES_MAX}): replaces a `GET :id` and a `GET :id/check` per form. Declared
+   * before `:id` so the literal wins. A form the reader may not read is absent from the answer.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get('summaries')
+  async summaries(
+    @Query('ids') ids: unknown,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    // `?ids=a&ids=b` parses to an array: a malformed request is a 400, never a TypeError's 500.
+    if (typeof ids !== 'string')
+      throw new BadRequestException(
+        `ids must be 1 to ${FORM_SUMMARIES_MAX} comma-separated form ids`
+      );
+    const list = ids.split(',').filter(Boolean);
+    if (
+      list.length === 0 ||
+      list.length > FORM_SUMMARIES_MAX ||
+      !list.every((i) => UUID_RE.test(i))
+    )
+      throw new BadRequestException(
+        `ids must be 1 to ${FORM_SUMMARIES_MAX} comma-separated form ids`
+      );
+    return {
+      forms: await this.service.summaries(list, {
+        userId: xUserId,
+        isGlobalAdmin: ga === 'true',
+      }),
+    };
   }
 
   /**
@@ -467,6 +506,22 @@ export class FormsController {
     @Body() dto: EditAnswerDto
   ) {
     return this.service.editAnswer(id, submissionId, xUserId, dto.answers);
+  }
+
+  /**
+   * How many answers of an anonymous form wait for their batch (`anonymous-answer-batches.ts`), and
+   * the batch size, so the responses screen can say why they are not listed yet. Requires form owner
+   * or MANAGE_FORMS flag, like the answers themselves.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get(':id/held-answers')
+  async getHeldAnswers(
+    @Param('id') id: string,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    await this.service.assertFormManager(id, xUserId, ga === 'true');
+    return this.service.heldAnswers(id);
   }
 
   /** Returns all submissions for the specified form. Requires form owner or MANAGE_FORMS flag. */

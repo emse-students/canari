@@ -186,7 +186,7 @@ scheduled; an action that throws does not strand the ones behind it (`WakeOrderT
 clock as a recorder fired by hand, so no test asserts a wall clock).
 
 The one "could not be loaded" notification is cancelled by id when the app comes to the foreground
-(`cancelAllMessageNotifications`), and is not counted as an unread conversation. Its id, 9995, sits
+(`retireTakenOverNotifications`), and is not counted as an unread conversation. Its id, 9995, sits
 with every other fixed notification id in `FixedNotifIds`, which the conversation-id counter
 (`getStableNotifId`, from 1000, only growing) now steps over, so no conversation can be handed it.
 The server writes `[PUSH_WAKE] served|gone` per fetch, so **sends with `mode=wake` minus fetches

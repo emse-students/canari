@@ -142,8 +142,10 @@ export function clearUpload(messageId: string): void {
  * this is not a phase of {@link UploadView}: the bubble's pending label reads it, and nothing else.
  * Written by the outbox for a DM or group text and by `messaging.ts` for a salon text; dropped with
  * the message's view ({@link clearUpload}), by any view written over it, and by a reconnect.
+ * `turn`: a salon text waiting behind an earlier one of its salon that is not sent yet
+ * (`salonSendLane.ts`) - it is queued, not refused, and goes when that one has gone.
  */
-export type TextWait = 'network' | 'server';
+export type TextWait = 'network' | 'server' | 'turn';
 
 const textWaits = new SvelteMap<string, TextWait>();
 

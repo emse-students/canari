@@ -10,6 +10,8 @@ import { Submission } from './entities/submission.entity';
 import { FormReminder } from './entities/form-reminder.entity';
 import { OpeningReminder } from '../openings/entities/opening-reminder.entity';
 import { FormRespondent } from './entities/form-respondent.entity';
+import { FormAnswerHeld } from './entities/form-answer-held.entity';
+import { FormAnonymousTailReleased } from './entities/form-anonymous-tail-released.entity';
 import { FormFile } from './entities/form-file.entity';
 import { FormItemImage } from './entities/form-item-image.entity';
 import { FormItemImagesService } from './form-item-images.service';
@@ -17,6 +19,7 @@ import { FormFilesService } from './form-files.service';
 import { FormOrganiserAlertService } from './organiser-alert.service';
 import { FormFileRetentionScheduler } from './form-file-retention.scheduler';
 import { StaleOpenFormScheduler } from './stale-open-form.scheduler';
+import { AnonymousAnswerReleaseScheduler } from './anonymous-answer-release.scheduler';
 import { AssociationsModule } from '../associations/associations.module';
 import { FormReminderScheduler } from './forms-reminder.scheduler';
 import { PushService } from '../push/push.service';
@@ -39,6 +42,9 @@ import { LydiaReconciliationScheduler } from './lydia-reconciliation.scheduler';
       FormReminder,
       OpeningReminder,
       FormRespondent,
+      // An anonymous answer waiting for its batch (migration 178).
+      FormAnswerHeld,
+      FormAnonymousTailReleased,
       FormFile,
       FormItemImage,
       // The boutique attempts the Lydia reconciliation reads (`lydia-reconciliation.service.ts`).
@@ -61,6 +67,7 @@ import { LydiaReconciliationScheduler } from './lydia-reconciliation.scheduler';
     FormReminderScheduler,
     FormFileRetentionScheduler,
     StaleOpenFormScheduler,
+    AnonymousAnswerReleaseScheduler,
     LydiaReconciliationService,
     LydiaReconciliationScheduler,
     PushService,

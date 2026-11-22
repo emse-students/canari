@@ -127,6 +127,8 @@ export interface GuestSubmitReply {
 export function toGuestSubmitReply(result: {
   /** Read by nobody here: named so every shape `submit` answers is one this accepts. */
   submissionId?: string;
+  /** An anonymous answer held for its batch (`anonymous-answer-batches.ts`): a free answer here. */
+  held?: boolean;
   checkoutUrl?: string;
   cashPayment?: boolean;
   reference?: string;

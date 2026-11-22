@@ -6,12 +6,17 @@
   import { onMount } from 'svelte';
   let {
     src,
+    seekAnywhere = false,
     onVideo,
-  }: { src: string; onVideo?: (video: HTMLVideoElement) => (() => void) | void } = $props();
+  }: {
+    src: string;
+    seekAnywhere?: boolean;
+    onVideo?: (video: HTMLVideoElement) => (() => void) | void;
+  } = $props();
   let el = $state<HTMLVideoElement | null>(null);
   onMount(() => {
     if (el && onVideo) return onVideo(el) ?? undefined;
   });
 </script>
 
-<video bind:this={el} data-video-player-stub={src}></video>
+<video bind:this={el} data-video-player-stub={src} data-seek-anywhere={seekAnywhere}></video>

@@ -29,7 +29,7 @@ pub enum Error {
     #[error("the phone's gallery exists only on Android and iOS")]
     Unsupported,
     #[cfg(not(target_os = "android"))]
-    #[error("the save dialog and the notification conversation shortcuts exist only on Android")]
+    #[error("the save dialog exists only on Android")]
     AndroidOnly,
 }
 
