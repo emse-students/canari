@@ -497,6 +497,49 @@ maybe('bell rows bound to something other than a post (PostgreSQL)', () => {
     expect(await served('fo')).toEqual(['form_paid_over_capacity']);
   });
 
+  it('the question put to a form left open is served to the MANAGE_FORMS holders while it waits, and leaves the bell once answered or when its reader stops managing', async () => {
+    const servedTo180 = async (reader: string) =>
+      (await bell.getNotifications(reader, 50, '1.8.0')).map((n) => n.type);
+    const ASKED = '2026-11-21T09:30:00.000Z';
+    // The test before this one took MANAGE_FORMS from `fm`: give it back, and take it again at the end.
+    await setFlags(O, 'fm', F.MANAGE_FORMS);
+    // The rows name the question they were written for (`meta.askedAt`). The form's creator `fo`
+    // holds no MANAGE_FORMS: an association's form is managed by its flag holders alone.
+    await row('fo', 'form_stale_open', FORM, { askedAt: ASKED });
+    await row('fm', 'form_stale_open', FORM, { askedAt: ASKED });
+    // Not asked yet (no stamp): nothing to answer, so nothing served.
+    expect(await servedTo180('fm')).toEqual([]);
+
+    await q(`UPDATE forms SET "staleAskedAt" = $2::timestamptz WHERE id = $1`, [FORM, ASKED]);
+    expect(await servedTo180('fm')).toEqual(['form_stale_open']);
+    expect(await servedTo180('fo')).toEqual([]);
+    // A build older than the floor is never served the type.
+    expect(await served('fm')).toEqual([]);
+
+    // A member who lost MANAGE_FORMS no longer sees it.
+    await setFlags(O, 'fm', F.POST_AS_ASSO);
+    expect(await servedTo180('fm')).toEqual([]);
+    await setFlags(O, 'fm', F.MANAGE_FORMS);
+    expect(await servedTo180('fm')).toEqual(['form_stale_open']);
+
+    // "Garder ouvert" answers it for everybody; a later question (a new stamp) puts back ITS row only.
+    await q(`UPDATE forms SET "staleKeptAt" = now() WHERE id = $1`, [FORM]);
+    expect(await servedTo180('fm')).toEqual([]);
+    const LATER = '2026-12-30T09:30:00.000Z';
+    await q(`UPDATE forms SET "staleAskedAt" = $2::timestamptz WHERE id = $1`, [FORM, LATER]);
+    expect(await servedTo180('fm')).toEqual([]);
+    await row('fm', 'form_stale_open', FORM, { askedAt: LATER });
+    expect(await servedTo180('fm')).toEqual(['form_stale_open']);
+
+    // A closing date (or a close) answers it too.
+    await q(`UPDATE forms SET "closedAt" = now() + interval '7 days' WHERE id = $1`, [FORM]);
+    expect(await servedTo180('fm')).toEqual([]);
+    await q(
+      `UPDATE forms SET "closedAt" = NULL, "staleAskedAt" = NULL, "staleKeptAt" = NULL WHERE id = $1`,
+      [FORM]
+    );
+  });
+
   it("a payout or a shop manager's notice leaves the bell with the flag", async () => {
     const kinds = ['delegation_revoked', 'lydia_payments_paused'];
     for (const u of ['pay1', 'pay2']) for (const k of kinds) await row(u, k, O);

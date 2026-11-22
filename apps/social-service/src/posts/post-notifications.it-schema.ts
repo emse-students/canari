@@ -74,7 +74,13 @@ export async function createBellTargetTables(q: (sql: string) => Promise<unknown
     ALTER TABLE forms
       ADD COLUMN IF NOT EXISTS "ownerId" varchar(255),
       ADD COLUMN IF NOT EXISTS "associationId" uuid,
-      ADD COLUMN IF NOT EXISTS title varchar;
+      ADD COLUMN IF NOT EXISTS title varchar,
+      -- The question put to a form left open (form_stale_open's gate, stale-open-forms.ts).
+      ADD COLUMN IF NOT EXISTS status varchar(16) NOT NULL DEFAULT 'published',
+      ADD COLUMN IF NOT EXISTS "deletedAt" timestamptz,
+      ADD COLUMN IF NOT EXISTS "closedAt" timestamptz,
+      ADD COLUMN IF NOT EXISTS "staleAskedAt" timestamptz,
+      ADD COLUMN IF NOT EXISTS "staleKeptAt" timestamptz;
     -- The two admin queue notices' gates (admin-queue-sql.ts). The estates' reports table was
     -- created by TypeORM (ContentReport): EVERY column of the entity is here, not only those the
     -- gates read - a suite that runs the account erasure on this schema executes its statements on

@@ -5,6 +5,8 @@ import {
   findDirectConversationByPeer,
   isRawId,
   resolveDirectPeerId,
+  retaggedAsSelf,
+  selfConversationIdentity,
 } from './conversations';
 import { holdsGroupState } from './groupUsability';
 import { isGroupInCreation } from './groupsInCreation';
@@ -71,6 +73,8 @@ export type ServerGroupRow = {
   groupId: string;
   name?: string | null;
   isGroup: boolean;
+  /** `self` for "Mes notes" - see {@link UserGroupRow.kind}. Read BEFORE `isGroup`. */
+  kind?: string;
   imageMediaId?: string | null;
   /** ISO-8601 instant the group was created server-side - see {@link UserGroupRow.createdAt}. */
   createdAt?: string | null;
@@ -857,6 +861,26 @@ export async function ensureConversationForServerGroup(
   // holds a perfectly good row for - and creating a second one is the duplicate-DM defect that
   // `mergeDirectConversationDuplicates` exists to clean up afterwards.
   const known = [...conversations.entries()].find(([, c]) => c.id === groupId);
+  // A SELF GROUP HELD UNDER ANOTHER TYPE is put right before anything reads it as a group: its row was
+  // built while the server's `kind` could not be read (a Welcome whose group read failed), and every
+  // group path below - the label repair, the name statements - would act on "Mes notes" as a group.
+  if (known && group.kind === 'self') {
+    if (known[1].conversationType !== 'self') {
+      conversations.set(known[0], retaggedAsSelf(known[1]));
+      log(
+        `[DISCOVERY] ${groupIdShort(groupId)} held as ${known[1].conversationType ?? 'group'} - re-typed as the self conversation`
+      );
+      if (saveConversation) {
+        try {
+          await saveConversation(known[0]);
+        } catch (e) {
+          log(`[WARN] Self conversation persistence failed for ${groupId}: ${String(e)}`);
+        }
+      }
+    }
+    await recordGroupStart(known[0], group, conversations, saveConversation);
+    return 'existed';
+  }
   if (known) {
     // What a rename still owes first: once the server's copy is written, the list in hand is the
     // one stale fact, and the label repair would report a disagreement the write has just ended.
@@ -939,6 +963,35 @@ export async function ensureConversationForServerGroup(
       `[DISCOVERY] ${groupIdShort(groupId)} not re-created - this device owes the server an exit for it`
     );
     return 'exit-owed';
+  }
+
+  // "MES NOTES" HAS NO PEER BY DESIGN, and the server's `kind` is the one fact that says so: it is
+  // `isGroup: false` with only this account on the roster, which the peer resolution below would
+  // read as a 1:1 still waiting for its peer and skip on every sweep.
+  if (group.kind === 'self') {
+    const joined = holdsGroupState(mlsService, groupId);
+    conversations.set(
+      groupId,
+      buildConversationRow({
+        id: groupId,
+        lifecycle: joined ? 'active' : 'pending',
+        identity: selfConversationIdentity(),
+        imageMediaId: null,
+        startedAt: groupStartInstant(group),
+      })
+    );
+    if (saveConversation) {
+      try {
+        await saveConversation(groupId);
+      } catch (e) {
+        log(`[WARN] Self conversation persistence failed for ${groupId}: ${String(e)}`);
+      }
+    }
+    log(
+      `[DISCOVERY] Self conversation ${groupIdShort(groupId)} placeholder created (joined=${joined}).`
+    );
+    mlsService.notifyConversationAvailable(groupId);
+    return 'created';
   }
 
   // Resolve the DM peer authoritatively: the group name is only a hint and may be malformed

@@ -103,8 +103,8 @@ describe('notificationTypesRenderableBy', () => {
 
   it('serves the trend to 1.6.10, a pre-release of it included', () => {
     expect(notificationTypesRenderableBy('1.6.10-alpha.1')).toContain('campus_trend');
-    // The build carrying the highest floor (the hand-over's heir notice, 1.7.3) renders every type.
-    expect(notificationTypesRenderableBy('1.7.3')).toHaveLength(
+    // The build carrying the highest floor (the question put to a form left open, 1.8.0) renders every type.
+    expect(notificationTypesRenderableBy('1.8.0')).toHaveLength(
       Object.keys(NOTIFICATION_TYPE_MIN_CLIENT).length
     );
   });
@@ -113,7 +113,7 @@ describe('notificationTypesRenderableBy', () => {
     expect(notificationTypesRenderableBy('1.7.2-alpha.2')).not.toContain(
       'lydia_responsable_handed_over'
     );
-    expect(notificationTypesRenderableBy('1.7.3')).toContain('lydia_responsable_handed_over');
+    expect(notificationTypesRenderableBy('1.8.0')).toContain('lydia_responsable_handed_over');
   });
 
   it('serves the admin queue notices from 1.7.1 only (owner, 2026-11-18)', () => {

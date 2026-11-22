@@ -219,7 +219,15 @@ export interface ChatMessage {
 }
 
 /**
- * Runtime representation of a conversation (DM, group, or channel).
+ * What a conversation IS. `self` is "Mes notes", the account's conversation with itself (server
+ * `dm_groups.kind = 'self'`, migration 056): its only members are this account's own devices, it has
+ * no `directPeerId`, and every peer path (name parse, roster lookup, de-duplication by peer, block,
+ * report, call) skips it.
+ */
+export type ConversationType = 'direct' | 'group' | 'channel' | 'self';
+
+/**
+ * Runtime representation of a conversation (DM, group, channel, or "Mes notes").
  *
  * `messages` is loaded lazily - it can be empty while the conversation is still
  * visible in the sidebar. `lastMessageAt` provides a stable sort key even before
@@ -310,7 +318,7 @@ export interface Conversation {
    * connection's sweep (`settleNameSync`, `stateGroupNameOnce`). Absent: nothing owed.
    */
   nameSync?: NameSync;
-  conversationType?: 'direct' | 'group' | 'channel';
+  conversationType?: ConversationType;
   directPeerId?: string;
   /** Media-service ID of the group image (unencrypted avatar). Channels never carry one. */
   imageMediaId?: string | null;

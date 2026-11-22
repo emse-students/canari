@@ -55,6 +55,12 @@ export const POST_ACTIVITY_QUIET_MIN_CLIENT_VERSION = '1.7.0';
  */
 export const ADMIN_QUEUE_NOTICE_MIN_CLIENT_VERSION = '1.7.1';
 
+/**
+ * The first build that draws the question put to a form left open (`form_stale_open`, owner,
+ * 2026-11-21): the bell row and the card of the managers' list.
+ */
+export const FORM_STALE_OPEN_MIN_CLIENT_VERSION = '1.8.0';
+
 /** The first build that draws a campus trend as a suggestion rather than as a person (2026-11-10). */
 export const CAMPUS_TREND_MIN_CLIENT_VERSION = '1.6.10';
 
@@ -124,6 +130,9 @@ export const NOTIFICATION_TYPE_MIN_CLIENT = {
   // The heir of a Lydia Responsable hand-over (2026-11-20): the first build that draws it. The
   // `1.7.2` pre-releases already out do not, and a floor compares the version core only.
   lydia_responsable_handed_over: '1.7.3',
+  // The question put to a form left open (owner, 2026-11-21): the first build that draws it. A bell
+  // row only, no push, so no push key.
+  form_stale_open: FORM_STALE_OPEN_MIN_CLIENT_VERSION,
 } as const satisfies Readonly<Record<string, string | null>>;
 
 /** A type a bell row may carry: one whose floor is declared above, and nothing else. */

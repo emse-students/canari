@@ -225,9 +225,48 @@ describe('the editor', () => {
       // Opening is not an edit: the editor's own payload round-trips without a save.
       expect(api.saveFormDraft).not.toHaveBeenCalled();
       byTestId<HTMLButtonElement>('publish-button')!.click();
+      // A draft with no closing date is offered one first: left open, as these tests mean it.
+      flushSync();
+      document
+        .querySelector<HTMLButtonElement>('[data-testid="close-suggestion-keep-open"]')
+        ?.click();
       await vi.waitFor(() =>
         expect(api.publishFormDraft).toHaveBeenCalledWith('f1', 0, false, null)
       );
+    },
+    MOUNT_BUDGET_MS
+  );
+
+  it(
+    'a draft with no closing date: "Publier" offers one, and accepting saves it with the revision BEFORE publishing',
+    async () => {
+      api.status = 'draft';
+      await open();
+      byTestId<HTMLButtonElement>('publish-button')!.click();
+      await settle();
+      expect(byTestId('close-suggestion')).not.toBeNull();
+      expect(api.publishFormDraft).not.toHaveBeenCalled();
+
+      byTestId<HTMLButtonElement>('close-suggestion-accept')!.click();
+      await vi.waitFor(() => expect(api.publishFormDraft).toHaveBeenCalledTimes(1));
+      const document = (api.saveFormDraft.mock.calls.at(-1) as any[])[2] as { closedAt?: string };
+      // The date is in the revision the publication applied, and it is in the future.
+      expect(typeof document.closedAt).toBe('string');
+      expect(new Date(document.closedAt!).getTime()).toBeGreaterThan(Date.now());
+    },
+    MOUNT_BUDGET_MS
+  );
+
+  it(
+    'a draft already holding a closing date is offered nothing, and publishes at once',
+    async () => {
+      api.status = 'draft';
+      api.closedAt = '2099-01-01T00:00:00.000Z';
+      await open();
+      byTestId<HTMLButtonElement>('publish-button')!.click();
+      await settle();
+      expect(byTestId('close-suggestion')).toBeNull();
+      await vi.waitFor(() => expect(api.publishFormDraft).toHaveBeenCalledTimes(1));
     },
     MOUNT_BUDGET_MS
   );
@@ -682,6 +721,10 @@ describe('the editor', () => {
         expect(byTestId('form-association-pending')).not.toBeNull();
 
         byTestId<HTMLButtonElement>('publish-button')!.click();
+        flushSync();
+        document
+          .querySelector<HTMLButtonElement>('[data-testid="close-suggestion-keep-open"]')
+          ?.click();
         await vi.advanceTimersByTimeAsync(0);
         await settle();
         expect(api.publishFormDraft).toHaveBeenCalledWith('f1', 2, false, null);

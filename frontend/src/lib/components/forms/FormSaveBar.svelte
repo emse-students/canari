@@ -3,6 +3,9 @@
   import Button from '$lib/components/ui/Button.svelte';
   import { m } from '$lib/paraglide/messages';
   import type { AutosaveStatus } from '$lib/forms/autosave.svelte';
+  import type { ClosingSuggestion } from '$lib/forms/closingSuggestion';
+  import { intlLocale } from '$lib/utils/intlLocale';
+  import { Log } from '$lib/utils/Log';
 
   /**
    * The sticky-looking footer that says what will be saved and saves it - and, on a DRAFT or a form
@@ -31,6 +34,15 @@
       blockedReason: string | null;
       busy: boolean;
       label?: string;
+      /**
+       * The closing date to OFFER when the form has none (`closingSuggestion.ts`), read when "Publier"
+       * is pressed so it is the freshest; null offers nothing and the press publishes at once. The
+       * offer is made ONCE per page: either answer publishes, and a refused publication is then
+       * pressed again without asking twice. Never forced - "Laisser ouvert" keeps the form open.
+       */
+      closingSuggestion?: (() => ClosingSuggestion | null) | null;
+      /** Writes the accepted date into the editor's closing field, before `onPublish` runs. */
+      onAcceptClosing?: (value: string) => void;
     } | null;
     /** "Abandonner les modifications", offered while a published form holds unpublished edits. */
     discard?: { onDiscard: () => void; busy: boolean } | null;
@@ -66,6 +78,43 @@
     }
   });
   const busy = $derived(isSubmitting || !!publish?.busy || !!discard?.busy);
+
+  /** The date on offer while the question is asked, or null when it is not. */
+  let offered = $state<ClosingSuggestion | null>(null);
+  /** Whether the closing date was offered already on this page: asked once, never twice. */
+  let closingAsked = false;
+
+  /** "Publier": offers the closing date first when the form has none and it was not offered yet. */
+  function pressPublish() {
+    if (!publish) return;
+    const suggestion = closingAsked ? null : (publish.closingSuggestion?.() ?? null);
+    if (!suggestion) {
+      publish.onPublish();
+      return;
+    }
+    closingAsked = true;
+    offered = suggestion;
+    Log.d('FormSaveBar', `offering a closing date: ${suggestion.kind} ${suggestion.value}`);
+  }
+
+  /** Either answer to the offer publishes: the date written first, or the form left open. */
+  function answerClosing(accept: boolean) {
+    if (!publish || !offered) return;
+    const value = offered.value;
+    offered = null;
+    Log.d('FormSaveBar', accept ? `closing date accepted: ${value}` : 'left open, as it was');
+    if (accept) publish.onAcceptClosing?.(value);
+    publish.onPublish();
+  }
+
+  const offeredLabel = $derived(
+    offered
+      ? new Date(offered.value).toLocaleDateString(intlLocale(), {
+          day: 'numeric',
+          month: 'long',
+        })
+      : ''
+  );
 </script>
 
 <div
@@ -93,6 +142,29 @@
       <p class="text-amber-warn-text text-sm font-medium" data-testid="publish-blocked-reason">
         {publish.blockedReason}
       </p>
+    {/if}
+    {#if offered}
+      <div class="space-y-2 pt-1" data-testid="close-suggestion">
+        <p class="text-text-main text-sm font-medium">{m.form_close_suggest_title()}</p>
+        <div class="flex flex-wrap justify-center gap-2 sm:justify-start">
+          <Button
+            size="compact"
+            variant="primary"
+            onclick={() => answerClosing(true)}
+            data-testid="close-suggestion-accept"
+          >
+            {m.form_close_suggest_accept({ date: offeredLabel })}
+          </Button>
+          <Button
+            size="compact"
+            variant="secondary"
+            onclick={() => answerClosing(false)}
+            data-testid="close-suggestion-keep-open"
+          >
+            {m.form_close_suggest_keep()}
+          </Button>
+        </div>
+      </div>
     {/if}
   </div>
   <div class="flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:flex-row">
@@ -122,8 +194,8 @@
     {#if publish}
       <Button
         variant="primary"
-        onclick={publish.onPublish}
-        disabled={busy || titleMissing || !!publish.blockedReason}
+        onclick={pressPublish}
+        disabled={busy || titleMissing || !!publish.blockedReason || !!offered}
         title={publish.blockedReason ?? undefined}
         class="w-full sm:w-auto"
         data-testid="publish-button"

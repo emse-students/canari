@@ -36,6 +36,7 @@ import {
   FormRevisionDto,
   PublishFormRevisionDto,
   SaveFormDraftDto,
+  SetClosingDateDto,
   SubmitFormDto,
 } from './dto/form.dto';
 import { FormsService } from './forms.service';
@@ -268,6 +269,36 @@ export class FormsController {
     @Headers('x-global-admin') ga?: string
   ) {
     return this.service.setClosed(id, true, xUserId, ga === 'true');
+  }
+
+  /**
+   * "Fixer une date" (the question put to a form left open): writes a closing date in the future.
+   * Same rights as an edit; a past instant is refused (`FORM_CLOSING_DATE_PAST`).
+   */
+  @UseGuards(NginxAuthGuard)
+  @Post(':id/closing-date')
+  @HttpCode(200)
+  setClosingDate(
+    @Param('id') id: string,
+    @Headers('x-user-id') xUserId: string,
+    @Body() dto: SetClosingDateDto,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    // A missing or malformed `closedAt` never gets here: the body is validated (400), not read as a
+    // past date.
+    return this.service.setClosingDate(id, new Date(dto.closedAt), xUserId, ga === 'true');
+  }
+
+  /** "Garder ouvert": answers the question put to a form left open, leaving the form as it is. */
+  @UseGuards(NginxAuthGuard)
+  @Post(':id/keep-open')
+  @HttpCode(200)
+  keepOpen(
+    @Param('id') id: string,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    return this.service.keepOpen(id, xUserId, ga === 'true');
   }
 
   /** "Rouvrir": clears the form's end, whether it is past or still to come. Idempotent. */

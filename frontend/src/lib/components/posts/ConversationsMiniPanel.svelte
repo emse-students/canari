@@ -27,7 +27,7 @@
     displayName: string;
     /** See `ConversationListPresentation.displayNameResolved` - false means it is a placeholder. */
     displayNameResolved: boolean;
-    conversationType: 'direct' | 'group';
+    conversationType: 'direct' | 'group' | 'self';
     isReady: boolean;
     unreadCount: number;
     imageMediaId: string | null;

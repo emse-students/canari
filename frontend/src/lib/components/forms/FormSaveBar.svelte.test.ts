@@ -113,3 +113,89 @@ describe('FormSaveBar', () => {
     expect([onPublish.mock.calls.length, onDiscard.mock.calls.length]).toEqual([1, 1]);
   });
 });
+
+describe('FormSaveBar - the closing date offered at publication', () => {
+  const suggestion = { kind: 'standard', days: 14, value: '2026-12-05T23:59' } as const;
+  const offer = () => document.querySelector('[data-testid="close-suggestion"]');
+  const accept = () =>
+    document.querySelector<HTMLButtonElement>('[data-testid="close-suggestion-accept"]')!;
+  const keepOpen = () =>
+    document.querySelector<HTMLButtonElement>('[data-testid="close-suggestion-keep-open"]')!;
+
+  it('offers the date instead of publishing when the form has none, and publishes nothing yet', () => {
+    const onPublish = vi.fn();
+    const root = render({
+      publish: { onPublish, blockedReason: null, busy: false, closingSuggestion: () => suggestion },
+    });
+    publishButton(root)!.click();
+    flushSync();
+    expect(offer()).not.toBeNull();
+    expect(onPublish).not.toHaveBeenCalled();
+    // "Publier" waits for the answer: no second press can publish past the question.
+    expect(publishButton(root)!.disabled).toBe(true);
+  });
+
+  it('accepting writes the date into the editor FIRST, then publishes', () => {
+    const calls: string[] = [];
+    const root = render({
+      publish: {
+        onPublish: () => calls.push('publish'),
+        onAcceptClosing: (value: string) => calls.push(`accept:${value}`),
+        blockedReason: null,
+        busy: false,
+        closingSuggestion: () => suggestion,
+      },
+    });
+    publishButton(root)!.click();
+    flushSync();
+    accept().click();
+    flushSync();
+    expect(calls).toEqual(['accept:2026-12-05T23:59', 'publish']);
+    expect(offer()).toBeNull();
+  });
+
+  it('"Laisser ouvert" is one tap: it publishes with no date written', () => {
+    const onAcceptClosing = vi.fn();
+    const onPublish = vi.fn();
+    const root = render({
+      publish: {
+        onPublish,
+        onAcceptClosing,
+        blockedReason: null,
+        busy: false,
+        closingSuggestion: () => suggestion,
+      },
+    });
+    publishButton(root)!.click();
+    flushSync();
+    keepOpen().click();
+    flushSync();
+    expect(onAcceptClosing).not.toHaveBeenCalled();
+    expect(onPublish).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks ONCE: a publication refused afterwards is pressed again without the question', () => {
+    const onPublish = vi.fn();
+    const root = render({
+      publish: { onPublish, blockedReason: null, busy: false, closingSuggestion: () => suggestion },
+    });
+    publishButton(root)!.click();
+    flushSync();
+    keepOpen().click();
+    flushSync();
+    publishButton(root)!.click();
+    flushSync();
+    expect(offer()).toBeNull();
+    expect(onPublish).toHaveBeenCalledTimes(2);
+  });
+
+  it('publishes at once when the form already has a date (nothing to offer)', () => {
+    const onPublish = vi.fn();
+    const root = render({
+      publish: { onPublish, blockedReason: null, busy: false, closingSuggestion: () => null },
+    });
+    publishButton(root)!.click();
+    expect(offer()).toBeNull();
+    expect(onPublish).toHaveBeenCalledTimes(1);
+  });
+});

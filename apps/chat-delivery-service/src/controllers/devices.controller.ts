@@ -1,3 +1,4 @@
+import { parseSelfConversationVersion } from '../utils/self-conversation';
 import {
   Controller,
   Get,
@@ -333,6 +334,8 @@ export class DevicesController {
       pushOutcome?: unknown;
       /** What the OS lets notifications do - see `parseNotificationState`. Absent from old clients. */
       notificationState?: unknown;
+      /** The "Mes notes" capability of the build (`parseSelfConversationVersion`). Absent from old clients. */
+      selfConversationVersion?: unknown;
     },
     @Headers('x-user-id') headerUserId?: string
   ) {
@@ -403,6 +406,7 @@ export class DevicesController {
     }
 
     const traceId = this.makeTraceId('reg-device');
+    const selfConversationVersion = parseSelfConversationVersion(body.selfConversationVersion);
     if (notification.state === 'invalid') {
       // A client stated something outside the allowlist: stored as unknown, said once per call.
       this.logger.warn(
@@ -413,7 +417,7 @@ export class DevicesController {
 
     this.logger.log(
       `[REGISTER_DEVICE][${traceId}] START user=${userId} device=${deviceId} kpLen=${keyPackagePayload.length}` +
-        ` notAfter=${notAfter ? notAfter.toISOString() : 'unknown'}`
+        ` notAfter=${notAfter ? notAfter.toISOString() : 'unknown'} selfConversation=${selfConversationVersion}`
     );
     // ONE OWNER PER DEVICE ID. The table is unique on the pair, yet memberships, commits and the
     // fan-out name a device by its id, so an id held by two accounts would let one stand in for the
@@ -454,6 +458,7 @@ export class DevicesController {
             ? null
             : notification.state,
         notificationChannels: notification.channels,
+        selfConversationVersion,
       },
       crypto.randomUUID()
     );
@@ -733,6 +738,7 @@ export class DevicesController {
       deviceName: row?.deviceName ?? undefined,
       deviceOs: row?.deviceOs ?? undefined,
       deviceAppVersion: row?.deviceAppVersion ?? undefined,
+      selfConversationVersion: row?.selfConversationVersion ?? 0,
     };
   }
 

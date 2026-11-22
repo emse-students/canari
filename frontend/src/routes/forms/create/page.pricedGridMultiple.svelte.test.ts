@@ -144,6 +144,9 @@ async function multipleSwitch(): Promise<HTMLInputElement> {
 
 async function savedAllowMultiple(): Promise<boolean> {
   byText(m.form_publish_button()).click();
+  // No closing date: the offer comes first, and the form is left open.
+  flushSync();
+  document.querySelector<HTMLButtonElement>('[data-testid="close-suggestion-keep-open"]')?.click();
   await vi.waitFor(() => expect(api.publishFormDraft).toHaveBeenCalledTimes(1));
   // Created once, as a shell; everything else is the saved revision.
   expect(api.createForm).toHaveBeenCalledTimes(1);
@@ -225,6 +228,10 @@ describe('the form builder, a grid refused by the server alone', () => {
       await settle();
       expect(document.querySelector('[data-testid="product-grid-editor"]')).toBeNull();
       byText(m.form_publish_button()).click();
+      flushSync();
+      document
+        .querySelector<HTMLButtonElement>('[data-testid="close-suggestion-keep-open"]')
+        ?.click();
       await vi.waitFor(() => expect(api.publishFormDraft).toHaveBeenCalledTimes(1));
       await settle();
       const sentence = m.form_pgrid_problem_in_question({

@@ -420,6 +420,27 @@ maybe('a link join waits for a member admission (PostgreSQL)', () => {
     expect(await awaiting(JOINER)).toBe(true);
   });
 
+  it('"Mes notes" admits nobody else: an Add of another person is refused whole, nothing advanced', async () => {
+    // The group as `POST mls/groups` writes a self conversation (migration 056): one person, no group.
+    await q(`UPDATE dm_groups SET kind = 'self', "isGroup" = false WHERE id = $1`, [GROUP]);
+    try {
+      await expect(memberCommit(3, [JOINER])).resolves.toMatchObject({
+        accepted: false,
+        reason: 'admit_refused',
+        userIds: [JOINER.userId],
+      });
+
+      expect(await epochOf()).toBe(3);
+      expect(await rowsOf('dm_group_members', JOINER)).toBe(0);
+      // The owner's own commits still land: the refusal is about another person, never the owner.
+      await expect(memberCommit(3)).resolves.toMatchObject({ accepted: true });
+    } finally {
+      await q(`UPDATE dm_groups SET kind = 'conversation', "isGroup" = true WHERE id = $1`, [
+        GROUP,
+      ]);
+    }
+  });
+
   it("a push's Add never answers the ask: refused awaiting_admission under the seat lock, nothing advanced", async () => {
     // The background Welcome a member's shut phone answers (`push/send-welcome-and-commit`) is no
     // member's gesture, whatever the phone's tree says (a removed member's leaf can outlive them).

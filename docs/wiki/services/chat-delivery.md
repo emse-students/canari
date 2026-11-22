@@ -3527,6 +3527,79 @@ and then at its 10th, 100th... send (`utils/log-repeat.ts`), and both cut ids to
 be pushed is a population question, answered by `tools/cross-client-harness/devices.mjs
 --unpushable`, never by counting this line.
 
+## Mes notes - the self conversation
+
+**What it is** (owner, 2026-11-22, [decisions](../backlog.d/owner-decisions-of-2026-11-22.md)): an
+ordinary MLS group whose only members are the devices of ONE account. It carries text, photos,
+files and voice notes through the same encrypted paths as any conversation; the server stores
+ciphertexts and never a key. Charter principle 1 (*vos messages sont a vous*) decides the shape:
+end-to-end, so the server holds nothing it can read.
+
+**The row.** `dm_groups.kind` (migration `056_dm_groups_self_kind.sql`) is `'conversation'` for
+every existing row and `'self'` for this one. A CHECK pins the shape of a self row: `isGroup = false`
+and no workspace or channel. A unique partial index,
+`idx_dm_groups_one_live_self_per_account ON ("createdBy") WHERE kind = 'self' AND "deletedAt" IS
+NULL`, makes "one live self conversation per account" a fact of the database. The `Group` entity
+declares both under the same names (`@Index`, `@Check`), so a `TYPEORM_SYNCHRONIZE` stack carries the
+same constraints (`group.entity.spec.ts`).
+
+**Creation is idempotent from that index, not from a read-then-write.** `POST /groups` with
+`kind: 'self'` inserts with `ON CONFLICT DO NOTHING RETURNING id`. If no row comes back, the answer is
+`409 SELF_CONVERSATION_EXISTS` with the facts the asking device decides on, never a dead end: the live
+`groupId` (never null - a row that ended between the insert and the read freed the slot, and the
+insert runs again) and `otherHolders`, the account's OTHER devices with an `active` seat and a key
+package (`countOtherSelfHolders`). The client then:
+
+- **holds that group itself** (its row was typed otherwise, or never written): opens it, re-typed;
+- **sees another holder**: says it is arriving - that device's Welcome brings it;
+- **sees none**: asks once more with `replaceUnheld: true`. Nothing can ever bring that group here and
+  no device that is left can read it, so the server ENDS it (`tombstoneGroupsIf`, the no-holder fact
+  re-read under the group's seat lock, so a device admitted meanwhile keeps it) and writes a new one.
+  A holder that appeared answers the 409 again, read as arriving - two requests at most.
+
+The creating device must itself state the capability below (`403 SELF_CONVERSATION_DEVICE_UNAWARE`).
+No error message is parsed.
+
+**What it refuses**, each typed at the throw ([refusal codes](../../../apps/chat-delivery-service/src/utils/refusal-codes.ts)):
+
+- **Another person.** `enrolAdmittedPeople`, the one writer that admits a person to a roster,
+  refuses every candidate of a self group (`admit_refused`); the account's own new devices are not
+  admissions and still join.
+- **Calls.** `CallsService.assertMembership` answers `403 SELF_CONVERSATION` for initiate,
+  room token, ICE, ring and ring end.
+- **Block and report.** Blocking oneself was already `BLOCK_SELF` (core-service); a report naming
+  the reporter's own account is now `400 REPORT_SELF` (social-service).
+
+**Push.** An own-device frame draws nothing (`recipientId === senderId` in `describeQueuedFrame`),
+so a note never rings the other devices of its author.
+
+**Erasure.** A roster of one with `isGroup = false` is tombstoned like a 1:1. The index skips
+tombstones, so an erased account's `[deleted]` rows never collide.
+
+**Which device may hold it: a capability each device states.** A build before "Mes notes" Welcomed
+into a self group builds an ordinary `group` row named after the account and offers rename, invite and
+DELETE; its delete would end the notes on every device. So each `register-device` states
+`selfConversationVersion` (`key_package`, migration 056; written as stated on every call, 0 when
+absent), and ONE predicate, `selfConversationUnawareDevices` (`utils/self-conversation.ts`), keeps a
+device below it out at every door: no pending seat (`writePendingSeats`), no Admit, inline Welcome
+target or external join in a commit (refused whole, `403 SELF_CONVERSATION_DEVICE_UNAWARE`), no stored
+Welcome (`lockWelcomeSeat`), no relayed welcome request. A `DELETE mls/groups/:id` of a self group is
+refused unless the request says `?kind=self` (`403 SELF_CONVERSATION_KIND_UNSTATED`) - asked only
+AFTER the caller is known to be allowed to end the group (its admitted member, or its creator while
+nobody holds a seat), so a stranger meets the same `NOT_A_MEMBER` as for any id and learns nothing of
+its kind (`groups.controller.authz.spec.ts`), as the calls gate does. The device list
+carries each device's capability, so a current creator never builds the Add the server would refuse.
+An older build still sees the group in its listing; with no `kind` it reads a 1:1 whose peer it cannot
+resolve and builds nothing from it, though it asks a re-add for it on every connection (refused, a
+few reads per connection). It joins once it updates and re-registers. The shim and its
+removal: [legacy-compatibility](../legacy-compatibility.md).
+
+Tests: `056_dm_groups_self_kind.integration.spec.ts` (PostgreSQL: the CHECK, the concurrent creation
+on two connections, `otherHolders`, the creator's capability, the tombstone, the 400s; and on the full
+schema the unaware device left unseated, the delete without the kind refused, `replaceUnheld` ending
+only an unheld group), `admission.integration.spec.ts` (nobody else is
+admitted, the owner's own commit is), `calls.service.spec.ts`, `moderation.service.spec.ts`.
+
 ## Environment variables
 
 | Variable | Required | Description |

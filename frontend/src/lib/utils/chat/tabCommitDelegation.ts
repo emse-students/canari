@@ -74,6 +74,8 @@ import {
 export type DelegatedCommitOp =
   /** A named group conversation (`createNewGroup`). */
   | { kind: 'create-group'; name: string }
+  /** "Mes notes", this account's conversation with itself (`createSelfConversation`). */
+  | { kind: 'create-self' }
   /** A direct conversation with `contact` (`startNewConversation`). */
   | { kind: 'start-direct'; contact: string }
   /** An invitation of `memberIds` into `groupId` (`inviteMembersToGroup`). */
@@ -127,6 +129,7 @@ export type DelegatedRemovalResult =
 /** What each gesture answers, as plain data a structured clone and JSON both carry. */
 interface DelegatedCommitResults {
   'create-group': ConversationOutcome;
+  'create-self': ConversationOutcome;
   'start-direct': ConversationOutcome;
   invite: BulkAdditionOutcome;
   remove: DelegatedRemovalResult;
@@ -269,6 +272,8 @@ function describe(op: DelegatedCommitOp): string {
   switch (op.kind) {
     case 'create-group':
       return 'create-group';
+    case 'create-self':
+      return 'create-self';
     case 'start-direct':
       return 'start-direct';
     case 'invite':

@@ -152,3 +152,23 @@ describe("SqliteStorage - the dated name's rank v22 added, on a store already st
     });
   });
 });
+
+describe('SqliteStorage - the kind of "Mes notes"', () => {
+  afterEach(() => {
+    vi.doUnmock('@tauri-apps/plugin-sql');
+    vi.restoreAllMocks();
+  });
+
+  it('a self row keeps its kind through a save, a re-save and a merge; any other row has none', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    const storage = await initialisedSqlite();
+    await storage.saveConversation({ ...conversation('n1'), name: '', kind: 'self' });
+    await storage.saveConversation({ ...conversation('n1'), name: '', kind: 'self', updatedAt: 2 });
+    await storage.mergeConversation({ ...conversation('n2'), name: '', kind: 'self' });
+    await storage.saveConversation(conversation('g1'));
+
+    expect((await storage.getConversation('n1'))?.kind).toBe('self');
+    expect((await storage.getConversation('n2'))?.kind).toBe('self');
+    expect(await storage.getConversation('g1')).not.toHaveProperty('kind');
+  });
+});

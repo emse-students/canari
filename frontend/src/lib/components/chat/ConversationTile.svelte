@@ -1,6 +1,7 @@
 <script lang="ts">
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
-  import { Hash } from '@lucide/svelte';
+  import { Bookmark, Hash } from '@lucide/svelte';
+  import type { ConversationType } from '$lib/types';
   import Avatar from '../shared/Avatar.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
@@ -32,8 +33,11 @@
      * a placeholder is non-empty, so without this flag it would win over the real answer forever.
      */
     displayNameResolved?: boolean;
-    /** Type of conversation, determines avatar and presence display logic. */
-    conversationType?: 'direct' | 'group' | 'channel';
+    /**
+     * Type of conversation, determines avatar and presence display logic. `self` ("Mes notes") draws
+     * the bookmark and, with no message yet, says where it is visible instead of the E2E line.
+     */
+    conversationType?: ConversationType;
     /** Serialised envelope of the last message, used to render the preview text. */
     lastMessage?: string;
     /** Whether the MLS session for this conversation is fully established. */
@@ -222,6 +226,13 @@
       <div class="text-text-muted flex h-14 w-14 items-center justify-center">
         <Hash size={22} strokeWidth={2.5} />
       </div>
+    {:else if conversationType === 'self'}
+      <div
+        class="bg-accent/15 text-accent-icon flex h-14 w-14 items-center justify-center rounded-full"
+        data-self-conversation-icon
+      >
+        <Bookmark size={24} strokeWidth={2.25} />
+      </div>
     {:else}
       <GroupAvatar id={conversationId} {imageMediaId} name={displayName} size="xl" />
     {/if}
@@ -293,7 +304,10 @@
       <EmojiText
         text={awaitingAdmission
           ? m.chat_awaiting_admission_preview()
-          : previewText || m.chat_e2e_established_preview()}
+          : previewText ||
+            (conversationType === 'self'
+              ? m.conversation_self_subtitle()
+              : m.chat_e2e_established_preview())}
       />
     </div>
   </div>

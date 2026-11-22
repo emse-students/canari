@@ -750,6 +750,48 @@ export class GroupDeletedError extends Error {
 }
 
 /**
+ * THE "MES NOTES" CAPABILITY THIS BUILD STATES on every `register-device` (server migration 056): a
+ * device below it is never seated, admitted or Welcomed into a self group, because a build that does
+ * not know the kind would read "Mes notes" as an ordinary group it may delete. Also the bar this
+ * build holds its own other devices to before adding them to one (`createOwnedGroup`).
+ * docs/wiki/legacy-compatibility.md
+ */
+export const SELF_CONVERSATION_VERSION = 1;
+
+/**
+ * The server refused to create "Mes notes" because this account already holds a live one (409
+ * `SELF_CONVERSATION_EXISTS`, the unique partial index of server migration 056). Nothing was
+ * written. It carries the two facts the caller decides on (`createSelfConversation`): `groupId`, the
+ * live conversation (the server never answers without it), and `otherHolders`, how many OTHER
+ * devices of the account hold it - none means no Welcome can ever come, and the device may ask the
+ * server to replace it.
+ */
+export class SelfConversationExistsError extends Error {
+  constructor(
+    readonly groupId: string,
+    readonly otherHolders: number
+  ) {
+    super(`A self conversation is already live (${groupId}, ${otherHolders} other holder(s))`);
+    this.name = 'SelfConversationExistsError';
+  }
+}
+
+/**
+ * The server answered a "Mes notes" creation with a group that is NOT a notes conversation: a
+ * server older than migration 056 ignores `kind: 'self'` and writes an ordinary group, which seats
+ * every device and is no "Mes notes" on any other device (legacy-compatibility.md, "Mes notes" - the
+ * stores-before-deploy window, or a rollback). Classified at the throw from the answer's own `kind`,
+ * never from a status or a message. `groupId` is the ordinary group that server wrote: the caller
+ * deletes it as such (no `?kind=self`, which that server does not read) and refuses the creation.
+ */
+export class SelfConversationUnsupportedError extends Error {
+  constructor(readonly groupId: string) {
+    super(`The server wrote ${groupId} as an ordinary group - it does not know "Mes notes"`);
+    this.name = 'SelfConversationUnsupportedError';
+  }
+}
+
+/**
  * The server refused a membership mutation because a BLOCK stands between the two people.
  *
  * Typed rather than message-matched, like every other refusal here: the neutral wording the server
@@ -1593,6 +1635,8 @@ export class MlsDeliveryApi {
       deviceName?: string;
       deviceOs?: string;
       deviceAppVersion?: string;
+      /** The "Mes notes" capability its build stated (`SELF_CONVERSATION_VERSION`), 0 if none. */
+      selfConversationVersion: number;
     }>
   > {
     const devices = await this.readUserDevices(userId, false);
@@ -1603,6 +1647,7 @@ export class MlsDeliveryApi {
       deviceName: d.deviceName,
       deviceOs: d.deviceOs,
       deviceAppVersion: d.deviceAppVersion,
+      selfConversationVersion: d.selfConversationVersion,
     }));
   }
 
@@ -1628,6 +1673,7 @@ export class MlsDeliveryApi {
         deviceName: d.deviceName,
         deviceOs: d.deviceOs,
         deviceAppVersion: d.deviceAppVersion,
+        selfConversationVersion: d.selfConversationVersion,
       }));
     });
   }
@@ -1643,6 +1689,7 @@ export class MlsDeliveryApi {
       deviceName?: string;
       deviceOs?: string;
       deviceAppVersion?: string;
+      selfConversationVersion: number;
     }>
   > {
     const res = await this.f(
@@ -1663,6 +1710,7 @@ export class MlsDeliveryApi {
       deviceName?: unknown;
       deviceOs?: unknown;
       deviceAppVersion?: unknown;
+      selfConversationVersion?: unknown;
     }>;
     return devices.map((d) => ({
       keyPackage: d.keyPackage,
@@ -1670,6 +1718,9 @@ export class MlsDeliveryApi {
       deviceName: typeof d.deviceName === 'string' ? d.deviceName : undefined,
       deviceOs: typeof d.deviceOs === 'string' ? d.deviceOs : undefined,
       deviceAppVersion: typeof d.deviceAppVersion === 'string' ? d.deviceAppVersion : undefined,
+      // A server before 056 states nothing: 0, the value of a build that knows nothing either.
+      selfConversationVersion:
+        typeof d.selfConversationVersion === 'number' ? d.selfConversationVersion : 0,
     }));
   }
 
@@ -1757,6 +1808,9 @@ export class MlsDeliveryApi {
           ...(params.deviceAppVersion ? { deviceAppVersion: params.deviceAppVersion } : {}),
           ...(params.pushOutcome ? { pushOutcome: params.pushOutcome } : {}),
           ...(params.notificationState ? { notificationState: params.notificationState } : {}),
+          // THIS BUILD KNOWS "MES NOTES": stated on every registration, so the server seats this
+          // device in the account's self group and Welcomes it (server migration 056).
+          selfConversationVersion: SELF_CONVERSATION_VERSION,
         }),
       });
 
@@ -2268,25 +2322,58 @@ export class MlsDeliveryApi {
    * Creates a new group row on the delivery service and returns the assigned `groupId`. A `null`
    * name (an unnamed group) sends no `name` at all, and the row's column stays NULL.
    */
-  async createRemoteGroup(name: string | null, isGroup: boolean): Promise<string> {
-    try {
-      const res = await this.f(`${this.historyUrl}/api/mls/groups`, {
-        method: 'POST',
-        headers: await this.auth({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({
-          ...(name !== null ? { name } : {}),
-          createdBy: this.userId,
-          isGroup,
-          creatorDeviceId: this.deviceId,
-        }),
-      });
-      if (!res.ok) throw new Error('Failed to create remote group');
-      const data = await res.json();
-      return data.groupId as string;
-    } catch (e) {
-      console.error('Failed to create remote group', e);
-      throw e;
+  async createRemoteGroup(
+    name: string | null,
+    isGroup: boolean,
+    kind: 'conversation' | 'self' = 'conversation',
+    opts: { replaceUnheld?: boolean } = {}
+  ): Promise<string> {
+    const res = await this.f(`${this.historyUrl}/api/mls/groups`, {
+      method: 'POST',
+      headers: await this.auth({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        ...(name !== null ? { name } : {}),
+        createdBy: this.userId,
+        isGroup,
+        creatorDeviceId: this.deviceId,
+        ...(kind === 'self' ? { kind } : {}),
+        ...(kind === 'self' && opts.replaceUnheld === true ? { replaceUnheld: true } : {}),
+      }),
+    });
+    // A notes conversation already live for this account: an ANSWER, typed at the throw with the
+    // facts the caller decides on, and never logged as a failure - it is the expected answer of a
+    // second device. A 409 without them is a server this build cannot read, and fails below.
+    if (res.status === 409 && kind === 'self') {
+      const body = (await res.json().catch(() => null)) as {
+        code?: unknown;
+        groupId?: unknown;
+        otherHolders?: unknown;
+      } | null;
+      if (
+        body?.code === 'SELF_CONVERSATION_EXISTS' &&
+        typeof body.groupId === 'string' &&
+        typeof body.otherHolders === 'number'
+      ) {
+        throw new SelfConversationExistsError(body.groupId, body.otherHolders);
+      }
+      console.error('[MLS] createRemoteGroup: a self 409 without its facts', body?.code);
+      throw new Error('Failed to create remote group');
     }
+    if (!res.ok) {
+      console.error('[MLS] createRemoteGroup failed', res.status);
+      throw new Error('Failed to create remote group');
+    }
+    const data = (await res.json()) as { groupId: string; kind?: unknown };
+    // A SERVER THAT DOES NOT ECHO `kind: 'self'` WROTE AN ORDINARY GROUP: one older than migration
+    // 056 drops the field it does not know. Tagging that row "Mes notes" here would make this device
+    // disagree with every other one about which group holds the notes.
+    if (kind === 'self' && data.kind !== 'self') {
+      console.error(
+        `[MLS] createRemoteGroup: asked for "Mes notes", the server wrote ${String(data.groupId).slice(0, 8)}... as kind=${String(data.kind)} - a server older than the self kind`
+      );
+      throw new SelfConversationUnsupportedError(data.groupId);
+    }
+    return data.groupId;
   }
 
   /**
@@ -2710,8 +2797,9 @@ export class MlsDeliveryApi {
    * reported done with nothing deleted. Any non-2xx is `GroupExitRefusedError`, held by the caller;
    * a 2xx that is not the API's JSON is `NotFromApiError`, a transport failure.
    */
-  async deleteGroupOnServer(groupId: string): Promise<void> {
-    const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}`, {
+  async deleteGroupOnServer(groupId: string, kind?: 'self'): Promise<void> {
+    const query = kind === 'self' ? '?kind=self' : '';
+    const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}${query}`, {
       method: 'DELETE',
       headers: await this.auth(),
     });
@@ -3313,6 +3401,10 @@ export class MlsDeliveryApi {
           (g as { distributionWorkspaceId?: string | null }).distributionWorkspaceId ?? null,
         distributionChannelId:
           (g as { distributionChannelId?: string | null }).distributionChannelId ?? null,
+        // "Mes notes" (migration 056): the Welcome handler builds that row with no peer to resolve.
+        ...(typeof (g as { kind?: unknown }).kind === 'string'
+          ? { kind: (g as { kind: string }).kind }
+          : {}),
         activeEpoch:
           typeof (g as { activeEpoch?: number }).activeEpoch === 'number'
             ? (g as { activeEpoch: number }).activeEpoch

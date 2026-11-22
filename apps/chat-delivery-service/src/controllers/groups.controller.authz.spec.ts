@@ -32,6 +32,7 @@ type GroupRow = {
   createdBy?: string | null;
   distributionWorkspaceId?: string | null;
   distributionChannelId?: string | null;
+  kind?: string;
   deletedAt?: Date | null;
 };
 
@@ -346,6 +347,55 @@ describe('the group routes enforce membership', () => {
       t.tables.groups = [{ id: GROUP, createdBy: MEMBER, distributionWorkspaceId: 'ws-1' }];
       await expect(groups.deleteGroup(GROUP, MEMBER)).rejects.toBeInstanceOf(ForbiddenException);
       expect(t.groupRepo.manager.transaction).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('"Mes notes": the kind gate is asked only after the caller may end the group', () => {
+    // An older build reads a self group as an ordinary one; its delete would end the notes on every
+    // device, so a self group is ended only by a request that states `?kind=self`. But the kind is
+    // asked AFTER the authorisation, so a stranger learns nothing about it.
+    beforeEach(() => {
+      t.tables.groups = [{ id: GROUP, createdBy: MEMBER, kind: 'self' }];
+      t.tables.seats = [{ groupId: GROUP, userId: MEMBER, awaitingAdmission: false }];
+      t.tables.devices = [{ groupId: GROUP, userId: MEMBER, deviceId: 'd-1', status: 'active' }];
+    });
+
+    it('a stranger gets NOT_A_MEMBER, never the kind refusal', async () => {
+      for (const statedKind of [undefined, 'self']) {
+        const refusal = await groups
+          .deleteGroup(GROUP, STRANGER, statedKind)
+          .catch((e: unknown) => e);
+        expect((refusal as ForbiddenException).getResponse()).toMatchObject({
+          code: 'NOT_A_MEMBER',
+        });
+      }
+      expect(t.groupRepo.manager.transaction).not.toHaveBeenCalled();
+    });
+
+    it('its member without ?kind=self gets SELF_CONVERSATION_KIND_UNSTATED, and nothing ends', async () => {
+      const refusal = await groups.deleteGroup(GROUP, MEMBER).catch((e: unknown) => e);
+      expect((refusal as ForbiddenException).getResponse()).toMatchObject({
+        code: 'SELF_CONVERSATION_KIND_UNSTATED',
+      });
+      expect(t.groupRepo.manager.transaction).not.toHaveBeenCalled();
+    });
+
+    it('its member stating ?kind=self ends it', async () => {
+      t.groupRepo.manager.transaction.mockResolvedValue({});
+      await expect(groups.deleteGroup(GROUP, MEMBER, 'self')).resolves.toEqual({
+        status: 'deleted',
+      });
+      expect(t.groupRepo.manager.transaction).toHaveBeenCalled();
+    });
+
+    it('its creator while nobody holds a seat is gated the same way', async () => {
+      t.tables.seats = [];
+      t.runTransactions();
+      const refusal = await groups.deleteGroup(GROUP, MEMBER).catch((e: unknown) => e);
+      expect((refusal as ForbiddenException).getResponse()).toMatchObject({
+        code: 'SELF_CONVERSATION_KIND_UNSTATED',
+      });
+      expect(t.groupRepo.update).not.toHaveBeenCalled();
     });
   });
 

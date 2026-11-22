@@ -111,6 +111,8 @@ describe('the account-level reads of a boot (WP-W4)', () => {
         deviceName: 'Mi 9T',
         deviceOs: undefined,
         deviceAppVersion: undefined,
+        // A server that states no capability: 0, the value of a build that knows nothing either.
+        selfConversationVersion: 0,
       },
     ]);
   });
