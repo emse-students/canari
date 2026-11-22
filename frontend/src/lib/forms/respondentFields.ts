@@ -1,4 +1,5 @@
 import { m } from '$lib/paraglide/messages';
+import { Log } from '$lib/utils/Log';
 import {
   CAMPUSES,
   FORMATIONS,
@@ -153,6 +154,23 @@ export function askedOfMember(form: {
 }
 
 /**
+ * The editor's ticks after one press, kept coherent: on an anonymous form "Promo et formation lues
+ * sur le compte" IMPLIES "Promo et formation" (a guest has no account and declares it, and the
+ * server refuses a join of a field nobody is asked, FORM_ANONYMOUS_CURSUS_NOT_ASKED). Ticking the
+ * box ticks the chip with it; unticking the chip unticks the box. So the editor never shows a tick
+ * the save would not keep (iPhone, `1.7.3-alpha.4`: the box alone was dropped at save, silently).
+ */
+export function coherentChoices(previous: readonly string[], next: readonly string[]): string[] {
+  if (!next.includes('cursusFromAccount') || next.includes('cursus')) return [...next];
+  if (previous.includes('cursusFromAccount') && previous.includes('cursus')) {
+    Log.d('FormEditor', 'cursus unticked: the account reading of it is unticked with it');
+    return next.filter((c) => c !== 'cursusFromAccount');
+  }
+  Log.d('FormEditor', 'account reading of the cursus ticked: the cursus chip is ticked with it');
+  return [...next, 'cursus'];
+}
+
+/**
  * The two lists a save sends, from the editor's one set: joined from a member's account on a named
  * form; asked of a guest on a public form and of everyone on an anonymous one. A choice the form
  * cannot offer is never sent.
@@ -161,10 +179,13 @@ export function respondentSettingsPayload(
   choices: readonly string[],
   form: { isPublic: boolean; anonymous: boolean }
 ): { respondentFields: AccountField[]; guestFields: RespondentChoice[] } {
-  const offered = pick(choices, offeredChoices(form.isPublic, form.anonymous));
-  // The join needs the cursus ticked too: a guest of the form is asked it, and the box without it
-  // would join a field nobody ticked.
-  const joinsCursus = offered.includes('cursusFromAccount') && offered.includes('cursus');
+  // The box implies the chip (`coherentChoices`): a set that carries the box alone still asks the
+  // cursus, so nothing ticked is ever dropped at save.
+  const offered = pick(
+    choices.includes('cursusFromAccount') ? [...choices, 'cursus'] : choices,
+    offeredChoices(form.isPublic, form.anonymous)
+  );
+  const joinsCursus = offered.includes('cursusFromAccount');
   return {
     respondentFields: form.anonymous
       ? joinsCursus

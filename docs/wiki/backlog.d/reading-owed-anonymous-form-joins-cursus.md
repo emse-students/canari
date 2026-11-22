@@ -28,3 +28,9 @@ the promo and formation are read from the account, and the manager's list shows 
 with the joined fields changed on the live form, the first "Envoyer" showed the changed-form message,
 the notice was redrawn, the typed answer kept, and the second press succeeded. **Still owed:** only
 the guest PAGE in a signed-out browser (the cursus asked).
+
+**iPhone, `1.7.3-alpha.4`: the editor dropped the box silently** when "Promo et formation" was not ticked
+too. Fixed: ticking the box ticks the chip, unticking the chip unticks the box, and the note under the box
+says so ([forms](../frontend/modules/forms.md#an-anonymous-form-may-read-the-cursus-from-the-account-owner-2026-11-21)).
+**Also owed:** in the editor of an anonymous form, tick only "Promo et formation lues sur le compte" -
+"Promo et formation" ticks itself; save, reopen: both still ticked. Untick "Promo et formation": both go.

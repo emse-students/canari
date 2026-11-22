@@ -37,6 +37,13 @@ import {
 import { readCallRelay, RELAY_SEATS, relayModeOf, type RelayMode } from '../utils/call-relay';
 import { missingCloudflareSfuHalves, readCloudflareSfuApp } from '../utils/cloudflare-sfu-app';
 import { describeFcmFailure, fcmErrorCode, isTerminalPushTokenError } from '../utils/fcm-errors';
+import {
+  APNS_VOIP_GONE,
+  APNS_VOIP_REFUSED,
+  PushDeliveryTally,
+  pushFailureCode,
+  PUSH_DELIVERY_RECORDER,
+} from '../utils/push-delivery-records';
 import { ADMITTED_SEAT, callerSeatStanding, refuseAwaitingSeat } from '../utils/group-membership';
 import { voipRingPayload } from './call-ring-payload';
 import { incomingCallAlertBody, IOS_CALL_RING_SOUND } from './push-payload';
@@ -1045,12 +1052,18 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     };
 
     let rang = 0;
-    for (const pt of tokens) {
-      const delivered =
-        pt.platform === 'ios' && pt.voipToken
-          ? voipReady && (await this.ringIosVoip(pt, { groupId, callId, callerId, hasVideo }))
-          : fcmReady && (await this.ringViaFcm(pt, dataFields));
-      if (delivered) rang++;
+    const delivery = new PushDeliveryTally('ring');
+    try {
+      for (const pt of tokens) {
+        const delivered =
+          pt.platform === 'ios' && pt.voipToken
+            ? voipReady &&
+              (await this.ringIosVoip(pt, { groupId, callId, callerId, hasVideo }, delivery))
+            : fcmReady && (await this.ringViaFcm(pt, dataFields, delivery));
+        if (delivered) rang++;
+      }
+    } finally {
+      this.recordDeliveries(delivery, `ring-${callId.slice(0, 8)}`);
     }
     this.logger.log(`[ring] call=${callId} group=${groupId} rang=${rang}/${tokens.length} devices`);
     return { rang };
@@ -1128,28 +1141,44 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     };
 
     let notified = 0;
-    for (const pt of tokens) {
-      // Ring-end is a pure state signal: background/data push on both platforms. An iOS
-      // device ringing via CallKit was just launched by the VoIP push, so its running
-      // process receives this and reports the call ended; a missed delivery is covered
-      // by the local 60s ring timeout on every platform.
-      try {
-        await getMessaging().send({
-          token: pt.token,
-          data: dataFields,
-          android: { priority: 'high', ttl: 60_000 },
-          apns: {
-            payload: { aps: { 'content-available': 1 }, ...dataFields },
-            headers: { 'apns-push-type': 'background', 'apns-priority': '5' },
-          },
-        });
-        notified++;
-      } catch (e) {
-        await this.dropTokenIfGone(pt, e, 'ring-end');
+    const delivery = new PushDeliveryTally('ring_end');
+    try {
+      for (const pt of tokens) {
+        // Ring-end is a pure state signal: background/data push on both platforms. An iOS
+        // device ringing via CallKit was just launched by the VoIP push, so its running
+        // process receives this and reports the call ended; a missed delivery is covered
+        // by the local 60s ring timeout on every platform.
+        try {
+          delivery.attempted(pt);
+          await getMessaging().send({
+            token: pt.token,
+            data: dataFields,
+            android: { priority: 'high', ttl: 60_000 },
+            apns: {
+              payload: { aps: { 'content-available': 1 }, ...dataFields },
+              headers: { 'apns-push-type': 'background', 'apns-priority': '5' },
+            },
+          });
+          delivery.accepted(pt);
+          notified++;
+        } catch (e) {
+          await this.dropTokenIfGone(pt, e, 'ring-end', delivery);
+        }
       }
+    } finally {
+      this.recordDeliveries(delivery, `ring-end-${callId.slice(0, 8)}`);
     }
     this.logger.log(`[ring] ring-end call=${callId} notified=${notified}/${tokens.length}`);
     return { notified };
+  }
+
+  /**
+   * Hands a ring's record to the process's one writer, {@link PUSH_DELIVERY_RECORDER}, without waiting
+   * for the database (migration 054): the rings it counts already left. Called from a `finally`, so a
+   * token prune that throws does not lose the fan-out.
+   */
+  private recordDeliveries(tally: PushDeliveryTally, traceId: string): void {
+    PUSH_DELIVERY_RECORDER.record(this.pushTokenRepo.manager, tally, traceId);
   }
 
   /**
@@ -1553,20 +1582,26 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
    */
   private async ringIosVoip(
     pt: PushToken,
-    ring: { groupId: string; callId: string; callerId: string; hasVideo: boolean }
+    ring: { groupId: string; callId: string; callerId: string; hasVideo: boolean },
+    delivery: PushDeliveryTally
   ): Promise<boolean> {
     const ringUntilMs = await this.liveRingDeadline(ring.callId);
     if (ringUntilMs === null) return false;
+    delivery.attempted(pt);
     const result = await this.apnsVoip.sendVoipPush(
       pt.voipToken as string,
       voipRingPayload({ ...ring, ringUntilMs }),
       Math.floor(ringUntilMs / 1000)
     );
     if (result === 'gone') {
+      delivery.failed(pt, APNS_VOIP_GONE);
       await this.pushTokenRepo.update({ id: pt.id }, { voipToken: null });
+      delivery.pruned(pt);
       this.logger.warn(`[ring] cleared expired voipToken user=${pt.userId} device=${pt.deviceId}`);
       return false;
     }
+    if (result) delivery.accepted(pt);
+    else delivery.failed(pt, APNS_VOIP_REFUSED);
     return result;
   }
 
@@ -1580,9 +1615,14 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
    * merges `data` into the APNs payload too. Since 2026-10-30 no ring payload carries a name on any
    * platform (`fanOutRing`). It rings with Canari's own tone (`IOS_CALL_RING_SOUND`), as CallKit does.
    */
-  private async ringViaFcm(pt: PushToken, dataFields: Record<string, string>): Promise<boolean> {
+  private async ringViaFcm(
+    pt: PushToken,
+    dataFields: Record<string, string>,
+    delivery: PushDeliveryTally
+  ): Promise<boolean> {
     const toIos = pt.platform === 'ios';
     try {
+      delivery.attempted(pt);
       await getMessaging().send({
         token: pt.token,
         data: dataFields,
@@ -1615,9 +1655,10 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
             : { 'apns-push-type': 'alert', 'apns-priority': '10' },
         },
       });
+      delivery.accepted(pt);
       return true;
     } catch (e) {
-      await this.dropTokenIfGone(pt, e, 'ring');
+      await this.dropTokenIfGone(pt, e, 'ring', delivery);
       return false;
     }
   }
@@ -1626,10 +1667,17 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
    * Deletes the push token row when FCM says the TOKEN is gone, decided on the error's structured
    * code ({@link isTerminalPushTokenError}, shared with the message pushes), never on its prose.
    */
-  private async dropTokenIfGone(pt: PushToken, e: unknown, scope: string): Promise<void> {
+  private async dropTokenIfGone(
+    pt: PushToken,
+    e: unknown,
+    scope: string,
+    delivery: PushDeliveryTally
+  ): Promise<void> {
     const code = fcmErrorCode(e) ?? 'none';
+    delivery.failed(pt, pushFailureCode(e));
     if (isTerminalPushTokenError(e)) {
       await this.pushTokenRepo.delete({ id: pt.id });
+      delivery.pruned(pt);
       this.logger.warn(
         `[${scope}] deleted invalid push token user=${pt.userId} device=${pt.deviceId} code=${code}`
       );

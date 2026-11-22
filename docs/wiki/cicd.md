@@ -1262,6 +1262,12 @@ release was **half-shipped by construction**. `tools/app-store/submit.mjs` close
 about how, including the release-notes file a human owes each stable and why its first line names
 its own version, is in [its README](../../tools/app-store/README.md), the only copy.
 
+### The Android release build packages both ABIs because Gradle builds them (2026-11-21)
+
+`v1.7.3-alpha.4` failed the new ABI check ("has no native library for armeabi-v7a") although `--target aarch64 armv7` was passed. The log shows ONE `cargo` run (`Finished release ... in 4m 37s`), one `symlinking lib ... jniLibs/arm64-v8a`, then Gradle's "There are no .so files available to package in the APK for armeabi-v7a". The tauri CLI compiles only the FIRST target itself; every other ABI is built by the Gradle task `rustBuild<Arch><Profile>`, which runs `tauri android android-studio-script --target <t>`. In this repo those tasks were empty `DefaultTask`s: `d4b181ef40` (2026-04-10, "routine Tauri gen update") deleted `buildSrc/.../BuildTask.kt` and its wiring in `RustPlugin.kt`. That is why the build was arm64-only before #3932 too, and why `--target` changed nothing.
+
+The fix restores both files at the tauri-cli 2.12.5 template's own path (`buildSrc/src/main/kotlin/`, so a future `tauri android init` diffs empty), with the template's body: `ExecOperations` (Gradle 9 removed `Project.exec`), `projectDir` captured as an `@Input`, `tasks.register`. Two things differ, on purpose: the binary is `bun`, and `rustBuildUniversal` stays what the template makes it. PR CI cannot run those tasks, so `android-app-compile.sh` asks Gradle (`:app:help --task rustBuildArmRelease` and two siblings) and fails unless each is a `BuildTask`; its self-test covers the refusal. The ABI check in `android.yml` remains the proof on a release: the next pre-release must show a second cargo run and `lib/armeabi-v7a/libmines_app_lib.so` in the AAB and the APK. Do not "tidy" `buildSrc` back to empty tasks.
+
 ### The Android release build restores Gradle, it never saves it (2026-11-09)
 
 `android.yml` cached nothing under `~/.gradle`, so every release fetched the Gradle wrapper
@@ -3380,7 +3386,7 @@ asserted per target, never assumed from the file name.
 | HIGH and CRITICAL, **with a fix published** (`--ignore-unfixed`) | a finding nobody can act on is a wall, not a gate |
 | in the `dependencies` half, so it gates `CI passed` and runs nightly | same footing as the audits: a database that moves without a commit; exit `2` (database or registry unreachable) is priced by `registry_outage_is_failure` |
 | the allowlist is `.github/image-scan-allowlist.yaml`, Trivy's own format | one entry per advisory, each with a `statement`; `image-scan-allowlist.test.mjs` refuses a missing statement, an unknown key and any `expired_at` - an entry retires on evidence, never on a date |
-| **every entry retires itself** | each image is rescanned WITHOUT the allowlist and `ignored-advisories-still-reported.sh` (media-service's check) fails on an id nothing reports any more. A pull request that moves a pin deletes the entries it made unnecessary in the same commit |
+| **every entry retires itself** | each image is rescanned WITHOUT the allowlist and `image-allowlist-retirement.sh` fails on an entry whose covered package version is in no image ([why not on the feed](#a-suppression-is-dead-when-the-image-moved-not-when-the-feed-forgot-2026-11-21)). A pull request that moves a pin deletes the entries it made unnecessary in the same commit |
 | Trivy from its release tarball, not `aquasecurity/trivy-action` | a tag can move, a checksum cannot. **Nothing watches the pin**: move it by changing `TRIVY_VERSION` and `TRIVY_SHA256` together, the checksum read from that release's `trivy_<v>_checksums.txt`. **The verified archive is cached** (`actions/cache`, keyed on version AND digest; ShellCheck the same, keyed on `.shellcheck-version` and its digest): GitHub's release downloads answered 504 for hours on 2026-11-08 under an "operational" status page and failed every pull request; the digest is still checked on every run, so a cache hit can only be the pinned archive |
 
 **What the first measurement found (Trivy 0.75.0, 2026-10-23), and what each became:**
@@ -3457,6 +3463,43 @@ root bought them nothing - the four Bun services run as the image's `bun` user, 
 install` with recommends. Two images stay root BY NAME in its allowlist, each with its reason, and
 the entry fails once its image gains a `USER`: the nginx frontend (port 80) and media-service
 (root-owned volumes) - [backlog](backlog.d/p3-two-service-images-still-run-as-root.md).
+
+### A suppression is dead when the image moved, not when the feed forgot (2026-11-21)
+
+**The defect.** The retirement check called an entry dead when the scan WITHOUT the allowlist no longer
+reported its id. That is a fact about Trivy's advisory data, which comes and goes: `CVE-2026-97054`
+(gosu's Go stdlib) was added (#3855), deleted as dead (#3895), restored when it was reported again
+(#3930) and then failed every pull request and main when the data dropped it once more. Whichever way
+the entry was last edited, the next feed state contradicted it.
+
+**The rule.** Every entry carries `purls:` naming the package version it was reviewed on (the test
+refuses an entry without one); `paths:` may restrict it further. Trivy enforces that scope itself, and
+`purls:` and `paths:` combine as an AND (measured with Trivy 0.75.0: a right path with a wrong purl, or
+the reverse, does not suppress). The second scan adds `--list-all-pkgs`, and `image-allowlist-retirement.sh` judges
+each `id package version`:
+
+| State | Verdict |
+| --- | --- |
+| the advisory is reported on that package version | needed, silent |
+| not reported, but an image still carries that package version | **kept, one plain log line** (never an annotation) naming the Trivy DB version: the advisory was dropped, rescored below HIGH or lost its fixed version (the scan filters on `--severity` and `--ignore-unfixed`, so the causes are not told apart), the image did not move |
+| not reported, and NO image carries that package version | **dead, the run fails**: the reviewed code is gone |
+
+**Why this keeps the protection.** A stale `--ignore` is dangerous because it hides a FUTURE finding.
+An entry is one advisory id on one package version - enforced by Trivy through the purl, not only
+judged by this check - so a new version of the package, or a different advisory, is outside it. When
+the image moves (a pin, an authentik release) the covered version leaves the inventory and the entry
+fails. The scan inventory records where each package sits (its file path and its scan target): an
+entry with `paths:` is alive only on a package at those paths, so the same package name in ANOTHER
+image cannot keep it alive. An entry with a purl and no `paths:` (the Alpine and postgres ones) is
+pooled across all scanned images. A deb epoch is listed with and without the epoch, since a purl
+carries none.
+
+**What lifts a refusal.** Delete the entry, or show that `trivy image --list-all-pkgs --format json
+<image>` lists the package at that version (then the inventory, not the entry, is wrong). Self-tests:
+`image-allowlist-retirement.test.sh` (reported, feed-dropped with the package present, package gone,
+silent scan, no inventory, a package present only at another path or image, deb epochs) and `image-scan-allowlist.test.mjs` (every entry covers a package; the bash
+reader agrees with a YAML parse). Cost: an advisory withdrawn upstream leaves a harmless entry behind
+that shows up as a log line, not a failure.
 
 ### A `code_scanning` rule on the ruleset: analysed 2026-10-23, APPLIED (2026-10-23)
 

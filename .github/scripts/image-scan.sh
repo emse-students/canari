@@ -11,10 +11,11 @@
 # yet is not a gate, it is a wall; one with a fix is a pull request somebody can open today.
 #
 # THE ALLOWLIST IS `.github/image-scan-allowlist.yaml`, Trivy's own ignore-file format, one entry per
-# advisory with a `statement` saying why it is not reachable or not ours to fix. And it RETIRES ITSELF:
-# every image is scanned a second time WITHOUT the allowlist, and an entry that scan no longer reports
-# fails the run (`ignored-advisories-still-reported.sh`, the same check media-service's audit ignores
-# use). An ignore that outlives its reason is a hole with a comment over it.
+# advisory with a `statement` saying why it is not reachable or not ours to fix. And it RETIRES ITSELF,
+# on a fact about OUR image and not about the advisory feed: every image is scanned a second time
+# WITHOUT the allowlist, with its package inventory, and an entry whose covered package version is in
+# no image any more fails the run (`image-allowlist-retirement.sh`). An entry the feed merely stopped
+# reporting, on a package that still ships, is a plain log line: the feed flapped three times on one entry.
 #
 # Exit, the same three codes as `audit-dependencies.sh`:
 #   0  every image was scanned and nothing outside the allowlist was found, and every entry is needed
@@ -26,7 +27,7 @@
 # Usage: image-scan.sh                    (`trivy` on PATH, and `docker` for a `dockerfile:` target;
 #                                          `TRIVY_CACHE_DIR` honoured)
 #        image-scan.sh --allowlist-ids    (the ids the retirement check reads; no network)
-#        image-scan.sh --allowlist-purls  (the `id package version` triples it reads; no network)
+#        image-scan.sh --allowlist-covers (every entry's `id package version paths`, from its purls; no network)
 #        image-scan.sh --upgraded-packages <Dockerfile> / --shipped-base <Dockerfile>  (the readers; no network)
 set -uo pipefail
 
@@ -34,36 +35,51 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 allowlist="$here/../image-scan-allowlist.yaml"
 [ -f "$allowlist" ] || { echo "::error::$allowlist is missing"; exit 1; }
 
-# The advisory ids the allowlist names, one per line. The retirement check below asks about exactly
-# these, so `image-scan-allowlist.test.mjs` compares them with a real YAML parse of the file: an entry
-# this reader missed would be an ignore nothing ever retires.
+# The advisory ids the allowlist names, one per line. Only the empty-allowlist guard below reads
+# them (the retirement check reads `allowlist_covers`); `image-scan-allowlist.test.mjs` still compares
+# them with a real YAML parse of the file, so an entry this grep missed cannot hide from that guard.
 allowlist_ids() {
   grep -oE "^[[:space:]]*-[[:space:]]*id:[[:space:]]*[\"']?(CVE|GHSA)-[A-Za-z0-9-]+" "$allowlist" |
     grep -oE '(CVE|GHSA)-[A-Za-z0-9-]+' | sort -u
 }
-# Every purl-scoped entry as `<id> <name> <version>`, one per line, the version percent-decoded.
-# An id alone cannot retire such an entry: one advisory can be allowlisted on two packages (brotli,
-# Alpine's `brotli-libs` and Debian's `libbrotli1`), and the id stays reported while either remains,
-# so the half that moved would sit in the file for ever. The retirement check asks about each PAIR,
-# and `image-scan-allowlist.test.mjs` compares these with a real YAML parse, as for the ids.
-allowlist_purls() {
+# Every entry's covered package as `<id> <name> <version> <globs>`, one per line, the version
+# percent-decoded and <globs> the entry's `paths:` joined by commas (`-` when it has none). Both come
+# from the entry's `purls:` - the ONLY scope Trivy enforces on a version, and combined with `paths:`
+# as an AND (measured with Trivy 0.75.0) - so what this check judges is what Trivy suppresses. An id
+# alone cannot retire an entry: one advisory can be allowlisted on two packages (brotli, Alpine's
+# `brotli-libs` and Debian's `libbrotli1`), so the check asks about each id + package + version, and
+# the paths keep a package of the same name in ANOTHER image from keeping the entry alive.
+# `image-scan-allowlist.test.mjs` compares this with a real YAML parse, and refuses an entry with no purl.
+allowlist_covers() {
   awk '
-    /^[[:space:]]*-[[:space:]]*id:/ { id = $0; sub(/^[^:]*:[[:space:]]*/, "", id); gsub(/["\047[:space:]]/, "", id) }
-    /^[[:space:]]*-[[:space:]]*["\047]?pkg:/ { p = $0; sub(/^[[:space:]]*-[[:space:]]*/, "", p); gsub(/["\047[:space:]]/, "", p); print id, p }
+    function flush(    i, g) {
+      if (id != "") for (i = 1; i <= np; i++) print id, purl[i], (ng ? globs : "-")
+      id = ""; np = 0; ng = 0; globs = ""; mode = ""
+    }
+    /^[[:space:]]*-[[:space:]]*id:/ { flush(); id = $0; sub(/^[^:]*:[[:space:]]*/, "", id); gsub(/["\047[:space:]]/, "", id); next }
+    /^[[:space:]]*paths:/ { mode = "paths"; next }
+    /^[[:space:]]*purls:/ { mode = "purls"; next }
+    /^[[:space:]]*[a-z]+:/ { mode = ""; next }
+    /^[[:space:]]*-[[:space:]]*["\047]?/ {
+      v = $0; sub(/^[[:space:]]*-[[:space:]]*/, "", v); gsub(/["\047[:space:]]/, "", v)
+      if (mode == "purls" && v ~ /^pkg:/) purl[++np] = v
+      else if (mode == "paths") { globs = (ng ? globs "," : "") v; ng++ }
+    }
+    END { flush() }
   ' "$allowlist" |
-    while read -r id purl; do
+    while read -r id purl globs; do
       nv="${purl%%\?*}"
       nv="${nv##*/}"
       version="${nv#*@}"
-      printf '%s %s %b\n' "$id" "${nv%%@*}" "${version//%/\\x}"
+      printf '%s %s %b %s\n' "$id" "${nv%%@*}" "${version//%/\x}" "$globs"
     done | sort -u
 }
 if [ "${1:-}" = '--allowlist-ids' ]; then
   allowlist_ids
   exit 0
 fi
-if [ "${1:-}" = '--allowlist-purls' ]; then
-  allowlist_purls
+if [ "${1:-}" = '--allowlist-covers' ]; then
+  allowlist_covers
   exit 0
 fi
 
@@ -262,7 +278,7 @@ while IFS= read -r target; do
     *) unread="$unread $target"; continue ;;
   esac
   # The same image WITHOUT the allowlist, for the retirement check below.
-  trivy image "${common[@]}" "${src[@]}" --exit-code 0 --format json --output "$work/raw-$(printf '%s' "$target" | tr -c 'A-Za-z0-9.-' '_').json" "$image" ||
+  trivy image "${common[@]}" "${src[@]}" --exit-code 0 --list-all-pkgs --format json --output "$work/raw-$(printf '%s' "$target" | tr -c 'A-Za-z0-9.-' '_').json" "$image" ||
     unread="$unread $target"
   # AN UPGRADE THE BASE NO LONGER NEEDS IS REPORTED (review of #3915). The built image is clean either
   # way, so nothing else would ever say that upstream shipped the fix and the line can go: the BARE
@@ -300,20 +316,12 @@ elif [ -n "$unread" ] || [ -n "$broken" ]; then
   # An image that was not read cannot say an entry is unneeded: only an ANSWER retires one.
   echo "    some image was not read, so nothing is concluded about the allowlist."
 else
-  echo "--- every allowlisted advisory is still reported"
+  echo "--- every allowlist entry still covers a package an image carries"
   cat "$work"/raw-*.json > "$work/all.json"
-  # shellcheck disable=SC2086 # `$ids` is a deliberately word-split list of advisory ids.
-  bash "$here/ignored-advisories-still-reported.sh" "$work/all.json" $ids || retired=1
-  # And every purl-scoped entry on ITS package: the id check above cannot see one half of a shared id move.
-  reported="$(jq -r '.Results[]?.Vulnerabilities[]? | "\(.VulnerabilityID) \(.PkgName) \(.InstalledVersion)"' "$work/all.json" | sort -u)"
-  gone="$(allowlist_purls | grep -vxF -f <(printf '%s\n' "$reported") || true)"
-  if [ -n "$gone" ]; then
-    printf '%s\n' "$gone" | sed 's/^/    no longer reported: /'
-    echo "::error::the scan no longer reports the advisory on the package a purl-scoped allowlist entry names (listed above as id, package, version) - the image moved, so delete that purl or its entry."
-    retired=1
-  else
-    echo "    every purl-scoped entry is still reported on its package."
-  fi
+  allowlist_covers > "$work/covers.txt"
+  # What the advisory data was: the evidence the kept-entry line names (never a verdict by itself).
+  dbnote="$(trivy version --format json 2>/dev/null | jq -r '.VulnerabilityDB // empty | "Trivy DB v\(.Version) (updated \(.UpdatedAt), downloaded \(.DownloadedAt))"' 2>/dev/null || true)"
+  bash "$here/image-allowlist-retirement.sh" "$work/all.json" "$work/covers.txt" "${dbnote:-an unreadable Trivy database}" || retired=1
 fi
 
 if [ -n "$found" ]; then
@@ -328,4 +336,4 @@ fi
 if [ -n "$unread" ]; then
   outage "these images could not be read:$unread"
 fi
-echo "every image is clean outside its allowlist, and every allowlist entry is still needed."
+echo "every image is clean outside its allowlist, and no allowlist entry covers a package version that left the images."

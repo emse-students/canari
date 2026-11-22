@@ -49,6 +49,11 @@ const MANAGER_FIELDS = [
 ] as const;
 
 export type SubmitterSubmissionView = Pick<Submission, (typeof SUBMITTER_FIELDS)[number]>;
+/**
+ * One of the caller's OWN answers read back (the fill page, `hasSubmission` with `withAnswers`, and
+ * `myEditableAnswers`): the submitter's allowlist plus the questions that fixed its price.
+ */
+export type OwnAnswerView = SubmitterSubmissionView & { lockedItemIds: string[] };
 export type ManagerSubmissionView = Pick<Submission, (typeof MANAGER_FIELDS)[number]> & {
   /**
    * The reference a PAYING GUEST was given (`guestReference`), so the organiser finds the answer a

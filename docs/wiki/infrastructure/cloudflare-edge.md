@@ -84,7 +84,7 @@ inline scripts whose SHA-256 the policy carries, and WebAssembly compilation run
 
 | Response | Policy | Written by |
 |---|---|---|
-| A web page (`@ssr`, a header) | the directives below, plus the hash of SvelteKit's start script and of each of `app.html`'s four inline scripts | SvelteKit, `kit.csp` in hash mode, built from `frontend/src/lib/security/cspPolicy.js` (web build only) |
+| A web page (`@ssr`, a header) | the directives below, plus the hash of SvelteKit's start script and of each of `app.html`'s five inline scripts | SvelteKit, `kit.csp` in hash mode, built from `frontend/src/lib/security/cspPolicy.js` (web build only) |
 | The degraded shell (`@app_shell`) | the same, as a `<meta>` written at prerender | SvelteKit |
 | Both page blocks, in addition | `frame-ancestors 'none'` - the one directive a `<meta>` cannot carry | nginx, `snippets/csp-page.conf` |
 | Every other web response (scripts, workers, the WASM binary, JSON, media) | the same directives, no hash | nginx, `snippets/csp.conf` |

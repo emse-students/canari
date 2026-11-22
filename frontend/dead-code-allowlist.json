@@ -1,0 +1,8 @@
+{
+  "messages": {
+    "webview_outdated_title": "Read by the pre-bundle string table in src/app.html, pinned to this key by webviewGuard.test.ts",
+    "webview_outdated_body": "Read by the pre-bundle string table in src/app.html, pinned to this key by webviewGuard.test.ts",
+    "webview_outdated_button": "Read by the pre-bundle string table in src/app.html, pinned to this key by webviewGuard.test.ts",
+    "webview_outdated_version": "Read by the pre-bundle string table in src/app.html, pinned to this key by webviewGuard.test.ts"
+  }
+}

@@ -80,6 +80,13 @@ describe.each([
     '049_report_accusations.sql',
     /^\s*CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+"?report_accusations"?/im,
   ],
+  // `push_token` again: the push delivery record's two dates. The new table comes first, then the
+  // ALTER - the timeout must precede both.
+  [
+    '054_push_delivery_records.sql',
+    /^\s*CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+"?push_delivery_daily"?/im,
+  ],
+  ['054_push_delivery_records.sql', /^\s*ALTER\s+TABLE\s+"?push_token"?/im],
   // `dm_groups` again: the self kind's column, check and unique partial index.
   ['056_dm_groups_self_kind.sql', /^\s*ALTER\s+TABLE\s+"?dm_groups"?/im],
 ])('a migration that locks another hot table: %s', (file, alters) => {

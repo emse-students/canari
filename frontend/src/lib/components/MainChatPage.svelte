@@ -34,6 +34,9 @@
   import { readMarkTarget, watermarkFor, withOwnReadAdvanced } from '$lib/utils/chat/readState';
   import { serverTimeSeen } from '$lib/utils/chat/serverClock';
   import { createReadMarkDebounce } from '$lib/utils/chat/readMarkDebounce';
+  import { createOpenedConversationDismissal } from '$lib/utils/chat/openedConversationDismissal';
+  import { recordNativeReadElsewhere } from '$lib/utils/nativeNotification';
+  import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
   import { publishConversationRead } from '$lib/mls-client/tabMessageSync';
   import { forceSyncReset } from '$lib/utils/chat/actions';
   import {
@@ -781,6 +784,8 @@
   // ─── Read watermark (sent at once, then one trailing mark per 2 s window; delivered at once on leave or off-screen) ──
   /** The pending mark of the conversation being read (see `readMarkDebounce.ts`). */
   const readMarks = createReadMarkDebounce(2000);
+  /** Which reading the native shade was told about (`openedConversationDismissal.ts`). */
+  const openedDismissal = createOpenedConversationDismissal();
 
   /** Delivers `userId`'s owed salon read marks; a refusal keeps it owed (`salonReadMarkQueue.ts`). */
   function flushOwedSalonMarks(userId: string): Promise<number> {
@@ -798,7 +803,10 @@
     // `readMarkDebounce.leave.svelte.test.ts` pins that this call stays the effect's first statement.
     const selectedNow = convs.selectedContact;
     untrack(() => readMarks.follow(selectedNow));
-    if (!convs.selectedContact || !session.isLoggedIn) return;
+    if (!convs.selectedContact || !session.isLoggedIn) {
+      openedDismissal.reset();
+      return;
+    }
     // THE THIRD TERM IS THE ONLY ONE A PHONE ANSWERS HONESTLY. `hasFocus()` and `visibilityState`
     // are both permanently true in a backgrounded Tauri WebView (measured on device 2026-09-05:
     // a backgrounded app reports `visible` / `hasFocus: true`, byte for byte its foreground
@@ -816,14 +824,21 @@
       foreground: appForeground.current,
       attentive: windowAttention.attentive,
     });
-    if (verdict === 'away') return;
+    if (verdict === 'away') {
+      openedDismissal.reset();
+      return;
+    }
     // The app came back to open something else (a tapped notification): what it shows until the
     // landing selects that is not being read (`resumeOpening.svelte.ts`).
-    if (appForeground.holds(convs.selectedContact)) return;
+    if (appForeground.holds(convs.selectedContact)) {
+      openedDismissal.reset();
+      return;
+    }
     const convo = convs.conversations.get(convs.selectedContact);
     if (!convo || convo.lifecycle !== 'active') return;
 
     const meNorm = session.userId.toLowerCase();
+    const currentSelection = convs.selectedContact;
     // A DM OR GROUP MARK IS TAKEN ON THE SERVER'S CLOCK (`serverReadWatermarks`, readState.ts), the
     // key its rows are sorted by; a salon's lives in the stamped map, where its rows' stamp IS the
     // server's time.
@@ -841,6 +856,25 @@
       isSelectedChannel,
       serverTimeSeen(session.userId)
     );
+    // THIS DEVICE'S READER OPENED THE CONVERSATION: the notifications the WebView raised for it while
+    // the app was open elsewhere go with it, a reaction's included (`openedConversationDismissal.ts`).
+    // BEFORE the `target` return - a reaction moves no mark, so a conversation with nothing new to mark
+    // still holds an alert to remove - and not for an idle window, which reads nothing.
+    if (verdict === 'idle') {
+      openedDismissal.reset();
+    } else if (openedDismissal.take(currentSelection, Math.max(held, target))) {
+      void notifs.dismissConversationReactions(currentSelection);
+      void recordNativeReadElsewhere(
+        currentSelection,
+        'read_here',
+        Math.max(held, target),
+        clock
+      ).then((queued) => {
+        // A refusal (or a throw) is already accused by the callee; the hand-over is not spent, so
+        // the next run of this effect retries it. Off Android there is nothing to hand over.
+        if (!queued && isAndroidTauriRuntime()) openedDismissal.unspend(currentSelection);
+      });
+    }
     if (target <= held) return;
     // NOBODY AT THE WINDOW, NO READ (owner, 2026-11-11). A window left in front stays visible and
     // focused with nobody there; a person's gesture in the last two minutes is what says someone is

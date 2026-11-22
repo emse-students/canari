@@ -538,6 +538,14 @@ export interface OutboxEntry {
    * row is deleted) and the member's Retry of a failed text resets it.
    */
   unavailableAnswers?: number;
+  /**
+   * Set on an entry ADOPTED from the native mirror (`adoptMirrorEntry`): one the native side queued
+   * - a shade reply, a read mark - whose line may still be native in the mirror, where a background
+   * drain could send it. Durable (in the encrypted payload), so a page life that cannot read the
+   * mirror still knows which entries to hold and which are its own to send (`outbox.ts`, the start
+   * pass). Absent on everything the page queued itself.
+   */
+  adoptedFromMirror?: true;
   createdAt: number;
 }
 
