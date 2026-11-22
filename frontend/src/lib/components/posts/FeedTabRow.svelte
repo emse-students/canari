@@ -47,30 +47,6 @@
 
   let { feed, onFeed, authToken }: Props = $props();
 
-  /**
-   * THE SMALLER TEXT STEP IS DECIDED BY MEASUREMENT, NEVER BY VIEWPORT WIDTH (the old `max-[24rem]`
-   * ignored the system font: a 2x font at 430 px overflowed, a 1x font at 360 px did not). The order
-   * of fallbacks: content-sized tabs, wrap between words, THIS step (`data-compact` on the scroller),
-   * and only then the sideways scroll. The attribute is cleared, the row read at the normal size and
-   * set again when it overflows, all inside one ResizeObserver callback (before paint), so it is
-   * stateless and cannot get stuck compact after the room comes back.
-   */
-  function compactWhenCrowded(node: HTMLElement) {
-    const decide = () => {
-      node.removeAttribute('data-compact');
-      if (node.scrollWidth > node.clientWidth) {
-        node.setAttribute('data-compact', '');
-        console.debug('[feed-tabs] the row is crowded: one text step down');
-      }
-    };
-    decide();
-    if (typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(decide);
-    observer.observe(node);
-    void document.fonts?.ready.then(decide);
-    return { destroy: () => observer.disconnect() };
-  }
-
   /** The feed's three modes, in the order they are drawn. */
   const FEED_TABS: { feed: PostFeed; label: () => string }[] = [
     { feed: 'associations', label: m.posts_tab_associations },
@@ -104,6 +80,49 @@
    * arriving one turns ink at the end of the slide (`transitionend`), so no label is ever ink on glass.
    */
   let settled = $state<PostFeed | null>(null);
+
+  /**
+   * THE SMALLER TEXT STEP IS DECIDED BY MEASUREMENT, NEVER BY VIEWPORT WIDTH (the old `max-[24rem]`
+   * ignored the system font: a 2x font at 430 px overflowed, a 1x font at 360 px did not). The order
+   * of fallbacks: content-sized tabs, wrap between words, THIS step (`data-compact` on the scroller),
+   * and only then the sideways scroll. The attribute is cleared, the row read at the normal size and
+   * set again when it overflows, all inside one callback (before paint), so it is stateless and
+   * cannot get stuck compact after the room comes back. The scroller keeps its width when the TEXT
+   * changes (a font scale, a locale), so every tab is observed too, as the pill effect does.
+   */
+  function decideCompact(row: HTMLElement) {
+    const was = row.hasAttribute('data-compact');
+    row.removeAttribute('data-compact');
+    const crowded = row.scrollWidth > row.clientWidth;
+    if (crowded) row.setAttribute('data-compact', '');
+    if (crowded !== was) {
+      console.debug(
+        `[feed-tabs] the row is ${crowded ? 'crowded: one text step down' : 'roomy again'}`
+      );
+    }
+  }
+
+  $effect(() => {
+    const row = tabs;
+    if (!row) return;
+    // Read so a locale change (new labels) re-runs the effect, whatever the observers see.
+    void FEED_TABS.map((t) => t.label()).join('|');
+    decideCompact(row);
+    let live = true;
+    const observer =
+      typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => decideCompact(row));
+    if (!observer)
+      console.debug('[feed-tabs] no ResizeObserver - compact decided on mount and font load only');
+    observer?.observe(row);
+    row.querySelectorAll('[data-feed-tab]').forEach((tab) => observer?.observe(tab));
+    void document.fonts?.ready.then(() => {
+      if (live) decideCompact(row);
+    });
+    return () => {
+      live = false;
+      observer?.disconnect();
+    };
+  });
 
   /** Reads the active button's box into `pill`; true when it moved. */
   function measurePill(row: HTMLElement, selected: PostFeed): boolean {
@@ -182,7 +201,9 @@
       row.getBoundingClientRect(),
       tab.getBoundingClientRect(),
       row.scrollLeft,
-      maxScroll
+      maxScroll,
+      // The fade's width (`scroll-px-8`): a tab scrolled to the leading edge keeps its first letters clear of it.
+      parseFloat(getComputedStyle(row).scrollPaddingLeft) || 0
     );
     if (next === row.scrollLeft) return;
     console.debug(`[feed-tabs] the row scrolls to ${next} px to show ${selected}`);
@@ -203,8 +224,7 @@
   >
     <div
       bind:this={tabs}
-      use:compactWhenCrowded
-      class="group/tabs no-scrollbar relative isolate flex min-w-0 flex-1 snap-x snap-proximity gap-1 overflow-x-auto"
+      class="group/tabs no-scrollbar relative isolate flex min-w-0 flex-1 scroll-px-8 gap-1 overflow-x-auto"
       data-feed-tabs
       use:scrollFades
     >
@@ -231,7 +251,7 @@
           use:guideAnchor={`posts.tab.${tab.feed}`}
           onclick={() => onFeed(tab.feed)}
           aria-pressed={feed === tab.feed}
-          class="tap-target focus-visible:ring-accent-icon relative z-1 min-w-min flex-auto snap-start rounded-full px-2.5 text-sm leading-tight transition-colors group-data-compact/tabs:px-2 group-data-compact/tabs:text-xs focus-visible:ring-2 focus-visible:outline-none {feed ===
+          class="tap-target focus-visible:ring-accent-icon relative z-1 min-w-min flex-auto rounded-full px-2.5 text-sm leading-tight transition-colors group-data-compact/tabs:px-2 group-data-compact/tabs:text-xs focus-visible:ring-2 focus-visible:outline-none {feed ===
           tab.feed
             ? settled === tab.feed
               ? 'text-on-accent font-semibold'

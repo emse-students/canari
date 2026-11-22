@@ -26,6 +26,10 @@ describe('centredTabScrollLeft', () => {
     expect(centredTabScrollLeft(row, { left: 16 + 100, width: 340 }, 0, 200)).toBe(100);
   });
 
+  it('keeps the fade width clear before the leading edge of a tab wider than the row', () => {
+    expect(centredTabScrollLeft(row, { left: 16 + 100, width: 340 }, 0, 200, 32)).toBe(68);
+  });
+
   it('leaves a row that does not overflow at 0', () => {
     expect(centredTabScrollLeft(row, { left: 200, width: 100 }, 0, 0)).toBe(0);
   });
