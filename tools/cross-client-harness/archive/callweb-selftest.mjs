@@ -184,7 +184,7 @@ ok('each pulse fades in rather than clicking on', Math.abs(at(1)) < 0.01 * 32767
 
 // -- how each call ENDS, and the record it writes (#2582; read on 1.5.1-alpha.1, 2026-10-27) -------
 console.log('the end of a call and its record, per scenario and role');
-const END = (state, outcome, notify) => `log: [20:33:35.528] [Call] ending call ${H} state=${state} outcome=${outcome} notify=${notify} remote=${!notify}`;
+const END = (state, outcome, notify) => `log: [20:33:35.528] [Call] ending call ${H} state=${state} outcome=${outcome} notify=${notify} remote=${!notify} failed=false`;
 const REC = (outcome) => `log: [20:33:35.531] [CallRecord] ${H} finalized as ${outcome}`;
 const PRIMED_DIAL = 'log: [Call] voice primed (mounted within the dialling tap): AbortError: The play() request was interrupted because the media was removed from the document. https://goo.gl/LdLk22';
 for (const row of ['CALL-WEB-1', 'CALL-WEB-2']) {
@@ -207,7 +207,7 @@ ok("... W4 records W5's call busy and ends its own as told", forgiven('CALL-WEB-
 ok('COUNTER: a busy answer is dirt outside the busy row', !forgiven('CALL-WEB-1', 'W4', REC('busy')) && !forgiven('CALL-WEB-1', 'W2', `log: [Call] ${H} is busy - ending call ${H} at once`));
 ok('CALL-WEB-3: the callee ends and notifies, the caller is told', forgiven('CALL-WEB-3', 'W4', END('incall', 'answered', true)) && forgiven('CALL-WEB-3', 'W2', END('incall', 'answered', false)) && forgiven('CALL-WEB-3', 'W2', REC('answered')));
 ok('COUNTER: in CALL-WEB-3 the caller ending as if it had hung up stays dirt', !forgiven('CALL-WEB-3', 'W2', END('incall', 'answered', true)));
-const LEFT_END = `log: [02:07:14.100] [Call] ending call ${H} state=incall outcome=answered notify=false remote=false`;
+const LEFT_END = `log: [02:07:14.100] [Call] ending call ${H} state=incall outcome=answered notify=false remote=false failed=false`;
 ok('CALL-WEB-8: W2 ends on the peer leaving the room, neither notifying nor told', forgiven('CALL-WEB-8', 'W2', LEFT_END) && forgiven('CALL-WEB-8', 'W2', REC('answered')));
 ok('COUNTER: ... that end is dirt in any other row', !forgiven('CALL-WEB-1', 'W2', LEFT_END) && !forgiven('CALL-WEB-3', 'W2', LEFT_END));
 ok('COUNTER: the same end at warn stays dirt', !forgiven('CALL-WEB-1', 'W2', END('incall', 'answered', true).replace(/^log/, 'warning')));
@@ -219,7 +219,7 @@ ok('COUNTER: the same end at warn stays dirt', !forgiven('CALL-WEB-1', 'W2', END
   const rec = readFileSync(join(ROOT, 'frontend/src/lib/utils/chat/callSystemMessages.ts'), 'utf8');
   const srv = readFileSync(join(ROOT, 'apps/chat-delivery-service/src/services/calls.service.ts'), 'utf8');
   ok('the end, the busy answer and the meeting invite are spelled as CallService.ts writes them', [
-    "`[Call] ending call ${callId} state=${state} outcome=${ended} notify=${notify} remote=${remoteOrigin}`",
+    "`[Call] ending call ${callId} state=${state} outcome=${ended} notify=${notify} remote=${remoteOrigin} failed=${failed}`",
     "const ended = outcome ?? (wasCalling && !this.peerArrived ? 'unrung' : 'answered');",
     '`[Call] ${senderId} is busy - ending call ${callMsg.callId} at once`',
     '`[Call] invite ${callId} in ${groupId} meets state=${state} call=${this.currentCallId}`',

@@ -6,22 +6,31 @@ import { callView, callStatusKind } from './callView.svelte';
 
 describe('callStatusKind', () => {
   it('reads the ring on each side', () => {
-    expect(callStatusKind('incoming', null, false)).toBe('incoming');
-    expect(callStatusKind('calling', null, false)).toBe('ringing');
+    expect(callStatusKind('incoming', null, false, false)).toBe('incoming');
+    expect(callStatusKind('calling', null, false, false)).toBe('ringing');
   });
 
   it('is not live at the tap: incall without a connected media path is connecting', () => {
-    expect(callStatusKind('incall', null, false)).toBe('connecting');
+    expect(callStatusKind('incall', null, false, false)).toBe('connecting');
+  });
+
+  it('says the other party is lost, never a silent connecting, when it went away before any media', () => {
+    // The callee answered; the caller's signalling died before the first connection.
+    expect(callStatusKind('incall', null, true, true)).toBe('peer-lost');
+    // The caller is `calling` until its media connects: a callee gone after answering is lost.
+    expect(callStatusKind('calling', null, false, true)).toBe('peer-lost');
   });
 
   it('is live once connected, and reconnecting while the path is down', () => {
-    expect(callStatusKind('incall', 1, false)).toBe('live');
-    expect(callStatusKind('incall', 1, true)).toBe('reconnecting');
+    expect(callStatusKind('incall', 1, false, false)).toBe('live');
+    expect(callStatusKind('incall', 1, true, false)).toBe('reconnecting');
+    // After a first connection a lost peer is a reconnection, the connected call's word.
+    expect(callStatusKind('incall', 1, true, true)).toBe('reconnecting');
   });
 
   it('reads ended and idle as themselves', () => {
-    expect(callStatusKind('ended', 1, false)).toBe('ended');
-    expect(callStatusKind('idle', null, false)).toBe('idle');
+    expect(callStatusKind('ended', 1, false, false)).toBe('ended');
+    expect(callStatusKind('idle', null, false, false)).toBe('idle');
   });
 });
 

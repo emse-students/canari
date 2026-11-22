@@ -1,6 +1,6 @@
 <script lang="ts">
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
-  import { CornerDownRight, Building2 } from '@lucide/svelte';
+  import { CornerDownRight, Building2, Phone } from '@lucide/svelte';
   import GroupAvatar from '$lib/components/shared/GroupAvatar.svelte';
   import { m } from '$lib/paraglide/messages';
   import { MediaService } from '$lib/media';
@@ -134,6 +134,11 @@
     groupPosition?: 'single' | 'start' | 'middle' | 'end';
     /** Called when the user clicks the "Rejoindre la communauté" button on a channel invitation card. */
     onJoinChannel?: (channelId: string) => void;
+    /**
+     * Called by the "Rappeler" button of a call record that never connected (`not-connected`): the
+     * call to place again, in this conversation. Absent where no call can be placed from here.
+     */
+    onCallBack?: () => void;
     /** Called when the user triggers the reply action. */
     onReply?: (messageId: string) => void;
     /** Called when the user triggers the forward action. */
@@ -215,6 +220,7 @@
     groupPosition = 'single',
     senderHeaderShown = false,
     onJoinChannel,
+    onCallBack,
     onReply,
     onForward,
     onNavigateToMessage,
@@ -343,6 +349,10 @@
 
   let envelope = $derived(parseEnvelope(content));
   let effectiveSystem = $derived(isSystem || envelope.kind === 'system');
+  /** A call record whose media never connected: it offers the call again (`onCallBack`). */
+  let callNotConnected = $derived(
+    envelope.kind === 'system' && envelope.callEvent?.outcome === 'not-connected'
+  );
   let channelInvite = $derived(
     envelope.kind === 'system' ? (envelope.channelInvite ?? null) : null
   );
@@ -1085,6 +1095,12 @@
       class="text-text-muted max-w-md text-center text-xs {shouldAnimate ? 'animate-rise-in' : ''}"
     >
       <span><EmojiText text={textContent} /></span>
+      {#if callNotConnected && onCallBack}
+        <Button variant="soft" class="ml-1" onclick={() => onCallBack?.()}>
+          <Phone size={12} strokeWidth={2.5} />
+          {m.chat_system_call_back()}
+        </Button>
+      {/if}
     </div>
   {/if}
 {:else}

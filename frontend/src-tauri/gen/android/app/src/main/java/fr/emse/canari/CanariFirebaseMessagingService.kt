@@ -48,6 +48,7 @@ import fr.emse.canari.push.ConversationNicknames
 import fr.emse.canari.push.ConversationRef
 import fr.emse.canari.push.ChannelReadMark
 import fr.emse.canari.push.ConversationShape
+import fr.emse.canari.push.UnsendableCause
 import fr.emse.canari.push.FallbackLine
 import fr.emse.canari.push.ForegroundGuard
 import fr.emse.canari.push.GenericBannerLedger
@@ -116,6 +117,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * native and outlive the page's own settlement of it.
          */
         val owner: String? = null,
+        /**
+         * WHY a drain marked it [unsendable] - an [UnsendableCause.wire], set with the mark and only
+         * with it. The page adopts the failure as that cause, not as the 5xx run its parked count
+         * otherwise reads as; the page's own write keeps it (`NATIVE_VERDICTS`, `outbox_mirror.rs`).
+         */
+        val unsendableCause: String? = null,
     )
 
     companion object {
@@ -2642,7 +2649,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // held here, this device removed from it, a malformed proto (NEVER, marked).
                     val prospect = failed[entry.id] ?: OutboxRetry.Prospect.NOT_YET
                     if (prospect == OutboxRetry.Prospect.NEVER) {
-                        remaining.add(entry.copy(unsendable = true))
+                        remaining.add(entry.copy(unsendable = true, unsendableCause = UnsendableCause.NOT_ENCRYPTABLE.wire))
                         Log.w(TAG, "drainOutboxBackground: id=${entry.id.take(8)} cannot be encrypted from this state - marked unsendable group=${ConversationRef.of(entry.groupId)}")
                     } else {
                         remaining.add(entry)
@@ -2664,7 +2671,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     Log.d(TAG, "drainOutboxBackground: ✓ sent id=${entry.id.take(8)} group=${ConversationRef.of(entry.groupId)}")
                 } else if (answer is QueuedSendAnswer.Outcome.Kept) {
                     // Refused for good: marked, so no later drain sends it again.
-                    remaining.add(if (answer.cause.prospect == OutboxRetry.Prospect.NEVER) entry.copy(unsendable = true) else entry)
+                    // Marked WITH its cause, typed here where the answer was read: the page says it.
+                    val verdict = UnsendableCause.of(answer.cause)
+                    remaining.add(if (verdict != null) entry.copy(unsendable = true, unsendableCause = verdict.wire) else entry)
                     prospects.add(answer.cause.prospect)
                     Log.w(TAG, "drainOutboxBackground: POST failed id=${entry.id.take(8)} -> stays queued (${answer.cause})") // log-safe: an enum constant's name (QueuedSendAnswer.KeptCause), no content
                     if (answer.cause.prospect == OutboxRetry.Prospect.BLOCKED) {
@@ -2978,6 +2987,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                             o.optBoolean("durable", true),
                             o.optBoolean("unsendable", false),
                             o.optString("owner").takeIf { it.isNotEmpty() },
+                            unsendableCause = o.optString("unsendableCause").takeIf { it.isNotEmpty() },
                         )
                     } catch (e: Exception) {
                         null
@@ -2993,6 +3003,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             put("silent", e.silent)
             put("durable", e.durable)
             if (e.unsendable) put("unsendable", true)
+            if (e.unsendable) e.unsendableCause?.let { put("unsendableCause", it) }
             e.owner?.let { put("owner", it) }
         }
 

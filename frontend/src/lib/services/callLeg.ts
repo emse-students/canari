@@ -1,5 +1,9 @@
 import type { CallVideoQualityLoop } from '$lib/utils/callVideoQuality';
-import type { MediaSnapshot } from '$lib/utils/callStats';
+import {
+  emptyCandidateCounts,
+  type IceCandidateCounts,
+  type MediaSnapshot,
+} from '$lib/utils/callStats';
 import type { RtpPacketCounts } from '$lib/utils/callE2eReport';
 
 /**
@@ -17,6 +21,33 @@ export const ONE_TO_ONE_LEG = '';
 export function peerUserOf(peerId: string): string {
   const i = peerId.lastIndexOf(':');
   return (i > 0 ? peerId.slice(0, i) : peerId).toLowerCase();
+}
+
+/**
+ * How the relay saw the other party's signalling socket end, as `PeerAway.disposition` names it
+ * (call-service `Disposition::as_str`, the seat-keeping ones only). The server classified it where
+ * the socket died; this side only reads the token. `unstated`: a relay older than the field said
+ * nothing; `unrecognised`: a token this build does not know (a newer relay) - named, never guessed.
+ */
+export type PeerAwayCause =
+  | 'transport-error'
+  | 'stream-ended'
+  | 'send-failed'
+  | 'keepalive-lost'
+  | 'unstated'
+  | 'unrecognised';
+
+const PEER_AWAY_CAUSES: readonly PeerAwayCause[] = [
+  'transport-error',
+  'stream-ended',
+  'send-failed',
+  'keepalive-lost',
+];
+
+/** The {@link PeerAwayCause} a `PeerAway` frame's `disposition` field carries. */
+export function peerAwayCauseOf(disposition: unknown): PeerAwayCause {
+  if (disposition === undefined || disposition === null) return 'unstated';
+  return PEER_AWAY_CAUSES.find((c) => c === disposition) ?? 'unrecognised';
 }
 
 /**
@@ -49,6 +80,8 @@ export class CallLeg {
   arrived = false;
   /** The relay said this leg's party lost its signalling (`PeerAway`), and it has not come back. */
   away = false;
+  /** How the relay saw that signalling end, while {@link away}; `null` otherwise. */
+  awayCause: PeerAwayCause | null = null;
   /** ICE of the CURRENT peer connection reached `connected` at least once. */
   mediaEverConnected = false;
   iceRestarts = 0;
@@ -85,6 +118,10 @@ export class CallLeg {
   reportTimer: number | null = null;
   reportInFlight: { pc: RTCPeerConnection; snapshot: Promise<MediaSnapshot | null> } | null = null;
   lastSnapshot: MediaSnapshot | null = null;
+  /** The other party's candidates trickled to the CURRENT peer connection (`cands_in=`). */
+  candsIn: IceCandidateCounts = emptyCandidateCounts();
+  /** The CURRENT peer connection's own candidates, gathered and sent (`cands_out=`). */
+  candsOut: IceCandidateCounts = emptyCandidateCounts();
 
   /**
    * @param key {@link ONE_TO_ONE_LEG}, or the other participant's user id (lowercased).

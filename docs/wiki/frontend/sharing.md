@@ -258,6 +258,14 @@ iOS suggestions show no photo either. Not fixed here (it needs an image per dona
 `INInteraction`/`setImage(_:forParameterNamed:)` and a cached file the extension can read); planned in
 [its backlog entry](../backlog.d/p3-ios-share-suggestions-carry-no-photo.md).
 
+**The late picture, pinned by a JVM test (2026-11-22, `1.7.3-alpha.6`).** No test account has a profile photo and a
+sign-out would drop the shared bench seat's state, so the upgrade is `ShareTargetsUpgradeTest.kt` over
+`pure/ShareTargetsUpgrade.kt` (the loop `ShareTargets.upgradeIcons` runs, with the platform calls passed in): one
+pending picture pushes the SAME shortcut id and the pass ends `upgradeIcons: 1 of 1 picture(s) set`; a `clear()` or a
+later publish ends the pass and nothing is pushed back. The menu and the notification header draw their circle through
+the one `ShortcutIcons.adaptive` helper (a source-level assertion: a `Bitmap` cannot be built on the JVM). Still read by
+eye: a real face inside the circle, not cropped.
+
 ## Share suggestions, iOS - lot S5
 
 The iPhone twin of the Android suggestions above, with the same decisions: the same list (the

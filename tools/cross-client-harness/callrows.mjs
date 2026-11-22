@@ -335,7 +335,7 @@ const HUNG_UP = at(L, String.raw`\[Call\] hung up from the full screen`);
 // produces - a declined call ending as `cancelled`, a connected call recording `not-answered` -
 // stays dirt.
 const ENDING = (state, outcome, ends) =>
-  at(L, String.raw`\[Call\] ending call ${H} state=${state} outcome=${outcome} notify=${ends} remote=${!ends}`);
+  at(L, String.raw`\[Call\] ending call ${H} state=${state} outcome=${outcome} notify=${ends} remote=${!ends} failed=false`);
 const RECORDED = (outcome) => at(L, String.raw`\[CallRecord\] ${H} finalized as ${outcome}`);
 /** The end of an answered call, on the side that ended it (`ends`) or the side told of it. */
 const ANSWERED_END = (ends) => [ENDING('incall', 'answered', ends), RECORDED('answered')];
@@ -367,7 +367,7 @@ export function callNarration(row, seat) {
       return [
         ...caller,
         at(L, String.raw`\[Call\] the other party left the call room`),
-        at(L, String.raw`\[Call\] ending call ${H} state=incall outcome=answered notify=false remote=false`),
+        at(L, String.raw`\[Call\] ending call ${H} state=incall outcome=answered notify=false remote=false failed=false`),
         RECORDED('answered'),
       ];
     if (scenario === 'callee-hangup') return [...caller, ...ANSWERED_END(false)];

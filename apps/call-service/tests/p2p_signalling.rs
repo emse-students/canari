@@ -646,7 +646,10 @@ async fn a_lost_socket_is_resumed_in_place_and_the_call_goes_on() {
 
     // No Close frame: the TCP connection just goes, as when the radio does.
     drop(bob);
-    assert_eq!(recv(&mut alice).await, json!({ "type": "PeerAway" }));
+    assert_eq!(
+        recv(&mut alice).await,
+        json!({ "type": "PeerAway", "disposition": "transport-error" })
+    );
 
     let mut bob = join_with(&svc, "bob", room, &bob_resume).await;
     let fresh = joined(&mut bob, room).await;
@@ -697,7 +700,10 @@ async fn an_away_seat_that_is_not_resumed_ends_the_call() {
     let (mut alice, _, bob, bob_resume) = paired(&svc, room).await;
 
     drop(bob);
-    assert_eq!(recv(&mut alice).await, json!({ "type": "PeerAway" }));
+    assert_eq!(
+        recv(&mut alice).await,
+        json!({ "type": "PeerAway", "disposition": "transport-error" })
+    );
     assert_eq!(recv(&mut alice).await, json!({ "type": "PeerLeft" }));
 
     let mut late = join_with(&svc, "bob", room, &bob_resume).await;
@@ -715,7 +721,10 @@ async fn a_resume_token_is_refused_to_another_user() {
     let room = "room-stolen";
     let (mut alice, _, bob, bob_resume) = paired(&svc, room).await;
     drop(bob);
-    assert_eq!(recv(&mut alice).await, json!({ "type": "PeerAway" }));
+    assert_eq!(
+        recv(&mut alice).await,
+        json!({ "type": "PeerAway", "disposition": "transport-error" })
+    );
 
     let mut mallory = join_with(&svc, "mallory", room, &bob_resume).await;
     assert_eq!(
@@ -842,7 +851,10 @@ async fn a_microphone_state_while_the_partner_is_away_is_dropped_then_re_announc
     let (mut alice, _, bob, bob_resume) = paired(&svc, room).await;
 
     drop(bob);
-    assert_eq!(recv(&mut alice).await, json!({ "type": "PeerAway" }));
+    assert_eq!(
+        recv(&mut alice).await,
+        json!({ "type": "PeerAway", "disposition": "transport-error" })
+    );
     send(
         &mut alice,
         json!({ "type": "MicSuspended", "suspended": true }),
@@ -1010,7 +1022,10 @@ async fn a_silent_half_open_peer_is_held_dead_and_the_partner_is_told() {
     let room = "room-half-open";
     let (mut alice, _bob_silent, _) = paired_with_a_silent_bob(&svc, room).await;
 
-    assert_eq!(next(&mut alice).await, json!({ "type": "PeerAway" }));
+    assert_eq!(
+        next(&mut alice).await,
+        json!({ "type": "PeerAway", "disposition": "keepalive-lost" })
+    );
     assert_eq!(next(&mut alice).await, json!({ "type": "PeerLeft" }));
 }
 
@@ -1021,7 +1036,10 @@ async fn a_peer_held_dead_by_the_keepalive_can_still_resume() {
     let svc = start_with(None, Some(TEST_KEEPALIVE_MS)).await;
     let room = "room-half-open-resume";
     let (mut alice, _bob_silent, bob_resume) = paired_with_a_silent_bob(&svc, room).await;
-    assert_eq!(next(&mut alice).await, json!({ "type": "PeerAway" }));
+    assert_eq!(
+        next(&mut alice).await,
+        json!({ "type": "PeerAway", "disposition": "keepalive-lost" })
+    );
 
     let mut bob = join_with(&svc, "bob", room, &bob_resume).await;
     joined(&mut bob, room).await;
@@ -1269,11 +1287,11 @@ async fn a_participant_away_during_a_replacement_resumes_into_a_fresh_pair_with_
     drop(alice);
     assert_eq!(
         recv_raw(&mut carol).await,
-        json!({ "type": "PeerAway", "peer": "alice" })
+        json!({ "type": "PeerAway", "peer": "alice", "disposition": "transport-error" })
     );
     assert_eq!(
         recv_raw(&mut bob_phone).await,
-        json!({ "type": "PeerAway", "peer": "alice" })
+        json!({ "type": "PeerAway", "peer": "alice", "disposition": "transport-error" })
     );
 
     let mut bob_pc = join_mesh(&svc, "bob", room, 4).await;
@@ -1284,7 +1302,7 @@ async fn a_participant_away_during_a_replacement_resumes_into_a_fresh_pair_with_
     joined(&mut bob_pc, room).await;
     assert_eq!(
         recv_raw(&mut bob_pc).await,
-        json!({ "type": "PeerAway", "peer": "alice" })
+        json!({ "type": "PeerAway", "peer": "alice", "disposition": "transport-error" })
     );
     assert_eq!(
         recv_raw(&mut bob_pc).await,

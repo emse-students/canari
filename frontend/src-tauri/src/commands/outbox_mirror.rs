@@ -67,7 +67,7 @@ const PAGE_OWNER: &str = "page";
 /// erase what a background drain learned: an `unsendable` mark gone, and every later drain trying
 /// again what the server refused for good. An allowlist: a field the page stopped setting is not
 /// resurrected by this.
-const NATIVE_VERDICTS: [&str; 1] = ["unsendable"];
+const NATIVE_VERDICTS: [&str; 2] = ["unsendable", "unsendableCause"];
 
 /// What one merge did, for its log line.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -1101,9 +1101,11 @@ mod tests {
     fn a_native_verdict_on_a_page_line_is_carried_over() {
         let mut marked = line("p1", Some("page"));
         marked["unsendable"] = json!(true);
+        marked["unsendableCause"] = json!("refused");
         let (lines, merge) =
             merge_outbox_mirror(&text(&[marked]), vec![line("p1", None)], &held(&["p1"]));
         assert_eq!(lines[0]["unsendable"], json!(true));
+        assert_eq!(lines[0]["unsendableCause"], "refused");
         assert_eq!(lines[0]["owner"], "page");
         assert_eq!(merge.verdicts_kept, 1);
     }

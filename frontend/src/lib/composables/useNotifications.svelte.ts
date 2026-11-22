@@ -16,7 +16,12 @@ import { playTone } from '$lib/utils/toneOutput';
 import { startCallRing, stopCallRing } from '$lib/utils/callRing';
 import { callHoldsAppSound } from '$lib/utils/callSoundGate';
 import { scoreSound } from '$lib/utils/soundPalette';
-import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
+import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion';
+import {
+  announcementDecision,
+  claimMessageAnnouncement,
+  type AnnouncedMessage,
+} from '$lib/utils/chat/announcedMessages';
 import {
   composePlainNotificationText,
   postNativeMessageNotification,
@@ -666,6 +671,7 @@ export function useNotifications() {
       channelId: mentionsMe ? CHANNEL_MENTIONS : CHANNEL_MESSAGES,
       idKey: conversationId,
       conversationId,
+      announced: native?.announced,
     });
   }
 
@@ -772,7 +778,11 @@ export function useNotifications() {
    *   conversation for a message (a second message updates the first), the reactor and the message
    *   for a reaction (`reactionCollapseKey`, the push's own collapse id on iOS: a reactor's second
    *   reaction to one message replaces the first) - so the two kinds never replace each other.
-   * @param p.conversationId where a tap leads.
+   * @param p.conversationId where a tap leads - and, on iOS, the notification's thread, the one the
+   *   extension files its banners of that conversation under, so taking a conversation's banners
+   *   down by thread (`cancel_conversation_notifications`) takes the page's too.
+   * @param p.announced a MESSAGE banner's messages (`NativeMessageNotification.announced`): on iOS the
+   *   page asks the ledger it shares with the extension before raising (`announcedMessages.ts`).
    */
   async function postPlainNotification(p: {
     convKey: string;
@@ -781,15 +791,45 @@ export function useNotifications() {
     channelId: string;
     idKey?: string;
     conversationId?: string;
+    announced?: readonly AnnouncedMessage[];
   }) {
-    const { convKey, title, body, channelId, idKey, conversationId } = p;
+    const { convKey, title, body, channelId, idKey, conversationId, announced } = p;
     if (isTauriRuntime()) {
       try {
         if (await isPermissionGranted()) {
+          const ios = isIosTauriRuntime() && conversationId !== undefined;
+          // ONE NOTIFICATION PER MESSAGE ON AN IPHONE: asked after every other refusal, right
+          // before the post, so a claim is never taken for a banner that is not raised.
+          let announces = '';
+          if (ios && announced !== undefined) {
+            const asked = await claimMessageAnnouncement(conversationId, announced);
+            const decision = announcementDecision(
+              convKey,
+              'claim' in asked ? asked.claim : null,
+              'failure' in asked ? asked.failure : undefined
+            );
+            if (!decision.raise) {
+              console.log(decision.line);
+              return;
+            }
+            if ('failure' in asked) console.error(decision.line);
+            else console.log(decision.line);
+            announces = decision.announces;
+          }
           await sendNotification({
             title,
             ...androidNotificationOptions(body, channelId),
             ...(idKey ? { id: stableNotifId(idKey) } : {}),
+            // THE EXTENSION'S THREAD AND ITS CONVERSATION FIELD: removal by conversation takes the
+            // page's banners with the extension's (iPhone 12, `1.7.3-alpha.6`: a deleted group kept
+            // the four banners the page had raised). `announces` lets the extension find this
+            // banner when it draws its one message later (`pageBannerStandsOnlyFor`).
+            ...(ios
+              ? {
+                  group: conversationId,
+                  extra: { groupId: conversationId, ...(announces ? { announces } : {}) },
+                }
+              : {}),
           });
           // The plugin reports no close, so a plugin entry lives until its conversation is opened -
           // one small id per reactor and message at most (`holdRaisedReaction` dedupes by slot).

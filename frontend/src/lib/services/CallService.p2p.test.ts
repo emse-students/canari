@@ -12,6 +12,7 @@ import {
   CALL_SIGNALLING_RESUME_MAX_DELAY_MS,
   CALL_SIGNALLING_RESUME_TIMEOUT_MS,
 } from './CallService';
+import { callRecordOwnedHere } from '$lib/utils/chat/callRecordOwner';
 import { canari } from '$lib/proto/canari.js';
 import { decodeAppMessage, mkCallBusy, mkCallHangup, mkCallInvite } from '$lib/proto/codec';
 import { appMessageSentAtMs } from '$lib/utils/chat/messageUtils';
@@ -480,12 +481,12 @@ class FakePeerConnection {
    * The peer's offer carries a NEW m-line of `kind`: `setRemoteDescription` creates its
    * transceiver (a bare sender, a receiver) and fires `ontrack` in the same task, as the browser.
    */
-  remoteOfferAdds(kind: string) {
+  remoteOfferAdds(kind: string, muted = false) {
     const sender = fakeSender(null, kind);
     const receiver = fakeReceiver();
     this.senders.push(sender);
     this.receivers.push(receiver);
-    const track = { kind, id: `remote-${kind}-1`, readyState: 'live', muted: false };
+    const track = { kind, id: `remote-${kind}-1`, readyState: 'live', muted };
     const transceiver = this.transceiverOf(sender);
     this.ontrackHandler()?.({ track, receiver, transceiver });
     return transceiver;
@@ -2450,7 +2451,8 @@ describe('when a busy answer is, and is not, given', () => {
       'room-1',
       ENDED_AT,
       'cancelled',
-      undefined
+      undefined,
+      false
     );
     expect(sentCallFrames().some((c) => c?.busy)).toBe(false);
   });
@@ -2471,7 +2473,7 @@ describe('when a busy answer is, and is not, given', () => {
   });
 });
 
-describe('a call whose callee reached the room is ANSWERED (B15)', () => {
+describe('a call whose callee reached the room but whose media never connected is NOT CONNECTED (B15, 2026-11-22)', () => {
   const asked = async () => {
     const chat = { onCallStarted: vi.fn(), onCallEnded: vi.fn() };
     const service = new CallService(fakeMls);
@@ -2485,7 +2487,7 @@ describe('a call whose callee reached the room is ANSWERED (B15)', () => {
   const failCall = (service: CallService, why: string) =>
     (service as unknown as { failCall: (r: string) => void }).failCall(why);
 
-  it('the callee leaves before any media: PeerLeft writes a duration, not an unanswered call', async () => {
+  it('the callee leaves before any media: PeerLeft writes not-connected, never a duration', async () => {
     const { chat, service, ws } = await asked();
     ws.deliver({ type: 'PeerLeft' });
     await settle();
@@ -2493,25 +2495,107 @@ describe('a call whose callee reached the room is ANSWERED (B15)', () => {
     expect(['ended', 'idle']).toContain(get(service.callState));
     await recordWritten();
     expect(chat.onCallEnded).toHaveBeenCalledTimes(1);
-    expect(chat.onCallEnded.mock.calls[0][3]).toBeUndefined();
+    expect(chat.onCallEnded.mock.calls[0][3]).toBe('not-connected');
   });
 
-  it('the callee MLS hangup first: the same fact, written by the signal path alone', async () => {
-    const { chat, service } = await asked();
-    await service.handleCallSignal(
+  /** The callee's MLS hangup, as a 1.7.x build sends it (no reason) or as this build does. */
+  const calleeHangup = (service: CallService, endReason?: number) =>
+    service.handleCallSignal(
       'callee@example.org',
       'group-1',
-      { callId: 'room-1', hangup: true },
+      { callId: 'room-1', hangup: true, ...(endReason !== undefined ? { endReason } : {}) },
       'me@example.org',
       'device-1'
     );
+
+  it('the callee MLS hangup FIRST (a 1.7.x callee, no reason): this device writes its own fact', async () => {
+    const { chat, service, ws } = await asked();
+    // The signal path is told this device owns the record, before the service handles the frame.
+    expect(callRecordOwnedHere('room-1')).toBe(true);
+    await calleeHangup(service);
+    ws.deliver({ type: 'PeerLeft' });
+    await settle();
     expect(['ended', 'idle']).toContain(get(service.callState));
     await recordWritten();
-    expect(chat.onCallEnded).not.toHaveBeenCalled();
+    expect(chat.onCallEnded).toHaveBeenCalledTimes(1);
+    expect(chat.onCallEnded.mock.calls[0][3]).toBe('not-connected');
+    // The other party hung up: nothing says the connection failed.
+    expect(chat.onCallEnded.mock.calls[0][5]).toBe(false);
   });
 
-  it('a hang-up by the caller after the callee arrived sends no unanswered reason', async () => {
+  it('PeerLeft FIRST, the MLS hangup after: the same record', async () => {
+    const { chat, service, ws } = await asked();
+    ws.deliver({ type: 'PeerLeft' });
+    await settle();
+    await calleeHangup(service, canari.CallEndReason.CALL_END_REASON_NOT_CONNECTED);
+    await recordWritten();
+    expect(chat.onCallEnded).toHaveBeenCalledTimes(1);
+    expect(chat.onCallEnded.mock.calls[0][3]).toBe('not-connected');
+    expect(chat.onCallEnded.mock.calls[0][5]).toBe(false);
+  });
+
+  it("this device's own connection decides, never the other side's reason", async () => {
     const { chat, service } = await asked();
+    FakePeerConnection.instances[0].setConnection('connected');
+    await calleeHangup(service, canari.CallEndReason.CALL_END_REASON_NOT_CONNECTED);
+    await recordWritten();
+    expect(chat.onCallEnded).toHaveBeenCalledTimes(1);
+    expect(chat.onCallEnded.mock.calls[0][3]).toBeUndefined();
+  });
+
+  it('a hangup whose send fails drops the record patch it was waiting for', async () => {
+    const { service } = await asked();
+    const chat = {
+      onCallStarted: vi.fn(),
+      onCallEnded: vi.fn(),
+      onCallEndAnswered: vi.fn(),
+      onCallEndUnsent: vi.fn(),
+    };
+    service.setChatNotifier(chat);
+    vi.mocked(fakeMls.sendMessage).mockRejectedValueOnce(new Error('send failed'));
+    service.endCall();
+    await settle();
+    await recordWritten();
+    expect(chat.onCallEndUnsent).toHaveBeenCalledWith('room-1');
+    expect(chat.onCallEndAnswered).not.toHaveBeenCalled();
+  });
+
+  it('a seat that went AWAY and never came back ends the call as a FAILURE', async () => {
+    const { chat, ws } = await asked();
+    ws.deliver({ type: 'PeerAway', disposition: 'transport-error' });
+    await settle();
+    ws.deliver({ type: 'PeerLeft' });
+    await settle();
+    await recordWritten();
+    expect(chat.onCallEnded.mock.calls[0][3]).toBe('not-connected');
+    expect(chat.onCallEnded.mock.calls[0][5]).toBe(true);
+  });
+
+  it('a hang-up by the caller after the callee arrived, before any media, says NOT CONNECTED on the wire', async () => {
+    const { chat, service } = await asked();
+    service.endCall();
+
+    await recordWritten();
+    expect(chat.onCallEnded.mock.calls[0][3]).toBe('not-connected');
+    // A person hung up: a neutral "not completed", never a claimed failure.
+    expect(chat.onCallEnded.mock.calls[0][5]).toBe(false);
+    const hangup = sentCallFrames().find((c) => c?.hangup);
+    expect(hangup?.endReason).toBe(canari.CallEndReason.CALL_END_REASON_NOT_CONNECTED);
+  });
+
+  it('a stalled media path after the callee joined fails the call as not connected, with a hangup', async () => {
+    const { chat, service } = await asked();
+    failCall(service, 'ice failed');
+
+    await recordWritten();
+    expect(chat.onCallEnded.mock.calls[0][3]).toBe('not-connected');
+    expect(chat.onCallEnded.mock.calls[0][5]).toBe(true);
+    expect(sentCallFrames().some((c) => c?.hangup)).toBe(true);
+  });
+
+  it('a call whose media CONNECTED keeps no outcome: it was answered, and has a duration', async () => {
+    const { chat, service } = await asked();
+    FakePeerConnection.instances[0].setConnection('connected');
     service.endCall();
 
     await recordWritten();
@@ -2520,13 +2604,51 @@ describe('a call whose callee reached the room is ANSWERED (B15)', () => {
     expect(hangup?.endReason ?? 0).toBe(canari.CallEndReason.CALL_END_REASON_UNSPECIFIED);
   });
 
-  it('a stalled media path after the callee joined fails an answered call, with a hangup', async () => {
-    const { chat, service } = await asked();
-    failCall(service, 'ice failed');
+  it('the peer away before the first connection is SAID (peerLost), and the relay disposition is logged', async () => {
+    const { service, ws } = await asked();
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    vi.mocked(appendLog).mockClear();
+    ws.deliver({ type: 'PeerAway', disposition: 'transport-error' });
+    await settle();
 
-    await recordWritten();
-    expect(chat.onCallEnded.mock.calls[0][3]).toBeUndefined();
-    expect(sentCallFrames().some((c) => c?.hangup)).toBe(true);
+    expect(get(service.peerLost)).toBe(true);
+    const lines = vi.mocked(appendLog).mock.calls.map(([l]) => String(l));
+    expect(lines.some((l) => l.includes('relay: transport-error, media never connected'))).toBe(
+      true
+    );
+    expect(lines.some((l) => l.includes('peer_lost=true') && l.includes('cands_in=h0/s0/r0'))).toBe(
+      true
+    );
+
+    // The same device resumes its seat: the party is back, the screen says connecting again.
+    ws.deliver({ type: 'PeerReady', initiator: true, resumed: true });
+    await settle();
+    expect(get(service.peerLost)).toBe(false);
+  });
+
+  it('an old relay names no disposition, and a newer one a token this build does not know', async () => {
+    const { ws } = await asked();
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    vi.mocked(appendLog).mockClear();
+    ws.deliver({ type: 'PeerAway' });
+    await settle();
+    ws.deliver({ type: 'PeerReady', initiator: true, resumed: true });
+    await settle();
+    ws.deliver({ type: 'PeerAway', disposition: 'something-new' });
+    await settle();
+    const lines = vi.mocked(appendLog).mock.calls.map(([l]) => String(l));
+    expect(lines.some((l) => l.includes('relay: unstated'))).toBe(true);
+    expect(lines.some((l) => l.includes('relay: unrecognised'))).toBe(true);
+    expect(lines.some((l) => l.includes('something-new'))).toBe(false);
+  });
+
+  it('a peer away AFTER the media connected is a reconnection, never peerLost', async () => {
+    const { service, ws } = await asked();
+    FakePeerConnection.instances[0].setConnection('connected');
+    FakePeerConnection.instances[0].setIce('connected');
+    ws.deliver({ type: 'PeerAway', disposition: 'keepalive-lost' });
+    await settle();
+    expect(get(service.peerLost)).toBe(false);
   });
 });
 
@@ -2546,7 +2668,8 @@ describe('a call that fails after its invite left (B15)', () => {
       'room-1',
       ENDED_AT,
       'not-answered',
-      undefined
+      undefined,
+      false
     );
     const hangup = sentCallFrames().find((c) => c?.hangup);
     expect(hangup?.endReason).toBe(canari.CallEndReason.CALL_END_REASON_NOT_ANSWERED);
@@ -2576,7 +2699,14 @@ describe('a busy answer, caller side (B16)', () => {
     expect(showToast).toHaveBeenCalledWith(m.call_busy(), 'info');
     await recordWritten();
     expect(chat.onCallEnded).toHaveBeenCalledTimes(1);
-    expect(chat.onCallEnded).toHaveBeenCalledWith('group-1', 'room-1', ENDED_AT, 'busy', undefined);
+    expect(chat.onCallEnded).toHaveBeenCalledWith(
+      'group-1',
+      'room-1',
+      ENDED_AT,
+      'busy',
+      undefined,
+      false
+    );
     // The hangup stops the callee's other devices ringing, and says why.
     const hangup = sentCallFrames().find((c) => c?.hangup);
     expect(hangup?.endReason).toBe(canari.CallEndReason.CALL_END_REASON_BUSY);
@@ -2627,7 +2757,8 @@ describe('the typed end reason of an unanswered call (B15)', () => {
       'room-1',
       ENDED_AT,
       'cancelled',
-      undefined
+      undefined,
+      false
     );
     const hangup = sentCallFrames().find((c) => c?.hangup);
     expect(hangup?.endReason).toBe(canari.CallEndReason.CALL_END_REASON_CANCELLED);
@@ -2677,7 +2808,8 @@ describe('the typed end reason of an unanswered call (B15)', () => {
       'room-1',
       ENDED_AT,
       'declined',
-      'peer@example.org'
+      'peer@example.org',
+      false
     );
     const hangup = sentCallFrames().find((c) => c?.hangup);
     expect(hangup?.endReason).toBe(canari.CallEndReason.CALL_END_REASON_DECLINED);
@@ -2745,7 +2877,8 @@ describe('the ring window, both sides', () => {
       'room-1',
       ENDED_AT,
       'not-answered',
-      undefined
+      undefined,
+      false
     );
     const hangup = sentCallFrames().find((c) => c?.hangup);
     expect(hangup?.endReason).toBe(canari.CallEndReason.CALL_END_REASON_NOT_ANSWERED);
@@ -4999,6 +5132,103 @@ describe('the call report (port of #2011, 2026-10-21)', () => {
     expect(await reports('end')).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(3 * CALL_REPORT_INTERVAL_MS);
     expect(await reports('tick')).toHaveLength(2);
+  });
+
+  it('counts the candidates each way by type, names the first remote of each, never an address', async () => {
+    const { service, ws, pc } = await liveCall();
+    const remote = (line: string) =>
+      ws.deliver({
+        type: 'IceCandidate',
+        candidate: JSON.stringify({ candidate: line, sdpMid: '0' }),
+      });
+    remote('candidate:1 1 udp 2122260223 192.0.2.7 50000 typ host');
+    remote('candidate:2 1 tcp 1518280447 192.0.2.7 9 typ host tcptype active');
+    remote('candidate:3 1 udp 1686052607 198.51.100.4 50001 typ srflx raddr 0.0.0.0 rport 0');
+    // The end-of-candidates marker is not a candidate.
+    remote('');
+    const onCandidate = pc.onicecandidate as unknown as (e: {
+      candidate: { candidate: string } | null;
+    }) => void;
+    onCandidate({
+      candidate: {
+        candidate: 'candidate:4 1 udp 1 198.51.100.9 50002 typ relay raddr 0.0.0.0 rport 0',
+      },
+    });
+    await settle();
+    pc.setConnection('connected');
+    service.endCall();
+    await settle();
+
+    const [end] = await reports('end');
+    expect(end).toContain('cands_in=h2/s1/r0 cands_out=h0/s0/r1');
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    const lines = vi.mocked(appendLog).mock.calls.map(([l]) => String(l));
+    expect(lines.filter((l) => l.includes('first remote host candidate'))).toHaveLength(1);
+    expect(lines.some((l) => l.includes('first remote srflx candidate (udp'))).toBe(true);
+    expect(lines.some((l) => l.includes('first local relay candidate (udp) sent'))).toBe(true);
+    expect(lines.some((l) => /192\.0\.2\.7|198\.51\.100/.test(l))).toBe(false);
+  });
+
+  it('cands_out counts only what reached the socket; a local candidate of no known type is named', async () => {
+    const { service, ws, pc } = await liveCall();
+    const onCandidate = pc.onicecandidate as unknown as (e: {
+      candidate: { candidate: string } | null;
+    }) => void;
+    onCandidate({ candidate: { candidate: 'candidate:1 1 udp 1 198.51.100.9 50002 typ host' } });
+    onCandidate({ candidate: { candidate: 'candidate:2 1 udp 1 198.51.100.9 50003 typ bogus' } });
+    // The socket is gone: a candidate gathered now is not sent, and not counted as sent.
+    (ws as unknown as { readyState: number }).readyState = 3;
+    onCandidate({ candidate: { candidate: 'candidate:3 1 udp 1 198.51.100.9 50004 typ srflx' } });
+    pc.setConnection('connected');
+    service.endCall();
+    await settle();
+    const [end] = await reports('end');
+    expect(end).toContain('cands_out=h1/s0/r0');
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    const lines = vi.mocked(appendLog).mock.calls.map(([l]) => String(l));
+    expect(lines.some((l) => l.includes('WARN a local ICE candidate names no known type'))).toBe(
+      true
+    );
+  });
+
+  it('names an icecandidateerror by its server host and code only, once per server and code', async () => {
+    const { pc } = await liveCall();
+    const onError = (pc as unknown as { onicecandidateerror: (e: unknown) => void })
+      .onicecandidateerror;
+    const error = {
+      url: 'turn:turn.cloudflare.com:3478?transport=udp',
+      errorCode: 701,
+      errorText: 'STUN host lookup received error.',
+      address: '192.0.2.44',
+      port: 50000,
+    };
+    onError(error);
+    onError(error);
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    const lines = vi
+      .mocked(appendLog)
+      .mock.calls.map(([l]) => String(l))
+      .filter((l) => l.includes('ICE candidate error'));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('server=turn.cloudflare.com:3478 code=701');
+    expect(lines[0]).not.toContain('192.0.2.44');
+    expect(lines[0]).not.toContain('transport=udp');
+  });
+
+  it('a remote track still muted after 5 s names every layer: ICE, gathering, candidates, both signallings', async () => {
+    const { ws, pc } = await liveCall();
+    pc.remoteOfferAdds('audio', true);
+    ws.deliver({ type: 'PeerAway', disposition: 'transport-error' });
+    await settle();
+    await vi.advanceTimersByTimeAsync(5_000);
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    const warn = vi
+      .mocked(appendLog)
+      .mock.calls.map(([l]) => String(l))
+      .find((l) => l.includes('still muted after 5s'));
+    expect(warn).toMatch(
+      /ice=\S+ gathering=\S+ cands_in=h0\/s0\/r0 cands_out=h0\/s0\/r0 signalling=up peer=away\(transport-error\)/
+    );
   });
 
   it("writes the end report from a peer connection still open, with the worker's counts", async () => {
