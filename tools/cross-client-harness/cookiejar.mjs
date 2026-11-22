@@ -4,8 +4,8 @@
  *
  * A hard kill (`killBrowser`) is a crash: Chrome commits its cookie store lazily (~30 s), so a kill
  * right after a rotation relaunches without the newest `canari_refresh`, and a kill can take the
- * profile's storage with it. A row that relaunches after a kill must therefore (1) wait for the
- * cookie commit (`awaitCookieCommitted`), (2) read the jar before the kill and the file after it
+ * profile's storage with it. A row that relaunches after a kill must therefore (1) wait out the
+ * cookie commit window (`awaitCookieCommitted`, a clock bound, not a proof; the proof is the post-kill read), (2) read the jar before the kill and the file after it
  * (`refreshInMemory`, `refreshOnDisk`, judged by `refreshCookieAtKill`), and (3) probe the revived
  * page's storage (`quotaDbOf`, `STORAGE_PROBE`, `siteCookies`, judged by `storageLost`). A signed-out
  * seat after a kill that fails any of these is a RIG casualty, never a product FAIL.
@@ -63,10 +63,13 @@ export function refreshOnDisk(device) {
 }
 
 /**
- * Waits until the browser's newest refresh cookie is committed to the profile's cookie file, so a
- * browser kill relaunches on the CURRENT token (`cookieCommitWaitMs`). Returns how long it waited;
- * throws when the browser holds no refresh cookie, a premise the row cannot play without.
+ * Waits out Chrome's cookie commit window (`cookieCommitWaitMs`) after the newest rotation, so a
+ * browser kill SHOULD relaunch on the CURRENT token. A clock bound, not a proof: `refreshOnDisk` read
+ * after the kill is the proof. Returns how long it waited; throws when the browser holds no refresh
+ * cookie, a premise the row cannot play without.
  *
+ * @param {object} cx the seat's CDP session
+ * @param {string} label the run's name in the log and the error
  * @param {string} tag the row's name for the log line
  */
 export async function awaitCookieCommitted(cx, label, tag) {
