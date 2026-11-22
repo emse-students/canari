@@ -3057,7 +3057,7 @@ export class FormsService {
         existingPending.paymentRequestId = null;
         existingPending.stripeSessionId = null;
         existingPending.paymentStatus = 'pending';
-        existingPending.paymentCancelledBy = null;
+        existingPending.paymentCancelOrigin = null;
         savedSubmission = await manager.save(existingPending);
         // A new payment request is about to be issued for this row, so its hold restarts with it,
         // on the database clock like every other read of it (`seat-hold.ts`).
@@ -3267,7 +3267,7 @@ export class FormsService {
         paymentRequestId: null,
         stripeSessionId: null,
         paymentSettledBy: null,
-        paymentCancelledBy: null,
+        paymentCancelOrigin: null,
         paymentRequestedAt: () => 'now()',
       });
       this.logger.log(
@@ -4653,7 +4653,7 @@ export class FormsService {
         return 'other-request';
       }
       submission.paymentStatus = to;
-      if (cancelledBy) submission.paymentCancelledBy = cancelledBy;
+      if (cancelledBy) submission.paymentCancelOrigin = cancelledBy;
       await manager.save(submission);
       return { moved: submission };
     });

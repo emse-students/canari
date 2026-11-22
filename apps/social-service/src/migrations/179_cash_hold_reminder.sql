@@ -9,7 +9,7 @@
 --                              the hold), so the hourly job compares one stored instant with now();
 --   "cashReminderNotifiedAt" - the CLAIM: set by a conditional UPDATE exactly one run wins, cleared
 --                              again if writing the notice failed. NULL = not told.
---   "paymentCancelledBy"     - who or what moved an online answer to `cancelled` (`payment-resume.ts`,
+--   "paymentCancelOrigin"    - who or what moved an online answer to `cancelled` (`payment-resume.ts`,
 --                              `PaymentCancelOrigin`): a manager's cancel is never offered for a
 --                              resume. NULL on a row cancelled before this migration (origin unknown,
 --                              not guessed: nothing recorded it).
@@ -24,7 +24,7 @@
 --
 -- ROLLBACK. Nothing reads the columns but this feature; an older image ignores them.
 --   ALTER TABLE submissions DROP COLUMN IF EXISTS "cashReminderDueAt",
---     DROP COLUMN IF EXISTS "cashReminderNotifiedAt", DROP COLUMN IF EXISTS "paymentCancelledBy";
+--     DROP COLUMN IF EXISTS "cashReminderNotifiedAt", DROP COLUMN IF EXISTS "paymentCancelOrigin";
 --
 -- LOCKS. ACCESS EXCLUSIVE on `submissions` for a catalogue change alone (nullable columns, no
 -- default: no rewrite), then row locks for the backfill of the few rows waiting for cash.
@@ -38,7 +38,7 @@ BEGIN;
 ALTER TABLE submissions
   ADD COLUMN IF NOT EXISTS "cashReminderDueAt" timestamptz NULL,
   ADD COLUMN IF NOT EXISTS "cashReminderNotifiedAt" timestamptz NULL,
-  ADD COLUMN IF NOT EXISTS "paymentCancelledBy" varchar(16) NULL;
+  ADD COLUMN IF NOT EXISTS "paymentCancelOrigin" varchar(16) NULL;
 
 UPDATE submissions
    SET "cashReminderDueAt" = "cashExpiresAt" - interval '24 hours'

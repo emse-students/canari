@@ -46,7 +46,7 @@ export const PAYMENT_PRICE_CHANGED = 'PAYMENT_PRICE_CHANGED';
 export type ResumeRowRefusal = typeof PAYMENT_IN_PROGRESS | typeof PAYMENT_NOT_RESUMABLE;
 
 /**
- * WHO OR WHAT CANCELLED an online answer's payment (`submissions.paymentCancelledBy`, migration
+ * WHO OR WHAT CANCELLED an online answer's payment (`submissions.paymentCancelOrigin`, migration
  * 179), written with the move to `cancelled`:
  *
  * - `member`: the submitter cancelled their own pending payment (`cancelSubmission`);
@@ -71,7 +71,7 @@ export const UNRESUMABLE_CANCEL_ORIGINS: readonly PaymentCancelOrigin[] = [
 /** What of a row the rule reads. */
 export type ResumableRow = Pick<
   Submission,
-  'paymentStatus' | 'paymentMethod' | 'totalPaid' | 'paymentCancelledBy'
+  'paymentStatus' | 'paymentMethod' | 'totalPaid' | 'paymentCancelOrigin'
 >;
 
 /**
@@ -87,8 +87,8 @@ export function resumeRowRefusal(row: ResumableRow, holdLive: boolean): ResumeRo
   if (row.paymentStatus === 'pending') return holdLive ? PAYMENT_IN_PROGRESS : null;
   if (
     row.paymentStatus === 'cancelled' &&
-    row.paymentCancelledBy !== null &&
-    UNRESUMABLE_CANCEL_ORIGINS.includes(row.paymentCancelledBy as PaymentCancelOrigin)
+    row.paymentCancelOrigin !== null &&
+    UNRESUMABLE_CANCEL_ORIGINS.includes(row.paymentCancelOrigin as PaymentCancelOrigin)
   ) {
     return PAYMENT_NOT_RESUMABLE;
   }
@@ -111,11 +111,11 @@ export function resumableWhere(formId: string, userId: string): FindOptionsWhere
   return [
     { ...base, paymentStatus: 'expired' },
     // A cancel whose origin is unknown (before 179) or one a resume may undo; never a manager's.
-    { ...base, paymentStatus: 'cancelled', paymentCancelledBy: IsNull() },
+    { ...base, paymentStatus: 'cancelled', paymentCancelOrigin: IsNull() },
     {
       ...base,
       paymentStatus: 'cancelled',
-      paymentCancelledBy: Not(In([...UNRESUMABLE_CANCEL_ORIGINS])),
+      paymentCancelOrigin: Not(In([...UNRESUMABLE_CANCEL_ORIGINS])),
     },
     {
       ...base,

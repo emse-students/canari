@@ -2454,7 +2454,7 @@ but a manager or an issue of unknown outcome. The offer also needs the form open
 payment accepted and nothing else answering for the person. A cash answer is the manager's
 (`validate-cash` / `cancel-cash`) and is never resumed.
 
-**Who cancelled is recorded** (`submissions.paymentCancelledBy`, migration 179, `PaymentCancelOrigin`):
+**Who cancelled is recorded** (`submissions.paymentCancelOrigin`, migration 179, `PaymentCancelOrigin`):
 `member` (the submitter's own cancel), `manager` (a form manager's cancel or delete - a DECISION, never
 offered back as a payment that failed), `provider` (Lydia read or reported the request declined,
 cancelled or expired), `unissued` (refused before Lydia created anything) and `issue-unknown` (below).

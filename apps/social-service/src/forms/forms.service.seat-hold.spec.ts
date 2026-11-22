@@ -59,7 +59,7 @@ describe('FormsService - the seat a pending payment holds', () => {
     paymentRequestId?: string | null;
     paymentSettledBy?: string | null;
     /** Who cancelled the payment (migration 179, `PaymentCancelOrigin`). */
-    paymentCancelledBy?: string | null;
+    paymentCancelOrigin?: string | null;
     cotisationGrantedAt?: Date | null;
     purchaseRecordedAt?: Date | null;
     organiserNotifiedAt?: Date | null;
@@ -76,7 +76,7 @@ describe('FormsService - the seat a pending payment holds', () => {
     paymentRequestId: null,
     stripeSessionId: null,
     paymentSettledBy: null,
-    paymentCancelledBy: null,
+    paymentCancelOrigin: null,
   };
 
   function makeStore(opts: {
@@ -2515,7 +2515,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       expect(rows[0]).toMatchObject({
         paymentStatus: 'cancelled',
         paymentRequestId: null,
-        paymentCancelledBy: 'unissued',
+        paymentCancelOrigin: 'unissued',
       });
       core.createAnswer = null;
       await expect(resume(service)).resolves.toMatchObject({ submissionId: 'ans' });
@@ -2562,7 +2562,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       ['an issue whose outcome at Lydia is unknown', 'issue-unknown', PAYMENT_NOT_RESUMABLE],
     ])('refuses a payment cancelled by %s', async (_label, origin, code) => {
       const { service, core } = lydia([
-        released({ paymentStatus: 'cancelled', paymentCancelledBy: origin }),
+        released({ paymentStatus: 'cancelled', paymentCancelOrigin: origin }),
       ]);
       await expect(resume(service)).rejects.toMatchObject({ response: { code } });
       expect(core.calls).toEqual([]);
@@ -2572,10 +2572,10 @@ describe('FormsService - the seat a pending payment holds', () => {
       'resumes a payment cancelled by %s, and clears the origin',
       async (origin) => {
         const { service, rows } = lydia([
-          released({ paymentStatus: 'cancelled', paymentCancelledBy: origin }),
+          released({ paymentStatus: 'cancelled', paymentCancelOrigin: origin }),
         ]);
         await resume(service);
-        expect(rows[0]).toMatchObject({ paymentStatus: 'pending', paymentCancelledBy: null });
+        expect(rows[0]).toMatchObject({ paymentStatus: 'pending', paymentCancelOrigin: null });
       }
     );
 
@@ -2585,7 +2585,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       await own.service.cancelSubmission('ans', 'u1', false);
       expect(own.rows[0]).toMatchObject({
         paymentStatus: 'cancelled',
-        paymentCancelledBy: 'member',
+        paymentCancelOrigin: 'member',
       });
 
       const managed = lydia([released({ paymentStatus: 'pending', paymentRequestedAt: T0 })]);
@@ -2593,7 +2593,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       await managed.service.cancelSubmission('ans', 'admin', true);
       expect(managed.rows[0]).toMatchObject({
         paymentStatus: 'cancelled',
-        paymentCancelledBy: 'manager',
+        paymentCancelOrigin: 'manager',
       });
     });
 
@@ -2606,7 +2606,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       expect(rows[0]).toMatchObject({
         paymentStatus: 'cancelled',
         paymentRequestId: null,
-        paymentCancelledBy: 'issue-unknown',
+        paymentCancelOrigin: 'issue-unknown',
       });
       await expect(resume(service)).rejects.toMatchObject({
         response: { code: PAYMENT_NOT_RESUMABLE },
@@ -2679,7 +2679,7 @@ describe('FormsService - the seat a pending payment holds', () => {
         ['a cash answer', () => [released({ paymentMethod: 'cash' })], {}],
         [
           "a manager's cancel",
-          () => [released({ paymentStatus: 'cancelled', paymentCancelledBy: 'manager' })],
+          () => [released({ paymentStatus: 'cancelled', paymentCancelOrigin: 'manager' })],
           {},
         ],
         ['an answer whose price changed', () => [released()], { basePrice: 2000 }],

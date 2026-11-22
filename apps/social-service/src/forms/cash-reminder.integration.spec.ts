@@ -114,7 +114,7 @@ maybe('the cash hold notice against PostgreSQL (migration 179)', () => {
   it('adds the two columns and backfills a waiting answer 24 hours before its expiry, twice over', async () => {
     await q(`ALTER TABLE submissions DROP COLUMN "cashReminderDueAt"`);
     await q(`ALTER TABLE submissions DROP COLUMN "cashReminderNotifiedAt"`);
-    await q(`ALTER TABLE submissions DROP COLUMN "paymentCancelledBy"`);
+    await q(`ALTER TABLE submissions DROP COLUMN "paymentCancelOrigin"`);
     await q(
       `INSERT INTO submissions (id, "formId", "userId", "paymentStatus", "paymentMethod", "cashExpiresAt")
        VALUES ('00000000-0000-4000-8000-0000000ca5a1', $1, $2, 'pending_cash', 'cash', now() + interval '3 days'),
@@ -141,7 +141,7 @@ maybe('the cash hold notice against PostgreSQL (migration 179)', () => {
     const [cancelOrigin] = await q(
       `SELECT data_type, character_maximum_length AS len FROM information_schema.columns
         WHERE table_schema = current_schema() AND table_name = 'submissions'
-          AND column_name = 'paymentCancelledBy'`
+          AND column_name = 'paymentCancelOrigin'`
     );
     expect(cancelOrigin).toEqual({ data_type: 'character varying', len: 16 });
   });

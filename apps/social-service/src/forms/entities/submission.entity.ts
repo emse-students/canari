@@ -98,7 +98,7 @@ export class Submission {
    * before 179; cleared when a resume reopens the answer.
    */
   @Column({ type: 'varchar', length: 16, nullable: true })
-  paymentCancelledBy: string | null;
+  paymentCancelOrigin: string | null;
 
   /**
    * The order_ref of the CURRENT Lydia request (migration 120), written when it is issued: what a
