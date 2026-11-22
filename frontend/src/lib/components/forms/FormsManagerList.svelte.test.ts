@@ -11,6 +11,7 @@ import { flushSync, mount, unmount } from 'svelte';
 const url = vi.hoisted(() => ({ value: new URL('https://canari.test/forms') }));
 const api = vi.hoisted(() => ({
   getSubmissions: vi.fn(async () => []),
+  getHeldAnswers: vi.fn(async () => ({ held: 0, batchSize: 5 })),
   deleteForm: vi.fn(async () => ({ ok: true })),
   setFormClosed: vi.fn(async (id: string, closed: boolean) => ({
     id,
@@ -395,6 +396,42 @@ describe('FormsManagerList - the responses', () => {
     toggle.click();
     await vi.waitFor(() => expect(api.getSubmissions).toHaveBeenCalledWith('f1'));
     await vi.waitFor(() => expect(toggle.getAttribute('aria-expanded')).toBe('true'));
+  });
+});
+
+describe('FormsManagerList - an anonymous form whose answers wait for their batch', () => {
+  async function openResponses(f: Form) {
+    const target = await render([f]);
+    target
+      .querySelector<HTMLButtonElement>(`#form-${f.id} [data-testid="form-responses-toggle"]`)!
+      .click();
+    await vi.waitFor(() => expect(api.getSubmissions).toHaveBeenCalledWith(f.id));
+    return target;
+  }
+
+  it('says how many answers wait and why, read after the answers', async () => {
+    api.getHeldAnswers.mockResolvedValueOnce({ held: 3, batchSize: 5 });
+    const target = await openResponses(form({ anonymous: true }));
+    await vi.waitFor(() =>
+      expect(target.querySelector('[data-testid="responses-held"]')?.textContent?.trim()).toBe(
+        m.form_responses_held_notice({ count: 3, size: 5 })
+      )
+    );
+    // The answers' read releases a closed form's: the count is asked only after it.
+    expect(api.getSubmissions.mock.invocationCallOrder[0]).toBeLessThan(
+      api.getHeldAnswers.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('says nothing when none waits', async () => {
+    const target = await openResponses(form({ anonymous: true }));
+    await vi.waitFor(() => expect(api.getHeldAnswers).toHaveBeenCalledWith('f1'));
+    expect(target.querySelector('[data-testid="responses-held"]')).toBeNull();
+  });
+
+  it('never asks about a named form, which holds nothing back', async () => {
+    await openResponses(form({}));
+    expect(api.getHeldAnswers).not.toHaveBeenCalled();
   });
 });
 

@@ -56,7 +56,11 @@ describe('FormsService - public forms', () => {
     };
     const submissionRepo: any = {
       count: jest.fn(() => Promise.resolve(0)),
-      manager: { transaction: jest.fn((_l: string, fn: any) => fn(manager)) },
+      manager: {
+        transaction: jest.fn((_l: string, fn: any) => fn(manager)),
+        // The release after an anonymous submit counts what waits (`heldAnswerCount`): below a batch.
+        query: jest.fn(() => Promise.resolve([{ n: '1' }])),
+      },
     };
     const namesByIds = jest.fn((_ids: string[]) => Promise.resolve(new Map<string, string>()));
     const pricingFacts: any = {
@@ -287,11 +291,15 @@ describe('FormsService - public forms', () => {
       expect(manager.query.mock.calls[1][0]).toContain('FOR UPDATE');
     });
 
-    it('cuts the time to the day when the public form is also anonymous', async () => {
-      const { service, saved } = makeService({ form: baseForm({ anonymous: true }) });
-      await service.submit('f1', { answers: { q1: 'Ada' } }, 'guest');
-      const at = saved[0].createdAt as Date;
-      expect([at.getUTCHours(), at.getUTCMinutes()]).toEqual([0, 0]);
+    it('holds the answer for its batch when the public form is also anonymous', async () => {
+      const { service, saved, manager } = makeService({ form: baseForm({ anonymous: true }) });
+      const reply = await service.submit('f1', { answers: { q1: 'Ada' } }, 'guest');
+      expect(reply).toEqual({ held: true });
+      expect(saved).toHaveLength(0);
+      const held = manager.query.mock.calls.filter(([sql]: [string]) =>
+        sql.includes('INSERT INTO form_answers_held')
+      );
+      expect(held).toHaveLength(1);
     });
 
     it('takes a second answer from the same link', async () => {
