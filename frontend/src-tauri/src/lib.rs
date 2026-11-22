@@ -70,6 +70,7 @@ use crate::commands::mls_account_state::{
     mls_other_accounts_present, rollback_user_mls_reset, stage_user_mls_reset,
 };
 use crate::commands::native_push_log::take_native_push_log;
+use crate::commands::notification_delivery_state::notification_delivery_state;
 use crate::commands::notifications::{
     notify_native_message, record_read_elsewhere, store_avatar_mirror,
 };
@@ -1906,6 +1907,7 @@ pub fn run() {
             store_push_secret,
             claim_device_notices,
             preclaim_device_notices,
+            notification_delivery_state,
             end_push_registration,
             complete_owed_push_token_deletion,
             clear_app_data,
