@@ -90,7 +90,7 @@ class OutboxRetryWorker(context: Context, workerParams: WorkerParameters) :
          */
         fun enqueueIfMirrorHolds(context: Context) {
             // An entry marked unsendable is the app's to show, not this worker's to retry.
-            val queued = CanariFirebaseMessagingService.readOutboxMirrorOrNull(context)?.filterNot { it.unsendable }
+            val queued = CanariFirebaseMessagingService.readOutboxQueuedOrNull(context)?.filterNot { it.unsendable }
             when {
                 queued == null -> {
                     Log.w(TAG, "enqueueIfMirrorHolds: outbox mirror unreadable - a retry is enqueued, the worker reads it again")
@@ -166,7 +166,7 @@ class OutboxRetryWorker(context: Context, workerParams: WorkerParameters) :
      */
     override fun doWork(): Result {
         forgetLegacyAttemptCounts(applicationContext)
-        val queued = CanariFirebaseMessagingService.readOutboxMirror(applicationContext).count { !it.unsendable }
+        val queued = (CanariFirebaseMessagingService.readOutboxQueuedOrNull(applicationContext) ?: emptyList()).count { !it.unsendable }
         when (OutboxRetry.run(queued, MainActivity.isInForeground)) {
             OutboxRetry.Run.NOTHING_OWED -> {
                 Log.d(TAG, "doWork: outbox empty - nothing owed (run $runAttemptCount)")

@@ -37,6 +37,7 @@
   import { Log } from '$lib/utils/Log';
   import { describeVoiceNoteCapture } from '$lib/utils/audio/voiceNoteCaptureReport';
   import { voiceNoteCapture } from '$lib/utils/audio/recordingConstraints';
+  import { monoRecordingStream, type RecordedStream } from '$lib/utils/audio/monoRecording';
   import { callSoundPhase } from '$lib/utils/callSoundGate';
   import { get } from 'svelte/store';
   import {
@@ -113,6 +114,8 @@
   interface Session {
     recorder: MediaRecorder;
     stream: MediaStream;
+    /** What the recorder records: the microphone itself, or its one-channel downmix. */
+    recorded: RecordedStream;
     /**
      * The loudness measured as the samples are recorded - made once the recorder has STARTED, and
      * stopped with the recording. Null until then.
@@ -125,6 +128,10 @@
   }
 
   let session: Session | null = null;
+  /** Counts `beginRecording` attempts: each checks it is still the latest after every await. */
+  let attempt = 0;
+  /** The microphone button, so an interruption can hand back the capture it holds. */
+  let thumbEl = $state<HTMLButtonElement | null>(null);
   let tickId: number | null = null;
   let pointerId: number | null = null;
   let originX = 0;
@@ -177,10 +184,16 @@
    * the device back rather than start a recording nobody is waiting for.
    */
   async function beginRecording() {
+    // THIS attempt's token: a release then a new press while the first `getUserMedia` is still
+    // pending makes a second attempt; the first finds the token moved after its await and gives its
+    // device back, so two recorders never run and no microphone is orphaned.
+    const mine = ++attempt;
+    const superseded = () => mine !== attempt || phase !== 'arming';
     console.debug('[VoiceRecorder] arming');
     // Held outside the `try`, so a failure at ANY step after the device opened gives back what was
     // opened (a recorder or a `start()` that throws used to leave the microphone held).
     let stream: MediaStream | null = null;
+    let recorded: RecordedStream | null = null;
     let tap: RecordingLoudnessTap | null = null;
     try {
       // A RECORDING, not a call (owner, 2026-11-20): processing off, unless a live call holds the
@@ -196,26 +209,46 @@
       );
       const opened = stream;
 
-      if (phase !== 'arming') {
+      if (superseded()) {
         console.debug('[VoiceRecorder] released before the microphone opened - closing it again');
         opened.getTracks().forEach((track) => track.stop());
         return;
       }
 
+      // ONE CHANNEL, whatever the engine granted (iPhone, 1.7.3-alpha.4: AAC in two channels while
+      // mono was asked - WebKit implements no `channelCount`): `monoRecording.ts`. Resolved only
+      // once its context RUNS: a context that does not throws, and the branch below refuses.
+      const toRecord = await monoRecordingStream(opened, recordingLoudnessDeps.createContext);
+      recorded = toRecord;
+      if (superseded()) {
+        console.debug('[VoiceRecorder] released while the downmix started - closing it again');
+        toRecord.release();
+        opened.getTracks().forEach((track) => track.stop());
+        return;
+      }
       const mimeType = pickRecorderMimeType();
       const recorder = mimeType
-        ? new MediaRecorder(opened, { mimeType })
-        : new MediaRecorder(opened);
+        ? new MediaRecorder(toRecord.stream, { mimeType })
+        : new MediaRecorder(toRecord.stream);
       // One line per recording: what the engine granted, not what was asked.
       // A report is never worth a recording: an odd engine that throws here is logged and skipped.
       try {
-        Log.i('VoiceRecorder', describeVoiceNoteCapture(opened.getAudioTracks()[0], recorder));
+        Log.i(
+          'VoiceRecorder',
+          describeVoiceNoteCapture(
+            opened.getAudioTracks()[0],
+            recorder,
+            navigator.mediaDevices.getSupportedConstraints?.(),
+            { downmixed: toRecord.downmixed }
+          )
+        );
       } catch (reportError) {
         Log.w('VoiceRecorder', 'capture report failed, recording continues', reportError);
       }
       const started: Session = {
         recorder,
         stream: opened,
+        recorded: toRecord,
         loudness: null,
         chunks: [],
         startedAt: 0,
@@ -244,7 +277,8 @@
       pausePlayback(undefined, false, 'voice recorder started');
       recorder.start();
       // THE TAP ONLY ONCE THE RECORDER RUNS: a `start()` that throws has then made no AudioContext.
-      tap = tapRecordingLoudness(opened, recordingLoudnessDeps);
+      // Measured on what is RECORDED, so the playback normalisation reads the file that is sent.
+      tap = tapRecordingLoudness(toRecord.stream, recordingLoudnessDeps);
       started.loudness = tap;
       started.startedAt = Date.now();
       session = started;
@@ -259,12 +293,15 @@
       console.error('[VoiceRecorder] microphone refused:', error);
       // Everything this attempt opened goes back: the tap's context, then the device.
       tap?.stop();
+      recorded?.release();
       if (stream) {
         console.debug(
           '[VoiceRecorder] the attempt failed after the microphone opened - closing it'
         );
         stream.getTracks().forEach((track) => track.stop());
       }
+      // A superseded attempt only gives back what it opened: the newer press owns the bar.
+      if (mine !== attempt) return;
       showToast(m.chat_mic_permission_error());
       stopClock();
       dx = 0;
@@ -300,6 +337,7 @@
   /** The one place a microphone is handed back, whichever way the recording ended. */
   function releaseDevice(ended: Session) {
     ended.loudness?.stop();
+    ended.recorded.release();
     ended.stream.getTracks().forEach((track) => track.stop());
     ended.chunks = [];
   }
@@ -314,6 +352,9 @@
   // -- The gesture -----------------------------------------------------------
 
   function handlePointerDown(e: PointerEvent) {
+    // A second finger or a palm is not a press: only the primary pointer starts a hold, and one
+    // landing during a hold leaves it alone. A hold the prompt took ends on `interruptHold`'s events.
+    if (e.isPrimary === false) return;
     if (phase !== 'idle') return;
     // Secondary buttons open context menus; only the primary one is a press.
     if (e.pointerType === 'mouse' && e.button !== 0) return;
@@ -371,6 +412,44 @@
     else if (phase === 'arming') setPhase('idle');
   }
 
+  /**
+   * THE GESTURE WAS TAKEN AWAY, and no `pointerup` will ever come (iPhone 12, `1.7.3-alpha.4`: the
+   * FIRST microphone permission prompt took the finger; no up nor cancel reached the page, the hold
+   * started once the prompt was answered and stayed on, its clock running, with no way out until the
+   * app was killed). Any of these proves the finger's gesture is over: the capture lost
+   * (`lostpointercapture`), the window losing focus (`blur` - an alert over the app), the page
+   * hidden. While arming, it is a release before the microphone opened (`beginRecording` then
+   * gives the device back); while holding, it is a cancel. Only a POINTER hold is ended: a keyboard
+   * start holds no finger and goes on to `locked`. A locked recording is not a gesture at all.
+   */
+  function interruptHold(reason: string) {
+    if (pointerId === null) return;
+    if (phase === 'arming') {
+      Log.i(
+        'VoiceRecorder',
+        `the press was interrupted while arming (${reason}): nothing recorded`
+      );
+      if (thumbEl?.hasPointerCapture?.(pointerId)) thumbEl.releasePointerCapture(pointerId);
+      pointerId = null;
+      dx = 0;
+      setPhase('idle');
+    } else if (phase === 'holding') {
+      Log.i('VoiceRecorder', `the hold was interrupted (${reason}): discarded`);
+      if (thumbEl?.hasPointerCapture?.(pointerId)) thumbEl.releasePointerCapture(pointerId);
+      finish(false, reason);
+    }
+  }
+
+  function handleLostPointerCapture(e: PointerEvent) {
+    // An up, a cancel or a lock released the capture and cleared `pointerId` first: not this case.
+    if (e.pointerId !== pointerId) return;
+    interruptHold('pointer capture lost');
+  }
+
+  function handleVisibilityChange() {
+    if (document.visibilityState === 'hidden') interruptHold('page hidden');
+  }
+
   function lockRecording(e: PointerEvent) {
     console.debug('[VoiceRecorder] locked - recording continues hands-free');
     releaseCapture(e);
@@ -414,6 +493,9 @@
     if (session || phase !== 'idle') finish(false, 'composer destroyed');
   });
 </script>
+
+<svelte:window onblur={() => interruptHold('window lost focus')} />
+<svelte:document onvisibilitychange={handleVisibilityChange} />
 
 <div class="voice-recorder {isActive ? 'is-active' : ''}" data-phase={phase}>
   {#if isActive}
@@ -472,6 +554,7 @@
 
   {#if phase !== 'locked'}
     <button
+      bind:this={thumbEl}
       type="button"
       class="voice-recorder-thumb {isActive ? 'is-recording' : ''} {willCancel
         ? 'is-cancelling'
@@ -481,6 +564,7 @@
       onpointermove={handlePointerMove}
       onpointerup={handlePointerUp}
       onpointercancel={handlePointerCancel}
+      onlostpointercapture={handleLostPointerCapture}
       onkeydown={handleKeydown}
       aria-label={m.chat_record_voice_message_label()}
       title={m.chat_record_voice_message_label()}
