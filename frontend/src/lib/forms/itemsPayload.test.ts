@@ -171,3 +171,30 @@ describe('a priced grid on the wire', () => {
     expect(back.productGrid.pricing.prices._all.r1).toBe(28.5);
   });
 });
+
+describe('the format of a short text question on the wire', () => {
+  const send = (item: Record<string, unknown>) => toFormItemsPayload([item], true)[0] as any;
+
+  it('sends a number with its bounds and decimals switch, cleared bounds left out', () => {
+    const item = send({ id: 'q', type: 'short_text', format: 'number', min: '', max: 99 });
+    expect(item).toMatchObject({ format: 'number', max: 99, allowDecimals: false });
+    expect(item.min).toBeUndefined();
+  });
+
+  it('sends a phone or an e-mail with no bounds', () => {
+    const item = send({
+      id: 'q',
+      type: 'short_text',
+      format: 'phone',
+      min: 1,
+      allowDecimals: true,
+    });
+    expect(item.format).toBe('phone');
+    expect(item.min).toBeUndefined();
+    expect(item.allowDecimals).toBeUndefined();
+  });
+
+  it('sends none for a question turned into another type', () => {
+    expect(send({ id: 'q', type: 'long_text', format: 'number', min: 1 }).format).toBeUndefined();
+  });
+});

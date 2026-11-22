@@ -6,6 +6,7 @@
   import ProductGridEditor from './ProductGridEditor.svelte';
   import ChoiceOptionsEditor from './ChoiceOptionsEditor.svelte';
   import ChoiceNotesEditor from './ChoiceNotesEditor.svelte';
+  import ShortTextFormatEditor from './ShortTextFormatEditor.svelte';
   import ScaleEditor from './ScaleEditor.svelte';
   import MatrixGridEditor from './MatrixGridEditor.svelte';
   import Picker from '$lib/components/ui/Picker.svelte';
@@ -143,8 +144,9 @@
     /** The sentence of a refused save about this priced grid. */
     gridProblem?: string | null;
     /**
-     * Whether a choice question may take a free comment and an "Autre" option. A builder whose
-     * answers are not stored by the forms service (a booking space) passes false.
+     * Whether a choice question may take a free comment and an "Autre" option, and a short text a
+     * format. A builder whose answers are not stored by the forms service (a booking space) passes
+     * false.
      */
     offerChoiceNotes?: boolean;
   } = $props();
@@ -670,6 +672,8 @@
       <p class="text-text-muted text-xs leading-relaxed">
         {fileHint ?? m.form_builder_file_hint()}
       </p>
+    {:else if item.type === 'short_text' && offerChoiceNotes}
+      <ShortTextFormatEditor {item} />
     {:else if item.type === 'linear_scale'}
       <ScaleEditor {item} />
     {:else if isMatrix}

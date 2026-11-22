@@ -2480,6 +2480,58 @@ so they survive its save. A new editor on a server older than this change (a sto
 production deploys): the whitelist drops both fields, the toggles read off again after the save - the same
 visible, harmless failure as any new field; no estate gate was added for it.
 
+## Answer formats on a short text question, and the empty answer stored as absent (owner, 2026-11-21, 1.8.0)
+
+**Decision** (owner, 2026-11-21, read-only production survey: *"lancer maintenant"* for answer formats, G-VALID of
+[the audit](../../forms-capability-audit-2026-11-06.md#5-the-other-gaps-ranked)). Of 419 short answers in production, 18%
+were a bare 1-3 digit number, 6 looked like phone numbers, 18 were "oui", "non" or "x" typed by hand, and 93 skipped
+optional answers were stored as `""`. Charter: principle 2 (the essential is never lost - a refused answer keeps what
+was typed and says why; an old app is never locked out), principle 7 (one picker, bounds only for a number).
+
+**Model.** A `short_text` question carries `format?: 'number' | 'phone' | 'email'` (absent = free text) and, for
+`number`, `min?`, `max?` (inclusive) and `allowDecimals?`. **Decision: whole numbers by default, decimals on request**
+(ages, counts and quantities are the production cases; a decimal comma is accepted and stored as a point).
+`normaliseAnswerFormats` (`forms/answer-format-rules.ts`) drops the settings from any other type, drops bounds/decimals
+from a phone or e-mail, and refuses a minimum above the maximum (`FORM_FORMAT_RANGE_INVALID`).
+
+**One judgement, two sides.** `answer-format.ts` / `answerFormat.ts` is a declared byte-for-byte copy (like
+`answer-text.ts`): `judgeAnswerFormat(rule, raw)` returns the NORMALISED text to store or a `problem`
+(`not_a_number`, `not_an_integer`, `ambiguous_separator` (more than one `.`/`,`), `below_min`, `above_max`, `not_a_phone`, `not_an_email`). Number: optional minus,
+digits, `.` or `,` decimals, at most 15 digits, stored as canonical decimal text, never an exponent (`3,50` -> `3.5`, `007` -> `7`, `0.0000001` stays as typed). Phone: optional `+`,
+7-15 digits, spaces/dots/dashes/brackets allowed, stored as typed (trimmed). E-mail: shape only (one `@`, dotted domain,
+254 characters) - the page cannot know more, and the existing guest e-mail check is unchanged.
+
+**The server is authoritative and the error is typed.** `settleAnswerFormats`, at `submit` and at an answer edit
+(visible, editable questions only), re-judges what the page judged and stores the normalised text; a refusal is
+`400 { code: FORM_ANSWER_FORMAT_INVALID, itemId, problem, min?, max? }`, worded by the page from the code and `problem`,
+never from the English sentence. The fill page (`firstMissingAnswer`, kind `format`) holds the send on the first fault,
+required or not, and says the bound it broke; a blank optional answer is never judged, a blank required one is "missing".
+
+**The empty answer is stored as absent.** `dropEmptyAnswers` removes `""`, `null` and `[]` at submit and edit. Readers
+checked before the change: `isQuestionAnswered` and `hasValue` (both read "" as unanswered), `canonical` in
+`answer-edit.ts` (absent = `""`, so a locked answer compares equal), `answerText` (`""` and absent both read empty),
+the responses table (`answeredItems` drops empty text), the export (empty cell), conditions (`answerSelections` ignores
+both), `selectionsFromAnswers` (absent keeps the empty shape). No reader needed `""` itself. **Rows already stored with
+`""` stay readable; no data is rewritten.**
+
+**Export.** A `number` question writes a real number cell (`Number(text)`), so the sheet can sum and sort it; a phone
+stays text (a spreadsheet would eat its leading zero); a stored answer that is not a number (written before the
+format) stays the text it was.
+
+**Editor and fill.** `ShortTextFormatEditor.svelte` under a short text question (not in a booking space:
+`offerChoiceNotes={false}`): a picker (Texte libre / Nombre / Telephone / E-mail), min and max inputs and a decimals
+switch for a number. The input asks the keyboard for its pad (`inputmode` numeric/decimal, `type=tel`, `type=email`;
+a number stays `type=text`, because `type=number` swallows a typed comma in some locales).
+
+**Old clients.** An old app FILLING such a form draws a plain text box and sends text; the server judges it and
+refuses a bad one with `FORM_ANSWER_FORMAT_INVALID`, which that app words as its generic answer error (it has no
+sentence for the code) - the person keeps the page and corrects. An old app EDITING round-trips the unknown fields.
+A new editor on an older server loses the settings at save (whitelist), no gate.
+
+**Not built, on purpose: the yes/no hint.** Suggesting a choice type when a short text label reads like a yes/no
+question was judged not cheap enough to be quiet (a label heuristic in French and English, shown while typing); the
+production signal is better served by the new choice comment and "Autre" above.
+
 ## Note on form management
 
 Association admins reach the same list, scoped to their association, through the associations

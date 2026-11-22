@@ -207,6 +207,12 @@ export const DECLARED_GROUPS = [
     files: ['frontend/src/lib/forms/answerText.ts', 'apps/social-service/src/forms/answer-text.ts'],
   },
   {
+    what: 'what a formatted short form answer (number, phone, e-mail) may say, and what is stored for it',
+    compare: 'exact',
+    why: 'one question - "may this text be sent" - asked by the fill page before the send and by the server before it stores, which is authoritative; they must not disagree, or a person is told yes and refused. No shared TS package; the file imports nothing, like the answer reading above.',
+    files: ['frontend/src/lib/forms/answerFormat.ts', 'apps/social-service/src/forms/answer-format.ts'],
+  },
+  {
     what: 'which form options rule each other out (anonymous, public, payment, grant, audience, file) and the tier a guest pays',
     compare: 'exact',
     why: 'the editor shuts a switch and the server refuses a save by the SAME pairs, so the answer cannot depend on the order the switches were clicked (owner, 2026-11-06). No shared TS package, for the reason the answer reading above gives; the file imports nothing. Its spec sits beside the frontend copy.',
