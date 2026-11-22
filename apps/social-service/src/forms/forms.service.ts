@@ -84,6 +84,7 @@ import {
   toRequestState,
   type RequestState,
 } from './seat-hold';
+import { computeFormResults, type FormResults, type ResultsItem } from './form-results';
 import { Submission } from './entities/submission.entity';
 import {
   ANONYMOUS_BATCH_SIZE,
@@ -4919,6 +4920,34 @@ export class FormsService {
         ),
       };
     });
+  }
+
+  /**
+   * The per-question results of a form (G-RESULTS), aggregated by SQL over the counted answers -
+   * never by shipping the answers (`form-results.ts`, which carries the rules: what counts, the
+   * stated denominator, the anonymity floor). The caller has already asserted the form manager.
+   */
+  async getResults(formId: string): Promise<FormResults> {
+    const form = await this.formRepo.findOne({ where: { id: formId } });
+    if (!form) throw new NotFoundException('Form not found');
+    // READ ONLY, AND WITH THE JIT OFF FOR THIS TRANSACTION: the planner costs a nested `jsonb_each`
+    // at 1000 rows per level, crosses the JIT threshold, and compiled the survey-grid statement for
+    // 430-500 ms to run a 7 ms query (measured on production's 690 answers, 2026-11-21).
+    // `SET LOCAL` ends with the transaction, so the pooled connection is left as it was found.
+    const results = await this.submissionRepo.manager.transaction(async (manager) => {
+      await manager.query('SET TRANSACTION READ ONLY');
+      await manager.query('SET LOCAL jit = off');
+      return computeFormResults((sql, params) => manager.query(sql, params), {
+        id: form.id,
+        anonymous: form.anonymous === true,
+        items: form.items as ResultsItem[],
+      });
+    });
+    this.logger.debug(
+      `[FORMS] results of ${formId.slice(0, 8)}: ${results.totalAnswers} answers, ` +
+        `${results.questions.length} questions`
+    );
+    return results;
   }
 
   /**

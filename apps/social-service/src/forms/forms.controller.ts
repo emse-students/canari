@@ -536,6 +536,21 @@ export class FormsController {
     return this.service.getSubmissions(id);
   }
 
+  /**
+   * The per-question results summary (G-RESULTS): counts, grid totals and scale means, aggregated in
+   * SQL. THE SAME RULE AS THE RESPONSES LIST - `assertFormManager`, nobody else, not a respondent.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get(':id/results')
+  async getResults(
+    @Param('id') id: string,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    await this.service.assertFormManager(id, xUserId, ga === 'true');
+    return this.service.getResults(id);
+  }
+
   /** Returns a single submission by its ID. Requires the submitter or a form manager. */
   @UseGuards(NginxAuthGuard)
   @Get('submissions/:submissionId')
