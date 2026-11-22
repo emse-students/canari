@@ -21,7 +21,7 @@ import { Form } from './entities/form.entity';
 import { Submission } from './entities/submission.entity';
 import { PostNotification } from '../posts/entities/post-notification.entity';
 import { AssociationMember } from '../associations/entities/association-member.entity';
-import { BELL_ROW_GATE } from '../posts/bell-row-gates';
+import { BELL_ROW_GATE, type BellRowRefs } from '../posts/bell-row-gates';
 import { StaleOpenFormScheduler } from './stale-open-form.scheduler';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import {
@@ -207,7 +207,7 @@ maybe('the question put to a form left open against PostgreSQL (migration 180)',
     );
   const MANAGE_FORMS = AssociationPermissionFlag.MANAGE_FORMS;
   /** A permission bit that is not MANAGE_FORMS. */
-  const OTHER_RIGHT = MANAGE_FORMS === 1 ? 2 : 1;
+  const OTHER_RIGHT = AssociationPermissionFlag.POST_AS_ASSO;
 
   describe('the sweep', () => {
     it('asks each due form ONCE, writing its bell rows to the managers alone', async () => {
@@ -365,11 +365,13 @@ maybe('the question put to a form left open against PostgreSQL (migration 180)',
       expect((await formsAskedStillOpen(ds.manager, [id(1)])).size).toBe(0);
     });
 
+    const staleOpenGate = BELL_ROW_GATE.form_stale_open as (row: BellRowRefs) => string;
+
     /** Whether the form_stale_open bell gate admits `reader` to the row naming `meta` on `target`. */
     const shown = async (target: string, reader: string, meta: unknown) =>
       (
         (await q(
-          `SELECT ${BELL_ROW_GATE.form_stale_open({ reader: '$2', target: '$1::uuid', meta: '$3::jsonb' })} AS ok`,
+          `SELECT ${staleOpenGate({ reader: '$2', target: '$1::uuid', meta: '$3::jsonb' })} AS ok`,
           [target, reader, JSON.stringify(meta)]
         )) as { ok: boolean }[]
       )[0].ok;
