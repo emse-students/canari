@@ -215,7 +215,9 @@ mod tests {
             }
             text
         };
-        let cases: [(PushText<'_>, &str, &[(&str, &str)]); 8] = [
+        /// A text, the message key it renders, and that key's parameters.
+        type Case<'a> = (PushText<'a>, &'a str, &'a [(&'a str, &'a str)]);
+        let cases: [Case<'_>; 8] = [
             (PushText::Photo, "chat_preview_photo", &[]),
             (PushText::Video, "chat_preview_video", &[]),
             (PushText::VoiceNote, "chat_preview_voice_note", &[]),
