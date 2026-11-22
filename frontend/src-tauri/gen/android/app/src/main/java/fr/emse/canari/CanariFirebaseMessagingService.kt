@@ -1524,7 +1524,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
             synchronized(GENERIC_BANNERS_LOCK) { GENERIC_BANNERS.groupCleared(groupId) }
             refreshBadgeSummary(context, justCancelled = cancelledBanner)
-            Log.d(TAG, "endConversationNotifications: group=${ConversationRef.of(groupId)} banner id=$cancelledBanner withdrawn ($reason)") // log-safe: a notification id (integer) and a fixed reason label
+            Log.d(TAG, "endConversationNotifications: group=${ConversationRef.of(groupId)} ended, banner id=$cancelledBanner (-1: none was recorded) ($reason)") // log-safe: a notification id (integer) and a fixed reason label
             return cancelledBanner
         }
 
@@ -1552,25 +1552,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             Log.i(TAG, "clearAccountNotifications: every message, mention and reaction notification and the summary removed - the account signed out")
         }
 
-        /**
-         * Ends every conversation this install holds a notification id for whose id is NOT among
-         * [activeIds]: their conversation is gone from the list the page just settled on. A
-         * conversation that ended while the app was closed, or before the page's list was restored,
-         * left a banner nothing else would retire. Reaction keys (`reaction:<id>`) and the counter
-         * are not conversations and are skipped.
-         *
-         * @return how many conversations were ended.
-         */
-        internal fun reconcileConversationNotifications(context: Context, activeIds: Set<String>): Int {
-            val prefs = context.getSharedPreferences("canari_notif_ids", Context.MODE_PRIVATE)
-            val orphans = prefs.all.entries
-                .filter { (key, value) -> value is Int && key != "__counter__" && ':' !in key && key !in activeIds }
-                .map { it.key }
-            for (groupId in orphans) endConversationNotifications(context, groupId, "reconciled: not in the conversation list")
-            Log.d(TAG, "reconcileConversationNotifications: ${orphans.size} conversation(s) not in the list of ${activeIds.size} ended")
-            return orphans.size
-        }
-
         /** The WebView's hand-over of an ENDED conversation, on [WS_NOTIF_LANE] (`end_conversation_notifications`). */
         @JvmStatic
         fun endConversationFromWebSocket(groupId: String, reason: String): Boolean {
@@ -1585,25 +1566,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 } catch (e: Exception) {
                     // EVERY SWALLOWED BRANCH LOGS: the banner of an ended conversation stays.
                     Log.e(TAG, "endConversationFromWebSocket: failed for ${ConversationRef.of(groupId)}: ${throwableSite(e)}")
-                }
-            }
-            return true
-        }
-
-        /** The WebView's list of live conversations, to reconcile against (`reconcile_conversation_notifications`). */
-        @JvmStatic
-        fun reconcileConversationNotifications(activeIds: String): Boolean {
-            val context = CanariApplication.appContext()
-            if (context == null) {
-                Log.w(TAG, "reconcileConversationNotifications: no Application context - nothing reconciled")
-                return false
-            }
-            val active = activeIds.split('\n').filter { it.isNotEmpty() }.toSet()
-            WS_NOTIF_LANE.execute {
-                try {
-                    reconcileConversationNotifications(context, active)
-                } catch (e: Exception) {
-                    Log.e(TAG, "reconcileConversationNotifications: failed: ${throwableSite(e)}")
                 }
             }
             return true

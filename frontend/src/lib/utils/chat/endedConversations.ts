@@ -48,34 +48,22 @@ export function endedConversationIds(
   return ended;
 }
 
-/** The minimal community the reconcile reads: its salons by their raw channel id. */
-export interface WatchedWorkspace {
-  channels?: ReadonlyArray<{ id: string }>;
-}
-
 /**
- * EVERY ID A NOTIFICATION CAN STILL BELONG TO, from facts only: each conversation row that is not
- * `removed` (by its id AND its map key, which differ for a re-keyed row) and each salon of each
- * community (`channel_<id>`, the key native banners are posted under).
+ * THE IDS WITH POSITIVE EVIDENCE OF HAVING ENDED: the rows the list itself marks `removed`. Handed to
+ * the native side once each, so a conversation that was already `removed` when the page restored
+ * (the watcher above only sees a transition) still loses its banner.
  *
- * What the native side reconciles against once the page's lists have SETTLED, to retire the banner
- * of a conversation that ended while the app was closed or before the list was restored: no watcher
- * saw that ending, so it is found by comparing what is shown with what exists, never by a timer.
+ * **NEVER AN ABSENCE.** A destructive control takes an allowlist of what it may touch, not "whatever
+ * the page does not list": the list is NOT the complete set at boot (a first DM from a new
+ * correspondent reaches it only through the FCM cache, after the catch-up; a restore that failed
+ * still reads as restored; a salon appears in `channelWorkspaces` only once its community answers),
+ * so reasoning from a row's absence ended banners of live conversations. Only a `removed` row, or the
+ * ledger of a conversation known gone, names an ending.
  */
-export function liveNotificationIds(
-  rows: Iterable<readonly [string, WatchedConversation]>,
-  workspaces: Iterable<WatchedWorkspace>
-): string[] {
-  const live = new Set<string>();
-  for (const [key, row] of rows) {
-    if (row.lifecycle === 'removed') continue;
-    live.add(key);
-    if (row.id) live.add(row.id);
+export function removedConversationIds(rows: Iterable<WatchedConversation>): string[] {
+  const removed: string[] = [];
+  for (const row of rows) {
+    if (row.id && row.lifecycle === 'removed') removed.push(row.id);
   }
-  for (const workspace of workspaces) {
-    for (const channel of workspace.channels ?? []) {
-      if (channel.id) live.add(`channel_${channel.id}`);
-    }
-  }
-  return [...live].sort();
+  return removed;
 }

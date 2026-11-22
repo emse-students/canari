@@ -1058,21 +1058,22 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   recorded** - an ending is not a read, a mark is a process-lifetime suppressor, and one written for
   an ending would silence the conversation if the account came back to it (`ReadElsewhereMarks.end`).
   The event decides, never a timer. Logged on both sides: the page (`[NOTIF] conversation <id> ended`)
-  and Kotlin (`endConversationNotifications: ... withdrawn`).
-  **The ending no watcher saw** (the app was closed, or the list was not restored yet) is found by
-  FACT: once the conversation list is restored and the communities confirmed by a listing, the page
-  hands the native side the ids that exist (`liveNotificationIds`: rows not `removed` and
-  `channel_<id>` of every community salon) and `reconcile_conversation_notifications` ends every
-  banner whose conversation is not among them (Android: the ids in `canari_notif_ids`; iOS: the
-  delivered thread). **A sign-out takes the account's banners down** (`clearAccountNotifications`, run
+  and Kotlin (`endConversationNotifications: ... ended, banner id=`).
+  **A row already `removed` when the page restored** (the watcher only sees a transition) is handed over
+  once by `removedConversationIds`. **NOTHING ENDS A BANNER BY ABSENCE** (re-review of #3951): a reconcile
+  against "the conversations the page lists" ended live banners - a first DM from a new correspondent
+  is listed only after the catch-up (FCM cache), a failed restore still reads as restored, a salon is
+  listed once its community answers - and a destructive control takes an allowlist, so only positive
+  evidence (a `removed` row) names an ending. A conversation that ended while the app was closed keeps
+  its banner until the user reads it or the server's own ending event reaches it.
+  **A sign-out takes the account's banners down** (`clearAccountNotifications`, run
   by `PushRegistrationEnd.endForSignOutFromRust`: every message, mention and reaction notification,
   the summary, the records and the read marks), since nothing else would before the next account.
   Every cancel path, the early returns included, refreshes the summary and the badge (a `finally`).
-  **iOS does the same** (2026-11-22) (2026-11-22): its activation (`CanariPushCancelMessageNotifications`) removes only a
-  call's ring alert and recomputes the badge; the page's `read_here` and `conversation_ended` reach
+  **iOS does the same** (2026-11-22): its activation (`CanariPushCancelMessageNotifications`) removes only a
+  call's ring alert and the pending-sync notice and recomputes the badge; the page's `read_here` and `conversation_ended` reach
   `cancel_conversation_notifications`, which takes the conversation's delivered notifications down by
-  thread, and `reconcileWithActive:` removes the chat banners of a thread that exists no more and,
-  once per process, the legacy flat or empty-thread chat banners no read can ever name ([reading owed](../backlog.d/reading-owed-ios-banners-go-with-their-conversation.md)).
+  thread ([reading owed](../backlog.d/reading-owed-ios-banners-go-with-their-conversation.md)).
   In split-screen the activity does not resume either, so the page's hand-over is the only trigger there.
 - **THE REACTION'S ALERT GOES WITH THE CONVERSATION** (round-14 decision, replacing rounds 12-13,
   `cancelReactionNotification`). Whatever removes OR COVERS the conversation's message banner removes

@@ -318,7 +318,7 @@ describe('the builder records what it posted and keeps the stamps current', () =
     expect(endBody).not.toContain('recordThenCancel');
     expect(endBody).not.toContain('READ_ELSEWHERE.record');
     expect(source).toContain('fun endConversationFromWebSocket(');
-    expect(source).toContain('fun reconcileConversationNotifications(activeIds: String)');
+    expect(source).not.toContain('fun reconcileConversationNotifications(');
     expect(source).not.toContain('"conversation_ended" ->');
 
     const signOut = readFileSync(resolve(dirname(SERVICE), 'PushRegistrationEnd.kt'), 'utf8');

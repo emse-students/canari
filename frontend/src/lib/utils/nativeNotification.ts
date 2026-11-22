@@ -354,39 +354,6 @@ export async function endNativeConversationNotifications(conversationId: string)
 }
 
 /**
- * Tells the native shade which conversations exist, so it ends the notifications of every other one
- * (`reconcile_conversation_notifications`). Called ONLY once the page's lists have settled (the
- * conversation list restored, the communities confirmed by a listing): a list still being drawn
- * would end a live conversation's banner. Decided on facts - the ids that exist - never a timer.
- * Off a native shade: `true`, nothing invoked.
- *
- * @returns whether the work was queued where there is a native shade.
- */
-export async function reconcileNativeConversationNotifications(
-  activeIds: readonly string[]
-): Promise<boolean> {
-  const android = isAndroidTauriRuntime();
-  if (!android && !isIosTauriRuntime()) return true;
-  try {
-    const { invoke } = await import('@tauri-apps/api/core');
-    const queued = await invoke<boolean>('reconcile_conversation_notifications', {
-      activeIds: activeIds.join('\n'),
-    });
-    if (!queued) {
-      console.error(
-        '[NOTIF] The native side refused to reconcile its notifications - a banner of a gone conversation may stay.'
-      );
-    }
-    return queued;
-  } catch (e) {
-    console.error(
-      `[NOTIF] Reconciling the native notifications threw - a banner of a gone conversation may stay: ${String(e)}`
-    );
-    return false;
-  }
-}
-
-/**
  * The conversation title a notification should carry, from the row the client already holds.
  *
  * EMPTY for a direct message, which is the server's own contract for `groupName` in a push - see

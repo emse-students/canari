@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   endedConversationIds,
-  liveNotificationIds,
+  removedConversationIds,
   snapshotConversations,
 } from './endedConversations';
 
@@ -39,20 +39,16 @@ describe('endedConversationIds', () => {
   });
 });
 
-describe('liveNotificationIds', () => {
-  it('lists live rows by key and id, salons of every community, and skips a removed row', () => {
-    const rows: [string, { id: string; lifecycle?: string }][] = [
-      ['k1', { id: 'g1' }],
-      ['g2', { id: 'g2', lifecycle: 'removed' }],
-      ['channel_c9', { id: 'channel_c9' }],
+describe('removedConversationIds', () => {
+  it('names only the rows the list marks removed - never a row that is merely absent or not yet listed', () => {
+    const rows = [
+      { id: 'g1' },
+      { id: 'g2', lifecycle: 'removed' },
+      { id: 'g3', lifecycle: 'active' },
     ];
-    const workspaces = [{ channels: [{ id: 'c1' }, { id: 'c2' }] }, {}];
-    expect(liveNotificationIds(rows, workspaces)).toEqual([
-      'channel_c1',
-      'channel_c2',
-      'channel_c9',
-      'g1',
-      'k1',
-    ]);
+    expect(removedConversationIds(rows)).toEqual(['g2']);
+    // A conversation that is not in the list at all (a new correspondent's first DM still in the FCM
+    // cache, a salon whose community has not answered) is never named.
+    expect(removedConversationIds([])).toEqual([]);
   });
 });

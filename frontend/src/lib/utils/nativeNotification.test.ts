@@ -14,7 +14,6 @@ import {
   handOverConversationEvent,
   cancelNativeConversationNotifications,
   endNativeConversationNotifications,
-  reconcileNativeConversationNotifications,
   notificationGroupName,
   notificationIsGroup,
   postNativeMessageNotification,
@@ -370,19 +369,6 @@ describe('recordNativeReadElsewhere', () => {
     expect(await endNativeConversationNotifications('g1')).toBe(false);
     expect(error).toHaveBeenCalledTimes(2);
     error.mockRestore();
-  });
-
-  it('hands the ids that exist to the native reconcile, newline-separated', async () => {
-    isAndroidTauriRuntime.mockReturnValue(true);
-    invoke.mockResolvedValue(true);
-    expect(await reconcileNativeConversationNotifications(['a', 'channel_b'])).toBe(true);
-    expect(invoke).toHaveBeenCalledExactlyOnceWith('reconcile_conversation_notifications', {
-      activeIds: 'a\nchannel_b',
-    });
-    invoke.mockClear();
-    isAndroidTauriRuntime.mockReturnValue(false);
-    expect(await reconcileNativeConversationNotifications(['a'])).toBe(true);
-    expect(invoke).not.toHaveBeenCalled();
   });
 
   // iOS keeps no mark: the native side removes the conversation's delivered notifications by thread.

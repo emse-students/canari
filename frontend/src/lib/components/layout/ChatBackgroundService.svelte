@@ -95,13 +95,10 @@
   import { resolveDisplayNames } from '$lib/utils/users/displayName';
   import {
     endedConversationIds,
-    liveNotificationIds,
+    removedConversationIds,
     snapshotConversations,
   } from '$lib/utils/chat/endedConversations';
-  import {
-    endNativeConversationNotifications,
-    reconcileNativeConversationNotifications,
-  } from '$lib/utils/nativeNotification';
+  import { endNativeConversationNotifications } from '$lib/utils/nativeNotification';
   import { serializeEnvelope, mkSystemEnvelope } from '$lib/envelope';
   import type { ChatMessage, MessageBatchOrigin } from '$lib/types';
   import PinModal from '$lib/components/auth/PinModal.svelte';
@@ -246,21 +243,22 @@
     }
   });
 
-  // THE ENDING NO WATCHER SAW: a conversation that ended while the app was closed, or before the list
-  // was restored, left a banner nothing above retires. Once the conversation list is RESTORED and
-  // the communities CONFIRMED by a listing (each settling re-runs this), the native side ends every
-  // notification whose conversation is not among the ids that exist. Gated on both so a list still
-  // being drawn never ends a live conversation's banner; decided on facts, never a timer.
+  // THE ENDING NO WATCHER SAW, by POSITIVE evidence only: a row the list already marks `removed`
+  // (restored that way, or turned so before this effect ran) loses its banner once. NEVER by absence
+  // from the list - the list is not the complete set at boot (a first DM from a new correspondent
+  // arrives through the FCM cache after the catch-up, a failed restore still reads as restored, a
+  // salon exists only once its community answers), and a destructive control takes an allowlist.
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a once-only ledger read by this effect alone, nothing renders from it
+  const handedRemoved = new Set<string>();
   $effect(() => {
     if (!globalSession.isLoggedIn) return;
-    if (!globalConvs.conversationsRestored) return;
-    if (!globalChannels.workspacesConfirmed || globalChannels.workspacesLoadError !== null) return;
-    const workspaces = globalChannels.channelWorkspaces;
-    const ids = untrack(() => liveNotificationIds(globalConvs.conversations.entries(), workspaces));
-    appendLog(
-      `[NOTIF] lists settled - reconciling the native notifications against ${ids.length} live conversation(s)`
-    );
-    void reconcileNativeConversationNotifications(ids);
+    const removed = removedConversationIds(globalConvs.conversations.values());
+    for (const id of removed) {
+      if (handedRemoved.has(id)) continue;
+      handedRemoved.add(id);
+      appendLog(`[NOTIF] conversation ${id.slice(0, 12)} is removed - its notifications go`);
+      void endNativeConversationNotifications(id);
+    }
   });
 
   /** Last call id we started ringing for (dedupes effect re-runs). */

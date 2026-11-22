@@ -43,18 +43,17 @@ describe('iOS: a banner goes with its conversation, never with the app coming up
     expect(push).toContain('+ (BOOL)cancelForConversation:(NSString *)groupId;');
   });
 
-  // BLOCK review of #3951: a banner whose conversation is gone is found by FACT once the lists
-  // settled, and the legacy flat or empty-thread chat banners no read can ever name go once.
-  it('reconciles banners against the conversations that exist, and clears legacy flat ones once', () => {
-    const cls = bodyOf(push, '+ (BOOL)reconcileWithActive:(NSString *)activeIds {');
-    expect(push).toContain('+ (BOOL)reconcileWithActive:(NSString *)activeIds;');
-    expect(cls).toContain('![active containsObject:thread]');
-    expect(cls).toContain('static BOOL flatCleared = NO;');
-    expect(cls).toContain('userInfo[@"canariCallId"] != nil');
-    expect(cls).toContain('CanariSetBadgeCount(CanariCountUnreadConversations(notifications');
-    expect(rust).toContain('pub(crate) fn reconcile_conversation_notifications(');
-    expect(rust).toContain('reconcileWithActive: ns');
-    expect(lib).toContain('reconcile_conversation_notifications,');
+  // Re-review of #3951: NO destructive control by ABSENCE. A reconcile against "the conversations the
+  // page lists" ended live banners (a first DM from a new correspondent is listed only after the
+  // catch-up, a failed restore reads as restored, a salon is listed once its community answers), so
+  // none exists: a banner goes on positive evidence of an ending only.
+  it('has no reconcile by absence on either OS, and retires the pending-sync notice on activation', () => {
+    expect(push).not.toContain('reconcileWithActive');
+    expect(push).not.toContain('flatCleared');
+    expect(rust).not.toContain('reconcile_conversation_notifications');
+    expect(lib).not.toContain('reconcile_conversation_notifications');
+    expect(activation).toContain('kPendingSyncNotifId');
+    expect(activation).toContain('[n.request.identifier isEqualToString:pendingSyncId]');
   });
 
   it('the Tauri command reaches that class through the runtime and is registered', () => {
