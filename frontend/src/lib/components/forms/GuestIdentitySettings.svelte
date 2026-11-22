@@ -2,7 +2,11 @@
   import CheckboxGroup from '$lib/components/ui/CheckboxGroup.svelte';
   import { CONTROL_HINT_CLASS } from '$lib/components/ui/controlClasses';
   import { guestFieldsAdvice } from '$lib/forms/guestIdentity';
-  import { offeredChoices, respondentChoiceLabel } from '$lib/forms/respondentFields';
+  import {
+    coherentChoices,
+    offeredChoices,
+    respondentChoiceLabel,
+  } from '$lib/forms/respondentFields';
   import { m } from '$lib/paraglide/messages';
 
   /**
@@ -53,16 +57,15 @@
   <CheckboxGroup
     label={m.form_respondent_settings_label()}
     {options}
-    bind:selected={choices}
+    bind:selected={() => choices, (next) => (choices = coherentChoices(choices, next))}
     hint={anonymous
       ? m.form_respondent_settings_hint_anonymous()
       : m.form_respondent_settings_hint()}
   />
   {#if anonymous && choices.includes('cursusFromAccount')}
     <p class={CONTROL_HINT_CLASS} data-testid="cursus-from-account-note">
-      {choices.includes('cursus')
-        ? m.form_respondent_cursus_from_account_note()
-        : m.form_respondent_cursus_from_account_needs_cursus()}
+      {m.form_respondent_cursus_from_account_note()}
+      {m.form_respondent_cursus_from_account_ticks_cursus()}
     </p>
   {/if}
   {#if advice === 'paid'}
