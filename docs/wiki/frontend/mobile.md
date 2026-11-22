@@ -2542,7 +2542,17 @@ being a SIGABRT from the looper callback, so read the frames below `cb_handler` 
 replaces, and asserts the `=0.57.1` pin and a lockfile entry with no registry `source`. The device
 reading is owed:
 [device-verification](../device-verification.md#wmp-the-wry-main-pipe-after-an-activity-destroy---owed-on-android).
-The fork is deleted once an upstream release carries every hunk.
+
+**One hunk is PERMANENT, so the fork is no longer deleted when upstream carries the main-pipe fixes.**
+`src/android/kotlin/RustWebView.kt` (a Kotlin template, not Rust) overrides
+`onCreateInputConnection` to hand the WebView's input connection to the app's `KeyboardMediaBridge`,
+which is what lets the soft keyboard commit a GIF. That is an app hook upstream will never carry,
+and it has to live in the TEMPLATE: wry's `build.rs` rewrites `gen/android/.../generated/` from it on
+every Android build, which is how the hook, first written in the generated copy, was lost for four
+months ([chat](modules/chat.md#android-keyboard-media-commitcontent)). Once an upstream release carries
+every main-pipe hunk, the fork stays as a re-applied template patch: the next rebase takes the
+upstream crate whole and re-applies this one hunk, which
+`.github/scripts/tests/android-keyboard-media-hook.test.mjs` fails without.
 
 ### A modal closed by its owner's state left the overlay stack, and the tab swipe stood down (2026-10-09)
 
@@ -4541,7 +4551,7 @@ uninstall and therefore that phone's identity and history.
 
 ### Keyboard media (Android)
 
-`KeyboardMediaBridge.kt` intercepts `InputConnection.commitContent` to handle GIF/sticker commits from the soft keyboard. Dispatches `canari-keyboard-media` DOM events picked up by `MainChatPage` → routed through the normal media pipeline.
+`KeyboardMediaBridge.kt` intercepts `InputConnection.commitContent` to handle GIF/sticker commits from the soft keyboard. Dispatches `canari-keyboard-media` DOM events routed by ONE dispatcher (`utils/keyboardMedia.ts`) to the focused composer, or refused with a toast → through the normal media pipeline. Its one hook is in the vendored wry template, not in `generated/`, which every Android build rewrites - the hook was lost that way for four months ([chat](modules/chat.md#android-keyboard-media-commitcontent)).
 
 ### OIDC login opens a dedicated in-app browser session (WP-OIDC-TAB-1, Android shipped and verified 2026-08-08; iOS verified on hardware 2026-08-27)
 

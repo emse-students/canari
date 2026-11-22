@@ -69,6 +69,7 @@
   import { clickOutside } from '$lib/actions/clickOutside';
   import { portal } from '$lib/actions/portal';
   import { Log } from '$lib/utils/Log';
+  import { keyboardMediaTarget } from '$lib/utils/keyboardMedia';
   import { publishComposerHeight } from '$lib/utils/chat/composerHeight';
   import type { PendingMediaFile } from '$lib/media';
   import type { VideoPreparationState } from '$lib/video/videoPreparationState.svelte';
@@ -923,6 +924,15 @@
   data-keyboard-leaf
   class:has-keyboard-panel={surfaceReservesPanel(surface)}
   bind:this={composerFooter}
+  use:keyboardMediaTarget={{
+    // A message being edited keeps its text only: the keyboard's GIF is refused with a toast.
+    surface: isEditing ? 'chat-edit' : 'chat',
+    accept: (file) => {
+      if (isEditing || !onFilesSelected) return false;
+      onFilesSelected([file]);
+      return true;
+    },
+  }}
 >
   {@render notice?.()}
 
