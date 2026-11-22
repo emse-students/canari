@@ -38,3 +38,5 @@ too. Fixed: ticking the box ticks the chip, unticking the chip unticks the box, 
 says so ([forms](../frontend/modules/forms.md#an-anonymous-form-may-read-the-cursus-from-the-account-owner-2026-11-21)).
 **Also owed:** in the editor of an anonymous form, tick only "Promo et formation lues sur le compte" -
 "Promo et formation" ticks itself; save, reopen: both still ticked. Untick "Promo et formation": both go.
+
+**2026-11-21, `1.7.3-alpha.4`, dev, the last owed row: PASS.** The guest page of a PUBLIC anonymous form with "Promo et formation" and the account box both ticked, in a signed-out isolated browser: it asks "Formation" and "Année d'entrée" under "À propos de vous". Setup trap: the account box alone, without the "Promo et formation" chip, is dropped at save and the guest is then asked only the other ticked field (first attempt) - the form editor does not say so.
