@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, Logger } from '@nestjs/common';
 import {
   bucketFor,
   dimensionsNeedProfile,
@@ -11,6 +11,7 @@ import {
   PRODUCT_GRID_ALL_TIER,
   PRODUCT_GRID_TYPE,
   parseProductGridAnswer,
+  productGridColumnSetRefusal,
   productGridItemRefusal,
   productGridLines,
   productGridRequiredOnSave,
@@ -25,6 +26,8 @@ import {
   type ProductGridTiers,
   type ProductGridViewerPrices,
 } from './product-grid-contract';
+
+const logger = new Logger('ProductGrid');
 
 /**
  * THE PRICED GRID ON THE SERVER: what a save stores, what a page is told, what a submit charges.
@@ -99,6 +102,9 @@ const MESSAGES: Record<ProductGridDefinitionCode | ProductGridAnswerCode, string
     'A public form charges a guest the "everyone else" price: the product grid needs it.',
   PRODUCT_GRID_PRICES_INCOMPLETE: 'A product grid needs exactly one price per category and axis.',
   PRODUCT_GRID_PRICE_INVALID: 'A product grid price must be a whole number of cents, at least 0.',
+  PRODUCT_GRID_COLUMN_SET_INVALID: 'A product grid column set needs an id and a name.',
+  PRODUCT_GRID_COLUMN_SET_DIVERGED:
+    'Two product grids of one column set hold different columns: a set is kept once.',
   PRODUCT_GRID_ANSWER_MISSING:
     'This form has a product grid this app cannot show: update the app to answer it.',
   PRODUCT_GRID_UNKNOWN_CELL: 'An order names a cell the product grid does not have.',
@@ -158,7 +164,7 @@ export function normaliseProductGridItems<T extends { type?: string }>(
   ctx: CriteriaContext,
   form: ProductGridFormContext
 ): T[] {
-  return items.map((item) => {
+  const normalised = items.map((item) => {
     if (!isProductGridItem(item)) {
       // A grid definition on another type is nothing that type reads: not stored.
       if (!('productGrid' in item)) return item;
@@ -197,6 +203,10 @@ export function normaliseProductGridItems<T extends { type?: string }>(
     const stored: ProductGrid = {
       rows: grid.rows.map((r) => ({ id: r.id, label: r.label.trim() })),
       columns: grid.columns.map((c) => ({ id: c.id, label: c.label.trim() })),
+      // Absent stays absent: a grid stored before the sets is rewritten byte for byte.
+      ...(grid.columnSet
+        ? { columnSet: { id: grid.columnSet.id, name: grid.columnSet.name.trim() } }
+        : {}),
       maxPerCell: grid.maxPerCell,
       closedCells: [...(grid.closedCells ?? [])],
       pricing: {
@@ -210,6 +220,17 @@ export function normaliseProductGridItems<T extends { type?: string }>(
     const required = productGridRequiredOnSave(item, form.requiredSwitch, form.storedItems);
     return { ...item, required, productGrid: stored };
   });
+  // Across grids, once each is valid: a set shared by several must be identical in all of them.
+  const diverged = productGridColumnSetRefusal(
+    normalised as readonly { id?: string; type?: string; productGrid?: unknown }[]
+  );
+  if (diverged) {
+    logger.debug(
+      `product grid column set ${diverged.refusal.detail} diverged in question ${diverged.itemId}`
+    );
+    throw productGridRefused({ id: diverged.itemId ?? undefined }, diverged.refusal);
+  }
+  return normalised;
 }
 
 /**
