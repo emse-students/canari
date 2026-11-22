@@ -777,6 +777,21 @@ export class SelfConversationExistsError extends Error {
 }
 
 /**
+ * The server answered a "Mes notes" creation with a group that is NOT a notes conversation: a
+ * server older than migration 056 ignores `kind: 'self'` and writes an ordinary group, which seats
+ * every device and is no "Mes notes" on any other device (legacy-compatibility.md, "Mes notes" - the
+ * stores-before-deploy window, or a rollback). Classified at the throw from the answer's own `kind`,
+ * never from a status or a message. `groupId` is the ordinary group that server wrote: the caller
+ * deletes it as such (no `?kind=self`, which that server does not read) and refuses the creation.
+ */
+export class SelfConversationUnsupportedError extends Error {
+  constructor(readonly groupId: string) {
+    super(`The server wrote ${groupId} as an ordinary group - it does not know "Mes notes"`);
+    this.name = 'SelfConversationUnsupportedError';
+  }
+}
+
+/**
  * The server refused a membership mutation because a BLOCK stands between the two people.
  *
  * Typed rather than message-matched, like every other refusal here: the neutral wording the server
@@ -1658,6 +1673,7 @@ export class MlsDeliveryApi {
         deviceName: d.deviceName,
         deviceOs: d.deviceOs,
         deviceAppVersion: d.deviceAppVersion,
+        selfConversationVersion: d.selfConversationVersion,
       }));
     });
   }
@@ -2347,8 +2363,17 @@ export class MlsDeliveryApi {
       console.error('[MLS] createRemoteGroup failed', res.status);
       throw new Error('Failed to create remote group');
     }
-    const data = await res.json();
-    return data.groupId as string;
+    const data = (await res.json()) as { groupId: string; kind?: unknown };
+    // A SERVER THAT DOES NOT ECHO `kind: 'self'` WROTE AN ORDINARY GROUP: one older than migration
+    // 056 drops the field it does not know. Tagging that row "Mes notes" here would make this device
+    // disagree with every other one about which group holds the notes.
+    if (kind === 'self' && data.kind !== 'self') {
+      console.error(
+        `[MLS] createRemoteGroup: asked for "Mes notes", the server wrote ${String(data.groupId).slice(0, 8)}... as kind=${String(data.kind)} - a server older than the self kind`
+      );
+      throw new SelfConversationUnsupportedError(data.groupId);
+    }
+    return data.groupId;
   }
 
   /**

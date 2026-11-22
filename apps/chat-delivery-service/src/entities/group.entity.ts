@@ -1,5 +1,7 @@
 import {
+  Check,
   Entity,
+  Index,
   PrimaryGeneratedColumn,
   Column,
   CreateDateColumn,
@@ -26,6 +28,17 @@ export function isSelfConversation(group: Pick<Group, 'kind'> | null | undefined
  * the structural/crypto metadata needed to coordinate device membership.
  */
 @Entity('dm_groups')
+// The two constraints of migration 056, named as it names them, so a `TYPEORM_SYNCHRONIZE` stack
+// carries the same "one live notes conversation per account" and the same kind values as
+// production - the precedent of `GroupMember`'s `IDX_dm_group_members_user`.
+@Index('idx_dm_groups_one_live_self_per_account', ['createdBy'], {
+  unique: true,
+  where: `"kind" = 'self' AND "deletedAt" IS NULL`,
+})
+@Check(
+  'chk_dm_groups_kind',
+  `"kind" IN ('conversation', 'self') AND ("kind" <> 'self' OR ("isGroup" = false AND "distributionWorkspaceId" IS NULL AND "distributionChannelId" IS NULL))`
+)
 export class Group {
   @PrimaryGeneratedColumn('uuid')
   id: string;

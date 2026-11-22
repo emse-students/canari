@@ -7366,21 +7366,28 @@ typed at the throw, never logged as a failure) with the live `groupId` and `othe
 client decides on those facts: a group this device holds is opened and its row re-typed; another
 holder means `self-conversation-arriving`; no holder means one more request with `replaceUnheld`,
 which has the server end the unreadable group and write a new one
-([server](../../services/chat-delivery.md#mes-notes---the-self-conversation)).
+([server](../../services/chat-delivery.md#mes-notes---the-self-conversation)). The notes are believed
+only from the answer's own `kind: 'self'`: a server older than 056 writes an ordinary group, which
+is deleted as such and the creation refused (`SelfConversationUnsupportedError`,
+`self-conversation-unsupported`, [legacy-compatibility](../../legacy-compatibility.md)). The row is
+offered only to a signed-in session: the logged-out preview gets no `onOpenSelfConversation`, so it
+draws no row (`Sidebar.selfRow.svelte.test.ts`).
 
 **The header.** `ChatHeader` with `isSelfConversation`: no calls, no settings, the Bookmark avatar
 and the lock subtitle. Every `directPeerId` path (peer resolution, DM repair, blocking, nicknames,
 calls) skips a self row because it has no peer; notifications name it with the reader's own label.
 
-**The loss notice** (charter principle 2): while the account has a single device, the top of the
+**The loss notice** (charter principle 2): while a single device HOLDS the notes, the top of the
 conversation says that losing it loses the notes and links the `.canari` backup
-(`SelfConversationLossNotice.svelte`, the count read once per opening with `listUserDevices`, a peek
-that claims nothing; an unreadable list says nothing - `readSelfConversationDeviceCover`).
+(`SelfConversationLossNotice.svelte`, read once per opening). A holder is an active device of a build
+that knows "Mes notes" (`selfConversationVersion >= SELF_CONVERSATION_VERSION`, from `listUserDevices`,
+a peek that claims nothing) AND seated in the group (`getGroupMembers`): a second device that merely
+exists is no copy. Either read failing says nothing - `readSelfConversationDeviceCover`.
 
 **Not yet here** ([the entry](../../backlog.d/mes-notes-notepad-migration-and-retention.md)):
 the move of existing notepads and the `410` on the old routes, the 90-day retention line, the removal
 of the notepad entry point, and a way to delete the conversation.
 
-Tests: `selfConversation.test.ts`, `sqliteConversationColumns.test.ts`, `sqliteMigrations.test.ts`,
+Tests: `selfConversation.test.ts`, `mlsDeliveryApi.selfKind.test.ts`, `sqliteConversationColumns.test.ts`, `sqliteMigrations.test.ts`,
 `tabCommitDelegation.test.ts`. **Owed: a reading on both phones** - open "Mes notes" on one device,
 write, add a photo and a voice note, then read them on the account's second device.

@@ -139,6 +139,36 @@ export class GroupsController {
     return othersDevices === 0;
   }
 
+  /**
+   * "MES NOTES" IS ENDED ONLY BY A BUILD THAT KNOWS WHAT IT ENDS: one before the self kind reads it
+   * as an ordinary group, and its delete would take the notes from every device of the account
+   * (legacy-compatibility.md, "Mes notes"). A current client says `?kind=self`; nothing else does.
+   *
+   * **ASKED ONLY ONCE THE CALLER IS KNOWN TO BE ALLOWED TO END THE GROUP** (its member, or its creator while
+   * nobody holds a seat), the way `CallsService` asks after the membership: a stranger meets the
+   * same `NOT_A_MEMBER` as for any other id and learns nothing about the group's kind.
+   */
+  private async assertSelfKindStated(
+    groupId: string,
+    caller: string | null,
+    statedKind: string | undefined
+  ): Promise<void> {
+    const kindRow = await this.groupRepo.findOne({
+      where: { id: groupId },
+      select: { id: true, kind: true },
+    });
+    if (!isSelfConversation(kindRow) || statedKind === GROUP_KIND_SELF) return;
+    this.logger.warn(
+      `[DELETE_GROUP] REFUSED ${groupId.slice(0, 8)}… caller=${caller ? cutUserId(caller) : 'none'} - a self conversation, and the request does not say it knows the kind; nothing deleted`
+    );
+    throw new ForbiddenException(
+      refusalBody(
+        RefusalCode.SELF_CONVERSATION_KIND_UNSTATED,
+        'this conversation can only be deleted by a client that knows it is "Mes notes"'
+      )
+    );
+  }
+
   private makeTraceId(scope: string): string {
     return `${scope}-${crypto.randomUUID().slice(0, 8)}`;
   }
@@ -583,25 +613,8 @@ export class GroupsController {
     const header = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
     const caller = header ? canonicalUserId(header) : null;
     const manager = this.groupRepo.manager;
-    // "MES NOTES" IS ENDED ONLY BY A BUILD THAT KNOWS WHAT IT ENDS: one before the self kind reads it
-    // as an ordinary group, and its delete would take the notes from every device of the account
-    // (legacy-compatibility.md, "Mes notes"). A current client says `?kind=self`; nothing else does.
-    const kindRow = await this.groupRepo.findOne({
-      where: { id: safeGroupId },
-      select: { id: true, kind: true },
-    });
-    if (isSelfConversation(kindRow) && statedKind !== GROUP_KIND_SELF) {
-      this.logger.warn(
-        `[DELETE_GROUP] REFUSED ${safeGroupId.slice(0, 8)}… caller=${caller ? cutUserId(caller) : 'none'} - a self conversation, and the request does not say it knows the kind; nothing deleted`
-      );
-      throw new ForbiddenException(
-        refusalBody(
-          RefusalCode.SELF_CONVERSATION_KIND_UNSTATED,
-          'this conversation can only be deleted by a client that knows it is "Mes notes"'
-        )
-      );
-    }
     if (caller && (await this.isCreatorsUnseatedGroup(manager, safeGroupId, caller))) {
+      await this.assertSelfKindStated(safeGroupId, caller, statedKind);
       // RE-READ UNDER THE SEAT LOCK, in the transaction that ends it: a seat or a device written
       // since the read above makes this group someone's conversation, and the shortcut is refused.
       const { counts, ended } = await tombstoneGroupsIf(
@@ -627,6 +640,7 @@ export class GroupsController {
     }
 
     await this.assertMayEditConversation('DELETE_GROUP', safeGroupId, headerUserId);
+    await this.assertSelfKindStated(safeGroupId, caller, statedKind);
     const counts = await tombstoneGroups(manager, this.redis, [safeGroupId]);
 
     this.logger.log(

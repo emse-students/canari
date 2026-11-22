@@ -125,4 +125,6 @@ export interface UserDeviceEntry {
   deviceName?: string;
   deviceOs?: string;
   deviceAppVersion?: string;
+  /** The "Mes notes" capability its build stated (`SELF_CONVERSATION_VERSION`), 0 if none. */
+  selfConversationVersion: number;
 }

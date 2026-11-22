@@ -17,7 +17,10 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
 
 import type { Conversation } from '$lib/types';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
-import { SelfConversationExistsError } from '$lib/mls-client/mlsDeliveryApi';
+import {
+  SelfConversationExistsError,
+  SelfConversationUnsupportedError,
+} from '$lib/mls-client/mlsDeliveryApi';
 import { m } from '$lib/paraglide/messages';
 import {
   buildConversationRow,
@@ -273,6 +276,26 @@ describe('opening "Mes notes"', () => {
     expect(d.conversations.get(SELF_GROUP)?.conversationType).toBe('self');
   });
 
+  it('a server that does not know the kind: its ordinary group is deleted as such, and the creation refused', async () => {
+    const d = deps();
+    const ORDINARY = 'f00dfeed-0000-4000-8000-0000000000aa';
+    d.mlsService.createRemoteGroup.mockRejectedValueOnce(
+      new SelfConversationUnsupportedError(ORDINARY)
+    );
+
+    expect(await createSelfConversation(d.args)).toEqual({
+      ok: false,
+      reason: 'self-conversation-unsupported',
+    });
+    // No `?kind=self`: that server does not read it, and the group it wrote is an ordinary one.
+    expect(d.mlsService.deleteGroupOnServer).toHaveBeenCalledWith(ORDINARY);
+    expect(d.mlsService.registerMember).not.toHaveBeenCalled();
+    expect(d.mlsService.createGroup).not.toHaveBeenCalled();
+    expect(d.mlsService.createRemoteGroup).toHaveBeenCalledTimes(1);
+    expect(d.conversations.size).toBe(0);
+    expect(d.selectConversation).not.toHaveBeenCalled();
+  });
+
   it('a replacement the server still refuses (a device was admitted meanwhile) is arriving, not a loop', async () => {
     const d = deps();
     d.mlsService.createRemoteGroup
@@ -312,17 +335,50 @@ describe('which other devices "Mes notes" is given', () => {
 });
 
 describe('the loss notice of "Mes notes"', () => {
-  it('speaks while the account has one device, not once it has two', async () => {
-    expect(await readSelfConversationDeviceCover(async () => [{ deviceId: 'a' }])).toBe('single');
-    expect(
-      await readSelfConversationDeviceCover(async () => [{ deviceId: 'a' }, { deviceId: 'b' }])
-    ).toBe('several');
+  const dev = (deviceId: string, selfConversationVersion = 1) => ({
+    deviceId,
+    selfConversationVersion,
+  });
+  const cover = (devices: ReturnType<typeof dev>[], seated: string[]) =>
+    readSelfConversationDeviceCover({
+      listDevices: async () => devices,
+      listSeatedDevices: async () => seated.map((deviceId) => ({ deviceId })),
+    });
+
+  it('speaks while one device holds the notes, not once two do', async () => {
+    expect(await cover([dev('a')], ['a'])).toBe('single');
+    expect(await cover([dev('a'), dev('b')], ['a', 'b'])).toBe('several');
   });
 
-  it('says nothing when the device list cannot be read - a failure is not an answer', async () => {
+  it('a second device whose build does not know "Mes notes" is no copy', async () => {
+    expect(await cover([dev('a'), dev('old', 0)], ['a'])).toBe('single');
+    // Even were it seated somehow, an older build reads the group as something it may delete.
+    expect(await cover([dev('a'), dev('old', 0)], ['a', 'old'])).toBe('single');
+  });
+
+  it('a capable device not yet seated in the group is no copy either', async () => {
+    expect(await cover([dev('a'), dev('b')], ['a'])).toBe('single');
+  });
+
+  it('a seat of a device no longer active is no copy', async () => {
+    expect(await cover([dev('a')], ['a', 'revoked'])).toBe('single');
+  });
+
+  it('says nothing when either read fails - a failure is not an answer', async () => {
     expect(
-      await readSelfConversationDeviceCover(async () => {
-        throw new Error('offline');
+      await readSelfConversationDeviceCover({
+        listDevices: async () => {
+          throw new Error('offline');
+        },
+        listSeatedDevices: async () => [],
+      })
+    ).toBe('unknown');
+    expect(
+      await readSelfConversationDeviceCover({
+        listDevices: async () => [dev('a')],
+        listSeatedDevices: async () => {
+          throw new Error('offline');
+        },
       })
     ).toBe('unknown');
   });

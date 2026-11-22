@@ -44,6 +44,7 @@ import {
   MemberNotAdmittedError,
   SELF_CONVERSATION_VERSION,
   SelfConversationExistsError,
+  SelfConversationUnsupportedError,
   type GroupRosterAtGeneration,
 } from '$lib/mls-client/mlsDeliveryApi';
 
@@ -113,6 +114,12 @@ export type ConversationRefusal =
    * account created it, and its Welcome brings it here. Nothing was written.
    */
   | 'self-conversation-arriving'
+  /**
+   * The server does not know "Mes notes" yet (older than migration 056): it wrote an ordinary group,
+   * which was deleted at once. Nothing is left; the creation is offered again once the server is
+   * updated.
+   */
+  | 'self-conversation-unsupported'
   /** Anything the creation threw. The log carries the detail; the screen cannot use it. */
   | 'creation-failed';
 
@@ -609,6 +616,21 @@ async function createOwnedGroup(
     if (e instanceof SelfConversationExistsError) {
       globalMessaging.resetMessageCatchupState();
       throw e;
+    }
+    // THE SERVER WROTE AN ORDINARY GROUP FOR "MES NOTES" (it predates the self kind): that group is
+    // deleted as the ordinary group it is - no `?kind=self`, which such a server does not read - and
+    // the creation is refused, never presented as notes another device would not agree on.
+    if (e instanceof SelfConversationUnsupportedError) {
+      globalMessaging.resetMessageCatchupState();
+      try {
+        await mlsService.deleteGroupOnServer(e.groupId);
+        log(
+          `[SELF] the server does not know "Mes notes" - the ordinary group ${e.groupId.slice(0, 8)}... it wrote was deleted`
+        );
+      } catch (cleanupError) {
+        logBestEffortGroupDeleteFailure(e.groupId, cleanupError, 'self conversation unsupported');
+      }
+      return { ok: false, reason: 'self-conversation-unsupported' };
     }
     log(`Group creation error: ${String(e)}`);
     console.error('[GROUP] createNewGroup failed:', e);

@@ -1,9 +1,10 @@
 <script lang="ts">
   /**
-   * THE LOSS NOTICE OF "MES NOTES" (owner, 2026-11-22, charter principle 2): while the account has a
-   * single device, the conversation says that losing it loses the notes, and links the `.canari`
-   * backup. The notes are end-to-end encrypted (principle 1), so nothing on the server can bring them
-   * back. Read once per opening of the conversation; an unreadable device list says nothing
+   * THE LOSS NOTICE OF "MES NOTES" (owner, 2026-11-22, charter principle 2): while a single device
+   * holds the notes (active, of a build that knows them, seated in the group), the conversation says
+   * that losing it loses the notes, and links the `.canari` backup. The notes are end-to-end
+   * encrypted (principle 1), so nothing on the server can bring them back. Read once per opening of
+   * the conversation; an unreadable device list or seat list says nothing
    * (`readSelfConversationDeviceCover`).
    */
   import { HardDriveDownload } from '@lucide/svelte';
@@ -25,11 +26,13 @@
     const userId = session.userId;
     let cancelled = false;
     cover = 'unknown';
-    void readSelfConversationDeviceCover(() => session.ensureMls().listUserDevices(userId)).then(
-      (read) => {
-        if (!cancelled) cover = read;
-      }
-    );
+    const mls = session.ensureMls();
+    void readSelfConversationDeviceCover({
+      listDevices: () => mls.listUserDevices(userId),
+      listSeatedDevices: () => mls.getGroupMembers(groupId),
+    }).then((read) => {
+      if (!cancelled) cover = read;
+    });
     return () => {
       cancelled = true;
     };

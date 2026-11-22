@@ -3539,7 +3539,9 @@ end-to-end, so the server holds nothing it can read.
 every existing row and `'self'` for this one. A CHECK pins the shape of a self row: `isGroup = false`
 and no workspace or channel. A unique partial index,
 `idx_dm_groups_one_live_self_per_account ON ("createdBy") WHERE kind = 'self' AND "deletedAt" IS
-NULL`, makes "one live self conversation per account" a fact of the database.
+NULL`, makes "one live self conversation per account" a fact of the database. The `Group` entity
+declares both under the same names (`@Index`, `@Check`), so a `TYPEORM_SYNCHRONIZE` stack carries the
+same constraints (`group.entity.spec.ts`).
 
 **Creation is idempotent from that index, not from a read-then-write.** `POST /groups` with
 `kind: 'self'` inserts with `ON CONFLICT DO NOTHING RETURNING id`. If no row comes back, the answer is
@@ -3582,10 +3584,14 @@ absent), and ONE predicate, `selfConversationUnawareDevices` (`utils/self-conver
 device below it out at every door: no pending seat (`writePendingSeats`), no Admit, inline Welcome
 target or external join in a commit (refused whole, `403 SELF_CONVERSATION_DEVICE_UNAWARE`), no stored
 Welcome (`lockWelcomeSeat`), no relayed welcome request. A `DELETE mls/groups/:id` of a self group is
-refused unless the request says `?kind=self` (`403 SELF_CONVERSATION_KIND_UNSTATED`). The device list
+refused unless the request says `?kind=self` (`403 SELF_CONVERSATION_KIND_UNSTATED`) - asked only
+AFTER the caller is known to be allowed to end the group (its admitted member, or its creator while
+nobody holds a seat), so a stranger meets the same `NOT_A_MEMBER` as for any id and learns nothing of
+its kind (`groups.controller.authz.spec.ts`), as the calls gate does. The device list
 carries each device's capability, so a current creator never builds the Add the server would refuse.
 An older build still sees the group in its listing; with no `kind` it reads a 1:1 whose peer it cannot
-resolve and builds nothing from it. It joins once it updates and re-registers. The shim and its
+resolve and builds nothing from it, though it asks a re-add for it on every connection (refused, a
+few reads per connection). It joins once it updates and re-registers. The shim and its
 removal: [legacy-compatibility](../legacy-compatibility.md).
 
 Tests: `056_dm_groups_self_kind.integration.spec.ts` (PostgreSQL: the CHECK, the concurrent creation
