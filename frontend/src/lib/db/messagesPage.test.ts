@@ -13,7 +13,11 @@ import { encryptData } from '../encryption';
 import { toBase64 } from '$lib/utils/hex';
 import { IndexedDbStorage } from './indexeddb';
 import { oldestPageKey, toMessagePayload } from './messagePayload';
-import { ORDER_KEY_CHUNK_ROWS } from './orderKeyDerivation';
+import {
+  ORDER_KEY_CHUNK_ROWS,
+  OrderKeyDerivations,
+  type OrderKeyDerivation,
+} from './orderKeyDerivation';
 import { SqliteStorage } from './sqlite';
 import { ORDER_AT_FILL_ROWS_PER_STATEMENT } from './sqliteBatch';
 import { MESSAGE_PROVISIONAL_ORDER_FILL } from './sqliteMigrations';
@@ -51,6 +55,30 @@ async function expectLateOnTop(
   // The cursor `loadOlderMessages` takes: the lowest page key the store handed back.
   const older = await read(50, oldestPageKey(page));
   expect(older.map((m) => m.id)).toEqual(Array.from({ length: 11 }, (_, i) => `m-${i}`));
+}
+
+/**
+ * What the derivations started while `act` runs keyed IN TOTAL. A page read starts a derivation
+ * behind it that nobody awaits, so `orderKeysDerived` called afterwards either JOINS that run (and
+ * reports its count) or, when the run already finished, starts a new one that finds nothing - which
+ * of the two depends on the machine's load, never on the code. The rows keyed are the same either
+ * way; this sums them over every run the case caused.
+ */
+async function derivedBy(act: () => Promise<unknown>): Promise<OrderKeyDerivation> {
+  const spy = vi.spyOn(OrderKeyDerivations.prototype, 'run');
+  try {
+    await act();
+    const runs = new Set(spy.mock.results.map((r) => r.value as Promise<OrderKeyDerivation>));
+    const total: OrderKeyDerivation = { derived: 0, unreadable: 0, deferred: 0 };
+    for (const done of await Promise.all(runs)) {
+      total.derived += done.derived;
+      total.unreadable += done.unreadable;
+      total.deferred += done.deferred;
+    }
+    return total;
+  } finally {
+    spy.mockRestore();
+  }
 }
 
 /** A device key no row of these cases was sealed with. */
@@ -234,14 +262,19 @@ describe('IndexedDbStorage pages on the order key', () => {
     const storage = new IndexedDbStorage(userId);
     await storage.init();
     // The first page does not wait for the keys: it is drawn on the provisional ones, sentAt order.
-    const first = await storage.getMessagesPage('conv', KEY, 50);
-    expect(first.every((m) => m.pageKey?.provisional)).toBe(true);
-    expect(first.some((m) => m.id === 'late')).toBe(false);
-    expect(await storage.orderKeysDerived('conv', KEY)).toEqual({
+    let first: StoredMessage[] = [];
+    expect(
+      await derivedBy(async () => {
+        first = await storage.getMessagesPage('conv', KEY, 50);
+        await storage.orderKeysDerived('conv', KEY);
+      })
+    ).toEqual({
       derived: 61,
       unreadable: 0,
       deferred: 0,
     });
+    expect(first.every((m) => m.pageKey?.provisional)).toBe(true);
+    expect(first.some((m) => m.id === 'late')).toBe(false);
     await expectLateOnTop((limit, at) => storage.getMessagesPage('conv', KEY, limit, at));
 
     // Keyed once: the next page reads its rows off the index and decrypts nothing else.
@@ -662,16 +695,21 @@ describe('SqliteStorage.getMessagesPage', () => {
     const before = chunkReads();
 
     // The failure passed: the load-older decrypts the ten rows still flagged pending.
-    const older = await storage.getMessagesPage('conv', KEY, 50, oldestPageKey(first));
-    expect(older).toHaveLength(10);
-    // Handed back provisional, so the NEXT load-older waits for the keys and re-reads above...
-    expect(older.every((m) => m.pageKey?.provisional === true)).toBe(true);
+    let older: StoredMessage[] = [];
     // ...which a run started behind this read derives.
-    expect(await storage.orderKeysDerived('conv', KEY)).toEqual({
+    expect(
+      await derivedBy(async () => {
+        older = await storage.getMessagesPage('conv', KEY, 50, oldestPageKey(first));
+        await storage.orderKeysDerived('conv', KEY);
+      })
+    ).toEqual({
       derived: 10,
       unreadable: 0,
       deferred: 0,
     });
+    expect(older).toHaveLength(10);
+    // Handed back provisional, so the NEXT load-older waits for the keys and re-reads above.
+    expect(older.every((m) => m.pageKey?.provisional === true)).toBe(true);
     expect(chunkReads()).toBeGreaterThan(before);
     const settled = await storage.getMessagesPage('conv', KEY, 50);
     expect(settled.some((m) => m.id === 'rises')).toBe(true);
@@ -726,14 +764,19 @@ describe('IndexedDbStorage - provisional keys, derived behind the page', () => {
       ...(await encryptData(toMessagePayload(late), KEY)),
     });
 
-    const first = await storage.getMessagesPage('conv', KEY, 50);
-    expect(first.every((m) => m.pageKey?.provisional)).toBe(true);
-    expect(first.some((m) => m.id === 'late')).toBe(false);
-    expect(await storage.orderKeysDerived('conv', KEY)).toEqual({
+    let first: StoredMessage[] = [];
+    expect(
+      await derivedBy(async () => {
+        first = await storage.getMessagesPage('conv', KEY, 50);
+        await storage.orderKeysDerived('conv', KEY);
+      })
+    ).toEqual({
       derived: 1201,
       unreadable: 0,
       deferred: 0,
     });
+    expect(first.every((m) => m.pageKey?.provisional)).toBe(true);
+    expect(first.some((m) => m.id === 'late')).toBe(false);
     const settled = await storage.getMessagesPage('conv', KEY, 50);
     expect(settled.at(-1)!.id).toBe('late');
     expect(settled.every((m) => m.pageKey?.provisional === false)).toBe(true);
@@ -815,14 +858,19 @@ describe('IndexedDbStorage - provisional keys, derived behind the page', () => {
     expect(first.every((m) => m.pageKey?.provisional === false)).toBe(true);
     failing.pass();
 
-    const older = await storage.getMessagesPage('conv', KEY, 50, oldestPageKey(first));
-    expect(older).toHaveLength(10);
-    expect(older.every((m) => m.pageKey?.provisional === true)).toBe(true);
-    expect(await storage.orderKeysDerived('conv', KEY)).toEqual({
+    let older: StoredMessage[] = [];
+    expect(
+      await derivedBy(async () => {
+        older = await storage.getMessagesPage('conv', KEY, 50, oldestPageKey(first));
+        await storage.orderKeysDerived('conv', KEY);
+      })
+    ).toEqual({
       derived: 10,
       unreadable: 0,
       deferred: 0,
     });
+    expect(older).toHaveLength(10);
+    expect(older.every((m) => m.pageKey?.provisional === true)).toBe(true);
     expect((await storage.getMessagesPage('conv', KEY, 50)).some((m) => m.id === 'rises')).toBe(
       true
     );
