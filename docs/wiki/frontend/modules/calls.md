@@ -3867,6 +3867,19 @@ playing. What changed:
   9T**: (1) start a Canari call during a cellular call - the peer sees the microphone cut; (2) the
   cellular call ends while Canari stays on screen, with no tap - the microphone comes back by
   itself.
+- **A call that REPLACES another in the service opens its OWN audio** (2026-11-23, review of
+  #4012). A start of another call while one held the foreground (`CallServiceEffect.Replace`, the
+  earlier call's stop never arrived) used to keep the earlier call's `CallAudio`, labelled with the
+  OLD call id: its `focus` events (a loss, the delayed GAIN, the hold at the start) reached the new
+  call's page under that id and were dropped, so a cellular call ending during the replacing call
+  never gave the microphone back. Now the first start and a replacement open the audio through ONE
+  path, `CallAudioSlot.open` (`call/CallAudioSlot.kt`, pure), which closes the held audio - focus
+  abandoned, output cleared, mode given back if set there, logged - BEFORE the new one asks for the
+  focus, so the old request never answers for the new call; `release` closes through the same slot.
+  Tests: `CallAudioSlotTest` (the close-before-open order, the new id, one close per audio). **Owed
+  on the Mi 9T**: a call replacing another in the service (the first call's stop lost) logs
+  `audio of call=<old> closed before call=<new> opens its own` then `audio focus taken` for the
+  new call, and a cellular call rung into it holds and releases the microphone as (G) below.
 - **EVERY mute control shows the call MUTED while held** - the in-app button, the minimised bar, the
   ongoing notification and the OS media controls all read `micShownMuted` (`isMuted ||
   audioFocusHeld`, `useCallModel`), and all tap through ONE function, `CallService.muteButtonTap`:
@@ -3891,8 +3904,8 @@ ringback before it ([the caller's ringback](#the-callers-ringback-2026-10-31)).
 `CanariFirebaseMessagingService.kt` are COMPILED by CI's `compile-android-app` job
 (`:app:compileArm64DebugKotlin`, since 2026-10-30, [cicd](../../cicd.md)) and tested by nothing:
 `android-tests` runs only the pure packages (`call/`, `push/`, `gesture/`, `share/`), which is
-where `OngoingCallTest` holds `pickCallOutput`, `holdsProximityScreenOff` and the spec, and
-`CallFocusHoldTest` the focus hold. The compile was also run by hand for the focus hold
+where `OngoingCallTest` holds `pickCallOutput`, `holdsProximityScreenOff` and the spec,
+`CallFocusHoldTest` the focus hold, and `CallAudioSlotTest` the audio's open and close. The compile was also run by hand for the focus hold
 (2026-11-12, BUILD SUCCESSFUL); the Objective-C of
 `canari_ios.mm` by nothing until the iOS CI job. **Owed on BOTH phones**: (A) an audio call starts on the EARPIECE - `CallAudio
 voice -> EARPIECE (call started)` in `logcat`, `[Call] voice starts on the earpiece` in the app log;

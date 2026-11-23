@@ -25,6 +25,8 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.Person
 import androidx.core.app.ServiceCompat
 import androidx.core.graphics.drawable.IconCompat
+import fr.emse.canari.call.CallAudioLease
+import fr.emse.canari.call.CallAudioSlot
 import fr.emse.canari.call.CallFocusHold
 import fr.emse.canari.call.CallOutput
 import fr.emse.canari.call.CallServiceCommand
@@ -222,7 +224,11 @@ class CallForegroundService : Service() {
 
     private var spec: OngoingCallSpec? = null
     private var wakeLock: PowerManager.WakeLock? = null
-    private var audio: CallAudio? = null
+    /** The call's audio, opened and closed through ONE path ([CallAudioSlot]): first start and replacement alike. */
+    private val audioSlot = CallAudioSlot<CallAudio> { accuse, message ->
+        if (accuse) Log.w(TAG, message) else Log.i(TAG, message) // log-safe: CallAudioSlot builds every line from literals and 8-character call ids
+    }
+    private val audio: CallAudio? get() = audioSlot.current
 
     /**
      * The screen-off-against-the-cheek lock, held while the voice is on the EARPIECE
@@ -267,6 +273,9 @@ class CallForegroundService : Service() {
                         "foreground - the earlier call's stop never arrived; the new call takes the foreground",
                 )
                 callId = effect.callId
+                // The earlier call's audio is labelled with ITS id: its focus events would reach the
+                // new call's page under the old one and be dropped. The new call opens its own.
+                openAudio(effect.callId, effect.spec)
                 refresh(effect.spec)
             }
             // The page asked (or the page is gone): it knows, so nothing is sent back.
@@ -335,12 +344,23 @@ class CallForegroundService : Service() {
                 if (onScreen) audio?.askFocus("the app is back on screen")
             }
         }
-        audio = CallAudio(getSystemService(Context.AUDIO_SERVICE) as AudioManager, callId, ::onOutput)
-            .also { it.open(spec.speaker, spec.speakerChosen) }
+        openAudio(callId, spec)
         loadAvatar(spec.peerUserId)
         val notifications = NotificationManagerCompat.from(this).areNotificationsEnabled()
         Log.i(TAG, "in the foreground: microphone service, wake lock held, notifications shown=$notifications")
         CallBridge.emit("started", callId)
+    }
+
+    /**
+     * Opens [callId]'s audio (mode, focus, output) through [audioSlot], which first closes any audio
+     * the service still holds - the one path for the first start and for a replacement.
+     */
+    private fun openAudio(callId: String, spec: OngoingCallSpec) {
+        Log.d(TAG, "openAudio(call=${short(callId)})")
+        audioSlot.open(callId) { id ->
+            CallAudio(getSystemService(Context.AUDIO_SERVICE) as AudioManager, id, ::onOutput)
+                .also { it.open(spec.speaker, spec.speakerChosen) }
+        }
     }
 
     private fun refresh(spec: OngoingCallSpec) {
@@ -502,8 +522,7 @@ class CallForegroundService : Service() {
         screenListener = null
         callId = null
         spec = null
-        audio?.close()
-        audio = null
+        audioSlot.close("the call left the foreground")
         proximityLock?.let { if (it.isHeld) it.release(PowerManager.RELEASE_FLAG_WAIT_FOR_NO_PROXIMITY) }
         proximityLock = null
         proximityWanted = false
@@ -612,10 +631,10 @@ class CallForegroundService : Service() {
 private class CallAudio(
     private val manager: AudioManager,
     /** The call this audio belongs to: the page matches a `focus` event against it. */
-    private val callId: String,
+    override val callId: String,
     /** Told every output actually applied (the proximity lock follows it); null = the platform routes. */
     private val onOutput: (CallOutput?) -> Unit,
-) {
+) : CallAudioLease {
     private companion object {
         const val TAG = "CallAudio"
     }
@@ -800,7 +819,8 @@ private class CallAudio(
         }
     }
 
-    fun close() {
+    override fun close(why: String) {
+        Log.d(TAG, "close(call=$call, $why)")
         manager.unregisterAudioDeviceCallback(devices)
         manager.abandonAudioFocusRequest(focus)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
