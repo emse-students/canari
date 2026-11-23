@@ -50,6 +50,7 @@
     scrollMeasurementResponse,
     threadReach,
     keyboardChangeResponse,
+    paneGeometryLine,
     type NewMessageResponse,
   } from '$lib/utils/chat/threadAnchor';
   import { observeThreadGrowth } from '$lib/utils/chat/threadGrowthObserver';
@@ -58,6 +59,7 @@
   import {
     keyboardTransitionCount,
     keyboardTransitionMoving,
+    onKeyboardTransitionEdge,
   } from '$lib/stores/keyboardTransition';
   import { floatingDateIndex } from '$lib/utils/chat/stickyDate';
   import {
@@ -1033,8 +1035,11 @@
       // A FALL WITH NO READER INPUT, the evidence the iPhone's photo DM was diagnosed from
       // (1.7.3-alpha.4 to 1.8.0-alpha.1, every opening: `scrollTop 5813 (last placed 6188), 375 px
       // from the end` with the keyboard up). ONE line per such move, never per frame: a put-back spends
-      // its keyboard transition, and a fall leaves the flag down. A put-back is INFO; a fall is the
-      // expected path of every assistive scroll from the end (VoiceOver, TalkBack, find-in-page), DEBUG.
+      // its keyboard transition, and a fall leaves the flag down. BOTH ARE INFO (2026-11-23): the
+      // home-button return of the iPhone left the thread above its end 4 times in 10 and the exported
+      // log (which records no DEBUG) said nothing, because the fall was the line that would have named
+      // it. A fall is also every assistive scroll from the end (VoiceOver, TalkBack, find-in-page) - one
+      // line per departure, the evidence that separates the two.
       const where =
         `left the bottom with no finger on the pane: scrollTop ${Math.round(c.scrollTop)} (last ` +
         `placed ${lastMeasuredScrollTop === null ? 'none' : Math.round(lastMeasuredScrollTop)}), ` +
@@ -1047,7 +1052,7 @@
             `pane, keyboard transition #${transitions})`
         );
       } else {
-        Log.d(
+        Log.i(
           'ChatArea',
           where +
             `not a keyboard move of the engine, the flag falls (keyboard transition #${transitions}` +
@@ -1800,6 +1805,53 @@
         );
       });
     });
+  });
+
+  /**
+   * THE PANE'S GEOMETRY AT EVERY EDGE THAT CAN MOVE IT WITH NO FINGER ON IT: the page hidden or shown
+   * (the home-button return of the iPhone, `1.8.0-alpha.4`), a keyboard transition starting (the
+   * viewport resized for it) or coming to rest (after WebKit's reveal). One `[CHAT_VIEW]` line per
+   * edge, never per frame (`paneGeometryLine`).
+   */
+  $effect(() => {
+    const el = chatContainer;
+    if (!el) return;
+    const report = (edge: string) => {
+      const c = conversation;
+      if (!c) return;
+      const keyboard = getKeyboardViewport();
+      Log.i(
+        'CHAT_VIEW',
+        paneGeometryLine(c.id, edge, el, isNearBottom, {
+          open: keyboard.isOpen,
+          height: keyboard.keyboardHeight,
+          transition: keyboardTransitionCount(),
+          moving: keyboardTransitionMoving(),
+        })
+      );
+    };
+    const onVisibility = () => untrack(() => report(`page ${document.visibilityState}`));
+    document.addEventListener('visibilitychange', onVisibility);
+    let startFrame: number | null = null;
+    const offEdge = onKeyboardTransitionEdge((edge, transition) => {
+      if (edge === 'at rest') {
+        untrack(() => report(`keyboard transition #${transition} at rest`));
+        return;
+      }
+      // A start is heard inside the keyboard's own update, before its variables are written: the
+      // pane is read in the frame that lays them out, which also keeps a layout read out of the
+      // announcement's task (the Android ride's first frame waits on it).
+      if (startFrame !== null) cancelAnimationFrame(startFrame);
+      startFrame = requestAnimationFrame(() => {
+        startFrame = null;
+        untrack(() => report(`keyboard transition #${transition} starts (its first frame)`));
+      });
+    });
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      offEdge();
+      if (startFrame !== null) cancelAnimationFrame(startFrame);
+    };
   });
 
   // The query lives in `viewport.ts`: this file and ChatComposer had the same hand-written one, and

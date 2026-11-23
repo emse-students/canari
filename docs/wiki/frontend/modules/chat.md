@@ -6098,7 +6098,9 @@ and a browser keeps today's rule.
 **Any other move up out of the slack lowers the flag, as it always did.** A VoiceOver or TalkBack
 scroll, a swipe to the previous message, find-in-page, a reader's key: once the keyboard is at rest -
 open or closed - no transition is moving, so an assistive or unexplained move is the reader's. Such a
-fall logs at DEBUG: it is the expected path of every assistive scroll from the end.
+fall logs at INFO since 2026-11-23 ([below](#the-keyboard-comes-back-with-the-app-2026-11-23)): it was
+DEBUG as the expected path of every assistive scroll, and the exported log, which records no DEBUG,
+was then silent on the one defect it would have named.
 
 **Not done, and why:** spending the transition when a placement or measurement after it finds the
 pane at its end. The observer's own pin after the resize is such a placement, and it comes BEFORE
@@ -6106,9 +6108,9 @@ WebKit's reveal (the 96 pt above): it would spend the transition the reveal need
 
 **Termination by construction:** a put-back SPENDS its transition, so there is at most one per keyboard
 transition; an engine that repeated its move would get one put-back and then lower the flag. The
-`left the bottom with no finger on the pane` line stays, one per such move and never per frame: at INFO
-ending `the engine's keyboard move, put back at the end (put-back N of this pane, keyboard transition
-#T)`, at DEBUG ending `not a keyboard move of the engine, the flag falls (keyboard transition #T moving
+`left the bottom with no finger on the pane` line stays, one per such move and never per frame, both at
+INFO: ending `the engine's keyboard move, put back at the end (put-back N of this pane, keyboard
+transition #T)`, or `not a keyboard move of the engine, the flag falls (keyboard transition #T moving
 |at rest)`.
 
 Tests: `threadGrowthObserver.test.ts` ("the engine keyboard move") replays the opening with the photos
@@ -6121,6 +6123,58 @@ scroll to the end, the arrow absent) and the assistive case with no transition a
 observers registered once the WebView exists, did-change-frame only with no show or hide pending, then
 the screen-update proof, the silent superseded check and the page hook. Read on both phones on 1.8.0-alpha.2
 ([device-verification](../../device-verification.md#the-readings-of-2026-11-23-180-alpha2-the-resume-with-salons-the-share-shortcuts-the-keyboard-on-a-photo-dm-the-inactive-iphone)).
+
+### The keyboard comes back with the app (2026-11-23)
+
+**What the iPhone said** (`1.8.0-alpha.4`, iPhone 12, the DM of the sitting, keyboard up at its end,
+Home, back 3 to 10 s later): 4 returns of 10 left the thread 65 to 87 pt above its end with the
+"Scroll to bottom" arrow up. The web view was 390 x 543 pt (the keyboard-up size) in passing and
+failing returns alike, and the exported log had no `left the bottom with no finger on the pane` line
+and no `[CHAT_VIEW]` line at any return
+([the entry](../../backlog.d/reading-owed-a-dm-thread-left-above-its-end-after-a-resume-from-ios-settings.md)).
+
+**Why, by reading.** iOS re-presents the keyboard when the app comes back, and WebKit reveals the
+focused field from that presentation's `_keyboardDidShow:` exactly as it does for a rise: it scrolls the
+thread pane. But the WebView comes back at the size it left with, so `keyboardViewport` reads no change
+of the keyboard and **no keyboard transition starts**. `scrollMeasurementResponse` then finds a move up
+with no reader input, the reach unchanged, and no transition moving - the assistive case - and the flag
+falls: every later change answers `keep-row`, and nothing takes the thread back. That fall logged at
+DEBUG, which the exported log does not record, hence the silence. The reveal moves the pane only when
+the field is not already in view after the return's relayout, which is why it is 4 in 10 and not 10.
+The shell's did-show at the return still reaches the page (`canariKeyboardAtRest`), but it finds
+nothing moving to bring to rest.
+
+**The fix: the keyboard's return is a transition, started where the page can still say so.**
+`keyboardReturnsWithTheApp` (`keyboardTransition.ts`): the page hidden (`visibilitychange`) with the
+keyboard open, in the iOS shell, starts a keyboard transition. Hidden comes before anything of the
+return, so the transition is moving when the reveal's scroll is measured, and it rests on the same fact
+as a rise - the shell's did-show at the return (or did-hide, if the field did not keep the keyboard),
+after WebKit's own observer and the screen-update proof. The put-back rule is unchanged: one put-back
+per transition, spent; a reader's touch before the reveal takes the move as theirs; no clock anywhere.
+A keyboard change the page does see at the return (a new height) belongs to that same transition.
+Outside the iOS shell a transition rests in the update that starts it and no engine makes the move, so
+nothing starts there.
+
+**Not done, and why: "only a user gesture lowers the flag".** It would put back every move with no
+finger on the pane, and a VoiceOver three-finger scroll or a find-in-page jump has no finger either -
+the reader could never leave the end with assistive technology. The flag stays durable intent that a
+move lowers only when nothing explains it, and the return is now explained.
+
+**The geometry at every edge** (`paneGeometryLine`, `[CHAT_VIEW]`, INFO, one line per edge, never per
+frame): the page hidden or visible, a keyboard transition starting (read in the frame that lays out
+its variables, outside the announcement's task) and coming to rest. Each carries `scrollTop`,
+`scrollHeight`, `clientHeight`, `fromEnd`, `pinned` (measured), `isNearBottom` (the flag), the
+keyboard and the transition number with `moving|at rest`. A failing return now names its cause: the
+flag down is a move read as the reader's (with its `left the bottom` line at INFO); the flag up with
+`pinned=false` is a pane the page did not put back; a reach that changed between two lines is the
+thread's measure, not its place.
+
+Tests: `keyboardViewport.appReturn.test.ts` (hidden with the keyboard open in the iOS shell starts a
+transition, the return at the same size starts none, the shell's rest ends it; nothing with the keyboard
+closed or outside the shell), `keyboardTransition.test.ts` (the decision, one edge per start and per
+rest, a throwing listener isolated), `ChatArea.scrollAnchor.svelte.test.ts` (the reveal during that
+transition put back, the two geometry lines, the assistive fall now at INFO), `threadAnchor.test.ts`
+(the line). **Owed: the iPhone reading of the same gesture, ten cycles.**
 
 ### A short thread sits at the bottom, and asks for its past at entry (2026-11-14)
 
