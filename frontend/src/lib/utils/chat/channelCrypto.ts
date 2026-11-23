@@ -6,7 +6,6 @@ import {
 import { encodeAppMessage, decodeAppMessage, mkEdit, mkPoll, mkReaction } from '$lib/proto/codec';
 import type { DecodedChannelEdit } from '$lib/utils/chat/channelEdit';
 import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
-import { createChangeLatch } from '$lib/utils/changeLatch';
 import { channelSystemEnvelope } from './channelNotice';
 import { CHANNEL_CONVERSATION_PREFIX, isChannelConversationId } from './rawId';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
@@ -184,18 +183,19 @@ function unreadableCauseClass(err: unknown): string {
 }
 
 /**
- * What each salon's pages have already said about their unreadable rows, keyed by (salon, class),
- * valued by the sorted row ids. Every open of a salon re-reads the same rows it can never read
- * (a Graine v1 session this device does not hold, a missing seed) and used to warn again for ever;
- * the fact is the same, so the line is said ONCE per (salon, class, id set) and the notice the salon
- * already shows carries the rest. A new or different set of rows is a new fact and is said again.
- * Durable state, not a clock; memory only, so a reload says it once more.
+ * EVERY (salon, class, sorted row ids) fact a page has already said about unreadable rows. Every open
+ * of a salon re-reads the rows it can never read (a Graine v1 session this device does not hold, a
+ * missing seed) and used to warn again for ever; the history pages, the post-drain re-read and the
+ * search each feed different id sets, so the memory is of EVERY set said, not only the last one: page
+ * 1, page 2, then a reopen of page 1 says nothing the second time. A set never seen is a new fact and
+ * is said. Durable state, not a clock; bounded by the sets one session meets; memory only, so a reload
+ * says it once more.
  */
-const unreadableSaid = createChangeLatch();
+const unreadableSaid = new Set<string>();
 
-/** Forgets what pages said (an account switch, tests). */
+/** Forgets what pages said (an account switch, sign-out, tests). */
 export function resetUnreadableRowLatch(): void {
-  unreadableSaid.reset();
+  unreadableSaid.clear();
 }
 
 /**
@@ -238,11 +238,10 @@ export class UnreadableRowTally {
     const channel = rawChannelId(this.channelId).slice(0, 8);
     for (const [causeClass, { rows, causes, fault }] of this.byClass) {
       // A refusal ACCUSES and is never latched; an honest unreadable class is said once per id set.
-      if (
-        !fault &&
-        !unreadableSaid.changed(`${this.channelId}|${causeClass}`, [...rows].sort().join(','))
-      ) {
-        continue;
+      if (!fault) {
+        const fact = `${this.channelId}|${causeClass}|${[...rows].sort().join(',')}`;
+        if (unreadableSaid.has(fact)) continue;
+        unreadableSaid.add(fact);
       }
       const samples = [...causes].slice(0, 3).join('; ');
       (fault ? console.error : console.warn)(

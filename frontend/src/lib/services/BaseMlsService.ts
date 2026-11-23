@@ -698,6 +698,15 @@ export abstract class BaseMlsService implements IMlsService {
    */
   private readonly heldAtHydration = new Set<string>();
 
+  /**
+   * Whether the last pull STOPPED on a refused page ({@link PendingPullIncompleteError}) and none has
+   * listed the whole mailbox since. The event that pulls again is NAMED, not timed: the next live
+   * frame the socket delivers (the gateway is up and the history service behind it may be too), or
+   * the reconnect's own pull, which already exists. Until one lands the drain waiters stay pending,
+   * which is true: the mailbox is not known empty.
+   */
+  private pullIncompleteOwed = false;
+
   /** Resolves {@link initialDrain}; null once it has. */
   private resolveInitialDrain: (() => void) | null = null;
 
@@ -3037,6 +3046,17 @@ export abstract class BaseMlsService implements IMlsService {
     channel: DeliveryChannel,
     listedAfterAck?: number
   ): void {
+    if (channel === 'live' && this.pullIncompleteOwed) {
+      // THE NAMED EVENT that retries a pull a refused page stopped: a live frame proves the gateway
+      // link is up, and the pull it asks for lists the backlog this frame may be ahead of.
+      this.pullIncompleteOwed = false;
+      console.log('[PENDING] a live frame arrived after an incomplete pull - pulling again');
+      void this.fetchPendingMessages().catch((e: unknown) =>
+        console.warn(
+          `[PENDING] the pull after an incomplete one failed: ${sanitizeForLog(String(e))}`
+        )
+      );
+    }
     const arrival: DeliveryArrival =
       channel === 'pull' ? { channel, listedAfterAck: listedAfterAck! } : { channel };
     if (!this.admitDelivery(msg.queuedMessageId, arrival)) return;
@@ -3590,6 +3610,7 @@ export abstract class BaseMlsService implements IMlsService {
           );
         }
         emptied = true;
+        this.pullIncompleteOwed = false;
         if (fetched === 0) {
           console.log(
             `[PENDING] No pending MLS messages for ${sanitizeForLog(this.userId)}:${sanitizeForLog(
@@ -3620,6 +3641,7 @@ export abstract class BaseMlsService implements IMlsService {
             `[PENDING] Pending fetch ended after ${fetched} message(s): this device was revoked by its owner, nothing remains to drain`
           );
         } else if (e instanceof PendingPullIncompleteError) {
+          this.pullIncompleteOwed = true;
           // AN ANSWER, NOT A FAULT OF THIS DEVICE: the server or the edge refused a page. The pull is
           // INCOMPLETE - never a drained mailbox (`emptied` and the mailbox flag stay unset).
           console.warn(

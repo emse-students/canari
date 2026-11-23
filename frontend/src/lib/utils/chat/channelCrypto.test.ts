@@ -223,6 +223,40 @@ describe('UnreadableRowTally', () => {
     expect(warn).toHaveBeenCalledTimes(2);
   });
 
+  it('remembers every id set said: page 1, page 2, then a reopen of page 1 says nothing', async () => {
+    const { reportUnreadableChannelMessage, UnreadableRowTally } =
+      await import('$lib/utils/chat/channelCrypto');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const open = (ids: string[]) => {
+      const tally = new UnreadableRowTally(CHANNEL);
+      for (const id of ids) {
+        reportUnreadableChannelMessage(CHANNEL, id, 'bob', undefined, new Error('bad'), tally);
+      }
+      tally.report();
+    };
+
+    open(['p1-a', 'p1-b']);
+    open(['p2-a']);
+    open(['p1-b', 'p1-a']);
+    open(['p2-a']);
+    expect(warn).toHaveBeenCalledTimes(2);
+  });
+
+  it('says a set again once the latch is reset (sign-out, account switch)', async () => {
+    const { reportUnreadableChannelMessage, UnreadableRowTally, resetUnreadableRowLatch } =
+      await import('$lib/utils/chat/channelCrypto');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const open = () => {
+      const tally = new UnreadableRowTally(CHANNEL);
+      reportUnreadableChannelMessage(CHANNEL, 'a', 'bob', undefined, new Error('bad'), tally);
+      tally.report();
+    };
+    open();
+    resetUnreadableRowLatch();
+    open();
+    expect(warn).toHaveBeenCalledTimes(2);
+  });
+
   it('says a page of unreadable rows once per class, not once per row', async () => {
     const { reportUnreadableChannelMessage, UnreadableRowTally } =
       await import('$lib/utils/chat/channelCrypto');

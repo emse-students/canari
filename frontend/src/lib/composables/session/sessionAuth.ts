@@ -171,6 +171,7 @@ import {
   initTabLeadershipAsync,
   getIsTabLeader,
 } from '$lib/utils/chat/connection';
+import { resetUnreadableRowLatch } from '$lib/utils/chat/channelCrypto';
 import { keptVerdictLatch, type AbsentGroupVerdicts } from '$lib/utils/chat/groupSweep';
 import {
   beginStartupCatchupBench,
@@ -3885,6 +3886,9 @@ export function tearDownLiveSession(
   // The `kept` verdicts already said belong to the account that leaves: two accounts on one install
   // share their 1:1 group, and the next one's first sweep would otherwise say nothing about it.
   keptVerdictLatch.reset();
+  // ...and so do the unreadable-row facts a salon's pages already said: the next account's salons
+  // are other rows, and one that shares an id says its own once.
+  resetUnreadableRowLatch();
   uiKeptLatch.reset();
   cb.setSelectedContact(null);
   setCallSystemMessageContext(null);
