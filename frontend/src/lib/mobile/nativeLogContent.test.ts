@@ -353,7 +353,7 @@ const REVIEWED_GROUPS: [string, string[]][] = [
       '2x group.rs|group_id_str',
       'members.rs|expected.unwrap_or("a well-formed device identity")',
       'messaging.rs|entrant.as_deref().unwrap_or("unreadable-identity")',
-      '9x CallForegroundService.kt|call',
+      '10x CallForegroundService.kt|call',
       '4x CanariFirebaseMessagingService.kt|channel',
       'CanariFirebaseMessagingService.kt|deepLink',
       'CanariFirebaseMessagingService.kt|eldest.key',
