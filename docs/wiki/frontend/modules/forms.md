@@ -3102,11 +3102,21 @@ association's readiness in that rule, a paused Lydia account would hand the plac
 hold - promoted, unable to pay, expired - until the line was empty. Logged at WARN with the form and
 the answer; the managers' section shows "Liste bloquée" (`waitlistFrozen`, the same rule on the client,
 reading the server's `paymentsPaused` for the account); a promotion by hand of such an answer is a typed
-409 `WAITLIST_NO_PAYMENT_PATH`. **It lifts at the next promotion that finds the mode payable: ANY save
-of a published form promotes while someone waits** (`update` and `publishChanges`, in the save's
-transaction - not only a capacity raised), so switching the mode back on lifts it in that very save; an
-account made ready again lifts it at the form's next save, freed place or submit, or a promotion by
-hand. Removing that answer lifts it too. A free answer is never frozen.
+409 `WAITLIST_NO_PAYMENT_PATH`. **It lifts by the event that makes the mode payable again, never by a
+timer.** The editor's mode: ANY save of a published form promotes while someone waits (`update` and
+`publishChanges`, in the save's transaction - not only a capacity raised), so switching the mode back on
+lifts it in that very save. The association's account: the transaction that makes it collect again
+promotes the lists of its forms and of the forms of those collecting through it
+(`promoteWaitlistsOfCollectors`, `waitlist.ts`) - `setLydiaReadiness` going ready (the holder when it
+collects on its own account, and its approved delegates: the very set its release of withheld products
+names) and `approvePaymentDelegation` (the child, onto a receiver proven ready). Those are every write
+that turns `collectsNow` true: the readiness flag has ONE writer, an association's kind is fixed at its
+creation, a switch back only stops an account, and linking a Business sets no readiness. The
+transaction has PROVEN the readiness under its locks, so that proof is what the promotion reads (the
+row it just wrote is invisible to `collectsNow` on another connection); each form is locked in id order
+after the association, as `submit` locks them, and a failure rolls the readiness back with it (the
+webhook or the admin action fails visibly and is retried). What was promoted goes to `afterCommit`
+after the commit. Removing that answer lifts the list too. A free answer is never frozen.
 
 **Every freeing promotes IN ITS OWN TRANSACTION, and there is no sweep.** Each event that frees a place
 takes the form's seat lock FIRST (then the row, the order `submit`, `markPaid` and an answer edit take)
@@ -3142,9 +3152,14 @@ same lock - nobody is both registered and in line. Landed **`paid_over_capacity`
 KEEPS their place in line: when their turn comes, the promotion converts that paid answer to `paid`
 (`planPromotion`, `promoteWaitingRow`) - no second charge, no `payment_due` - and deletes the waiting
 answer, under the same exactly-one-row rule. What the payment buys (the cotisation it could not grant
-over capacity) runs after the commit (`fulfilConvertedPromotions`, claimed on the row's own
-`cotisationGrantedAt`; the five-minute form job runs the ones a refund's promotion converted, or a
-process stopped before). The refund stays owed only if they are never promoted. Before, the late payment
+over capacity) runs right after the commit of WHICHEVER promoter converted it, a refund or an association
+collecting again included: every promoter hands what it promoted to
+`FormWaitlistNoticeService.afterCommit`, which runs the conversions' fulfilment
+(`FormsService.fulfilConvertedPromotions`, registered there by `FormsService`, whose module imports the
+notice's - claimed on the row's own `cotisationGrantedAt`) and then the notices. The five-minute form job
+runs the same step with no ids only as the durable retry of a process stopped between a commit and its
+`afterCommit`, or a grant that gave its claim back (WARN), like `tellPending`. The refund stays owed
+only if they are never promoted. Confirmed by the owner on 2026-11-24. Before, the late payment
 deleted the waiting answer: the person who had paid lost their place AND was owed a refund.
 
 **A promotee never loses its place to Canari's failure.** A `payment_due` answer resumed and whose
@@ -3159,8 +3174,9 @@ through a later cancel or expiry and which `resumeRowRefusal` refuses - so the n
 promoted into a place a payable request may still claim, and no second request is issued.
 
 **One notice, from the row, told by the event that promoted.** Every promoter - a form event in
-`FormsService` and a refund in `RefundsService` - collects what it promoted and calls
-`FormWaitlistNoticeService.tell` right after its commit (never about a promotion that rolled back). The
+`FormsService`, a refund in `RefundsService`, an association collecting again in `AssociationsService` -
+collects what it promoted and calls `FormWaitlistNoticeService.afterCommit` right after its commit
+(never about a promotion that rolled back). The
 service is provided by `AssociationsModule`, which `FormsModule` imports, so both reach one instance
 (the reverse import would be a cycle). The CLAIM of `promotionNotifiedAt` (a conditional `UPDATE`, the
 one winner writes) and the BELL ROW are written in ONE transaction: a crash or a failed write between
@@ -3172,11 +3188,10 @@ where the form reminders file); a failed push fails only the push. Two types: `f
 a `payment_due` one, whose sentence says the place is HELD until it is paid, or goes to the next in
 line (Paraglide, Android, iOS and the NSE carry both). NO DURATION in either text: a notice may arrive
 late (a phone offline, one retried by `tellPending`), and "within 30 minutes" would promise time the
-hold no longer has; the form page shows the hold as it stands. The bell row is written by hand, not
-through `PostNotificationsService.createNotification`: that method writes through its own repository,
-outside the claim's transaction (the one property the notice rests on), and `PostsModule` imports
-`AssociationsModule`, so injecting it here would be a cycle; what it decides - the category gate, the
-system actor, the association's name and logo - is kept. Moving up in rank is never announced. Both types are
+hold no longer has; the form page shows the hold as it stands. The bell row is written by
+`PostNotificationsService.createNotification`, the one bell-row writer, ON the claim's transaction (its
+`manager` option, which requires `skipPush`: a push sent from inside a transaction would announce a row
+that may still roll back); the push is the notice's own, after the commit. Moving up in rank is never announced. Both types are
 new, so both are gated on the `1.8.0` client floor (`NOTIFICATION_TYPE_MIN_CLIENT`,
 `PUSH_KEY_MIN_CLIENT`; [legacy-compatibility](../../legacy-compatibility.md)).
 
@@ -3203,9 +3218,13 @@ never resumable, a late payment over capacity keeping its payer in line and conv
 turn (no second request, its cotisation run, nothing left for the retry), the frozen list (nobody
 promoted, the form full, the promotion by hand refused, lifted by turning online back on), a frozen list
 lifted by a plain save of the form that reopens online, an association that cannot collect freezing the
-list (and a save once it can promoting), the account erasure deleting a waiting answer, leaving
+list (and a save once it can promoting), a conversion committed by another promoter fulfilled by its
+`afterCommit` with nothing left for the retry, the account erasure deleting a waiting answer, leaving
 (own, another's, promoted), the promotion by hand (and refused to a non-manager), a capacity raised by
-`update`. `refunds.integration.spec.ts` proves the refund's promotion and its notice after the commit.
+`update`. `refunds.integration.spec.ts` proves the refund's promotion, a conversion, and both handed to
+`afterCommit` after the refund's commit. `lydia-readiness.integration.spec.ts` proves the frozen lists of
+a holder and its delegate promoted by the readiness transaction alone, no form saved, and a replay
+promoting nothing.
 On the client: `waitlist.test.ts` (with `waitlistFrozen`), `paymentResume.test.ts`,
 `page.waitlist.svelte.test.ts` (the join, the rank, leaving, the payment due),
 `FormWaitlistSection.svelte.test.ts` (the manager's list and the frozen notice) and

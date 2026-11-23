@@ -3,7 +3,7 @@ import type { Logger } from '@nestjs/common';
 import { Form } from './entities/form.entity';
 import { Submission } from './entities/submission.entity';
 import { cashReminderDueAt } from './cash-reminder';
-import { seatHoldingWhere } from './seat-hold';
+import { lockFormSeats, seatHoldingWhere } from './seat-hold';
 import { acceptsCash, acceptsOnline } from './payment-offer';
 
 /**
@@ -50,6 +50,7 @@ export type WaitlistTrigger =
   | 'online-expiry'
   | 'refund'
   | 'form-edit'
+  | 'collection-resumed'
   | 'by-hand';
 
 /** The form fields the waiting list reads. */
@@ -260,7 +261,7 @@ export async function promotionPayable(
  * on the list (the same rule, in the client's `waitlistFrozen`). It lifts at the next promotion
  * that finds the mode payable again: any save of the published form promotes while someone waits
  * (`FormsService.update`), so turning the mode back on lifts it in that save; an account made ready
- * again lifts it at the form's next save, freed place or submit, or a promotion by hand.
+ * again lifts it in the transaction that makes it collect (`promoteWaitlistsOfCollectors`).
  */
 export async function promoteFromWaitlist(
   manager: EntityManager,
@@ -329,6 +330,58 @@ export async function promoteFromWaitlist(
         `${waitingCount} waiting (${promoted.map((p) => `${p.submissionId.slice(0, 8)}->${p.status}`).join(', ')})`
     );
   }
+  return promoted;
+}
+
+/**
+ * AN ASSOCIATION CAN COLLECT ONLINE AGAIN: every list of its forms frozen on an online promotee
+ * (`promotionPayable`) is promoted, IN THE CALLER'S TRANSACTION - the one that made it collect
+ * (`AssociationsService.setLydiaReadiness` going ready, `approvePaymentDelegation` accepted onto a
+ * ready receiver) - so the readiness and the promotions commit together, with no event left for a
+ * frozen list to wait on. The caller has PROVEN, under its locks, that each of `associationIds`
+ * collects now (the same proof its release of withheld products rests on,
+ * `releaseWithheldProductsOf`), so that proof is the readiness this promotion reads: the
+ * association's row, written but not yet committed, is invisible to a read on another connection.
+ *
+ * Each form with someone waiting, in id order (two such transactions lock forms in the same order),
+ * under the form's seat lock (`lockFormSeats`, taken AFTER the association's: the order `submit`
+ * takes them in). Returns what it promoted, for the caller to hand to
+ * `FormWaitlistNoticeService.afterCommit` after its commit. A failure throws and rolls the
+ * readiness back with it: the webhook or the admin action fails visibly and is retried.
+ */
+export async function promoteWaitlistsOfCollectors(
+  manager: EntityManager,
+  associationIds: readonly string[],
+  logger: Pick<Logger, 'log' | 'debug' | 'warn'>
+): Promise<PromotedAnswer[]> {
+  if (associationIds.length === 0) return [];
+  const proven = new Set(associationIds);
+  const forms = (await manager.query(
+    `SELECT f.id FROM forms f
+      WHERE f."associationId" = ANY($1::uuid[]) AND f."deletedAt" IS NULL
+        AND EXISTS (SELECT 1 FROM submissions s WHERE s."formId" = f.id AND s."paymentStatus" = $2)
+      ORDER BY f.id`,
+    [[...associationIds], WAITING]
+  )) as Array<{ id: string }>;
+  if (forms.length === 0) {
+    logger.debug(
+      `[WAITLIST] collection-resumed: nobody waits on the forms of ${associationIds.length} association(s)`
+    );
+    return [];
+  }
+  const promoted: PromotedAnswer[] = [];
+  for (const { id } of forms) {
+    await lockFormSeats(manager, id);
+    promoted.push(
+      ...(await promoteFromWaitlist(manager, id, 'collection-resumed', logger, (associationId) =>
+        Promise.resolve(associationId !== null && proven.has(associationId))
+      ))
+    );
+  }
+  logger.log(
+    `[WAITLIST] collection-resumed: ${associationIds.length} association(s), ${forms.length} form(s) ` +
+      `with someone waiting, ${promoted.length} promoted`
+  );
   return promoted;
 }
 

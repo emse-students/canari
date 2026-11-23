@@ -48,7 +48,7 @@ maybe('Lydia refunds against PostgreSQL', () => {
   let ds: DataSource;
   let service: RefundsService;
   let notifier: { tell: jest.Mock };
-  let waitlistNotice: { tell: jest.Mock };
+  let waitlistNotice: { afterCommit: jest.Mock };
   let post: jest.SpyInstance;
 
   const options = (synchronize: boolean, entities: Function[]) => ({
@@ -116,7 +116,7 @@ maybe('Lydia refunds against PostgreSQL', () => {
     );
     await ds.initialize();
     notifier = { tell: jest.fn().mockResolvedValue(undefined) };
-    waitlistNotice = { tell: jest.fn().mockResolvedValue(undefined) };
+    waitlistNotice = { afterCommit: jest.fn().mockResolvedValue(undefined) };
     service = Object.assign(Object.create(RefundsService.prototype) as object, {
       logger: new Logger('RefundsService'),
       refundRepo: ds.getRepository(LydiaRefund),
@@ -473,7 +473,7 @@ maybe('Lydia refunds against PostgreSQL', () => {
         waitlistOrder: '1',
       })
     );
-    waitlistNotice.tell.mockClear();
+    waitlistNotice.afterCommit.mockClear();
     await service.refund(ASSO, record.id, MANAGER, total());
     const [after] = await ds.query(
       `SELECT "paymentStatus", "promotedAt", "promotionNotifiedAt" FROM submissions WHERE id = $1`,
@@ -483,9 +483,62 @@ maybe('Lydia refunds against PostgreSQL', () => {
     // its transaction committed (the notice service is this spec's double: nothing stamped here).
     expect(after.paymentStatus).toBe('payment_due');
     expect(after.promotedAt).not.toBeNull();
-    expect(waitlistNotice.tell).toHaveBeenCalledTimes(1);
-    expect(waitlistNotice.tell).toHaveBeenCalledWith([waiting.id]);
+    expect(waitlistNotice.afterCommit).toHaveBeenCalledTimes(1);
+    expect(waitlistNotice.afterCommit).toHaveBeenCalledWith([
+      {
+        submissionId: waiting.id,
+        userId: 'w'.repeat(64),
+        formId: submission.formId,
+        status: 'payment_due',
+      },
+    ]);
     expect((await refundOf(record.id))[0].sideEffect).toBe('seat-freed');
+  });
+
+  it("a TOTAL refund whose freed seat goes to a person with a payment landed over capacity converts it, handed over after the refund's commit", async () => {
+    const { record, submission } = await formPayment(false);
+    await ds.query(`UPDATE forms SET "maxSubmissions" = 1 WHERE id = $1`, [submission.formId]);
+    const person = 'v'.repeat(64);
+    const repo = ds.getRepository(Submission);
+    // A late payment of theirs landed over capacity while they waited (`markPaid`): kept in line.
+    const overCapacity = await repo.save(
+      repo.create({
+        formId: submission.formId,
+        userId: person,
+        answers: {},
+        totalPaid: 800,
+        paymentStatus: 'paid_over_capacity',
+      })
+    );
+    const waiting = await repo.save(
+      repo.create({
+        formId: submission.formId,
+        userId: person,
+        answers: {},
+        totalPaid: 800,
+        paymentMethod: null,
+        paymentStatus: 'waiting',
+        waitlistOrder: '1',
+      })
+    );
+    waitlistNotice.afterCommit.mockClear();
+    await service.refund(ASSO, record.id, MANAGER, total());
+    const statusOf = async (id: string) =>
+      (
+        (await ds.query(`SELECT "paymentStatus" FROM submissions WHERE id = $1`, [id]))[0] as
+          | { paymentStatus: string }
+          | undefined
+      )?.paymentStatus;
+    // Their paid answer is the registration now - no second charge - and the waiting one is gone.
+    expect(await statusOf(overCapacity.id)).toBe('paid');
+    expect(await statusOf(waiting.id)).toBeUndefined();
+    // Handed to the after-commit step BY THE REFUND, once, as a conversion: what the payment buys
+    // runs there (`FormWaitlistNoticeService.afterCommit`, proven in waitlist.integration.spec.ts),
+    // never left for the five-minute retry.
+    expect(waitlistNotice.afterCommit).toHaveBeenCalledTimes(1);
+    expect(waitlistNotice.afterCommit).toHaveBeenCalledWith([
+      { submissionId: overCapacity.id, userId: person, formId: submission.formId, status: 'paid' },
+    ]);
   });
 
   it('a TOTAL refund of a priced-grid order frees its seat and keeps the lines it was charged', async () => {

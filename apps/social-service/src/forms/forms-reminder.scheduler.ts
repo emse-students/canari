@@ -394,8 +394,9 @@ export class FormReminderScheduler {
       } else {
         this.logger.error('[WAITLIST] no notifier wired: promotion notices owed are not told');
       }
-      // A promotion that converted a `paid_over_capacity` answer owes what its payment buys
-      // (`FormsService.fulfilConvertedPromotions`); one committed by a refund is run here. Its own `try`.
+      // A promotion that converted a `paid_over_capacity` answer owes what its payment buys; every
+      // promoter runs it after its commit (`afterCommit`), so this is the durable retry of one a
+      // stopped process never ran (`FormsService.fulfilConvertedPromotions`, WARN). Its own `try`.
       try {
         await this.formsService.fulfilConvertedPromotions();
       } catch (e) {

@@ -34,6 +34,7 @@ import { FormRespondent } from './entities/form-respondent.entity';
 import { PurchaseRecord } from '../users/entities/purchase-record.entity';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { PostNotification } from '../posts/entities/post-notification.entity';
+import { PostNotificationsService } from '../posts/post-notifications.service';
 import { ERASURE_ROW_STATEMENTS, erasureParams } from '../internal/account-erasure';
 import {
   FormsService,
@@ -46,6 +47,7 @@ import {
   FORM_WAITLIST_PROMOTED_TYPE,
 } from './waitlist-notice.service';
 import { lockFormSeats, PENDING_PAYMENT_HOLD_SECONDS } from './seat-hold';
+import { promoteFromWaitlist } from './waitlist';
 import { FORM_FINGERPRINT_SQL } from './form-draft-revision';
 import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
 
@@ -153,11 +155,18 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
     await ds.query(migration);
     await ds.query('RESET lock_timeout');
 
-    notice = new FormWaitlistNoticeService(ds.getRepository(Submission), {
+    const push = {
       notifyContent: async (userId: string, content: { key: string }) => {
         pushes.push({ userId, key: content.key });
       },
-    } as any);
+    } as any;
+    // The one bell-row writer, real: the notice writes its row through it, on the claim's
+    // transaction. No post is read, and its push is never used (`skipPush`).
+    notice = new FormWaitlistNoticeService(
+      ds.getRepository(Submission),
+      push,
+      new PostNotificationsService(ds.getRepository(PostNotification), {} as any, push, {} as any)
+    );
     service = new FormsService(
       ds.getRepository(Form),
       ds.getRepository(Submission),
@@ -687,6 +696,42 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
     expect(await service.fulfilConvertedPromotions()).toBe(0);
     // One registration, the form full: the next answer waits.
     expect(await send(formId, CAROL)).toMatchObject({ waiting: true, waitlistRank: 1 });
+  });
+
+  it('a conversion committed by another promoter (a refund) is fulfilled by its after-commit step, never by the retry', async () => {
+    const formId = await paidOnlineForm();
+    const alice: any = await send(formId, ALICE, { payerEmail: 'a@example.org' });
+    await service.markPaid(alice.submissionId);
+    const bob: any = await send(formId, BOB);
+    expect(bob).toMatchObject({ waiting: true, waitlistRank: 1 });
+    // A late payment of Bob's old answer landed over capacity: its purchase recorded, no cotisation.
+    // An INSERT ... RETURNING answers the rows themselves through TypeORM.
+    const [{ id: paidId }] = (await ds.query(
+      `INSERT INTO submissions ("formId", "userId", answers, "totalPaid", "paymentStatus", "purchaseRecordedAt")
+       VALUES ($1, $2, '{}'::jsonb, 1500, 'paid_over_capacity', now()) RETURNING id`,
+      [formId, BOB]
+    )) as Array<{ id: string }>;
+    pushes.length = 0;
+    // What `RefundsService.withdraw` does in the refund's transaction, then its `afterCommit`.
+    const promoted = await ds.transaction('READ COMMITTED', async (m) => {
+      await lockFormSeats(m, formId);
+      await m.query(`UPDATE submissions SET "paymentStatus" = 'refunded' WHERE id = $1`, [
+        alice.submissionId,
+      ]);
+      return promoteFromWaitlist(m, formId, 'refund', new Logger('it'), async () => true);
+    });
+    expect(promoted).toEqual([{ submissionId: paidId, userId: BOB, formId, status: 'paid' }]);
+    await notice.afterCommit(promoted);
+    const [{ granted }] = await ds.query(
+      `SELECT "cotisationGrantedAt" IS NOT NULL AS granted FROM submissions WHERE id = $1`,
+      [paidId]
+    );
+    expect(granted).toBe(true);
+    expect(await status(bob.submissionId)).toBeUndefined();
+    expect(pushes).toEqual([{ userId: BOB, key: 'form_waitlist_promoted' }]);
+    // The durable retry finds nothing: the ordinary path never reaches it.
+    expect(await service.fulfilConvertedPromotions()).toBe(0);
+    expect(await notice.tellPending()).toBe(0);
   });
 
   it('a list whose first in line can no longer pay is FROZEN: nobody promoted, the form full', async () => {

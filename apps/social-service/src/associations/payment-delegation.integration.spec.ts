@@ -22,6 +22,8 @@ import { Association } from './entities/association.entity';
 import { AssociationAudience } from '../spaces/association-audience.entity';
 import { Space } from '../spaces/space.entity';
 import { PostNotification } from '../posts/entities/post-notification.entity';
+import { Form } from '../forms/entities/form.entity';
+import { Submission } from '../forms/entities/submission.entity';
 import { AssociationsService } from './associations.service';
 import { ProductsService } from './products.service';
 import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
@@ -50,7 +52,17 @@ maybe('a list collects through an accepted payment delegation (PostgreSQL)', () 
   const options = (synchronize: boolean) => ({
     type: 'postgres' as const,
     url: URL,
-    entities: [AssociationProduct, Association, AssociationAudience, Space, PostNotification],
+    // The forms and their answers: an association collecting again promotes its frozen waiting
+    // lists in the same transaction (`promoteWaitlistsOfCollectors`); none wait in this file.
+    entities: [
+      AssociationProduct,
+      Association,
+      AssociationAudience,
+      Space,
+      PostNotification,
+      Form,
+      Submission,
+    ],
     synchronize,
     uuidExtension: 'pgcrypto' as const,
     installExtensions: false,

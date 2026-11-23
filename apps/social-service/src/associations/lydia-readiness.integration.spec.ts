@@ -32,6 +32,10 @@ import { UserTag } from '../users/entities/user-tag.entity';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { UserTagService } from '../users/user-tag.service';
 import { PostNotification } from '../posts/entities/post-notification.entity';
+import { Form } from '../forms/entities/form.entity';
+import { Submission } from '../forms/entities/submission.entity';
+import { lockFormSeats } from '../forms/seat-hold';
+import { onlineCollectsThrough, promoteFromWaitlist } from '../forms/waitlist';
 import { SECRET_BOX_ENV } from '../common/secret-box';
 import { AssociationsService, LYDIA_RESPONSABLE_IN_FLIGHT } from './associations.service';
 import { LYDIA_ENROLMENT_IN_FLIGHT } from './lydia-readiness';
@@ -68,6 +72,8 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
     tellDelegation.mock.calls.filter(([asso]) => asso.id === id).map(([, notice]) => notice);
   let savedSecret: string | undefined;
   const requests: unknown[] = [];
+  /** The waiting list's after-commit step: what a readiness transaction promoted, handed over. */
+  const afterCommit = jest.fn(async (_promoted: unknown[]) => undefined);
 
   const options = (synchronize: boolean, entities: Function[]) => ({
     type: 'postgres' as const,
@@ -95,6 +101,9 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
       AssociationAudience,
       Space,
       PostNotification,
+      // The forms and their answers: a holder collecting again promotes its frozen waiting lists.
+      Form,
+      Submission,
     ];
     const others = new DataSource(options(true, entities));
     await others.initialize();
@@ -148,6 +157,7 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
       lydiaNotifier: { enabled: () => true, tell, tellDelegation },
       listFlagHolders: async () => ['manager-1'],
       isMember: async () => true,
+      waitlist: { afterCommit },
     }) as unknown as AssociationsService;
     products = Object.assign(Object.create(ProductsService.prototype) as object, {
       logger: new Logger('ProductsService'),
@@ -304,6 +314,89 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
     expect(await flags(offSale.id)).toEqual({ isActive: false, activationWithheld: false });
     // Released in the readiness transaction, and told so.
     expect(delegationTells(CLUB)).toEqual(['receiver-not-ready', 'resumed']);
+  });
+
+  it('a waiting list frozen while its association cannot collect is promoted by the readiness itself, no form saved', async () => {
+    // Paused: Lydia blocked the holder's Business.
+    await associations.revertLydiaReadinessAfterRefusal(VENDOR, 'request-blocked', {
+      path: 'shop',
+    });
+    expect((await stateOf(HOLDER)).ready).toBe(false);
+    const forms = ds.getRepository(Form);
+    const answers = ds.getRepository(Submission);
+    // A paid online form of the holder and one of its approved delegate, each with its place free
+    // and an online answer first in line.
+    const lists: Array<{ formId: string; waitingId: string }> = [];
+    for (const [associationId, userId] of [
+      [HOLDER, 'member-1'],
+      [CLUB, 'member-2'],
+    ] as const) {
+      const form = await forms.save(
+        forms.create({
+          ownerId: 'it',
+          title: `Gala ${associationId.slice(-2)}`,
+          associationId,
+          status: 'published',
+          maxSubmissions: 1,
+          requiresPayment: true,
+          basePrice: 1500,
+          currency: 'eur',
+          allowOnlinePayment: true,
+          waitlistEnabled: true,
+          items: [],
+        } as Partial<Form>)
+      );
+      const waiting = await answers.save(
+        answers.create({
+          formId: form.id,
+          userId,
+          answers: {},
+          totalPaid: 1500,
+          paymentMethod: null,
+          paymentStatus: 'waiting',
+          waitlistOrder: '1',
+        } as Partial<Submission>)
+      );
+      lists.push({ formId: form.id, waitingId: waiting.id });
+    }
+    const statusOf = async (id: string) =>
+      (
+        (await ds.query(`SELECT "paymentStatus" FROM submissions WHERE id = $1`, [id]))[0] as {
+          paymentStatus: string;
+        }
+      ).paymentStatus;
+    // A freeing while paused promotes nobody: the first in line could not pay (the FROZEN list).
+    for (const { formId, waitingId } of lists) {
+      const promoted = await ds.transaction('READ COMMITTED', async (m) => {
+        await lockFormSeats(m, formId);
+        return promoteFromWaitlist(
+          m,
+          formId,
+          'cash-expiry',
+          new Logger('it'),
+          onlineCollectsThrough(associations)
+        );
+      });
+      expect(promoted).toEqual([]);
+      expect(await statusOf(waitingId)).toBe('waiting');
+    }
+    // Collection resumes - the readiness event alone, no form saved: both lists are promoted in the
+    // readiness transaction, and handed to the after-commit step (notices, conversions) once.
+    afterCommit.mockClear();
+    await expect(
+      products.markLydiaReady(VENDOR, 'admin', { path: 'admin' })
+    ).resolves.toMatchObject({ kind: 'transitioned' });
+    for (const { waitingId } of lists) expect(await statusOf(waitingId)).toBe('payment_due');
+    expect(afterCommit).toHaveBeenCalledTimes(1);
+    const handed = afterCommit.mock.calls[0][0] as Array<{ submissionId: string; status: string }>;
+    expect(handed.map((p) => p.submissionId).sort()).toEqual(lists.map((l) => l.waitingId).sort());
+    expect(new Set(handed.map((p) => p.status))).toEqual(new Set(['payment_due']));
+    // A replay finds nobody waiting: nothing promoted, nothing handed over.
+    afterCommit.mockClear();
+    await products.markLydiaReady(VENDOR, 'admin', { path: 'admin' });
+    expect(afterCommit).not.toHaveBeenCalled();
+    await ds.query(`DELETE FROM submissions`);
+    await ds.query(`DELETE FROM forms`);
   });
 
   it('a revert committed while the purchase is prepared: the typed 409 under the lock, and NO request/do', async () => {

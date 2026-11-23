@@ -792,10 +792,10 @@ export class RefundsService implements OnApplicationBootstrap {
       const name = await this.associationName(on, result.row.associationId);
       await this.notifier.tell({ id: result.row.associationId, name }, result.payerId ?? null);
     }
-    // The promotion committed with the refund: its people are told now, never by a sweep (`tell`
-    // never throws, and a notice it cannot write stays owed in the row).
-    const toTell = promoted.filter((p) => p.userId).map((p) => p.submissionId);
-    if (toTell.length > 0) await this.waitlistNotice.tell(toTell);
+    // The promotion committed with the refund: what a converted payment buys runs now, then its
+    // people are told, never by a sweep (`afterCommit` never throws; what it cannot write stays owed
+    // in the rows, for the five-minute retry).
+    if (promoted.length > 0) await this.waitlistNotice.afterCommit(promoted);
     return result.row;
   }
 

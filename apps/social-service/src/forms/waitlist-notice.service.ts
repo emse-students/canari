@@ -6,15 +6,14 @@ import {
   SYSTEM_ACTOR_ID,
   SYSTEM_ACTOR_NAME,
 } from '../posts/post-notifications.service';
-import { PostNotification } from '../posts/entities/post-notification.entity';
+import { PostNotificationsService } from '../posts/post-notifications.service';
 import { PushService } from '../push/push.service';
 import {
   formWaitlistPromotedContent,
   formWaitlistPromotedPaymentDueContent,
 } from '../push/push-content';
-import { recipientsWithCategoryOn } from '../push/notification-category';
 import { Submission } from './entities/submission.entity';
-import { PAYMENT_DUE } from './waitlist';
+import { PAYMENT_DUE, type PromotedAnswer } from './waitlist';
 
 /** The bell type of a promotion from the waiting list; the push's `contentKey` is the same word. */
 export const FORM_WAITLIST_PROMOTED_TYPE = 'form_waitlist_promoted';
@@ -62,14 +61,61 @@ export class FormWaitlistNoticeService {
 
   constructor(
     @InjectRepository(Submission) private readonly submissionRepo: Repository<Submission>,
-    private readonly push: PushService
+    private readonly push: PushService,
+    private readonly notifications: PostNotificationsService
   ) {}
+
+  /**
+   * What a promotion that CONVERTED a `paid_over_capacity` answer to `paid` owes after its commit:
+   * what the payment buys (`FormsService.fulfilConvertedPromotions`). Registered once at boot by
+   * `FormsService`, whose module imports this one - the reverse edge would be a cycle - so every
+   * promoter in either module runs it through `afterCommit`.
+   */
+  private conversionFulfiller: ((submissionIds: readonly string[]) => Promise<unknown>) | null =
+    null;
+
+  /** Called once, by `FormsService`. A second registration is a wiring defect. */
+  registerConversionFulfiller(fn: (submissionIds: readonly string[]) => Promise<unknown>): void {
+    if (this.conversionFulfiller)
+      throw new Error('waiting-list conversion fulfiller registered twice');
+    this.conversionFulfiller = fn;
+  }
+
+  /**
+   * EVERYTHING A PROMOTION OWES ONCE ITS TRANSACTION COMMITTED, for every promoter - a form event, a
+   * refund, an association that can collect again: what a converted payment buys, then each notice.
+   * Never throws: each half logs its own failure, and the five-minute job is the durable retry of
+   * both (`tellPending`, `FormsService.fulfilConvertedPromotions` with no ids) for a process stopped
+   * between the commit and here - never the path of an ordinary promotion.
+   */
+  async afterCommit(promoted: readonly PromotedAnswer[]): Promise<void> {
+    const converted = promoted.filter((p) => p.status === 'paid').map((p) => p.submissionId);
+    if (converted.length > 0) {
+      if (!this.conversionFulfiller) {
+        this.logger.error(
+          `[WAITLIST] ${converted.length} converted promotion(s) committed with no fulfiller wired - ` +
+            'what their payment buys waits for the five-minute retry'
+        );
+      } else {
+        try {
+          await this.conversionFulfiller(converted);
+        } catch (e: unknown) {
+          this.logger.error(
+            `[WAITLIST] what ${converted.length} converted promotion(s) buy could not be run - the five-minute retry runs it`,
+            e
+          );
+        }
+      }
+    }
+    const ids = promoted.filter((p) => p.userId).map((p) => p.submissionId);
+    if (ids.length > 0) await this.tell(ids);
+  }
 
   /**
    * Tells each answer in `submissionIds` once (a try per answer: one failure never costs the others
    * theirs). Never throws: every failure is logged with the answer it concerns.
    */
-  async tell(submissionIds: readonly string[]): Promise<void> {
+  private async tell(submissionIds: readonly string[]): Promise<void> {
     for (const submissionId of submissionIds) {
       try {
         await this.tellOne(submissionId);
@@ -105,17 +151,10 @@ export class FormWaitlistNoticeService {
   }
 
   /**
-   * The claim and the bell row in one transaction, then the push. Throws on a failed write.
-   *
-   * WHY NOT `PostNotificationsService.createNotification`, the one bell-row writer elsewhere: it
-   * writes through its own repository, outside any caller's transaction, so the claim and the row
-   * could no longer commit or roll back together - the property this notice rests on (a crash
-   * between them would either lose the notice or tell it twice). And it cannot be injected here:
-   * this service lives in `AssociationsModule` (a refund promotes too), which `PostsModule` imports,
-   * so the reverse edge would be a cycle. The row is written by hand instead, with what
-   * `createNotification` decides kept: the category gate (`recipientsWithCategoryOn`, on this
-   * transaction), the system actor and the association's name and logo. Its push is this service's
-   * own, as `skipPush` callers send theirs.
+   * The claim and the bell row in ONE transaction, then the push. Throws on a failed write. The row
+   * is written by `PostNotificationsService.createNotification` - the one bell-row writer, its
+   * category gate included - ON this transaction (`manager`), so the claim and the row commit or
+   * roll back together; the push is this service's own, sent after the commit (`skipPush`).
    */
   private async tellOne(submissionId: string): Promise<void> {
     const told = await this.submissionRepo.manager.transaction(async (m) => {
@@ -141,24 +180,21 @@ export class FormWaitlistNoticeService {
         facts.paymentStatus === PAYMENT_DUE
           ? FORM_WAITLIST_PROMOTED_PAYMENT_DUE_TYPE
           : FORM_WAITLIST_PROMOTED_TYPE;
-      // The reader's own answer: always written (`BELL_ROW_GATE` 'reader'), read through the gate
-      // like every bell row so a future gate on it is honoured here too.
-      const [recipient] = await recipientsWithCategoryOn(m, type, [facts.userId]);
-      if (recipient) {
-        await m.save(
-          PostNotification,
-          m.create(PostNotification, {
-            recipientId: facts.userId,
-            type,
-            postId: facts.formId,
-            actorId: SYSTEM_ACTOR_ID,
-            actorName: facts.associationName || SYSTEM_ACTOR_NAME,
-            associationId: facts.associationId ?? null,
-            associationLogoUrl: facts.associationId ? facts.associationLogoUrl : null,
-            text: facts.formTitle ?? '',
-          })
-        );
-      }
+      // The reader's own answer: always written (`BELL_ROW_GATE` 'reader'), through the gate like
+      // every bell row, so a future gate on it is honoured here too.
+      await this.notifications.createNotification({
+        recipientId: facts.userId,
+        type,
+        postId: facts.formId,
+        actorId: SYSTEM_ACTOR_ID,
+        actorName: facts.associationName || SYSTEM_ACTOR_NAME,
+        ...(facts.associationId
+          ? { associationId: facts.associationId, associationLogoUrl: facts.associationLogoUrl }
+          : {}),
+        text: facts.formTitle ?? '',
+        skipPush: true,
+        manager: m,
+      });
       return { facts, type };
     });
     if (!told) {

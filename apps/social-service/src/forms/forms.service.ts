@@ -655,6 +655,9 @@ export class FormsService {
     private readonly waitlistNotice?: FormWaitlistNoticeService
   ) {
     this.onlineCollects = onlineCollectsThrough(associationsService);
+    // What a converted promotion buys runs after the commit of WHICHEVER promoter converted it - a
+    // refund or an association collecting again included (`FormWaitlistNoticeService.afterCommit`).
+    waitlistNotice?.registerConversionFulfiller((ids) => this.fulfilConvertedPromotions(ids));
   }
 
   /**
@@ -5459,11 +5462,13 @@ export class FormsService {
    * grant over capacity is granted (`fulfilPayment`, claimed on the row's own flag, so it runs once
    * however many callers reach it). The purchase record was written when the money landed.
    *
-   * With `submissionIds`, the answers a promotion of THIS service just committed. Without, THE
-   * RETRY: every promoted `paid` answer whose cotisation flag is still free - a conversion committed
-   * by a refund (`RefundsService`, another module), a process stopped after the commit, or a grant
-   * that failed and gave its claim back. Run by the five-minute form job; finding any is logged at
-   * WARN. A try per answer: one failure never costs the others theirs.
+   * With `submissionIds`, the answers a promotion just committed - whichever promoter, through
+   * `FormWaitlistNoticeService.afterCommit` (registered there by this service's constructor), so a
+   * refund's conversion is run right after the refund's own commit. Without, THE DURABLE RETRY, never
+   * an ordinary path: every promoted `paid` answer whose cotisation flag is still free - a process
+   * stopped between a commit and its `afterCommit`, or a grant that failed and gave its claim back.
+   * Run by the five-minute form job; finding any is logged at WARN. A try per answer: one failure
+   * never costs the others theirs.
    */
   async fulfilConvertedPromotions(submissionIds?: readonly string[]): Promise<number> {
     const ids =
@@ -5514,17 +5519,14 @@ export class FormsService {
    * `tellPending` - the only thing that job does for the waiting list.
    */
   private async tellPromoted(promoted: readonly PromotedAnswer[]): Promise<void> {
-    const converted = promoted.filter((p) => p.status === 'paid').map((p) => p.submissionId);
-    if (converted.length > 0) await this.fulfilConvertedPromotions(converted);
-    const ids = promoted.filter((p) => p.userId).map((p) => p.submissionId);
-    if (ids.length === 0) return;
+    if (promoted.length === 0) return;
     if (!this.waitlistNotice) {
       this.logger.error(
-        `[WAITLIST] ${ids.length} promotion(s) committed with no notifier wired - their notices are owed`
+        `[WAITLIST] ${promoted.length} promotion(s) committed with no notifier wired - their notices are owed`
       );
       return;
     }
-    await this.waitlistNotice.tell(ids);
+    await this.waitlistNotice.afterCommit(promoted);
   }
 
   /**
