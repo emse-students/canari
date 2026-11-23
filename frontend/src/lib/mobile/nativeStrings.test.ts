@@ -355,6 +355,18 @@ describe('A form opening push names the association and the form (reading of 202
   });
 });
 
+describe('An opening told to followers names the association and the title on every composer', () => {
+  it.each(['booking_open', 'event_open'])('%s reads the actor and the fragment', (stem) => {
+    const kotlin = kotlinFiles.find((f) => f.name === 'CanariFirebaseMessagingService.kt')?.source;
+    const swift = readFileSync(join(APPLE_ROOT, 'canari_NSE', 'NotificationService.swift'), 'utf8');
+    const objc = readFileSync(join(APPLE_ROOT, 'Sources', 'canari', 'canari_push.mm'), 'utf8');
+    expect(kotlin).toContain(`R.string.notif_social_${stem}_title, actor`);
+    expect(kotlin).toContain(`R.string.notif_social_${stem}_body`);
+    expect(swift).toContain(`actorTitled("${stem}")`);
+    expect(objc).toContain(`@"social_${stem}" : @"${stem}"`);
+  });
+});
+
 describe('Native sources, both platforms', () => {
   /**
    * NO NATIVE SOURCE MAY CARRY A LITERAL A TABLE ALREADY TRANSLATES.

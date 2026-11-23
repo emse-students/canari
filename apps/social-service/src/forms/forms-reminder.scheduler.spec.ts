@@ -300,6 +300,22 @@ describe('FormReminderScheduler.checkReminders - the push carries the facts of t
     });
   });
 
+  it.each(['booking', 'event'])(
+    'a %s opening hands the bell row the logo id the push picture needs',
+    async (kind) => {
+      const { createNotification } = await run({ openings: [{ ...opening, kind }] });
+      expect(createNotification).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorName: 'Club photo',
+          associationId: 'asso-1',
+          associationLogoUrl: '/api/media/public/logo-1?v=1',
+          associationLogoMediaId: 'logo-1',
+          text: 'Sortie macro',
+        })
+      );
+    }
+  );
+
   it('a personal form pushes no picture, never a member face', async () => {
     const { notifyContent } = await run({
       openings: [

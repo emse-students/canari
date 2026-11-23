@@ -216,6 +216,7 @@ export class FormReminderScheduler {
         ...(r.associationId && {
           associationId: r.associationId,
           associationLogoUrl: r.associationLogoUrl,
+          associationLogoMediaId: r.associationLogoMediaId,
         }),
         text: r.linkOnly ? '' : (r.targetName ?? ''),
         // A booking opens Reservations; an event the agenda (`action`, read by `socialDeepLink`).
