@@ -118,6 +118,7 @@ environment secret read by a job that does not declare that environment, fails `
 | `DEPENDABOT_ALERTS_TOKEN` | repo | scheduled :: alerts |
 | `DEV_AGENDA_SIGNING_KEY` | development | serve-dev :: deploy-dev |
 | `DEV_ANDROID_APP_LINK_SHA256` | development | serve-dev :: deploy-dev |
+| `DEV_ANDROID_UPLOAD_KEY_SHA256` | development | serve-dev :: deploy-dev |
 | `DEV_APNS_VOIP_KEY_ID` | development | serve-dev :: deploy-dev |
 | `DEV_APNS_VOIP_KEY_P8` | development | serve-dev :: deploy-dev |
 | `DEV_APNS_VOIP_TEAM_ID` | development | serve-dev :: deploy-dev |

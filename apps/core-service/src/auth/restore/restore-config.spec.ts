@@ -71,4 +71,46 @@ describe('restore configuration', () => {
     expect(readRestoreConfig(HEX, '').available).toBe(false);
     expect(readRestoreConfig(HEX, 'not a url').available).toBe(false);
   });
+
+  it('adds the dev-only upload key origin beside the Play key, and de-duplicates', () => {
+    const upload = 'CD'.repeat(32);
+    const config = readRestoreConfig(HEX, 'https://dev.canari-emse.fr', upload);
+    expect(config).toEqual({
+      available: true,
+      rpId: 'dev.canari-emse.fr',
+      origins: [ORIGIN, apkKeyHashOrigin(upload)],
+    });
+    expect(readRestoreConfig(HEX, 'https://dev.canari-emse.fr', HEX)).toMatchObject({
+      origins: [ORIGIN],
+    });
+  });
+
+  it('accepts the Play key only when no upload key is given (production)', () => {
+    expect(readRestoreConfig(HEX, 'https://canari.emse.fr', '')).toMatchObject({
+      origins: [ORIGIN],
+    });
+    expect(readRestoreConfig(HEX, 'https://canari.emse.fr', undefined)).toMatchObject({
+      origins: [ORIGIN],
+    });
+  });
+
+  it('never becomes available on the upload key alone', () => {
+    expect(readRestoreConfig('', 'https://dev.canari-emse.fr', HEX).available).toBe(false);
+  });
+
+  it('names the variable that holds the malformed value', () => {
+    expect(() => readRestoreConfig(HEX, 'https://dev.canari-emse.fr', 'AB:CD')).toThrow(
+      /^ANDROID_UPLOAD_KEY_SHA256:/
+    );
+    expect(() => readRestoreConfig('AB:CD', 'https://dev.canari-emse.fr', HEX)).toThrow(
+      /^ANDROID_APP_LINK_SHA256:/
+    );
+    expect(() => apkKeyHashOrigin('ZZ', 'SOME_LABEL')).toThrow(/^SOME_LABEL:/);
+  });
+
+  it('refuses a malformed upload key rather than ignoring it', () => {
+    expect(() => readRestoreConfig(HEX, 'https://dev.canari-emse.fr', 'AB:CD')).toThrow(
+      /not a SHA-256 fingerprint/
+    );
+  });
 });
