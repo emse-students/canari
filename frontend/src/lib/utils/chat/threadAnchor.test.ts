@@ -7,6 +7,7 @@ import {
   keyboardChangeResponse,
   ownMessageAppended,
   respondToNewMessage,
+  scrollMeasurementResponse,
   stickToBottomAfterScroll,
   THREAD_BOTTOM_SLACK_PX,
   threadGrowthResponse,
@@ -422,5 +423,41 @@ describe('stickToBottomAfterScroll', () => {
 
   it('measures plainly when there is no previous offset to compare with', () => {
     expect(stickToBottomAfterScroll({ ...at, previousScrollTop: null })).toBe(false);
+  });
+});
+
+/**
+ * ONLY A READER LOWERS THE FLAG (iPhone 12, 1.8.0-alpha.1): `scrollTop 5813 (last placed 6188), 375 px
+ * from the end`, the reach unchanged, no finger on the pane - the engine's move, not the reader's.
+ */
+describe('scrollMeasurementResponse', () => {
+  const engineMove = {
+    pinned: false,
+    scrollTop: 5813,
+    wasNearBottom: true,
+    previousScrollTop: 6188,
+  };
+
+  it('puts the pane back at its end when it left it with no reader moving it', () => {
+    expect(scrollMeasurementResponse({ ...engineMove, readerMoving: false })).toBe('put-back');
+  });
+
+  it('lets a reader who moved up leave the end, as before', () => {
+    expect(scrollMeasurementResponse({ ...engineMove, readerMoving: true })).toBe('in-history');
+  });
+
+  it('holds the flag at the end whoever moved the pane', () => {
+    expect(scrollMeasurementResponse({ ...engineMove, pinned: true, readerMoving: false })).toBe(
+      'at-end'
+    );
+    expect(scrollMeasurementResponse({ ...engineMove, scrollTop: 6188, readerMoving: true })).toBe(
+      'at-end'
+    );
+  });
+
+  it('never pulls a reader in history down to the end', () => {
+    expect(
+      scrollMeasurementResponse({ ...engineMove, wasNearBottom: false, readerMoving: false })
+    ).toBe('in-history');
   });
 });

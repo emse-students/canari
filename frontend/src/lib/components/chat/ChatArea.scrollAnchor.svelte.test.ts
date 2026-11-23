@@ -143,6 +143,8 @@ const rowsOf = (target: HTMLElement) => [...target.querySelectorAll<HTMLElement>
 
 /** A reader's wheel: moves the pane and lets the component measure it (it leaves the bottom). */
 async function scrollTo(scroller: HTMLElement, top: number) {
+  // The wheel itself: only a reader's input may lower the stick-to-bottom flag (2026-11-23).
+  scroller.dispatchEvent(new Event('wheel'));
   scroller.scrollTop = top;
   scroller.dispatchEvent(new Event('scroll'));
   await vi.advanceTimersByTimeAsync(50);

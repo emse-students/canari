@@ -5903,7 +5903,42 @@ short of the thread's padding. So the build REPORTS instead of guessing: the nat
 line carries `threadTop`, `threadMax`, `threadPad` and `lastRowBottom`, and `measureScroll` logs every
 fall of the flag with NO finger on the pane (`left the bottom with no finger on the pane: ...`; a reader
 scrolling up is not logged). Such a fall during a rise is the flag read off a move that was not the
-reader's; the fix then is to let only a reader's input lower it. Owed:
+reader's; the fix then is to let only a reader's input lower it - which `1.8.0-alpha.1` showed, below.
+
+### Only a reader lowers the flag (2026-11-23)
+
+**What the iPhone said** (`1.8.0-alpha.1`, iPhone 12, iOS 27, 3 of 3): one line per opening,
+`left the bottom with no finger on the pane: scrollTop 5813 (last placed 6188), 375 px from the end`
+(an earlier run: 102 px). The pane went 375 px UP while its reach (`scrollHeight - clientHeight`) was
+the same as at the last placement, with no finger on it, and no writer of this page made the move:
+every one of them reports its placement (`onPlaced`, `scrollToBottom`). It is the engine's - WKWebView
+scrolls an overflow scroller in its UI process, around the keyboard and the focused field. The
+measurement read it as the reader leaving: the flag fell, every later change answered `keep-row`, the
+last photo stayed under the composer and the thread 96 pt short after the keyboard fell. The Mi 9T
+(Chromium) never makes such a move and passed.
+
+**The cause is the rule, not the engine:** "moved up out of the slack" was taken as the reader's intent
+whoever moved the pane. **The fix asks who moved it, from durable input state, never from a clock.**
+`trackReaderInput` (`readerInput.ts`) is raised by the reader's own input on the pane - `touchstart`,
+`pointerdown` (a scrollbar drag), `wheel`, `keydown` - or by a jump they asked for (`declare`, the
+jump to a quoted message), and lowered only when the PAGE places the pane (`placedAt`: the observer's
+pins, `scrollToBottom`) with no finger down, or when the composer is taken up. So a fling keeps it up
+through its momentum after the finger lifted, and a move nobody touched finds it down.
+`scrollMeasurementResponse` (`threadAnchor.ts`) then answers `put-back` for a pane whose flag was up,
+that left the slack, with no reader moving it: the flag holds and `measureScroll` puts the pane back at
+its end - the same answer the growth observer gives when the bottom moves away from a reader at the
+end. The `left the bottom with no finger on the pane` line stays, as the evidence of each such move,
+ending `- not the reader's move, put back at the end`. It holds whatever the order of the image loads
+and the viewport resize, for a thread of any length.
+
+`threadGrowthObserver.test.ts` ("a move no reader made, around the keyboard") replays the opening:
+the pane at its end, the photos growing (before and after the resize), the box losing the keyboard,
+the 375 px move with the reach unchanged, the keyboard falling. The pane ends at its end with the flag
+up; the control with the old rule leaves it 375 px short; a reader who touched the pane still leaves.
+
+**Not refuted:** WebKit could re-apply its move every frame, which would show as one log line per frame
+rather than one per opening - the reading says which. A VoiceOver scroll fires none of the four inputs
+and is put back at the end while the flag is up. Owed:
 [the reading](../../backlog.d/reading-owed-a-dm-ending-in-photos-stays-at-its-end-when-the-keyboard-opens.md).
 
 ### A short thread sits at the bottom, and asks for its past at entry (2026-11-14)

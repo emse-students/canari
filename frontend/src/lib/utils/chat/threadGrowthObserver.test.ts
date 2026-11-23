@@ -1,5 +1,10 @@
 // @vitest-environment happy-dom
-import { isPinnedToBottom, stickToBottomAfterScroll } from './threadAnchor';
+import { trackReaderInput } from './readerInput';
+import {
+  isPinnedToBottom,
+  scrollMeasurementResponse,
+  stickToBottomAfterScroll,
+} from './threadAnchor';
 import { motionMs, observeThreadGrowth } from './threadGrowthObserver';
 
 /**
@@ -185,6 +190,128 @@ describe('observeThreadGrowth - a thread that shrinks then grows back under a re
     const run = replay(false);
     expect(run.nearBottom).toBe(false);
     expect(run.distance).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * THE IPHONE PHOTO DM (1.7.3-alpha.4 to 1.8.0-alpha.1, 3 of 3; chat.md, "only a reader lowers the
+ * flag"). A DM ending in three portrait photos, at its end; the photos grow to their size after the
+ * end was placed, the keyboard takes the box, and the engine moves the pane 375 px up with its reach
+ * unchanged and no finger on it (the in-app log of every opening: `scrollTop 5813 (last placed 6188),
+ * 375 px from the end`). The measurement of that move must not drop the flag: the pane goes back to
+ * its end, and is still there once the keyboard has left - whatever order the photos and the resize
+ * come in.
+ */
+describe('observeThreadGrowth - a move no reader made, around the keyboard, on a DM ending in photos', () => {
+  const PHOTOS = [37, 38, 39];
+  const PLACEHOLDER = 300;
+  const PORTRAIT = 567;
+  const ENGINE_MOVE = 375;
+  const heights = () =>
+    Array.from({ length: 40 }, (_, i) => (PHOTOS.includes(i) ? PLACEHOLDER : 60));
+
+  /**
+   * One opening. `readerKnown` is the fix (who moved the pane is asked); without it every move up out
+   * of the slack is the reader's, the rule before. `photosFirst` is the load order.
+   */
+  function opening(o: { readerKnown: boolean; photosFirst: boolean; readerTouches?: boolean }) {
+    const { scroller, layout, relayout, reach } = makeThread(heights(), 945);
+    const input = trackReaderInput(scroller, { held: false });
+    let nearBottom = true;
+    let lastPlaced: number | null = null;
+    const placed = (top: number) => {
+      lastPlaced = top;
+      input.placed();
+    };
+    let putBacks = 0;
+    const measure = () => {
+      const response = scrollMeasurementResponse({
+        pinned: isPinnedToBottom(scroller),
+        scrollTop: scroller.scrollTop,
+        wasNearBottom: nearBottom,
+        previousScrollTop: lastPlaced,
+        readerMoving: o.readerKnown ? input.moving : true,
+      });
+      if (response === 'put-back') {
+        putBacks++;
+        scroller.scrollTop = scroller.scrollHeight;
+        placed(scroller.scrollTop);
+      }
+      nearBottom = response !== 'in-history';
+      lastPlaced = scroller.scrollTop;
+    };
+    const stop = observeThreadGrowth(
+      scroller,
+      () => ({ wasNearBottom: nearBottom, isLoadingOlder: false, isEntering: false }),
+      null,
+      placed
+    );
+    // The entry puts the pane at its end, the photos still at their placeholder size.
+    scroller.scrollTop = scroller.scrollHeight;
+    placed(scroller.scrollTop);
+    const photosGrow = () => {
+      for (const i of PHOTOS) layout.heights[i] = PORTRAIT;
+      relayout();
+    };
+    const keyboardRises = () => {
+      layout.box -= KEYBOARD;
+      relayout();
+    };
+    if (o.photosFirst) {
+      photosGrow();
+      keyboardRises();
+    } else {
+      keyboardRises();
+      photosGrow();
+    }
+    if (o.readerTouches) scroller.dispatchEvent(new Event('touchstart'));
+    // The engine's move: up by 375 px, the reach unchanged, then the frame's scroll measurement.
+    const reachBefore = reach();
+    layout.scrollTop -= ENGINE_MOVE;
+    expect(reach()).toBe(reachBefore);
+    measure();
+    const distanceKeyboardUp = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+    const flagKeyboardUp = nearBottom;
+    // The keyboard falls: the box gets its height back.
+    layout.box += KEYBOARD;
+    relayout();
+    measure();
+    stop();
+    input.dispose();
+    return {
+      flagKeyboardUp,
+      distanceKeyboardUp,
+      nearBottom,
+      distanceAfterFall: scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight,
+      putBacks,
+    };
+  }
+
+  it.each([
+    ['the photos grow before the keyboard rises', true],
+    ['the keyboard rises before the photos grow', false],
+  ])('keeps the pane at its end through the keyboard when %s', (_, photosFirst) => {
+    expect(opening({ readerKnown: true, photosFirst })).toEqual({
+      flagKeyboardUp: true,
+      distanceKeyboardUp: 0,
+      nearBottom: true,
+      distanceAfterFall: 0,
+      putBacks: 1,
+    });
+  });
+
+  it('the old rule reads the engine move as the reader leaving, and the end is lost (control)', () => {
+    const run = opening({ readerKnown: false, photosFirst: true });
+    expect(run.flagKeyboardUp).toBe(false);
+    expect(run.distanceKeyboardUp).toBe(ENGINE_MOVE);
+    expect(run.distanceAfterFall).toBeGreaterThan(0);
+  });
+
+  it('a reader who touched the pane and moved up still leaves the end', () => {
+    const run = opening({ readerKnown: true, photosFirst: true, readerTouches: true });
+    expect(run.flagKeyboardUp).toBe(false);
+    expect(run.putBacks).toBe(0);
+    expect(run.distanceKeyboardUp).toBe(ENGINE_MOVE);
   });
 });
 

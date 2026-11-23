@@ -47,13 +47,14 @@
     isPinnedToBottom,
     ownMessageAppended,
     respondToNewMessage,
-    stickToBottomAfterScroll,
+    scrollMeasurementResponse,
     threadReach,
     keyboardChangeResponse,
     type NewMessageResponse,
   } from '$lib/utils/chat/threadAnchor';
   import { observeThreadGrowth } from '$lib/utils/chat/threadGrowthObserver';
   import { trackTouchHold, type TouchHold } from '$lib/utils/chat/touchHold';
+  import { trackReaderInput, type ReaderInput } from '$lib/utils/chat/readerInput';
   import { floatingDateIndex } from '$lib/utils/chat/stickyDate';
   import {
     countUnreadBelow,
@@ -532,6 +533,8 @@
   let entryWidening = $state(false);
   /** The touches on the thread, read by the widen so no step writes `scrollTop` under a finger. */
   let threadTouch: TouchHold | null = null;
+  /** Whether the READER is moving the pane - the only thing that may lower the flag (`measureScroll`). */
+  let readerInput: ReaderInput | null = null;
 
   /**
    * Puts the pane on its last row.
@@ -546,7 +549,16 @@
   function scrollToBottom() {
     if (!chatContainer) return;
     chatContainer.scrollTo({ top: chatContainer.scrollHeight, behavior: 'auto' });
-    lastMeasuredScrollTop = chatContainer.scrollTop;
+    placedAt(chatContainer.scrollTop);
+  }
+
+  /**
+   * The page put the pane at `scrollTop` (a scroll to the end, the growth observer's pin): the
+   * baseline the next scroll measurement compares against, and the end of any reader's move.
+   */
+  function placedAt(scrollTop: number) {
+    lastMeasuredScrollTop = scrollTop;
+    readerInput?.placed();
   }
 
   /**
@@ -984,27 +996,32 @@
     // THE ONLY WRITER of the thread's stick-to-bottom flag. A scroll is the only thing that can
     // express the reader's intent to leave the live end, so it is the only thing that revises it.
     // Leaving the bottom takes a move UP: a growth seen here before the observer could follow it
-    // must not drop the flag the observer is about to read (`stickToBottomAfterScroll`).
+    // must not drop the flag the observer is about to read (`stickToBottomAfterScroll`), and a move
+    // up that no reader made (`readerInput`) never drops it at all.
     const wasNearBottom = isNearBottom;
-    isNearBottom = stickToBottomAfterScroll({
+    const response = scrollMeasurementResponse({
       pinned: isPinnedToBottom(chatContainer),
       scrollTop: chatContainer.scrollTop,
       wasNearBottom,
       previousScrollTop: lastMeasuredScrollTop,
+      readerMoving: readerInput?.moving ?? true,
     });
-    if (wasNearBottom && !isNearBottom && !threadTouch?.held) {
-      // A FALL WITH NO FINGER ON THE PANE, the case the diagnosis needs (iPhone 12, 1.7.3-alpha.4:
-      // the photo DM ended 102 pt short of its end with the keyboard up): a reader scrolling up has a
-      // finger down and is not logged; this one is the flag read off a move that may not be the
-      // reader's (chat.md, the flag is only the reader's). A wheel or a key on desktop reads here too.
+    if (response === 'put-back') {
+      // A MOVE NO READER MADE, the iPhone's photo DM (1.7.3-alpha.4 to 1.8.0-alpha.1, every opening:
+      // `scrollTop 5813 (last placed 6188), 375 px from the end` as the keyboard rose). The line is the
+      // evidence of each such move; the flag holds and the pane goes back to its end
+      // (`scrollMeasurementResponse`, chat.md "only a reader lowers the flag").
       const c = chatContainer;
       Log.i(
         'ChatArea',
         `left the bottom with no finger on the pane: scrollTop ${Math.round(c.scrollTop)} (last ` +
           `placed ${lastMeasuredScrollTop === null ? 'none' : Math.round(lastMeasuredScrollTop)}), ` +
-          `${Math.round(c.scrollHeight - c.clientHeight - c.scrollTop)} px from the end`
+          `${Math.round(c.scrollHeight - c.clientHeight - c.scrollTop)} px from the end - not the ` +
+          `reader's move, put back at the end`
       );
+      scrollToBottom();
     }
+    isNearBottom = response !== 'in-history';
     lastMeasuredScrollTop = chatContainer.scrollTop;
     lastVisibleAnchor = measureLastVisibleAnchor();
     updateStickyDateIndicator();
@@ -1392,6 +1409,8 @@
     const targetElement = document.getElementById(`msg-${messageId}`);
     if (targetElement && chatContainer) {
       Log.d('chat.jumpToMessage', `${messageId.slice(0, 8)} at group ${targetIndex}`);
+      // The reader asked for this row: the move away from the end is theirs (`measureScroll`).
+      readerInput?.declare();
       // Instant, never smooth: see `scrollMessageIntoList` for the anchor write that cancelled it.
       scrollMessageIntoList(chatContainer, targetElement);
       targetElement.classList.add('chat-message-jump-highlight');
@@ -1804,10 +1823,14 @@
     const el = chatContainer;
     if (!el) return;
     const hold = trackTouchHold(el);
+    const input = trackReaderInput(el, hold);
     threadTouch = hold;
+    readerInput = input;
     return () => {
+      input.dispose();
       hold.dispose();
       if (threadTouch === hold) threadTouch = null;
+      if (readerInput === input) readerInput = null;
     };
   });
 
@@ -1824,12 +1847,15 @@
       composerBand,
       // The pane's place is the baseline the next scroll measurement compares against: a move the
       // observer made (a pin after a clamp included) is not the reader leaving the bottom.
-      (top) => (lastMeasuredScrollTop = top)
+      placedAt
     );
   });
 
   $effect(() => {
     if (!_composerFocused || !chatContainer) return;
+    // Taking up the composer is the reader asking for the end: whatever they did on the pane before
+    // is over, so a move the keyboard brings is not read as theirs.
+    readerInput?.placed();
     untrack(() => {
       tick().then(() => requestAnimationFrame(() => scrollToBottom()));
     });
