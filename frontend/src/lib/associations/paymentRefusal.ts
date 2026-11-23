@@ -369,3 +369,10 @@ export const PAYMENT_NOT_SWITCHABLE = 'PAYMENT_NOT_SWITCHABLE';
  * guest, takes it with no deadline (`payment-cash-switch.ts`).
  */
 export const FORM_CASH_NOT_OFFERED = 'FORM_CASH_NOT_OFFERED';
+
+/**
+ * The body `code` of the 409 a manager's cash validation gets on an answer paid ONLINE meanwhile (a
+ * switched answer's late confirmation, `payment-cash-switch.ts`): no cash is owed, and any taken
+ * must go back. The panels word it and reload, never "already processed" in silence.
+ */
+export const CASH_ALREADY_PAID_ONLINE = 'CASH_ALREADY_PAID_ONLINE';

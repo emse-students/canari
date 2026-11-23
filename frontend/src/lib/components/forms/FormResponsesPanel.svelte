@@ -30,7 +30,8 @@
   import { hasResultQuestions } from '$lib/forms/resultsView';
   import { submitterName } from '$lib/forms/submissionTable';
   import { formatAmount } from '$lib/forms/fillAnswers';
-  import { refusalStatus } from '$lib/utils/apiRefusal';
+  import { refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
+  import { CASH_ALREADY_PAID_ONLINE } from '$lib/associations/paymentRefusal';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { showToast } from '$lib/stores/toast.svelte';
   import { Log } from '$lib/utils/Log';
@@ -209,6 +210,13 @@
       await validateCashSubmission(form.id, sub.id);
       await onReload();
     } catch (e) {
+      if (refusalCode(e) === CASH_ALREADY_PAID_ONLINE) {
+        // Paid online meanwhile: nothing to collect, and any cash taken goes back. Shown as it is.
+        Log.d('FormResponsesPanel', `cash answer ${sub.id.slice(0, 8)} was already paid online`);
+        showToast(m.form_cash_already_paid_online());
+        await onReload();
+        return;
+      }
       console.error(`[FORMS] marking cash answer ${sub.id.slice(0, 8)} paid failed:`, e);
       showToast(m.form_responses_mark_paid_error());
     } finally {

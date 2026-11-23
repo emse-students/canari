@@ -30,6 +30,14 @@ export const PAYMENT_NOT_SWITCHABLE = 'PAYMENT_NOT_SWITCHABLE';
  */
 export const FORM_CASH_NOT_OFFERED = 'FORM_CASH_NOT_OFFERED';
 
+/**
+ * The `code` of the 409 a manager's cash validation gets on an answer whose ONLINE request was
+ * paid meanwhile (a switched answer's late confirmation, `markPaid`): there is no cash to collect,
+ * and if the payer handed some over anyway, a refund is owed. Never answered as "already processed"
+ * in silence. Words: `form_cash_already_paid_online`.
+ */
+export const CASH_ALREADY_PAID_ONLINE = 'CASH_ALREADY_PAID_ONLINE';
+
 /** What of a row the rule reads. */
 export type CashSwitchRow = Pick<
   Submission,
@@ -42,7 +50,8 @@ export type CashSwitchRow = Pick<
  *
  * - `pending` - WITHIN its hold too (unlike a resume): the payer may have left Lydia's page after a
  *   card failure that left the request open. Its request is settled at Lydia before anything moves
- *   (`settleOpenRequest`); one being issued right now refuses there (`PREVIOUS_PAYMENT_OPEN`);
+ *   (`settleRequestAtProvider`); one naming no request is being issued right now, and the service
+ *   refuses it `PAYMENT_IN_PROGRESS` under its lock;
  * - `expired`, or `pending` past its hold (its request died with D1);
  * - `cancelled` by an origin of {@link RESUMABLE_CANCEL_ORIGINS}: the payer's own cancel, Lydia's
  *   verdict, a request refused before it existed. The SAME allowlist as a resume, for the same
@@ -68,6 +77,17 @@ export function cashSwitchRowRefusal(
       : PAYMENT_NOT_SWITCHABLE;
   }
   return PAYMENT_NOT_SWITCHABLE;
+}
+
+/**
+ * An answer already paid ONLINE (`paid` / `paid_over_capacity`, no cash method): a switch on it is
+ * a replay of the one that found its request paid (`alreadyPaid`), never a refusal.
+ */
+export function paidOnline(row: Pick<Submission, 'paymentStatus' | 'paymentMethod'>): boolean {
+  return (
+    row.paymentMethod === null &&
+    (row.paymentStatus === 'paid' || row.paymentStatus === 'paid_over_capacity')
+  );
 }
 
 /** Who asks for the switch: the member who owns the answer, or the guest holding its receipt. */

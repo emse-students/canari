@@ -195,6 +195,30 @@ export function livePendingWhere(
 }
 
 /**
+ * The hold cutoff on the WALL clock (`clock_timestamp()`), not the transaction's start (`now()`): for
+ * a decision taken inside a transaction that may have WAITED (on a lock) or CALLED OUT (to Lydia)
+ * since it began, whose answer must be "does the hold still run at this instant". Same interval,
+ * same comparison as {@link PENDING_HOLD_CUTOFF_SQL}; only `switchToCash` reads it.
+ */
+export const PENDING_HOLD_CUTOFF_CLOCK_SQL = `clock_timestamp() - make_interval(secs => ${PENDING_PAYMENT_HOLD_SECONDS})`;
+
+/**
+ * {@link livePendingWhere} judged at THIS instant ({@link PENDING_HOLD_CUTOFF_CLOCK_SQL}): a
+ * `pending` row still within its hold now, however long the transaction asking has run.
+ */
+export function livePendingAtClockWhere(
+  formId: string,
+  extra: FindOptionsWhere<Submission> = {}
+): FindOptionsWhere<Submission> {
+  return {
+    ...extra,
+    formId,
+    paymentStatus: 'pending',
+    paymentRequestedAt: Raw((column) => `${column} > ${PENDING_HOLD_CUTOFF_CLOCK_SQL}`),
+  };
+}
+
+/**
  * Takes the form's row lock, which is what serialises every decision about its seats.
  *
  * A count followed by a write is a race unless something orders the writers: two submits, or two

@@ -49,7 +49,10 @@
   import { m } from '$lib/paraglide/messages';
   import { submitterName } from '$lib/forms/submissionTable';
   import { formCodeMessage } from '$lib/forms/answerBounds';
-  import { PREVIOUS_PAYMENT_OPEN } from '$lib/associations/paymentRefusal';
+  import {
+    CASH_ALREADY_PAID_ONLINE,
+    PREVIOUS_PAYMENT_OPEN,
+  } from '$lib/associations/paymentRefusal';
   import { refusalCode } from '$lib/utils/apiRefusal';
   import FormResponsesPanel from '$lib/components/forms/FormResponsesPanel.svelte';
   import FormRowMenu from '$lib/components/forms/FormRowMenu.svelte';
@@ -412,6 +415,12 @@
       await validateCashSubmission(form.id, subId);
       await settleCash(form, subId);
     } catch (e) {
+      if (refusalCode(e) === CASH_ALREADY_PAID_ONLINE) {
+        // Paid online meanwhile: it leaves the cash list, and the manager is told why.
+        showToast(m.form_cash_already_paid_online());
+        await settleCash(form, subId);
+        return;
+      }
       console.error(`[FORMS] validating cash ${subId.slice(0, 8)} failed:`, e);
       showToast(m.common_generic_error_label());
     }

@@ -3436,6 +3436,7 @@
   "form_payment_cash_switched_desc_deadline": "Pay the amount to the organiser before {date}: your answer counts as soon as they confirm the payment, and your place is kept until then.",
   "form_payment_not_switchable": "This answer no longer has an online payment to replace with a payment in person.",
   "form_cash_not_offered": "This form does not accept payment in person.",
+  "form_cash_already_paid_online": "This answer was already paid online: there is nothing to collect. If cash was also handed over, it must be given back.",
   "form_success_cash_heading": "Payment in person",
   "form_success_cash_desc": "Your answer is saved and waits for your payment in person: pay the organiser, who will confirm it.",
   "form_guest_receipt_cash_desc": "Your answer is saved. Pay the amount to the organiser in person and give them your reference: your answer counts as soon as they confirm the payment.",

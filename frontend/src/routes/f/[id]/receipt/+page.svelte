@@ -100,7 +100,14 @@
         `switch to cash refused status=${err instanceof SocialApiError ? err.status : 'transport'}`
       );
       switchError = formSubmitRefusalMessage(err, m.form_guest_submit_failed());
-      cashOffered = false;
+      // What the server offers NOW: a refusal may be transient (a request still open at Lydia),
+      // so the offer is read again rather than hidden for good.
+      try {
+        show(await confirmGuestReceipt(receipt));
+      } catch (readErr) {
+        Log.d('GuestReceipt', `re-reading the offer failed: ${String(readErr)}`);
+        cashOffered = false;
+      }
     } finally {
       switching = false;
     }

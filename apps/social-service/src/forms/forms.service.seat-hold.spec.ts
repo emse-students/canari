@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   HttpException,
+  NotFoundException,
 } from '@nestjs/common';
 import { CONFIRM_PAYMENT_PER_MINUTE, FormsController } from './forms.controller';
 import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
@@ -16,6 +17,7 @@ import { GUEST_PENDING_CEILING, GUEST_PENDING_LIMIT, guestVisitorKey } from './g
 import { InternalFormsController } from '../internal/internal-forms.controller';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
 import {
+  PENDING_HOLD_CUTOFF_CLOCK_SQL,
   PENDING_HOLD_CUTOFF_SQL,
   PAYMENT_REQUEST_LIFETIME_SECONDS,
   PENDING_PAYMENT_HOLD_SECONDS,
@@ -29,7 +31,11 @@ import {
   PAYMENT_NOT_RESUMABLE,
   PAYMENT_PRICE_CHANGED,
 } from './payment-resume';
-import { FORM_CASH_NOT_OFFERED, PAYMENT_NOT_SWITCHABLE } from './payment-cash-switch';
+import {
+  CASH_ALREADY_PAID_ONLINE,
+  FORM_CASH_NOT_OFFERED,
+  PAYMENT_NOT_SWITCHABLE,
+} from './payment-cash-switch';
 import { cashReminderDueAt } from './cash-reminder';
 
 /**
@@ -167,7 +173,12 @@ describe('FormsService - the seat a pending payment holds', () => {
         expect(expected.type).toBe('raw');
         const sql = expected.getSql?.('col');
         const past = `col <= ${PENDING_HOLD_CUTOFF_SQL}`;
-        expect([`col > ${PENDING_HOLD_CUTOFF_SQL}`, past]).toContain(sql);
+        // The switch's own self-check reads the hold at the WALL clock: the fake clock is both.
+        expect([
+          `col > ${PENDING_HOLD_CUTOFF_SQL}`,
+          past,
+          `col > ${PENDING_HOLD_CUTOFF_CLOCK_SQL}`,
+        ]).toContain(sql);
         const holding = row.paymentRequestedAt.getTime() > now.getTime() - HOLD_MS;
         return sql === past ? !holding : holding;
       }
@@ -248,8 +259,17 @@ describe('FormsService - the seat a pending payment holds', () => {
             .map((r) => ({ ...r }));
         }
       ),
-      update: jest.fn(async (id: string, values: Partial<Row>) => {
-        Object.assign(byId(id), values);
+      // By id, or by a criteria object (the conditional naming of a request, `issueOnlineRequest`).
+      update: jest.fn(async (criteria: string | Record<string, unknown>, values: Partial<Row>) => {
+        await roundTrip();
+        if (typeof criteria === 'string') {
+          Object.assign(byId(criteria), values);
+          return { affected: 1 };
+        }
+        const target = rows.find((r) => matches(r, criteria));
+        if (!target) return { affected: 0 };
+        Object.assign(target, values);
+        return { affected: 1 };
       }),
       createQueryBuilder: () => {
         const state = {
@@ -281,6 +301,11 @@ describe('FormsService - the seat a pending payment holds', () => {
         find: jest.fn(async (_entity: unknown, { where }: { where: Record<string, unknown>[] }) =>
           rows.filter((r) => matches(r, where)).map((r) => ({ ...r }))
         ),
+        // The association's archive, read outside any transaction (the switch's pre-check).
+        query: jest.fn(async (sql: string) => {
+          expect(sql).toContain('FROM associations');
+          return [];
+        }),
         transaction: jest.fn(async (level: string, run: (manager: unknown) => Promise<unknown>) => {
           // REPEATABLE READ takes its snapshot BEFORE the lock wait, so the count after it would not
           // see the previous holder's commit: the seat lock is only sound in READ COMMITTED.
@@ -301,12 +326,30 @@ describe('FormsService - the seat a pending payment holds', () => {
               });
               return [];
             },
-            findOne: async (entity: unknown, { where }: { where: Record<string, unknown> }) => {
+            findOne: async (
+              entity: unknown,
+              { where, lock }: { where: Record<string, unknown>; lock?: { mode: string } }
+            ) => {
               await roundTrip();
               if (entity === Form) return { ...form };
               expect(entity).toBe(Submission);
-              const row = rows.find((r) => matches(r, where));
-              return row ? { ...row } : null;
+              const found = rows.find((r) => matches(r, where));
+              if (found && lock) {
+                // A submission ROW lock, held to the end of the transaction as PostgreSQL holds it:
+                // every locked step on the row (a cancel callback, the poll, `markPaid`) queues.
+                const key = `row:${found.id}`;
+                while (locks.has(key)) await locks.get(key);
+                let release!: () => void;
+                locks.set(key, new Promise<void>((resolve) => (release = resolve)));
+                releases.push(() => {
+                  locks.delete(key);
+                  release();
+                });
+                // Re-read after the wait: READ COMMITTED sees what the previous holder committed.
+                const row = rows.find((r) => matches(r, where));
+                return row ? { ...row } : null;
+              }
+              return found ? { ...found } : null;
             },
             find: async (_entity: unknown, { where }: { where: Record<string, unknown>[] }) => {
               await roundTrip();
@@ -428,6 +471,8 @@ describe('FormsService - the seat a pending payment holds', () => {
       duringCancel: null as null | (() => Promise<unknown>),
       /** What `create-checkout-session` answers instead of a request, when set (a core refusal). */
       createAnswer: null as null | Error,
+      /** Runs inside request creation, as a concurrent switch to cash may. */
+      duringCreate: null as null | (() => Promise<unknown>),
     };
     let requests = 0;
     jest.spyOn(axios, 'post').mockImplementation(async (url: string, body: any) => {
@@ -457,6 +502,7 @@ describe('FormsService - the seat a pending payment holds', () => {
         return { data: { ok: true, state: core.stateAnswer, raw } };
       }
       expect(route).toBe('create-checkout-session');
+      if (core.duringCreate) await core.duringCreate();
       if (core.createAnswer) throw core.createAnswer;
       requests += 1;
       return {
@@ -3008,7 +3054,7 @@ describe('FormsService - the seat a pending payment holds', () => {
         }),
       ]);
       await expect(toCash(service)).rejects.toMatchObject({
-        response: { code: PREVIOUS_PAYMENT_OPEN },
+        response: { code: PAYMENT_IN_PROGRESS },
       });
       expect(core.calls).toEqual([]);
       expect(rows[0].paymentStatus).toBe('pending');
@@ -3032,8 +3078,27 @@ describe('FormsService - the seat a pending payment holds', () => {
     });
 
     it.each([
-      ['a paid answer', { paymentStatus: 'paid' }],
-      ['a paid answer over capacity', { paymentStatus: 'paid_over_capacity' }],
+      ['paid', 'paid'],
+      ['paid over capacity', 'paid_over_capacity'],
+    ])('answers an answer %s online "already paid", asking Lydia nothing', async (_l, status) => {
+      const { service, rows, core, transitions } = cashForm([card({ paymentStatus: status })]);
+      await expect(toCash(service)).resolves.toEqual({ submissionId: 'ans', alreadyPaid: true });
+      expect(core.calls).toEqual([]);
+      expect(rows[0].paymentStatus).toBe(status);
+      expect(transitions).toEqual([]);
+    });
+
+    it('answers a second press after the request was found paid "already paid" again', async () => {
+      const { service, core } = cashForm([card()]);
+      core.cancelAnswer = 'already-settled';
+      core.stateAnswer = 'paid';
+      await expect(toCash(service)).resolves.toEqual({ submissionId: 'ans', alreadyPaid: true });
+      const calls = core.calls.length;
+      await expect(toCash(service)).resolves.toEqual({ submissionId: 'ans', alreadyPaid: true });
+      expect(core.calls).toHaveLength(calls);
+    });
+
+    it.each([
       ['a refunded answer', { paymentStatus: 'refunded' }],
       ['a free answer', { paymentStatus: 'free', totalPaid: 0 }],
       ['an expired cash answer', { paymentStatus: 'expired', paymentMethod: 'cash' }],
@@ -3089,26 +3154,112 @@ describe('FormsService - the seat a pending payment holds', () => {
       expect(core.calls).toEqual([]);
     });
 
-    // THE ONE OVERLAP, named: the cancel the switch makes at Lydia makes Lydia call back, and that
-    // callback releases the live row before the switch takes the lock. The switch takes it back
-    // with the capacity check - and refuses if the seat was taken in between.
-    it('takes back a live row its own cancel released meanwhile, with the capacity check', async () => {
-      const live = () => [card({ paymentStatus: 'pending', paymentRequestedAt: ago(60_000) })];
-      const room = cashForm(live(), { maxSubmissions: 1 });
-      room.core.duringCancel = () =>
-        room.service.cancelPendingSubmission('ans', { requestId: '555' }, 'vendor');
-      await toCash(room.service);
-      expect(room.transitions).toEqual(['ans:pending->cancelled', 'ans:cancelled->pending_cash']);
+    // THE SEAT IS KEPT CONTINUOUSLY (owner): the cancel the switch makes at Lydia makes Lydia call
+    // back, and the payer's return poll may read the request dead, while a third person submits on
+    // the full form. The switch holds the row lock across its call: both release paths queue and
+    // then find `pending_cash`, the third submit counts the held seat - nothing is ever released.
+    it('never releases a live seat to its own cancel, the poll, or a third submit', async () => {
+      const { service, rows, core, transitions } = cashForm(
+        [card({ paymentStatus: 'pending', paymentRequestedAt: ago(60_000) })],
+        { maxSubmissions: 1 }
+      );
+      const racing: Promise<unknown>[] = [];
+      core.duringCancel = async () => {
+        racing.push(
+          service.cancelPendingSubmission('ans', { requestId: '555' }, 'vendor'),
+          service.confirmPayment('ans'),
+          service.submit('f1', { userId: 'u2', answers: {} } as any).catch((e: unknown) => e)
+        );
+        // Every racer reaches as far as it can while the call is in flight.
+        for (let i = 0; i < 20; i += 1) await new Promise<void>((r) => setImmediate(r));
+      };
+      await expect(toCash(service)).resolves.toMatchObject({ cashPayment: true });
+      const [cancelled, polled, third] = await Promise.all(racing);
+      // The callback read the request dead, then queued on the row lock and found it switched.
+      expect(cancelled).toMatchObject({ ok: true });
+      expect(polled).toMatchObject({ paymentStatus: 'pending_cash' });
+      expect(third).toMatchObject({ response: { code: 'FORM_FULL' } });
+      expect(transitions).toEqual(['ans:pending->pending_cash']);
+      expect(rows.map((r) => [r.id, r.paymentStatus])).toEqual([['ans', 'pending_cash']]);
+    });
 
-      const taken = cashForm(live(), { maxSubmissions: 1 });
+    // A hold that ENDS during the call to Lydia (read at the wall clock after it) holds no seat any
+    // more: the row re-takes one under the form lock like any released answer.
+    it('re-takes a seat with the capacity check when the hold ended during the call', async () => {
+      const lapsing = () => [
+        card({ paymentStatus: 'pending', paymentRequestedAt: ago(HOLD_MS - 1000) }),
+        row({ id: 'other', userId: 'u2', paymentStatus: 'paid' }),
+      ];
+      const free = cashForm(lapsing(), { maxSubmissions: 2 });
+      free.core.duringCancel = async () => free.advance(2000);
+      await expect(toCash(free.service)).resolves.toMatchObject({ cashPayment: true });
+      expect(free.transitions).toEqual(['ans:pending->pending_cash']);
+
+      const taken = cashForm(lapsing(), { maxSubmissions: 2 });
       taken.core.duringCancel = async () => {
-        await taken.service.cancelPendingSubmission('ans', { requestId: '555' }, 'vendor');
-        taken.rows.push(row({ id: 'other', userId: 'u2', paymentStatus: 'paid' }));
+        taken.advance(2000);
+        // The seat the lapsed hold freed is taken by someone else meanwhile.
+        taken.rows.push(row({ id: 'third', userId: 'u3', paymentStatus: 'paid' }));
       };
       await expect(toCash(taken.service)).rejects.toMatchObject({
         response: { code: 'FORM_FULL' },
       });
-      expect(taken.rows[0].paymentStatus).toBe('cancelled');
+      expect(taken.rows[0].paymentStatus).toBe('pending');
+    });
+
+    // NEVER A CASH ANSWER UNDER A REQUEST BEING ISSUED: tab A resumes the released answer (pending,
+    // naming none, the request being created), tab B pressed "Payer en direct" on the row it read
+    // released. Under the lock B finds the row moved INTO pending and refuses.
+    it('refuses a switch on a row a resume reopened since it was read', async () => {
+      const { service, rows, core } = cashForm([
+        card({ paymentStatus: 'cancelled', paymentRequestId: null, stripeSessionId: null }),
+      ]);
+      const stale = { ...rows[0] };
+      let switched: unknown;
+      core.duringCreate = async () => {
+        jest.spyOn(service as any, 'cashSwitchRow').mockResolvedValueOnce(stale);
+        switched = await toCash(service).catch((e: unknown) => e);
+      };
+      await expect(
+        service.resumePayment('ans', 'u1', { payerEmail: 'payer@example.org' })
+      ).resolves.toMatchObject({ checkoutUrl: expect.any(String) });
+      expect(switched).toMatchObject({ response: { code: PAYMENT_IN_PROGRESS } });
+      expect(rows[0]).toMatchObject({ paymentStatus: 'pending', paymentRequestId: '1001' });
+    });
+
+    // The issuing write is CONDITIONAL: a row moved off `pending` while its request was created
+    // never gets that request written onto it, nor its URL handed out - the request is cancelled.
+    it('withholds and cancels a request created for a row that moved meanwhile', async () => {
+      const { service, rows, core } = cashForm([
+        card({ paymentStatus: 'cancelled', paymentRequestId: null, stripeSessionId: null }),
+      ]);
+      const error = jest.spyOn((service as any).logger, 'error');
+      core.duringCreate = async () => {
+        Object.assign(rows[0], { paymentStatus: 'pending_cash', paymentMethod: 'cash' });
+      };
+      await expect(
+        service.resumePayment('ans', 'u1', { payerEmail: 'payer@example.org' })
+      ).rejects.toMatchObject({ response: { code: PAYMENT_NOT_RESUMABLE } });
+      expect(rows[0]).toMatchObject({
+        paymentStatus: 'pending_cash',
+        paymentRequestId: null,
+        stripeSessionId: null,
+      });
+      expect(core.calls[core.calls.length - 1]).toMatchObject({
+        route: 'cancel-request',
+        body: { requestId: '1001', connectAccountId: 'vendor' },
+      });
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('its URL withheld'));
+    });
+
+    // Refusals that would come after the irreversible cancel are judged BEFORE it.
+    it('refuses an archived association before cancelling anything at Lydia', async () => {
+      const { service, core } = cashForm([card()]);
+      jest
+        .spyOn(service as any, 'assertAssociationLiveUnderLock')
+        .mockRejectedValueOnce(new NotFoundException('Form not found'));
+      await expect(toCash(service)).rejects.toMatchObject({ status: 404 });
+      expect(core.calls).toEqual([]);
     });
 
     // A LATE CONFIRMATION, which the settle makes unexpected, is decided from the row all the same:
@@ -3124,18 +3275,23 @@ describe('FormsService - the seat a pending payment holds', () => {
       const before = core.calls.length;
       await service.confirmPayment('ans');
       expect(core.calls).toHaveLength(before);
-      // A VERIFIED confirm callback is read: Lydia says paid. Then replayed.
+      // A VERIFIED confirm callback is read: Lydia says paid. Then replayed. Accused at ERROR:
+      // cash may have been handed over too.
+      const error = jest.spyOn((service as any).logger, 'error');
       core.stateAnswer = 'paid';
       await service.confirmPaymentFromCallback('ans', { vendorToken: 'vendor', requestId: '555' });
       await service.confirmPaymentFromCallback('ans', { vendorToken: 'vendor', requestId: '555' });
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining('if cash was also handed over, a refund is owed')
+      );
       expect(rows[0]).toMatchObject({ paymentStatus: 'paid', paymentMethod: null });
       expect(transitions).toEqual(['ans:expired->pending_cash', 'ans:pending_cash->paid']);
       expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
-      // The cash hold is over: a manager's validation finds nothing to validate.
-      await expect(service.validateCashPayment('f1', 'ans', 'admin', true)).resolves.toEqual({
-        ok: true,
-        message: 'Already processed',
+      // The cash hold is over: a manager's validation is told the answer was paid online, accused.
+      await expect(service.validateCashPayment('f1', 'ans', 'admin', true)).rejects.toMatchObject({
+        response: { code: CASH_ALREADY_PAID_ONLINE },
       });
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('a refund is owed'));
       expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
     });
 
@@ -3207,11 +3363,28 @@ describe('FormsService - the seat a pending payment holds', () => {
             guestVisitorKey: key,
           })
         );
-        const { service, rows } = guestForm([guestCard(), ...waiting], { maxSubmissions: null });
+        const { service, rows, core } = guestForm([guestCard(), ...waiting], {
+          maxSubmissions: null,
+        });
         await expect(service.switchGuestToCash(RECEIPT, VISITOR)).rejects.toMatchObject({
           response: { code: GUEST_PENDING_LIMIT },
         });
         expect(rows[0].paymentStatus).toBe('expired');
+        // Judged BEFORE the irreversible cancel: the online request is left as it was.
+        expect(core.calls).toEqual([]);
+      });
+
+      it("keeps a waiting answer's own visitor key, whoever presses", async () => {
+        const answered = guestVisitorKey('f1', '198.51.100.1');
+        const { service, rows } = guestForm([
+          guestCard({
+            paymentStatus: 'pending',
+            paymentRequestedAt: ago(60_000),
+            guestVisitorKey: answered,
+          }),
+        ]);
+        await service.switchGuestToCash(RECEIPT, VISITOR);
+        expect(rows[0]).toMatchObject({ paymentStatus: 'pending_cash', guestVisitorKey: answered });
       });
 
       it.each([

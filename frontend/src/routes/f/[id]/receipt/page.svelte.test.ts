@@ -161,6 +161,21 @@ describe('the guest receipt page', () => {
       expect(text()).toContain(m.form_success_declined_heading());
     });
 
+    // A transient refusal (a request still open at Lydia) does not hide the offer for good: the
+    // page reads what the server offers now, and the guest may press again.
+    it('reads the offer again after a refusal, and keeps the button the server still offers', async () => {
+      answer.confirm.mockResolvedValue({ ...declined, cashSwitchOffered: true });
+      answer.toCash.mockRejectedValue(new SocialApiError('open', 'PREVIOUS_PAYMENT_OPEN', 409));
+      await render(`?receipt=${RECEIPT}`);
+      const reads = answer.confirm.mock.calls.length;
+      cashButton()!.click();
+      for (let i = 0; i < 5; i++) await tick();
+      flushSync();
+      expect(answer.confirm.mock.calls.length).toBe(reads + 1);
+      expect(document.querySelector('[role="alert"]')?.textContent).not.toBe('');
+      expect(cashButton()).not.toBeNull();
+    });
+
     it('shows an answer already waiting for cash as such, never as not found', async () => {
       answer.confirm.mockResolvedValue({
         ...declined,
