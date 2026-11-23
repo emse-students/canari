@@ -167,7 +167,7 @@ describe('HandoffService', () => {
     }
   );
 
-  it('the contract registry mints for MiGallery (owner, 2026-11-14) and Le Cercle (2026-11-23); Sky is off', async () => {
+  it('the contract registry mints for MiGallery (owner, 2026-11-14), Le Cercle and Sky (2026-11-23)', async () => {
     const service = new HandoffService(undefined, OPEN);
     await expect(service.mint('user-a', 'migallery', '/')).resolves.toMatchObject({
       url: expect.stringMatching(/^https:\/\/gallery\.mitv\.fr\/auth\/handoff#/),
@@ -175,9 +175,9 @@ describe('HandoffService', () => {
     await expect(service.mint('user-a', 'le-cercle', '/')).resolves.toMatchObject({
       url: expect.stringMatching(/^https:\/\/cercle\.emse\.fr\/auth\/handoff#/),
     });
-    for (const aud of ['sky']) {
-      await expect(service.mint('user-a', aud, '/')).rejects.toBeInstanceOf(BadRequestException);
-    }
+    await expect(service.mint('user-a', 'sky', '/')).resolves.toMatchObject({
+      url: expect.stringMatching(/^https:\/\/sky\.emse\.fr\/auth\/handoff#/),
+    });
   });
 
   describe("MiConnect's door (F3-bound)", () => {

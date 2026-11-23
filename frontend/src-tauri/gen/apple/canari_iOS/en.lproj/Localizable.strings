@@ -106,6 +106,10 @@
 "notif.form.opening_soon.body" = "A form you are watching opens in 5 minutes!";
 "notif.form.open.title" = "Form now open!";
 "notif.form.open.body" = "The form is available - hurry, spots are limited!";
+"notif.form.opening_soon.title_named" = "%@: form opening soon";
+"notif.form.opening_soon.body_named" = "\"%@\" opens in 5 minutes!";
+"notif.form.open.title_named" = "%@: form now open!";
+"notif.form.open.body_named" = "\"%@\" is available - hurry, spots are limited!";
 "notif.form.paid_over_capacity.title" = "Payment on a full form";
 "notif.form.paid_over_capacity.body" = "“%1$@”: a payment arrived after the form was full. A refund is owed.";
 "notif.lydia_payments_active.title" = "Lydia payments active";

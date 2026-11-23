@@ -320,6 +320,53 @@ describe('Server-composed push keys reach every native table', () => {
   });
 });
 
+describe('A form opening push names the association and the form (reading of 2026-11-23)', () => {
+  const STEMS = ['opening_soon', 'open'];
+
+  it('has a named title and body in both Android tables and all four iOS tables', () => {
+    for (const stem of STEMS) {
+      for (const name of [`notif_form_${stem}_title_named`, `notif_form_${stem}_body_named`]) {
+        expect(fr.has(name), name).toBe(true);
+        expect(en.has(name), name).toBe(true);
+      }
+      for (const bundle of BUNDLES) {
+        for (const lang of ['fr', 'en']) {
+          const table = parseLproj(bundle, lang, 'Localizable.strings');
+          for (const name of [`notif.form.${stem}.title_named`, `notif.form.${stem}.body_named`]) {
+            expect(table.has(name), `${bundle}/${lang} ${name}`).toBe(true);
+          }
+        }
+      }
+    }
+  });
+
+  it('every native composer reads the actor and the title for these keys', () => {
+    const kotlin = kotlinFiles.find((f) => f.name === 'CanariFirebaseMessagingService.kt')?.source;
+    const swift = readFileSync(join(APPLE_ROOT, 'canari_NSE', 'NotificationService.swift'), 'utf8');
+    const objc = readFileSync(join(APPLE_ROOT, 'Sources', 'canari', 'canari_push.mm'), 'utf8');
+    for (const stem of STEMS) {
+      expect(kotlin, `Kotlin ${stem}`).toContain(`R.string.notif_form_${stem}_title_named, actor`);
+      expect(kotlin, `Kotlin ${stem}`).toContain(`R.string.notif_form_${stem}_body_named, arg`);
+    }
+    expect(swift).toContain('title_named", actor');
+    expect(swift).toContain('body_named", arg');
+    expect(objc).toContain('.title_named"]), actor]');
+    expect(objc).toContain('.body_named"]), arg]');
+  });
+});
+
+describe('An opening told to followers names the association and the title on every composer', () => {
+  it.each(['booking_open', 'event_open'])('%s reads the actor and the fragment', (stem) => {
+    const kotlin = kotlinFiles.find((f) => f.name === 'CanariFirebaseMessagingService.kt')?.source;
+    const swift = readFileSync(join(APPLE_ROOT, 'canari_NSE', 'NotificationService.swift'), 'utf8');
+    const objc = readFileSync(join(APPLE_ROOT, 'Sources', 'canari', 'canari_push.mm'), 'utf8');
+    expect(kotlin).toContain(`R.string.notif_social_${stem}_title, actor`);
+    expect(kotlin).toContain(`R.string.notif_social_${stem}_body`);
+    expect(swift).toContain(`actorTitled("${stem}")`);
+    expect(objc).toContain(`@"social_${stem}" : @"${stem}"`);
+  });
+});
+
 describe('Native sources, both platforms', () => {
   /**
    * NO NATIVE SOURCE MAY CARRY A LITERAL A TABLE ALREADY TRANSLATES.

@@ -572,12 +572,13 @@ export class PostNotificationsService {
       case 'booking_removed':
         return withIcon(bookingRemovedContent(actorName, text), icon);
       // The openings told to an association's followers (engagement WP-4). `actorName` is the
-      // ASSOCIATION, `text` the space's name (empty for a link-only one) or the event's title. No
-      // picture: the caller is the scheduler, whose actor is the platform.
+      // ASSOCIATION, `text` the space's name (empty for a link-only one) or the event's title. The
+      // picture is the association's logo (`pushIconOf`: the scheduler's actor is the platform, so
+      // no logo means no picture, never a face).
       case 'booking_open':
-        return bookingOpenContent(actorName, text);
+        return withIcon(bookingOpenContent(actorName, text), icon);
       case 'event_open':
-        return eventOpenContent(actorName, text);
+        return withIcon(eventOpenContent(actorName, text), icon);
       // The agenda's six. `text` is the event's TITLE for all of them - never a composed sentence,
       // which is what the server used to send here and could not translate.
       case 'event_proposed':

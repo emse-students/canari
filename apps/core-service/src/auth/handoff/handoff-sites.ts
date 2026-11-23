@@ -50,7 +50,7 @@ export const ECOSYSTEM_SITES: readonly EcosystemSiteContract[] = [
     origin: 'https://sky.emse.fr',
     miconnect: true,
     miconnectApplication: 'sky',
-    handoff: false,
+    handoff: true,
     dests: ['/'],
   },
   {

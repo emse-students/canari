@@ -337,6 +337,34 @@ describe('PostNotificationsService.createNotifications', () => {
     }
   );
 
+  // The opening told to an association's followers (reading of 2026-11-23): the same facts as the
+  // form reminder - the association as the actor, its logo as the picture, the title as the text.
+  it.each([
+    ['booking_open', 'social_booking_open', 'Salle B'],
+    ['event_open', 'social_event_open', 'Gala'],
+  ] as const)(
+    'a %s push carries the association, its logo and the title',
+    async (type, key, text) => {
+      await service().createNotification({
+        recipientId: 'a',
+        type,
+        postId: 't1',
+        actorId: 'system',
+        actorName: 'Club photo',
+        associationId: 'asso1',
+        associationLogoUrl: '/api/media/public/logo1?v=1',
+        associationLogoMediaId: 'logo1',
+        text,
+      });
+      expect(pushes[0].content).toMatchObject({
+        key,
+        actorName: 'Club photo',
+        arg: text,
+        icon: { kind: 'publicMedia', mediaId: 'logo1' },
+      });
+    }
+  );
+
   it("never serves the member who published an association's post or republication on a bell row - stored rows included", async () => {
     const svc = service();
     const rows = [

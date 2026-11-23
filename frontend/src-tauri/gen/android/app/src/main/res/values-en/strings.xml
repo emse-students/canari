@@ -142,6 +142,10 @@
     <string name="notif_form_opening_soon_body">A form you are watching opens in 5 minutes!</string>
     <string name="notif_form_open_title">Form now open!</string>
     <string name="notif_form_open_body">The form is available - hurry, spots are limited!</string>
+    <string name="notif_form_opening_soon_title_named">%1$s: form opening soon</string>
+    <string name="notif_form_opening_soon_body_named">\"%1$s\" opens in 5 minutes!</string>
+    <string name="notif_form_open_title_named">%1$s: form now open!</string>
+    <string name="notif_form_open_body_named">\"%1$s\" is available - hurry, spots are limited!</string>
     <string name="notif_form_paid_over_capacity_title">Payment on a full form</string>
     <string name="notif_form_paid_over_capacity_body">“%1$s”: a payment arrived after the form was full. A refund is owed.</string>
     <string name="notif_lydia_payments_active_title">Lydia payments active</string>
