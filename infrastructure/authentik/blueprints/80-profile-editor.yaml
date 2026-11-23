@@ -1,14 +1,23 @@
 # The account Canari writes a person's profile through (WP4 of the profile reform,
-# docs/wiki/profiles-and-access.md, decision D9): a SERVICE ACCOUNT that may view and change users and
-# do nothing else, and its API token.
+# docs/wiki/profiles-and-access.md, decision D9), and merges an Alumni duplicate through (D47, D48): a
+# SERVICE ACCOUNT that may view, change and delete users and read their source connections, and do
+# nothing else, and its API token.
 #
 # Applied by infrastructure/authentik/apply-blueprints.py, never by the worker's own discovery
 # (instantiate: false) - see infrastructure/authentik/README.md.
 #
 # WHY A ROLE AND A GROUP. authentik grants a global permission to a ROLE, and a role reaches a user
-# only through a group. The role carries exactly `view_user` and `change_user`: enough to read a user
-# by uuid and PATCH its attributes, and not enough to create or delete an account, touch a flow, a
-# provider or another role. It is deliberately NOT a superuser group.
+# only through a group. The role carries exactly:
+#   - `view_user`, `change_user`: read a user by uuid and PATCH its attributes (WP4);
+#   - `delete_user`: the merge deletes the duplicate account an Alumni sign-in created (D48). authentik
+#     has no per-path scope for a global permission, so the TOKEN could delete any user; Canari
+#     deletes only an account whose username starts with `alumni-` and which holds no CAS link, read
+#     through the next permission just before the delete (`alumni-merge.service.ts`);
+#   - `view_usersourceconnection`: list which sources a user is linked to, which is how that check
+#     and the admin's duplicates list are made.
+# Not enough to create an account, add, change or delete a source connection, touch a source, a flow,
+# a provider or another role. It is deliberately NOT a superuser group. test-profile-editor.py proves
+# each of these by USING the token.
 #
 # THE TOKEN KEY IS `!Env`, never written here: the file is public. It is read from the worker's
 # environment (`MICONNECT_EDITOR_TOKEN`, declared with `:?` in compose.yml), and the same value is the
@@ -27,6 +36,8 @@ entries:
       permissions:
         - authentik_core.view_user
         - authentik_core.change_user
+        - authentik_core.delete_user
+        - authentik_core.view_usersourceconnection
   - model: authentik_core.group
     identifiers:
       name: "miconnect-profile-editors"
@@ -51,5 +62,5 @@ entries:
       user: !Find [authentik_core.user, [username, "miconnect-canari-editor"]]
       intent: "api"
       expiring: false
-      description: "Canari core-service - writes attributes.profile (WP4)"
+      description: "Canari core-service - writes attributes.profile (WP4), merges Alumni duplicates (D48)"
       key: !Env MICONNECT_EDITOR_TOKEN

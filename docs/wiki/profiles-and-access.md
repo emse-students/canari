@@ -936,6 +936,73 @@ user sets" with a rule per promo, and adds the cotisant gate. Planned in `1.8.0`
   (2026-11-23). The confirmation therefore names what the duplicate holds before the admin
   confirms.
 
+**WP8, the Canari half, as built (2026-11-23, ships in `1.8.0`).** The MiConnect half (the claim
+`alumni_linked`, the routing page, the stages, the policies) is built apart; Canari only reads the
+claim and calls the editor account.
+
+- **The claim (D44).** `parseProfileClaims` reads `alumni_linked` as a boolean; absent or malformed is
+  `null`, UNKNOWN, logged when malformed. It is stored at every sign-in with the rest of the profile
+  (`users."alumniLinked"`, migration core `028`) and served on the reader's OWN profile only
+  (`GET /users/me`), never to another reader of the profile. Until MiConnect emits it, every value
+  is `null` and nothing shows.
+- **The reminder banner (D44).** `AlumniLinkBanner.svelte`, in the layout's banner column, decided
+  by `alumniLinkReminderDue` (`lib/profile/alumniLink.ts`, unit-tested on injected dates): an
+  explicit `alumniLinked === false`, and today on or after 1 September P+1 where P is the EARLIEST
+  promo of the cursus (two cursus: the first one due reminds; no cursus: never). Its button opens
+  `<VITE_AUTHENTIK_URL>/if/user/#/settings;page-sources`. Dismissed for the run of the app (module
+  state, no storage): a restart reminds again. The blocking half from 1 February P+2 and the
+  2027-02-01 grace are MiConnect's stage, not Canari's.
+- **The duplicates list (D47)** is `/admin/alumni-duplicates` (global admin, beside the profile
+  corrections), served by `GET /users/admin/alumni-duplicates` (`AlumniMergeService.listDuplicates`):
+  every MiConnect account whose username starts with `alumni-` (a person account, not a service
+  one), against every non-`alumni-` person account with the same name (accents, case, hyphens and
+  spaces folded: the CAS and Alumnforce spell one person differently) and at least one promo in
+  common (`attributes.profile.cursus[].promo`). Read through the editor account; each account shows
+  whether it ever signed in to Canari. Production only, like every editor call (dev shares
+  production MiConnect and answers `PROFILE_EDIT_DEV_ESTATE`).
+- **"Rattacher" (D48) DOES NOT MOVE THE LINK, AND CANNOT.** Measured in authentik 2026.8.6's source:
+  `UserSourceConnectionSerializer` serves `user` READ-ONLY, so no token, however wide, re-points a
+  source connection through the API; and while the duplicate holds the Alumni identity, a link
+  attempt from the real account signs the person INTO the duplicate (`SourceFlowManager.get_action`:
+  an authenticated request meeting an existing connection is an `AUTH`, not a `LINK`). So the merge
+  DELETES the duplicate at MiConnect - its Alumni connection goes with it (cascade, proven in CI) -
+  and the person re-links from MiConnect's settings page, which the banner asks for. Reversible
+  choice, taken without the owner (the brief asked for a move the API does not offer): if authentik
+  ever makes `user` writable, the move goes in before the deletion and nothing else changes.
+- **What it does, in order** (`AlumniMergeService.merge`, `POST /users/admin/alumni-duplicates/:uuid/merge`
+  with `{ targetUuid }`, global admin): re-reads both accounts from MiConnect and refuses outside the
+  ALLOWLIST - the duplicate's username starts with `alumni-` and it holds no link but `alumni`
+  (`ALUMNI_MERGE_NOT_DUPLICATE`); the target is another, non-`alumni-` person account matching by
+  name and promo (`ALUMNI_MERGE_NO_MATCH`); counts what the duplicate holds; writes the trace row
+  (`alumni_merges`: actor, duplicate uuid and username, target, the counts, `requestedAt`); deletes
+  the MiConnect account; erases the duplicate's Canari account through `AccountErasureService.requestErasure`,
+  the ONE erasure path (durable, retried, [account-erasure](account-erasure.md)); completes the row.
+  The pending row is the durable state of a merge cut between MiConnect and Canari: the same call
+  finds it and does only what is left (one pending row per duplicate, a partial unique index).
+- **The confirmation names what the duplicate holds** before the admin confirms:
+  `GET .../:uuid/holdings` counts personal posts (a post published as an association stays),
+  association memberships, communities and form submissions in social-service, and conversations
+  in chat-delivery (`GET internal/users/:id/holdings`, counts only, nothing nominative). The messages
+  themselves are end-to-end encrypted on the devices and are not counted. A service that does not
+  answer refuses the reading (`ALUMNI_MERGE_HOLDINGS_UNAVAILABLE`): no confirmation on a partial
+  count.
+- **Principle 2** ("the essential is never lost", [principes](../principes.md)) is touched, and
+  knowingly: the owner chose deletion over deactivation (2026-11-23). What answers it here is the
+  confirmation that names the holdings, the allowlist, and the trace.
+- **The trace and the erasure.** The target's own erasure deletes its `alumni_merges` rows; the acting
+  admin's erasure blanks `actorId` (`CORE_ERASURE_STATEMENTS`), as for `profile_changes`.
+- **The editor role, widened** (`80-profile-editor.yaml`): `delete_user` and
+  `view_usersourceconnection` join `view_user` and `change_user`. `test-profile-editor.py` USES the
+  token: it lists a user's connections, deletes an `alumni-` duplicate and sees its Alumni connection
+  gone, and is refused creating a user, changing, adding or deleting a connection, changing the
+  Alumni source and changing a flow. **authentik has no per-account scope for a global permission**:
+  the token could delete any user, a superuser included. Canari's allowlist is what holds that line;
+  the owner's open wish that the editor token not reach admin accounts
+  ([backlog](backlog.d/p3-the-rust-runtimes-base-image-and-two-miconnect-hardenings.md))
+  is still open, and this widening is in its scope. The token itself is unchanged (no new secret).
+- **Not observed**: the claim on a real sign-in (MiConnect does not emit it yet), the list and a merge
+  against production MiConnect. The first flagged duplicate is the observation.
+
 **WP9 - The shims go.** The `promo`/`formation`/`school_status` claims and columns and the old
 attribute keys, once nothing reads them - each removal measured, per
 [legacy-compatibility](legacy-compatibility.md).

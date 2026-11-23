@@ -21,6 +21,7 @@ const GLOBAL: AdminTiers = {
 /** Every admin page the app has, as the filesystem names them. */
 const ADMIN_PAGES = [
   'agenda',
+  'alumni-duplicates',
   'carte',
   'cercle',
   'database',

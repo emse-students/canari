@@ -514,7 +514,8 @@ describe('FormsService - cotisation configuration and granting', () => {
       );
     });
 
-    // Ranked like a boutique settlement: a paid form never swaps out a dearer tier by the XOR. The
+    // Ranked on current prices (a boutique settlement judges on its frozen opening instead), a paid
+    // form never swaps out a dearer tier by the XOR. The
     // payment is real, so it is recorded - marked paid and NOT granted, for a refund or a grant.
     // The mode flips INSIDE the grant, under the buyer's tier lock: the grant answers a typed refusal
     // (no unlocked pre-read to race), which is FINAL - never `failed`, whose claim release would make

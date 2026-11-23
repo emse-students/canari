@@ -108,6 +108,8 @@
     pendingCommentIds={thread.pending}
     {currentUserId}
     {authToken}
+    readOnly={post.canParticipate === false}
+    canLike={post.canLikeComments !== false}
     onCommentTextChange={async (text) => {
       commentText = text;
       commentError = '';
