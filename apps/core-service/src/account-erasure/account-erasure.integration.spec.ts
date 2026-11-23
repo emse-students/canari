@@ -67,6 +67,10 @@ maybe('account erasure queue against PostgreSQL', () => {
     await ds.query(
       readFileSync(join(__dirname, '..', 'migrations', '012_account_erasure_jobs.sql'), 'utf8')
     );
+    // `alumni_merges` has no entity (raw SQL in `AlumniMergeService`): its migration builds it here.
+    await ds.query(
+      readFileSync(join(__dirname, '..', 'migrations', '028_alumni_link_and_merges.sql'), 'utf8')
+    );
     jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
     jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
   }, 60_000);

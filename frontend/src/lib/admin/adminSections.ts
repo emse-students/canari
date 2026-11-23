@@ -27,6 +27,7 @@ import {
   ShieldAlert,
   UserCog,
   UserPen,
+  UsersRound,
   Users,
   Wallet,
   Wrench,
@@ -131,6 +132,15 @@ const ENTRIES: readonly AdminEntry[] = [
     label: () => m.profile_corrections_nav_label(),
     summary: () => m.profile_corrections_card_desc(),
     icon: UserPen,
+    may: GLOBAL,
+  },
+  {
+    key: 'alumni-duplicates',
+    href: '/admin/alumni-duplicates',
+    group: 'platform',
+    label: () => m.alumni_duplicates_nav_label(),
+    summary: () => m.alumni_duplicates_card_desc(),
+    icon: UsersRound,
     may: GLOBAL,
   },
   {
