@@ -452,6 +452,11 @@ CI then USES the token (`test-profile-editor.py`): read by uuid and PATCH work, 
 user and changing a flow answer `403`. The applier compares the token's `key` by digest like the other
 secrets, and ignores `expires` on a non-expiring token, which authentik rewrites at every apply
 ([profiles-and-access](../profiles-and-access.md#the-work-packages-in-order)).
+**Widened 2026-11-23 for the Alumni merge (D48)** with `delete_user` and `view_usersourceconnection`:
+the token deletes an `alumni-` duplicate (its Alumni connection cascades) and reads a user's links;
+it still may not create a user, add, change or delete a connection, nor touch a source or a flow, and
+CI proves each. A connection's `user` is read-only in authentik's API, so a link is never MOVED
+([the Canari half as built](../profiles-and-access.md#the-work-packages-in-order)).
 
 **`55-handoff-reader.yaml` (F3-bound, 2026-11-11)** builds the READ-ONLY account Canari's handoff
 mint asks whether a person may enter a site: a role with global `view_user`, `view_policybinding`

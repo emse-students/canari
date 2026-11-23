@@ -221,6 +221,25 @@ export class InternalController {
   }
 
   /**
+   * How many conversations an account is a member of, as a count: what an admin is shown BEFORE
+   * merging an Alumni duplicate into another account, which erases this one (D48, core-service
+   * `AlumniMergeService`). The messages themselves are end-to-end encrypted and live on the devices;
+   * the membership rows are what the server holds and what the erasure takes. Read-only.
+   */
+  @Get('users/:userId/holdings')
+  async userHoldings(
+    @Headers('x-internal-secret') headerSecret: string,
+    @Param('userId') userId: string
+  ): Promise<{ conversations: number }> {
+    this.assertInternalSecret(headerSecret);
+    const conversations = await this.groupMemberRepo.count({ where: { userId } });
+    this.logger.log(
+      `[INTERNAL_HOLDINGS] user=${userId.slice(0, 8)} conversations=${conversations}`
+    );
+    return { conversations };
+  }
+
+  /**
    * Which session a device's push registration is bound to - the first half of the compare-and-
    * delete core-service's outbox (`SessionPushEndService`) runs when a session that named this
    * device ends. core-service reads the binding HERE, then decides whether that session is still
