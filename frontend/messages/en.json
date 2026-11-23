@@ -828,6 +828,7 @@
   "post_report_label": "Report",
   "post_report_comment_label": "Report this comment",
   "post_like_label": "Like",
+  "post_like_muted_label": "Your account is restricted: you cannot like comments.",
   "post_likes_count_label": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],

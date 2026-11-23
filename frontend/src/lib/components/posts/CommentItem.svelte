@@ -79,6 +79,8 @@
      * edit or report control; a delete the server grants (moderation) stays.
      */
     readOnly?: boolean;
+    /** The server's `canLikeComments`: false draws the like disabled (a muted account). */
+    canLike?: boolean;
   }
 
   let {
@@ -96,6 +98,7 @@
     onDelete,
     onReport,
     readOnly = false,
+    canLike = true,
   }: Props = $props();
 
   const authorName = $derived(commentAuthorName(comment));
@@ -368,6 +371,7 @@
               {liked}
               count={likeCount}
               onLike={() => onLike(comment.id)}
+              enabled={canLike}
               class="ml-auto"
             />
           {/if}
@@ -410,6 +414,7 @@
               {onDelete}
               {onReport}
               {readOnly}
+              {canLike}
             />
           {/each}
         </div>

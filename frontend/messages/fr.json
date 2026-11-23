@@ -869,6 +869,7 @@
   "post_report_label": "Signaler",
   "post_report_comment_label": "Signaler ce commentaire",
   "post_like_label": "J'aime",
+  "post_like_muted_label": "Votre compte est restreint : vous ne pouvez pas aimer de commentaire.",
   "post_likes_count_label": "{count} J'aime",
   "post_reply_label": "Répondre",
   "post_show_comments_label": "Afficher les {count} commentaires",

@@ -37,14 +37,26 @@ const comment = (id: string, minute: number, extra: Partial<PostComment> = {}): 
   ...extra,
 });
 
-function mountPreview(comments: PostComment[], commentCount = comments.length) {
+function mountPreview(
+  comments: PostComment[],
+  commentCount = comments.length,
+  extra: { canLike?: boolean } = {}
+) {
   const onOpen = vi.fn();
   const onLike = vi.fn();
   const target = document.createElement('div');
   document.body.appendChild(target);
   const app = mount(CommentsPreview, {
     target,
-    props: { comments, commentCount, currentUserId: 'u1', authToken: 'tok', onLike, onOpen },
+    props: {
+      comments,
+      commentCount,
+      currentUserId: 'u1',
+      authToken: 'tok',
+      onLike,
+      onOpen,
+      ...extra,
+    },
   });
   mounted.push(() => void unmount(app));
   flushSync();
@@ -53,6 +65,26 @@ function mountPreview(comments: PostComment[], commentCount = comments.length) {
 
 const buttonWith = (t: HTMLElement, text: string) =>
   [...t.querySelectorAll('button')].find((b) => b.textContent?.includes(text));
+
+describe('CommentsPreview - the like of a muted account', () => {
+  const heart = (t: HTMLElement) =>
+    t.querySelector<HTMLButtonElement>('button[aria-pressed]') as HTMLButtonElement;
+
+  it('draws the like DISABLED, with the reason, when the server says the reader may not like', () => {
+    const { target, onLike } = mountPreview([comment('a', 1)], 1, { canLike: false });
+    expect(heart(target).disabled).toBe(true);
+    expect(heart(target).title).toBe(m.post_like_muted_label());
+    heart(target).click();
+    expect(onLike).not.toHaveBeenCalled();
+  });
+
+  it('CONTROL: the like is live by default and by the server saying so', () => {
+    const { target, onLike } = mountPreview([comment('a', 1)], 1);
+    expect(heart(target).disabled).toBe(false);
+    heart(target).click();
+    expect(onLike).toHaveBeenCalledWith('a');
+  });
+});
 
 describe('CommentsPreview', () => {
   it('draws NOTHING for a post nobody has commented on (a permanent field cost 90 px a card)', () => {
