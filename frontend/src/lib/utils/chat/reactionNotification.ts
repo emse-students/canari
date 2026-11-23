@@ -155,7 +155,11 @@ export function inboundReactionVerdict(
 
 /** The runtime facts the trigger is decided on, gathered by the caller. */
 export interface ReactionTriggerFacts {
-  /** Whether the reader can see the conversation (`canSeeArrival`): the bubble then carries it. */
+  /**
+   * Whether the reader is READING the conversation (`isReadingConversationNow`): the bubble then
+   * carries it. Not `canSeeArrival`, which is also true for the conversation LIST - and a list row
+   * shows no reaction.
+   */
   conversationOnScreen: boolean;
   /**
    * Whether this runtime has a reaction PUSH that may draw the same reaction (a phone). Web and

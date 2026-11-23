@@ -86,6 +86,7 @@ function foreground(value: boolean | undefined) {
   const w = window as unknown as Record<string, unknown>;
   if (value === undefined) delete w.__canariForeground;
   else w.__canariForeground = value;
+  delete w.__canariActive;
 }
 
 describe('the frame trigger of a reaction to my message', () => {
@@ -162,6 +163,33 @@ describe('the frame trigger of a reaction to my message', () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(sendReactionNotification).not.toHaveBeenCalled();
+  });
+
+  it('THE PARKED CONVERSATION (iPhone 12, 1.8.0-alpha.1): Back to the list on a phone is told - a list row shows no reaction', async () => {
+    // `goBackToMenu` clears the selection and the phone shows the conversation LIST, where a message
+    // landing would be seen - so the old predicate (`canSeeArrival`) answered "on screen" and the
+    // reaction to a message of the conversation just left raised nothing.
+    const messaging = useMessaging();
+    const { ctx, sendReactionNotification } = makeContext('');
+    window.history.pushState({}, '', '/chat');
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
+    foreground(true);
+
+    messaging.notifyInboundReaction(REACTION, ctx);
+
+    await vi.waitFor(() => expect(sendReactionNotification).toHaveBeenCalledTimes(1));
+  });
+
+  it('an iPhone that is no longer ACTIVE is told, even with that conversation open (the app switcher)', async () => {
+    const messaging = useMessaging();
+    const { ctx, sendReactionNotification } = makeContext(CONVO);
+    window.history.pushState({}, '', '/chat');
+    foreground(true);
+    (window as unknown as Record<string, unknown>).__canariActive = false;
+
+    messaging.notifyInboundReaction(REACTION, ctx);
+
+    await vi.waitFor(() => expect(sendReactionNotification).toHaveBeenCalledTimes(1));
   });
 
   it("obeys the account's reactions switch", async () => {

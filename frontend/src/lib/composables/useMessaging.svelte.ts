@@ -7,7 +7,7 @@
  * - File selection + validation
  */
 import { sendFrameFromThisTab } from '$lib/mls-client/frameFromAnyTab';
-import { isAppInForeground } from '$lib/utils/appForeground';
+import { isAppActive, isAppInForeground } from '$lib/utils/appForeground';
 import { isSalonMuted } from '$lib/utils/chat/salonUnread';
 import type { AnnouncedMessage } from '$lib/utils/chat/announcedMessages';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
@@ -1542,7 +1542,9 @@ export function useMessaging() {
     const away = isMobileTauriRuntime()
       ? !isAppInForeground()
         ? 'the app is backgrounded (no push is sent for a frame this client ACKed)'
-        : `the app is open on ${window.location.pathname} showing ${ctx.selectedContact || 'the list'}`
+        : !isAppActive()
+          ? 'the app is no longer active - the reader left it, its socket still open (no push is sent for a frame this client ACKed)'
+          : `the app is open on ${window.location.pathname} showing ${ctx.selectedContact || 'the list'}`
       : document.visibilityState !== 'visible' || !document.hasFocus()
         ? `the tab is ${document.visibilityState}${document.hasFocus() ? '' : ' and unfocused'}`
         : // In front, but nobody has touched it for the attention window (`windowAttention`).
@@ -1641,7 +1643,11 @@ export function useMessaging() {
     const convo = ctx.conversations.get(key);
     const isSalon = key.startsWith('channel_');
     const refusal = reactionTriggerRefusal({
-      conversationOnScreen: canSeeArrival(ctx, key),
+      // THE CONVERSATION ITSELF, never "the place a message would land": the bubble is what carries a
+      // reaction, and the list row does not show one. `canSeeArrival` is true for the list on a phone
+      // with no conversation open, so a reaction to a message of a conversation left with Back raised
+      // nothing (iPhone 12, `1.8.0-alpha.1`).
+      conversationOnScreen: isReadingConversationNow(key, ctx.selectedContact),
       // A phone has a reaction push that may draw it too; web and desktop have none.
       pushMayDraw: isMobileTauriRuntime(),
       at: reaction.at,
@@ -3059,12 +3065,16 @@ export function useMessaging() {
       // same predicate, and the label names the state it actually observed rather than the
       // document's opinion of it.
       const appAway = isMobileTauriRuntime()
-        ? !isAppInForeground()
+        ? !isAppInForeground() || !isAppActive()
         : typeof document !== 'undefined' && document.visibilityState !== 'visible';
       if (!lastInbound && brandNew.length && appAway) {
         // The other half of the same question: a flush that added messages while the app was away and
         // raised nothing has either seen only own/system rows, or lost them to a predicate.
-        const awayState = isMobileTauriRuntime() ? 'backgrounded' : document.visibilityState;
+        const awayState = isMobileTauriRuntime()
+          ? isAppInForeground()
+            ? 'no longer active'
+            : 'backgrounded'
+          : document.visibilityState;
         console.log(
           `[NOTIF] Batch into "${normalized}" added ${brandNew.length} while ${awayState}, none of them an inbound message - nothing to raise.`
         );

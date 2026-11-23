@@ -3620,7 +3620,7 @@ its whole matrix asserted beside it:
 | --- | --- |
 | the frame (`inboundReactionVerdict`) | my own reaction, or a reaction to somebody else's message (said nowhere: the ordinary frame); a removal, a replay or older state, or a frame that is not LIVE (said: it is a reaction to me). The author is the row held (window, then store), else the one the frame STATES (`ReactionMsg.target_author_id`, the reactor's own claim - the one `notify-reaction` already rests on). News whose author is still unknown is `unresolved` (WARNED each time) when the store FAILED to answer, `unattributed` (said ONCE per session) when the frame comes from a reactor predating `target_author_id` |
 | live (`isLiveDelivery`) | not `channel === 'live'`, or `aheadOfMailbox`, or an `addressed` history answer - a catch-up on resume may carry a reaction already announced and dismissed. A page of salon history raises nothing, except the ONE row that arrived live before its seed (below) |
-| the screen (`reactionTriggerRefusal`) | the conversation is on screen (`canSeeArrival`); on a phone, a frame with no `at` (it could not be made one with its push, so the push draws it); the `reactions` category is off; a private conversation's level is not `all` (a reaction is never a mention). **The app's foreground state is NOT a term** |
+| the screen (`reactionTriggerRefusal`) | the conversation is being READ (`isReadingConversationNow`: selected, on a route that draws it, the app in front - never `canSeeArrival`, which is also true for the conversation LIST, and a list row shows no reaction; corrected 2026-11-23, [below](#an-app-that-is-not-active-is-not-read-2026-11-23)); on a phone, a frame with no `at` (it could not be made one with its push, so the push draws it); the `reactions` category is off; a private conversation's level is not `all` (a reaction is never a mention). **The app's foreground state is NOT a term** |
 
 **A live salon reaction that arrives BEFORE its seed is still decided live (2026-11-18).** The first
 frame of a reactor's new seed session (the distribution epoch moved: a member added or removed) often
@@ -3726,6 +3726,48 @@ identity reading, read PASS on `1.7.0-alpha.10` ([readings](../device-verificati
 `apns-collapse-id` (and the reverse) is what a post's twin already relies on, and is proven by no
 test here: a reaction under Control Center shows ONE entry (a second sound on the replacement is
 acceptable), and a reaction while ACTIVE on another screen keeps an entry (the `List` answer).
+
+#### An app that is not active is not read (2026-11-23)
+
+Two losses read on the iPhone 12 (`1.8.0-alpha.1`, iOS 27), both a reader judged "looking" who was not.
+
+**A message in the seconds after the home gesture was announced zero times.** Dev logs, one device,
+one sitting: the gateway routed a frame to the iPhone and the page ACKed it within 300 ms, then the
+page's own `disconnect` arrived 8 s later. The page was running and held its socket, so the server
+(correctly) owed no push: `scheduleDeferredPush` fires only for a row still unACKed after 10 s, and
+no `[PUSH_DEFERRED]` line exists for the whole sitting. The page then judged the reader on screen and
+raised nothing. Both of its signals are keyed on `didEnterBackground` - `__canariForeground`
+(`CanariPublishForeground`) and the WebView's `visibilitychange`, which is what pauses the socket - and
+the home gesture first makes the app INACTIVE (`willResignActive`): the app switcher, a slow swipe,
+Notification Center or Control Center leave it there for seconds before the background edge, or for
+good. So of the three candidates, the server's presence was right (the socket WAS live and read), and
+the client's suppression was the defect.
+
+**The fix is a second fact, written by the thing whose state it is.** The shell publishes the ACTIVE
+pair as its own global and event - `window.__canariActive` / `canari:active` (`CanariPublishActive`,
+from `willResignActive` first thing, `didBecomeActive`, and every page load), from `g_isInForeground`.
+`canari:foreground` stays the background/foreground pair: the resume work keys on it and a Face ID
+sheet must not re-run it (`appForeground.contract.test.ts` holds both). The page asks
+`isAppInFront()` = foreground AND active (`appForeground.ts`) wherever it decides that a reader saw an
+arrival or is reading a conversation (`arrivalRuntime.ts`), and the receipt effect follows the active
+fact as state (`MainChatPage`), so returning to active marks what landed - no timer anywhere. Android
+writes no such flag: its `onPause` already ends the foreground.
+
+**Exactly once, by construction.** While inactive with the socket live, the page decrypts, ACKs and
+announces (`notifyInbound`, through the announced-messages ledger,
+[ios-notification-ownership](ios-notification-ownership.md)); the ACK means no push. If the page is
+frozen instead, nothing ACKs and the deferred push carries it to the extension. The ledger keeps the
+two from doubling when both happen.
+
+**A reaction in a conversation left with Back raised nothing.** `goBackToMenu` clears the selection, the
+phone shows the list, and `canSeeArrival` is true for the list (a message landing there lights its
+row). The reaction trigger asked that predicate, though its own stated reason is "the bubble on screen
+carries it" - and a list row shows no reaction. It now asks `isReadingConversationNow`. Not a wiki
+decision reversed: the table above named the wrong predicate for its own reason.
+
+Tests: `appForeground.test.ts`, `appForeground.contract.test.ts`, `arrivalRuntime.ios.test.ts`,
+`useMessaging.reactionNotification.svelte.test.ts`. Owed on the iPhone:
+[reading](../backlog.d/reading-owed-an-inactive-iphone-announces-what-it-acks.md).
 
 #### Background MLS decrypt ladder
 

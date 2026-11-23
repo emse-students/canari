@@ -12,7 +12,15 @@
  * READ RECEIPT for a message nobody had seen.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { APP_FOREGROUND_EVENT, isAppInForeground, onAppForegroundChange } from './appForeground';
+import {
+  APP_ACTIVE_EVENT,
+  APP_FOREGROUND_EVENT,
+  isAppActive,
+  isAppInForeground,
+  isAppInFront,
+  onAppActiveChange,
+  onAppForegroundChange,
+} from './appForeground';
 
 const FLAG = '__canariForeground';
 const set = (v: unknown) => {
@@ -22,7 +30,10 @@ const clear = () => {
   delete (window as unknown as Record<string, unknown>)[FLAG];
 };
 
-afterEach(clear);
+afterEach(() => {
+  clear();
+  delete (window as unknown as Record<string, unknown>).__canariActive;
+});
 
 describe('isAppInForeground', () => {
   it('reads the flag the Android activity writes', () => {
@@ -108,5 +119,45 @@ describe('onAppScreenChange - one edge per transition', () => {
       off();
       hidden.mockRestore();
     }
+  });
+});
+
+describe('the ACTIVE fact (iOS willResignActive / didBecomeActive)', () => {
+  const setActive = (v: unknown) => {
+    (window as unknown as Record<string, unknown>).__canariActive = v;
+  };
+
+  it('is true where no shell writes it, and believes only a boolean', () => {
+    expect(isAppActive()).toBe(true);
+    for (const junk of ['false', 0, null, {}]) {
+      setActive(junk);
+      expect(isAppActive()).toBe(true);
+    }
+    setActive(false);
+    expect(isAppActive()).toBe(false);
+  });
+
+  it('puts the app in front of the reader only when it is BOTH in the foreground and active', () => {
+    set(true);
+    setActive(true);
+    expect(isAppInFront()).toBe(true);
+    // The home gesture: inactive, the background edge not there yet - the window of the defect.
+    setActive(false);
+    expect(isAppInForeground()).toBe(true);
+    expect(isAppInFront()).toBe(false);
+    set(false);
+    setActive(true);
+    expect(isAppInFront()).toBe(false);
+  });
+
+  it('reports each edge of its event, and unsubscribes', () => {
+    const seen: boolean[] = [];
+    const off = onAppActiveChange((active) => seen.push(active));
+    window.dispatchEvent(new CustomEvent(APP_ACTIVE_EVENT, { detail: { active: false } }));
+    window.dispatchEvent(new CustomEvent(APP_ACTIVE_EVENT, { detail: { active: 'no' } }));
+    window.dispatchEvent(new CustomEvent(APP_ACTIVE_EVENT, { detail: { active: true } }));
+    off();
+    window.dispatchEvent(new CustomEvent(APP_ACTIVE_EVENT, { detail: { active: false } }));
+    expect(seen).toEqual([false, true]);
   });
 });

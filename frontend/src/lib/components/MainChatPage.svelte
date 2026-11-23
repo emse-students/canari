@@ -23,7 +23,7 @@
   import { recordUnsentSalonText } from '$lib/utils/chat/salonUnsent';
   import { restoreFailedDraft } from '$lib/utils/chat/draftRestore';
   import { createHeldSendQueue } from '$lib/utils/chat/heldSends';
-  import { onAppScreenChange } from '$lib/utils/appForeground';
+  import { isAppActive, onAppActiveChange, onAppScreenChange } from '$lib/utils/appForeground';
   import { createResumeReadGate } from '$lib/utils/chat/resumeOpening.svelte';
   import {
     ATTENTION_WINDOW_MS,
@@ -392,6 +392,18 @@
     (id) => resolveConversationKey(convs.conversations, id)
   );
   onDestroy(() => appForeground.destroy());
+  /**
+   * The iPhone's ACTIVE fact, as state the receipt effect follows (`isAppActive`): an app the reader
+   * has left - the home gesture, the app switcher - stays in the foreground until its background
+   * edge, and reads nothing meanwhile. Back to active runs the effect again and marks what landed.
+   * Always `true` where no shell writes it.
+   */
+  let appActive = $state(isAppActive());
+  onDestroy(
+    onAppActiveChange((active) => {
+      appActive = active;
+    })
+  );
 
   /**
    * The frame the log panel's scroll is already scheduled for, or `null`.
@@ -823,7 +835,7 @@
     const verdict = windowReadVerdict({
       focused: isWindowFocused,
       visible: isTabVisible,
-      foreground: appForeground.current,
+      foreground: appForeground.current && appActive,
       attentive: windowAttention.attentive,
     });
     if (verdict === 'away') {
