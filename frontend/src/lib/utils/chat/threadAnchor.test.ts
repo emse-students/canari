@@ -7,6 +7,7 @@ import {
   keyboardChangeResponse,
   ownMessageAppended,
   respondToNewMessage,
+  scrollMeasurementResponse,
   stickToBottomAfterScroll,
   THREAD_BOTTOM_SLACK_PX,
   threadGrowthResponse,
@@ -422,5 +423,47 @@ describe('stickToBottomAfterScroll', () => {
 
   it('measures plainly when there is no previous offset to compare with', () => {
     expect(stickToBottomAfterScroll({ ...at, previousScrollTop: null })).toBe(false);
+  });
+});
+
+/**
+ * THE ENGINE'S KEYBOARD MOVE IS PUT BACK, AND ONLY IT (iPhone 12, 1.8.0-alpha.1): `scrollTop 5813 (last
+ * placed 6188), 375 px from the end`, the reach unchanged, no finger on the pane, a field taking focus.
+ */
+describe('scrollMeasurementResponse', () => {
+  const engineMove = {
+    pinned: false,
+    scrollTop: 5813,
+    wasNearBottom: true,
+    previousScrollTop: 6188,
+    readerMoving: false,
+    unspentKeyboardTransition: true,
+    reachUnchanged: true,
+  };
+
+  it('puts the pane back at its end when all three facts name the engine keyboard move', () => {
+    expect(scrollMeasurementResponse(engineMove)).toBe('put-back');
+  });
+
+  it('lets any move missing one of the three lower the flag, as before', () => {
+    // A reader's own input.
+    expect(scrollMeasurementResponse({ ...engineMove, readerMoving: true })).toBe('in-history');
+    // No keyboard transition: a screen reader's scroll, find-in-page - the assistive case.
+    expect(scrollMeasurementResponse({ ...engineMove, unspentKeyboardTransition: false })).toBe(
+      'in-history'
+    );
+    // The reach moved: content or the box changed, which is not the engine's reveal.
+    expect(scrollMeasurementResponse({ ...engineMove, reachUnchanged: false })).toBe('in-history');
+  });
+
+  it('holds the flag at the end whoever moved the pane', () => {
+    expect(scrollMeasurementResponse({ ...engineMove, pinned: true })).toBe('at-end');
+    expect(scrollMeasurementResponse({ ...engineMove, scrollTop: 6188, readerMoving: true })).toBe(
+      'at-end'
+    );
+  });
+
+  it('never pulls a reader in history down to the end', () => {
+    expect(scrollMeasurementResponse({ ...engineMove, wasNearBottom: false })).toBe('in-history');
   });
 });

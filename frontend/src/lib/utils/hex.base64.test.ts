@@ -11,15 +11,33 @@ function patterned(n: number): Uint8Array {
   return bytes;
 }
 
+/**
+ * The platform's own base64 of `bytes`, built from 32 KiB slices: one string per byte, joined, cost a
+ * million-element array and timed out under a loaded full run.
+ */
+function referenceBase64(bytes: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+}
+
+/** The first index where `a` and `b` differ, or -1 - a byte loop, not two deep-compared copies. */
+function firstDifference(a: Uint8Array, b: Uint8Array): number {
+  if (a.length !== b.length) return Math.min(a.length, b.length);
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return i;
+  return -1;
+}
+
 describe('toBase64 / fromBase64', () => {
   it.each([0, 1, 2, 3, 32767, 32768, 32769, 65536 + 5, 1_000_003])(
     'round-trips %i bytes and matches btoa',
     (n) => {
       const bytes = patterned(n);
-      const expected = btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(''));
       const encoded = toBase64(bytes);
-      expect(encoded).toBe(expected);
-      expect(Array.from(fromBase64(encoded))).toEqual(Array.from(bytes));
+      expect(encoded).toBe(referenceBase64(bytes));
+      expect(firstDifference(fromBase64(encoded), bytes)).toBe(-1);
     }
   );
 

@@ -5903,7 +5903,91 @@ short of the thread's padding. So the build REPORTS instead of guessing: the nat
 line carries `threadTop`, `threadMax`, `threadPad` and `lastRowBottom`, and `measureScroll` logs every
 fall of the flag with NO finger on the pane (`left the bottom with no finger on the pane: ...`; a reader
 scrolling up is not logged). Such a fall during a rise is the flag read off a move that was not the
-reader's; the fix then is to let only a reader's input lower it. Owed:
+reader's; the fix then is to let only a reader's input lower it - which `1.8.0-alpha.1` showed, below.
+
+### The engine's keyboard move is put back, and only it (2026-11-23)
+
+**What the iPhone said** (`1.8.0-alpha.1`, iPhone 12, iOS 27, 3 of 3): one line per opening,
+`left the bottom with no finger on the pane: scrollTop 5813 (last placed 6188), 375 px from the end`
+(an earlier run: 102 px). The pane went 375 px UP while its reach (`scrollHeight - clientHeight`) was
+the reach of the last placement, with no finger on it, and no writer of this page made the move: every
+one of them reports its placement (`onPlaced`, `scrollToBottom`). It is the engine's: WKWebView scrolls
+an overflow scroller to reveal the focused field. **It happens with the keyboard UP**, after the
+WebView was resized and the observer pinned the pane: the thread ended 96 pt short once the keyboard
+fell, which is 375 minus the 279 pt keyboard - a move before the resize would have left it 375 short.
+Read as the reader leaving, the move dropped the flag, every later change answered `keep-row`, and the
+last photo stayed under the composer. The Mi 9T (Chromium) makes no such move and passed.
+
+**The rule: a move is put back only when it is POSITIVELY the engine's keyboard move**, named by three
+facts carried from where each is already known, never by a clock (`scrollMeasurementResponse`,
+`threadAnchor.ts`):
+
+1. **No reader input since the last placement** - `trackReaderInput` (`readerInput.ts`): a `touchstart`,
+   `pointerdown`, `wheel` or `keydown` on the pane, a scrolling key pressed with the focus on the page
+   itself (the pane has no tabindex, so PageUp lands on `body`), or a jump the reader asked for. Lowered
+   when the page places the pane with no finger down, so a fling stays the reader's through its momentum.
+2. **A keyboard transition still moving, and unspent** - `keyboardTransition.ts`. A transition starts
+   once per keyboard open or close, and in the iOS shell once per height change while open (a change
+   arriving while one moves belongs to it: one count, one log line). It comes to REST by a fact: in the
+   iOS shell, `window.canariKeyboardAtRest` (`canari_ios.mm`, `CanariTellPageKeyboardAtRest`);
+   everywhere else, in the same update that started it (the Android shell announces the final inset, a
+   browser's viewport resize is the keyboard where it stands, and neither engine makes the move).
+   Unspent: started after the reader's last input and after the last put-back.
+3. **The reach unchanged** since the last placement or measurement.
+
+**Why the rest comes after the reveal - the ordering, in the iOS shell.** The rest must reach the
+page after the page measured the scroll WebKit's reveal caused, or the flag falls and the defect is
+back. Three facts order it, none of them a delay:
+
+1. **It rests on the facts WebKit acts on.** WebKit reveals the focused field from its own
+   `_keyboardDidShow:`. So a show rests on `UIKeyboardDidShow` and a hide on `UIKeyboardDidHide`.
+   `UIKeyboardDidChangeFrame` is posted BEFORE did-show, in the same run-loop turn, so it rests only
+   a height change while the keyboard is open: `CanariApplyKeyboardLayout` sets
+   `g_keyboardShowHidePending` for a rise or a fall, and did-show / did-hide clear it.
+2. **WebKit's observer runs first.** `CanariObserveKeyboardRest` registers the three observers once,
+   synchronously (`queue:nil`), from the first keyboard change - after the WKWebView exists, so after
+   WebKit registered its own. The notification center delivers a post to its observers in
+   registration order, so WebKit's `_keyboardDidShow:` has run, and started its reveal, when ours runs.
+   That delivery order is what the build relies on and what the reading checks: a rest heard before
+   the reveal shows as `the flag falls (keyboard transition #T at rest)` in the in-app log.
+3. **The proof orders the page after both.** Ours asks for a screen-update proof (a snapshot
+   `afterScreenUpdates`), which the web process answers only with a rendering update made after the
+   reveal's scroll reached it. That update runs the scroll event and, in the same update, the
+   animation frame that measures it. The page is told only once the proof returns, and only if no
+   newer keyboard change superseded it. A superseded rest is silent, because that change rests on its
+   own.
+
+**Mobile Safari on the web is out of scope.** It runs the same WebKit, but nothing there says the
+keyboard is at rest. A transition rests at once, in the viewport update that started it, so no move is
+ever put back. Safari does not resize the layout viewport for the keyboard either, so the reveal there
+scrolls the document, not the thread pane. The defect was read in the app, the fix lives in the shell,
+and a browser keeps today's rule.
+
+**Any other move up out of the slack lowers the flag, as it always did.** A VoiceOver or TalkBack
+scroll, a swipe to the previous message, find-in-page, a reader's key: once the keyboard is at rest -
+open or closed - no transition is moving, so an assistive or unexplained move is the reader's. Such a
+fall logs at DEBUG: it is the expected path of every assistive scroll from the end.
+
+**Not done, and why:** spending the transition when a placement or measurement after it finds the
+pane at its end. The observer's own pin after the resize is such a placement, and it comes BEFORE
+WebKit's reveal (the 96 pt above): it would spend the transition the reveal needs.
+
+**Termination by construction:** a put-back SPENDS its transition, so there is at most one per keyboard
+transition; an engine that repeated its move would get one put-back and then lower the flag. The
+`left the bottom with no finger on the pane` line stays, one per such move and never per frame: at INFO
+ending `the engine's keyboard move, put back at the end (put-back N of this pane, keyboard transition
+#T)`, at DEBUG ending `not a keyboard move of the engine, the flag falls (keyboard transition #T moving
+|at rest)`.
+
+Tests: `threadGrowthObserver.test.ts` ("the engine keyboard move") replays the opening with the photos
+growing before and after the resize; the control on the old rule ends 375 px short; a move with no
+transition, or after one at rest, lowers the flag; a reader's touch still leaves; ten repeated engine
+moves give one put-back; a change during a moving transition counts once.
+`ChatArea.scrollAnchor.svelte.test.ts` drives the put-back through the mounted pane (the INFO line, the
+scroll to the end, the arrow absent) and the assistive case with no transition and after one at rest
+(the DEBUG line, the arrow shown). `iosKeyboardRiseHandoff.test.ts` holds the native relay: the did-show / did-hide
+observers registered once the WebView exists, did-change-frame only with no show or hide pending, then
+the screen-update proof, the silent superseded check and the page hook. Owed:
 [the reading](../../backlog.d/reading-owed-a-dm-ending-in-photos-stays-at-its-end-when-the-keyboard-opens.md).
 
 ### A short thread sits at the bottom, and asks for its past at entry (2026-11-14)

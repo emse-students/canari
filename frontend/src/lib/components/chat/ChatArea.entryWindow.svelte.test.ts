@@ -375,6 +375,8 @@ describe('ChatArea entry window (F6)', () => {
     await settleEntry();
     const scroller = target.querySelector<HTMLElement>('.chat-messages-scroll')!;
     // The reader reaches the top of g1: the window is whole, so the store is asked for more.
+    // A reader's wheel: only a reader's input may lower the stick-to-bottom flag (2026-11-23).
+    scroller.dispatchEvent(new Event('wheel'));
     scroller.scrollTop = 0;
     scroller.dispatchEvent(new Event('scroll'));
     await vi.advanceTimersByTimeAsync(20);
@@ -588,6 +590,8 @@ describe('ChatArea older-history page', () => {
     const { target } = mountSwitchable(25, load);
     await settleEntry();
     const scroller = target.querySelector<HTMLElement>('.chat-messages-scroll')!;
+    // A reader's wheel: only a reader's input may lower the stick-to-bottom flag (2026-11-23).
+    scroller.dispatchEvent(new Event('wheel'));
     scroller.scrollTop = 10;
     scroller.dispatchEvent(new Event('scroll'));
     await vi.advanceTimersByTimeAsync(20);

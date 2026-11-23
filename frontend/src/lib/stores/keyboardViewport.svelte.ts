@@ -24,6 +24,8 @@
 
 import { detectRuntimeDeviceOs } from '$lib/mls-client/mlsPlatform';
 import { orientationOf, rememberKeyboardHeight } from './keyboardHeightMemory';
+import { noteKeyboardAtRest, noteKeyboardTransition } from './keyboardTransition';
+import { isTauriRuntime } from '$lib/utils/tauriRuntime';
 import { cssColorToHex, groundOf } from './imeGround';
 import { parseImeTarget, resolveImeTarget, type ImeAnimation, type ImeTarget } from './imeTarget';
 import {
@@ -1028,6 +1030,19 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
     const closedNow = !next.isOpen && keyboardWasOpen;
     const insetMoved = next.insetBottom !== snapshot.insetBottom;
     const moved = keyboardMoved(snapshot, next);
+    // A KEYBOARD TRANSITION (`keyboardTransition.ts`): once per open or close, and in the iOS shell
+    // once per height change while open - the shell resizes once per change there, where a browser
+    // resizes per frame. It rests at the shell's word in the iOS shell, at once everywhere else.
+    const iosShell = isTauriRuntime() && detectRuntimeDeviceOs() === 'ios';
+    const heightChanged =
+      iosShell && next.isOpen && next.keyboardHeight !== snapshot.keyboardHeight;
+    if (next.isOpen !== snapshot.isOpen || heightChanged) {
+      noteKeyboardTransition(
+        `keyboard ${snapshot.isOpen ? 'open' : 'closed'} ${snapshot.keyboardHeight}px -> ` +
+          `${next.isOpen ? 'open' : 'closed'} ${next.keyboardHeight}px`
+      );
+      if (!iosShell) noteKeyboardAtRest('the viewport reading is the keyboard where it stands');
+    }
     snapshot = next;
     const vars = keyboardVariables(next, m, baselineHeight, detectRuntimeDeviceOs());
     if (Array.isArray(hold)) holdRoot(vars, hold);
@@ -1220,6 +1235,14 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
   };
   (window as unknown as { canariKeyboardFall?: (v: unknown) => boolean }).canariKeyboardFall =
     takeKeyboardFall;
+  /**
+   * `window.canariKeyboardAtRest`: the iOS shell's word that the keyboard has come to rest
+   * (`UIKeyboardDidShow` / `DidHide`, or `DidChangeFrame` for a height change while open, once
+   * WebKit's pending updates are on screen) - the end of the keyboard transition
+   * (`keyboardTransition.ts`).
+   */
+  (window as unknown as { canariKeyboardAtRest?: () => void }).canariKeyboardAtRest = () =>
+    noteKeyboardAtRest('the shell: the keyboard did show, hide or change height, on screen');
 
   // A press during a ride (a picker opening, a tap on a row) ends it: while a piece rides it is the
   // containing block of its fixed descendants (`keyboardRide.ts`).
@@ -1244,6 +1267,7 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
     window.visualViewport?.removeEventListener('scroll', updateOffsetOnly);
     delete (window as unknown as { canariImeTarget?: unknown }).canariImeTarget;
     delete (window as unknown as { canariKeyboardFall?: unknown }).canariKeyboardFall;
+    delete (window as unknown as { canariKeyboardAtRest?: unknown }).canariKeyboardAtRest;
     if (overlayDeclared) {
       (
         navigator as unknown as { virtualKeyboard: { overlaysContent: boolean } }

@@ -182,6 +182,64 @@ export function stickToBottomAfterScroll(m: ScrollMeasurement): boolean {
   return m.scrollTop >= m.previousScrollTop;
 }
 
+/**
+ * What one scroll measurement does to the pane (`scrollMeasurementResponse`):
+ *
+ * - `at-end`: the stick-to-bottom flag holds ({@link stickToBottomAfterScroll}).
+ * - `in-history`: the flag is (or stays) down - the pane moved up out of the slack, or the reader was
+ *   already reading history.
+ * - `put-back`: the move is the ENGINE'S OWN around the keyboard ({@link EngineKeyboardMove}) - the flag
+ *   holds and the pane is put back at its end.
+ */
+export type ScrollMeasurementResponse = 'at-end' | 'in-history' | 'put-back';
+
+/**
+ * The three facts that, together, name a move of the pane as the engine's own around the keyboard -
+ * each carried from where it is already known, none guessed.
+ */
+export interface EngineKeyboardMove {
+  /** A reader's input moved, or may still be moving, the pane since the page last placed it. */
+  readerMoving: boolean;
+  /**
+   * A keyboard transition still MOVING - the keyboard opened, closed or changed height and has not come
+   * to rest (`keyboardTransition.ts`) - that started after the reader's last input and after the last
+   * put-back.
+   */
+  unspentKeyboardTransition: boolean;
+  /** The reach (`scrollHeight - clientHeight`) is the one of the last placement or measurement. */
+  reachUnchanged: boolean;
+}
+
+/**
+ * The stick-to-bottom flag after one scroll measurement, **WITH THE ENGINE'S OWN KEYBOARD MOVE - AND
+ * ONLY IT - PUT BACK** (iPhone 12, `1.7.3-alpha.4` to `1.8.0-alpha.1`, 3 of 3: a DM ending in portrait
+ * photos left 375 px short of its end when the keyboard rose, 96 pt short after it fell).
+ *
+ * The iPhone's log of every opening reads `scrollTop 5813 (last placed 6188), 375 px from the end`: the
+ * pane went 375 px UP with its reach unchanged since the last placement, no finger on it and no writer
+ * of this page behind it, with the keyboard up (96 pt short once it fell: 375 minus the 279 pt
+ * keyboard) - WKWebView scrolling an overflow scroller to reveal the focused field once the keyboard
+ * has shown. Read as the reader leaving, it dropped the flag; every later
+ * change answered `keep-row`, and nothing took the thread back to its end.
+ *
+ * **The move is put back only when it is POSITIVELY that one**: no reader input since the last
+ * placement, a keyboard transition still moving and unspent, and the reach unchanged. Every other move up
+ * out of the slack lowers the flag as before - a screen reader's scroll (VoiceOver, TalkBack), find-in-page, a
+ * reader's key: an assistive or unexplained move is the reader's until proven otherwise. A put-back
+ * SPENDS its transition (the caller records it), so there is at most one per keyboard transition and
+ * a second engine move in the same one lowers the flag: termination by construction, not by a clock.
+ * A transition that comes to rest with no engine move is over too, so a later assistive scroll with
+ * the keyboard up or down finds none.
+ */
+export function scrollMeasurementResponse(
+  m: ScrollMeasurement & EngineKeyboardMove
+): ScrollMeasurementResponse {
+  if (stickToBottomAfterScroll(m)) return 'at-end';
+  const engineKeyboardMove =
+    m.wasNearBottom && !m.readerMoving && m.unspentKeyboardTransition && m.reachUnchanged;
+  return engineKeyboardMove ? 'put-back' : 'in-history';
+}
+
 /** What a change of the soft keyboard may do to the thread (`keyboardChangeResponse`). */
 export interface KeyboardChange {
   wasOpen: boolean;
