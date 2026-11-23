@@ -1,4 +1,5 @@
 /* eslint-disable */
+import { UsageActivity } from '../usage/usage-activity';
 import { mapWithConcurrency } from '../common/map-with-concurrency';
 import { assertMayCollect } from '../associations/collection-policy';
 import {
@@ -592,7 +593,8 @@ export class FormsService {
     @InjectRepository(FormRespondent) private readonly respondentRepo: Repository<FormRespondent>,
     private readonly formFiles: FormFilesService,
     private readonly organiserAlert: FormOrganiserAlertService,
-    private readonly formItemImages: FormItemImagesService
+    private readonly formItemImages: FormItemImagesService,
+    private readonly usage?: UsageActivity
   ) {}
 
   /**
@@ -3148,6 +3150,11 @@ export class FormsService {
     let savedSubmission!: Submission;
     // An anonymous answer is held for its batch: it has no submission id to hand back.
     let heldAnswer = false;
+    // A NEW named answer was stored (a member's, a guest's) - the usage dashboard's "forms answered"
+    // (docs/wiki/usage-dashboard.md). A retry that re-uses its pending payment row is the same answer,
+    // and is not counted again. AN ANONYMOUS ANSWER IS NOT COUNTED: it keeps only its week (owner,
+    // 2026-11-22, migration 181), and a daily total would date it to the day again.
+    let answered = false;
     await this.submissionRepo.manager.transaction('READ COMMITTED', async (manager) => {
       // The association BEFORE the form: the lock order its delete takes (association first).
       await this.assertAssociationLiveUnderLock(manager, form, 'submit');
@@ -3298,6 +3305,7 @@ export class FormsService {
             cashExpiresAt: null,
           })
         );
+        answered = true;
         return;
       }
 
@@ -3345,11 +3353,13 @@ export class FormsService {
           guestVisitorKey: visitorKey,
         });
         savedSubmission = await manager.save(submission);
+        answered = true;
       }
       if (storedFileAnswers.length > 0) {
         await this.formFiles.attach(manager, savedSubmission, id, input.userId!, storedFileAnswers);
       }
     });
+    if (answered) void this.usage?.count('forms');
 
     if (heldAnswer) {
       // The batch this answer completes is released in a transaction of its OWN, never the one that
