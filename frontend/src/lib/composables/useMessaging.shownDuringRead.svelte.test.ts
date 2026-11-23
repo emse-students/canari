@@ -434,3 +434,81 @@ describe('a removal racing a batch write that already asked the map (follow-up o
     expect(await storage.getMessage('m1', KEY)).toBeFalsy();
   });
 });
+
+describe('an own send racing a removal (review of #3992)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    window.history.pushState({}, '', '/posts');
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  const ownEntry = (id: string) =>
+    ({ id, conversationId: CONVO, kind: 'text', content: 'mine' }) as never;
+
+  it('the pair write held while the purge runs: the purge waits for it, and its clear takes the row', async () => {
+    const storage = new IndexedDbStorage(freshStoreName());
+    await storage.init();
+    const d = makeDevice(useMessaging, storage);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const pair = storage.saveMessageWithOutboxEntry.bind(storage);
+    const held = vi
+      .spyOn(storage, 'saveMessageWithOutboxEntry')
+      .mockImplementation(async (...args) => {
+        await gate;
+        return pair(...args);
+      });
+
+    const sending = d.messaging.addMessageToChat('me-user-id', 'mine', CONVO, d.ctx, {
+      messageId: 'own-1',
+      outboxEntry: ownEntry('own-1'),
+    });
+    await vi.waitFor(() => expect(held).toHaveBeenCalled());
+
+    let purged = false;
+    const purging = purgeConversation({
+      conversations: d.conversations,
+      key: CONVO,
+      deleteStored: (key) => storage.deleteConversation(key),
+    }).then(() => (purged = true));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(purged).toBe(false);
+
+    release();
+    await sending;
+    await purging;
+
+    // The pair landed BEFORE the clear (the purge waited for it), so the clear took its row. Its
+    // outbox entry is in the state of any entry queued a moment before a removal: the purge does
+    // not clear the outbox (chat wiki, "known limits").
+    expect(await storage.getMessage('own-1', KEY)).toBeFalsy();
+    expect(d.conversations.has(CONVO)).toBe(false);
+  });
+
+  it('a conversation already out of the map: no row, no entry, and the send is told it failed', async () => {
+    const storage = new IndexedDbStorage(freshStoreName());
+    await storage.init();
+    const d = makeDevice(useMessaging, storage);
+    const pair = vi.spyOn(storage, 'saveMessageWithOutboxEntry');
+    // Out of the map between the send's render and its write: the render reads the map at entry.
+    const set = d.conversations.set.bind(d.conversations);
+    vi.spyOn(d.conversations, 'set').mockImplementationOnce((key, value) => {
+      const out = set(key, value);
+      d.conversations.delete(CONVO);
+      return out;
+    });
+
+    await expect(
+      d.messaging.addMessageToChat('me-user-id', 'mine', CONVO, d.ctx, {
+        messageId: 'own-2',
+        outboxEntry: ownEntry('own-2'),
+      })
+    ).rejects.toMatchObject({ name: 'MessagePairWriteError' });
+
+    expect(pair).not.toHaveBeenCalled();
+    expect(await storage.getMessage('own-2', KEY)).toBeFalsy();
+    expect(await storage.getOutboxEntry('own-2', KEY)).toBeFalsy();
+  });
+});

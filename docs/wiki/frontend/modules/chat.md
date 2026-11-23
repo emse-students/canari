@@ -1585,6 +1585,42 @@ before the clear, which takes it; one that asks after finds no conversation. (Th
 loser's rows to the winner's key and re-homes a kept write by `homeOfWrite`; the restore prune and
 the landing preview touch only the map.)
 
+**Every row writer keyed by a conversation, and why it cannot land after a purge (review of #3992):**
+
+| Writer | Ordering |
+| --- | --- |
+| `writeBatchRows` (live batch, stored-preview upgrade, kept write retried by a hold) | asks the map and registers in one step |
+| the own-send pair `saveMessageWithOutboxEntry` (`addMessageToChatOnce`) | asks the map and registers in one step; out of the map, refused as a `MessagePairWriteError` at WARN - neither row nor entry is written |
+| the outbox's write-back of a queued text's missing row (`outbox.ts`) | re-asks the map after its store read and registers in one step |
+| edits, deletions, pins, reactions, pending-mutation settlement, `updateMessage` (`persistLocalMutation`, `reactionFrame`, `systemMessageHandler`, `pendingMutationStore`, `history`, `outbox` marks) | `mergeMessages` / `updateMessage` are compare-and-set onto a row that STANDS: after the clear there is none, and nothing is inserted |
+| `saveConversation` (`useConversations`) | reads the map and writes nothing for a key not in it |
+| the push-preview cache (`fcmCache.ts`) | not a stale writer: it writes the conversation's own placeholder row with the preview - an ARRIVAL re-creating a conversation, by design |
+| the native outbox mirror adoption (`outboxMirror.ts`) | adopts only for a conversation the STORE holds, read just before; a removal in that gap is not ordered (it is keyed by group id, not the map key) - see the limits below |
+| a salon's page (`useConversations` `channel` page write) | salons are removed by the community paths (`useChannelWorkspaces`, `ChatBackgroundService`), not by these two purges - see the limits below |
+| the DM merge (`conversations.ts`), the legacy migration (`migration.ts`) | move or seed rows at boot, before any purge can run |
+
+On SQLite (the phone apps) a message row also carries a FOREIGN KEY onto its conversation row, so an
+insert after `deleteConversation` fails at the store; IndexedDB has no such key, which is why the
+ordering above is what holds there.
+
+**Known limits, stated rather than hidden:**
+
+- **A conversation re-created under the same key during the purge's wait** (a Welcome for the same
+  group landing in the milliseconds a write is in flight) has its new writes waited for too, and the
+  purge's clear then takes them. Accepted for now because the window is one in-flight write long and
+  needs a re-creation of the very conversation being removed; it is not proven harmless. It would be
+  closed by giving
+  the purge the row OBJECT it removed and, after the wait, clearing only if the map does not hold a
+  newer one under the key - which needs the clear to tell old rows from new (a per-conversation epoch
+  on the stored row).
+- **A purge does not clear the outbox.** An entry queued before the removal - the own-send pair the
+  purge waited for included - stays queued for a group that is gone; its message row is cleared. That
+  predates this ordering and is the outbox's question (what an entry for a removed conversation
+  becomes), not a resurrection of rows.
+- **The mirror adoption and a salon's page** are not registered: neither runs through these purges'
+  key (group id vs map key; salons have their own removal), and closing them means registering their
+  removers too.
+
 The live path's re-entry cannot loop: both branches it lands in return, and nothing is awaited
 between the read that sent it back and the re-entry's own.
 

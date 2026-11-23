@@ -137,6 +137,7 @@ import { FollowerTabSendError } from '$lib/mls-client/commitSubmission';
 import { insertMessageOrdered, replaceMessageOrdered } from './messageOrder';
 import { mapStoredMessagesToChatMessages } from './messageUtils';
 import { noteServerTime } from './serverClock';
+import { beginConversationRowWrite } from './conversationRowWrites';
 
 /** How the queue left one message for now - see {@link OutboxController.awaitSettled}. */
 export type OutboxSettlement = 'sent' | 'failed' | 'pending';
@@ -2748,6 +2749,15 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         );
         return;
       }
+      // ASKED AND REGISTERED IN ONE STEP (`conversationRowWrites.ts`): the map was read before the
+      // store's await above, and a removal since then must not get this row back after its clear.
+      if (!conversations.has(holder[0])) {
+        console.warn(
+          `[OUTBOX] ${entry.id.slice(0, 8)}… row not written back: its conversation left the map meanwhile - nothing written into a removed conversation`
+        );
+        return;
+      }
+      const releaseRowWrite = beginConversationRowWrite(holder[0]);
       try {
         await storage.saveMessagesIfAbsent([rebuilt], deviceKey());
       } catch (e) {
@@ -2755,6 +2765,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           `[OUTBOX] ${entry.id.slice(0, 8)}… is queued with no stored message, and its row could not be written back: ${String(e)}`
         );
         return;
+      } finally {
+        releaseRowWrite();
       }
       console.error(
         `[OUTBOX] ${entry.id.slice(0, 8)}… was queued with no stored message (left alone by an earlier writer) - its row is written back from the entry`

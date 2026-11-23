@@ -2419,25 +2419,45 @@ export function useMessaging() {
         // message the sender could see and no queue would ever send (TAB-5, 2026-09-05). Every other
         // caller - an inbound message, an FCM upgrade - has no entry and takes the single-store path.
         if (options.outboxEntry) {
-          try {
-            await ctx.storage.saveMessageWithOutboxEntry(
-              row,
-              options.outboxEntry,
-              ctx.deviceKeyB64
+          // ASKED AND REGISTERED IN ONE STEP, as `writeBatchRows` does (`conversationRowWrites.ts`):
+          // a removal clears the store only after this pair has landed, and a conversation already
+          // out of the map gets neither the row nor the entry - which would otherwise send into a
+          // deleted group. Refused, it is reported like any failed pair write: the caller must not
+          // tell the queue the row is on disk.
+          if (!ctx.conversations.has(normalized)) {
+            pairWriteFailure = new MessagePairWriteError(
+              newMsg.id,
+              new Error(`conversation "${normalized}" left the map before the write`)
             );
-            options.onPairWritten?.();
-          } catch (e) {
-            // REPORTED, NEVER SWALLOWED (review of #2843, M1): the caller would otherwise tell the
-            // outbox the row is on disk when nothing is. Thrown once the conversation is saved.
-            pairWriteFailure = new MessagePairWriteError(newMsg.id, e);
-            console.error(
-              pairWriteFailure.entryWritten
-                ? '[DB] the outbox entry was written WITHOUT its message:'
-                : '[DB] the message and its outbox entry were NOT written:',
-              e
+            console.warn(
+              `[ADD_MSG] own message ${newMsg.id.slice(0, 8)} and its outbox entry dropped, not written: the conversation "${normalized}" left the map before their write (${ORPHAN_REMOVERS})`
             );
+          } else {
+            const releaseRowWrite = beginConversationRowWrite(normalized);
+            try {
+              try {
+                await ctx.storage.saveMessageWithOutboxEntry(
+                  row,
+                  options.outboxEntry,
+                  ctx.deviceKeyB64
+                );
+                options.onPairWritten?.();
+              } catch (e) {
+                // REPORTED, NEVER SWALLOWED (review of #2843, M1): the caller would otherwise tell
+                // the outbox the row is on disk when nothing is. Thrown once the conversation is saved.
+                pairWriteFailure = new MessagePairWriteError(newMsg.id, e);
+                console.error(
+                  pairWriteFailure.entryWritten
+                    ? '[DB] the outbox entry was written WITHOUT its message:'
+                    : '[DB] the message and its outbox entry were NOT written:',
+                  e
+                );
+              }
+              await ctx.saveConversation(normalized);
+            } finally {
+              releaseRowWrite();
+            }
           }
-          await ctx.saveConversation(normalized);
         } else {
           // NEVER OVER A ROW: the store was read above, and another writer (the archive replay runs
           // outside the inbound drain) may have written the id since. Its row stands, and memory
