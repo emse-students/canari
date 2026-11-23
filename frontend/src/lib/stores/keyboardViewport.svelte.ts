@@ -1237,11 +1237,12 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
     takeKeyboardFall;
   /**
    * `window.canariKeyboardAtRest`: the iOS shell's word that the keyboard has come to rest
-   * (`UIKeyboardDidChangeFrame`, once WebKit's pending updates are on screen) - the end of the
-   * keyboard transition (`keyboardTransition.ts`).
+   * (`UIKeyboardDidShow` / `DidHide`, or `DidChangeFrame` for a height change while open, once
+   * WebKit's pending updates are on screen) - the end of the keyboard transition
+   * (`keyboardTransition.ts`).
    */
   (window as unknown as { canariKeyboardAtRest?: () => void }).canariKeyboardAtRest = () =>
-    noteKeyboardAtRest('the shell: the keyboard did change frame, on screen');
+    noteKeyboardAtRest('the shell: the keyboard did show, hide or change height, on screen');
 
   // A press during a ride (a picker opening, a tap on a row) ends it: while a piece rides it is the
   // containing block of its fixed descendants (`keyboardRide.ts`).

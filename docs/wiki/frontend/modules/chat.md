@@ -5929,13 +5929,39 @@ facts carried from where each is already known, never by a clock (`scrollMeasure
 2. **A keyboard transition still moving, and unspent** - `keyboardTransition.ts`. A transition starts
    once per keyboard open or close, and in the iOS shell once per height change while open (a change
    arriving while one moves belongs to it: one count, one log line). It comes to REST by a fact: in the
-   iOS shell, `window.canariKeyboardAtRest`, which `canari_ios.mm` calls on `UIKeyboardDidChangeFrame`
-   once WebKit's pending updates are on screen - after the keyboard's animation, after WebKit's own
-   did-show reveal, and after the page measured the scroll that reveal caused; everywhere else, in the
-   same update that started it (the Android shell announces the final inset, a browser's viewport
-   resize is the keyboard where it stands, and neither engine makes the move). Unspent: started after
-   the reader's last input and after the last put-back.
+   iOS shell, `window.canariKeyboardAtRest` (`canari_ios.mm`, `CanariTellPageKeyboardAtRest`);
+   everywhere else, in the same update that started it (the Android shell announces the final inset, a
+   browser's viewport resize is the keyboard where it stands, and neither engine makes the move).
+   Unspent: started after the reader's last input and after the last put-back.
 3. **The reach unchanged** since the last placement or measurement.
+
+**Why the rest comes after the reveal - the ordering, in the iOS shell.** The rest must reach the
+page after the page measured the scroll WebKit's reveal caused, or the flag falls and the defect is
+back. Three facts order it, none of them a delay:
+
+1. **It rests on the facts WebKit acts on.** WebKit reveals the focused field from its own
+   `_keyboardDidShow:`. So a show rests on `UIKeyboardDidShow` and a hide on `UIKeyboardDidHide`.
+   `UIKeyboardDidChangeFrame` is posted BEFORE did-show, in the same run-loop turn, so it rests only
+   a height change while the keyboard is open: `CanariApplyKeyboardLayout` sets
+   `g_keyboardShowHidePending` for a rise or a fall, and did-show / did-hide clear it.
+2. **WebKit's observer runs first.** `CanariObserveKeyboardRest` registers the three observers once,
+   synchronously (`queue:nil`), from the first keyboard change - after the WKWebView exists, so after
+   WebKit registered its own. The notification center delivers a post to its observers in
+   registration order, so WebKit's `_keyboardDidShow:` has run, and started its reveal, when ours runs.
+   That delivery order is what the build relies on and what the reading checks: a rest heard before
+   the reveal shows as `the flag falls (keyboard transition #T at rest)` in the in-app log.
+3. **The proof orders the page after both.** Ours asks for a screen-update proof (a snapshot
+   `afterScreenUpdates`), which the web process answers only with a rendering update made after the
+   reveal's scroll reached it. That update runs the scroll event and, in the same update, the
+   animation frame that measures it. The page is told only once the proof returns, and only if no
+   newer keyboard change superseded it. A superseded rest is silent, because that change rests on its
+   own.
+
+**Mobile Safari on the web is out of scope.** It runs the same WebKit, but nothing there says the
+keyboard is at rest. A transition rests at once, in the viewport update that started it, so no move is
+ever put back. Safari does not resize the layout viewport for the keyboard either, so the reveal there
+scrolls the document, not the thread pane. The defect was read in the app, the fix lives in the shell,
+and a browser keeps today's rule.
 
 **Any other move up out of the slack lowers the flag, as it always did.** A VoiceOver or TalkBack
 scroll, a swipe to the previous message, find-in-page, a reader's key: once the keyboard is at rest -
@@ -5959,8 +5985,9 @@ transition, or after one at rest, lowers the flag; a reader's touch still leaves
 moves give one put-back; a change during a moving transition counts once.
 `ChatArea.scrollAnchor.svelte.test.ts` drives the put-back through the mounted pane (the INFO line, the
 scroll to the end, the arrow absent) and the assistive case with no transition and after one at rest
-(the DEBUG line, the arrow shown). `iosKeyboardRiseHandoff.test.ts` holds the native relay's order:
-did-change-frame, the screen-update proof, the superseded check, then the page hook. Owed:
+(the DEBUG line, the arrow shown). `iosKeyboardRiseHandoff.test.ts` holds the native relay: the did-show / did-hide
+observers registered once the WebView exists, did-change-frame only with no show or hide pending, then
+the screen-update proof, the silent superseded check and the page hook. Owed:
 [the reading](../../backlog.d/reading-owed-a-dm-ending-in-photos-stays-at-its-end-when-the-keyboard-opens.md).
 
 ### A short thread sits at the bottom, and asks for its past at entry (2026-11-14)

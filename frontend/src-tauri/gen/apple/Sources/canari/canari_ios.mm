@@ -346,13 +346,25 @@ static void CanariSnapKeyboardFrame(WKWebView *webView, CGRect target) {
   });
 }
 
+/// A keyboard SHOW or HIDE is under way: `UIKeyboardDidShow` / `UIKeyboardDidHide` will end it. Set by
+/// `CanariApplyKeyboardLayout` for a rise or a fall, cleared by those two; a `UIKeyboardDidChangeFrame`
+/// while it is set belongs to them (UIKit posts it BEFORE did-show, in the same turn).
+static BOOL g_keyboardShowHidePending = NO;
+
 /// Tells the page the keyboard has come to rest (`window.canariKeyboardAtRest`, `keyboardTransition.ts`):
 /// the end of the keyboard transition during which the page may put back the thread pane WebKit moved
-/// to reveal the focused field (docs/wiki/frontend/modules/chat.md, "the engine's keyboard move is put
-/// back, and only it"). `UIKeyboardDidChangeFrame` comes after the keyboard's animation, for a show, a
-/// hide and a height change alike, and after WebKit's own did-show reveal; the call waits for WebKit to
-/// put its pending updates on screen, so the page has measured the scroll that reveal caused before it
-/// hears the keyboard is at rest. A newer keyboard change supersedes it: that one rests on its own.
+/// around the keyboard (docs/wiki/frontend/modules/chat.md, "the engine's keyboard move is put back,
+/// and only it").
+///
+/// IT RESTS ON THE FACTS WEBKIT ACTS ON. WebKit reveals the focused field from its own
+/// `_keyboardDidShow:`, so a show rests on `UIKeyboardDidShow` and a hide on `UIKeyboardDidHide`;
+/// `UIKeyboardDidChangeFrame` rests only a height change while the keyboard is open (no show or hide
+/// pending), since UIKit posts it before did-show. The observers are registered once the WKWebView
+/// exists (`CanariObserveKeyboardRest`), so they come after WebKit's own in the notification center's
+/// delivery order and its `_keyboardDidShow:` has run when this does; the screen-update proof then
+/// waits for the web process to render after it, so the page has measured the scroll the reveal caused
+/// before it hears the keyboard is at rest. A newer keyboard change supersedes it, silently: that one
+/// rests on its own.
 static void CanariTellPageKeyboardAtRest(void) {
   WKWebView *webView = CanariFindWebView();
   if (webView == nil) {
@@ -361,7 +373,6 @@ static void CanariTellPageKeyboardAtRest(void) {
   NSUInteger seq = g_keyboardChangeSeq;
   CanariAfterScreenUpdates(webView, ^(__unused double proofMs, NSError *error) {
     if (seq != g_keyboardChangeSeq) {
-      NSLog(@"[CanariIOS] keyboard at rest: superseded by a newer keyboard change, not told");
       return;
     }
     if (error != nil) {
@@ -370,6 +381,41 @@ static void CanariTellPageKeyboardAtRest(void) {
             CanariErrorReason(error));
     }
     [webView evaluateJavaScript:@"window.canariKeyboardAtRest?.()" completionHandler:nil];
+  });
+}
+
+/// Registers the observers that end a keyboard transition, ONCE and only once the WKWebView exists:
+/// WebKit registered its own keyboard observers when it created the view, so these are delivered after
+/// them (see `CanariTellPageKeyboardAtRest`). Called from the first keyboard change, whose did-show is
+/// posted later than the will-change-frame that registers them.
+static void CanariObserveKeyboardRest(void) {
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+    [nc addObserverForName:UIKeyboardDidShowNotification
+                    object:nil
+                     queue:nil
+                usingBlock:^(__unused NSNotification *note) {
+                  g_keyboardShowHidePending = NO;
+                  CanariTellPageKeyboardAtRest();
+                }];
+    [nc addObserverForName:UIKeyboardDidHideNotification
+                    object:nil
+                     queue:nil
+                usingBlock:^(__unused NSNotification *note) {
+                  g_keyboardShowHidePending = NO;
+                  CanariTellPageKeyboardAtRest();
+                }];
+    [nc addObserverForName:UIKeyboardDidChangeFrameNotification
+                    object:nil
+                     queue:nil
+                usingBlock:^(__unused NSNotification *note) {
+                  // A show or a hide rests on its own did-show / did-hide, posted after this.
+                  if (g_keyboardShowHidePending) {
+                    return;
+                  }
+                  CanariTellPageKeyboardAtRest();
+                }];
   });
 }
 
@@ -523,6 +569,7 @@ static void CanariApplyKeyboardLayout(NSNotification *note) {
     return;
   }
   CanariObserveKeyboardNavigation(webView);
+  CanariObserveKeyboardRest();
 
   CGRect keyboardEnd = [note.userInfo[UIKeyboardFrameEndUserInfoKey] CGRectValue];
   CGRect overlapRect =
@@ -533,6 +580,10 @@ static void CanariApplyKeyboardLayout(NSNotification *note) {
   target.size.height -= overlap;
   CGFloat fromOverlap = MAX(0.0, CGRectGetHeight(parent.bounds) - CGRectGetHeight(webView.frame));
   BOOL rise = overlap > 0 && fromOverlap == 0;
+  // A show or a hide: its did-show / did-hide, not a did-change-frame, says it is at rest.
+  if (rise || (overlap == 0 && fromOverlap > 0)) {
+    g_keyboardShowHidePending = YES;
+  }
   if (rise) {
     // A second rise while one waits (the predictive bar arriving) replaces it.
     CanariEndPendingRise(@"a newer rise");
@@ -2112,12 +2163,6 @@ void canari_ios_bootstrap(void) {
                    queue:[NSOperationQueue mainQueue]
               usingBlock:^(NSNotification *note) {
                 CanariApplyKeyboardLayout(note);
-              }];
-  [nc addObserverForName:UIKeyboardDidChangeFrameNotification
-                  object:nil
-                   queue:[NSOperationQueue mainQueue]
-              usingBlock:^(__unused NSNotification *note) {
-                CanariTellPageKeyboardAtRest();
               }];
   // The change itself. Activations already cover a size changed in Settings or Control Center
   // (dismissing Control Center fires didBecomeActive); this observer is extra coverage for any

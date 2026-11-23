@@ -8,11 +8,12 @@
  * frame - a change arriving while one is still moving belongs to it. It COMES TO REST when the
  * keyboard does, by a fact and never by a clock:
  *
- * - in the iOS shell, the shell's `canariKeyboardAtRest` - `UIKeyboardDidChangeFrame`, relayed once
- *   WebKit has put its pending updates on screen. WebKit reveals the focused field when the keyboard
- *   has shown, after the WebView was resized (the iPhone's numbers: the pane 375 px short with the
- *   keyboard up, 96 pt short once it fell - 375 minus the 279 pt keyboard), and the proof orders the
- *   rest after the scroll that reveal caused;
+ * - in the iOS shell, the shell's `canariKeyboardAtRest` - on `UIKeyboardDidShow` / `DidHide` (on
+ *   `DidChangeFrame` only for a height change while open), after WebKit's own observers and once its
+ *   pending updates are on screen (`canari_ios.mm`, `CanariTellPageKeyboardAtRest`). WebKit reveals the
+ *   focused field from its `_keyboardDidShow:`, after the WebView was resized (the iPhone's numbers: the
+ *   pane 375 px short with the keyboard up, 96 pt short once it fell - 375 minus the 279 pt keyboard),
+ *   and that order puts the rest after the page measured the scroll the reveal caused;
  * - everywhere else, in the same update that started it: the Android shell announces the keyboard's
  *   final inset, and a browser's viewport resize IS the keyboard where it stands.
  *
