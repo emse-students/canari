@@ -278,3 +278,33 @@ describe('the badge a push merge adds is the one the next load derives', () => {
     expect(conversations.get('grp-aaaa-bbbb')?.unreadCount).toBe(0);
   });
 });
+
+describe('a salon id is not an FCM-merge destination', () => {
+  it('refuses a message for a channel_ conversation, with a warning, and creates nothing', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const conversations = new Map<string, Conversation>();
+    const merged = mergeFcmMessagesIntoConversations(
+      [message({ conversationId: 'channel_c1' })],
+      conversations,
+      'me',
+      new Map([['channel_c1', { name: 'Salon', contactName: 'Salon', updatedAt: 1 }]])
+    );
+    expect(merged).toBe(0);
+    expect(conversations.size).toBe(0);
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
+  it('refuses it even when a row with that id is already in memory', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const conversations = new Map([['channel_c1', existing({ id: 'channel_c1' })]]);
+    const merged = mergeFcmMessagesIntoConversations(
+      [message({ conversationId: 'channel_c1' })],
+      conversations,
+      'me'
+    );
+    expect(merged).toBe(0);
+    expect(conversations.get('channel_c1')?.messages).toEqual([]);
+    warn.mockRestore();
+  });
+});

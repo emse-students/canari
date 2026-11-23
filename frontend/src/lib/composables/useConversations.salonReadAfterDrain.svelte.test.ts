@@ -76,6 +76,9 @@ vi.mock('$lib/utils/chat/channelCrypto', () => ({
 /** The key group's drain, settled by hand: the event `whenGroupDrained` stands for. */
 const drain = vi.hoisted(() => ({
   settle: null as null | ((bring: string[]) => void),
+  /** Resolves when the read ASKS for the drain: awaited in place of a poll on a wall clock. */
+  asked: Promise.resolve() as Promise<void>,
+  markAsked: () => {},
   salonKeysNow: vi.fn(),
 }));
 vi.mock('$lib/utils/graine/salonReadGate', () => ({
@@ -127,12 +130,16 @@ beforeEach(async () => {
   vi.clearAllMocks();
   seeds.held = new Set(['m1']);
   drain.settle = null;
+  drain.asked = new Promise<void>((resolve) => {
+    drain.markAsked = resolve;
+  });
   seeds.duringDecode = null;
   drain.salonKeysNow.mockImplementation(() => ({
     kind: 'draining',
     groupId: 'kg-0001',
     drained: () =>
       new Promise((resolve) => {
+        drain.markAsked();
         drain.settle = (bring) => {
           // The drain applies the key group's frames - the seeds land - and only then is it proven.
           for (const id of bring) seeds.held.add(id);
@@ -150,7 +157,7 @@ describe('a salon opened while its key group is draining', () => {
   it('draws the row whose seed is held at once, and the one whose seed is in the queue after the drain, unwarned', async () => {
     const convs = openSalon();
     const loading = convs.loadHistoryForConversation(SALON, SALON, makeCtx(), { force: true });
-    await vi.waitFor(() => expect(drain.settle).not.toBeNull());
+    await drain.asked;
     await flushMacrotask();
 
     // The held row does not wait for the link: drawn, and the skeleton is down.
@@ -171,7 +178,7 @@ describe('a salon opened while its key group is draining', () => {
   it('a seed the drain did not bring is reported only after the drain - something true', async () => {
     const convs = openSalon();
     const loading = convs.loadHistoryForConversation(SALON, SALON, makeCtx(), { force: true });
-    await vi.waitFor(() => expect(drain.settle).not.toBeNull());
+    await drain.asked;
     expect(seeds.missingSeedWarned).not.toHaveBeenCalled();
 
     drain.settle?.([]);
@@ -202,7 +209,7 @@ describe('a salon opened while its key group is draining', () => {
   it('the deferred pass never rewinds what moved on screen during the wait - a deletion, an edit', async () => {
     const convs = openSalon();
     const loading = convs.loadHistoryForConversation(SALON, SALON, makeCtx(), { force: true });
-    await vi.waitFor(() => expect(drain.settle).not.toBeNull());
+    await drain.asked;
     await flushMacrotask();
     expect(ids(convs)).toEqual(['m1']);
 
@@ -228,7 +235,7 @@ describe('a salon opened while its key group is draining', () => {
   it('a salon declared stale during the wait is not marked fresh again by the deferred pass', async () => {
     const convs = openSalon();
     const loading = convs.loadHistoryForConversation(SALON, SALON, makeCtx(), { force: true });
-    await vi.waitFor(() => expect(drain.settle).not.toBeNull());
+    await drain.asked;
     await flushMacrotask();
 
     convs.invalidateChannelHistoryCache(SALON);
@@ -257,7 +264,7 @@ describe('a salon opened while its key group is draining', () => {
   it('a newer load started during the wait supersedes the deferred rows of the older one', async () => {
     const convs = openSalon();
     const first = convs.loadHistoryForConversation(SALON, SALON, makeCtx(), { force: true });
-    await vi.waitFor(() => expect(drain.settle).not.toBeNull());
+    await drain.asked;
     const settleFirst = drain.settle!;
 
     // The newer load finds the drain proven and the seed held.
@@ -277,7 +284,7 @@ describe('a salon opened while its key group is draining', () => {
   it('a salon left during the wait is not decoded again - no warning, no request for a salon gone', async () => {
     const convs = openSalon();
     const loading = convs.loadHistoryForConversation(SALON, SALON, makeCtx(), { force: true });
-    await vi.waitFor(() => expect(drain.settle).not.toBeNull());
+    await drain.asked;
     await flushMacrotask();
 
     // Removed from the private salon (or signed out): the purge takes the conversation.
@@ -294,7 +301,7 @@ describe('a salon opened while its key group is draining', () => {
   it('a deferred row removed live during the wait is never inserted - the delete found no row to mark', async () => {
     const convs = openSalon();
     const loading = convs.loadHistoryForConversation(SALON, SALON, makeCtx(), { force: true });
-    await vi.waitFor(() => expect(drain.settle).not.toBeNull());
+    await drain.asked;
     await flushMacrotask();
     expect(ids(convs)).toEqual(['m1']);
 
@@ -335,7 +342,7 @@ describe('a salon opened while its key group is draining', () => {
     listMessages.mockResolvedValue([{ id: 'm1' }, { id: 'm2', poll: stale }]);
     const convs = openSalon();
     const loading = convs.loadHistoryForConversation(SALON, SALON, makeCtx(), { force: true });
-    await vi.waitFor(() => expect(drain.settle).not.toBeNull());
+    await drain.asked;
     await flushMacrotask();
 
     // `channel.poll.vote` on the poll still waiting for its seed.

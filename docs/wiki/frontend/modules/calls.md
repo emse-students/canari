@@ -1147,7 +1147,9 @@ Then, on each side:
    each party can learn the other's public IP.
 5. On `connected` the client logs `[Call] selected path pair=<local>/<proto>-><remote>/<proto>
    relayed=yes|no [relay_proto=] [rtt_ms=]` (`utils/callStats.ts`, no address) - the client's own
-   reading of its path, a DIAGNOSTIC. The TURN budget never reads it: it reads what Cloudflare
+   reading of its path, a DIAGNOSTIC (written AGAIN whenever the selected pair changes, at the
+   path checks that read the stats too, so the last line names the path the call ended on:
+   `selectedPathToLog`). The TURN budget never reads it: it reads what Cloudflare
    metered ([the kill switch and the metered budget](#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21)).
    From then on a `[CALL_REPORT]` line every 10 s and one at the end carries the same pair plus
    rates, loss, audio levels and the E2E worker's frame counts
