@@ -7402,13 +7402,20 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_social_booking_reminder_title),
                 arg.ifEmpty { res.getString(R.string.notif_social_booking_reminder_body) }
             )
+            // A watched form (owner, 2026-11-17; read on a phone 2026-11-23): `actor` is the association
+            // that runs it and `arg` the form's title, the same facts as the bell row. Each is used
+            // when the server sends it, and the fixed sentence stands for a form that has neither.
             "form_opening_soon" -> Pair(
-                res.getString(R.string.notif_form_opening_soon_title),
-                res.getString(R.string.notif_form_opening_soon_body)
+                if (actor.isEmpty()) res.getString(R.string.notif_form_opening_soon_title)
+                else res.getString(R.string.notif_form_opening_soon_title_named, actor),
+                if (arg.isEmpty()) res.getString(R.string.notif_form_opening_soon_body)
+                else res.getString(R.string.notif_form_opening_soon_body_named, arg)
             )
             "form_open" -> Pair(
-                res.getString(R.string.notif_form_open_title),
-                res.getString(R.string.notif_form_open_body)
+                if (actor.isEmpty()) res.getString(R.string.notif_form_open_title)
+                else res.getString(R.string.notif_form_open_title_named, actor),
+                if (arg.isEmpty()) res.getString(R.string.notif_form_open_body)
+                else res.getString(R.string.notif_form_open_body_named, arg)
             )
             // A payment landed on a full form, to the form's managers: `arg` is the form's title,
             // the only data the server sends (no payer, no amount on a lock screen).

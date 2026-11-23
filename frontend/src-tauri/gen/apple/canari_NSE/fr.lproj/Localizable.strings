@@ -103,6 +103,10 @@
 "notif.form.opening_soon.body" = "Un formulaire que vous suivez ouvre dans 5 minutes !";
 "notif.form.open.title" = "Formulaire ouvert !";
 "notif.form.open.body" = "Le formulaire est disponible - dépêchez-vous, les places sont limitées !";
+"notif.form.opening_soon.title_named" = "%@ : formulaire bientôt ouvert";
+"notif.form.opening_soon.body_named" = "« %@ » ouvre dans 5 minutes !";
+"notif.form.open.title_named" = "%@ : formulaire ouvert !";
+"notif.form.open.body_named" = "« %@ » est disponible - dépêchez-vous, les places sont limitées !";
 "notif.form.paid_over_capacity.title" = "Paiement sur un formulaire complet";
 "notif.form.paid_over_capacity.body" = "« %1$@ » : un paiement est arrivé alors que le formulaire était complet. Remboursement à faire.";
 "notif.lydia_payments_active.title" = "Paiements Lydia actifs";

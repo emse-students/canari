@@ -414,15 +414,18 @@ class NotificationService: UNNotificationServiceExtension {
             actor, String(others))
         )
       }
-    case "form_opening_soon":
+    // A watched form (owner, 2026-11-17): the association that runs it names the title and the
+    // form's own title the body, the same facts as the bell row; each falls back to the fixed
+    // sentence when the server sends none.
+    case "form_opening_soon", "form_open":
+      let stem = key == "form_open" ? "form.open" : "form.opening_soon"
       composed = (
-        Self.localized("notif.form.opening_soon.title", locale: locale),
-        Self.localized("notif.form.opening_soon.body", locale: locale)
-      )
-    case "form_open":
-      composed = (
-        Self.localized("notif.form.open.title", locale: locale),
-        Self.localized("notif.form.open.body", locale: locale)
+        actor.isEmpty
+          ? Self.localized("notif.\(stem).title", locale: locale)
+          : Self.localizedFormat("notif.\(stem).title_named", actor, locale: locale),
+        arg.isEmpty
+          ? Self.localized("notif.\(stem).body", locale: locale)
+          : Self.localizedFormat("notif.\(stem).body_named", arg, locale: locale)
       )
     // A payment landed on a full form, to the form's managers: `arg` is the form's title only.
     case "form_paid_over_capacity":
