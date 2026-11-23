@@ -24,6 +24,7 @@ import { UserBlocksService } from './user-blocks.service';
 import { AvatarService, AVATAR_SUBJECT_ID } from './avatar.service';
 import { ProfileEditService } from './profile-edit.service';
 import { ProfileCorrectionService } from './profile-correction.service';
+import { AlumniMergeService } from './alumni-merge.service';
 import {
   CreateUserDto,
   UpdateUserDto,
@@ -58,6 +59,9 @@ import { RouteParams } from '../common/route-params';
  * chunks rather than handing Postgres a list nobody bounded.
  */
 const MAX_PROFILE_BATCH = 100;
+
+/** A MiConnect uuid, as a body field names one. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Controller handling user profile CRUD, search, and avatar proxy. */
 /**
@@ -98,7 +102,13 @@ type AvatarLogOutcome =
   | 'rejected'
   | 'refused';
 
-@RouteParams({ id: 'opaque', otherUserId: 'opaque', blockedId: 'opaque', requestId: 'uuid' })
+@RouteParams({
+  id: 'opaque',
+  otherUserId: 'opaque',
+  blockedId: 'opaque',
+  requestId: 'uuid',
+  duplicateUuid: 'uuid',
+})
 @Controller('users')
 export class UsersController {
   private readonly logger = new Logger(UsersController.name);
@@ -151,7 +161,8 @@ export class UsersController {
     private readonly profileEdit: ProfileEditService,
     private readonly corrections: ProfileCorrectionService,
     private readonly accountErasure: AccountErasureService,
-    private readonly sessions: AuthSessionsService
+    private readonly sessions: AuthSessionsService,
+    private readonly alumniMerge: AlumniMergeService
   ) {}
 
   // -- Blocking -------------------------------------------------------------
@@ -547,7 +558,10 @@ export class UsersController {
     }
     await this.usersService.assertMayOpenProfile(requesterId, id);
     const user = await this.usersService.findOne(id);
-    return this.usersService.toPublicDto(user);
+    const dto = this.usersService.toPublicDto(user);
+    // Whether the account holds its Alumni link is its OWNER's business (D44: the reminder banner),
+    // never a fact another reader of the profile is served.
+    return id === requesterId ? { ...dto, alumniLinked: user.alumniLinked ?? null } : dto;
   }
 
   /**
@@ -625,6 +639,43 @@ export class UsersController {
     @Body() body: { note?: unknown }
   ) {
     return this.corrections.refuse(requestId, actorId, body?.note);
+  }
+
+  /**
+   * The Alumni duplicates (D47): every account an Alumni sign-in created (`alumni-<af_id>`) whose
+   * name and promo match an existing account, read from MiConnect. Global admin only; production
+   * only, like the profile edit (dev shares production MiConnect): the refusals are its codes.
+   */
+  @UseGuards(NginxAuthGuard, GlobalAdminGuard)
+  @Get('admin/alumni-duplicates')
+  listAlumniDuplicates() {
+    return this.alumniMerge.listDuplicates();
+  }
+
+  /** What a duplicate's Canari account holds, as counts - shown BEFORE "Rattacher" (D48). */
+  @UseGuards(NginxAuthGuard, GlobalAdminGuard)
+  @Get('admin/alumni-duplicates/:duplicateUuid/holdings')
+  alumniDuplicateHoldings(@Param('duplicateUuid') duplicateUuid: string) {
+    return this.alumniMerge.holdings(duplicateUuid);
+  }
+
+  /**
+   * "Rattacher" (D48): deletes the duplicate MiConnect account and erases its Canari account, traced
+   * (`alumni_merges`). The body names the account it belongs with, `{ targetUuid }`.
+   */
+  @UseGuards(NginxAuthGuard, GlobalAdminGuard)
+  @Post('admin/alumni-duplicates/:duplicateUuid/merge')
+  @HttpCode(200)
+  mergeAlumniDuplicate(
+    @Param('duplicateUuid') duplicateUuid: string,
+    @Headers('x-user-id') actorId: string,
+    @Body() body: { targetUuid?: unknown }
+  ) {
+    const targetUuid = body?.targetUuid;
+    if (typeof targetUuid !== 'string' || !UUID_RE.test(targetUuid)) {
+      throw new BadRequestException('targetUuid must be a uuid');
+    }
+    return this.alumniMerge.merge(duplicateUuid, targetUuid, actorId);
   }
 
   /**

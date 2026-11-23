@@ -54,6 +54,7 @@ const PROFILE = {
   campus: 'gardanne' as const,
   cursus: [{ formation: 'ISMIN' as const, promo: 2024 }],
   posts: ['ME' as const],
+  alumniLinked: null,
 };
 const EDIT = { ...PROFILE, firstName: 'Camille', lastName: 'Durand' };
 
@@ -180,7 +181,8 @@ maybe('a user write against PostgreSQL', () => {
       profiles,
       unused,
       erasure as never,
-      sessions
+      sessions,
+      unused
     );
     process.env.JWT_SECRET = JWT_SECRET;
     process.env.NODE_ENV = 'test';

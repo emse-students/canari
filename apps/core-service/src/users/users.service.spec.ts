@@ -245,6 +245,7 @@ describe('UsersService.findOrCreateFromOidc profile', () => {
     campus: 'gardanne' as const,
     cursus: [{ formation: 'ISMIN', promo: 2025 }],
     posts: ['ALUMNI' as const],
+    alumniLinked: null,
   };
 
   function makeService(existing: Partial<User> | null, affected = 1) {
@@ -270,6 +271,7 @@ describe('UsersService.findOrCreateFromOidc profile', () => {
         campus: null,
         cursus: [],
         posts: [],
+        alumniLinked: null,
       });
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('[OIDC_PROFILE_SHRANK]'));
       warn.mockClear();
@@ -309,12 +311,13 @@ describe('UsersService.findOrCreateFromOidc profile', () => {
       campus: 'saint-etienne',
       cursus: [],
       posts: ['EMSE'],
+      alumniLinked: false,
     });
     // The changed claims as one column update; the row read is never saved back.
     expect(save).not.toHaveBeenCalled();
     expect(update).toHaveBeenCalledWith({ id: 's1' }, expect.not.objectContaining({ admin: true }));
     expect(Object.keys(update.mock.calls[0][1]).sort()).toEqual(
-      ['campus', 'cursus', 'formation', 'miconnectUuid', 'posts', 'promo'].sort()
+      ['alumniLinked', 'campus', 'cursus', 'formation', 'miconnectUuid', 'posts', 'promo'].sort()
     );
     expect(user).toMatchObject({
       campus: 'saint-etienne',

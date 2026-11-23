@@ -1,10 +1,13 @@
-"""Proves the service account Canari edits profiles through can do exactly that - and no more.
+"""Proves the service account Canari edits profiles and merges Alumni duplicates through can do
+exactly that - and no more.
 
 Run through `ak shell` by test-blueprints.sh, after the blueprints applied (and by hand on any
 disposable instance). It calls authentik's REAL API in-process, with the token the blueprint wrote,
-the way core-service does: read a user by uuid, PATCH its whole `attributes`. Then it proves the
-role's limits - the same token may not create or delete a user, nor change a flow. It prints
-`PROFILE-EDITOR-OK` when every assertion held and raises otherwise.
+the way core-service does: read a user by uuid, PATCH its whole `attributes` (WP4); list a user's
+source connections and delete an `alumni-` duplicate, its Alumni connection going with it (D48).
+Then it proves the role's limits - the same token may not create a user, add, move or delete a
+source connection, change the Alumni source, nor change a flow. It prints `PROFILE-EDITOR-OK` when
+every assertion held and raises otherwise.
 
 WHY THE API AND NOT `user.has_perm`: the permission list on a role says what was GRANTED, and the
 API is what a stolen token could DO. A role that silently carried more than the blueprint named would
@@ -15,12 +18,15 @@ import os
 
 from django.test import Client
 
-from authentik.core.models import Token, User
+from authentik.core.models import Token, User, UserSourceConnection
 from authentik.flows.models import Flow
+from authentik.sources.oauth.models import OAuthSource, UserOAuthSourceConnection
+from authentik.sources.saml.models import SAMLSource, UserSAMLSourceConnection
 
 TOKEN = os.environ["MICONNECT_EDITOR_TOKEN"]
 USERNAME = "miconnect-canari-editor"
 PROBE = "miconnect-editor-probe"
+DUPLICATE = "alumni-editor-probe-0001"
 
 
 def check(condition, message):
@@ -71,9 +77,6 @@ try:
     created = call("post", "/api/v3/core/users/", {"username": "miconnect-editor-intruder", "name": "x"})
     check(created.status_code == 403, f"the editor may NOT create a user (got {created.status_code})")
     check(not User.objects.filter(username="miconnect-editor-intruder").exists(), "no user was created")
-    deleted = call("delete", f"/api/v3/core/users/{probe.pk}/")
-    check(deleted.status_code == 403, f"the editor may NOT delete a user (got {deleted.status_code})")
-    check(User.objects.filter(pk=probe.pk).exists(), "the user is still there")
     flow = Flow.objects.first()
     changed = call("patch", f"/api/v3/flows/instances/{flow.slug}/", {"title": "hijacked"})
     check(changed.status_code in (403, 404), f"the editor may NOT change a flow (got {changed.status_code})")
@@ -81,5 +84,59 @@ try:
     check(flow.title != "hijacked", "the flow is untouched")
 finally:
     probe.delete()
+
+# THE MERGE (D47, D48). A CAS account (the target) and an `alumni-` account the Alumni source created
+# for the same person (the duplicate). What core-service does: read the duplicate's connections, then
+# delete it - and the Alumni identity goes with it, free to be linked onto the target from its
+# settings page. What it must NOT be able to do: move or delete a connection on its own, touch the
+# source, create the account.
+alumni = SAMLSource.objects.get(slug="alumni")
+cas = OAuthSource.objects.get(slug="cas-emse")
+User.objects.filter(username__in=[PROBE, DUPLICATE]).delete()
+target = User.objects.create(username=PROBE, name="Probe Person")
+duplicate = User.objects.create(username=DUPLICATE, name="Probe Person")
+UserOAuthSourceConnection.objects.create(user=target, source=cas, identifier="probe.person")
+link = UserSAMLSourceConnection.objects.create(user=duplicate, source=alumni, identifier="0001")
+try:
+    listed = call("get", f"/api/v3/sources/user_connections/all/?user={duplicate.pk}")
+    check(listed.status_code == 200, f"the editor lists a user's source connections (got {listed.status_code})")
+    slugs = [c["source_obj"]["slug"] for c in listed.json()["results"]]
+    check(slugs == ["alumni"], f"the duplicate holds exactly the Alumni connection (got {slugs})")
+    listed = call("get", f"/api/v3/sources/user_connections/all/?user={target.pk}")
+    slugs = [c["source_obj"]["slug"] for c in listed.json()["results"]]
+    check(slugs == ["cas-emse"], f"the target's CAS connection is visible too (got {slugs})")
+
+    # authentik's serializer makes a connection's `user` read-only: no token, however wide, moves a
+    # link through the API - which is why the merge deletes the duplicate and the person re-links.
+    # The global view permission is on the BASE connection model, so the SAML endpoint does not even
+    # find the object for this token (404); either refusal holds.
+    moved = call("patch", f"/api/v3/sources/user_connections/saml/{link.pk}/", {"user": target.pk})
+    check(moved.status_code in (403, 404), f"the editor may NOT change a connection (got {moved.status_code})")
+    added = call(
+        "post",
+        "/api/v3/sources/user_connections/saml/",
+        {"user": target.pk, "source": str(alumni.pk), "identifier": "0001"},
+    )
+    check(added.status_code in (403, 404), f"the editor may NOT add a connection (got {added.status_code})")
+    unlinked = call("delete", f"/api/v3/sources/user_connections/saml/{link.pk}/")
+    check(unlinked.status_code in (403, 404), f"the editor may NOT delete a connection alone (got {unlinked.status_code})")
+    link.refresh_from_db()
+    check(link.user_id == duplicate.pk, "the Alumni connection is still the duplicate's")
+    was_enabled = alumni.enabled
+    source_changed = call("patch", f"/api/v3/sources/saml/{alumni.slug}/", {"enabled": not was_enabled})
+    check(source_changed.status_code in (403, 404), f"the editor may NOT change the Alumni source (got {source_changed.status_code})")
+    alumni.refresh_from_db()
+    check(alumni.enabled == was_enabled, "the source is untouched")
+
+    removed = call("delete", f"/api/v3/core/users/{duplicate.pk}/")
+    check(removed.status_code == 204, f"the editor deletes the duplicate (got {removed.status_code})")
+    check(not User.objects.filter(pk=duplicate.pk).exists(), "the duplicate is gone")
+    check(
+        not UserSourceConnection.objects.filter(source=alumni, identifier="0001").exists(),
+        "its Alumni connection went with it - the identity is free to be linked again",
+    )
+    check(User.objects.filter(pk=target.pk).exists(), "the target is untouched")
+finally:
+    User.objects.filter(username__in=[PROBE, DUPLICATE]).delete()
 
 print("PROFILE-EDITOR-OK")

@@ -78,6 +78,7 @@
   import { startFormDraftResend, stopFormDraftResend } from '$lib/forms/draftResend';
   import ConnectionAnnouncer from '$lib/components/shared/ConnectionAnnouncer.svelte';
   import OpenInAppBanner from '$lib/components/shared/OpenInAppBanner.svelte';
+  import AlumniLinkBanner from '$lib/components/shared/AlumniLinkBanner.svelte';
   import { getKeyboardViewport, initKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
   import {
     classifySwipeRelease,
@@ -849,6 +850,10 @@
     <ConnectionAnnouncer />
     <!-- Only inside the browser built into Messenger, Facebook or Instagram; it decides itself. -->
     <OpenInAppBanner />
+    <!-- The Alumni link, due mid second year and missing (D44); skippable, it decides itself. -->
+    {#if !isLoginPage}
+      <AlumniLinkBanner />
+    {/if}
   </div>
 
   <!-- THE ROW THAT WAS THE SHELL. It takes what the banners leave, so the height chain

@@ -144,6 +144,11 @@ export class PublicUserDto {
   createdAt?: Date;
   /** Whether the user has global admin privileges (only included in admin-facing responses). */
   admin?: boolean;
+  /**
+   * Whether the account holds its Alumni link (D44); `null` unknown. Served on the reader's OWN
+   * profile only (`GET /users/me`).
+   */
+  alumniLinked?: boolean | null;
 }
 
 /** Query params for the public user directory search. */
