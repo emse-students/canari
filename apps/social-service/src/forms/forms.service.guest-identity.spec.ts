@@ -50,6 +50,8 @@ describe('guest identity on a public form', () => {
 
   function makeService(form: Record<string, unknown>) {
     const saved: Record<string, unknown>[] = [];
+    /** The usage dashboard's daily count (`usage/usage-activity.ts`): the metrics it was told of. */
+    const usage = { count: jest.fn(() => Promise.resolve()) };
     const manager: any = {
       query: jest.fn(() => Promise.resolve([{ formId: 'f1' }])),
       create: jest.fn((_entity: unknown, row: Record<string, unknown>) => row),
@@ -91,9 +93,10 @@ describe('guest identity on a public form', () => {
       { count: jest.fn() } as any,
       {} as any,
       { enabled: () => false } as any,
-      {} as any
+      {} as any,
+      usage as any
     );
-    return { service, saved, formRepo };
+    return { service, saved, formRepo, usage };
   }
 
   const code = async (p: Promise<unknown>): Promise<string | undefined> => {
@@ -316,6 +319,23 @@ describe('guest identity on a public form', () => {
       expect(formRepo.save.mock.calls[0][0].guestFields).toEqual(['email']);
       await service.update('f1', { guestFields: [] } as any, 'u-owner', true);
       expect(formRepo.save.mock.calls[1][0].guestFields).toBeNull();
+    });
+  });
+
+  describe('the usage dashboard counts an answer stored (docs/wiki/usage-dashboard.md)', () => {
+    it("counts a guest's answer and a member's answer, once each", async () => {
+      const { service, usage } = makeService(baseForm());
+      await service.submit('f1', { answers: { q1: 'vege' } }, 'guest');
+      await service.submit('f1', { answers: { q1: 'vege' }, userId: 'u1' }, 'member');
+      expect(usage.count.mock.calls).toEqual([['forms'], ['forms']]);
+    });
+
+    it('counts nothing for an answer it refuses', async () => {
+      const { service, usage } = makeService(baseForm({ guestFields: ['lastName'] }));
+      await expect(service.submit('f1', { answers: {} }, 'guest')).rejects.toThrow(
+        BadRequestException
+      );
+      expect(usage.count).not.toHaveBeenCalled();
     });
   });
 

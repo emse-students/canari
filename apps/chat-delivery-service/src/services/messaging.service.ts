@@ -42,6 +42,7 @@ import { KeyPackage } from '../entities/key-package.entity';
 import { OneTimeKeyPackage } from '../entities/one-time-key-package.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { PushToken } from '../entities/push-token.entity';
+import { countUsageActivity } from '../utils/usage-activity';
 import {
   PushDeliveryTally,
   pushFailureCode,
@@ -2540,6 +2541,11 @@ export class MessagingService {
     // drops its offline recipients above, and a log that still said `ops.length` would describe rows
     // that do not exist.
     this.logger.log(`[SEND][${traceId}] DONE queued=${queuedRows.length} realtime=${sentCount}`);
+    // THE USAGE DASHBOARD'S MESSAGE COUNT (docs/wiki/usage-dashboard.md): an application frame its
+    // sender declared NOT silent - one somebody is told about. Receipts, reactions, edits and
+    // own-device copies are silent by construction, and a handshake frame is silent above; a repeat
+    // of a named message returned before this line. Not awaited: the send's answer never waits on it.
+    if (!silent) void countUsageActivity(this.redis, 'messages', this.logger);
 
     return {
       status: 'processed',
