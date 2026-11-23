@@ -135,7 +135,7 @@ five-hour outage). `apps/core-service/src/users/upstream-health.ts` is the state
 
 Tests: `upstream-health.spec.ts` (the state machine), `avatar-outage.spec.ts` (one probe, silence, return line,
 presence). Le Cercle's `[MIGALLERY]` fetch needs the same treatment in its own repository, still owed: see
-the backlog entry.
+the merge of `rootz/le-cercle` !33 (the upstream-health treatment of that fetch), which must also keep its `upstream-health.ts` in step with this one. The backlog entry about the five-hour outage was closed on 2026-11-23 as a reading the bench cannot take; this merge is the owed item that remains.
 
 ## What it does not do
 

@@ -2163,7 +2163,7 @@ Xcode 27.0, 27.1 (default) and 27.2, iOS SDKs 27.0-27.2, and no preinstalled Rus
 it with `dtolnay/rust-toolchain`). The standard label, not `-xlarge`: the larger runner is billed.
 `ios-compile-job.test.mjs` asserts the two jobs name the SAME runner and the SAME pin, so a pull
 request never compiles on another toolchain than the one the release archives with. The move and
-what closes it: the backlog entry.
+what closes it: [the backlog entry](backlog.d/reading-owed-ios-27-sdk-build-on-the-iphone-12-itms-90725.md).
 
 **Xcode 27 makes a Swift `@_cdecl` export a LOCAL symbol.** The first compile on the new runner
 failed at the link with `Undefined symbols: _init_plugin_customtabs`, `_init_plugin_gallery`,
