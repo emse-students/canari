@@ -1,9 +1,7 @@
 ## Decided by the user on 2026-10-23 - what is still open, and the rules not written elsewhere (trimmed 2026-11-19)
 
-target: 1.9.0
-
 **Still open from that day:** the Debian trixie base for the two Rust runtimes (`FROM debian:bookworm-slim`
-today; the non-root half of the containers lot is done, [backlog](p3-two-service-images-still-run-as-root.md));
+today; the non-root half of the containers lot is done, [backlog](../backlog.d/p3-two-service-images-still-run-as-root.md));
 and, under MiConnect, impersonation to be disabled and the profile-editor token restricted to non-admin
 accounts, neither visible in `infrastructure/authentik/`. The Pixel 6a is the user's personal phone,
 looked at only when the user asks.

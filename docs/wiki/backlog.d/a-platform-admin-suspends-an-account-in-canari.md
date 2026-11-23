@@ -2,7 +2,7 @@
 
 target: 1.9.0
 
-**Decided by the owner on 2026-11-19** ([decisions](owner-decisions-of-2026-11-19.md)), answering the
+**Decided by the owner on 2026-11-19** ([decisions](../decisions/owner-decisions-of-2026-11-19.md)), answering the
 question parked on 2026-11-15: Canari gains a sanction stronger than the mute - a SUSPENSION.
 
 - **In Canari only.** The person can no longer use Canari; MiConnect and the other sites are untouched

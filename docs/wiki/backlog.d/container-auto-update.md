@@ -2,7 +2,7 @@
 
 target: 1.8.0
 
-**Owner, 2026-11-19:** the weekly scan of the deployed images TRIGGERS the server-only release by itself for a digest bump (a rebuilt image of the same version, with its health check and automatic rollback); anything larger opens an issue ([decisions](owner-decisions-of-2026-11-19.md)).
+**Owner, 2026-11-19:** the weekly scan of the deployed images TRIGGERS the server-only release by itself for a digest bump (a rebuilt image of the same version, with its health check and automatic rollback); anything larger opens an issue ([decisions](../decisions/owner-decisions-of-2026-11-19.md)).
 
 Decided by the owner on 2026-11-16, after the image scan blocked a release on base-image findings
 nobody had been told about ([cicd](../cicd.md)). The goal: a vulnerable base image is replaced without

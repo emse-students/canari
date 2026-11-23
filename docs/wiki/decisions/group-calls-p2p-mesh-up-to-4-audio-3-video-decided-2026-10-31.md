@@ -1,7 +1,5 @@
 ## Group calls go peer to peer in a MESH up to 4 in audio and 3 in video, a relay SFU beyond (owner decision D-A, 2026-10-31, not built - feeds WP-C11)
 
-target: 1.8.0
-
 _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
@@ -138,4 +136,4 @@ Delete this entry when WP-C11 ships; its rule goes to `durable-rules.md`, the me
 
 **The readings the group-call build owes once it ships in a stable (carried here on 2026-11-14 from three reading entries deleted by the owner's rule that a reading of unshipped code is deleted: none of WP-GC1 to WP-GC4, #3489-#3502, is in `v1.6.12`).** File them as readings on the pre-release that first carries the group-call client, not before. (1) On dev with `group_calls_mode = mesh`, a three-way AUDIO call and a three-way VIDEO call between the Mi 9T, the iPhone 12 and a desktop browser, each started once from each phone: every participant hears and (video) sees the two others, the shield shows everywhere, each log has one `[leg ...]` line set per other participant with `E2E path check ... PASS`, a leave closes only that leg (`leg closed`) until the last, one member declining changes nothing for the two others. (2) The Mi 9T and the iPhone 12 each as a sender to two receivers for five minutes: each leg's `[CALL_REPORT]` (fps sent, ladder rung, `videoSendReduced`), the phone's CPU (Android `top`, Xcode gauge) and temperature; whether the cap of 3 in video holds. (3) On the iPhone 12 in the three-way call, the worker's `E2E receiver transformer #N` lines (one per participant), no `E2E key mismatch`, no `undecryptable`, both voices heard, each leg's `[CALL_REPORT]` (`callId/<user8>`) carrying decrypted frames: whether WebKit hands each receiver transform ITS options when one page holds two peer connections.
 
-_2026-11-20, a pointer:_ WP-GC6's client half (`callRoomOccupancy.ts`) lives on the unmerged local branch `feat/group-calls-wp1`, behind `main`; the SFU leg's `CallService` wiring waits on it (see [the empty-room entry](group-call-empty-room-answer-and-outcome-less-ring.md)).
+_2026-11-20, a pointer:_ WP-GC6's client half (`callRoomOccupancy.ts`) lives on the unmerged local branch `feat/group-calls-wp1`, behind `main`; the SFU leg's `CallService` wiring waits on it (see [the empty-room entry](../backlog.d/group-call-empty-room-answer-and-outcome-less-ring.md)).

@@ -1,13 +1,11 @@
 ## Decided by the user on 2026-10-18 - what is still open (trimmed 2026-11-19)
 
-target: 1.8.0
-
 Every package of that day shipped or has its own entry: WP-DEL-LOCAL, WP-PRESENCE (its push half:
-[the presence poll](p3-the-phone-polls-presence-every-ten-seconds-over-a-live-websocket-2026-09-02.md)),
+[the presence poll](../backlog.d/p3-the-phone-polls-presence-every-ten-seconds-over-a-live-websocket-2026-09-02.md)),
 WP-SMOKE-LOGIN, WP-HOLD-NOTHING, WP-REELS-MENU, WP-PUSH-I18N, WP-MENTION-NAME, WP-NICK-COMMUNITY-RULES
 (#3177), WP-CHECKPOINT-SKIP ([open-questions](../open-questions.md#decided-2026-11-07-lead-owners-delegation-build-with-k100-behind-checkpoint_skip_mode-off-flip-after-the-dev-readings-below)),
 WP-RESTORE-1 ([design](../account-restore.md); closed by the owner, 2026-11-14), WP-MIGALLERY-OFFSITE
-([the offsite](p2-migallery-s-only-offsite-still-lands-on-the-old-canari-vm.md)) and WP-SECOND-CAMPAIGN-VENUE
+([the offsite](../backlog.d/p2-migallery-s-only-offsite-still-lands-on-the-old-canari-vm.md)) and WP-SECOND-CAMPAIGN-VENUE
 (the second campaign, closed by the owner on 2026-11-19: the server specs cover its last case).
 
 Still open here:

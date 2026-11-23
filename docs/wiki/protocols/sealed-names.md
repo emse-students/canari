@@ -4,7 +4,7 @@
 groups and communities are encrypted so that even Canari cannot read them. A group's or a community's
 NAME is still a plaintext column today, so the server knows what every group is called and pushes it
 to Google and Apple ([dm-vs-community-encryption](dm-vs-community-encryption.md#both)). The owner
-ordered the work on 2026-11-14 ([decisions](../backlog.d/owner-decisions-of-2026-11-14.md)): group
+ordered the work on 2026-11-14 ([decisions](../decisions/owner-decisions-of-2026-11-14.md)): group
 names (step 6 of his privacy order), then a sealed community state - name, photo, salons, role labels,
 community nicknames (step 7). The backlog entry is
 [p1-encrypt-the-names-of-groups-communities-and-salons](../backlog.d/p1-encrypt-the-names-of-groups-communities-and-salons.md).

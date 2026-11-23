@@ -4,7 +4,7 @@
 ([the decisions](#the-owners-decisions-of-2026-11-09)); WP-R1 to WP-R5 built and shipped (the client in
 the `1.7.0` stable); `live_replays_mode` turned `on` in production and on dev on 2026-11-19 at the
 owner's request, BEFORE the texts (*"Prod maintenant, textes juste après"*,
-[decision 42](backlog.d/owner-decisions-of-2026-11-19.md)); WP-R6, the texts and `LIVE_RULES_VERSION` 3,
+[decision 42](decisions/owner-decisions-of-2026-11-19.md)); WP-R6, the texts and `LIVE_RULES_VERSION` 3,
 [built](#wp-r6-as-built-the-texts) in the pull request that followed. The phone readings are owed.**
 
 This page is the ONE design. It reconciles the two drafts written for it: #3234 (2026-11-09, the
@@ -485,7 +485,7 @@ The client half (`frontend/`), inert while `live_replays_mode` is `off`:
 - **Save (WP-R5):** `ReelSaveButton` runs `saveReplayFlow` (list, say the size, confirm) then `saveReplay`: the first init once, every fragment staged at a continuing offset (`stageBlobAt`), a second part (`-2.mp4`) when an init differs; a part is committed to the gallery as soon as it is closed. On the web a part is held and handed to the download.
 - **Broadcaster texts (part of WP-R6):** the audience rule names the replay while the switch is on; the end confirm and the end screen read the server's facts, [below](#the-end-texts-say-the-servers-verdict) (superseding a first version that read the switch and a client clock).
 
-**`LIVE_RULES_VERSION` stayed 2 until the texts shipped, and is 3 since WP-R6.** Version 3 is the broadcaster accepting a text that names the replay; raised while the switch was off, every broadcaster would have re-accepted a sheet promising a replay that does not happen. The plan was to raise it with the texts BEFORE the switch; the owner had the switch turned on first (2026-11-19, [decision 42](backlog.d/owner-decisions-of-2026-11-19.md)), so lives started between the flip and WP-R6 were kept as replays under a version 2 acceptance and the pre-live line that already named the replay.
+**`LIVE_RULES_VERSION` stayed 2 until the texts shipped, and is 3 since WP-R6.** Version 3 is the broadcaster accepting a text that names the replay; raised while the switch was off, every broadcaster would have re-accepted a sheet promising a replay that does not happen. The plan was to raise it with the texts BEFORE the switch; the owner had the switch turned on first (2026-11-19, [decision 42](decisions/owner-decisions-of-2026-11-19.md)), so lives started between the flip and WP-R6 were kept as replays under a version 2 acceptance and the pre-live line that already named the replay.
 
 Owed: the phone readings listed above (cover and time left on the card included).
 
@@ -817,7 +817,7 @@ re-run the effect) and the player's start runs untracked. Test: a re-keyed post,
 
 ## The organiser's "Rediffusion" switch (owner, 2026-11-20)
 
-**Decided by the owner on 2026-11-20** ([decision 5](backlog.d/owner-decisions-of-2026-11-20.md)): a finished live
+**Decided by the owner on 2026-11-20** ([decision 5](decisions/owner-decisions-of-2026-11-20.md)): a finished live
 stays as a replay ONLY if its organiser leaves a "Rediffusion" switch on. **Charter, principle 1 (your messages are
 yours, [principes](../principes.md)): the video is the organiser's, so keeping it is theirs to grant and to
 withdraw, at any moment, and withdrawing deletes it.** It narrows the platform switch (`live_replays_mode`), never
@@ -869,5 +869,5 @@ with the whole backlog trimmed, off before publication, off after publication, a
 `live-replay-choice.spec.ts`, `liveBroadcast.svelte.test.ts`, `api.test.ts`.
 
 **Not built, asked the same day**: the chat and the reactions replayed in sync with the video
-([decision 6](backlog.d/owner-decisions-of-2026-11-20.md), [design and open questions](backlog.d/live-replay-chat-and-reactions-replayed.md)).
+([decision 6](decisions/owner-decisions-of-2026-11-20.md), [design and open questions](backlog.d/live-replay-chat-and-reactions-replayed.md)).
 Today a live's chat and reaction rows are deleted in the publication transaction, as designed above.

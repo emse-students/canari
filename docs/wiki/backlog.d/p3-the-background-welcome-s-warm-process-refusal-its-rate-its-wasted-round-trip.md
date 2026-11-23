@@ -8,7 +8,7 @@ _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
 _2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
-_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md))._
+_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](../decisions/owner-decisions-of-2026-11-17.md))._
 
 1. **The phone learns it is warm too late.** `processWelcomeRequestBackground`
    (`CanariFirebaseMessagingService.kt`) fetches the KeyPackage over HTTP and takes the Redis add-lock

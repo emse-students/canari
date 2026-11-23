@@ -948,7 +948,7 @@ Every bell kind now has a gate, re-asked at each read in the bell's one statemen
 The agenda's link back to a post (`GET /posts/calendar-link/:eventId`) served a scheduled post to
 every reader of its association before its hour; it now keeps published posts only, as the feed,
 the search and the post by id do. Found by the audience audit of 2026-11-14
-([audit](docs/wiki/backlog.d/audience-audit-2026-11-14.md)).
+([audit](docs/wiki/decisions/audience-audit-2026-11-14.md)).
 
 ### Added - a 3-party encrypted mesh call in CI
 
@@ -1453,7 +1453,7 @@ closed on evidence already written down or as moot; the still-open ones carry th
 
 Closed on 2026-11-14: the zero-tap restore (dropped by the owner, "On zappe"), the Lydia production rows and the historical-account bridge (both validated by the owner), the placeholder's MLS leaf (closed as unanswerable, it cost nothing cryptographically), and WebView debugging in the release build (the `v1.6.12` release APK has no `debuggable` attribute and no `setWebContentsDebuggingEnabled` call in its dex or its native library). Five open entries carry their read-only production and dev measurement of the same day ([readings owed](docs/wiki/plan.md#readings-owed)).
 
-The owner's decisions of 2026-11-14 are recorded in [backlog.d](docs/wiki/backlog.d/owner-decisions-of-2026-11-14.md).
+The owner's decisions of 2026-11-14 are recorded in [backlog.d](docs/wiki/decisions/owner-decisions-of-2026-11-14.md).
 
 ### Changed - the web readings of batch 1 taken on dev
 
@@ -3791,7 +3791,7 @@ The booking sheet, its "Jusqu'a" stepper, the free slots of the day grid, and th
 
 ### Added - the SFU places a real call in CI: two browsers, coturn, encrypted audio
 
-`call-service` is proven by an end-to-end call on every change that touches it (owner decision D3): its binary, a throwaway coturn and two headless Chromes running the app's own E2E transform, passing only on frames decrypted under the other browser's key over a relay pair ([call-service](docs/wiki/services/call-service.md#the-end-to-end-call-in-ci)). Group calls' mesh-to-SFU switch and the choice of relay are decided (D1, D2, D4) ([backlog](docs/wiki/backlog.d/group-calls-p2p-mesh-up-to-4-audio-3-video-decided-2026-10-31.md)).
+`call-service` is proven by an end-to-end call on every change that touches it (owner decision D3): its binary, a throwaway coturn and two headless Chromes running the app's own E2E transform, passing only on frames decrypted under the other browser's key over a relay pair ([call-service](docs/wiki/services/call-service.md#the-end-to-end-call-in-ci)). Group calls' mesh-to-SFU switch and the choice of relay are decided (D1, D2, D4) ([backlog](docs/wiki/decisions/group-calls-p2p-mesh-up-to-4-audio-3-video-decided-2026-10-31.md)).
 
 ### Fixed - the CanaReels viewer shows a followed member's reels across campuses
 
@@ -5347,7 +5347,7 @@ Scripts run only from the app itself or by hash: no `'unsafe-inline'` or `'unsaf
 
 ### Documented - the user's decisions of 2026-10-23
 
-Bookings redesign, sharing, reels, calls, payments, MiConnect and the next stable are recorded in [backlog](docs/wiki/backlog.d/decided-by-the-user-on-2026-10-23-bookings-redesign-sharing-reels-calls.md) and [bookings-chantier](docs/wiki/bookings-chantier.md#redesign-decided-2026-10-23).
+Bookings redesign, sharing, reels, calls, payments, MiConnect and the next stable are recorded in [backlog](docs/wiki/decisions/decided-by-the-user-on-2026-10-23-bookings-redesign-sharing-reels-calls.md) and [bookings-chantier](docs/wiki/bookings-chantier.md#redesign-decided-2026-10-23).
 
 ### Documented - the user's decisions on the open pull requests of 2026-10-23
 
