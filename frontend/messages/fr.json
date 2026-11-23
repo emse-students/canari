@@ -6858,5 +6858,6 @@
   "alumni_merge_error_not_found": "Ce compte n'existe plus.",
   "alumni_merge_error_not_duplicate": "Ce compte n'est pas un doublon Alumni : rien n'a été supprimé.",
   "alumni_merge_error_no_match": "Les deux comptes ne correspondent pas : rien n'a été supprimé.",
-  "alumni_merge_error_holdings": "Impossible de compter ce que contient le doublon : rien n'a été supprimé."
+  "alumni_merge_error_holdings": "Impossible de compter ce que contient le doublon : rien n'a été supprimé.",
+  "form_question_duplicates_identity": "Ce champ est déjà transmis avec chaque réponse ({field}). Vous pouvez supprimer cette question."
 }
