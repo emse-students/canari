@@ -321,13 +321,14 @@ describe('channel push payload contract (social-service writer vs the three nati
       'void resolveNotificationSenderName(senderId, conversationKey, convo)'
     );
     const flushed = messaging.indexOf('await flushNameMirror();', resolved);
-    const posted = messaging.indexOf(
-      'ctx.sendSystemNotification(senderName, notificationBody',
-      resolved
-    );
+    const posted = messaging.indexOf('return ctx.sendSystemNotification(', resolved);
+    // ...and the decision is re-made on the facts of the post's instant, after the awaits (review
+    // of #3985: a reader back in front meanwhile has had `read_here` retire the banners already).
+    const reasked = messaging.indexOf('if (canSeeArrival(ctx, conversationKey)) {', flushed);
     expect(resolved).toBeGreaterThan(-1);
     expect(flushed).toBeGreaterThan(resolved);
-    expect(posted).toBeGreaterThan(flushed);
+    expect(reasked).toBeGreaterThan(flushed);
+    expect(posted).toBeGreaterThan(reasked);
     // NEVER A BORROWED FACE: a line not added (the other trigger posted it first) lends no icon.
     expect(kotlinSource).toMatch(
       /\} else if \(alreadyPosted\) \{[\s\S]{0,600}style\.messages\s*\.lastOrNull \{[^}]*\}\s*\?\.person\?\.icon/
