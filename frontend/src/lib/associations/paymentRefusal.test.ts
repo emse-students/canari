@@ -26,6 +26,11 @@ describe('providerRefusalMessage', () => {
     expect(providerRefusalMessage(err)).toBe(m.form_previous_payment_open());
   });
 
+  it('words a submit whose answer moved during its payment from its code', () => {
+    const err = new SocialApiError('changed', 'PAYMENT_ISSUE_WITHDRAWN', 409);
+    expect(providerRefusalMessage(err)).toBe(m.form_payment_issue_withdrawn());
+  });
+
   it('words an association whose payments are not active, and one Lydia blocked, apart', () => {
     const notActive = new SocialApiError('Payments off', 'PAYMENTS_NOT_ACTIVATED', 409);
     const blocked = new SocialApiError('Blocked', 'PAYMENTS_BLOCKED', 409);

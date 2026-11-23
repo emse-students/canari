@@ -38,6 +38,15 @@ export const FORM_CASH_NOT_OFFERED = 'FORM_CASH_NOT_OFFERED';
  */
 export const CASH_ALREADY_PAID_ONLINE = 'CASH_ALREADY_PAID_ONLINE';
 
+/**
+ * The `code` of the 409 a SUBMIT gets when its answer moved while its Lydia request was being
+ * created (`issueOnlineRequest`'s conditional naming; a resume answers `PAYMENT_NOT_RESUMABLE`):
+ * the request is withheld and cancelled, nothing was charged, the form is to be reloaded. Expected
+ * never - every path that moves a row naming no request refuses or settles first. Words:
+ * `form_payment_issue_withdrawn`.
+ */
+export const PAYMENT_ISSUE_WITHDRAWN = 'PAYMENT_ISSUE_WITHDRAWN';
+
 /** What of a row the rule reads. */
 export type CashSwitchRow = Pick<
   Submission,

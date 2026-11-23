@@ -102,6 +102,7 @@ import {
 import {
   CASH_ALREADY_PAID_ONLINE,
   FORM_CASH_NOT_OFFERED,
+  PAYMENT_ISSUE_WITHDRAWN,
   PAYMENT_NOT_SWITCHABLE,
   cashSwitchRowRefusal,
   paidOnline,
@@ -3216,7 +3217,9 @@ export class FormsService {
           !existingPending ||
           !['pending', 'cancelled', 'expired'].includes(existingPending.paymentStatus) ||
           existingPending.paymentRequestId !== previous.paymentRequestId ||
-          existingPending.stripeSessionId !== previous.stripeSessionId
+          existingPending.stripeSessionId !== previous.stripeSessionId ||
+          // A switch to cash claims it (`claimCashSwitch`): that switch decides the row.
+          !!existingPending.cashSwitchClaimId
         ) {
           throw this.previousPaymentOpen(
             previous.id,
@@ -3450,6 +3453,7 @@ export class FormsService {
 
     if (totalCents > 0) {
       return this.issueOnlineRequest(form, savedSubmission.id, totalCents, {
+        issuedFor: 'submit',
         guest,
         receiptToken: receipt?.token ?? null,
         userId: input.userId,
@@ -3575,9 +3579,11 @@ export class FormsService {
       });
       if (!locked) throw new NotFoundException('Submission not found');
       // The row the settle was about, unchanged: another resume (or a callback) moved it otherwise.
+      // ...or a switch to cash claims it (`claimCashSwitch`): that switch is the payment in progress.
       const changed =
         locked.paymentRequestId !== row.paymentRequestId ||
-        locked.stripeSessionId !== row.stripeSessionId;
+        locked.stripeSessionId !== row.stripeSessionId ||
+        !!locked.cashSwitchClaimId;
       // The ids are checked unchanged just below, so the request's Business read above still holds.
       const lockedRefusal = resumeRowRefusal(
         locked,
@@ -3618,6 +3624,7 @@ export class FormsService {
     });
 
     return this.issueOnlineRequest(form, submissionId, row.totalPaid, {
+      issuedFor: 'resume',
       guest: false,
       receiptToken: null,
       userId: callerId,
@@ -3637,31 +3644,28 @@ export class FormsService {
    * NO DOUBLE PAYMENT, from Lydia's own word and before anything moves: the online request the row
    * names is SETTLED first (`settleRequestAtProvider`, D2) - cancelled, or read dead, it can never be
    * paid; read PAID, the answer is recorded paid online (`markPaid`) and nothing is switched
-   * (`alreadyPaid`); open or unreadable, the switch is refused `PREVIOUS_PAYMENT_OPEN`. A `pending`
-   * row naming NO request is one a submit or a resume is issuing right now: refused
-   * `PAYMENT_IN_PROGRESS` (the request about to be named is the one to pay). Under every lock the row
-   * must be the one read - same request ids, and never moved INTO `pending` since (a resume) - so a
-   * switch can never land on a row another path is about to hand to Lydia. The row KEEPS naming its
-   * request afterwards: the trace a confirmation that should never come is matched against.
+   * (`alreadyPaid`); open or unreadable, the switch is refused `PREVIOUS_PAYMENT_OPEN`. Under the
+   * lock the row must be the one read (`switchReplayOrRefusal`), so a switch never lands on a row
+   * another path is about to hand to Lydia. The row KEEPS naming its request afterwards: the trace
+   * a confirmation that should never come is matched against.
    *
-   * THE SEAT, in two phases that take their locks in the one order every path takes them
-   * (association, form, submission):
-   * - PHASE A, the row naming a request: under the SUBMISSION row lock, held ACROSS the call to
-   *   Lydia. Both release paths (the cancel callback, the return poll) and the expiry job write that
-   *   row under the same lock, so the cancel this switch makes cannot release the row before it
-   *   moves: they queue, then find `pending_cash` and leave it. If the hold still runs at the wall
-   *   clock after the call (`livePendingAtClockWhere`), the row moves to `pending_cash` right there -
-   *   its seat KEPT, never released for an instant. No form lock is taken here: the row already
-   *   holds its seat, and the count every writer makes under the form lock already includes it.
-   * - PHASE B, a row holding no seat (released, never issued, or a hold that ended DURING the call):
-   *   under the form lock, then the row lock, it re-takes a seat with the capacity check a submit
-   *   and a resume make (`FORM_FULL`).
+   * NO DATABASE LOCK IS HELD ACROSS THE CALL TO LYDIA (review of #4019: a lock held for a provider
+   * call convoys every writer of the form and can exhaust the pool). A row still within its hold -
+   * the one whose seat a release would take - is CLAIMED first, durably (`cashSwitchClaimId`, a
+   * short row-locked write): the release paths (Lydia's cancel callback, the return poll, the
+   * reconciliation's release) and a resume or a submit's retry REFUSE a claimed row, so the cancel
+   * this switch makes cannot release the seat before the row moves. The call is then made with no
+   * lock held, and one short transaction (association, form, row - the order every path takes)
+   * finishes: the seat KEPT when the hold still runs at the wall clock (`livePendingAtClockWhere`),
+   * else re-taken with the capacity check a submit makes (`FORM_FULL`). Every outcome clears the
+   * claim; a claim a crash leaves ends with the row's hold (`expireStalePendingPayments` expires the
+   * row and clears it), or sooner on the next press, which re-drives it. A row already released
+   * (`expired`, `cancelled`) holds no seat to protect: it is settled with no claim.
    *
    * IDEMPOTENT FROM THE ROW: an answer already `pending_cash` is answered as the switch made, with
-   * no call anywhere - a second press, two tabs, or two simultaneous presses (the second queues on
-   * the row lock and finds the row switched); one already paid online is answered `alreadyPaid`.
-   * Every refusal a guest ceiling or an archived association would give is judged BEFORE the
-   * irreversible cancel at Lydia, and again under the lock.
+   * no call anywhere; one already paid online is answered `alreadyPaid`. Every refusal a guest
+   * ceiling or an archived association would give is judged BEFORE the irreversible cancel at Lydia,
+   * and again under the lock.
    */
   async switchToCash(caller: CashSwitchCaller): Promise<CashSwitchOutcome> {
     const guest = caller.kind === 'guest';
@@ -3721,9 +3725,9 @@ export class FormsService {
     // switch sells only what a fresh cash submit would (the resume's own rule).
     await this.assertResumeQuote(form, row, userId, 'cash-switch');
     await this.assertGrantedTierIsARise(form, userId);
-    // The guest ceiling, judged BEFORE the irreversible cancel at Lydia (a refusal after it would
-    // leave the payer with neither payment), and again under the form lock. The association's
-    // archive is judged under its share lock before the cancel too, first thing in either phase.
+    // The archive and the guest ceiling, judged BEFORE the irreversible cancel at Lydia (a refusal
+    // after it would leave the payer with neither payment), and again under the lock.
+    await this.assertAssociationLiveUnderLock(this.submissionRepo.manager, form, 'cash switch');
     const visitorKey = guest
       ? (row.guestVisitorKey ?? guestVisitorKey(form.id, caller.visitorAddress))
       : null;
@@ -3731,46 +3735,65 @@ export class FormsService {
       await this.assertGuestCeiling(this.submissionRepo.manager, form, submissionId, visitorKey);
     }
 
-    const ids = { requestId: row.paymentRequestId, sessionId: row.stripeSessionId };
-    if (ids.requestId || ids.sessionId) {
-      const phaseA = await this.switchSettlingUnderRowLock(row, form, settleable, {
+    let claim: string | null = null;
+    try {
+      if (row.paymentRequestId || row.stripeSessionId) {
+        const claimed = await this.claimCashSwitch(row, form, settleable);
+        if (typeof claimed === 'string') claim = claimed;
+        else if (claimed) return claimed;
+        // NO LOCK HELD: the claim keeps the row's seat from every release while Lydia answers.
+        const settled = await this.settleRequestAtProvider(row, form);
+        if (settled === 'paid') {
+          if (claim) await this.releaseCashSwitchClaim(submissionId, claim, 'request paid');
+          claim = null;
+          this.logger.log(
+            `[Forms] switchToCash ${submissionId}: the online request was paid - recorded, nothing switched`
+          );
+          try {
+            await this.markPaid(
+              submissionId,
+              row.paymentRequestId ?? row.stripeSessionId ?? undefined
+            );
+          } catch (err: unknown) {
+            // As `settleOpenRequest` answers it: the payment is Lydia's word, the write failed -
+            // the next press, the callback or the reconciliation records it.
+            throw this.previousPaymentOpen(
+              submissionId,
+              `recording the paid request failed: ${err instanceof Error ? err.message : String(err)}`
+            );
+          }
+          return { submissionId, alreadyPaid: true };
+        }
+      }
+      const done = await this.finishCashSwitch(row, form, settleable, {
         oneAnswer,
         userId,
         visitorKey,
       });
-      if (phaseA === 'paid') {
-        // Recorded outside the row lock it would queue on, as the callback would record it.
-        this.logger.log(
-          `[Forms] switchToCash ${submissionId}: the online request was paid - recorded, nothing switched`
-        );
-        await this.markPaid(submissionId, ids.requestId ?? ids.sessionId ?? undefined);
-        return { submissionId, alreadyPaid: true };
-      }
-      if (phaseA !== 'seat-released') return phaseA;
+      claim = null;
+      return done;
+    } catch (err: unknown) {
+      // Every refusal clears the claim it made: the row is the payer's again, as it was.
+      if (claim) await this.releaseCashSwitchClaim(submissionId, claim, 'switch refused');
+      throw err;
     }
-    return this.switchTakingASeat(row, form, settleable, { oneAnswer, userId, visitorKey });
   }
 
   /**
-   * PHASE A of `switchToCash`: the request the row names, settled at Lydia WHILE the submission row
-   * lock is held, so neither release path (Lydia's cancel callback, the return poll) nor the expiry
-   * job can release the row between the cancel and the move - they queue on the lock and find
-   * `pending_cash`. The association's archive lock is taken FIRST (the order every path takes).
-   *
-   * Answers the switch made (the hold still runs at the wall clock after the call: seat kept),
-   * `paid` (nothing written; the caller records it outside this lock), or `seat-released` (the row
-   * holds no seat - released before, or its hold ended during the call; nothing written, the
-   * request already settled dead) for PHASE B.
+   * THE CLAIM of `switchToCash`, in one short row-locked transaction: a row still `pending` within
+   * its hold (the only one whose seat a release would take) gets `cashSwitchClaimId`, a token of
+   * this press. Answers the token; null when the row holds no seat to protect (released already,
+   * or past its hold - settled with no claim); or the replay when the switch was made meanwhile.
+   * A row already claimed (another press, or one a crash left) is claimed again: the press re-drives
+   * it, and the earlier press's own release of the claim matches its token only.
    */
-  private async switchSettlingUnderRowLock(
+  private async claimCashSwitch(
     row: Submission,
     form: Form,
-    settleable: boolean,
-    who: { oneAnswer: boolean; userId: string | undefined; visitorKey: string | null }
-  ): Promise<CashSwitchOutcome | 'paid' | 'seat-released'> {
+    settleable: boolean
+  ): Promise<string | null | CashSwitchOutcome> {
     const submissionId = row.id;
     return this.submissionRepo.manager.transaction('READ COMMITTED', async (manager) => {
-      await this.assertAssociationLiveUnderLock(manager, form, 'cash switch');
       const locked = await manager.findOne(Submission, {
         where: { id: submissionId },
         lock: { mode: 'pessimistic_write' },
@@ -3778,33 +3801,59 @@ export class FormsService {
       if (!locked) throw new NotFoundException('Submission not found');
       const replay = this.switchReplayOrRefusal(row, locked, settleable);
       if (replay) return replay;
-      if (who.oneAnswer) {
-        await this.assertNoOtherAnswer(manager, form.id, who.userId!, submissionId);
-      }
-      const settled = await this.settleRequestAtProvider(locked, form);
-      if (settled === 'paid') return 'paid';
-      // The hold judged at THIS instant: the transaction began before the lock wait and the call.
-      const holdsSeat =
+      const holds =
         (await manager.count(Submission, {
           where: livePendingAtClockWhere(form.id, { id: submissionId }),
         })) > 0;
-      if (!holdsSeat) {
-        this.logger.log(
-          `[Forms] switchToCash ${submissionId}: request settled, the row holds no seat (${locked.paymentStatus}) - a seat is re-taken under the form lock`
+      if (!holds) {
+        this.logger.debug(
+          `[Forms] switchToCash ${submissionId}: ${locked.paymentStatus}, no seat held - settled with no claim`
         );
-        return 'seat-released';
+        return null;
       }
-      // The visitor's count is unchanged: the row waited under its own key and still does.
-      return this.writeCashSwitch(manager, locked, form, who.visitorKey, 'seat kept');
+      const token = crypto.randomUUID();
+      await manager.update(Submission, submissionId, { cashSwitchClaimId: token });
+      this.logger.log(
+        `[Forms] switchToCash ${submissionId}: claimed (${locked.cashSwitchClaimId ? 're-driving an earlier claim' : 'new'}) - its seat is kept from every release while Lydia answers`
+      );
+      return token;
     });
   }
 
   /**
-   * PHASE B of `switchToCash`: a row holding no seat re-takes one under the form lock, with the
-   * capacity check a fresh submit and a resume make (`FORM_FULL`), and the guest ceiling counted
-   * as a direct guest cash answer is.
+   * Clears THIS press's claim (`claimCashSwitch`), conditionally on its token: a later press that
+   * re-drove the row owns the claim now. A failure is accused: the claim then ends with the row's
+   * hold (`expireStalePendingPayments`), the release paths refusing the row until then.
    */
-  private async switchTakingASeat(
+  private async releaseCashSwitchClaim(
+    submissionId: string,
+    token: string,
+    why: string
+  ): Promise<void> {
+    try {
+      const cleared = await this.submissionRepo.update(
+        { id: submissionId, cashSwitchClaimId: token },
+        { cashSwitchClaimId: null }
+      );
+      this.logger.log(
+        `[Forms] switchToCash ${submissionId}: claim ${cleared?.affected === 0 ? 'already taken over' : 'cleared'} (${why})`
+      );
+    } catch (err: unknown) {
+      this.logger.error(
+        `[Forms] switchToCash ${submissionId}: clearing the claim failed (${why}): ${err instanceof Error ? err.message : String(err)} - it ends with the row's hold`
+      );
+    }
+  }
+
+  /**
+   * THE FINISH of `switchToCash`, one short transaction in the one lock order (association, form,
+   * row), with nothing external inside: the row as read (`switchReplayOrRefusal`), one answer per
+   * person, then the seat - KEPT when the hold still runs at the wall clock (the claim kept every
+   * release away, and every count already includes it), else re-taken with the capacity check a
+   * fresh submit makes (`FORM_FULL`) - and the guest ceiling counted as a direct guest cash answer
+   * is, under the form lock (a row whose visitor key was forgotten is written the presser's).
+   */
+  private async finishCashSwitch(
     row: Submission,
     form: Form,
     settleable: boolean,
@@ -3824,7 +3873,12 @@ export class FormsService {
       if (who.oneAnswer) {
         await this.assertNoOtherAnswer(manager, form.id, who.userId!, submissionId);
       }
-      if (form.maxSubmissions) {
+      // The hold judged at THIS instant: the transaction began after a call of unknown length.
+      const holdsSeat =
+        (await manager.count(Submission, {
+          where: livePendingAtClockWhere(form.id, { id: submissionId }),
+        })) > 0;
+      if (!holdsSeat && form.maxSubmissions) {
         // The capacity, as a fresh submit counts it: this row holds no seat, so it needs one free.
         const count = await manager.count(Submission, { where: seatHoldingWhere(form.id) });
         if (count >= form.maxSubmissions) {
@@ -3835,9 +3889,20 @@ export class FormsService {
         }
       }
       if (who.visitorKey) {
-        await this.assertGuestCeiling(manager, form, submissionId, who.visitorKey);
+        await this.assertGuestCeiling(
+          manager,
+          form,
+          submissionId,
+          locked.guestVisitorKey ?? who.visitorKey
+        );
       }
-      return this.writeCashSwitch(manager, locked, form, who.visitorKey, 'seat re-taken');
+      return this.writeCashSwitch(
+        manager,
+        locked,
+        form,
+        who.visitorKey,
+        holdsSeat ? 'seat kept' : 'seat re-taken'
+      );
     });
   }
 
@@ -3959,6 +4024,8 @@ export class FormsService {
       cashExpiresAt,
       cashReminderDueAt: cashReminderDue,
       cashReminderNotifiedAt: null,
+      // The switch is done: its claim, if any (`claimCashSwitch`), ends with it.
+      cashSwitchClaimId: null,
       ...(key ? { guestVisitorKey: key } : {}),
     });
     this.logger.log(
@@ -4172,6 +4239,8 @@ export class FormsService {
     submissionId: string,
     totalCents: number,
     opts: {
+      /** Which path issues it: what a request withheld from a moved row answers is worded for it. */
+      issuedFor: 'submit' | 'resume';
       guest: boolean;
       /** The guest's receipt, minted by `submit` for a guest paying online; null for a member. */
       receiptToken: string | null;
@@ -4353,11 +4422,25 @@ export class FormsService {
           }
         );
         if (named?.affected === 0) {
-          await this.withdrawOrphanRequest(submissionId, requestId, sessionId, connectAccountId);
-          throw new ConflictException({
-            code: PAYMENT_NOT_RESUMABLE,
-            message: 'This answer is no longer waiting for an online payment.',
+          await this.withdrawOrphanRequest(submissionId, {
+            requestId,
+            sessionId,
+            orderRef: idempotencyKey,
+            connectAccountId: connectAccountId ?? null,
           });
+          // Worded for the path that issued it: a resume's answer is no longer resumable, a fresh
+          // submit's answer changed under it (nothing was charged, the form is to be reloaded).
+          throw new ConflictException(
+            opts.issuedFor === 'resume'
+              ? {
+                  code: PAYMENT_NOT_RESUMABLE,
+                  message: 'This answer is no longer waiting for an online payment.',
+                }
+              : {
+                  code: PAYMENT_ISSUE_WITHDRAWN,
+                  message: 'Your answer changed while its payment was being prepared.',
+                }
+          );
         }
       }
 
@@ -4390,40 +4473,69 @@ export class FormsService {
   /**
    * A request Lydia just created for a row that MOVED while it was being issued (the conditional
    * write in `issueOnlineRequest` found it no longer `pending` naming none): accused at ERROR, and
-   * cancelled at Lydia so it can never be paid - its URL is never handed to the payer. A cancel that
-   * fails is accused too: that request may still be paid, onto a row that does not name it.
+   * cancelled at Lydia so it can never be paid - its URL is never handed to the payer.
+   *
+   * A CANCEL THAT FAILS leaves a request that may still be paid (Lydia also sends it to the payer's
+   * app). It is then NAMED on the row, conditionally on the row naming no request - the only way it
+   * can have moved, since every path that moves a row naming none refuses or settles first - so the
+   * row's own machinery owns it: the confirm callback reads a row by the request it names and
+   * records a payment on it (`markPaid`, the late-payment rules for a released row), and a resume or
+   * a switch settles it at Lydia before anything else. A row naming another request by then is
+   * accused: the payment would be recorded by nothing.
    */
   private async withdrawOrphanRequest(
     submissionId: string,
-    requestId: string | null,
-    sessionId: string | null,
-    connectAccountId: string | undefined
+    orphan: {
+      requestId: string | null;
+      sessionId: string | null;
+      orderRef: string;
+      connectAccountId: string | null;
+    }
   ): Promise<void> {
+    const { requestId, sessionId, connectAccountId } = orphan;
     const current = await this.submissionRepo.findOne({ where: { id: submissionId } });
     this.logger.error(
       `[Forms] issueOnlineRequest ${submissionId}: the row moved to ${current?.paymentStatus ?? 'gone'} ` +
-        `while request ${requestId ?? sessionId} was issued - not named, cancelled at Lydia, its URL withheld`
+        `while request ${requestId ?? sessionId} was issued - not handed out, cancelled at Lydia, its URL withheld`
     );
-    if (!requestId || !connectAccountId) {
+    let cancelled = false;
+    if (requestId && connectAccountId) {
+      try {
+        const { data } = await axios.post(
+          coreUrl('payments/cancel-request'),
+          { requestId, connectAccountId },
+          internalCoreRequestConfig()
+        );
+        cancelled = data?.outcome === 'cancelled';
+        this.logger.log(
+          `[Forms] issueOnlineRequest ${submissionId}: orphan request ${requestId} -> ${String(data?.outcome)}`
+        );
+      } catch (err: unknown) {
+        this.logger.error(
+          `[Forms] issueOnlineRequest ${submissionId}: cancelling orphan request ${requestId} failed (${err instanceof Error ? err.message : String(err)})`
+        );
+      }
+    }
+    if (cancelled) return;
+    // Not provably dead at Lydia: the row names it, so its payment is recorded where any is.
+    const kept = await this.submissionRepo.update(
+      { id: submissionId, paymentRequestId: IsNull(), stripeSessionId: IsNull() },
+      {
+        stripeSessionId: sessionId,
+        paymentRequestId: requestId,
+        lydiaOrderRef: orphan.orderRef,
+        lydiaVendorToken: connectAccountId,
+      }
+    );
+    if (kept?.affected === 0) {
       this.logger.error(
-        `[Forms] issueOnlineRequest ${submissionId}: request ${sessionId} cannot be cancelled (no numeric id or Business) - if it is paid, a refund is owed`
+        `[Forms] issueOnlineRequest ${submissionId}: orphan request ${requestId ?? sessionId} could not be cancelled NOR named on the row - if it is paid, nothing records it, a refund is owed`
       );
       return;
     }
-    try {
-      const { data } = await axios.post(
-        coreUrl('payments/cancel-request'),
-        { requestId, connectAccountId },
-        internalCoreRequestConfig()
-      );
-      this.logger.log(
-        `[Forms] issueOnlineRequest ${submissionId}: orphan request ${requestId} -> ${String(data?.outcome)}`
-      );
-    } catch (err: unknown) {
-      this.logger.error(
-        `[Forms] issueOnlineRequest ${submissionId}: cancelling orphan request ${requestId} failed (${err instanceof Error ? err.message : String(err)}) - if it is paid, a refund is owed`
-      );
-    }
+    this.logger.error(
+      `[Forms] issueOnlineRequest ${submissionId}: orphan request ${requestId ?? sessionId} named on the row - a confirmation records it, a resume or a switch settles it first`
+    );
   }
 
   /**
@@ -5544,6 +5656,13 @@ export class FormsService {
       named,
       cancelledBy: origin,
     });
+    if (outcome === 'claimed' && origin !== 'provider') {
+      // A person's cancel during their own switch to cash: the switch is the payment in progress.
+      throw new ConflictException({
+        code: PAYMENT_IN_PROGRESS,
+        message: 'A payment of this answer is already in progress.',
+      });
+    }
     if (outcome === 'missing') {
       this.logger.warn(`[Forms] cancel: submission ${submissionId} not found`);
       return { ok: false };
@@ -5578,7 +5697,7 @@ export class FormsService {
       /** Who or what cancels, recorded with a move to `cancelled` (`PaymentCancelOrigin`). */
       cancelledBy?: PaymentCancelOrigin;
     } = {}
-  ): Promise<{ moved: Submission } | 'missing' | 'not-in-state' | 'other-request'> {
+  ): Promise<{ moved: Submission } | 'missing' | 'not-in-state' | 'other-request' | 'claimed'> {
     return this.submissionRepo.manager.transaction('READ COMMITTED', async (manager) => {
       const submission = await manager.findOne(Submission, {
         where: formId ? { id: submissionId, formId } : { id: submissionId },
@@ -5590,6 +5709,14 @@ export class FormsService {
           `[Forms] submission ${submissionId} is ${submission.paymentStatus}, not ${from} - left as is`
         );
         return 'not-in-state';
+      }
+      if (from === 'pending' && submission.cashSwitchClaimId) {
+        // A switch to cash is moving this row (`claimCashSwitch`): its seat is not released under
+        // it - the cancel it made at Lydia is what this report is about. The switch decides the row.
+        this.logger.log(
+          `[Forms] submission ${submissionId} left ${from}: a switch to cash claims it`
+        );
+        return 'claimed';
       }
       if (named && !named(submission)) {
         // Expected after every reuse: the old request was cancelled on purpose, and Lydia reports it.
@@ -5780,7 +5907,10 @@ export class FormsService {
     const result = await this.submissionRepo
       .createQueryBuilder()
       .update()
-      .set({ paymentStatus: 'expired' })
+      // A switch-to-cash claim ends with the hold it protected (`claimCashSwitch`): one a crash left
+      // is cleared here, so a dead claim never outlives the row's own hold. A switch still running
+      // finds the row `expired` and re-takes a seat like any released answer.
+      .set({ paymentStatus: 'expired', cashSwitchClaimId: null })
       .where('"paymentStatus" = :status', { status: 'pending' })
       // An INSTANT, compared as `PENDING_HOLD_CUTOFF_SQL` was: the column is a `timestamp` with no
       // zone, and an uncast parameter would be read as one, dropping the offset the driver sends.

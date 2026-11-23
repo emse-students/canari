@@ -131,6 +131,18 @@ export class Submission {
   cashReminderNotifiedAt: Date | null;
 
   /**
+   * A switch to cash in progress on this row (migration 183, `FormsService.switchToCash`): the token
+   * of the press that CLAIMED a `pending` row still within its hold, written before the call to Lydia
+   * and cleared by every outcome of the switch. While set, nothing releases the row's seat - the
+   * cancel callback, the return poll and the reconciliation leave it, a resume and a submit's retry
+   * refuse it - so the cancel the switch makes cannot cost the payer the seat. A claim a crash leaves
+   * ends with the row's hold: `expireStalePendingPayments` expires the row and clears it. NULL on
+   * every other row.
+   */
+  @Column({ type: 'uuid', nullable: true })
+  cashSwitchClaimId: string | null;
+
+  /**
    * When the CURRENT payment request was issued (migration 084): the seat hold of an online
    * `pending` row is counted from it (`seat-hold.ts`). Equal to `createdAt` until `submit` reuses
    * the row for a new request, which sets it to the database's `now()` again.

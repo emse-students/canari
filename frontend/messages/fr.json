@@ -3472,6 +3472,7 @@
   "form_payment_not_switchable": "Cette réponse n'a plus de paiement en ligne à remplacer par un paiement en direct.",
   "form_cash_not_offered": "Ce formulaire n'accepte pas le paiement en direct.",
   "form_cash_already_paid_online": "Cette réponse a déjà été payée en ligne : il n'y a rien à encaisser. Si des espèces ont aussi été remises, elles doivent être rendues.",
+  "form_payment_issue_withdrawn": "Votre réponse a changé pendant la préparation du paiement : rien n'a été débité. Rechargez le formulaire.",
   "form_success_cash_heading": "Paiement en direct",
   "form_success_cash_desc": "Votre réponse est enregistrée et attend votre paiement en direct : réglez-le auprès de l'organisateur, qui le validera.",
   "form_guest_receipt_cash_desc": "Votre réponse est enregistrée. Réglez le montant en direct auprès de l'organisateur et donnez-lui votre référence : votre réponse compte dès qu'il valide le paiement.",

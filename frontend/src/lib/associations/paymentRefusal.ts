@@ -75,6 +75,9 @@ export function providerRefusalMessage(err: unknown): string | null {
   if (err instanceof SocialApiError && err.code === FORM_CASH_NOT_OFFERED) {
     return m.form_cash_not_offered();
   }
+  if (err instanceof SocialApiError && err.code === PAYMENT_ISSUE_WITHDRAWN) {
+    return m.form_payment_issue_withdrawn();
+  }
   if (err instanceof SocialApiError && err.code === AMOUNT_OUT_OF_RANGE && err.amountBounds) {
     const { minCents, maxCents } = err.amountBounds;
     const min = formatAmount(minCents);
@@ -376,3 +379,9 @@ export const FORM_CASH_NOT_OFFERED = 'FORM_CASH_NOT_OFFERED';
  * must go back. The panels word it and reload, never "already processed" in silence.
  */
 export const CASH_ALREADY_PAID_ONLINE = 'CASH_ALREADY_PAID_ONLINE';
+
+/**
+ * The body `code` of the 409 a submit gets when its answer moved while its payment request was
+ * being created (`payment-cash-switch.ts`): nothing was charged, the form is to be reloaded.
+ */
+export const PAYMENT_ISSUE_WITHDRAWN = 'PAYMENT_ISSUE_WITHDRAWN';

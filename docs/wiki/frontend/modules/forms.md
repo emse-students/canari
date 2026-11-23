@@ -3019,8 +3019,9 @@ else):
 
 **No double payment.** The Lydia request is settled BEFORE the row moves (`settleRequestAtProvider`, the
 conversation `settleOpenRequest` has, writing nothing): cancelled or read final, it can never be paid;
-read paid, it is recorded (`markPaid`, after the row lock is released) and the switch answers
-`alreadyPaid`; open or unreadable, the switch is refused. **Under every lock the row must be the one
+read paid, it is recorded (`markPaid`; a write that fails answers `PREVIOUS_PAYMENT_OPEN`, as
+`settleOpenRequest` answers it, never a bare 500) and the switch answers `alreadyPaid`; open or
+unreadable, the switch is refused. **Under every lock the row must be the one
 read**: the same request ids, and not `pending` naming none. Those two checks catch every move INTO
 `pending` since the read (a resume, a submit's retry), because each one CLEARS the ids: a row read naming
 a request now names none or another, and a row read naming none is now `pending` naming none - or names
@@ -3028,7 +3029,15 @@ the new request, which differs. Without them a switch could land on a row a resu
 Lydia (review of #4019). **And the other side is closed too**: `issueOnlineRequest` names the request it
 created ONLY on a row still `pending` naming none (a conditional `UPDATE`); a row that moved meanwhile
 never gets a payable request written onto it - the new request is cancelled at Lydia, its URL withheld,
-the issue answered `PAYMENT_NOT_RESUMABLE`, all accused at ERROR (`withdrawOrphanRequest`). The move is
+all accused at ERROR (`withdrawOrphanRequest`), and the issue answered for its path: a resume
+`PAYMENT_NOT_RESUMABLE`, a fresh submit `PAYMENT_ISSUE_WITHDRAWN` ("your answer changed while its payment
+was being prepared, nothing was charged"). **A cancel that fails does not leave a log line only**: the
+request may still be paid (Lydia also sends it to the payer's app), so it is NAMED on the row,
+conditionally on the row naming none - the only way that row can have moved, since every path moving a
+row that names no request refuses or settles first. The row's own machinery then owns it: the confirm
+callback reads a row by the request it names, and a resume or a switch settles it at Lydia before
+anything else. A row naming another request by then is accused at ERROR, the one case nothing records.
+The move is
 then written with named columns: `paymentStatus = pending_cash`, `paymentMethod = cash`,
 `cashExpiresAt` (now + `cashPaymentExpiryDays`), the member's `cashReminderDueAt`. **The request ids are
 KEPT**: they are what a late callback is matched against.
@@ -3045,35 +3054,49 @@ PAYMENTS - the refund is a human's, from the Achats tab. The payer's own poll (`
 reads a `pending_cash` row: only a verified callback can.
 
 **The seat, kept continuously** (the owner's rule: held until `cashExpiresAt`, the reminder included; a
-`pending` answer still within its 30-minute hold never loses its seat for an instant). The switch runs in
-two phases that take their locks in the one order every path takes them - association, form,
-submission - so no deadlock is possible:
+`pending` answer still within its 30-minute hold never loses its seat for an instant) - **with NO
+database lock held across the call to Lydia** (second review of #4019: a row lock held for a provider
+call, up to two calls of 60 s each at core, made every path that takes the form lock and then that row
+- a submit's retry, a resume, `markPaid` from a callback - queue behind it with the FORM lock held, so
+every submit of the form waited, ten waiters exhausted the pool and the whole service failed; and the
+expiry `UPDATE` blocked on it while holding rows of other forms. A timeout would only have bounded it).
+The switch runs as a durable CLAIM instead (`submissions."cashSwitchClaimId"`, migration 183):
 
-- **Phase A, the row naming a request**: the association's share lock, then the SUBMISSION row lock,
-  held ACROSS the call to Lydia. The cancel this switch makes makes Lydia call back
-  (`cancelPendingSubmission`), and the payer's return poll may read the request dead
-  (`releaseSettledRefusedRow`); both, and the expiry job, write that row under the same lock - so they
-  queue, then find `pending_cash` and leave it. If the hold still runs AT THE WALL CLOCK after the call
-  (`livePendingAtClockWhere`, `clock_timestamp()` - the transaction began before the lock wait and the
-  call, so `now()` would answer for the wrong instant), the row moves right there: its seat kept, no form
-  lock needed (every count made meanwhile under the form lock already counted it). A third submit on a
-  full form counts the held seat and is refused `FORM_FULL`. A `paid` reading writes nothing under this
-  lock: `markPaid` (form lock, then this row) runs after it is released.
-- **Phase B, a row holding no seat** (released, never issued, or a hold that ended DURING the call):
-  the form lock, then the row lock, and the capacity check a submit and a resume make (`FORM_FULL`). A
-  hold that lapses mid-call has already let its seat go by the hold's own rule, so the row competes for
-  one like any released answer.
+1. **Claim** (`claimCashSwitch`, one short row-locked write): a row still `pending` within its hold -
+   the one whose seat a release would take - gets a token of this press. A row already released
+   (`expired`, `cancelled`) or past its hold has no seat to protect: no claim, it is settled as is.
+2. **Call Lydia with no lock held** (`settleRequestAtProvider`). While the claim stands, every path
+   that would release the row's seat leaves it: Lydia's cancel callback and the return poll
+   (`moveLockedSubmission` answers `claimed`, logged), the reconciliation's release (the same function),
+   a resume and a submit's retry (refused, `PAYMENT_IN_PROGRESS` / `PREVIOUS_PAYMENT_OPEN`), and the
+   payer's own cancel (`PAYMENT_IN_PROGRESS`). The seat is counted by the hold rule as before
+   (`seatHoldingWhere` is unchanged): a third submit on a full form is refused `FORM_FULL`.
+3. **Finish** (`finishCashSwitch`, one short transaction in the one lock order - association, form,
+   row - with nothing external inside): the row as read, one answer per person, then the seat - KEPT
+   when the hold still runs AT THE WALL CLOCK (`livePendingAtClockWhere`, `clock_timestamp()`: the
+   transaction began after a call of unknown length, so the instant asked about is now), else re-taken
+   with the capacity check a submit makes (`FORM_FULL`; a hold that lapsed mid-call already let its seat
+   go by its own rule) - and the guest ceiling, under the form lock. The write clears the claim.
+   `paid` clears the claim, then records the payment; any refusal clears it (conditionally on THIS
+   press's token, so a later press that re-drove the row keeps its own).
 
-The row lock is held for one call to core (its timeout bounds it); a confirm callback arriving
-meanwhile queues behind it holding the form lock, so the form's submits wait as long - bounded, and the
-price of a seat that is never released. Whether Lydia sends its cancel callback before it answers the
-cancel is not measured; if it did, that callback would wait on the row lock until its own timeout, the
-cancel call would still return, and the row would still switch - the callback, retried or not, then
-finds `pending_cash`.
+**How a claim ends, from durable state.** Every outcome of the switch clears it. A claim a CRASH leaves
+(the process dies during the call) ends in one of two ways, neither a new clock: the next press
+re-drives it (it claims the row again and finishes - the cancel at Lydia is idempotent, the earlier
+press's token no longer matches anything), or the row's own hold ends and the expiry job
+(`expireStalePendingPayments`) expires it AND clears the claim in the same `UPDATE` - the end every
+`pending` row already had. A claim therefore never outlives the hold it protects, and the seat it
+protects is the hold's, so no dead claim holds a seat for ever: after the hold the row holds none and
+is an ordinary released answer (resumable, switchable). Until then the release paths leave it and its
+seat stays held - which is what the claim was for. The expiry job does not skip a claimed row: past its
+hold it has no seat left to protect, and a switch still running then finds it `expired` and re-takes a
+seat like any released answer.
 
 **Every refusal that would come after the irreversible cancel is judged before it**: the guest
-ceiling is counted before Phase A (and again under the form lock in Phase B); the association's archive
-is read under its share lock first thing in each phase, before the call.
+ceiling and the association's archive are read before the claim and the call, and again in the finish.
+Answers created DURING the call can still fill the visitor's ceiling or the form: the finish then
+refuses, the claim is cleared, and the payer keeps the row as it was (its request now cancelled) - the
+one refusal after the cancel, and it is a race with other people, not a check skipped.
 
 **Guests.** The receipt is the only credential (its SHA-256 is looked up; unknown is
 `GUEST_RECEIPT_NOT_FOUND`), the form must still be public, and the ceiling (`GUEST_PENDING_CEILING`, the
@@ -3082,7 +3105,8 @@ still has one**: the visitor who answered stays the one counted (a waiting row a
 key, so the switch cannot change that count), and a receipt opened from another network must not move
 an answer into a different visitor's bucket. Only a row whose key was forgotten
 (`forgetSettledGuestVisitors` clears it once a row stops waiting) gets the switching visitor's key,
-counted against that visitor's ceiling first. A guest gets no reminder (no account).
+counted against that visitor's ceiling first - before the call, and again under the form lock in the
+finish, a live row included. A guest gets no reminder (no account).
 
 **Anonymous forms are refused** (`PAYMENT_NOT_SWITCHABLE`): a cash payment is validated by the
 association matching the person in front of it to the answer, which an anonymous form exists to make
@@ -3090,31 +3114,44 @@ impossible - the responses table does not name the payer. Its card offers only t
 
 **Idempotence comes from the row**: a second press reads `pending_cash` and answers the recorded
 deadline, or reads a paid-online answer and answers `alreadyPaid` (before any lock and again under it);
-two simultaneous presses queue on the row lock and the second finds the row moved. No clock, no flag.
+two simultaneous presses both claim (the later token wins), both settle (Lydia's cancel is
+idempotent), and the second finish finds the row moved and answers the same. No clock, no flag.
 Every decision logs (`[Forms] switchToCash ...`).
 
 **Tests**: `forms.service.seat-hold.spec.ts`, "a failed card payment settled in person" (in-hold kept,
 released re-taken, never-issued, full, cash not offered, paid meanwhile and the second press after it,
-open and unreadable, a request being issued, replay, simultaneous presses, every non-switchable status,
-the anonymous form, another person, closed, price changed, answered again, **the cancel callback, the
-return poll and a third submit racing the call on a full form - the seat is never released**, a hold
-that lapses during the call, a switch on a row a resume reopened, a request created for a row that moved,
-an archived association, a late confirmation paid online once and the cash validation it refuses, the
-TWO PAYMENTS accusation, guests and their ceiling and key, what `check` and `receipts/confirm` offer). The
-in-memory store holds real ROW locks to the end of a transaction, as PostgreSQL does. Controls, each run
-by deleting the guard (failing tests): the row lock across the call (1), the in-lock check of a row
-naming none (2), the conditional naming in `issueOnlineRequest` (1), the guest ceiling before the cancel
-(1), the archive read before the call (1), the hold re-read after the call (2), the paid-online replay
-(3), the typed cash validation (1), `markPaid`'s ERROR (1); from the first round, the settle before the
-move (6), the capacity count (2), `pending_cash` among the callback statuses (1), `markPaid`'s method
-reset (1), the one-answer check (1). The store cannot tell `clock_timestamp()` from `now()` (one fake
-clock serves both); that choice rests on the reasoning above. Client: `paymentResume.test.ts`,
-`paymentReturn.test.ts`, `paymentReturnPoll.test.ts`, `page.paymentResume.svelte.test.ts`, the receipt
-page's test (the re-read after a refusal) and `FormsManagerList.svelte.test.ts` (an answer already paid
-online).
+a paid request whose recording fails, open and unreadable, a request being issued, replay, simultaneous
+presses, every non-switchable status, the anonymous form, another person, closed, price changed,
+answered again, **the cancel callback, the return poll and a third submit run DURING the call on a full
+form - each completes while the call is pending, and the seat is never released**, **another submit and
+the expiry sweep complete while the call is pending** (the sweep even on this row, whose hold lapses
+mid-call), a resume and a submit's retry of the claimed row, the payer's own cancel, **a claim a crash
+left** (the callback leaves it, the next press finishes it; or the hold ends and the sweep clears it),
+the guest ceiling re-read in the finish, a hold that lapses during the call, a switch on a row a resume
+reopened, a request created for a row that moved (a resume's code, a submit's own code, and an orphan
+whose cancel failed named on the row and settled first by the next resume), an archived association, a
+late confirmation paid online once and the cash validation it refuses, the TWO PAYMENTS accusation,
+guests and their ceiling and key, what `check` and `receipts/confirm` offer). The in-memory store holds
+real ROW locks to the end of a transaction and makes the expiry `UPDATE` wait on them, as PostgreSQL
+does. Controls, each run by deleting the guard (failing tests), third round: the claim before the call
+(7), the release paths honouring it (3), the payer's cancel of a claimed row (1), the resume refusing it
+(1), the submit's retry refusing it (1), the sweep clearing it (2), the claim cleared on a refusal (1),
+the guest ceiling in the finish (1), a failed paid write typed (1), the submit's own withdrawn code (1),
+an uncancelled orphan named on the row (1); second round: the in-lock check of a row naming none (2),
+the conditional naming in `issueOnlineRequest` (1), the guest ceiling before the cancel (1), the archive
+read before the call (1), the hold re-read after the call (2), the paid-online replay (3), the typed
+cash validation (1), `markPaid`'s ERROR (1); first round: the settle before the move (6), the capacity
+count (2), `pending_cash` among the callback statuses (1), `markPaid`'s method reset (1), the one-answer
+check (1). The store cannot tell `clock_timestamp()` from `now()` (one fake clock serves both); that
+choice rests on the reasoning above. Client: `paymentResume.test.ts`, `paymentReturn.test.ts`,
+`paymentReturnPoll.test.ts`, `page.paymentResume.svelte.test.ts`, the receipt page's test (the re-read
+after a refusal), `FormsManagerList.svelte.test.ts` (an answer already paid online) and
+`paymentRefusal.test.ts` (the submit's withdrawn code).
 
 **Old clients** ignore `cashSwitchable`, `cashSwitchOffered` and the routes; a new client on an older
-server reads neither field and offers only what it did. No migration: every column existed.
+server reads neither field and offers only what it did. **Migration 183** adds the one nullable column
+(additive, no backfill: no row is being switched before the image that writes it runs); an older image
+ignores it.
 
 ### A cash hold is announced once before it expires (owner decision of 2026-11-21)
 

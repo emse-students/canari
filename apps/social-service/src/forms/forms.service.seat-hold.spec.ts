@@ -34,6 +34,7 @@ import {
 import {
   CASH_ALREADY_PAID_ONLINE,
   FORM_CASH_NOT_OFFERED,
+  PAYMENT_ISSUE_WITHDRAWN,
   PAYMENT_NOT_SWITCHABLE,
 } from './payment-cash-switch';
 import { cashReminderDueAt } from './cash-reminder';
@@ -79,6 +80,8 @@ describe('FormsService - the seat a pending payment holds', () => {
     /** The priced grids' lines and the price questions, snapshotted at submit (137, 166). */
     lines?: unknown[] | null;
     priceLockedItemIds?: string[] | null;
+    /** A switch to cash in progress (migration 183, `claimCashSwitch`). */
+    cashSwitchClaimId?: string | null;
     /** The cash hold and its one notice (`pending_cash`, migration 179). */
     cashExpiresAt?: Date | null;
     cashReminderDueAt?: Date | null;
@@ -191,6 +194,8 @@ describe('FormsService - the seat a pending payment holds', () => {
     const byId = (id: string) => rows.find((r) => r.id === id)!;
     /** Every status a locked step wrote, in order: one payment must move its row ONCE. */
     const transitions: string[] = [];
+    /** Every switch-to-cash claim written (`claimCashSwitch`), in order. */
+    const claims: string[] = [];
 
     const locks = new Map<string, Promise<void>>();
     const purchaseRecordService = { create: jest.fn(() => Promise.resolve()) };
@@ -289,6 +294,10 @@ describe('FormsService - the seat a pending payment holds', () => {
           ),
           execute: async () => {
             await roundTrip();
+            // An UPDATE waits on every row it matches that another transaction locked.
+            for (const r of rows) {
+              while (locks.has(`row:${r.id}`)) await locks.get(`row:${r.id}`);
+            }
             return runUpdate(state);
           },
         };
@@ -388,6 +397,7 @@ describe('FormsService - the seat a pending payment holds', () => {
                   'cashExpiresAt',
                   'cashReminderDueAt',
                   'cashReminderNotifiedAt',
+                  'cashSwitchClaimId',
                   'paymentCancelOrigin',
                   'paymentMethod',
                   'paymentStatus',
@@ -401,6 +411,16 @@ describe('FormsService - the seat a pending payment holds', () => {
                 const before = byId(id).paymentStatus;
                 Object.assign(byId(id), values);
                 transitions.push(`${id}:${before}->pending_cash`);
+                return;
+              }
+              if (Object.keys(values).join() === 'cashSwitchClaimId') {
+                // The switch's CLAIM (`claimCashSwitch`): a token, and nothing else of the row. A
+                // wrong shape THROWS out of the service call, so the test that drove it fails.
+                if (typeof values.cashSwitchClaimId !== 'string') {
+                  throw new Error(`a claim wrote ${String(values.cashSwitchClaimId)}, not a token`);
+                }
+                byId(id).cashSwitchClaimId = values.cashSwitchClaimId;
+                claims.push(`${id}:claimed`);
                 return;
               }
               const { paymentRequestedAt, ...named } = values;
@@ -535,6 +555,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       organiserAlert,
       core,
       transitions,
+      claims,
       advance: (ms: number) => (now = new Date(now.getTime() + ms)),
     };
   }
@@ -3153,31 +3174,201 @@ describe('FormsService - the seat a pending payment holds', () => {
 
     // THE SEAT IS KEPT CONTINUOUSLY (owner): the cancel the switch makes at Lydia makes Lydia call
     // back, and the payer's return poll may read the request dead, while a third person submits on
-    // the full form. The switch holds the row lock across its call: both release paths queue and
-    // then find `pending_cash`, the third submit counts the held seat - nothing is ever released.
-    it('never releases a live seat to its own cancel, the poll, or a third submit', async () => {
-      const { service, rows, core, transitions } = cashForm(
+    // the full form. The row is CLAIMED before the call: both release paths leave it, the third
+    // submit counts the held seat - nothing is ever released.
+    it('never releases a claimed seat to its own cancel, the poll, or a third submit', async () => {
+      const { service, rows, core, transitions, claims } = cashForm(
         [card({ paymentStatus: 'pending', paymentRequestedAt: ago(60_000) })],
         { maxSubmissions: 1 }
       );
-      const racing: Promise<unknown>[] = [];
+      let during: unknown[] = [];
       core.duringCancel = async () => {
-        racing.push(
+        // Each racer COMPLETES while the call is pending: nothing waits on the switch.
+        during = await Promise.all([
           service.cancelPendingSubmission('ans', { requestId: '555' }, 'vendor'),
           service.confirmPayment('ans'),
-          service.submit('f1', { userId: 'u2', answers: {} } as any).catch((e: unknown) => e)
-        );
-        // Every racer reaches as far as it can while the call is in flight.
-        for (let i = 0; i < 20; i += 1) await new Promise<void>((r) => setImmediate(r));
+          service.submit('f1', { userId: 'u2', answers: {} } as any).catch((e: unknown) => e),
+        ]);
+        expect(rows[0]).toMatchObject({ paymentStatus: 'pending' });
+        expect(rows[0].cashSwitchClaimId).toEqual(expect.any(String));
       };
       await expect(toCash(service)).resolves.toMatchObject({ cashPayment: true });
-      const [cancelled, polled, third] = await Promise.all(racing);
-      // The callback read the request dead, then queued on the row lock and found it switched.
+      const [cancelled, polled, third] = during;
       expect(cancelled).toMatchObject({ ok: true });
-      expect(polled).toMatchObject({ paymentStatus: 'pending_cash' });
+      expect(polled).toMatchObject({ paymentStatus: 'pending' });
       expect(third).toMatchObject({ response: { code: 'FORM_FULL' } });
+      expect(claims).toEqual(['ans:claimed']);
       expect(transitions).toEqual(['ans:pending->pending_cash']);
-      expect(rows.map((r) => [r.id, r.paymentStatus])).toEqual([['ans', 'pending_cash']]);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ paymentStatus: 'pending_cash', cashSwitchClaimId: null });
+    });
+
+    // NO LOCK ACROSS THE PROVIDER CALL (review of #4019): a slow Lydia never holds up the form's
+    // other submits, nor the expiry sweep - even on this very row, whose hold lapses mid-call.
+    it('lets another submit and the expiry sweep complete while the call to Lydia is pending', async () => {
+      const { service, rows, core, advance } = cashForm(
+        [
+          card({ paymentStatus: 'pending', paymentRequestedAt: ago(HOLD_MS - 1000) }),
+          row({ id: 'stale', userId: 'u3', paymentRequestedAt: ago(2 * HOLD_MS) }),
+        ],
+        { maxSubmissions: 5, provider: 'disabled' }
+      );
+      core.duringCancel = async () => {
+        advance(2000);
+        const sweep = await service.expireStalePendingPayments(ago(HOLD_MS - 2000));
+        expect(sweep).toBe(2);
+        await expect(
+          service.submit('f1', { userId: 'u2', answers: {} } as any).catch((e: unknown) => e)
+        ).resolves.toBeDefined();
+        // The sweep ended the claim with the hold it protected.
+        expect(rows[0]).toMatchObject({ paymentStatus: 'expired', cashSwitchClaimId: null });
+      };
+      await expect(toCash(service)).resolves.toMatchObject({ cashPayment: true });
+      expect(rows.find((r) => r.userId === 'u2')).toBeDefined();
+      expect(rows[0].paymentStatus).toBe('pending_cash');
+    });
+
+    // A resume or a submit's retry of the same answer during the call never takes it from under
+    // the switch: the claimed row is refused, the switch finishes.
+    it('refuses a resume of a claimed row whose hold lapsed during the call', async () => {
+      const { service, rows, core, advance } = cashForm([
+        card({ paymentStatus: 'pending', paymentRequestedAt: ago(HOLD_MS - 1000) }),
+      ]);
+      let resumed: unknown;
+      core.duringCancel = async () => {
+        core.duringCancel = null;
+        advance(2000);
+        resumed = await service
+          .resumePayment('ans', 'u1', { payerEmail: 'payer@example.org' })
+          .catch((e: unknown) => e);
+      };
+      await expect(toCash(service)).resolves.toMatchObject({ cashPayment: true });
+      expect(resumed).toMatchObject({ response: { code: PAYMENT_IN_PROGRESS } });
+      expect(rows[0].paymentStatus).toBe('pending_cash');
+      expect(core.calls.map((c) => c.route)).not.toContain('create-checkout-session');
+    });
+
+    it("refuses a submit's retry of a claimed row, and the switch finishes", async () => {
+      const { service, rows, core } = cashForm([
+        card({ paymentStatus: 'pending', paymentRequestedAt: ago(60_000) }),
+      ]);
+      let retried: unknown;
+      core.duringCancel = async () => {
+        core.duringCancel = null;
+        retried = await service
+          .submit('f1', { userId: 'u1', answers: {}, payerEmail: 'p@example.org' } as any)
+          .catch((e: unknown) => e);
+      };
+      await expect(toCash(service)).resolves.toMatchObject({ cashPayment: true });
+      expect(retried).toMatchObject({ response: { code: PREVIOUS_PAYMENT_OPEN } });
+      expect(rows).toHaveLength(1);
+      expect(rows[0].paymentStatus).toBe('pending_cash');
+    });
+
+    // A person's own cancel during their switch is told the switch is the payment in progress.
+    it("answers the payer's own cancel of a claimed row PAYMENT_IN_PROGRESS", async () => {
+      const { service, rows, core } = cashForm([
+        card({ paymentStatus: 'pending', paymentRequestedAt: ago(60_000) }),
+      ]);
+      let mine: unknown;
+      core.duringCancel = async () => {
+        core.duringCancel = null;
+        mine = await service.cancelSubmission('ans', 'u1', false).catch((e: unknown) => e);
+      };
+      await toCash(service);
+      expect(mine).toMatchObject({ response: { code: PAYMENT_IN_PROGRESS } });
+      expect(rows[0].paymentStatus).toBe('pending_cash');
+    });
+
+    // A CLAIM A CRASH LEAVES (the process dies during the call): the release paths still leave the
+    // row; the next press re-drives it to the end; or the hold ends and the sweep clears it.
+    describe('a claim a crash left', () => {
+      const crashed = async (over: Partial<Parameters<typeof makeStore>[0]> = {}) => {
+        const store = cashForm(
+          [card({ paymentStatus: 'pending', paymentRequestedAt: ago(60_000) })],
+          over
+        );
+        // The press never comes back from Lydia: everything after the claim is lost.
+        store.core.duringCancel = () => new Promise<never>(() => undefined);
+        void toCash(store.service);
+        for (let i = 0; i < 30; i += 1) await new Promise<void>((r) => setImmediate(r));
+        expect(store.rows[0].cashSwitchClaimId).toEqual(expect.any(String));
+        store.core.duringCancel = null;
+        return store;
+      };
+
+      it('keeps the seat from the cancel callback, and the next press finishes the switch', async () => {
+        const { service, rows, transitions } = await crashed({ maxSubmissions: 1 });
+        await service.cancelPendingSubmission('ans', { requestId: '555' }, 'vendor');
+        expect(rows[0].paymentStatus).toBe('pending');
+        await expect(toCash(service)).resolves.toMatchObject({ cashPayment: true });
+        expect(rows[0]).toMatchObject({ paymentStatus: 'pending_cash', cashSwitchClaimId: null });
+        expect(transitions).toEqual(['ans:pending->pending_cash']);
+      });
+
+      it('ends with the hold: the sweep expires the row and clears the claim', async () => {
+        const { service, rows, advance } = await crashed();
+        advance(HOLD_MS);
+        expect(await service.expireStalePendingPayments(ago(0))).toBe(1);
+        expect(rows[0]).toMatchObject({ paymentStatus: 'expired', cashSwitchClaimId: null });
+        // An ordinary released answer again: the payer may resume or switch it.
+        await expect(toCash(service)).resolves.toMatchObject({ cashPayment: true });
+      });
+    });
+
+    // The ceiling re-read under the form lock: a live guest row whose visitor key was forgotten
+    // takes the presser's, and answers that appeared during the call are counted.
+    it('re-checks the guest ceiling under the lock when the row takes the presser key', async () => {
+      const VISITOR = '203.0.113.9';
+      const RECEIPT = 'A'.repeat(43);
+      const saved = process.env.INTERNAL_SECRET;
+      process.env.INTERNAL_SECRET = 'internal-secret-for-test';
+      try {
+        const { service, rows, core } = cashForm(
+          [
+            card({
+              userId: null,
+              guestReceiptHash: hashGuestReceipt(RECEIPT),
+              paymentStatus: 'pending',
+              paymentRequestedAt: ago(60_000),
+              guestVisitorKey: null,
+            }),
+          ],
+          { isPublic: true, allowMultipleSubmissions: true, grantsCotisation: false }
+        );
+        const key = guestVisitorKey('f1', VISITOR);
+        core.duringCancel = async () => {
+          for (let i = 0; i < GUEST_PENDING_CEILING; i += 1) {
+            rows.push(
+              row({
+                id: `w${i}`,
+                userId: null,
+                paymentStatus: 'pending_cash',
+                paymentMethod: 'cash',
+                guestVisitorKey: key,
+              })
+            );
+          }
+        };
+        await expect(service.switchGuestToCash(RECEIPT, VISITOR)).rejects.toMatchObject({
+          response: { code: GUEST_PENDING_LIMIT },
+        });
+        // Refused: the claim is cleared, the row is the payer's again.
+        expect(rows[0]).toMatchObject({ paymentStatus: 'pending', cashSwitchClaimId: null });
+      } finally {
+        if (saved === undefined) delete process.env.INTERNAL_SECRET;
+        else process.env.INTERNAL_SECRET = saved;
+      }
+    });
+
+    it('answers PREVIOUS_PAYMENT_OPEN, never a bare 500, when recording a paid request fails', async () => {
+      const { service, core } = cashForm([card()]);
+      core.cancelAnswer = 'already-settled';
+      core.stateAnswer = 'paid';
+      jest.spyOn(service, 'markPaid').mockRejectedValueOnce(new Error('connection lost'));
+      await expect(toCash(service)).rejects.toMatchObject({
+        response: { code: PREVIOUS_PAYMENT_OPEN },
+      });
     });
 
     // A hold that ENDS during the call to Lydia (read at the wall clock after it) holds no seat any
@@ -3247,6 +3438,49 @@ describe('FormsService - the seat a pending payment holds', () => {
         body: { requestId: '1001', connectAccountId: 'vendor' },
       });
       expect(error).toHaveBeenCalledWith(expect.stringContaining('its URL withheld'));
+    });
+
+    it('answers a SUBMIT whose row moved during the issue PAYMENT_ISSUE_WITHDRAWN', async () => {
+      const { service, rows, core } = cashForm([], { maxSubmissions: 5 });
+      jest.spyOn((service as any).logger, 'error').mockImplementation(() => undefined);
+      core.duringCreate = async () => {
+        Object.assign(rows[0], { paymentStatus: 'expired' });
+      };
+      await expect(
+        service.submit('f1', { userId: 'u1', answers: {}, payerEmail: 'p@example.org' } as any)
+      ).rejects.toMatchObject({ response: { code: PAYMENT_ISSUE_WITHDRAWN } });
+      expect(core.calls[core.calls.length - 1]).toMatchObject({ route: 'cancel-request' });
+    });
+
+    // An orphan whose cancel FAILED may still be paid: it is named on the row (which names none),
+    // so the confirm callback reads it and every resume or switch settles it first.
+    it('names an orphan request it could not cancel on the row, which settles it first', async () => {
+      const { service, rows, core, purchaseRecordService } = cashForm([
+        card({ paymentStatus: 'cancelled', paymentRequestId: null, stripeSessionId: null }),
+      ]);
+      jest.spyOn((service as any).logger, 'error').mockImplementation(() => undefined);
+      core.duringCreate = async () => {
+        Object.assign(rows[0], { paymentStatus: 'expired' });
+        core.cancelAnswer = new Error('core down');
+      };
+      await expect(
+        service.resumePayment('ans', 'u1', { payerEmail: 'payer@example.org' })
+      ).rejects.toMatchObject({ response: { code: PAYMENT_NOT_RESUMABLE } });
+      expect(rows[0]).toMatchObject({
+        paymentStatus: 'expired',
+        paymentRequestId: '1001',
+        stripeSessionId: 'uuid-1',
+      });
+      // The next resume settles THAT request at Lydia before it issues anything.
+      core.duringCreate = null;
+      core.cancelAnswer = 'cancelled';
+      const before = core.calls.length;
+      await service.resumePayment('ans', 'u1', { payerEmail: 'payer@example.org' });
+      expect(core.calls[before]).toMatchObject({
+        route: 'cancel-request',
+        body: { requestId: '1001' },
+      });
+      expect(purchaseRecordService.create).not.toHaveBeenCalled();
     });
 
     // Refusals that would come after the irreversible cancel are judged BEFORE it.
