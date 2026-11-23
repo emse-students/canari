@@ -70,6 +70,7 @@ import {
   canSeeArrivalNow,
   type ArrivalVerdict,
 } from '$lib/utils/chat/arrivalRuntime';
+import { beginConversationRowWrite } from '$lib/utils/chat/conversationRowWrites';
 import { ATTENTION_WINDOW_MS, windowAttention } from '$lib/utils/windowAttention.svelte';
 import {
   MAX_DISTINCT_MESSAGE_REACTIONS,
@@ -3135,19 +3136,19 @@ export function useMessaging() {
         // and the reactions, land on the row shown - never the bare body until a reload.
         const consumed = consumedById.get(msg.id) ?? [];
         if (shouldUpgradeMessage(shown, body)) {
-          const upgraded = resettled(mergeMessageUpgrade(shown, upgrade), consumed);
+          // ONE FUNCTION FOR THE ROW SHOWN NOW AND FOR A RESHOW, so neither can forget a half of it.
           // THE BUBBLE READS `messageReactions` FIRST: `settledWith` set it against the bare body,
-          // without the preview's own reactions. It follows the row shown, as the live upgrade's.
-          if (upgraded.reactions) messageReactions.set(msg.id, upgraded.reactions);
-          upgradedById.set(msg.id, {
-            from: shown,
-            shown: upgraded,
-            reshow: (now) =>
-              resettled(
-                shouldUpgradeMessage(now, body) ? mergeMessageUpgrade(now, upgrade) : now,
-                consumed
-              ),
-          });
+          // without the preview's own reactions, so it follows the row this returns, as the live
+          // upgrade's does.
+          const lateUpgrade = (now: ChatMessage): ChatMessage => {
+            const row = resettled(
+              shouldUpgradeMessage(now, body) ? mergeMessageUpgrade(now, upgrade) : now,
+              consumed
+            );
+            if (row.reactions) messageReactions.set(msg.id, row.reactions);
+            return row;
+          };
+          upgradedById.set(msg.id, { from: shown, shown: lateUpgrade(shown), reshow: lateUpgrade });
         }
       }
       for (let i = newRows.length - 1; i >= 0; i--) {
@@ -3364,25 +3365,45 @@ export function useMessaging() {
         );
         return null;
       }
-      const inserted = await ctx.storage.saveMessagesIfAbsent(notMerged, ctx.deviceKeyB64);
-      const left = notMerged.length - inserted.size;
-      if (left > 0) {
-        console.log(
-          `[ADD_MSG] ${left} shown preview(s) of "${conversationId}" are no longer previews in the store - the arriving body leaves them as they are`
-        );
+      // REGISTERED IN THE SAME STEP AS THE CHECK, no await between them (`conversationRowWrites.ts`):
+      // a removal takes the conversation out of the map, then waits for this before clearing the
+      // store, so these inserts land before the clear and are taken by it - never after it.
+      const releaseRowWrite = beginConversationRowWrite(conversationId);
+      try {
+        return await insertBatchRows(ctx, write, merged, notMerged);
+      } finally {
+        releaseRowWrite();
       }
-      const written = await ctx.storage.saveMessagesIfAbsent(newRows, ctx.deviceKeyB64);
-      const standing = newRows.filter((row) => !written.has(row.id)).map((row) => row.id);
-      if (standing.length > 0) await showStoredInstead(ctx, conversationId, standing);
-      await removeSettled(
-        ctx,
-        [...merged, ...inserted, ...written].flatMap((id) => consumedById.get(id) ?? [])
-      );
-      await ctx.saveConversation(conversationId);
-      return null;
     } catch (e) {
       return e ?? new Error('batch write failed');
     }
+  }
+
+  /** {@link writeBatchRows}' inserts and conversation row, once the map has said the conversation stands. */
+  async function insertBatchRows(
+    ctx: MessagingContext,
+    write: BatchRowWrite,
+    merged: ReadonlySet<string>,
+    notMerged: StoredMessage[]
+  ): Promise<null> {
+    const { conversationId, newRows, consumedById } = write;
+    if (!ctx.storage) return null;
+    const inserted = await ctx.storage.saveMessagesIfAbsent(notMerged, ctx.deviceKeyB64);
+    const left = notMerged.length - inserted.size;
+    if (left > 0) {
+      console.log(
+        `[ADD_MSG] ${left} shown preview(s) of "${conversationId}" are no longer previews in the store - the arriving body leaves them as they are`
+      );
+    }
+    const written = await ctx.storage.saveMessagesIfAbsent(newRows, ctx.deviceKeyB64);
+    const standing = newRows.filter((row) => !written.has(row.id)).map((row) => row.id);
+    if (standing.length > 0) await showStoredInstead(ctx, conversationId, standing);
+    await removeSettled(
+      ctx,
+      [...merged, ...inserted, ...written].flatMap((id) => consumedById.get(id) ?? [])
+    );
+    await ctx.saveConversation(conversationId);
+    return null;
   }
 
   // ── Send ──────────────────────────────────────────────────────────────────

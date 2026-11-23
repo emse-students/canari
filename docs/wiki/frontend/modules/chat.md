@@ -1573,6 +1573,18 @@ at entry can be false after the store read, and neither may be answered by the n
   inserted, the rows are dropped with their frames at WARN, and the write reports success so the
   hold it refused is released rather than retried for ever.
 
+**And a removal is ordered after the writes that already asked (follow-up of #3988).** The map check
+in `writeBatchRows` is followed by awaits (the inserts, `saveConversation`), and `purgeConversation`
+cleared the STORE first and took the row out of the map last: a write that asked the map before the
+removal inserted after the clear, and the rows of a removed conversation came back at the next
+restore. Closed by construction, no clock (`conversationRowWrites.ts`): the writer asks the map and
+registers its write in ONE synchronous step, releasing it in a `finally`; `purgeConversation` and
+`purgeLocalConversationRecord` take the conversation out of the map FIRST, wait for the writes
+registered under its key, and only then clear the store. A write that asked before the removal lands
+before the clear, which takes it; one that asks after finds no conversation. (The DM merge moves its
+loser's rows to the winner's key and re-homes a kept write by `homeOfWrite`; the restore prune and
+the landing preview touch only the map.)
+
 The live path's re-entry cannot loop: both branches it lands in return, and nothing is awaited
 between the read that sent it back and the re-entry's own.
 
@@ -1587,7 +1599,9 @@ arrival, then an own send, lands: both are kept and counted. `useMessaging.shown
 shows a preview of the same id, then removes the conversation, during the store read, on both paths:
 one message, counted once, upgraded on screen and on disk (with a pending deletion, edit or reaction),
 nothing announced; nothing stored into a removed conversation, a kept write retried after the removal
-included. `useMessaging.editRereads.svelte.test.ts` lands a message and moves the reader
+included, and a purge racing a write held after its map check (out of the map at once, the store
+cleared only after the insert, nothing left; the registry itself in `conversationRowWrites.test.ts`).
+`useMessaging.editRereads.svelte.test.ts` lands a message and moves the reader
 during an edit's send. Each fails on the entry-copy code.
 
 ## Outbox (outbound delivery)

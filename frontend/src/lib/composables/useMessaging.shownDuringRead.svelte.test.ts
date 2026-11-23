@@ -49,6 +49,7 @@ vi.mock('$lib/utils/appVersion', async (orig) => ({
 }));
 
 const { useMessaging } = await import('./useMessaging.svelte');
+const { purgeConversation } = await import('$lib/utils/chat/conversations');
 
 const PEER = 'peer-user-id';
 const BODY = '{"kind":"text","text":"the real body"}';
@@ -383,5 +384,53 @@ describe('the last gaps (final check of #3988)', () => {
     expect(await d.storage.getMessage('p1', KEY)).toBeFalsy();
     expect(await d.storage.getMessage('m2', KEY)).toBeFalsy();
     expect(warn.mock.calls.some(([line]) => String(line).includes('not inserted'))).toBe(true);
+  });
+});
+
+describe('a removal racing a batch write that already asked the map (follow-up of #3988)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    window.history.pushState({}, '', '/posts');
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  it('the purge takes the map first, waits for the insert, then clears the store - nothing comes back', async () => {
+    const storage = new IndexedDbStorage(freshStoreName());
+    await storage.init();
+    const d = makeDevice(useMessaging, storage);
+    // The insert is held open AFTER the map said the conversation stands.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const insert = storage.saveMessagesIfAbsent.bind(storage);
+    const held = vi.spyOn(storage, 'saveMessagesIfAbsent').mockImplementation(async (rows, key) => {
+      if (rows.length > 0) await gate;
+      return insert(rows, key);
+    });
+
+    const adding = d.messaging.batchAddMessages(
+      [{ senderId: PEER, content: BODY, messageId: 'm1', serverTimestamp: 5_000 }],
+      CONVO,
+      d.ctx,
+      'arrival'
+    );
+    await vi.waitFor(() => expect(held).toHaveBeenCalled());
+
+    let purged = false;
+    const purging = purgeConversation({
+      conversations: d.conversations,
+      key: CONVO,
+      deleteStored: (key) => storage.deleteConversation(key),
+    }).then(() => (purged = true));
+    // Out of the map at once; the store is not cleared while the insert it must take is in flight.
+    expect(d.conversations.has(CONVO)).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(purged).toBe(false);
+
+    release();
+    await adding;
+    await purging;
+
+    expect(await storage.getMessage('m1', KEY)).toBeFalsy();
   });
 });
