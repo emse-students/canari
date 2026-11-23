@@ -17,7 +17,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { IndexedDbStorage } from '$lib/db/indexeddb';
 import type { ChatMessage } from '$lib/types';
-import { CONVO, KEY, makeDevice, freshStoreName } from './pendingMutations.test-helper';
+import {
+  CONVO,
+  KEY,
+  deleteFrame,
+  editFrame,
+  makeDevice,
+  freshStoreName,
+} from './pendingMutations.test-helper';
 
 vi.mock('$lib/utils/users/displayName', async (importOriginal) => {
   const real = await importOriginal<typeof import('$lib/utils/users/displayName')>();
@@ -54,11 +61,18 @@ const preview = (id: string): ChatMessage => ({
   isFcmPreview: true,
 });
 
-/** A device whose first store read runs `during` before it answers - the other writer's gap. */
-async function deviceWithGap(during: (d: ReturnType<typeof makeDevice>) => void) {
+/**
+ * A device whose first store read runs `during` before it answers - the other writer's gap. `before`
+ * runs first, with the store not yet watched (a mutation frame reads the store too).
+ */
+async function deviceWithGap(
+  during: (d: ReturnType<typeof makeDevice>) => void,
+  before?: (d: ReturnType<typeof makeDevice>) => Promise<unknown>
+) {
   const storage = new IndexedDbStorage(freshStoreName());
   await storage.init();
   const d = makeDevice(useMessaging, storage);
+  await before?.(d);
   const read = storage.getMessagesByIds.bind(storage);
   const gap = vi.spyOn(storage, 'getMessagesByIds').mockImplementationOnce(async (...args) => {
     during(d);
@@ -182,5 +196,115 @@ describe('the conversation left the map during the store read', () => {
     expect(d.conversations.has(CONVO)).toBe(false);
     expect((await read(CONVO, ['m1'], KEY)).rows.has('m1')).toBe(false);
     expect(d.ctx.sendSystemNotification).not.toHaveBeenCalled();
+  });
+});
+
+describe('a late-held preview takes the body WITH what waited for it (re-review of #3988)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    window.history.pushState({}, '', '/posts');
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  it('THE BATCH PATH, a deletion before the body: the preview shows the tombstone, as stored', async () => {
+    const { d } = await deviceWithGap(previewShown('p1'), (dev) => deleteFrame(dev, PEER, 'p1'));
+
+    await d.messaging.batchAddMessages(
+      [{ senderId: PEER, content: BODY, messageId: 'p1', serverTimestamp: 5_000 }],
+      CONVO,
+      d.ctx,
+      'arrival'
+    );
+
+    const [shown] = d.shown();
+    expect(shown.id).toBe('p1');
+    expect(shown.isDeleted).toBe(true);
+    expect(shown.content).not.toContain('the real body');
+    expect((await d.storage.getMessage('p1', KEY))?.isDeleted).toBe(true);
+  });
+
+  it('THE BATCH PATH, an edit before the body: the preview shows the edit, as stored', async () => {
+    const { d, read } = await deviceWithGap(previewShown('p1'), (dev) =>
+      editFrame(dev, PEER, 'p1', 'the real edit', 6_000)
+    );
+
+    await d.messaging.batchAddMessages(
+      [{ senderId: PEER, content: BODY, messageId: 'p1', serverTimestamp: 5_000 }],
+      CONVO,
+      d.ctx,
+      'arrival'
+    );
+
+    const [shown] = d.shown();
+    expect(shown.isEdited).toBe(true);
+    expect(shown.content).toContain('the real edit');
+    expect((await read(CONVO, ['p1'], KEY)).rows.get('p1')?.content).toContain('the real edit');
+  });
+});
+
+describe('an upgrade never inserts into a conversation removed during its await (re-review of #3988)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    window.history.pushState({}, '', '/posts');
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  const storedPreview = {
+    id: 'p1',
+    conversationId: CONVO,
+    senderId: PEER,
+    content: 'caption',
+    timestamp: 5_000,
+    isFcmPreview: true,
+  };
+
+  /** A device whose first pending-mutation read removes the conversation, rows and all. */
+  async function removedOnPendingRead() {
+    const storage = new IndexedDbStorage(freshStoreName());
+    await storage.init();
+    const d = makeDevice(useMessaging, storage);
+    await storage.saveMessage(storedPreview, KEY);
+    const pendingRead = storage.getPendingMutations.bind(storage);
+    vi.spyOn(storage, 'getPendingMutations').mockImplementationOnce(async (...args) => {
+      d.conversations.delete(CONVO);
+      await storage.deleteMessagesForConversation(CONVO);
+      return pendingRead(...args);
+    });
+    return d;
+  }
+
+  it('THE STORED PREVIEW (settleStoredBodies): the body is not inserted, a WARN says so', async () => {
+    const d = await removedOnPendingRead();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await d.messaging.batchAddMessages(
+      [{ senderId: PEER, content: BODY, messageId: 'p1', serverTimestamp: 5_000 }],
+      CONVO,
+      d.ctx,
+      'arrival'
+    );
+
+    expect((await d.storage.getMessagesByIds(CONVO, ['p1'], KEY)).rows.has('p1')).toBe(false);
+    expect(warn.mock.calls.some(([line]) => String(line).includes('NOT inserted'))).toBe(true);
+  });
+
+  it('THE SHOWN PREVIEW (the live upgrade): the body is not inserted, a WARN says so', async () => {
+    const d = await removedOnPendingRead();
+    d.conversations.set(CONVO, {
+      ...d.conversations.get(CONVO)!,
+      messages: [preview('p1')],
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await d.messaging.addMessageToChat(PEER, BODY, CONVO, d.ctx, {
+      messageId: 'p1',
+      serverTimestamp: 5_000,
+    });
+
+    expect(d.conversations.has(CONVO)).toBe(false);
+    expect((await d.storage.getMessagesByIds(CONVO, ['p1'], KEY)).rows.has('p1')).toBe(false);
+    expect(warn.mock.calls.some(([line]) => String(line).includes('NOT inserted'))).toBe(true);
   });
 });

@@ -2713,10 +2713,18 @@ export function useMessaging() {
       },
       ctx.deviceKeyB64
     );
-    const inserted = await ctx.storage.saveMessagesIfAbsent(
-      upgrades.filter((row) => !merged.has(row.id)),
-      ctx.deviceKeyB64
-    );
+    const absent = upgrades.filter((row) => !merged.has(row.id));
+    // NEVER AN INSERT INTO A CONVERSATION THAT LEFT THE MAP (review of #3988). An upgrade read its
+    // row, then awaited; a conversation deleted meanwhile took its rows with it, and inserting the
+    // body would resurrect one row of a removed conversation. The merge above is safe (it rewrites
+    // only a row that stands); the insert is asked of the map as it is NOW, after that await.
+    if (absent.length > 0 && !ctx.conversations.has(conversationId)) {
+      console.warn(
+        `[ADD_MSG] ${absent.length} upgrade(s) of "${conversationId}" found no stored row and are NOT inserted: the conversation left the map - nothing is written into a removed conversation`
+      );
+      return new SvelteSet(merged);
+    }
+    const inserted = await ctx.storage.saveMessagesIfAbsent(absent, ctx.deviceKeyB64);
     const written = new SvelteSet([...merged, ...inserted]);
     const left = upgrades.length - written.size;
     if (left > 0) {
@@ -3123,21 +3131,34 @@ export function useMessaging() {
     const lateHeld = heldNow ? brandNew.filter((m) => heldNow.has(m.id)) : [];
     if (lateHeld.length > 0) {
       const lateIds = new SvelteSet(lateHeld.map((m) => m.id));
+      // The BODY as it arrived: `msg` is already settled, and a settled deletion's content is the
+      // tombstone line, which `shouldUpgradeMessage` would not take for a body.
+      const arrivedContent = new SvelteMap(
+        messages.map((pm) => [normalizeMessageId(pm.messageId), pm.content] as const)
+      );
       for (const msg of lateHeld) {
         const shown = heldNow!.get(msg.id)!;
+        const body = arrivedContent.get(msg.id) ?? msg.content;
         const upgrade = {
-          content: msg.content,
+          content: body,
           senderId: msg.senderId,
           replyTo: msg.replyTo,
           isSystem: msg.isSystem,
           serverTimestamp: msg.serverTimestamp,
         };
-        if (shouldUpgradeMessage(shown, msg.content)) {
+        // WITH WHAT WAITED FOR THE BODY, as the store gets it (`settledStoredPatch`) and as the
+        // entry-time upgrade shows it: a deletion or an edit its author made before the body arrived,
+        // and the reactions, land on the row shown - never the bare body until a reload.
+        const consumed = consumedById.get(msg.id) ?? [];
+        if (shouldUpgradeMessage(shown, body)) {
           upgradedById.set(msg.id, {
             from: shown,
-            shown: mergeMessageUpgrade(shown, upgrade),
+            shown: resettled(mergeMessageUpgrade(shown, upgrade), consumed),
             reshow: (now) =>
-              shouldUpgradeMessage(now, msg.content) ? mergeMessageUpgrade(now, upgrade) : now,
+              resettled(
+                shouldUpgradeMessage(now, body) ? mergeMessageUpgrade(now, upgrade) : now,
+                consumed
+              ),
           });
         }
       }

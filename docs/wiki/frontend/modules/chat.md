@@ -1559,11 +1559,16 @@ at entry can be false after the store read, and neither may be answered by the n
   arrival: the live path re-enters and its entry-time duplicate/upgrade branch answers - a preview
   takes the body (`mergeMessageUpgrade`), a body or a tombstone is left - and none of the arrival's
   effects run (no second count, tone or banner). The batch path does the same for its late-held ids:
-  a preview is reshown upgraded, the row is written as an UPGRADE (compare-and-set onto a stored
-  preview, inserted only where none stands, `writeShownUpgrades`), and only the messages actually
-  added are counted and announced;
+  a preview is reshown upgraded WITH what waited for the body (a deletion, an edit, reactions -
+  `resettled`, the same settlement the stored row gets), the row is written as an UPGRADE
+  (compare-and-set onto a stored preview, inserted only where none stands, `writeShownUpgrades`),
+  and only the messages actually added are counted and announced;
 - **the conversation left the map.** Storing its rows would resurrect a deleted conversation, so
-  both paths hand the messages to the orphan buffer, as the live path's entry does, with a WARN.
+  both paths hand the messages to the orphan buffer, as the live path's entry does, with a WARN. The
+  writes that run BEFORE that check - the upgrade of a stored preview (`settleStoredBodies`) and the
+  live upgrade whose conversation left during it - go through `writeShownUpgrades`, which asks the map
+  after its own await: the compare-and-set onto a row that stands still runs, the insert does not,
+  and a WARN says so.
 
 The live path's re-entry cannot loop: both branches it lands in return, and nothing is awaited
 between the read that sent it back and the re-entry's own.
