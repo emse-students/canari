@@ -5095,6 +5095,25 @@ two hops, and the second one is slower than the first:
 | Android Keystore / iOS Keychain | `CanariApplication.processPendingPushSecret` (also run from `MainActivity.onResume`) / `CanariRetrievePushSecret` | at process start and at each resume - always BEFORE the registration that writes the file |
 | `push_secret.txt` in the App Group (iOS only, the NSE's copy) | `store_push_secret`, in the SAME call as the file above; `CanariMirrorPushStateToAppGroup` rewrites the same value at each activation and resignation | at every `/register` since 2026-10-12 |
 
+**A secret the sign-out erased is not a lost Keystore** (S17, 2026-11-20; fixed 2026-11-23,
+review of #4012). `CanariApplication.checkKeystoreHealth` logged `Keystore lost - background push
+disabled` at ERROR after every ordinary sign-out, reading the sign-out's own erasure as a loss. The
+fact is now carried to the check as positive evidence: `PushRegistrationEnd.eraseSecret` writes
+`push_secret_erased_by_sign_out` once `PushSecretKeystore.clear` succeeded, and the next
+`PushSecretKeystore.store` removes it BEFORE writing its ciphertext (a crash in between gives a
+false ERROR, never a hidden loss). The verdict is `push/KeystoreHealth.kt` (`KeystoreHealthTest`),
+and the mark explains ONE fact only, that nothing is stored:
+
+| Fact | Verdict | Level |
+|---|---|---|
+| the secret decrypts | `OPERATIONAL` | debug |
+| a ciphertext is stored but no longer decrypts (a lost key), mark or not | `LOST` | ERROR |
+| the pending secret `processPendingPushSecret` failed to store in the SAME pass (its return value, not the file read afterwards), mark or not | `ADOPTION_FAILED` | ERROR |
+| nothing stored, the mark on disk | `ERASED_BY_SIGN_OUT` | info |
+| nothing stored, no mark | `LOST` | ERROR |
+
+**Owed on the Mi 9T**: a sign-out then sign-in leaves no `Keystore lost` line.
+
 ### The extension's copy that followed the lifecycle, and the iPhones that presented a dead secret
 
 **Measured, prod, 2026-10-12, 09:15-09:35 UTC** (the only window the container's 30 MB log rotation

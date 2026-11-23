@@ -9,7 +9,9 @@ package fr.emse.canari.call
  * a phone conversation. Now a loss HOLDS the microphone - the page disables it and tells both the
  * member and the peer, through the same state the system's own microphone hold uses - and the hold is
  * RELEASED, restoring the member's OWN mute state (muted before stays muted), by either of two facts:
- * the platform's GAIN after a transient loss, or a focus ASKED AGAIN and granted ([onAsk]).
+ * the platform's GAIN after a transient loss, or a focus ASKED AGAIN and granted ([onAsk]). A focus
+ * REFUSED at the call's start ([onOpen]) holds the same way, since no loss will ever announce it,
+ * and the delayed GAIN that follows releases it.
  * `LOSS_TRANSIENT_CAN_DUCK` (a navigation prompt that only lowers others' sound) changes nothing.
  *
  * **A PERMANENT `LOSS` IS NEVER FOLLOWED BY A GAIN** (Android's contract: the other app keeps the
@@ -55,6 +57,22 @@ class CallFocusHold {
         FocusChange.GAIN ->
             if (held) FocusStep.RELEASE.also { held = false } else FocusStep.NONE
         FocusChange.LOSS_TRANSIENT_CAN_DUCK, FocusChange.OTHER -> FocusStep.NONE
+    }
+
+    /**
+     * The step the call's FIRST focus request asks for, [granted] being the platform's answer.
+     *
+     * **A REFUSED FIRST REQUEST HOLDS EXACTLY LIKE A PERMANENT `LOSS`** (backlog P2 of 2026-11-12): a
+     * cellular call already in progress keeps the focus, so no `LOSS` will ever arrive to hold the
+     * microphone. The call therefore starts held. Its request is a DELAYED one (the service accepts
+     * delayed gain), so the GAIN Telecom's abandon delivers is [on]`(GAIN)` and releases the hold
+     * with no tap; an ask ([onAsk]) granted by the platform releases it too. A granted request
+     * changes nothing - the call starts with the member's own microphone state - and so does an
+     * answer reaching a call already held.
+     */
+    fun onOpen(granted: Boolean): FocusStep = when {
+        granted || held -> FocusStep.NONE
+        else -> FocusStep.HOLD.also { held = true }
     }
 
     /** Whether asking for the focus again could change anything: only a held call asks. */

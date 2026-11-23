@@ -3809,7 +3809,7 @@ playing. What changed:
 | Every call started on the loudspeaker, and `pickCallOutput` never reads the headsets with the speaker on | The voice STARTS where `callStartsOnSpeaker(video)` says: a VIDEO call on the loudspeaker, an AUDIO call on the earpiece - or a connected headset, which `pickCallOutput` already prefers off the speaker. Decided when the call first holds the microphone (`CallService.hasVideo` is set before the stream is published), moved to the loudspeaker if video shows later; the user's tap on the toggle wins for the rest of the call | `androidCallService.ts`, `CallOverlay.svelte` |
 | The screen stayed on against the cheek | Android: `PROXIMITY_SCREEN_OFF_WAKE_LOCK` held while the output `CallAudio` APPLIED is the earpiece (`holdsProximityScreenOff`), released with `RELEASE_FLAG_WAIT_FOR_NO_PROXIMITY` on a move to the speaker or a headset and on every end path; a device without the sensor says so once. iPhone: `UIDevice.proximityMonitoringEnabled` through the `canariProximity` message handler (`canari_ios.mm`), set while the call holds the microphone on the receiver (`iosCallProximity.ts`) | `CallForegroundService.kt`, `canari_ios.mm` |
 | No photo on the ongoing notification | The `CallStyle` person carries the peer's photo: `peerUserId` crosses the bridge, `CanariFirebaseMessagingService.callAvatar` - the SAME `fetchAvatar` every message notification uses (push-secret route, 24 h cache, remembered absence) - runs off the main thread, and the notification is re-posted when it lands; it is never held for the picture | `CallForegroundService.kt` |
-| Music kept playing | `CallAudio.open` requests `AUDIOFOCUS_GAIN_TRANSIENT` with `USAGE_VOICE_COMMUNICATION`; `close` abandons it. A refusal (a phone call holds the focus) is a WARN and the call goes on | `CallForegroundService.kt` |
+| Music kept playing | `CallAudio.open` requests `AUDIOFOCUS_GAIN_TRANSIENT` with `USAGE_VOICE_COMMUNICATION`; `close` abandons it. A refusal (a phone call holds the focus) STARTS THE CALL HELD (below) | `CallForegroundService.kt` |
 | No mute on the notification | A mute / unmute action (`notif_action_call_mute` / `_unmute`, the app's language) sends `ToggleMute` -> `ForwardMute` -> a `mute` event; the page toggles its microphone and its next `update` carries `muted`, so the label shows the CALL's state, never the one a press assumed | `OngoingCall.kt`, `androidCallService.ts` |
 
 **What the review of #2723 added (2026-10-30).**
@@ -3851,6 +3851,22 @@ playing. What changed:
   coming back on screen (the service's screen listener). A grant is `focus`/`gained`; a refusal (a
   phone call still holds the focus) is `focus`/`refused`, the hold stays and the member reads
   "Une autre application garde le son". A call not held asks nothing.
+- **A focus REFUSED at the call's start holds the call, and the focus's return releases it**
+  (2026-11-23, review of #4012). A cellular call already in progress keeps the focus, so no `LOSS`
+  ever arrives and the microphone used to run under the phone call. `CallAudio.open` hands the
+  request's answer to `CallFocusHold.onOpen`: anything but `GRANTED` holds and emits `focus`/`lost`
+  (reason `refused at the call's start`) before any GAIN, with ONE log line per outcome. The request
+  accepts DELAYED gain (`setAcceptsDelayedFocusGain(true)`): while Telecom holds the voice-call
+  focus AOSP neither grants nor queues an ordinary request, so without it no GAIN would ever come
+  and only a tap could release the hold (and `onResume` can run before Telecom abandons). The
+  delayed answer `AUDIOFOCUS_REQUEST_DELAYED` counts as not granted, and the GAIN Telecom's abandon
+  delivers - every `GAIN*` code maps to `GAIN` in `focusListener` - releases the hold with no tap.
+  The ask paths above still release it too. Tests: `CallFocusHoldTest`
+  (`aFocusRefusedAtTheStartIsReleasedByTheDelayedGain`, the ask path, the held -> no-step branch)
+  and `androidCallService.test.ts` (the page receives `lost` before any GAIN). **Owed on the Mi
+  9T**: (1) start a Canari call during a cellular call - the peer sees the microphone cut; (2) the
+  cellular call ends while Canari stays on screen, with no tap - the microphone comes back by
+  itself.
 - **EVERY mute control shows the call MUTED while held** - the in-app button, the minimised bar, the
   ongoing notification and the OS media controls all read `micShownMuted` (`isMuted ||
   audioFocusHeld`, `useCallModel`), and all tap through ONE function, `CallService.muteButtonTap`:
