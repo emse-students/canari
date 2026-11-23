@@ -65,7 +65,7 @@ export function noteKeyboardAtRest(why: string): void {
 }
 
 /** An edge of a keyboard transition, as {@link onKeyboardTransitionEdge} hands it. */
-export type KeyboardTransitionEdge = 'starts' | 'at rest';
+type KeyboardTransitionEdge = 'starts' | 'at rest';
 
 type EdgeListener = (edge: KeyboardTransitionEdge, transition: number, why: string) => void;
 const edgeListeners = new Set<EdgeListener>();
