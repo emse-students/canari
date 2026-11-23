@@ -260,7 +260,7 @@ as the fallback. Tests: `AvatarAbsenceTest.kt`, `shareTargets.test.ts`.
 **The deeper cause (found in review of #3982): the Rust command dropped the picture.** `publish_share_targets`
 deserializes into the plugin's `ShareTarget`, which had only `id`, `label` and `link`, so serde discarded
 `avatar` before Kotlin was called: NO share-target picture, user or media, ever arrived through this
-path since 2026-11-20, and every shortcut was initials whatever the cache held. That alone explains
+path since #3908 (2026-11-20, the commit that added the picture to the page and to Kotlin but not to the Rust struct, which dates from #2292), and every shortcut was initials whatever the cache held. That alone explains
 the Mi 9T reading, media icons included; the absent marker was a second, hidden defect behind it.
 `ShareTarget` now carries `avatar` (`kind`, `id`, `hasPhoto`, camelCase), pinned by a serde test in
 `commands.rs`, and Kotlin logs the counts per publish (`publishShareTargets: N user avatar(s), N media
