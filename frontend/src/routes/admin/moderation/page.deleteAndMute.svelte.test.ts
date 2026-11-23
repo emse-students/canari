@@ -136,3 +136,24 @@ describe('Delete and mute on a hidden post', () => {
     expect(api.deletePost).not.toHaveBeenCalled();
   });
 });
+
+describe('The hidden row names who spoke', () => {
+  it('names the association first (database name) and the author second', async () => {
+    await openWith({
+      ...hidden(false),
+      associationId: 'asso-1',
+      associationName: 'Bureau des Eleves',
+      associationLogoUrl: null,
+    });
+    const asso = document.querySelector('[data-hidden-association]')!;
+    const author = document.querySelector('[data-hidden-author]')!;
+    expect(asso.textContent).toContain('Bureau des Eleves');
+    expect(asso.compareDocumentPosition(author) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('names a personal post by its author alone', async () => {
+    await openWith(hidden(false));
+    expect(document.querySelector('[data-hidden-association]')).toBeNull();
+    expect(document.querySelector('[data-hidden-author]')).not.toBeNull();
+  });
+});
