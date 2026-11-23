@@ -4,8 +4,7 @@
 > 2026-11-02): nothing a signed-out visitor reads may go further than portail-etu.emse.fr shows. A
 > profile's memberships and past roles need a session since that day.
 
-**Status (2026-10-01): WP0, WPA and WP1 are BUILT AND LIVE on production (2026-09-30); WP2 is BUILT AND
-TESTED, ON `main`, AND REACHES PRODUCTION WITH THE NEXT STABLE; WP3 is BUILT (backend, backfill, directory), WP4 to WP9 are PLANNED**. Every answer below was given by the user on
+**Status (2026-11-23): WP0, WPA, WP1, WP2, WP3, WP4 and WP6 (a to e) are in production; WP5 is next, then WP7 to WP9 ([backlog](backlog.d/the-miconnect-profile-reform-wp5-is-next.md)); WP8 is UNBLOCKED, the Alumni SSO having been measured on 2026-11-23.** Every answer below was given by the user on
 2026-09-29, one question at a time. The technical plan that turns them into work packages is section 4,
 VALIDATED the same day. Sections 1 and 3 describe production as measured BEFORE WP0/WP1: read them as the
 starting point, not as today's state. Anyone can log in to MiConnect with a School CAS account (and soon a Mines Saint-Etienne
@@ -28,7 +27,7 @@ nothing else. Two sources:
 | Source | Kind | State |
 | --- | --- | --- |
 | `cas-emse` | OAuth/OIDC against `cas.emse.fr/cas/oidc` | 598 accounts linked. Its mapping `CAS EMSE` keeps `sub` (the username, `prenom.nom`) and `name`, nothing else |
-| `alumni` | SAML | enabled and promoted, but its `sso_url` is a PLACEHOLDER (a YouTube URL), it has no property mapping and no account is linked |
+| `alumni` | SAML | enabled, NOT promoted, against Alumnforce since 2026-11-23, measured on a real login; one alumni identity linked ([authentik](infrastructure/authentik.md#the-alumni-saml-source-enabled-not-promoted-measured-2026-11-23)) |
 
 **The CAS says nothing about the person.** Its public discovery document advertises the standard
 OIDC claims only (`sub`, `name`, `given_name`, `family_name`, `email`, ...) - no affiliation, no
@@ -279,9 +278,6 @@ built.
 - **A MiGallery API key travels in plain text in claims.** The property mapping `avatar` builds a
   URL carrying it, and it is attached to MinoWiki and Archives MINO, so it was readable in a claim. The value is not written here. Closed by WP0 on 2026-09-30
   ([section 4](#the-work-packages-in-order)).
-- **The Alumni source's `sso_url` is a placeholder** while the source is enabled and promoted.
-  Whether its button renders on the sign-in page was not observed. The SP metadata the IdP needs
-  is served and was measured 2026-10-22 ([authentik](infrastructure/authentik.md#the-alumni-saml-source-what-to-hand-the-idp-and-what-is-still-missing-2026-10-22)).
 
 ## 4. The technical plan - VALIDATED by the user 2026-09-29
 
@@ -903,18 +899,19 @@ keeps its remembered verdict, and the server must be restarted to show 6b.
 page. A BDE grants within its space; cross-space capabilities (widening a post, institutions,
 profiles) stay with global admins.
 
-**WP8 - The colle (D28), BLOCKED on the Alumni SSO existing.** A real `sso_url` and mappings (name,
-alumni id) on the `alumni` SAML source, bound to WP2's flow; a claim `alumni_linked`; a Canari banner
+**WP8 - The colle (D28), UNBLOCKED 2026-11-23.** The `alumni` SAML source has its real `sso_url`, its
+certificate and a name mapping, and a link onto an account signed in through the CAS was OBSERVED
+([authentik](infrastructure/authentik.md#the-alumni-saml-source-enabled-not-promoted-measured-2026-11-23)). Still owed: a claim `alumni_linked`; a Canari banner
 for promo N-1; a stage in `miconnect-auth`, skippable before the date the user sets and blocking
 after it. authentik links a source to the account that is ALREADY signed in, which is exactly the
-colle - to be proven on dev with a real alumni account.
+colle - proven in production on 2026-11-23 with a real alumni account.
 
 **WP9 - The shims go.** The `promo`/`formation`/`school_status` claims and columns and the old
 attribute keys, once nothing reads them - each removal measured, per
 [legacy-compatibility](legacy-compatibility.md).
 
-**Dependencies.** WP0 whenever. WPA -> WP1 -> WP2 and WP3; WP3 -> WP4 -> WP5; WP3 -> WP6 -> WP7; WP8 waits
-for the SSO; WP9 last.
+**Dependencies.** WP0 whenever. WPA -> WP1 -> WP2 and WP3; WP3 -> WP4 -> WP5; WP3 -> WP6 -> WP7; WP8 no longer waits
+(the SSO is live, not promoted); WP9 last.
 
 ## The access plan - who sees what (decided with the user, 2026-10-04)
 
