@@ -45,6 +45,7 @@ import {
   type GroupRosterAtGeneration,
   type PendingInvitationRow,
   WelcomeTargetUnknownError,
+  PendingPullIncompleteError,
   isTerminalWelcomeRefusal,
   whyWelcomeUndeliverable,
   type RefusedAdmit,
@@ -3617,6 +3618,12 @@ export abstract class BaseMlsService implements IMlsService {
           // reconnect would drain it, so neither an error line nor "stays queued" is true.
           console.info(
             `[PENDING] Pending fetch ended after ${fetched} message(s): this device was revoked by its owner, nothing remains to drain`
+          );
+        } else if (e instanceof PendingPullIncompleteError) {
+          // AN ANSWER, NOT A FAULT OF THIS DEVICE: the server or the edge refused a page. The pull is
+          // INCOMPLETE - never a drained mailbox (`emptied` and the mailbox flag stay unset).
+          console.warn(
+            `[PENDING] Pending fetch stopped by a ${e.status} from the ${e.origin} after ${fetched} message(s) - ${where}`
           );
         } else if (isTransportFailure(e)) {
           console.warn(

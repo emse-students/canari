@@ -6,6 +6,7 @@ import {
 import { encodeAppMessage, decodeAppMessage, mkEdit, mkPoll, mkReaction } from '$lib/proto/codec';
 import type { DecodedChannelEdit } from '$lib/utils/chat/channelEdit';
 import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
+import { createChangeLatch } from '$lib/utils/changeLatch';
 import { channelSystemEnvelope } from './channelNotice';
 import { CHANNEL_CONVERSATION_PREFIX, isChannelConversationId } from './rawId';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
@@ -183,6 +184,21 @@ function unreadableCauseClass(err: unknown): string {
 }
 
 /**
+ * What each salon's pages have already said about their unreadable rows, keyed by (salon, class),
+ * valued by the sorted row ids. Every open of a salon re-reads the same rows it can never read
+ * (a Graine v1 session this device does not hold, a missing seed) and used to warn again for ever;
+ * the fact is the same, so the line is said ONCE per (salon, class, id set) and the notice the salon
+ * already shows carries the rest. A new or different set of rows is a new fact and is said again.
+ * Durable state, not a clock; memory only, so a reload says it once more.
+ */
+const unreadableSaid = createChangeLatch();
+
+/** Forgets what pages said (an account switch, tests). */
+export function resetUnreadableRowLatch(): void {
+  unreadableSaid.reset();
+}
+
+/**
  * One page of a salon's history, said as ONE line per unreadable class instead of one per row.
  *
  * A page is 200 rows, and a salon whose past predates this device's seeds used to print 200 warns
@@ -221,6 +237,13 @@ export class UnreadableRowTally {
   report(): void {
     const channel = rawChannelId(this.channelId).slice(0, 8);
     for (const [causeClass, { rows, causes, fault }] of this.byClass) {
+      // A refusal ACCUSES and is never latched; an honest unreadable class is said once per id set.
+      if (
+        !fault &&
+        !unreadableSaid.changed(`${this.channelId}|${causeClass}`, [...rows].sort().join(','))
+      ) {
+        continue;
+      }
       const samples = [...causes].slice(0, 3).join('; ');
       (fault ? console.error : console.warn)(
         `[CHANNEL] ${rows.length} message(s) of ${channel} are ${fault ? 'REFUSED' : 'unreadable'} and not rendered - ` +

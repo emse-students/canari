@@ -310,7 +310,10 @@ seed (the protocol working; asking would loop for ever on the same answer), or a
 row appears the moment its seed lands. **A page says it once**: history and search hand every row
 of a page an `UnreadableRowTally`, which prints one warn per class - count, distinct causes, three
 row ids - where a salon older than this device's seeds used to print 200 identical lines per load
-(2026-09-28). A live frame is one row and still says so itself. **Do not add a placeholder to one of the two systems
+(2026-09-28). **And once per set of rows, across opens**: the tally's `report()` latches each
+non-fault class per (salon, class) on the sorted row ids (`changeLatch`, memory only), so reopening a
+salon whose v1 or seedless rows can never be read is silent, while a different id set is said again
+and a REFUSED class (an error) is never latched. A live frame is one row and still says so itself. **Do not add a placeholder to one of the two systems
 without adding it to both**, and that is a product decision, not a protocol one.
 
 A request names WHO must answer, so that N members do not all answer at once and no election is

@@ -570,6 +570,36 @@ export function raceDeadline<T>(
 }
 
 /**
+ * The pending pull STOPPED on a page the server (or the edge in front of it) answered with a non-2xx
+ * status. Typed, so a caller can never read the end of the pull as a drained mailbox: the pages
+ * already handed to `onPage` stay handed on, and the rest of the backlog is still queued. Not a
+ * transport failure (somebody answered) and never classified by its message.
+ */
+export class PendingPullIncompleteError extends Error {
+  constructor(
+    readonly status: number,
+    readonly origin: 'gateway' | 'edge'
+  ) {
+    super(
+      `[PENDING] the pull stopped on a ${status} from the ${origin} - the mailbox is NOT drained`
+    );
+    this.name = 'PendingPullIncompleteError';
+  }
+}
+
+/**
+ * The resend after a 401 (the page asked again with the renewed token) did not arrive. Wraps what
+ * the resend threw so the pull's halving ladder can tell it from a failed RENEWAL, which is thrown as
+ * itself and never halved: only a page that did not arrive is a page asked for too big.
+ */
+class PendingResendDidNotArrive extends Error {
+  constructor(readonly reason: unknown) {
+    super(`[PENDING] the resend after a 401 did not arrive: ${String(reason)}`);
+    this.name = 'PendingResendDidNotArrive';
+  }
+}
+
+/**
  * A request of the key package round was ABANDONED because it exceeded its deadline. Not
  * {@link DeliveryUnreachableError} (the service WAS asked, it never answered) and not a status
  * code: nothing is established about the device, so the caller must not act on it.
@@ -1277,6 +1307,9 @@ export class MlsDeliveryApi {
    * deadline and the halving below are a detector and a response, not two answers to one question:
    * the deadline decides when to stop waiting, the ladder decides what to ask next, and neither can
    * do the other's job.
+   *
+   * @throws {PendingPullIncompleteError} A page answered non-2xx: the pull is INCOMPLETE, never a
+   *   drained mailbox (pages already handed to `onPage` stay handed on).
    */
   async pullPendingMessagesJson(opts?: {
     /** The longest SILENCE tolerated on one page. Defaults to {@link PENDING_PAGE_STALL_MS}. */
@@ -1314,10 +1347,9 @@ export class MlsDeliveryApi {
           { headers: this.headersFor(bearer) },
           stallTimeoutMs
         );
-      let page: ProgressDeadlineResult<Array<{ createdAt?: string }>>;
-      try {
-        page = await fetchPage(token);
-      } catch (e) {
+      // THE LADDER, one step: what a page that did not ARRIVE changes about the next request. Shared by
+      // the first ask and by the resend after a 401, so a stall on either is asked again smaller.
+      const halveOnUnarrived = (e: unknown): void => {
         // A TRANSPORT FAILURE IS NOT A SIZE PROBLEM. Nobody answered, so no smaller question can get
         // a different answer from the same dead link: halving it eight times was eight warn lines and
         // eight requests against a fact (`transportFailure.ts`). A body that STARTED and died is not
@@ -1343,9 +1375,16 @@ export class MlsDeliveryApi {
           console.warn(
             `[PENDING] page did not arrive (${String(e)}) - retrying with limit=${pageLimit}`
           );
-          continue;
+          return;
         }
         throw e;
+      };
+      let page: ProgressDeadlineResult<Array<{ createdAt?: string }>>;
+      try {
+        page = await fetchPage(token);
+      } catch (e) {
+        halveOnUnarrived(e);
+        continue;
       }
       // THE GATEWAY'S ANSWER, WHATEVER ITS STATUS, PROVES THE SERVER REACHABLE - and this route is the
       // one that tells the store when it got none (`BaseMlsService.fetchPendingMessages`), so it must
@@ -1363,18 +1402,40 @@ export class MlsDeliveryApi {
       // refresh nobody answered, a renewed token refused) is thrown as itself, never read as a page
       // too big, and the resend has its own stall timer.
       if (page.status === 401 && this.renewal) {
-        page = await resendAfter401(page, fetchPage, token, {
-          ...this.renewal,
-          refusedRenewed: (answer) => this.renewal!.refusedRenewed(answer, 'GET /api/mls/messages'),
-          where: 'GET /api/mls/messages',
-        });
+        try {
+          page = await resendAfter401(
+            page,
+            // Only the resend's own SEND is tagged: a renewal that fails is thrown as itself below.
+            async (bearer) => {
+              try {
+                return await fetchPage(bearer);
+              } catch (e) {
+                throw new PendingResendDidNotArrive(e);
+              }
+            },
+            token,
+            {
+              ...this.renewal,
+              refusedRenewed: (answer) =>
+                this.renewal!.refusedRenewed(answer, 'GET /api/mls/messages'),
+              where: 'GET /api/mls/messages',
+            }
+          );
+        } catch (e) {
+          // A resend that stalled is a page asked for too big, exactly like the first ask: it goes
+          // down the same ladder (the next iteration asks again with the renewed token).
+          if (e instanceof PendingResendDidNotArrive) {
+            halveOnUnarrived(e.reason);
+            continue;
+          }
+          throw e;
+        }
       }
       if (!page.ok) {
-        // Every swallowed branch logs: the pull stops here and keeps the pages already handed on.
-        console.warn(
-          `[PENDING] page answered ${page.status} by the ${page.origin} - the pull stops here, the next one asks again`
-        );
-        break;
+        // The pull stops here, and SAYS it did not drain: returning what it has read as an empty
+        // queue to the one caller that treats the end of the pull as a drained mailbox. The pages
+        // already handed to `onPage` stay handed on.
+        throw new PendingPullIncompleteError(page.status, page.origin);
       }
       const batch = page.body;
       if (!Array.isArray(batch) || batch.length === 0) break;

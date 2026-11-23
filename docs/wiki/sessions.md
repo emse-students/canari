@@ -969,6 +969,8 @@ design. An audit trail names the account that ACTED, so it reads the real user, 
 
 ## A 401 renews the token and sends the same request once - one rule, every caller
 
+**The pending pull's two edges (2026-11-23).** A non-2xx page ends the pull with a typed `PendingPullIncompleteError` (status, origin), never a return that reads as a drained mailbox: `BaseMlsService.fetchPendingMessages` logs it as a warn and leaves the mailbox flag unset. A resend after a 401 that stalls is tagged at its send and goes down the same page-halving ladder as the first ask, while a failed renewal is still thrown as itself and never halved (`mlsDeliveryApi.renewOn401.test.ts`).
+
 ONE implementation, `frontend/src/lib/utils/renewOn401.ts`. On a 401 to a request that carried a
 bearer: use the token in memory if another caller already renewed it (the single flight only joins a
 refresh while it is PENDING), else renew through `refresh()`; send the SAME request once more; release
