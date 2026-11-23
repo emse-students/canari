@@ -104,13 +104,15 @@ import {
   capacityFreed,
   nextWaitlistOrder,
   promoteFromWaitlist,
-  promotedStatusOf,
+  onlineCollectsThrough,
+  planPromotion,
   promotionPayable,
   promoteWaitingRow,
   waitingLast,
   waitlistApplies,
   waitlistRank,
   type PromotedAnswer,
+  type OnlineCollects,
   type WaitlistTrigger,
 } from './waitlist';
 import { FormWaitlistNoticeService } from './waitlist-notice.service';
@@ -612,10 +614,11 @@ function freeingTrigger(
 export const WAITLIST_ANSWER_NOT_WAITING = 'WAITLIST_ANSWER_NOT_WAITING';
 
 /**
- * The `code` of the 409 a promotion by hand gets when the answer would owe a payment the form no
- * longer takes (`promotionPayable`, `waitlist.ts`): online switched off for an online answer, cash
- * for a cash one - the registration could never be paid. The manager turns the mode back on, or
- * removes the answer. The client words it.
+ * The `code` of the 409 a promotion by hand gets when the answer would owe a payment the form
+ * cannot take now (`promotionPayable`, `waitlist.ts`): online switched off, or an association that
+ * cannot collect online, for an online answer; cash switched off for a cash one - the registration
+ * could not be paid. The manager makes the mode payable again, or removes the answer. The client
+ * words it.
  */
 export const WAITLIST_NO_PAYMENT_PATH = 'WAITLIST_NO_PAYMENT_PATH';
 
@@ -629,6 +632,9 @@ export const FORM_SUMMARIES_CONCURRENCY = 6;
 @Injectable()
 export class FormsService {
   private readonly logger = new Logger(FormsService.name);
+
+  /** Whether a form's association can collect online now, for the waiting list (`promotionPayable`). */
+  private readonly onlineCollects: OnlineCollects;
 
   constructor(
     @InjectRepository(Form) private readonly formRepo: Repository<Form>,
@@ -647,7 +653,9 @@ export class FormsService {
     // The waiting list's one notice (`waitlist-notice.service.ts`). Always injected by Nest; a unit
     // spec that never promotes anyone may leave it out, and a promotion told without it is an ERROR.
     private readonly waitlistNotice?: FormWaitlistNoticeService
-  ) {}
+  ) {
+    this.onlineCollects = onlineCollectsThrough(associationsService);
+  }
 
   /**
    * A form may be given a price only by an entity that may collect now (`mayCollect`, owner
@@ -2009,12 +2017,17 @@ export class FormsService {
       if (moves) await this.followFormOpeningMove(inTransaction, form);
       return withStatus(saved);
     }
-    // A PUBLISHED form's capacity RAISED OR CLEARED by this edit frees places: the first in line is
-    // promoted into them IN THE SAVE'S TRANSACTION, under the form's seat lock taken first
-    // (`waitlist.ts`), and told after the commit. A draft holds no answer to promote, and an edit
-    // that frees no place has nothing to promote.
+    // ANY SAVE OF A PUBLISHED FORM PROMOTES while someone waits: the first in line takes every
+    // free place IN THE SAVE'S TRANSACTION, under the form's seat lock taken first (`waitlist.ts`),
+    // and is told after the commit. Not only a capacity raised or cleared: a payment mode turned
+    // back on is what lifts a FROZEN list (`promotionPayable`), and an edit that frees nothing
+    // finds no free place and promotes nobody. A capacity freed promotes even when the read below
+    // saw nobody waiting: an answer joining the line concurrently does so under the seat lock this
+    // save then waits for. A draft holds no answer to promote.
     const promotes =
-      status === FORM_PUBLISHED && capacityFreed(capacityBefore, form.maxSubmissions);
+      status === FORM_PUBLISHED &&
+      (capacityFreed(capacityBefore, form.maxSubmissions) ||
+        (await this.submissionRepo.count({ where: { formId, paymentStatus: WAITING } })) > 0);
     if (citedBefore.length === 0 && citedAfter.length === 0 && !moves && !promotes) {
       return withStatus(await this.formRepo.save(written as Form));
     }
@@ -2026,7 +2039,14 @@ export class FormsService {
       }
       const stored = await m.save(Form, written as Form);
       if (moves) await this.followFormOpeningMove(m, form);
-      if (promotes) promoted = await promoteFromWaitlist(m, formId, 'form-edit', this.logger);
+      if (promotes)
+        promoted = await promoteFromWaitlist(
+          m,
+          formId,
+          'form-edit',
+          this.logger,
+          this.onlineCollects
+        );
       return stored;
     });
     await this.tellPromoted(promoted);
@@ -2162,7 +2182,6 @@ export class FormsService {
       const changed = current.document ? await formChangedSinceRevision(m, formId) : false;
       if (changed && !overwrite) return { refused: 'changed' as const };
       let saved: Form = locked;
-      const capacityBefore = locked.maxSubmissions;
       if (current.document) {
         const dto = await this.validatedRevision(current.document);
         saved = (await this.update(formId, dto, userId, isGlobalAdmin, m, confirmedAskers)) as Form;
@@ -2177,13 +2196,13 @@ export class FormsService {
           .execute();
       }
       const next = current.document ? await closeFormDraft(m, formId) : current.revision;
-      // A capacity raised or cleared by the revision of a published form frees places: the first in
-      // line takes them in this transaction, the form's row already held (`waitlist.ts`), and is
-      // told after the commit. A draft holds no answer to promote.
-      const promoted =
-        !wasDraft && capacityFreed(capacityBefore, saved.maxSubmissions)
-          ? await promoteFromWaitlist(m, formId, 'form-edit', this.logger)
-          : [];
+      // EVERY PUBLISHED REVISION PROMOTES, as every save of a published form does (`update`): a
+      // capacity raised or cleared frees places, and a payment mode turned back on lifts a frozen
+      // list. In this transaction, the form's row already held (`waitlist.ts`), told after the
+      // commit; nobody waiting or no place free promotes nobody. A draft holds no answer to promote.
+      const promoted = !wasDraft
+        ? await promoteFromWaitlist(m, formId, 'form-edit', this.logger, this.onlineCollects)
+        : [];
       return { refused: null, revision: next, items: saved.items as unknown, wasDraft, promoted };
     });
     if (outcome.refused === 'gone') throw new NotFoundException('Form not found');
@@ -3277,7 +3296,13 @@ export class FormsService {
         // every free place BEFORE this answer's seat is counted, under the same lock (a hold that
         // lapsed before the expiry job said so is such a place).
         if (form.maxSubmissions && !form.anonymous) {
-          promotedHere = await promoteFromWaitlist(manager, id, 'submit', this.logger);
+          promotedHere = await promoteFromWaitlist(
+            manager,
+            id,
+            'submit',
+            this.logger,
+            this.onlineCollects
+          );
         }
 
         // Looked up BEFORE the capacity check: the row already holds this person's seat, so a retry
@@ -3540,8 +3565,9 @@ export class FormsService {
         this.logger.log(
           `[WAITLIST] submit on ${formTag(form)} refused after promoting ${promotedHere.length} - promoted again on its own`
         );
-        // Logged at ERROR by `promoteWaitlist` when it fails; the refusal is still what this caller
-        // is answered, and the place waits for the form's next capacity event.
+        // NOT A SILENT SWALLOW: `promoteWaitlist` logs every failure at ERROR before it throws, so
+        // this catch only keeps the refusal `e` as what this caller is answered; the place then
+        // waits for the form's next capacity event.
         await this.promoteWaitlist(id, 'submit').catch(() => undefined);
       }
       throw e;
@@ -3737,7 +3763,13 @@ export class FormsService {
           })) > 0;
         // As in `submit`: the first in line takes every free place BEFORE this answer counts one.
         if (form.maxSubmissions && !ownSeat) {
-          promotedHere = await promoteFromWaitlist(manager, form.id, 'resume', this.logger);
+          promotedHere = await promoteFromWaitlist(
+            manager,
+            form.id,
+            'resume',
+            this.logger,
+            this.onlineCollects
+          );
         }
         const locked = await manager.findOne(Submission, {
           where: { id: submissionId },
@@ -3789,7 +3821,8 @@ export class FormsService {
       });
     } catch (e: unknown) {
       // A refusal after the promotion rolled it back: the places are promoted again on their own.
-      // Logged at ERROR by `promoteWaitlist` when it fails; the refusal is what this caller is answered.
+      // NOT A SILENT SWALLOW: `promoteWaitlist` logs every failure at ERROR before it throws, so
+      // this catch only keeps the refusal `e` as what this caller is answered.
       if (promotedHere.length > 0) {
         await this.promoteWaitlist(form.id, 'resume').catch(() => undefined);
       }
@@ -4509,7 +4542,8 @@ export class FormsService {
    *   (`promotedAt`, `waitlist.ts`), which goes back to `payment_due`: its place was given by the
    *   waiting list, and Canari failing to ask for the payment is no reason to give it to the next
    *   in line (owner decision of 2026-11-23 frees a place on a refused or expired payment only). Its
-   *   hold runs from the resume that tried.
+   *   hold is counted from its PROMOTION again, never from the resume that tried, so it ends at a
+   *   fixed time however often the person retries.
    * - `issue-unknown` (the call was sent and failed, so a request may exist at Lydia that the row
    *   does not name): the row STAYS `pending`, holding its seat until its hold lapses (the expiry
    *   job then frees it and promotes the next in line), and is marked `issue-unknown` so no resume
@@ -4551,6 +4585,7 @@ export class FormsService {
     if (head?.promotedAt) {
       const restored = await this.moveLockedSubmission(submissionId, 'pending', PAYMENT_DUE, {
         named: namesNone,
+        holdFromPromotion: true,
       });
       if (typeof restored === 'object') {
         this.logger.log(
@@ -4633,7 +4668,13 @@ export class FormsService {
           deleted: rows,
           promoted:
             rows.length > 0
-              ? await promoteFromWaitlist(m, sub.formId, 'manager-delete', this.logger)
+              ? await promoteFromWaitlist(
+                  m,
+                  sub.formId,
+                  'manager-delete',
+                  this.logger,
+                  this.onlineCollects
+                )
               : [],
         };
       }
@@ -4787,11 +4828,14 @@ export class FormsService {
         // request (`request_uuid`) and is no longer overwritten with whichever id arrived first.
         submission.paymentSettledBy = sessionId ?? null;
         await manager.save(submission);
-        // NO ONE IS BOTH PAID AND IN LINE (`waitlist.ts`): a late payment on an old answer of a
-        // person who has since joined the form's waiting list takes that person off it, under the
-        // seat lock held, so they are never promoted into a second registration they would pay for
-        // twice. A waiting answer holds no seat, so it never made this payment over capacity.
-        if (submission.userId) {
+        // NO ONE IS BOTH REGISTERED AND IN LINE (`waitlist.ts`): a late payment that GAVE a seat
+        // (`paid`) on an old answer of a person who has since joined the form's waiting list takes
+        // that person off it, under the seat lock held, so they are never promoted into a second
+        // registration they would pay for twice. One that landed `paid_over_capacity` gave no seat,
+        // so the person KEEPS their place in line (decision of 2026-11-23, forms.md): when their
+        // turn comes, the promotion converts this paid answer to `paid` instead of opening a second
+        // one (`planPromotion`), and the refund is owed only if they are never promoted.
+        if (submission.userId && status === 'paid') {
           const [left] = (await manager.query(
             `DELETE FROM submissions WHERE "formId" = $1 AND "userId" = $2 AND "paymentStatus" = $3
                 AND id <> $4 RETURNING id`,
@@ -5294,11 +5338,18 @@ export class FormsService {
       formId,
       named,
       cancelledBy,
+      holdFromPromotion,
     }: {
       formId?: string;
       named?: (submission: Submission) => boolean;
       /** Who or what cancels, recorded with a move to `cancelled` (`PaymentCancelOrigin`). */
       cancelledBy?: PaymentCancelOrigin;
+      /**
+       * A move back to `payment_due`: the hold is counted from the PROMOTION again
+       * (`paymentRequestedAt = promotedAt`), not from the resume that failed, so it ends at the
+       * time it always would have - re-clicking "pay" never keeps a seat longer.
+       */
+      holdFromPromotion?: boolean;
     } = {}
   ): Promise<{ moved: Submission } | 'missing' | 'not-in-state' | 'other-request'> {
     // The form the row belongs to, read to take its lock first: a row never changes form.
@@ -5331,6 +5382,9 @@ export class FormsService {
           return 'other-request';
         }
         submission.paymentStatus = to;
+        if (holdFromPromotion && !submission.promotedAt) {
+          throw new Error(`submission ${submissionId} moved to ${to} carries no promotedAt`);
+        }
         // A row kept `pending` after an issue whose outcome is unknown keeps that origin through its
         // cancel: a request may still be payable at Lydia, so it must never become resumable.
         if (cancelledBy && submission.paymentCancelOrigin !== 'issue-unknown') {
@@ -5341,12 +5395,22 @@ export class FormsService {
           );
         }
         await manager.save(submission);
+        if (holdFromPromotion) {
+          // In SQL, on the database's own clock: `paymentRequestedAt` is a `timestamp` and
+          // `promotedAt` a `timestamptz`, so a value carried through the service would be shifted
+          // by the process's time zone - the cast here is the one `now()` takes on both.
+          await manager.query(
+            `UPDATE submissions SET "paymentRequestedAt" = "promotedAt" WHERE id = $1`,
+            [submissionId]
+          );
+        }
         if (to === 'cancelled') {
           promoted = await promoteFromWaitlist(
             manager,
             head.formId,
             freeingTrigger(from, cancelledBy),
-            this.logger
+            this.logger,
+            this.onlineCollects
           );
         }
         return { moved: submission } as const;
@@ -5374,7 +5438,7 @@ export class FormsService {
         'READ COMMITTED',
         async (manager) => {
           await lockFormSeats(manager, formId);
-          return promoteFromWaitlist(manager, formId, trigger, this.logger);
+          return promoteFromWaitlist(manager, formId, trigger, this.logger, this.onlineCollects);
         }
       );
     } catch (e: unknown) {
@@ -5390,11 +5454,68 @@ export class FormsService {
   }
 
   /**
+   * WHAT A PAYMENT BUYS, RUN FOR A PROMOTION THAT CONVERTED A `paid_over_capacity` ANSWER TO `paid`
+   * (`planPromotion`, `waitlist.ts`): the seat is given now, so the cotisation the payment could not
+   * grant over capacity is granted (`fulfilPayment`, claimed on the row's own flag, so it runs once
+   * however many callers reach it). The purchase record was written when the money landed.
+   *
+   * With `submissionIds`, the answers a promotion of THIS service just committed. Without, THE
+   * RETRY: every promoted `paid` answer whose cotisation flag is still free - a conversion committed
+   * by a refund (`RefundsService`, another module), a process stopped after the commit, or a grant
+   * that failed and gave its claim back. Run by the five-minute form job; finding any is logged at
+   * WARN. A try per answer: one failure never costs the others theirs.
+   */
+  async fulfilConvertedPromotions(submissionIds?: readonly string[]): Promise<number> {
+    const ids =
+      submissionIds ??
+      (
+        (await this.submissionRepo.query(
+          `SELECT id FROM submissions
+            WHERE "paymentStatus" = 'paid' AND "promotedAt" IS NOT NULL
+              AND "cotisationGrantedAt" IS NULL`
+        )) as Array<{ id: string }>
+      ).map((row) => row.id);
+    if (ids.length === 0) return 0;
+    if (!submissionIds) {
+      this.logger.warn(
+        `[WAITLIST] ${ids.length} converted promotion(s) still owe what their payment buys - running it now`
+      );
+    }
+    for (const id of ids) {
+      try {
+        const row = await this.submissionRepo.findOne({
+          where: { id, paymentStatus: 'paid' },
+          select: { id: true, formId: true, userId: true, totalPaid: true, paymentStatus: true },
+        });
+        if (!row) {
+          this.logger.log(
+            `[WAITLIST] converted promotion ${id.slice(0, 8)} is no longer paid - nothing run`
+          );
+          continue;
+        }
+        await this.fulfilPayment(row, true, {
+          grantedBy: 'system',
+          paymentMethod: 'online',
+          metadata: { submissionId: id, promotedFromWaitlist: true },
+        });
+      } catch (e: unknown) {
+        this.logger.error(
+          `[WAITLIST] what converted promotion ${id.slice(0, 8)} buys could not be run - retried by the next run`,
+          e
+        );
+      }
+    }
+    return ids.length;
+  }
+
+  /**
    * Tells the people a committed promotion registered (`FormWaitlistNoticeService`, once each). A
    * notice that cannot be written leaves its claim free in the row, retried by the five-minute
    * `tellPending` - the only thing that job does for the waiting list.
    */
   private async tellPromoted(promoted: readonly PromotedAnswer[]): Promise<void> {
+    const converted = promoted.filter((p) => p.status === 'paid').map((p) => p.submissionId);
+    if (converted.length > 0) await this.fulfilConvertedPromotions(converted);
     const ids = promoted.filter((p) => p.userId).map((p) => p.submissionId);
     if (ids.length === 0) return;
     if (!this.waitlistNotice) {
@@ -5467,19 +5588,20 @@ export class FormsService {
           message: 'This answer is no longer on the waiting list.',
         });
       }
-      const status = promotedStatusOf(row);
-      if (!promotionPayable(status, form)) {
+      const plan = await planPromotion(m, row);
+      const status = plan.status;
+      if (!(await promotionPayable(status, form, this.onlineCollects))) {
         this.logger.warn(
           `[WAITLIST] by-hand promotion of ${submissionId.slice(0, 8)} refused: it would be ${status}, ` +
-            `and form ${formId.slice(0, 8)} takes no such payment now`
+            `and form ${formId.slice(0, 8)} can take no such payment now`
         );
         throw new ConflictException({
           code: WAITLIST_NO_PAYMENT_PATH,
-          message: 'This answer would owe a payment the form no longer takes.',
+          message: 'This answer would owe a payment the form cannot take now.',
         });
       }
       const held = await m.count(Submission, { where: seatHoldingWhere(formId) });
-      const answer = await promoteWaitingRow(m, row, form);
+      const answer = await promoteWaitingRow(m, row, form, plan);
       this.logger.log(
         `[WAITLIST] by-hand: ${submissionId.slice(0, 8)} -> ${answer.status} on form ${formId.slice(0, 8)} ` +
           `by ${callerId.slice(0, 8)} (${held}/${form.maxSubmissions ?? 'unlimited'} seats held before` +
@@ -5644,7 +5766,13 @@ export class FormsService {
               moved: rows.length,
               promoted:
                 rows.length > 0
-                  ? await promoteFromWaitlist(manager, formId, trigger, this.logger)
+                  ? await promoteFromWaitlist(
+                      manager,
+                      formId,
+                      trigger,
+                      this.logger,
+                      this.onlineCollects
+                    )
                   : [],
             };
           }

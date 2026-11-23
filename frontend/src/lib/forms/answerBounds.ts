@@ -107,13 +107,13 @@ export const FORM_BLOCK_INVALID = 'FORM_BLOCK_INVALID';
  * An answer left or promoted from the waiting list no longer waits: promoted meanwhile, or removed
  * (`forms.service.ts`, `WAITLIST_ANSWER_NOT_WAITING`).
  */
-export const WAITLIST_ANSWER_NOT_WAITING = 'WAITLIST_ANSWER_NOT_WAITING';
+const WAITLIST_ANSWER_NOT_WAITING = 'WAITLIST_ANSWER_NOT_WAITING';
 
 /**
  * A promotion by hand refused: the answer would owe a payment the form no longer takes
  * (`forms.service.ts`, `WAITLIST_NO_PAYMENT_PATH`).
  */
-export const WAITLIST_NO_PAYMENT_PATH = 'WAITLIST_NO_PAYMENT_PATH';
+const WAITLIST_NO_PAYMENT_PATH = 'WAITLIST_NO_PAYMENT_PATH';
 
 /**
  * The sentence for a form's CODED refusal, or `null` when the code is none of a form's (the

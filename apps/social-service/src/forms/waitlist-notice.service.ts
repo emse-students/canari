@@ -104,7 +104,19 @@ export class FormWaitlistNoticeService {
     return rows.length;
   }
 
-  /** The claim and the bell row in one transaction, then the push. Throws on a failed write. */
+  /**
+   * The claim and the bell row in one transaction, then the push. Throws on a failed write.
+   *
+   * WHY NOT `PostNotificationsService.createNotification`, the one bell-row writer elsewhere: it
+   * writes through its own repository, outside any caller's transaction, so the claim and the row
+   * could no longer commit or roll back together - the property this notice rests on (a crash
+   * between them would either lose the notice or tell it twice). And it cannot be injected here:
+   * this service lives in `AssociationsModule` (a refund promotes too), which `PostsModule` imports,
+   * so the reverse edge would be a cycle. The row is written by hand instead, with what
+   * `createNotification` decides kept: the category gate (`recipientsWithCategoryOn`, on this
+   * transaction), the system actor and the association's name and logo. Its push is this service's
+   * own, as `skipPush` callers send theirs.
+   */
   private async tellOne(submissionId: string): Promise<void> {
     const told = await this.submissionRepo.manager.transaction(async (m) => {
       const [claimed] = (await m.query(

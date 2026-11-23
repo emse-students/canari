@@ -91,6 +91,8 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
   /** The pushes the notice sent (its bell rows are read from `post_notifications`, `bellRows`). */
   const pushes: { userId: string; key: string }[] = [];
   let issued = 0;
+  /** Whether the association can collect online now (`collectsNow`), switched by a case. */
+  let collects = true;
 
   beforeAll(async () => {
     admin = new Client({ connectionString: URL });
@@ -168,7 +170,7 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
         getActivePaymentProvider: async () => 'lydia',
         mayAct: async (userId: string) => userId === OWNER,
         noteLydiaRequestIssued: async () => undefined,
-        collectsNow: async () => true,
+        collectsNow: async () => collects,
         namesByIds: async () => new Map(),
       } as any,
       { cotisationModeOf: async () => 'simple' } as any,
@@ -212,6 +214,7 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
 
   beforeEach(async () => {
     pushes.length = 0;
+    collects = true;
     await ds.query(`DELETE FROM post_notifications`);
   });
 
@@ -600,7 +603,8 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
     const carol: any = await send(formId, CAROL);
     await pastHold(alice.submissionId);
     await service.expireStalePendingPayments(await service.pendingHoldCutoff());
-    expect((await status(bob.submissionId)).paymentStatus).toBe('payment_due');
+    const promoted = await status(bob.submissionId);
+    expect(promoted.paymentStatus).toBe('payment_due');
     // Core refuses the request with a typed refusal: nothing exists at Lydia (its ERROR line silenced).
     jest.spyOn(Logger.prototype, 'error').mockImplementationOnce(() => undefined);
     jest.spyOn(axios, 'post').mockRejectedValueOnce({
@@ -609,8 +613,11 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
     await expect(
       service.resumePayment(bob.submissionId, BOB, { payerEmail: 'b@example.org' })
     ).rejects.toBeDefined();
-    // Back to owing its payment, holding the place; Carol still waits.
-    expect((await status(bob.submissionId)).paymentStatus).toBe('payment_due');
+    // Back to owing its payment, holding the place; Carol still waits. Its hold is counted from the
+    // PROMOTION again, not from the resume that failed: retrying never keeps the place longer.
+    const restored = await status(bob.submissionId);
+    expect(restored.paymentStatus).toBe('payment_due');
+    expect(restored.paymentRequestedAt).toEqual(promoted.paymentRequestedAt);
     expect((await status(carol.submissionId)).paymentStatus).toBe('waiting');
     expect((await service.hasSubmission(formId, BOB)).resumable).toMatchObject({
       submissionId: bob.submissionId,
@@ -642,7 +649,7 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
     expect((await service.hasSubmission(formId, BOB)).resumable).toBeNull();
   });
 
-  it('a late payment on an old answer takes its payer off the line: never paid AND promoted', async () => {
+  it('a late payment over capacity keeps its payer in line, and their turn converts it to paid', async () => {
     const formId = await paidOnlineForm();
     const alice: any = await send(formId, ALICE, { payerEmail: 'a@example.org' });
     const bob: any = await send(formId, BOB);
@@ -652,10 +659,34 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
     // Alice, her answer expired, joins the line behind the place Bob now holds.
     const again: any = await send(formId, ALICE);
     expect(again).toMatchObject({ waiting: true, waitlistRank: 1 });
-    // Her first payment lands late: over capacity (Bob holds the place), and she leaves the line.
+    // Her first payment lands late: over capacity (Bob holds the place). It gave no seat, so she
+    // KEEPS her place in line - the refund is owed only if she is never promoted.
     await service.markPaid(alice.submissionId);
     expect((await status(alice.submissionId)).paymentStatus).toBe('paid_over_capacity');
+    expect((await status(again.submissionId)).paymentStatus).toBe('waiting');
+    // Bob does not pay: his place is hers. Her PAID answer becomes the registration - no second
+    // charge, no payment owed - and her waiting answer is gone.
+    const before = issued;
+    await pastHold(bob.submissionId);
+    await service.expireStalePendingPayments(await service.pendingHoldCutoff());
+    await noticesLand();
+    expect((await status(alice.submissionId)).paymentStatus).toBe('paid');
+    expect((await status(alice.submissionId)).promotedAt).not.toBeNull();
     expect(await status(again.submissionId)).toBeUndefined();
+    expect(issued).toBe(before);
+    expect(pushes).toEqual([
+      { userId: BOB, key: 'form_waitlist_promoted_payment_due' },
+      { userId: ALICE, key: 'form_waitlist_promoted' },
+    ]);
+    // What her payment buys ran once the seat was given: nothing more is owed on a retry.
+    const [{ granted }] = await ds.query(
+      `SELECT "cotisationGrantedAt" IS NOT NULL AS granted FROM submissions WHERE id = $1`,
+      [alice.submissionId]
+    );
+    expect(granted).toBe(true);
+    expect(await service.fulfilConvertedPromotions()).toBe(0);
+    // One registration, the form full: the next answer waits.
+    expect(await send(formId, CAROL)).toMatchObject({ waiting: true, waitlistRank: 1 });
   });
 
   it('a list whose first in line can no longer pay is FROZEN: nobody promoted, the form full', async () => {
@@ -681,6 +712,84 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
     await ds.getRepository(Form).update(formId, { allowOnlinePayment: true });
     expect((await service.promoteWaitlist(formId, 'form-edit')).length).toBe(1);
     expect((await status(bob.submissionId)).paymentStatus).toBe('payment_due');
+  });
+
+  it('a save of the form that reopens the payment mode lifts a frozen list, in its own transaction', async () => {
+    const formId = await paidOnlineForm({ maxSubmissions: 2 } as Partial<Form>);
+    await send(formId, ALICE, { payerEmail: 'a@example.org' });
+    await send(formId, CAROL, { payerEmail: 'c@example.org' });
+    const bob: any = await send(formId, BOB);
+    expect(bob).toMatchObject({ waiting: true, waitlistRank: 1 });
+    // Online off, and Carol's place freed: Bob is first, owing a payment nobody can take.
+    await ds.getRepository(Form).update(formId, {
+      allowOnlinePayment: false,
+      allowCashPayment: true,
+    });
+    await ds.query(`UPDATE submissions SET "paymentStatus" = 'cancelled' WHERE "userId" = $1`, [
+      CAROL,
+    ]);
+    expect(await service.promoteWaitlist(formId, 'form-edit')).toEqual([]);
+    expect((await status(bob.submissionId)).paymentStatus).toBe('waiting');
+    // The manager saves the form with online back on - its capacity untouched. The save promotes.
+    const stored = await ds.getRepository(Form).findOneByOrFail({ id: formId });
+    await service.update(
+      formId,
+      {
+        title: stored.title,
+        items: ITEMS,
+        maxSubmissions: 2,
+        waitlistEnabled: true,
+        associationId: ASSO,
+        requiresPayment: true,
+        basePrice: 1500,
+        allowOnlinePayment: true,
+        allowCashPayment: true,
+      } as any,
+      OWNER,
+      false
+    );
+    await noticesLand();
+    expect((await status(bob.submissionId)).paymentStatus).toBe('payment_due');
+    expect(pushes).toEqual([{ userId: BOB, key: 'form_waitlist_promoted_payment_due' }]);
+  });
+
+  it('an association that cannot collect online freezes the list instead of handing the place on', async () => {
+    const formId = await paidOnlineForm();
+    const alice: any = await send(formId, ALICE, { payerEmail: 'a@example.org' });
+    const bob: any = await send(formId, BOB);
+    const carol: any = await send(formId, CAROL);
+    // The association's account stops collecting; Alice's hold lapses.
+    collects = false;
+    await pastHold(alice.submissionId);
+    await service.expireStalePendingPayments(await service.pendingHoldCutoff());
+    // Bob would owe a payment nobody can take: he is not promoted, and nobody behind him either.
+    expect((await status(alice.submissionId)).paymentStatus).toBe('expired');
+    expect((await status(bob.submissionId)).paymentStatus).toBe('waiting');
+    expect((await status(carol.submissionId)).paymentStatus).toBe('waiting');
+    expect(await refusal(service.promoteByHand(formId, bob.submissionId, OWNER, false))).toEqual({
+      status: 409,
+      code: WAITLIST_NO_PAYMENT_PATH,
+    });
+    // The account collects again: the manager's next save promotes him.
+    collects = true;
+    const stored = await ds.getRepository(Form).findOneByOrFail({ id: formId });
+    await service.update(
+      formId,
+      {
+        title: stored.title,
+        items: ITEMS,
+        maxSubmissions: 1,
+        waitlistEnabled: true,
+        associationId: ASSO,
+        requiresPayment: true,
+        basePrice: 1500,
+        allowOnlinePayment: true,
+      } as any,
+      OWNER,
+      false
+    );
+    expect((await status(bob.submissionId)).paymentStatus).toBe('payment_due');
+    expect((await status(carol.submissionId)).paymentStatus).toBe('waiting');
   });
 
   it("the account erasure deletes the account's waiting answer, so nobody is promoted into it", async () => {

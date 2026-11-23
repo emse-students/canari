@@ -480,9 +480,11 @@ export function formWaitlistPromotedContent(subject: FormReminderSubject = {}): 
 /**
  * A PLACE WAS FREED FOR THE READER, FIRST ON A PAID FORM'S WAITING LIST, AND IS HELD FOR THEIR
  * PAYMENT (`payment_due`, `waitlist.ts`): the place is theirs for the online hold
- * (`PENDING_PAYMENT_HOLD_SECONDS`, 30 minutes) counted from the promotion, and goes to the next in
- * line if it is not paid by then - so the sentence says so, where the plain promotion's says
- * "registered". Never an amount on a lock screen: the form shows it.
+ * (`PENDING_PAYMENT_HOLD_SECONDS`) counted from the promotion, and goes to the next in line if it is
+ * not paid by then - so the sentence says so, where the plain promotion's says "registered". NO
+ * DURATION IN THE TEXT: a push may arrive late (a phone offline, a notice retried by
+ * `tellPending`), and "within 30 minutes" would then promise time the hold no longer has; the form
+ * page shows the hold as it stands. Never an amount on a lock screen: the form shows it.
  */
 export function formWaitlistPromotedPaymentDueContent(
   subject: FormReminderSubject = {}
@@ -498,8 +500,8 @@ export function formWaitlistPromotedPaymentDueContent(
       ? `${association} : une place vous est gardée`
       : 'Une place vous est gardée',
     legacyBody: title
-      ? `Une place s'est libérée sur ${quoted(title)} : réglez-la dans les 30 minutes pour la garder.`
-      : "Une place s'est libérée : réglez-la dans les 30 minutes pour la garder.",
+      ? `Une place s'est libérée sur ${quoted(title)} : réglez-la pour la garder, elle passe sinon au suivant sur la liste.`
+      : "Une place s'est libérée : réglez-la pour la garder, elle passe sinon au suivant sur la liste.",
   };
 }
 

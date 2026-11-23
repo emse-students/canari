@@ -114,9 +114,9 @@
 "notif.form.waitlist_promoted.title_named" = "%@ : une place s'est libérée";
 "notif.form.waitlist_promoted.body_named" = "Vous êtes inscrit à « %@ ». Ouvrez le formulaire pour voir votre inscription.";
 "notif.form.waitlist_promoted_payment_due.title" = "Une place vous est gardée";
-"notif.form.waitlist_promoted_payment_due.body" = "Une place s'est libérée : réglez-la dans les 30 minutes pour la garder.";
+"notif.form.waitlist_promoted_payment_due.body" = "Une place s'est libérée : réglez-la pour la garder, elle passe sinon au suivant sur la liste.";
 "notif.form.waitlist_promoted_payment_due.title_named" = "%@ : une place vous est gardée";
-"notif.form.waitlist_promoted_payment_due.body_named" = "Une place s'est libérée sur « %@ » : réglez-la dans les 30 minutes pour la garder.";
+"notif.form.waitlist_promoted_payment_due.body_named" = "Une place s'est libérée sur « %@ » : réglez-la pour la garder, elle passe sinon au suivant sur la liste.";
 "notif.lydia_payments_active.title" = "Paiements Lydia actifs";
 "notif.lydia_payments_active.body" = "Les paiements Lydia de %1$@ sont actifs.";
 "notif.lydia_payments_paused.title" = "Paiements Lydia suspendus";

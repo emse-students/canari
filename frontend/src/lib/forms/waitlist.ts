@@ -29,7 +29,7 @@ export interface WaitlistView {
 }
 
 /** Whether an answer row is waiting in line rather than registered. */
-export function isWaiting(sub: { paymentStatus: string }): boolean {
+function isWaiting(sub: { paymentStatus: string }): boolean {
   return sub.paymentStatus === WAITING_STATUS;
 }
 
@@ -52,14 +52,17 @@ export function waitingInOrder<
 export interface WaitlistPaymentModes {
   allowOnlinePayment?: boolean | null;
   allowCashPayment?: boolean | null;
+  /** Online payment not offered now: switched off, or the association cannot collect (server-derived). */
+  paymentsPaused?: boolean | null;
 }
 
 /**
  * Whether the line is FROZEN - the server's own rule (`promotionPayable`, `waitlist.ts`): the first
- * in line owes a payment (`totalPaid` > 0) by a mode the form no longer takes - online switched off
- * for an online answer (`paymentMethod` null), cash for a cash one. The server then promotes nobody
- * past them (the line is never reordered), and refuses to promote them by hand; the manager reopens
- * the mode or removes the answer. False with nobody waiting.
+ * in line owes a payment (`totalPaid` > 0) by a mode the form cannot take now - for an online answer
+ * (`paymentMethod` null), online switched off or the association unable to collect (`paymentsPaused`,
+ * the server's own reading); for a cash one, cash switched off. The server then promotes nobody past
+ * them (the line is never reordered), and refuses to promote them by hand; the manager makes the
+ * mode payable again or removes the answer. False with nobody waiting.
  */
 export function waitlistFrozen(
   form: WaitlistPaymentModes,
@@ -67,7 +70,7 @@ export function waitlistFrozen(
 ): boolean {
   if (!first || !(first.totalPaid > 0)) return false;
   if (first.paymentMethod === 'cash') return form.allowCashPayment !== true;
-  return form.allowOnlinePayment === false;
+  return form.allowOnlinePayment === false || form.paymentsPaused === true;
 }
 
 /** The answers that are registrations: every row but the waiting ones. */

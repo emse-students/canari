@@ -3084,21 +3084,29 @@ promote two people; a submit takes the same lock and PROMOTES BEFORE IT COUNTS, 
 take a place someone is waiting for - it is put in line behind them. A promoted answer becomes exactly
 what a fresh answer of its kind is: `free` when it owes nothing, `pending_cash` with its cash window and
 its one reminder (`cash-reminder.ts`), or **`payment_due`** for an online payment: a registration holding
-its seat for the online hold (30 minutes) from its promotion (`livePaymentDueWhere`), paid through
+its seat for the online hold (`PENDING_PAYMENT_HOLD_SECONDS`) from its promotion (`livePaymentDueWhere`), paid through
 "Reprendre le paiement" (`payment-resume.ts` accepts it, open or closed form, since the seat is its own),
 and `expired` past the hold by the same five-minute job as a `pending` - which frees the place for the
 next in line. A promotion by hand (the manager's "Inscrire") is the same step on one chosen row, above
 the capacity if the form is full, logged with the count.
 
 **The frozen list: no payment path, no promotion.** A waiting answer owes what it was priced at, by the
-mode it chose; a manager may since have switched that mode off. Promoting it would make a registration
-nobody can pay (`payment_due` is paid through the resume, which a cash-only form refuses; `pending_cash`
-is a manager taking cash). So `promotionPayable` (`waitlist.ts`) is checked for each answer in turn,
-and the FIRST that cannot pay STOPS the promotion there: nobody behind it is promoted past it, since
-the line is never reordered (item 18). Logged at WARN with the form and the answer; the managers'
-section shows "Liste bloquée" (`waitlistFrozen`, the same rule on the client); a promotion by hand of
-such an answer is a typed 409 `WAITLIST_NO_PAYMENT_PATH`. Lifted by switching the mode back on (the
-next capacity event promotes) or removing that answer. A free answer is never frozen.
+mode it chose; that mode may since have become unpayable. Promoting it would make a registration
+nobody can pay (`payment_due` is paid through the resume, which a cash-only form, or an association
+that cannot collect online, refuses; `pending_cash` is a manager taking cash). So `promotionPayable`
+(`waitlist.ts`) is checked for each answer in turn: an online answer needs online accepted AND the
+association able to collect now (`collectsNow`, through `onlineCollectsThrough`; a personal form
+always can), a cash one needs cash accepted. The FIRST that cannot pay STOPS the promotion there:
+nobody behind it is promoted past it, since the line is never reordered (item 18). Without the
+association's readiness in that rule, a paused Lydia account would hand the place on one person per
+hold - promoted, unable to pay, expired - until the line was empty. Logged at WARN with the form and
+the answer; the managers' section shows "Liste bloquée" (`waitlistFrozen`, the same rule on the client,
+reading the server's `paymentsPaused` for the account); a promotion by hand of such an answer is a typed
+409 `WAITLIST_NO_PAYMENT_PATH`. **It lifts at the next promotion that finds the mode payable: ANY save
+of a published form promotes while someone waits** (`update` and `publishChanges`, in the save's
+transaction - not only a capacity raised), so switching the mode back on lifts it in that very save; an
+account made ready again lifts it at the form's next save, freed place or submit, or a promotion by
+hand. Removing that answer lifts it too. A free answer is never frozen.
 
 **Every freeing promotes IN ITS OWN TRANSACTION, and there is no sweep.** Each event that frees a place
 takes the form's seat lock FIRST (then the row, the order `submit`, `markPaid` and an answer edit take)
@@ -3107,8 +3115,10 @@ not at all: a failed promotion rolls the freeing back with it, and a place is ne
 someone waiting. The events: a member or manager cancel (`moveLockedSubmission` to `cancelled`, which
 covers a refused payment and a withdrawn `payment_due`), a manager's deletion (`deleteSubmission`), the
 cash and online expiries (`expirePerForm`, one form per transaction, a try per form: a failed form keeps
-its rows for the next run), and a capacity raised or cleared by an edit or a published revision
-(`update`, `publishChanges`, inside their save; `capacityFreed`). The ONE exception is a refund
+its rows for the next run), and every save of a published form while someone waits or its capacity
+is raised or cleared (`update`, `publishChanges`, inside their save; `capacityFreed` covers an answer
+joining the line concurrently, which does so under the seat lock the save then waits for). The ONE
+exception is a refund
 (`refunds.service.ts`): the money has already gone back at Lydia and its record must not be lost to a
 promotion, so its promotion sits behind a SAVEPOINT - a failure there is said at ERROR and the place
 waits for the form's next capacity event (every submit promotes before it counts). A heal-by-timer
@@ -3125,12 +3135,23 @@ the fill page reads the form FULL once its free places are no more than the answ
 DELETES the account's waiting answers before anonymising its other answers, under the forms' seat lock
 (`submissions_waiting_forms_locked`, `submissions_waiting` in `account-erasure.ts`), as leaving the list
 does (principle 1): anonymised, a waiting row would later be promoted into a registration nobody holds.
-A late payment on an old answer of a person who has since joined the line (`markPaid`) takes that
-person's waiting answer off it under the same lock: nobody is both paid and promoted.
+**A late payment on an old answer of a person who has since joined the line** (`markPaid`, decision
+of 2026-11-23 taken by the lead, reversible, [decisions](../../decisions/owner-decisions-of-2026-11-23.md)
+item 18): landed `paid` (a seat was free), it takes that person's waiting answer off the line under the
+same lock - nobody is both registered and in line. Landed **`paid_over_capacity`** (no seat), the person
+KEEPS their place in line: when their turn comes, the promotion converts that paid answer to `paid`
+(`planPromotion`, `promoteWaitingRow`) - no second charge, no `payment_due` - and deletes the waiting
+answer, under the same exactly-one-row rule. What the payment buys (the cotisation it could not grant
+over capacity) runs after the commit (`fulfilConvertedPromotions`, claimed on the row's own
+`cotisationGrantedAt`; the five-minute form job runs the ones a refund's promotion converted, or a
+process stopped before). The refund stays owed only if they are never promoted. Before, the late payment
+deleted the waiting answer: the person who had paid lost their place AND was owed a refund.
 
 **A promotee never loses its place to Canari's failure.** A `payment_due` answer resumed and whose
 request is then refused before Lydia created anything (`releaseUnissuedRow`, `unissued`) goes back to
-`payment_due`, not `cancelled` - its hold runs from the resume. One whose issuing call failed after it
+`payment_due`, not `cancelled` - its hold counted from its PROMOTION again (`paymentRequestedAt =
+"promotedAt"`, in SQL: the first is a `timestamp`, the second a `timestamptz`), never from the resume,
+so the place is held until a fixed time however often the person retries. One whose issuing call failed after it
 was SENT (`issue-unknown`: a request may exist at Lydia that the row does not name) is not cancelled at
 once either, for any answer: it STAYS `pending`, holding its seat until its hold lapses (the expiry job
 then frees it and promotes the next), marked `paymentCancelOrigin = 'issue-unknown'`, which it keeps
@@ -3148,8 +3169,14 @@ NOTICE and never of a promotion, logged at WARN when it finds any - tells it. Th
 on the existing forms channel (the association's name and logo, `type: 'form_reminder'` so it files
 where the form reminders file); a failed push fails only the push. Two types: `form_waitlist_promoted`
 ("registered", for a `free` or `pending_cash` promotee) and **`form_waitlist_promoted_payment_due`** for
-a `payment_due` one, whose sentence says the place is HELD and must be paid within the 30-minute hold
-(Paraglide, Android, iOS and the NSE carry both). Moving up in rank is never announced. Both types are
+a `payment_due` one, whose sentence says the place is HELD until it is paid, or goes to the next in
+line (Paraglide, Android, iOS and the NSE carry both). NO DURATION in either text: a notice may arrive
+late (a phone offline, one retried by `tellPending`), and "within 30 minutes" would promise time the
+hold no longer has; the form page shows the hold as it stands. The bell row is written by hand, not
+through `PostNotificationsService.createNotification`: that method writes through its own repository,
+outside the claim's transaction (the one property the notice rests on), and `PostsModule` imports
+`AssociationsModule`, so injecting it here would be a cycle; what it decides - the category gate, the
+system actor, the association's name and logo - is kept. Moving up in rank is never announced. Both types are
 new, so both are gated on the `1.8.0` client floor (`NOTIFICATION_TYPE_MIN_CLIENT`,
 `PUSH_KEY_MIN_CLIENT`; [legacy-compatibility](../../legacy-compatibility.md)).
 
@@ -3171,9 +3198,12 @@ a freeing's lock never jumping the line, a cash expiry giving `pending_cash` wit
 expiry giving `payment_due` (told with its own type) then its own expiry and its withdrawal promoting the
 next, a promotion refused by the database rolling back a delete, a cancel and an expiry, a failed bell
 row rolling its claim back then told by `tellPending`, a promotee's refused request restoring
-`payment_due`, an `issue-unknown` keeping its seat until its hold lapses and never resumable, a late
-payment taking its payer off the line, the frozen list (nobody promoted, the form full, the promotion by
-hand refused, lifted by turning online back on), the account erasure deleting a waiting answer, leaving
+`payment_due` with its promotion's clock, an `issue-unknown` keeping its seat until its hold lapses and
+never resumable, a late payment over capacity keeping its payer in line and converted to `paid` at their
+turn (no second request, its cotisation run, nothing left for the retry), the frozen list (nobody
+promoted, the form full, the promotion by hand refused, lifted by turning online back on), a frozen list
+lifted by a plain save of the form that reopens online, an association that cannot collect freezing the
+list (and a save once it can promoting), the account erasure deleting a waiting answer, leaving
 (own, another's, promoted), the promotion by hand (and refused to a non-manager), a capacity raised by
 `update`. `refunds.integration.spec.ts` proves the refund's promotion and its notice after the commit.
 On the client: `waitlist.test.ts` (with `waitlistFrozen`), `paymentResume.test.ts`,

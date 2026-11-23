@@ -82,7 +82,7 @@ maybe('Lydia refunds against PostgreSQL', () => {
       `CREATE TABLE forms (id uuid PRIMARY KEY, "grantsCotisation" boolean NOT NULL DEFAULT false,
          "maxSubmissions" integer NULL, "cashPaymentExpiryDays" integer NULL,
          "deletedAt" timestamptz NULL, "allowOnlinePayment" boolean NOT NULL DEFAULT true,
-         "allowCashPayment" boolean NOT NULL DEFAULT false)`
+         "allowCashPayment" boolean NOT NULL DEFAULT false, "associationId" uuid NULL)`
     );
     // Migration 120 from the file, twice: it must be idempotent. On the admin connection, so its
     // `SET lock_timeout` does not stay on a pool connection.
@@ -120,7 +120,11 @@ maybe('Lydia refunds against PostgreSQL', () => {
     service = Object.assign(Object.create(RefundsService.prototype) as object, {
       logger: new Logger('RefundsService'),
       refundRepo: ds.getRepository(LydiaRefund),
-      associations: { canManagePayoutAccount: jest.fn().mockResolvedValue(true) },
+      associations: {
+        canManagePayoutAccount: jest.fn().mockResolvedValue(true),
+        // The waiting list asks whether the association can collect online (`promotionPayable`).
+        collectsNow: jest.fn().mockResolvedValue(true),
+      },
       notifier,
       waitlistNotice,
     }) as unknown as RefundsService;

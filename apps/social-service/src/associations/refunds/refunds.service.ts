@@ -16,7 +16,11 @@ import { coreUrl } from '../../internal/service-urls';
 import { internalCoreRequestConfig } from '../../internal/core-request';
 import { lockBuyerTiers } from '../../users/buyer-tier-lock';
 import { lockFormSeats } from '../../forms/seat-hold';
-import { promoteFromWaitlist, type PromotedAnswer } from '../../forms/waitlist';
+import {
+  onlineCollectsThrough,
+  promoteFromWaitlist,
+  type PromotedAnswer,
+} from '../../forms/waitlist';
 import { FormWaitlistNoticeService } from '../../forms/waitlist-notice.service';
 import {
   LISTED_PURCHASE_STATUSES,
@@ -862,7 +866,15 @@ export class RefundsService implements OnApplicationBootstrap {
       // every other freeing promotes in its own transaction.
       await manager.query('SAVEPOINT refund_waitlist');
       try {
-        promoted.push(...(await promoteFromWaitlist(manager, formId, 'refund', this.logger)));
+        promoted.push(
+          ...(await promoteFromWaitlist(
+            manager,
+            formId,
+            'refund',
+            this.logger,
+            onlineCollectsThrough(this.associations)
+          ))
+        );
         await manager.query('RELEASE SAVEPOINT refund_waitlist');
       } catch (e: unknown) {
         await manager.query('ROLLBACK TO SAVEPOINT refund_waitlist');

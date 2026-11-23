@@ -22,8 +22,8 @@
     /** The waiting answers, already in arrival order (`waitingInOrder`). */
     waiting: Submission[];
     /**
-     * The first in line owes a payment the form no longer takes (`waitlistFrozen`): nobody is
-     * promoted until the manager reopens that payment mode or removes the answer.
+     * The first in line owes a payment the form cannot take now (`waitlistFrozen`): nobody is
+     * promoted until that payment mode is payable again and the form saved, or the answer removed.
      */
     frozen: boolean;
     /** The answer currently being deleted, so its control can say so. */

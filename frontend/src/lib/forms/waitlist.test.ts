@@ -109,10 +109,13 @@ describe('a waiting list frozen by its payment modes', () => {
       true
     );
     expect(waitlistFrozen({ allowOnlinePayment: true, allowCashPayment: false }, cash)).toBe(true);
+    // The association cannot collect online: the server freezes the line on the same reading.
+    expect(waitlistFrozen({ allowOnlinePayment: true, paymentsPaused: true }, online)).toBe(true);
   });
 
   it('is not frozen when that mode is offered, nothing is owed, or nobody waits', () => {
     expect(waitlistFrozen({ allowOnlinePayment: true }, online)).toBe(false);
+    expect(waitlistFrozen({ allowCashPayment: true, paymentsPaused: true }, cash)).toBe(false);
     expect(waitlistFrozen({}, online)).toBe(false);
     expect(waitlistFrozen({ allowCashPayment: true }, cash)).toBe(false);
     expect(

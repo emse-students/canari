@@ -79,7 +79,39 @@ export interface PromotedAnswer {
   submissionId: string;
   userId: string | null;
   formId: string;
-  status: 'free' | 'pending_cash' | typeof PAYMENT_DUE;
+  status: 'free' | 'pending_cash' | typeof PAYMENT_DUE | 'paid';
+}
+
+/**
+ * What a waiting answer becomes when its turn comes. `paidRowId` names the SAME PERSON's
+ * `paid_over_capacity` answer on the form, when they have one: a late payment that landed on an old
+ * answer while this one waited (`markPaid`, decision of 2026-11-23 recorded in forms.md). Their
+ * turn then converts THAT answer to `paid` - the money already landed, so nothing is charged twice
+ * and no `payment_due` is opened - and the waiting answer is deleted.
+ */
+export interface PromotionPlan {
+  status: PromotedAnswer['status'];
+  paidRowId: string | null;
+}
+
+/**
+ * Reads what `row`, a waiting answer, becomes (`PromotionPlan`), locking the same person's
+ * `paid_over_capacity` answer when there is one. THE CALLER HOLDS THE FORM'S SEAT LOCK.
+ */
+export async function planPromotion(
+  manager: EntityManager,
+  row: Pick<Submission, 'formId' | 'userId' | 'totalPaid' | 'paymentMethod'>
+): Promise<PromotionPlan> {
+  const paid = row.userId
+    ? await manager.findOne(Submission, {
+        where: { formId: row.formId, userId: row.userId, paymentStatus: 'paid_over_capacity' },
+        select: { id: true },
+        order: { createdAt: 'ASC' },
+        lock: { mode: 'pessimistic_write' },
+      })
+    : null;
+  if (paid) return { status: 'paid', paidRowId: paid.id };
+  return { status: promotedStatusOf(row), paidRowId: null };
 }
 
 /**
@@ -89,7 +121,7 @@ export interface PromotedAnswer {
  */
 export function promotedStatusOf(
   row: Pick<Submission, 'totalPaid' | 'paymentMethod'>
-): PromotedAnswer['status'] {
+): Exclude<PromotedAnswer['status'], 'paid'> {
   if (!(row.totalPaid > 0)) return 'free';
   return row.paymentMethod === 'cash' ? 'pending_cash' : PAYMENT_DUE;
 }
@@ -103,13 +135,33 @@ export function promotedStatusOf(
  * Exactly what a fresh answer of the same kind gets: a cash answer its window (`cashPaymentExpiryDays`)
  * and the due date of its one reminder (`cash-reminder.ts`), written as `submit` writes them; an
  * online one its hold, restarted on the database clock (`paymentRequestedAt = now()`).
+ *
+ * A plan naming a `paid_over_capacity` answer (`planPromotion`) converts THAT answer to `paid`
+ * instead, and deletes the waiting one - each write must move exactly one row, under the same rule.
+ * The caller runs what a landed payment buys after its commit (`FormsService.tellPromoted`).
  */
 export async function promoteWaitingRow(
   manager: EntityManager,
   row: Submission,
-  form: Pick<Form, 'cashPaymentExpiryDays'>
+  form: Pick<Form, 'cashPaymentExpiryDays'>,
+  plan: PromotionPlan
 ): Promise<PromotedAnswer> {
-  const status = promotedStatusOf(row);
+  if (plan.paidRowId) {
+    const converted = await manager.update(
+      Submission,
+      { id: plan.paidRowId, paymentStatus: 'paid_over_capacity' },
+      { paymentStatus: 'paid', promotedAt: () => 'now()' }
+    );
+    const left = await manager.delete(Submission, { id: row.id, paymentStatus: WAITING });
+    if (converted.affected !== 1 || left.affected !== 1) {
+      throw new Error(
+        `waiting answer ${row.id} could not convert ${plan.paidRowId}: ${converted.affected ?? 'no'} ` +
+          `converted, ${left.affected ?? 'no'} deleted under the form lock`
+      );
+    }
+    return { submissionId: plan.paidRowId, userId: row.userId, formId: row.formId, status: 'paid' };
+  }
+  const status = plan.status;
   const base = { paymentStatus: status, promotedAt: () => 'now()' } as const;
   let patch: Record<string, unknown>;
   if (status === 'pending_cash') {
@@ -154,16 +206,37 @@ export function capacityFreed(
 export type WaitlistPaymentModes = Pick<Form, 'allowOnlinePayment' | 'allowCashPayment'>;
 
 /**
- * Whether a promotee of `status` has a way to pay on this form NOW: an online promotee needs online
- * payment offered (`payment_due` is paid through the resume, which refuses a cash-only form), a cash
- * one needs cash accepted (`pending_cash` is validated by a manager taking cash). A free one owes
- * nothing. False is THE FROZEN LIST: the first in line cannot become a registration it could pay.
+ * Whether the form's association can collect an ONLINE payment now (`collectsNow`: its own or its
+ * approved delegate's Lydia account ready, the entity allowed to collect), asked lazily and only
+ * for an online promotee. A personal form collects through the platform: always true there.
  */
-export function promotionPayable(
+export type OnlineCollects = (associationId: string | null) => Promise<boolean>;
+
+/** The one `OnlineCollects` every promoting service passes: `collectsNow`, true for a personal form. */
+export function onlineCollectsThrough(associations: {
+  collectsNow(associationId: string): Promise<boolean>;
+}): OnlineCollects {
+  return (associationId) =>
+    associationId ? associations.collectsNow(associationId) : Promise.resolve(true);
+}
+
+/**
+ * Whether a promotee of `status` has a way to pay on this form NOW: an online promotee needs online
+ * payment offered by the editor AND an association that can collect it (`onlineCollects`: an
+ * account paused, revoked or never set up makes `payment_due` unpayable - the resume is refused -
+ * so promoting into it would only hand the place on, one person per hold, until the line is
+ * empty), a cash one needs cash accepted (`pending_cash` is validated by a manager taking cash). A
+ * free one owes nothing. False is THE FROZEN LIST: the first in line cannot become a registration
+ * it could pay.
+ */
+export async function promotionPayable(
   status: PromotedAnswer['status'],
-  form: WaitlistPaymentModes
-): boolean {
-  if (status === PAYMENT_DUE) return acceptsOnline(form);
+  form: WaitlistPaymentModes & Pick<Form, 'associationId'>,
+  onlineCollects: OnlineCollects
+): Promise<boolean> {
+  if (status === PAYMENT_DUE) {
+    return acceptsOnline(form) && (await onlineCollects(form.associationId ?? null));
+  }
   if (status === 'pending_cash') return acceptsCash(form);
   return true;
 }
@@ -180,18 +253,21 @@ export function promotionPayable(
  * limit cleared) promotes everyone waiting. Returns what it promoted, for the caller to tell AFTER
  * its commit (`FormWaitlistNoticeService`): a notice is never sent about a promotion that rolled back.
  *
- * THE FROZEN LIST: when the next in line would owe a payment the form no longer takes (online
- * switched off for an online promotee, cash for a cash one, `promotionPayable`), promotion STOPS
- * there - nobody behind is promoted past them, since the line is never reordered (owner,
- * 2026-11-23). Logged at WARN; the manager sees it on the list (the same rule, in the client's
- * `waitlistFrozen`), and lifts it by turning the payment mode back on, promoting by hand once it is,
- * or removing that answer.
+ * THE FROZEN LIST: when the next in line would owe a payment the form cannot take now (online
+ * switched off, or an association that cannot collect online, for an online promotee; cash switched
+ * off for a cash one: `promotionPayable`), promotion STOPS there - nobody behind is promoted past
+ * them, since the line is never reordered (owner, 2026-11-23). Logged at WARN; the manager sees it
+ * on the list (the same rule, in the client's `waitlistFrozen`). It lifts at the next promotion
+ * that finds the mode payable again: any save of the published form promotes while someone waits
+ * (`FormsService.update`), so turning the mode back on lifts it in that save; an account made ready
+ * again lifts it at the form's next save, freed place or submit, or a promotion by hand.
  */
 export async function promoteFromWaitlist(
   manager: EntityManager,
   formId: string,
   trigger: WaitlistTrigger,
-  logger: Pick<Logger, 'log' | 'debug' | 'warn'>
+  logger: Pick<Logger, 'log' | 'debug' | 'warn'>,
+  onlineCollects: OnlineCollects
 ): Promise<PromotedAnswer[]> {
   const waitingCount = await manager.count(Submission, {
     where: { formId, paymentStatus: WAITING },
@@ -204,6 +280,7 @@ export async function promoteFromWaitlist(
       maxSubmissions: true,
       cashPaymentExpiryDays: true,
       deletedAt: true,
+      associationId: true,
       allowOnlinePayment: true,
       allowCashPayment: true,
     },
@@ -233,17 +310,18 @@ export async function promoteFromWaitlist(
   });
   const promoted: PromotedAnswer[] = [];
   for (const row of first) {
-    const status = promotedStatusOf(row);
-    if (!promotionPayable(status, form)) {
+    const plan = await planPromotion(manager, row);
+    const status = plan.status;
+    if (!(await promotionPayable(status, form, onlineCollects))) {
       logger.warn(
         `[WAITLIST] ${trigger}: form ${formId.slice(0, 8)} list FROZEN at ${row.id.slice(0, 8)}: ` +
-          `it would be ${status}, and the form takes no ${status === PAYMENT_DUE ? 'online' : 'cash'} ` +
-          `payment - nobody behind it is promoted past it until a manager reopens that payment mode ` +
-          `or removes it`
+          `it would be ${status}, and the form can take no ${status === PAYMENT_DUE ? 'online' : 'cash'} ` +
+          `payment now - nobody behind it is promoted past it until that payment mode is payable ` +
+          `again or a manager removes it`
       );
       break;
     }
-    promoted.push(await promoteWaitingRow(manager, row, form));
+    promoted.push(await promoteWaitingRow(manager, row, form, plan));
   }
   if (promoted.length > 0) {
     logger.log(

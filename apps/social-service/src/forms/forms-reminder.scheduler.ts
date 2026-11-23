@@ -394,6 +394,13 @@ export class FormReminderScheduler {
       } else {
         this.logger.error('[WAITLIST] no notifier wired: promotion notices owed are not told');
       }
+      // A promotion that converted a `paid_over_capacity` answer owes what its payment buys
+      // (`FormsService.fulfilConvertedPromotions`); one committed by a refund is run here. Its own `try`.
+      try {
+        await this.formsService.fulfilConvertedPromotions();
+      } catch (e) {
+        this.logger.error('[WAITLIST] converted promotions owed could not be read', e);
+      }
       // Its own `try`: a failed expiry must not keep a visitor key the rows no longer need, and a
       // failed forget must not hide an expiry that worked. AFTER the expiry, so the rows it just
       // moved out of `pending` lose their key in the same tick.

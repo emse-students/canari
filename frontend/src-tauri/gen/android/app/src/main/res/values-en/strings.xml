@@ -153,9 +153,9 @@
     <string name="notif_form_waitlist_promoted_title_named">%1$s: a spot opened up</string>
     <string name="notif_form_waitlist_promoted_body_named">You are registered for \"%1$s\". Open the form to see your registration.</string>
     <string name="notif_form_waitlist_promoted_payment_due_title">A spot is held for you</string>
-    <string name="notif_form_waitlist_promoted_payment_due_body">A spot opened up: pay for it within 30 minutes to keep it.</string>
+    <string name="notif_form_waitlist_promoted_payment_due_body">A spot opened up: pay for it to keep it, or it goes to the next in line.</string>
     <string name="notif_form_waitlist_promoted_payment_due_title_named">%1$s: a spot is held for you</string>
-    <string name="notif_form_waitlist_promoted_payment_due_body_named">A spot opened up on \"%1$s\": pay for it within 30 minutes to keep it.</string>
+    <string name="notif_form_waitlist_promoted_payment_due_body_named">A spot opened up on \"%1$s\": pay for it to keep it, or it goes to the next in line.</string>
     <string name="notif_lydia_payments_active_title">Lydia payments active</string>
     <string name="notif_lydia_payments_active_body">Lydia payments for %1$s are active.</string>
     <string name="notif_lydia_payments_paused_title">Lydia payments paused</string>
