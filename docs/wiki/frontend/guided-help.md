@@ -445,7 +445,7 @@ visit after the update, ahead of the contextual hints (one help per visit, so th
 
 - **OFFERED ONLY TO ICM AT SAINT-ETIENNE (owner, 2026-11-10; made permanent 2026-11-11: *"MiGallery
   est faite avant tout pour les ICM/Saint-Etienne"*,
-  [decisions](../backlog.d/owner-decisions-of-2026-11-11.md)).** Who is offered the
+  [decisions](../decisions/owner-decisions-of-2026-11-11.md)).** Who is offered the
   prompt is decided on the SERVER, so changing it needs no release: core-service reads
   `PROFILE_PHOTO_PROMPT_SPACES`, a comma-separated list of `FORMATION:campus` pairs in the spaces'
   own spelling (`ICM:saint-etienne` on both estates, a literal row of `env-manifest.tsv`), and

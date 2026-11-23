@@ -9,9 +9,9 @@ _2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 **Decided by the owner, 2026-11-19:** a seat whose user holds no active device in the group is SHOWN
 GREYED with "aucun appareil actif" (Paraglide), never hidden and never removed: the person may come back,
 and the panel shows the truth (principle 2 of the [charter](../../principes.md)). Both populations below
-take the same display; nothing is deleted ([decisions](owner-decisions-of-2026-11-19.md)).
+take the same display; nothing is deleted ([decisions](../decisions/owner-decisions-of-2026-11-19.md)).
 
-_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md))._
+_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](../decisions/owner-decisions-of-2026-11-17.md))._
 
 **What is built:** the pre-038 link seats the group panel would list as members (found 2026-10-25; the group panel reads `user-members` and drops only `awaitingAdmission` seats)
 

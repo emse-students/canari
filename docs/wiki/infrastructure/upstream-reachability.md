@@ -82,7 +82,7 @@ them is only what runs in the estate and the apps: the gallery's avatar path log
 alerts nobody; dev's deploy checks its containers when it deploys, not afterwards; the legacy name has
 nothing. **The owner accepted this gap on 2026-11-19** (*"on accepte le trou et on en parle plus avant que
 je remette le sujet sur la table"*): nothing is built for it and the question is not raised again until the
-owner reopens it ([decisions](../backlog.d/owner-decisions-of-2026-11-19.md)).
+owner reopens it ([decisions](../decisions/owner-decisions-of-2026-11-19.md)).
 
 ## Who watches the monitor
 
@@ -135,7 +135,7 @@ five-hour outage). `apps/core-service/src/users/upstream-health.ts` is the state
 
 Tests: `upstream-health.spec.ts` (the state machine), `avatar-outage.spec.ts` (one probe, silence, return line,
 presence). Le Cercle's `[MIGALLERY]` fetch needs the same treatment in its own repository, still owed: see
-[the backlog entry](../backlog.d/p2-the-gallery-went-down-for-five-hours-and-nothing-alerted.md).
+the backlog entry.
 
 ## What it does not do
 

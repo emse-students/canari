@@ -2,7 +2,7 @@
 
 target: 1.8.0
 
-**Asked by the owner on 2026-11-19, from a user's request** ([decisions](owner-decisions-of-2026-11-19.md)):
+**Asked by the owner on 2026-11-19, from a user's request** ([decisions](../decisions/owner-decisions-of-2026-11-19.md)):
 a button that creates a group conversation with every person who answered a form - the same effect
 as "créer un groupe" and adding each respondent by hand.
 

@@ -404,7 +404,7 @@ moderation read (`allowHidden` passes it, `SS/posts/post-openable.ts`). Unchange
 
 The P1 entries and the grid spec they are proven by go first, in `1.8.0` (the plan's order: P1 first);
 the rest are the newest entries of the backlog and take `1.9.0` under the owner's order of 2026-11-11
-(the slow-link chantier, then the oldest entries first; [note](backlog.d/owner-decisions-of-2026-11-11.md)).
+(the slow-link chantier, then the oldest entries first; [note](decisions/owner-decisions-of-2026-11-11.md)).
 
 **Found, and not decided** - cells nobody has ruled on, listed so they are not mistaken for
 decisions. None is planned.

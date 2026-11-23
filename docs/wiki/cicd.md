@@ -420,7 +420,7 @@ a file edited after its approval is held again, and the refusal says so. Chosen 
 because `gh release create` carries none, and over an environment flag because a switch nobody reviews
 is no approval.
 
-**Who merges the approval line (owner, 2026-11-03: "Oui, après revue et dev").** The owner, or the lead agent under his delegation, on three conditions: an adversarial Opus review has passed, the migration has run on dev through a pre-release (which takes a backup right before it), and each such merge is reported on the owner's private tracking page ([decisions](backlog.d/owner-decisions-of-2026-11-03-evening.md)). Mechanics are unchanged: `arm-auto-merge.yml` still never arms such a pull request, and the lead merges it by hand with `gh pr merge --match-head-commit`. **The order the conditions run in (lead, 2026-11-22, reversible, [open question](open-questions.md#the-order-of-a-delegated-held-migrations-conditions-decided-2026-11-22-reversible)):** gate 6 refuses every pre-release while a held migration on `main` lacks its line, so "has run on dev" cannot come first: the approval line is merged after the Opus review, the next pre-release runs the migration on dev with its backup, and the lead measures it there read-only before any stable - production is reached only by a stable, which is refused unless dev served that alpha.
+**Who merges the approval line (owner, 2026-11-03: "Oui, après revue et dev").** The owner, or the lead agent under his delegation, on three conditions: an adversarial Opus review has passed, the migration has run on dev through a pre-release (which takes a backup right before it), and each such merge is reported on the owner's private tracking page ([decisions](decisions/owner-decisions-of-2026-11-03-evening.md)). Mechanics are unchanged: `arm-auto-merge.yml` still never arms such a pull request, and the lead merges it by hand with `gh pr merge --match-head-commit`. **The order the conditions run in (lead, 2026-11-22, reversible, [open question](open-questions.md#the-order-of-a-delegated-held-migrations-conditions-decided-2026-11-22-reversible)):** gate 6 refuses every pre-release while a held migration on `main` lacks its line, so "has run on dev" cannot come first: the approval line is merged after the Opus review, the next pre-release runs the migration on dev with its backup, and the lead measures it there read-only before any stable - production is reached only by a stable, which is refused unless dev served that alpha.
 
 **A held migration on `main` BLOCKS EVERY RELEASE until it is approved or reverted.** The hold stops a
 migration at the release and at the deploy, never at the merge: the pull request that adds one is an
@@ -2163,7 +2163,7 @@ Xcode 27.0, 27.1 (default) and 27.2, iOS SDKs 27.0-27.2, and no preinstalled Rus
 it with `dtolnay/rust-toolchain`). The standard label, not `-xlarge`: the larger runner is billed.
 `ios-compile-job.test.mjs` asserts the two jobs name the SAME runner and the SAME pin, so a pull
 request never compiles on another toolchain than the one the release archives with. The move and
-what closes it: [the backlog entry](backlog.d/p2-ios-builds-need-the-ios-27-sdk-before-april-2027.md).
+what closes it: the backlog entry.
 
 **Xcode 27 makes a Swift `@_cdecl` export a LOCAL symbol.** The first compile on the new runner
 failed at the link with `Undefined symbols: _init_plugin_customtabs`, `_init_plugin_gallery`,

@@ -191,7 +191,8 @@ commit per group and not one per member.
 6. Phone: plug it in, then `bun phone.mjs` (`bun phone.mjs <port>` for another port).
 7. `bun unlock.mjs` after any launch, kill, reboot, radio cycle or `install -r`: every one of those
    re-locks the encryption PIN, and a locked client does not fail honestly - it renders, answers, and
-   reports on an empty store.
+   reports on an empty store. A reading agent may `adb reboot` the Mi 9T with no limit per sitting
+   (owner, 2026-11-23, replacing the one-per-sitting rule; [decisions](../../docs/wiki/decisions/owner-decisions-of-2026-11-23.md)).
 8. `bun seed-bench.mjs` tops the estate up with what the verification rows look at: 40 feed posts
    (enough to scroll `/posts`), one encrypted video post, six upcoming validated events on the
    `banc-essai` association, and the `banc-defilement` salon in the venue at 100 messages. Every

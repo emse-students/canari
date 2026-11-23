@@ -2,7 +2,7 @@
 
 target: 1.8.0
 
-**Read by the owner, 2026-11-19** ([decisions](owner-decisions-of-2026-11-19.md)): the frank line on what the server sees (*"qui parle à qui,
+**Read by the owner, 2026-11-19** ([decisions](../decisions/owner-decisions-of-2026-11-19.md)): the frank line on what the server sees (*"qui parle à qui,
 quand, et combien"*) stays as written; no paragraph on sealed conversations (*"trop technique"*); the guide
 is linked from **Settings only** ("Comprendre le chiffrement", a page in the app, French and English,
 Paraglide) - that link is what this entry still owes, besides the SharedWorker line below, which is the

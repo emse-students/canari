@@ -602,7 +602,7 @@ broadcaster and the viewers alike, with no asymmetry between them.
 
 **The decision, and the rule it reverses.** The owner decided on 2026-11-07 that "X a rejoint" lines are
 VISIBLE TO EVERY VIEWER, rate-limited (decision 12 of the owner's list of that day,
-`docs/wiki/backlog.d/owner-decisions-of-2026-11-07.md`), answering knowing it shows everyone who
+`docs/wiki/decisions/owner-decisions-of-2026-11-07.md`), answering knowing it shows everyone who
 joined. It deliberately reverses "a count, never an identity" for ARRIVALS ([above](#the-viewer-count-2026-10-21)),
 and the reasoning of [exact, not rounded](#exact-not-rounded---confirmed-by-the-owner-2026-10-21) ("an
 arrival is otherwise invisible") no longer holds: an arrival is now the one thing shown. What stays:

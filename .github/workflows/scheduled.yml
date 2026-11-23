@@ -1059,7 +1059,7 @@ jobs:
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   # Q4: DO E2E-ENCRYPTED CALL FRAMES CROSS CLOUDFLARE REALTIME'S RAW SFU INTACT? - ON DEMAND ONLY
   #
-  # WP-GC3's first step (docs/wiki/backlog.d/group-calls-p2p-mesh-up-to-4-audio-3-video-decided-2026-10-31.md):
+  # WP-GC3's first step (docs/wiki/decisions/group-calls-p2p-mesh-up-to-4-audio-3-video-decided-2026-10-31.md):
   # two headless Chromes running the app's own `encryption.worker.ts`, one pushing an Opus and a VP8
   # track to a Cloudflare Realtime session, the other pulling them into a second session. PASS only
   # on proof: frames decrypted by the receiver's transform, none undecryptable, the transforms not

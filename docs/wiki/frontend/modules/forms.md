@@ -1092,7 +1092,7 @@ outside this mechanism.
 
 ## An anonymous answer keeps only its week (2026-11-22)
 
-**Owner, 2026-11-22** ([decision 15](../../backlog.d/owner-decisions-of-2026-11-22.md), charter
+**Owner, 2026-11-22** ([decision 15](../../decisions/owner-decisions-of-2026-11-22.md), charter
 [principle 1](../../../principes.md), "vos messages sont à vous"): an answer to an anonymous form keeps
 its WEEK, never its day. Until then a batch was dated with its UTC day, and a day on which a single
 person answered was a "group of one" the manager could read beside the answer and put a name on.

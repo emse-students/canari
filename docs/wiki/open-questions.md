@@ -25,7 +25,7 @@ measurement was read on 2026-10-22, and on 2026-11-07 the lead, under the owner'
 to BUILD it, conservatively: **K = 100** (the measured value, a count of deferred receive
 generations, never a clock), behind the server switch **`platform_config.checkpoint_skip_mode`**
 (core migration 020, `off` by default on every estate, moved at `/admin/platform`, published by
-`GET /api/version` as `checkpointSkip.mode`). Built in [WP-CHECKPOINT-SKIP](backlog.d/decided-by-the-user-on-2026-10-18-every-design-question-answered.md).
+`GET /api/version` as `checkpointSkip.mode`). Built in [WP-CHECKPOINT-SKIP](decisions/decided-by-the-user-on-2026-10-18-every-design-question-answered.md).
 **The switch is flipped by the lead on dev, then production, only after [the readings
 below](#the-readings-owed-before-the-flip) pass.** This section stays as the measured reasoning and
 the protocol, and is deleted when those readings are read and the switch is on in production.
@@ -647,12 +647,12 @@ of an institution also opens to every staff account (a campus, no cursus) whose 
 of a ticked space the institution's rules reach - a door of its own, `institutionReachStaffCampusDoorSql`,
 in `postVisibleToUserSql`, with a term in the feed gate. Reversible. Built: [as built](profiles-and-access.md#an-institutions-reach-per-post-as-built-owner-2026-11-10).
 
-**Decided for the agenda too (owner, 2026-11-19, [decisions](backlog.d/owner-decisions-of-2026-11-19.md)):** an institution's calendar event with the public "Personnel" or "Tous" opens to every staff account whose campus is the campus of a TICKED space - the same door as posts, so an event for Saint-Etienne only reaches Saint-Etienne's staff only; entry [institution-events-reach-staff-by-campus](backlog.d/institution-events-reach-staff-by-campus.md). **What it replaced - the agenda.** The owner's answer is for POSTS. An institution's
+**Decided for the agenda too (owner, 2026-11-19, [decisions](decisions/owner-decisions-of-2026-11-19.md)):** an institution's calendar event with the public "Personnel" or "Tous" opens to every staff account whose campus is the campus of a TICKED space - the same door as posts, so an event for Saint-Etienne only reaches Saint-Etienne's staff only; entry [institution-events-reach-staff-by-campus](backlog.d/institution-events-reach-staff-by-campus.md). **What it replaced - the agenda.** The owner's answer is for POSTS. An institution's
 calendar event with "Personnel" still reaches only the staff who already have a door
 (`eventVisibleToUserSql` unchanged), although the question below said one answer would settle both:
 whether the same door opens on events waits for the owner.
 
-**Decided 2026-11-19 for the institution as a whole too** (*"Oui, par campus"*, [decisions](backlog.d/owner-decisions-of-2026-11-19.md)): the shop, the partnerships, the directory and an institution's lives open to the staff of the campuses its rules reach - [entry](backlog.d/institution-reaches-staff-by-campus-beyond-posts.md). **What it was:** The door is per ITEM: it needs a chosen
+**Decided 2026-11-19 for the institution as a whole too** (*"Oui, par campus"*, [decisions](decisions/owner-decisions-of-2026-11-19.md)): the shop, the partnerships, the directory and an institution's lives open to the staff of the campuses its rules reach - [entry](backlog.d/institution-reaches-staff-by-campus-beyond-posts.md). **What it was:** The door is per ITEM: it needs a chosen
 public. The association-level readers that the audiences audit of 2026-11-14 found with the same
 dead zone for staff - the shop (`ProductsService`, `associationVisibleToViewerSql`), the partnerships
 (`PartnershipsService`, a claim answering 404), the association directory, an institution's lives,
@@ -703,7 +703,7 @@ group the device left), not shown (the page has nowhere to draw it), and said on
 WARN (`not adopted, kept native in the mirror`). The native drain's own notification is the only
 place the member saw it fail.
 
-**DECIDED 2026-11-22 (owner): SHOW it** - the conversation is recreated locally and the reply is shown as failed, with Delete ([decisions](backlog.d/owner-decisions-of-2026-11-22.md), item 7; [entry](backlog.d/a-shade-reply-to-a-deleted-conversation-is-shown-as-failed.md)). The options below are kept as the record of what was weighed.
+**DECIDED 2026-11-22 (owner): SHOW it** - the conversation is recreated locally and the reply is shown as failed, with Delete ([decisions](decisions/owner-decisions-of-2026-11-22.md), item 7; entry). The options below are kept as the record of what was weighed.
 
 - **Show it** (recommended, principle 2: the essential is never lost): restore the conversation as a
   read-only "removed" row holding the failed message, with Delete. This creates a row the member
@@ -725,4 +725,4 @@ with its backup; the lead measures it there read-only before any stable; product
 a stable, which is refused unless dev served that alpha. First applied to migration 181 (#3979).
 **For the owner:** confirm this order, or amend it (for example, require the owner's own merge of the
 line for a backfill of user data) ([cicd](cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01),
-[decisions](backlog.d/owner-decisions-of-2026-11-03-evening.md)).
+[decisions](decisions/owner-decisions-of-2026-11-03-evening.md)).
