@@ -30,6 +30,10 @@ Owner, 2026-11-23 ([decisions](decisions/owner-decisions-of-2026-11-23.md)): a r
 - The owner handing the Lydia Responsable over in production, then taking it back: the same real Business and real account; the homologation run stays in the plan.
 - The feed on an iPhone below iOS 26 (the classic tab bar): the bench iPhone 12 runs iOS 26, so the bar never draws on it. The measure taken in desktop Chrome with the classic bar simulated stands ([design-reference](frontend/design-reference.md)).
 
+## Readings closed on 2026-11-24 - the bench has no SIM
+
+Owner, 2026-11-24 ([decisions](decisions/owner-decisions-of-2026-11-24.md), item 3): two Android call readings need a cellular call, and the bench Mi 9T has no SIM. Both are CLOSED, never queued: a Canari call started during a cellular call (the peer sees the microphone cut), and the microphone coming back by itself when the cellular call ends. The hold and its release are covered by `CallFocusHoldTest` and `CallAudioSlotTest` ([calls](frontend/modules/calls.md)).
+
 ## The readings triage of 2026-11-14 - what is kept, what each needs, and the sittings
 
 **The rule (owner, 2026-11-14):** the readings owed reach ZERO before a release; each is READ with evidence or

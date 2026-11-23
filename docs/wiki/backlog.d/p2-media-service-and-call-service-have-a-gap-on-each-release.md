@@ -1,6 +1,6 @@
 ## P2 - media-service and call-service still have a gap on each release (seen 2026-10-09, re-read 2026-11-11)
 
-target: 1.8.0
+target: 1.9.0
 
 Every other service is started beside its old replica and drained ([cicd](../cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to)); these two are still `canari.deploy.replace: exclusive` in both compose files, recreated in place, so an upload or a call started in those few seconds fails. The deploy's resolver report names the gap (`gap - media-service x2 "Host not found": an exclusive service`, `infrastructure/lib/resolver-report.sh`).
 

@@ -1,6 +1,6 @@
 ## The chat and the reactions of a live replayed in sync with the video, as on Twitch (owner wish, 2026-11-20; designed, not built)
 
-target: 1.8.0
+target: 1.10.0
 
 _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 

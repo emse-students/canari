@@ -1,6 +1,6 @@
 ## P2 - one tap from Canari signs the user into its MiConnect sites, and MiGallery's notifications go through Canari (owner, 2026-11-07: decided; Canari's half of the handoff built 2026-11-08, MiGallery's flag ON 2026-11-14, the others OFF)
 
-target: 1.8.0
+target: 1.9.0
 
 **Owner, 2026-11-19:** *"comme on l'a fait pour MiGallery, il faut qu'arriver sur le Cercle, Sky etc, via Canari connecte automatiquement"* - each MiConnect site Canari opens adopts the verification contract and its `handoff` flag is turned on, as MiGallery's was; independent of WP5 ([decisions](../decisions/owner-decisions-of-2026-11-19.md)).
 
