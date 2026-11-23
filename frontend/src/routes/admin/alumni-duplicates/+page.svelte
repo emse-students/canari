@@ -101,7 +101,7 @@
 
 {#snippet account(a: AlumniAccount, label: string)}
   <div class="min-w-0">
-    <p class="text-text-muted text-xs font-semibold uppercase">{label}</p>
+    <p class="text-text-muted text-xs font-semibold">{label}</p>
     <p class="text-text-main truncate text-sm font-semibold">{a.name}</p>
     <p class="text-text-muted truncate text-xs">
       {a.username} - {m.alumni_duplicates_promos({ promos: a.promos.join(', ') })}
