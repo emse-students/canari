@@ -298,7 +298,7 @@ export const DUE_HEADS_UP_SQL = `SELECT o.id, o.kind, o."targetId", o."userId",
          (f."deletedAt" IS NULL AND f.status = 'published'
            AND NOT ${associationArchivedSql('f."associationId"')}) AS "targetLive",
          f."associationId", f.title AS "targetName", a.name AS "associationName",
-         a."logoUrl" AS "associationLogoUrl"
+         a."logoUrl" AS "associationLogoUrl", a."logoMediaId" AS "associationLogoMediaId"
     FROM opening_reminders o
     LEFT JOIN forms f ON f.id = o."targetId"
     LEFT JOIN associations a ON a.id = f."associationId"
@@ -334,6 +334,8 @@ export interface DueOpening {
   associationId: string | null;
   associationName: string | null;
   associationLogoUrl: string | null;
+  /** The logo's media id: the only form of it a push picture may carry (`publicMediaIconId`). */
+  associationLogoMediaId: string | null;
   /** The form's or event's title, the booking space's name. */
   targetName: string | null;
   /** A booking space reached by its link only: its name never reaches a lock screen (Q-R5). */
@@ -369,6 +371,7 @@ export const DUE_OPENINGS_SQL = `SELECT o.id, o.kind, o."targetId", o."userId", 
              AND ${eventOpeningSeenBySql('o.kind', 'o."targetId"', 'op_user')})), false) AS "stillOwed",
          t."associationId", t."linkOnly",
          t.name AS "targetName", a.name AS "associationName", a."logoUrl" AS "associationLogoUrl",
+         a."logoMediaId" AS "associationLogoMediaId",
          (o.origin = 'followed' AND t."associationId" IS NOT NULL AND EXISTS (
             SELECT 1 FROM account_bells b
              WHERE b."userId" = o."userId" AND b."targetKind" = 'association'
