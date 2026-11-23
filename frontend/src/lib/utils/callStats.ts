@@ -87,6 +87,23 @@ export function describeSelectedPair(stats: RTCStatsReport): string {
   return parts.join(' ');
 }
 
+/**
+ * The path line to write NOW, or `null` when the call still rides the pair already logged.
+ *
+ * ICE may move to a better pair after `connected` (bench P1 logged `relayed=yes` while the call
+ * ended on host/udp), so a line written once over-counts relayed calls: the line is written again
+ * whenever the pair changes, and the last one names the path the call ended on. The round-trip time
+ * moves on every read and is not part of the identity of the path.
+ *
+ * @param previous The last line logged for this peer connection, or `null` when none was.
+ * @param stats The report from `RTCPeerConnection.getStats()`.
+ */
+export function selectedPathToLog(previous: string | null, stats: RTCStatsReport): string | null {
+  const line = describeSelectedPair(stats);
+  const identity = (l: string) => l.replace(/ rtt_ms=\d+$/, '');
+  return previous !== null && identity(previous) === identity(line) ? null : line;
+}
+
 /** The subset of an audio `outbound-rtp` / `inbound-rtp` / `codec` stats entry the codec line reads. */
 type RtpCodecEntry = {
   type: string;

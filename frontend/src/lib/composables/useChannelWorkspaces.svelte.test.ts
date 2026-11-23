@@ -2215,6 +2215,21 @@ describe('useChannelWorkspaces - the membership notice', () => {
     expect(JSON.parse(sent.system?.data ?? '')).toEqual({ newUsers: ['newcomer'] });
   });
 
+  // A notice with no id is a duplicate waiting for a replay or a re-fetch: it carries a minted one,
+  // like every group notice (`mkVisibleSystem`), and a fresh one per invitation.
+  it('carries a minted message id and send time, a new one each time', async () => {
+    const api = useChannelWorkspaces();
+    await api.inviteMemberToChannel('channel_c1', 'newcomer', 'member', makeContext());
+    await api.inviteMemberToChannel('channel_c1', 'newcomer', 'member', makeContext());
+
+    const [first, second] = sendEncryptedChannelMessage.mock.calls.map((c) =>
+      decodeAppMessage(c[1] as Uint8Array)!
+    );
+    expect(first.messageId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(Number(first.sentAt)).toBeGreaterThan(0);
+    expect(second.messageId).not.toBe(first.messageId);
+  });
+
   // A member hands the newcomer the past only on a proof it can check: the admission this device
   // signs travels WITH the invitation and is stored on the newcomer's membership row.
   it('sends the admission this device signed with the invitation (channel-encryption section 25)', async () => {
