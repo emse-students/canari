@@ -3366,6 +3366,14 @@ export class ProductsService {
       this.assertWithinCustomBounds(product, associationId, customAmountCents, 'custom amount');
       amountCents = customAmountCents;
     } else {
+      // A REFUSED REQUEST, not a fault: the shop shows no card for a product nothing prices
+      // (`productCards.ts`) and a save refuses one (`PRODUCT_HAS_NO_PRICE`), so this is a stale
+      // client or a free-amount product bought without an amount. No typed code: no sentence of its
+      // own would be shown, the client's generic checkout error is the answer.
+      this.logger.log(
+        `[SHOP] purchase refused: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)} - ` +
+          `no fixed price, no grid and no amount sent (allowCustomAmount=${product.allowCustomAmount})`
+      );
       throw new BadRequestException('No amount provided for this product');
     }
 

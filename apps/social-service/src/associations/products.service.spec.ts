@@ -368,6 +368,18 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     );
   });
 
+  it('refuses a purchase nothing prices, and says so in the log', async () => {
+    const { service, productRepo, assoRepo } = makeService();
+    assoRepo.findOne.mockResolvedValue(asso());
+    productRepo.findOne.mockResolvedValue(product({ amountCents: null, allowCustomAmount: true }));
+    const log = jest.spyOn((service as any).logger, 'log').mockImplementation(() => undefined);
+
+    await expect(resolvePurchase(service, 'asso1', 'prod1', 'user1')).rejects.toThrow(
+      'No amount provided for this product'
+    );
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('purchase refused: product=prod1'));
+  });
+
   it('allows a members-only purchase when the buyer holds the cotisation tag', async () => {
     const { service, productRepo, assoRepo, userTagService } = makeService();
     assoRepo.findOne.mockResolvedValue(asso());

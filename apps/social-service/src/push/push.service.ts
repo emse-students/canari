@@ -5,6 +5,18 @@ import { MIN_APP_VERSION_DATA_KEY, PUSH_KEY_MIN_CLIENT } from './notification-cl
 import { pushContentData, type PushContent } from './push-content';
 import { socialDeepLink } from './push-target';
 
+/** One line for a failed delivery call: its name and message, and the budget a timeout ran out of. */
+export function describePushFailure(e: unknown): string {
+  // Duck-typed, not `instanceof Error`: a DOMException (the timeout) is not one in every realm.
+  const named =
+    typeof e === 'object' && e !== null ? (e as { name?: unknown; message?: unknown }) : null;
+  if (typeof named?.name !== 'string' || typeof named.message !== 'string') return String(e);
+  const detail = `${named.name}: ${named.message}`;
+  return named.name === 'TimeoutError'
+    ? `${detail} (chat-delivery did not answer within ${DELIVERY_TIMEOUT_MS} ms)`
+    : detail;
+}
+
 /**
  * Fire-and-forget FCM dispatcher.
  * Calls the chat-delivery-service internal endpoint so that Firebase Admin SDK
@@ -82,7 +94,10 @@ export class PushService {
         this.logger.warn(`[PUSH] notify HTTP ${res.status} for user=${userId}`);
       }
     } catch (e: unknown) {
-      this.logger.warn(`[PUSH] notify failed for user=${userId}`, e);
+      // THE ERROR IS IN THE MESSAGE: as Nest's second argument it is read as the CONTEXT name and
+      // prints as a second, unexplained line. A timeout names the budget it ran out of, so the line
+      // says chat-delivery did not answer, not that it refused.
+      this.logger.warn(`[PUSH] notify failed for user=${userId}: ${describePushFailure(e)}`);
     }
   }
 }

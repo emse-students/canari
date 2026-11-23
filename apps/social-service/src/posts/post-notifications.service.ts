@@ -880,10 +880,14 @@ export class PostNotificationsService {
     // FCM push so every visible notification also triggers a system notification, even with the app closed. Fire-and-forget.
     // THE PICTURE IS THE ACTOR'S, or the association's when the notice speaks for one (a mention in
     // an association's post) - never the member behind it (`pushIconOf`).
-    if (data.associationId && !publicMediaIconId(associationLogoMediaId)) {
+    if (
+      data.associationId &&
+      associationLogoMediaId &&
+      !publicMediaIconId(associationLogoMediaId)
+    ) {
       this.logger.warn(
         `[NOTIFY] association ${data.associationId} pushes no picture, not its logo - ` +
-          `logoMediaId=${associationLogoMediaId ? 'present but refused' : 'absent'}`
+          'logoMediaId=present but refused'
       );
     }
     const content = this.pushContent(
@@ -1177,13 +1181,13 @@ export class PostNotificationsService {
     const icon = pushIconOf(data);
     // A GAP IS A SIGNAL. The member's face was pushed for an association's post on 40 of 91
     // associations for as long as the icon was parsed out of `logoUrl` - and nothing said so. The
-    // only case left that is NOT a defect is an association with no logo at all, and the line
-    // separates them: an id that is present and refused is a broken column, an absent one is a logo
-    // nobody uploaded.
-    if (data.associationId && !logoId) {
+    // only case left that is NOT a defect is an association with no logo at all: an ordinary state
+    // that says nothing (it would repeat on every push). Only an id that is present and refused is
+    // a broken column, and only that one is warned.
+    if (data.associationId && data.associationLogoMediaId && !logoId) {
       this.logger.warn(
         `[NOTIFY] association ${data.associationId} pushes no picture, not its logo - ` +
-          `logoMediaId=${data.associationLogoMediaId ? 'present but refused' : 'absent'}`
+          'logoMediaId=present but refused'
       );
     }
     const content = this.pushContent(
