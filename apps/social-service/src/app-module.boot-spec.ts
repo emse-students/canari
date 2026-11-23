@@ -83,6 +83,12 @@ describe('the real AppModule boots', () => {
       const dataSource = app.get(DataSource, { strict: false });
       expect(dataSource.entityMetadatas.length).toBeGreaterThan(0);
 
+      // THE SESSION ZONE IS THE APP'S OWN, NOT THE SERVER'S: `PG_SESSION_OPTIONS` reaches every
+      // pooled connection only through the `extra.options` of this module's TypeORM config, so a
+      // dropped `options` line leaves the unit spec of the constant green and this one red.
+      const [{ TimeZone }] = (await dataSource.query('SHOW timezone')) as { TimeZone: string }[];
+      expect(TimeZone).toBe('UTC');
+
       for (const metadata of dataSource.entityMetadatas) {
         // `take: 1` because the assertion is that the query RUNS, not what it returns - the schema
         // is freshly synchronised and every table is empty. A thrown query is the failure.

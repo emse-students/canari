@@ -65,6 +65,7 @@ import {
   type NameStatementOutcome,
   type OwnNameStatement,
 } from './groupName';
+import { conversationRowWritesSettled } from './conversationRowWrites';
 
 /**
  * The trust refusals this session already reported, as `deviceId|reason` - a sweep re-derives the
@@ -1008,6 +1009,11 @@ export async function purgeLocalConversationRecord(params: {
   // recovery is owed for it. The in-memory cooldown (`lastReAddAt`) is a throttle, schedules
   // nothing, and stays.
   clearGroupNotReady(userId, groupId);
+  // THE MAP FIRST, THEN THE WRITES IN FLIGHT, THEN THE STORE - as `purgeConversation`, for the
+  // reason `conversationRowWrites.ts` gives: a batch write that asked the map before this removal
+  // lands before the clear, and none starts after it.
+  conversations.delete(contactKey);
+  await conversationRowWritesSettled(contactKey);
   if (deleteConversation) {
     // Best-effort, never silent: a row left in the local store comes back at the next restore.
     await deleteConversation(contactKey).catch((e: unknown) =>
@@ -1016,7 +1022,6 @@ export async function purgeLocalConversationRecord(params: {
       )
     );
   }
-  conversations.delete(contactKey);
   log?.(`[UI] Local conversation removed (${groupId})`);
 }
 
