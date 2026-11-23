@@ -148,6 +148,10 @@
     <string name="notif_form_open_body_named">\"%1$s\" is available - hurry, spots are limited!</string>
     <string name="notif_form_paid_over_capacity_title">Payment on a full form</string>
     <string name="notif_form_paid_over_capacity_body">“%1$s”: a payment arrived after the form was full. A refund is owed.</string>
+    <string name="notif_form_waitlist_promoted_title">A spot opened up</string>
+    <string name="notif_form_waitlist_promoted_body">You are registered for the form. Open it to see your registration.</string>
+    <string name="notif_form_waitlist_promoted_title_named">%1$s: a spot opened up</string>
+    <string name="notif_form_waitlist_promoted_body_named">You are registered for \"%1$s\". Open the form to see your registration.</string>
     <string name="notif_lydia_payments_active_title">Lydia payments active</string>
     <string name="notif_lydia_payments_active_body">Lydia payments for %1$s are active.</string>
     <string name="notif_lydia_payments_paused_title">Lydia payments paused</string>

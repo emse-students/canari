@@ -194,19 +194,21 @@ describe('FormsService - the seat a pending payment holds', () => {
       where: string[];
       params: Record<string, unknown>;
     }) {
-      if (state.where[0] === '"paymentStatus" = :status') {
+      if (state.where[0] === '"paymentStatus" IN (:...statuses)') {
+        // The online expiry: a `pending` row and a promoted `payment_due` one share the hold.
         expect(state.where).toEqual([
-          '"paymentStatus" = :status',
+          '"paymentStatus" IN (:...statuses)',
           '"paymentRequestedAt" <= CAST(:cutoff AS timestamptz)',
         ]);
+        expect(state.params.statuses).toEqual(['pending', 'payment_due']);
         const cutoff = state.params.cutoff as Date;
         const moved = rows.filter(
           (r) =>
-            r.paymentStatus === state.params.status &&
+            (state.params.statuses as string[]).includes(r.paymentStatus) &&
             r.paymentRequestedAt.getTime() <= cutoff.getTime()
         );
         moved.forEach((r) => Object.assign(r, state.set));
-        return { affected: moved.length };
+        return { affected: moved.length, raw: moved.map((r) => ({ formId: r.formId })) };
       }
       const [flag] = Object.keys(state.set) as Flag[];
       expect(state.where).toEqual(['id = :id', `"${flag}" IS NULL`]);
@@ -256,6 +258,8 @@ describe('FormsService - the seat a pending payment holds', () => {
             Object.assign(state.params, params),
             builder
           ),
+          // The expiry answers the forms it touched, for the waiting list to promote.
+          returning: (columns: string[]) => (expect(columns).toEqual(['formId']), builder),
           execute: async () => {
             await roundTrip();
             return runUpdate(state);
@@ -501,7 +505,8 @@ describe('FormsService - the seat a pending payment holds', () => {
 
     it('counts every other seat-holding state whatever its age', () => {
       const branches = seatHoldingWhere('f1').map((clause) => clause.paymentStatus);
-      expect(branches).toEqual(['paid', 'free', 'pending', 'pending_cash']);
+      // `payment_due`: a waiting answer promoted on a paid form, held by the online hold (waitlist.ts).
+      expect(branches).toEqual(['paid', 'free', 'pending', 'pending_cash', 'payment_due']);
     });
   });
 

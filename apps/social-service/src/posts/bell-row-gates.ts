@@ -196,6 +196,8 @@ export const BELL_ROW_GATE: Readonly<Record<NotificationType, BellRowGate>> = {
   form_reminder: 'reader',
   // The reader's own cash answer about to expire: told to the one who answered, nobody else.
   form_cash_expiring: 'reader',
+  // The reader's own answer, promoted from the waiting list: told to the one who answered.
+  form_waitlist_promoted: 'reader',
   // The reader's own bookings: what happened to THEIR place - a removal is the very thing told.
   booking_cancelled: 'reader',
   booking_withdrawn: 'reader',

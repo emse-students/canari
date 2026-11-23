@@ -104,6 +104,12 @@ export const FORM_ANSWER_PAID = 'FORM_ANSWER_PAID';
 export const FORM_BLOCK_INVALID = 'FORM_BLOCK_INVALID';
 
 /**
+ * An answer left or promoted from the waiting list no longer waits: promoted meanwhile, or removed
+ * (`forms.service.ts`, `WAITLIST_ANSWER_NOT_WAITING`).
+ */
+export const WAITLIST_ANSWER_NOT_WAITING = 'WAITLIST_ANSWER_NOT_WAITING';
+
+/**
  * The sentence for a form's CODED refusal, or `null` when the code is none of a form's (the
  * caller then tries the next mapper, and ends on its own generic line). Classified by the code,
  * never by the message.
@@ -169,6 +175,8 @@ export function formCodeMessage(code: string | null): string | null {
       return m.form_refusal_answer_paid();
     case FORM_BLOCK_INVALID:
       return m.form_refusal_block_invalid();
+    case WAITLIST_ANSWER_NOT_WAITING:
+      return m.form_refusal_waitlist_not_waiting();
     default:
       // A priced grid's coded refusal (`PRODUCT_GRID_*`): an answer's, else a definition's at save.
       return productGridRefusalMessage(code) ?? productGridDefinitionMessage(code);

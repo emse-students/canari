@@ -125,6 +125,10 @@
 "notif.form.open.body_named" = "« %@ » est disponible - dépêchez-vous, les places sont limitées !";
 "notif.form.paid_over_capacity.title" = "Paiement sur un formulaire complet";
 "notif.form.paid_over_capacity.body" = "« %1$@ » : un paiement est arrivé alors que le formulaire était complet. Remboursement à faire.";
+"notif.form.waitlist_promoted.title" = "Une place s'est libérée";
+"notif.form.waitlist_promoted.body" = "Vous êtes inscrit au formulaire. Ouvrez-le pour voir votre inscription.";
+"notif.form.waitlist_promoted.title_named" = "%@ : une place s'est libérée";
+"notif.form.waitlist_promoted.body_named" = "Vous êtes inscrit à « %@ ». Ouvrez le formulaire pour voir votre inscription.";
 "notif.lydia_payments_active.title" = "Paiements Lydia actifs";
 "notif.lydia_payments_active.body" = "Les paiements Lydia de %1$@ sont actifs.";
 "notif.lydia_payments_paused.title" = "Paiements Lydia suspendus";

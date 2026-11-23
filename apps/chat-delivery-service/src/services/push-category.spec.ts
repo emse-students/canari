@@ -47,6 +47,7 @@ describe('categoryOfDataPush', () => {
     ['form_opening_soon', 'forms'],
     ['form_open', 'forms'],
     ['form_paid_over_capacity', 'forms'],
+    ['form_waitlist_promoted', 'forms'],
     ['lydia_payments_active', 'forms'],
     ['lydia_payments_paused', 'forms'],
     ['lydia_refund_issued', 'forms'],

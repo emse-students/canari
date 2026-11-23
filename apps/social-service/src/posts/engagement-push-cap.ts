@@ -143,6 +143,7 @@ export const PUSH_BUDGET: Readonly<
   live_reinstated: FREE,
   form_paid_over_capacity: FREE,
   form_cash_expiring: FREE,
+  form_waitlist_promoted: FREE,
   lydia_payments_active: FREE,
   lydia_payments_paused: FREE,
   lydia_refund_issued: FREE,

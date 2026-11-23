@@ -877,6 +877,10 @@ earlier reaches the floor clients as a wrong sentence and a dead link, which no 
 no native table), floor `1.8.0` (`FORM_STALE_OPEN_MIN_CLIENT_VERSION`): a build below it is never served the
 row, so it draws nothing unknown ([forms](frontend/modules/forms.md#the-question-put-to-a-form-left-open-owner-2026-11-21-migration-180)).
 
+**`form_waitlist_promoted` (owner, 2026-11-23)**: a waiting answer became a registration, a bell row AND a push
+key (with its Android and iOS tables), floor `1.8.0` (`FORM_WAITLIST_MIN_CLIENT_VERSION`) for both: a build
+below it is never served the row nor the push ([forms](frontend/modules/forms.md#a-waiting-list-on-a-limited-form-owner-decision-of-2026-11-23-180)).
+
 ### The client floor of every notification type (owner, 2026-11-10)
 
 **The rule: the server never sends a notification type to a client too old to render it.** The 1.6.9
@@ -1115,6 +1119,22 @@ could file an institution's event until production deployed.
 event as before, with no picker and no reach. The `404` is never read as the signal.
 **Removal condition:** when no estate older than the release carrying `eventReach` is served (both
 estates deployed past it), the client branch for `false` may go; the field stays, always `true`.
+
+### No date yet - a form editor newer than its server's waiting list - `formWaitlist` (2026-11-23)
+
+**Site:** `serverFormWaitlist()` (`frontend/src/lib/stores/appVersionCheck.svelte.ts`), read by both form
+editors (`waitlistPayload`, `frontend/src/lib/forms/waitlist.ts`); the server half is `formWaitlist: true`
+in core-service's `GET /api/version`.
+**Why.** A stable ships both stores before production deploys, so for days a phone build talks to a
+social-service that strips `waitlistEnabled` from a save (its validation whitelists the body): the switch
+would be drawn, set, and silently not kept.
+**What the client does.** It draws the switch and sends the field only on an estate whose `/api/version`
+says `formWaitlist: true`. The fill page needs no gate of its own: it offers to join only when the
+check carries `waitlist.open`, which an older server never sends, and an older server answers a
+`joinWaitlist` it does not know with the `FORM_FULL` it always gave.
+**Removal condition:** when no estate older than the release carrying `formWaitlist` is served (both
+estates deployed past it), the client branch for `false` may go; the field stays, always `true`
+([forms](frontend/modules/forms.md#a-waiting-list-on-a-limited-form-owner-decision-of-2026-11-23-180)).
 
 ### Removal once `minClientVersion` passes `1.6.12` - a form editor that cannot draw a priced grid's "Obligatoire" switch (owner, 2026-11-13)
 

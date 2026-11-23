@@ -61,6 +61,11 @@ export class Submission {
    * - `cancelled` - cancelled / abandoned
    * - `expired` - cash payment window elapsed without validation, or an online `pending` past the
    *   hold (`paymentMethod` tells the two apart: `cash` or null)
+   * - `waiting` - on the form's waiting list (migration 183, `waitlist.ts`): no seat, no payment
+   *   asked, ranked by `waitlistOrder`; promoted to a registration when a place is freed
+   * - `payment_due` - a waiting ONLINE answer promoted on a paid form: it holds its seat for the
+   *   online hold counted from its promotion (`paymentRequestedAt`), like a `pending` one, and is
+   *   paid through the payment resume; past the hold it is `expired`
    *
    * A plain varchar with no CHECK constraint, so a new state needs no migration.
    */
@@ -219,6 +224,26 @@ export class Submission {
    */
   @Column({ type: 'jsonb', nullable: true })
   priceLockedItemIds: string[] | null;
+
+  /**
+   * The arrival order of a WAITING answer on its form (migration 183): one more than the form's
+   * highest, written under the form's seat lock (`waitlist.ts`), so two arrivals never share it. The
+   * rank is the number of waiting answers at or before it - never a clock. Kept after a promotion;
+   * NULL on an answer that never waited.
+   */
+  @Column({ type: 'bigint', nullable: true })
+  waitlistOrder: string | null;
+
+  /** When this waiting answer became a registration (migration 183); NULL otherwise. */
+  @Column({ type: 'timestamptz', nullable: true })
+  promotedAt: Date | null;
+
+  /**
+   * The claim of the ONE notice of a promotion (migration 183): set by a conditional `UPDATE` exactly
+   * one caller wins, cleared again if writing the notice failed, so the next sweep retries it.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  promotionNotifiedAt: Date | null;
 
   @CreateDateColumn()
   createdAt: Date;

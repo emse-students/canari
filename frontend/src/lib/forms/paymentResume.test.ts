@@ -34,4 +34,14 @@ describe('offersPaymentResume', () => {
   ])('offers nothing for %s', (_why, patch) => {
     expect(offersPaymentResume({ ...idle, ...patch })).toBe(false);
   });
+
+  // A promoted answer owing its payment (the waiting list): answered already, its seat its own.
+  it('offers the payment of a promoted answer although it is answered and the form closed', () => {
+    expect(offersPaymentResume({ ...idle, submitted: true, closed: true, paymentDue: true })).toBe(
+      true
+    );
+    expect(offersPaymentResume({ ...idle, submitted: true, paymentDue: true, preview: true })).toBe(
+      false
+    );
+  });
 });

@@ -61,6 +61,12 @@ export const ADMIN_QUEUE_NOTICE_MIN_CLIENT_VERSION = '1.7.1';
  */
 export const FORM_STALE_OPEN_MIN_CLIENT_VERSION = '1.8.0';
 
+/**
+ * The first build that knows the waiting list (owner, 2026-11-23, `forms/waitlist.ts`): the bell row
+ * and the push key of a promotion, and the fill page that asks to join the list.
+ */
+export const FORM_WAITLIST_MIN_CLIENT_VERSION = '1.8.0';
+
 /** The first build that draws a campus trend as a suggestion rather than as a person (2026-11-10). */
 export const CAMPUS_TREND_MIN_CLIENT_VERSION = '1.6.10';
 
@@ -136,6 +142,8 @@ export const NOTIFICATION_TYPE_MIN_CLIENT = {
   // The question put to a form left open (owner, 2026-11-21): the first build that draws it. A bell
   // row only, no push, so no push key.
   form_stale_open: FORM_STALE_OPEN_MIN_CLIENT_VERSION,
+  // The one notice of the waiting list, a promotion (owner, 2026-11-23): the first build that draws it.
+  form_waitlist_promoted: FORM_WAITLIST_MIN_CLIENT_VERSION,
 } as const satisfies Readonly<Record<string, string | null>>;
 
 /** A type a bell row may carry: one whose floor is declared above, and nothing else. */
@@ -179,6 +187,7 @@ export const PUSH_KEY_MIN_CLIENT: Readonly<Record<PushContentKey, string | null>
   social_live_withdrawn: '1.4.0',
   social_live_reinstated: '1.7.0',
   form_paid_over_capacity: '1.4.0',
+  form_waitlist_promoted: FORM_WAITLIST_MIN_CLIENT_VERSION,
   social_follow_request: '1.5.1',
   social_follow_accepted: '1.5.1',
   social_booking_cancelled: '1.5.1',

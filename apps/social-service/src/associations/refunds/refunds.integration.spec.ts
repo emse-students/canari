@@ -23,6 +23,7 @@ import { ProductCheckout } from '../entities/product-checkout.entity';
 import { AssociationProduct } from '../entities/association-product.entity';
 import { Submission } from '../../forms/entities/submission.entity';
 import { Association } from '../entities/association.entity';
+import { Form } from '../../forms/entities/form.entity';
 import { LydiaRefund } from './lydia-refund.entity';
 import { REFUND_CALL_BOUND_MS, REFUND_CALL_LOCK_KEY, RefundsService } from './refunds.service';
 import { ERASURE_STATEMENTS, erasureParams } from '../../internal/account-erasure';
@@ -76,7 +77,10 @@ maybe('Lydia refunds against PostgreSQL', () => {
          "lydiaOnboardingComplete" boolean NOT NULL DEFAULT false)`
     );
     await admin.query(
-      `CREATE TABLE forms (id uuid PRIMARY KEY, "grantsCotisation" boolean NOT NULL DEFAULT false)`
+      // The capacity and the waiting list a freed seat is promoted on (migration 183).
+      `CREATE TABLE forms (id uuid PRIMARY KEY, "grantsCotisation" boolean NOT NULL DEFAULT false,
+         "maxSubmissions" integer NULL, "cashPaymentExpiryDays" integer NULL,
+         "deletedAt" timestamptz NULL)`
     );
     // Migration 120 from the file, twice: it must be idempotent. On the admin connection, so its
     // `SET lock_timeout` does not stay on a pool connection.
@@ -104,6 +108,8 @@ maybe('Lydia refunds against PostgreSQL', () => {
         Submission,
         LydiaRefund,
         Association,
+        // Read by the promotion of the waiting list a freed seat runs (`waitlist.ts`).
+        Form,
       ])
     );
     await ds.initialize();
@@ -441,6 +447,33 @@ maybe('Lydia refunds against PostgreSQL', () => {
       submission.id,
     ]);
     expect(after.paymentStatus).toBe('refunded');
+    expect((await refundOf(record.id))[0].sideEffect).toBe('seat-freed');
+  });
+
+  it('a TOTAL refund of a form answer gives the freed seat to the first in line, its notice to the sweep', async () => {
+    const { record, submission } = await formPayment(false);
+    await ds.query(`UPDATE forms SET "maxSubmissions" = 1 WHERE id = $1`, [submission.formId]);
+    const waiting = await ds.getRepository(Submission).save(
+      ds.getRepository(Submission).create({
+        formId: submission.formId,
+        userId: 'w'.repeat(64),
+        answers: {},
+        // What it will owe, priced at its submit, online.
+        totalPaid: 800,
+        paymentMethod: 'online',
+        paymentStatus: 'waiting',
+        waitlistOrder: '1',
+      })
+    );
+    await service.refund(ASSO, record.id, MANAGER, total());
+    const [after] = await ds.query(
+      `SELECT "paymentStatus", "promotedAt", "promotionNotifiedAt" FROM submissions WHERE id = $1`,
+      [waiting.id]
+    );
+    // An online answer: the promoted one owes its payment, and is told by the sweep.
+    expect(after.paymentStatus).toBe('payment_due');
+    expect(after.promotedAt).not.toBeNull();
+    expect(after.promotionNotifiedAt).toBeNull();
     expect((await refundOf(record.id))[0].sideEffect).toBe('seat-freed');
   });
 

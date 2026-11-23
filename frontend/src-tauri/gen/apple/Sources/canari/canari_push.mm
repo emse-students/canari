@@ -921,8 +921,12 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
   // A watched form (owner, 2026-11-17): the association that runs it names the title and the
   // form's own title the body, the same facts as the bell row; the fixed sentence stands for a form
   // that has neither.
-  if ([key isEqualToString:@"form_opening_soon"] || [key isEqualToString:@"form_open"]) {
-    NSString *stem = [key isEqualToString:@"form_open"] ? @"notif.form.open" : @"notif.form.opening_soon";
+  // A waiting answer became a registration (owner, 2026-11-23) reads like the form reminders.
+  if ([key isEqualToString:@"form_opening_soon"] || [key isEqualToString:@"form_open"] ||
+      [key isEqualToString:@"form_waitlist_promoted"]) {
+    NSString *stem = [key isEqualToString:@"form_open"]                ? @"notif.form.open"
+                     : [key isEqualToString:@"form_waitlist_promoted"] ? @"notif.form.waitlist_promoted"
+                                                                       : @"notif.form.opening_soon";
     *title = actor.length > 0
                  ? [NSString stringWithFormat:CanariLocalized([stem stringByAppendingString:@".title_named"]), actor]
                  : CanariLocalized([stem stringByAppendingString:@".title"]);

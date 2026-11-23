@@ -16,6 +16,7 @@ import { coreUrl } from '../../internal/service-urls';
 import { internalCoreRequestConfig } from '../../internal/core-request';
 import { lockBuyerTiers } from '../../users/buyer-tier-lock';
 import { lockFormSeats } from '../../forms/seat-hold';
+import { promoteFromWaitlist } from '../../forms/waitlist';
 import {
   LISTED_PURCHASE_STATUSES,
   PurchaseRecord,
@@ -836,6 +837,23 @@ export class RefundsService implements OnApplicationBootstrap {
           WHERE id = $1 AND "paymentStatus" IN ('paid', 'paid_over_capacity')`,
         [submissionId]
       );
+      // The freed seat goes to the first in line of the form's waiting list, under the lock just
+      // taken and in this transaction (`waitlist.ts`). Its notice is the five-minute sweep's
+      // (`FormWaitlistNoticeService.tellPending`): this module does not reach the forms' notifier.
+      // Behind a savepoint: a failed promotion must never undo the refund it follows - the place
+      // then stays free for the five-minute sweep, which accuses the miss.
+      await manager.query('SAVEPOINT refund_waitlist');
+      try {
+        await promoteFromWaitlist(manager, formId, 'refund', this.logger);
+        await manager.query('RELEASE SAVEPOINT refund_waitlist');
+      } catch (e: unknown) {
+        await manager.query('ROLLBACK TO SAVEPOINT refund_waitlist');
+        this.logger.error(
+          `[LYDIA-REFUND] ${refund.id}: the seat is freed but the waiting list of form ${formId} ` +
+            'could not be promoted - left for the sweep',
+          e
+        );
+      }
     }
     if (withdrawal === 'form') return 'seat-freed';
     const revoked = await this.revokeDelivery(manager, record, {

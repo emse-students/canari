@@ -434,7 +434,7 @@
         ? 'bg-accent text-on-accent'
         : notif.type === 'reply'
           ? 'bg-blue-500 text-white'
-          : notif.type === 'form_reminder'
+          : notif.type === 'form_reminder' || notif.type === 'form_waitlist_promoted'
             ? 'bg-purple-500 text-white'
             : notif.type === 'form_paid_over_capacity' ||
                 notif.type === 'form_cash_expiring' ||
@@ -527,6 +527,8 @@
         <CornerDownLeft size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'form_reminder'}
         <Clock size={glyph} strokeWidth={2.75} />
+      {:else if notif.type === 'form_waitlist_promoted'}
+        <CircleCheck size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'form_paid_over_capacity'}
         <TriangleAlert size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'form_cash_expiring'}
@@ -639,6 +641,11 @@
         {m.notif_reply_text()}
       {:else if notif.type === 'form_reminder'}
         <EmojiText text={bodyText} />
+      {:else if notif.type === 'form_waitlist_promoted'}
+        <!-- A waiting answer became a registration: the actor is the association, the row's text
+             the form's title; the sentence is this build's. -->
+        {m.notif_form_waitlist_promoted_text()}
+        <span class="italic"><EmojiText text={bodyText} /></span>
       {:else if notif.type === 'form_paid_over_capacity'}
         <!-- A payment landed on a full form: the sentence is built here, in the reader's locale,
              from the type and the form's title - the only data the server stores on the row. -->

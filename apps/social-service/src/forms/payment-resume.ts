@@ -91,7 +91,8 @@ export function oldRequestSettleable(
 
 /**
  * Why this row cannot be resumed, judged on the row alone, or null when it may be. Resumable: an
- * online, charged answer that is `expired` (its hold passed), `pending` past its hold (its request
+ * online, charged answer that is `payment_due` (promoted from the waiting list, never paid yet),
+ * `expired` (its hold passed), `pending` past its hold (its request
  * died with D1, the five-minute expiry job has not said so yet), or `cancelled` by an allowed origin.
  *
  * `holdLive` says whether a `pending` row still holds its seat (`livePendingWhere`, on the
@@ -106,6 +107,10 @@ export function resumeRowRefusal(
   // Only an ONLINE answer: `cash` is the manager's to validate or cancel, a Stripe-era row has no
   // request Lydia can read, and a free answer owes nothing.
   if (row.paymentMethod !== null || !(row.totalPaid > 0)) return PAYMENT_NOT_RESUMABLE;
+  // A waiting answer promoted on a paid form (`waitlist.ts`): registered, owing its payment, and
+  // naming no request - none was ever issued. Its FIRST payment goes through here; the move to
+  // `pending` under the lock is what refuses a second click (`PAYMENT_IN_PROGRESS`).
+  if (row.paymentStatus === 'payment_due') return null;
   if (row.paymentStatus === 'pending' && holdLive) return PAYMENT_IN_PROGRESS;
   if (!settleable) return PAYMENT_NOT_RESUMABLE;
   if (row.paymentStatus === 'pending') return null;
@@ -134,6 +139,8 @@ export function resumableWhere(formId: string, userId: string): FindOptionsWhere
     totalPaid: MoreThan(0),
   };
   return [
+    // A promoted waiting answer owing its payment (`waitlist.ts`), within its hold or past it.
+    { ...base, paymentStatus: 'payment_due' },
     { ...base, paymentStatus: 'expired' },
     { ...base, paymentStatus: 'cancelled', paymentCancelOrigin: In([...RESUMABLE_CANCEL_ORIGINS]) },
     {

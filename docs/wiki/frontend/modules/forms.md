@@ -3031,6 +3031,98 @@ A row that `markPaid` settles `paid_over_capacity` owes a refund nobody was told
 
 Tests: `forms.service.seat-hold.spec.ts` runs the service on an in-memory store that evaluates its own `where` clauses and refuses any transaction that is not READ COMMITTED (the boundary one second either side of the hold, two simultaneous submits on the last seat, the reuse restarting the hold on a full form, the job twice, a late payment with and without room, two simultaneous late payments on the last seat with a real per-form mutex, replays, a failed grant retried, one payment confirmed under both ids in both orders, a cancel against a paid row, a cancel naming another request (not even read at Lydia), a verified cancel whose request Lydia reads open, unmeasured, paid or not at all (the seat kept, or the payment recorded) and one whose request a retry replaced during the read, the request lifetime (1680 s), the old request settled before the new one with the row still naming it, an old request found PAID stopping the retry, a failed cancel / open state / failed state read / request being issued each refused with `PREVIOUS_PAYMENT_OPEN`, the old request's cancel callback landing DURING the retry and taken back, the submitter's cancel settling the request, a confirmation naming another request accused at ERROR, a late payment on a one-answer form whose payer already has a seat or a payment, the payer's return (`confirmPayment`) recording a payment no callback confirmed, then a late callback as a silent replay, and leaving an open/unknown/unreadable request pending, and the bodies core-service posts entering through `InternalFormsController`: webhook confirm and the payer return's uuid in both orders and at once, a cancel or expire callback after the payment, one between the two confirmations, a payment after its own expiry - one transition, one grant, one purchase each). Controls (each makes it fail): the lock removed from `markPaid`; REPEATABLE READ put back in `submit`; the cancel comparison removed; error 2 read as cancelled without the state read; a failed settle carried past; the one-answer check removed; the foreign-id accusation removed; the take-back of a self-caused cancel removed. The core half is in `lydia-payment-provider.spec.ts` (`expire_time`, `request_id`, `request/cancel` and its error 2, `request/state` and its codes) and `payment.controller.spec.ts` (`request-state` takes the uuid as Lydia issues it, 32 hex digits; it fails on the old dashed pattern). **Real Postgres is NOT in CI**: the Postgres 18 runs quoted on this page (concurrency, migration 084 twice, the hold restart surviving the id write, the real core controllers wired to the real internal route) were throwaway scripts on the pull request, not committed tests - the committed proof is the in-memory store above. `paymentStatus.test.ts` and `paymentReturn.test.ts` (with `paymentCancelView`) on the client.
 
+## A waiting list on a limited form (owner decision of 2026-11-23, 1.8.0)
+
+Asked by an association for its sign-ups: past the capacity, an answer waits in line, and a freed
+place registers the first in line by itself. The four choices are the owner's
+([decisions](../../decisions/owner-decisions-of-2026-11-23.md), items 15-18); everything below is how
+they are kept.
+
+**Opt-in, per form, off by default.** `forms.waitlistEnabled` (migration 183). The list applies only
+where a line means something (`waitlistApplies` in `apps/social-service/src/forms/waitlist.ts`, mirrored
+by `waitlistSettable` in `frontend/src/lib/forms/waitlist.ts`): a capacity, named answers (an anonymous
+answer has nobody to promote) and one answer per person (a second answer is not a place in line, so a
+public form, which takes several, never has one). The editors draw the switch only on an estate that
+says it keeps the list (`formWaitlist` in `/api/version`; an older social-service strips the field), and
+a save sends `false` under a setting that rules it out. Turning the switch off stops NEW arrivals only:
+answers already in line keep their place and are still promoted.
+
+**The schema: a status, an order, two stamps.** An answer in line is a `submissions` row with
+`paymentStatus = 'waiting'` and a `waitlistOrder` (bigint, `MAX + 1` per form under the form's seat lock,
+so it is the arrival order and never a clock); `promotedAt` says when it became a registration, and
+`promotionNotifiedAt` is the claim of its one notice. A waiting row holds NO seat
+(`seatHoldingWhere` never counts it) but IS the person's answer (`answerHoldingWhere` counts it, so a
+second answer is refused as for any other). Migration 183 is additive and NOT held; the new forms column
+changes every draft fingerprint (`FORM_FINGERPRINT_SQL` covers every column), so the migration re-bases
+the drafts that were based on the form as it stood, in the same transaction.
+
+**Joining.** Only a member, only when their page asks (`joinWaitlist: true`, sent by the fill page when
+the server says the list is open and the form full): `submit` then keeps the answer as `waiting`,
+charges nothing, issues no request, and answers `{ waiting: true, waitlistRank }`. Without the wish - an
+older client, a guest - a full form refuses `FORM_FULL` exactly as before, list or no list. The
+answer is priced and stored at submit like any other (its `totalPaid` and `paymentMethod` say what it
+will owe), so a promotion needs nothing from the person.
+
+**The promotion is one function, under the existing lock.** `promoteFromWaitlist(manager, formId,
+trigger)` runs in the caller's READ COMMITTED transaction, which holds the form's `FOR UPDATE` seat lock
+(`lockFormSeats`): it counts the free places (capacity minus `seatHoldingWhere`), takes that many waiting
+rows in `waitlistOrder` with a row lock, and registers each by a conditional `UPDATE ... WHERE
+"paymentStatus" = 'waiting'` that must move exactly one row. Two freeings serialise on the lock and
+promote two people; a submit takes the same lock and PROMOTES BEFORE IT COUNTS, so a newcomer cannot
+take a place someone is waiting for - it is put in line behind them. A promoted answer becomes exactly
+what a fresh answer of its kind is: `free` when it owes nothing, `pending_cash` with its cash window and
+its one reminder (`cash-reminder.ts`), or **`payment_due`** for an online payment: a registration holding
+its seat for the online hold (30 minutes) from its promotion (`livePaymentDueWhere`), paid through
+"Reprendre le paiement" (`payment-resume.ts` accepts it, open or closed form, since the seat is its own),
+and `expired` past the hold by the same five-minute job as a `pending` - which frees the place for the
+next in line. A promotion by hand (the manager's "Inscrire") is the same step on one chosen row, above
+the capacity if the form is full, logged with the count.
+
+**The freeing events, each promoting in its own transaction.** A member or manager cancel
+(`moveLockedSubmission` to `cancelled`, which covers a refused or released payment and a withdrawn
+`payment_due`), a manager's deletion, a cash answer expired, an online `pending` or a `payment_due` past
+its hold, a refund (`refunds.service.ts`, behind a SAVEPOINT so a failed promotion never undoes the
+refund), a form saved or published (a capacity raised). `promoteWaitlist` never throws: a failure is
+logged at ERROR and the place stays free - nothing is lost, because the five-minute tick sweeps every
+form with someone waiting (`promoteEveryWaitlist`, logged at WARN when it promotes anyone: reaching it
+means a freeing event's own promotion failed). Idempotence is the row's status, never a clock.
+
+**One notice, from the row.** `FormWaitlistNoticeService` claims `promotionNotifiedAt` with a conditional
+`UPDATE` (the one winner writes), writes the bell row `form_waitlist_promoted` (the association as the
+actor, the form's title as the text, `postId` the form) and sends one push on the existing forms channel
+(`contentKey` `form_waitlist_promoted`, the association's name and logo, `type: 'form_reminder'` so it
+files where the form reminders file). A bell row that cannot be written RELEASES the claim for the next
+sweep (`tellPending`, every promoted registration not yet told); a failed push fails only the push. A
+promotion made where the notifier does not run (a refund, in the associations module) is told by that
+sweep. Moving up in rank is never announced. The type is new, so it is gated on the `1.8.0` client floor
+(`NOTIFICATION_TYPE_MIN_CLIENT`, `PUSH_KEY_MIN_CLIENT`; [legacy-compatibility](../../legacy-compatibility.md)).
+
+**What each person sees.** The waiting member's page (`GET forms/:id/check`, `waitlist: { open, rank }`)
+shows "3e sur la liste d'attente" (`waitlistRankText`) and "Quitter la liste", which deletes the waiting
+row (`POST forms/submissions/:id/leave-waitlist`; a 409 `WAITLIST_ANSWER_NOT_WAITING` once promoted, a
+404 for another person's row) - everyone behind moves up with no write, the rank being a count. A
+promoted member owing a payment sees "Une place s'est libérée pour vous" with the payment, through the
+resume. The managers see the line apart from the registrations on the responses screen
+(`FormWaitlistSection.svelte`), in arrival order, never reordered, with "Inscrire" (`POST
+forms/:id/submissions/:submissionId/promote`) and "Retirer" (the ordinary deletion). Every count, filter
+and total of that screen counts registrations only; the server's list and export put the waiting rows
+last, in arrival order, each labelled "Liste d'attente" (`paymentStatus.ts`).
+
+**Known limit, filed:** a `payment_due` answer whose resumed request cannot be issued is released like
+any unissued request, so the place goes to the next in line although the failure was not the person's
+([entry](../../backlog.d/a-promoted-answer-keeps-its-place-when-its-payment-cannot-be-issued.md)).
+
+**Tests.** `waitlist.integration.spec.ts` against real PostgreSQL: migration 183 twice and the draft
+re-based, the list off (and a client not asking) refused as before, arrival order and no seat held, a
+manager removal promoting and telling once, two concurrent freeings promoting two, a submit queued behind
+a freeing's lock never jumping the line, a cash expiry giving `pending_cash` with its window, an online
+expiry giving `payment_due` then its own expiry and its withdrawal promoting the next, leaving (own,
+another's, promoted), the promotion by hand (and refused to a non-manager), a raised capacity, the sweep
+taking a place no promotion ran for, a failed bell row released then told. `refunds.integration.spec.ts`
+proves the refund's promotion. On the client: `waitlist.test.ts`, `paymentResume.test.ts`,
+`page.waitlist.svelte.test.ts` (the join, the rank, leaving, the payment due) and
+`FormWaitlistSection.svelte.test.ts` (the manager's list).
+
 ## What a client reads of a submission is an allowlist (2026-10-15)
 
 

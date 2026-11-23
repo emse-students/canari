@@ -529,6 +529,31 @@ describe('NotificationRow sentence', () => {
 });
 
 /**
+ * A WAITING ANSWER BECAME A REGISTRATION, told to its author: the association is the actor and the
+ * row stores the form's title; the sentence is this build's.
+ */
+describe('NotificationRow for a promotion from the waiting list', () => {
+  const row: PostNotification = {
+    id: 'n-promoted',
+    type: 'form_waitlist_promoted',
+    postId: 'f1',
+    actorId: 'system',
+    actorName: 'BDE',
+    text: 'Soiree de gala',
+    read: false,
+    createdAt: new Date().toISOString(),
+  };
+
+  it('names the association and the form, and says a place is now held', () => {
+    const target = renderRow(row);
+    expect(target.textContent).toContain('BDE');
+    expect(target.textContent).toContain(m.notif_form_waitlist_promoted_text());
+    expect(target.textContent).toContain('Soiree de gala');
+    expect(target.querySelector('button')!.disabled).toBe(false);
+  });
+});
+
+/**
  * A PAYMENT LANDED ON A FULL FORM, told to its managers. The row stores the form's TITLE and nothing
  * else (no payer, no amount); the sentence is built here, never a comment's, and the row opens.
  */
@@ -739,6 +764,7 @@ const EVERY_TYPE_THE_SERVER_EMITS = [
   'form_paid_over_capacity',
   'form_cash_expiring',
   'form_stale_open',
+  'form_waitlist_promoted',
   'association_post',
   'followed_post',
   'association_repost',

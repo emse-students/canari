@@ -60,6 +60,7 @@ export type PushContentKey =
   | 'form_opening_soon'
   | 'form_open'
   | 'form_paid_over_capacity'
+  | 'form_waitlist_promoted'
   | 'lydia_payments_active'
   | 'lydia_payments_paused'
   | 'lydia_refund_issued'
@@ -153,6 +154,7 @@ export type PushContent = {
    * - the two admin queue keys (`social_admin_profile_correction`, `social_admin_report`): nothing,
    *   always empty - the content-free rule
    * - `form_paid_over_capacity`: the form's own title - never the payer's name, never the amount
+   * - `form_waitlist_promoted`: the form's own title (`actorName` is its association, or empty)
    * - the two `lydia_payments_*` keys: the association's name, nothing else
    * - the five event keys: the event's own title, which is not translatable either
    * - the four booking keys (WP-N): the PLACE of the booking (its space, and its column when it has
@@ -445,6 +447,31 @@ export function formOpenContent(subject: FormReminderSubject = {}): PushContent 
     legacyBody: title
       ? `${quoted(title)} est disponible - dépêchez-vous, les places sont limitées !`
       : 'Le formulaire est disponible - dépêchez-vous, les places sont limitées !',
+  };
+}
+
+/**
+ * A PLACE WAS FREED AND THE READER, FIRST ON THE FORM'S WAITING LIST, IS NOW REGISTERED (owner,
+ * 2026-11-23, `waitlist.ts`). The one push of the waiting list: moving up in rank sends none
+ * (principle 3, "Votre attention n'est pas à vendre"). Names the association that runs the form
+ * (the actor, and its logo the picture) and the form's title, like the form reminders; the sentence
+ * sends the reader to the form, where a payment still owed is shown - never an amount on a lock
+ * screen.
+ */
+export function formWaitlistPromotedContent(subject: FormReminderSubject = {}): PushContent {
+  const title = subject.formTitle?.trim() ?? '';
+  const association = subject.associationName?.trim() ?? '';
+  return {
+    key: 'form_waitlist_promoted',
+    ...(subject.icon ? { icon: subject.icon } : {}),
+    actorName: association,
+    arg: title,
+    legacyTitle: association
+      ? `${association} : une place s'est libérée`
+      : "Une place s'est libérée",
+    legacyBody: title
+      ? `Vous êtes inscrit à ${quoted(title)}. Ouvrez le formulaire pour voir votre inscription.`
+      : 'Vous êtes inscrit au formulaire. Ouvrez-le pour voir votre inscription.',
   };
 }
 

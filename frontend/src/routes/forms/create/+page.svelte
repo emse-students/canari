@@ -27,7 +27,12 @@
     type CreateFormPayload,
   } from '$lib/forms/api';
   import { draftRefusalMessage, FORM_CREATE_KEY_REUSED, publishBlocker } from '$lib/forms/publish';
-  import { serverFormAnswerEdit, serverFormDrafts } from '$lib/stores/appVersionCheck.svelte';
+  import {
+    serverFormAnswerEdit,
+    serverFormDrafts,
+    serverFormWaitlist,
+  } from '$lib/stores/appVersionCheck.svelte';
+  import { waitlistPayload } from '$lib/forms/waitlist';
   import { answerEditPayload } from '$lib/forms/answerEditGate';
   import { gridRequiredSwitchOn } from '$lib/forms/gridRequiredGate';
   import { deviceCopyOf, formDraftCopyStore, holdFormEditor } from '$lib/forms/draftCopies';
@@ -108,6 +113,10 @@
   let allowAnswerEdit = $state(false);
   /** Whether this estate serves it (`formAnswerEdit`): an older server drops the switch. */
   const answerEditAvailable = serverFormAnswerEdit() === true;
+  /** The waiting list past the capacity (migration 183), off by default. */
+  let waitlistEnabled = $state(false);
+  /** Whether this estate keeps it (`formWaitlist`): an older server drops the switch. */
+  const waitlistAvailable = serverFormWaitlist() === true;
   let anonymous = $state(false);
   let isPublic = $state(false);
   /** What a public form asks a guest (`guestIdentity.ts`); none by default. */
@@ -417,6 +426,11 @@
       maxSubmissions,
       allowMultipleSubmissions,
       ...answerEditPayload(answerEditAvailable, allowAnswerEdit),
+      ...waitlistPayload(waitlistAvailable, waitlistEnabled, {
+        maxSubmissions,
+        anonymous,
+        allowMultipleSubmissions,
+      }),
       anonymous,
       isPublic,
       // Asked of a guest only on a public form that keeps names; otherwise nothing is asked.
@@ -670,6 +684,8 @@
       }
       bind:allowAnswerEdit
       {answerEditAvailable}
+      bind:waitlistEnabled
+      {waitlistAvailable}
       bind:anonymous
       anonymousFixed={false}
       bind:isPublic

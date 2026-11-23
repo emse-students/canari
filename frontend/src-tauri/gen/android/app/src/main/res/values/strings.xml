@@ -184,6 +184,10 @@
     <string name="notif_form_open_body_named">« %1$s » est disponible - dépêchez-vous, les places sont limitées !</string>
     <string name="notif_form_paid_over_capacity_title">Paiement sur un formulaire complet</string>
     <string name="notif_form_paid_over_capacity_body">« %1$s » : un paiement est arrivé alors que le formulaire était complet. Remboursement à faire.</string>
+    <string name="notif_form_waitlist_promoted_title">Une place s\'est libérée</string>
+    <string name="notif_form_waitlist_promoted_body">Vous êtes inscrit au formulaire. Ouvrez-le pour voir votre inscription.</string>
+    <string name="notif_form_waitlist_promoted_title_named">%1$s : une place s\'est libérée</string>
+    <string name="notif_form_waitlist_promoted_body_named">Vous êtes inscrit à « %1$s ». Ouvrez le formulaire pour voir votre inscription.</string>
     <string name="notif_lydia_payments_active_title">Paiements Lydia actifs</string>
     <string name="notif_lydia_payments_active_body">Les paiements Lydia de %1$s sont actifs.</string>
     <string name="notif_lydia_payments_paused_title">Paiements Lydia suspendus</string>
