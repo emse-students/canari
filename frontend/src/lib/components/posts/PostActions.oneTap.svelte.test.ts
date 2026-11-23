@@ -10,6 +10,7 @@ import { flushSync, mount, unmount } from 'svelte';
 import PostActions from './PostActions.svelte';
 import { LONG_PRESS_MS } from '$lib/actions/longPress';
 import { REACTIONS, reactionTypeToLabel } from '$lib/posts/reactions';
+import { m } from '$lib/paraglide/messages';
 
 const mounted: (() => void)[] = [];
 let target: HTMLElement;
@@ -117,10 +118,21 @@ it('Escape closes the open picker', () => {
   expect(close).toHaveBeenCalledTimes(1);
 });
 
-it('announces the reacted state and shows the assistive button on keyboard focus', () => {
+it('announces the reacted state; the assistive button is a named, 44 px target, never sr-only', () => {
   expect(mountBar(null).getAttribute('aria-pressed')).toBe('false');
   document.body.innerHTML = '';
   expect(mountBar('LIKE').getAttribute('aria-pressed')).toBe('true');
   const assistive = target.querySelector<HTMLButtonElement>('button[data-post-react-picker-open]')!;
-  expect(assistive.className).toContain('focus:not-sr-only');
+  expect(assistive.className).not.toContain('sr-only');
+  expect(assistive.className).toContain('h-11');
+  expect(assistive.className).toContain('min-w-11');
+});
+
+it('both ways to the picker are reachable by role and name', () => {
+  mountBar(null);
+  const named = [...target.querySelectorAll('button')].filter(
+    (b) => b.getAttribute('aria-label') === m.post_reacter()
+  );
+  expect(named).toHaveLength(1);
+  expect(target.querySelector(`button[aria-label="${m.post_react()}"]`)).not.toBeNull();
 });

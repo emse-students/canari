@@ -1,7 +1,7 @@
 <script lang="ts">
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import type { Snippet } from 'svelte';
-  import { MessageCircle, FaceSlightlySmiling } from '@lucide/svelte';
+  import { MessageCircle, FaceSlightlySmiling, ChevronUp } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { reactionTypeToLabel } from '$lib/posts/reactions';
   import { longPress } from '$lib/actions/longPress';
@@ -155,13 +155,23 @@
       <FaceSlightlySmiling size={20} />
     {/if}
   </button>
+  <!--
+    THE ASSISTIVE WAY TO THE PICKER IS A REAL TARGET (S17, 2026-11-20). It was a `sr-only` button: 1 pt
+    by 1 pt, so the iOS accessibility tree listed it with no usable frame and neither VoiceOver's
+    touch exploration nor the rig could land on it. It now sits in the row beside the react button
+    with its own ACTION-sized (44 px) hit area, a name ("Add reaction") and a small chevron, and
+    never overlaps the react button: a tap on an overlay would have liked the post instead.
+  -->
   <Button
-    variant="ghost"
+    variant="bare"
     onclick={() => openPicker('assistive button')}
-    class="sr-only focus:not-sr-only"
+    class="{ACTION} text-text-muted/70 touch-manipulation hover:bg-(--cn-surface)"
     aria-label={m.post_reacter()}
+    aria-expanded={showReactionPicker}
     data-post-react-picker-open
-  />
+  >
+    <ChevronUp size={14} aria-hidden="true" />
+  </Button>
 
   {#if onCommentClick}
     <button

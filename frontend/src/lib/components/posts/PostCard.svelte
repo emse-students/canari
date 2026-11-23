@@ -214,6 +214,35 @@
     sheetWrite = opts.write;
     commentsSheetOpen = true;
   }
+
+  /**
+   * A NEW `focusCommentId` ON A CARD ALREADY DRAWN is a notification link to the route on screen
+   * (same post, another `?comment=`): the page does not remount, so the sheet's initial state is no
+   * longer the answer. The sheet opens on the thread, and when the named comment is not in what the
+   * card holds (a reply that arrived after the post was read) the post is read again, so the row
+   * exists to be scrolled to and ringed (`PostComments` acts once the row is there). The value the
+   * card mounted with is the initial state's business, not this effect's.
+   */
+  let lastFocusSeen = untrack(() => focusCommentId);
+  $effect(() => {
+    const id = focusCommentId;
+    if (id === lastFocusSeen) return;
+    lastFocusSeen = id;
+    if (!id) return;
+    untrack(() => {
+      Log.d('PostCard.focus', `${localPost.id}: comment ${id.slice(0, 8)} named while open`);
+      openCommentsSheet({ write: false });
+      if ((localPost.comments ?? []).some((c) => c.id === id)) return;
+      Log.d('PostCard.focus', `comment ${id.slice(0, 8)} not held - reading the post again`);
+      void getPost(localPost.id)
+        .then((fresh) => {
+          localPost = ledger.mergeRead(localPost, fresh, servedAt(fresh));
+        })
+        .catch((err: unknown) =>
+          Log.d('PostCard.focus', `re-read for comment ${id.slice(0, 8)} failed: ${String(err)}`)
+        );
+    });
+  });
   /**
    * The comment writes (`posts/postCommentThread.svelte.ts`), shared with the reel viewer's comments
    * sheet: this card lends its copy of the post, its ledger and its inline line. Its `pending` set

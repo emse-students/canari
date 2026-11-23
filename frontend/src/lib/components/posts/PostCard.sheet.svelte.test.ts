@@ -9,6 +9,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 import { flushSync, mount, tick, unmount } from 'svelte';
 import PostCard from './PostCard.svelte';
 import type { PostComment, PostEntity } from '$lib/posts/api';
+import { getPost } from '$lib/posts/api';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { m } from '$lib/paraglide/messages';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
@@ -18,6 +19,10 @@ afterAll(adoptTransitionAnimations());
 vi.mock('$lib/utils/apiFetch', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/utils/apiFetch')>()),
   apiFetch: vi.fn(),
+}));
+vi.mock('$lib/posts/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/posts/api')>()),
+  getPost: vi.fn(),
 }));
 vi.mock('$lib/associations/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/associations/api')>()),
@@ -173,6 +178,59 @@ describe('the card', () => {
 
     expect(sheetOpen()).toBe(true);
     expect(scrolled).toEqual(['comment-c2']);
+  });
+
+  it('opens on the comment a notification names for the post ALREADY on screen, and rings it', async () => {
+    const scrolled: string[] = [];
+    vi.spyOn(HTMLElement.prototype, 'scrollIntoView').mockImplementation(function (
+      this: HTMLElement
+    ) {
+      scrolled.push(this.id);
+    });
+    const props = $state<{ post: PostEntity; currentUserId: string; focusCommentId?: string }>({
+      post: row([comment(1), comment(2)]),
+      currentUserId: 'alice',
+    });
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const instance = mount(PostCard, { target, props });
+    mounted.push(() => void unmount(instance));
+    flushSync();
+    expect(sheetOpen()).toBe(false);
+
+    props.focusCommentId = 'c2';
+    await settle();
+
+    expect(sheetOpen()).toBe(true);
+    expect(scrolled).toEqual(['comment-c2']);
+    expect(getPost).not.toHaveBeenCalled();
+  });
+
+  it('reads the post again when the named comment arrived after it was read, then rings it', async () => {
+    const scrolled: string[] = [];
+    vi.spyOn(HTMLElement.prototype, 'scrollIntoView').mockImplementation(function (
+      this: HTMLElement
+    ) {
+      scrolled.push(this.id);
+    });
+    vi.mocked(getPost).mockResolvedValue(row([comment(1), comment(2), comment(3)]));
+    const props = $state<{ post: PostEntity; currentUserId: string; focusCommentId?: string }>({
+      post: row([comment(1), comment(2)]),
+      currentUserId: 'alice',
+    });
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const instance = mount(PostCard, { target, props });
+    mounted.push(() => void unmount(instance));
+    flushSync();
+
+    props.focusCommentId = 'c3';
+    await settle();
+
+    expect(getPost).toHaveBeenCalledWith('p1');
+    expect(sheetOpen()).toBe(true);
+    expect(threadRows()).toBe(3);
+    expect(scrolled).toEqual(['comment-c3']);
   });
 
   it('keeps what was typed when the sheet is closed and opened again', async () => {

@@ -127,17 +127,22 @@
 
   /** The focus id already acted on, so a later redraw (a new comment, a like) never scrolls again. */
   let focusHandled: string | undefined;
+  /** The id whose absence was logged, so a retry on each new row stays one line. */
+  let focusMissLogged: string | undefined;
   $effect(() => {
     const id = focusCommentId;
     if (!id || focusHandled === id) return;
     if (!comments.some((c) => c.id === id)) {
-      // Deleted since the push, or not in this list: the thread is shown from the top, and the log
-      // says why the page did not move.
-      Log.d(
-        'PostComments',
-        `focus comment ${id.slice(0, 8)} not in the thread - shown from the top`
-      );
-      focusHandled = id;
+      // Not in this list YET (the card re-reads the post for a reply that arrived after it was
+      // read) or deleted since the push: the thread is shown from the top, the id stays unhandled
+      // so the row is acted on the moment it is drawn, and the log says why the page did not move.
+      if (focusMissLogged !== id) {
+        focusMissLogged = id;
+        Log.d(
+          'PostComments',
+          `focus comment ${id.slice(0, 8)} not in the thread - shown from the top`
+        );
+      }
       return;
     }
     focusHandled = id;

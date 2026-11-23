@@ -2550,6 +2550,10 @@ export class PostsService {
    * for a BDE `MODERATE` holder its moderation read (`bdeModerationReadsPostSql`: a hidden post
    * scheduled later only while an open report targets it, owner 2026-11-15, "Exclure les posts
    * programmes"). The caller is a moderator already.
+   *
+   * A post an association published carries that association's id, name and logo as the database
+   * holds them (`associationName`, `associationLogoUrl`), so the row names the institution that
+   * spoke and the person only second (principes: an institution's word is the institution's).
    */
   async getHiddenPosts(scope: {
     userId: string;
@@ -2557,9 +2561,11 @@ export class PostsService {
   }): Promise<HiddenPostRow[]> {
     const rows: (ServedWriterPost & { id: string })[] = await this.postRepo.manager.query(
       `SELECT p.id, p."authorId", p.anonymous, p.markdown, p."createdAt", p."associationId",
+              a.name AS "associationName", a."logoUrl" AS "associationLogoUrl",
               (SELECT COUNT(*)::int FROM content_reports cr
                WHERE cr."contentId" = p.id::text AND cr.status = 'pending') AS "pendingReportCount"
        FROM posts p
+       LEFT JOIN associations a ON a.id = p."associationId"
        WHERE p."hiddenByModeration" = true
          AND ($2::boolean OR ${bdeModerationReadsPostSql('$1', 'p')})
        ORDER BY p."createdAt" DESC
