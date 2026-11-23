@@ -88,9 +88,33 @@ export function activityLabel(metric: ActivityMetric): string {
  * The activity of each calendar month, summed from its DAYS (the server stores activity per day
  * only). Only the days the answer carries are summed, so a month older than them has no row.
  */
+/**
+ * The `count` calendar days ending at `today` (`YYYY-MM-DD`, Paris), oldest first, each with its
+ * period when the server sent one. A day the server has no row for is kept, with no period, so the
+ * chart draws it as a gap - never squeezed out, never a zero it was not told.
+ */
+export function calendarDays(
+  days: UsagePeriod[],
+  today: string,
+  count: number
+): { start: string; period: UsagePeriod | undefined }[] {
+  const byStart = new Map(days.map((d) => [d.start, d]));
+  const end = Date.parse(`${today}T12:00:00Z`);
+  return Array.from({ length: count }, (_, i) => {
+    const start = new Date(end - (count - 1 - i) * 86_400_000).toISOString().slice(0, 10);
+    return { start, period: byStart.get(start) };
+  });
+}
+
+/**
+ * The activity of each month the days cover, oldest first. A month is `partial` when the days do
+ * not reach back to its first day (the oldest month of a 366-day window, or a month whose first days
+ * were never folded): its totals are what was counted, not the month's.
+ */
 export function activityByMonth(
   days: UsagePeriod[]
-): { start: string; activity: Record<ActivityMetric, number> }[] {
+): { start: string; partial: boolean; activity: Record<ActivityMetric, number> }[] {
+  const first = days.find((d) => d.activity)?.start;
   const months = new Map<string, Record<ActivityMetric, number>>();
   for (const day of days) {
     if (!day.activity) continue;
@@ -101,7 +125,11 @@ export function activityByMonth(
     for (const k of ACTIVITY_METRICS) sum[k] += day.activity[k] ?? 0;
     months.set(start, sum);
   }
-  return [...months.entries()].map(([start, activity]) => ({ start, activity }));
+  return [...months.entries()].map(([start, activity]) => ({
+    start,
+    partial: first !== undefined && first > start,
+    activity,
+  }));
 }
 
 /** The versions of a period, most people first. */

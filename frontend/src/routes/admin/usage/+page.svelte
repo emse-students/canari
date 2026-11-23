@@ -15,6 +15,7 @@
     ACTIVITY_METRICS,
     USAGE_CATEGORIES,
     activityByMonth,
+    calendarDays,
     activityLabel,
     categoryLabel,
     hourMapMax,
@@ -46,7 +47,7 @@
       view = (await res.json()) as UsageView;
       failed = false;
     } catch (e) {
-      Log.d('admin.usage.load failed', e);
+      Log.w('admin.usage.load failed - the dashboard shows the error, not figures', e);
       failed = true;
     } finally {
       loading = false;
@@ -77,8 +78,8 @@
   const today = $derived(view?.days.find((d) => d.start === view?.today));
   const thisWeek = $derived(last(view?.weeks));
   const thisMonth = $derived(last(view?.months));
-  const chartDays = $derived(view ? view.days.slice(-CHART_DAYS) : []);
-  const chartMax = $derived(Math.max(1, ...chartDays.map((d) => d.people.all)));
+  const chartDays = $derived(view ? calendarDays(view.days, view.today, CHART_DAYS) : []);
+  const chartMax = $derived(Math.max(1, ...chartDays.map((d) => d.period?.people.all ?? 0)));
   const activityDays = $derived(view ? view.days.slice(-ACTIVITY_DAYS).reverse() : []);
   const activityMonths = $derived(view ? activityByMonth(view.days).reverse() : []);
   const monthVersions = $derived(versionsOf(thisMonth));
@@ -150,7 +151,7 @@
     <h2 id="usage-days" class="text-text-muted mb-3 text-xs font-semibold">
       {m.admin_usage_days_heading({ days: CHART_DAYS })}
     </h2>
-    {#if chartDays.length === 0}
+    {#if chartDays.every((d) => d.period === undefined)}
       <p class="text-text-muted text-sm">{m.admin_usage_empty()}</p>
     {:else}
       <div
@@ -159,19 +160,26 @@
         aria-label={m.admin_usage_days_heading({ days: CHART_DAYS })}
       >
         {#each chartDays as d (d.start)}
-          <div
-            class="group relative flex h-full flex-1 items-end"
-            title={m.admin_usage_day_tooltip({
-              day: dayFmt.format(asDate(d.start)),
-              count: d.people.all,
-            })}
-            data-testid="usage-day-bar"
-          >
+          {#if d.period}
+            {@const count = d.period.people.all}
             <div
-              class="w-full rounded-t-sm bg-(--chart-series-1) group-hover:opacity-80"
-              style:height="{Math.max((d.people.all / chartMax) * 100, d.people.all > 0 ? 2 : 0)}%"
+              class="group relative flex h-full flex-1 items-end"
+              title={m.admin_usage_day_tooltip({ day: dayFmt.format(asDate(d.start)), count })}
+              data-testid="usage-day-bar"
+            >
+              <div
+                class="w-full rounded-t-sm bg-(--chart-series-1) group-hover:opacity-80"
+                style:height="{Math.max((count / chartMax) * 100, count > 0 ? 2 : 0)}%"
+              ></div>
+            </div>
+          {:else}
+            <!-- A day with no figure: a gap, never a zero it was not told -->
+            <div
+              class="h-full flex-1"
+              title={m.admin_usage_day_gap_tooltip({ day: dayFmt.format(asDate(d.start)) })}
+              data-testid="usage-day-gap"
             ></div>
-          </div>
+          {/if}
         {/each}
       </div>
       <div class="text-text-muted mt-1 flex justify-between text-xs">
@@ -282,7 +290,7 @@
       {m.admin_usage_activity_heading()}
     </h2>
     <p class="text-text-muted mb-3 text-sm">{m.admin_usage_activity_hint()}</p>
-    {#each [{ id: 'days', rows: activityDays.map( (d) => ({ label: dayFmt.format(asDate(d.start)), activity: d.activity }) ) }, { id: 'months', rows: activityMonths.map( (mo) => ({ label: monthFmt.format(asDate(mo.start)), activity: mo.activity }) ) }] as block (block.id)}
+    {#each [{ id: 'days', rows: activityDays.map( (d) => ({ label: dayFmt.format(asDate(d.start)), activity: d.activity }) ) }, { id: 'months', rows: activityMonths.map( (mo) => ({ label: mo.partial ? m.admin_usage_partial_month( { month: monthFmt.format(asDate(mo.start)) } ) : monthFmt.format(asDate(mo.start)), activity: mo.activity }) ) }] as block (block.id)}
       <div class="border-cn-border mb-4 overflow-x-auto rounded-xl border bg-(--cn-surface)">
         <table class="w-full text-sm" data-testid="usage-activity-{block.id}">
           <thead>

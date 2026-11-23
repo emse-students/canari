@@ -6823,6 +6823,8 @@
   "webview_outdated_body": "Canari cannot start: the Android System WebView component of this phone is too old. Update it from the Play Store, then reopen Canari.",
   "webview_outdated_button": "Open the Play Store",
   "webview_outdated_version": "Detected version: {version}",
+  "admin_usage_day_gap_tooltip": "{day}: no figure (day not counted)",
+  "admin_usage_partial_month": "{month} (partial)",
   "admin_usage_label": "Usage",
   "admin_card_usage_desc": "Who uses Canari, counted without keeping who: people per day, week and month, hours, activity.",
   "admin_usage_title": "Canari usage",

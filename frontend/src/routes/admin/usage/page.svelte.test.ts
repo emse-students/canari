@@ -22,7 +22,14 @@ vi.mock('$lib/utils/apiFetch', () => ({
 
 import Page from './+page.svelte';
 import { apiFetch } from '$lib/utils/apiFetch';
-import { activityByMonth, hourMapMax, versionsOf } from '$lib/admin/usageDashboard';
+import {
+  activityByMonth,
+  calendarDays,
+  hourMapMax,
+  versionsOf,
+  type UsageView,
+} from '$lib/admin/usageDashboard';
+import { Log } from '$lib/utils/Log';
 
 const mounted: (() => void)[] = [];
 afterEach(() => {
@@ -112,10 +119,17 @@ it('never draws an identifier the server should not have sent', async () => {
 it('says the figures could not be read, never a zero it was not told', async () => {
   answer.status = 503;
   answer.body = { error: 'usage_unavailable' };
+  const warn = vi.spyOn(Log, 'w');
   const target = await render();
   await vi.waitFor(() =>
     expect(target.querySelector('[data-testid="usage-error"]')).not.toBeNull()
   );
+  // A failed read accuses: a warn, not a debug line nobody reads.
+  expect(warn).toHaveBeenCalledWith(
+    expect.stringContaining('admin.usage.load failed'),
+    expect.anything()
+  );
+  warn.mockRestore();
   expect(target.querySelector('[data-testid="usage-people-today"]')).toBeNull();
 });
 
@@ -124,6 +138,34 @@ it('sends a reader who is not a platform admin back to the admin home, asking no
   await render();
   await vi.waitFor(() => expect(goto).toHaveBeenCalled());
   expect(apiFetch).not.toHaveBeenCalled();
+});
+
+it('keeps a day with no figure as a gap in the chart, never squeezing it out', async () => {
+  seed();
+  const target = await render();
+  await vi.waitFor(() =>
+    expect(target.querySelectorAll('[data-testid="usage-day-bar"]')).toHaveLength(2)
+  );
+  // 31 calendar days end today: two have figures, the other 29 are gaps, not missing columns.
+  expect(target.querySelectorAll('[data-testid="usage-day-gap"]')).toHaveLength(29);
+  const days = calendarDays((answer.body as UsageView).days, '2026-11-23', 3);
+  expect(days.map((d) => [d.start, d.period?.people.all])).toEqual([
+    ['2026-11-21', undefined],
+    ['2026-11-22', 3],
+    ['2026-11-23', 5],
+  ]);
+  // Across the spring change of the hour, every calendar day once.
+  expect(calendarDays([], '2026-03-30', 3).map((d) => d.start)).toEqual([
+    '2026-03-28',
+    '2026-03-29',
+    '2026-03-30',
+  ]);
+});
+
+it('marks a month whose first days are not in the window as partial', () => {
+  seed();
+  const months = activityByMonth((answer.body as UsageView).days);
+  expect(months).toEqual([{ start: '2026-11-01', partial: true, activity: expect.any(Object) }]);
 });
 
 it('sums a month of activity from its days, most people first for versions, the top of the map', () => {
@@ -145,8 +187,8 @@ it('sums a month of activity from its days, most people first for versions, the 
     },
   ];
   expect(activityByMonth(days)).toEqual([
-    { start: '2026-10-01', activity: activity(3) },
-    { start: '2026-11-01', activity: { ...activity(9), posts: 2, calls: 4 } },
+    { start: '2026-10-01', partial: true, activity: activity(3) },
+    { start: '2026-11-01', partial: false, activity: { ...activity(9), posts: 2, calls: 4 } },
   ]);
   expect(
     versionsOf({ start: 'x', people: { all: 3, categories: {}, versions: { a: 1, b: 2 } } })

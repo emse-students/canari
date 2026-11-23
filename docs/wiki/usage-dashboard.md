@@ -181,7 +181,10 @@ layout refuses the URL to anyone else, and the server refuses the read regardles
 read above from social-service and draws, from that answer alone: three tiles (distinct people today,
 this week, this month), the last days as bars (a day without a row is a gap, never a zero), the
 categories and versions for today, this week and this month, the week-by-hour map on one hue scaled
-to its own maximum (`--chart-series-1`), and the activity totals per day and per month. Every label is
+to its own maximum (`--chart-series-1`), and the activity totals per day and per month. The bar
+chart is the 31 CALENDAR days ending today (`calendarDays`): a day the server has no row for keeps
+its column, empty. A month whose first days are not in the answer (the oldest of the 366-day window,
+or one whose first days were never folded) is labelled partial. Every label is
 Paraglide (`admin_usage_*`); the shaping lives in `frontend/src/lib/admin/usageDashboard.ts`. A read
 that fails says so - it never draws zeros it was not told.
 
