@@ -158,12 +158,17 @@ if (routeMap && tokenMap && refererMap) {
       ['/api/ws?token=eyJSECRET', '/api/ws?query-redacted'],
       ['/api/ws?%75serId=u1', '/api/ws?query-redacted'],
       ['/api/ws', '/api/ws'],
+      ['/api/ws/?userId=u1&token=eyJSECRET', '/api/ws?query-redacted'],
       ['/api/wsx?userId=keep', '/api/wsx?userId=keep'],
       // A form's submit routes keep the route and lose the id (2026-11-23): an anonymous answer's
       // address no longer sits beside the form it answered. Anything else under /forms/ stays.
       ['/api/forms/9b2f-1c/submit', '/api/forms/redacted/submit'],
       ['/api/public/forms/9b2f-1c/submit', '/api/public/forms/redacted/submit'],
       ['/api/public/forms/9b2f-1c/submit?x=1', '/api/public/forms/redacted/submit'],
+      ['/api/forms/9b2f-1c/submit/', '/api/forms/redacted/submit'],
+      ['/api/forms/9b2f-1c/submit/?x=1', '/api/forms/redacted/submit'],
+      ['/api/public/forms/9b2f-1c/submit/', '/api/public/forms/redacted/submit'],
+      ['/api/public/forms/9b2f-1c/submit/?x=1', '/api/public/forms/redacted/submit'],
       ['/api/forms/9b2f-1c', '/api/forms/9b2f-1c'],
       ['/api/forms/9b2f-1c/submissions', '/api/forms/9b2f-1c/submissions'],
       ['/api/forms/9b2f-1c/submit/extra', '/api/forms/9b2f-1c/submit/extra'],
