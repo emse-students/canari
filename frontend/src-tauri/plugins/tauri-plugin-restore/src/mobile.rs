@@ -4,7 +4,7 @@ use tauri::{
     AppHandle, Runtime,
 };
 
-use crate::{CreatedRestoreCredential, FoundRestoreCredential};
+use crate::{CreatedRestoreCredential, FoundRestoreCredential, SigningOrigins};
 
 /// Registers the Kotlin `RestorePlugin` (androidx.credentials). Android only - see `lib.rs`.
 pub fn init<R: Runtime, C: DeserializeOwned>(
@@ -36,6 +36,13 @@ impl<R: Runtime> Restore<R> {
     pub fn get(&self, request_json: String) -> crate::Result<FoundRestoreCredential> {
         self.0
             .run_mobile_plugin("getRestoreCredential", RequestPayload { request_json })
+            .map_err(Into::into)
+    }
+
+    /// The WebAuthn origin(s) of this APK's current signing certificate.
+    pub fn signing_origins(&self) -> crate::Result<SigningOrigins> {
+        self.0
+            .run_mobile_plugin("signingOrigins", ())
             .map_err(Into::into)
     }
 

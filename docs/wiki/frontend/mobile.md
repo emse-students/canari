@@ -3813,7 +3813,7 @@ guards the post's own awaits, and can only stand a post down. No timer.
 Tests: `appForeground.test.ts`, `appForeground.contract.test.ts`, `arrivalRuntime.ios.test.ts`,
 `useMessaging.reactionNotification.svelte.test.ts`, `reactionNotification.test.ts`,
 `useMessaging.latePost.svelte.test.ts` (the write held open while the reader leaves, and its control), `useNotifications.iosAnnounced.svelte.test.ts`. Owed on the iPhone:
-[reading](../backlog.d/reading-owed-an-inactive-iphone-announces-what-it-acks.md).
+[the alpha.2 reading](../device-verification.md#the-readings-of-2026-11-23-180-alpha2-the-resume-with-salons-the-share-shortcuts-the-keyboard-on-a-photo-dm-the-inactive-iphone).
 
 #### Background MLS decrypt ladder
 

@@ -17,19 +17,20 @@ import { m } from '$lib/paraglide/messages';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { coreUrl } from '$lib/utils/apiUrl';
 import { isTransportFailure } from '$lib/utils/transportFailure';
-import { getClientAppVersion } from '$lib/utils/appVersion';
 import { adoptRestoredSession, type SignedInSession } from '$lib/stores/auth';
 import { sessionScopedHeaders } from '$lib/services/authSessions';
 import {
   clearRestoreKey,
   createRestoreKey,
+  dropLegacyOriginRefusal,
   getRestoreKey,
   hasAttemptedRestore,
   markRestoreAttempted,
-  recordRestoreOriginRefused,
   restoreKeyRecord,
-  restoreOriginRefusal,
   restoreKeySupported,
+  restoreSigning,
+  PLAY_STORE_INSTALLER,
+  type RestoreSigning,
   writeRestoreKeyRecord,
 } from '$lib/services/restoreKey';
 
@@ -98,10 +99,13 @@ let ensureInFlight: Promise<void> | null = null;
  * (the server holds the platform's key) and never accused. The ordinary start costs one request and
  * no platform call.
  *
- * Throws on any failure (the caller logs it); the next start tries again - EXCEPT after the estate
- * refused this BUILD (`RESTORE_ORIGIN_NOT_ALLOWED`), a verdict on the pair (this version, the
- * estate's accepted origins): recorded ({@link recordRestoreOriginRefused}), and no key is minted
- * while both still match - a new version or a changed configuration lifts it at the next start.
+ * Throws on any failure (the caller logs it); the next start tries again. A BUILD the estate does
+ * not vouch for (an APK whose signing certificate the estate's accepted origins do not name - the
+ * release asset sideloaded with `adb`) is KNOWN before any key is minted: the options carry the
+ * accepted origins and the platform names this APK's own ({@link restoreSigning}), so such an
+ * install mints nothing and is never refused. A changed configuration is read at the next start.
+ * A PLAY install never skips: it registers and the server judges, so a wrong read of the signer can
+ * only ever be accused, never cost a real user their key.
  */
 export function ensureRestoreKey(userId: string): Promise<void> {
   if (ensureInFlight) {
@@ -132,13 +136,14 @@ async function ensureRestoreKeyOnce(userId: string): Promise<void> {
   const {
     options,
     registeredCredentialId: onServer,
-    originsDigest,
+    origins: accepted,
   } = (await optionsRes.json()) as {
     options: unknown;
     registeredCredentialId: string | null;
-    /** Absent from a server older than the origin refusal: nothing is then recorded against it. */
-    originsDigest?: string;
+    /** The origins this estate accepts. Absent from a server older than `1.8.0`: not compared. */
+    origins?: string[];
   };
+  dropLegacyOriginRefusal();
   const record = restoreKeyRecord(userId);
   if (onServer !== null && onServer === record.held) {
     if (record.registered !== onServer) {
@@ -162,24 +167,42 @@ async function ensureRestoreKeyOnce(userId: string): Promise<void> {
     // was then refused): the two diverged, and this start brings them back together.
     rwarn('the session holds a key this phone no longer holds - replacing it');
   }
-  // A VERDICT ON THIS BUILD, UNDER THIS CONFIGURATION, IS NOT ASKED AGAIN. The estate refused this
-  // install's signing certificate (`RESTORE_ORIGIN_NOT_ALLOWED`); minting a key at every start only
-  // to have it refused again was a refusal per start that changed nothing (59 on a bench Mi 9T from
-  // 2026-11-01 to 11-05). Skipped only while BOTH halves of that verdict still hold - this version
-  // and the estate's accepted origins - so a fixed configuration heals at the next start. The
-  // checks above still run: they are this session's, not this build's. The skip is a WARN, once
-  // per start: this install has NO restore key, and that must stay countable.
-  const version = getClientAppVersion();
-  const refusedAt = restoreOriginRefusal();
-  if (
-    refusedAt !== null &&
-    refusedAt.version === version &&
-    refusedAt.originsDigest === originsDigest
-  ) {
-    rwarn(
-      `register skipped: this estate refused this build (${version}) under origins ${refusedAt.originsDigest} - this install holds no restore key until the version or the estate's origins change`
-    );
-    return;
+  // WHETHER THIS ESTATE WOULD TAKE A KEY FROM THIS BUILD IS A FACT, NOT A REFUSAL TO WAIT FOR. The
+  // estate names the origins it accepts; the platform names this APK's, and who installed it. An
+  // install from outside Play whose signer is not among them (the release asset sideloaded on a
+  // bench phone, signed by the upload key) mints nothing: before this, it minted a key, was refused
+  // (`RESTORE_ORIGIN_NOT_ALLOWED`), recorded the verdict and then said `register skipped` at WARN at
+  // every start - an expected state reported as a fault. Now it is a decision, said once per start
+  // at log level, naming the signer it was made on.
+  // A PLAY install is never skipped on this read: Play signs with the key the estates name, so a
+  // Play origin missing from the list means the READ is wrong (or the estate's configuration is),
+  // and skipping would leave every real user without a restore key with nothing reporting it. It is
+  // accused at error and the registration goes ahead: the server stays the judge.
+  // The checks above still run: they are this session's, not this build's.
+  if (Array.isArray(accepted)) {
+    let signing: RestoreSigning | null = null;
+    try {
+      signing = await restoreSigning();
+    } catch (e) {
+      // The platform could not say how this APK is signed: a defect, accused here. It is NOT a
+      // reason to skip - that would leave a Play install keyless with nothing else reporting it -
+      // so the registration goes ahead and the server judges. Not cached: the next start reads again.
+      console.error(
+        `[RESTORE] register: the signing origin could not be read (${String(e)}) - registering anyway, the server judges`
+      );
+    }
+    const own = signing?.origins.join(', ') || 'nothing';
+    if (signing && !signing.origins.some((origin) => accepted.includes(origin))) {
+      if (signing.installer !== PLAY_STORE_INSTALLER) {
+        rlog(
+          `register not attempted: this build is signed as ${own}, which this estate does not vouch for (accepts ${accepted.length} origin(s)), and was not installed by Play - a sideloaded APK; this install holds no restore key`
+        );
+        return;
+      }
+      console.error(
+        `[RESTORE] register: a Play install read its signer as ${own}, which this estate does not list (accepts ${accepted.length} origin(s)) - the native read or the estate's ANDROID_APP_LINK_SHA256 is wrong; registering anyway, the server judges`
+      );
+    }
   }
   rlog("register: creating this install's key");
 
@@ -205,14 +228,12 @@ async function ensureRestoreKeyOnce(userId: string): Promise<void> {
   });
   if (!res.ok) {
     const refusal = await readRestoreRefusal(res);
-    // Recorded only when both halves of the verdict are KNOWN: a build with no version constant
-    // (`0.0.0`) or a server that sends no digest would make a record nothing could ever lift.
-    if (
-      refusal.code === 'RESTORE_ORIGIN_NOT_ALLOWED' &&
-      version !== '0.0.0' &&
-      typeof originsDigest === 'string'
-    ) {
-      recordRestoreOriginRefused({ version, originsDigest });
+    if (refusal.code === 'RESTORE_ORIGIN_NOT_ALLOWED' && Array.isArray(accepted)) {
+      // The estate named this build's origin as accepted and then refused it: the platform's origin
+      // and the one read above disagree. A defect, never an ordinary outcome.
+      console.error(
+        '[RESTORE] register: the estate refused an origin it lists as accepted - the signing origin read on this install is not the one Credential Manager sent'
+      );
     }
     throw new RestoreRegistrationRefusedError(refusal);
   }

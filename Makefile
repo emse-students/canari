@@ -361,6 +361,7 @@ test-ci-scripts: lint-ci-scripts
 	else bash .github/scripts/tests/deploy-rolling.test.sh; fi
 	@bash .github/scripts/tests/dependency-ceiling.test.sh
 	@bash .github/scripts/tests/mls-forward-compat.test.sh
+	@bash .github/scripts/tests/android-scope.test.sh
 	@bun .github/scripts/tests/changes-outputs.test.mjs
 	@bun .github/scripts/tests/ci-passed-gate.test.mjs
 	@bun .github/scripts/tests/smoke-login.test.mjs

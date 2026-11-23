@@ -1008,23 +1008,29 @@ export class AuthController {
   /**
    * Creation options for the restore key of the calling session, and the id of the key it holds
    * now. The client asks at EVERY start and re-registers unless that id is the one it registered
-   * itself, so a key planted by anybody else is evicted at the owner's next start. The digest of the
-   * accepted origins rides along (`originsDigest`), the other half of an origin refusal's verdict.
+   * itself, so a key planted by anybody else is evicted at the owner's next start. The accepted
+   * origins ride along (`origins`): the client compares its own signing origin with them and mints
+   * no key this estate would refuse. `originsDigest` is for builds before `1.8.0`
+   * (docs/wiki/legacy-compatibility.md).
    */
   @Post('restore/registration/options')
   @HttpCode(200)
   @UseGuards(AccountThrottlerGuard)
   @Throttle({ default: { limit: RESTORE_REGISTER_LIMIT_PER_MINUTE, ttl: 60_000 } })
-  async restoreRegistrationOptions(
-    @Req() req: Request
-  ): Promise<{ options: unknown; registeredCredentialId: string | null; originsDigest: string }> {
+  async restoreRegistrationOptions(@Req() req: Request): Promise<{
+    options: unknown;
+    registeredCredentialId: string | null;
+    origins: string[];
+    originsDigest: string;
+  }> {
     this.requireRestoreAvailable();
     const { sessionId } = await this.restoreRegistrationCaller(req);
     return {
       options: await this.restoreCredentials.registrationOptions(sessionId, new Date()),
       registeredCredentialId: await this.restoreCredentials.registeredKeyOf(sessionId),
-      // What a `RESTORE_ORIGIN_NOT_ALLOWED` was a verdict against: the client skips a new key only
-      // while this AND its version are what it was refused at, so a fixed configuration heals.
+      origins: this.restoreCredentials.allowedOrigins(),
+      // LEGACY (builds before 1.8.0): what their recorded `RESTORE_ORIGIN_NOT_ALLOWED` was a verdict
+      // against. Removed once the floor passes 1.8.0 (docs/wiki/legacy-compatibility.md).
       originsDigest: this.restoreCredentials.allowedOriginsDigest(),
     };
   }
@@ -1083,8 +1089,9 @@ export class AuthController {
           )
         );
       case 'origin-refused':
-        // A verdict on the BUILD, not on this request: the client records it and stops asking until
-        // it runs another version (restoreCredential.ts, `ensureRestoreKey`).
+        // A verdict on the BUILD, not on this request. A `1.8.0` client knows its signer and never
+        // mints a key the options' `origins` exclude, so from it this means its origin read and
+        // Credential Manager's disagree; a build before `1.8.0` records it (`ensureRestoreKey`).
         throw new ForbiddenException(
           restoreRefusal(
             'RESTORE_ORIGIN_NOT_ALLOWED',
