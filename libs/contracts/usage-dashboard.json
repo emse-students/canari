@@ -1,0 +1,88 @@
+{
+  "$comment": "The usage dashboard's shared facts (docs/wiki/usage-dashboard.md). Read by chat-gateway (usage.rs), chat-delivery-service (utils/usage-activity.ts) and social-service (usage/). parisTime: the Paris day and hour of an instant, on each side of both changes of the hour and of midnight - the gateway applies the EU rule, the services Intl, and both must agree. userAgents: the category of a web socket by its User-Agent (gateway only). versionGrammar/versions: the only versions that get a key of their own (a release); anything else but `unknown` is counted as `other` (gateway at the count, social-service again at the fold).",
+  "keyPrefix": "usage:",
+  "categories": [
+    "app_android",
+    "app_ios",
+    "app_desktop",
+    "web_android",
+    "web_ios",
+    "web_desktop",
+    "other"
+  ],
+  "activityMetrics": ["messages", "posts", "reels", "lives", "calls", "forms"],
+  "maxVersionsPerDay": 32,
+  "versionGrammar": "^\\d+\\.\\d+\\.\\d+(-alpha\\.\\d+)?$",
+  "versions": [
+    { "given": "1.8.0", "counted": "1.8.0" },
+    { "given": "1.8.0-alpha.2", "counted": "1.8.0-alpha.2" },
+    { "given": "10.20.30-alpha.400", "counted": "10.20.30-alpha.400" },
+    { "given": "unknown", "counted": "unknown" },
+    { "given": "other", "counted": "other" },
+    { "given": "Jean.Dupont", "counted": "other" },
+    { "given": "1.8", "counted": "other" },
+    { "given": "1.8.0.1", "counted": "other" },
+    { "given": "1.8.0-beta.1", "counted": "other" },
+    { "given": "1.8.0-alpha", "counted": "other" },
+    { "given": "1.8.0-alpha.", "counted": "other" },
+    { "given": "1.8.0-alpha.2-alpha.3", "counted": "other" },
+    { "given": "v1.8.0", "counted": "other" },
+    { "given": "1..0", "counted": "other" },
+    { "given": "", "counted": "other" }
+  ],
+  "dayKeyTtlSecs": 3456000,
+  "hourKeyTtlSecs": 2592000,
+  "parisTime": [
+    { "instant": "2026-03-29T00:59:59Z", "day": "2026-03-29", "hour": 1 },
+    { "instant": "2026-03-29T01:00:00Z", "day": "2026-03-29", "hour": 3 },
+    { "instant": "2026-10-25T00:59:59Z", "day": "2026-10-25", "hour": 2 },
+    { "instant": "2026-10-25T01:00:00Z", "day": "2026-10-25", "hour": 2 },
+    { "instant": "2026-11-22T22:59:59Z", "day": "2026-11-22", "hour": 23 },
+    { "instant": "2026-11-22T23:00:00Z", "day": "2026-11-23", "hour": 0 },
+    { "instant": "2026-07-14T21:59:59Z", "day": "2026-07-14", "hour": 23 },
+    { "instant": "2026-07-14T22:00:00Z", "day": "2026-07-15", "hour": 0 },
+    { "instant": "2027-03-28T00:30:00Z", "day": "2027-03-28", "hour": 1 },
+    { "instant": "2027-03-28T01:00:00Z", "day": "2027-03-28", "hour": 3 },
+    { "instant": "2024-02-29T23:30:00Z", "day": "2024-03-01", "hour": 0 },
+    { "instant": "2025-12-31T23:00:00Z", "day": "2026-01-01", "hour": 0 }
+  ],
+  "userAgents": [
+    {
+      "platform": "web",
+      "userAgent": "Mozilla/5.0 (Linux; Android 14; Pixel 6a) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
+      "category": "web_android"
+    },
+    {
+      "platform": "web",
+      "userAgent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1",
+      "category": "web_ios"
+    },
+    {
+      "platform": "web",
+      "userAgent": "Mozilla/5.0 (iPad; CPU OS 15_8 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.6 Mobile/15E148 Safari/604.1",
+      "category": "web_ios"
+    },
+    {
+      "platform": "web",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15",
+      "category": "web_desktop"
+    },
+    {
+      "platform": "web",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
+      "category": "web_desktop"
+    },
+    { "platform": "web", "userAgent": null, "category": "other" },
+    {
+      "platform": "android",
+      "userAgent": "Mozilla/5.0 (Linux; Android 14; wv) AppleWebKit/537.36",
+      "category": "app_android"
+    },
+    { "platform": "ios", "userAgent": null, "category": "app_ios" },
+    { "platform": "macos", "userAgent": null, "category": "app_desktop" },
+    { "platform": "windows", "userAgent": null, "category": "app_desktop" },
+    { "platform": "linux", "userAgent": null, "category": "app_desktop" },
+    { "platform": "unknown", "userAgent": "Mozilla/5.0 (Windows NT 10.0)", "category": "other" },
+    { "platform": "other", "userAgent": null, "category": "other" }
+  ]
+}

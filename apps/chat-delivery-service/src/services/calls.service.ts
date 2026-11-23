@@ -37,6 +37,7 @@ import {
 import { readCallRelay, RELAY_SEATS, relayModeOf, type RelayMode } from '../utils/call-relay';
 import { missingCloudflareSfuHalves, readCloudflareSfuApp } from '../utils/cloudflare-sfu-app';
 import { describeFcmFailure, fcmErrorCode, isTerminalPushTokenError } from '../utils/fcm-errors';
+import { countUsageActivity } from '../utils/usage-activity';
 import {
   APNS_VOIP_GONE,
   APNS_VOIP_REFUSED,
@@ -488,6 +489,9 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
       ringTimeoutMs: CALL_RING_TIMEOUT_SEC * 1000,
     };
     if (mode !== undefined) response.mode = mode;
+    // One room minted is one call started, for the usage dashboard's daily total
+    // (docs/wiki/usage-dashboard.md). Not awaited: the ring never waits on it.
+    void countUsageActivity(this.redis, 'calls', this.logger);
     return response;
   }
 

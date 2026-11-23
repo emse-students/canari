@@ -331,6 +331,19 @@ pub async fn ws_handler(
                 params.platform.as_deref(),
                 params.app_version.as_deref(),
             );
+            // Who uses Canari, by category (crate::usage): the user agent is read HERE and dropped -
+            // only the category it decides travels on with the socket.
+            let usage = std::sync::Arc::new(crate::usage::SocketUsage::new(
+                &state.usage_key,
+                &claims.sub,
+                crate::usage::category(
+                    &client.platform,
+                    headers
+                        .get(axum::http::header::USER_AGENT)
+                        .and_then(|v| v.to_str().ok()),
+                ),
+                &client.version,
+            ));
             // THE PLACE IS TAKEN BEFORE THE UPGRADE (`AppState::admit`): counted and registered
             // under the map lock, per account and for the process. A request past either limit is
             // answered 503 and never upgraded, so the client's socket FAILS before it opens and
@@ -367,7 +380,7 @@ pub async fn ws_handler(
                 .max_message_size(max_frame_bytes)
                 .on_upgrade(move |socket| {
                     handle_socket(
-                        socket, state, claims.sub, device_id, declared, client, admitted,
+                        socket, state, claims.sub, device_id, declared, client, usage, admitted,
                     )
                 })
         }
@@ -425,7 +438,8 @@ fn refuse_admission(state: &AppState, user_id: &str, refusal: &AdmissionRefusal)
 /// - Spawns two concurrent tasks: a **send task** (outbound frames + ping heartbeat) and
 ///   a **recv task** (inbound frame dispatch).
 /// - Uses `ConnectionGuard` to ensure cleanup happens even on task cancellation.
-#[allow(clippy::collapsible_if)]
+// One argument per fact the upgrade decided; bundling them would only rename the list.
+#[allow(clippy::collapsible_if, clippy::too_many_arguments)]
 async fn handle_socket(
     socket: WebSocket,
     state: Arc<AppState>,
@@ -433,6 +447,7 @@ async fn handle_socket(
     device_id: String,
     declared: crate::addressing::SessionCaps,
     client: crate::census::ClientKind,
+    usage: std::sync::Arc<crate::usage::SocketUsage>,
     admitted: Admitted,
 ) {
     tracing::info!(
@@ -508,7 +523,7 @@ async fn handle_socket(
                     PRESENCE_TTL_SECS
                 );
             }
-            note_client(&mut con, &conn_key, &client).await;
+            note_client(&mut con, &conn_key, &client, &usage).await;
 
             // ── Drain pending welcome_request signals ─────────────────
             // When no peer was online for a welcome_request, the delivery service
@@ -629,6 +644,7 @@ async fn handle_socket(
         let pong_flag_recv = awaiting_pong.clone();
         let tx_for_dispatch = tx.clone();
         let client_recv = client.clone();
+        let usage_recv = usage.clone();
 
         tokio::spawn(async move {
             // Take ownership of the shared connection (or None in degraded mode).
@@ -685,6 +701,7 @@ async fn handle_socket(
                             &field_recv,
                             declared,
                             &client_recv,
+                            &usage_recv,
                         )
                         .await;
                         continue;
@@ -703,6 +720,7 @@ async fn handle_socket(
                             &field_recv,
                             declared,
                             &client_recv,
+                            &usage_recv,
                         )
                         .await;
 
@@ -871,17 +889,21 @@ async fn handle_socket(
 // ── Presence refresh helper ───────────────────────────────────────────────
 
 /// Record what this device declared, beside its presence and with the same TTL, for the anonymous
-/// census ([`crate::census`]). A failure costs the census one device's label (it counts as
-/// `unknown`) and nothing else, so it is logged and never propagated.
+/// census ([`crate::census`]), and count its person for the usage dashboard ([`crate::usage`], at
+/// most once per Paris hour per socket). A failure costs the census one device's label (it counts
+/// as `unknown`) or the dashboard one count, and nothing else, so each is logged and never
+/// propagated.
 async fn note_client(
     con: &mut redis::aio::MultiplexedConnection,
     conn_key: &str,
     client: &crate::census::ClientKind,
+    usage: &crate::usage::SocketUsage,
 ) {
     if let Err(e) = crate::census::note_client(con, conn_key, client, PRESENCE_TTL_SECS).await {
         // No conn_key: it holds a user id, and the census names nobody.
         tracing::warn!("[census] could not record a device's declaration: {}", e);
     }
+    crate::usage::note_person(con, usage, chrono::Utc::now().timestamp()).await;
 }
 
 /// Refresh the `user:online:{userId}:{deviceId}` Redis TTL to [`PRESENCE_TTL_SECS`], with this
@@ -898,6 +920,7 @@ async fn refresh_presence(
     field: &str,
     declared: crate::addressing::SessionCaps,
     client: &crate::census::ClientKind,
+    usage: &crate::usage::SocketUsage,
 ) {
     // Try the existing connection first.
     if let Some(con) = con_opt.as_mut() {
@@ -905,7 +928,7 @@ async fn refresh_presence(
             .await
         {
             Ok(true) => {
-                note_client(con, conn_key, client).await;
+                note_client(con, conn_key, client, usage).await;
                 return;
             }
             Ok(false) => {
@@ -951,7 +974,7 @@ async fn refresh_presence(
                     "[presence] Reconnected to Redis and refreshed TTL for {}",
                     conn_key
                 );
-                note_client(&mut new_con, conn_key, client).await;
+                note_client(&mut new_con, conn_key, client, usage).await;
                 *con_opt = Some(new_con);
             }
         }
