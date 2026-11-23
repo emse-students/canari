@@ -24,6 +24,7 @@ import {
   didMyAssociationsProbeFail,
   ensureMyAssociations,
   followAssociation,
+  type FollowAssociationAnswer,
   getAssociationFollowStatus,
   listMyFollowedAssociations,
   unfollowAssociation,
@@ -452,11 +453,17 @@ export async function leavePerson(userId: string): Promise<void> {
   recordPersonStatus(userId, null, at);
 }
 
-/** Follows an association and writes it. Throws on failure. */
-export async function followAssociationLedgered(associationId: string): Promise<void> {
+/**
+ * Follows an association and writes it. Throws on failure. Returns the server's answer, whose
+ * `bellReset` tells a bell still on screen to take its default level.
+ */
+export async function followAssociationLedgered(
+  associationId: string
+): Promise<FollowAssociationAnswer> {
   const at = epoch;
-  await followAssociation(associationId);
+  const answer = await followAssociation(associationId);
   recordAssociationFollowed(associationId, true, at);
+  return answer;
 }
 
 /** Stops following an association and writes it. Throws on failure. */

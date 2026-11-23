@@ -17,6 +17,7 @@ export const GALLERY_COMMAND_NAMES = {
   saveVideo: 'save_video',
   discardVideo: 'discard_video',
   openAppSettings: 'open_app_settings',
+  cameraPermission: 'camera_permission',
   shareText: 'share_text',
   shareStaged: 'share_staged',
   discardSharedOut: 'discard_shared_out',

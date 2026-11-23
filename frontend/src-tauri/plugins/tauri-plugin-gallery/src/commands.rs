@@ -471,6 +471,22 @@ pub(crate) async fn clear_conversation_shortcuts<R: Runtime>(
     }
 }
 
+/// The camera permission as the OS holds it, answered without asking the member (Android only; the
+/// WebView cannot tell a refused permission from a busy camera).
+#[command]
+pub(crate) async fn camera_permission<R: Runtime>(app: AppHandle<R>) -> crate::Result<String> {
+    log::debug!("[gallery] camera_permission");
+    #[cfg(mobile)]
+    {
+        app.gallery().camera_permission().map(|p| p.state)
+    }
+    #[cfg(not(mobile))]
+    {
+        let _ = app;
+        Err(crate::Error::Unsupported)
+    }
+}
+
 /// Opens this app's page in the system settings.
 #[command]
 pub(crate) async fn open_app_settings<R: Runtime>(app: AppHandle<R>) -> crate::Result<()> {

@@ -28,6 +28,7 @@ import java.util.concurrent.Executors
 private const val TAG = "GalleryPlugin"
 private const val ALBUM = "Canari"
 private const val STORAGE_ALIAS = "storage"
+private const val CAMERA_ALIAS = "camera"
 
 /**
  * The phone's gallery for CanaReels (C6): a saved reel lands in `Movies/Canari`, where the system
@@ -41,7 +42,8 @@ private const val STORAGE_ALIAS = "storage"
  */
 @TauriPlugin(
     permissions = [
-        Permission(strings = [Manifest.permission.WRITE_EXTERNAL_STORAGE], alias = STORAGE_ALIAS)
+        Permission(strings = [Manifest.permission.WRITE_EXTERNAL_STORAGE], alias = STORAGE_ALIAS),
+        Permission(strings = [Manifest.permission.CAMERA], alias = CAMERA_ALIAS)
     ]
 )
 class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
@@ -319,6 +321,18 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
                 invoke.reject("clearConversationShortcuts failed: ${e.message}")
             }
         }
+    }
+
+    /**
+     * THE CAMERA PERMISSION, as the OS holds it. The WebView reports a camera the OS refused as
+     * `NotReadableError`, the same name as a camera another app holds (Mi 9T, 2026-11-16), so the
+     * page asks this fact at the throw instead of guessing. Asks nothing of the member.
+     */
+    @Command
+    fun cameraPermission(invoke: Invoke) {
+        val state = CameraPermissionAnswer.of(getPermissionState(CAMERA_ALIAS)?.toString())
+        Log.d(TAG, "cameraPermission: $state")
+        invoke.resolve(JSObject().put("state", state))
     }
 
     /** This app's page in the system settings, where a refused permission is given back. */
