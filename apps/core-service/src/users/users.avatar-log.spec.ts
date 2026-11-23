@@ -5,6 +5,7 @@ import type { UsersService } from './users.service';
 import type { UserBlocksService } from './user-blocks.service';
 import type { ProfileEditService } from './profile-edit.service';
 import type { ProfileCorrectionService } from './profile-correction.service';
+import type { AlumniMergeService } from './alumni-merge.service';
 import type { AccountErasureService } from '../account-erasure/account-erasure.service';
 import { mintAvatarToken } from '../auth/avatar-token';
 
@@ -55,7 +56,8 @@ describe('GET /users/:id/avatar logging', () => {
       {} as AccountErasureService,
       {
         isLiveSession: jest.fn(async () => asker === 'internal' || asker.live !== false),
-      } as never
+      } as never,
+      {} as AlumniMergeService
     );
     const res = { set: jest.fn(), status: jest.fn(), end: jest.fn(), send: jest.fn() };
     res.status.mockReturnValue(res);
@@ -142,7 +144,8 @@ describe('GET /users/:id/avatar logging', () => {
           isLiveSession: jest.fn(async () => {
             throw new Error('connection terminated');
           }),
-        } as never
+        } as never,
+        {} as AlumniMergeService
       );
       const res = { set: jest.fn(), status: jest.fn(), end: jest.fn(), send: jest.fn() };
       res.status.mockReturnValue(res);

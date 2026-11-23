@@ -39,6 +39,11 @@ export interface UserProfile {
   campus?: Campus | null;
   cursus?: CursusEntry[];
   posts?: Post[];
+  /**
+   * Whether the account holds its Alumni link (D44) - on the reader's OWN profile only; `null` or
+   * absent is unknown, never "not linked".
+   */
+  alumniLinked?: boolean | null;
   /** Media ID of the uploaded avatar, or `null` if using the generated placeholder. */
   avatarMediaId: string | null;
   bio: string | null;

@@ -5052,7 +5052,7 @@ The Mi 9T by sideload (versionCode `100700203`) and the iPhone 12 from TestFligh
 | --- | --- | --- |
 | #3907 typed previews in Android notifications, Mi 9T | **PASS** | "📷 Photo", "🌀 GIF", "🎥 Vidéo", "📎 Fichier : rapport.pdf", "🎵 Fichier audio" and, with a caption, "📷 Photo : legende test"; the chat list "📷 Photo"; the web list "🎤 Message vocal" (entry deleted 2026-11-22, read) |
 | #3907 killed-app banners, iPhone 12 | **PASS (three kinds)** | "Photo", "Photo: caption" and "Audio file". GIF, video and file **NOT TAKEN** |
-| #3908 launcher shortcuts carry pictures, Mi 9T | **PASS** | `bitmapPath` set on the published shortcuts. The share sheet's row **NOT TAKEN** ([entry](backlog.d/reading-owed-share-shortcuts-carry-the-conversations-picture.md)) |
+| #3908 launcher shortcuts carry pictures, Mi 9T | **PASS** | `bitmapPath` set on the published shortcuts. The share sheet's row **NOT TAKEN**, read later, see [the readings of 2026-11-23, `1.8.0-alpha.3`](#the-readings-of-2026-11-23-180-alpha3-the-form-booking-and-event-pushes-the-restore-on-the-upload-key-the-share-logos) |
 | #3910 one capture line per voice note, Mi 9T | **PASS** | `capture: echo=true noise=true agc=true rate=48000Hz ch=1 mime=audio/mp4 bps=128000`, once per note ([entry](frontend/sounds.md#a-voice-note-is-a-recording-not-a-call-owner-2026-11-20)) |
 | #3905 a second live after an ended live, phones | **PASS** | A fresh pre-live sheet opens (entry) |
 | #3904 a personal live card by tab | **PASS (personal)** | Under "Pour toi" and "Campus", not under "Organisations". An association's live **NOT TAKEN** (entry deleted 2026-11-22, read) |
@@ -5184,3 +5184,24 @@ Read on dev, on the Mi 9T (installed over the previous build, data kept) and the
 
 **Noise found on the way.** Every cold start of a build installed over adb logs a warning that the estate refused this build for the restore registration. Fixed by #3990; the phone check is the entry `p2-restore-signing-origin-read-on-a-phone`.
 **Seen once and not chased:** the iPhone, resumed from iOS Settings with a DM open, showed the thread above its end (a [new entry](backlog.d/reading-owed-a-dm-thread-left-above-its-end-after-a-resume-from-ios-settings.md)).
+
+## The readings of 2026-11-23 (`1.8.0-alpha.3`): the form, booking and event pushes, the restore on the upload key, the share logos
+
+Read on dev (`1.8.0-alpha.3`, build `dev.1ab8411`) on the Mi 9T, with the release APK installed over the previous build with `adb` (no store, upload-key signed) and web seats as the organiser. Evidence stays outside the repository; dev data written is in the harness's `WRITTEN-IDS.txt`.
+
+| Reading | Verdict | Evidence or reason |
+| --- | --- | --- |
+| A form opening's push names the association, shows its logo and quotes the form (#3989, Mi 9T) | **PASS** | A public form of the association "Club photo" opening in 9 minutes, its bell pressed on the Mi, the app in the background. The heads-up arrived at the five-minute mark titled "Club photo : formulaire bientôt ouvert", body "« ... » ouvre dans 5 minutes !", and the opening at the hour titled "Club photo : formulaire ouvert !", body "« ... » est disponible - dépêchez-vous, les places sont limitées !", both on `canari_forms` with a large icon, which in the shade is the association's logo (not the app bird, not initials). Entry deleted |
+| A booking space's opening push (Mi 9T, a follower) | **PASS** | A space of the same association opening in 3 minutes: "Club photo ouvre les réservations", body the space's name, `canari_social`, `fetchPublicMediaIcon` for the association's logo, the logo drawn in the shade |
+| An event's opening push (Mi 9T, a follower) | **PASS** | An agenda event validated from the Mi (a validator of the space): "Club photo publie un événement", body the event's title, the association's logo, `largeIcon=true` |
+| The restore registers on dev with the Android upload key (#3999, Mi 9T) | **PASS** | See the [entry](backlog.d/p2-restore-signing-origin-read-on-a-phone.md): `register OK (cloudBackup=true)` after a 200 on `/api/auth/restore/registration`, no `register skipped`; the production half stays |
+| Share shortcuts carry the group image and the community logo (#3982, Mi 9T) | **PASS** | A dev group and a dev community given a public image (a blue disc, a red disc): the launcher long-press and the share sheet's direct row draw the group's image and the launcher the community's logo, round, whole, never the initials; the conversation list tile of the group follows. The cached-later upgrade ran live (`publish: 1 picture(s) to fetch after the publish`, then `upgradeIcons: 1 of 1 picture(s) set`). The community logo was read in the launcher menu, not in the share sheet's three-slot direct row. Entry deleted |
+| Text and image blocks in a form, in the app (Mi 9T) | **PASS** | See the [entry](backlog.d/reading-owed-form-text-and-image-blocks.md); the editor's arrows in a browser are left |
+| A reaction notifies while the app is open and goes with its conversation (Mi 9T, row 1) | **PASS** | See the [entry](backlog.d/reading-owed-a-reaction-to-my-message-notifies-while-the-app-is-open.md) |
+| `logWebViewVersion` once per start, no update screen (Mi 9T, row 2) | **PASS** | See the [entry](backlog.d/reading-owed-old-webview-update-screen.md) |
+| Voice notes are recorded, not called (Mi 9T, rows 1 and 2) | **PASS** | See the [entry](backlog.d/reading-owed-voice-notes-are-recorded-not-called.md) |
+| A phone with notifications switched off states it (Mi 9T) | **PARTIAL** | The client reads "off"; the server row is not readable from the bench. See the [entry](backlog.d/reading-owed-a-phone-with-notifications-off-says-so-to-the-server.md) |
+| The three Lydia notices (cashier added, payments active and paused, payment over capacity) | **NOT TAKEN** | Each needs a dev association whose Lydia sandbox Business is linked, a platform admin's validation or refusal, and for the last a payment confirmed by Lydia; the Mi 9T and the web rig alone cannot cause the transition. Entries unchanged |
+| The broadcaster's control column: a long title, the keyboard up, the studio on a short screen (Mi 9T) | **NOT TAKEN** | Needs a live started from the Mi with the studio on; not reached in this sitting. Entry unchanged |
+
+**Seen on the way, not chased:** the "Événement à valider" notice names a member and draws no picture in the shade (an empty avatar slot), where every association-actor notice draws the logo; that is the documented split ([engagement](engagement.md), L30: the agenda's `event_*` notices name a member), noted only because the blank slot is visible.

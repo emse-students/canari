@@ -6,6 +6,7 @@ import type { AvatarService } from './avatar.service';
 import type { UserBlocksService } from './user-blocks.service';
 import type { ProfileEditService } from './profile-edit.service';
 import type { ProfileCorrectionService } from './profile-correction.service';
+import type { AlumniMergeService } from './alumni-merge.service';
 import { User } from './entities/user.entity';
 import type { AccountErasureService } from '../account-erasure/account-erasure.service';
 
@@ -40,7 +41,8 @@ describe('GET /users/batch', () => {
       {} as ProfileEditService,
       {} as ProfileCorrectionService,
       {} as AccountErasureService,
-      {} as never // AuthSessionsService: no admin flag route here
+      {} as never, // AuthSessionsService: no admin flag route here
+      {} as AlumniMergeService
     );
     return { controller, find };
   }

@@ -17,12 +17,10 @@ been live, unpromoted, since 2026-11-23
 - an access policy per application: window OR post OR cotisant this calendar year (D42, D43). It
   is the same mechanism as WP5, see [the-miconnect-profile-reform-wp5-is-next](the-miconnect-profile-reform-wp5-is-next.md).
 
-**Canari:**
-- the reminder banner (D44);
-- the admin list of flagged duplicates (D47);
-- the "Rattacher" action that moves the Alumni connection and deletes the duplicate, naming what it
-  holds first (D48). This needs the editor account (`80-profile-editor.yaml`) widened to source
-  connections and user deletion, proven by `test-profile-editor.py`.
+**Canari: BUILT 2026-11-23** (the banner D44, the duplicates list D47, "Rattacher" D48, the editor
+account widened and proven) - [as built](../profiles-and-access.md#the-work-packages-in-order). The
+link is NOT moved (authentik's API serves a connection's `user` read-only): the duplicate is deleted
+and the person re-links from the banner. Owed: a reading once MiConnect emits `alumni_linked`.
 
 **GDPR:** the e-mail and `cotisant` become kept data. The register (M1), the privacy policy and the
 MiConnect terms notice change together. A new terms version makes everyone accept again.

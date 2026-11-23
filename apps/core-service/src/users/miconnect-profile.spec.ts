@@ -15,6 +15,7 @@ describe('parseProfileClaims', () => {
       campus: 'gardanne',
       cursus: [{ formation: 'ISMIN', promo: 2025 }],
       posts: [],
+      alumniLinked: null,
     });
   });
 
@@ -33,6 +34,7 @@ describe('parseProfileClaims', () => {
       campus: null,
       cursus: [],
       posts: [],
+      alumniLinked: null,
     });
   });
 
@@ -42,7 +44,27 @@ describe('parseProfileClaims', () => {
       cursus: [{ formation: 'ICM', promo: '2024' }, { formation: '', promo: 2024 }, null],
       posts: ['BOSS'],
     });
-    expect(p).toEqual({ miconnectUuid: null, campus: null, cursus: [], posts: [] });
+    expect(p).toEqual({
+      miconnectUuid: null,
+      campus: null,
+      cursus: [],
+      posts: [],
+      alumniLinked: null,
+    });
+  });
+
+  it('reads alumni_linked as a boolean, and anything else as UNKNOWN (D44)', () => {
+    expect(parseProfileClaims({ alumni_linked: true }).alumniLinked).toBe(true);
+    expect(parseProfileClaims({ alumni_linked: false }).alumniLinked).toBe(false);
+    // Absent is unknown, never "not linked": a provider without the claim shows no banner.
+    expect(parseProfileClaims({}).alumniLinked).toBeNull();
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      expect(parseProfileClaims({ alumni_linked: 'false' }).alumniLinked).toBeNull();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('alumni_linked is not a boolean'));
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('keeps a formation no space names, and says so: the person must never become staff', () => {

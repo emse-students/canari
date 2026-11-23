@@ -549,7 +549,8 @@ function clearWsSessionCookie(): void {
   alog('ws-');
 }
 
-function authentikUrl(): string {
+/** MiConnect's (authentik's) base URL as this build is configured, without a trailing slash. */
+export function authentikUrl(): string {
   return ((import.meta.env.VITE_AUTHENTIK_URL as string) || '').replace(/\/+$/, '');
 }
 
