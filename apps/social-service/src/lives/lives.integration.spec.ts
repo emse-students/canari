@@ -21,6 +21,7 @@
  *
  * Everything happens in a throwaway schema, dropped at the end.
  */
+import type { UsageActivity } from '../usage/usage-activity';
 import { createCipheriv, randomBytes } from 'crypto';
 import { readFileSync } from 'fs';
 import { join } from 'path';
@@ -72,6 +73,8 @@ import {
 } from '../internal/account-erasure';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
+/** The usage dashboard's daily count (`usage/usage-activity.ts`): the metrics it was told of. */
+const usage = { count: jest.fn(() => Promise.resolve()) };
 const maybe = URL ? describe : describe.skip;
 
 const MIGRATION = readFileSync(join(__dirname, '..', 'migrations', '091_lives.sql'), 'utf8');
@@ -608,7 +611,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       announcer,
       notifications,
       feedCache,
-      replayRetentionFor(ds)
+      replayRetentionFor(ds),
+      usage as unknown as UsageActivity
     );
     sweeper = new LiveRetentionScheduler(lives);
   });
@@ -641,6 +645,15 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
   });
 
   describe('the live row and its key (WP-L2)', () => {
+    it('counts one live started for the usage dashboard, and none for a refused start (docs/wiki/usage-dashboard.md)', async () => {
+      usage.count.mockClear();
+      await start();
+      expect(usage.count.mock.calls).toEqual([['lives']]);
+      usage.count.mockClear();
+      expect((await refusal(start())).code).toBe('LIVE_ALREADY_OPEN');
+      expect(usage.count).not.toHaveBeenCalled();
+    });
+
     it('serves the key to any member, as a post CEK is', async () => {
       const live = await start();
       expect(live.key).toBe(KEY);

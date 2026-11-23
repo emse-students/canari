@@ -37,6 +37,7 @@
 ### Backend services
 
 - [chat-gateway](services/chat-gateway.md) — Rust/Axum WebSocket gateway, Redis pub/sub
+- [Usage dashboard](usage-dashboard.md) - who uses Canari, anonymously: distinct people per day, week and month by platform category and version (HyperLogLogs, no id stored), the week-by-hour map, the daily activity totals, and where each is counted
 - [call-service](services/call-service.md) — Rust/Axum WebRTC SFU, Cloudflare TURN
 - [chat-delivery-service](services/chat-delivery.md) — NestJS MLS API, message queue, sync engine, push
 - [core-service](services/core-service.md) — OIDC auth (Authentik), users, Stripe payments
