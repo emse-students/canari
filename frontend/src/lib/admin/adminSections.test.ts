@@ -32,6 +32,7 @@ const ADMIN_PAGES = [
   'spaces',
   'status',
   'storage',
+  'usage',
   'users',
 ].map((p) => `/admin/${p}`);
 

@@ -148,6 +148,17 @@ Paris hour `h` of weekday `d` (0 = Monday) over the 28 complete days before toda
 hour keys, each local hour visited once (the autumn hour that happens twice is one key; the spring
 hour that does not exist is not averaged as a zero).
 
+## The page: `/admin/usage`
+
+Listed in the hub's platform group for global admins only (`adminSections.ts`, `may: GLOBAL`; the
+layout refuses the URL to anyone else, and the server refuses the read regardless). It fetches the
+read above from social-service and draws, from that answer alone: three tiles (distinct people today,
+this week, this month), the last days as bars (a day without a row is a gap, never a zero), the
+categories and versions for today, this week and this month, the week-by-hour map on one hue scaled
+to its own maximum (`--chart-series-1`), and the activity totals per day and per month. Every label is
+Paraglide (`admin_usage_*`); the shaping lives in `frontend/src/lib/admin/usageDashboard.ts`. A read
+that fails says so - it never draws zeros it was not told.
+
 ## Interpretation taken, reversible
 
 - **"The per-minute detail, 30 days"** is read as: the sub-daily detail this feature adds (the hour
@@ -172,3 +183,6 @@ hour that does not exist is not averaged as a zero).
   the counting sites in `posts.service.reels.spec.ts`, `lives.integration.spec.ts`,
   `forms.service.guest-identity.spec.ts` and `forms.service.anonymous.spec.ts` (an anonymous answer
   is never counted).
+- `frontend/src/routes/admin/usage/page.svelte.test.ts` (the tiles from the server's figures, no
+  identifier drawn, a failed read is an error and never a zero, a reader who is not a platform admin
+  is sent back without a request); `adminSections.test.ts` (the page is listed for global admins only).

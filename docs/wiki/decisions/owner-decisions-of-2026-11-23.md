@@ -15,4 +15,4 @@ Recorded so no question answered here is asked again.
 11. **The membership tier-key unique index**: the lead runs the read-only duplicate count on dev, then on production. If it finds 0, the migration ships under the usual review and the dev pass; if it finds any, they are shown to the owner first.
 12. **A 409 `PREVIOUS_PAYMENT_OPEN` during a core-service deploy is accepted**: an older core answering `closed` is read as unknown and a retry is refused until the new core serves. Nothing is owed unless a deploy leaves payers refused past the restart; then the deploy order is checked, not the old word taught to social-service.
 13. **The complete carte redesign stays at `1.10.0`** and waits for the owner's brief.
-14. **The usage dashboard is started now, in parallel, by a dedicated agent** ([entry](../backlog.d/usage-dashboard-who-uses-canari-anonymously.md)).
+14. **The usage dashboard is started now, in parallel, by a dedicated agent** ([entry](../usage-dashboard.md)).
