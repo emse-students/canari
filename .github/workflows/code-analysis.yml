@@ -148,7 +148,7 @@ jobs:
       # string that merely looks like one. That cannot be a warning: the step fails, and the
       # credential is rotated before anything else happens.
       - name: TruffleHog Secret Scan
-        uses: trufflesecurity/trufflehog@3bd2b5887eb0efb8fa18bfd1d296032924e4ffdc # v3.99.9
+        uses: trufflesecurity/trufflehog@4ef51f69ca6347aaa76a5e64a87eac9c0c909f71 # v3.100.1
         with:
           path: ./
           extra_args: --debug --only-verified
