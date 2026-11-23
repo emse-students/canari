@@ -81,7 +81,7 @@
   const chartDays = $derived(view ? calendarDays(view.days, view.today, CHART_DAYS) : []);
   const chartMax = $derived(Math.max(1, ...chartDays.map((d) => d.period?.people.all ?? 0)));
   const activityDays = $derived(view ? view.days.slice(-ACTIVITY_DAYS).reverse() : []);
-  const activityMonths = $derived(view ? activityByMonth(view.days).reverse() : []);
+  const activityMonths = $derived(view ? activityByMonth(view.days, view.today).reverse() : []);
   const monthVersions = $derived(versionsOf(thisMonth));
   const hourMax = $derived(view ? hourMapMax(view.hours.cells) : 0);
   /** Monday first: 2026-11-23 is a Monday, so the week from it names the seven days in order. */

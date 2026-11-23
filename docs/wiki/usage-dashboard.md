@@ -105,6 +105,12 @@ of the current periods restart on top of what they held. The figures already fol
 PostgreSQL are untouched. A deliberate re-key of the dashboard alone is a new label (`usage-hll/v2`),
 with the same effect.
 
+**Operating note: rotate at a month boundary.** The double count of a rotation lands in the day,
+week, month and hour that SPAN it, and once those periods are folded it is PERMANENT (the fold keeps
+the larger value, and the periods stop being re-read when their keys expire). Rotating `JWT_SECRET`
+just after midnight on the first of a month confines it to that day, its ISO week and its hour, and
+leaves every month's figure clean.
+
 **Bounds** (abuse, never privacy): a socket counts at most ONCE PER PARIS HOUR (`SocketUsage` keeps
 the last hour index it counted, in the socket task), so the gateway costs one script call per socket
 per hour, not one per pong; at most 32 distinct versions a day get their own key, a 33rd is counted
@@ -117,8 +123,14 @@ never become one. Only `X.Y.Z` or `X.Y.Z-alpha.N` - the contract's `versionGramm
 the socket); the census's `unknown` stays `unknown`, anything else is `other`. The fold applies the
 same grammar again (`isFoldableVersion`): a day's `versions` set holding anything else, which only a
 writer that bypassed the gateway rule could produce, is not folded, and the fold warns with a COUNT,
-never the text. The grammar still admits digits a client chooses; at most 32 a day, and only
-digits.
+never the text.
+
+**The per-version split is indicative; the totals are not affected.** The grammar admits any digits
+a client chooses. A client can therefore send 32 different release-shaped numbers in one day, take
+all the day's version slots, and push every real version into `ver:other` for that day (and so for
+its week and month). Only the `ver:` rows are distorted: the person is still counted once in `all`
+and in their category, whatever version they declare. Nothing outside the grammar - only digits,
+dots and `-alpha.` - can be kept this way.
 
 **Durable figures in PostgreSQL**, `usage_figures` (social-service, migration 182, additive - a
 `CREATE TABLE`, not held): `(period, start, metric, dimension) -> value`, `period` one of `day`,
@@ -183,8 +195,8 @@ this week, this month), the last days as bars (a day without a row is a gap, nev
 categories and versions for today, this week and this month, the week-by-hour map on one hue scaled
 to its own maximum (`--chart-series-1`), and the activity totals per day and per month. The bar
 chart is the 31 CALENDAR days ending today (`calendarDays`): a day the server has no row for keeps
-its column, empty. A month whose first days are not in the answer (the oldest of the 366-day window,
-or one whose first days were never folded) is labelled partial. Every label is
+its column, empty. A month is labelled partial when any of its own days - from its first to its last, or to today for
+the current month - has no row: the oldest of the 366-day window, or one with days never folded. Every label is
 Paraglide (`admin_usage_*`); the shaping lives in `frontend/src/lib/admin/usageDashboard.ts`. A read
 that fails says so - it never draws zeros it was not told.
 

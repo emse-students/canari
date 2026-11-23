@@ -162,10 +162,30 @@ it('keeps a day with no figure as a gap in the chart, never squeezing it out', a
   ]);
 });
 
-it('marks a month whose first days are not in the window as partial', () => {
+it('marks a month partial when any of its own days up to today has no row', () => {
   seed();
-  const months = activityByMonth((answer.body as UsageView).days);
+  const months = activityByMonth((answer.body as UsageView).days, '2026-11-23');
   expect(months).toEqual([{ start: '2026-11-01', partial: true, activity: expect.any(Object) }]);
+  const day = (start: string) => ({
+    start,
+    people: { all: 1, categories: {}, versions: {} },
+    activity: activity(1),
+  });
+  const february = Array.from({ length: 28 }, (_, i) =>
+    day(`2026-02-${String(i + 1).padStart(2, '0')}`)
+  );
+  const march = ['2026-03-01', '2026-03-02', '2026-03-04'].map(day);
+  const partial = (list: ReturnType<typeof day>[], today: string) =>
+    activityByMonth(list, today).map((mo) => [mo.start, mo.partial]);
+  // February whole (28 days); March has its day 1 but a hole on the 3rd.
+  expect(partial([...february, ...march], '2026-03-04')).toEqual([
+    ['2026-02-01', false],
+    ['2026-03-01', true],
+  ]);
+  // The current month is owed only the days up to today.
+  expect(partial(march.slice(0, 2), '2026-03-02')).toEqual([['2026-03-01', false]]);
+  // One day missing from a whole month is enough.
+  expect(partial(february.slice(1), '2026-03-10')).toEqual([['2026-02-01', true]]);
 });
 
 it('sums a month of activity from its days, most people first for versions, the top of the map', () => {
@@ -186,7 +206,7 @@ it('sums a month of activity from its days, most people first for versions, the 
       activity: activity(5),
     },
   ];
-  expect(activityByMonth(days)).toEqual([
+  expect(activityByMonth(days, '2026-11-02')).toEqual([
     { start: '2026-10-01', partial: true, activity: activity(3) },
     { start: '2026-11-01', partial: false, activity: { ...activity(9), posts: 2, calls: 4 } },
   ]);

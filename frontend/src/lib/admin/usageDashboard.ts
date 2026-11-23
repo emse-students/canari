@@ -107,14 +107,28 @@ export function calendarDays(
 }
 
 /**
- * The activity of each month the days cover, oldest first. A month is `partial` when the days do
- * not reach back to its first day (the oldest month of a 366-day window, or a month whose first days
- * were never folded): its totals are what was counted, not the month's.
+ * The activity of each month the days cover, oldest first. A month is `partial` when any of ITS OWN
+ * days, from its first to its last or to `today` for the current month, has no activity row - the
+ * oldest month of a 366-day window, a month whose first days were never folded, or one with a hole
+ * in the middle: its totals are then what was counted, not the month's.
  */
 export function activityByMonth(
-  days: UsagePeriod[]
+  days: UsagePeriod[],
+  today: string
 ): { start: string; partial: boolean; activity: Record<ActivityMetric, number> }[] {
-  const first = days.find((d) => d.activity)?.start;
+  const counted = new Map<string, number>();
+  for (const day of days) {
+    if (day.activity && day.start <= today) {
+      const start = `${day.start.slice(0, 8)}01`;
+      counted.set(start, (counted.get(start) ?? 0) + 1);
+    }
+  }
+  /** How many days of the month starting `start` exist up to `today`. */
+  const owed = (start: string) => {
+    const [y, mo] = start.split('-').map(Number);
+    const inMonth = new Date(Date.UTC(y, mo, 0)).getUTCDate();
+    return today.startsWith(start.slice(0, 8)) ? Number(today.slice(8, 10)) : inMonth;
+  };
   const months = new Map<string, Record<ActivityMetric, number>>();
   for (const day of days) {
     if (!day.activity) continue;
@@ -127,7 +141,7 @@ export function activityByMonth(
   }
   return [...months.entries()].map(([start, activity]) => ({
     start,
-    partial: first !== undefined && first > start,
+    partial: (counted.get(start) ?? 0) < owed(start),
     activity,
   }));
 }

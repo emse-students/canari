@@ -257,6 +257,36 @@ export class InternalController {
   }
 
   /**
+   * What an account holds here, as counts: what an admin is shown BEFORE merging an Alumni duplicate
+   * into another account, which erases this one (D48, core-service `AlumniMergeService`). Counts
+   * only - nothing nominative leaves - and each one what the erasure would actually take: the
+   * PERSONAL posts (a post published as an association stays), the association memberships, the
+   * communities, the form submissions. Read-only.
+   */
+  @Get('users/:userId/holdings')
+  async userHoldings(
+    @Param('userId') userId: string,
+    @Headers('x-internal-secret') headerSecret: string
+  ) {
+    assertInternalSecret(headerSecret);
+    const [row] = (await this.postRepo.manager.query(
+      `SELECT
+         (SELECT count(*)::int FROM posts WHERE "authorId" = $1 AND "associationId" IS NULL) AS "personalPosts",
+         (SELECT count(*)::int FROM association_members WHERE "userId" = $1) AS associations,
+         (SELECT count(DISTINCT "workspaceId")::int FROM channel_members WHERE "userId" = $1) AS communities,
+         (SELECT count(*)::int FROM submissions WHERE "userId" = $1) AS "formSubmissions"`,
+      [userId]
+    )) as {
+      personalPosts: number;
+      associations: number;
+      communities: number;
+      formSubmissions: number;
+    }[];
+    this.logger.log(`[INTERNAL_HOLDINGS] user=${userId.slice(0, 8)} ${JSON.stringify(row)}`);
+    return row;
+  }
+
+  /**
    * Deletes or anonymises all social data for the given user - the social half of an account
    * erasure, called by core-service's durable erasure queue until it answers 2xx, then once more
    * after every token the account held has expired.

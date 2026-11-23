@@ -6,6 +6,7 @@ import type { UserBlocksService } from './user-blocks.service';
 import type { AvatarService } from './avatar.service';
 import type { ProfileEditService } from './profile-edit.service';
 import type { ProfileCorrectionService } from './profile-correction.service';
+import type { AlumniMergeService } from './alumni-merge.service';
 import type { AccountErasureService } from '../account-erasure/account-erasure.service';
 import type { AuthSessionsService } from '../auth/auth-sessions.service';
 import { RefusalCode, refusalBody } from '../common/refusal-codes';
@@ -40,7 +41,8 @@ describe('core-service refusal codes', () => {
         {} as ProfileEditService,
         {} as ProfileCorrectionService,
         {} as AccountErasureService,
-        sessions as unknown as AuthSessionsService
+        sessions as unknown as AuthSessionsService,
+        {} as AlumniMergeService
       );
       return { controller, users, sessions };
     };

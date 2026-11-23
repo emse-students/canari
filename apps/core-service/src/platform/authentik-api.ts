@@ -39,6 +39,8 @@ export async function authentikRequest<T>(
     return { kind: 'transport', error: String(err) };
   }
   if (!res.ok) return { kind: 'status', status: res.status };
+  // A DELETE answers 204 with no body: that is the success it asked for, not a malformed answer.
+  if (res.status === 204) return { kind: 'ok', body: undefined as T };
   try {
     return { kind: 'ok', body: (await res.json()) as T };
   } catch {

@@ -87,6 +87,14 @@ export const CORE_ERASURE_STATEMENTS: readonly {
     sql: `UPDATE profile_changes SET "actorId" = $2 WHERE "actorId" = $1`,
     replacement: DELETED_ACCOUNT,
   },
+  // The Alumni merges made INTO this account (D48, migration 028): its history, gone with it; where
+  // the erased account was the admin who merged, the row keeps the merge without the admin's id.
+  { label: 'alumni_merges', sql: `DELETE FROM alumni_merges WHERE "targetUserId" = $1` },
+  {
+    label: 'alumni_merges_actor',
+    sql: `UPDATE alumni_merges SET "actorId" = $2 WHERE "actorId" = $1`,
+    replacement: DELETED_ACCOUNT,
+  },
   {
     label: 'profile_corrections',
     sql: `DELETE FROM profile_correction_requests WHERE "userId" = $1`,
