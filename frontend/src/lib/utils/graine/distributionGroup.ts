@@ -119,15 +119,14 @@ function ensureDistributionGroupReported(
   const attempt = joinDistributionGroup(mlsService, channelService, scope, log)
     .then(
       (outcome) => {
-        // A JOIN THAT DID NOT CONVERGE WITHDRAWS THE RECORD HERE, whoever asked for it (a load, a
-        // salon creation, the re-join of a group behind its server) - see `keyGroupConvergence.ts`.
-        if (scope.kind === 'workspace' && !outcome.converged) {
-          forgetKeyGroupConvergence(scope.workspaceId);
-        }
+        // A JOIN THAT DID NOT CONVERGE WITHDRAWS ITS SCOPE'S RECORD HERE, whoever asked for it (a
+        // load, a salon creation, the re-join of a group behind its server) - see
+        // `keyGroupConvergence.ts`.
+        if (!outcome.converged) forgetKeyGroupConvergence(scope);
         return outcome;
       },
       (error: unknown) => {
-        if (scope.kind === 'workspace') forgetKeyGroupConvergence(scope.workspaceId);
+        forgetKeyGroupConvergence(scope);
         throw error;
       }
     )
@@ -477,6 +476,13 @@ export async function enterPrivateSalonGroup(
     viewerHasAccess: boolean;
     ensureMls?: () => IMlsService | Promise<IMlsService>;
     log: (message: string) => void;
+    /**
+     * The salon's key-group version, read by a LOAD before this pass (`CommunityBootReads`): an
+     * unchanged version on a converged tree skips the pass, as for a community
+     * ({@link ensureVersionedDistributionGroup}). Absent (a join, a creation, an older server): the
+     * full pass.
+     */
+    version?: KeyGroupVersion | null;
   }
 ): Promise<boolean> {
   // A PUBLIC SALON'S SEEDS TRAVEL ON THE COMMUNITY'S GROUP, WHICH EVERY CALLER OF THIS ENTERS
@@ -491,11 +497,12 @@ export async function enterPrivateSalonGroup(
     // Access (re)gained: forget a past refusal, so losing it again is said again.
     declinedSalons.delete(channelId);
     const mls = await opts.ensureMls();
-    return ensureDistributionGroupFor(
+    return ensureVersionedDistributionGroup(
       mls,
       channelService,
       channelScope(workspaceId, channelId),
-      opts.log
+      opts.log,
+      opts.version ?? null
     );
   }
 
@@ -599,7 +606,7 @@ export function distributionGapListener(
 }
 
 /** {@link ensureDistributionGroupFor} for a whole community. */
-export async function ensureCommunityDistributionGroup(
+export function ensureCommunityDistributionGroup(
   mlsService: IMlsService,
   channelService: ChannelService,
   workspaceId: string,
@@ -612,14 +619,37 @@ export async function ensureCommunityDistributionGroup(
    */
   version: KeyGroupVersion | null = null
 ): Promise<boolean> {
-  const scope = workspaceScope(workspaceId);
+  return ensureVersionedDistributionGroup(
+    mlsService,
+    channelService,
+    workspaceScope(workspaceId),
+    log,
+    version
+  );
+}
+
+/**
+ * {@link ensureDistributionGroupFor} for a load that holds `scope`'s key-group version - a
+ * community's or a private salon's, ONE implementation for both (`keyGroupConvergence.ts`): the pass
+ * is skipped when the version is the one its last converged pass started from and the tree is still
+ * where that pass left it; otherwise it runs, and a pass this caller started and that converged is
+ * recorded against `version`. With no version, the full pass and no record.
+ */
+async function ensureVersionedDistributionGroup(
+  mlsService: IMlsService,
+  channelService: ChannelService,
+  scope: DistributionScope,
+  log: (message: string) => void,
+  version: KeyGroupVersion | null
+): Promise<boolean> {
   // TAKEN BEFORE ANYTHING ELSE: a pass of any caller that fails to converge from here on refuses
   // this load's record (`recordKeyGroupConvergence`).
-  const ticket = convergenceTicket(workspaceId);
-  if (version && (await convergedPassCanBeSkipped(mlsService, workspaceId, version, log))) {
+  const ticket = convergenceTicket(scope);
+  if (version && (await convergedPassCanBeSkipped(mlsService, scope, version, log))) {
     // NOTHING THE PASS READS HAS CHANGED, AND THE TREE IS WHERE IT LEFT IT. Registering is what the
-    // pass would have done first (idempotent); the history ask decides for itself, without a
-    // request, that it is not owed - so the skip keeps both and drops only the two reads.
+    // pass would have done first (idempotent); the history ask (a community's only) decides for
+    // itself, without a request, that it is not owed - so the skip keeps both and drops only the
+    // two reads.
     mlsService.registerDistributionGroup(scope, version.groupId);
     askForHistory(scope, log);
     return true;
@@ -635,7 +665,7 @@ export async function ensureCommunityDistributionGroup(
   // lane). A converged pass this caller only SHARED read before this caller's version, so it records
   // nothing and leaves an earlier record standing.
   if (version && result.converged && !shared) {
-    recordKeyGroupConvergence(workspaceId, version, ticket, log);
+    recordKeyGroupConvergence(scope, version, ticket, log);
   }
   return result.held;
 }

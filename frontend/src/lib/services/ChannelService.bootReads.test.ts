@@ -310,4 +310,53 @@ describe('ChannelService - the key-group versions of a load', () => {
     expect(warned).toHaveLength(1);
     expect(String(warned[0][0])).toContain('full roster pass');
   });
+
+  it('reads each private salon version from its community item; a server older than `salons` names none', async () => {
+    const { svc, urls, log } = serviceOnNetwork((url) =>
+      url.includes('/key-group-versions')
+        ? Response.json({
+            items: [
+              {
+                workspaceId: 'w0',
+                version: 'v-w0',
+                groupId: 'g-w0',
+                activeEpoch: 4,
+                baseEpoch: 4,
+                salons: [
+                  {
+                    channelId: 's1',
+                    version: 'v-s1',
+                    groupId: 'g-s1',
+                    activeEpoch: 2,
+                    baseEpoch: 2,
+                  },
+                ],
+              },
+              // An older server: no `salons` at all.
+              { workspaceId: 'w1', version: 'v-w1', groupId: 'g-w1', activeEpoch: 4, baseEpoch: 4 },
+            ],
+          })
+        : Response.json({ items: [] })
+    );
+    const reads = svc.startCommunityBootReads(['w0', 'w1'], log);
+
+    expect(await reads.salonKeyGroupVersion('s1')).toEqual({
+      version: 'v-s1',
+      groupId: 'g-s1',
+      activeEpoch: 2,
+      baseEpoch: 2,
+    });
+    // Not named: that salon runs its full pass.
+    expect(await reads.salonKeyGroupVersion('s-unknown')).toBeNull();
+    expect(await reads.keyGroupVersion('w1')).toEqual({
+      version: 'v-w1',
+      groupId: 'g-w1',
+      activeEpoch: 4,
+      baseEpoch: 4,
+    });
+    // The same single request: the salons cost no round trip of their own.
+    expect(urls.filter((u) => u.includes('/key-group-versions'))).toHaveLength(1);
+    reads.release();
+    expect(await reads.salonKeyGroupVersion('s1')).toBeNull();
+  });
 });

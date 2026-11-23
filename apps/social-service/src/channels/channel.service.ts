@@ -2641,6 +2641,10 @@ export class ChannelService implements OnApplicationBootstrap {
    *
    * WHAT IT SAVES IS CLIENT ROUND TRIPS, NOT SERVER WORK: the server still reads both answers for
    * every community, once per load, to hash them. Two requests per community become one per load.
+   *
+   * EACH ITEM CARRIES ITS COMMUNITY'S PRIVATE SALONS TOO ({@link readSalonKeyGroupVersions}, the
+   * `salons` field, additive): a salon's pass is the same pass on its own two answers, and it was
+   * what a resume still read once the communities skipped (1.8.0-alpha.1 reading, Mi 9T).
    */
   async listKeyGroupVersions(
     userId: string,
@@ -2675,6 +2679,7 @@ export class ChannelService implements OnApplicationBootstrap {
                     code: 'WORKSPACE_HAS_NO_DISTRIBUTION_GROUP',
                     message: 'This community has no key distribution group.',
                   },
+                  salons: [],
                 };
               }
               return {
@@ -2684,6 +2689,7 @@ export class ChannelService implements OnApplicationBootstrap {
                 activeEpoch: ref.activeEpoch,
                 baseEpoch: ref.baseEpoch,
                 refusal: null,
+                salons: await this.readSalonKeyGroupVersions(workspaceId, userId),
               };
             } catch (e) {
               const refusal = bootReadRefusal(e);
@@ -2700,6 +2706,7 @@ export class ChannelService implements OnApplicationBootstrap {
                 activeEpoch: null,
                 baseEpoch: null,
                 refusal,
+                salons: [],
               };
             }
           })
@@ -2707,6 +2714,64 @@ export class ChannelService implements OnApplicationBootstrap {
       );
     }
     return { items };
+  }
+
+  /**
+   * The key-group version of every PRIVATE salon of `workspaceId` that `userId` reads - the salon
+   * twin of {@link listKeyGroupVersions}'s community digest, carried on the community's item.
+   *
+   * WHY (the 1.8.0-alpha.1 reading on the Mi 9T, 2026-11-23): with every community pass skipped, a
+   * resume still read `GET :channelId/distribution-group` and `GET :channelId/members` for each
+   * private salon the account reads, every one ending "agrees with its roster". A salon's pass reads
+   * exactly those two answers, so its version is the same digest ({@link keyGroupVersionOf}) of the
+   * same two bodies, read through the routes' own readers without their lines:
+   * `readDistributionGroup` on the salon's scope with no device (as the pass asks it) and
+   * {@link listChannelMembers} on the channel roster with no presence.
+   *
+   * ONLY THE SALONS THE ROUTE WOULD SERVE ({@link isChannelReader}): an admin who has not joined is
+   * served no GroupInfo, so its client never enters the salon and is owed no version. A salon NOT
+   * NAMED runs its full pass on the client, so leaving one out is never wrong, only a pass more: a
+   * salon with no key group (its route logs that, once, at error) and a salon whose read failed
+   * (said here, at warn). One salon at a time: a community holds few, and this already runs beside
+   * nine other communities ({@link COMMUNITY_BOOT_READS_CONCURRENCY}).
+   */
+  private async readSalonKeyGroupVersions(
+    workspaceId: string,
+    userId: string
+  ): Promise<SalonKeyGroupVersionItem[]> {
+    let salons: Channel[];
+    try {
+      salons = await this.channelRepo.find({ where: { workspaceId, isPrivate: true } });
+    } catch (e) {
+      this.logger.warn(
+        `[KEY_GROUP_VERSIONS] workspace=${workspaceId} user=${userId.slice(0, 8)} private salons not listed - each runs its full pass: ${e instanceof Error ? e.message : String(e)}`
+      );
+      return [];
+    }
+    const items: SalonKeyGroupVersionItem[] = [];
+    for (const channel of salons) {
+      try {
+        if (!(await this.isChannelReader(channel, userId))) continue;
+        const [ref, roster] = await Promise.all([
+          this.readSalonDistributionGroup(channel.id, userId),
+          this.listChannelMembers(channel.id, userId, 'channel'),
+        ]);
+        // NOT LOGGED HERE: the client runs the full pass, and the route it reads says it once.
+        if (!ref) continue;
+        items.push({
+          channelId: channel.id,
+          version: keyGroupVersionOf(ref, roster),
+          groupId: ref.groupId,
+          activeEpoch: ref.activeEpoch,
+          baseEpoch: ref.baseEpoch,
+        });
+      } catch (e) {
+        this.logger.warn(
+          `[KEY_GROUP_VERSIONS] channel=${channel.id} user=${userId.slice(0, 8)} not versioned - its client runs the full pass: ${e instanceof Error ? e.message : String(e)}`
+        );
+      }
+    }
+    return items;
   }
 
   /**
@@ -2784,6 +2849,19 @@ export class ChannelService implements OnApplicationBootstrap {
   }
 
   /**
+   * A private salon's key-group reference for one of its readers, or null when it has none - the
+   * read {@link getChannelDistributionGroupForMember} serves, WITHOUT its access check or its lines,
+   * which the caller owns. {@link readSalonKeyGroupVersions} reads the same thing for a digest.
+   */
+  private readSalonDistributionGroup(
+    channelId: string,
+    userId: string,
+    deviceId?: string
+  ): Promise<DistributionGroupRef | null> {
+    return readDistributionGroup(this.internalSecret, channelScope(channelId), userId, deviceId);
+  }
+
+  /**
    * Hands a private salon's reader its OWN distribution group and the latest GroupInfo on it.
    *
    * The salon-scoped twin of {@link getDistributionGroupForMember}, and the reason the roster is
@@ -2799,12 +2877,7 @@ export class ChannelService implements OnApplicationBootstrap {
   ): Promise<DistributionGroupRef> {
     await this.assertPrivateChannelReader(channelId, userId);
 
-    const ref = await readDistributionGroup(
-      this.internalSecret,
-      channelScope(channelId),
-      userId,
-      deviceId
-    );
+    const ref = await this.readSalonDistributionGroup(channelId, userId, deviceId);
     if (!ref) {
       // Every private salon is given one at birth and cannot be created without it, so this is not
       // a state to repair silently: it is a salon that cannot carry seeds.
@@ -7444,6 +7517,20 @@ export interface KeyGroupVersionItem {
   activeEpoch: number | null;
   baseEpoch: number | null;
   refusal: BootReadRefusal | null;
+  /**
+   * The community's private salons this user reads, each with its own version (since the
+   * 1.8.0-alpha.1 reading). ADDITIVE: a client older than the field ignores it; empty on a refusal.
+   */
+  salons: SalonKeyGroupVersionItem[];
+}
+
+/** One private salon's part of a {@link KeyGroupVersionItem}: the salon twin of its fields. */
+export interface SalonKeyGroupVersionItem {
+  channelId: string;
+  version: string;
+  groupId: string;
+  activeEpoch: number;
+  baseEpoch: number | null;
 }
 
 /**

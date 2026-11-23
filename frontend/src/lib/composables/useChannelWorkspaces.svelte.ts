@@ -648,11 +648,18 @@ export function useChannelWorkspaces() {
       // enters it. This is the only one that meets a salon the viewer may merely SEE, so it is the
       // only one that passes anything but `true` - see `enterPrivateSalonGroup` for why declining
       // has to be as loud as entering.
+      // THE SALON'S KEY-GROUP VERSION, read when the load started (in the community's versions
+      // answer): an unchanged one on a converged tree skips the salon's two reads, as for its
+      // community (`keyGroupConvergence.ts`). Asked only of a salon this walk enters. Never throws.
+      const version =
+        isPrivate && viewerHasAccess ? await bootReads.salonKeyGroupVersion(actualId) : null;
+      assertListingSession(session, `the key-group version of the salon ${actualId}`);
       await enterPrivateSalonGroup(service, workspaceId, actualId, {
         isPrivate,
         viewerHasAccess,
         ensureMls: ctx.ensureMls,
         log: ctx.log,
+        version,
       }).catch((e: unknown) => leaveKeyGroupToMainTab(e, `the salon ${actualId}`, ctx.log));
       assertListingSession(session, `the salon ${actualId}`);
       // ENTERED: a send typed into this salon before the walk reached it goes now (`salonSendGate`).

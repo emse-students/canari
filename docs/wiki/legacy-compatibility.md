@@ -722,8 +722,10 @@ together with the drop of the table ([backlog](backlog.d/drop-the-global-associa
 once per community listing; a server older than the route answers 404, the client logs
 `[KEY_GROUP_VERSIONS] warn: ... each runs its full roster pass` - it warns once per load (a cold start,
 every resume), not once - and every community
-runs the pass it always ran. An older CLIENT never asks the route and needs nothing: the
-per-community routes it reads are unchanged
+runs the pass it always ran. A server older than the `salons` field of each item (2026-11-23) names
+no salon: every private salon runs its full pass, silently, since the community versions answered. An
+older CLIENT never asks the route, or ignores `salons`, and needs nothing: the per-community and
+per-salon routes it reads are unchanged
 ([offline-and-weak-network](frontend/offline-and-weak-network.md#a-return-re-reads-the-key-group-only-of-a-community-that-changed-2026-11-22)).
 **The cost while it stands:** none - the 404 branch IS the behaviour before the route, and the server ships
 before the stores take the client.

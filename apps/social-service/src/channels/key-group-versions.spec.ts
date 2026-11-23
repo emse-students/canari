@@ -70,10 +70,11 @@ describe('keyGroupVersionOf', () => {
 describe('ChannelService.listKeyGroupVersions', () => {
   const USER = 'u1';
 
-  function makeService() {
+  function makeService(privateSalons: { id: string }[] = []) {
+    const channelRepo = { find: jest.fn().mockResolvedValue(privateSalons) };
     const service = new ChannelService(
       {} as never,
-      {} as never,
+      channelRepo as never,
       {} as never,
       {} as never,
       {} as never,
@@ -91,7 +92,24 @@ describe('ChannelService.listKeyGroupVersions', () => {
       'readMemberDistributionGroup'
     );
     const members = jest.spyOn(service, 'listWorkspaceMembers');
-    return { service, keyGroup, members, warn, error };
+    const internals = service as unknown as {
+      readSalonDistributionGroup: (channelId: string, user: string) => Promise<unknown>;
+      isChannelReader: (channel: { id: string }, user: string) => Promise<boolean>;
+    };
+    const salonKeyGroup = jest.spyOn(internals, 'readSalonDistributionGroup');
+    const reader = jest.spyOn(internals, 'isChannelReader').mockResolvedValue(true);
+    const salonMembers = jest.spyOn(service, 'listChannelMembers');
+    return {
+      service,
+      channelRepo,
+      keyGroup,
+      members,
+      salonKeyGroup,
+      reader,
+      salonMembers,
+      warn,
+      error,
+    };
   }
 
   afterEach(() => jest.restoreAllMocks());
@@ -155,5 +173,66 @@ describe('ChannelService.listKeyGroupVersions', () => {
 
     expect(items).toHaveLength(COMMUNITY_BOOT_READS_MAX);
     expect(keyGroup).toHaveBeenCalledTimes(COMMUNITY_BOOT_READS_MAX);
+  });
+
+  // The salons were what a resume still read once the communities skipped (1.8.0-alpha.1, Mi 9T).
+  it('carries each private salon this user reads, with the digest of ITS two answers', async () => {
+    const { service, keyGroup, members, salonKeyGroup, reader, salonMembers } = makeService([
+      { id: 's-read' },
+      { id: 's-not-read' },
+      { id: 's-bare' },
+    ]);
+    keyGroup.mockResolvedValue({ groupId: 'g', groupInfo: 'X', baseEpoch: 1, activeEpoch: 1 });
+    members.mockResolvedValue([] as never);
+    reader.mockImplementation((channel) => Promise.resolve(channel.id !== 's-not-read'));
+    const salonRef = { groupId: 'gs', groupInfo: 'Y', baseEpoch: 7, activeEpoch: 7 };
+    salonKeyGroup.mockImplementation((channelId) =>
+      Promise.resolve(channelId === 's-bare' ? null : salonRef)
+    );
+    const salonRoster = [{ id: 'm1', userId: USER, role: 'member', joinedAt: new Date(0) }];
+    salonMembers.mockResolvedValue(salonRoster as never);
+
+    const { items } = await service.listKeyGroupVersions(USER, ['a']);
+
+    // Only the salon whose GroupInfo the route would serve; a salon with no key group is left to
+    // its full pass, whose route says so.
+    expect(items[0].salons).toEqual([
+      {
+        channelId: 's-read',
+        version: keyGroupVersionOf(salonRef, salonRoster),
+        groupId: 'gs',
+        activeEpoch: 7,
+        baseEpoch: 7,
+      },
+    ]);
+    // Read as the salon's pass reads them: no device (no seat), the channel roster, no presence.
+    expect(salonKeyGroup).toHaveBeenCalledWith('s-read', USER);
+    expect(salonMembers).toHaveBeenCalledWith('s-read', USER, 'channel');
+    expect(salonKeyGroup).not.toHaveBeenCalledWith('s-not-read', USER);
+  });
+
+  it('leaves out a salon whose read failed, says so, and still answers the community', async () => {
+    const { service, keyGroup, members, salonKeyGroup, salonMembers, warn } = makeService([
+      { id: 's-down' },
+    ]);
+    keyGroup.mockResolvedValue({ groupId: 'g', groupInfo: 'X', baseEpoch: 1, activeEpoch: 1 });
+    members.mockResolvedValue([] as never);
+    salonKeyGroup.mockRejectedValue(new Error('delivery down'));
+    salonMembers.mockResolvedValue([] as never);
+
+    const { items } = await service.listKeyGroupVersions(USER, ['a']);
+
+    expect(items[0]).toMatchObject({ version: expect.any(String), refusal: null, salons: [] });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain('channel=s-down');
+  });
+
+  it('moves a salon version when its roster loses a reader', () => {
+    const salonRef = { groupId: 'gs', groupInfo: 'Y', baseEpoch: 7, activeEpoch: 7 };
+    const two = [
+      { id: 'm1', userId: 'u1' },
+      { id: 'm2', userId: 'u2' },
+    ];
+    expect(keyGroupVersionOf(salonRef, two.slice(0, 1))).not.toBe(keyGroupVersionOf(salonRef, two));
   });
 });
