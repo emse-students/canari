@@ -84,6 +84,8 @@ live-list routes, so a live started while the switches were open is still ended 
 they close. What must be true before lives open in production, and in what order:
 [live-production](../frontend/modules/live-production.md).
 
+**The relay log (2026-11-23).** media-service asks `GET /api/internal/lives/mode` on every live segment, so social-service logs the answer only when it differs from the last one it gave (the first answer of a process counts), never per request.
+
 ## The numbers, and where each is the ONE copy
 
 | Number | Value | Lives in | Clients read it from |

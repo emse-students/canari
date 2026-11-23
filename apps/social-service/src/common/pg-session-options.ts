@@ -12,5 +12,9 @@
  * 13 s production answers of `GET /api/posts/notifications`. JIT changes no result, and none of this
  * service's statements scans enough rows to repay a compilation (docs/wiki/frontend/modules/posts.md,
  * "The bell re-checks the post").
+ *
+ * `timezone=UTC`: `CURRENT_TIMESTAMP` defaults on zone-less `timestamp` columns are written on the
+ * SESSION's wall clock and read back in the process's zone (`TZ=UTC` in the image); they agree only
+ * while both are UTC, and the server's own default is not ours to rely on.
  */
-export const PG_SESSION_OPTIONS = '-c jit=off';
+export const PG_SESSION_OPTIONS = '-c jit=off -c timezone=UTC';
