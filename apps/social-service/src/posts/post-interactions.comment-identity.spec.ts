@@ -178,6 +178,39 @@ describe('PostInteractionsService - comment identity', () => {
     });
   });
 
+  describe('a muted account and the like toggle (moderation-authority, decision 9)', () => {
+    it('is refused ADDING a like, writing nothing', async () => {
+      const { service, post } = make({
+        ...base(),
+        comments: [{ id: 'c1', userId: 'x', likes: [] }],
+      });
+      await expect(
+        service.likeComment('p1', 'c1', 'muted-user', false, { muted: true })
+      ).rejects.toMatchObject({ status: 403 });
+      expect(post.comments[0].likes).toEqual([]);
+    });
+
+    it('may TAKE BACK a like it already holds: that adds nothing', async () => {
+      const { service, post } = make({
+        ...base(),
+        comments: [{ id: 'c1', userId: 'x', likes: ['muted-user', 'other'] }],
+      });
+      await service.likeComment('p1', 'c1', 'muted-user', false, { muted: true });
+      expect(post.comments[0].likes).toEqual(['other']);
+    });
+
+    it('CONTROL: an unmuted account toggles both ways', async () => {
+      const { service, post } = make({
+        ...base(),
+        comments: [{ id: 'c1', userId: 'x', likes: [] }],
+      });
+      await service.likeComment('p1', 'c1', 'u', false, { muted: false });
+      expect(post.comments[0].likes).toEqual(['u']);
+      await service.likeComment('p1', 'c1', 'u', false, { muted: false });
+      expect(post.comments[0].likes).toEqual([]);
+    });
+  });
+
   it('stores an anonymous comment with the real account and no name', async () => {
     const { service, post } = make(base());
     const { comment } = await service.addComment('p1', {

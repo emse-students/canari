@@ -9,6 +9,7 @@ mod origin;
 mod presence;
 mod state;
 mod subscribers;
+mod usage;
 mod ws_dispatch;
 
 use axum::{

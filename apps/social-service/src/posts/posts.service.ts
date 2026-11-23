@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument */
+import { UsageActivity } from '../usage/usage-activity';
 import { assertWithinPostAttachmentCap } from './post-attachment-cap';
 import { readRetentionDays } from '../common/retention-settings';
 import {
@@ -258,6 +259,13 @@ interface PostViewerContext {
    * Served as `canParticipate`.
    */
   participableIds: Set<string> | null;
+  /**
+   * The reader's account is muted (`user_moderation.isMuted`, the row `assertNotMuted` reads):
+   * their votes and comment likes are refused, so `canVote` and `canLikeComments` read false and
+   * the client draws the controls disabled rather than refusing after a tap (moderation-authority,
+   * decision 9). One read per request, none for a reader who is not logged in.
+   */
+  muted: boolean;
 }
 
 /** A request one of the reader's associations made for a personal post and that still stands (D38b). */
@@ -343,6 +351,11 @@ interface PostCapabilities {
    */
   canVote: boolean;
   /**
+   * The reader may like a comment of this post: they participate (`canParticipate`) and are not
+   * muted - the mute refuses a comment like (`likeComment`), so the heart is drawn disabled.
+   */
+  canLikeComments: boolean;
+  /**
    * The comments (the button, the count, the thread) and the lists of people on this post (who
    * reacted, who voted what) are shown to this reader. False only for a named reader whose ONLY door
    * is a read grant, switch "voit les commentaires" off (owner, 2026-11-04): their row then carries
@@ -387,7 +400,8 @@ export class PostsService {
     private readonly followsService: FollowsService,
     private readonly associationsService: AssociationsService,
     private readonly notifications: PostNotificationsService,
-    private readonly mediaRetention: PostMediaRetentionService
+    private readonly mediaRetention: PostMediaRetentionService,
+    private readonly usage?: UsageActivity
   ) {}
 
   private commentIdentityService?: CommentIdentityService;
@@ -551,6 +565,7 @@ export class PostsService {
     pinSpaces: new Map(),
     commentsWithheldIds: new Set(),
     participableIds: new Set(),
+    muted: false,
   };
 
   /**
@@ -568,6 +583,7 @@ export class PostsService {
     isGlobalAdmin: boolean
   ): Promise<PostViewerContext> {
     if (!viewerId) return PostsService.EMPTY_VIEWER;
+    const muted = await this.viewerIsMuted(viewerId);
     const postIds = rows.map((row) => row.id).filter((id): id is string => !!id);
     const personalIds = rows
       .filter((row) => row.id && !row.associationId)
@@ -596,6 +612,7 @@ export class PostsService {
           viewerId
         ),
         participableIds,
+        muted,
         viewerId,
         isGlobalAdmin: true,
         moderatedIds: new Set(),
@@ -658,8 +675,22 @@ export class PostsService {
       firstHandIds: grantFree.firstHandIds,
       commentsWithheldIds,
       participableIds,
+      muted,
       ...(await this.personalRequestContext(personalIds, viewerId, memberships.personal)),
     };
+  }
+
+  /**
+   * Whether the reader's account is muted: the same `user_moderation.isMuted` row
+   * `ModerationService.isUserMuted` answers, read here by one query so the served controls and the
+   * guard cannot disagree.
+   */
+  private async viewerIsMuted(viewerId: string): Promise<boolean> {
+    const rows: { isMuted: boolean }[] = await this.postRepo.manager.query(
+      `SELECT "isMuted" FROM user_moderation WHERE "userId" = $1`,
+      [viewerId]
+    );
+    return rows?.[0]?.isMuted === true;
   }
 
   /**
@@ -947,7 +978,8 @@ export class PostsService {
         !!viewer.viewerId && !!post.associationId && (viewer.isGlobalAdmin || isPublisher),
       canUnrepublishAs: this.viewerMayUnrepublishAs(post, viewer),
       // An admin votes where an ordinary reader would (`assertMayVote`, 2026-11-14).
-      canVote: !!viewer.viewerId && this.viewerSeesWithoutGrant(post, viewer),
+      canVote: !!viewer.viewerId && !viewer.muted && this.viewerSeesWithoutGrant(post, viewer),
+      canLikeComments: participates && !viewer.muted,
       canSeeComments: !post.id || !viewer.commentsWithheldIds.has(post.id),
       canRequestRepublication: this.viewerMayRequestRepublication(post, viewer),
       republicationRequests: post.id
@@ -1487,6 +1519,9 @@ export class PostsService {
       throw new GoneException('This post was deleted');
     }
     await this.invalidateListCache();
+    // The usage dashboard's daily total (docs/wiki/usage-dashboard.md): a post or a CanaReel MADE
+    // today - counted once its row committed, never for a replayed client id (answered above).
+    void this.usage?.count(entity.kind === 'reel' ? 'reels' : 'posts');
 
     // The mentions are STORED here and told by `PostAnnounceScheduler` alone, under its one-shot
     // `feedNotifiedAt` claim, when the post is first published - at once (within a sweep) for a post

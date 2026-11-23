@@ -638,6 +638,10 @@ says so ([backlog](../backlog.d/p3-the-phone-polls-presence-every-ten-seconds-ov
 
 ## The anonymous census and its 24-hour series (2026-11-02)
 
+**Not to be confused with the usage dashboard** ([usage-dashboard](../usage-dashboard.md), 2026-11-23): the census
+counts sockets connected at each minute ("does the server hold"); the dashboard counts DISTINCT people per
+day, week and month, from the same presence write (`usage.rs`, called by `note_client`).
+
 **The owner's request (2026-11-02):** `/admin/status` listed every connected person and device; it
 now counts them - *"un outil de monitoring, avec une courbe des dernieres 24h (anonyme), avec la
 plateforme, la version"*. The page is `frontend/src/routes/admin/status/+page.svelte`

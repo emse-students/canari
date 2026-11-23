@@ -70,6 +70,8 @@ describe('FormsService - anonymous forms', () => {
       },
     };
     const respondentRepo: any = { count: jest.fn(() => Promise.resolve(0)) };
+    /** The usage dashboard's daily count: an anonymous answer must never reach it. */
+    const usage = { count: jest.fn(() => Promise.resolve()) };
     const pricingFacts: any = {
       build: jest.fn(() =>
         Promise.resolve({
@@ -92,9 +94,10 @@ describe('FormsService - anonymous forms', () => {
       {} as any,
       // FormOrganiserAlertService: switched off, as it ships.
       { enabled: () => false } as any,
-      {} as any
+      {} as any,
+      usage as any
     );
-    return { service, manager, saved, formRepo, submissionRepo, respondentRepo };
+    return { service, manager, saved, formRepo, submissionRepo, respondentRepo, usage };
   }
 
   describe('submit', () => {
@@ -117,6 +120,12 @@ describe('FormsService - anonymous forms', () => {
       expect(sql).not.toMatch(/userId|email|createdAt|At"/);
       expect(JSON.stringify(params)).not.toContain('u-alice');
       expect(JSON.stringify(params)).not.toContain('alice@example.org');
+    });
+
+    it('is not counted by the usage dashboard: a daily total would date it to the day again (docs/wiki/usage-dashboard.md)', async () => {
+      const { service, usage } = makeService();
+      await service.submit('f1', { userId: 'u-alice', answers: { q1: 'bof' } });
+      expect(usage.count).not.toHaveBeenCalled();
     });
 
     it('records WHO answered in the registry, which names no answer', async () => {
