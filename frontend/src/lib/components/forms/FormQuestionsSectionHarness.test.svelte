@@ -13,6 +13,7 @@
     gridFault?: { itemId: string; message: string } | null;
     offerBlocks?: boolean;
     imageUploadFn?: (file: File) => Promise<string>;
+    transmittedFields?: ('lastName' | 'firstName' | 'email' | 'cursus' | 'status' | 'campus')[];
   }
 
   let {
@@ -25,6 +26,7 @@
     gridFault = null,
     offerBlocks = true,
     imageUploadFn,
+    transmittedFields = [],
   }: Props = $props();
   let items = $state(untrack(() => initial));
   $effect(() => onItems($state.snapshot(items)));
@@ -40,4 +42,5 @@
   {gridFault}
   {offerBlocks}
   {imageUploadFn}
+  {transmittedFields}
 />

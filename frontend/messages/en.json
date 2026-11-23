@@ -6849,5 +6849,6 @@
   "alumni_merge_error_not_found": "This account no longer exists.",
   "alumni_merge_error_not_duplicate": "This account is not an Alumni duplicate: nothing was deleted.",
   "alumni_merge_error_no_match": "The two accounts do not match: nothing was deleted.",
-  "alumni_merge_error_holdings": "Could not count what the duplicate holds: nothing was deleted."
+  "alumni_merge_error_holdings": "Could not count what the duplicate holds: nothing was deleted.",
+  "form_question_duplicates_identity": "This field is already sent with every answer ({field}). You can delete this question."
 }

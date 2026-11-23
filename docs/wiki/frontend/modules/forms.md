@@ -1677,6 +1677,18 @@ announced fields, core-service down: 503 with no transaction opened, the Source 
 question and draws the notice; a form changed between load and submit is refused, read again with the
 typed answers and declared values kept, and sent; a reload that fails says "rechargez la page").
 
+### A question the form already answers (owner, 2026-11-23)
+
+A registration form asked "Nom", "Prenom", "Adresse mail" and "Promo" while it already transmitted the
+names from the account, so respondents typed twice what the organiser receives. `FormQuestionsSection`
+now draws a NON-BLOCKING note under a question whose title equals (case-, accent- and trailing-
+punctuation-folded, from a short synonym list per field, nothing fuzzier) a field the form transmits
+with every answer: `identityDuplicate.ts`. "Transmitted" is read from the editor's LIVE ticks through
+`respondentSettingsPayload`, so unticking a field clears the note at once; an anonymous form never
+transmits a name or an e-mail (so "Nom" is not flagged there), and on a public form a field counts only
+when members and guests both give it (an e-mail only a guest is asked still has to be typed by a
+member). Tests: `identityDuplicate.test.ts`, `FormQuestionsSection.identityDuplicate.svelte.test.ts`.
+
 ## A respondent changes their own answer (owner, 2026-11-13)
 
 A per-form switch, **"Autoriser la modification de la réponse"** (`forms.allowAnswerEdit`, OFF by
