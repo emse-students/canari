@@ -449,6 +449,17 @@ check "a crate change leaves that crate's suite to CI, by a named line" "a call-
   test -z "$(grep -F 'PLAN rust ' <<<"$out" || true)" -a -n "$(grep -F 'CI only: the Rust crates' <<<"$out" || true)"
 check "and not the frontend suite" "a Rust change planned the frontend suite" \
   test -z "$(grep -F 'PLAN frontend-test:' <<<"$out" || true)"
+# A service change runs ITS typecheck (specs included, which ts-jest's isolatedModules never types),
+# and only its own: 2026-11-23, #3989 shipped TS2345 in a scheduler and its spec.
+mkdir -p "$s/apps/social-service/src"
+echo "export const c = 1;" >"$s/apps/social-service/src/c.ts"
+git -C "$s" add apps/social-service/src/c.ts
+out=$(scope_push service)
+check "a service change plans that service's typecheck" "a social-service change planned no typecheck-social-service: $out" planned typecheck-social-service "$out"
+check "and no other service's" "a social-service change planned another service's typecheck: $out" \
+  test -z "$(grep -E 'PLAN typecheck-(core|media|chat-delivery)-service' <<<"$out" || true)"
+check "and it is the typecheck step through checks.sh" "the typecheck was not run through checks.sh ts: $out" \
+  test -n "$(grep -F 'checks.sh ts apps/social-service install typecheck' <<<"$out" || true)"
 # A top-level frontend config file, ALONE, owes the frontend jobs (2026-11-16: `kit.config.js` did not).
 for cfg in kit.config.js oxvelte.config.json project.inlang/settings.json; do
   mkdir -p "$s/frontend/$(dirname "$cfg")"

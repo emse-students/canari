@@ -58,7 +58,7 @@ test-rust                          ci-only   cargo test and clippy per crate: mi
 boot-nest-apps                     ci-only   boots each service on PostgreSQL, Redis and an S3 endpoint
 test-social-integration            ci-only   integration specs on PostgreSQL and Redis
 test-chat-delivery-integration     ci-only   integration specs on PostgreSQL
-test-typescript-backend            ci-only   the whole jest suite of a service: up to 20 min here
+test-typescript-backend            split     tsc --noEmit (typecheck, specs included) per service at push; lint, build and the jest suites in CI only
 test-frontend                      split     frontend-prepare and frontend-lint at push; dead-code and frontend-build in CI only
 test-frontend-shards               split     checks.sh frontend-test-related at push: the tests the range reaches; the whole suite in CI only
 test-android                       ci-only   android-unit-tests.sh: a Gradle run
@@ -298,7 +298,14 @@ push_plan() {
     fi
     echo "CI only: dead-code, frontend-build" >&2
   fi
-  [ "$(scope ts)" != "[]" ] && echo "CI only: the services' jest suites, boot-nest-apps, the PostgreSQL integration suites" >&2
+  # A TYPE ERROR IN A SERVICE, SPECS INCLUDED, FAILS HERE (2026-11-23, #3989). Jest runs ts-jest with
+  # `isolatedModules`, which transpiles without types, so no spec run ever sees one; only `tsc --noEmit`
+  # does (4-11 s per service, incremental). The services come from the scope CI's matrix uses.
+  local svc
+  while read -r svc; do
+    echo "typecheck-${svc#apps/}|bash .github/scripts/checks.sh ts $svc install typecheck"
+  done < <(grep -o 'apps/[a-z-]*' <<<"$(scope ts)" || true)
+  [ "$(scope ts)" != "[]" ] && echo "CI only: the services' jest suites, lint, build, boot-nest-apps, the PostgreSQL integration suites" >&2
   grep -q '"path":"' <<<"$(scope rust)" && echo "CI only: the Rust crates' cargo test and clippy" >&2
   [ "$(scope android)" = "true" ] && echo "CI only: android-unit" >&2
   [ "$(scope mls_compat)" = "true" ] && echo "CI only: mls-forward-compat" >&2
