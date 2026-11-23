@@ -560,10 +560,10 @@ other.
 | Path | Takes |
 | --- | --- |
 | Checkout opening (rank, amount, attempt row) | association shared + buyer |
-| Settlement (re-rank, grant, XOR) | association shared + buyer |
+| Settlement (verdict on the tiers held now against the frozen opening, grant, XOR) | association shared + buyer |
 | Cash sale (`grantProductPurchase`; the product re-read after the locks) | association shared + buyer |
 | `grantCotisant` - the roster picker; tiers and tag derived after the locks | association shared + buyer |
-| A paid form's grant (`grantCotisantIfARise`: ranked like a settlement, refused -> `paid_not_granted`) | association shared + buyer |
+| A paid form's grant (`grantCotisantIfARise`: RANKED on current prices, where a settlement judges on the tier its checkout froze; refused -> `paid_not_granted`) | association shared + buyer |
 | Legacy claim (`grantCotisantUnlessHeld`: "already holds one" read under the locks) | association shared + buyer |
 | Raw tag grant (`POST :id/tags`, `grantTagForAssociation`: one of the association's own tier tags, then the manual add's body) | association shared + buyer |
 | Tag revocation (`revoke`: the holder read from the row, then the delete) | association shared + buyer |
@@ -951,8 +951,11 @@ to a higher tier").
   default is a price the checkout charges unchecked too, so a member price under
   `customAmountMinCents` is recorded - and typing that very quoted amount is the default, not an
   override. The
-  price is read before the buyer's tier lock, as the grid cell always was: a tier granted to that
-  buyer in the same instant can leave the default one tier stale, never the grant itself.
+  default is quoted INSIDE the sale's transaction, under the buyer's tier lock (`fulfillProductPurchase`
+  takes the amount as a function of the transaction manager), so a tier granted or revoked in the same
+  instant cannot leave it one tier off; only the beneficiary's profile read (a grid's call to
+  core-service, which no lock may wait on) is made before the lock. The cashier's screen quote
+  (`quoteCashSale`) is a display and reads outside any lock.
 - `POST /api/associations/:id/tags` -> raw tag grant with an admin-supplied `tagName`/`expiresAt`
   (`MANAGE_MEMBERS`), the name being one of the association's own tier tags, granted like the
   manual add ([above](#a-tag-counts-only-for-the-association-that-issued-it)); `DELETE /api/associations/:id/tags/:tagId` revokes. The revoke is scoped to

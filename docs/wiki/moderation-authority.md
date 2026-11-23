@@ -82,7 +82,7 @@ questions the first draft of this page left open, the same day.
 9. **Sanctions: the mute extends to votes, comment likes and nicknames.** Community and group messages
    stay outside it - each place regulates itself. Account suspension touches MiConnect and is a
    [decided 2026-11-19: a platform admin suspends, in Canari only](backlog.d/a-platform-admin-suspends-an-account-in-canari.md).
-   [WP](backlog.d/p2-the-mute-covers-votes-and-comment-likes.md).
+   Votes and comment likes are built; nicknames: [WP](backlog.d/p2-a-reported-community-nickname-reaches-the-community-moderators.md).
 10. **Encrypted groups (MLS): ALL MEMBERS ARE EQUAL.** *"A quoi sert un role d'admin dans les groupes ?
     Les communautes oui, les groupes, tout le monde est a egalite non ?"* The unread `role` column of
     `dm_group_members` and its misleading comment go; removing a member stays open to every member.
@@ -377,7 +377,7 @@ moderation read (`allowHidden` passes it, `SS/posts/post-openable.ts`). Unchange
 
 | Sanction | Who | What it covers (target) | Today |
 | --- | --- | --- | --- |
-| Mute (one row, platform-wide) | AP, BM of the person's spaces | posts, reactions, comments, republications, reposts, follow requests, lives and their chat, **votes, comment likes, community nicknames** | **votes and comment likes are not checked** (`votePoll`, `likeComment` in `SS/posts/posts.controller.ts`), **nor nicknames** [MUTE] [NICK] |
+| Mute (one row, platform-wide) | AP, BM of the person's spaces | posts, reactions, comments, republications, reposts, follow requests, lives and their chat, **votes, comment likes, community nicknames** | votes and comment likes are refused to a muted account (`votePoll`, `likeComment` call `assertNotMuted` first, `SS/posts/posts.controller.ts`; `posts.controller.mute.spec.ts`); **nicknames are not checked** [NICK] |
 | Outside the mute, deliberately | - | community and salon messages, DMs and groups: each place regulates itself (decision 9) | same |
 | Not decided | - | events, forms | not covered |
 | Broadcast ladder | AP, BM | warning, 30-day suspension of broadcasting, withdrawal ([lives](services/lives.md#the-strike-ladder-wp-l8b)) | same |
@@ -395,7 +395,6 @@ moderation read (`allowHidden` passes it, `SS/posts/post-openable.ts`). Unchange
 | `NICK` | a reported nickname reaches a queue with no tool; a muted moderator renames | [nicknames to the community](backlog.d/p2-a-reported-community-nickname-reaches-the-community-moderators.md) | `1.9.0` |
 | `LIVE` | an association's live belongs to its broadcaster alone; a chat line cannot be hidden after the end | [the live's moderators](backlog.d/p2-an-association-live-is-moderated-by-its-co-holders.md) | `1.9.0` |
 | `AGENDA` | a BDE, a super-admin and the AP rewrite another body's event or form | [validate, never rewrite](backlog.d/p2-a-bde-validates-an-event-but-never-rewrites-it.md) | `1.9.0` |
-| `MUTE` | the mute ignores votes and comment likes | [the mute's gaps](backlog.d/p2-the-mute-covers-votes-and-comment-likes.md) | `1.9.0` |
 | `JOURNAL` | no moderator sees what its peers did | [the journal](backlog.d/p2-every-moderation-act-is-journaled-for-its-peers.md) | `1.9.0` |
 | `NOTICE` | a moderated person is never told | [the notice](backlog.d/p2-a-moderated-person-is-told-which-place-acted.md) | `1.9.0` |
 | `BIO` | a bio cannot be erased by anyone but its owner | [bio erasure](backlog.d/p2-a-moderator-erases-a-bio.md) | `1.9.0` |

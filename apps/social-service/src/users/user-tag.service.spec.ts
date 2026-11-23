@@ -503,7 +503,8 @@ describe('UserTagService.listCotisants / exportCotisants', () => {
     });
   });
 
-  // A paid form's grant is ranked like a settlement: it never swaps out a dearer tier by the XOR.
+  // A paid form's grant is ranked (`rankTier`, current prices), which a settlement is not: both
+  // refuse a tier already held, and the form's grant never swaps out a dearer tier by the XOR.
   describe('grantCotisantWithin', () => {
     it("grants inside the CALLER's transaction, under the buyer's lock, never opening its own", async () => {
       const { service, repo } = makeService();

@@ -399,6 +399,8 @@ export class PostsController {
     @Body() body: VotePollDto,
     @Headers('x-global-admin') xGlobalAdmin?: string
   ) {
+    // A vote is participation: the mute covers it (moderation-authority, decision 9).
+    await this.assertNotMuted(xUserId);
     await this.service.assertMayVote(postId, xUserId);
     const stored = await this.interactions.votePoll(postId, pollId, { ...body, userId: xUserId });
     return this.service.serveToReader(stored, {
@@ -482,6 +484,8 @@ export class PostsController {
     @Param('postId') postId: string,
     @Param('commentId') commentId: string
   ) {
+    // A comment like is participation: the mute covers it (moderation-authority, decision 9).
+    await this.assertNotMuted(xUserId);
     await this.service.assertVisible(postId, xUserId, 'COMMENT');
     return this.interactions.likeComment(postId, commentId, xUserId, xGlobalAdmin === 'true');
   }
