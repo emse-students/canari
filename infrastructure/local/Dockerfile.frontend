@@ -123,6 +123,13 @@ RUN printf '# THE ACCESS LOG NEVER RECORDS A BEARER TOKEN (prod 2026-10-06: ever
 # token), and an invite keeps its route with its token replaced -\n\
 # the two join pages (their whole path segment, whatever its alphabet, and their query if any) and the\n\
 # two API routes that read an invite.\n\
+# AN ANONYMOUS FORM IS NOT LOGGED WITH ITS ID, NOR A SOCKET WITH ITS USER (2026-11-23, the cursus join review of\n\
+# 2026-11-21): `POST /api/forms/<id>/submit` and `POST /api/public/forms/<id>/submit` kept the form's id\n\
+# beside the client address - for an anonymous form, the address next to the form a person answered - so\n\
+# both are logged as their route (`.../forms/redacted/submit`). A `/api/ws` line paired the address with\n\
+# the `userId` of its query (and a deviceId that starts with it), so the socket drops its WHOLE query:\n\
+# one rule for every spelling of the key, where a map rewriting one occurrence is how the token rule\n\
+# needed three. The services log the user and the device themselves; this line need not.\n\
 # TWO MAPS, CHAINED: a map applies ONE rule, so the route rules run first and the query rules then\n\
 # run on their output - an invite path that also carries a token= or a quoted join path is redacted\n\
 # twice, not once.\n\
@@ -132,6 +139,8 @@ RUN printf '# THE ACCESS LOG NEVER RECORDS A BEARER TOKEN (prod 2026-10-06: ever
 # and log the field as "-". access-log-redaction.test.mjs times every rule on adversarial inputs in\n\
 # the JavaScript engine, a proxy for PCRE; the 2026-10-28 rules were also run through pcre2test.\n\
 map $request_uri $route_redacted_request_uri {\n\
+    "~^/api/ws[?]" "/api/ws?query-redacted";\n\
+    "~^(?<form_head>/api/(?:public/)?forms/)[^/?]+(?<form_tail>/submit)(?:[?].*)?$" "${form_head}redacted${form_tail}";\n\
     "~^/api/presence[?]" "/api/presence?query-redacted";\n\
     "~^/api/mls/gifs/media(?:[?]|$)" "/api/mls/gifs/media?query-redacted";\n\
     "~^/api/mls/gifs(?:[?/]|$)" "/api/mls/gifs?query-redacted";\n\
@@ -150,7 +159,8 @@ map $request_uri $route_redacted_request_uri {\n\
 # SPELLED: a query holding the key twice, or spelled percent-encoded, in another case or as an array\n\
 # (token[]) loses its WHOLE query too: a map rewrites one occurrence, and the services decode the key\n\
 # before reading it, so a literal match alone would log the others. A query holding it once,\n\
-# literally, keeps everything but its value (the /api/ws line keeps userId/deviceId).\n\
+# literally, keeps everything but its value (the /api/ws line no longer reaches here with one: the\n\
+# route map above already dropped its whole query).\n\
 map $route_redacted_request_uri $logged_request_uri {\n\
     "~*^(?<join_query_path>[^?]*)[?].*?(?:/|%%2f|%%252f)[cg](?:/|%%2f|%%252f)join(?:/|%%2f|%%252f)" "${join_query_path}?query-redacted";\n\
     "~*^(?<query_path>[^?]*)[?](?:[^&]*&)*?(?:(?:t|%%[57]4)(?:o|%%[46]f)(?:k|%%[46]b)(?:e|%%[46]5)(?:n|%%[46]e)(?:=|[[]|%%5b)[^&]*&(?:[^&]*&)*?(?:t|%%[57]4)(?:o|%%[46]f)(?:k|%%[46]b)(?:e|%%[46]5)(?:n|%%[46]e)(?:=|[[]|%%5b)|(?!token=)(?:t|%%[57]4)(?:o|%%[46]f)(?:k|%%[46]b)(?:e|%%[46]5)(?:n|%%[46]e)(?:=|[[]|%%5b))" "${query_path}?query-redacted";\n\

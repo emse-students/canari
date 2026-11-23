@@ -24,6 +24,9 @@
  *   and a join path quoted percent-encoded in a query too. The `token` key spelled twice,
  *   percent-encoded, in another case or as an array drops the whole query (a map rewrites ONE
  *   occurrence). The route map and the token map are chained, so both apply to one line.
+ * - a socket's whole query and a form's id (2026-11-23): `/api/ws?...` drops its query (it paired the
+ *   client address with the `userId`), and `/api/forms/<id>/submit` and `/api/public/forms/<id>/submit`
+ *   keep their route and lose the id (an anonymous answer's address beside the form it answered).
  * - the referer field goes through its own map: one naming any of those keeps its origin only.
  * - THE ERROR LOG MUST NOT RECORD A WEBSOCKET REQUEST LINE: the access log's redaction does not
  *   reach it, and it prints the raw request line - query included - for an error on the request
@@ -149,11 +152,23 @@ if (routeMap && tokenMap && refererMap) {
   {
     const apply = (uri) => tokenMap(routeMap(uri));
     const cases = [
-      [
-        '/api/ws?userId=u1&token=eyJSECRET.abc&deviceId=d1',
-        '/api/ws?userId=u1&token=redacted&deviceId=d1',
-      ],
-      ['/api/ws?token=eyJSECRET', '/api/ws?token=redacted'],
+      // The socket's whole query goes (2026-11-23): its token, and the userId that paired the client
+      // address with an account. The bare route and a longer path stay.
+      ['/api/ws?userId=u1&token=eyJSECRET.abc&deviceId=d1', '/api/ws?query-redacted'],
+      ['/api/ws?token=eyJSECRET', '/api/ws?query-redacted'],
+      ['/api/ws?%75serId=u1', '/api/ws?query-redacted'],
+      ['/api/ws', '/api/ws'],
+      ['/api/wsx?userId=keep', '/api/wsx?userId=keep'],
+      // A form's submit routes keep the route and lose the id (2026-11-23): an anonymous answer's
+      // address no longer sits beside the form it answered. Anything else under /forms/ stays.
+      ['/api/forms/9b2f-1c/submit', '/api/forms/redacted/submit'],
+      ['/api/public/forms/9b2f-1c/submit', '/api/public/forms/redacted/submit'],
+      ['/api/public/forms/9b2f-1c/submit?x=1', '/api/public/forms/redacted/submit'],
+      ['/api/forms/9b2f-1c', '/api/forms/9b2f-1c'],
+      ['/api/forms/9b2f-1c/submissions', '/api/forms/9b2f-1c/submissions'],
+      ['/api/forms/9b2f-1c/submit/extra', '/api/forms/9b2f-1c/submit/extra'],
+      ['/api/forms/submit', '/api/forms/submit'],
+      ['/api/public/forms/receipts/confirm', '/api/public/forms/receipts/confirm'],
       ['/x?xtoken=keep&a=b', '/x?xtoken=keep&a=b'],
       ['/plain', '/plain'],
       // A GIF search: the whole query goes, whatever it carries (2026-10-16).
@@ -180,12 +195,13 @@ if (routeMap && tokenMap && refererMap) {
       ['/api/presences?users=keep', '/api/presences?users=keep'],
       // The token key, however it is spelled (2026-10-28): twice, percent-encoded, another case,
       // an array. Each loses its whole query; `xtoken` and a value that merely says token stay.
-      ['/api/ws?token=A&x=1&token=B', '/api/ws?query-redacted'],
-      ['/api/ws?%74oken=SECRET&a=b', '/api/ws?query-redacted'],
-      ['/api/ws?a=b&%74%6F%6B%65%6E=SECRET', '/api/ws?query-redacted'],
-      ['/api/ws?TOKEN=SECRET', '/api/ws?TOKEN=redacted'],
-      ['/api/ws?token[]=SECRET', '/api/ws?query-redacted'],
-      ['/api/ws?token%5B%5D=SECRET', '/api/ws?query-redacted'],
+      ['/x?token=A&x=1&token=B', '/x?query-redacted'],
+      ['/x?%74oken=SECRET&a=b', '/x?query-redacted'],
+      ['/x?a=b&%74%6F%6B%65%6E=SECRET', '/x?query-redacted'],
+      ['/x?TOKEN=SECRET', '/x?TOKEN=redacted'],
+      ['/x?token[]=SECRET', '/x?query-redacted'],
+      ['/x?token%5B%5D=SECRET', '/x?query-redacted'],
+      ['/x?userId=u1&token=SECRET&deviceId=d1', '/x?userId=u1&token=redacted&deviceId=d1'],
       ['/x?xtoken=a&ytoken=b', '/x?xtoken=a&ytoken=b'],
       ['/x?%78token=keep', '/x?%78token=keep'],
       ['/x?q=token%3Dkeep', '/x?q=token%3Dkeep'],

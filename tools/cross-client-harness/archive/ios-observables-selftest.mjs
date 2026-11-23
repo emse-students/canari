@@ -354,6 +354,20 @@ const notifScreens = (root) => ({
   restore();
 }
 {
+  // The submit button starts BELOW the sheet's fold (S9, 1.7.1-alpha.3): the terms stage scrolls to it.
+  const HOSTS = ['auth.canari-emse.fr'];
+  const bar = el('auth.canari-emse.fr', 'StaticText', row(50));
+  const box = el("J'ai lu les conditions d'utilisation de MiConnect, et je les accepte.", 'Switch', row(300));
+  const { s, restore } = device({
+    start: 'terms',
+    screens: { terms: [bar, box, el('Continuer', 'Button', row(900), { go: 'app' })], app: [] },
+  });
+  s.scroll = ['terms'];
+  const r = await ios.signInThroughSheet({ username: 'u', password: 'p' }, { hosts: HOSTS });
+  check('O9: a terms submit below the fold is scrolled to, then tapped', JSON.stringify(r.stages) === '["terms"]' && s.calls.some((c) => c.startsWith('swipe ')), JSON.stringify(r));
+  restore();
+}
+{
   const HOSTS = ['auth.canari-emse.fr'];
   const alert = [el('« Canari » souhaite utiliser…', 'Alert', row(300)), el('Continuer', 'Button', row(400), { go: 'app' })];
   const { s, restore } = device({ start: 'consent', screens: { consent: alert, app: [] } });

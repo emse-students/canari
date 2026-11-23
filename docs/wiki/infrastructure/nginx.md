@@ -359,7 +359,7 @@ $logged_request_uri` that redacts every `token=` query value (`xtoken=` is left 
 `canari_redacted` format that is `main` with `$request` rebuilt from it, and the `access_log` **inside
 the server block** - at http level it would ADD to the base image's `main` and write the raw line
 beside the redacted one (measured). Gate: `.github/scripts/tests/access-log-redaction.test.mjs`.
-The same map drops the whole query of the GIF search (`/api/mls/gifs?query-redacted`, 2026-10-16)
+Since 2026-11-23 the route map also drops the whole query of `/api/ws` (its `userId` paired the client address with an account; the whole query goes rather than that one key because the `deviceId` carries the user id's prefix and a map rewrites one spelling of a key, owner-approved 2026-11-23) and replaces the id of `/api/forms/<id>/submit` and `/api/public/forms/<id>/submit` with `redacted` (an anonymous answer's address beside the form it answered). The same map drops the whole query of the GIF search (`/api/mls/gifs?query-redacted`, 2026-10-16)
 and of the GIF relay (`/api/mls/gifs/media?query-redacted`, 2026-10-18, its own rule first): a
 search, or which GIF a reader loaded, beside their address is what those routes keep from KLIPY.
 And of the legacy presence read (`/api/presence?query-redacted`, 2026-10-28): its query named every
