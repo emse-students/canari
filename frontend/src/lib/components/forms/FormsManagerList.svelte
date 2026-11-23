@@ -717,6 +717,7 @@
                   deletingId={deletingSubmissionId}
                   onDelete={(sub) => void handleDeleteSubmission(form.id, sub)}
                   onReload={() => reloadResponses(form)}
+                  heldCount={form.anonymous ? (heldAnswers[form.id]?.held ?? 0) : 0}
                 />
               {/if}
             </div>

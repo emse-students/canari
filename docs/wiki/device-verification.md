@@ -3951,7 +3951,7 @@ A web-only sitting on dev `1.7.0-alpha.2` (build `dev.9ca790c`): the rig's three
 | A HISTORY ask answered "I hold nothing" [entry](protocols/channel-encryption.md#24-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster-wp-hold-nothing-decided-2026-10-18) | **PASS (web half)**, Mi half left | One ask per member and one `holds nothing ... recorded` per answering device in the joining session, then no `asked` line for that community at a true cold start; answerers were other devices of alpha and gamma, not a web seat that joined after the history |
 | The checkpoint every commit awaits (entry deleted: every half is read) | **LEAF-REFRESH-3 PASS (by hand); 1 and 2 PASS, 4 PASS-DIRTY on the runner's own narration gap, in [the leaf-refresh rows](#the-leaf-refresh-rows-on-the-web-rig-2026-11-16-170-alpha2-then-alpha3-dev-builds-dev9ca790c-and-dev68983e3)** | A refresh with the third seat closed: epoch 6 to 7, one `[COMMIT]`, the seat reopened read both texts once, no `[WELCOME]`; the runner `leaf.mjs` then read -1, -2 and -4 |
 | The live seen-cipher mark ([entry](backlog.d/reading-owed-the-live-seen-cipher-mark-written-at-the-checkpoint.md)) | **NOT REPRODUCED (3 runs), cause unproven** | TAB-3b's shape on two small seats read 0 accusation lines; the order `processIncomingMessage` (checkpoint) then `noteFrameConsumed` is the candidate window |
-| The organiser alert for a payment over capacity ([entry](backlog.d/reading-owed-the-organiser-alert-for-a-payment-over-capacity.md)) | **NOT TAKEN: cannot be** | The switch is a compiled `false`; no Lydia, no money. The flip pull request is owed |
+| The organiser alert for a payment over capacity ([entry](#the-readings-of-2026-11-23-180-alpha4-mi-9t-the-live-sheets-camera-sentence-the-switch-the-bell-the-mute-the-group-creation-log)) | **NOT TAKEN: cannot be** | The switch is a compiled `false`; no Lydia, no money. The flip pull request is owed |
 | Campus trends ([entry](backlog.d/reading-owed-campus-trends-and-the-daily-cap-wp-8-wp-10-and-the-quieter-batch.md)) | **STAGED, NOT FIRED** | Two dev posts sit one reaction below `TREND_THRESHOLD`; the next like crosses; it rings the phones' accounts, so a phone sitting fires it |
 | Native devices with no push token (entry deleted 2026-11-22, read) | **Server half read; the fix itself waits for the stable** | Production still `1.6.12`: 27 of 73 `1.6.12` devices tokenless, all born since the deploy; older builds 0 of 205. Dev: both `1.7.0` devices hold a token, `[PUSH_COVERAGE]` names the pre-fix builds |
 | The institution's spaces and public ([entry](backlog.d/reading-owed-an-institution-chooses-each-post-s-spaces-and-public.md)) | **Web half re-read; reel path NOT reachable on the web** | The composer's picker, hints and chip again; a post staged for the phones |
@@ -5229,3 +5229,36 @@ Read on dev (`1.8.0-alpha.3`, build `dev.1ab8411`) on the bench iPhone 12 (iOS 2
 | The broadcaster's control column, the Lydia notices, the old-WebView screen, the voice notes | **NOT TAKEN** | Android or Lydia-sandbox readings, or a live studio not started in this sitting; entries unchanged |
 
 **Dev data written** (all in `WRITTEN-IDS.txt`): a form, a booking space and an event of "Club photo" (the event validated from the iPhone), a throwaway group deleted by its creator twice over, the messages and reactions of `delta` in the DM with the iPhone account.
+
+## The readings of 2026-11-23 (`1.8.0-alpha.4`, Mi 9T): the live sheet's camera sentence, the switch, the bell, the mute, the group-creation log
+
+Release APK `1.8.0-alpha.4` over the alpha.3 install, dev serving the same version (`/api/version`). Harness seats: the Mi on the `alpha` account, the web seat `w2` as `beta`.
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| #3998 live sheet with the camera permission DENIED: "Passer en direct" names the refusal and offers the settings | **PASS** | From the composer's "En direct" with the Android camera permission denied, the sheet states the permission refusal (not "another app uses the camera") and "Ouvrir les reglages" opens the system settings. The camera tab and the composer were read in the same state; the permission was restored afterwards |
+| #3998 the Rediffusion switch on the dark pre-live sheet | **PASS** | OFF and ON are both distinguishable on the dark sheet |
+| #3998 the bell after "Rien", "Ne plus suivre", "Suivre" | **PASS** | After the re-follow the bell reads "Publications et lives" at once, with no second tap |
+| #4000 a muted account: poll options refused, comment heart disabled with the reason, un-like allowed | **PASS** | The mute was made from a report in Admin > Posts signales ("Muter l'auteur") on the `beta` account; the poll refused its vote, the heart was disabled with its reason, and an existing like could still be taken back. The account was unmuted afterwards |
+| #4005 one log line at group creation | **PASS** | The in-app log exported from the phone (Settings > A propos > Enregistrer le journal) holds the creation line of the new group once |
+| #4005 the salon "member added" notice | **NOT TAKEN** | The restricted salon was made, but the "Ajouter un utilisateur" field offered no result for the second account (the "Ajouter" button stayed disabled), so no member was added and no notice written. The invite path is covered by the server spec; the reading is closed as not readable from this seat |
+| The Lydia notices (cashier added, payments active and paused), the organiser alert, the Responsable hand-over | **CLOSED, cannot be read** | Each needs a Lydia sandbox transition or real money; the owner's rule of 2026-11-23 closes a reading nobody can take. The entries are deleted; a defect in these paths comes back as a bug report |
+
+**Dev data written** (all in `WRITTEN-IDS.txt`): a poll post with a comment and a follow and unfollow, a report with the mute and unmute of `beta`, a group made for the creation-log reading, and a private salon in the BancOuverture-1 community with no second member.
+
+**Left open, not read in this sitting:** the broadcaster's control column (long title, keyboard up, studio on a short screen) and the form blocks; both stay in the plan.
+
+## The readings of 2026-11-23 (`1.8.0-alpha.4`, Mi 9T, second group): the salon access search, the broadcaster's column, the form blocks
+
+Same install as [the first group](#the-readings-of-2026-11-23-180-alpha4-mi-9t-the-live-sheets-camera-sentence-the-switch-the-bell-the-mute-the-group-creation-log).
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| The restricted salon's "Ajouter un utilisateur" returned no result for the second account (first group) | **NOT A DEFECT** | The field offers the members of the salon's COMMUNITY only (`filterUserIds` is the community's member list, `ChannelSettingsPanel.svelte`). The test community held one member (the creator), and the second account's own community list does not show it. The community's own "Membres" search is global: it found the account, "Generer une invitation" made it a member at once ("2 membres"), and the salon field then listed it, "Ajouter" put it in "Membres autorises" |
+| #4005 the salon's "member added" notice | **NOT TAKEN, narrowed** | After the add, the salon's timeline on the creator's phone stayed empty, and the second account's discussion list showed one row "Canari Test Alpha vous a invite a rejoindre BancOuverture-1" (no duplicate), but it was stamped "2 h" and was not proven to be the notice written by this add. The minted-id path is `inviteMemberToChannel` (the community invitation card), which the access-list add does not call. Entry for the unit test unchanged; no phone reading can separate the two on this rig |
+| The broadcaster's column, a LONG title | **PASS** | A 67-character title on air is cut with an ellipsis at about 60 % of the width, well clear of the right-edge column |
+| The broadcaster's column, the KEYBOARD up in portrait | **PASS** | With the comment box focused the column keeps its place (End first, then flip, mic, camera, share, chat) and the comment bar rises under it, no control overlaps |
+| The broadcaster's column, the studio on a SHORT screen | **CLOSED, cannot be read** | No studio control is offered on this phone's pre-live or on-air screen, and the live screen did not rotate when the system rotation was forced (landscape is covered by the owner's validation of the live-screen rotation). The rotation setting was restored |
+| Form text and image blocks (Mi 9T) | **NO MI PART OWED** | The Mi half passed on `alpha.3`; what is left is the editor's arrows in a browser |
+
+**Dev data written** (all in `WRITTEN-IDS.txt`): the second account made a member of the test community, added to the private salon, and one live with its replay OFF (ended; "Rien n'en est garde").

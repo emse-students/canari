@@ -69,7 +69,7 @@ who leaves kept the row and Lydia's rights - is BUILT with the flip
    typed confirmation; heirs hold `MANAGE_PAYOUT_ACCOUNT`; a cashier is promoted in one step - owner,
    2026-11-20) ([payments](../frontend/modules/payments.md#handing-the-responsable-over-owner-2026-11-19)).
    Items 4 and 6 stand: an erased Responsable's current number stays live at Lydia under no row. It flips
-   after [homologation](reading-owed-the-lydia-responsable-hand-over-runs-against-homologation.md);
+   after [homologation](../device-verification.md#the-readings-of-2026-11-23-180-alpha4-mi-9t-the-live-sheets-camera-sentence-the-switch-the-bell-the-mute-the-group-creation-log);
    the owner's production trial is a closed reading ([closed readings](../device-verification.md#readings-closed-on-2026-11-23---no-hand-can-take-them)).
 8. **The claim fence is a clock.** social waits 30 s for core's removal and then records it NOT
    confirmed and releases the claim; core bounds its three Lydia calls to 24 s, but an axios timeout is

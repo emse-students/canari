@@ -11,8 +11,9 @@
   import type { ProductGridTierDimension } from '$lib/forms/productGridEditor';
   import { insertQuestion, type DraftQuestion } from '$lib/forms/questionDraft';
   import { isFormBlockType, questionItemsOf, questionNumbers } from '$lib/forms/formBlocks';
+  import { identityDuplicates, type TransmittableField } from '$lib/forms/identityDuplicate';
   import { Log } from '$lib/utils/Log';
-  import { ListChecks, Plus } from '@lucide/svelte';
+  import { ListChecks, Plus, Info } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { draggableCard } from '$lib/actions/draggableCard';
 
@@ -84,6 +85,11 @@
     isPublic?: boolean;
     /** The priced grid a refused save is about, and its sentence - drawn under that grid. */
     gridFault?: { itemId: string; message: string } | null;
+    /**
+     * The identity fields the form transmits with every answer, live from the editor's settings: a
+     * question titled like one gets a non-blocking warning (`identityDuplicate.ts`).
+     */
+    transmittedFields?: TransmittableField[];
   }
 
   let {
@@ -105,6 +111,7 @@
     orderedReady = true,
     isPublic = false,
     gridFault = null,
+    transmittedFields = [],
   }: Props = $props();
 
   const types = $derived(
@@ -137,6 +144,8 @@
   // image block is not one (`formBlocks.ts`).
   const countLabel = $derived(m.form_questions_count({ count: questionItemsOf(items).length }));
   const numbers = $derived(questionNumbers(items));
+  /** Per question id, the transmitted field its title repeats. */
+  const duplicates = $derived(identityDuplicates(items, transmittedFields));
 
   function openWizard(afterIndex: number | null) {
     Log.d('FormQuestionsSection', `add wizard opened, after ${afterIndex ?? 'the end'}`);
@@ -266,6 +275,15 @@
           {isPublic}
           gridProblem={gridFault?.itemId === _item.id ? (gridFault?.message ?? null) : null}
         />
+        {#if duplicates.has(_item.id)}
+          <p
+            class="bg-amber-warn/10 text-amber-warn-text mt-1 flex items-start gap-2 rounded-lg px-3 py-2 text-xs"
+            data-testid="identity-duplicate-warning"
+          >
+            <Info size={14} class="mt-0.5 shrink-0" aria-hidden="true" />
+            {m.form_question_duplicates_identity({ field: duplicates.get(_item.id) ?? '' })}
+          </p>
+        {/if}
       </div>
     {/each}
   </div>

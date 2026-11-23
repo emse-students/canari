@@ -997,8 +997,7 @@ class MainActivity : TauriActivity() {
         // no-op after migration since processPendingPushSecret deletes the file).
         Thread {
             val app = application as? CanariApplication ?: return@Thread
-            app.processPendingPushSecret()
-            app.checkKeystoreHealth()
+            app.checkKeystoreHealth(adoptionFailed = app.processPendingPushSecret())
         }.start()
     }
 

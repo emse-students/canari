@@ -250,15 +250,12 @@ describe('FormsService - the seat a pending payment holds', () => {
         async ({ where }: { where: Record<string, unknown>[] }) =>
           rows.filter((r) => matches(r, where)).length
       ),
-      find: jest.fn(
-        async ({ where, order }: { where: Record<string, unknown>[]; order?: object }) => {
-          expect(order).toEqual({ createdAt: 'DESC' });
-          return rows
-            .filter((r) => matches(r, where))
-            .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-            .map((r) => ({ ...r }));
-        }
-      ),
+      find: jest.fn(async ({ where }: { where: Record<string, unknown>[] }) => {
+        return rows
+          .filter((r) => matches(r, where))
+          .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+          .map((r) => ({ ...r }));
+      }),
       // By id, or by a criteria object (the conditional naming of a request, `issueOnlineRequest`).
       update: jest.fn(async (criteria: string | Record<string, unknown>, values: Partial<Row>) => {
         await roundTrip();
@@ -3456,6 +3453,32 @@ describe('FormsService - the seat a pending payment holds', () => {
     });
   });
 
+  describe('the answers the organiser reads (holdsSeat)', () => {
+    it('flags each answer with the SAME predicate the seat count uses', async () => {
+      const { service } = makeStore({
+        maxSubmissions: 10,
+        rows: [
+          row({ id: 'paid', userId: null, paymentStatus: 'paid' }),
+          row({ id: 'cancelled', userId: null, paymentStatus: 'cancelled' }),
+          row({ id: 'expired', userId: null, paymentStatus: 'expired' }),
+          row({ id: 'inside', userId: null, paymentRequestedAt: ago(HOLD_MS - 1000) }),
+          row({ id: 'past', userId: null, paymentRequestedAt: ago(HOLD_MS + 1000) }),
+        ],
+      });
+      const read = await service.getSubmissions('f1');
+      const flags = Object.fromEntries(read.map((s: any) => [s.id, s.holdsSeat]));
+      expect(flags).toEqual({
+        paid: true,
+        cancelled: false,
+        expired: false,
+        inside: true,
+        past: false,
+      });
+      expect(read.filter((s: any) => s.holdsSeat)).toHaveLength(
+        (await service.get('f1')).submissionCount as number
+      );
+    });
+  });
   describe('overCapacityFirst', () => {
     it('puts the rows owed a refund on top and keeps the order within each half', () => {
       const ordered = overCapacityFirst([

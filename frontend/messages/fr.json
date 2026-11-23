@@ -3232,6 +3232,7 @@
   "form_list_delete_anonymous_submission_confirm": "Supprimer cette réponse anonyme ?",
   "form_status_refunded": "Remboursé",
   "form_responses_card_answers": "Réponses",
+  "form_responses_card_seats": "Places occupées",
   "form_responses_card_guests": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],
@@ -3258,7 +3259,9 @@
   "form_responses_filter_all": "Toutes",
   "form_responses_filter_paid": "Payées",
   "form_responses_filter_unpaid": "Non payées",
+  "form_responses_filter_abandoned": "Abandonnées",
   "form_responses_filter_refunded": "Remboursées",
+  "form_responses_seats": "{taken} / {max} places",
   "form_responses_held_notice": "Réponses en attente : {count}. Sur un formulaire anonyme, elles s'affichent par groupes de {size}, et les dernières à la clôture du formulaire.",
   "form_responses_no_match": "Aucune réponse ne correspond.",
   "form_responses_status_with_method": "{status} · {method}",
@@ -6871,5 +6874,6 @@
   "alumni_merge_error_not_found": "Ce compte n'existe plus.",
   "alumni_merge_error_not_duplicate": "Ce compte n'est pas un doublon Alumni : rien n'a été supprimé.",
   "alumni_merge_error_no_match": "Les deux comptes ne correspondent pas : rien n'a été supprimé.",
-  "alumni_merge_error_holdings": "Impossible de compter ce que contient le doublon : rien n'a été supprimé."
+  "alumni_merge_error_holdings": "Impossible de compter ce que contient le doublon : rien n'a été supprimé.",
+  "form_question_duplicates_identity": "Ce champ est déjà transmis avec chaque réponse ({field}). Vous pouvez supprimer cette question."
 }
