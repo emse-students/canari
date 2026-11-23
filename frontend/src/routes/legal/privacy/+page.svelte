@@ -62,7 +62,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="21/11/2026"
+  updated="23/11/2026"
   {sections}
 >
   <!-- 1 -->
@@ -517,6 +517,24 @@
         </dd>
       </div>
       <div>
+        <dt>Statistiques d'utilisation (anonymes)</dt>
+        <dd>
+          Pour savoir si Canari sert et tient la charge, les administrateurs de la plateforme voient
+          des chiffres d'ensemble, jamais une personne : combien de personnes différentes ont
+          utilisé Canari chaque jour, semaine et mois (au total, par type d'appareil - appli
+          Android, iPhone ou ordinateur, site web sur téléphone Android, sur iPhone ou iPad, sur
+          ordinateur - et par version de l'application), à quelles heures de la semaine, et chaque
+          jour le nombre total de messages, publications, CanaReels, lives, appels et réponses à des
+          formulaires nommés sur toute la plateforme. Pour compter les personnes sans garder de
+          liste, le serveur ajoute l'identifiant de votre compte à un compteur probabiliste
+          (HyperLogLog) qui estime un nombre de personnes différentes et dont aucun identifiant ne
+          peut être relu ; votre navigateur n'est pas conservé, seul le type d'appareil l'est. Les
+          messages sont comptés comme un volume quotidien, jamais par conversation, par personne ni
+          par heure, et sans être lus ; une réponse à un formulaire anonyme n'est pas comptée. Nous
+          ne mesurons jamais le temps que vous passez sur Canari.
+        </dd>
+      </div>
+      <div>
         <dt>Appels audio et vidéo (quand la fonction est ouverte)</dt>
         <dd>
           Le son et l'image d'un appel sont chiffrés de bout en bout entre les deux appareils : ni
@@ -894,6 +912,13 @@
           <tr>
             <td>Présence en ligne</td>
             <td>Effacée à la déconnexion de l'appareil, 90 secondes au plus après</td>
+          </tr>
+          <tr>
+            <td>Statistiques d'utilisation : compteurs qui reçoivent l'identifiant du compte</td>
+            <td
+              >40 jours (30 pour ceux d'une heure) ; les chiffres d'ensemble qui en sont tirés, sans
+              limite</td
+            >
           </tr>
           <tr>
             <td>Messages privés en attente de remise (chiffrés)</td>

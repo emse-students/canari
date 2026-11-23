@@ -32,7 +32,23 @@ describe('MessagingService - visibility vs durability', () => {
   /** What `exec()` answers. Per-command failures live in the RESULTS, so a test can seed one. */
   let execResult: Array<[Error | null, unknown]> | null;
 
+  /** The metrics the usage dashboard was told of (`countUsageActivity`), apart from the stream's commands. */
+  const usageCounted = jest.fn();
+
   const redis = {
+    /** The usage dashboard's activity count: one MULTI of its own (`utils/usage-activity.ts`). */
+    multi: jest.fn(() => {
+      const chain = {
+        hincrby: (_key: string, metric: string) => (usageCounted(metric), chain),
+        expire: () => chain,
+        exec: () =>
+          Promise.resolve([
+            [null, 1],
+            [null, 1],
+          ]),
+      };
+      return chain;
+    }),
     xadd: jest.fn().mockResolvedValue('1-0'),
     xtrim: jest.fn().mockResolvedValue(0),
     expire: jest.fn().mockResolvedValue(1),
@@ -234,6 +250,32 @@ describe('MessagingService - visibility vs durability', () => {
       ],
     }).compile();
     service = module.get(MessagingService);
+  });
+
+  describe('the usage dashboard counts a message somebody is told about (docs/wiki/usage-dashboard.md)', () => {
+    it('counts a visible message once', async () => {
+      await service.sendMessage(send({ silent: false, durable: true }));
+      expect(usageCounted.mock.calls).toEqual([['messages']]);
+    });
+
+    it('counts no silent frame: a receipt, a reaction, an edit, a transport frame', async () => {
+      await service.sendMessage(send({ silent: true, durable: true }));
+      await service.sendMessage(send({ silent: true, durable: false }));
+      expect(usageCounted).not.toHaveBeenCalled();
+    });
+
+    it('counts no handshake frame, whatever it declares', async () => {
+      await service.sendMessage(send({ silent: false, durable: true, isWelcome: true }));
+      await service.sendMessage(send({ silent: false, durable: true, isCommit: true }));
+      expect(usageCounted).not.toHaveBeenCalled();
+    });
+
+    it('counts nothing for a send it refuses', async () => {
+      await expect(service.sendMessage(send({ senderId: 'victim' }), 'attacker')).rejects.toThrow(
+        'requesterUserId does not match the authenticated caller'
+      );
+      expect(usageCounted).not.toHaveBeenCalled();
+    });
   });
 
   describe('who the shared log records as the author', () => {

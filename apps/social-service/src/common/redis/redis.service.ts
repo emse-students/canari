@@ -134,6 +134,40 @@ export class RedisService implements OnModuleDestroy {
     if (failed) throw failed[0];
   }
 
+  /**
+   * `PFCOUNT` of each group of keys (the UNION of a group's HyperLogLogs - a key that does not exist
+   * is empty), in one round trip. Throws when any of them failed: a figure read as zero would be a
+   * claim. For the usage dashboard (`usage/usage-fold.ts`).
+   */
+  async pfcountEach(groups: readonly (readonly string[])[]): Promise<number[]> {
+    return this.pipelined(groups, (p, keys) => p.pfcount(...keys)) as Promise<number[]>;
+  }
+
+  /** `SMEMBERS` of each key, in one round trip. Throws when any of them failed. */
+  async smembersEach(keys: readonly string[]): Promise<string[][]> {
+    return this.pipelined(keys, (p, key) => p.smembers(key)) as Promise<string[][]>;
+  }
+
+  /** `HGETALL` of each key (`{}` for a missing one), in one round trip. Throws when any failed. */
+  async hgetallEach(keys: readonly string[]): Promise<Record<string, string>[]> {
+    return this.pipelined(keys, (p, key) => p.hgetall(key)) as Promise<Record<string, string>[]>;
+  }
+
+  /** One pipeline of one command per item; the replies in order, or the first error thrown. */
+  private async pipelined<T>(
+    items: readonly T[],
+    add: (p: ReturnType<Redis['pipeline']>, item: T) => unknown
+  ): Promise<unknown[]> {
+    if (items.length === 0) return [];
+    const pipeline = this.client.pipeline();
+    for (const item of items) add(pipeline, item);
+    const results = await pipeline.exec();
+    if (!results) throw new Error('the pipeline was discarded');
+    const failed = results.find(([err]) => err);
+    if (failed) throw failed[0];
+    return results.map(([, value]) => value);
+  }
+
   /** Stores a string value with an expiry (TTL in seconds). */
   async setex(key: string, ttlSeconds: number, value: string): Promise<void> {
     await this.client.setex(key, ttlSeconds, value);
