@@ -3786,6 +3786,16 @@ permission read and the claim, with no await between it and the post. A stand-do
 leaves the claim standing, deliberately: the reader saw the message land, so the screen announced it.
 One debug line says so. No clock: the same predicate, asked on the facts of the post's instant.
 
+**The decision itself reads the live selection too (final review of #3985).** `addMessageToChat` and
+`batchAddMessages` read the store (`getMessagesByIds`, the pending mutations) BEFORE they decide, and
+the context they were handed is a snapshot from their entry. So `canSeeArrival` (whose consumers are
+all inbound: the message notification, the reaction trigger, the tone) and the read-on-arrival verdict
+of both paths (`isReadingConversationNow`) ask `ctx.selectedNow()`, never `ctx.selectedContact`. A
+reader who moved from A to C during that read was otherwise judged "on A": a tone instead of a
+notification, the message read on arrival - announced zero times and marked read unseen. The outbound
+reads of `selectedContact` (send, retry, reaction, edit, delete, pin) are the reader's own gesture on
+the screen they started it from and stay as they are.
+
 Tests: `appForeground.test.ts`, `appForeground.contract.test.ts`, `arrivalRuntime.ios.test.ts`,
 `useMessaging.reactionNotification.svelte.test.ts`, `reactionNotification.test.ts`,
 `useMessaging.latePost.svelte.test.ts`, `useNotifications.iosAnnounced.svelte.test.ts`. Owed on the iPhone:

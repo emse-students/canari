@@ -177,3 +177,95 @@ describe('the live re-ask handed to the poster', () => {
     expect(stillOwed()).toBe(true);
   });
 });
+
+/**
+ * THE DECISION ITSELF IS LIVE TOO (final review of #3985). `addMessageToChat` and
+ * `batchAddMessages` read the store (`getMessagesByIds`) BEFORE they decide whether the reader sees
+ * the arrival, and the context's `selectedContact` is the selection from when they were entered.
+ * A reader who moved from A to C during that read was judged "on A": a tone instead of a
+ * notification, and the message read on arrival - announced zero times, read unseen.
+ */
+describe('the arrival decision reads the selection after the row read, not before', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    window.history.pushState({}, '', '/chat');
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => 'visible',
+    });
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    w.__canariForeground = true;
+    w.__canariActive = true;
+  });
+
+  /** A context on A whose store read is held open until `release()`. */
+  function heldOnA() {
+    const made = makeContext(A);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const getMessagesByIds = vi.fn(async () => {
+      await gate;
+      return { rows: new Map(), unreadable: new Set<string>() };
+    });
+    Object.assign(made.ctx.storage as object, {
+      getMessagesByIds,
+      saveMessagesIfAbsent: vi.fn(async (rows: unknown[]) => rows),
+    });
+    return { ...made, getMessagesByIds, release };
+  }
+
+  const unreadOf = (ctx: MessagingContext, key: string) =>
+    ctx.conversations.get(key)?.unreadCount ?? 0;
+
+  it('THE SINGLE PATH: the reader moves to C during the row read - A is notified and stays unread', async () => {
+    const messaging = useMessaging();
+    const { ctx, live, getMessagesByIds, release, sendSystemNotification } = heldOnA();
+    const adding = messaging.addMessageToChat(PEER, 'their message', A, ctx, {
+      messageId: 'm-1',
+    });
+    await vi.waitFor(() => expect(getMessagesByIds).toHaveBeenCalled());
+    live.now = C; // the reader opened C while the store answered
+    release();
+    await adding;
+
+    await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
+    expect(ctx.playReceiveTone).not.toHaveBeenCalled();
+    expect(unreadOf(ctx, A)).toBe(1);
+  });
+
+  it('THE BATCH PATH: the same move during the batch read - A is notified and stays unread', async () => {
+    const messaging = useMessaging();
+    const { ctx, live, getMessagesByIds, release, sendSystemNotification } = heldOnA();
+    const adding = messaging.batchAddMessages(
+      [{ senderId: PEER, content: 'their message', messageId: 'm-1' }],
+      A,
+      ctx,
+      'arrival'
+    );
+    await vi.waitFor(() => expect(getMessagesByIds).toHaveBeenCalled());
+    live.now = C;
+    release();
+    await adding;
+
+    await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
+    expect(ctx.playReceiveTone).not.toHaveBeenCalled();
+    expect(unreadOf(ctx, A)).toBe(1);
+  });
+
+  it('CONTROL: the reader stays on A - read on arrival, a tone, no notification', async () => {
+    const messaging = useMessaging();
+    const { ctx, getMessagesByIds, release, sendSystemNotification } = heldOnA();
+    const adding = messaging.addMessageToChat(PEER, 'their message', A, ctx, {
+      messageId: 'm-1',
+    });
+    await vi.waitFor(() => expect(getMessagesByIds).toHaveBeenCalled());
+    release();
+    await adding;
+
+    await vi.waitFor(() => expect(ctx.playReceiveTone).toHaveBeenCalled());
+    expect(sendSystemNotification).not.toHaveBeenCalled();
+    expect(unreadOf(ctx, A)).toBe(0);
+  });
+});

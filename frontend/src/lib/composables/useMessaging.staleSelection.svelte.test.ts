@@ -72,6 +72,9 @@ function makeContext() {
     authToken: 'token',
     // THE SALON IS THE SELECTED CONVERSATION in every case: only where the reader is differs.
     selectedContact: SALON,
+    selectedNow(this: { selectedContact: string | null }) {
+      return this.selectedContact;
+    },
     storage: {
       saveMessage: vi.fn().mockResolvedValue(undefined),
       saveMessages: vi.fn().mockResolvedValue(undefined),

@@ -44,6 +44,9 @@ function makeContext() {
   return {
     conversations,
     selectedContact: CONVO,
+    selectedNow(this: { selectedContact: string | null }) {
+      return this.selectedContact;
+    },
     setSendError: vi.fn(),
     log: vi.fn(),
   } as unknown as MessagingContext;

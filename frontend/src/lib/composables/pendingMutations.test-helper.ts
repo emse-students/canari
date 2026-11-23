@@ -51,6 +51,9 @@ export function makeDevice(useMessaging: UseMessaging, storage: IndexedDbStorage
     deviceKeyB64: KEY,
     authToken: 'token',
     selectedContact: '',
+    selectedNow(this: { selectedContact: string | null }) {
+      return this.selectedContact;
+    },
     storage,
     setAuthToken: vi.fn(),
     getSendError: () => '',

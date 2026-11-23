@@ -64,6 +64,9 @@ function makeContext(lookingAt = 'something-else') {
     conversations,
     userId: ME,
     selectedContact: lookingAt,
+    selectedNow(this: { selectedContact: string | null }) {
+      return this.selectedContact;
+    },
     log: vi.fn(),
     sendSystemNotification: vi.fn().mockResolvedValue(undefined),
     sendReactionNotification,

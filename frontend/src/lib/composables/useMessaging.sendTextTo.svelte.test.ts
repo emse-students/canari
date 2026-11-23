@@ -37,6 +37,9 @@ function makeContext(
     deviceKeyB64: 'device-key',
     authToken: 'token',
     selectedContact: null,
+    selectedNow(this: { selectedContact: string | null }) {
+      return this.selectedContact;
+    },
     storage: { getConversation: vi.fn(getConversation) } as never,
     setAuthToken: vi.fn(),
     getSendError: () => '',

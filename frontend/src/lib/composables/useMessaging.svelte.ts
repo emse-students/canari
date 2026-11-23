@@ -1346,7 +1346,12 @@ export function useMessaging() {
    * backgrounded Tauri app reports `visible`/`hasFocus` exactly as a foregrounded one does.
    */
   function canSeeArrival(ctx: MessagingContext, conversationKey: string): boolean {
-    return canSeeArrivalNow(conversationKey, ctx.selectedContact);
+    // THE LIVE SELECTION, NEVER THE SNAPSHOT (final review of #3985): every inbound caller - the
+    // notification (`notifyInbound`), the reaction trigger and the tone - asks this AFTER the row's
+    // storage awaits, and `ctx.selectedContact` is the selection from before them. A burst landing in
+    // A while the reader moved to C was judged "A open": a tone, no notification, read on arrival -
+    // and ACKed, so no push: announced zero times, marked read unseen.
+    return canSeeArrivalNow(conversationKey, ctx.selectedNow());
   }
 
   /**
@@ -1552,13 +1557,13 @@ export function useMessaging() {
         ? 'the app is backgrounded (no push is sent for a frame this client ACKed)'
         : !isAppActive()
           ? 'the app is no longer active - the reader left it, its socket still open (no push is sent for a frame this client ACKed)'
-          : `the app is open on ${window.location.pathname} showing ${ctx.selectedContact || 'the list'}`
+          : `the app is open on ${window.location.pathname} showing ${ctx.selectedNow() || 'the list'}`
       : document.visibilityState !== 'visible' || !document.hasFocus()
         ? `the tab is ${document.visibilityState}${document.hasFocus() ? '' : ' and unfocused'}`
         : // In front, but nobody has touched it for the attention window (`windowAttention`).
           !windowAttention.attentive
           ? `the window is in front but idle (no gesture for ${ATTENTION_WINDOW_MS / 1000} s)`
-          : `the window is open on ${window.location.pathname} showing ${ctx.selectedContact || 'the list'}`;
+          : `the window is open on ${window.location.pathname} showing ${ctx.selectedNow() || 'the list'}`;
     console.log(`[NOTIF] Inbound in ${conversationKey} while ${away} - asking.`);
     const preview = getPreviewText(parseEnvelope(content));
     const notificationBody = preview || m.notif_new_message();
@@ -1685,7 +1690,7 @@ export function useMessaging() {
     }
     const send = ctx.sendReactionNotification;
     console.log(
-      `[NOTIF] Reaction to my message ${tag} while the app is open on ${window.location.pathname} showing ${ctx.selectedContact || 'the list'} - asking.`
+      `[NOTIF] Reaction to my message ${tag} while the app is open on ${window.location.pathname} showing ${ctx.selectedNow() || 'the list'} - asking.`
     );
     void resolveNotificationSenderName(
       reaction.reactorId,
@@ -2271,7 +2276,7 @@ export function useMessaging() {
         }
         // `selected=` pairs it with the pane's `[CHAT_VIEW]` lines, like the batch line's.
         console.log(
-          `[ADD_MSG] ✓ Message upgraded: id=${newMsg.id} selected=${ctx.selectedContact === normalized}`
+          `[ADD_MSG] ✓ Message upgraded: id=${newMsg.id} selected=${ctx.selectedNow() === normalized}`
         );
         return;
       }
@@ -2307,7 +2312,8 @@ export function useMessaging() {
 
     // READ ON ARRIVAL ONLY WHERE THE READER IS READING. The bare selection stays true after they walk
     // to another route or put the window away, which counted a message nobody saw as read.
-    const isConversationOpen = isReadingConversationNow(normalized, ctx.selectedContact);
+    // LIVE: read after the storage awaits above (see `canSeeArrival`).
+    const isConversationOpen = isReadingConversationNow(normalized, ctx.selectedNow());
     // The same question the batch path asks, which until 2026-08-30 it did not: this one forgot
     // the watermark AND counted system messages, so a replayed frame taking the single path could
     // still raise a badge for something already read, and a "X joined" notice raised one for
@@ -3000,7 +3006,8 @@ export function useMessaging() {
 
     // READ ON ARRIVAL ONLY WHERE THE READER IS READING. The bare selection stays true after they walk
     // to another route or put the window away, which counted a message nobody saw as read.
-    const isConversationOpen = isReadingConversationNow(normalized, ctx.selectedContact);
+    // LIVE: read after the storage awaits above (see `canSeeArrival`).
+    const isConversationOpen = isReadingConversationNow(normalized, ctx.selectedNow());
     // COUNTED AGAINST THIS USER'S OWN WATERMARK, not against "arrived just now". The two are the
     // same thing only for live traffic; a reconciliation delivers frames that are new to THIS
     // device and were read long ago on another one, and counting those raised a badge the next
@@ -3056,7 +3063,7 @@ export function useMessaging() {
     // System messages are named individually because they are few, and because a card is one.
     const systemIds = brandNew.filter((m) => m.isSystem).map((m) => m.id);
     console.log(
-      `[ADD_MSG] Batch into "${normalized}": ${brandNew.length} added, ${upgradedById.size} upgraded, selected=${ctx.selectedContact === normalized}` +
+      `[ADD_MSG] Batch into "${normalized}": ${brandNew.length} added, ${upgradedById.size} upgraded, selected=${ctx.selectedNow() === normalized}` +
         (systemIds.length > 0 ? ` - system: ${systemIds.join(', ')}` : '') +
         largestClockGapNote(brandNew)
     );

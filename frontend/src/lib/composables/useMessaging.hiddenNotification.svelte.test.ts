@@ -66,6 +66,9 @@ function makeContext(lookingAt = 'something-else') {
     authToken: 'token',
     // Not the open conversation: a hidden tab showing this very thread is a different question.
     selectedContact: lookingAt,
+    selectedNow(this: { selectedContact: string | null }) {
+      return this.selectedContact;
+    },
     // BOTH writers, because the two inbound paths use different ones: the live path saves one
     // message and the bulk flush saves the batch. A fixture with only the first made
     // `batchAddMessages` log a real TypeError into every drain case - harmless to the assertion,
