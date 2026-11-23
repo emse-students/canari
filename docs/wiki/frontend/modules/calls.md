@@ -3867,6 +3867,26 @@ playing. What changed:
   9T**: (1) start a Canari call during a cellular call - the peer sees the microphone cut; (2) the
   cellular call ends while Canari stays on screen, with no tap - the microphone comes back by
   itself.
+- **A call that REPLACES another in the service TAKES ITS AUDIO OVER** (2026-11-23, review of
+  #4012). A start of another call while one held the foreground (`CallServiceEffect.Replace`, the
+  earlier call's stop never arrived) used to keep the `CallAudio` labelled with the OLD call id: its
+  `focus` events (a loss, the delayed GAIN, the hold at the start) reached the new call's page under
+  that id and were dropped, so a cellular call ending during the replacing call never gave the
+  microphone back. Now the service opens, hands over and closes its audio through ONE path,
+  `CallAudioSlot` (`call/CallAudioSlot.kt`, pure). A replacement is a HANDOVER
+  (`CallAudio.handOver`), never a close and a reopen: the voice is live, and closing would dip the
+  mode (`MODE_NORMAL` then `MODE_IN_COMMUNICATION`), clear the communication device (a Bluetooth SCO
+  link drops for a second or two) and abandon the focus (paused music blips back). The audio keeps
+  all three, takes the new id, and re-sends under it what the new page has not heard: the hold
+  (`focus`/`lost`, reason `held when the call was handed over`) and the output in use. `release`
+  closes it exactly once. A closed audio (`CallAudioLife`) refuses a device callback or a focus
+  change the main looper still delivers, with ONE accusing line each, and a close with nothing to
+  close is accused too. Tests: `CallAudioSlotTest` (the same object relabelled, nothing closed; one
+  close; late callbacks refused). **Owed on the Mi 9T**, ideally with a Bluetooth headset: a call
+  replacing another in the service (the first call's stop lost) logs `audio hands over from
+  call=<old> to call=<new> - mode, output and focus kept` and NO `released:` line, and the voice
+  has no gap (the headset stays on, music stays paused); then a cellular call rung into it holds
+  and releases the microphone as (G) below.
 - **EVERY mute control shows the call MUTED while held** - the in-app button, the minimised bar, the
   ongoing notification and the OS media controls all read `micShownMuted` (`isMuted ||
   audioFocusHeld`, `useCallModel`), and all tap through ONE function, `CallService.muteButtonTap`:
@@ -3891,8 +3911,8 @@ ringback before it ([the caller's ringback](#the-callers-ringback-2026-10-31)).
 `CanariFirebaseMessagingService.kt` are COMPILED by CI's `compile-android-app` job
 (`:app:compileArm64DebugKotlin`, since 2026-10-30, [cicd](../../cicd.md)) and tested by nothing:
 `android-tests` runs only the pure packages (`call/`, `push/`, `gesture/`, `share/`), which is
-where `OngoingCallTest` holds `pickCallOutput`, `holdsProximityScreenOff` and the spec, and
-`CallFocusHoldTest` the focus hold. The compile was also run by hand for the focus hold
+where `OngoingCallTest` holds `pickCallOutput`, `holdsProximityScreenOff` and the spec,
+`CallFocusHoldTest` the focus hold, and `CallAudioSlotTest` the audio's open, handover and close. The compile was also run by hand for the focus hold
 (2026-11-12, BUILD SUCCESSFUL); the Objective-C of
 `canari_ios.mm` by nothing until the iOS CI job. **Owed on BOTH phones**: (A) an audio call starts on the EARPIECE - `CallAudio
 voice -> EARPIECE (call started)` in `logcat`, `[Call] voice starts on the earpiece` in the app log;

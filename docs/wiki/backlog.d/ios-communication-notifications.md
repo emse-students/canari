@@ -1,4 +1,4 @@
-## P2 - iPhone message banners as communication notifications: seven iPhone readings owed (2026-11-21)
+## P2 - iPhone message banners as communication notifications: one iPhone reading owed, the sign-out row (2026-11-21)
 
 target: 1.8.0
 
@@ -38,3 +38,5 @@ logs `WARN` on every push, that is noise and is fixed before the stable.
 
 If a row fails while the app was alive rather than killed, check first which composer drew the
 banner: the app's own (`canari_push.mm` `CanariShowMessageNotification`) is not converted.
+
+**2026-11-23, `1.8.0-alpha.4` ([iPhone 12 sitting](../device-verification.md#the-readings-of-2026-11-23-180-alpha4-iphone-12-the-bell-after-a-re-follow-the-dm-thread-the-communication-banners-the-focus-rows-the-voice-note-the-composer)): rows 1 to 5 are READ and PASS, row 7 is CLOSED, row 6 stays.** Row 1 and 2: with Do Not Disturb on and Canari absent from its allowed apps a DM from `delta` raised nothing on the lock screen (the extension still ran: `communication style applied`); with Canari added to the allowed apps the next DM came through as a banner with the sender's face. Row 3: the DM banner draws the sender's face on the left with the Canari badge, the sender as the title, no second copy as an attachment (`communication style: donating isGroup=false source=avatar`). Row 4 passed on `alpha.3`. Row 5: a group @-mention keeps the group's name ("Mentioned you - S15R2B" as the subtitle, `message shape isGroup=true declared=Optional(true)`). **Seen, not a row:** that mention banner carries the TIME SENSITIVE label and the plain app icon with no face although the extension logged `communication style applied isGroup=true`; the face is the one thing the row did not ask for, and the plain look is what iOS drew. **Row 7 is closed:** it needs the app swiped away in the app switcher, which the driver cannot do ([the rule](../device-verification.md#readings-closed-on-2026-11-23---no-hand-can-take-them)). **Row 6 stays**: it signs the bench account out and back in, and no sitting has yet taken the cost of the re-enrolment.

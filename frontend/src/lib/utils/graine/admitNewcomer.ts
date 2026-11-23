@@ -8,6 +8,7 @@ import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { isGraineReady, rawChannelId, requireGraineRuntime, workspaceForChannel } from './runtime';
 import { treeHoldsDevice } from '$lib/mls-client/leafIdentity';
+import { untilListedWhole } from '$lib/mls-client/IMlsService';
 import { CommitRefusedError, rebuildableRefusal } from '$lib/mls-client/CommitRefusedError';
 import { groupSkippedByReason } from '$lib/mls-client/skippedKeyPackage';
 
@@ -223,10 +224,14 @@ export async function admitNewcomerToDistributionGroup(
         // this link's drain and the epoch check it scheduled, then read the epoch the queue
         // reached. Outside the MLS lock (the commit released it), and never inside a frame - this
         // runs from an admin's gesture.
+        // A PULL THAT ENDS INCOMPLETE meanwhile leaves the epoch the queue reaches unknown, so the
+        // rebuild DEFERS to the next complete pull (`untilListedWhole`, said per deferral) rather
+        // than read an epoch the unlisted part of the mailbox may still move.
         if (e instanceof CommitRefusedError && mlsService.getEpoch(groupId) <= e.baseEpoch) {
+          const what = `ADMIT ${newcomer.slice(0, 8)} into ${label}: the rebuild after a refused Add`;
           try {
-            await mlsService.whenGroupDrained(groupId);
-            await mlsService.whenDistributionEpochSettled(groupId);
+            await untilListedWhole(() => mlsService.whenGroupDrained(groupId), what);
+            await untilListedWhole(() => mlsService.whenDistributionEpochSettled(groupId), what);
           } catch (drainError) {
             // Only a destroyed service rejects the wait (sign-out): the epoch read below decides.
             log(

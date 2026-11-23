@@ -1,6 +1,10 @@
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { connectivity } from '$lib/stores/connectivity.svelte';
-import { MlsDeliveryApi } from './mlsDeliveryApi';
+import {
+  MlsDeliveryApi,
+  PendingPageNeverArrivedError,
+  PendingPullIncompleteError,
+} from './mlsDeliveryApi';
 import { ADDRESSED_HISTORY_CAPABILITY } from './frameDelivery';
 
 /**
@@ -46,12 +50,11 @@ describe('MlsDeliveryApi.pullPendingMessagesJson', () => {
       })
     );
 
-    await api(fetchFn).pullPendingMessagesJson();
+    await expect(api(fetchFn).pullPendingMessagesJson()).rejects.toBeInstanceOf(
+      PendingPullIncompleteError
+    );
 
     expect(connectivity.isOffline).toBe(false);
-    expect(warn).toHaveBeenCalledWith(
-      '[PENDING] page answered 503 by the gateway - the pull stops here, the next one asks again'
-    );
     warn.mockRestore();
     connectivity.reset();
   });
@@ -74,20 +77,43 @@ describe('MlsDeliveryApi.pullPendingMessagesJson', () => {
     connectivity.reset();
     connectivity.isOnline = true;
     connectivity.notifyServerUnreachable('test');
-    await api(vi.fn().mockResolvedValueOnce(edge())).pullPendingMessagesJson();
+    await expect(
+      api(vi.fn().mockResolvedValueOnce(edge())).pullPendingMessagesJson()
+    ).rejects.toBeInstanceOf(PendingPullIncompleteError);
     expect(connectivity.isOffline).toBe(true);
 
     // Reachable: stays reachable.
     connectivity.reset();
     connectivity.isOnline = true;
-    await api(vi.fn().mockResolvedValueOnce(edge())).pullPendingMessagesJson();
+    const failure = await api(vi.fn().mockResolvedValueOnce(edge()))
+      .pullPendingMessagesJson()
+      .catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(PendingPullIncompleteError);
+    expect(failure).toMatchObject({ status, origin: 'edge' });
     expect(connectivity.isOffline).toBe(false);
-
-    expect(warn).toHaveBeenCalledWith(
-      `[PENDING] page answered ${status} by the edge - the pull stops here, the next one asks again`
-    );
     warn.mockRestore();
     connectivity.reset();
+  });
+
+  it('never reads a non-2xx page as a drained mailbox: it throws a typed incomplete pull after handing on what it had', async () => {
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(json(page(2, '2026-01-01T00:00:00.000Z')))
+      .mockResolvedValueOnce(
+        new Response('{"message":"busy"}', {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+    const pages: number[] = [];
+
+    const failure = await api(fetchFn)
+      .pullPendingMessagesJson({ onPage: (rows) => void pages.push(rows.length) })
+      .catch((e: unknown) => e);
+
+    expect(failure).toBeInstanceOf(PendingPullIncompleteError);
+    expect(failure).toMatchObject({ status: 503, origin: 'gateway' });
+    expect(pages).toEqual([2]);
   });
 
   it('hands every page to onPage as it lands, and follows the createdAt cursor', async () => {
@@ -182,7 +208,11 @@ describe('MlsDeliveryApi.pullPendingMessagesJson', () => {
     // 1 MB, so a one-row page really is small enough to cross any link this app runs on.
     const fetchFn = vi.fn().mockRejectedValue(new Error('aborted'));
 
-    await expect(api(fetchFn).pullPendingMessagesJson()).rejects.toThrow('aborted');
+    const pull = api(fetchFn).pullPendingMessagesJson();
+    await expect(pull).rejects.toThrow('aborted');
+    // TYPED, so the caller reads an INCOMPLETE listing and settles its drain waiters on it - never an
+    // unclassified failure told apart by its message.
+    await expect(pull).rejects.toBeInstanceOf(PendingPageNeverArrivedError);
 
     const limits = fetchFn.mock.calls.map((c) => new URL(String(c[0])).searchParams.get('limit'));
     expect(limits).toEqual(['500', '250', '125', '62', '31', '15', '7', '3', '1']);
