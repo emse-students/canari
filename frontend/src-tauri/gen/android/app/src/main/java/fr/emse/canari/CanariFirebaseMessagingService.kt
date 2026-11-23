@@ -3702,7 +3702,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 val marker = absentMarkerFile(context.avatarCacheFile(avatar.id))
                 when (AvatarAbsence.yieldToPresence(marker, avatar.hasPhoto)) {
                     AvatarAbsence.Outcome.NOT_CLAIMED -> Unit
-                    AvatarAbsence.Outcome.NO_MARKER -> Log.d(TAG, "forgetAbsence: photo known, no remembered absence to drop")
                     AvatarAbsence.Outcome.DROPPED -> Log.d(TAG, "forgetAbsence: photo known -> remembered absence dropped, the picture is fetched")
                     AvatarAbsence.Outcome.STILL_THERE -> Log.w(TAG, "forgetAbsence: photo known but the remembered absence could not be dropped")
                 }

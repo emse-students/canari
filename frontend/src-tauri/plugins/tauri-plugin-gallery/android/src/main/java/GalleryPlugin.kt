@@ -272,6 +272,9 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
     fun publishShareTargets(invoke: Invoke) {
         val args = invoke.parseArgs(PublishShareTargetsArgs::class.java)
         Log.d(TAG, "publishShareTargets: ${args.targets.size} target(s)")
+        // Proves the pictures ARRIVED (a Rust struct once dropped them silently): counts only, no names.
+        val avatars = args.targets.mapNotNull { it.avatar }
+        Log.d(TAG, "publishShareTargets: ${avatars.count { it.kind == ShortcutIcons.AVATAR_USER }} user avatar(s), ${avatars.count { it.kind == ShortcutIcons.AVATAR_MEDIA }} media avatar(s), ${avatars.count { it.hasPhoto }} known to have a photo")
         val targets = args.targets.map { ShareTargets.Target(it.id, it.label, it.link, it.avatar?.let { a -> ShortcutIcons.Avatar(a.kind, a.id, a.hasPhoto) }) }
         shareTargetsThread.execute {
             try {
