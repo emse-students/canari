@@ -56,6 +56,15 @@ type Waiter = (hasPhoto: boolean | null) => void;
 let pendingBatch: Map<string, Waiter[]> | null = null;
 
 /**
+ * What this session ALREADY knows of `userId`'s photo, with no request: `true`, `false`, or
+ * `undefined` when no answer is in yet. For a caller that must not wait (the share shortcuts'
+ * publish at a departure) and only wants the fact if it is there.
+ */
+export function knownAvatarPresence(userId: string): boolean | undefined {
+  return known.get(userId);
+}
+
+/**
  * Whether `userId` has a photo: `true`, `false`, or `null` when nobody could say.
  *
  * Every id asked in the same turn of the event loop travels in one request (the window

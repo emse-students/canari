@@ -175,8 +175,17 @@ internal object ShareTargets {
         return Target(target.id, target.label, target.link, null)
     }
 
+    /**
+     * A photo the page KNOWS exists outranks a remembered 404 ([ShortcutIcons.Avatar.hasPhoto]):
+     * the marker is dropped so the cache reads a miss and the picture is fetched after the publish.
+     */
+    private fun yieldAbsenceToPresence(context: Context, icons: ShortcutIcons.Source, avatar: ShortcutIcons.Avatar) {
+        if (avatar.hasPhoto) icons.forgetAbsence(context, avatar)
+    }
+
     /** What the cache holds for [avatar]; a read that throws is logged and counts as a miss. */
     private fun cachedPicture(context: Context, icons: ShortcutIcons.Source, avatar: ShortcutIcons.Avatar, rank: Int): ShortcutIcons.Cached = try {
+        yieldAbsenceToPresence(context, icons, avatar)
         icons.cached(context, avatar)
     } catch (e: Exception) {
         Log.w(TAG, "publish: target #$rank: the cache could not be read: ${e.javaClass.simpleName}")
