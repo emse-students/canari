@@ -863,7 +863,7 @@ re-selecting from rows, none from a clock:
 off, and ALWAYS off when the switch was not shown: `replayOffered`, set from `replaysAvailable`), `keepsReplay` stays the server's verdict, and `switchReplayOff()` flips `keepsReplay` and the end verdict to
 false only on the server's answer (or its 404). The button "Désactiver la rediffusion" shows on air and on the
 broadcaster's end screen while the server says it keeps a replay, behind a confirm (`live_replay_off_confirm`: it
-deletes and cannot be undone). `Toggle` is disabled once the live has started. Tests:
+deletes and cannot be undone). `Toggle` is disabled once the live has started. **The OFF track reads on the camera (2026-11-23, entry deleted; owed a reading OFF and ON on the Mi 9T):** the `on-media` tone draws the `--toggle-off-on-media` token with the `--glass-video-edge` ring instead of `--cn-border`, a near-background grey that vanished over the dark image (S17); ON stays the accent. Pinned by the replay-switch test in `LiveBroadcaster.svelte.test.ts`. Tests:
 `lives.integration.spec.ts` ("the organiser's Rediffusion switch": default on, platform lock first, off on air
 with the whole backlog trimmed, off before publication, off after publication, a stranger, a purged live),
 `live-replay-choice.spec.ts`, `liveBroadcast.svelte.test.ts`, `api.test.ts`.

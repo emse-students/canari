@@ -241,7 +241,7 @@ describe('SuggestionCarousel', () => {
 
   it('a follow removes its card, soft button and all; a followed entity leaves too; then the row hides', async () => {
     api.askToFollow.mockResolvedValue('pending');
-    asso.followAssociation.mockResolvedValue(undefined);
+    asso.followAssociation.mockResolvedValue({ ok: true });
     renderRow();
     await settle();
     const soft = document.querySelector('[data-suggestion-id="ann"] [data-follow-chip]')!;

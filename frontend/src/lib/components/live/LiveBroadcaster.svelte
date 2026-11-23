@@ -25,6 +25,7 @@
     Pencil,
     Radio,
     RefreshCcw,
+    Settings,
     RotateCcw,
     ShieldAlert,
     ShieldCheck,
@@ -40,6 +41,7 @@
   import { getLocale } from '$lib/paraglide/runtime';
   import { CameraSession } from '$lib/reels/cameraSession.svelte';
   import type { CameraFault } from '$lib/reels/cameraAccess';
+  import { hasNativeGallery, openAppSettings } from '$lib/reels/gallery';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { themeStore } from '$lib/stores/themeStore.svelte';
   import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
@@ -426,12 +428,27 @@
     'upload-too-slow': m.live_ended_upload_too_slow,
   };
 
+  /**
+   * A refused permission is `denied` on both phone platforms: iOS says `NotAllowedError`, and
+   * Android's `NotReadableError` is told apart from a busy camera by the OS's own answer
+   * (`classifyCameraRefusal`, Mi 9T 2026-11-16). Only `denied` is undone in the system settings, so
+   * only `denied` offers them, and only where an app settings page exists (the phone apps).
+   */
+  const canOpenSettings = hasNativeGallery();
   const CAMERA_FAULT_TEXT: Record<CameraFault, () => string> = {
     denied: m.reels_camera_denied_body,
     unavailable: m.reels_camera_unavailable_body,
     busy: m.reels_camera_busy_body,
     interrupted: m.reels_camera_interrupted_body,
   };
+
+  async function openSettings() {
+    try {
+      await openAppSettings();
+    } catch (err) {
+      console.error('[live] the settings page did not open', err);
+    }
+  }
 
   const pill =
     'inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-white disabled:opacity-50';
@@ -883,6 +900,17 @@
             {m.reels_camera_retry()}
           </button>
         </div>
+        {#if canOpenSettings && camera.fault === 'denied'}
+          <Button
+            variant="secondary"
+            class="justify-center"
+            onclick={() => void openSettings()}
+            data-live-open-settings
+          >
+            <Settings size={16} strokeWidth={2.5} />
+            {m.reels_open_settings()}
+          </Button>
+        {/if}
       {/if}
 
       {#if broadcast.rulesPending}

@@ -1391,10 +1391,23 @@ export async function getAssociationFollowStatus(
   );
 }
 
-export async function followAssociation(associationId: string): Promise<{ ok: boolean }> {
-  return request<{ ok: boolean }>(`/api/associations/${encodeURIComponent(associationId)}/follow`, {
-    method: 'POST',
-  });
+/**
+ * The answer of a follow. `bellReset`: this follow reset the reader's bell to its default (a new
+ * follow after an unfollow, the server's design), so a bell picker still on screen shows a stale
+ * level until it takes the default.
+ */
+export interface FollowAssociationAnswer {
+  ok: boolean;
+  bellReset?: boolean;
+}
+
+export async function followAssociation(associationId: string): Promise<FollowAssociationAnswer> {
+  return request<FollowAssociationAnswer>(
+    `/api/associations/${encodeURIComponent(associationId)}/follow`,
+    {
+      method: 'POST',
+    }
+  );
 }
 
 export async function unfollowAssociation(associationId: string): Promise<{ ok: boolean }> {

@@ -541,6 +541,9 @@
   --glass-video-blur: blur(12px) saturate(160%);
   --glass-video-fill-solid: color-mix(in srgb, var(--color-black) 80%, transparent);
   --glass-video-edge: color-mix(in srgb, var(--color-white) 26%, transparent);
+  /* The OFF track of a switch drawn over a camera or video (`Toggle` tone `on-media`): a lighter
+     fill than the glass, so it reads on a dark image where `--cn-border` vanishes. */
+  --toggle-off-on-media: color-mix(in srgb, var(--color-white) 40%, transparent);
   --glass-video-rim: inset 0 1px 0 color-mix(in srgb, var(--color-white) 40%, transparent);
   --glass-video-sheen: linear-gradient(
     180deg,

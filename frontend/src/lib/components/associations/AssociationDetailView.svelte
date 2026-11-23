@@ -153,6 +153,8 @@
     bellLevel = undefined;
     return read;
   }
+  /** The bell's level on screen: a follow answer that reset the bell sets it back to the default. */
+  let bellShown = $state<BellLevel>('all');
   let followLoading = $state(false);
   /**
    * The open section is a ROUTE segment (`/associations/<slug>/<section>`), never local state: Back
@@ -367,7 +369,8 @@
     try {
       if (wasFollowing) await unfollowAssociationLedgered(asso.id);
       else {
-        await followAssociationLedgered(asso.id);
+        const answer = await followAssociationLedgered(asso.id);
+        if (answer.bellReset) bellShown = 'all';
         followedHereId = asso.id;
       }
     } catch (err) {
@@ -518,7 +521,12 @@
                 it is offered followed or not, since an association's posts reach its whole
                 audience (L7).
               -->
-              <AccountBell kind="association" targetId={asso.id} takeInitial={takeBellLevel} />
+              <AccountBell
+                kind="association"
+                targetId={asso.id}
+                takeInitial={takeBellLevel}
+                bind:level={bellShown}
+              />
             {/if}
             {#if myMembership}
               <Button

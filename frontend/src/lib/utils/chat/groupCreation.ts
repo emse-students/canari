@@ -602,7 +602,6 @@ async function createOwnedGroup(
       });
     }
     log(`[OK] Group ${groupId} created.`);
-    console.log(`[GROUP] Group created successfully (id=${groupId})`);
     // MLS commits from group setup can leave the catch-up overlay stuck on mobile if begin/end desync.
     queueMicrotask(() => {
       if (globalMessaging.isMessageCatchupActive) {
