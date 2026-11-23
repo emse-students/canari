@@ -20,6 +20,13 @@ import { readLivesMode, type LivesMode } from './lives-mode';
 export class InternalLivesModeController {
   private readonly logger = new Logger(InternalLivesModeController.name);
 
+  /**
+   * The mode last answered, the durable-in-process state the log decision reads: media-service asks on
+   * every live segment, so the answer is logged when it CHANGES (or is the first of this process),
+   * never per request. A restart logs the current mode once, which is the boot line.
+   */
+  private lastRelayed: LivesMode | undefined;
+
   constructor(@InjectDataSource() private readonly db: DataSource) {}
 
   @Get('mode')
@@ -28,7 +35,12 @@ export class InternalLivesModeController {
   ): Promise<{ mode: LivesMode }> {
     assertInternalSecret(secret);
     const mode = await readLivesMode(this.db.manager, this.logger);
-    this.logger.debug(`[LIVE] lives_mode relayed to media-service: ${mode}`);
+    if (mode !== this.lastRelayed) {
+      this.logger.log(
+        `[LIVE] lives_mode relayed to media-service: ${mode} (${this.lastRelayed ? `previously ${this.lastRelayed}` : 'first answer since boot'})`
+      );
+      this.lastRelayed = mode;
+    }
     return { mode };
   }
 }

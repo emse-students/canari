@@ -8,14 +8,14 @@ _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
 _2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
-**2026-11-17 evening: step 1 shipped in `1.7.0` (#3785, on dev from `1.7.0-alpha.10`); steps 2-4 are `1.7.1`, per the [scope cut](owner-decisions-of-2026-11-17.md#the-170-scope-cut-afternoon---it-supersedes-the-mornings-line-below).**
+**2026-11-17 evening: step 1 shipped in `1.7.0` (#3785, on dev from `1.7.0-alpha.10`); steps 2-4 are `1.7.1`, per the [scope cut](../decisions/owner-decisions-of-2026-11-17.md#the-170-scope-cut-afternoon---it-supersedes-the-mornings-line-below).**
 
 Names are in the clear on the server: `dm_groups.name`, `channel_workspaces.name` and `slug`, and
 `channels.name` are plaintext columns. Push notifications carry sender and group names to FCM and APNs
 ([dm-vs-community-encryption](../protocols/dm-vs-community-encryption.md#both)). Principle 1 of
 [Nos principes](../../principes.md) makes this a debt against the charter. The owner placed it after
 the content-free push and the encrypted photos: step 6 is group names, step 7 is a sealed community
-state ([decisions of 2026-11-14](owner-decisions-of-2026-11-14.md)). This entry absorbs the P3
+state ([decisions of 2026-11-14](../decisions/owner-decisions-of-2026-11-14.md)). This entry absorbs the P3
 "names in the clear" entry of 2026-10-21. Its constraints (invite preview, slug, native push, admin
 screens) are answered on the design page.
 

@@ -1,6 +1,6 @@
 # The usage dashboard: who uses Canari, and how - anonymously
 
-**Owner, 2026-11-16 and 2026-11-19** ([decisions](backlog.d/owner-decisions-of-2026-11-19.md)): the
+**Owner, 2026-11-16 and 2026-11-19** ([decisions](decisions/owner-decisions-of-2026-11-19.md)): the
 platform admins see, as aggregated figures and never a person, how many DISTINCT people used Canari
 per day, week and month (overall, per platform category, per app version), a week-by-hour map of
 when it is used, and six daily activity totals. No small-number threshold. The daily figures are

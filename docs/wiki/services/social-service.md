@@ -254,6 +254,8 @@ asking an older server for a route it lacks (`/api/posts/reel-limits`) landed on
 logged a server ERROR. `posts.controller.post-id.spec.ts` reads Nest's route metadata, so a handler
 added later without the pipe fails there.
 
+**A comment says something (2026-11-23).** `AddCommentDto` refuses a comment with neither a non-blank `text` nor a `media`, and `EditCommentDto` refuses a whitespace-only text, each with a 400: a misnamed field used to store an empty comment and push it. The refusal is a class-validator constraint (`commentTextOrMedia`); on the wire the default ValidationPipe sends only the message array, so the constraint name is the type for the validator and its spec, and no client branches on it.
+
 ### Channels and workspaces (`/api/channels`)
 
 | Method | Path | Description |
@@ -2331,3 +2333,4 @@ where it applies: the declared question ids are an allowlist, so nothing else ca
 | `INTERNAL_SECRET` | yes | Shared secret for service-to-service calls |
 | `MEDIA_SERVICE_URL` | yes | Internal URL for media-service (blob proxy) |
 | `CORE_SERVICE_URL` | yes | Internal URL for core-service (user/payment verification) |
+| `TZ` | pinned `UTC` | Set in the image and the three compose files (with core-service and chat-delivery-service, held by `social-service-tz.test.mjs`): zone-less `timestamp` columns (`submissions` dates, `CURRENT_TIMESTAMP` defaults) are read in the process zone, so readers agree with the writer only while it is UTC. The Postgres session zone is pinned too (`PG_SESSION_OPTIONS`, `-c timezone=UTC`) |

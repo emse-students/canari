@@ -1,6 +1,6 @@
 # sfu-e2ee-probe - Q4: do E2E-encrypted call frames cross Cloudflare Realtime's SFU intact?
 
-WP-GC3's first step ([backlog](../../docs/wiki/backlog.d/group-calls-p2p-mesh-up-to-4-audio-3-video-decided-2026-10-31.md)):
+WP-GC3's first step ([backlog](../../docs/wiki/decisions/group-calls-p2p-mesh-up-to-4-audio-3-video-decided-2026-10-31.md)):
 before any client or backend code is written against Cloudflare Realtime's raw SFU (the
 sessions/tracks API), prove that frames the app's own E2E transform encrypted reach a subscriber
 whole and open there. The result is recorded in

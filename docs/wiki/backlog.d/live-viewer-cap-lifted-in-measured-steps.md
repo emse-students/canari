@@ -2,7 +2,7 @@
 
 target: 1.8.0
 
-**Owner, 2026-11-19:** a viewer is NEVER refused. Quality steps down to the lowest rung; a viewer past what that rung carries waits on "Connexion au direct..." until a seat frees ([decisions](owner-decisions-of-2026-11-19.md)).
+**Owner, 2026-11-19:** a viewer is NEVER refused. Quality steps down to the lowest rung; a viewer past what that rung carries waits on "Connexion au direct..." until a seat frees ([decisions](../decisions/owner-decisions-of-2026-11-19.md)).
 
 Split on 2026-11-17 from the WP-L8 moderation entry, which is closed in code: the cap is not
 moderation, and no code can lift it before the owner's decisions and the measurements below. The
@@ -12,7 +12,7 @@ Today: `LIVE_VIEWER_CAP` = 24 seats for every live together, a refusal ("Live co
 failure. Charter: principle 4 (independence) and 7 (simplicity) weigh the R2 processor below.
 
 **ANSWERED by the owner on 2026-11-17** ([live-scaling 7](../frontend/modules/live-scaling.md#7-the-decisions-owed-by-the-owner),
-[decisions](owner-decisions-of-2026-11-17.md)): **no R2 and no Cloudflare Stream - the lives stay on
+[decisions](../decisions/owner-decisions-of-2026-11-17.md)): **no R2 and no Cloudflare Stream - the lives stay on
 the server, the quality steps down** (O-1 no for now, the storage kept S3-generic so a self-hosted
 store stays possible; O-2 and O-4 moot; O-3 (i) as the standing state, a refused viewer meeting the
 "Connexion au direct..." retry, never `live complet`; O-5 yes, D2 reversed). **The steps below that

@@ -14,7 +14,7 @@ turning screens:
 - **a live keeps the broadcaster's orientation**: a viewer in portrait sees the whole landscape
   picture with bars, and goes full-screen landscape by turning the phone or with the button.
 
-The work is three steps, read and closed on 2026-11-22 (the backlog entry was deleted, [decisions](../backlog.d/owner-decisions-of-2026-11-22.md)).
+The work is three steps, read and closed on 2026-11-22 (the backlog entry was deleted, [decisions](../decisions/owner-decisions-of-2026-11-22.md)).
 This page is the mechanism.
 
 ## Ownership - one stack of requests, released on unmount

@@ -57,6 +57,7 @@ case "$cmd" in
   want="$(arg --search "$@")"
   want="${want% in:title}"
   for d in "$DB"/*/; do
+    [ -f "$d/state" ] || continue # an empty $DB leaves the glob literal
     [ -f "$d/state" ] && [ "$(cat "$d/state")" = open ] && [ "$(cat "$d/title")" = "$want" ] && basename "$d"
   done
   exit 0
@@ -96,6 +97,7 @@ step() {
 count_open() {
   local n=0 d
   for d in "$DB"/*/; do
+    [ -f "$d/state" ] || continue # an empty $DB leaves the glob literal
     [ "$(cat "$d/state")" = open ] && [ "$(cat "$d/title")" = "$1" ] && n=$((n + 1))
   done
   echo "$n"

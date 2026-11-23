@@ -3529,7 +3529,7 @@ be pushed is a population question, answered by `tools/cross-client-harness/devi
 
 ## Mes notes - the self conversation
 
-**What it is** (owner, 2026-11-22, [decisions](../backlog.d/owner-decisions-of-2026-11-22.md)): an
+**What it is** (owner, 2026-11-22, [decisions](../decisions/owner-decisions-of-2026-11-22.md)): an
 ordinary MLS group whose only members are the devices of ONE account. It carries text, photos,
 files and voice notes through the same encrypted paths as any conversation; the server stores
 ciphertexts and never a key. Charter principle 1 (*vos messages sont a vous*) decides the shape:

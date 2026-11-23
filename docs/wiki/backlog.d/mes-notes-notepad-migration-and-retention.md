@@ -5,7 +5,7 @@ target: 1.8.0
 The conversation itself is built: the server kind `self` (chat-delivery migration 056), the pinned
 row, the header, the refusals, the capability that keeps it from older builds, and the single-device
 loss notice ([chat](../frontend/modules/chat.md#mes-notes---the-conversation-with-oneself-2026-11-22)).
-What the owner decided on 2026-11-22 ([decisions](owner-decisions-of-2026-11-22.md)) and is NOT built:
+What the owner decided on 2026-11-22 ([decisions](../decisions/owner-decisions-of-2026-11-22.md)) and is NOT built:
 
 - **The notepad migration.** A client holding a non-empty notepad (`users.notesCiphertext`, under the
   server-held `users.notesKey`) posts it as a first message of "Mes notes", then asks the server to

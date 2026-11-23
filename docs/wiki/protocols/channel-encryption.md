@@ -5091,7 +5091,7 @@ byte copy as `a_seed_the_extension_stored_survives_the_app_becoming_active`), an
 seed file, and the app-alive path reads `CanariAppGroupPath()`.
 
 **Not established, and said:** the one Android line of 2026-11-14 (`held=true`). Android has one
-file, so this cause cannot reach it: [its own entry](../backlog.d/p2-android-blind-salon-banner-held-true.md).
+file, so this cause cannot reach it: its own entry.
 The bench run against a key group of production size, which this section does not cover, is
 [section 28](#28-a-salon-pushs-catch-up-against-a-key-group-of-production-size---measured-2026-11-17). What is owed for
 this fix is in the reading (entry deleted 2026-11-22, read).

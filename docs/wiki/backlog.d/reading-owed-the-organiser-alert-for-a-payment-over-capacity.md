@@ -6,7 +6,7 @@ _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped. THE SWITCH IS ON: `FORM_ORGANISER_ALERT_ENABLED = true` (floor `1.7.0`, #2228 in `v1.4.0`); what is owed is the phone reading below, on the next alpha (dev)._
 
-_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md))._
+_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](../decisions/owner-decisions-of-2026-11-17.md))._
 
 **What is built:** the organiser alert for a payment over capacity (#2228, D3; `FORM_ORGANISER_ALERT_ENABLED` is `true` since the flip pull request, kept as the kill switch)
 
