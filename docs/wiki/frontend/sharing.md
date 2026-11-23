@@ -246,6 +246,17 @@ preselection, never a destination by itself.
   sheet), which the user accepted knowingly; the privacy policy (section 7) and the register (C22)
   say so.
 
+#### The picture of a shortcut: absence yields to presence
+
+A remembered 404 (`avatar_<id>.absent`, 24 h) answers only "did the server say none when I asked".
+Mi 9T, `1.8.0-alpha.1`: three contacts had photos (`avatar-presence` listed them) and their shortcuts
+kept initials because the 404 predated the upload. The fact now invalidates the marker: `selectShareTargets`
+sets `avatar.hasPhoto: true` for a DM peer when the session already knows the photo exists
+(`knownAvatarPresence`, no request at a departure), `hasPhoto` is part of the publish key so it is
+sent even when nothing else changed, and `ShareTargets.publish` calls `Source.forgetAbsence` before
+reading the cache (`AvatarAbsence.yieldToPresence`). Not knowing is never a claim: the clock stays
+as the fallback. Tests: `AvatarAbsenceTest.kt`, `shareTargets.test.ts`.
+
 **Known limits.** Android 9 (API 28, the app's minimum) does not list them: that needs
 `androidx.sharetarget` and its chooser service, not shipped for one API level. A shortcut with a
 picture NOT yet cached shows the initials until the fetch lands (seconds; the process may be frozen

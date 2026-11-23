@@ -22,6 +22,7 @@ import androidx.core.app.Person
 import androidx.core.app.RemoteInput
 import androidx.core.content.FileProvider
 import androidx.core.content.pm.ShortcutInfoCompat
+import app.tauri.gallery.AvatarAbsence
 import app.tauri.gallery.ConversationShortcuts
 import app.tauri.gallery.ShortcutIcons
 import androidx.core.graphics.drawable.IconCompat
@@ -3562,6 +3563,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * one status that is an answer about the picture; a 200 deletes it. It lives on the same
          * [AVATAR_CACHE_MAX_AGE_MS] clock as the image itself, so a newly added photo reaches the
          * shade no later than a CHANGED photo already did.
+         * The clock is only the fallback: a page that KNOWS the user has a photo (`avatar-presence`) makes
+         * the launcher shortcuts drop this marker at once ([AvatarAbsence.yieldToPresence]).
          */
         private fun absentMarkerFile(cacheFile: File): File =
             File(cacheFile.parentFile, "${cacheFile.nameWithoutExtension}.absent")
@@ -3691,6 +3694,18 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 ShortcutIcons.AVATAR_USER -> context.cachedIconState(context.avatarCacheFile(avatar.id))
                 ShortcutIcons.AVATAR_MEDIA -> context.cachedIconState(context.mediaCacheFile(safeMediaId(avatar.id)))
                 else -> ShortcutIcons.Cached.Miss
+            }
+
+            // Only a person's photo has a remembered absence the page can refute (avatar-presence).
+            override fun forgetAbsence(context: Context, avatar: ShortcutIcons.Avatar) {
+                if (avatar.kind != ShortcutIcons.AVATAR_USER) return
+                val marker = absentMarkerFile(context.avatarCacheFile(avatar.id))
+                when (AvatarAbsence.yieldToPresence(marker, avatar.hasPhoto)) {
+                    AvatarAbsence.Outcome.NOT_CLAIMED -> Unit
+                    AvatarAbsence.Outcome.NO_MARKER -> Log.d(TAG, "forgetAbsence: photo known, no remembered absence to drop")
+                    AvatarAbsence.Outcome.DROPPED -> Log.d(TAG, "forgetAbsence: photo known -> remembered absence dropped, the picture is fetched")
+                    AvatarAbsence.Outcome.STILL_THERE -> Log.w(TAG, "forgetAbsence: photo known but the remembered absence could not be dropped")
+                }
             }
 
             override fun fetch(context: Context, avatar: ShortcutIcons.Avatar): Bitmap? = load(context, avatar)

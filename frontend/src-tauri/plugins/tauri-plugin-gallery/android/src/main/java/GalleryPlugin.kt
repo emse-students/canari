@@ -243,6 +243,8 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
     class ShareTargetAvatarArg {
         lateinit var kind: String
         lateinit var id: String
+        /** True only when the page knows this user has a photo (`avatar-presence`). */
+        var hasPhoto: Boolean = false
     }
 
     @InvokeArg
@@ -270,7 +272,7 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
     fun publishShareTargets(invoke: Invoke) {
         val args = invoke.parseArgs(PublishShareTargetsArgs::class.java)
         Log.d(TAG, "publishShareTargets: ${args.targets.size} target(s)")
-        val targets = args.targets.map { ShareTargets.Target(it.id, it.label, it.link, it.avatar?.let { a -> ShortcutIcons.Avatar(a.kind, a.id) }) }
+        val targets = args.targets.map { ShareTargets.Target(it.id, it.label, it.link, it.avatar?.let { a -> ShortcutIcons.Avatar(a.kind, a.id, a.hasPhoto) }) }
         shareTargetsThread.execute {
             try {
                 val published = ShareTargets.publish(activity, targets)
