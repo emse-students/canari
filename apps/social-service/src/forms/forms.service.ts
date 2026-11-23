@@ -5422,6 +5422,16 @@ export class FormsService {
         order: form?.anonymous ? { id: 'ASC' } : { createdAt: 'DESC' },
       })
     );
+    // WHICH ANSWERS HOLD A SEAT, from the SAME predicate the capacity checks count (`seatHoldingWhere`,
+    // the hold's clock included): the client never re-implements the 30-minute rule, it reads this.
+    const seatHolders = new Set(
+      (
+        await this.submissionRepo.find({ select: { id: true }, where: seatHoldingWhere(formId) })
+      ).map((row) => row.id)
+    );
+    this.logger.debug(
+      `getSubmissions: form ${formId.slice(0, 8)} ${subs.length} answer(s), ${seatHolders.size} hold a seat`
+    );
     // A member's name is the answer's snapshot; only an answer older than it reads the account.
     const live = await this.legacyNames(this.submissionRepo.manager, subs);
     // The files among these answers: a purged one reads "file deleted" instead of offering a
@@ -5436,6 +5446,7 @@ export class FormsService {
       const names = s.userId ? respondentNames(s, live) : { firstName: null, lastName: null };
       return {
         ...toManagerView(s),
+        holdsSeat: seatHolders.has(s.id),
         firstName: names.firstName,
         lastName: names.lastName,
         deletedFileIds: cited.filter((id) => files.get(id)!.purged),
