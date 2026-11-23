@@ -54,6 +54,7 @@ describe('AuthController restore routes', () => {
     isLiveSessionOf: jest.Mock;
     registrationOptions: jest.Mock;
     registeredKeyOf: jest.Mock;
+    allowedOrigins: jest.Mock;
     allowedOriginsDigest: jest.Mock;
     register: jest.Mock;
     assertionOptions: jest.Mock;
@@ -87,6 +88,7 @@ describe('AuthController restore routes', () => {
       isLiveSessionOf: jest.fn().mockResolvedValue(true),
       registrationOptions: jest.fn().mockResolvedValue({ challenge: 'c' }),
       registeredKeyOf: jest.fn().mockResolvedValue(null),
+      allowedOrigins: jest.fn().mockReturnValue(['android:apk-key-hash:play']),
       allowedOriginsDigest: jest.fn().mockReturnValue('0123456789abcdef'),
       register: jest
         .fn()
@@ -152,7 +154,9 @@ describe('AuthController restore routes', () => {
       await expect(controller.restoreRegistrationOptions(fromApp())).resolves.toEqual({
         options: { challenge: 'c' },
         registeredCredentialId: 'held',
-        // The other half of an origin refusal's verdict: a changed set lifts it on the client.
+        // What the client compares its own signing origin with, before it mints any key.
+        origins: ['android:apk-key-hash:play'],
+        // Legacy, for builds before 1.8.0 that record an origin refusal against it.
         originsDigest: '0123456789abcdef',
       });
       // The refresh id is passed down: only the session's CURRENT credential may register a key.

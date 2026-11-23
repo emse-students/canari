@@ -45,6 +45,8 @@ sourceSets {
         kotlin.srcDir("../gen/android/app/src/main/java/fr/emse/canari/keyboard")
         // The generation guard of the launcher shortcuts' late icon upgrades (sharing.md), same rule.
         kotlin.srcDir("../plugins/tauri-plugin-gallery/android/src/main/java/pure")
+        // The restore key's WebAuthn origin, pinned against the server's form (account-restore.md).
+        kotlin.srcDir("../plugins/tauri-plugin-restore/android/src/main/java/pure")
     }
 }
 

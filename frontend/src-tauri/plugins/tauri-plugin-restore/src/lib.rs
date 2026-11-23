@@ -19,7 +19,7 @@ mod mobile;
 mod commands;
 mod error;
 
-pub use commands::{CreatedRestoreCredential, FoundRestoreCredential};
+pub use commands::{CreatedRestoreCredential, FoundRestoreCredential, SigningOrigins};
 pub use error::{Error, Result};
 
 #[cfg(target_os = "android")]
@@ -45,7 +45,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
         .invoke_handler(tauri::generate_handler![
             commands::create_restore_credential,
             commands::get_restore_credential,
-            commands::clear_restore_credential
+            commands::clear_restore_credential,
+            commands::signing_origins
         ])
         .setup(|_app, _api| {
             #[cfg(target_os = "android")]

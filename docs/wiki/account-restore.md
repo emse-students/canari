@@ -209,7 +209,7 @@ drift, and the erasure race is exactly the part that must not.
 | 503 `RESTORE_UNAVAILABLE` | this estate has no signing fingerprint configured | logs, shows the ordinary sign-in, keeps the key |
 | 429, 408 | throttled, or too slow to answer | as `RESTORE_UNAVAILABLE`: the attempt stays un-recorded and the next start asks again |
 | 409 `RESTORE_REGISTRATION_CONFLICT` (registration) | another registration for this session committed first | the start's registration fails, logged; the next start re-checks |
-| 403 `RESTORE_ORIGIN_NOT_ALLOWED` (registration) | the key was made by a build whose signing certificate `ANDROID_APP_LINK_SHA256` does not name (a sideloaded APK signed by the upload key) - read from the response's `clientDataJSON` before the verifier, so it is never a `RESTORE_REGISTRATION_INVALID` | records the PAIR it was a verdict on - its version and the `originsDigest` the registration options carry (an order-free SHA-256 prefix of the accepted origins) - in `canari_restore_origin_refused`, and mints no key while both still match; a new version OR a changed configuration lifts it at the next start, so a fixed variable heals without a release. Each skipped start says so at `warn` (`register skipped`), countable; nothing is recorded at version `0.0.0` or against a server that sends no digest. The session's own check still runs at every start |
+| 403 `RESTORE_ORIGIN_NOT_ALLOWED` (registration) | the key was made by a build whose signing certificate `ANDROID_APP_LINK_SHA256` does not name (a sideloaded APK signed by the upload key) - read from the response's `clientDataJSON` before the verifier, so it is never a `RESTORE_REGISTRATION_INVALID` | **never reached from a `1.8.0` client in the ordinary case**: the client knows its own signer before it mints a key ([below](#a-build-the-estate-does-not-vouch-for-is-known-before-any-key-2026-11-23)). Reached, it means the origin the app read and the one Credential Manager sent disagree: logged at `error`, thrown. A build before `1.8.0` records the pair (version, `originsDigest`) in `canari_restore_origin_refused` and skips at `warn` (`register skipped`) while both match |
 | 403 `ACCOUNT_ERASURE_*`, 503 `MAINTENANCE` | as for a MiConnect sign-in | the same sentences as a MiConnect sign-in |
 
 Every refusal is logged server-side at `warn` with the code and the first 8 characters of the
@@ -235,8 +235,8 @@ files. Dev reads `DEV_ANDROID_APP_LINK_SHA256`, which does not exist yet - **a o
 (the same value as production's: one Play signing key signs both tracks). **A bench APK is NOT signed by that key** (2026-11-05): the
 sideloaded `1.6.5-alpha.1` on the bench Mi 9T is signed by the upload or sideload key, so dev
 refused its key at every start - 59 `400 RESTORE_REGISTRATION_INVALID` from 11-01 to 11-05, server
-side `Unexpected registration response origin "android:apk-key-hash:..."`. Since the refusal has its
-own code the client stops minting until its version or dev's origins change (the origins digest); whether dev should ALSO accept the upload key
+side `Unexpected registration response origin "android:apk-key-hash:..."`. Since `1.8.0` the client
+knows its signer before it mints anything ([below](#a-build-the-estate-does-not-vouch-for-is-known-before-any-key-2026-11-23)); whether dev should ALSO accept the upload key
 (adding its SHA-256 to `DEV_ANDROID_APP_LINK_SHA256`, which also puts it in dev's
 `assetlinks.json`) is the owner's variable to change. The conversion is
 `base64url` WITHOUT padding of the 32 bytes the colon-hex names, accepted in exactly the forms
@@ -247,6 +247,52 @@ own code the client stops minting until its version or dev's origins change (the
 key - the platform then offers none for the new RP id, the attempt answers "nothing to restore", and
 the phone signs in through MiConnect; nothing is logged as a defect. A pre-release APK talking to
 dev holds a key for `dev.canari-emse.fr`, which a production server never asks for, so the same.
+
+### A build the estate does not vouch for is known before any key (2026-11-23)
+
+**The finding.** Every cold start of the bench Mi 9T on `1.8.0-alpha.2` logged
+`[RESTORE] register skipped: this estate refused this build (1.8.0-alpha.2) under origins 3703af67...`
+at `warn`. The bench installs the GitHub release asset (`app-universal-release.apk`) with `adb`; that
+APK is signed by the UPLOAD key, while both estates accept only the Play app-signing key (the one
+fingerprint `assetlinks.json` publishes on each). Dev's log on 2026-11-23 holds exactly one
+`registration refused ... origin "android:apk-key-hash:..." is not a build this estate vouches for`
+(the first start of the new version), then nothing: the client had recorded the verdict and warned at
+every later start. The same line was read on `1.7.1-alpha.6` ([device-verification](device-verification.md)),
+so every sideloaded build since the record existed (`1.6.5`) did it. Production holds no refusal and
+registered keys normally: a Play-installed build is signed by the accepted key. **Not a release or
+configuration defect** - dev refusing the upload key is the configuration as designed - but a WARN at
+every start for a state that is expected, and one refusal per version learned by failing.
+
+**The fix: the signer is a FACT the install can read.** The registration options carry `origins`,
+the origins this estate accepts (public: `assetlinks.json` already publishes their fingerprints). The
+restore plugin answers `signing_origins` - `android:apk-key-hash:` + base64url (no padding) of the
+SHA-256 of the certificate signing THIS APK, read from `PackageManager.GET_SIGNING_CERTIFICATES`
+(the current signer: every content signer if several, else the last of the rotation history) - once
+per process, with the INSTALLER (`installingPackageName`; none for `adb`). When none of the
+install's origins is accepted AND Play did not install it, the client mints NO key, sends no
+registration, and says so once per start at `log`: `register not attempted: this build is signed as
+<origin>, which this estate does not vouch for ... and was not installed by Play`. **A Play install
+is never skipped on this read** (review of #3990): Play signs with the key the estates name, so a
+Play origin missing from the list means the read or the configuration is wrong, and skipping would
+leave every real user keyless with nothing reporting it. It is accused at `error` and registers
+anyway; the server judges. A read the platform cannot answer is said at `error` and registers
+anyway too (never a reason to skip), and is not cached; an installer the platform will not name
+reads as unknown, which matters only for an origin the estate does not list. Nothing is refused, so nothing is recorded; an estate
+that starts naming the build is read at the next start. The session's own check (the key it holds)
+still runs first. A server older than `1.8.0` sends no `origins`: the client then registers as before.
+The legacy record `canari_restore_origin_refused` is dropped at the first check, and `originsDigest`
+stays in the options for builds before `1.8.0`
+([legacy-compatibility](legacy-compatibility.md#the-restore-options-originsdigest-for-builds-before-180-2026-11-23)).
+
+**What proves the read matches Credential Manager's.** The server test pins that the options hand out
+exactly the origin the verifier accepts. The FORM is pinned on both sides by one vector,
+`libs/contracts/restore-apk-key-hash.cases.json`: the pure `ApkKeyHash.origin` (the plugin's
+`android/src/main/java/pure/`, compiled into `android-tests`, `RestoreOriginTest`) hashes its DER, and
+`restore-config.spec.ts` converts its fingerprint with `apkKeyHashOrigin`; both must give its origin.
+Which certificate `PackageManager` hands over is proven on a phone only: on the
+sideloaded bench Mi the `register not attempted` line must name the origin dev's log named for the
+same APK, and a Play-installed build must keep registering keys on production (`key registered` in
+core-service's log). Owed as a reading ([backlog](backlog.d/p2-restore-signing-origin-read-on-a-phone.md)).
 
 ### Schema - migration `013_restore_credentials.sql`
 
@@ -287,7 +333,9 @@ against the Rust and Kotlin sources by `restoreCommands.test.ts`.
   key the session holds, and compares it with the `{ held, registered }` record this install keeps
   under `canari_restore_registered:<userId>`; when the server holds the platform's key it stops
   there (one request, no platform call). Otherwise it registers, after the reading the planted-key
-  rule above describes (accused at `error` only when the key is nobody's here). So an existing user gets a key at the first start
+  rule above describes (accused at `error` only when the key is nobody's here) - and only when this
+  APK's signing origin is among the `origins` the options carry
+  ([why](#a-build-the-estate-does-not-vouch-for-is-known-before-any-key-2026-11-23)). So an existing user gets a key at the first start
   of the new version, without signing in again. Fire-and-forget, every failure logged; a failure
   leaves the marker unset and the next start tries again. **A key is per SESSION and the marker is per account, so the marker is dropped at every
   session MINT** (`adoptSignedInSession`: every MiConnect callback and every restore), never only on
@@ -323,10 +371,11 @@ maintenance) reuses the MiConnect sign-in's.
 
 ## The native piece - `tauri-plugin-restore`
 
-`frontend/src-tauri/plugins/tauri-plugin-restore`, shaped like `tauri-plugin-customtabs`: three
+`frontend/src-tauri/plugins/tauri-plugin-restore`, shaped like `tauri-plugin-customtabs`: four
 commands, `create_restore_credential(requestJson) -> { responseJson, cloudBackup }`,
 `get_restore_credential(requestJson) -> { responseJson } | { absent: true }`,
-`clear_restore_credential()`. Kotlin uses `androidx.credentials:credentials` and
+`clear_restore_credential()`, and `signing_origins() -> { origins }` (this APK's
+`android:apk-key-hash:` origin(s), from `PackageManager`; added 2026-11-23). Kotlin uses `androidx.credentials:credentials` and
 `credentials-play-services-auth` **1.6.0, the stable line** (trap 2: the feature arrived in
 1.5.0-beta01; 1.7.0 is still alpha), through the callback API so no coroutine dependency is added.
 `E2eeUnavailableException` is retried once with `isCloudBackupEnabled = false` and logged at `ERROR`
@@ -343,7 +392,9 @@ shape then.
 **Nothing changes for an old client, so there is no floor and no shim.** The four routes are new;
 an old client never calls them and holds no key. Every existing route keeps its shape: `issueSession`
 is a refactor whose responses the existing `auth.controller.spec.ts` pins. `minClientVersion` is not
-touched, and [legacy-compatibility](legacy-compatibility.md) gains no entry.
+touched. **One shim since `1.8.0`:** the options keep `originsDigest` for builds before `1.8.0`,
+which record an origin refusal against it
+([legacy-compatibility](legacy-compatibility.md#the-restore-options-originsdigest-for-builds-before-180-2026-11-23)).
 
 ## GDPR
 

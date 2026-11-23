@@ -17,6 +17,7 @@ export const RESTORE_COMMAND_NAMES = {
   create: 'create_restore_credential',
   get: 'get_restore_credential',
   clear: 'clear_restore_credential',
+  signingOrigins: 'signing_origins',
 } as const;
 
 /** Fully-qualified `invoke()` identifier for a restore command. */
