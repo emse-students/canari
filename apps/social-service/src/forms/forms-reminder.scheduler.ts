@@ -12,10 +12,15 @@ import {
 } from '../openings/opening-reminders';
 import { pruneEngagementPushDays } from '../posts/engagement-push-cap';
 import { PushService } from '../push/push.service';
-import { formOpeningSoonContent, formOpenContent } from '../push/push-content';
+import {
+  formOpeningSoonContent,
+  formOpenContent,
+  type FormReminderSubject,
+} from '../push/push-content';
 import { BOOKINGS_TARGET } from '../push/push-target';
 import {
   PostNotificationsService,
+  pushIconOf,
   SYSTEM_ACTOR_ID,
   SYSTEM_ACTOR_NAME,
 } from '../posts/post-notifications.service';
@@ -42,18 +47,41 @@ const OPENING_NOTIFICATION_TYPE: Readonly<Record<OpeningKind, NotificationType>>
 };
 
 /** One heads-up row, as `DUE_HEADS_UP_SQL` reads it. */
-interface DueHeadsUp {
+interface DueHeadsUp extends FormReminderFacts {
   id: string;
   kind: OpeningKind;
   targetId: string;
   userId: string;
   /** The form is published and its association not archived; false = gone for good, told nothing. */
   targetLive: boolean;
-  /** What the reminder names: the form's association (name, logo) and its title. */
+}
+
+/** What a form reminder names, from the row's statement: the ONE source of the push and the bell row. */
+interface FormReminderFacts {
   associationId: string | null;
   associationName: string | null;
   associationLogoUrl: string | null;
+  associationLogoMediaId: string | null;
   targetName: string | null;
+}
+
+/**
+ * The form reminder's push subject: the association (actor and, when its logo id is usable, the
+ * picture) and the form's title - the SAME facts `formReminderActor` writes on the bell row, so the
+ * lock screen can never say less than the bell (reading of 2026-11-23: the push read "Formulaire
+ * ouvert !" with no picture while the row was right). A personal form has no association and no
+ * picture, never a member's face (`pushIconOf`).
+ */
+function formReminderSubject(r: FormReminderFacts): FormReminderSubject {
+  return {
+    formTitle: r.targetName,
+    associationName: r.associationName,
+    icon: pushIconOf({
+      actorId: SYSTEM_ACTOR_ID,
+      associationId: r.associationId,
+      associationLogoMediaId: r.associationLogoMediaId,
+    }),
+  };
 }
 
 @Injectable()
@@ -82,10 +110,7 @@ export class FormReminderScheduler {
 
     const headsUp = (await manager.query(DUE_HEADS_UP_SQL, [now])) as DueHeadsUp[];
     for (const r of headsUp) {
-      const content = formOpeningSoonContent({
-        formTitle: r.targetName,
-        associationName: r.associationName,
-      });
+      const content = formOpeningSoonContent(formReminderSubject(r));
       try {
         // Mark as notified BEFORE sending to avoid duplicate notifications if the process
         // crashes between the push and the flag update.  Worst case: the notification is
@@ -156,10 +181,7 @@ export class FormReminderScheduler {
     }
     const withhold = r.bellWithholds;
     if (r.kind === 'form') {
-      const content = formOpenContent({
-        formTitle: r.targetName,
-        associationName: r.associationName,
-      });
+      const content = formOpenContent(formReminderSubject(r));
       if (!withhold) {
         await this.push.notifyContent(r.userId, content, {
           type: 'form_reminder',
@@ -188,6 +210,7 @@ export class FormReminderScheduler {
         ...(r.associationId && {
           associationId: r.associationId,
           associationLogoUrl: r.associationLogoUrl,
+          associationLogoMediaId: r.associationLogoMediaId,
         }),
         text: r.linkOnly ? '' : (r.targetName ?? ''),
         // A booking opens Reservations; an event the agenda (`action`, read by `socialDeepLink`).
@@ -204,11 +227,9 @@ export class FormReminderScheduler {
    * The actor of a form reminder's bell row: the association that runs the form, with its logo (owner,
    * 2026-11-17), else the generic system actor for a personal form.
    */
-  private formReminderActor(r: {
-    associationId: string | null;
-    associationName: string | null;
-    associationLogoUrl: string | null;
-  }) {
+  private formReminderActor(
+    r: Pick<FormReminderFacts, 'associationId' | 'associationName' | 'associationLogoUrl'>
+  ) {
     return {
       actorId: SYSTEM_ACTOR_ID,
       actorName: r.associationName || SYSTEM_ACTOR_NAME,

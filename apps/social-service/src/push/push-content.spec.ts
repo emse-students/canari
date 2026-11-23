@@ -569,6 +569,19 @@ describe('form reminders name who and what (owner, 2026-11-17)', () => {
     expect(content.legacyBody).toContain('Gala');
   });
 
+  it('carries the association logo as the picture when the subject has one', () => {
+    const icon = { kind: 'publicMedia', mediaId: 'logo-1' } as const;
+    expect(pushContentData(formOpenContent({ associationName: 'BDE', icon }))).toMatchObject({
+      iconMediaId: 'logo-1',
+    });
+    expect(pushContentData(formOpeningSoonContent({ associationName: 'BDE', icon }))).toMatchObject(
+      { iconMediaId: 'logo-1' }
+    );
+    expect(pushContentData(formOpenContent({ associationName: 'BDE' }))).not.toHaveProperty(
+      'iconMediaId'
+    );
+  });
+
   it('the heads-up names them too, and reads as before for a form with neither', () => {
     const soon = formOpeningSoonContent({ formTitle: 'Gala', associationName: 'BDE' });
     expect(soon.legacyBody).toContain('Gala');
