@@ -694,7 +694,7 @@ publishes ([rules](#rules)). A carte published before that release keeps its sto
 is republished, so the republication is also what brings every live carte under that rule.
 
 **Owed by the lead, once, right after the stable carrying #3526 is in production** (owner,
-2026-11-14, [decisions](backlog.d/owner-decisions-of-2026-11-14.md)). Delete this section when the
+2026-11-14, [decisions](decisions/owner-decisions-of-2026-11-14.md)). Delete this section when the
 checks of step 4 read zero on production.
 
 1. **Why.** A publication stored before #3526 keeps its old shape until it is republished: directory

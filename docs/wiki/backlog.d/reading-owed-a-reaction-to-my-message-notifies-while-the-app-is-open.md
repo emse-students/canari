@@ -26,7 +26,7 @@ conversation ([mobile](../frontend/mobile.md#the-frame-trigger-of-a-reaction-202
 3. **The web with its tab hidden:** a signed-in seat that GRANTED notifications, tab hidden, while
    another seat reacts to a message it wrote in a 1:1: ONE browser notification, none once the tab
    shows that conversation (the rig seats report `denied`, see
-   [the harness entry](p3-the-web-hidden-tab-reaction-reading-cannot-be-taken-no-rig-seat-gets-notification-permission.md)).
+   the harness entry).
 4. **Opened here (iPhone 12):** the same as 1 on the iPhone, app open on the feed: the reaction's
    notification the page raised is gone from Notification Center once the conversation is opened from
    inside the app (one drawn by a push while the app was away is not reached, and `willPresent` already

@@ -8,7 +8,7 @@ _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 a voice note asks `RECORDING_AUDIO_CONSTRAINTS` (echo cancellation, noise suppression and auto gain
 off, mono) instead of `{ audio: true }`, unless a call holds the microphone, in which case it asks the
 call's own constraints. It replaces the P2 "voice notes are captured as a phone call" (owner,
-2026-11-20, decisions 16 and 21 of [the day](owner-decisions-of-2026-11-20.md)). Decision 21 lets the
+2026-11-20, decisions 16 and 21 of [the day](../decisions/owner-decisions-of-2026-11-20.md)). Decision 21 lets the
 lead ship it without a further question **if the measurements are better**: the rows below are that
 measurement. Nothing native changed; the engines read the constraints, so a phone is the only proof.
 
@@ -25,7 +25,7 @@ measurement. Nothing native changed; the engines read the constraints, so a phon
    (not `IN_COMMUNICATION`) and the record client with source `CAMCORDER` or `MIC`/generic, not
    `VOICE_COMMUNICATION`. iPhone: music from another app playing while recording STOPS - other audio is
    interrupted on purpose, as WhatsApp does (owner, 2026-11-22,
-   [decision](owner-decisions-of-2026-11-22.md); this row used to say "NOT ducked") - and a voice note
+   [decision](../decisions/owner-decisions-of-2026-11-22.md); this row used to say "NOT ducked") - and a voice note
    played right after recording comes out of the loudspeaker.
 3. **The sound.** The same phrase, before (`1.7.2`) and after, built-in microphone, then a Bluetooth
    headset. Per file: `ffprobe` (codec, rate, channels, bitrate), `ffmpeg -af ebur128` (integrated
@@ -96,6 +96,6 @@ playback normalisation" is not a property of the law, so it cannot be closed by 
 target (-16 to -18, the lever named above, peak clamp kept). **Still open:** that call, the iPhone half (row 1's capture line shows no
 `noise`/`agc`, mono on the iPhone, rows 3, 6 and 7).
 
-**2026-11-22, `1.8.0-alpha.1` triage (readings rule).** Loudness is decided: the owner chose a playback law of its own for voice notes ([decisions](owner-decisions-of-2026-11-22.md), item 6, [the entry](voice-notes-have-their-own-playback-loudness-law.md)), so row 3's loudness leaves this entry. Fix shipped in `1.7.3`, takeable now. Left for the next phone sitting: the iPhone's capture line (row 1) and mono file (row 3), row 6 on the iPhone and once on the Mi 9T, row 7 on the Mi 9T and once on the iPhone.
+**2026-11-22, `1.8.0-alpha.1` triage (readings rule).** Loudness is decided: the owner chose a playback law of its own for voice notes ([decisions](../decisions/owner-decisions-of-2026-11-22.md), item 6, [the entry](voice-notes-have-their-own-playback-loudness-law.md)), so row 3's loudness leaves this entry. Fix shipped in `1.7.3`, takeable now. Left for the next phone sitting: the iPhone's capture line (row 1) and mono file (row 3), row 6 on the iPhone and once on the Mi 9T, row 7 on the Mi 9T and once on the iPhone.
 
 **2026-11-23, [`1.8.0-alpha.2`](../device-verification.md#the-readings-of-2026-11-23-180-alpha2-the-resume-with-salons-the-share-shortcuts-the-keyboard-on-a-photo-dm-the-inactive-iphone) (iPhone 12): row 7, the release that sends, is CLOSED, not takeable.** WDA cannot release a hold so that it sends; `VoiceRecorder.gesture.svelte.test.ts` covers the send on a plain release. Left: the iPhone half (rows 1, 3 and 6).

@@ -42,6 +42,10 @@ COPY --from=builder /app/apps/chat-delivery-service/dist ./dist
 COPY --from=prod-deps /app/apps/chat-delivery-service/node_modules ./node_modules
 COPY --from=builder /app/apps/chat-delivery-service/package.json ./
 
+# THE ZONE IS PINNED, not inherited from the base image: zone-less `timestamp` columns are read back in
+# the PROCESS's zone, so a reader agrees with the writer only while this is UTC (see social-service).
+ENV TZ=UTC
+
 EXPOSE 3010
 
 # The image has no node, so the check runs under bun - the same runtime that serves.

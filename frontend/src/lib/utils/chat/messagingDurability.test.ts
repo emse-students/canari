@@ -1,11 +1,13 @@
 import { sendChatMessage } from './messaging';
 import {
+  ConversationGoneError,
   MessagePairWriteError,
   MessageWrittenError,
   OutboxEntryWrittenAloneError,
 } from './messageWrittenError';
 import type { Conversation } from '$lib/types';
 import { serializeEnvelope, mkTextEnvelope } from '$lib/envelope';
+import { m } from '$lib/paraglide/messages';
 
 const enqueueOutboxMessage = vi.fn().mockResolvedValue(undefined);
 /** The outbox's own refusal type, kept real: what is asserted is that nobody re-types it. */
@@ -144,6 +146,18 @@ describe('sendChatMessage: the echo and its queue entry are one write', () => {
     expect(result.success).toBe(true);
     expect(enqueueOutboxMessage).toHaveBeenCalledTimes(1);
     expect(enqueueOutboxMessage.mock.calls[0][1]).toBeUndefined();
+  });
+
+  // Review of #3992: this refusal is a verdict, not a failed write - handing the entry to the queue
+  // anyway would send into the group the member just deleted or left.
+  it('a conversation gone before the write: nothing queued, and the member is told', async () => {
+    const h = harness();
+    h.deps.addMessageToChat = async (_s: string, _c: string, _n: string, o: any) => {
+      throw new ConversationGoneError(o.messageId, 'alice');
+    };
+    const result = await sendChatMessage('hello', 'alice', null, h.deps);
+    expect(result).toEqual({ success: false, error: m.chat_send_conversation_gone() });
+    expect(enqueueOutboxMessage).not.toHaveBeenCalled();
   });
 
   it('an entry SQLite wrote WITHOUT its echo is called durable: never written twice (#2874, M2)', async () => {

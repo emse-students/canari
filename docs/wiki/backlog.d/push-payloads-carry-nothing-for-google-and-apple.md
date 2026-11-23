@@ -248,7 +248,7 @@ Premise re-measured: step 1 (MLS frames) and WP-W3 (the envelope's server half) 
 switch `push_mode` OFF on both estates as far as the code says; `PUSH_WAKE_DECLARED` is still
 `{android: true, ios: false}` (a boolean - version 1 on the wire); WP-W3b, W4, W5, W3c and W7 are
 not started. The owner's order of 2026-11-14
-([decisions](owner-decisions-of-2026-11-14.md#content-free-push---the-order-answers-of-the-afternoon))
+([decisions](../decisions/owner-decisions-of-2026-11-14.md#content-free-push---the-order-answers-of-the-afternoon))
 puts the readings before WP-W4 and before any lasting flip.
 
 1. **Readings 1 and 3 + the device row CFP-W3** - one Mi 9T sitting on dev with `push_mode = wake`

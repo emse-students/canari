@@ -26,6 +26,7 @@ import { ExternalModule } from './external/external.module';
 import { InternalModule } from './internal/internal.module';
 import { SkyModule } from './sky/sky.module';
 import { typeormSynchronize } from './typeorm-synchronize';
+import { PG_SESSION_OPTIONS } from './common/pg-session-options';
 import { ROUTE_PARAMS_GUARD } from './common/route-params';
 
 /** Root NestJS module - wires up TypeORM, config, auth, users, payments, and version. */
@@ -66,6 +67,8 @@ import { ROUTE_PARAMS_GUARD } from './common/route-params';
           AccountErasureJob,
         ],
         synchronize: typeormSynchronize(),
+        // The session zone is pinned: see `PG_SESSION_OPTIONS`.
+        extra: { options: PG_SESSION_OPTIONS },
       }),
       inject: [ConfigService],
     }),

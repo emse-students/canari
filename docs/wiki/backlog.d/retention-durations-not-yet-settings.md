@@ -8,7 +8,7 @@ _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
 _2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
-_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md))._
+_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](../decisions/owner-decisions-of-2026-11-17.md))._
 
 The owner decided on 2026-11-14 that every retention duration becomes a platform admin setting, the
 privacy policy rendering the values in force, a lowered duration applying to new content only. Four
@@ -23,7 +23,7 @@ A setting read by such a sweep would apply a lowered value to everything already
 needs its expiry stamped at creation first (a column per table, or a field per entry), then a column
 in `platform_config`, a row in the admin section and its rendering in the privacy policy.
 
-**Confirmed by the owner on 2026-11-19 to stay constants** ([decisions](owner-decisions-of-2026-11-19.md)): the TTLs of seconds to hours (presence, call
+**Confirmed by the owner on 2026-11-19 to stay constants** ([decisions](../decisions/owner-decisions-of-2026-11-19.md)): the TTLs of seconds to hours (presence, call
 state, upload sessions, pending uploads, restore challenges), the per-form and per-space durations
 already chosen by their organiser (form files, booking answers), and the backups (an infrastructure
 script, not a service).

@@ -77,7 +77,11 @@ import {
 } from '$lib/services/ChannelService';
 import { writePolicyLine } from './channelWritePolicy';
 import { flushDmReadMarks } from './salonReadMarkQueue';
-import { MessagePairWriteError, MessageWrittenError } from './messageWrittenError';
+import {
+  ConversationGoneError,
+  MessagePairWriteError,
+  MessageWrittenError,
+} from './messageWrittenError';
 import { readWatermarkFrameData, readWatermarkFrameMark } from './readState';
 
 /**
@@ -1163,6 +1167,12 @@ export async function sendChatMessage(
       ...(replyToData ? { replyTo: replyToData } : {}),
     });
   } catch (e) {
+    // THE CONVERSATION LEFT BEFORE THE WRITE: nothing was written, and queueing the entry anyway
+    // would send into a group that is gone (review of #3992). The send stops, the member is told.
+    if (e instanceof ConversationGoneError) {
+      deps.log(`[SEND] ${messageId.slice(0, 8)}… not sent: ${e.message}`);
+      return { success: false, error: m.chat_send_conversation_gone() };
+    }
     if (!(e instanceof MessagePairWriteError)) throw e;
     // The entry reached disk alone (SQLite writes it first): the queue owns it already.
     pairWritten = e.entryWritten;

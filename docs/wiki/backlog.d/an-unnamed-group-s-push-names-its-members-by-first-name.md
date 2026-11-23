@@ -8,7 +8,7 @@ _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
 _2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
-**The owner, the evening of 2026-11-17** ([decisions](owner-decisions-of-2026-11-17.md#the-evening-the-owner-present)):
+**The owner, the evening of 2026-11-17** ([decisions](../decisions/owner-decisions-of-2026-11-17.md#the-evening-the-owner-present)):
 in `1.7.0` a push for an UNNAMED group (#3793) shows the sender alone - the plain-notification rule for
 a group with no name to show - and that stays. Naming the group by its members' first names in that
 notification, as the app already does in the foreground, is this entry.

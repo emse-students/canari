@@ -37,6 +37,7 @@ import { isRawId } from './rawId';
 import { classifyExitFailure, logBestEffortGroupDeleteFailure } from './pendingGroupExits';
 import { PENDING_MUTATION_LIMITS } from './pendingMutations';
 import { settlePendingFor } from './pendingMutationStore';
+import { conversationRowWritesSettled } from './conversationRowWrites';
 
 /** Why a restore stopped asking the server part-way: the connectivity store saw the link drop. */
 class LinkDroppedMidPassError extends Error {
@@ -402,8 +403,15 @@ export async function purgeConversation(params: {
     forgetGroupReconciliation(groupId);
     clearConversationControlRefusals(groupId);
   }
+  // THE MAP FIRST, THEN THE WRITES IN FLIGHT, THEN THE STORE (`conversationRowWrites.ts`). Cleared
+  // first, the store was refilled by a batch write that had asked the map before this removal and
+  // inserted after the clear - rows of a removed conversation, back at the next restore. Out of the
+  // map first, no new write starts; the ones already registered land before the clear, which takes
+  // them.
+  const removed = conversations.delete(key);
+  await conversationRowWritesSettled(key);
   await deleteStored?.(key).catch(() => {});
-  return conversations.delete(key);
+  return removed;
 }
 
 /**

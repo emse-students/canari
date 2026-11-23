@@ -51,6 +51,7 @@ import { UninvitedEntry } from './entities/uninvited-entry.entity';
 import { ReportAccusation } from './entities/report-accusation.entity';
 import Redis from 'ioredis';
 import { typeormSynchronize } from './typeorm-synchronize';
+import { PG_SESSION_OPTIONS } from './utils/pg-session-options';
 import { ROUTE_PARAMS_GUARD } from './common/route-params';
 
 const RedisProvider: Provider = {
@@ -123,6 +124,8 @@ class RedisShutdown implements OnModuleDestroy {
         ReportAccusation,
       ],
       synchronize: typeormSynchronize(),
+      // The session zone is pinned: see `PG_SESSION_OPTIONS`.
+      extra: { options: PG_SESSION_OPTIONS },
     }),
     TypeOrmModule.forFeature([
       QueuedMessage,

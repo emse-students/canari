@@ -2,7 +2,7 @@
 
 target: 1.8.0
 
-Designed with the owner on 2026-11-19 ([decisions](owner-decisions-of-2026-11-19.md)). Nothing is built yet.
+Designed with the owner on 2026-11-19 ([decisions](../decisions/owner-decisions-of-2026-11-19.md)). Nothing is built yet.
 It is a live quiz built the Canari way: a host runs it, the players answer from their phones, they
 score on correctness and speed, and a ranking shows between the questions. **It is our own
 design**: no other product's name, branding, layout or look is reused.
