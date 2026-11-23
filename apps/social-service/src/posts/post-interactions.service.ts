@@ -9,9 +9,6 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Post } from './entities/post.entity';
-
-/** The 403 a muted account gets for a gesture that ADDS something (`assertNotMuted`, `likeComment`). */
-export const MUTED_REFUSAL_MESSAGE = 'Your account has been restricted. You cannot post or react.';
 import { sameSideOfReviewCohort } from '../review-cohort';
 import { isUnsafeObjectKey, withOwnEntry } from '../common/object-keys';
 import {
@@ -49,6 +46,9 @@ import {
   mentionContent,
   previewOf,
 } from '../push/push-content';
+
+/** The 403 a muted account gets for a gesture that ADDS something (`assertNotMuted`, `likeComment`). */
+export const MUTED_REFUSAL_MESSAGE = 'Your account has been restricted. You cannot post or react.';
 
 /** Handles reactions, comments, polls, and form submissions on posts. */
 @Injectable()

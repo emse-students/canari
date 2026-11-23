@@ -289,16 +289,16 @@ describe('PostNotificationsService.createNotifications', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
-  it("shows NO face for an association with no logo - never its writer's - and ACCUSES", async () => {
+  it("shows NO face for an association with no logo - never its writer's - and says nothing", async () => {
     await service().createNotifications(
       assoPost({ associationLogoUrl: null, associationLogoMediaId: null })
     );
 
     expect(pushes[0].content.icon).toBeUndefined();
-    // `absent` and `present but refused` are a logo nobody uploaded and a broken column - the two
-    // causes this line exists to separate, since the icon itself cannot.
-    expect(String(warn.mock.calls[0][0])).toContain('asso1');
-    expect(String(warn.mock.calls[0][0])).toContain('absent');
+    // A logo nobody uploaded is an ordinary state, not a defect: only `present but refused` (a
+    // broken column, next test) accuses, so the line does not repeat on every push of such an
+    // association.
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it('refuses an id that is not one, rather than concatenating it into the route', async () => {
@@ -306,6 +306,7 @@ describe('PostNotificationsService.createNotifications', () => {
     await service().createNotifications(assoPost({ associationLogoMediaId: '../../etc/passwd' }));
 
     expect(pushes[0].content.icon).toBeUndefined();
+    expect(String(warn.mock.calls[0][0])).toContain('asso1');
     expect(String(warn.mock.calls[0][0])).toContain('present but refused');
   });
 
