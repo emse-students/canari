@@ -137,6 +137,28 @@ export async function commitStaged(
   throw new GalleryError('failed', `gallery: unknown status ${answer.status}`);
 }
 
+/** The OS's answer for the camera permission; `unknown` when the plugin could not say. */
+export type CameraPermissionState = 'granted' | 'denied' | 'prompt' | 'unknown';
+
+/**
+ * The camera permission as ANDROID holds it, asked without prompting the member. The WebView
+ * rejects a camera the OS refused with `NotReadableError`, the name of a camera another app holds,
+ * so the error cannot say which it is and this fact does (`classifyCameraRefusal`). Android only:
+ * the command is not implemented on iOS, which reports a refusal as `NotAllowedError`.
+ */
+export async function cameraPermission(): Promise<CameraPermissionState> {
+  if (!hasNativeGallery())
+    throw new GalleryError('unavailable', 'camera permission: not a phone build');
+  try {
+    const state = await invoke<string>(galleryCommand('cameraPermission'));
+    console.debug(`[gallery] camera permission: ${state}`);
+    return state === 'granted' || state === 'denied' || state === 'prompt' ? state : 'unknown';
+  } catch (err) {
+    console.error('[gallery] the camera permission could not be read', err);
+    throw new GalleryError('failed', 'camera permission: not read', { cause: err });
+  }
+}
+
 /** Opens this app's page in the system settings. */
 export async function openAppSettings(): Promise<void> {
   if (!hasNativeGallery()) throw new GalleryError('unavailable', 'settings: not a phone build');

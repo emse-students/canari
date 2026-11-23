@@ -58,6 +58,13 @@ struct PublishShareTargetsPayload {
     targets: Vec<ShareTarget>,
 }
 
+/// The OS's answer for the camera permission (`camera_permission`): `granted`, `denied`, `prompt`
+/// or `unknown` (the plugin could not say).
+#[derive(Serialize, Deserialize)]
+pub struct CameraPermission {
+    pub state: String,
+}
+
 /// How many suggestions were removed (`clear_share_targets`).
 #[derive(Serialize, Deserialize)]
 pub struct ClearOutcome {
@@ -122,6 +129,12 @@ impl<R: Runtime> Gallery<R> {
     pub fn clear_conversation_shortcuts(&self) -> crate::Result<ClearOutcome> {
         self.0
             .run_mobile_plugin("clearConversationShortcuts", ())
+            .map_err(Into::into)
+    }
+
+    pub fn camera_permission(&self) -> crate::Result<CameraPermission> {
+        self.0
+            .run_mobile_plugin("cameraPermission", ())
             .map_err(Into::into)
     }
 

@@ -5,6 +5,8 @@ import { mapStoredMessagesToChatMessages } from '$lib/utils/chat/history';
 import { shouldUpgradeMessage, mergeMessageUpgrade } from '$lib/utils/chat/messageMerge';
 import { buildConversationRow } from '$lib/utils/chat/conversations';
 import type { PushPlaceholder } from '$lib/utils/chat/fcmCache';
+import { appendLog } from '$lib/utils/sessionLog';
+import { isChannelConversationId } from '$lib/utils/chat/rawId';
 import { countingReadPoint, isUnreadForUser } from '$lib/utils/chat/readState';
 
 /**
@@ -49,6 +51,16 @@ export function mergeFcmMessagesIntoConversations(
   let merged = 0;
   for (const msg of injected) {
     const convoId = msg.conversationId;
+    // A SALON ROW IS SERVER-AUTHORITATIVE AND NEVER CACHED BY THE PUSH SERVICE: the native side
+    // caches MLS group pushes only, so this is unreachable today. It is the guard of THIS seam, so a
+    // salon frame can never be drawn from a preview that bypasses the Graine read path (the
+    // placeholder branch below would even invent an MLS-style row for it).
+    if (isChannelConversationId(convoId)) {
+      appendLog(
+        `[FCM_CACHE] message ${msg.id.slice(0, 8)} names salon ${convoId.slice(0, 16)}, which the push cache never holds - refused`
+      );
+      continue;
+    }
     let convo = conversations.get(convoId);
     if (!convo) {
       const placeholder = placeholders?.get(convoId);

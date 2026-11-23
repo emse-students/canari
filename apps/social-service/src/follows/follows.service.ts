@@ -136,7 +136,10 @@ export class FollowsService {
    * muted association followed again is unmuted), while a retried follow, a double tap, returns no
    * row and leaves a bell the reader set since untouched.
    */
-  async followAssociation(followerUserId: string, associationId: string): Promise<{ ok: boolean }> {
+  async followAssociation(
+    followerUserId: string,
+    associationId: string
+  ): Promise<{ ok: boolean; bellReset: boolean }> {
     const exists = await this.assoRepo.findOne({ where: { id: associationId } });
     if (!exists) {
       throw new NotFoundException('Association not found');
@@ -162,7 +165,9 @@ export class FollowsService {
     // client, finds the follow already there, and must still leave the reader's pages right - never
     // the cache's TTL to heal it.
     await dropFeedPagesOfReader(this.redis, this.logger, followerUserId, 'a follow');
-    return { ok: true };
+    // The answer carries the reset so a page that still shows the old level can drop it at once,
+    // never by asking again on a clock.
+    return { ok: true, bellReset: !!row?.reset };
   }
 
   /** Removes a follow relationship. Throws NotFoundException if no such relationship exists. */

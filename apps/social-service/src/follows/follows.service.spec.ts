@@ -64,7 +64,8 @@ function fakeRepo(rows: Row[]) {
           return Promise.resolve([{ created: 0, reset: 0 }]);
         }
         rows.push({ followerUserId, associationId });
-        return Promise.resolve([{ created: 1, reset: 0 }]);
+        // A reader whose id says so had set a bell before unfollowing: the follow resets it.
+        return Promise.resolve([{ created: 1, reset: followerUserId === 'u-bell' ? 1 : 0 }]);
       }
       if (!/^\s*INSERT INTO user_follows/.test(sql)) throw new Error(`unexpected SQL: ${sql}`);
       const [followerUserId, followedUserId, status] = params;
@@ -132,9 +133,16 @@ describe('FollowsService', () => {
 
   describe('association follows', () => {
     it('follows once however many times it is asked (idempotent)', async () => {
-      expect(await service().followAssociation('u1', 'a1')).toEqual({ ok: true });
-      expect(await service().followAssociation('u1', 'a1')).toEqual({ ok: true });
+      expect(await service().followAssociation('u1', 'a1')).toEqual({ ok: true, bellReset: false });
+      expect(await service().followAssociation('u1', 'a1')).toEqual({ ok: true, bellReset: false });
       expect(assoRows).toEqual([{ followerUserId: 'u1', associationId: 'a1' }]);
+    });
+
+    it('answers that the bell was reset when the new follow reset one, so a page can drop its old level', async () => {
+      expect(await service().followAssociation('u-bell', 'a1')).toEqual({
+        ok: true,
+        bellReset: true,
+      });
     });
 
     it('refuses an association that does not exist, and writes nothing', async () => {
@@ -172,11 +180,11 @@ describe('FollowsService', () => {
       const warned = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
       redis.incrEach.mockRejectedValueOnce(new Error('redis down'));
       // The follow is written, its drop failed ...
-      expect(await service().followAssociation('u1', 'a1')).toEqual({ ok: true });
+      expect(await service().followAssociation('u1', 'a1')).toMatchObject({ ok: true });
       expect(warned).toHaveBeenCalledWith(expect.stringContaining('not dropped after a follow'));
       // ... and the retry, which creates nothing, drops them all the same.
       redis.incrEach.mockClear();
-      expect(await service().followAssociation('u1', 'a1')).toEqual({ ok: true });
+      expect(await service().followAssociation('u1', 'a1')).toMatchObject({ ok: true });
       expect(assoRows).toHaveLength(1);
       expect(readersDropped()).toEqual([pagesOf('u1')]);
       warned.mockRestore();
