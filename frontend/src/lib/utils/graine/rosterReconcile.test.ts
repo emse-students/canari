@@ -808,24 +808,24 @@ describe('a pass says it CONVERGED only when a repetition would do nothing', () 
   });
 });
 
-describe('a community pass that did not converge withdraws the convergence record, in the lane', () => {
+describe('a pass that did not converge withdraws the convergence record of its scope, in the lane', () => {
   // By construction, whoever ran it: the actor of a removal (`commitRemoval.ts`) and the departure
   // committer call the lane directly, never `ensureCommunityDistributionGroup`.
   beforeEach(() => forgetAllKeyGroupConvergence());
 
   it('a converged pass leaves it; a removal, an unreadable roster, an unrecorded admission withdraw it', async () => {
     // Counters are never cleared (only the session ends), so the assertions are on the delta.
-    const base = convergenceTicket('ws-1').withdrawn;
+    const base = convergenceTicket(workspaceScope('ws-1')).withdrawn;
     await reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'));
-    expect(convergenceTicket('ws-1').withdrawn).toBe(base);
+    expect(convergenceTicket(workspaceScope('ws-1')).withdrawn).toBe(base);
 
     listWorkspaceMembers.mockResolvedValueOnce([{ userId: 'alice' }]);
     await reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'));
-    expect(convergenceTicket('ws-1').withdrawn).toBe(base + 1);
+    expect(convergenceTicket(workspaceScope('ws-1')).withdrawn).toBe(base + 1);
 
     listWorkspaceMembers.mockRejectedValueOnce(new Error('offline'));
     await reconcileDistributionGroupRoster(channelService, workspaceScope('ws-1'));
-    expect(convergenceTicket('ws-1').withdrawn).toBe(base + 2);
+    expect(convergenceTicket(workspaceScope('ws-1')).withdrawn).toBe(base + 2);
 
     observeAdmissionState.mockRejectedValueOnce(new Error('ledger write failed'));
     const report = await reconcileDistributionGroupRosterReported(
@@ -834,13 +834,16 @@ describe('a community pass that did not converge withdraws the convergence recor
       () => {}
     );
     expect(report.converged).toBeUndefined();
-    expect(convergenceTicket('ws-1').withdrawn).toBe(base + 3);
+    expect(convergenceTicket(workspaceScope('ws-1')).withdrawn).toBe(base + 3);
   });
 
-  it('a private salon pass touches no community record', async () => {
-    const base = convergenceTicket('ws-1').withdrawn;
+  it('a private salon pass withdraws its own record and touches no community record', async () => {
+    const salon = channelScope('ws-1', 'chan-1');
+    const base = convergenceTicket(workspaceScope('ws-1')).withdrawn;
+    const salonBase = convergenceTicket(salon).withdrawn;
     listMembers.mockRejectedValueOnce(new Error('offline'));
-    await reconcileDistributionGroupRoster(channelService, channelScope('ws-1', 'chan-1'));
-    expect(convergenceTicket('ws-1').withdrawn).toBe(base);
+    await reconcileDistributionGroupRoster(channelService, salon);
+    expect(convergenceTicket(workspaceScope('ws-1')).withdrawn).toBe(base);
+    expect(convergenceTicket(salon).withdrawn).toBe(salonBase + 1);
   });
 });
