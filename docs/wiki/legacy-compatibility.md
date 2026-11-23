@@ -91,6 +91,19 @@ owner's go of 2026-11-09). An older figure on this page is the floor at the date
   `cartesWithheld` with the WARN `internal.controller.ts` writes from it. The publish refusal stays:
   it is the rule, not a shim.
 
+### The restore options' `originsDigest`, for builds before `1.8.0` (2026-11-23)
+
+- **What.** `POST /api/auth/restore/registration/options` still answers `originsDigest` beside the
+  new `origins`. A build before `1.8.0` records a `RESTORE_ORIGIN_NOT_ALLOWED` against that digest
+  and its version, and stops minting while both match; `1.8.0` reads its own signer instead and
+  never asks ([account-restore](account-restore.md#a-build-the-estate-does-not-vouch-for-is-known-before-any-key-2026-11-23)).
+  Removed, an older sideloaded build would mint and be refused at every start again (it records
+  nothing without a digest). On the client, `dropLegacyOriginRefusal` (`restoreKey.ts`) deletes the
+  record those builds left.
+- **Removal.** Both go when the floor passes `1.8.0`: `originsDigest`, `allowedOriginsDigest`,
+  `originsDigest()` and their specs on the server; `dropLegacyOriginRefusal` and its test on the
+  client. Nothing to measure: the field is read only by a sideloaded build, which the floor retires.
+
 ### A PIN check with no intent still registers, unconfirmed (2026-11-20)
 
 - **What.** `POST /api/mls/security/pin-check` registers an account's first PIN only on
