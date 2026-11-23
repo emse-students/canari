@@ -111,14 +111,18 @@ describe('the frame trigger of a reaction to my message', () => {
     messaging.notifyInboundReaction(REACTION, ctx);
 
     await vi.waitFor(() => expect(sendReactionNotification).toHaveBeenCalledTimes(1));
-    expect(sendReactionNotification).toHaveBeenCalledWith({
-      conversationId: CONVO,
-      messageId: 'msg-1',
-      actorId: PEER,
-      actorName: 'Peer',
-      emoji: '❤️',
-      at: 1_700_000_000_123,
-    });
+    expect(sendReactionNotification).toHaveBeenCalledWith(
+      {
+        conversationId: CONVO,
+        messageId: 'msg-1',
+        actorId: PEER,
+        actorName: 'Peer',
+        emoji: '❤️',
+        at: 1_700_000_000_123,
+      },
+      // The live re-ask the poster runs last (`useMessaging.latePost.svelte.test.ts`).
+      expect.any(Function)
+    );
   });
 
   it('NEVER A LOSS: a phone not in front still posts it - the push of the same reaction is made ONE with it', async () => {

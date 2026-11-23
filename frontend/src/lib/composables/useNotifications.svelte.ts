@@ -33,6 +33,7 @@ import { reactionCollapseKey, reactionNotificationKey } from '$lib/utils/chat/re
 import { stableNotifId } from '$lib/utils/stableNotifId';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { appendLog } from '$lib/utils/sessionLog';
+import { Log } from '$lib/utils/Log';
 import { systemNotificationsBlockedAnnounceOnce } from '$lib/utils/systemNotificationsBlocked';
 import {
   isPermissionGranted,
@@ -583,6 +584,24 @@ export function useNotifications() {
     }
   }
 
+  /**
+   * THE LAST WORD BEFORE A POST: whether the reader still cannot see what is being announced, asked
+   * on the facts of NOW by the caller (`useMessaging`, the live selection and the app in front).
+   *
+   * Every builder asks it as the LAST SYNCHRONOUS STEP before the call that posts - after the
+   * permission read and the announcement claim, never before an await - because an app that came
+   * back in front during any await has run its receipt effect, whose `read_here` retires the
+   * conversation's banners; a banner posted after that stays up for a message already read (review of
+   * #3985). A race that heals is still a defect, so no await sits between this and the post.
+   *
+   * @returns true when the post must stand down; it logs the one line that says so.
+   */
+  function readerNowSees(convKey: string, stillOwed?: () => boolean): boolean {
+    if (!stillOwed || stillOwed()) return false;
+    Log.d('NOTIF', `${convKey} - the reader came back in front before the post; nothing raised`);
+    return true;
+  }
+
   /** Shows an OS-level notification (via Tauri plugin or Web Notification API). Rate-limited per conversation to 800 ms to absorb bursts while allowing different conversations to notify independently. Uses a stable ID/tag per conversation so successive messages replace rather than stack. */
   /**
    * THE PREAMBLE EVERY SYSTEM NOTIFICATION SHARES - a message's and a reaction's - so neither can
@@ -634,7 +653,9 @@ export function useNotifications() {
      * nothing, so a second builder for the same event is what produced the doubled notification
      * the user reported on 2026-09-18.
      */
-    native?: NativeMessageNotification
+    native?: NativeMessageNotification,
+    /** The live re-ask, asked last before the post ({@link readerNowSees}). */
+    stillOwed?: () => boolean
   ) {
     const convKey = conversationId ?? '__default__';
     if (!mayRaise(convKey)) return;
@@ -652,6 +673,7 @@ export function useNotifications() {
         );
         return;
       }
+      if (readerNowSees(convKey, stillOwed)) return;
       const accepted = await postNativeMessageNotification(native);
       console.log(
         accepted
@@ -672,6 +694,7 @@ export function useNotifications() {
       idKey: conversationId,
       conversationId,
       announced: native?.announced,
+      stillOwed,
     });
   }
 
@@ -688,12 +711,17 @@ export function useNotifications() {
    * decimal, so the system replaces one by the other. It never replaces the conversation's message
    * notification. Throttled per that reaction, so a burst of different reactions loses none.
    */
-  async function sendReactionNotification(reaction: NativeReactionNotification) {
+  async function sendReactionNotification(
+    reaction: NativeReactionNotification,
+    /** The live re-ask, asked last before the post ({@link readerNowSees}). */
+    stillOwed?: () => boolean
+  ) {
     const reactionKey = reactionCollapseKey(reaction.messageId, reaction.actorId);
     // Throttled per REACTION (its instant included), never per slot: a reactor's quick second emoji
     // is a new reaction, and it must replace the first rather than be swallowed by the window.
     if (!mayRaise(`${reactionKey}:${reaction.at}`)) return;
     if (isAndroidTauriRuntime()) {
+      if (readerNowSees(reactionKey, stillOwed)) return;
       const accepted = await postNativeReactionNotification(reaction);
       const shade = reactionNotificationKey(reaction.conversationId);
       console.log(
@@ -710,6 +738,7 @@ export function useNotifications() {
       channelId: CHANNEL_REACTIONS,
       idKey: reactionKey,
       conversationId: reaction.conversationId,
+      stillOwed,
     });
   }
 
@@ -792,8 +821,10 @@ export function useNotifications() {
     idKey?: string;
     conversationId?: string;
     announced?: readonly AnnouncedMessage[];
+    /** The live re-ask, asked last before the post ({@link readerNowSees}). */
+    stillOwed?: () => boolean;
   }) {
-    const { convKey, title, body, channelId, idKey, conversationId, announced } = p;
+    const { convKey, title, body, channelId, idKey, conversationId, announced, stillOwed } = p;
     if (isTauriRuntime()) {
       try {
         if (await isPermissionGranted()) {
@@ -816,6 +847,11 @@ export function useNotifications() {
             else console.log(decision.line);
             announces = decision.announces;
           }
+          // LAST, AND SYNCHRONOUS: nothing awaited between this answer and the post. A stand-down
+          // AFTER the claim leaves the claim standing, and that is right: the reader saw the message
+          // land, so it WAS announced - by the screen - and neither the extension nor a later ask
+          // may raise it again.
+          if (readerNowSees(convKey, stillOwed)) return;
           await sendNotification({
             title,
             ...androidNotificationOptions(body, channelId),
@@ -921,6 +957,7 @@ export function useNotifications() {
       try {
         // A call holds the sound (`callSoundGate`): the banner is still raised, only without its
         // sound - the message arrives, the call is not interrupted by it.
+        if (readerNowSees(convKey, stillOwed)) return;
         const silent = callHoldsAppSound();
         if (silent) console.log(`[NOTIF] ${convKey} raised silent - a call holds the app's sound.`);
         const n = new Notification(title, {

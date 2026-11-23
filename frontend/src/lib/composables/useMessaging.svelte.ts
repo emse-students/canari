@@ -66,7 +66,6 @@ import {
 import { isOwnMessage } from '$lib/utils/chat/messageUtils';
 import { countingReadPoint, isUnreadForUser } from '$lib/utils/chat/readState';
 import { canSeeArrivalNow, isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
-import { Log } from '$lib/utils/Log';
 import { ATTENTION_WINDOW_MS, windowAttention } from '$lib/utils/windowAttention.svelte';
 import {
   MAX_DISTINCT_MESSAGE_REACTIONS,
@@ -304,14 +303,22 @@ export interface MessagingContext {
     body: string,
     conversationId?: string,
     mentionsMe?: boolean,
-    native?: NativeMessageNotification
+    native?: NativeMessageNotification,
+    /**
+     * The LIVE re-ask the poster runs as its last synchronous step before posting: true while the
+     * reader still cannot see the arrival (`useNotifications.readerNowSees`).
+     */
+    stillOwed?: () => boolean
   ) => Promise<void>;
   /**
    * Raises a REACTION's notification (`useNotifications.sendReactionNotification`). Optional only so
    * a test context may leave it out; a context without it says so, because a reaction it would have
    * raised is then raised by nobody.
    */
-  sendReactionNotification?: (reaction: NativeReactionNotification) => Promise<void>;
+  sendReactionNotification?: (
+    reaction: NativeReactionNotification,
+    stillOwed?: () => boolean
+  ) => Promise<void>;
   /**
    * Tells this user's OTHER devices that a salon has been read, so any of them still showing its
    * notification drops it. Optional: only the layer holding a channel client can provide it, and
@@ -1570,18 +1577,6 @@ export function useMessaging() {
         return senderName;
       })
       .then((senderName) => {
-        // ASKED AGAIN AT THE POST, from the same fact: the awaits above let the app come back in
-        // front (`didBecomeActive`) after the decision, and the receipt effect then hands over
-        // `read_here` - which retires the banners standing - BEFORE this one is posted, so it would
-        // stay up for a message already read. No clock: the decision is simply re-made on the facts
-        // of now, and a reader who can now see it land is told by the screen.
-        if (canSeeArrival(ctx, conversationKey)) {
-          Log.d(
-            'NOTIF',
-            `inbound in ${conversationKey} - the reader came back in front before the post; nothing raised`
-          );
-          return;
-        }
         return ctx.sendSystemNotification(
           senderName,
           notificationBody,
@@ -1608,7 +1603,12 @@ export function useMessaging() {
             covers,
             announced,
             authorProven,
-          }
+          },
+          // ASKED AGAIN AT THE POST, ON THE LIVE SELECTION (reviews of #3985): the awaits above let
+          // the app come back in front, or the reader move to another conversation, after the
+          // decision - and `ctx.selectedContact` is a snapshot from before them. The poster runs this
+          // as its LAST synchronous step, after its own awaits (`readerNowSees`).
+          () => !canSeeArrivalNow(conversationKey, ctx.selectedNow())
         );
       });
   }
@@ -1700,22 +1700,18 @@ export function useMessaging() {
         return actorName;
       })
       .then((actorName) => {
-        // Re-made on the facts of now, for the reason `notifyInbound` gives at its post.
-        if (canSeeArrival(ctx, key)) {
-          Log.d(
-            'NOTIF',
-            `reaction ${tag} - the reader came back in front before the post; nothing raised`
-          );
-          return;
-        }
-        return send({
-          conversationId: key,
-          messageId: reaction.messageId,
-          actorId: reaction.reactorId,
-          actorName,
-          emoji: reaction.emoji,
-          at: reaction.at,
-        });
+        return send(
+          {
+            conversationId: key,
+            messageId: reaction.messageId,
+            actorId: reaction.reactorId,
+            actorName,
+            emoji: reaction.emoji,
+            at: reaction.at,
+          },
+          // The live re-ask, as for a message (`notifyInbound`).
+          () => !canSeeArrivalNow(key, ctx.selectedNow())
+        );
       })
       .catch((e: unknown) =>
         console.error(`[NOTIF] Reaction to my message ${tag} was not raised: ${String(e)}`)

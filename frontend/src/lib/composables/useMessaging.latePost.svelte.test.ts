@@ -1,23 +1,23 @@
 // @vitest-environment happy-dom
 /**
- * A BANNER DECIDED WHILE THE READER WAS AWAY, POSTED AFTER THEY CAME BACK, STAYED UP (review of #3985).
+ * THE DECISION IS RE-MADE AT THE POST, ON THE LIVE SELECTION (reviews of #3985).
  *
- * `notifyInbound` decides, then awaits the sender's name and two mirror flushes before it posts. An
- * iPhone that becomes active again in between (`didBecomeActive`) runs the receipt effect, which hands
- * over `read_here` and so retires the conversation's banners - BEFORE this one is posted, so nothing
- * ever retired it. The decision is now re-made on the facts of the post's own instant. These pin both
- * directions: the reader back in front raises nothing, the reader still away is told once.
+ * `notifyInbound` decides, then awaits the sender's name and two mirror flushes before it hands the
+ * post over; the poster awaits again (permission, the announcement claim). Between the decision and
+ * the post the reader can come back in front - the receipt effect then hands over `read_here`, which
+ * retires the banners, so one posted after it stays up - or move to ANOTHER conversation, which
+ * `ctx.selectedContact` (a snapshot) does not see. So the caller hands the poster a live re-ask
+ * (`stillOwed`, read on `ctx.selectedNow()`), which the poster runs last before posting
+ * (`useNotifications.readerNowSees`; the poster's half is pinned in
+ * `useNotifications.iosAnnounced.svelte.test.ts`). These pin the caller's half: what that re-ask
+ * answers at the post's instant, in every direction.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SvelteMap } from 'svelte/reactivity';
 
-let releaseName: (name: string) => void = () => {};
 vi.mock('$lib/utils/users/displayName', async (orig) => ({
   ...(await orig<typeof import('$lib/utils/users/displayName')>()),
-  resolveNotificationSenderName: () =>
-    new Promise<string>((resolve) => {
-      releaseName = resolve;
-    }),
+  resolveNotificationSenderName: async () => 'Peer',
 }));
 
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
@@ -45,32 +45,36 @@ import type { InboundReaction } from '$lib/utils/chat/reactionNotification';
 
 const ME = 'me-user-id';
 const PEER = 'peer-user-id';
-const CONVO = 'conversation-key';
+const A = 'conversation-a';
+const C = 'conversation-c';
 
-function makeContext() {
+function convo(key: string): Conversation {
+  return {
+    id: key,
+    name: key,
+    contactName: key,
+    conversationType: 'direct',
+    messages: [],
+    unreadCount: 0,
+    lastMessageAt: 0,
+  } as never;
+}
+
+/** A context whose snapshot is `selected` and whose LIVE selection is whatever `live.now` says. */
+function makeContext(selected: string) {
+  const live = { now: selected as string | null };
   const sendSystemNotification = vi.fn().mockResolvedValue(undefined);
   const sendReactionNotification = vi.fn().mockResolvedValue(undefined);
-  const conversations = new SvelteMap<string, Conversation>([
-    [
-      CONVO,
-      {
-        id: CONVO,
-        name: CONVO,
-        contactName: CONVO,
-        conversationType: 'direct',
-        messages: [],
-        unreadCount: 0,
-        lastMessageAt: 0,
-      } as never,
-    ],
-  ]);
   const ctx = {
-    conversations,
+    conversations: new SvelteMap<string, Conversation>([
+      [A, convo(A)],
+      [C, convo(C)],
+    ]),
     userId: ME,
     deviceKeyB64: 'device-key',
     authToken: 'token',
-    // THE CONVERSATION IS OPEN: what decides is only whether the app is in front of the reader.
-    selectedContact: CONVO,
+    selectedContact: selected,
+    selectedNow: () => live.now,
     storage: {
       saveMessage: vi.fn().mockResolvedValue(undefined),
       saveMessages: vi.fn().mockResolvedValue(undefined),
@@ -86,16 +90,17 @@ function makeContext() {
     sendSystemNotification,
     sendReactionNotification,
   } as unknown as MessagingContext;
-  return { ctx, sendSystemNotification, sendReactionNotification };
+  return { ctx, live, sendSystemNotification, sendReactionNotification };
 }
 
 const w = window as unknown as Record<string, unknown>;
-const settle = async () => {
-  for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0));
-};
+
+/** The re-ask the poster was handed - the 6th argument of a message post, the 2nd of a reaction's. */
+const reaskOf = (mock: ReturnType<typeof vi.fn>, index: number) =>
+  mock.mock.calls[0][index] as () => boolean;
 
 const REACTION: InboundReaction = {
-  conversationKey: CONVO,
+  conversationKey: A,
   messageId: 'msg-1',
   reactorId: PEER,
   emoji: '❤️',
@@ -107,7 +112,7 @@ const REACTION: InboundReaction = {
   live: true,
 };
 
-describe('the decision is re-made at the post', () => {
+describe('the live re-ask handed to the poster', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     window.history.pushState({}, '', '/chat');
@@ -119,45 +124,56 @@ describe('the decision is re-made at the post', () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     w.__canariForeground = true;
-    // The home gesture: the app is no longer active, its background edge not there yet.
-    w.__canariActive = false;
-  });
-
-  it('THE RACE: back in front before the post - nothing is posted that nothing would retire', async () => {
-    const messaging = useMessaging();
-    const { ctx, sendSystemNotification } = makeContext();
-
-    await messaging.addMessageToChat(PEER, 'their message', CONVO, ctx, { messageId: 'm-1' });
-    // `didBecomeActive` lands while the sender's name is still being asked for.
     w.__canariActive = true;
-    releaseName('Peer');
-    await settle();
-
-    expect(sendSystemNotification).not.toHaveBeenCalled();
   });
 
-  it('still away at the post: told exactly once', async () => {
+  it('back in front on that conversation before the post: no longer owed', async () => {
+    w.__canariActive = false; // the home gesture, A left open
     const messaging = useMessaging();
-    const { ctx, sendSystemNotification } = makeContext();
-
-    await messaging.addMessageToChat(PEER, 'their message', CONVO, ctx, { messageId: 'm-1' });
-    releaseName('Peer');
+    const { ctx, sendSystemNotification } = makeContext(A);
+    await messaging.addMessageToChat(PEER, 'their message', A, ctx, { messageId: 'm-1' });
     await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
+    const stillOwed = reaskOf(sendSystemNotification, 5);
+    expect(stillOwed()).toBe(true);
+    w.__canariActive = true; // didBecomeActive
+    expect(stillOwed()).toBe(false);
   });
 
-  it('the reaction post follows the same rule', async () => {
-    const messaging = useMessaging();
-    const { ctx, sendReactionNotification } = makeContext();
-
-    messaging.notifyInboundReaction(REACTION, ctx);
-    w.__canariActive = true;
-    releaseName('Peer');
-    await settle();
-    expect(sendReactionNotification).not.toHaveBeenCalled();
-
+  it('THE LOST POST: away on A, back on C through its banner - A is still owed, though the snapshot says A', async () => {
     w.__canariActive = false;
-    messaging.notifyInboundReaction({ ...REACTION, at: REACTION.at + 1 }, ctx);
-    releaseName('Peer');
+    const messaging = useMessaging();
+    const { ctx, live, sendSystemNotification } = makeContext(A);
+    await messaging.addMessageToChat(PEER, 'their message', A, ctx, { messageId: 'm-1' });
+    await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
+    const stillOwed = reaskOf(sendSystemNotification, 5);
+    w.__canariActive = true;
+    live.now = C; // the reader tapped C's banner meanwhile
+    expect(ctx.selectedContact).toBe(A);
+    expect(stillOwed()).toBe(true);
+  });
+
+  it('THE STALE BANNER: in front on C, a message in A, then A opened before the post - no longer owed', async () => {
+    const messaging = useMessaging();
+    const { ctx, live, sendSystemNotification } = makeContext(C);
+    await messaging.addMessageToChat(PEER, 'their message', A, ctx, { messageId: 'm-1' });
+    await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
+    const stillOwed = reaskOf(sendSystemNotification, 5);
+    expect(stillOwed()).toBe(true);
+    live.now = A;
+    expect(stillOwed()).toBe(false);
+  });
+
+  it('a reaction carries the same live re-ask, both directions', async () => {
+    const messaging = useMessaging();
+    const { ctx, live, sendReactionNotification } = makeContext(C);
+    messaging.notifyInboundReaction(REACTION, ctx);
     await vi.waitFor(() => expect(sendReactionNotification).toHaveBeenCalledTimes(1));
+    const stillOwed = reaskOf(sendReactionNotification, 1);
+    expect(stillOwed()).toBe(true);
+    live.now = A;
+    expect(stillOwed()).toBe(false);
+    live.now = C;
+    w.__canariActive = false;
+    expect(stillOwed()).toBe(true);
   });
 });

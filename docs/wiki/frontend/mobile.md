@@ -3773,16 +3773,22 @@ with Back on `/communities`, another route, an app not in front); where a messag
 nothing (the chat list on screen, that conversation open), the reaction raises no notification. So the
 Back-to-list case on `/chat` is the RULE, not a defect; the inactive-app half of it is fixed above.
 
-**A late banner for a message already read (review of #3985).** The decision and the post are apart by
-the sender-name resolution and two mirror flushes. If the app comes back in front in between
-(`didBecomeActive`), the receipt effect hands over `read_here` - which retires the conversation's
-banners - and the banner posted after it would stay up for a read message. Both posts (`notifyInbound`,
-`notifyInboundReaction`) re-make the decision on the facts of now, `canSeeArrival` again, immediately
-before posting, and stand down with one debug line. No clock: the same predicate, asked twice.
+**A late banner for a message already read (reviews of #3985).** The decision and the post are apart
+by the sender-name resolution, two mirror flushes, and in the poster the permission read and the
+announcement claim (two IPC calls). If the app comes back in front in between (`didBecomeActive`),
+the receipt effect hands over `read_here` - which retires the conversation's banners - and a banner
+posted after it stays up for a read message; if the reader moves to another conversation in between,
+the snapshot selection (`ctx.selectedContact`) answers for the old screen, in both directions (a lost
+post, a stale banner). So the caller hands the poster a LIVE re-ask
+(`() => !canSeeArrivalNow(key, ctx.selectedNow())`), and every builder (`useNotifications`,
+`readerNowSees`) runs it as the LAST SYNCHRONOUS STEP before the call that posts - after the
+permission read and the claim, with no await between it and the post. A stand-down after the claim
+leaves the claim standing, deliberately: the reader saw the message land, so the screen announced it.
+One debug line says so. No clock: the same predicate, asked on the facts of the post's instant.
 
 Tests: `appForeground.test.ts`, `appForeground.contract.test.ts`, `arrivalRuntime.ios.test.ts`,
 `useMessaging.reactionNotification.svelte.test.ts`, `reactionNotification.test.ts`,
-`useMessaging.latePost.svelte.test.ts`. Owed on the iPhone:
+`useMessaging.latePost.svelte.test.ts`, `useNotifications.iosAnnounced.svelte.test.ts`. Owed on the iPhone:
 [reading](../backlog.d/reading-owed-an-inactive-iphone-announces-what-it-acks.md).
 
 #### Background MLS decrypt ladder
