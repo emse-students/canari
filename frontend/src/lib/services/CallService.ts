@@ -3408,7 +3408,10 @@ export class CallService {
         }
         void pc
           .getStats()
-          .then((stats) => this.logSelectedPath(leg, stats))
+          .then((stats) => {
+            // A peer connection replaced meanwhile must not write ITS pair as this leg's last line.
+            if (leg.pc === pc) this.logSelectedPath(leg, stats);
+          })
           .catch((e: unknown) => appendLog(`[Call]${leg.tag} getStats failed: ${String(e)}`));
         // The RTP streams bind their codec on the first packet, after `connected`: read once
         // the media has had time to flow (a diagnostic read, nothing waits on it).
@@ -3644,7 +3647,6 @@ export class CallService {
     let statsError = '';
     try {
       stats = await pc.getStats();
-      this.logSelectedPath(leg, stats);
       packets = rtpPacketCounts(stats);
     } catch (e) {
       statsError = String(e);
@@ -3659,6 +3661,8 @@ export class CallService {
       );
       return;
     }
+    // After the stale guard: only the live peer connection's pair is the leg's path.
+    if (stats) this.logSelectedPath(leg, stats);
     if (!packets) {
       // Unverifiable, exactly as a worker that does not answer: withdrawn, and re-checked.
       this.withdrawE2eClaim(leg, why, 'the stats cannot be read');

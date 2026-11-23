@@ -5,6 +5,7 @@ import { mapStoredMessagesToChatMessages } from '$lib/utils/chat/history';
 import { shouldUpgradeMessage, mergeMessageUpgrade } from '$lib/utils/chat/messageMerge';
 import { buildConversationRow } from '$lib/utils/chat/conversations';
 import type { PushPlaceholder } from '$lib/utils/chat/fcmCache';
+import { appendLog } from '$lib/utils/sessionLog';
 import { isChannelConversationId } from '$lib/utils/chat/rawId';
 import { countingReadPoint, isUnreadForUser } from '$lib/utils/chat/readState';
 
@@ -55,7 +56,7 @@ export function mergeFcmMessagesIntoConversations(
     // salon frame can never be drawn from a preview that bypasses the Graine read path (the
     // placeholder branch below would even invent an MLS-style row for it).
     if (isChannelConversationId(convoId)) {
-      console.warn(
+      appendLog(
         `[FCM_CACHE] message ${msg.id.slice(0, 8)} names salon ${convoId.slice(0, 16)}, which the push cache never holds - refused`
       );
       continue;

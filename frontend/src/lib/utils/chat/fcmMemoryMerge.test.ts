@@ -19,8 +19,14 @@
  * The cases below are the three states a message can arrive in, and the middle one is the defect.
  */
 import { describe, it, expect, vi } from 'vitest';
+import { appendLog } from '$lib/utils/sessionLog';
 import type { StoredMessage } from '$lib/db/types';
 import type { Conversation } from '$lib/types';
+vi.mock('$lib/utils/sessionLog', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/sessionLog')>()),
+  appendLog: vi.fn(),
+}));
+
 import { mergeFcmMessagesAndAnnounce, mergeFcmMessagesIntoConversations } from './fcmMemoryMerge';
 
 /** A cached message as `consumeFcmCache` hands it over, with a real serialized envelope. */
@@ -281,7 +287,7 @@ describe('the badge a push merge adds is the one the next load derives', () => {
 
 describe('a salon id is not an FCM-merge destination', () => {
   it('refuses a message for a channel_ conversation, with a warning, and creates nothing', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.mocked(appendLog).mockClear();
     const conversations = new Map<string, Conversation>();
     const merged = mergeFcmMessagesIntoConversations(
       [message({ conversationId: 'channel_c1' })],
@@ -291,12 +297,12 @@ describe('a salon id is not an FCM-merge destination', () => {
     );
     expect(merged).toBe(0);
     expect(conversations.size).toBe(0);
-    expect(warn).toHaveBeenCalledTimes(1);
-    warn.mockRestore();
+    expect(appendLog).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(appendLog).mock.calls[0][0]).toMatch(/^\[FCM_CACHE\] .*refused$/);
   });
 
   it('refuses it even when a row with that id is already in memory', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.mocked(appendLog).mockClear();
     const conversations = new Map([['channel_c1', existing({ id: 'channel_c1' })]]);
     const merged = mergeFcmMessagesIntoConversations(
       [message({ conversationId: 'channel_c1' })],
@@ -305,6 +311,5 @@ describe('a salon id is not an FCM-merge destination', () => {
     );
     expect(merged).toBe(0);
     expect(conversations.get('channel_c1')?.messages).toEqual([]);
-    warn.mockRestore();
   });
 });

@@ -1148,7 +1148,8 @@ Then, on each side:
 5. On `connected` the client logs `[Call] selected path pair=<local>/<proto>-><remote>/<proto>
    relayed=yes|no [relay_proto=] [rtt_ms=]` (`utils/callStats.ts`, no address) - the client's own
    reading of its path, a DIAGNOSTIC (written AGAIN whenever the selected pair changes, at the
-   path checks that read the stats too, so the last line names the path the call ended on:
+   path checks that read the stats too, so a move to another pair after `connected` shows, though a move between two
+   checks is only seen at the next one: the pair at the end is what `[CALL_REPORT]` carries;
    `selectedPathToLog`). The TURN budget never reads it: it reads what Cloudflare
    metered ([the kill switch and the metered budget](#the-servers-kill-switch-and-the-metered-turn-budget-b12-b7-2026-10-21)).
    From then on a `[CALL_REPORT]` line every 10 s and one at the end carries the same pair plus
