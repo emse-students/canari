@@ -19,7 +19,7 @@ import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { PostsService } from './posts.service';
 import { assertCreateKindShape } from './reel-rules';
 import { resolveListFeed } from './list-feed';
-import { PostInteractionsService } from './post-interactions.service';
+import { MUTED_REFUSAL_MESSAGE, PostInteractionsService } from './post-interactions.service';
 import { PostNotificationsService, bellPageLimit } from './post-notifications.service';
 import { postPageLimit } from './post-page';
 import { CLIENT_VERSION_HEADER, clientVersionOf } from '../common/client-version';
@@ -64,8 +64,7 @@ export class PostsController {
   /** Throws 403 if the given user is currently muted. */
   private async assertNotMuted(userId: string): Promise<void> {
     const muted = await this.moderationService.isUserMuted(userId);
-    if (muted)
-      throw new ForbiddenException('Your account has been restricted. You cannot post or react.');
+    if (muted) throw new ForbiddenException(MUTED_REFUSAL_MESSAGE);
   }
 
   /** Returns the health status of the post service. */
@@ -484,10 +483,14 @@ export class PostsController {
     @Param('postId') postId: string,
     @Param('commentId') commentId: string
   ) {
-    // A comment like is participation: the mute covers it (moderation-authority, decision 9).
-    await this.assertNotMuted(xUserId);
+    // A comment like is participation, so the mute covers ADDING one (decision 9); taking one back
+    // adds nothing and goes through. Which of the two this call is depends on the stored state, so
+    // the verdict is read here and judged where the state is (`likeComment`'s `muted`).
+    const muted = await this.moderationService.isUserMuted(xUserId);
     await this.service.assertVisible(postId, xUserId, 'COMMENT');
-    return this.interactions.likeComment(postId, commentId, xUserId, xGlobalAdmin === 'true');
+    return this.interactions.likeComment(postId, commentId, xUserId, xGlobalAdmin === 'true', {
+      muted,
+    });
   }
 
   /**

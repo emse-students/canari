@@ -78,6 +78,15 @@ describe('CommentsPreview - the like of a muted account', () => {
     expect(onLike).not.toHaveBeenCalled();
   });
 
+  it('keeps the heart usable to TAKE BACK a like the muted reader already holds (it adds nothing)', () => {
+    const { target, onLike } = mountPreview([comment('a', 1, { likes: ['u1'] })], 1, {
+      canLike: false,
+    });
+    expect(heart(target).disabled).toBe(false);
+    heart(target).click();
+    expect(onLike).toHaveBeenCalledWith('a');
+  });
+
   it('CONTROL: the like is live by default and by the server saying so', () => {
     const { target, onLike } = mountPreview([comment('a', 1)], 1);
     expect(heart(target).disabled).toBe(false);

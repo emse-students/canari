@@ -371,7 +371,7 @@
               {liked}
               count={likeCount}
               onLike={() => onLike(comment.id)}
-              enabled={canLike}
+              enabled={canLike || liked}
               class="ml-auto"
             />
           {/if}

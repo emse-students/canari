@@ -15,8 +15,9 @@
     count: number;
     onLike: () => void;
     /**
-     * False when the server says this reader may not like (a muted account): the heart stays drawn
-     * but disabled and says why, so no tap ends in a refusal.
+     * False when the server says this reader may not like (a muted account) AND they do not hold a
+     * like to take back: the heart stays drawn but disabled and says why, so no tap ends in a
+     * refusal. Taking a like back adds nothing, so the callers keep it usable while `liked`.
      */
     enabled?: boolean;
     class?: string;

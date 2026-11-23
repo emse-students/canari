@@ -13,6 +13,8 @@ const EXEMPT: Record<string, string> = {
   withdrawPost: 'takes back the reader own post',
   deletePost: 'takes back the reader own post, or a moderator deletion',
   removeReaction: 'takes back the reader own reaction: adds nothing',
+  likeComment:
+    'a toggle: the mute is judged by STATE inside PostInteractionsService.likeComment (adding a like is refused, taking back the reader own like adds nothing and goes through)',
   editComment: 'corrects the reader own comment, behind commentRights',
   deleteComment: 'takes back the reader own comment, or a moderator deletion',
   unmaskPost: 'a moderation act, not participation',

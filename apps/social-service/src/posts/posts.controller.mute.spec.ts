@@ -34,11 +34,6 @@ describe('PostsController - the mute covers votes and comment likes', () => {
       'assertMayVote',
       (c: PostsController) => c.votePoll('u', 'post', 'poll', {} as never),
     ],
-    [
-      'likeComment',
-      'assertVisible',
-      (c: PostsController) => c.likeComment('u', undefined, 'post', 'c1'),
-    ],
   ] as const;
 
   describe.each(routes)('%s', (name, gate, call) => {
@@ -55,4 +50,28 @@ describe('PostsController - the mute covers votes and comment likes', () => {
       expect(interactions[name]).toHaveBeenCalled();
     });
   });
+});
+
+describe('PostsController.likeComment - the mute is judged by state, so the controller hands over the verdict', () => {
+  function make(muted: boolean) {
+    const service = { assertVisible: jest.fn(() => Promise.resolve({})) };
+    const interactions = { likeComment: jest.fn(() => Promise.resolve({ ok: true })) };
+    const controller = new PostsController(
+      service as never,
+      interactions as never,
+      {} as never,
+      {} as never,
+      { isUserMuted: jest.fn(() => Promise.resolve(muted)) } as never
+    );
+    return { controller, interactions };
+  }
+
+  it.each([true, false])(
+    'passes muted=%s to the write that knows whether it adds',
+    async (muted) => {
+      const { controller, interactions } = make(muted);
+      await controller.likeComment('u', undefined, 'post', 'c1');
+      expect(interactions.likeComment).toHaveBeenCalledWith('post', 'c1', 'u', false, { muted });
+    }
+  );
 });

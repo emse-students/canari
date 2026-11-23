@@ -26,6 +26,19 @@ export interface ProductPricingShape {
 }
 
 /**
+ * Whether something prices the product: a fixed amount, a free amount or a grid. A membership
+ * product is always read as priced here: its tiers have their own ranking (`rankPriceCents`).
+ */
+export function productHasPrice(p: ProductPricingShape): boolean {
+  return (
+    p.type === 'membership' ||
+    p.amountCents != null ||
+    p.allowCustomAmount === true ||
+    p.priceMatrix != null
+  );
+}
+
+/**
  * Refuses (typed 400 `PRODUCT_HAS_NO_PRICE`) a product that nothing prices: no fixed `amountCents`,
  * no free amount (`allowCustomAmount`) and no `priceMatrix`. A membership product is out of this
  * rule: its tiers have their own ranking (`rankPriceCents`: the unpriced base tier ranks lowest, a
@@ -36,8 +49,7 @@ export function assertProductHasPrice(
   logger: WarnLogger,
   what: 'create' | 'update'
 ): void {
-  if (p.type === 'membership') return;
-  if (p.amountCents != null || p.allowCustomAmount === true || p.priceMatrix != null) return;
+  if (productHasPrice(p)) return;
   logger.warn(`[SHOP] product ${what} refused: no amount, no free amount and no price grid`);
   throw new BadRequestException({
     code: PRODUCT_HAS_NO_PRICE,

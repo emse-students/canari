@@ -52,7 +52,11 @@ import {
   productOrderRef,
   withCheckoutReturnKey,
 } from './product-checkout';
-import { assertCustomBoundsPayable, assertProductHasPrice } from './product-save-rules';
+import {
+  assertCustomBoundsPayable,
+  assertProductHasPrice,
+  productHasPrice,
+} from './product-save-rules';
 import { PENDING_HOLD_CUTOFF_SQL, toRequestState } from '../forms/seat-hold';
 import { isUniqueViolation, violatesUniqueIndex } from '../common/pg-errors';
 import { associationVisibleToViewerSql } from '../spaces/reader-spaces';
@@ -1595,25 +1599,23 @@ export class ProductsService {
       throw new BadRequestException('customAmountMinCents must be ≤ customAmountMaxCents');
     }
     assertCustomBoundsPayable(dto, this.logger);
-    // Judged only when the request touches what prices the product, so a product saved before the
-    // rule (and an edit of its name or limits) stays editable.
-    if (
-      dto.amountCents !== undefined ||
-      dto.allowCustomAmount !== undefined ||
-      dto.priceMatrix !== undefined
-    ) {
-      assertProductHasPrice(
-        {
-          type: product.type,
-          amountCents: dto.amountCents !== undefined ? dto.amountCents : product.amountCents,
-          allowCustomAmount:
-            dto.allowCustomAmount !== undefined ? dto.allowCustomAmount : product.allowCustomAmount,
-          priceMatrix: dto.priceMatrix !== undefined ? dto.priceMatrix : product.priceMatrix,
-        },
-        this.logger,
-        'update'
-      );
-    }
+    // Refused only as a TRANSITION from priced to unpriced, judged on the merged result against the
+    // stored row: the editor's settings save sends `priceMatrix: null` whenever there is no grid, so a
+    // product saved unpriced before this rule must stay editable (its sale is what stays refused).
+    const stored = {
+      type: product.type,
+      amountCents: product.amountCents,
+      allowCustomAmount: product.allowCustomAmount,
+      priceMatrix: product.priceMatrix,
+    };
+    const merged = {
+      type: product.type,
+      amountCents: dto.amountCents !== undefined ? dto.amountCents : product.amountCents,
+      allowCustomAmount:
+        dto.allowCustomAmount !== undefined ? dto.allowCustomAmount : product.allowCustomAmount,
+      priceMatrix: dto.priceMatrix !== undefined ? dto.priceMatrix : product.priceMatrix,
+    };
+    if (productHasPrice(stored)) assertProductHasPrice(merged, this.logger, 'update');
 
     // Only a TRANSITION into the gated state is asked, not a save that repeats it: the settings
     // panel and /admin/cercle send `membersOnly` on every save, so an old product left gated by a

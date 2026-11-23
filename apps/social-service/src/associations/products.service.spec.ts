@@ -531,15 +531,50 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       expect(productRepo.save).not.toHaveBeenCalled();
     });
 
-    it('CONTROL: an edit that does not touch the price still saves a product saved unpriced before the rule', async () => {
+    it("CONTROL: the editor's real settings save (priceMatrix null + the settings fields) still saves a product saved unpriced before the rule", async () => {
       const { service, assoRepo, productRepo } = makeService();
       assoRepo.findOne.mockResolvedValue(asso());
       productRepo.findOne.mockResolvedValue(
         product({ type: 'other', amountCents: null, allowCustomAmount: false, priceMatrix: null })
       );
+      // `EditBoutiqueTab.handleSaveProductSettings`: it always sends `priceMatrix`, null without a grid.
       await expect(
-        service.update('asso1', 'prod1', { name: 'Renamed' }, false)
+        service.update(
+          'asso1',
+          'prod1',
+          {
+            allowRepeatPurchase: true,
+            maxPurchasesPerUser: null,
+            maxPurchasesTotal: null,
+            membersOnly: false,
+            priceMatrix: null,
+            amountCentsMember: null,
+            badgeText: null,
+          },
+          false
+        )
       ).resolves.toBeDefined();
+      expect(productRepo.save).toHaveBeenCalled();
+    });
+
+    it('refuses the TRANSITION: a grid product whose grid is removed with no price left', async () => {
+      const { service, assoRepo, productRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+      productRepo.findOne.mockResolvedValue(
+        product({
+          type: 'other',
+          amountCents: null,
+          allowCustomAmount: false,
+          priceMatrix: {} as never,
+        })
+      );
+      jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
+      const err = await service
+        .update('asso1', 'prod1', { priceMatrix: null }, false)
+        .catch((e: unknown) => e);
+      expect((err as BadRequestException).getResponse()).toMatchObject({
+        code: 'PRODUCT_HAS_NO_PRICE',
+      });
     });
 
     it('CONTROL: a free-amount product with no fixed price is accepted', async () => {

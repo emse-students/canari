@@ -130,7 +130,7 @@
             liked={latest.likes?.includes(currentUserId) ?? false}
             count={latest.likes?.length ?? 0}
             onLike={() => onLike(latest.id)}
-            enabled={canLike}
+            enabled={canLike || (latest.likes?.includes(currentUserId) ?? false)}
             class="mt-0.5 shrink-0"
           />
         {/if}

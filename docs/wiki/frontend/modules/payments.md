@@ -370,8 +370,10 @@ at the controller (`AMOUNT_INVALID`) - `5000.5` used to be charged rounded and r
 used to answer a bare 400 with no log), and a free-amount bound outside the payable range answers 400
 `AMOUNT_OUT_OF_RANGE` carrying that range - a bound the provider would refuse at checkout for an amount
 the product itself allowed. Membership tiers are outside the first rule (their own rank,
-`rankPriceCents`); an update is judged only when it touches the price columns, or a bound, so a product
-saved before the rule stays editable. The editor words both in the manager's locale
+`rankPriceCents`). An update refuses only the TRANSITION from priced to unpriced, judged on the merged
+result against the stored row (the editor's settings save always sends `priceMatrix`, null without a
+grid, so a product saved unpriced before the rule stays editable); a bound is judged only when the
+request sets it. The editor words both in the manager's locale
 (`membersOnlySaveRefusalMessage`: `admin_product_has_no_price`, `admin_product_bounds_not_payable`).
 In homologation the payer page offers a card form and, at its end, buttons to
 choose the final status - a real card is refused at the 3-D Secure step, so never type one there.
