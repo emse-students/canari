@@ -18,6 +18,8 @@ import {
   PendingPullIncompleteError,
 } from '$lib/mls-client/mlsDeliveryApi';
 import { MailboxListingIncompleteError } from '$lib/mls-client/IMlsService';
+import { RequestDeadlineError } from '$lib/utils/requestDeadline';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 import type { MlsQueuedMessage } from '$lib/mls-client/mlsPerGroupScheduler';
 
 abstract class Harness extends BaseMlsService {
@@ -136,6 +138,63 @@ describe('a pull that ends incomplete', () => {
     expect(inner(svc).mailboxEmptiedByAPull).toBe(false);
     expect(inner(svc).pullIncompleteOwed).toBe(true);
     expect(error.mock.calls.flat().join(' ')).toContain('a page of ONE row never arrived');
+  });
+
+  // EVERY ENDING THAT DID NOT EMPTY THE MAILBOX settles the waits - not only the two typed by the
+  // delivery API. Each of these used to leave them pending while the socket stayed up.
+  it.each([
+    [
+      'a deadline (a token renewal past its own)',
+      () => new RequestDeadlineError('read', 15_000, 'POST', '/api/auth/refresh', 0),
+      'warn',
+    ],
+    [
+      'a transport failure while the gateway socket stays open',
+      () => new TransportFailureError(new TypeError('Failed to fetch')),
+      'warn',
+    ],
+    ['an unclassified throw', () => new Error('something nobody typed'), 'error'],
+  ] as const)(
+    'on %s, settles the drain waiters and the initial drain as incomplete',
+    async (_label, ending, level) => {
+      const endedBy = ending();
+      wire(endedBy);
+      const initial = watch(svc.whenInitialDrainSettled());
+      const group = watch(svc.whenGroupDrained('g-1'));
+
+      await inner(svc).fetchPendingMessages();
+      await vi.waitFor(() => expect(group.now().state).toBe('rejected'));
+      await vi.waitFor(() => expect(initial.now().state).toBe('rejected'));
+
+      const groupEnd = (group.now() as { error: unknown }).error;
+      expect(groupEnd).toBeInstanceOf(MailboxListingIncompleteError);
+      expect((groupEnd as MailboxListingIncompleteError).endedBy).toBe(endedBy);
+      expect((initial.now() as { error: unknown }).error).toBeInstanceOf(
+        MailboxListingIncompleteError
+      );
+      expect(inner(svc).mailboxEmptiedByAPull).toBe(false);
+      expect(inner(svc).pullIncompleteOwed).toBe(true);
+      // The failure keeps its own level: an unclassified throw accuses.
+      const spy = level === 'error' ? error : warn;
+      expect(spy.mock.calls.flat().join(' ')).toContain('Pending fetch');
+
+      // And the next complete pull releases what waits again.
+      const again = watch(svc.whenGroupDrained('g-1'));
+      await inner(svc).fetchPendingMessages();
+      await vi.waitFor(() => expect(again.now().state).toBe('resolved'));
+    }
+  );
+
+  it('a revoked device settles nothing: its backlog is deleted and the service wiped next', async () => {
+    const { SessionEndedByDeviceRevocationError } = await import('$lib/stores/auth');
+    wire(new SessionEndedByDeviceRevocationError({ userId: 'user-a', deviceId: 'dev-a' }));
+    const group = watch(svc.whenGroupDrained('g-1'));
+
+    await inner(svc).fetchPendingMessages();
+    await Promise.resolve();
+
+    expect(group.now().state).toBe('pending');
+    expect(inner(svc).pullIncompleteOwed).toBe(false);
   });
 
   it('a wait registered again after the settlement is released by the next COMPLETE pull', async () => {

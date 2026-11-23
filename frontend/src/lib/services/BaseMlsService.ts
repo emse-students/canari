@@ -702,9 +702,10 @@ export abstract class BaseMlsService implements IMlsService {
   private readonly heldAtHydration = new Set<string>();
 
   /**
-   * Whether the last pull ended INCOMPLETE - a refused page ({@link PendingPullIncompleteError}) or a
-   * page of one row that never arrived ({@link PendingPageNeverArrivedError}) - and none has listed
-   * the whole mailbox since. NOT what releases the drain waiters: the failed pull settled them itself,
+   * Whether the last pull ended WITHOUT EMPTYING the mailbox - a refused page
+   * ({@link PendingPullIncompleteError}), a page of one row that never arrived
+   * ({@link PendingPageNeverArrivedError}), a deadline, a transport failure or any other throw; never
+   * on a revoked device - and none has listed the whole mailbox since. NOT what releases the drain waiters: the failed pull settled them itself,
    * with {@link MailboxListingIncompleteError} ({@link settleDrainWaitersIncomplete}). This is an
    * ADDITIONAL trigger to pull again, named and not timed: the next live frame the socket delivers
    * (the gateway is up and the history service behind it may be too). The reconnect's own pull, and
@@ -3701,10 +3702,6 @@ export abstract class BaseMlsService implements IMlsService {
               `[PENDING] Pending fetch gave up after ${fetched} message(s): a page of ONE row never arrived (${String(e.reason)}) - ${where}`
             );
           }
-          this.pullIncompleteOwed = true;
-          // THIS FAILED PULL IS THE PROOF that settles every drain wait: the mailbox state is
-          // unknown, and the next pull may be hours away on a quiet account.
-          this.settleDrainWaitersIncomplete(e);
         } else if (isTransportFailure(e)) {
           console.warn(
             `[PENDING] Pending fetch got no answer after ${fetched} message(s) - ${where}: ${String(e)}`
@@ -3723,14 +3720,16 @@ export abstract class BaseMlsService implements IMlsService {
             e
           );
         }
-        // WHAT THIS FAILURE HOLDS UP, made visible: a drain waiter (a parked seed ask, an admission
-        // observation) is woken only by a pull that ENDS whole, so it waits for the next one.
-        // Not on a revoked device: no pull will ever complete there, so the line would promise one.
-        const waiting = revokedHere ? 0 : this.pendingGroupDrainWaiters();
-        if (waiting > 0) {
-          console.info(
-            `[PENDING] ${waiting} drain waiter(s) (parked seed asks, admission observations) wait for a pull that completes`
-          );
+        // EVERY ENDING THAT DID NOT EMPTY THE MAILBOX IS THE PROOF that settles the drain waits -
+        // a refused page, a ladder run out, a deadline (a token renewal's included), a transport
+        // failure while the gateway socket stays open, an unclassified throw. The mailbox state is
+        // unknown, and the next pull may be hours away on a quiet account: waiting for it was a wait
+        // on nothing. Each caller says what an unknown mailbox means for it
+        // ({@link MailboxListingIncompleteError}), and the next live frame pulls again. Not on a
+        // revoked device: its backlog is deleted and the wipe that follows ends the service.
+        if (!revokedHere) {
+          this.pullIncompleteOwed = true;
+          this.settleDrainWaitersIncomplete(e instanceof Error ? e : new Error(String(e)));
         }
       }
     })();

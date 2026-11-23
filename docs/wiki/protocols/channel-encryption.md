@@ -346,8 +346,9 @@ arrival is counted only when the store holds the seed now.
   rejects at once on a destroyed service, `GroupDrainAbandonedError`), the runtime gone (said at
   warn, never thrown - the flush is fire-and-forget), or this tab a follower. The accumulator is
   emptied, the wants kept; the next decode naming the rows starts a fresh flush.
-- **A pull that ends incomplete DEFERS the flush, never ends it** (2026-11-23): a refused page or a
-  page of one row that never arrived settles the drain waits with `MailboxListingIncompleteError`,
+- **A pull that ends incomplete DEFERS the flush, never ends it** (2026-11-23): any pull that ends
+  without emptying the mailbox (a refused page, a page of one row that never arrived, a deadline, a
+  transport failure, an unclassified throw) settles the drain waits with `MailboxListingIncompleteError`,
   and the seed may be in the part of the mailbox nobody listed, so `whenAskable` waits again for the
   next complete pull (`untilListedWhole`, `[QUEUE] ... deferred to the next complete pull`); the
   history ask does the same on `whenDistributionEpochSettled`. The asks stay outstanding.
@@ -4784,11 +4785,11 @@ admissions, per account) and its MLS layer (pins and departures):
   **Consequence: the answer waits for the key group to catch up on the answering device.** A parked
   ask lost with the app is acceptable: the asking device asks again at its next start. A SESSIONS
   repair naming only seeds this device does not hold is answered at once (`missing` does not depend
-  on the admission). A pull that ends INCOMPLETE (a refused page, a ladder run out) settles the
-  drain waits as `MailboxListingIncompleteError`: the observation and the parked asks are ARMED
-  AGAIN for the next pull - an observation on an unknown mailbox could place a voucher at an epoch
-  the unlisted part still moves - and said; never dropped. Any other failed pull wakes nothing and
-  says how many drain waiters it holds up. Sign-out forgets the parked asks (`clearParkedAsks`), and the MLS
+  on the admission). A pull that ends without emptying the mailbox - whatever ended it, a revoked
+  device's alone excepted - settles the drain waits as `MailboxListingIncompleteError`: the
+  observation and the parked asks are ARMED AGAIN for the next pull - an observation on an unknown
+  mailbox could place a voucher at an epoch the unlisted part still moves - and said; never
+  dropped. Sign-out forgets the parked asks (`clearParkedAsks`), and the MLS
   service's `destroy` rejects its pending drain waiters (`GroupDrainAbandonedError`).
 - **Removals**: the epochs at which a commit this device merged - live or on catch-up - removed the
   user's last leaf from the key group (`removalEpochs`, [mls-protocol](mls-protocol.md)); a device

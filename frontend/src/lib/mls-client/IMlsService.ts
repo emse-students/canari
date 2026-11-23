@@ -456,8 +456,9 @@ export class GroupDrainAbandonedError extends Error {
 /**
  * What a pending drain wait - {@link IMlsService.whenGroupDrained}, {@link IMlsService.whenInitialDrainSettled},
  * and so {@link IMlsService.whenDistributionEpochSettled} - rejects with when a pull ENDED without
- * listing the whole mailbox: a page was refused (`PendingPullIncompleteError`) or a page of one row
- * never arrived (`PendingPageNeverArrivedError`).
+ * emptying the mailbox, whatever ended it: a refused page (`PendingPullIncompleteError`), a page of
+ * one row that never arrived (`PendingPageNeverArrivedError`), a deadline, a transport failure, any
+ * other throw. Only a revoked device's pull settles nothing (its service is wiped next).
  *
  * THE FAILED PULL IS THE PROOF that settles the wait, the way a destroy is
  * ({@link GroupDrainAbandonedError}): the mailbox state is UNKNOWN, and a waiter left pending would
@@ -1593,8 +1594,8 @@ export interface IMlsService {
    * Resolves once the FIRST pull of this session has emptied the mailbox and the scheduler has
    * applied it - never on a pull that failed half-way, whose rows are still on the server.
    *
-   * Never resolved by a clock: an offline start-up simply keeps it pending until the reconnect's pull
-   * lands. It is the fact a verdict about a group's epoch needs - before it, "behind" may only mean
+   * Never resolved by a clock: an offline start-up's failed pull rejects it (below), and a wait made
+   * after that is settled by the reconnect's pull. It is the fact a verdict about a group's epoch needs - before it, "behind" may only mean
    * "its commits are still queued".
    *
    * @throws {MailboxListingIncompleteError} (as a rejection) when a pull ended without listing the
