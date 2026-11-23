@@ -1548,17 +1548,38 @@ showed in that gap - an own message just sent, a second arrival - was erased fro
 unread count (it stayed in the store, so it came back at the next load).
 
 The fix is the one the batch path and the preview upgrade already used: re-read after the last await
-and render onto the row as it stands. A message the row gained meanwhile under the same id is not
-shown twice (the write still runs; where the other writer's row stands, memory takes it,
-`showStoredInstead`), and a conversation that left the map meanwhile is stored and not rendered, with
-a warning. The effects after the write (the other tabs' seed, the notification's watermark) read the
-live row too. No lock and no timer: every writer that awaits re-reads, and the ones that do not await
-before rendering cannot hold a stale copy.
+and render onto the row as it stands. The effects after the write (the other tabs' seed, the
+notification's watermark) read the live row too. No lock and no timer: every writer that awaits
+re-reads, and the ones that do not await before rendering cannot hold a stale copy.
+
+**What the entry decided is decided again when the gap changed it (review of #3988).** Two facts read
+at entry can be false after the store read, and neither may be answered by the new-arrival path:
+
+- **the id is now shown** by another writer (a push preview, a redelivery). The add is not a new
+  arrival: the live path re-enters and its entry-time duplicate/upgrade branch answers - a preview
+  takes the body (`mergeMessageUpgrade`), a body or a tombstone is left - and none of the arrival's
+  effects run (no second count, tone or banner). The batch path does the same for its late-held ids:
+  a preview is reshown upgraded, the row is written as an UPGRADE (compare-and-set onto a stored
+  preview, inserted only where none stands, `writeShownUpgrades`), and only the messages actually
+  added are counted and announced;
+- **the conversation left the map.** Storing its rows would resurrect a deleted conversation, so
+  both paths hand the messages to the orphan buffer, as the live path's entry does, with a WARN.
+
+The live path's re-entry cannot loop: both branches it lands in return, and nothing is awaited
+between the read that sent it back and the re-entry's own.
+
+An own act has the same shape: `handleEditMessage` awaits the control act's enqueue, then re-reads
+the conversation and writes under the key the edit STARTED on (never the selection of the moment), as
+`tombstoneLocalMessage` does.
 
 **INVARIANT: an add that awaits between reading the conversation and writing it back re-reads it
-after its last await.** `useMessaging.interleavedAdds.svelte.test.ts` holds the store read of one
-arrival open while a second arrival, then an own send, lands: both are kept and counted (both fail on
-the entry-copy spread).
+after its last await, and takes the entry's decisions again if what they read has changed.**
+`useMessaging.interleavedAdds.svelte.test.ts` holds the store read of one arrival open while a second
+arrival, then an own send, lands: both are kept and counted. `useMessaging.shownDuringRead.svelte.test.ts`
+shows a preview of the same id, then removes the conversation, during the store read, on both paths:
+one message, counted once, upgraded on screen and on disk, nothing announced; nothing stored into a
+removed conversation. `useMessaging.editRereads.svelte.test.ts` lands a message and moves the reader
+during an edit's send. Each fails on the entry-copy code.
 
 ## Outbox (outbound delivery)
 

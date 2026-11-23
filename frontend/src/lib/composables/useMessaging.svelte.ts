@@ -2334,25 +2334,36 @@ export function useMessaging() {
     // per conversation: the MLS drain applies one frame at a time, but a send, an own notice, a call
     // or device notice and the outbox's lines call `addMessageToChat` outside it. Spreading the entry
     // copy erased whatever such a writer showed in the gap - an own message just sent, its unread
-    // count - from memory. A message the row gained meanwhile under this id is not shown twice; the
-    // write below still runs, and where the other writer's row stands, memory takes it.
+    // count - from memory.
+    //
+    // AND WHAT THE ENTRY DECIDED IS DECIDED AGAIN WHEN THE GAP CHANGED IT (review of #3988). Two
+    // facts read at entry can be false now: the conversation is in the map (it may have been
+    // removed - storing the row then would resurrect a deleted conversation's rows), and this id is
+    // not shown (another writer may have shown it - a preview to upgrade, a body or a tombstone to
+    // leave). Either way this add is not a NEW arrival any more, so it runs none of the effects
+    // below (no second count, tone or banner): it re-enters, and the entry-time branches answer -
+    // the orphan buffer for a missing conversation, the duplicate/upgrade branch for a shown id.
+    // The re-entry cannot reach this point again: both of those branches return, and nothing is
+    // awaited between this read and the re-entry's.
     const shownNow = ctx.conversations.get(normalized);
-    if (!shownNow) {
-      console.warn(
-        `[ADD_MSG] conversation "${normalized}" left the map during the store read of id=${newMsg.id} - stored, not rendered`
-      );
-    } else if (shownNow.messages.some((m) => m.id === newMsg.id)) {
-      console.log(
-        `[ADD_MSG] id=${newMsg.id} was shown by another writer during the store read - not shown twice`
-      );
-    } else {
-      ctx.conversations.set(normalized, {
-        ...shownNow,
-        messages: insertMessageOrdered(shownNow.messages, newMsg),
-        lastMessageAt: advanceLastMessageAt(shownNow.lastMessageAt, [newMsg]),
-      });
-      console.log(`[ADD_MSG] ✓ Message added: id=${newMsg.id} ${clockGapNote(newMsg)}`);
+    if (!shownNow || shownNow.messages.some((m) => m.id === newMsg.id)) {
+      if (!shownNow) {
+        console.warn(
+          `[ADD_MSG] conversation "${normalized}" left the map during the store read of id=${newMsg.id} - decided again (orphan buffer), not stored`
+        );
+      } else {
+        console.log(
+          `[ADD_MSG] id=${newMsg.id} was shown by another writer during the store read - decided again as a shown row (upgrade or duplicate)`
+        );
+      }
+      return addMessageToChatOnce(senderId, content, contactName, ctx, options);
     }
+    ctx.conversations.set(normalized, {
+      ...shownNow,
+      messages: insertMessageOrdered(shownNow.messages, newMsg),
+      lastMessageAt: advanceLastMessageAt(shownNow.lastMessageAt, [newMsg]),
+    });
+    console.log(`[ADD_MSG] ✓ Message added: id=${newMsg.id} ${clockGapNote(newMsg)}`);
 
     // ONE ARRIVAL VERDICT, AFTER THE LAST AWAIT BEFORE THE EFFECTS (review of #3985). It was taken
     // here, before the row's writes, while the tone and the notification asked again after them: a
@@ -3085,9 +3096,61 @@ export function useMessaging() {
     // (`notifyConversationRowsSeeded`), so the two do overlap. Writing back the copy read before the
     // loop would erase that page; a message the row gained meanwhile is not added a second time.
     const current = ctx.conversations.get(normalized);
-    const base = current ?? convo;
-    const heldNow = current && current !== convo ? indexMessagesById(current.messages) : null;
+    // A CONVERSATION THAT LEFT THE MAP DURING THE LOOP IS NOT WRITTEN INTO (review of #3988): its
+    // rows would resurrect a deleted conversation. What this batch would have shown or upgraded
+    // goes to the orphan buffer, as the live path's entry does, and is replayed if it comes back.
+    if (!current) {
+      const pending = new SvelteSet([...brandNew.map((m) => m.id), ...upgradedById.keys()]);
+      const orphans = messages.filter((pm) => {
+        const id = normalizeMessageId(pm.messageId);
+        return id !== undefined && pending.has(id);
+      });
+      console.warn(
+        `[ADD_MSG] conversation "${normalized}" vanished during the batch - ${orphans.length} message(s) buffered as orphans, not stored`
+      );
+      for (const { senderId, content, ...options } of orphans) {
+        bufferOrphan(normalized, senderId, content, contactName, options);
+      }
+      return;
+    }
+    const base = current;
+    const heldNow = current !== convo ? indexMessagesById(current.messages) : null;
     const toAdd = heldNow ? brandNew.filter((m) => !heldNow.has(m.id)) : brandNew;
+    // SHOWN BY ANOTHER WRITER DURING THE LOOP (review of #3988): not new, so neither counted nor
+    // announced. A shown PREVIEW takes the body, as at the entry (`shouldUpgradeMessage`); a body or
+    // a tombstone is left. Its row is written as an upgrade - a compare-and-set onto a stored
+    // preview, inserted only where none stands - never as a new row a stored preview would refuse.
+    const lateHeld = heldNow ? brandNew.filter((m) => heldNow.has(m.id)) : [];
+    if (lateHeld.length > 0) {
+      const lateIds = new SvelteSet(lateHeld.map((m) => m.id));
+      for (const msg of lateHeld) {
+        const shown = heldNow!.get(msg.id)!;
+        const upgrade = {
+          content: msg.content,
+          senderId: msg.senderId,
+          replyTo: msg.replyTo,
+          isSystem: msg.isSystem,
+          serverTimestamp: msg.serverTimestamp,
+        };
+        if (shouldUpgradeMessage(shown, msg.content)) {
+          upgradedById.set(msg.id, {
+            from: shown,
+            shown: mergeMessageUpgrade(shown, upgrade),
+            reshow: (now) =>
+              shouldUpgradeMessage(now, msg.content) ? mergeMessageUpgrade(now, upgrade) : now,
+          });
+        }
+      }
+      for (let i = newRows.length - 1; i >= 0; i--) {
+        if (lateIds.has(newRows[i].id)) {
+          upgradeRows.push({ ...newRows[i], isFcmPreview: false });
+          newRows.splice(i, 1);
+        }
+      }
+      console.log(
+        `[ADD_MSG] Batch into "${normalized}": ${lateHeld.length} message(s) shown by another writer during the batch - upgraded where a preview, otherwise left; not counted, not announced`
+      );
+    }
     const mine = countingReadPoint(base, ctx.userId.toLowerCase());
     // A MUTED SALON RAISES NOTHING, the server's count of it being zero by the same rule.
     const addedUnread = isSalonMuted(normalized)
@@ -3103,20 +3166,12 @@ export function useMessaging() {
     });
     const merged = mergeMessagesInInputOrder(withUpgrades, toAdd);
 
-    if (current) {
-      ctx.conversations.set(normalized, {
-        ...current,
-        unreadCount: nextUnreadCount,
-        messages: merged,
-        lastMessageAt: advanceLastMessageAt(current.lastMessageAt, merged),
-      });
-    } else {
-      // Same rule as the vanished-conversation return at the top: never silent. The rows are still
-      // persisted below, so the store keeps what the map could not show.
-      console.warn(
-        `[ADD_MSG] conversation "${normalized}" vanished during the batch - ${brandNew.length} message(s) persisted, not rendered`
-      );
-    }
+    ctx.conversations.set(normalized, {
+      ...current,
+      unreadCount: nextUnreadCount,
+      messages: merged,
+      lastMessageAt: advanceLastMessageAt(current.lastMessageAt, merged),
+    });
 
     // THE ONLY INBOUND PATH WITH NO SUCCESS LINE, until 2026-08-20. The live path says
     // `Message added` per message; this one said nothing at all, so a message that took the buffered
@@ -3124,11 +3179,11 @@ export function useMessaging() {
     // that never appeared left the log in. One line per FLUSH rather than per message: a catch-up
     // carries thousands, and the question a reader has is which conversation received how many.
     // System messages are named individually because they are few, and because a card is one.
-    const systemIds = brandNew.filter((m) => m.isSystem).map((m) => m.id);
+    const systemIds = toAdd.filter((m) => m.isSystem).map((m) => m.id);
     console.log(
-      `[ADD_MSG] Batch into "${normalized}": ${brandNew.length} added, ${upgradedById.size} upgraded, selected=${ctx.selectedNow() === normalized}` +
+      `[ADD_MSG] Batch into "${normalized}": ${toAdd.length} added, ${upgradedById.size} upgraded, selected=${ctx.selectedNow() === normalized}` +
         (systemIds.length > 0 ? ` - system: ${systemIds.join(', ')}` : '') +
-        largestClockGapNote(brandNew)
+        largestClockGapNote(toAdd)
     );
 
     // THE SAME QUESTION THE LIVE PATH ASKS, and until 2026-09-05 this path never asked it. A message
@@ -3142,7 +3197,7 @@ export function useMessaging() {
     // re-run of this batch would meet them there and write nothing (rows before ratchet). A failed
     // announcement costs the banner or the other tabs' copy, never the row.
     try {
-      const lastInbound = [...brandNew]
+      const lastInbound = [...toAdd]
         .reverse()
         .find((msg) => !msg.isSystem && !msg.isDeleted && !isOwnMessage(msg.senderId, ctx.userId));
       // AND IT ASKS THE APP, NOT THE DOCUMENT - THIS GUARD WAS THE ONE SITE IN THIS FILE THAT STILL
@@ -3158,7 +3213,7 @@ export function useMessaging() {
       const appAway = isMobileTauriRuntime()
         ? !isAppInFront()
         : typeof document !== 'undefined' && document.visibilityState !== 'visible';
-      if (!lastInbound && brandNew.length && appAway) {
+      if (!lastInbound && toAdd.length && appAway) {
         // The other half of the same question: a flush that added messages while the app was away and
         // raised nothing has either seen only own/system rows, or lost them to a predicate.
         const awayState = isMobileTauriRuntime()
@@ -3167,7 +3222,7 @@ export function useMessaging() {
             : 'backgrounded'
           : document.visibilityState;
         console.log(
-          `[NOTIF] Batch into "${normalized}" added ${brandNew.length} while ${awayState}, none of them an inbound message - nothing to raise.`
+          `[NOTIF] Batch into "${normalized}" added ${toAdd.length} while ${awayState}, none of them an inbound message - nothing to raise.`
         );
       }
       // AND ONLY AN ARRIVAL IS NEWS. `brandNew` means "not already in the in-memory map", which on a
@@ -3182,10 +3237,10 @@ export function useMessaging() {
       // and used to throw that away at the door. A restore is silent here, always, on every platform.
       if (lastInbound && origin === 'restore') {
         console.log(
-          `[NOTIF] Batch into "${normalized}" restored ${brandNew.length} message(s) from an archive - a replay is not an arrival, nothing raised.`
+          `[NOTIF] Batch into "${normalized}" restored ${toAdd.length} message(s) from an archive - a replay is not an arrival, nothing raised.`
         );
       } else if (lastInbound) {
-        const inbound = brandNew.filter(
+        const inbound = toAdd.filter(
           (msg) => !msg.isSystem && !msg.isDeleted && !isOwnMessage(msg.senderId, ctx.userId)
         );
         notifyInbound(
@@ -3213,8 +3268,8 @@ export function useMessaging() {
       publishTabMessageUpdate({
         type: 'messages_batch',
         conversationId: normalized,
-        messages: brandNew,
-        ...tabSeed(advanceLastMessageAt(convo.lastMessageAt, brandNew)),
+        messages: toAdd,
+        ...tabSeed(advanceLastMessageAt(base.lastMessageAt, toAdd)),
         unreadCount: nextUnreadCount,
       });
     } catch (e) {
@@ -4775,8 +4830,11 @@ export function useMessaging() {
 
   /** Sends an "edit_message" MLS system message and updates the message content and editedAt in the local conversation state. Only the original sender can edit their own message. */
   async function handleEditMessage(messageId: string, text: string, ctx: MessagingContext) {
-    if (!ctx.selectedContact) return;
-    const convo = ctx.conversations.get(ctx.selectedContact);
+    // THE CONVERSATION THE EDIT STARTED ON, kept across the send: the reader may select another one
+    // meanwhile, and the edit belongs to this one (review of #3988).
+    const key = ctx.selectedContact;
+    if (!key) return;
+    const convo = ctx.conversations.get(key);
     if (!convo) return;
 
     // Ownership check: only the sender can edit their own message
@@ -4797,7 +4855,14 @@ export function useMessaging() {
     const act: ControlAct = { kind: 'edit', editedAt };
     const queued = await sendControlAct(messageId, act, controlDeps(ctx, convo), text);
     settleControl(ctx, convo.id, messageId, act, queued);
-    const msgs = [...convo.messages];
+    // READ AGAIN AFTER THE SEND, as `tombstoneLocalMessage` does: writing back the copy from before
+    // it erased from memory whatever landed in the conversation while the act was queued.
+    const live = ctx.conversations.get(key);
+    if (!live) {
+      ctx.log(`[EDIT] ${messageId.slice(0, 8)} not applied here: its conversation left the map`);
+      return;
+    }
+    const msgs = [...live.messages];
     const idx = msgs.findIndex((m) => m.id === messageId);
     // The row is defended against our own edit by the same rule that defends it against a peer's:
     // if it already holds a later one, this edit lost and the broadcast above will lose everywhere.
@@ -4812,8 +4877,8 @@ export function useMessaging() {
         // `replyTo` until the first reload, which is why the loss was first seen on the PEER's PC.
         content: applyEditToBody(msgs[idx].content, text),
       };
-      ctx.conversations.set(ctx.selectedContact, { ...convo, messages: msgs });
-      await persistLocalMutation(ctx.selectedContact, msgs[idx], ctx, {
+      ctx.conversations.set(key, { ...live, messages: msgs });
+      await persistLocalMutation(key, msgs[idx], ctx, {
         kind: 'edit',
         slot: '',
         rank: editedAt,
