@@ -22,7 +22,7 @@ import {
   RESTORE_ATTEMPTED_KEY,
   RESTORE_REGISTERED_PREFIX,
   forgetRestoreKeyRegistrations,
-  resetRestoreSigningOriginsForTests,
+  resetRestoreSigningForTests,
   restoreKeyRecord,
   writeRestoreKeyRecord,
 } from './restoreKey';
@@ -51,7 +51,7 @@ let fetchMock: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   localStorage.clear();
-  resetRestoreSigningOriginsForTests();
+  resetRestoreSigningForTests();
   android = true;
   invoke.mockReset();
   adoptRestoredSession.mockReset().mockResolvedValue(undefined);
@@ -73,16 +73,27 @@ const PLAY = 'android:apk-key-hash:play';
 /** The origin of the release asset sideloaded with `adb` (signed by the upload key). */
 const SIDELOADED = 'android:apk-key-hash:upload';
 
-/** Routes `invoke` by command name. `signing` is this APK's own origin(s), Play-signed by default. */
+/**
+ * Routes `invoke` by command name. `signing` is this APK's own origin(s) and `installer` who put it
+ * there: a Play install by default; `installer: null` is `adb`. `signingThrows` fails the read.
+ */
 function platform(answers: {
   create?: unknown;
   get?: unknown;
   getThrows?: unknown;
   signing?: string[];
+  installer?: string | null;
+  signingThrows?: unknown;
 }) {
   invoke.mockImplementation(async (cmd: string) => {
     if (cmd === 'plugin:restore|create_restore_credential') return answers.create;
-    if (cmd === 'plugin:restore|signing_origins') return { origins: answers.signing ?? [PLAY] };
+    if (cmd === 'plugin:restore|signing_origins') {
+      if (answers.signingThrows) throw answers.signingThrows;
+      const installer = answers.installer === undefined ? 'com.android.vending' : answers.installer;
+      return installer === null
+        ? { origins: answers.signing ?? [PLAY] }
+        : { origins: answers.signing ?? [PLAY], installer };
+    }
     if (cmd === 'plugin:restore|get_restore_credential') {
       if (answers.getThrows) throw answers.getThrows;
       return answers.get;
@@ -218,8 +229,12 @@ describe('ensureRestoreKey', () => {
     expect(restoreKeyRecord('user-1').registered).toBeNull();
   });
 
-  it('a build the estate does not vouch for mints no key and is never refused - said once, at log, not warn', async () => {
-    platform({ create: { responseJson: '{"id":"k"}', cloudBackup: true }, signing: [SIDELOADED] });
+  it('a SIDELOADED build the estate does not vouch for mints no key and is never refused - said once, at log, not warn', async () => {
+    platform({
+      create: { responseJson: '{"id":"k"}', cloudBackup: true },
+      signing: [SIDELOADED],
+      installer: null,
+    });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     apiFetch.mockImplementation(async () => options(null));
@@ -239,8 +254,51 @@ describe('ensureRestoreKey', () => {
     ).toHaveLength(1);
   });
 
-  it('an estate that starts naming this build is read at the next start, same version', async () => {
+  it('a PLAY install whose read origin the estate does not list still registers, and accuses the read at error', async () => {
     platform({ create: { responseJson: '{"id":"k"}', cloudBackup: true }, signing: [SIDELOADED] });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    apiFetch
+      .mockResolvedValueOnce(options(null))
+      .mockResolvedValueOnce(json({ registered: true, credentialId: 'k' }));
+    await ensureRestoreKey('user-1');
+    // The server stays the judge: a wrong native read never costs a real user their key.
+    expect(created()).toBe(1);
+    expect(restoreKeyRecord('user-1')).toEqual({ held: 'k', registered: 'k' });
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('a Play install read its signer'));
+  });
+
+  it('a signer the platform cannot read mints no key, is said at error, and is asked again next start', async () => {
+    platform({
+      create: { responseJson: '{"id":"k"}', cloudBackup: true },
+      signingThrows: new Error('no signing info'),
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    apiFetch.mockImplementation(async () => options(null));
+    await ensureRestoreKey('user-1');
+    expect(created()).toBe(0);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('the signing origin could not be read')
+    );
+
+    // Not cached: the next start reads again, and this time it answers.
+    platform({ create: { responseJson: '{"id":"k"}', cloudBackup: true } });
+    apiFetch
+      .mockReset()
+      .mockResolvedValueOnce(options(null))
+      .mockResolvedValueOnce(json({ registered: true, credentialId: 'k' }));
+    await ensureRestoreKey('user-1');
+    expect(created()).toBe(1);
+    expect(
+      invoke.mock.calls.filter(([cmd]) => cmd === 'plugin:restore|signing_origins')
+    ).toHaveLength(2);
+  });
+
+  it('an estate that starts naming this build is read at the next start, same version', async () => {
+    platform({
+      create: { responseJson: '{"id":"k"}', cloudBackup: true },
+      signing: [SIDELOADED],
+      installer: null,
+    });
     apiFetch.mockResolvedValueOnce(options(null));
     await ensureRestoreKey('user-1');
     expect(created()).toBe(0);

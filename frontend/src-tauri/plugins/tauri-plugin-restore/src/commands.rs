@@ -31,6 +31,10 @@ pub struct FoundRestoreCredential {
 #[serde(rename_all = "camelCase")]
 pub struct SigningOrigins {
     pub origins: Vec<String>,
+    /// The package that installed this APK (`com.android.vending` for Play), or `None` for `adb`
+    /// / `pm install`: only a non-Play install may skip registration on the origins alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installer: Option<String>,
 }
 
 /// Creates (or replaces) this install's restore key from the server's registration options.
@@ -130,6 +134,11 @@ mod tests {
         let v: SigningOrigins =
             serde_json::from_str(r#"{"origins":["android:apk-key-hash:abc"]}"#).unwrap();
         assert_eq!(v.origins, vec!["android:apk-key-hash:abc".to_string()]);
+        // A sideload: Kotlin puts no `installer` key at all.
+        assert_eq!(v.installer, None);
+        let v: SigningOrigins =
+            serde_json::from_str(r#"{"origins":[],"installer":"com.android.vending"}"#).unwrap();
+        assert_eq!(v.installer.as_deref(), Some("com.android.vending"));
     }
 
     #[test]

@@ -4,7 +4,6 @@ import android.app.Activity
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.CancellationSignal
-import android.util.Base64
 import android.util.Log
 import androidx.credentials.ClearCredentialStateRequest
 import androidx.credentials.CreateCredentialResponse
@@ -21,7 +20,6 @@ import androidx.credentials.exceptions.CreateCredentialException
 import androidx.credentials.exceptions.GetCredentialException
 import androidx.credentials.exceptions.NoCredentialException
 import androidx.credentials.exceptions.restorecredential.E2eeUnavailableException
-import java.security.MessageDigest
 import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
 import app.tauri.annotation.TauriPlugin
@@ -181,6 +179,11 @@ class RestorePlugin(private val activity: Activity) : Plugin(activity) {
      *
      * The CURRENT signer: every content signer when the APK has several, otherwise the last entry of
      * the rotation history (index 0 is the original certificate, the last the one signing now).
+     *
+     * With it, the INSTALLER (`installingPackageName`, null for `adb` / `pm install`): the frontend
+     * skips registration only for an install that did not come from Play. A Play install always
+     * registers and lets the server judge, so a wrong read here can never silently cost a real user
+     * their restore key - it is accused at error instead.
      */
     @Command
     fun signingOrigins(invoke: Invoke) {
@@ -207,14 +210,18 @@ class RestorePlugin(private val activity: Activity) : Plugin(activity) {
                 signing.signingCertificateHistory.takeLast(1)
             }
             val origins = JSArray()
-            for (cert in certs) {
-                val digest = MessageDigest.getInstance("SHA-256").digest(cert.toByteArray())
-                val hash = Base64.encodeToString(digest, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
-                origins.put("android:apk-key-hash:$hash")
+            for (cert in certs) origins.put(ApkKeyHash.origin(cert.toByteArray()))
+            val installer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                pm.getInstallSourceInfo(activity.packageName).installingPackageName
+            } else {
+                @Suppress("DEPRECATION")
+                pm.getInstallerPackageName(activity.packageName)
             }
-            Log.d(TAG, "signingOrigins: ${certs.size} signer(s)")
+            Log.d(TAG, "signingOrigins: ${certs.size} signer(s), installer known: ${installer != null}")
             val answer = JSObject()
             answer.put("origins", origins)
+            // JSONObject drops a null value: an absent key reads as null on the Rust side.
+            if (installer != null) answer.put("installer", installer)
             invoke.resolve(answer)
         } catch (e: Exception) {
             Log.e(TAG, "signingOrigins: unreadable (${e.javaClass.simpleName})")

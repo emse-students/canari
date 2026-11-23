@@ -28,7 +28,8 @@ import {
   markRestoreAttempted,
   restoreKeyRecord,
   restoreKeySupported,
-  restoreSigningOrigins,
+  restoreSigning,
+  PLAY_STORE_INSTALLER,
   writeRestoreKeyRecord,
 } from '$lib/services/restoreKey';
 
@@ -100,8 +101,10 @@ let ensureInFlight: Promise<void> | null = null;
  * Throws on any failure (the caller logs it); the next start tries again. A BUILD the estate does
  * not vouch for (an APK whose signing certificate the estate's accepted origins do not name - the
  * release asset sideloaded with `adb`) is KNOWN before any key is minted: the options carry the
- * accepted origins and the platform names this APK's own ({@link restoreSigningOrigins}), so such an
+ * accepted origins and the platform names this APK's own ({@link restoreSigning}), so such an
  * install mints nothing and is never refused. A changed configuration is read at the next start.
+ * A PLAY install never skips: it registers and the server judges, so a wrong read of the signer can
+ * only ever be accused, never cost a real user their key.
  */
 export function ensureRestoreKey(userId: string): Promise<void> {
   if (ensureInFlight) {
@@ -164,19 +167,39 @@ async function ensureRestoreKeyOnce(userId: string): Promise<void> {
     rwarn('the session holds a key this phone no longer holds - replacing it');
   }
   // WHETHER THIS ESTATE WOULD TAKE A KEY FROM THIS BUILD IS A FACT, NOT A REFUSAL TO WAIT FOR. The
-  // estate names the origins it accepts; the platform names this APK's. An install whose signer is
-  // not among them (the release asset sideloaded on a bench phone, signed by the upload key) mints
-  // nothing: before this, it minted a key, was refused (`RESTORE_ORIGIN_NOT_ALLOWED`), recorded the
-  // verdict and then said `register skipped` at WARN at every start - an expected state reported as
-  // a fault. It is a decision, said once per start at log level, naming the signer it was made on.
+  // estate names the origins it accepts; the platform names this APK's, and who installed it. An
+  // install from outside Play whose signer is not among them (the release asset sideloaded on a
+  // bench phone, signed by the upload key) mints nothing: before this, it minted a key, was refused
+  // (`RESTORE_ORIGIN_NOT_ALLOWED`), recorded the verdict and then said `register skipped` at WARN at
+  // every start - an expected state reported as a fault. Now it is a decision, said once per start
+  // at log level, naming the signer it was made on.
+  // A PLAY install is never skipped on this read: Play signs with the key the estates name, so a
+  // Play origin missing from the list means the READ is wrong (or the estate's configuration is),
+  // and skipping would leave every real user without a restore key with nothing reporting it. It is
+  // accused at error and the registration goes ahead: the server stays the judge.
   // The checks above still run: they are this session's, not this build's.
   if (Array.isArray(accepted)) {
-    const own = await restoreSigningOrigins();
-    if (!own.some((origin) => accepted.includes(origin))) {
-      rlog(
-        `register not attempted: this build is signed as ${own.join(', ') || 'nothing'}, which this estate does not vouch for (accepts ${accepted.length} origin(s)) - a sideloaded APK; this install holds no restore key`
-      );
+    let signing;
+    try {
+      signing = await restoreSigning();
+    } catch (e) {
+      // The platform could not say how this APK is signed: a defect, said here and once (the
+      // caller adds nothing). No key is minted on a guess; the read is not cached, so the next
+      // start asks again.
+      console.error(`[RESTORE] register: the signing origin could not be read: ${String(e)}`);
       return;
+    }
+    const own = signing.origins.join(', ') || 'nothing';
+    if (!signing.origins.some((origin) => accepted.includes(origin))) {
+      if (signing.installer !== PLAY_STORE_INSTALLER) {
+        rlog(
+          `register not attempted: this build is signed as ${own}, which this estate does not vouch for (accepts ${accepted.length} origin(s)), and was not installed by Play - a sideloaded APK; this install holds no restore key`
+        );
+        return;
+      }
+      console.error(
+        `[RESTORE] register: a Play install read its signer as ${own}, which this estate does not list (accepts ${accepted.length} origin(s)) - the native read or the estate's ANDROID_APP_LINK_SHA256 is wrong; registering anyway, the server judges`
+      );
     }
   }
   rlog("register: creating this install's key");

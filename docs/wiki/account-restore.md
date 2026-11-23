@@ -268,9 +268,15 @@ the origins this estate accepts (public: `assetlinks.json` already publishes the
 restore plugin answers `signing_origins` - `android:apk-key-hash:` + base64url (no padding) of the
 SHA-256 of the certificate signing THIS APK, read from `PackageManager.GET_SIGNING_CERTIFICATES`
 (the current signer: every content signer if several, else the last of the rotation history) - once
-per process. When none of the install's origins is accepted, the client mints NO key, sends no
+per process, with the INSTALLER (`installingPackageName`; none for `adb`). When none of the
+install's origins is accepted AND Play did not install it, the client mints NO key, sends no
 registration, and says so once per start at `log`: `register not attempted: this build is signed as
-<origin>, which this estate does not vouch for`. Nothing is refused, so nothing is recorded; an estate
+<origin>, which this estate does not vouch for ... and was not installed by Play`. **A Play install
+is never skipped on this read** (review of #3990): Play signs with the key the estates name, so a
+Play origin missing from the list means the read or the configuration is wrong, and skipping would
+leave every real user keyless with nothing reporting it. It is accused at `error` and registers
+anyway; the server judges. A read the platform cannot answer is said at `error`, mints nothing, and
+is not cached. Nothing is refused, so nothing is recorded; an estate
 that starts naming the build is read at the next start. The session's own check (the key it holds)
 still runs first. A server older than `1.8.0` sends no `origins`: the client then registers as before.
 The legacy record `canari_restore_origin_refused` is dropped at the first check, and `originsDigest`
@@ -278,7 +284,11 @@ stays in the options for builds before `1.8.0`
 ([legacy-compatibility](legacy-compatibility.md#the-restore-options-originsdigest-for-builds-before-180-2026-11-23)).
 
 **What proves the read matches Credential Manager's.** The server test pins that the options hand out
-exactly the origin the verifier accepts; the native read is proven on a phone only: on the
+exactly the origin the verifier accepts. The FORM is pinned on both sides by one vector,
+`libs/contracts/restore-apk-key-hash.cases.json`: the pure `ApkKeyHash.origin` (the plugin's
+`android/src/main/java/pure/`, compiled into `android-tests`, `RestoreOriginTest`) hashes its DER, and
+`restore-config.spec.ts` converts its fingerprint with `apkKeyHashOrigin`; both must give its origin.
+Which certificate `PackageManager` hands over is proven on a phone only: on the
 sideloaded bench Mi the `register not attempted` line must name the origin dev's log named for the
 same APK, and a Play-installed build must keep registering keys on production (`key registered` in
 core-service's log). Owed as a reading ([backlog](backlog.d/p2-restore-signing-origin-read-on-a-phone.md)).

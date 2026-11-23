@@ -130,31 +130,44 @@ export function markRestoreAttempted(): void {
   writeStorage(RESTORE_ATTEMPTED_KEY, '1');
 }
 
-/**
- * The WebAuthn origin(s) of the certificate that signs THIS APK, as Credential Manager writes them
- * into a key's `clientDataJSON` (`android:apk-key-hash:...`). A FACT of the install - only an
- * uninstall changes the signer - so it is read once per process and kept. The registration options
- * carry the origins the estate accepts; comparing the two tells, before any key is minted, whether
- * the estate would refuse it (docs/wiki/account-restore.md). A rejected read is not cached: the next
- * start asks again.
- */
-let signingOriginsRead: Promise<string[]> | null = null;
+/** The package Google Play installs an app as: the one installer whose builds the estates vouch for. */
+export const PLAY_STORE_INSTALLER = 'com.android.vending';
 
-/** This install's signing origin(s), read once per process (see above). */
-export function restoreSigningOrigins(): Promise<string[]> {
-  signingOriginsRead ??= invoke<{ origins: string[] }>(restoreCommand('signingOrigins')).then(
-    ({ origins }) => origins,
+/**
+ * What this install knows of how it came to be: the WebAuthn origin(s) of the certificate signing
+ * THIS APK, as Credential Manager writes them into a key's `clientDataJSON`
+ * (`android:apk-key-hash:...`), and the package that installed it (null: `adb` / `pm install`).
+ */
+export interface RestoreSigning {
+  origins: string[];
+  installer: string | null;
+}
+
+/**
+ * {@link RestoreSigning}, a FACT of the install - only an uninstall changes either - so it is read
+ * once per process and kept. The registration options carry the origins the estate accepts;
+ * comparing the two tells, before any key is minted, whether the estate would refuse it
+ * (docs/wiki/account-restore.md). A rejected read is not cached: the next start asks again.
+ */
+let signingRead: Promise<RestoreSigning> | null = null;
+
+/** This install's {@link RestoreSigning}, read once per process (see above). */
+export function restoreSigning(): Promise<RestoreSigning> {
+  signingRead ??= invoke<{ origins: string[]; installer?: string | null }>(
+    restoreCommand('signingOrigins')
+  ).then(
+    ({ origins, installer }) => ({ origins, installer: installer ?? null }),
     (e: unknown) => {
-      signingOriginsRead = null;
+      signingRead = null;
       throw e;
     }
   );
-  return signingOriginsRead;
+  return signingRead;
 }
 
 /** Test seam: forgets the cached signing origins. */
-export function resetRestoreSigningOriginsForTests(): void {
-  signingOriginsRead = null;
+export function resetRestoreSigningForTests(): void {
+  signingRead = null;
 }
 
 /**
