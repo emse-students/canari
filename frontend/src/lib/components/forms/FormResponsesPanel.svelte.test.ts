@@ -155,12 +155,12 @@ const SUBMISSIONS: Submission[] = [
   }),
 ];
 
-function render(submissions = SUBMISSIONS) {
+function render(submissions = SUBMISSIONS, shownForm: Form = form) {
   const target = document.body.appendChild(document.createElement('div'));
   const instance = mount(FormResponsesPanel, {
     target,
     props: {
-      form,
+      form: shownForm,
       submissions,
       deletingId: null,
       onDelete: () => {},
@@ -191,7 +191,9 @@ function openTab(target: HTMLElement, label: string) {
 describe('the "Réponses" tab', () => {
   it('filters by payment, and counts each chip', () => {
     const target = render();
-    expect(rowNames(target)).toHaveLength(4);
+    // "Toutes" lists what holds a seat: the refunded answer gave its seat back, it reads under its own chip.
+    expect(rowNames(target)).toHaveLength(3);
+    expect(target.querySelector('[data-testid="filter-all"]')!.textContent).toContain('3');
     expect(target.querySelector('[data-testid="filter-unpaid"]')!.textContent).toContain('1');
 
     click(target.querySelector('[data-testid="filter-unpaid"]'));
@@ -202,6 +204,47 @@ describe('the "Réponses" tab', () => {
 
     click(target.querySelector('[data-testid="filter-paid"]'));
     expect(rowNames(target)).toHaveLength(2);
+  });
+
+  it('files a cancelled, expired or lapsed answer under "Abandonnées", out of "Toutes"', () => {
+    const target = render([
+      ...SUBMISSIONS,
+      sub({ id: 'c', paymentStatus: 'cancelled', holdsSeat: false, firstName: 'Cleo' }),
+      sub({ id: 'x', paymentStatus: 'expired', holdsSeat: false, firstName: 'Xena' }),
+      sub({ id: 'p', paymentStatus: 'pending', holdsSeat: false, firstName: 'Pia' }),
+      sub({ id: 'q', paymentStatus: 'pending', holdsSeat: true, firstName: 'Quin' }),
+    ]);
+    expect(target.querySelector('[data-testid="filter-all"]')!.textContent).toContain('4');
+    expect(rowNames(target)).toHaveLength(4);
+    expect(target.querySelector('[data-testid="filter-abandoned"]')!.textContent).toContain('3');
+    click(target.querySelector('[data-testid="filter-abandoned"]'));
+    expect(rowNames(target)).toHaveLength(3);
+  });
+
+  it('shows the seats taken on a capped form', () => {
+    const capped = { ...form, maxSubmissions: 50 } as Form;
+    const target = document.body.appendChild(document.createElement('div'));
+    const instance = mount(FormResponsesPanel, {
+      target,
+      props: {
+        form: capped,
+        submissions: [sub({ id: 'a', holdsSeat: true }), sub({ id: 'b', holdsSeat: false })],
+        deletingId: null,
+        onDelete: () => {},
+        onReload: async () => {},
+        heldCount: 0,
+      },
+    });
+    mounted.push(() => unmount(instance));
+    flushSync();
+    expect(target.textContent).toContain(m.form_responses_seats({ taken: 1, max: 50 }));
+  });
+
+  it('hides the seats card when the server sent no holdsSeat, rather than show 0', () => {
+    const capped = { ...form, maxSubmissions: 50 } as Form;
+    const target = render([sub({ id: 'a' }), sub({ id: 'b' })], capped);
+    expect(target.textContent).not.toContain(m.form_responses_seats({ taken: 0, max: 50 }));
+    expect(target.textContent).not.toContain(m.form_responses_card_seats());
   });
 
   it('searches the names and the answers, accents folded', async () => {
@@ -222,7 +265,7 @@ describe('the "Réponses" tab', () => {
     const badges = target.querySelectorAll('table [data-testid="guest-badge"]');
     expect(badges).toHaveLength(1);
     expect(badges[0].textContent).toBe(m.form_submitter_guest());
-    expect(rowNames(target)[3]).toContain('1A2B-3C4D');
+    expect(rowNames(target)[2]).toContain('1A2B-3C4D');
   });
 
   // Owner, 2026-11-06: a guest who gave a name is shown under it in place of the reference, and
@@ -232,9 +275,9 @@ describe('the "Réponses" tab', () => {
       s.id === 'guest' ? { ...s, guestFirstName: 'Marie', guestLastName: 'Curie' } : s
     );
     const target = render(named);
-    expect(rowNames(target)[3]).toContain('Marie Curie');
+    expect(rowNames(target)[2]).toContain('Marie Curie');
     // Never the name alone: it would read as an account's (review of #3096).
-    expect(rowNames(target)[3]).toContain('1A2B-3C4D');
+    expect(rowNames(target)[2]).toContain('1A2B-3C4D');
     expect(target.querySelectorAll('table [data-testid="guest-badge"]')).toHaveLength(1);
     const input = target.querySelector<HTMLInputElement>('[data-testid="responses-search"]')!;
     input.value = 'curie';
