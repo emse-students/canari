@@ -195,6 +195,34 @@ describe('loadAndRestoreConversations - one restore at a time, at most one queue
     expect(convs.conversationSourcesSettled).toBe(false);
   });
 
+  // The fact the outbox retires an entry on (review of #3992): an absence read from the map is a
+  // verdict only once the map is complete - never on a cold start, after a FAILED restore (the map
+  // it leaves is empty), while a startup source is still adding, or after a sign-out.
+  it('marks the map complete only after a SUCCESSFUL restore with no source still adding', async () => {
+    const releases = holdEachRestore();
+    const convs = useConversations();
+    expect(convs.conversationMapComplete()).toBe(false);
+
+    const failed = convs.loadAndRestoreConversations(makeCtx());
+    await settle();
+    releases[0].reject(new Error('IndexedDB unavailable'));
+    await expect(failed).rejects.toThrow('IndexedDB unavailable');
+    expect(convs.conversationsRestored).toBe(true);
+    expect(convs.conversationMapComplete()).toBe(false);
+
+    convs.beginConversationSource();
+    const ok = convs.loadAndRestoreConversations(makeCtx());
+    await settle();
+    releases[1].resolve();
+    await ok;
+    expect(convs.conversationMapComplete()).toBe(false);
+    convs.endConversationSource();
+    expect(convs.conversationMapComplete()).toBe(true);
+
+    convs.invalidateRestores();
+    expect(convs.conversationMapComplete()).toBe(false);
+  });
+
   it('a restore still running from a signed-out session never blocks the next one', async () => {
     const releases = holdEachRestore();
     const convs = useConversations();

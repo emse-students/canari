@@ -518,6 +518,7 @@
       forgetUnconfirmedSalonDraws: () => convs.forgetUnconfirmedSalonDraws(),
       beginConversationSource: () => convs.beginConversationSource(),
       endConversationSource: () => convs.endConversationSource(),
+      conversationMapComplete: () => convs.conversationMapComplete(),
       addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
         messaging.addMessageToChat(sid, content, contactName, msgCtx(), options),
       messageIngestObserver: messaging.bulkIngestObserver(msgCtx),

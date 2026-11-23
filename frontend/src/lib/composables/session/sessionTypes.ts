@@ -76,6 +76,12 @@ export interface ChatSessionCallbacks extends Pick<
   beginConversationSource: () => void;
   endConversationSource: () => void;
   /**
+   * True when the map holds every conversation of this device (`useConversations`'
+   * `conversationMapComplete`: the restore SUCCEEDED and no startup source is still adding). What the
+   * outbox reads before it treats a group no conversation holds as gone.
+   */
+  conversationMapComplete: () => boolean;
+  /**
    * Draws the notification landing's target from the local store (F1). Called with the open store
    * and the device key the moment the login holds both - on the vault path, before the token and
    * the revocation answer. Reads only; see `landingPreview.ts`.

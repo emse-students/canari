@@ -481,13 +481,13 @@ describe('an own send racing a removal (review of #3992)', () => {
     await purging;
 
     // The pair landed BEFORE the clear (the purge waited for it), so the clear took its row. Its
-    // outbox entry is in the state of any entry queued a moment before a removal: the purge does
-    // not clear the outbox (chat wiki, "known limits").
+    // outbox entry is in the state of any entry queued a moment before a removal: the exit's drain or
+    // the outbox's own retire settles it, not the purge (chat wiki, "known limits").
     expect(await storage.getMessage('own-1', KEY)).toBeFalsy();
     expect(d.conversations.has(CONVO)).toBe(false);
   });
 
-  it('a conversation already out of the map: no row, no entry, and the send is told it failed', async () => {
+  it('a conversation already out of the map: no row, no entry, and the send is refused as gone', async () => {
     const storage = new IndexedDbStorage(freshStoreName());
     await storage.init();
     const d = makeDevice(useMessaging, storage);
@@ -505,7 +505,7 @@ describe('an own send racing a removal (review of #3992)', () => {
         messageId: 'own-2',
         outboxEntry: ownEntry('own-2'),
       })
-    ).rejects.toMatchObject({ name: 'MessagePairWriteError' });
+    ).rejects.toMatchObject({ name: 'ConversationGoneError', messageId: 'own-2' });
 
     expect(pair).not.toHaveBeenCalled();
     expect(await storage.getMessage('own-2', KEY)).toBeFalsy();

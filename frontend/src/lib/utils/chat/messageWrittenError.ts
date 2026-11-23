@@ -63,3 +63,22 @@ export class MessagePairWriteError extends Error {
     this.entryWritten = cause instanceof OutboxEntryWrittenAloneError;
   }
 }
+
+/**
+ * An own message was NOT written, and must not be queued: its conversation left the map before the
+ * write (deleted, left, purged - `conversationRowWrites.ts`). Distinct from
+ * {@link MessagePairWriteError}, whose callers hand the entry to the outbox to write its own row:
+ * this one is a verdict, not a store failure, and the send stops and tells the member (review of
+ * #3992). Classified here, at the throw - no caller reads a message.
+ */
+export class ConversationGoneError extends Error {
+  constructor(
+    readonly messageId: string,
+    readonly conversationKey: string
+  ) {
+    super(
+      `message ${messageId.slice(0, 8)} not written: conversation "${conversationKey}" left the map before its write`
+    );
+    this.name = 'ConversationGoneError';
+  }
+}

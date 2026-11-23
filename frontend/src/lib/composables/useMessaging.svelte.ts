@@ -141,7 +141,11 @@ import {
   settlementHeld,
   type OutboxSettlement,
 } from '$lib/utils/chat/outbox';
-import { MessagePairWriteError, MessageWrittenError } from '$lib/utils/chat/messageWrittenError';
+import {
+  ConversationGoneError,
+  MessagePairWriteError,
+  MessageWrittenError,
+} from '$lib/utils/chat/messageWrittenError';
 import { beginOutboxEnqueue } from '$lib/utils/chat/outboxActivity.svelte';
 import { unregisterDeviceNotices } from '$lib/utils/chat/deviceNoticeWiring';
 import { resetJoinRequests } from '$lib/utils/chat/joinRequests.svelte';
@@ -2400,7 +2404,7 @@ export function useMessaging() {
     };
 
     const skipDbSave = options.skipDbSave ?? isChannelConversationId(normalized);
-    let pairWriteFailure: MessagePairWriteError | null = null;
+    let pairWriteFailure: MessagePairWriteError | ConversationGoneError | null = null;
     if (ctx.storage && !skipDbSave) {
       try {
         const row = {
@@ -2422,15 +2426,12 @@ export function useMessaging() {
           // ASKED AND REGISTERED IN ONE STEP, as `writeBatchRows` does (`conversationRowWrites.ts`):
           // a removal clears the store only after this pair has landed, and a conversation already
           // out of the map gets neither the row nor the entry - which would otherwise send into a
-          // deleted group. Refused, it is reported like any failed pair write: the caller must not
-          // tell the queue the row is on disk.
+          // deleted group. Refused with its OWN type (review of #3992): a `MessagePairWriteError`
+          // makes the send path hand the entry to the queue anyway; this one stops the send.
           if (!ctx.conversations.has(normalized)) {
-            pairWriteFailure = new MessagePairWriteError(
-              newMsg.id,
-              new Error(`conversation "${normalized}" left the map before the write`)
-            );
+            pairWriteFailure = new ConversationGoneError(newMsg.id, normalized);
             console.warn(
-              `[ADD_MSG] own message ${newMsg.id.slice(0, 8)} and its outbox entry dropped, not written: the conversation "${normalized}" left the map before their write (${ORPHAN_REMOVERS})`
+              `[ADD_MSG] own message ${newMsg.id.slice(0, 8)} refused, nothing written or queued: the conversation "${normalized}" left the map before its write (${ORPHAN_REMOVERS}) - the send stops and the member is told`
             );
           } else {
             const releaseRowWrite = beginConversationRowWrite(normalized);
@@ -3743,6 +3744,16 @@ export function useMessaging() {
                   ...(echoReplyForFile ? { replyTo: echoReplyForFile } : {}),
                 });
               } catch (pairError) {
+                // GONE BETWEEN THE CHECK ABOVE AND THE WRITE: nothing was written, and nothing may be
+                // queued - the same answer as the check, said to the member the same way.
+                if (pairError instanceof ConversationGoneError) {
+                  ctx.log(
+                    `[MEDIA] ${messageId.slice(0, 8)}… refused at its write: ${sendKey.slice(0, 8)}… left the conversation list - ${fileEntries.length - index} file(s) not sent`
+                  );
+                  sayOnScreen(m.chat_media_conversation_gone());
+                  conversationGoneDuringSend = true;
+                  break;
+                }
                 if (!(pairError instanceof MessagePairWriteError)) throw pairError;
                 // THE ENTRY REACHED DISK ALONE (SQLite writes it first): the queue owns it, so it
                 // is not written a second time and the file is not given back (M2).

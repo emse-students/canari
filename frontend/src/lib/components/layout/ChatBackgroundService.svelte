@@ -1247,6 +1247,7 @@
       forgetUnconfirmedSalonDraws: () => globalConvs.forgetUnconfirmedSalonDraws(),
       beginConversationSource: () => globalConvs.beginConversationSource(),
       endConversationSource: () => globalConvs.endConversationSource(),
+      conversationMapComplete: () => globalConvs.conversationMapComplete(),
       previewLandingTarget: (input: {
         storage: IStorage;
         deviceKeyB64: string;

@@ -77,6 +77,7 @@ import {
 import { unavailableHoldMs } from './retryLadder';
 import { ApiRefusalError } from '$lib/utils/apiRefusal';
 import { MessageWrittenError } from './messageWrittenError';
+import { conversationRowWritesInFlight } from './conversationRowWrites';
 import { toMirrorEntry } from './outboxMirror';
 import {
   MediaKind,
@@ -1172,6 +1173,90 @@ describe('outbox flusher', () => {
     expect(lines).toContainEqual(expect.stringContaining('removed - permanent failure'));
     outbox.dispose();
   });
+
+  // REVIEW OF #3992: the whole-row write after a CAS that found no row is an INSERT, so a removal of
+  // the conversation in its window must not get the row back after the purge's clear - and a write
+  // that does go is registered for the purge to wait on.
+  it.each([
+    [false, 'written whole, registered while it runs'],
+    [true, 'not written: the conversation left the map before it'],
+  ])('a sent message with no row under its group, conversation removed=%s: %s', async (removed) => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['m1'])]]);
+    const inFlight: number[] = [];
+    storage.saveMessage.mockImplementation(async () => {
+      inFlight.push(conversationRowWritesInFlight('g1'));
+    });
+    // The CAS finds no row; the removal lands in its round trip.
+    storage.mergeMessages.mockImplementation(async () => {
+      if (removed) conversations.delete('g1');
+      return new Set<string>();
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const outbox = createOutbox(makeDeps({ mlsService: makeMls(), storage, conversations }));
+
+    await outbox.flush();
+
+    expect(storage._map.has('m1')).toBe(false);
+    const dropped = warn.mock.calls.some((c) => String(c[0]).includes('its row NOT written'));
+    warn.mockRestore();
+    expect(dropped).toBe(removed);
+    if (removed) {
+      expect(storage.saveMessage).not.toHaveBeenCalled();
+    } else {
+      expect(storage.saveMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'm1', conversationId: 'g1' }),
+        'device-key'
+      );
+      expect(inFlight).toEqual([1]);
+      expect(conversationRowWritesInFlight('g1')).toBe(0);
+    }
+    outbox.dispose();
+  });
+
+  // REVIEW OF #3992: the device lost its tree (removed, evicted), and the member deleted or left the
+  // conversation, whose purge took the row. The entry asked for a re-add on every flush and start,
+  // because `requestReAdd` reads the row it would stop on, and the row was gone.
+  it.each([
+    [true, 'retired at once, no re-add asked'],
+    [false, 'held, re-add asked: a map not known complete is no verdict'],
+  ])(
+    'an unsendable entry whose group no conversation holds, map complete=%s: %s',
+    async (complete) => {
+      const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+      const mlsService = makeMls();
+      const conversations = new SvelteMap<string, Conversation>();
+      const requestReAdd = vi.fn(async () => {});
+      const lines: string[] = [];
+      const outbox = createOutbox(
+        makeDeps({
+          mlsService,
+          storage,
+          conversations,
+          requestReAdd,
+          isGroupHealthy: () => false,
+          conversationMapComplete: () => complete,
+          log: (l: string) => lines.push(l),
+        })
+      );
+
+      await outbox.flush();
+
+      expect(mlsService.sendMessage).not.toHaveBeenCalled();
+      if (complete) {
+        expect(requestReAdd).not.toHaveBeenCalled();
+        expect(storage._map.has('m1')).toBe(false);
+        expect(lines).toContainEqual(
+          expect.stringContaining('retired: no conversation holds group g1')
+        );
+      } else {
+        expect(requestReAdd).toHaveBeenCalledWith('g1');
+        expect(storage._map.has('m1')).toBe(true);
+        expect(lines.some((l) => l.includes('retired: no conversation holds'))).toBe(false);
+      }
+      outbox.dispose();
+    }
+  );
 
   it("a group becoming ready resumes only ITS held entries, and leaves another group's on their clock", async () => {
     const storage = makeStorage([textEntry('m1', 'g1', 100), textEntry('m2', 'g2', 101)]);

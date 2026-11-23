@@ -263,6 +263,13 @@ export function useConversations() {
    */
   let pendingConversationSources = $state(0);
   /**
+   * True once THIS session's restore SUCCEEDED - not merely ended, which is all
+   * {@link conversationsRestored} says: a restore that threw leaves the map empty and still sets
+   * that flag. The half of {@link conversationMapComplete} that a failed restore must never satisfy,
+   * because an absence read from an empty map is not an absence. Reset with the map at sign-out.
+   */
+  let restoreSucceeded = false;
+  /**
    * The conversation drawn from the LOCAL store while the session is not up yet - the notification
    * landing's target (F1, `landingPreview.ts`). Null whenever a session owns the map, or when there
    * is nothing to preview. While it is set the chat page is drawn without a session, so it is the
@@ -1526,6 +1533,7 @@ export function useConversations() {
     retired.owedReconnectOff = null;
     retired.owedArchives.clear();
     restoreGeneration = newRestoreGeneration(retired.id + 1);
+    restoreSucceeded = false;
     // The re-planner re-plans into THIS session's map: the next account must not inherit it. Its
     // entries stay in the leaving account's own record.
     replannerMls?.setOwedInvitationReplanner(null);
@@ -1639,6 +1647,7 @@ export function useConversations() {
       // the client it would wake belongs to the account that left.
       if (!gen.retired) {
         conversationsRestored = true;
+        if (restored) restoreSucceeded = true;
         // A frame that reached the handler while this map was still empty was left in the server
         // queue rather than dropped. The restore finishing is what makes it readable, so it is the
         // trigger to ask again - there is no timer waiting to notice.
@@ -3289,6 +3298,15 @@ export function useConversations() {
      */
     get conversationSourcesSettled() {
       return conversationsRestored && pendingConversationSources === 0;
+    },
+    /**
+     * True when the map holds EVERY conversation this device has: the restore succeeded (a failed
+     * one leaves it empty) and no startup source can still add one. The only fact on which an
+     * ABSENCE from the map may be read as "no conversation holds this group" - the outbox retires a
+     * queued entry on it (review of #3992), and a cold start, before the restore, never answers so.
+     */
+    conversationMapComplete() {
+      return restoreSucceeded && pendingConversationSources === 0;
     },
     /** Opens a span during which a conversation may still appear. Always paired in a `finally`. */
     beginConversationSource() {
