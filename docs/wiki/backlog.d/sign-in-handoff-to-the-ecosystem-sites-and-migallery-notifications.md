@@ -1,4 +1,4 @@
-## P2 - one tap from Canari signs the user into its MiConnect sites, and MiGallery's notifications go through Canari (owner, 2026-11-07: decided; Canari's half of the handoff built 2026-11-08, MiGallery's flag ON 2026-11-14, Le Cercle's 2026-11-23, Sky's OFF)
+## P2 - one tap from Canari signs the user into its MiConnect sites, and MiGallery's notifications go through Canari (owner, 2026-11-07: decided; Canari's half of the handoff built 2026-11-08, MiGallery's flag ON 2026-11-14, Le Cercle's and Sky's 2026-11-23)
 
 target: 1.8.0
 
@@ -67,6 +67,22 @@ met only once !41 is merged, the two CI variables (`CANARI_HANDOFF_ISSUER`, `CAN
 are set and its `/auth/handoff` answers 200 in production; Canari's pull request stays a draft
 until then.** Le Cercle is on GitLab, so `shape.mjs` claim 6 does not compare its vendored copies;
 its own vector test is the guard (section 4).
+
+**Sky's three conditions, read 2026-11-23**: (1) F3-bound reads the application `sky` at every
+mint; (2) `miconnect-sky`'s `sub_mode` was read `hashed_user_id` by H0 on 2026-11-11 (section 9),
+the blueprint pinning nothing; (3) Sky's redemption is `emse-students/Sky` #193 (draft): the
+vendored verifier and vectors, admission F1 on the record LINKED to the `sub` (an unlinked `sub`
+goes through MiConnect, where `choice` -> `/auth/link` happens), **the ICM gate the callback applies,
+now ONE function `admits()` that the callback, `/auth/link`, the handoff and `gateHandler` all call**
+(a non-ICM record is refused `not_admitted`), the interstitial always, the `handoff_redemptions`
+ledger and the MARKED session (`sessions.via_handoff`) in one transaction, and a DEFAULT-DENY
+step-up enumerated from its route tree by `tests/step-up.test.ts` - the `/account` relink, relatives,
+relationships and every admin write; exempt `/auth/logout`, the redemption, `/auth/link` (it acts on
+the identity a MiConnect sign-in just proved) and the CSP report. Sky's compose defaults the issuer
+and JWKS to production Canari, as MiGallery's does, so no variable is owed. **Condition 3 is met only
+once #193 is merged, released and `/auth/handoff` answers 200 in production; Canari's pull request
+stays a draft until then.** Sky is one of `shape.mjs`'s four checkouts, so claim 6 now compares its
+three copies - which fails until `../Sky` carries #193, one more reason the flag waits for it.
 
 **Portail-etu is out of scope, measured 2026-11-23:** it has no sign-in at all - no OIDC client, no
 session, no provider in `50-providers.yaml`, and its only state-changing route is the CSP report -

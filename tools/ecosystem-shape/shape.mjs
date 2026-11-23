@@ -353,13 +353,16 @@ for (const [shared, why] of SHARED_BY_SIBLINGS) compare(shared, SIBLINGS, `  [Ca
 // THE SIGN-IN HANDOFF'S VENDORED FILES (Canari's design note on the sign-in handoff, section 4): the
 // verifier, the landing page's logic and the vectors, written in Canari and COPIED byte-identically
 // to every site that redeems a handoff, at that site's own path. Compared RAW: a copy is a copy. A
-// site joins this list in the pull request that vendors it (MiGallery first, WP-H4; Sky with WP-H6).
+// site joins this list in the pull request that turns its flag on (MiGallery first, WP-H4; Sky, WP-H6).
 // Le Cercle is on the school's GitLab, outside this tool's four checkouts: its copy is held only by
 // its own vector test.
 const HANDOFF_VENDORED = [
-  ['libs/handoff/handoff-verify.ts', { MiGallery: 'src/lib/server/handoff/handoff-verify.ts' }],
-  ['libs/handoff/handoff-landing.ts', { MiGallery: 'src/lib/handoff/handoff-landing.ts' }],
-  ['libs/contracts/handoff-token.cases.json', { MiGallery: 'tests/fixtures/handoff-token.cases.json' }],
+  ['libs/handoff/handoff-verify.ts', { MiGallery: 'src/lib/server/handoff/handoff-verify.ts', Sky: 'src/lib/server/handoff/handoff-verify.ts' }],
+  ['libs/handoff/handoff-landing.ts', { MiGallery: 'src/lib/handoff/handoff-landing.ts', Sky: 'src/lib/handoff/handoff-landing.ts' }],
+  [
+    'libs/contracts/handoff-token.cases.json',
+    { MiGallery: 'tests/fixtures/handoff-token.cases.json', Sky: 'tests/fixtures/handoff-token.cases.json' },
+  ],
 ];
 for (const [source, sites] of HANDOFF_VENDORED) {
   const dirOf = Object.fromEntries(REPOS);
