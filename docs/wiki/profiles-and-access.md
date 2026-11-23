@@ -217,7 +217,8 @@ application computed from the same profile, so no application keeps a hard-coded
 - **D27 - The 14 "Personnel de l'ecole" and the account with no status become an EMSE post.**
 - **D28 - The colle: a reminder first, then mandatory.** A Canari banner and a skippable MiConnect
   stage for promo N-1 (N the current year) as soon as the Alumni SSO works; from a date the user
-  sets, the MiConnect stage blocks until the link is made.
+  sets, the MiConnect stage blocks until the link is made. **Re-decided 2026-11-23 as D44**: a date
+  per promo (reminder from 1 September P+1, blocking from 1 February P+2), see WP8 below.
 
 **The 2026-09-05 direction this model replaces.** The user had asked to separate ICM and ISMIN
 *"comme si on avait deux instances de Canari. Seule la partie admin et la messagerie/communautes
@@ -905,6 +906,35 @@ certificate and a name mapping, and a link onto an account signed in through the
 for promo N-1; a stage in `miconnect-auth`, skippable before the date the user sets and blocking
 after it. authentik links a source to the account that is ALREADY signed in, which is exactly the
 colle - proven in production on 2026-11-23 with a real alumni account.
+
+**WP8 re-decided - what the Alumni SSO is for (owner, 2026-11-23).** It replaces D28's "a date the
+user sets" with a rule per promo, and adds the cotisant gate. Planned in `1.8.0`
+([backlog](backlog.d/the-alumni-sso-window-link-and-cotisant-gate.md)).
+
+- **D42 - The free window.** A person whose cursus has entry year P signs in without any alumni
+  condition until 31 August of P+5 (promo 2024: until 2029-08-31). The promo is trustworthy enough
+  because only an admin edits it after enrolment (D10).
+- **D43 - The cotisant gate.** After the window, some applications are reserved to Alumni
+  cotisants. MiConnect alone decides, application by application. The `cotisant` value is read
+  from Alumnforce at EVERY Alumni sign-in and stored with its read date. It counts only within the
+  calendar year of that read. It is never handed to an application.
+- **D44 - The link is due mid second year.** For promo P, if the account has no Alumni link:
+  a skippable reminder from 1 September P+1, and a blocking step from 1 February P+2. **Grace:**
+  promos already past that date at launch are reminded only until 2027-02-01. Every student has an
+  Alumnforce account from entry, so the blocking step has no "not yet" exit.
+- **D45 - Both ways in on the login page.** The Alumni source is promoted beside the CAS.
+- **D46 - An account created through Alumni** gets the username `alumni-<af_id>` and keeps the
+  Alumni e-mail in MiConnect, never sent to applications (they keep the synthetic address).
+- **D47 - No duplicate by construction, a merge for the misses.** An Alumni identity with no link
+  first meets a routing page: "I have a working School account -> sign in with the CAS first, to
+  link" or "I have none any more -> create". A created account whose name and promo match an
+  existing CAS account is flagged to the admins in Canari.
+- **D48 - The merge moves the link, and DELETES the duplicate.** An admin moves the Alumni
+  identity onto the older account from Canari's admin, traced (D9), whatever the duplicate holds.
+  The duplicate is then deleted. **This touches principle 2 ("the essential is never lost",
+  [principes](../principes.md)):** the owner chose deletion over deactivation knowingly
+  (2026-11-23). The confirmation therefore names what the duplicate holds before the admin
+  confirms.
 
 **WP9 - The shims go.** The `promo`/`formation`/`school_status` claims and columns and the old
 attribute keys, once nothing reads them - each removal measured, per
