@@ -5575,7 +5575,7 @@ sidebar order kept when they answer in reverse, and no retry while a sibling is 
   and 44px tall, 48px wide from 360px and 42px at 320px - never wrapped, never scrolled. The text
   nodes inside a bubble are `select-text` for a mouse but `pointer-coarse:select-none` (a child's
   `select-text` beats the bubble's `select-none`, which let iOS select a word under the sheet);
-  "Copier" is the touch way to copy.
+  "Copier" is the touch way to copy. **The quick-reaction strip above the row is a `role="group"` named "React"** (`data-quick-reactions`), each emoji a 44 px button named "React with X" with `aria-pressed`, the glyph `aria-hidden` (S17, 2026-11-20: the iOS accessibility tree did not list the emojis; read again on the phone).
 - **Read receipts**: three states — sent / delivered / read — with distinct icons. In a DM the
   reader's "Lu" marker sits under the NEWEST message of the conversation the peer has read, which must
   be the viewer's own (`dmReadAnchorId`, owner, 2026-11-13, the Messenger placement - it reuses

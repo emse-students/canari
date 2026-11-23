@@ -16,6 +16,7 @@ import { BaseMlsService } from '$lib/services/BaseMlsService';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { RequestDeadlineError } from '$lib/utils/requestDeadline';
+import { MailboxListingIncompleteError } from '$lib/mls-client/IMlsService';
 import {
   noteUnackedFrame,
   refusedBacklogIsQueued,
@@ -237,18 +238,21 @@ describe('waitForMessageQueueIdle', () => {
    * mailbox, "behind" may only mean "its commits are still queued".
    */
   it('settles the initial drain on the first pull that EMPTIED the mailbox, never on a failed one', async () => {
+    // A failed pull SETTLES the wait it was owed - typed incomplete, never resolved as drained.
+    const first = svc.whenInitialDrainSettled();
+    pullPendingMessagesJson.mockRejectedValueOnce(new Error('offline'));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await svc.fetchPendingMessages();
+    await expect(first).rejects.toBeInstanceOf(MailboxListingIncompleteError);
+    error.mockRestore();
+    warn.mockRestore();
+
+    // Asked again, it is settled by the next pull - which emptied the mailbox.
     let settled = false;
     void svc.whenInitialDrainSettled().then(() => {
       settled = true;
     });
-
-    pullPendingMessagesJson.mockRejectedValueOnce(new Error('offline'));
-    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    await svc.fetchPendingMessages();
-    await Promise.resolve();
-    expect(settled).toBe(false);
-    error.mockRestore();
-
     await svc.fetchPendingMessages();
     await Promise.resolve();
     expect(settled).toBe(true);

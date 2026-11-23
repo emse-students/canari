@@ -1,4 +1,4 @@
-import type { IMlsService } from '$lib/mls-client/IMlsService';
+import { untilListedWhole, type IMlsService } from '$lib/mls-client/IMlsService';
 import type { Conversation } from '$lib/types';
 import {
   buildConversationRow,
@@ -575,12 +575,15 @@ async function stateGroupNameOnce(
     // CHAINED ON THE DRAIN, NEVER SKIPPED TO THE NEXT SWEEP: skipping said the same line for every
     // group on every sweep, and a sweep is a connection away. The first-drained waiter is an event
     // (`whenGroupDrained`), and the statement runs then, on the row as it stands, with a clock read
-    // then. One chain per group at a time.
+    // then. One chain per group at a time. A pull that ends incomplete DEFERS it to the next complete
+    // one (`untilListedWhole`): a row read before the mailbox is listed may lack a rename to date by.
     if (statementsWaitingForDrain.has(group.groupId)) return;
     statementsWaitingForDrain.add(group.groupId);
     log(`[GROUP_NAME] ${short} name statement waits for this link to drain the group`);
-    mlsService
-      .whenGroupDrained(group.groupId)
+    untilListedWhole(
+      () => mlsService.whenGroupDrained(group.groupId),
+      `the name statement of group ${short}`
+    )
       .then(() => {
         // Released BEFORE the re-run, so a group busy again by then chains anew.
         statementsWaitingForDrain.delete(group.groupId);
@@ -790,8 +793,11 @@ export async function settleOwedAnswer(
     if (answersWaitingForDrain.has(groupId)) return;
     answersWaitingForDrain.add(groupId);
     log(`[GROUP_NAME] ${short} owed answer waits for this link to drain the group`);
-    mlsService
-      .whenGroupDrained(groupId)
+    // Deferred, like the statement, past a pull that ends incomplete (`untilListedWhole`).
+    untilListedWhole(
+      () => mlsService.whenGroupDrained(groupId),
+      `the owed name answer of group ${short}`
+    )
       .then(() => {
         // Released BEFORE the re-run, so a group busy again by then chains anew.
         answersWaitingForDrain.delete(groupId);

@@ -1036,11 +1036,11 @@ function setSwitch(labels, on, where) {
 }
 
 /** Scrolls the front screen down until an element labelled one of `labels` is ON it; the element. */
-function scrollTo(labels, where, maxScrolls = 10) {
+function scrollTo(labels, where, maxScrolls = 10, { type } = {}) {
   const { width, height } = screen();
   const x = Math.round(width / 2);
   for (let i = 0; i <= maxScrolls; i++) {
-    const hit = findLabelled(readFlat(), labels);
+    const hit = findLabelled(readFlat(), labels, { type });
     if (hit && hit.rect.y >= 0 && hit.rect.y + hit.rect.height <= height) return hit;
     io.ios(['swipe', x, Math.round(height * 0.75), x, Math.round(height * 0.3), 0.05]);
     io.sleepSync(500);
@@ -1389,8 +1389,9 @@ export async function signInThroughSheet(creds, { hosts, settled = async () => f
       if (!answered.includes('terms')) {
         tapRect(findTermsBox(flat).rect, FOREIGN.sheet);
         io.sleepSync(400);
-        const submit = findLabelled(readFlat(), TERMS_SUBMIT_LABELS, { type: 'Button' });
-        if (!submit) throw new Error('signInThroughSheet: the terms page shows no submit button after the tick');
+        // WDA's visible tree does not list an element below the sheet's fold, so a "Continue" that is
+        // not listed yet is scrolled TO (the same bounded swipe the Settings walks use), never given up on.
+        const submit = scrollTo(TERMS_SUBMIT_LABELS, 'signInThroughSheet: the terms page, after the tick', 10, { type: 'Button' });
         tapRect(submit.rect, FOREIGN.sheet);
         answered.push('terms');
       } else if (io.now() - t0 > timeoutMs / 2) {

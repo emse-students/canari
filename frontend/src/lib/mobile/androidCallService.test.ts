@@ -232,6 +232,20 @@ describe('the audio focus (D056, decided 2026-11-12)', () => {
     expect(onFocus.mock.calls).toEqual([['lost'], ['gained']]);
   });
 
+  it('a focus refused at the start hands over a loss before any gain, and an ask releases it', () => {
+    const { h, calls } = host();
+    const onFocus = vi.fn();
+    const session = openAndroidCallSession(h, { onHangUp: () => {}, onFocus }, CALL);
+    session.publish(SPEC, 'live');
+    // A cellular call holds the focus: the service starts the call held, no GAIN before it.
+    h.emit({ kind: 'focus', code: 'lost', reason: "refused at the call's start" });
+    expect(onFocus.mock.calls).toEqual([['lost']]);
+    session.askFocus('an unmute tap');
+    expect(calls.at(-1)).toEqual({ method: 'askFocus', arg: 'an unmute tap', callId: CALL });
+    h.emit({ kind: 'focus', code: 'gained', reason: 'granted: an unmute tap' });
+    expect(onFocus.mock.calls).toEqual([['lost'], ['gained']]);
+  });
+
   it('asks nothing of a service that is not running for the call', () => {
     const { h, calls } = host();
     const session = openAndroidCallSession(h, { onHangUp: () => {} }, CALL);

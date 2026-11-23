@@ -25,6 +25,9 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.Person
 import androidx.core.app.ServiceCompat
 import androidx.core.graphics.drawable.IconCompat
+import fr.emse.canari.call.CallAudioLease
+import fr.emse.canari.call.CallAudioLife
+import fr.emse.canari.call.CallAudioSlot
 import fr.emse.canari.call.CallFocusHold
 import fr.emse.canari.call.CallOutput
 import fr.emse.canari.call.CallServiceCommand
@@ -222,7 +225,11 @@ class CallForegroundService : Service() {
 
     private var spec: OngoingCallSpec? = null
     private var wakeLock: PowerManager.WakeLock? = null
-    private var audio: CallAudio? = null
+    /** The call's audio, opened, handed over and closed through ONE path ([CallAudioSlot]). */
+    private val audioSlot = CallAudioSlot<CallAudio> { accuse, message ->
+        if (accuse) Log.w(TAG, message) else Log.i(TAG, message) // log-safe: CallAudioSlot builds every line from literals and 8-character call ids
+    }
+    private val audio: CallAudio? get() = audioSlot.current
 
     /**
      * The screen-off-against-the-cheek lock, held while the voice is on the EARPIECE
@@ -267,6 +274,10 @@ class CallForegroundService : Service() {
                         "foreground - the earlier call's stop never arrived; the new call takes the foreground",
                 )
                 callId = effect.callId
+                // The audio is labelled with the earlier call's id: its focus events would reach the
+                // new call's page under the old one and be dropped. A HANDOVER, never a close and a
+                // reopen: the voice is live, so the mode, the output and the focus request stay.
+                audioSlot.handOver(effect.callId)
                 refresh(effect.spec)
             }
             // The page asked (or the page is gone): it knows, so nothing is sent back.
@@ -335,8 +346,10 @@ class CallForegroundService : Service() {
                 if (onScreen) audio?.askFocus("the app is back on screen")
             }
         }
-        audio = CallAudio(getSystemService(Context.AUDIO_SERVICE) as AudioManager, callId, ::onOutput)
-            .also { it.open(spec.speaker, spec.speakerChosen) }
+        audioSlot.open(callId) { id ->
+            CallAudio(getSystemService(Context.AUDIO_SERVICE) as AudioManager, id, ::onOutput)
+                .also { it.open(spec.speaker, spec.speakerChosen) }
+        }
         loadAvatar(spec.peerUserId)
         val notifications = NotificationManagerCompat.from(this).areNotificationsEnabled()
         Log.i(TAG, "in the foreground: microphone service, wake lock held, notifications shown=$notifications")
@@ -502,8 +515,7 @@ class CallForegroundService : Service() {
         screenListener = null
         callId = null
         spec = null
-        audio?.close()
-        audio = null
+        audioSlot.close("the call left the foreground")
         proximityLock?.let { if (it.isHeld) it.release(PowerManager.RELEASE_FLAG_WAIT_FOR_NO_PROXIMITY) }
         proximityLock = null
         proximityWanted = false
@@ -611,16 +623,25 @@ class CallForegroundService : Service() {
  */
 private class CallAudio(
     private val manager: AudioManager,
-    /** The call this audio belongs to: the page matches a `focus` event against it. */
-    private val callId: String,
+    /** The call this audio is opened for; [handOver] relabels it. */
+    callId: String,
     /** Told every output actually applied (the proximity lock follows it); null = the platform routes. */
     private val onOutput: (CallOutput?) -> Unit,
-) {
+) : CallAudioLease {
     private companion object {
         const val TAG = "CallAudio"
     }
 
-    private val call = callId.take(8)
+    /** The call this audio belongs to now: the page matches a `focus` event against it. */
+    override var callId: String = callId
+        private set
+
+    private var call = callId.take(8)
+
+    /** Closed once by [close]; a callback the main looper delivers after it is refused, said. */
+    private val life = CallAudioLife { accuse, message ->
+        if (accuse) Log.w(TAG, message) else Log.i(TAG, message) // log-safe: CallAudioLife builds every line from literals and 8-character call ids
+    }
 
     /** Whether the microphone is held for a focus loss ([CallFocusHold], decided 2026-11-12). */
     private val hold = CallFocusHold()
@@ -634,14 +655,19 @@ private class CallAudio(
      */
     private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
         val (what, kind) = when (change) {
+            // Every GAIN variant is a gain: a DELAYED request is answered with the kind it asked
+            // for (`GAIN_TRANSIENT`), and that answer must release the hold too.
             AudioManager.AUDIOFOCUS_GAIN -> "GAIN" to FocusChange.GAIN
+            AudioManager.AUDIOFOCUS_GAIN_TRANSIENT -> "GAIN_TRANSIENT" to FocusChange.GAIN
+            AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK -> "GAIN_TRANSIENT_MAY_DUCK" to FocusChange.GAIN
+            AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE -> "GAIN_TRANSIENT_EXCLUSIVE" to FocusChange.GAIN
             AudioManager.AUDIOFOCUS_LOSS -> "LOSS" to FocusChange.LOSS
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> "LOSS_TRANSIENT" to FocusChange.LOSS_TRANSIENT
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK ->
                 "LOSS_TRANSIENT_CAN_DUCK" to FocusChange.LOSS_TRANSIENT_CAN_DUCK
             else -> "change $change" to FocusChange.OTHER
         }
-        apply(hold.on(kind), what)
+        if (life.admits("audio focus change", callId)) apply(hold.on(kind), what)
     }
 
     /** Tells the page what [step] asks of the call; [what] names the change or the answer. */
@@ -670,6 +696,7 @@ private class CallAudio(
      * and a request would interrupt nothing new). Main looper, like every other method here.
      */
     fun askFocus(why: String) {
+        if (!life.admits("focus ask", callId)) return
         if (!hold.wantsAsk) {
             Log.i(TAG, "focus not asked again ($why) for call=$call - the call is not held")
             return
@@ -683,6 +710,12 @@ private class CallAudio(
      * starts pauses (or ducks) for its length, and resumes when [close] abandons it. Transient, so the
      * player knows it is getting it back; `USAGE_VOICE_COMMUNICATION`, so the system treats it as a
      * call. A loss holds the microphone through [focusListener], never ends the call.
+     *
+     * **DELAYED GAIN IS ACCEPTED** (review of #4012): while Telecom holds the voice-call focus, AOSP
+     * neither grants a request nor queues it, so a refused call would never hear a GAIN and only a
+     * tap could release its hold. A delayed request is queued instead (`AUDIOFOCUS_REQUEST_DELAYED`,
+     * which counts as NOT granted: the call starts held), and the GAIN Telecom's abandon delivers to
+     * [focusListener] releases the hold by itself.
      */
     private val focus: AudioFocusRequest =
         AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
@@ -693,6 +726,7 @@ private class CallAudio(
                     .build(),
             )
             .setOnAudioFocusChangeListener(focusListener, Handler(Looper.getMainLooper()))
+            .setAcceptsDelayedFocusGain(true)
             .build()
 
     /** Whether THIS class set `MODE_IN_COMMUNICATION` - the only case in which it ever resets it. */
@@ -728,14 +762,18 @@ private class CallAudio(
             modeSetHere = true
             Log.i(TAG, "mode $found -> MODE_IN_COMMUNICATION, set by the service (read back ${manager.mode})")
         }
+        // DELAYED (a phone call holds the focus) is not granted: no LOSS will ever come, so the
+        // call STARTS HELD ([CallFocusHold.onOpen]) - the microphone is not heard under the phone
+        // call - and the delayed GAIN, or a granted ask, releases it. One line per outcome.
         val granted = manager.requestAudioFocus(focus)
-        if (granted == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+        val taken = granted == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        val step = hold.onOpen(taken)
+        if (taken) {
             Log.i(TAG, "audio focus taken (transient, voice communication) - other players pause for the call")
         } else {
-            // Refused while another call holds the focus (a phone call ringing in): the call goes on,
-            // and what else is playing keeps playing - said, so a reading can tell why.
-            Log.w(TAG, "audio focus NOT granted ($granted) - other players keep playing during the call")
+            Log.w(TAG, "audio focus NOT granted ($granted) at the call's start - the call starts held until the focus is granted")
         }
+        if (step == FocusStep.HOLD) CallBridge.emit("focus", callId, reason = "refused at the call's start", code = "lost")
         this.speaker = speaker
         this.speakerChosen = speakerChosen
         route("call started")
@@ -744,12 +782,14 @@ private class CallAudio(
     }
 
     fun setSpeaker(on: Boolean, chosen: Boolean, why: String) {
+        if (!life.admits("speaker change", callId)) return
         speaker = on
         speakerChosen = chosen
         route(why)
     }
 
     private fun route(why: String) {
+        if (!life.admits("output re-route", callId)) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val available = manager.availableCommunicationDevices
             val wanted = pickCallOutput(available.map { classify(it.type) }, speaker, speakerChosen)
@@ -784,7 +824,23 @@ private class CallAudio(
         }
     }
 
-    fun close() {
+    /**
+     * The new call's page has heard nothing from this audio: its hold, if any, and the output in use
+     * are re-sent under [newCallId]. The mode, the output and the focus request are left as they are.
+     */
+    override fun handOver(newCallId: String) {
+        if (!life.admits("handover", callId)) return
+        callId = newCallId
+        call = newCallId.take(8)
+        if (hold.held) {
+            Log.i(TAG, "the hold carries over to call=$call - re-sent under its id")
+            CallBridge.emit("focus", callId, reason = "held when the call was handed over", code = "lost")
+        }
+        if (appliedOnce) onOutput(applied)
+    }
+
+    override fun close(why: String) {
+        if (!life.close(callId)) return
         manager.unregisterAudioDeviceCallback(devices)
         manager.abandonAudioFocusRequest(focus)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {

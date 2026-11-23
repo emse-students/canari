@@ -1137,7 +1137,7 @@ screens could not name another person: one live Responsable per Business (`LYDIA
 against Lydia. Off, core answers the typed 409 `LYDIA_RESPONSABLE_HANDOVER_DISABLED` before any claim,
 the screen draws no button, and the departure refusal below is off too (refusing a departure while
 nothing lets the Responsable hand over would trap them). It flips once the run on Lydia homologation is read
-([homologation](../../backlog.d/reading-owed-the-lydia-responsable-hand-over-runs-against-homologation.md));
+([homologation](../../device-verification.md#the-readings-of-2026-11-23-180-alpha4-mi-9t-the-live-sheets-camera-sentence-the-switch-the-bell-the-mute-the-group-creation-log));
 the owner's own production trial is a closed reading ([closed readings](../../device-verification.md#readings-closed-on-2026-11-23---no-hand-can-take-them)).
 
 **Who may hand over: the live Responsable themselves, or a platform admin** - the same rule as the

@@ -112,3 +112,27 @@ describe('MessageMobileActions action row', () => {
     expect(buttons).toHaveLength(0);
   });
 });
+
+describe('MessageMobileActions quick reactions', () => {
+  it('are a named group of named, pressable 44 px buttons, reachable by role and name', () => {
+    open({ ...all, isOwn: false, canReact: true, userReactions: ['👍'] });
+    const group = document.body.querySelector<HTMLElement>(
+      `[role="group"][aria-label="${m.msg_react_label()}"]`
+    );
+    expect(group).not.toBeNull();
+    const buttons = Array.from(group!.querySelectorAll<HTMLButtonElement>('button'));
+    const names = buttons.map((b) => b.getAttribute('aria-label'));
+    expect(names).toContain(m.msg_react_with_emoji({ emoji: '👍' }));
+    expect(names.at(-1)).toBe(m.msg_more_reactions_label());
+    for (const b of buttons) {
+      expect(b.className).toContain('h-11');
+      expect(b.className).toContain('w-11');
+    }
+    const active = buttons.find(
+      (b) => b.getAttribute('aria-label') === m.msg_react_with_emoji({ emoji: '👍' })
+    );
+    expect(active?.getAttribute('aria-pressed')).toBe('true');
+    // The glyph is decoration: the name is on the button.
+    expect(active?.querySelector('[aria-hidden="true"]')).not.toBeNull();
+  });
+});
