@@ -186,40 +186,54 @@ export function stickToBottomAfterScroll(m: ScrollMeasurement): boolean {
  * What one scroll measurement does to the pane (`scrollMeasurementResponse`):
  *
  * - `at-end`: the stick-to-bottom flag holds ({@link stickToBottomAfterScroll}).
- * - `in-history`: the flag is (or stays) down - the reader moved up, or was already reading history.
- * - `put-back`: the pane left its end and NO READER moved it - the flag holds and the pane is put
- *   back at its end.
+ * - `in-history`: the flag is (or stays) down - the pane moved up out of the slack, or the reader was
+ *   already reading history.
+ * - `put-back`: the move is the ENGINE'S OWN around the keyboard ({@link EngineKeyboardMove}) - the flag
+ *   holds and the pane is put back at its end.
  */
 export type ScrollMeasurementResponse = 'at-end' | 'in-history' | 'put-back';
 
 /**
- * The stick-to-bottom flag after one scroll measurement, **WHERE ONLY A READER CAN LOWER IT**
- * (iPhone 12, `1.7.3-alpha.4` to `1.8.0-alpha.1`, 3 of 3: a DM ending in portrait photos left 375 px
- * short of its end when the keyboard rose, 96 pt short after it fell).
+ * The three facts that, together, name a move of the pane as the engine's own around the keyboard -
+ * each carried from where it is already known, none guessed.
+ */
+export interface EngineKeyboardMove {
+  /** A reader's input moved, or may still be moving, the pane since the page last placed it. */
+  readerMoving: boolean;
+  /**
+   * A keyboard transition started after the reader's last input and after the last put-back
+   * (`keyboardTransition.ts`): a field took focus, the keyboard opened, closed or changed height.
+   */
+  unspentKeyboardTransition: boolean;
+  /** The reach (`scrollHeight - clientHeight`) is the one of the last placement or measurement. */
+  reachUnchanged: boolean;
+}
+
+/**
+ * The stick-to-bottom flag after one scroll measurement, **WITH THE ENGINE'S OWN KEYBOARD MOVE - AND
+ * ONLY IT - PUT BACK** (iPhone 12, `1.7.3-alpha.4` to `1.8.0-alpha.1`, 3 of 3: a DM ending in portrait
+ * photos left 375 px short of its end when the keyboard rose, 96 pt short after it fell).
  *
- * {@link stickToBottomAfterScroll} reads "moved up out of the slack" as the reader leaving. That holds
- * only while the reader is the one moving the pane. On the iPhone the log of every opening reads
- * `scrollTop 5813 (last placed 6188), 375 px from the end`: the pane went 375 px UP with its reach
- * unchanged since the last placement, no finger on it and no writer of this page behind it - a move
- * the engine made itself (WKWebView scrolls an overflow scroller in its UI process, around a
- * keyboard and a focused field). Measured as the reader's, it dropped the flag; every later change
- * then answered `keep-row`, and nothing ever took the thread back to its end.
+ * The iPhone's log of every opening reads `scrollTop 5813 (last placed 6188), 375 px from the end`: the
+ * pane went 375 px UP with its reach unchanged since the last placement, no finger on it and no writer
+ * of this page behind it, as a field took focus - WKWebView scrolling an overflow scroller to reveal
+ * the focused field as the keyboard shows. Read as the reader leaving, it dropped the flag; every later
+ * change answered `keep-row`, and nothing took the thread back to its end.
  *
- * So the measurement asks WHO moved the pane, from durable input state (`readerMoving`, from
- * `trackReaderInput`), never from a clock: a reader's touch, wheel, key or jump lets the flag fall as
- * before; any other move away from the end of a pane whose flag is up is put back - the same answer
- * the growth observer gives when the bottom moves away from a reader at the end, from the one other
- * cause that moves it. It holds whatever the order of the image loads and of the viewport resize,
- * and for a thread of any length.
+ * **The move is put back only when it is POSITIVELY that one**: no reader input since the last
+ * placement, an unspent keyboard transition, and the reach unchanged. Every other move up out of the
+ * slack lowers the flag as before - a screen reader's scroll (VoiceOver, TalkBack), find-in-page, a
+ * reader's key: an assistive or unexplained move is the reader's until proven otherwise. A put-back
+ * SPENDS its transition (the caller records it), so there is at most one per keyboard transition and
+ * a second engine move in the same one lowers the flag: termination by construction, not by a clock.
  */
 export function scrollMeasurementResponse(
-  m: ScrollMeasurement & {
-    /** A reader's input moved, or may still be moving, the pane since the page last placed it. */
-    readerMoving: boolean;
-  }
+  m: ScrollMeasurement & EngineKeyboardMove
 ): ScrollMeasurementResponse {
   if (stickToBottomAfterScroll(m)) return 'at-end';
-  return m.wasNearBottom && !m.readerMoving ? 'put-back' : 'in-history';
+  const engineKeyboardMove =
+    m.wasNearBottom && !m.readerMoving && m.unspentKeyboardTransition && m.reachUnchanged;
+  return engineKeyboardMove ? 'put-back' : 'in-history';
 }
 
 /** What a change of the soft keyboard may do to the thread (`keyboardChangeResponse`). */

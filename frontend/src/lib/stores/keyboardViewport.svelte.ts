@@ -24,6 +24,7 @@
 
 import { detectRuntimeDeviceOs } from '$lib/mls-client/mlsPlatform';
 import { orientationOf, rememberKeyboardHeight } from './keyboardHeightMemory';
+import { noteKeyboardTransition } from './keyboardTransition';
 import { cssColorToHex, groundOf } from './imeGround';
 import { parseImeTarget, resolveImeTarget, type ImeAnimation, type ImeTarget } from './imeTarget';
 import {
@@ -1028,6 +1029,12 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
     const closedNow = !next.isOpen && keyboardWasOpen;
     const insetMoved = next.insetBottom !== snapshot.insetBottom;
     const moved = keyboardMoved(snapshot, next);
+    if (next.isOpen !== snapshot.isOpen || next.keyboardHeight !== snapshot.keyboardHeight) {
+      noteKeyboardTransition(
+        `keyboard ${snapshot.isOpen ? 'open' : 'closed'} ${snapshot.keyboardHeight}px -> ` +
+          `${next.isOpen ? 'open' : 'closed'} ${next.keyboardHeight}px`
+      );
+    }
     snapshot = next;
     const vars = keyboardVariables(next, m, baselineHeight, detectRuntimeDeviceOs());
     if (Array.isArray(hold)) holdRoot(vars, hold);
@@ -1078,6 +1085,9 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
   const handleFocusIn = (e: FocusEvent) => {
     const target = e.target;
     if (!(target instanceof HTMLElement) || !isFocusableField(target)) return;
+    // The keyboard is about to show (or to serve another field): the engine may move a scroller
+    // to reveal the field before any resize says so (`keyboardTransition.ts`).
+    if (hasVirtualKeyboard(detectRuntimeDeviceOs())) noteKeyboardTransition('a field took focus');
     if (!keyboardWasCovering) return;
     scrollFocusedFieldIntoView('smooth');
   };

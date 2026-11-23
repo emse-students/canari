@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { keyboardTransitionCount, noteKeyboardTransition } from '$lib/stores/keyboardTransition';
 import { trackReaderInput } from './readerInput';
 import {
   isPinnedToBottom,
@@ -194,15 +195,14 @@ describe('observeThreadGrowth - a thread that shrinks then grows back under a re
 });
 
 /**
- * THE IPHONE PHOTO DM (1.7.3-alpha.4 to 1.8.0-alpha.1, 3 of 3; chat.md, "only a reader lowers the
- * flag"). A DM ending in three portrait photos, at its end; the photos grow to their size after the
- * end was placed, the keyboard takes the box, and the engine moves the pane 375 px up with its reach
- * unchanged and no finger on it (the in-app log of every opening: `scrollTop 5813 (last placed 6188),
- * 375 px from the end`). The measurement of that move must not drop the flag: the pane goes back to
- * its end, and is still there once the keyboard has left - whatever order the photos and the resize
- * come in.
+ * THE IPHONE PHOTO DM (1.7.3-alpha.4 to 1.8.0-alpha.1, 3 of 3; chat.md, "the engine's keyboard move is
+ * put back, and only it"). A DM ending in three portrait photos, at its end; the composer takes focus
+ * and the engine moves the pane 375 px up with its reach unchanged and no finger on it (the in-app log
+ * of every opening: `scrollTop 5813 (last placed 6188), 375 px from the end`); the keyboard takes the
+ * box, the photos grow to their size (before or after), the keyboard leaves. The pane must end at its
+ * end - and ONLY that move may be put back.
  */
-describe('observeThreadGrowth - a move no reader made, around the keyboard, on a DM ending in photos', () => {
+describe('observeThreadGrowth - the engine keyboard move, on a DM ending in photos', () => {
   const PHOTOS = [37, 38, 39];
   const PLACEHOLDER = 300;
   const PORTRAIT = 567;
@@ -210,35 +210,41 @@ describe('observeThreadGrowth - a move no reader made, around the keyboard, on a
   const heights = () =>
     Array.from({ length: 40 }, (_, i) => (PHOTOS.includes(i) ? PLACEHOLDER : 60));
 
-  /**
-   * One opening. `readerKnown` is the fix (who moved the pane is asked); without it every move up out
-   * of the slack is the reader's, the rule before. `photosFirst` is the load order.
-   */
-  function opening(o: { readerKnown: boolean; photosFirst: boolean; readerTouches?: boolean }) {
+  /** A pane wired like `ChatArea`: the observer, the reader's input, the measurement and its log. */
+  function pane() {
     const { scroller, layout, relayout, reach } = makeThread(heights(), 945);
     const input = trackReaderInput(scroller, { held: false });
     let nearBottom = true;
     let lastPlaced: number | null = null;
+    let lastReach: number | null = null;
+    let spent = keyboardTransitionCount();
+    const lines: string[] = [];
     const placed = (top: number) => {
       lastPlaced = top;
+      lastReach = reach();
       input.placed();
     };
-    let putBacks = 0;
-    const measure = () => {
+    /** `measureScroll`'s decision; `oldRule` is the rule before #3984 (every move up is the reader's). */
+    const measure = (oldRule = false) => {
+      const transitions = keyboardTransitionCount();
       const response = scrollMeasurementResponse({
         pinned: isPinnedToBottom(scroller),
         scrollTop: scroller.scrollTop,
         wasNearBottom: nearBottom,
         previousScrollTop: lastPlaced,
-        readerMoving: o.readerKnown ? input.moving : true,
+        readerMoving: oldRule || input.moving,
+        unspentKeyboardTransition: transitions > Math.max(input.lastInputTransition, spent),
+        reachUnchanged: lastReach !== null && Math.abs(reach() - lastReach) < 1,
       });
+      if (nearBottom && response !== 'at-end' && !input.moving) lines.push(response);
       if (response === 'put-back') {
-        putBacks++;
+        spent = transitions;
         scroller.scrollTop = scroller.scrollHeight;
         placed(scroller.scrollTop);
       }
       nearBottom = response !== 'in-history';
       lastPlaced = scroller.scrollTop;
+      lastReach = reach();
     };
     const stop = observeThreadGrowth(
       scroller,
@@ -246,72 +252,106 @@ describe('observeThreadGrowth - a move no reader made, around the keyboard, on a
       null,
       placed
     );
-    // The entry puts the pane at its end, the photos still at their placeholder size.
     scroller.scrollTop = scroller.scrollHeight;
     placed(scroller.scrollTop);
+    const engineMove = (oldRule = false) => {
+      layout.scrollTop -= ENGINE_MOVE;
+      measure(oldRule);
+    };
     const photosGrow = () => {
       for (const i of PHOTOS) layout.heights[i] = PORTRAIT;
       relayout();
     };
-    const keyboardRises = () => {
-      layout.box -= KEYBOARD;
+    const keyboard = (rises: boolean) => {
+      noteKeyboardTransition(rises ? 'keyboard opened' : 'keyboard closed');
+      layout.box += rises ? -KEYBOARD : KEYBOARD;
       relayout();
+      measure();
     };
-    if (o.photosFirst) {
-      photosGrow();
-      keyboardRises();
-    } else {
-      keyboardRises();
-      photosGrow();
-    }
-    if (o.readerTouches) scroller.dispatchEvent(new Event('touchstart'));
-    // The engine's move: up by 375 px, the reach unchanged, then the frame's scroll measurement.
-    const reachBefore = reach();
-    layout.scrollTop -= ENGINE_MOVE;
-    expect(reach()).toBe(reachBefore);
-    measure();
-    const distanceKeyboardUp = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-    const flagKeyboardUp = nearBottom;
-    // The keyboard falls: the box gets its height back.
-    layout.box += KEYBOARD;
-    relayout();
-    measure();
-    stop();
-    input.dispose();
+    const distance = () => scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+    const done = () => {
+      stop();
+      input.dispose();
+    };
     return {
-      flagKeyboardUp,
-      distanceKeyboardUp,
-      nearBottom,
-      distanceAfterFall: scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight,
-      putBacks,
+      scroller,
+      input,
+      lines,
+      measure,
+      engineMove,
+      photosGrow,
+      keyboard,
+      distance,
+      done,
+      flag: () => nearBottom,
     };
   }
 
   it.each([
     ['the photos grow before the keyboard rises', true],
-    ['the keyboard rises before the photos grow', false],
+    ['the photos grow after the keyboard rises', false],
   ])('keeps the pane at its end through the keyboard when %s', (_, photosFirst) => {
-    expect(opening({ readerKnown: true, photosFirst })).toEqual({
-      flagKeyboardUp: true,
-      distanceKeyboardUp: 0,
-      nearBottom: true,
-      distanceAfterFall: 0,
-      putBacks: 1,
+    const p = pane();
+    if (photosFirst) p.photosGrow();
+    noteKeyboardTransition('a field took focus');
+    p.engineMove();
+    expect(p.flag()).toBe(true);
+    expect(p.distance()).toBe(0);
+    p.keyboard(true);
+    if (!photosFirst) p.photosGrow();
+    expect(p.distance()).toBe(0);
+    p.keyboard(false);
+    expect({ flag: p.flag(), distance: p.distance(), lines: p.lines }).toEqual({
+      flag: true,
+      distance: 0,
+      lines: ['put-back'],
     });
+    p.done();
   });
 
   it('the old rule reads the engine move as the reader leaving, and the end is lost (control)', () => {
-    const run = opening({ readerKnown: false, photosFirst: true });
-    expect(run.flagKeyboardUp).toBe(false);
-    expect(run.distanceKeyboardUp).toBe(ENGINE_MOVE);
-    expect(run.distanceAfterFall).toBeGreaterThan(0);
+    const p = pane();
+    p.photosGrow();
+    noteKeyboardTransition('a field took focus');
+    p.engineMove(true);
+    p.keyboard(true);
+    p.keyboard(false);
+    expect(p.flag()).toBe(false);
+    expect(p.distance()).toBeGreaterThan(0);
+    p.done();
   });
 
-  it('a reader who touched the pane and moved up still leaves the end', () => {
-    const run = opening({ readerKnown: true, photosFirst: true, readerTouches: true });
-    expect(run.flagKeyboardUp).toBe(false);
-    expect(run.putBacks).toBe(0);
-    expect(run.distanceKeyboardUp).toBe(ENGINE_MOVE);
+  it('an unexplained move with no keyboard transition lowers the flag - a screen reader scrolling', () => {
+    const p = pane();
+    p.photosGrow();
+    p.engineMove();
+    expect(p.flag()).toBe(false);
+    expect(p.distance()).toBe(ENGINE_MOVE);
+    expect(p.lines).toEqual(['in-history']);
+    p.done();
+  });
+
+  it('a reader who touched the pane after the transition still leaves the end', () => {
+    const p = pane();
+    noteKeyboardTransition('a field took focus');
+    p.scroller.dispatchEvent(new Event('touchstart'));
+    p.engineMove();
+    expect(p.flag()).toBe(false);
+    expect(p.lines).toEqual([]);
+    p.done();
+  });
+
+  /**
+   * TERMINATION: a put-back spends its transition. An engine that repeated its move every frame would
+   * get ONE put-back, then the flag falls - two log lines, never one per frame, and no loop.
+   */
+  it('puts back at most once per keyboard transition', () => {
+    const p = pane();
+    noteKeyboardTransition('a field took focus');
+    for (let frame = 0; frame < 10; frame++) p.engineMove();
+    expect(p.lines).toEqual(['put-back', 'in-history']);
+    expect(p.flag()).toBe(false);
+    p.done();
   });
 });
 

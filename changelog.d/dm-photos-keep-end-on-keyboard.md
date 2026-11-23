@@ -1,3 +1,3 @@
 ### Fixed - a DM ending in photos stays at its last message when the iPhone keyboard opens
 
-The thread's stick-to-bottom flag now falls only on the reader's own input (touch, pointer, wheel, key, a jump they asked for); a move nobody made - WebKit scrolling the pane around the keyboard - is put back at the end ([chat](docs/wiki/frontend/modules/chat.md#only-a-reader-lowers-the-flag-2026-11-23)).
+WebKit's own scroll of the thread as the composer takes focus - no reader input, a keyboard transition under way, the reach unchanged - is now put back at the end, once per transition; any other unexplained move, a screen reader's included, still leaves the end ([chat](docs/wiki/frontend/modules/chat.md#the-engines-keyboard-move-is-put-back-and-only-it-2026-11-23)).

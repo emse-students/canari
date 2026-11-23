@@ -5905,40 +5905,47 @@ fall of the flag with NO finger on the pane (`left the bottom with no finger on 
 scrolling up is not logged). Such a fall during a rise is the flag read off a move that was not the
 reader's; the fix then is to let only a reader's input lower it - which `1.8.0-alpha.1` showed, below.
 
-### Only a reader lowers the flag (2026-11-23)
+### The engine's keyboard move is put back, and only it (2026-11-23)
 
 **What the iPhone said** (`1.8.0-alpha.1`, iPhone 12, iOS 27, 3 of 3): one line per opening,
 `left the bottom with no finger on the pane: scrollTop 5813 (last placed 6188), 375 px from the end`
 (an earlier run: 102 px). The pane went 375 px UP while its reach (`scrollHeight - clientHeight`) was
-the same as at the last placement, with no finger on it, and no writer of this page made the move:
-every one of them reports its placement (`onPlaced`, `scrollToBottom`). It is the engine's - WKWebView
-scrolls an overflow scroller in its UI process, around the keyboard and the focused field. The
-measurement read it as the reader leaving: the flag fell, every later change answered `keep-row`, the
-last photo stayed under the composer and the thread 96 pt short after the keyboard fell. The Mi 9T
-(Chromium) never makes such a move and passed.
+the reach of the last placement - the keyboard-free layout - with no finger on it, and no writer of
+this page made the move: every one of them reports its placement (`onPlaced`, `scrollToBottom`). It is
+the engine's: WKWebView scrolls an overflow scroller to reveal the focused field as the keyboard is
+about to show, before the WebView is resized. The measurement read it as the reader leaving: the flag
+fell, every later change answered `keep-row`, the last photo stayed under the composer and the thread
+96 pt short after the keyboard fell. The Mi 9T (Chromium) makes no such move and passed.
 
-**The cause is the rule, not the engine:** "moved up out of the slack" was taken as the reader's intent
-whoever moved the pane. **The fix asks who moved it, from durable input state, never from a clock.**
-`trackReaderInput` (`readerInput.ts`) is raised by the reader's own input on the pane - `touchstart`,
-`pointerdown` (a scrollbar drag), `wheel`, `keydown` - or by a jump they asked for (`declare`, the
-jump to a quoted message), and lowered only when the PAGE places the pane (`placedAt`: the observer's
-pins, `scrollToBottom`) with no finger down, or when the composer is taken up. So a fling keeps it up
-through its momentum after the finger lifted, and a move nobody touched finds it down.
-`scrollMeasurementResponse` (`threadAnchor.ts`) then answers `put-back` for a pane whose flag was up,
-that left the slack, with no reader moving it: the flag holds and `measureScroll` puts the pane back at
-its end - the same answer the growth observer gives when the bottom moves away from a reader at the
-end. The `left the bottom with no finger on the pane` line stays, as the evidence of each such move,
-ending `- not the reader's move, put back at the end`. It holds whatever the order of the image loads
-and the viewport resize, for a thread of any length.
+**The rule: a move is put back only when it is POSITIVELY the engine's keyboard move**, named by three
+facts carried from where each is already known, never by a clock (`scrollMeasurementResponse`,
+`threadAnchor.ts`):
 
-`threadGrowthObserver.test.ts` ("a move no reader made, around the keyboard") replays the opening:
-the pane at its end, the photos growing (before and after the resize), the box losing the keyboard,
-the 375 px move with the reach unchanged, the keyboard falling. The pane ends at its end with the flag
-up; the control with the old rule leaves it 375 px short; a reader who touched the pane still leaves.
+1. **No reader input since the last placement** - `trackReaderInput` (`readerInput.ts`): a `touchstart`,
+   `pointerdown`, `wheel` or `keydown` on the pane, a scrolling key pressed with the focus on the page
+   itself (the pane has no tabindex, so PageUp lands on `body`), or a jump the reader asked for. Lowered
+   when the page places the pane with no finger down, so a fling stays the reader's through its momentum.
+2. **An unspent keyboard transition** - `keyboardTransition.ts`, a count bumped by
+   `keyboardViewport.svelte.ts` when a field takes focus on an OS with a virtual keyboard and whenever
+   the keyboard opens, closes or changes height. Unspent: started after the reader's last input and
+   after the last put-back.
+3. **The reach unchanged** since the last placement or measurement.
 
-**Not refuted:** WebKit could re-apply its move every frame, which would show as one log line per frame
-rather than one per opening - the reading says which. A VoiceOver scroll fires none of the four inputs
-and is put back at the end while the flag is up. Owed:
+**Any other move up out of the slack lowers the flag, as it always did.** A VoiceOver or TalkBack
+scroll, a swipe to the previous message, find-in-page, a reader's key: none carries an unspent keyboard
+transition with no input and an unchanged reach, so an assistive or unexplained move is the reader's.
+
+**Termination by construction:** a put-back SPENDS its transition, so there is at most one per keyboard
+transition; an engine that repeated its move would get one put-back and then lower the flag. The
+`left the bottom with no finger on the pane` line stays, one per such move and never per frame - it
+ends `the engine's keyboard move, put back at the end (put-back N of this pane, keyboard transition #T)`
+or `not a keyboard move of the engine, the flag falls`.
+
+Tests: `threadGrowthObserver.test.ts` ("the engine keyboard move") replays the opening with the photos
+growing before and after the resize; the control on the old rule ends 375 px short; a move with no
+transition lowers the flag; a reader's touch still leaves; ten repeated engine moves give one put-back.
+`ChatArea.scrollAnchor.svelte.test.ts` drives the put-back through the mounted pane (the log line, the
+scroll to the end, the arrow absent) and the assistive case (the arrow shown). Owed:
 [the reading](../../backlog.d/reading-owed-a-dm-ending-in-photos-stays-at-its-end-when-the-keyboard-opens.md).
 
 ### A short thread sits at the bottom, and asks for its past at entry (2026-11-14)

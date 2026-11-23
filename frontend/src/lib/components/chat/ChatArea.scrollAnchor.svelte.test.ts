@@ -11,6 +11,8 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import ChatArea from './ChatArea.svelte';
 import { clearConversationAnchors } from '$lib/utils/chat/scrollAnchors';
+import { noteKeyboardTransition } from '$lib/stores/keyboardTransition';
+import { Log } from '$lib/utils/Log';
 import type { ChatMessage, Conversation } from '$lib/types';
 
 type Nav = {
@@ -366,5 +368,59 @@ describe('ChatArea follows the bottom for a message the reader just sent, and fo
     await settleEntry();
 
     expect(newestRowTop(area.target)).toBeLessThan(PANE_PX);
+  });
+});
+
+/**
+ * THE ENGINE'S KEYBOARD MOVE IS PUT BACK, AND ONLY IT (iPhone 12, 1.8.0-alpha.1, #3984; chat.md). The
+ * pane at its end, then moved 375 px up with no reader input and its reach unchanged - with a keyboard
+ * transition started (a field took focus) it is put back; with none (a screen reader's scroll,
+ * find-in-page) the flag falls as it always did.
+ */
+describe('ChatArea and a move of the pane no reader made', () => {
+  const ENGINE_MOVE = 375;
+  const reach = () => THREAD * ROW_PX - PANE_PX;
+  const arrowShown = (target: HTMLElement) =>
+    target.querySelector('.chat-scroll-bottom-button') !== null;
+
+  async function engineMove(scroller: HTMLElement) {
+    scroller.scrollTop = reach() - ENGINE_MOVE;
+    scroller.dispatchEvent(new Event('scroll'));
+    await vi.advanceTimersByTimeAsync(50);
+    flushSync();
+  }
+
+  it('puts the engine keyboard move back at the end, logs it once and holds the flag', async () => {
+    const info = vi.spyOn(Log, 'i');
+    const area = mountArea();
+    await settleEntry();
+    const scroller = scrollerOf(area.target);
+    noteKeyboardTransition('a field took focus');
+    await engineMove(scroller);
+
+    expect(scroller.scrollTop).toBeGreaterThanOrEqual(reach());
+    expect(arrowShown(area.target)).toBe(false);
+    const lines = info.mock.calls.filter(([, line]) => String(line).includes('left the bottom'));
+    expect(lines).toHaveLength(1);
+    expect(String(lines[0][1])).toMatch(/put back at the end \(put-back 1 of this pane/);
+
+    // The transition is spent: the same move again is not put back a second time.
+    await engineMove(scroller);
+    expect(scroller.scrollTop).toBe(reach() - ENGINE_MOVE);
+    expect(arrowShown(area.target)).toBe(true);
+  });
+
+  it('lets an unexplained move with no keyboard transition lower the flag (the assistive case)', async () => {
+    const info = vi.spyOn(Log, 'i');
+    const area = mountArea();
+    await settleEntry();
+    const scroller = scrollerOf(area.target);
+    await engineMove(scroller);
+
+    expect(scroller.scrollTop).toBe(reach() - ENGINE_MOVE);
+    expect(arrowShown(area.target)).toBe(true);
+    const lines = info.mock.calls.filter(([, line]) => String(line).includes('left the bottom'));
+    expect(lines).toHaveLength(1);
+    expect(String(lines[0][1])).toContain('the flag falls');
   });
 });

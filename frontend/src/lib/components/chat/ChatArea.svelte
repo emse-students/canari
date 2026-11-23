@@ -55,6 +55,7 @@
   import { observeThreadGrowth } from '$lib/utils/chat/threadGrowthObserver';
   import { trackTouchHold, type TouchHold } from '$lib/utils/chat/touchHold';
   import { trackReaderInput, type ReaderInput } from '$lib/utils/chat/readerInput';
+  import { keyboardTransitionCount } from '$lib/stores/keyboardTransition';
   import { floatingDateIndex } from '$lib/utils/chat/stickyDate';
   import {
     countUnreadBelow,
@@ -533,8 +534,18 @@
   let entryWidening = $state(false);
   /** The touches on the thread, read by the widen so no step writes `scrollTop` under a finger. */
   let threadTouch: TouchHold | null = null;
-  /** Whether the READER is moving the pane - the only thing that may lower the flag (`measureScroll`). */
+  /** Whether, and when last, the READER moved the pane (`measureScroll`). */
   let readerInput: ReaderInput | null = null;
+  /** `threadReach` at the last placement or measurement - the engine's keyboard move leaves it alone. */
+  let lastMeasuredReach: number | null = null;
+  /**
+   * The keyboard transition the last put-back spent (`keyboardTransition.ts`): ONE put-back per
+   * transition, so a move the engine repeats can never loop the pane (`scrollMeasurementResponse`).
+   * Starts at the count of the pane's mount: a transition before it moved nothing here.
+   */
+  let spentKeyboardTransition = keyboardTransitionCount();
+  /** Put-backs in this mount, carried by their log line. */
+  let putBacks = 0;
 
   /**
    * Puts the pane on its last row.
@@ -558,6 +569,7 @@
    */
   function placedAt(scrollTop: number) {
     lastMeasuredScrollTop = scrollTop;
+    if (chatContainer) lastMeasuredReach = threadReach(chatContainer);
     readerInput?.placed();
   }
 
@@ -996,33 +1008,47 @@
     // THE ONLY WRITER of the thread's stick-to-bottom flag. A scroll is the only thing that can
     // express the reader's intent to leave the live end, so it is the only thing that revises it.
     // Leaving the bottom takes a move UP: a growth seen here before the observer could follow it
-    // must not drop the flag the observer is about to read (`stickToBottomAfterScroll`), and a move
-    // up that no reader made (`readerInput`) never drops it at all.
+    // must not drop the flag the observer is about to read (`stickToBottomAfterScroll`), and the
+    // engine's own move around the keyboard - and only it - is put back (`scrollMeasurementResponse`).
     const wasNearBottom = isNearBottom;
+    const c = chatContainer;
+    const transitions = keyboardTransitionCount();
+    const reach = threadReach(c);
     const response = scrollMeasurementResponse({
-      pinned: isPinnedToBottom(chatContainer),
-      scrollTop: chatContainer.scrollTop,
+      pinned: isPinnedToBottom(c),
+      scrollTop: c.scrollTop,
       wasNearBottom,
       previousScrollTop: lastMeasuredScrollTop,
       readerMoving: readerInput?.moving ?? true,
+      unspentKeyboardTransition:
+        readerInput !== null &&
+        transitions > Math.max(readerInput.lastInputTransition, spentKeyboardTransition),
+      reachUnchanged: lastMeasuredReach !== null && Math.abs(reach - lastMeasuredReach) < 1,
     });
-    if (response === 'put-back') {
-      // A MOVE NO READER MADE, the iPhone's photo DM (1.7.3-alpha.4 to 1.8.0-alpha.1, every opening:
-      // `scrollTop 5813 (last placed 6188), 375 px from the end` as the keyboard rose). The line is the
-      // evidence of each such move; the flag holds and the pane goes back to its end
-      // (`scrollMeasurementResponse`, chat.md "only a reader lowers the flag").
-      const c = chatContainer;
+    if (wasNearBottom && response !== 'at-end' && !readerInput?.moving) {
+      // A FALL WITH NO READER INPUT, the evidence the iPhone's photo DM was diagnosed from
+      // (1.7.3-alpha.4 to 1.8.0-alpha.1, every opening: `scrollTop 5813 (last placed 6188), 375 px
+      // from the end` as the composer took focus). ONE line per such move, never per frame: a
+      // put-back spends its keyboard transition, and a fall leaves the flag down.
       Log.i(
         'ChatArea',
         `left the bottom with no finger on the pane: scrollTop ${Math.round(c.scrollTop)} (last ` +
           `placed ${lastMeasuredScrollTop === null ? 'none' : Math.round(lastMeasuredScrollTop)}), ` +
-          `${Math.round(c.scrollHeight - c.clientHeight - c.scrollTop)} px from the end - not the ` +
-          `reader's move, put back at the end`
+          `${Math.round(reach - c.scrollTop)} px from the end - ` +
+          (response === 'put-back'
+            ? `the engine's keyboard move, put back at the end (put-back ${putBacks + 1} of this ` +
+              `pane, keyboard transition #${transitions})`
+            : `not a keyboard move of the engine, the flag falls`)
       );
+    }
+    if (response === 'put-back') {
+      spentKeyboardTransition = transitions;
+      putBacks++;
       scrollToBottom();
     }
     isNearBottom = response !== 'in-history';
-    lastMeasuredScrollTop = chatContainer.scrollTop;
+    lastMeasuredScrollTop = c.scrollTop;
+    lastMeasuredReach = threadReach(c);
     lastVisibleAnchor = measureLastVisibleAnchor();
     updateStickyDateIndicator();
     // A pane its thread does not fill cannot be scrolled by the reader: a scroll event there is a box
@@ -1651,6 +1677,7 @@
         olderLoadToken++;
         isLoadingOlder = false;
         lastMeasuredScrollTop = null;
+        lastMeasuredReach = null;
         scrollbackState = 'idle';
         scrollbackAskedAt = null;
         // Hold the list invisible until fillViewportThenPin() lands it at the bottom, so the
