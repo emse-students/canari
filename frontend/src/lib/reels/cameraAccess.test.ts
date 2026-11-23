@@ -8,6 +8,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   CameraAccessError,
   classifyCameraError,
+  classifyCameraRefusal,
+  faultForNotReadable,
   openPhotoCamera,
   postCameraOpener,
   openReelCamera,
@@ -21,6 +23,16 @@ vi.mock('$lib/utils/audioSession', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/utils/audioSession')>()),
   captureUserMedia: (devices: MediaDevices, constraints: MediaStreamConstraints) =>
     devices.getUserMedia(constraints),
+}));
+
+const platform = vi.hoisted(() => ({ android: false, permission: vi.fn() }));
+vi.mock('$lib/utils/appVersion', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/appVersion')>()),
+  isAndroidTauriRuntime: () => platform.android,
+}));
+vi.mock('./gallery', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./gallery')>()),
+  cameraPermission: platform.permission,
 }));
 
 function domError(name: string): DOMException {
@@ -272,5 +284,51 @@ describe('releaseCamera', () => {
     releaseCamera({ getTracks: () => [{ stop }, { stop }] } as unknown as MediaStream);
     expect(stop).toHaveBeenCalledTimes(2);
     expect(() => releaseCamera(null)).not.toThrow();
+  });
+});
+
+describe('faultForNotReadable (Android reports a refused permission as NotReadableError)', () => {
+  it('reads a permission that is not granted as denied, and a granted one as busy', () => {
+    expect(faultForNotReadable('denied')).toBe('denied');
+    expect(faultForNotReadable('prompt')).toBe('denied');
+    expect(faultForNotReadable('granted')).toBe('busy');
+    expect(faultForNotReadable('unknown')).toBe('busy');
+  });
+});
+
+describe('classifyCameraRefusal (the fact the error name cannot carry)', () => {
+  afterEach(() => {
+    platform.android = false;
+    platform.permission.mockReset();
+  });
+
+  it('on Android, a NotReadableError with the permission off is denied', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    platform.android = true;
+    platform.permission.mockResolvedValue('denied');
+    expect(await classifyCameraRefusal(domError('NotReadableError'))).toBe('denied');
+  });
+
+  it('on Android, a NotReadableError with the permission granted stays busy', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    platform.android = true;
+    platform.permission.mockResolvedValue('granted');
+    expect(await classifyCameraRefusal(domError('NotReadableError'))).toBe('busy');
+  });
+
+  it('on Android, a permission that cannot be read leaves busy, and says so', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    platform.android = true;
+    platform.permission.mockRejectedValue(new Error('plugin down'));
+    expect(await classifyCameraRefusal(domError('NotReadableError'))).toBe('busy');
+    expect(warn).toHaveBeenCalled();
+  });
+
+  it('asks nothing off Android, nor for any other name', async () => {
+    expect(await classifyCameraRefusal(domError('NotReadableError'))).toBe('busy');
+    platform.android = true;
+    expect(await classifyCameraRefusal(domError('NotAllowedError'))).toBe('denied');
+    expect(await classifyCameraRefusal(domError('AbortError'))).toBe('busy');
+    expect(platform.permission).not.toHaveBeenCalled();
   });
 });

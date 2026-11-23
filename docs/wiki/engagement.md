@@ -525,6 +525,8 @@ request, so no release - a hotfix included - can carry the wider audience withou
 
 ## WP-3 - the bell (BUILT)
 
+**A re-follow reaches the open picker (2026-11-23, entry deleted; owed an iPhone and a Mi 9T reading: bell at "Rien", Ne plus suivre, Suivre, the picker reads "Publications et lives" at once).** The association follow answers `{ ok, bellReset }` (`bellReset` is the reset statement's row count), `followAssociationLedgered` hands it back, and `AssociationDetailView` writes the default level into the bell's bindable `level`; `AccountBell` follows it with no second read and no timer. A retried follow answers `bellReset: false` and leaves the picker alone. A person's profile reads again on its next visit and is unaffected. Pinned in `AccountBell.svelte.test.ts`, `AssociationDetailView.bellReset.svelte.test.ts` (reset and no-reset), `follows.service.spec.ts` and, on PostgreSQL, `account-bells.integration.spec.ts` (set a bell, unfollow, follow: `bellReset` true; a retried follow: false).
+
 Built 2026-11-08 to the design [below](#the-bell---data-model-and-how-it-combines-with-categories-and-mutes)
 (L3, L7, L8) plus L17-L21 above. The decisions it applies are 3d, 5a and 10.
 
