@@ -91,8 +91,9 @@ describe('the thread follows its own bottom from four triggers', () => {
   it('watches the content, every child box, its own box and the composer band', () => {
     expect(read(CHAT_AREA)).toContain('return observeThreadGrowth(');
     expect(read(CHAT_AREA)).toContain('composerBand,\n');
-    // The pane's placements are the baseline of the flag's measurement (the photo DM, 2026-11-21).
-    expect(read(CHAT_AREA)).toContain('(top) => (lastMeasuredScrollTop = top)');
+    // The pane's placements are the baseline of the flag's measurement (the photo DM, 2026-11-21),
+    // and the end of any reader's move (2026-11-23).
+    expect(read(CHAT_AREA)).toContain('      placedAt\n    );');
     const wiring = read(GROWTH);
     // A box change is never an arrival, so it never glides (keyboard-and-send-motion.md).
     expect(wiring).toContain("const boxes = new ResizeObserver(() => follow('box'));");
@@ -114,9 +115,12 @@ describe('the thread follows its own bottom from four triggers', () => {
 
   it('holds the stick-to-bottom judgement in one shared predicate', () => {
     const body = read(CHAT_AREA);
-    // One writer, one shared predicate - `stickToBottomAfterScroll` over `isPinnedToBottom`.
-    expect(body).toContain('isNearBottom = stickToBottomAfterScroll({');
+    // One writer, one shared predicate - `scrollMeasurementResponse` over `isPinnedToBottom`, which
+    // only a reader's input lets lower the flag (2026-11-23).
+    expect(body).toContain('const response = scrollMeasurementResponse({');
+    expect(body).toContain("isNearBottom = response !== 'in-history';");
     expect(body).toContain('pinned: isPinnedToBottom(chatContainer),');
+    expect(body).toContain('readerMoving: readerInput?.moving ?? true,');
     // The magic number this replaced must not come back inline.
     expect(body).not.toContain('distanceFromBottom');
   });

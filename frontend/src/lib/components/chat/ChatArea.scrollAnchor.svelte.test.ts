@@ -11,6 +11,8 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import ChatArea from './ChatArea.svelte';
 import { clearConversationAnchors } from '$lib/utils/chat/scrollAnchors';
+import { noteKeyboardAtRest, noteKeyboardTransition } from '$lib/stores/keyboardTransition';
+import { Log } from '$lib/utils/Log';
 import type { ChatMessage, Conversation } from '$lib/types';
 
 type Nav = {
@@ -143,6 +145,8 @@ const rowsOf = (target: HTMLElement) => [...target.querySelectorAll<HTMLElement>
 
 /** A reader's wheel: moves the pane and lets the component measure it (it leaves the bottom). */
 async function scrollTo(scroller: HTMLElement, top: number) {
+  // The wheel itself: only a reader's input may lower the stick-to-bottom flag (2026-11-23).
+  scroller.dispatchEvent(new Event('wheel'));
   scroller.scrollTop = top;
   scroller.dispatchEvent(new Event('scroll'));
   await vi.advanceTimersByTimeAsync(50);
@@ -364,5 +368,73 @@ describe('ChatArea follows the bottom for a message the reader just sent, and fo
     await settleEntry();
 
     expect(newestRowTop(area.target)).toBeLessThan(PANE_PX);
+  });
+});
+
+/**
+ * THE ENGINE'S KEYBOARD MOVE IS PUT BACK, AND ONLY IT (iPhone 12, 1.8.0-alpha.1, #3984; chat.md). The
+ * pane at its end, then moved 375 px up with no reader input and its reach unchanged - with a keyboard
+ * transition started (a field took focus) it is put back; with none (a screen reader's scroll,
+ * find-in-page) the flag falls as it always did.
+ */
+describe('ChatArea and a move of the pane no reader made', () => {
+  const ENGINE_MOVE = 375;
+  const reach = () => THREAD * ROW_PX - PANE_PX;
+  const arrowShown = (target: HTMLElement) =>
+    target.querySelector('.chat-scroll-bottom-button') !== null;
+
+  // Every test starts with no keyboard transition moving (the count is the document's).
+  beforeEach(() => noteKeyboardAtRest('test start'));
+
+  async function engineMove(scroller: HTMLElement) {
+    scroller.scrollTop = reach() - ENGINE_MOVE;
+    scroller.dispatchEvent(new Event('scroll'));
+    await vi.advanceTimersByTimeAsync(50);
+    flushSync();
+  }
+
+  it('puts the engine keyboard move back at the end, logs it once and holds the flag', async () => {
+    const info = vi.spyOn(Log, 'i');
+    const area = mountArea();
+    await settleEntry();
+    const scroller = scrollerOf(area.target);
+    noteKeyboardTransition('keyboard opened');
+    await engineMove(scroller);
+
+    expect(scroller.scrollTop).toBeGreaterThanOrEqual(reach());
+    expect(arrowShown(area.target)).toBe(false);
+    const lines = info.mock.calls.filter(([, line]) => String(line).includes('left the bottom'));
+    expect(lines).toHaveLength(1);
+    expect(String(lines[0][1])).toMatch(/put back at the end \(put-back 1 of this pane/);
+
+    // The transition is spent: the same move again is not put back a second time.
+    await engineMove(scroller);
+    expect(scroller.scrollTop).toBe(reach() - ENGINE_MOVE);
+    expect(arrowShown(area.target)).toBe(true);
+  });
+
+  it.each([
+    ['no keyboard transition at all', false],
+    ['a keyboard transition that came to rest', true],
+  ])('lets an unexplained move after %s lower the flag (the assistive case)', async (_, opened) => {
+    const info = vi.spyOn(Log, 'i');
+    const debug = vi.spyOn(Log, 'd');
+    const area = mountArea();
+    await settleEntry();
+    const scroller = scrollerOf(area.target);
+    if (opened) {
+      noteKeyboardTransition('keyboard opened');
+      noteKeyboardAtRest('the shell: at rest');
+    }
+    await engineMove(scroller);
+
+    expect(scroller.scrollTop).toBe(reach() - ENGINE_MOVE);
+    expect(arrowShown(area.target)).toBe(true);
+    const hasLine = ([, line]: unknown[]) => String(line).includes('left the bottom');
+    // The expected path of every assistive scroll from the end: DEBUG, never INFO.
+    expect(info.mock.calls.filter(hasLine)).toHaveLength(0);
+    const lines = debug.mock.calls.filter(hasLine);
+    expect(lines).toHaveLength(1);
+    expect(String(lines[0][1])).toContain('the flag falls');
   });
 });

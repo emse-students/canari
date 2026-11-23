@@ -26,6 +26,54 @@ describe('the iOS keyboard hand-off (canari_ios.mm)', () => {
   const snap = body('static void CanariSnapKeyboardFrame(');
   const apply = body('static void CanariApplyKeyboardLayout(');
 
+  /**
+   * THE KEYBOARD AT REST (#3984): the end of the transition in which the page may put back the thread
+   * pane WebKit moved. It rests on the facts WebKit acts on - did-show / did-hide, WebKit revealing the
+   * focused field from its own `_keyboardDidShow:` - and on did-change-frame only for a height change
+   * with no show or hide pending (UIKit posts it BEFORE did-show). The observers are registered once the
+   * WebView exists, synchronously (`queue:nil`), so they are delivered after WebKit's own; the page is
+   * told only after the screen-update proof and the superseded check.
+   */
+  it('tells the page the keyboard is at rest on did-show / did-hide, after the proof', () => {
+    expect(viewport).toContain('.canariKeyboardAtRest = () =>');
+    const observers = body('static void CanariObserveKeyboardRest(');
+    expect(observers).toContain('dispatch_once(&once');
+    for (const name of ['DidShow', 'DidHide']) {
+      expect(observers).toMatch(
+        new RegExp(
+          `addObserverForName:UIKeyboard${name}Notification\\s+object:nil\\s+queue:nil[\\s\\S]{0,200}` +
+            'g_keyboardShowHidePending = NO;\\s+CanariTellPageKeyboardAtRest\\(\\);'
+        )
+      );
+    }
+    // A did-change-frame rests only a height change: a show or hide pending returns first.
+    const changeFrame = observers.slice(
+      observers.indexOf('addObserverForName:UIKeyboardDidChangeFrameNotification')
+    );
+    const pendingReturn = changeFrame.indexOf('if (g_keyboardShowHidePending) {');
+    expect(pendingReturn).toBeGreaterThan(-1);
+    expect(changeFrame.indexOf('CanariTellPageKeyboardAtRest();')).toBeGreaterThan(pendingReturn);
+    // Registered from the keyboard change, once the WebView exists - never at launch, before it.
+    expect(apply).toContain('CanariObserveKeyboardRest();');
+    expect(apply.indexOf('CanariObserveKeyboardRest();')).toBeGreaterThan(
+      apply.indexOf('if (parent == nil)')
+    );
+    expect(apply).toContain('g_keyboardShowHidePending = YES;');
+    expect(native.match(/addObserverForName:UIKeyboardDidChangeFrameNotification/g)).toHaveLength(
+      1
+    );
+
+    const rest = body('static void CanariTellPageKeyboardAtRest(');
+    const proved = rest.indexOf('CanariAfterScreenUpdates(webView, ^');
+    const superseded = rest.indexOf('seq != g_keyboardChangeSeq', proved);
+    const told = rest.indexOf('window.canariKeyboardAtRest?.()', superseded);
+    expect(proved).toBeGreaterThan(-1);
+    expect(superseded).toBeGreaterThan(proved);
+    expect(told).toBeGreaterThan(superseded);
+    // A superseded rest is silent: a quick double change would log one line per change.
+    expect(rest.slice(superseded, rest.indexOf('return;', superseded))).not.toContain('NSLog');
+  });
+
   it('the proof is the public screen-update snapshot, never the private presentation hook', () => {
     expect(proof).toContain('proof.afterScreenUpdates = YES;');
     expect(proof).toContain('[webView takeSnapshotWithConfiguration:proof');
