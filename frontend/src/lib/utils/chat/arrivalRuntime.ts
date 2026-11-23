@@ -80,3 +80,28 @@ export function conversationBeingRead(selected: string | null | undefined): stri
   if (!selected) return null;
   return isReadingConversationNow(selected, selected) ? selected : null;
 }
+
+/**
+ * ONE ARRIVAL'S VERDICT, taken once and handed to every effect of that arrival.
+ *
+ * `reading` decides the read on arrival (no unread count, the read signal to this account's other
+ * devices); `seen` decides between the tone and the OS notification. Asked separately, at different
+ * instants, they could disagree about one message: counted read on arrival AND notified, when the
+ * reader backed out between the two asks. So an inbound path asks once, after its last await before
+ * the effects, and every effect reads the same answer.
+ */
+export interface ArrivalVerdict {
+  readonly reading: boolean;
+  readonly seen: boolean;
+}
+
+/** Takes {@link ArrivalVerdict} on the facts of this instant, both halves from one read. */
+export function arrivalVerdictNow(
+  conversationKey: string,
+  selectedConversationKey: string | null | undefined
+): ArrivalVerdict {
+  return {
+    reading: isReadingConversationNow(conversationKey, selectedConversationKey),
+    seen: canSeeArrivalNow(conversationKey, selectedConversationKey),
+  };
+}

@@ -29,6 +29,12 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   globalNotifs: {},
 }));
 
+/** A salon's notification level is a server read; every salon is `all` here. */
+vi.mock('$lib/notifications/preferencesApi', async (orig) => ({
+  ...(await orig<typeof import('$lib/notifications/preferencesApi')>()),
+  fetchChannelNotificationLevel: async () => 'all' as const,
+}));
+
 vi.mock('$lib/utils/appVersion', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
   isMobileTauriRuntime: () => true,
@@ -267,5 +273,109 @@ describe('the arrival decision reads the selection after the row read, not befor
     await vi.waitFor(() => expect(ctx.playReceiveTone).toHaveBeenCalled());
     expect(sendSystemNotification).not.toHaveBeenCalled();
     expect(unreadOf(ctx, A)).toBe(0);
+  });
+});
+
+/**
+ * ONE ARRIVAL VERDICT, TAKEN AFTER THE ROW'S WRITE (review of #3985). The single path decided the
+ * read on arrival BEFORE writing the row, and the tone and the notification after it: a reader who
+ * backed out while the write was in flight got the message counted read on arrival (no unread; for
+ * a salon, the read signal that clears the banners on their other devices) AND a banner here. The
+ * write is held open while the reader leaves: every effect must read the one later verdict.
+ */
+describe('the read on arrival, the read signal, the tone and the notification read one verdict', () => {
+  const SALON = 'channel_00000000-0000-4000-8000-0000000000aa';
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    window.history.pushState({}, '', '/chat');
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => 'visible',
+    });
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    w.__canariForeground = true;
+    w.__canariActive = true;
+  });
+
+  /**
+   * A context on `selected` whose row write (`saveMessagesIfAbsent`) is held open until `release()`;
+   * `during` runs while it is held - the reader's move.
+   */
+  function writeHeldOn(selected: string) {
+    const made = makeContext(selected);
+    made.ctx.conversations.set(SALON, { ...convo(SALON), conversationType: 'channel' } as never);
+    const signalChannelRead = vi.fn();
+    Object.assign(made.ctx, { signalChannelRead });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const saveMessagesIfAbsent = vi.fn(async (rows: { id: string }[]) => {
+      await gate;
+      return new Set(rows.map((row) => row.id));
+    });
+    Object.assign(made.ctx.storage as object, {
+      getMessagesByIds: vi.fn(async () => ({ rows: new Map(), unreadable: new Set<string>() })),
+      saveMessagesIfAbsent,
+    });
+    return { ...made, saveMessagesIfAbsent, release, signalChannelRead };
+  }
+
+  const unreadOf = (ctx: MessagingContext, key: string) =>
+    ctx.conversations.get(key)?.unreadCount ?? 0;
+
+  it('THE DEFECT: on A, the home gesture during the write - unread AND notified, read nowhere', async () => {
+    const messaging = useMessaging();
+    const { ctx, saveMessagesIfAbsent, release, sendSystemNotification } = writeHeldOn(A);
+    const adding = messaging.addMessageToChat(PEER, 'their message', A, ctx, { messageId: 'm-1' });
+    await vi.waitFor(() => expect(saveMessagesIfAbsent).toHaveBeenCalled());
+    w.__canariActive = false; // the reader left while the row was being written
+    release();
+    await adding;
+
+    await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
+    expect(unreadOf(ctx, A)).toBe(1);
+    expect(ctx.playReceiveTone).not.toHaveBeenCalled();
+  });
+
+  it('THE DEFECT, a salon: Back during the write - unread, notified, and NO read signal', async () => {
+    window.history.pushState({}, '', '/communities');
+    const messaging = useMessaging();
+    const { ctx, live, saveMessagesIfAbsent, release, sendSystemNotification, signalChannelRead } =
+      writeHeldOn(SALON);
+    const adding = messaging.addMessageToChat(PEER, 'their message', SALON, ctx, {
+      messageId: 'm-2',
+      skipDbSave: false,
+    });
+    await vi.waitFor(() => expect(saveMessagesIfAbsent).toHaveBeenCalled());
+    live.now = null; // Back: the salon list, the salon no longer open
+    release();
+    await adding;
+
+    await vi.waitFor(() => expect(sendSystemNotification).toHaveBeenCalledTimes(1));
+    expect(unreadOf(ctx, SALON)).toBe(1);
+    expect(signalChannelRead).not.toHaveBeenCalled();
+    expect(ctx.playReceiveTone).not.toHaveBeenCalled();
+  });
+
+  it('CONTROL: the reader stays on the salon through the write - read, signalled, a tone, no notification', async () => {
+    window.history.pushState({}, '', '/communities');
+    const messaging = useMessaging();
+    const { ctx, saveMessagesIfAbsent, release, sendSystemNotification, signalChannelRead } =
+      writeHeldOn(SALON);
+    const adding = messaging.addMessageToChat(PEER, 'their message', SALON, ctx, {
+      messageId: 'm-3',
+      skipDbSave: false,
+    });
+    await vi.waitFor(() => expect(saveMessagesIfAbsent).toHaveBeenCalled());
+    release();
+    await adding;
+
+    expect(unreadOf(ctx, SALON)).toBe(0);
+    expect(signalChannelRead).toHaveBeenCalledTimes(1);
+    expect(ctx.playReceiveTone).toHaveBeenCalledTimes(1);
+    await Promise.resolve();
+    expect(sendSystemNotification).not.toHaveBeenCalled();
   });
 });
