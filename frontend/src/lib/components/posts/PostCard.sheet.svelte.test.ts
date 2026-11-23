@@ -289,6 +289,33 @@ describe('the card', () => {
     expect(misses).toHaveLength(1);
   });
 
+  it('mounted on a comment it does not hold: no re-read and no open from the mount; a later push does both', async () => {
+    vi.mocked(getPost).mockResolvedValue(row([comment(1), comment(2), comment(3)]));
+    const props = $state<{
+      post: PostEntity;
+      currentUserId: string;
+      focusCommentId?: string;
+      focusNonce: number;
+    }>({
+      post: row([comment(1), comment(2)]),
+      currentUserId: 'alice',
+      focusCommentId: 'c3',
+      focusNonce: 0,
+    });
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const instance = mount(PostCard, { target, props });
+    mounted.push(() => void unmount(instance));
+    flushSync();
+    await settle();
+    expect(getPost).not.toHaveBeenCalled();
+
+    props.focusNonce = 1;
+    await settle();
+    expect(getPost).toHaveBeenCalledTimes(1);
+    expect(sheetOpen()).toBe(true);
+  });
+
   it('keeps what was typed when the sheet is closed and opened again', async () => {
     mountCard(row([comment(1), comment(2)]));
     buttonWith(m.post_show_comments_label({ count: 2 }))!.click();

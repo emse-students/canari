@@ -37,6 +37,19 @@ export const LYDIA_PRO_HELP_ROUTE = '/help/lydia-pro' satisfies AppPath;
 export const POST_COMMENT_PARAM = 'comment';
 
 /**
+ * Whether a navigation reached a post page that was ALREADY on screen: it left from and arrived at
+ * the same path (the same post, the same URL pushed again included). The navigation that MOUNTS the
+ * page comes from elsewhere (or from nowhere, on a cold start), so it is never counted: counting it
+ * would fire the card's focus watcher on mount, after the card captured its starting value.
+ */
+export function isRepeatNavigationToSamePage(nav: {
+  from: { url: { pathname: string } } | null;
+  to: { url: { pathname: string } } | null;
+}): boolean {
+  return nav.from !== null && nav.to !== null && nav.from.url.pathname === nav.to.url.pathname;
+}
+
+/**
  * A post's page, opened at one comment when one is named - the one spelling shared by the bell
  * (`notificationHref`) and a notification tap (`appRouteForDeepLink`), so the two land alike.
  */

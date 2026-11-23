@@ -264,3 +264,19 @@ describe('resolveNotificationHref', () => {
     ).rejects.toThrow('404');
   });
 });
+
+describe('isRepeatNavigationToSamePage', () => {
+  const at = (pathname: string) => ({ url: { pathname } });
+  it('is false for the navigation that mounts the page (cold start, or from another page)', async () => {
+    const { isRepeatNavigationToSamePage } = await import('./notificationTarget');
+    expect(isRepeatNavigationToSamePage({ from: null, to: at('/posts/p1') })).toBe(false);
+    expect(isRepeatNavigationToSamePage({ from: at('/chats'), to: at('/posts/p1') })).toBe(false);
+  });
+  it('is true for the same path again, and false for another post', async () => {
+    const { isRepeatNavigationToSamePage } = await import('./notificationTarget');
+    expect(isRepeatNavigationToSamePage({ from: at('/posts/p1'), to: at('/posts/p1') })).toBe(true);
+    expect(isRepeatNavigationToSamePage({ from: at('/posts/p1'), to: at('/posts/p2') })).toBe(
+      false
+    );
+  });
+});

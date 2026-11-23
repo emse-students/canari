@@ -12,17 +12,21 @@
   import { m } from '$lib/paraglide/messages';
   import { postNotifStore } from '$lib/stores/postNotifStore.svelte';
   import { page } from '$app/state';
-  import { POST_COMMENT_PARAM } from '$lib/posts/notificationTarget';
+  import { POST_COMMENT_PARAM, isRepeatNavigationToSamePage } from '$lib/posts/notificationTarget';
 
   let { data }: { data: { post: Promise<PostEntity | null> } } = $props();
 
   /** The comment a comment, reply or mention notification opened this post at, if any. */
   const focusCommentId = $derived(page.url.searchParams.get(POST_COMMENT_PARAM) ?? undefined);
 
-  /** Every navigation to this route, the same URL again included: a repeated push is an event. */
+  /** Every navigation to this route while it is mounted, the same URL again included: a repeated push is an event. */
   let navigations = $state(0);
-  afterNavigate(() => {
+  afterNavigate((nav) => {
+    // Only a navigation to the page ALREADY mounted counts: the one that mounted it runs this
+    // callback too, after the card took its starting value.
+    if (!isRepeatNavigationToSamePage(nav)) return;
     navigations += 1;
+    Log.d('postPage', `repeat navigation #${navigations} to ${nav.to?.url.pathname}`);
   });
 
   /**
