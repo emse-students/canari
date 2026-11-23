@@ -460,6 +460,13 @@ export interface CommunityBootReads {
    * throws.
    */
   keyGroupVersion(workspaceId: string): Promise<KeyGroupVersion | null>;
+  /**
+   * The key-group version of the PRIVATE salon `channelId`, carried in the same answer as its
+   * community's (`salons`, since the 1.8.0-alpha.1 reading); null when none is known - a server
+   * that predates the field, a salon it did not name (one this user does not read, one with no key
+   * group, one whose read failed), anything {@link keyGroupVersion} answers null for. Never throws.
+   */
+  salonKeyGroupVersion(channelId: string): Promise<KeyGroupVersion | null>;
   /** Forgets what THIS load held and no read took. Touches nothing else. */
   release(): void;
 }
@@ -483,6 +490,45 @@ interface KeyGroupVersionDto {
   groupId: string | null;
   activeEpoch: number | null;
   baseEpoch: number | null;
+  /** The community's private salons this user reads, each with its own version. Absent on a server older than the field. */
+  salons?: SalonKeyGroupVersionDto[];
+}
+
+/** One private salon's key-group version, inside its community's item. */
+interface SalonKeyGroupVersionDto {
+  channelId: string;
+  version: string | null;
+  groupId: string | null;
+  activeEpoch: number | null;
+  baseEpoch: number | null;
+}
+
+/** The key-group versions one load read: communities by workspace id, private salons by channel id. */
+export interface KeyGroupVersions {
+  communities: Map<string, KeyGroupVersion>;
+  salons: Map<string, KeyGroupVersion>;
+}
+
+/** `item` as a {@link KeyGroupVersion}, or null when the server did not answer one (a refusal). */
+function keyGroupVersionOfDto(item: {
+  version: string | null;
+  groupId: string | null;
+  activeEpoch: number | null;
+  baseEpoch: number | null;
+}): KeyGroupVersion | null {
+  if (
+    typeof item.version !== 'string' ||
+    typeof item.groupId !== 'string' ||
+    typeof item.activeEpoch !== 'number'
+  ) {
+    return null;
+  }
+  return {
+    version: item.version,
+    groupId: item.groupId,
+    activeEpoch: item.activeEpoch,
+    baseEpoch: typeof item.baseEpoch === 'number' ? item.baseEpoch : null,
+  };
 }
 
 export class ChannelService {
@@ -825,14 +871,21 @@ export class ChannelService {
     // round trip in front of every key-group pass of a cold start. Read this early it is still read
     // before any pass of the load reads, which is what the record needs (`keyGroupConvergence.ts`).
     // Never rejects. Asked for one community too: one request against that community's two.
-    const versions: Promise<Map<string, KeyGroupVersion>> =
-      ids.length > 0 ? this.readKeyGroupVersions(ids, log) : Promise.resolve(new Map());
+    const versions: Promise<KeyGroupVersions> =
+      ids.length > 0
+        ? this.readKeyGroupVersions(ids, log)
+        : Promise.resolve({ communities: new Map(), salons: new Map() });
     return {
       keyGroupVersion: async (workspaceId) => {
         // A released handle answers nothing more: its load has ended, and no request starts here.
         if (released) return null;
         const known = await versions;
-        return released ? null : (known.get(workspaceId) ?? null);
+        return released ? null : (known.communities.get(workspaceId) ?? null);
+      },
+      salonKeyGroupVersion: async (channelId) => {
+        if (released) return null;
+        const known = await versions;
+        return released ? null : (known.salons.get(channelId) ?? null);
       },
       listChannels: async (workspaceId) => {
         await pending;
@@ -862,13 +915,18 @@ export class ChannelService {
    * that never answers is the visible end of a server this client outran. A refused item (a
    * community just left, one with no key group) is left out too; its full pass meets the refusal on
    * its own route and handles it there.
+   *
+   * THE PRIVATE SALONS RIDE IN THE SAME ANSWER (`salons` on each community's item): the salon
+   * passes of a resume were the reads left after the community skip (1.8.0-alpha.1 reading, Mi 9T).
+   * A salon the answer does not name runs its full pass.
    */
   async readKeyGroupVersions(
     workspaceIds: readonly string[],
     log: (message: string) => void
-  ): Promise<Map<string, KeyGroupVersion>> {
+  ): Promise<KeyGroupVersions> {
     const ids = [...new Set(workspaceIds)];
     const known = new Map<string, KeyGroupVersion>();
+    const salons = new Map<string, KeyGroupVersion>();
     for (let i = 0; i < ids.length; i += COMMUNITY_BOOT_READS_MAX) {
       const chunk = ids.slice(i, i + COMMUNITY_BOOT_READS_MAX);
       try {
@@ -880,17 +938,12 @@ export class ChannelService {
           items?: KeyGroupVersionDto[];
         };
         for (const item of body.items ?? []) {
-          if (
-            typeof item.version === 'string' &&
-            typeof item.groupId === 'string' &&
-            typeof item.activeEpoch === 'number'
-          ) {
-            known.set(item.workspaceId, {
-              version: item.version,
-              groupId: item.groupId,
-              activeEpoch: item.activeEpoch,
-              baseEpoch: typeof item.baseEpoch === 'number' ? item.baseEpoch : null,
-            });
+          const version = keyGroupVersionOfDto(item);
+          if (version) known.set(item.workspaceId, version);
+          // A server older than `salons` names none: every salon then runs its full pass.
+          for (const salon of item.salons ?? []) {
+            const salonVersion = keyGroupVersionOfDto(salon);
+            if (salonVersion) salons.set(salon.channelId, salonVersion);
           }
         }
       } catch (e) {
@@ -899,8 +952,11 @@ export class ChannelService {
         );
       }
     }
-    Log.d('KEY_GROUP_VERSIONS', `${known.size}/${ids.length} community version(s) known`);
-    return known;
+    Log.d(
+      'KEY_GROUP_VERSIONS',
+      `${known.size}/${ids.length} community version(s) known, ${salons.size} private salon version(s)`
+    );
+    return { communities: known, salons };
   }
 
   async listChannels(workspaceId: string) {

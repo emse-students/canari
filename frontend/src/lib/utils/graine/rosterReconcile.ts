@@ -206,7 +206,8 @@ const passes = new Map<
 >();
 
 /**
- * A community pass that did not converge WITHDRAWS the convergence record, here in the lane every
+ * A pass that did not converge - a community's or a private salon's - WITHDRAWS the convergence
+ * record of its scope, here in the lane every
  * pass runs through - whoever started it (a load, the actor of a removal, the departure committer,
  * the re-join of a group behind its server). Done at each caller it held only for the callers that
  * remembered (review of #3960): in the lane, it holds by construction. A pass that threw is one that
@@ -216,14 +217,13 @@ function withdrawUnlessConverged(
   scope: DistributionScope,
   pass: Promise<RosterPassReport>
 ): Promise<RosterPassReport> {
-  if (scope.kind !== 'workspace') return pass;
   return pass.then(
     (report) => {
-      if (report.converged !== true) forgetKeyGroupConvergence(scope.workspaceId);
+      if (report.converged !== true) forgetKeyGroupConvergence(scope);
       return report;
     },
     (error: unknown) => {
-      forgetKeyGroupConvergence(scope.workspaceId);
+      forgetKeyGroupConvergence(scope);
       throw error;
     }
   );
