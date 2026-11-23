@@ -31,6 +31,17 @@ export const USAGE_ACTIVITY_METRICS = [
 ] as const;
 export type UsageActivityMetric = (typeof USAGE_ACTIVITY_METRICS)[number];
 
+/**
+ * The only versions that may become a dimension (the contract's `versionGrammar`): a release, or
+ * the gateway's two buckets. The gateway already counts anything else as `other`
+ * (`usage::release_version`); the fold applies it again because a version row is kept forever, so
+ * free text that reached Redis by any other path must still never reach PostgreSQL.
+ */
+export const USAGE_RELEASE_VERSION = /^\d+\.\d+\.\d+(-alpha\.\d+)?$/;
+/** Whether `version` may be folded into a `ver:` row ({@link USAGE_RELEASE_VERSION}). */
+export const isFoldableVersion = (version: string): boolean =>
+  version === 'unknown' || version === 'other' || USAGE_RELEASE_VERSION.test(version);
+
 /** A day's keys live 40 days; the fold reads the last {@link USAGE_FOLD_DAYS} of them. */
 export const USAGE_DAY_KEY_TTL_SECS = 40 * 24 * 60 * 60;
 /** An hour's key lives 30 days; the hour map reads the {@link USAGE_HOUR_MAP_DAYS} before today. */

@@ -526,12 +526,15 @@
           ordinateur - et par version de l'application), à quelles heures de la semaine, et chaque
           jour le nombre total de messages, publications, CanaReels, lives, appels et réponses à des
           formulaires nommés sur toute la plateforme. Pour compter les personnes sans garder de
-          liste, le serveur ajoute l'identifiant de votre compte à un compteur probabiliste
-          (HyperLogLog) qui estime un nombre de personnes différentes et dont aucun identifiant ne
-          peut être relu ; votre navigateur n'est pas conservé, seul le type d'appareil l'est. Les
-          messages sont comptés comme un volume quotidien, jamais par conversation, par personne ni
-          par heure, et sans être lus ; une réponse à un formulaire anonyme n'est pas comptée. Nous
-          ne mesurons jamais le temps que vous passez sur Canari.
+          liste, le serveur ajoute à un compteur probabiliste (HyperLogLog), qui estime un nombre de
+          personnes différentes, une empreinte de votre identifiant calculée avec une clé secrète
+          (HMAC) qui n'est jamais enregistrée avec ces compteurs : votre identifiant n'y figure pas,
+          et sans cette clé on ne peut pas y vérifier si un compte donné a été compté. Votre
+          navigateur n'est pas conservé, seul le type d'appareil l'est, et seul un numéro de version
+          publiée de l'application est retenu. Les messages sont comptés comme un volume quotidien,
+          jamais par conversation, par personne ni par heure, et sans être lus ; une réponse à un
+          formulaire anonyme n'est pas comptée. Nous ne mesurons jamais le temps que vous passez sur
+          Canari.
         </dd>
       </div>
       <div>
@@ -914,7 +917,9 @@
             <td>Effacée à la déconnexion de l'appareil, 90 secondes au plus après</td>
           </tr>
           <tr>
-            <td>Statistiques d'utilisation : compteurs qui reçoivent l'identifiant du compte</td>
+            <td
+              >Statistiques d'utilisation : compteurs qui reçoivent une empreinte chiffrée du compte</td
+            >
             <td
               >40 jours (30 pour ceux d'une heure) ; les chiffres d'ensemble qui en sont tirés, sans
               limite</td

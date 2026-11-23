@@ -7,7 +7,12 @@
  * screen on, no guessed battery).
  */
 
-import { CameraAccessError, classifyCameraError, type CameraFacing } from '$lib/reels/cameraAccess';
+import {
+  CameraAccessError,
+  classifyCameraError,
+  classifyCameraRefusal,
+  type CameraFacing,
+} from '$lib/reels/cameraAccess';
 import { facingConstraint, lensIsExact } from '$lib/utils/cameraFacing';
 import { isCoarsePointerDevice } from '$lib/utils/pointerDevice';
 import { isTauriRuntime } from '$lib/utils/tauriRuntime';
@@ -69,7 +74,7 @@ export async function openLiveCamera(
     );
     return stream;
   } catch (err) {
-    const fault = classifyCameraError(err);
+    const fault = await classifyCameraRefusal(err);
     console.warn(`[LIVE-CAM] refused (${fault})`, err);
     throw new CameraAccessError(fault, `live camera: ${fault}`, { cause: err });
   }

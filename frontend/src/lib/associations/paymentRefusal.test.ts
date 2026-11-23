@@ -322,6 +322,22 @@ describe('the archived association and the members-only save', () => {
     expect(cotisationModeInUseMessage(new Error('COTISATION_MODE_IN_USE'))).toBeNull();
   });
 
+  it('words a product saved with no price from its code', () => {
+    expect(
+      membersOnlySaveRefusalMessage(new SocialApiError('x', 'PRODUCT_HAS_NO_PRICE', 400))
+    ).toBe(m.admin_product_has_no_price());
+  });
+
+  it('words a free-amount limit outside the payable range with that range', () => {
+    const err = new SocialApiError('x', 'AMOUNT_OUT_OF_RANGE', 400, {
+      minCents: 50,
+      maxCents: 100000,
+    });
+    expect(membersOnlySaveRefusalMessage(err)).toBe(
+      m.admin_product_bounds_not_payable({ min: formatAmount(50), max: formatAmount(100000) })
+    );
+  });
+
   it('CONTROL: any other save failure is left to the caller generic line', () => {
     expect(membersOnlySaveRefusalMessage(new SocialApiError('x', 'OTHER', 400))).toBeNull();
     expect(membersOnlySaveRefusalMessage(new Error('MEMBERS_ONLY_WITHOUT_COTISATION'))).toBeNull();

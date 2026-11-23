@@ -334,14 +334,15 @@ pub async fn ws_handler(
             // Who uses Canari, by category (crate::usage): the user agent is read HERE and dropped -
             // only the category it decides travels on with the socket.
             let usage = std::sync::Arc::new(crate::usage::SocketUsage::new(
-                claims.sub.clone(),
+                &state.usage_key,
+                &claims.sub,
                 crate::usage::category(
                     &client.platform,
                     headers
                         .get(axum::http::header::USER_AGENT)
                         .and_then(|v| v.to_str().ok()),
                 ),
-                client.version.clone(),
+                &client.version,
             ));
             // THE PLACE IS TAKEN BEFORE THE UPGRADE (`AppState::admit`): counted and registered
             // under the map lock, per account and for the process. A request past either limit is

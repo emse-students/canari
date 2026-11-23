@@ -52,6 +52,11 @@ import {
   productOrderRef,
   withCheckoutReturnKey,
 } from './product-checkout';
+import {
+  assertCustomBoundsPayable,
+  assertProductHasPrice,
+  productHasPrice,
+} from './product-save-rules';
 import { PENDING_HOLD_CUTOFF_SQL, toRequestState } from '../forms/seat-hold';
 import { isUniqueViolation, violatesUniqueIndex } from '../common/pg-errors';
 import { associationVisibleToViewerSql } from '../spaces/reader-spaces';
@@ -1317,6 +1322,17 @@ export class ProductsService {
     ) {
       throw new BadRequestException('customAmountMinCents must be ≤ customAmountMaxCents');
     }
+    assertCustomBoundsPayable(dto, this.logger);
+    assertProductHasPrice(
+      {
+        type: dto.type,
+        amountCents: dto.amountCents,
+        allowCustomAmount: dto.allowCustomAmount,
+        priceMatrix: dto.priceMatrix,
+      },
+      this.logger,
+      'create'
+    );
 
     const { webhookUrl, webhookSecret, deriveVariantKey, ...rest } = dto;
 
@@ -1582,6 +1598,24 @@ export class ProductsService {
     ) {
       throw new BadRequestException('customAmountMinCents must be ≤ customAmountMaxCents');
     }
+    assertCustomBoundsPayable(dto, this.logger);
+    // Refused only as a TRANSITION from priced to unpriced, judged on the merged result against the
+    // stored row: the editor's settings save sends `priceMatrix: null` whenever there is no grid, so a
+    // product saved unpriced before this rule must stay editable (its sale is what stays refused).
+    const stored = {
+      type: product.type,
+      amountCents: product.amountCents,
+      allowCustomAmount: product.allowCustomAmount,
+      priceMatrix: product.priceMatrix,
+    };
+    const merged = {
+      type: product.type,
+      amountCents: dto.amountCents !== undefined ? dto.amountCents : product.amountCents,
+      allowCustomAmount:
+        dto.allowCustomAmount !== undefined ? dto.allowCustomAmount : product.allowCustomAmount,
+      priceMatrix: dto.priceMatrix !== undefined ? dto.priceMatrix : product.priceMatrix,
+    };
+    if (productHasPrice(stored)) assertProductHasPrice(merged, this.logger, 'update');
 
     // Only a TRANSITION into the gated state is asked, not a save that repeats it: the settings
     // panel and /admin/cercle send `membersOnly` on every save, so an old product left gated by a
@@ -3858,25 +3892,30 @@ export class ProductsService {
     );
     if (userRows.length === 0) throw new NotFoundException('User not found');
 
-    let amountCents: number;
-    if (dto.amountCents != null) {
-      // A TYPED amount is what the bounds of a free-amount product bind - never the default resolved
-      // below, which is a price the checkout charges with no bounds check either. Typing the very
-      // amount the screen quoted is that default, so it is not bound either.
-      if (product.allowCustomAmount) {
-        const quote = await this.cashSaleQuoteFor(product, dto.userId);
-        if (quote.kind !== 'priced' || quote.amountCents !== dto.amountCents) {
-          this.assertWithinCustomBounds(
-            product,
-            associationId,
-            dto.amountCents,
-            'cash grant amount'
-          );
+    // The amount is decided INSIDE the sale's transaction, under the buyer's tier lock, so the
+    // default it records is quoted from the tiers the grant itself will see. Only the profile read
+    // (a peer call) is made out here, before any lock.
+    const cursus = await this.cashQuoteCursus(product, dto.userId);
+    const amountUnderLock = async (manager: EntityManager): Promise<number> => {
+      const quoted = () => this.cashSaleQuoteFor(product, dto.userId, { manager, cursus });
+      if (dto.amountCents != null) {
+        // A TYPED amount is what the bounds of a free-amount product bind - never the default
+        // resolved below, which is a price the checkout charges with no bounds check either. Typing
+        // the very amount the screen quoted is that default, so it is not bound either.
+        if (product.allowCustomAmount) {
+          const quote = await quoted();
+          if (quote.kind !== 'priced' || quote.amountCents !== dto.amountCents) {
+            this.assertWithinCustomBounds(
+              product,
+              associationId,
+              dto.amountCents,
+              'cash grant amount'
+            );
+          }
         }
+        return dto.amountCents;
       }
-      amountCents = dto.amountCents;
-    } else {
-      const quote = await this.cashSaleQuoteFor(product, dto.userId);
+      const quote = await quoted();
       if (quote.kind === 'not-sold') {
         throw new BadRequestException(
           'The pricing grid does not sell this product to that person, so there is no amount to record.'
@@ -3885,8 +3924,8 @@ export class ProductsService {
       if (quote.kind === 'typed') {
         throw new BadRequestException('amountCents is required for this product');
       }
-      amountCents = quote.amountCents;
-    }
+      return quote.amountCents;
+    };
 
     this.logger.log(
       `[SHOP] manual grant: product=${productId.slice(0, 8)} user=${dto.userId.slice(0, 8)} by=${grantedBy.slice(0, 8)}`
@@ -3895,7 +3934,7 @@ export class ProductsService {
     const record = await this.fulfillProductPurchase({
       product,
       userId: dto.userId,
-      amountCents,
+      amountCents: amountUnderLock,
       paymentMethod: 'cash',
       stripePaymentIntentId: null,
       grantedBy,
@@ -3930,12 +3969,18 @@ export class ProductsService {
    * What the checkout would charge this beneficiary, which a cash sale records by default (user,
    * 2026-10-29): their grid cell (`not-sold` when the grid closes their combination), else the fixed
    * price through `fixedPriceOf` - the preferential one when they qualify - else `typed`, a
-   * free-amount product the cashier must type an amount for. Read before the buyer's tier lock, as
-   * the backlog's P3 says: one tier stale at worst, never the grant itself.
+   * free-amount product the cashier must type an amount for.
+   *
+   * The SALE passes `locked`: its tiers are then read through the sale's own transaction, UNDER the
+   * buyer's tier lock, so a tier granted or revoked in the same instant cannot leave the recorded
+   * default one tier off. The profile read (a call to core-service, which a lock must never wait
+   * on) was made BEFORE the lock (`cashQuoteCursus`) and is handed in: it does not depend on the
+   * tiers. The cashier's screen (`quoteCashSale`) passes nothing - a display, never the record.
    */
   private async cashSaleQuoteFor(
     product: AssociationProduct,
-    userId: string
+    userId: string,
+    locked?: { manager: EntityManager; cursus: readonly CursusView[] }
   ): Promise<CashSaleQuote> {
     const associationId = product.associationId;
     if (product.priceMatrix) {
@@ -3943,11 +3988,8 @@ export class ProductsService {
       // the grid never quoted, and `amountCents` may not even be set.
       const priced = this.resolveGridPrice(
         product.priceMatrix,
-        await this.userTagService.listHeldCotisationTiers(userId, associationId),
-        await this.pricingFacts.cursusFor(
-          userId,
-          dimensionsNeedProfile(product.priceMatrix.dimensions)
-        )
+        await this.userTagService.listHeldCotisationTiers(userId, associationId, locked?.manager),
+        locked?.cursus ?? (await this.cashQuoteCursus(product, userId))
       );
       this.logger.debug(
         `[SHOP] cash sale grid quote: product=${product.id.slice(0, 8)} user=${userId.slice(0, 8)} ` +
@@ -3958,12 +4000,14 @@ export class ProductsService {
         : { kind: 'priced', amountCents: priced.cents, preferential: false };
     }
     if (product.amountCents == null) return { kind: 'typed' };
-    const asso = await this.assoRepo.findOne({ where: { id: associationId } });
+    const asso = locked
+      ? await locked.manager.findOne(Association, { where: { id: associationId } })
+      : await this.assoRepo.findOne({ where: { id: associationId } });
     if (!asso) throw new NotFoundException('Association not found');
     const price = this.fixedPriceOf(
       product,
       product.amountCents,
-      await this.tierFactsOf(asso, userId)
+      await this.tierFactsOf(asso, userId, locked?.manager)
     );
     if (price.preferential) {
       this.logger.debug(
@@ -3971,6 +4015,21 @@ export class ProductsService {
       );
     }
     return { kind: 'priced', ...price };
+  }
+
+  /**
+   * The beneficiary's profile as a grid's price needs it (a call to core-service), read BEFORE the
+   * buyer's tier lock so a slow peer never holds it. Empty for a product with no grid.
+   */
+  private async cashQuoteCursus(
+    product: AssociationProduct,
+    userId: string
+  ): Promise<readonly CursusView[]> {
+    if (!product.priceMatrix) return [];
+    return this.pricingFacts.cursusFor(
+      userId,
+      dimensionsNeedProfile(product.priceMatrix.dimensions)
+    );
   }
 
   /**
@@ -4639,17 +4698,21 @@ export class ProductsService {
   private async fulfillProductPurchase(params: {
     product: AssociationProduct;
     userId: string;
-    amountCents: number;
+    /** The amount, or what decides it from the locked transaction (a cash sale's default quote). */
+    amountCents: number | ((manager: EntityManager) => Promise<number>);
     paymentMethod: PurchasePaymentMethod;
     stripePaymentIntentId: string | null;
     grantedBy: string;
   }): Promise<PurchaseRecord> {
-    const { product, userId, amountCents, paymentMethod, stripePaymentIntentId, grantedBy } =
-      params;
+    const { product, userId, paymentMethod, stripePaymentIntentId, grantedBy } = params;
     return this.productRepo.manager.transaction(async (manager) => {
       // A cash sale grants and swaps tiers like a settlement: the same lock, so the two cannot
       // interleave for one buyer. A manager's sale is not ranked - it may be a deliberate downgrade.
       await this.lockBuyerTiers(manager, product.associationId, userId);
+      const amountCents =
+        typeof params.amountCents === 'function'
+          ? await params.amountCents(manager)
+          : params.amountCents;
       // Re-read after the locks: a retag committed while this sale waited renamed the tier's tag.
       const current =
         (await manager.findOne(AssociationProduct, { where: { id: product.id } })) ?? product;
