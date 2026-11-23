@@ -41,7 +41,7 @@ describe('InternalLivesModeController', () => {
       rows[0] = { lives_mode: 'off' };
       for (let i = 0; i < 5; i++) await controller.mode('the-secret');
       expect(log).toHaveBeenCalledTimes(2);
-      expect(log.mock.calls[1][0]).toContain('off (was on)');
+      expect(log.mock.calls[1][0]).toContain('off (previously on)');
       expect(debug).not.toHaveBeenCalled();
     } finally {
       log.mockRestore();

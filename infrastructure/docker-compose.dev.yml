@@ -248,6 +248,8 @@ services:
       # Dev is served over HTTPS behind the tunnel and must keep production's attributes.
       NODE_ENV: production
       PORT: "3010"
+      # Pinned with the image: zone-less timestamps are read in the process zone.
+      TZ: UTC
       POSTGRES_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/auth_db
       REDIS_HOST: redis
       REDIS_PORT: "6379"
@@ -461,6 +463,8 @@ services:
       # Dev is served over HTTPS behind the tunnel and must keep production's attributes.
       NODE_ENV: production
       PORT: "3012"
+      # Pinned with the image: zone-less timestamps are read in the process zone.
+      TZ: UTC
       JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required - see .env.example}"
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
       # Signs the viewer-bound avatar token (docs/wiki/sessions.md, "The avatar token").

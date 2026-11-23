@@ -1,5 +1,5 @@
-### Fixed - a comment with neither text nor media is refused with a 400
+### Fixed - a comment with neither text nor media, or an edit to blank text, is refused with a 400
 
 The comment route stored a body carrying neither (a misnamed field) as an empty comment and pushed
-"Nouveau commentaire" to the post's author. The DTO now refuses it, typed by its constraint name
-([social](docs/wiki/services/social-service.md)).
+"Nouveau commentaire" to the post's author; the edit route accepted whitespace-only text. Both DTOs now
+refuse them ([social-service](docs/wiki/services/social-service.md#posts-apiposts)).

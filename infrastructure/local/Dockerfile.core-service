@@ -40,6 +40,10 @@ COPY --from=builder /app/apps/core-service/package.json ./
 # Eight invented dev avatars: inert unless DEV_AVATAR_OVERRIDE_DIR is set, which only the dev compose does.
 COPY --from=builder /app/apps/core-service/dev-avatars ./dev-avatars
 
+# THE ZONE IS PINNED, not inherited from the base image: zone-less `timestamp` columns are read back in
+# the PROCESS's zone, so a reader agrees with the writer only while this is UTC (see social-service).
+ENV TZ=UTC
+
 EXPOSE 3013
 
 # NON-ROOT: the image's own `bun` user (uid 1000). This service writes nothing to disk and mounts no

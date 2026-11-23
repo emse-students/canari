@@ -239,7 +239,6 @@ the guard provides it in its `AppModule`, has its own coverage spec, and is in t
 | DELETE | `/api/posts/:postId` | Delete post (author or admin) |
 | POST | `/api/posts/:postId/reactions` | Add/toggle emoji reaction |
 | POST | `/api/posts/:postId/comments` | Add comment |
-
 | PATCH | `/api/posts/:postId/pin` | Pin the post in ONE space, body `{ spaceId }` (WP-PIN, `SpacePinsService`): the platform admin, or `MODERATE` in that space's BDE; at most 3 shown per space ([spaces-and-audiences-reform](../spaces-and-audiences-reform.md#11-wp-pin---a-pin-is-a-promotion-per-space-not-a-global-flag-decided-2026-11-03)) |
 | PATCH | `/api/posts/:postId/unpin` | Unpin the post from ONE space, body `{ spaceId }` |
 | GET | `/api/posts/space-pins/:spaceId` | The governor's pins of a space, `shown` then `pending` ("en attente") |
@@ -254,6 +253,8 @@ query, and Postgres's `invalid input syntax for type uuid` became an unhandled 5
 asking an older server for a route it lacks (`/api/posts/reel-limits`) landed on `GET :postId` and
 logged a server ERROR. `posts.controller.post-id.spec.ts` reads Nest's route metadata, so a handler
 added later without the pipe fails there.
+
+**A comment says something (2026-11-23).** `AddCommentDto` refuses a comment with neither a non-blank `text` nor a `media`, and `EditCommentDto` refuses a whitespace-only text, each with a 400: a misnamed field used to store an empty comment and push it. The refusal is a class-validator constraint (`commentTextOrMedia`); on the wire the default ValidationPipe sends only the message array, so the constraint name is the type for the validator and its spec, and no client branches on it.
 
 ### Channels and workspaces (`/api/channels`)
 
@@ -2332,5 +2333,4 @@ where it applies: the declared question ids are an allowlist, so nothing else ca
 | `INTERNAL_SECRET` | yes | Shared secret for service-to-service calls |
 | `MEDIA_SERVICE_URL` | yes | Internal URL for media-service (blob proxy) |
 | `CORE_SERVICE_URL` | yes | Internal URL for core-service (user/payment verification) |
-
-**Two small hardenings (2026-11-23).** `AddCommentDto` refuses a comment with neither a non-blank `text` nor a `media` (constraint `commentTextOrMedia`, a 400): a misnamed field used to store an empty comment and push it. The image and the three compose files pin `TZ=UTC` (`social-service-tz.test.mjs`), because the zone-less `submissions` timestamps are read in the process zone.
+| `TZ` | pinned `UTC` | Set in the image and the three compose files (with core-service and chat-delivery-service, held by `social-service-tz.test.mjs`): zone-less `timestamp` columns (`submissions` dates, `CURRENT_TIMESTAMP` defaults) are read in the process zone, so readers agree with the writer only while it is UTC. The Postgres session zone is pinned too (`PG_SESSION_OPTIONS`, `-c timezone=UTC`) |

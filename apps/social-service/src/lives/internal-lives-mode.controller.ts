@@ -37,7 +37,7 @@ export class InternalLivesModeController {
     const mode = await readLivesMode(this.db.manager, this.logger);
     if (mode !== this.lastRelayed) {
       this.logger.log(
-        `[LIVE] lives_mode relayed to media-service: ${mode} (was ${this.lastRelayed ?? 'unasked'})`
+        `[LIVE] lives_mode relayed to media-service: ${mode} (${this.lastRelayed ? `previously ${this.lastRelayed}` : 'first answer since boot'})`
       );
       this.lastRelayed = mode;
     }

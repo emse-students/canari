@@ -266,6 +266,8 @@ services:
       # The review cohort (review-cohort.ts): no conversation, call or invitation crosses it.
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
       PORT: "3010"
+      # Pinned with the image: zone-less timestamps are read in the process zone.
+      TZ: UTC
       NODE_ENV: ${NODE_ENV:-production}
       # Same as core/social: browser origin for CORS (same-site prod usually unaffected).
       FRONTEND_URL: ${FRONTEND_URL:-}
@@ -468,6 +470,8 @@ services:
       # that long. The resolver lifetime instead (deploy-replace.test.sh holds them equal).
       BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS: "2"
       PORT: "3012"
+      # Pinned with the image: zone-less timestamps are read in the process zone.
+      TZ: UTC
       NODE_ENV: ${NODE_ENV:-production}
       JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required - see .env.example}"
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}

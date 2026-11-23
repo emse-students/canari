@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
-import { AddCommentDto, COMMENT_MEDIA_MAX_BYTES } from './dto/post.dto';
+import { AddCommentDto, COMMENT_MEDIA_MAX_BYTES, EditCommentDto } from './dto/post.dto';
 
 /**
  * A comment's ONE picture is validated like a post's media, and narrower: an image, bounded, with
@@ -80,5 +80,21 @@ describe('AddCommentDto text-or-media', () => {
     expect(await check({ text: 'hi' })).toHaveLength(0);
     expect(await check({ text: '', media })).toHaveLength(0);
     expect(await check({ media })).toHaveLength(0);
+  });
+});
+
+describe('EditCommentDto', () => {
+  const checkEdit = (body: object) => validate(plainToInstance(EditCommentDto, body));
+
+  it.each([
+    ['an empty text', { text: '' }],
+    ['a whitespace text', { text: ' \t\n ' }],
+    ['no text', {}],
+  ])('refuses %s', async (_label, body) => {
+    expect((await checkEdit(body)).length).toBeGreaterThan(0);
+  });
+
+  it('accepts a text with content', async () => {
+    expect(await checkEdit({ text: ' hi ' })).toHaveLength(0);
   });
 });

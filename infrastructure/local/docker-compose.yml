@@ -148,6 +148,8 @@ services:
       # The review cohort (review-cohort.ts): no conversation, call or invitation crosses it.
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
       PORT: "3010"
+      # Pinned with the image: zone-less timestamps are read in the process zone.
+      TZ: UTC
       NODE_ENV: development
       # Set explicitly, as the deployed estates set them to the mesh; this stack has no rolling
       # deploy, so it names the peer (docs/wiki/cicd.md, service-to-service calls).
@@ -336,6 +338,8 @@ services:
       # compose-wiring.test.sh holds this estate to the keys production forwards.
       BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS: "2"
       PORT: "3012"
+      # Pinned with the image: zone-less timestamps are read in the process zone.
+      TZ: UTC
       NODE_ENV: development
       # Set explicitly, as the deployed estates set it to the mesh; this stack names the peer.
       CHAT_DELIVERY_URL: http://chat-delivery-service:3010
