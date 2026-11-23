@@ -130,7 +130,7 @@ describe('the foreground contract between the shells and the page', () => {
     );
     // Before the slower work of the edge: a frame taken from here on is not seen landing.
     expect(resign.indexOf('CanariPublishActive();')).toBeLessThan(
-      resign.indexOf('CanariMirrorPushStateToAppGroup();')
+      resign.indexOf('CanariSetAppGroupForegroundFlag(NO);')
     );
     const become = objcBody(ios, 'static void CanariOnDidBecomeActive(');
     expect(become.indexOf('CanariPublishActive();')).toBeGreaterThan(

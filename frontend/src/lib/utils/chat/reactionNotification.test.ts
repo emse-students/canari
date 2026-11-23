@@ -106,7 +106,7 @@ describe('isLiveDelivery', () => {
 
 describe('reactionTriggerRefusal - the screen', () => {
   const OPEN: ReactionTriggerFacts = {
-    conversationOnScreen: false,
+    arrivalSeen: false,
     pushMayDraw: true,
     at: 1_700_000_000_123,
     reactionsAllowed: true,
@@ -124,7 +124,7 @@ describe('reactionTriggerRefusal - the screen', () => {
     // and both deferred - nobody announced the reaction. The facts carry no foreground term at all;
     // the reaction's identity (`at`) makes the two posts one instead.
     expect(Object.keys(OPEN).sort()).toEqual(
-      ['at', 'conversationOnScreen', 'level', 'pushMayDraw', 'reactionsAllowed'].sort()
+      ['arrivalSeen', 'at', 'level', 'pushMayDraw', 'reactionsAllowed'].sort()
     );
   });
 
@@ -139,7 +139,7 @@ describe('reactionTriggerRefusal - the screen', () => {
   });
 
   it('stays quiet when the conversation is on screen - the bubble carries it', () => {
-    expect(reactionTriggerRefusal({ ...OPEN, conversationOnScreen: true })).toMatch(/on screen/);
+    expect(reactionTriggerRefusal({ ...OPEN, arrivalSeen: true })).toMatch(/would be seen/);
   });
 
   it("obeys the account's reactions switch and the conversation's level, as the server does", () => {

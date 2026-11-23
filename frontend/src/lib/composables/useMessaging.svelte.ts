@@ -7,7 +7,7 @@
  * - File selection + validation
  */
 import { sendFrameFromThisTab } from '$lib/mls-client/frameFromAnyTab';
-import { isAppActive, isAppInForeground } from '$lib/utils/appForeground';
+import { isAppActive, isAppInForeground, isAppInFront } from '$lib/utils/appForeground';
 import { isSalonMuted } from '$lib/utils/chat/salonUnread';
 import type { AnnouncedMessage } from '$lib/utils/chat/announcedMessages';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
@@ -66,6 +66,7 @@ import {
 import { isOwnMessage } from '$lib/utils/chat/messageUtils';
 import { countingReadPoint, isUnreadForUser } from '$lib/utils/chat/readState';
 import { canSeeArrivalNow, isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
+import { Log } from '$lib/utils/Log';
 import { ATTENTION_WINDOW_MS, windowAttention } from '$lib/utils/windowAttention.svelte';
 import {
   MAX_DISTINCT_MESSAGE_REACTIONS,
@@ -1568,30 +1569,48 @@ export function useMessaging() {
         await flushNicknameMirror();
         return senderName;
       })
-      .then((senderName) =>
-        ctx.sendSystemNotification(senderName, notificationBody, conversationKey, mentionsMe, {
-          // ON ANDROID THIS IS THE CALL, not an enrichment of it: the frame no longer builds its own
-          // plain notification, it asks the native builder for the SAME one a push would raise. See
-          // `nativeNotification.ts` for the pair of notifications this replaced.
-          conversationId: conversationKey,
-          senderId,
+      .then((senderName) => {
+        // ASKED AGAIN AT THE POST, from the same fact: the awaits above let the app come back in
+        // front (`didBecomeActive`) after the decision, and the receipt effect then hands over
+        // `read_here` - which retires the banners standing - BEFORE this one is posted, so it would
+        // stay up for a message already read. No clock: the decision is simply re-made on the facts
+        // of now, and a reader who can now see it land is told by the screen.
+        if (canSeeArrival(ctx, conversationKey)) {
+          Log.d(
+            'NOTIF',
+            `inbound in ${conversationKey} - the reader came back in front before the post; nothing raised`
+          );
+          return;
+        }
+        return ctx.sendSystemNotification(
           senderName,
-          groupName: notificationGroupName(
-            convo.conversationType,
-            convo.contactName,
-            convo.name,
-            notificationGroupTitle(convo, ctx.userId)
-          ),
-          isGroup: notificationIsGroup(convo.conversationType),
-          body: notificationBody,
+          notificationBody,
+          conversationKey,
           mentionsMe,
-          sentAt,
-          serverAt: serverAt ?? 0,
-          covers,
-          announced,
-          authorProven,
-        })
-      );
+          {
+            // ON ANDROID THIS IS THE CALL, not an enrichment of it: the frame no longer builds its own
+            // plain notification, it asks the native builder for the SAME one a push would raise. See
+            // `nativeNotification.ts` for the pair of notifications this replaced.
+            conversationId: conversationKey,
+            senderId,
+            senderName,
+            groupName: notificationGroupName(
+              convo.conversationType,
+              convo.contactName,
+              convo.name,
+              notificationGroupTitle(convo, ctx.userId)
+            ),
+            isGroup: notificationIsGroup(convo.conversationType),
+            body: notificationBody,
+            mentionsMe,
+            sentAt,
+            serverAt: serverAt ?? 0,
+            covers,
+            announced,
+            authorProven,
+          }
+        );
+      });
   }
 
   /**
@@ -1643,11 +1662,9 @@ export function useMessaging() {
     const convo = ctx.conversations.get(key);
     const isSalon = key.startsWith('channel_');
     const refusal = reactionTriggerRefusal({
-      // THE CONVERSATION ITSELF, never "the place a message would land": the bubble is what carries a
-      // reaction, and the list row does not show one. `canSeeArrival` is true for the list on a phone
-      // with no conversation open, so a reaction to a message of a conversation left with Back raised
-      // nothing (iPhone 12, `1.8.0-alpha.1`).
-      conversationOnScreen: isReadingConversationNow(key, ctx.selectedContact),
+      // THE MESSAGE PATH'S OWN PREDICATE, shared and never re-derived: a reaction never announces
+      // louder than a message would in the same place (`ReactionTriggerFacts.arrivalSeen`).
+      arrivalSeen: canSeeArrival(ctx, key),
       // A phone has a reaction push that may draw it too; web and desktop have none.
       pushMayDraw: isMobileTauriRuntime(),
       at: reaction.at,
@@ -1682,16 +1699,24 @@ export function useMessaging() {
         await flushNicknameMirror();
         return actorName;
       })
-      .then((actorName) =>
-        send({
+      .then((actorName) => {
+        // Re-made on the facts of now, for the reason `notifyInbound` gives at its post.
+        if (canSeeArrival(ctx, key)) {
+          Log.d(
+            'NOTIF',
+            `reaction ${tag} - the reader came back in front before the post; nothing raised`
+          );
+          return;
+        }
+        return send({
           conversationId: key,
           messageId: reaction.messageId,
           actorId: reaction.reactorId,
           actorName,
           emoji: reaction.emoji,
           at: reaction.at,
-        })
-      )
+        });
+      })
       .catch((e: unknown) =>
         console.error(`[NOTIF] Reaction to my message ${tag} was not raised: ${String(e)}`)
       );
@@ -3065,7 +3090,7 @@ export function useMessaging() {
       // same predicate, and the label names the state it actually observed rather than the
       // document's opinion of it.
       const appAway = isMobileTauriRuntime()
-        ? !isAppInForeground() || !isAppActive()
+        ? !isAppInFront()
         : typeof document !== 'undefined' && document.visibilityState !== 'visible';
       if (!lastInbound && brandNew.length && appAway) {
         // The other half of the same question: a flush that added messages while the app was away and

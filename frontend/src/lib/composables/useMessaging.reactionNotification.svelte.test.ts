@@ -24,6 +24,11 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
 }));
 
 let MOBILE = true;
+let NARROW = true;
+vi.mock('$lib/utils/viewport', async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
+  isNarrowChatLayout: () => NARROW,
+}));
 vi.mock('$lib/utils/appVersion', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
   isMobileTauriRuntime: () => MOBILE,
@@ -95,6 +100,7 @@ describe('the frame trigger of a reaction to my message', () => {
     window.history.pushState({}, '', '/posts');
     vi.spyOn(console, 'log').mockImplementation(() => {});
     MOBILE = true;
+    NARROW = true;
   });
 
   it('THE DEFECT: the app open on another screen is told, with the actor and the emoji', async () => {
@@ -165,20 +171,50 @@ describe('the frame trigger of a reaction to my message', () => {
     expect(sendReactionNotification).not.toHaveBeenCalled();
   });
 
-  it('THE PARKED CONVERSATION (iPhone 12, 1.8.0-alpha.1): Back to the list on a phone is told - a list row shows no reaction', async () => {
-    // `goBackToMenu` clears the selection and the phone shows the conversation LIST, where a message
-    // landing would be seen - so the old predicate (`canSeeArrival`) answered "on screen" and the
-    // reaction to a message of the conversation just left raised nothing.
-    const messaging = useMessaging();
-    const { ctx, sendReactionNotification } = makeContext('');
-    window.history.pushState({}, '', '/chat');
-    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 390 });
-    foreground(true);
+  /**
+   * A REACTION NEVER ANNOUNCES LOUDER THAN A MESSAGE WOULD IN THE SAME PLACE (coordinator, 2026-11-23,
+   * principle 3). Each case asks the message path's own predicate through the same runtime, so the
+   * two cannot drift: a banner for the reaction exactly where a message would raise one.
+   */
+  it.each([
+    // [what is on screen, route, selected, narrow, a message there raises a banner]
+    [
+      'phone, a salon left with Back (the salon list does not draw it)',
+      '/communities',
+      '',
+      true,
+      true,
+    ],
+    ['phone, the chat list after Back (its row would light up)', '/chat', '', true, false],
+    ['phone, that conversation open', '/chat', CONVO, true, false],
+    ['phone, another conversation open', '/chat', 'other', true, true],
+    ['wide, reading another conversation beside the list', '/chat', 'other', false, false],
+    ['wide, that conversation open', '/chat', CONVO, false, false],
+    ['wide, another page entirely', '/posts', 'other', false, true],
+  ])(
+    '%s: a notification exactly where a message would raise one',
+    async (_what, path, selected, narrow, banner) => {
+      NARROW = narrow;
+      MOBILE = narrow;
+      const messaging = useMessaging();
+      const { ctx, sendReactionNotification } = makeContext(selected);
+      window.history.pushState({}, '', path);
+      foreground(true);
+      vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+      // A person at the desktop window (a phone is exempt from the attention term).
+      const { windowAttention } = await import('$lib/utils/windowAttention.svelte');
+      windowAttention.noteGesture();
+      const { canSeeArrivalNow } = await import('$lib/utils/chat/arrivalRuntime');
+      // The message path's answer for the same place, through the same runtime.
+      expect(!canSeeArrivalNow(CONVO, selected)).toBe(banner);
 
-    messaging.notifyInboundReaction(REACTION, ctx);
+      messaging.notifyInboundReaction(REACTION, ctx);
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
 
-    await vi.waitFor(() => expect(sendReactionNotification).toHaveBeenCalledTimes(1));
-  });
+      expect(sendReactionNotification).toHaveBeenCalledTimes(banner ? 1 : 0);
+    }
+  );
 
   it('an iPhone that is no longer ACTIVE is told, even with that conversation open (the app switcher)', async () => {
     const messaging = useMessaging();

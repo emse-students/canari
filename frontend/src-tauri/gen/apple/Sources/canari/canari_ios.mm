@@ -1941,9 +1941,10 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
 
 static void CanariOnWillResignActive(__unused NSNotification *note) {
   g_isInForeground = false;
-  CanariSetAppGroupForegroundFlag(NO);
-  // FIRST, before the slower work below: a frame the page takes from now on is not seen landing.
+  // FIRST after the flag it reads, before any file write: a frame the page takes from now on is not
+  // seen landing.
   CanariPublishActive();
+  CanariSetAppGroupForegroundFlag(NO);
   canari_ios_on_pause();
   // Snapshot the push context and secret into the App Group container before suspending
   // (mls.bin already follows each of its writes - see didBecomeActive).

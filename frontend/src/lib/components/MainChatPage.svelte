@@ -835,6 +835,8 @@
     const verdict = windowReadVerdict({
       focused: isWindowFocused,
       visible: isTabVisible,
+      // `isAppInFront()` as STATE: the same two facts, each followed by its own event, so either edge
+      // re-runs this effect - the global read would leave it stale until something else ran it.
       foreground: appForeground.current && appActive,
       attentive: windowAttention.attentive,
     });

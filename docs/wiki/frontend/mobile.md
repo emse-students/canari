@@ -3620,7 +3620,7 @@ its whole matrix asserted beside it:
 | --- | --- |
 | the frame (`inboundReactionVerdict`) | my own reaction, or a reaction to somebody else's message (said nowhere: the ordinary frame); a removal, a replay or older state, or a frame that is not LIVE (said: it is a reaction to me). The author is the row held (window, then store), else the one the frame STATES (`ReactionMsg.target_author_id`, the reactor's own claim - the one `notify-reaction` already rests on). News whose author is still unknown is `unresolved` (WARNED each time) when the store FAILED to answer, `unattributed` (said ONCE per session) when the frame comes from a reactor predating `target_author_id` |
 | live (`isLiveDelivery`) | not `channel === 'live'`, or `aheadOfMailbox`, or an `addressed` history answer - a catch-up on resume may carry a reaction already announced and dismissed. A page of salon history raises nothing, except the ONE row that arrived live before its seed (below) |
-| the screen (`reactionTriggerRefusal`) | the conversation is being READ (`isReadingConversationNow`: selected, on a route that draws it, the app in front - never `canSeeArrival`, which is also true for the conversation LIST, and a list row shows no reaction; corrected 2026-11-23, [below](#an-app-that-is-not-active-is-not-read-2026-11-23)); on a phone, a frame with no `at` (it could not be made one with its push, so the push draws it); the `reactions` category is off; a private conversation's level is not `all` (a reaction is never a mention). **The app's foreground state is NOT a term** |
+| the screen (`reactionTriggerRefusal`) | a MESSAGE landing in that conversation would be seen where it lands (`canSeeArrival`, the message path's own predicate, passed as `arrivalSeen`): **a reaction never announces louder than a message would in the same place** ([below](#an-app-that-is-not-active-is-not-read-2026-11-23)); on a phone, a frame with no `at` (it could not be made one with its push, so the push draws it); the `reactions` category is off; a private conversation's level is not `all` (a reaction is never a mention). **The app's foreground state is NOT a term** |
 
 **A live salon reaction that arrives BEFORE its seed is still decided live (2026-11-18).** The first
 frame of a reactor's new seed session (the distribution epoch moved: a member added or removed) often
@@ -3759,14 +3759,30 @@ announces (`notifyInbound`, through the announced-messages ledger,
 frozen instead, nothing ACKs and the deferred push carries it to the extension. The ledger keeps the
 two from doubling when both happen.
 
-**A reaction in a conversation left with Back raised nothing.** `goBackToMenu` clears the selection, the
-phone shows the list, and `canSeeArrival` is true for the list (a message landing there lights its
-row). The reaction trigger asked that predicate, though its own stated reason is "the bubble on screen
-carries it" - and a list row shows no reaction. It now asks `isReadingConversationNow`. Not a wiki
-decision reversed: the table above named the wrong predicate for its own reason.
+**A reaction is never louder than a message in the same place (coordinator decision, 2026-11-23,
+reversible; [principle 3](../../principes.md), "your attention is not for sale").** The sitting also
+read "a reaction in a conversation left with Back raised nothing". `goBackToMenu` clears the selection
+and a phone then shows the list, where `canSeeArrival` is true: a MESSAGE landing there gets the tone
+and its row lights up, no OS notification. A first version of this change made the reaction trigger
+ask `isReadingConversationNow` instead - which also made a wide layout (desktop, web, an iPad) raise
+an OS notification for a reaction in conversation B while the reader reads A, where a message in B
+gets only a tone. Refused at review: a reaction is the lesser news, so it may not be louder. The
+trigger asks exactly the message path's predicate (`canSeeArrival`, `ReactionTriggerFacts.arrivalSeen`),
+shared and never re-derived: where a message would raise a banner, so does the reaction (a salon left
+with Back on `/communities`, another route, an app not in front); where a message gets a tone or
+nothing (the chat list on screen, that conversation open), the reaction raises no notification. So the
+Back-to-list case on `/chat` is the RULE, not a defect; the inactive-app half of it is fixed above.
+
+**A late banner for a message already read (review of #3985).** The decision and the post are apart by
+the sender-name resolution and two mirror flushes. If the app comes back in front in between
+(`didBecomeActive`), the receipt effect hands over `read_here` - which retires the conversation's
+banners - and the banner posted after it would stay up for a read message. Both posts (`notifyInbound`,
+`notifyInboundReaction`) re-make the decision on the facts of now, `canSeeArrival` again, immediately
+before posting, and stand down with one debug line. No clock: the same predicate, asked twice.
 
 Tests: `appForeground.test.ts`, `appForeground.contract.test.ts`, `arrivalRuntime.ios.test.ts`,
-`useMessaging.reactionNotification.svelte.test.ts`. Owed on the iPhone:
+`useMessaging.reactionNotification.svelte.test.ts`, `reactionNotification.test.ts`,
+`useMessaging.latePost.svelte.test.ts`. Owed on the iPhone:
 [reading](../backlog.d/reading-owed-an-inactive-iphone-announces-what-it-acks.md).
 
 #### Background MLS decrypt ladder
