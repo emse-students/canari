@@ -11,7 +11,7 @@
 # A `libs/shared-ts` build stage used to sit here, installing and compiling a
 # package whose output was then copied nowhere. Both the stage and the package
 # are gone - nothing in any service imported it. `--install-links` went too.
-FROM oven/bun:1.4.4-alpine AS builder
+FROM oven/bun:1.4.5-alpine AS builder
 
 WORKDIR /app
 
@@ -26,7 +26,7 @@ RUN cd apps/chat-delivery-service && bunx tsc -p tsconfig.build.json
 # What the runtime stage ships: the production closure only. The builder installs devDependencies
 # too (it needs tsc and @nestjs/cli), and copying ITS node_modules put jest, the Nest CLI, ts-jest
 # and the rest next to dist/ on the image's disk, in its size, its pull time and its scan.
-FROM oven/bun:1.4.4-alpine AS prod-deps
+FROM oven/bun:1.4.5-alpine AS prod-deps
 
 WORKDIR /app
 
@@ -34,7 +34,7 @@ COPY apps/chat-delivery-service/package.json apps/chat-delivery-service/bun.lock
 RUN cd apps/chat-delivery-service && bun install --production --frozen-lockfile
 
 # -- Runtime stage -------------------------------------------------------------
-FROM oven/bun:1.4.4-alpine
+FROM oven/bun:1.4.5-alpine
 
 WORKDIR /app
 
