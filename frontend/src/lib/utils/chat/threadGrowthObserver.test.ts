@@ -1,5 +1,10 @@
 // @vitest-environment happy-dom
-import { keyboardTransitionCount, noteKeyboardTransition } from '$lib/stores/keyboardTransition';
+import {
+  keyboardTransitionCount,
+  keyboardTransitionMoving,
+  noteKeyboardAtRest,
+  noteKeyboardTransition,
+} from '$lib/stores/keyboardTransition';
 import { trackReaderInput } from './readerInput';
 import {
   isPinnedToBottom,
@@ -233,7 +238,8 @@ describe('observeThreadGrowth - the engine keyboard move, on a DM ending in phot
         wasNearBottom: nearBottom,
         previousScrollTop: lastPlaced,
         readerMoving: oldRule || input.moving,
-        unspentKeyboardTransition: transitions > Math.max(input.lastInputTransition, spent),
+        unspentKeyboardTransition:
+          keyboardTransitionMoving() && transitions > Math.max(input.lastInputTransition, spent),
         reachUnchanged: lastReach !== null && Math.abs(reach() - lastReach) < 1,
       });
       if (nearBottom && response !== 'at-end' && !input.moving) lines.push(response);
@@ -262,12 +268,15 @@ describe('observeThreadGrowth - the engine keyboard move, on a DM ending in phot
       for (const i of PHOTOS) layout.heights[i] = PORTRAIT;
       relayout();
     };
+    /** The keyboard's resize: a transition starts, the box changes, the observer pins. */
     const keyboard = (rises: boolean) => {
       noteKeyboardTransition(rises ? 'keyboard opened' : 'keyboard closed');
       layout.box += rises ? -KEYBOARD : KEYBOARD;
       relayout();
       measure();
     };
+    /** The shell's word that the keyboard has come to rest. */
+    const atRest = () => noteKeyboardAtRest('the shell: at rest');
     const distance = () => scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
     const done = () => {
       stop();
@@ -281,11 +290,15 @@ describe('observeThreadGrowth - the engine keyboard move, on a DM ending in phot
       engineMove,
       photosGrow,
       keyboard,
+      atRest,
       distance,
       done,
       flag: () => nearBottom,
     };
   }
+
+  // Every test starts with no keyboard transition moving (the count is the document's).
+  beforeEach(() => noteKeyboardAtRest('test start'));
 
   it.each([
     ['the photos grow before the keyboard rises', true],
@@ -293,14 +306,16 @@ describe('observeThreadGrowth - the engine keyboard move, on a DM ending in phot
   ])('keeps the pane at its end through the keyboard when %s', (_, photosFirst) => {
     const p = pane();
     if (photosFirst) p.photosGrow();
-    noteKeyboardTransition('a field took focus');
+    p.keyboard(true);
+    // WebKit's reveal, once the keyboard has shown: 375 px up, the reach unchanged.
     p.engineMove();
     expect(p.flag()).toBe(true);
     expect(p.distance()).toBe(0);
-    p.keyboard(true);
     if (!photosFirst) p.photosGrow();
     expect(p.distance()).toBe(0);
+    p.atRest();
     p.keyboard(false);
+    p.atRest();
     expect({ flag: p.flag(), distance: p.distance(), lines: p.lines }).toEqual({
       flag: true,
       distance: 0,
@@ -312,12 +327,14 @@ describe('observeThreadGrowth - the engine keyboard move, on a DM ending in phot
   it('the old rule reads the engine move as the reader leaving, and the end is lost (control)', () => {
     const p = pane();
     p.photosGrow();
-    noteKeyboardTransition('a field took focus');
-    p.engineMove(true);
     p.keyboard(true);
-    p.keyboard(false);
+    p.engineMove(true);
     expect(p.flag()).toBe(false);
-    expect(p.distance()).toBeGreaterThan(0);
+    expect(p.distance()).toBe(ENGINE_MOVE);
+    p.atRest();
+    p.keyboard(false);
+    // 375 px short with the keyboard up, 375 - 357 once it fell: the iPhone's 96 pt, in this model.
+    expect(p.distance()).toBe(ENGINE_MOVE - KEYBOARD);
     p.done();
   });
 
@@ -331,9 +348,20 @@ describe('observeThreadGrowth - the engine keyboard move, on a DM ending in phot
     p.done();
   });
 
-  it('a reader who touched the pane after the transition still leaves the end', () => {
+  /** The re-review of #3984: a transition at rest swallows nothing, the keyboard up or down. */
+  it('a keyboard opened and at rest leaves the next assistive move to the reader', () => {
     const p = pane();
-    noteKeyboardTransition('a field took focus');
+    p.keyboard(true);
+    p.atRest();
+    p.engineMove();
+    expect(p.flag()).toBe(false);
+    expect(p.lines).toEqual(['in-history']);
+    p.done();
+  });
+
+  it('a reader who touched the pane during the transition still leaves the end', () => {
+    const p = pane();
+    p.keyboard(true);
     p.scroller.dispatchEvent(new Event('touchstart'));
     p.engineMove();
     expect(p.flag()).toBe(false);
@@ -347,11 +375,21 @@ describe('observeThreadGrowth - the engine keyboard move, on a DM ending in phot
    */
   it('puts back at most once per keyboard transition', () => {
     const p = pane();
-    noteKeyboardTransition('a field took focus');
+    p.keyboard(true);
     for (let frame = 0; frame < 10; frame++) p.engineMove();
     expect(p.lines).toEqual(['put-back', 'in-history']);
     expect(p.flag()).toBe(false);
     p.done();
+  });
+
+  it('a change while the keyboard moves belongs to the same transition: counted and logged once', () => {
+    const before = keyboardTransitionCount();
+    noteKeyboardTransition('keyboard opened');
+    noteKeyboardTransition('a height step of the same rise');
+    expect(keyboardTransitionCount()).toBe(before + 1);
+    noteKeyboardAtRest('the shell: at rest');
+    noteKeyboardTransition('keyboard closed');
+    expect(keyboardTransitionCount()).toBe(before + 2);
   });
 });
 

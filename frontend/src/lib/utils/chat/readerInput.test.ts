@@ -1,7 +1,11 @@
 // @vitest-environment happy-dom
 /** `trackReaderInput`: the reader's input raises it, a placement with no finger down lowers it. */
 import { describe, expect, it } from 'vitest';
-import { noteKeyboardTransition, keyboardTransitionCount } from '$lib/stores/keyboardTransition';
+import {
+  keyboardTransitionCount,
+  noteKeyboardAtRest,
+  noteKeyboardTransition,
+} from '$lib/stores/keyboardTransition';
 import { isPageScrollingKey, trackReaderInput } from './readerInput';
 
 describe('trackReaderInput', () => {
@@ -52,6 +56,7 @@ describe('trackReaderInput', () => {
     const el = document.createElement('div');
     const input = trackReaderInput(el, { held: false });
     expect(input.lastInputTransition).toBe(keyboardTransitionCount());
+    noteKeyboardAtRest('test');
     noteKeyboardTransition('test');
     // The transition came after the last input: the reader did not follow it with a move.
     expect(input.lastInputTransition).toBeLessThan(keyboardTransitionCount());

@@ -55,7 +55,10 @@
   import { observeThreadGrowth } from '$lib/utils/chat/threadGrowthObserver';
   import { trackTouchHold, type TouchHold } from '$lib/utils/chat/touchHold';
   import { trackReaderInput, type ReaderInput } from '$lib/utils/chat/readerInput';
-  import { keyboardTransitionCount } from '$lib/stores/keyboardTransition';
+  import {
+    keyboardTransitionCount,
+    keyboardTransitionMoving,
+  } from '$lib/stores/keyboardTransition';
   import { floatingDateIndex } from '$lib/utils/chat/stickyDate';
   import {
     countUnreadBelow,
@@ -1022,24 +1025,35 @@
       readerMoving: readerInput?.moving ?? true,
       unspentKeyboardTransition:
         readerInput !== null &&
+        keyboardTransitionMoving() &&
         transitions > Math.max(readerInput.lastInputTransition, spentKeyboardTransition),
       reachUnchanged: lastMeasuredReach !== null && Math.abs(reach - lastMeasuredReach) < 1,
     });
     if (wasNearBottom && response !== 'at-end' && !readerInput?.moving) {
       // A FALL WITH NO READER INPUT, the evidence the iPhone's photo DM was diagnosed from
       // (1.7.3-alpha.4 to 1.8.0-alpha.1, every opening: `scrollTop 5813 (last placed 6188), 375 px
-      // from the end` as the composer took focus). ONE line per such move, never per frame: a
-      // put-back spends its keyboard transition, and a fall leaves the flag down.
-      Log.i(
-        'ChatArea',
+      // from the end` with the keyboard up). ONE line per such move, never per frame: a put-back spends
+      // its keyboard transition, and a fall leaves the flag down. A put-back is INFO; a fall is the
+      // expected path of every assistive scroll from the end (VoiceOver, TalkBack, find-in-page), DEBUG.
+      const where =
         `left the bottom with no finger on the pane: scrollTop ${Math.round(c.scrollTop)} (last ` +
-          `placed ${lastMeasuredScrollTop === null ? 'none' : Math.round(lastMeasuredScrollTop)}), ` +
-          `${Math.round(reach - c.scrollTop)} px from the end - ` +
-          (response === 'put-back'
-            ? `the engine's keyboard move, put back at the end (put-back ${putBacks + 1} of this ` +
-              `pane, keyboard transition #${transitions})`
-            : `not a keyboard move of the engine, the flag falls`)
-      );
+        `placed ${lastMeasuredScrollTop === null ? 'none' : Math.round(lastMeasuredScrollTop)}), ` +
+        `${Math.round(reach - c.scrollTop)} px from the end - `;
+      if (response === 'put-back') {
+        Log.i(
+          'ChatArea',
+          where +
+            `the engine's keyboard move, put back at the end (put-back ${putBacks + 1} of this ` +
+            `pane, keyboard transition #${transitions})`
+        );
+      } else {
+        Log.d(
+          'ChatArea',
+          where +
+            `not a keyboard move of the engine, the flag falls (keyboard transition #${transitions}` +
+            `${keyboardTransitionMoving() ? ' moving' : ' at rest'})`
+        );
+      }
     }
     if (response === 'put-back') {
       spentKeyboardTransition = transitions;

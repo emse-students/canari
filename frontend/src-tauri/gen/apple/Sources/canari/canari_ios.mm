@@ -346,6 +346,33 @@ static void CanariSnapKeyboardFrame(WKWebView *webView, CGRect target) {
   });
 }
 
+/// Tells the page the keyboard has come to rest (`window.canariKeyboardAtRest`, `keyboardTransition.ts`):
+/// the end of the keyboard transition during which the page may put back the thread pane WebKit moved
+/// to reveal the focused field (docs/wiki/frontend/modules/chat.md, "the engine's keyboard move is put
+/// back, and only it"). `UIKeyboardDidChangeFrame` comes after the keyboard's animation, for a show, a
+/// hide and a height change alike, and after WebKit's own did-show reveal; the call waits for WebKit to
+/// put its pending updates on screen, so the page has measured the scroll that reveal caused before it
+/// hears the keyboard is at rest. A newer keyboard change supersedes it: that one rests on its own.
+static void CanariTellPageKeyboardAtRest(void) {
+  WKWebView *webView = CanariFindWebView();
+  if (webView == nil) {
+    return;
+  }
+  NSUInteger seq = g_keyboardChangeSeq;
+  CanariAfterScreenUpdates(webView, ^(__unused double proofMs, NSError *error) {
+    if (seq != g_keyboardChangeSeq) {
+      NSLog(@"[CanariIOS] keyboard at rest: superseded by a newer keyboard change, not told");
+      return;
+    }
+    if (error != nil) {
+      NSLog(@"[CanariIOS] ERROR keyboard at rest: the screen-update proof failed (%@), telling the "
+            @"page anyway",
+            CanariErrorReason(error));
+    }
+    [webView evaluateJavaScript:@"window.canariKeyboardAtRest?.()" completionHandler:nil];
+  });
+}
+
 /// Ends the rise in flight without its proof, saying why and how long it had waited - a rise that never
 /// got its proof is not a slow one, and the two lines must not be confused.
 static void CanariEndPendingRise(NSString *why) {
@@ -2085,6 +2112,12 @@ void canari_ios_bootstrap(void) {
                    queue:[NSOperationQueue mainQueue]
               usingBlock:^(NSNotification *note) {
                 CanariApplyKeyboardLayout(note);
+              }];
+  [nc addObserverForName:UIKeyboardDidChangeFrameNotification
+                  object:nil
+                   queue:[NSOperationQueue mainQueue]
+              usingBlock:^(__unused NSNotification *note) {
+                CanariTellPageKeyboardAtRest();
               }];
   // The change itself. Activations already cover a size changed in Settings or Control Center
   // (dismissing Control Center fires didBecomeActive); this observer is extra coverage for any

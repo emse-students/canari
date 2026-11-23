@@ -11,7 +11,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import ChatArea from './ChatArea.svelte';
 import { clearConversationAnchors } from '$lib/utils/chat/scrollAnchors';
-import { noteKeyboardTransition } from '$lib/stores/keyboardTransition';
+import { noteKeyboardAtRest, noteKeyboardTransition } from '$lib/stores/keyboardTransition';
 import { Log } from '$lib/utils/Log';
 import type { ChatMessage, Conversation } from '$lib/types';
 
@@ -383,6 +383,9 @@ describe('ChatArea and a move of the pane no reader made', () => {
   const arrowShown = (target: HTMLElement) =>
     target.querySelector('.chat-scroll-bottom-button') !== null;
 
+  // Every test starts with no keyboard transition moving (the count is the document's).
+  beforeEach(() => noteKeyboardAtRest('test start'));
+
   async function engineMove(scroller: HTMLElement) {
     scroller.scrollTop = reach() - ENGINE_MOVE;
     scroller.dispatchEvent(new Event('scroll'));
@@ -395,7 +398,7 @@ describe('ChatArea and a move of the pane no reader made', () => {
     const area = mountArea();
     await settleEntry();
     const scroller = scrollerOf(area.target);
-    noteKeyboardTransition('a field took focus');
+    noteKeyboardTransition('keyboard opened');
     await engineMove(scroller);
 
     expect(scroller.scrollTop).toBeGreaterThanOrEqual(reach());
@@ -410,16 +413,27 @@ describe('ChatArea and a move of the pane no reader made', () => {
     expect(arrowShown(area.target)).toBe(true);
   });
 
-  it('lets an unexplained move with no keyboard transition lower the flag (the assistive case)', async () => {
+  it.each([
+    ['no keyboard transition at all', false],
+    ['a keyboard transition that came to rest', true],
+  ])('lets an unexplained move after %s lower the flag (the assistive case)', async (_, opened) => {
     const info = vi.spyOn(Log, 'i');
+    const debug = vi.spyOn(Log, 'd');
     const area = mountArea();
     await settleEntry();
     const scroller = scrollerOf(area.target);
+    if (opened) {
+      noteKeyboardTransition('keyboard opened');
+      noteKeyboardAtRest('the shell: at rest');
+    }
     await engineMove(scroller);
 
     expect(scroller.scrollTop).toBe(reach() - ENGINE_MOVE);
     expect(arrowShown(area.target)).toBe(true);
-    const lines = info.mock.calls.filter(([, line]) => String(line).includes('left the bottom'));
+    const hasLine = ([, line]: unknown[]) => String(line).includes('left the bottom');
+    // The expected path of every assistive scroll from the end: DEBUG, never INFO.
+    expect(info.mock.calls.filter(hasLine)).toHaveLength(0);
+    const lines = debug.mock.calls.filter(hasLine);
     expect(lines).toHaveLength(1);
     expect(String(lines[0][1])).toContain('the flag falls');
   });

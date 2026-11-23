@@ -201,8 +201,9 @@ export interface EngineKeyboardMove {
   /** A reader's input moved, or may still be moving, the pane since the page last placed it. */
   readerMoving: boolean;
   /**
-   * A keyboard transition started after the reader's last input and after the last put-back
-   * (`keyboardTransition.ts`): a field took focus, the keyboard opened, closed or changed height.
+   * A keyboard transition still MOVING - the keyboard opened, closed or changed height and has not come
+   * to rest (`keyboardTransition.ts`) - that started after the reader's last input and after the last
+   * put-back.
    */
   unspentKeyboardTransition: boolean;
   /** The reach (`scrollHeight - clientHeight`) is the one of the last placement or measurement. */
@@ -216,16 +217,19 @@ export interface EngineKeyboardMove {
  *
  * The iPhone's log of every opening reads `scrollTop 5813 (last placed 6188), 375 px from the end`: the
  * pane went 375 px UP with its reach unchanged since the last placement, no finger on it and no writer
- * of this page behind it, as a field took focus - WKWebView scrolling an overflow scroller to reveal
- * the focused field as the keyboard shows. Read as the reader leaving, it dropped the flag; every later
+ * of this page behind it, with the keyboard up (96 pt short once it fell: 375 minus the 279 pt
+ * keyboard) - WKWebView scrolling an overflow scroller to reveal the focused field once the keyboard
+ * has shown. Read as the reader leaving, it dropped the flag; every later
  * change answered `keep-row`, and nothing took the thread back to its end.
  *
  * **The move is put back only when it is POSITIVELY that one**: no reader input since the last
- * placement, an unspent keyboard transition, and the reach unchanged. Every other move up out of the
- * slack lowers the flag as before - a screen reader's scroll (VoiceOver, TalkBack), find-in-page, a
+ * placement, a keyboard transition still moving and unspent, and the reach unchanged. Every other move up
+ * out of the slack lowers the flag as before - a screen reader's scroll (VoiceOver, TalkBack), find-in-page, a
  * reader's key: an assistive or unexplained move is the reader's until proven otherwise. A put-back
  * SPENDS its transition (the caller records it), so there is at most one per keyboard transition and
  * a second engine move in the same one lowers the flag: termination by construction, not by a clock.
+ * A transition that comes to rest with no engine move is over too, so a later assistive scroll with
+ * the keyboard up or down finds none.
  */
 export function scrollMeasurementResponse(
   m: ScrollMeasurement & EngineKeyboardMove

@@ -26,6 +26,25 @@ describe('the iOS keyboard hand-off (canari_ios.mm)', () => {
   const snap = body('static void CanariSnapKeyboardFrame(');
   const apply = body('static void CanariApplyKeyboardLayout(');
 
+  /**
+   * THE KEYBOARD AT REST (#3984): the end of the transition in which the page may put back the thread
+   * pane WebKit moved to reveal the focused field. After the keyboard's own animation, and only once
+   * WebKit's pending updates are on screen, so the page measured that reveal's scroll first.
+   */
+  it('tells the page the keyboard is at rest after did-change-frame and the proof', () => {
+    expect(viewport).toContain('.canariKeyboardAtRest = () =>');
+    expect(native).toMatch(
+      /addObserverForName:UIKeyboardDidChangeFrameNotification[\s\S]{0,200}CanariTellPageKeyboardAtRest\(\);/
+    );
+    const rest = body('static void CanariTellPageKeyboardAtRest(');
+    const proved = rest.indexOf('CanariAfterScreenUpdates(webView, ^');
+    const superseded = rest.indexOf('seq != g_keyboardChangeSeq', proved);
+    const told = rest.indexOf('window.canariKeyboardAtRest?.()', superseded);
+    expect(proved).toBeGreaterThan(-1);
+    expect(superseded).toBeGreaterThan(proved);
+    expect(told).toBeGreaterThan(superseded);
+  });
+
   it('the proof is the public screen-update snapshot, never the private presentation hook', () => {
     expect(proof).toContain('proof.afterScreenUpdates = YES;');
     expect(proof).toContain('[webView takeSnapshotWithConfiguration:proof');

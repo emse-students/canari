@@ -5910,12 +5910,13 @@ reader's; the fix then is to let only a reader's input lower it - which `1.8.0-a
 **What the iPhone said** (`1.8.0-alpha.1`, iPhone 12, iOS 27, 3 of 3): one line per opening,
 `left the bottom with no finger on the pane: scrollTop 5813 (last placed 6188), 375 px from the end`
 (an earlier run: 102 px). The pane went 375 px UP while its reach (`scrollHeight - clientHeight`) was
-the reach of the last placement - the keyboard-free layout - with no finger on it, and no writer of
-this page made the move: every one of them reports its placement (`onPlaced`, `scrollToBottom`). It is
-the engine's: WKWebView scrolls an overflow scroller to reveal the focused field as the keyboard is
-about to show, before the WebView is resized. The measurement read it as the reader leaving: the flag
-fell, every later change answered `keep-row`, the last photo stayed under the composer and the thread
-96 pt short after the keyboard fell. The Mi 9T (Chromium) makes no such move and passed.
+the reach of the last placement, with no finger on it, and no writer of this page made the move: every
+one of them reports its placement (`onPlaced`, `scrollToBottom`). It is the engine's: WKWebView scrolls
+an overflow scroller to reveal the focused field. **It happens with the keyboard UP**, after the
+WebView was resized and the observer pinned the pane: the thread ended 96 pt short once the keyboard
+fell, which is 375 minus the 279 pt keyboard - a move before the resize would have left it 375 short.
+Read as the reader leaving, the move dropped the flag, every later change answered `keep-row`, and the
+last photo stayed under the composer. The Mi 9T (Chromium) makes no such move and passed.
 
 **The rule: a move is put back only when it is POSITIVELY the engine's keyboard move**, named by three
 facts carried from where each is already known, never by a clock (`scrollMeasurementResponse`,
@@ -5925,27 +5926,41 @@ facts carried from where each is already known, never by a clock (`scrollMeasure
    `pointerdown`, `wheel` or `keydown` on the pane, a scrolling key pressed with the focus on the page
    itself (the pane has no tabindex, so PageUp lands on `body`), or a jump the reader asked for. Lowered
    when the page places the pane with no finger down, so a fling stays the reader's through its momentum.
-2. **An unspent keyboard transition** - `keyboardTransition.ts`, a count bumped by
-   `keyboardViewport.svelte.ts` when a field takes focus on an OS with a virtual keyboard and whenever
-   the keyboard opens, closes or changes height. Unspent: started after the reader's last input and
-   after the last put-back.
+2. **A keyboard transition still moving, and unspent** - `keyboardTransition.ts`. A transition starts
+   once per keyboard open or close, and in the iOS shell once per height change while open (a change
+   arriving while one moves belongs to it: one count, one log line). It comes to REST by a fact: in the
+   iOS shell, `window.canariKeyboardAtRest`, which `canari_ios.mm` calls on `UIKeyboardDidChangeFrame`
+   once WebKit's pending updates are on screen - after the keyboard's animation, after WebKit's own
+   did-show reveal, and after the page measured the scroll that reveal caused; everywhere else, in the
+   same update that started it (the Android shell announces the final inset, a browser's viewport
+   resize is the keyboard where it stands, and neither engine makes the move). Unspent: started after
+   the reader's last input and after the last put-back.
 3. **The reach unchanged** since the last placement or measurement.
 
 **Any other move up out of the slack lowers the flag, as it always did.** A VoiceOver or TalkBack
-scroll, a swipe to the previous message, find-in-page, a reader's key: none carries an unspent keyboard
-transition with no input and an unchanged reach, so an assistive or unexplained move is the reader's.
+scroll, a swipe to the previous message, find-in-page, a reader's key: once the keyboard is at rest -
+open or closed - no transition is moving, so an assistive or unexplained move is the reader's. Such a
+fall logs at DEBUG: it is the expected path of every assistive scroll from the end.
+
+**Not done, and why:** spending the transition when a placement or measurement after it finds the
+pane at its end. The observer's own pin after the resize is such a placement, and it comes BEFORE
+WebKit's reveal (the 96 pt above): it would spend the transition the reveal needs.
 
 **Termination by construction:** a put-back SPENDS its transition, so there is at most one per keyboard
 transition; an engine that repeated its move would get one put-back and then lower the flag. The
-`left the bottom with no finger on the pane` line stays, one per such move and never per frame - it
-ends `the engine's keyboard move, put back at the end (put-back N of this pane, keyboard transition #T)`
-or `not a keyboard move of the engine, the flag falls`.
+`left the bottom with no finger on the pane` line stays, one per such move and never per frame: at INFO
+ending `the engine's keyboard move, put back at the end (put-back N of this pane, keyboard transition
+#T)`, at DEBUG ending `not a keyboard move of the engine, the flag falls (keyboard transition #T moving
+|at rest)`.
 
 Tests: `threadGrowthObserver.test.ts` ("the engine keyboard move") replays the opening with the photos
 growing before and after the resize; the control on the old rule ends 375 px short; a move with no
-transition lowers the flag; a reader's touch still leaves; ten repeated engine moves give one put-back.
-`ChatArea.scrollAnchor.svelte.test.ts` drives the put-back through the mounted pane (the log line, the
-scroll to the end, the arrow absent) and the assistive case (the arrow shown). Owed:
+transition, or after one at rest, lowers the flag; a reader's touch still leaves; ten repeated engine
+moves give one put-back; a change during a moving transition counts once.
+`ChatArea.scrollAnchor.svelte.test.ts` drives the put-back through the mounted pane (the INFO line, the
+scroll to the end, the arrow absent) and the assistive case with no transition and after one at rest
+(the DEBUG line, the arrow shown). `iosKeyboardRiseHandoff.test.ts` holds the native relay's order:
+did-change-frame, the screen-update proof, the superseded check, then the page hook. Owed:
 [the reading](../../backlog.d/reading-owed-a-dm-ending-in-photos-stays-at-its-end-when-the-keyboard-opens.md).
 
 ### A short thread sits at the bottom, and asks for its past at entry (2026-11-14)
