@@ -101,7 +101,8 @@ object PushRegistrationEnd {
         if (pending.exists() && !pending.delete()) {
             Log.e(TAG, "eraseSecret: $PENDING_PUSH_SECRET_FILE not removed")
         }
-        PushSecretKeystore.clear(context)
+        // Carried to the health check: the absence that follows is this erasure, not a loss.
+        if (PushSecretKeystore.clear(context)) PushSecretKeystore.markErasedBySignOut(context)
     }
 
     /** Drops the token mirror, file and preference, so nothing registers a token that is gone. */

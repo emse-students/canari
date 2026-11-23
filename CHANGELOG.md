@@ -1429,7 +1429,7 @@ A dead-session verdict reached before its handler is queued with its target inst
 
 ### Fixed - a reaction to my message now notifies while the app is open on another screen
 
-The reaction push is dropped whenever the app is in the foreground, so a reaction landing on the feed or in another conversation notified nobody, and the web and desktop never notified one. The live reaction frame is now a second trigger, raised only in the foreground with that conversation off screen - never where the push draws ([backlog](docs/wiki/backlog.d/reading-owed-a-reaction-to-my-message-notifies-while-the-app-is-open.md), [mobile](docs/wiki/frontend/mobile.md#the-frame-trigger-of-a-reaction-2026-11-17)).
+The reaction push is dropped whenever the app is in the foreground, so a reaction landing on the feed or in another conversation notified nobody, and the web and desktop never notified one. The live reaction frame is now a second trigger, raised only in the foreground with that conversation off screen - never where the push draws ([backlog](docs/wiki/device-verification.md#the-readings-of-2026-11-23-180-alpha3-iphone-12-the-resume-from-settings-the-pushes-name-and-logo-the-banners-the-share-logos-the-ios-27-launch), [mobile](docs/wiki/frontend/mobile.md#the-frame-trigger-of-a-reaction-2026-11-17)).
 
 ### Changed - a named reader books in the association spaces of their granted cells
 

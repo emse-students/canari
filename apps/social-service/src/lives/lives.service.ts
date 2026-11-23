@@ -1,3 +1,4 @@
+import { UsageActivity } from '../usage/usage-activity';
 import {
   BadRequestException,
   ConflictException,
@@ -473,7 +474,8 @@ export class LivesService implements OnModuleDestroy {
     private readonly announcer: LiveAnnouncer,
     private readonly notifications: PostNotificationsService,
     private readonly redis: RedisService,
-    private readonly replayRetention: ReelRetentionScheduler
+    private readonly replayRetention: ReelRetentionScheduler,
+    private readonly usage?: UsageActivity
   ) {}
 
   /**
@@ -611,6 +613,8 @@ export class LivesService implements OnModuleDestroy {
     this.logger.log(
       `[LIVE] ${row.id} started by ${short(broadcasterId)}, title ${title === null ? 'none' : `${[...title].length} chars`}, replay ${keepsReplay ? 'kept' : 'none'}`
     );
+    // One live started, for the usage dashboard's daily total (docs/wiki/usage-dashboard.md).
+    void this.usage?.count('lives');
     // The broadcaster's own key, just sealed: answered as received, nothing to open.
     return toView(row, key);
   }

@@ -22,6 +22,7 @@ import { MinesweeperModule } from './minesweeper/minesweeper.module';
 import { CoorganisationModule } from './coorganisation/coorganisation.module';
 import { BookingsModule } from './bookings/bookings.module';
 import { LivesModule } from './lives/lives.module';
+import { UsageModule } from './usage/usage.module';
 import { BirthdaysModule } from './birthdays/birthdays.module';
 import { HealthController } from './health.controller';
 import { typeormSynchronize } from './typeorm-synchronize';
@@ -35,6 +36,7 @@ import { ROUTE_PARAMS_GUARD } from './common/route-params';
     // Guards the public Cercle cotisant-status check (`PublicController`) against API-key brute-forcing.
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 20 }]),
     RedisModule,
+    UsageModule,
     AdminQueueSignalModule,
     TypeOrmModule.forRootAsync({
       useFactory: () => ({
