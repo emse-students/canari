@@ -2,10 +2,8 @@
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
 let android = true;
-let appVersion = '1.6.5-alpha.1';
 vi.mock('$lib/utils/appVersion', () => ({
   isAndroidTauriRuntime: () => android,
-  getClientAppVersion: () => appVersion,
 }));
 const adoptRestoredSession = vi.fn();
 vi.mock('$lib/stores/auth', () => ({
@@ -20,10 +18,11 @@ vi.mock('$lib/services/authSessions', () => ({
 
 import { attemptRestore, ensureRestoreKey } from './restoreCredential';
 import {
+  LEGACY_RESTORE_ORIGIN_REFUSED_KEY,
   RESTORE_ATTEMPTED_KEY,
-  RESTORE_ORIGIN_REFUSED_KEY,
   RESTORE_REGISTERED_PREFIX,
   forgetRestoreKeyRegistrations,
+  resetRestoreSigningForTests,
   restoreKeyRecord,
   writeRestoreKeyRecord,
 } from './restoreKey';
@@ -52,8 +51,8 @@ let fetchMock: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   localStorage.clear();
+  resetRestoreSigningForTests();
   android = true;
-  appVersion = '1.6.5-alpha.1';
   invoke.mockReset();
   adoptRestoredSession.mockReset().mockResolvedValue(undefined);
   apiFetch.mockReset();
@@ -69,10 +68,32 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-/** Routes `invoke` by command name. */
-function platform(answers: { create?: unknown; get?: unknown; getThrows?: unknown }) {
+/** The origin of a build signed by the key the estate names (the Play app-signing key). */
+const PLAY = 'android:apk-key-hash:play';
+/** The origin of the release asset sideloaded with `adb` (signed by the upload key). */
+const SIDELOADED = 'android:apk-key-hash:upload';
+
+/**
+ * Routes `invoke` by command name. `signing` is this APK's own origin(s) and `installer` who put it
+ * there: a Play install by default; `installer: null` is `adb`. `signingThrows` fails the read.
+ */
+function platform(answers: {
+  create?: unknown;
+  get?: unknown;
+  getThrows?: unknown;
+  signing?: string[];
+  installer?: string | null;
+  signingThrows?: unknown;
+}) {
   invoke.mockImplementation(async (cmd: string) => {
     if (cmd === 'plugin:restore|create_restore_credential') return answers.create;
+    if (cmd === 'plugin:restore|signing_origins') {
+      if (answers.signingThrows) throw answers.signingThrows;
+      const installer = answers.installer === undefined ? 'com.android.vending' : answers.installer;
+      return installer === null
+        ? { origins: answers.signing ?? [PLAY] }
+        : { origins: answers.signing ?? [PLAY], installer };
+    }
     if (cmd === 'plugin:restore|get_restore_credential') {
       if (answers.getThrows) throw answers.getThrows;
       return answers.get;
@@ -86,11 +107,14 @@ const cleared = () =>
   invoke.mock.calls.some(([cmd]) => cmd === 'plugin:restore|clear_restore_credential');
 
 describe('ensureRestoreKey', () => {
-  /** The options answer: the WebAuthn options and the key the session holds now. */
-  const options = (registeredCredentialId: string | null, originsDigest = 'origins-a') =>
-    json({ options: { challenge: 'c' }, registeredCredentialId, originsDigest });
+  /** The options answer: the WebAuthn options, the key the session holds now, the accepted origins. */
+  const options = (registeredCredentialId: string | null, origins: string[] = [PLAY]) =>
+    json({ options: { challenge: 'c' }, registeredCredentialId, origins, originsDigest: 'legacy' });
   const record = (held: string | null, registered: string | null) =>
     writeRestoreKeyRecord('user-1', { held, registered });
+  /** How many keys the platform was asked to mint. */
+  const created = () =>
+    invoke.mock.calls.filter(([cmd]) => cmd === 'plugin:restore|create_restore_credential').length;
 
   it('registers when the session holds no key: options, the platform key, the server - and records it', async () => {
     platform({ create: { responseJson: '{"id":"k"}', cloudBackup: true } });
@@ -182,7 +206,7 @@ describe('ensureRestoreKey', () => {
       .mockResolvedValueOnce(json({ registered: true, credentialId: 'k' }));
     await Promise.all([ensureRestoreKey('user-1'), ensureRestoreKey('user-1')]);
     expect(apiFetch).toHaveBeenCalledTimes(2);
-    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(created()).toBe(1);
   });
 
   it('carries the second path (no cloud backup) to the server as it happened', async () => {
@@ -205,79 +229,123 @@ describe('ensureRestoreKey', () => {
     expect(restoreKeyRecord('user-1').registered).toBeNull();
   });
 
-  const refusedOnce = async () => {
+  it('a SIDELOADED build the estate does not vouch for mints no key and is never refused - said once, at log, not warn', async () => {
+    platform({
+      create: { responseJson: '{"id":"k"}', cloudBackup: true },
+      signing: [SIDELOADED],
+      installer: null,
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    apiFetch.mockImplementation(async () => options(null));
+
+    await ensureRestoreKey('user-1');
+    await ensureRestoreKey('user-1');
+
+    // The options only: no key minted, no registration sent, so no refusal anywhere.
+    expect(apiFetch).toHaveBeenCalledTimes(2);
+    expect(created()).toBe(0);
+    expect(warn).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining(`register not attempted`));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining(SIDELOADED));
+    // The signer is a fact of the install: read once per process.
+    expect(
+      invoke.mock.calls.filter(([cmd]) => cmd === 'plugin:restore|signing_origins')
+    ).toHaveLength(1);
+  });
+
+  it('a PLAY install whose read origin the estate does not list still registers, and accuses the read at error', async () => {
+    platform({ create: { responseJson: '{"id":"k"}', cloudBackup: true }, signing: [SIDELOADED] });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    apiFetch
+      .mockResolvedValueOnce(options(null))
+      .mockResolvedValueOnce(json({ registered: true, credentialId: 'k' }));
+    await ensureRestoreKey('user-1');
+    // The server stays the judge: a wrong native read never costs a real user their key.
+    expect(created()).toBe(1);
+    expect(restoreKeyRecord('user-1')).toEqual({ held: 'k', registered: 'k' });
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('a Play install read its signer'));
+  });
+
+  it('a signer the platform cannot read is said at error and registers anyway; the read is retried next start', async () => {
+    platform({
+      create: { responseJson: '{"id":"k"}', cloudBackup: true },
+      signingThrows: new Error('no signing info'),
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    apiFetch
+      .mockResolvedValueOnce(options(null))
+      .mockResolvedValueOnce(json({ registered: true, credentialId: 'k' }));
+    await ensureRestoreKey('user-1');
+    // Never skipped on a failed read: a Play install must not be left keyless, the server judges.
+    expect(created()).toBe(1);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('the signing origin could not be read')
+    );
+
+    // Not cached: the next start reads again, and this time it answers.
     platform({ create: { responseJson: '{"id":"k"}', cloudBackup: true } });
+    apiFetch
+      .mockReset()
+      .mockResolvedValueOnce(options(null))
+      .mockResolvedValueOnce(json({ registered: true, credentialId: 'k' }));
+    await ensureRestoreKey('user-1');
+    expect(created()).toBe(2);
+    expect(
+      invoke.mock.calls.filter(([cmd]) => cmd === 'plugin:restore|signing_origins')
+    ).toHaveLength(2);
+  });
+
+  it('an estate that starts naming this build is read at the next start, same version', async () => {
+    platform({
+      create: { responseJson: '{"id":"k"}', cloudBackup: true },
+      signing: [SIDELOADED],
+      installer: null,
+    });
+    apiFetch.mockResolvedValueOnce(options(null));
+    await ensureRestoreKey('user-1');
+    expect(created()).toBe(0);
+
+    // The variable was changed on the server: the options now name the upload key too.
+    apiFetch
+      .mockResolvedValueOnce(options(null, [PLAY, SIDELOADED]))
+      .mockResolvedValueOnce(json({ registered: true, credentialId: 'k' }));
+    await ensureRestoreKey('user-1');
+    expect(created()).toBe(1);
+    expect(restoreKeyRecord('user-1')).toEqual({ held: 'k', registered: 'k' });
+  });
+
+  it('against a server that names no origins (before 1.8.0), registers as before without reading the signer', async () => {
+    platform({ create: { responseJson: '{"id":"k"}', cloudBackup: true } });
+    apiFetch
+      .mockResolvedValueOnce(json({ options: { challenge: 'c' }, registeredCredentialId: null }))
+      .mockResolvedValueOnce(json({ registered: true, credentialId: 'k' }));
+    await ensureRestoreKey('user-1');
+    expect(created()).toBe(1);
+    expect(invoke.mock.calls.some(([cmd]) => cmd === 'plugin:restore|signing_origins')).toBe(false);
+  });
+
+  it('an origin refusal of a build the estate lists is a defect, said at error', async () => {
+    platform({ create: { responseJson: '{"id":"k"}', cloudBackup: true } });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     apiFetch
       .mockResolvedValueOnce(options(null))
       .mockResolvedValueOnce(json({ code: 'RESTORE_ORIGIN_NOT_ALLOWED', message: 'x' }, 403));
     await expect(ensureRestoreKey('user-1')).rejects.toMatchObject({
       refusal: { status: 403, code: 'RESTORE_ORIGIN_NOT_ALLOWED' },
     });
-  };
-
-  it('a build the estate refuses is not asked again at the same version, and is at the next', async () => {
-    await refusedOnce();
-    expect(JSON.parse(localStorage.getItem(RESTORE_ORIGIN_REFUSED_KEY) ?? 'null')).toEqual({
-      version: '1.6.5-alpha.1',
-      originsDigest: 'origins-a',
-    });
-
-    // The next start of the same version, same origins: the session's own check still runs, no
-    // key is minted, and the skip is a countable WARN - this install holds no restore key.
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    invoke.mockClear();
-    apiFetch.mockReset().mockResolvedValueOnce(options(null));
-    await ensureRestoreKey('user-1');
-    expect(apiFetch).toHaveBeenCalledTimes(1);
-    expect(invoke).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('[RESTORE] register skipped'));
-
-    // Another version may be signed by a key the estate names: it asks again.
-    appVersion = '1.6.5-alpha.2';
-    apiFetch
-      .mockReset()
-      .mockResolvedValueOnce(options(null))
-      .mockResolvedValueOnce(json({ registered: true, credentialId: 'k' }));
-    await ensureRestoreKey('user-1');
-    expect(invoke).toHaveBeenCalledTimes(1);
-    expect(restoreKeyRecord('user-1')).toEqual({ held: 'k', registered: 'k' });
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('refused an origin it lists'));
   });
 
-  it('a changed estate configuration heals the refusal at the next start, same version', async () => {
-    await refusedOnce();
-    invoke.mockClear();
-    // The variable was fixed on the server: the digest the options carry is a new one.
-    apiFetch
-      .mockReset()
-      .mockResolvedValueOnce(options(null, 'origins-b'))
-      .mockResolvedValueOnce(json({ registered: true, credentialId: 'k' }));
+  it('drops the origin refusal an older build recorded', async () => {
+    localStorage.setItem(
+      LEGACY_RESTORE_ORIGIN_REFUSED_KEY,
+      JSON.stringify({ version: '1.8.0-alpha.2', originsDigest: '3703af67' })
+    );
+    record('k', 'k');
+    apiFetch.mockResolvedValueOnce(options('k'));
     await ensureRestoreKey('user-1');
-    expect(invoke).toHaveBeenCalledTimes(1);
-    expect(restoreKeyRecord('user-1')).toEqual({ held: 'k', registered: 'k' });
-  });
-
-  it('records nothing it could never lift: a build with no version, a server with no digest', async () => {
-    appVersion = '0.0.0';
-    await refusedOnce();
-    expect(localStorage.getItem(RESTORE_ORIGIN_REFUSED_KEY)).toBeNull();
-
-    appVersion = '1.6.5-alpha.1';
-    platform({ create: { responseJson: '{"id":"k"}', cloudBackup: true } });
-    apiFetch
-      .mockReset()
-      .mockResolvedValueOnce(json({ options: { challenge: 'c' }, registeredCredentialId: null }))
-      .mockResolvedValueOnce(json({ code: 'RESTORE_ORIGIN_NOT_ALLOWED', message: 'x' }, 403));
-    await expect(ensureRestoreKey('user-1')).rejects.toBeDefined();
-    expect(localStorage.getItem(RESTORE_ORIGIN_REFUSED_KEY)).toBeNull();
-  });
-
-  it('records nothing for a refusal that is not a verdict on the build', async () => {
-    platform({ create: { responseJson: '{"id":"k"}', cloudBackup: true } });
-    apiFetch
-      .mockResolvedValueOnce(options(null))
-      .mockResolvedValueOnce(json({ code: 'RESTORE_REGISTRATION_INVALID', message: 'x' }, 400));
-    await expect(ensureRestoreKey('user-1')).rejects.toBeDefined();
-    expect(localStorage.getItem(RESTORE_ORIGIN_REFUSED_KEY)).toBeNull();
+    expect(localStorage.getItem(LEGACY_RESTORE_ORIGIN_REFUSED_KEY)).toBeNull();
   });
 
   it('does nothing off Android', async () => {

@@ -1,6 +1,21 @@
 /// <reference types="jest" />
 
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { apkKeyHashOrigin, readRestoreConfig } from './restore-config';
+
+/**
+ * Shared with the app's own read of its signer (`RestoreOriginTest.kt` over `ApkKeyHash.origin`):
+ * the same certificate must give the same origin on both sides, or the client decides against an
+ * origin this server never sees (docs/wiki/account-restore.md).
+ */
+const CONTRACT = JSON.parse(
+  readFileSync(
+    join(__dirname, '../../../../../libs/contracts/restore-apk-key-hash.cases.json'),
+    'utf8'
+  )
+) as { cases: { name: string; derHex: string; fingerprint: string; origin: string }[] };
 
 const HEX = 'AB'.repeat(32);
 const COLONS = HEX.match(/.{2}/g)!.join(':');
@@ -11,6 +26,17 @@ describe('restore configuration', () => {
     expect(apkKeyHashOrigin(COLONS)).toBe(ORIGIN);
     expect(apkKeyHashOrigin(HEX)).toBe(ORIGIN);
     expect(apkKeyHashOrigin(COLONS.toLowerCase())).toBe(ORIGIN);
+  });
+
+  it('gives the shared contract origin, the one the app computes from the certificate DER', () => {
+    expect(CONTRACT.cases.length).toBeGreaterThan(0);
+    for (const c of CONTRACT.cases) {
+      // The fingerprint IS the DER's SHA-256: the vector is consistent before either side reads it.
+      expect(c.fingerprint.replace(/:/g, '').toLowerCase()).toBe(
+        createHash('sha256').update(Buffer.from(c.derHex, 'hex')).digest('hex')
+      );
+      expect(apkKeyHashOrigin(c.fingerprint)).toBe(c.origin);
+    }
   });
 
   it('refuses a value that is not a SHA-256 fingerprint rather than accepting an origin that never matches', () => {

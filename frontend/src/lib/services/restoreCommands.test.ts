@@ -54,7 +54,7 @@ describe('restore command contract', () => {
 
   it('names a Kotlin @Command for every method the Rust side runs', () => {
     const methods = [...mobileRs.matchAll(/run_mobile_plugin\(\s*"(\w+)"/g)].map((m) => m[1]);
-    expect(methods).toHaveLength(3);
+    expect(methods).toHaveLength(4);
     for (const method of methods) {
       expect(kotlin).toMatch(new RegExp(`@Command\\s+fun ${method}\\(`));
     }

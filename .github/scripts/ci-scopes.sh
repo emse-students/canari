@@ -241,8 +241,13 @@ fi
 # is there to catch; `android-tests` is the standalone JVM project that suite now lives
 # in, outside the app module - see its `settings.gradle.kts` for why. A path filter is
 # right here and a `cargo`-style dependency walk is not: neither tree reads anything
-# outside itself.
-if has '^frontend/src-tauri/gen/android/' || has '^frontend/src-tauri/android-tests/'; then
+# outside itself. The plugins' `pure/` directories are compiled into the suite too
+# (`android-tests/build.gradle.kts`), and its contract tests read `libs/contracts/`, so a
+# change to either runs it - before 2026-11-23 a change to the gallery's `pure/` code did
+# not. `android-scope.test.sh` feeds paths to this filter.
+if has '^frontend/src-tauri/gen/android/' || has '^frontend/src-tauri/android-tests/' || \
+   has '^frontend/src-tauri/plugins/[^/]+/android/src/main/java/pure/' || \
+   has '^libs/contracts/'; then
   echo "android=true"
 else
   echo "android=false"

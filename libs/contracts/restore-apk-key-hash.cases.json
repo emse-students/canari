@@ -1,0 +1,11 @@
+{
+  "$comment": "The WebAuthn origin Credential Manager writes for an Android app: android:apk-key-hash: + base64url WITHOUT padding of the SHA-256 of the signing certificate's DER. Read by RestoreOriginTest.kt (the app's own read, ApkKeyHash.origin over derHex) and restore-config.spec.ts (the server's apkKeyHashOrigin over fingerprint): the two must produce the same origin, or the client's skip decision and the server's verdict disagree (docs/wiki/account-restore.md).",
+  "cases": [
+    {
+      "name": "a certificate whose digest needs both URL-safe characters",
+      "derHex": "63616e6172692d726573746f72652d766563746f722d34",
+      "fingerprint": "1D:C5:24:6C:63:A1:9E:67:10:F7:E3:11:E8:70:61:CD:74:82:E6:65:00:FA:00:0D:B1:90:3E:75:8F:C9:8C:BA",
+      "origin": "android:apk-key-hash:HcUkbGOhnmcQ9-MR6HBhzXSC5mUA-gANsZA-dY_JjLo"
+    }
+  ]
+}

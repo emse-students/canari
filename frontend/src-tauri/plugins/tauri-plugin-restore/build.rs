@@ -4,6 +4,7 @@ const COMMANDS: &[&str] = &[
     "create_restore_credential",
     "get_restore_credential",
     "clear_restore_credential",
+    "signing_origins",
 ];
 
 // ANDROID ONLY, and no `ios_path`: Restore Credentials is a Google Play services API with no iOS

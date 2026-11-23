@@ -1,6 +1,8 @@
 package app.tauri.restore
 
 import android.app.Activity
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.CancellationSignal
 import android.util.Log
 import androidx.credentials.ClearCredentialStateRequest
@@ -22,6 +24,7 @@ import app.tauri.annotation.Command
 import app.tauri.annotation.InvokeArg
 import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
+import app.tauri.plugin.JSArray
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
 
@@ -164,5 +167,73 @@ class RestorePlugin(private val activity: Activity) : Plugin(activity) {
                 }
             }
         )
+    }
+
+    /**
+     * The WebAuthn origin(s) Credential Manager puts in this install's `clientDataJSON`:
+     * `android:apk-key-hash:` + base64url (no padding) of the SHA-256 of the certificate that signs
+     * THIS APK. The server accepts only the origins `ANDROID_APP_LINK_SHA256` names (the Play
+     * app-signing key), so an APK signed otherwise - the release asset sideloaded with `adb`, signed
+     * by the upload key - would have every key it mints refused. Read here so the frontend knows that
+     * BEFORE it mints one, instead of learning it from a refusal (docs/wiki/account-restore.md).
+     *
+     * The CURRENT signer: every content signer when the APK has several, otherwise the last entry of
+     * the rotation history (index 0 is the original certificate, the last the one signing now).
+     *
+     * With it, the INSTALLER (`installingPackageName`, null for `adb` / `pm install`): the frontend
+     * skips registration only for an install that did not come from Play. A Play install always
+     * registers and lets the server judge, so a wrong read here can never silently cost a real user
+     * their restore key - it is accused at error instead.
+     */
+    @Command
+    fun signingOrigins(invoke: Invoke) {
+        try {
+            val pm = activity.packageManager
+            val info = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                pm.getPackageInfo(
+                    activity.packageName,
+                    PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES.toLong())
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                pm.getPackageInfo(activity.packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+            }
+            val signing = info.signingInfo
+            if (signing == null) {
+                Log.e(TAG, "signingOrigins: the package manager answered no signing info")
+                invoke.reject("signingOrigins: no signing info")
+                return
+            }
+            val certs = if (signing.hasMultipleSigners()) {
+                signing.apkContentsSigners.toList()
+            } else {
+                signing.signingCertificateHistory.takeLast(1)
+            }
+            val origins = JSArray()
+            for (cert in certs) origins.put(ApkKeyHash.origin(cert.toByteArray()))
+            // A separate try: the installer is a hint for the frontend's skip, the origins are the
+            // fact. An installer the platform will not name reads as unknown (null), which the
+            // frontend treats as "not Play" only for an origin the estate does not list.
+            val installer = try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    pm.getInstallSourceInfo(activity.packageName).installingPackageName
+                } else {
+                    @Suppress("DEPRECATION")
+                    pm.getInstallerPackageName(activity.packageName)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "signingOrigins: installer unreadable (${e.javaClass.simpleName}) - answered as unknown")
+                null
+            }
+            Log.d(TAG, "signingOrigins: ${certs.size} signer(s), installer known: ${installer != null}")
+            val answer = JSObject()
+            answer.put("origins", origins)
+            // JSONObject drops a null value: an absent key reads as null on the Rust side.
+            if (installer != null) answer.put("installer", installer)
+            invoke.resolve(answer)
+        } catch (e: Exception) {
+            Log.e(TAG, "signingOrigins: unreadable (${e.javaClass.simpleName})")
+            invoke.reject("signingOrigins failed (${e.javaClass.simpleName})")
+        }
     }
 }
