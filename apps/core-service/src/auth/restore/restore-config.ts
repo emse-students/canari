@@ -8,6 +8,10 @@
  *   cannot vouch for different apps.
  * - The RP ID is the host of the estate's canonical name, the FIRST entry of `FRONTEND_URL`.
  *
+ * DEV ONLY (owner, 2026-11-23): `ANDROID_UPLOAD_KEY_SHA256` adds the upload key's origin, so a bench
+ * APK installed by hand can register a key. Only `docker-compose.dev.yml` delivers it and the
+ * manifest row is `skip` in production (`deploy-env.test.sh`): production accepts the Play key only.
+ *
  * An estate with no fingerprint is UNAVAILABLE, never permissive: there is no origin to accept, so
  * nothing is accepted (fails closed).
  */
@@ -25,12 +29,10 @@ const FINGERPRINT_HEX = /^[0-9A-F]{64}$/;
  * case - because both read the SAME secret. Throws on anything else: a malformed value is a
  * configuration error to see at boot, not an origin that silently never matches.
  */
-export function apkKeyHashOrigin(fingerprint: string): string {
+export function apkKeyHashOrigin(fingerprint: string, label = 'ANDROID_APP_LINK_SHA256'): string {
   const hex = fingerprint.trim().toUpperCase().replace(/:/g, '');
   if (!FINGERPRINT_HEX.test(hex)) {
-    throw new Error(
-      `ANDROID_APP_LINK_SHA256: "${fingerprint}" is not a SHA-256 fingerprint (32 hex bytes)`
-    );
+    throw new Error(`${label}: "${fingerprint}" is not a SHA-256 fingerprint (32 hex bytes)`);
   }
   const bytes = Buffer.from(hex, 'hex');
   return `android:apk-key-hash:${bytes.toString('base64url')}`;
@@ -42,13 +44,16 @@ export function apkKeyHashOrigin(fingerprint: string): string {
  */
 export function readRestoreConfig(
   fingerprints: string | undefined,
-  frontendUrl: string | undefined
+  frontendUrl: string | undefined,
+  uploadKeyFingerprints?: string
 ): RestoreConfig {
-  const list = (fingerprints ?? '')
-    // Comma- or whitespace-separated, as `parseAndroidSha256Fingerprints` splits it.
-    .split(/[\s,]+/)
-    .map((part) => part.trim())
-    .filter(Boolean);
+  const split = (value: string | undefined): string[] =>
+    (value ?? '')
+      // Comma- or whitespace-separated, as `parseAndroidSha256Fingerprints` splits it.
+      .split(/[\s,]+/)
+      .map((part) => part.trim())
+      .filter(Boolean);
+  const list = split(fingerprints);
   if (list.length === 0) {
     return { available: false, reason: 'ANDROID_APP_LINK_SHA256 is empty' };
   }
@@ -60,5 +65,11 @@ export function readRestoreConfig(
     return { available: false, reason: `FRONTEND_URL has no usable first entry ("${first}")` };
   }
   if (!rpId) return { available: false, reason: 'FRONTEND_URL names no host' };
-  return { available: true, rpId, origins: [...new Set(list.map(apkKeyHashOrigin))] };
+  // The upload key (dev only) widens the list but never makes an estate available on its own: the
+  // Play key stays the one that must be named, so an empty `ANDROID_APP_LINK_SHA256` still fails closed.
+  const origins = [
+    ...list.map((f) => apkKeyHashOrigin(f, 'ANDROID_APP_LINK_SHA256')),
+    ...split(uploadKeyFingerprints).map((f) => apkKeyHashOrigin(f, 'ANDROID_UPLOAD_KEY_SHA256')),
+  ];
+  return { available: true, rpId, origins: [...new Set(origins)] };
 }

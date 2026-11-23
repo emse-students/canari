@@ -236,9 +236,15 @@ files. Dev reads `DEV_ANDROID_APP_LINK_SHA256`, which does not exist yet - **a o
 sideloaded `1.6.5-alpha.1` on the bench Mi 9T is signed by the upload or sideload key, so dev
 refused its key at every start - 59 `400 RESTORE_REGISTRATION_INVALID` from 11-01 to 11-05, server
 side `Unexpected registration response origin "android:apk-key-hash:..."`. Since `1.8.0` the client
-knows its signer before it mints anything ([below](#a-build-the-estate-does-not-vouch-for-is-known-before-any-key-2026-11-23)); whether dev should ALSO accept the upload key
-(adding its SHA-256 to `DEV_ANDROID_APP_LINK_SHA256`, which also puts it in dev's
-`assetlinks.json`) is the owner's variable to change. The conversion is
+knows its signer before it mints anything ([below](#a-build-the-estate-does-not-vouch-for-is-known-before-any-key-2026-11-23)). **Owner, 2026-11-23: dev ALSO accepts the upload key**, through
+its own variable `ANDROID_UPLOAD_KEY_SHA256` (GitHub secret `DEV_ANDROID_UPLOAD_KEY_SHA256`, same
+colon-hex format): `readRestoreConfig` appends its origin to the Play key's, and it never makes an
+estate available alone. **Production cannot receive it**: only `docker-compose.dev.yml` delivers it,
+its manifest row is `skip` for production, and `deploy-env.test.sh` asserts both, plus its absence
+from `docker-compose.prod.yml` and `serve-prod.yml`. Boot logs `[RESTORE] available: ... accepted=<origins>`
+(public digests). It is kept out of `DEV_ANDROID_APP_LINK_SHA256` so dev's `assetlinks.json` is
+unchanged. **Reading owed:** on the Mi 9T with an APK installed by hand, restore registration
+succeeds on dev. The conversion is
 `base64url` WITHOUT padding of the 32 bytes the colon-hex names, accepted in exactly the forms
 `parseAndroidSha256Fingerprints` accepts.
 
