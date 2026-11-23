@@ -38,8 +38,12 @@ object ShortcutIcons {
     const val AVATAR_USER = "user"
     const val AVATAR_MEDIA = "media"
 
-    /** WHICH picture a shortcut is drawn with: a person's photo or a public media object, by id. */
-    class Avatar(val kind: String, val id: String)
+    /**
+     * WHICH picture a shortcut is drawn with: a person's photo or a public media object, by id.
+     * [hasPhoto] is true only when the page KNOWS the user has a photo (`avatar-presence`): a
+     * remembered "none" is then stale ([Source.forgetAbsence]).
+     */
+    class Avatar(val kind: String, val id: String, val hasPhoto: Boolean = false)
 
     /** What the local cache says about one [Avatar] - three different facts, three different actions. */
     sealed class Cached {
@@ -60,6 +64,12 @@ object ShortcutIcons {
          * inside a publish.
          */
         fun cached(context: Context, avatar: Avatar): Cached
+
+        /**
+         * Drops the remembered absence of [avatar]'s picture: the page has just said the photo
+         * exists, which outranks an older 404. Local file work only.
+         */
+        fun forgetAbsence(context: Context, avatar: Avatar)
 
         /**
          * The picture, fetched. NETWORK I/O: never on the main thread. Null when there is none or

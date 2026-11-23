@@ -35,6 +35,13 @@ const CONVERSATION_ID = /^[A-Za-z0-9_-]+$/;
 export interface ShareTargetAvatar {
   kind: 'user' | 'media';
   id: string;
+  /**
+   * `true` only when the app KNOWS this user has a photo (`avatar-presence`). The native side then
+   * drops its remembered "no photo" for that user before drawing the shortcut: that absence was
+   * learned from a 404 and must not outlive the fact that refutes it. Never `false` - not knowing
+   * is not a claim, and the native cache is then left to its own answer.
+   */
+  hasPhoto?: true;
 }
 
 /** One suggestion as the native side takes it (`publish_share_targets`). */
@@ -72,10 +79,13 @@ export function conversationIdFromShareTarget(value: unknown): string | null {
 
 /**
  * What identifies a published set: the ordered ids, labels and pictures (the link follows from the
- * id). The picture is part of it, so a changed group image reaches the sheet at the next departure.
+ * id). The picture is part of it, so a changed group image reaches the sheet at the next departure -
+ * and so is the knowledge that a photo exists, or a publish after learning it would be skipped.
  */
 function keyOf(targets: readonly ShareTarget[]): string {
-  return JSON.stringify(targets.map((t) => [t.id, t.label, t.avatar?.kind, t.avatar?.id]));
+  return JSON.stringify(
+    targets.map((t) => [t.id, t.label, t.avatar?.kind, t.avatar?.id, t.avatar?.hasPhoto === true])
+  );
 }
 
 /**

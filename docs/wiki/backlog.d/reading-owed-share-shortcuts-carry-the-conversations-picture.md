@@ -44,3 +44,5 @@ real photo and step 3's "the face is not cropped inside the circle" - the bench 
 bitmap. A reading with a peer who has a profile photo (Mi 9T or Pixel 6a) closes it.
 
 **2026-11-22, `1.8.0-alpha.1` triage (readings rule).** Nothing is left that a test can take. Left, Mi 9T: give a test account an uploaded profile photo on dev (a logged dev write), then read the launcher menu and the share sheet for a real photo, the face not cropped inside the circle.
+
+**2026-11-23, `1.8.0-alpha.1` finding and fix.** On the Mi 9T the three contacts WITH photos still showed initials: a remembered 404 (`.absent`, 24 h) outlived `avatar-presence`. The marker now yields to presence ([sharing](../frontend/sharing.md#the-picture-of-a-shortcut-absence-yields-to-presence)). **Triage: re-read on the next alpha, fresh state not needed** (the contacts' photos exist on dev already; read the launcher menu and the share sheet for the real photo and the face not cropped).

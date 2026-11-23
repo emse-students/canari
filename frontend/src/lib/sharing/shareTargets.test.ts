@@ -17,6 +17,12 @@ vi.mock('$lib/utils/appVersion', () => ({
   isMobileTauriRuntime: () => platform !== null,
 }));
 
+/** What the session already knows of each user's photo (`avatarPresence.known`), set per test. */
+const presence = new Map<string, boolean>();
+vi.mock('$lib/utils/avatarPresence', () => ({
+  knownAvatarPresence: (id: string) => presence.get(id),
+}));
+
 const { selectShareTargets, syncShareTargets, MAX_SHARE_TARGETS } = await import('./shareTargets');
 const {
   clearShareTargets,
@@ -86,11 +92,48 @@ async function settle() {
 
 beforeEach(() => {
   platform = 'android';
+  presence.clear();
   invoke.mockReset();
   invoke.mockImplementation(async (cmd: string) =>
     cmd === PUBLISH ? CLEAN : cmd === OWED ? null : 0
   );
   resetShareTargetsStateForTests();
+});
+
+describe('the photo the session knows exists', () => {
+  const peer = '33333333-3333-4333-8333-333333333333';
+  const dm = () => group('dm', 'Camille', 5000, { conversationType: 'direct', directPeerId: peer });
+
+  it('travels with the id so the native side drops its remembered 404', () => {
+    presence.set(peer, true);
+    expect(selectShareTargets([dm()], ME, [])[0].avatar).toEqual({
+      kind: 'user',
+      id: peer,
+      hasPhoto: true,
+    });
+  });
+
+  it('is never claimed when presence said no or nothing', () => {
+    presence.set(peer, false);
+    expect(selectShareTargets([dm()], ME, [])[0].avatar).toEqual({ kind: 'user', id: peer });
+    presence.clear();
+    expect(selectShareTargets([dm()], ME, [])[0].avatar).toEqual({ kind: 'user', id: peer });
+  });
+
+  it('is published again once learned, though the list is otherwise unchanged', async () => {
+    syncShareTargets(input([dm()]), 'before');
+    await settle();
+    presence.set(peer, true);
+    syncShareTargets(input([dm()]), 'after');
+    await settle();
+    const sent = calls(PUBLISH).map(
+      ([, a]) => (a as { targets: { avatar?: unknown }[] }).targets[0].avatar
+    );
+    expect(sent).toEqual([
+      { kind: 'user', id: peer },
+      { kind: 'user', id: peer, hasPhoto: true },
+    ]);
+  });
 });
 
 describe('selectShareTargets', () => {

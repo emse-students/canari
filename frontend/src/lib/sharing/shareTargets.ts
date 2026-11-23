@@ -22,6 +22,7 @@ import { compareConversationRecency } from '$lib/utils/chat/conversations';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { MOBILE_APP_PROTOCOL } from '$lib/mobile/appSiteAssociation';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
+import { knownAvatarPresence } from '$lib/utils/avatarPresence';
 import type { Conversation } from '$lib/types';
 import {
   channelCommunities,
@@ -63,7 +64,14 @@ function shareTargetAvatar(
   isDirect: boolean,
   logoOf: Map<string, string>
 ): ShareTargetAvatar | undefined {
-  if (isDirect) return contactId ? { kind: 'user', id: contactId } : undefined;
+  if (isDirect) {
+    if (!contactId) return undefined;
+    // The fact travels with the id: the native side drops a remembered 404 for a user known to have
+    // a photo. Read from what the session already holds - a departure publish never waits.
+    return knownAvatarPresence(contactId) === true
+      ? { kind: 'user', id: contactId, hasPhoto: true }
+      : { kind: 'user', id: contactId };
+  }
   if (isChannelConversationId(c.id)) {
     const logo = logoOf.get(c.id);
     return logo ? { kind: 'media', id: logo } : undefined;
