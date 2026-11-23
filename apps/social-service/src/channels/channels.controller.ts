@@ -129,8 +129,10 @@ export class ChannelsController {
    * The key-group version of several communities in one answer (`?ids=a,b,c`, at most
    * {@link COMMUNITY_BOOT_READS_MAX}): a digest of the key-group reference and the roster a roster
    * pass reads, so a device whose last converged pass started from the same digest skips both reads
-   * (`ChannelService.listKeyGroupVersions`). A client older than this route never asks it; a client
-   * newer than the server meets a 404 and runs every pass, as before.
+   * (`ChannelService.listKeyGroupVersions`). Each item also carries `salons`, the same digest for
+   * every private salon of the community this user reads. A client older than this route never asks
+   * it, one older than `salons` ignores it; a client newer than the server meets a 404 (or no
+   * `salons`) and runs those passes, as before.
    */
   @UseGuards(NginxAuthGuard)
   @Get('workspaces/key-group-versions')

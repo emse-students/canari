@@ -81,6 +81,7 @@ const releaseBootReads = vi.fn();
 const startCommunityBootReads = vi.fn(() => ({
   listChannels: (id: string) => listChannels(id),
   keyGroupVersion: async (_id: string): Promise<unknown> => null,
+  salonKeyGroupVersion: async (_id: string): Promise<unknown> => null,
   release: releaseBootReads,
 }));
 const createWorkspace = vi.fn();
@@ -120,13 +121,14 @@ vi.mock('$lib/utils/graine/admissionIssue', () => ({
 }));
 
 const ensureCommunityDistributionGroup = vi.fn().mockResolvedValue(true);
+// The one entrance a private salon is entered through, at all three moments. Its own contract -
+// that declining is as loud as entering, that an unchanged version skips - is driven in
+// `distributionGroup.test.ts`; here it only has to succeed so the walk around it keeps going.
+const enterPrivateSalonGroup = vi.fn().mockResolvedValue(true);
 vi.mock('$lib/utils/graine/distributionGroup', () => ({
   ensureCommunityDistributionGroup: (...args: unknown[]) =>
     ensureCommunityDistributionGroup(...args),
-  // The one entrance a private salon is entered through, at all three moments. Its own contract -
-  // that declining is as loud as entering - is driven in `distributionGroup.test.ts`; here it only
-  // has to succeed so the walk around it keeps going.
-  enterPrivateSalonGroup: vi.fn().mockResolvedValue(true),
+  enterPrivateSalonGroup: (...args: unknown[]) => enterPrivateSalonGroup(...args),
 }));
 
 /**
@@ -354,6 +356,7 @@ describe('useChannelWorkspaces - loadChannelWorkspacesFromBackend', () => {
       // The batch is still on the wire: no listing has been handed out yet.
       listChannels: () => new Promise<ChannelDto[]>((resolve) => answerListing.push(resolve)),
       keyGroupVersion: async () => null,
+      salonKeyGroupVersion: async () => null,
       release: releaseBootReads,
     }));
     ensureCommunityDistributionGroup.mockClear();
@@ -2360,6 +2363,10 @@ describe('useChannelWorkspaces - the key-group version a load hands each pass', 
   // community removed live - must be asked AFTER the version arrived, not before it was asked.
   const version = { version: 'v-ws1', groupId: 'g-ws1', activeEpoch: 3, baseEpoch: 3 };
   let keyGroupVersion: ReturnType<typeof vi.fn<(id: string) => Promise<unknown>>>;
+  const salonVersion = { version: 'v-ch1', groupId: 'g-ch1', activeEpoch: 2, baseEpoch: 2 };
+  const salonKeyGroupVersion = vi.fn(async (id: string): Promise<unknown> =>
+    id === 'ch1' ? salonVersion : null
+  );
   let answerVersion: (v: unknown) => void = () => {};
 
   beforeEach(() => {
@@ -2374,6 +2381,7 @@ describe('useChannelWorkspaces - the key-group version a load hands each pass', 
     startCommunityBootReads.mockImplementationOnce(() => ({
       listChannels: (id: string) => listChannels(id),
       keyGroupVersion,
+      salonKeyGroupVersion,
       release: releaseBootReads,
     }));
     setMlsReady(true);
@@ -2418,5 +2426,24 @@ describe('useChannelWorkspaces - the key-group version a load hands each pass', 
     await loading.catch(() => {});
 
     expect(ensureCommunityDistributionGroup).not.toHaveBeenCalled();
+  });
+
+  // The 1.8.0-alpha.1 reading: the salons' two reads were what a resume still paid once the
+  // communities skipped. The walk hands each private salon its own version from the same answer.
+  it("hands each private salon it enters that salon's version, and asks none for a salon it may not read", async () => {
+    listChannels.mockResolvedValue([
+      { ...makeChannelDto('ch1', 'salon', 'private'), viewerHasAccess: true } as ChannelDto,
+      { ...makeChannelDto('ch2', 'seen', 'private'), viewerHasAccess: false } as ChannelDto,
+    ]);
+    const { loading } = await loadUntilTheVersionIsAsked();
+    answerVersion(version);
+    await loading;
+
+    expect(salonKeyGroupVersion).toHaveBeenCalledWith('ch1');
+    expect(salonKeyGroupVersion).not.toHaveBeenCalledWith('ch2');
+    const entered = enterPrivateSalonGroup.mock.calls.find((c) => c[2] === 'ch1');
+    expect(entered?.[3]).toMatchObject({ version: salonVersion });
+    const declined = enterPrivateSalonGroup.mock.calls.find((c) => c[2] === 'ch2');
+    expect(declined?.[3]).toMatchObject({ version: null });
   });
 });
