@@ -8,41 +8,33 @@ import {
 } from './keyboardTransition';
 
 /**
- * THE KEYBOARD COMES BACK WITH THE APP (iPhone 12, `1.8.0-alpha.4`, 2026-11-23): the app hidden with
- * the keyboard open, in the iOS shell, starts a keyboard transition, which the shell's did-show at the
- * return brings to rest - so WebKit's reveal at the return is put back like a rise's
- * (docs/wiki/frontend/modules/chat.md).
+ * THE KEYBOARD COMES BACK WITH THE APP (iPhone 12, `1.8.0-alpha.4`, 2026-11-23): the app returns at the
+ * WebView size it left with, so no resize starts a transition; the shell's will-show
+ * (`canariKeyboardShows`) does, and its did-show or did-hide (`canariKeyboardAtRest`) rests it - a fact
+ * at both ends (docs/wiki/frontend/modules/chat.md).
  */
-let os = 'ios';
 vi.mock('$lib/mls-client/mlsPlatform', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/mls-client/mlsPlatform')>()),
-  detectRuntimeDeviceOs: () => os,
+  detectRuntimeDeviceOs: () => 'ios',
 }));
 
-type Hooks = { canariKeyboardAtRest?: () => void; __TAURI_INTERNALS__?: unknown };
+type Hooks = {
+  canariKeyboardAtRest?: () => void;
+  canariKeyboardShows?: () => void;
+  __TAURI_INTERNALS__?: unknown;
+};
 const hooks = () => window as unknown as Hooks;
 
-describe('the app hidden with the keyboard open', () => {
+describe('a keyboard the shell says will show', () => {
   let teardown: () => void;
-  let visibility: DocumentVisibilityState = 'visible';
 
   const resizeTo = (h: number) => {
     vi.stubGlobal('innerHeight', h);
     (window.visualViewport as unknown as { height: number }).height = h;
     window.dispatchEvent(new Event('resize'));
   };
-  const setVisibility = (state: DocumentVisibilityState) => {
-    visibility = state;
-    document.dispatchEvent(new Event('visibilitychange'));
-  };
 
   beforeEach(() => {
-    os = 'ios';
-    visibility = 'visible';
-    Object.defineProperty(document, 'visibilityState', {
-      configurable: true,
-      get: () => visibility,
-    });
     hooks().__TAURI_INTERNALS__ = {};
     vi.stubGlobal('innerHeight', 844);
     vi.stubGlobal(
@@ -57,46 +49,55 @@ describe('the app hidden with the keyboard open', () => {
   afterEach(() => {
     teardown();
     delete hooks().__TAURI_INTERNALS__;
-    Reflect.deleteProperty(document, 'visibilityState');
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
-  it('starts a transition at the hidden edge, which the shell rests at the return', () => {
-    resizeTo(543); // the keyboard is up
+  it('starts a transition at the same size, which the did-show rests', () => {
+    resizeTo(543); // the keyboard is up, and the app leaves and returns at this size
     hooks().canariKeyboardAtRest?.();
-    expect(keyboardTransitionMoving()).toBe(false);
     const before = keyboardTransitionCount();
 
-    setVisibility('hidden');
+    hooks().canariKeyboardShows?.();
+    resizeTo(543); // nothing changes for the page's own reading
     expect(keyboardTransitionCount()).toBe(before + 1);
     expect(keyboardTransitionMoving()).toBe(true);
 
-    // The return: the WebView comes back at the size it left with, so no resize starts anything.
-    setVisibility('visible');
-    resizeTo(543);
-    expect(keyboardTransitionCount()).toBe(before + 1);
-    expect(keyboardTransitionMoving()).toBe(true);
-
-    // The shell's did-show at the return, after WebKit's reveal.
     hooks().canariKeyboardAtRest?.();
     expect(keyboardTransitionMoving()).toBe(false);
   });
 
-  it('starts nothing when the keyboard is closed', () => {
-    const before = keyboardTransitionCount();
-    setVisibility('hidden');
-    expect(keyboardTransitionCount()).toBe(before);
+  it('a show that is cancelled rests on its did-hide: nothing is left moving', () => {
+    resizeTo(543);
+    hooks().canariKeyboardAtRest?.();
+    hooks().canariKeyboardShows?.();
+    resizeTo(844); // the field lost the keyboard instead
+    hooks().canariKeyboardAtRest?.(); // did-hide
     expect(keyboardTransitionMoving()).toBe(false);
   });
 
-  it('starts nothing outside the iOS shell, where no engine makes the move', () => {
-    os = 'android';
-    delete hooks().__TAURI_INTERNALS__;
-    resizeTo(543);
+  it('a rise counts once: the will-show and the resize are one transition', () => {
     const before = keyboardTransitionCount();
-    setVisibility('hidden');
-    expect(keyboardTransitionCount()).toBe(before);
+    hooks().canariKeyboardShows?.();
+    resizeTo(543);
+    expect(keyboardTransitionCount()).toBe(before + 1);
+    hooks().canariKeyboardAtRest?.();
     expect(keyboardTransitionMoving()).toBe(false);
+  });
+
+  it('a will-show while a transition is already moving belongs to it', () => {
+    resizeTo(543);
+    const moving = keyboardTransitionCount();
+    expect(keyboardTransitionMoving()).toBe(true);
+    hooks().canariKeyboardShows?.();
+    expect(keyboardTransitionCount()).toBe(moving);
+    hooks().canariKeyboardAtRest?.();
+    expect(keyboardTransitionMoving()).toBe(false);
+  });
+
+  it('the hook is withdrawn at teardown', () => {
+    teardown();
+    expect(hooks().canariKeyboardShows).toBeUndefined();
+    teardown = () => {};
   });
 });

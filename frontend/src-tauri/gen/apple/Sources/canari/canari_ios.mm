@@ -385,6 +385,22 @@ static void CanariTellPageKeyboardAtRest(void) {
   });
 }
 
+/// Tells the page a keyboard is about to show (`window.canariKeyboardShows`, `keyboardTransition.ts`): the
+/// START of a keyboard transition the page may not see in its own viewport. The case that needs it: an
+/// app returning with the keyboard up (iPhone 12, `1.8.0-alpha.4`, 4 returns of 10 above the thread's
+/// end) comes back at the WebView size it left with, so no resize reaches the page, while WebKit's
+/// `_keyboardDidShow:` still reveals the focused field and scrolls the thread pane. UIKit pairs every
+/// will-show with a did-show or, when the show is cancelled, a did-hide, and both rest the transition
+/// (`CanariTellPageKeyboardAtRest`): it starts on a fact and ends on one, never on a clock. Sent at once,
+/// with no proof, so it reaches the page before the reveal's scroll, which comes after did-show.
+static void CanariTellPageKeyboardShows(void) {
+  WKWebView *webView = CanariFindWebView();
+  if (webView == nil) {
+    return;
+  }
+  [webView evaluateJavaScript:@"window.canariKeyboardShows?.()" completionHandler:nil];
+}
+
 /// Registers the observers that end a keyboard transition, ONCE and only once the WKWebView exists:
 /// WebKit registered its own keyboard observers when it created the view, so these are delivered after
 /// them (see `CanariTellPageKeyboardAtRest`). Called from the first keyboard change, whose did-show is
@@ -393,6 +409,12 @@ static void CanariObserveKeyboardRest(void) {
   static dispatch_once_t once;
   dispatch_once(&once, ^{
     NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+    [nc addObserverForName:UIKeyboardWillShowNotification
+                    object:nil
+                     queue:nil
+                usingBlock:^(__unused NSNotification *note) {
+                  CanariTellPageKeyboardShows();
+                }];
     [nc addObserverForName:UIKeyboardDidShowNotification
                     object:nil
                      queue:nil

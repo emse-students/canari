@@ -1816,7 +1816,12 @@
   $effect(() => {
     const el = chatContainer;
     if (!el) return;
-    const report = (edge: string) => {
+    // The transition is the one AT the edge, captured there: a line read a frame later must not claim
+    // the state of a later edge (a start printed after its own rest).
+    const report = (
+      edge: string,
+      at = { transition: keyboardTransitionCount(), moving: keyboardTransitionMoving() }
+    ) => {
       const c = conversation;
       if (!c) return;
       const keyboard = getKeyboardViewport();
@@ -1825,32 +1830,40 @@
         paneGeometryLine(c.id, edge, el, isNearBottom, {
           open: keyboard.isOpen,
           height: keyboard.keyboardHeight,
-          transition: keyboardTransitionCount(),
-          moving: keyboardTransitionMoving(),
+          transition: at.transition,
+          moving: at.moving,
         })
       );
     };
-    const onVisibility = () => untrack(() => report(`page ${document.visibilityState}`));
-    document.addEventListener('visibilitychange', onVisibility);
-    let startFrame: number | null = null;
+    // A keyboard edge is heard inside the keyboard's own update, before its variables are written: each
+    // is read in the frame that lays them out, which also keeps a layout read out of the announcement's
+    // task (the Android ride's first frame waits on it). Edges queue in the order they happened, so a
+    // start and a rest heard in one task print in that order, both from the laid-out frame.
+    const pending: { label: string; transition: number; moving: boolean }[] = [];
+    let edgeFrame: number | null = null;
+    const flushEdges = () => {
+      if (edgeFrame !== null) cancelAnimationFrame(edgeFrame);
+      edgeFrame = null;
+      for (const edge of pending.splice(0)) untrack(() => report(edge.label, edge));
+    };
     const offEdge = onKeyboardTransitionEdge((edge, transition) => {
-      if (edge === 'at rest') {
-        untrack(() => report(`keyboard transition #${transition} at rest`));
-        return;
-      }
-      // A start is heard inside the keyboard's own update, before its variables are written: the
-      // pane is read in the frame that lays them out, which also keeps a layout read out of the
-      // announcement's task (the Android ride's first frame waits on it).
-      if (startFrame !== null) cancelAnimationFrame(startFrame);
-      startFrame = requestAnimationFrame(() => {
-        startFrame = null;
-        untrack(() => report(`keyboard transition #${transition} starts (its first frame)`));
+      pending.push({
+        label: `keyboard transition #${transition} ${edge} (its frame)`,
+        transition,
+        moving: edge === 'starts',
       });
+      if (edgeFrame === null) edgeFrame = requestAnimationFrame(flushEdges);
     });
+    // A hidden page runs no frame: the visibility edge is read at once, after any edge still queued.
+    const onVisibility = () => {
+      flushEdges();
+      untrack(() => report(`page ${document.visibilityState}`));
+    };
+    document.addEventListener('visibilitychange', onVisibility);
     return () => {
       document.removeEventListener('visibilitychange', onVisibility);
       offEdge();
-      if (startFrame !== null) cancelAnimationFrame(startFrame);
+      if (edgeFrame !== null) cancelAnimationFrame(edgeFrame);
     };
   });
 

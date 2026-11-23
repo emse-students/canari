@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  keyboardReturnsWithTheApp,
   keyboardTransitionCount,
   keyboardTransitionMoving,
   noteKeyboardAtRest,
@@ -9,25 +8,14 @@ import {
 } from './keyboardTransition';
 import { Log } from '$lib/utils/Log';
 
-describe('keyboardReturnsWithTheApp', () => {
-  it.each([
-    [true, true, true],
-    [true, false, false],
-    [false, true, false],
-    [false, false, false],
-  ])('iOS shell %s, keyboard open %s -> %s', (iosShell, keyboardOpen, expected) => {
-    expect(keyboardReturnsWithTheApp({ iosShell, keyboardOpen })).toBe(expected);
-  });
-});
-
 describe('the edges of a keyboard transition', () => {
   it('are heard once per start and once per rest, never for a change that belongs to one', () => {
     noteKeyboardAtRest('test start');
     const heard: string[] = [];
     const off = onKeyboardTransitionEdge((edge, n) => heard.push(`#${n} ${edge}`));
     const first = keyboardTransitionCount() + 1;
-    noteKeyboardTransition('the app leaves with the keyboard open');
-    // The keyboard re-presented at the return belongs to the transition still moving.
+    noteKeyboardTransition('the shell: a keyboard will show');
+    // The resize of the same rise belongs to the transition still moving.
     noteKeyboardTransition('keyboard open 279px -> open 279px');
     expect(keyboardTransitionMoving()).toBe(true);
     noteKeyboardAtRest('the shell: did show');

@@ -34,6 +34,18 @@ describe('the iOS keyboard hand-off (canari_ios.mm)', () => {
    * WebView exists, synchronously (`queue:nil`), so they are delivered after WebKit's own; the page is
    * told only after the screen-update proof and the superseded check.
    */
+  it('tells the page at once that a keyboard will show, from the same once-registered observers', () => {
+    expect(viewport).toContain('.canariKeyboardShows = () =>');
+    const observers = body('static void CanariObserveKeyboardRest(');
+    expect(observers).toMatch(
+      /addObserverForName:UIKeyboardWillShowNotification\s+object:nil\s+queue:nil[\s\S]{0,120}CanariTellPageKeyboardShows\(\);/
+    );
+    // No proof before it: it must reach the page before the did-show reveal's scroll.
+    const shows = body('static void CanariTellPageKeyboardShows(');
+    expect(shows).toContain('window.canariKeyboardShows?.()');
+    expect(shows).not.toContain('CanariAfterScreenUpdates');
+  });
+
   it('tells the page the keyboard is at rest on did-show / did-hide, after the proof', () => {
     expect(viewport).toContain('.canariKeyboardAtRest = () =>');
     const observers = body('static void CanariObserveKeyboardRest(');

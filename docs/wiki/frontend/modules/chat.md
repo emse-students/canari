@@ -6144,16 +6144,22 @@ the field is not already in view after the return's relayout, which is why it is
 The shell's did-show at the return still reaches the page (`canariKeyboardAtRest`), but it finds
 nothing moving to bring to rest.
 
-**The fix: the keyboard's return is a transition, started where the page can still say so.**
-`keyboardReturnsWithTheApp` (`keyboardTransition.ts`): the page hidden (`visibilitychange`) with the
-keyboard open, in the iOS shell, starts a keyboard transition. Hidden comes before anything of the
-return, so the transition is moving when the reveal's scroll is measured, and it rests on the same fact
-as a rise - the shell's did-show at the return (or did-hide, if the field did not keep the keyboard),
-after WebKit's own observer and the screen-update proof. The put-back rule is unchanged: one put-back
-per transition, spent; a reader's touch before the reveal takes the move as theirs; no clock anywhere.
-A keyboard change the page does see at the return (a new height) belongs to that same transition.
-Outside the iOS shell a transition rests in the update that starts it and no engine makes the move, so
-nothing starts there.
+**The fix: the keyboard's return is a transition, started and ended by the shell's facts.** The iOS
+shell tells the page `window.canariKeyboardShows()` on `UIKeyboardWillShow` (`CanariTellPageKeyboardShows`,
+registered with the rest observers once the WebView exists, sent at once with no proof so it reaches the
+page before the did-show reveal's scroll), and the page starts a keyboard transition - or joins the one a
+resize already started, as on every ordinary rise. UIKit pairs every will-show with a did-show or, when
+the show is cancelled, a did-hide, and both already rest the transition (`canariKeyboardAtRest`): so the
+transition starts on a fact and ends on one, and none is left moving. The put-back rule is unchanged:
+one put-back per transition, spent; a reader's touch before the reveal takes the move as theirs; no
+clock anywhere.
+
+**Refused in review (2026-11-23): starting it when the page is hidden with the keyboard open.** That
+transition would end only on a did-show or did-hide the shell might never send for this return (the
+field's first responder lost while away, a native modal, a did-hide delivered before the re-show), and a
+transition left moving puts back a later VoiceOver or find-in-page move and swallows the next real
+keyboard change, whose own move (#3984) would then not be put back. The will-show is the fact that the
+did-show it pairs with will follow.
 
 **Not done, and why: "only a user gesture lowers the flag".** It would put back every move with no
 finger on the pane, and a VoiceOver three-finger scroll or a find-in-page jump has no finger either -
@@ -6161,20 +6167,21 @@ the reader could never leave the end with assistive technology. The flag stays d
 move lowers only when nothing explains it, and the return is now explained.
 
 **The geometry at every edge** (`paneGeometryLine`, `[CHAT_VIEW]`, INFO, one line per edge, never per
-frame): the page hidden or visible, a keyboard transition starting (read in the frame that lays out
-its variables, outside the announcement's task) and coming to rest. Each carries `scrollTop`,
+frame): the page hidden or visible (read at once: a hidden page runs no frame), a keyboard transition
+starting and coming to rest (each read in the frame after the edge, outside the keyboard's own update,
+in the order the edges came, with the transition's state as it stood at its edge). Each carries `scrollTop`,
 `scrollHeight`, `clientHeight`, `fromEnd`, `pinned` (measured), `isNearBottom` (the flag), the
 keyboard and the transition number with `moving|at rest`. A failing return now names its cause: the
 flag down is a move read as the reader's (with its `left the bottom` line at INFO); the flag up with
 `pinned=false` is a pane the page did not put back; a reach that changed between two lines is the
 thread's measure, not its place.
 
-Tests: `keyboardViewport.appReturn.test.ts` (hidden with the keyboard open in the iOS shell starts a
-transition, the return at the same size starts none, the shell's rest ends it; nothing with the keyboard
-closed or outside the shell), `keyboardTransition.test.ts` (the decision, one edge per start and per
-rest, a throwing listener isolated), `ChatArea.scrollAnchor.svelte.test.ts` (the reveal during that
-transition put back, the two geometry lines, the assistive fall now at INFO), `threadAnchor.test.ts`
-(the line). **Owed: the iPhone reading of the same gesture, ten cycles.**
+Tests: `keyboardViewport.appReturn.test.ts` (a will-show at the same size starts a transition the did-show
+rests; a cancelled show rests on its did-hide; a rise is one transition; a will-show during a moving
+transition joins it), `iosKeyboardRiseHandoff.test.ts` (the will-show observer, no proof before it),
+`keyboardTransition.test.ts` (one edge per start and per rest, a throwing listener isolated),
+`ChatArea.scrollAnchor.svelte.test.ts` (the reveal put back, the geometry lines read in their frame and
+in order, the assistive fall at INFO), `threadAnchor.test.ts` (the line). **Owed: the iPhone reading of the same gesture, ten cycles.**
 
 ### A short thread sits at the bottom, and asks for its past at entry (2026-11-14)
 

@@ -24,11 +24,7 @@
 
 import { detectRuntimeDeviceOs } from '$lib/mls-client/mlsPlatform';
 import { orientationOf, rememberKeyboardHeight } from './keyboardHeightMemory';
-import {
-  keyboardReturnsWithTheApp,
-  noteKeyboardAtRest,
-  noteKeyboardTransition,
-} from './keyboardTransition';
+import { noteKeyboardAtRest, noteKeyboardTransition } from './keyboardTransition';
 import { isTauriRuntime } from '$lib/utils/tauriRuntime';
 import { cssColorToHex, groundOf } from './imeGround';
 import { parseImeTarget, resolveImeTarget, type ImeAnimation, type ImeTarget } from './imeTarget';
@@ -1249,19 +1245,13 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
     noteKeyboardAtRest('the shell: the keyboard did show, hide or change height, on screen');
 
   /**
-   * The page is hidden with the keyboard open, in the iOS shell: the keyboard comes back with the app,
-   * and WebKit's reveal at its return is a keyboard move like a rise's (`keyboardReturnsWithTheApp`).
-   * The transition starts here, before anything of the return, and rests on the shell's did-show or
-   * did-hide at the return.
+   * `window.canariKeyboardShows`: the iOS shell's word that a keyboard is about to show
+   * (`UIKeyboardWillShow`), which UIKit pairs with a did-show or did-hide that rests it. It starts a
+   * transition the viewport may not show - an app returning with the keyboard up comes back at the size
+   * it left with - and merges into the one a resize started otherwise (`keyboardTransition.ts`).
    */
-  const handleVisibilityChange = () => {
-    if (document.visibilityState !== 'hidden') return;
-    const iosShell = isTauriRuntime() && detectRuntimeDeviceOs() === 'ios';
-    if (!keyboardReturnsWithTheApp({ iosShell, keyboardOpen: snapshot.isOpen })) return;
-    noteKeyboardTransition(
-      `the app leaves with the keyboard open ${snapshot.keyboardHeight}px: it comes back with the app`
-    );
-  };
+  (window as unknown as { canariKeyboardShows?: () => void }).canariKeyboardShows = () =>
+    noteKeyboardTransition('the shell: a keyboard will show');
 
   // A press during a ride (a picker opening, a tap on a row) ends it: while a piece rides it is the
   // containing block of its fixed descendants (`keyboardRide.ts`).
@@ -1274,7 +1264,6 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
   window.addEventListener('pointerdown', handlePointerDown, true);
   window.addEventListener('focusin', handleFocusIn, true);
   window.addEventListener('transitionend', handleTransitionEnd, true);
-  document.addEventListener('visibilitychange', handleVisibilityChange);
   window.visualViewport?.addEventListener('resize', onViewportEvent);
   window.visualViewport?.addEventListener('scroll', updateOffsetOnly);
 
@@ -1283,12 +1272,12 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
     window.removeEventListener('pointerdown', handlePointerDown, true);
     window.removeEventListener('focusin', handleFocusIn, true);
     window.removeEventListener('transitionend', handleTransitionEnd, true);
-    document.removeEventListener('visibilitychange', handleVisibilityChange);
     window.visualViewport?.removeEventListener('resize', onViewportEvent);
     window.visualViewport?.removeEventListener('scroll', updateOffsetOnly);
     delete (window as unknown as { canariImeTarget?: unknown }).canariImeTarget;
     delete (window as unknown as { canariKeyboardFall?: unknown }).canariKeyboardFall;
     delete (window as unknown as { canariKeyboardAtRest?: unknown }).canariKeyboardAtRest;
+    delete (window as unknown as { canariKeyboardShows?: unknown }).canariKeyboardShows;
     if (overlayDeclared) {
       (
         navigator as unknown as { virtualKeyboard: { overlaysContent: boolean } }
