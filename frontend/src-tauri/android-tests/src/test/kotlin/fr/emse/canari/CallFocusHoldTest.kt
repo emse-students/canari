@@ -54,6 +54,28 @@ class CallFocusHoldTest {
         assertFalse(hold.held)
     }
 
+    /**
+     * THE DELAYED GAIN RELEASES BY ITSELF (review of #4012): the refused request is queued as a
+     * delayed one, and the GAIN Telecom's abandon delivers releases the hold with no tap.
+     */
+    @Test
+    fun aFocusRefusedAtTheStartIsReleasedByTheDelayedGain() {
+        val hold = CallFocusHold()
+        assertEquals(FocusStep.HOLD, hold.onOpen(granted = false))
+        assertEquals(FocusStep.RELEASE, hold.on(FocusChange.GAIN))
+        assertFalse(hold.held)
+        assertFalse(hold.wantsAsk)
+    }
+
+    @Test
+    fun anOpenAnswerReachingACallAlreadyHeldIsNoStep() {
+        val hold = CallFocusHold()
+        hold.on(FocusChange.LOSS)
+        assertEquals(FocusStep.NONE, hold.onOpen(granted = false))
+        assertEquals(FocusStep.NONE, hold.onOpen(granted = true))
+        assertTrue(hold.held)
+    }
+
     @Test
     fun aFocusGrantedAtTheStartChangesNothing() {
         val hold = CallFocusHold()

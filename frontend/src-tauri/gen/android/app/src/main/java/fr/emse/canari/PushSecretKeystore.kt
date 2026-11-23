@@ -22,7 +22,8 @@ object PushSecretKeystore {
 
     /**
      * The durable mark "the sign-out erased the secret on purpose, and none was stored since",
-     * written by [markErasedBySignOut] once [clear] succeeded and removed by the next [store]. It
+     * written by [markErasedBySignOut] once [clear] succeeded and removed at the start of the next
+     * [store], before its ciphertext is written. It
      * answers ONE question, the one `checkKeystoreHealth` asks of an absent secret ([erasedBySignOut]).
      */
     private const val ERASED_BY_SIGN_OUT_FILE = "push_secret_erased_by_sign_out"
@@ -49,6 +50,16 @@ object PushSecretKeystore {
             Log.w(TAG, "store: refused - storage still locked (pre-unlock process)")
             return
         }
+        // A secret is about to be held again: the sign-out's erasure mark goes FIRST, so a crash
+        // between the two steps leaves a false ERROR at the next check, never a hidden loss.
+        val mark = File(MlsContextLoader.tauriDataDir(context), ERASED_BY_SIGN_OUT_FILE)
+        if (mark.exists()) {
+            if (mark.delete()) {
+                Log.i(TAG, "store: the sign-out's erasure mark is removed before the secret is written")
+            } else {
+                Log.e(TAG, "store: $ERASED_BY_SIGN_OUT_FILE not removed - a later loss would not be accused")
+            }
+        }
         val key = getOrCreateKey(context)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key)
@@ -58,15 +69,16 @@ object PushSecretKeystore {
             .putString(PREFS_KEY_ENC, Base64.encodeToString(encrypted, Base64.NO_WRAP))
             .putString(PREFS_KEY_IV, Base64.encodeToString(iv, Base64.NO_WRAP))
             .apply()
-        // A secret is held again: from now on its absence is a loss, never the sign-out's erasure.
-        val mark = File(MlsContextLoader.tauriDataDir(context), ERASED_BY_SIGN_OUT_FILE)
-        if (mark.exists()) {
-            if (mark.delete()) {
-                Log.i(TAG, "store: secret stored - the sign-out's erasure mark is removed")
-            } else {
-                Log.e(TAG, "store: $ERASED_BY_SIGN_OUT_FILE not removed - a later loss would not be accused")
-            }
-        }
+    }
+
+    /**
+     * Whether a ciphertext is stored at all, decryptable or not. Separates "nothing stored" (what a
+     * sign-out leaves) from "stored but no longer decrypts" (a lost Keystore key) for
+     * [fr.emse.canari.push.KeystoreHealth]. The caller checks the storage is readable first.
+     */
+    fun ciphertextPresent(context: Context): Boolean {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.contains(PREFS_KEY_ENC) || prefs.contains(PREFS_KEY_IV)
     }
 
     /**

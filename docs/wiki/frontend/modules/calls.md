@@ -3851,14 +3851,22 @@ playing. What changed:
   coming back on screen (the service's screen listener). A grant is `focus`/`gained`; a refusal (a
   phone call still holds the focus) is `focus`/`refused`, the hold stays and the member reads
   "Une autre application garde le son". A call not held asks nothing.
-- **A focus REFUSED at the call's start holds like a permanent `LOSS`** (2026-11-23). A cellular call
-  already in progress keeps the focus, so no `LOSS` ever arrives and the microphone used to run
-  under the phone call. `CallAudio.open` now hands the request's answer to `CallFocusHold.onOpen`:
-  a refusal holds and emits `focus`/`lost` (reason `refused at the call's start`) before any GAIN,
-  and the same ask paths above release it once the platform grants the focus
-  (`CallFocusHoldTest.aFocusRefusedAtTheStartHoldsUntilAGrantedAsk`, the page's half in
-  `androidCallService.test.ts`). **Owed on the Mi 9T**: start a Canari call during a cellular call -
-  the peer sees the microphone cut; after the cellular call ends, a mute tap brings it back.
+- **A focus REFUSED at the call's start holds the call, and the focus's return releases it**
+  (2026-11-23, review of #4012). A cellular call already in progress keeps the focus, so no `LOSS`
+  ever arrives and the microphone used to run under the phone call. `CallAudio.open` hands the
+  request's answer to `CallFocusHold.onOpen`: anything but `GRANTED` holds and emits `focus`/`lost`
+  (reason `refused at the call's start`) before any GAIN, with ONE log line per outcome. The request
+  accepts DELAYED gain (`setAcceptsDelayedFocusGain(true)`): while Telecom holds the voice-call
+  focus AOSP neither grants nor queues an ordinary request, so without it no GAIN would ever come
+  and only a tap could release the hold (and `onResume` can run before Telecom abandons). The
+  delayed answer `AUDIOFOCUS_REQUEST_DELAYED` counts as not granted, and the GAIN Telecom's abandon
+  delivers - every `GAIN*` code maps to `GAIN` in `focusListener` - releases the hold with no tap.
+  The ask paths above still release it too. Tests: `CallFocusHoldTest`
+  (`aFocusRefusedAtTheStartIsReleasedByTheDelayedGain`, the ask path, the held -> no-step branch)
+  and `androidCallService.test.ts` (the page receives `lost` before any GAIN). **Owed on the Mi
+  9T**: (1) start a Canari call during a cellular call - the peer sees the microphone cut; (2) the
+  cellular call ends while Canari stays on screen, with no tap - the microphone comes back by
+  itself.
 - **EVERY mute control shows the call MUTED while held** - the in-app button, the minimised bar, the
   ongoing notification and the OS media controls all read `micShownMuted` (`isMuted ||
   audioFocusHeld`, `useCallModel`), and all tap through ONE function, `CallService.muteButtonTap`:

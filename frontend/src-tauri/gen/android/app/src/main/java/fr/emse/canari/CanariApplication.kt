@@ -70,8 +70,7 @@ class CanariApplication : Application() {
      * safe - which is what [registerUnlockReceiver] does.
      */
     private fun initStorageBackedState() {
-        processPendingPushSecret()
-        checkKeystoreHealth()
+        checkKeystoreHealth(adoptionFailed = processPendingPushSecret())
         recordInstallerPackage()
         logWebViewVersion()
         // Before any push can be handled by this process: the key that seals the native caches,
@@ -182,12 +181,14 @@ class CanariApplication : Application() {
 
     /**
      * Verifies that the Android Keystore can read the push secret (key not lost).
-     * Writes `keystore_ok.flag` if OK, deletes it otherwise. A secret the sign-out erased on purpose
-     * ([PushSecretKeystore.erasedBySignOut]) is not a loss and is not accused ([KeystoreHealth]).
+     * Writes `keystore_ok.flag` if OK, deletes it otherwise. The verdict is [KeystoreHealth]'s: a
+     * secret the sign-out erased on purpose ([PushSecretKeystore.erasedBySignOut]) is not accused,
+     * a ciphertext that no longer decrypts always is, and so is a pending secret that
+     * [processPendingPushSecret] failed to store ([adoptionFailed], its answer in the same pass).
      * The Tauri command `check_push_secret_health` reads this flag to signal the UI.
      * Silent call: an error here must not block startup.
      */
-    internal fun checkKeystoreHealth() {
+    internal fun checkKeystoreHealth(adoptionFailed: Boolean) {
         try {
             if (!DirectBoot.storageReadable(this)) {
                 // `push_context.json` merely LOOKS absent while locked, and the early return below
@@ -201,9 +202,13 @@ class CanariApplication : Application() {
             val contextFile = File(dataDir, "push_context.json")
             if (!contextFile.exists()) return // not authenticated yet, no secret expected
             val markerFile = File(dataDir, "keystore_ok.flag")
-            val secret = PushSecretKeystore.retrieve(this)
-            val erasedBySignOut = PushSecretKeystore.erasedBySignOut(this)
-            when (KeystoreHealth.of(secret != null, erasedBySignOut)) {
+            val verdict = KeystoreHealth.of(
+                ciphertextPresent = PushSecretKeystore.ciphertextPresent(this),
+                secretReadable = PushSecretKeystore.retrieve(this) != null,
+                adoptionFailed = adoptionFailed,
+                erasedBySignOut = PushSecretKeystore.erasedBySignOut(this),
+            )
+            when (verdict) {
                 KeystoreHealth.OPERATIONAL -> {
                     markerFile.writeText("ok")
                     Log.d(TAG, "checkKeystoreHealth: Keystore operational")
@@ -212,6 +217,10 @@ class CanariApplication : Application() {
                     // The sign-out erased the secret on purpose and none was stored since: no loss.
                     markerFile.delete()
                     Log.i(TAG, "checkKeystoreHealth: no push secret - erased by the sign-out, none stored since")
+                }
+                KeystoreHealth.ADOPTION_FAILED -> {
+                    markerFile.delete()
+                    Log.e(TAG, "checkKeystoreHealth: the pending push secret could not be stored - background push disabled")
                 }
                 KeystoreHealth.LOST -> {
                     markerFile.delete()
@@ -223,11 +232,17 @@ class CanariApplication : Application() {
         }
     }
 
-    internal fun processPendingPushSecret() {
-        synchronized(PushSecretKeystore.handoffLock) {
+    /**
+     * Moves `pending_push_secret.txt` into the Keystore. Returns whether the move FAILED - a
+     * pending secret was there and could not be stored - which [checkKeystoreHealth] takes in the
+     * same pass: the fact is carried from here, where it is known, never re-derived from the file
+     * afterwards (a registration may write a new one in between).
+     */
+    internal fun processPendingPushSecret(): Boolean {
+        return synchronized(PushSecretKeystore.handoffLock) {
             try {
                 val file = File(MlsContextLoader.tauriDataDir(this), "pending_push_secret.txt")
-                if (!file.exists()) return@synchronized
+                if (!file.exists()) return@synchronized false
                 // Read raw bytes first so the overwrite covers the exact file size, including
                 // any trailing newline. secret.length is a char count and diverges from byte
                 // count for multi-byte UTF-8 sequences, leaving secret bytes unzeroed.
@@ -239,8 +254,10 @@ class CanariApplication : Application() {
                 }
                 file.writeBytes(ByteArray(rawBytes.size) { 0 })
                 file.delete()
+                false
             } catch (e: Exception) {
                 Log.e(TAG, "processPendingPushSecret: push secret transfer failed: ${e.javaClass.simpleName}")
+                true
             }
         }
     }
