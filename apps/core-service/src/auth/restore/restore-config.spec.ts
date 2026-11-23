@@ -98,6 +98,16 @@ describe('restore configuration', () => {
     expect(readRestoreConfig('', 'https://dev.canari-emse.fr', HEX).available).toBe(false);
   });
 
+  it('names the variable that holds the malformed value', () => {
+    expect(() => readRestoreConfig(HEX, 'https://dev.canari-emse.fr', 'AB:CD')).toThrow(
+      /^ANDROID_UPLOAD_KEY_SHA256:/
+    );
+    expect(() => readRestoreConfig('AB:CD', 'https://dev.canari-emse.fr', HEX)).toThrow(
+      /^ANDROID_APP_LINK_SHA256:/
+    );
+    expect(() => apkKeyHashOrigin('ZZ', 'SOME_LABEL')).toThrow(/^SOME_LABEL:/);
+  });
+
   it('refuses a malformed upload key rather than ignoring it', () => {
     expect(() => readRestoreConfig(HEX, 'https://dev.canari-emse.fr', 'AB:CD')).toThrow(
       /not a SHA-256 fingerprint/

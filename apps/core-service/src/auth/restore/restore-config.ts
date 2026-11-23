@@ -29,12 +29,10 @@ const FINGERPRINT_HEX = /^[0-9A-F]{64}$/;
  * case - because both read the SAME secret. Throws on anything else: a malformed value is a
  * configuration error to see at boot, not an origin that silently never matches.
  */
-export function apkKeyHashOrigin(fingerprint: string): string {
+export function apkKeyHashOrigin(fingerprint: string, label = 'ANDROID_APP_LINK_SHA256'): string {
   const hex = fingerprint.trim().toUpperCase().replace(/:/g, '');
   if (!FINGERPRINT_HEX.test(hex)) {
-    throw new Error(
-      `ANDROID_APP_LINK_SHA256: "${fingerprint}" is not a SHA-256 fingerprint (32 hex bytes)`
-    );
+    throw new Error(`${label}: "${fingerprint}" is not a SHA-256 fingerprint (32 hex bytes)`);
   }
   const bytes = Buffer.from(hex, 'hex');
   return `android:apk-key-hash:${bytes.toString('base64url')}`;
@@ -69,6 +67,9 @@ export function readRestoreConfig(
   if (!rpId) return { available: false, reason: 'FRONTEND_URL names no host' };
   // The upload key (dev only) widens the list but never makes an estate available on its own: the
   // Play key stays the one that must be named, so an empty `ANDROID_APP_LINK_SHA256` still fails closed.
-  const all = [...list, ...split(uploadKeyFingerprints)];
-  return { available: true, rpId, origins: [...new Set(all.map(apkKeyHashOrigin))] };
+  const origins = [
+    ...list.map((f) => apkKeyHashOrigin(f, 'ANDROID_APP_LINK_SHA256')),
+    ...split(uploadKeyFingerprints).map((f) => apkKeyHashOrigin(f, 'ANDROID_UPLOAD_KEY_SHA256')),
+  ];
+  return { available: true, rpId, origins: [...new Set(origins)] };
 }
