@@ -47,19 +47,13 @@ const OPENING_NOTIFICATION_TYPE: Readonly<Record<OpeningKind, NotificationType>>
 };
 
 /** One heads-up row, as `DUE_HEADS_UP_SQL` reads it. */
-interface DueHeadsUp {
+interface DueHeadsUp extends FormReminderFacts {
   id: string;
   kind: OpeningKind;
   targetId: string;
   userId: string;
   /** The form is published and its association not archived; false = gone for good, told nothing. */
   targetLive: boolean;
-  /** What the reminder names: the form's association (name, logo) and its title. */
-  associationId: string | null;
-  associationName: string | null;
-  associationLogoUrl: string | null;
-  associationLogoMediaId: string | null;
-  targetName: string | null;
 }
 
 /** What a form reminder names, from the row's statement: the ONE source of the push and the bell row. */
@@ -233,7 +227,9 @@ export class FormReminderScheduler {
    * The actor of a form reminder's bell row: the association that runs the form, with its logo (owner,
    * 2026-11-17), else the generic system actor for a personal form.
    */
-  private formReminderActor(r: FormReminderFacts) {
+  private formReminderActor(
+    r: Pick<FormReminderFacts, 'associationId' | 'associationName' | 'associationLogoUrl'>
+  ) {
     return {
       actorId: SYSTEM_ACTOR_ID,
       actorName: r.associationName || SYSTEM_ACTOR_NAME,

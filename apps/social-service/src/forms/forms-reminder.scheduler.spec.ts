@@ -259,8 +259,10 @@ describe('FormReminderScheduler.checkReminders - the push carries the facts of t
     const query = jest.fn(async (sql: string) =>
       sql === DUE_HEADS_UP_SQL ? (due.headsUp ?? []) : (due.openings ?? [])
     );
-    const notifyContent = jest.fn(async () => undefined);
-    const createNotification = jest.fn(async () => undefined);
+    const notifyContent = jest.fn(
+      async (_userId: string, _content: unknown, _data?: unknown) => {}
+    );
+    const createNotification = jest.fn(async (_row: Record<string, unknown>) => {});
     const scheduler = new FormReminderScheduler(
       { manager: { query }, update: jest.fn(async () => ({ affected: 1 })) } as never,
       { notifyContent } as never,
