@@ -1534,6 +1534,62 @@ it, and a pull records the serial of its flush (`listedAfterAck` on `DeliveryArr
 `BaseMlsService.singleFlightPull.test.ts` drives both through the real pull, scheduler and drain:
 two asks during a drain give exactly one second pull, after the drain's ack, and no repeat.
 
+### Adds to one conversation are NOT serialized, so an add renders onto the row as it is now (2026-11-23)
+
+Asked after the review of #3987: does anything serialize `addMessageToChatOnce` per conversation? **No.**
+The MLS drain applies one frame at a time (`MlsPerGroupScheduler.drain`, one borrower at a time under
+a commit's loan), so two FRAMES never interleave. But many writers call `addMessageToChat` outside the
+drain: a send and its placeholders (`useMessaging` send paths, `messaging.ts`), own visible notices
+(`visibleNotices.ts`, `removalNotice.ts`, `deviceNotices.svelte.ts`, `callSystemMessages.ts`), the
+outbox's own lines (`outbox.ts`), and the salon event handler (`channelEventHandler.ts`). An inbound
+add awaits the store (`getMessagesByIds`, then `settleWithPending`) between reading the conversation
+and rendering, and it used to render by spreading the copy it read at ENTRY: a message another writer
+showed in that gap - an own message just sent, a second arrival - was erased from memory along with its
+unread count (it stayed in the store, so it came back at the next load).
+
+The fix is the one the batch path and the preview upgrade already used: re-read after the last await
+and render onto the row as it stands. The effects after the write (the other tabs' seed, the
+notification's watermark) read the live row too. No lock and no timer: every writer that awaits
+re-reads, and the ones that do not await before rendering cannot hold a stale copy.
+
+**What the entry decided is decided again when the gap changed it (review of #3988).** Two facts read
+at entry can be false after the store read, and neither may be answered by the new-arrival path:
+
+- **the id is now shown** by another writer (a push preview, a redelivery). The add is not a new
+  arrival: the live path re-enters and its entry-time duplicate/upgrade branch answers - a preview
+  takes the body (`mergeMessageUpgrade`), a body or a tombstone is left - and none of the arrival's
+  effects run (no second count, tone or banner). The batch path does the same for its late-held ids:
+  a preview is reshown upgraded WITH what waited for the body (a deletion, an edit, reactions -
+  `resettled`, the same settlement the stored row gets; `messageReactions`, which the bubble reads
+  first, follows the row shown), the row is written as an UPGRADE (compare-and-set onto a stored
+  preview, `mergeShownUpgrades`, inserted only where none stands), and only the messages actually
+  added are counted and announced;
+- **the conversation left the map.** Storing its rows would resurrect a deleted conversation, so
+  both paths hand the messages to the orphan buffer, as the live path's entry does, with a WARN. The
+  writes that run BEFORE that check - the upgrade of a stored preview (`settleStoredBodies`), the
+  live upgrade whose conversation left during it, and a kept write retried by a checkpoint's hold -
+  all go through `writeBatchRows`, which asks the map ONCE, after the merge's await and before every
+  insert and `saveConversation`: the compare-and-set onto a row that stands still runs, nothing is
+  inserted, the rows are dropped with their frames at WARN, and the write reports success so the
+  hold it refused is released rather than retried for ever.
+
+The live path's re-entry cannot loop: both branches it lands in return, and nothing is awaited
+between the read that sent it back and the re-entry's own.
+
+An own act has the same shape: `handleEditMessage` awaits the control act's enqueue, then re-reads
+the conversation and writes under the key the edit STARTED on (never the selection of the moment), as
+`tombstoneLocalMessage` does.
+
+**INVARIANT: an add that awaits between reading the conversation and writing it back re-reads it
+after its last await, and takes the entry's decisions again if what they read has changed.**
+`useMessaging.interleavedAdds.svelte.test.ts` holds the store read of one arrival open while a second
+arrival, then an own send, lands: both are kept and counted. `useMessaging.shownDuringRead.svelte.test.ts`
+shows a preview of the same id, then removes the conversation, during the store read, on both paths:
+one message, counted once, upgraded on screen and on disk (with a pending deletion, edit or reaction),
+nothing announced; nothing stored into a removed conversation, a kept write retried after the removal
+included. `useMessaging.editRereads.svelte.test.ts` lands a message and moves the reader
+during an edit's send. Each fails on the entry-copy code.
+
 ## Outbox (outbound delivery)
 
 `utils/chat/outbox.ts` owns every outbound message. A send is persisted first and transmitted
@@ -3551,7 +3607,7 @@ the batch's own seam (`writeBatchRows`, via `writeOrKeep`) and keeps a failed wr
 UPGRADE writes of the live path** (review of #3851): the upgrade of a SHOWN push preview in
 `addMessageToChat` and the upgrade of a STORED one in `settleStoredBodies` caught, logged and went on,
 so the frame was acknowledged while the stored row was still the notification's caption. Both are
-`upgradeRows` of a `BatchRowWrite` now (a compare-and-set, `writeShownUpgrades`), kept on failure. **A
+`upgradeRows` of a `BatchRowWrite` now (a compare-and-set, `mergeShownUpgrades`), kept on failure. **A
 failed CONVERSATION-row write withholds too**: `writeBatchRows` ends with `saveConversation`, and a
 write is stored only once that landed, so a refused conversation row keeps its rows' frames on the
 server like a refused message row. **A reaction whose write onto its stored row
