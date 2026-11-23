@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ListOrdered, Trash2, UserCheck } from '@lucide/svelte';
+  import { ListOrdered, Trash2, TriangleAlert, UserCheck } from '@lucide/svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import { promoteFromWaitlist, type Submission } from '$lib/forms/api';
   import { formCodeMessage } from '$lib/forms/answerBounds';
@@ -21,6 +21,11 @@
     formId: string;
     /** The waiting answers, already in arrival order (`waitingInOrder`). */
     waiting: Submission[];
+    /**
+     * The first in line owes a payment the form no longer takes (`waitlistFrozen`): nobody is
+     * promoted until the manager reopens that payment mode or removes the answer.
+     */
+    frozen: boolean;
     /** The answer currently being deleted, so its control can say so. */
     deletingId: string | null;
     onDelete: (sub: Submission) => void;
@@ -28,7 +33,7 @@
     onReload: () => Promise<void>;
   }
 
-  let { formId, waiting, deletingId, onDelete, onReload }: Props = $props();
+  let { formId, waiting, frozen, deletingId, onDelete, onReload }: Props = $props();
 
   /** The answer being promoted, so its control can say so. */
   let promotingId = $state<string | null>(null);
@@ -72,6 +77,14 @@
     </h3>
   </div>
   <p class="text-text-muted text-xs">{m.form_waitlist_section_note()}</p>
+  {#if frozen}
+    <p
+      class="text-amber-warn-text flex items-start gap-2 text-xs font-semibold"
+      data-testid="form-waitlist-frozen"
+    >
+      <TriangleAlert size={14} class="mt-0.5 shrink-0" />{m.form_waitlist_frozen_note()}
+    </p>
+  {/if}
   <ol class="flex flex-col gap-1">
     {#each waiting as sub, index (sub.id)}
       <li class="flex items-center justify-between gap-3 py-1" data-testid="form-waitlist-row">

@@ -109,6 +109,10 @@
 "notif.form.waitlist_promoted.body" = "You are registered for the form. Open it to see your registration.";
 "notif.form.waitlist_promoted.title_named" = "%@: a spot opened up";
 "notif.form.waitlist_promoted.body_named" = "You are registered for \"%@\". Open the form to see your registration.";
+"notif.form.waitlist_promoted_payment_due.title" = "A spot is held for you";
+"notif.form.waitlist_promoted_payment_due.body" = "A spot opened up: pay for it within 30 minutes to keep it.";
+"notif.form.waitlist_promoted_payment_due.title_named" = "%@: a spot is held for you";
+"notif.form.waitlist_promoted_payment_due.body_named" = "A spot opened up on \"%@\": pay for it within 30 minutes to keep it.";
 "notif.lydia_payments_active.title" = "Lydia payments active";
 "notif.lydia_payments_active.body" = "Lydia payments for %1$@ are active.";
 "notif.lydia_payments_paused.title" = "Lydia payments paused";

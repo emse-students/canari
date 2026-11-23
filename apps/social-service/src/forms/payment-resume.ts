@@ -48,7 +48,9 @@ export type ResumeRowRefusal = typeof PAYMENT_IN_PROGRESS | typeof PAYMENT_NOT_R
  * - `issue-unknown`: the issuing call failed after it was SENT (a timeout, a 5xx, an answer with no
  *   URL), so a request may exist at Lydia that the row does not name - resuming would risk a second
  *   payable request for one answer, so it is not offered (the follow-up that settles it by its
- *   order_ref is in the backlog entry).
+ *   order_ref is in the backlog entry). Since the waiting list (2026-11-23) such a row is NOT
+ *   cancelled at once: it stays `pending`, holding its seat until its hold lapses, carrying this
+ *   origin, and keeps it through its expiry or cancel (`releaseUnissuedRow`).
  *
  * NULL on a row cancelled before 179, or by an older image during the rolling deploy: its origin is
  * unknown - it may be a manager's decision, or an issue that timed out with a request still payable
@@ -107,6 +109,8 @@ export function resumeRowRefusal(
   // Only an ONLINE answer: `cash` is the manager's to validate or cancel, a Stripe-era row has no
   // request Lydia can read, and a free answer owes nothing.
   if (row.paymentMethod !== null || !(row.totalPaid > 0)) return PAYMENT_NOT_RESUMABLE;
+  // A request may exist at Lydia that the row does not name, whatever the row's status now.
+  if (row.paymentCancelOrigin === 'issue-unknown') return PAYMENT_NOT_RESUMABLE;
   // A waiting answer promoted on a paid form (`waitlist.ts`): registered, owing its payment, and
   // naming no request - none was ever issued. Its FIRST payment goes through here; the move to
   // `pending` under the lock is what refuses a second click (`PAYMENT_IN_PROGRESS`).

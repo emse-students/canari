@@ -551,6 +551,13 @@ describe('NotificationRow for a promotion from the waiting list', () => {
     expect(target.textContent).toContain('Soiree de gala');
     expect(target.querySelector('button')!.disabled).toBe(false);
   });
+
+  it('says the place is held for its payment when the promotion owes one', () => {
+    const target = renderRow({ ...row, id: 'n-due', type: 'form_waitlist_promoted_payment_due' });
+    expect(target.textContent).toContain('BDE');
+    expect(target.textContent).toContain(m.notif_form_waitlist_promoted_payment_due_text());
+    expect(target.textContent).toContain('Soiree de gala');
+  });
 });
 
 /**
@@ -765,6 +772,7 @@ const EVERY_TYPE_THE_SERVER_EMITS = [
   'form_cash_expiring',
   'form_stale_open',
   'form_waitlist_promoted',
+  'form_waitlist_promoted_payment_due',
   'association_post',
   'followed_post',
   'association_repost',

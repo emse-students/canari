@@ -4,6 +4,7 @@ import { Form } from './entities/form.entity';
 import { Submission } from './entities/submission.entity';
 import { cashReminderDueAt } from './cash-reminder';
 import { seatHoldingWhere } from './seat-hold';
+import { acceptsCash, acceptsOnline } from './payment-offer';
 
 /**
  * THE WAITING LIST OF A LIMITED FORM (owner, 2026-11-23; docs/wiki/frontend/modules/forms.md, "A
@@ -33,8 +34,8 @@ export const PAYMENT_DUE = 'payment_due';
 
 /**
  * What freed the place a promotion fills, named in every log line so a promotion is traceable to its
- * event. `sweep` is the five-minute job finding a free place nothing promoted: a missed event,
- * logged at WARN when it promotes anyone.
+ * event. There is no sweep: every event that frees a place promotes in its own transaction, under the
+ * form's seat lock, so a place is never free with someone waiting once that event has committed.
  */
 export type WaitlistTrigger =
   | 'submit'
@@ -49,8 +50,7 @@ export type WaitlistTrigger =
   | 'online-expiry'
   | 'refund'
   | 'form-edit'
-  | 'by-hand'
-  | 'sweep';
+  | 'by-hand';
 
 /** The form fields the waiting list reads. */
 export type WaitlistForm = Pick<
@@ -139,15 +139,53 @@ export async function promoteWaitingRow(
 }
 
 /**
+ * Whether an edit moving a form's capacity from `before` to `after` FREES places: a limit raised, or
+ * cleared (no limit, `null` or 0, takes everyone). A form that had no limit had no line to promote.
+ */
+export function capacityFreed(
+  before: number | null | undefined,
+  after: number | null | undefined
+): boolean {
+  if (!before) return false;
+  return !after || after > before;
+}
+
+/** The payment modes of a form a promotion reads, to know whether the promotee can pay. */
+export type WaitlistPaymentModes = Pick<Form, 'allowOnlinePayment' | 'allowCashPayment'>;
+
+/**
+ * Whether a promotee of `status` has a way to pay on this form NOW: an online promotee needs online
+ * payment offered (`payment_due` is paid through the resume, which refuses a cash-only form), a cash
+ * one needs cash accepted (`pending_cash` is validated by a manager taking cash). A free one owes
+ * nothing. False is THE FROZEN LIST: the first in line cannot become a registration it could pay.
+ */
+export function promotionPayable(
+  status: PromotedAnswer['status'],
+  form: WaitlistPaymentModes
+): boolean {
+  if (status === PAYMENT_DUE) return acceptsOnline(form);
+  if (status === 'pending_cash') return acceptsCash(form);
+  return true;
+}
+
+/**
  * PROMOTES AS MANY WAITING ANSWERS AS THE FORM HAS FREE PLACES, first in line first. THE CALLER
  * HOLDS THE FORM'S SEAT LOCK in this READ COMMITTED transaction (`lockFormSeats`), so the count and
  * the promotions are one step no other capacity decision interleaves with: two places freed at once
- * promote two people, and a concurrent submit counts after them.
+ * promote two people, and a concurrent submit counts after them. Every event that frees a place
+ * calls it in the transaction that frees it, so a failure here rolls the freeing back with it.
  *
  * Reads the form again under the lock (its capacity may have moved since the caller read it), never
  * an archived form's answers, and nothing when nobody waits. A form with no capacity left (the
  * limit cleared) promotes everyone waiting. Returns what it promoted, for the caller to tell AFTER
  * its commit (`FormWaitlistNoticeService`): a notice is never sent about a promotion that rolled back.
+ *
+ * THE FROZEN LIST: when the next in line would owe a payment the form no longer takes (online
+ * switched off for an online promotee, cash for a cash one, `promotionPayable`), promotion STOPS
+ * there - nobody behind is promoted past them, since the line is never reordered (owner,
+ * 2026-11-23). Logged at WARN; the manager sees it on the list (the same rule, in the client's
+ * `waitlistFrozen`), and lifts it by turning the payment mode back on, promoting by hand once it is,
+ * or removing that answer.
  */
 export async function promoteFromWaitlist(
   manager: EntityManager,
@@ -161,7 +199,14 @@ export async function promoteFromWaitlist(
   if (waitingCount === 0) return [];
   const form = await manager.findOne(Form, {
     where: { id: formId },
-    select: { id: true, maxSubmissions: true, cashPaymentExpiryDays: true, deletedAt: true },
+    select: {
+      id: true,
+      maxSubmissions: true,
+      cashPaymentExpiryDays: true,
+      deletedAt: true,
+      allowOnlinePayment: true,
+      allowCashPayment: true,
+    },
   });
   if (!form || form.deletedAt) {
     logger.debug(
@@ -187,13 +232,25 @@ export async function promoteFromWaitlist(
     lock: { mode: 'pessimistic_write' },
   });
   const promoted: PromotedAnswer[] = [];
-  for (const row of first) promoted.push(await promoteWaitingRow(manager, row, form));
-  const line =
-    `[WAITLIST] ${trigger}: form ${formId.slice(0, 8)} promoted ${promoted.length} of ` +
-    `${waitingCount} waiting (${promoted.map((p) => `${p.submissionId.slice(0, 8)}->${p.status}`).join(', ')})`;
-  // The sweep promoting anyone means an event that freed a place did not promote: accused.
-  if (trigger === 'sweep') logger.warn(`${line} - no event promoted for this place`);
-  else logger.log(line);
+  for (const row of first) {
+    const status = promotedStatusOf(row);
+    if (!promotionPayable(status, form)) {
+      logger.warn(
+        `[WAITLIST] ${trigger}: form ${formId.slice(0, 8)} list FROZEN at ${row.id.slice(0, 8)}: ` +
+          `it would be ${status}, and the form takes no ${status === PAYMENT_DUE ? 'online' : 'cash'} ` +
+          `payment - nobody behind it is promoted past it until a manager reopens that payment mode ` +
+          `or removes it`
+      );
+      break;
+    }
+    promoted.push(await promoteWaitingRow(manager, row, form));
+  }
+  if (promoted.length > 0) {
+    logger.log(
+      `[WAITLIST] ${trigger}: form ${formId.slice(0, 8)} promoted ${promoted.length} of ` +
+        `${waitingCount} waiting (${promoted.map((p) => `${p.submissionId.slice(0, 8)}->${p.status}`).join(', ')})`
+    );
+  }
   return promoted;
 }
 

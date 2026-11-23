@@ -144,6 +144,8 @@ export const NOTIFICATION_TYPE_MIN_CLIENT = {
   form_stale_open: FORM_STALE_OPEN_MIN_CLIENT_VERSION,
   // The one notice of the waiting list, a promotion (owner, 2026-11-23): the first build that draws it.
   form_waitlist_promoted: FORM_WAITLIST_MIN_CLIENT_VERSION,
+  // The same promotion on a paid online form, whose place is held for the payment (`payment_due`).
+  form_waitlist_promoted_payment_due: FORM_WAITLIST_MIN_CLIENT_VERSION,
 } as const satisfies Readonly<Record<string, string | null>>;
 
 /** A type a bell row may carry: one whose floor is declared above, and nothing else. */
@@ -188,6 +190,7 @@ export const PUSH_KEY_MIN_CLIENT: Readonly<Record<PushContentKey, string | null>
   social_live_reinstated: '1.7.0',
   form_paid_over_capacity: '1.4.0',
   form_waitlist_promoted: FORM_WAITLIST_MIN_CLIENT_VERSION,
+  form_waitlist_promoted_payment_due: FORM_WAITLIST_MIN_CLIENT_VERSION,
   social_follow_request: '1.5.1',
   social_follow_accepted: '1.5.1',
   social_booking_cancelled: '1.5.1',

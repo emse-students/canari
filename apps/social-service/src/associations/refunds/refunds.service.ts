@@ -16,7 +16,8 @@ import { coreUrl } from '../../internal/service-urls';
 import { internalCoreRequestConfig } from '../../internal/core-request';
 import { lockBuyerTiers } from '../../users/buyer-tier-lock';
 import { lockFormSeats } from '../../forms/seat-hold';
-import { promoteFromWaitlist } from '../../forms/waitlist';
+import { promoteFromWaitlist, type PromotedAnswer } from '../../forms/waitlist';
+import { FormWaitlistNoticeService } from '../../forms/waitlist-notice.service';
 import {
   LISTED_PURCHASE_STATUSES,
   PurchaseRecord,
@@ -185,7 +186,10 @@ export class RefundsService implements OnApplicationBootstrap {
   constructor(
     @InjectRepository(LydiaRefund) private readonly refundRepo: Repository<LydiaRefund>,
     private readonly associations: AssociationsService,
-    private readonly notifier: LydiaRefundNotifier
+    private readonly notifier: LydiaRefundNotifier,
+    // The waiting list's one notice: a total refund of a form answer frees its seat, and whoever
+    // the refund's transaction promoted is told right after its commit.
+    private readonly waitlistNotice: FormWaitlistNoticeService
   ) {}
 
   /** Refuses anyone but a MANAGE_PAYOUT_ACCOUNT holder of the association (403). */
@@ -722,6 +726,8 @@ export class RefundsService implements OnApplicationBootstrap {
     outcome: CallOutcome,
     resolvedBy: string | null
   ): Promise<LydiaRefund> {
+    // Filled by `withdraw` when the freed seat promoted the first in line; told after the commit.
+    const promoted: PromotedAnswer[] = [];
     const result = await on.transaction('READ COMMITTED', async (manager) => {
       const head = await manager.findOne(LydiaRefund, { where: { id: refundId } });
       if (!head) throw new NotFoundException('Refund not found');
@@ -767,7 +773,7 @@ export class RefundsService implements OnApplicationBootstrap {
         ...(resolvedBy ? { resolvedByUserId: resolvedBy, resolvedAt: now } : { answeredAt: now }),
       };
       if (outcome.status === 'confirmed' && row.kind === 'total') {
-        patch.sideEffect = await this.withdraw(manager, row);
+        patch.sideEffect = await this.withdraw(manager, row, promoted);
       }
       await manager.update(LydiaRefund, { id: row.id }, patch);
       this.logger.log(
@@ -782,6 +788,10 @@ export class RefundsService implements OnApplicationBootstrap {
       const name = await this.associationName(on, result.row.associationId);
       await this.notifier.tell({ id: result.row.associationId, name }, result.payerId ?? null);
     }
+    // The promotion committed with the refund: its people are told now, never by a sweep (`tell`
+    // never throws, and a notice it cannot write stays owed in the row).
+    const toTell = promoted.filter((p) => p.userId).map((p) => p.submissionId);
+    if (toTell.length > 0) await this.waitlistNotice.tell(toTell);
     return result.row;
   }
 
@@ -791,9 +801,14 @@ export class RefundsService implements OnApplicationBootstrap {
    * the product is gone and what it was cannot be told (`unidentified`: nothing is touched). A Cercle
    * top-up gives the money back only: its balance at the Cercle is NOT debited (the manager is told).
    * A membership's tier is revoked only when the tag is THIS payment's delivery; a form answer's seat
-   * is freed (`refunded`, out of every seat count) and its tier revoked by the same rule.
+   * is freed (`refunded`, out of every seat count) and its tier revoked by the same rule; the first
+   * in line of its form's waiting list is promoted into that seat, and appended to `promoted`.
    */
-  private async withdraw(manager: EntityManager, refund: LydiaRefund): Promise<RefundSideEffect> {
+  private async withdraw(
+    manager: EntityManager,
+    refund: LydiaRefund,
+    promoted: PromotedAnswer[]
+  ): Promise<RefundSideEffect> {
     const record = await manager.findOne(PurchaseRecord, {
       where: { id: refund.purchaseRecordId },
       lock: { mode: 'pessimistic_write' },
@@ -838,19 +853,22 @@ export class RefundsService implements OnApplicationBootstrap {
         [submissionId]
       );
       // The freed seat goes to the first in line of the form's waiting list, under the lock just
-      // taken and in this transaction (`waitlist.ts`). Its notice is the five-minute sweep's
-      // (`FormWaitlistNoticeService.tellPending`): this module does not reach the forms' notifier.
-      // Behind a savepoint: a failed promotion must never undo the refund it follows - the place
-      // then stays free for the five-minute sweep, which accuses the miss.
+      // taken and in this transaction (`waitlist.ts`), told by `settle` after the commit.
+      //
+      // THE ONE FREEING A FAILED PROMOTION DOES NOT ROLL BACK, behind a savepoint: the money has
+      // already gone back at Lydia, and its record must not be lost to a promotion - a refund rolled
+      // back would read as never made. The place then stays free with the list waiting, said at
+      // ERROR, until the form's next capacity event: every submit promotes before it counts, and
+      // every other freeing promotes in its own transaction.
       await manager.query('SAVEPOINT refund_waitlist');
       try {
-        await promoteFromWaitlist(manager, formId, 'refund', this.logger);
+        promoted.push(...(await promoteFromWaitlist(manager, formId, 'refund', this.logger)));
         await manager.query('RELEASE SAVEPOINT refund_waitlist');
       } catch (e: unknown) {
         await manager.query('ROLLBACK TO SAVEPOINT refund_waitlist');
         this.logger.error(
           `[LYDIA-REFUND] ${refund.id}: the seat is freed but the waiting list of form ${formId} ` +
-            'could not be promoted - left for the sweep',
+            "could not be promoted - it waits for the form's next capacity event",
           e
         );
       }

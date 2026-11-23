@@ -101,8 +101,11 @@ import { CASH_REMINDER_LEAD_MS, cashReminderDueAt, type DueCashReminder } from '
 import {
   PAYMENT_DUE,
   WAITING,
+  capacityFreed,
   nextWaitlistOrder,
   promoteFromWaitlist,
+  promotedStatusOf,
+  promotionPayable,
   promoteWaitingRow,
   waitingLast,
   waitlistApplies,
@@ -598,7 +601,7 @@ function freeingTrigger(
   if (from === 'pending_cash') return 'cash-cancel';
   if (cancelledBy === 'member') return 'member-cancel';
   if (cancelledBy === 'provider') return 'provider-release';
-  if (cancelledBy === 'unissued' || cancelledBy === 'issue-unknown') return 'unissued-release';
+  if (cancelledBy === 'unissued') return 'unissued-release';
   return 'manager-cancel';
 }
 
@@ -607,6 +610,14 @@ function freeingTrigger(
  * no longer waits: promoted meanwhile, removed, or never on the list. The client words it.
  */
 export const WAITLIST_ANSWER_NOT_WAITING = 'WAITLIST_ANSWER_NOT_WAITING';
+
+/**
+ * The `code` of the 409 a promotion by hand gets when the answer would owe a payment the form no
+ * longer takes (`promotionPayable`, `waitlist.ts`): online switched off for an online answer, cash
+ * for a cash one - the registration could never be paid. The manager turns the mode back on, or
+ * removes the answer. The client words it.
+ */
+export const WAITLIST_NO_PAYMENT_PATH = 'WAITLIST_NO_PAYMENT_PATH';
 
 /**
  * Forms `summaries` reads at once. One form costs about seven queries (`get` plus `hasSubmission`), so
@@ -1484,6 +1495,23 @@ export class FormsService {
   }
 
   /**
+   * Whether a newcomer finds the form full, as its page is told: its free places are no more than
+   * the answers waiting. A place free while people wait is THEIRS (the next capacity event promotes
+   * them, `waitlist.ts`), never a newcomer's; with nobody waiting it is the plain seat count.
+   */
+  private async isFormFull(
+    form: Pick<Form, 'id' | 'anonymous' | 'maxSubmissions'>
+  ): Promise<boolean> {
+    if (!form.maxSubmissions) return false;
+    const free = form.maxSubmissions - (await this.countActiveSubmissions(form));
+    if (free <= 0) return true;
+    const waiting = await this.submissionRepo.count({
+      where: { formId: form.id, paymentStatus: WAITING },
+    });
+    return free <= waiting;
+  }
+
+  /**
    * Inside an answer's transaction (a submit, an answer edit), BEFORE the form's own lock - the
    * order `AssociationsService.remove` takes, association first - reads the form's association
    * `FOR SHARE` and refuses (404, what `respondentFormWhere` answered before the lock) one ARCHIVED
@@ -1517,8 +1545,7 @@ export class FormsService {
       this.logger.debug(`[FORMS] public read refused, not a public form id=${id.slice(0, 8)}`);
       throw new NotFoundException('Form not found');
     }
-    const formFull =
-      !!form.maxSubmissions && (await this.countActiveSubmissions(form)) >= form.maxSubmissions;
+    const formFull = await this.isFormFull(form);
     // The guest's slice of the grid, exactly as a member's is built (`hasSubmission`), from facts
     // that know nobody: every criterion on promo, formation or cotisation resolves to its "everyone
     // else" tier, and what is left is the answer criteria. The page totals from it; `submit`
@@ -1890,6 +1917,7 @@ export class FormsService {
     );
     const citedBefore = questionImageIds(form.items);
     const opensBefore = form.opensAt ? new Date(form.opensAt).getTime() : null;
+    const capacityBefore = form.maxSubmissions;
     if (input.guestFields !== undefined && input.respondentFields === undefined) {
       this.logger.log(
         `[LEGACY] edit of ${formId.slice(0, 8)} sends guestFields without respondentFields: a client ` +
@@ -1981,17 +2009,27 @@ export class FormsService {
       if (moves) await this.followFormOpeningMove(inTransaction, form);
       return withStatus(saved);
     }
-    if (citedBefore.length === 0 && citedAfter.length === 0 && !moves) {
+    // A PUBLISHED form's capacity RAISED OR CLEARED by this edit frees places: the first in line is
+    // promoted into them IN THE SAVE'S TRANSACTION, under the form's seat lock taken first
+    // (`waitlist.ts`), and told after the commit. A draft holds no answer to promote, and an edit
+    // that frees no place has nothing to promote.
+    const promotes =
+      status === FORM_PUBLISHED && capacityFreed(capacityBefore, form.maxSubmissions);
+    if (citedBefore.length === 0 && citedAfter.length === 0 && !moves && !promotes) {
       return withStatus(await this.formRepo.save(written as Form));
     }
+    let promoted: PromotedAnswer[] = [];
     const saved = await this.formRepo.manager.transaction(async (m) => {
+      if (promotes) await lockFormSeats(m, formId);
       if (citedBefore.length > 0 || citedAfter.length > 0) {
         await this.formItemImages.claimForSave(m, form.items, formId, userId);
       }
       const stored = await m.save(Form, written as Form);
       if (moves) await this.followFormOpeningMove(m, form);
+      if (promotes) promoted = await promoteFromWaitlist(m, formId, 'form-edit', this.logger);
       return stored;
     });
+    await this.tellPromoted(promoted);
     // Replaced or removed: released once no question of any form cites it (a duplicated question
     // still does). After the commit, so the release re-reads the citations this save wrote.
     const dropped = citedBefore.filter((id) => !citedAfter.includes(id));
@@ -2124,6 +2162,7 @@ export class FormsService {
       const changed = current.document ? await formChangedSinceRevision(m, formId) : false;
       if (changed && !overwrite) return { refused: 'changed' as const };
       let saved: Form = locked;
+      const capacityBefore = locked.maxSubmissions;
       if (current.document) {
         const dto = await this.validatedRevision(current.document);
         saved = (await this.update(formId, dto, userId, isGlobalAdmin, m, confirmedAskers)) as Form;
@@ -2138,7 +2177,14 @@ export class FormsService {
           .execute();
       }
       const next = current.document ? await closeFormDraft(m, formId) : current.revision;
-      return { refused: null, revision: next, items: saved.items as unknown, wasDraft };
+      // A capacity raised or cleared by the revision of a published form frees places: the first in
+      // line takes them in this transaction, the form's row already held (`waitlist.ts`), and is
+      // told after the commit. A draft holds no answer to promote.
+      const promoted =
+        !wasDraft && capacityFreed(capacityBefore, saved.maxSubmissions)
+          ? await promoteFromWaitlist(m, formId, 'form-edit', this.logger)
+          : [];
+      return { refused: null, revision: next, items: saved.items as unknown, wasDraft, promoted };
     });
     if (outcome.refused === 'gone') throw new NotFoundException('Form not found');
     if (outcome.refused === 'conflict') return this.throwDraftConflict(formId, revision, 'publish');
@@ -2164,6 +2210,7 @@ export class FormsService {
     this.logger.log(
       `[FORM_DRAFT] ${formId.slice(0, 8)} revision ${revision} published${outcome.wasDraft ? ', and the form with it' : ''}${overwrite ? ' (overwrite confirmed)' : ''}`
     );
+    await this.tellPromoted(outcome.promoted);
     // Replaced or removed by the published revision: released once nothing cites it, after the commit.
     const citedAfter = questionImageIds(outcome.items);
     const dropped = citedBefore.filter((id) => !citedAfter.includes(id));
@@ -2771,10 +2818,7 @@ export class FormsService {
       };
 
     // Check global capacity independently of per-user state
-    let formFull = false;
-    if (form.maxSubmissions) {
-      formFull = (await this.countActiveSubmissions(form)) >= form.maxSubmissions;
-    }
+    const formFull = await this.isFormFull(form);
 
     const facts = await this.factsFor(form, userId);
     // Every distinct cursus slice goes to the page, which totals each live (D32, `form-quote.ts`);
@@ -3496,7 +3540,9 @@ export class FormsService {
         this.logger.log(
           `[WAITLIST] submit on ${formTag(form)} refused after promoting ${promotedHere.length} - promoted again on its own`
         );
-        await this.promoteWaitlist(id, 'submit');
+        // Logged at ERROR by `promoteWaitlist` when it fails; the refusal is still what this caller
+        // is answered, and the place waits for the form's next capacity event.
+        await this.promoteWaitlist(id, 'submit').catch(() => undefined);
       }
       throw e;
     }
@@ -3743,7 +3789,10 @@ export class FormsService {
       });
     } catch (e: unknown) {
       // A refusal after the promotion rolled it back: the places are promoted again on their own.
-      if (promotedHere.length > 0) await this.promoteWaitlist(form.id, 'resume');
+      // Logged at ERROR by `promoteWaitlist` when it fails; the refusal is what this caller is answered.
+      if (promotedHere.length > 0) {
+        await this.promoteWaitlist(form.id, 'resume').catch(() => undefined);
+      }
       throw e;
     }
     await this.tellPromoted(promotedHere);
@@ -4451,32 +4500,72 @@ export class FormsService {
   }
 
   /**
-   * Cancels a `pending` row whose payment request was never issued (the provider refused, the call
-   * failed, payments are off): nothing is payable, so it must not hold a seat for 30 minutes, and a
-   * row naming no request would otherwise read as "being issued" to the next retry. A row that DOES
-   * name a request is left alone.
+   * What a `pending` row whose payment request could not be issued becomes - decided by what is
+   * KNOWN of the request, and never at the expense of a place the failure was not the person's:
+   *
+   * - `unissued` (refused before Lydia created anything): nothing is payable, so the row must not
+   *   hold a seat it cannot be paid for, and a row naming no request would otherwise read as "being
+   *   issued" to the next retry. It is `cancelled` (resumable) - EXCEPT a PROMOTED answer
+   *   (`promotedAt`, `waitlist.ts`), which goes back to `payment_due`: its place was given by the
+   *   waiting list, and Canari failing to ask for the payment is no reason to give it to the next
+   *   in line (owner decision of 2026-11-23 frees a place on a refused or expired payment only). Its
+   *   hold runs from the resume that tried.
+   * - `issue-unknown` (the call was sent and failed, so a request may exist at Lydia that the row
+   *   does not name): the row STAYS `pending`, holding its seat until its hold lapses (the expiry
+   *   job then frees it and promotes the next in line), and is marked `issue-unknown` so no resume
+   *   is offered (`resumeRowRefusal`): freeing the seat at once would promote the next in line into
+   *   a place that payable request may still claim.
+   *
+   * A row that DOES name a request, or is no longer `pending`, is left alone.
    */
   private async releaseUnissuedRow(
     submissionId: string,
     origin: 'unissued' | 'issue-unknown' = 'unissued'
   ): Promise<void> {
-    const outcome = await this.moveLockedSubmission(submissionId, 'pending', 'cancelled', {
-      named: (s) => !s.paymentRequestId && !s.stripeSessionId,
-      cancelledBy: origin,
-    });
-    if (typeof outcome === 'object') {
-      if (origin === 'issue-unknown') {
-        // Not an answer from Lydia: the call was sent and failed, so a request may exist that this
-        // row does not name. The answer is released (it holds no seat) and NOT offered for a resume.
+    const namesNone = (s: Submission) => !s.paymentRequestId && !s.stripeSessionId;
+    if (origin === 'issue-unknown') {
+      const kept = await this.submissionRepo
+        .createQueryBuilder()
+        .update()
+        .set({ paymentCancelOrigin: 'issue-unknown' })
+        .where('id = :id', { id: submissionId })
+        .andWhere('"paymentStatus" = :pending', { pending: 'pending' })
+        .andWhere('"paymentRequestId" IS NULL AND "stripeSessionId" IS NULL')
+        .execute();
+      if (kept.affected) {
         this.logger.warn(
-          `[Forms] submission ${submissionId} released: the issuing call failed after it was sent - ` +
-            `its outcome at Lydia is unknown, no resume is offered`
+          `[Forms] submission ${submissionId} kept pending: the issuing call failed after it was sent - ` +
+            `its outcome at Lydia is unknown, the seat is held until the hold lapses, no resume is offered`
         );
       } else {
         this.logger.log(
-          `[Forms] submission ${submissionId} released: no payment request was issued`
+          `[Forms] submission ${submissionId} left as is after an unknown issue: no longer pending, or it names a request`
         );
       }
+      return;
+    }
+    const head = await this.submissionRepo.findOne({
+      where: { id: submissionId },
+      select: { id: true, promotedAt: true },
+    });
+    if (head?.promotedAt) {
+      const restored = await this.moveLockedSubmission(submissionId, 'pending', PAYMENT_DUE, {
+        named: namesNone,
+      });
+      if (typeof restored === 'object') {
+        this.logger.log(
+          `[WAITLIST] ${submissionId.slice(0, 8)} back to ${PAYMENT_DUE}: its payment request could ` +
+            'not be issued, and a promoted answer keeps its place'
+        );
+      }
+      return;
+    }
+    const outcome = await this.moveLockedSubmission(submissionId, 'pending', 'cancelled', {
+      named: namesNone,
+      cancelledBy: origin,
+    });
+    if (typeof outcome === 'object') {
+      this.logger.log(`[Forms] submission ${submissionId} released: no payment request was issued`);
     }
   }
 
@@ -4527,12 +4616,28 @@ export class FormsService {
       // Settles the request at Lydia and moves the row to `cancelled`, or marks it paid.
       await this.cancelSubmission(submissionId, callerId, isGlobalAdmin);
     }
-    // A DELETE answers `[rows, rowCount]` through TypeORM's postgres driver, never the rows alone:
-    // read as the rows, the result always had length 2, and a refused delete read as a deletion.
-    const [deleted] = (await this.submissionRepo.query(
-      `DELETE FROM submissions WHERE id = $1 AND "paymentStatus" <> ALL($2::text[]) RETURNING id`,
-      [submissionId, [...PAID_SUBMISSION_STATUSES, 'pending']]
-    )) as [unknown[], number];
+    // Under the form's seat lock, and the first in line promoted into the seat it frees IN THE SAME
+    // TRANSACTION: a failed promotion keeps the answer (a deleted WAITING answer frees no seat, and
+    // promotes nobody). A DELETE answers `[rows, rowCount]` through TypeORM's postgres driver, never
+    // the rows alone: read as the rows, the result always had length 2, and a refused delete read as
+    // a deletion.
+    const { deleted, promoted } = await this.submissionRepo.manager.transaction(
+      'READ COMMITTED',
+      async (m) => {
+        await lockFormSeats(m, sub.formId);
+        const [rows] = (await m.query(
+          `DELETE FROM submissions WHERE id = $1 AND "paymentStatus" <> ALL($2::text[]) RETURNING id`,
+          [submissionId, [...PAID_SUBMISSION_STATUSES, 'pending']]
+        )) as [unknown[], number];
+        return {
+          deleted: rows,
+          promoted:
+            rows.length > 0
+              ? await promoteFromWaitlist(m, sub.formId, 'manager-delete', this.logger)
+              : [],
+        };
+      }
+    );
     if (deleted.length === 0) {
       const now = await this.submissionRepo.findOne({
         where: { id: submissionId },
@@ -4555,8 +4660,7 @@ export class FormsService {
       });
     }
     this.logger.log(`[Forms] Submission ${submissionId} deleted by ${callerId}`);
-    // A deleted registration frees its seat (a deleted WAITING answer frees none, and promotes nobody).
-    await this.promoteWaitlist(sub.formId, 'manager-delete');
+    await this.tellPromoted(promoted);
   }
 
   /**
@@ -4683,6 +4787,23 @@ export class FormsService {
         // request (`request_uuid`) and is no longer overwritten with whichever id arrived first.
         submission.paymentSettledBy = sessionId ?? null;
         await manager.save(submission);
+        // NO ONE IS BOTH PAID AND IN LINE (`waitlist.ts`): a late payment on an old answer of a
+        // person who has since joined the form's waiting list takes that person off it, under the
+        // seat lock held, so they are never promoted into a second registration they would pay for
+        // twice. A waiting answer holds no seat, so it never made this payment over capacity.
+        if (submission.userId) {
+          const [left] = (await manager.query(
+            `DELETE FROM submissions WHERE "formId" = $1 AND "userId" = $2 AND "paymentStatus" = $3
+                AND id <> $4 RETURNING id`,
+            [submission.formId, submission.userId, WAITING, submissionId]
+          )) as [Array<{ id: string }>, number];
+          if (left.length > 0) {
+            this.logger.warn(
+              `[WAITLIST] late payment on ${submissionId.slice(0, 8)} (${status}): the same person's ` +
+                `waiting answer ${left.map((r) => r.id.slice(0, 8)).join(', ')} leaves the line`
+            );
+          }
+        }
         return { submission, status, replay: false };
       }
     );
@@ -5157,9 +5278,13 @@ export class FormsService {
    * The read and the write used to be two statements with nothing between them: a cancel or expiry
    * callback that read `pending` could then overwrite a `paid` that `markPaid` committed in between,
    * and a cash validation could be applied twice. The lock makes the check and the move one step.
-   * Takes no form lock: none of these moves changes how many seats are held in a way a count could
-   * race (a cancel only frees one, a cash validation keeps the one it has). `named`, when given, is
-   * read under the same lock: a row whose current request is not the one reported is left as is.
+   * `named`, when given, is read under the same lock: a row whose current request is not the one
+   * reported is left as is.
+   *
+   * THE FORM'S SEAT LOCK FIRST, then the row (the order `submit`, `markPaid` and an answer edit take):
+   * a move to `cancelled` FREES the seat the row held, and the first in line is promoted into it IN
+   * THIS TRANSACTION (`promoteFromWaitlist`) - a failed promotion rolls the cancel back with it, so a
+   * place is never left free with someone waiting. Those promoted are told after the commit.
    */
   private async moveLockedSubmission(
     submissionId: string,
@@ -5176,11 +5301,19 @@ export class FormsService {
       cancelledBy?: PaymentCancelOrigin;
     } = {}
   ): Promise<{ moved: Submission } | 'missing' | 'not-in-state' | 'other-request'> {
+    // The form the row belongs to, read to take its lock first: a row never changes form.
+    const head = await this.submissionRepo.findOne({
+      where: formId ? { id: submissionId, formId } : { id: submissionId },
+      select: { id: true, formId: true },
+    });
+    if (!head) return 'missing';
+    let promoted: PromotedAnswer[] = [];
     const outcome = await this.submissionRepo.manager.transaction(
       'READ COMMITTED',
       async (manager) => {
+        await lockFormSeats(manager, head.formId);
         const submission = await manager.findOne(Submission, {
-          where: formId ? { id: submissionId, formId } : { id: submissionId },
+          where: { id: submissionId },
           lock: { mode: 'pessimistic_write' },
         });
         if (!submission) return 'missing';
@@ -5198,30 +5331,41 @@ export class FormsService {
           return 'other-request';
         }
         submission.paymentStatus = to;
-        if (cancelledBy) submission.paymentCancelOrigin = cancelledBy;
+        // A row kept `pending` after an issue whose outcome is unknown keeps that origin through its
+        // cancel: a request may still be payable at Lydia, so it must never become resumable.
+        if (cancelledBy && submission.paymentCancelOrigin !== 'issue-unknown') {
+          submission.paymentCancelOrigin = cancelledBy;
+        } else if (cancelledBy) {
+          this.logger.log(
+            `[Forms] submission ${submissionId} cancelled by ${cancelledBy}, kept issue-unknown: never resumable`
+          );
+        }
         await manager.save(submission);
+        if (to === 'cancelled') {
+          promoted = await promoteFromWaitlist(
+            manager,
+            head.formId,
+            freeingTrigger(from, cancelledBy),
+            this.logger
+          );
+        }
         return { moved: submission } as const;
       }
     );
-    // A cancel FREES the seat the row held: the first in line takes it now, under the form's lock,
-    // in a transaction of its own (this one holds the row lock, and the form's comes first).
-    if (typeof outcome === 'object' && to === 'cancelled') {
-      await this.promoteWaitlist(outcome.moved.formId, freeingTrigger(from, cancelledBy));
-    }
+    await this.tellPromoted(promoted);
     return outcome;
   }
 
   /**
-   * PROMOTES THE FIRST IN LINE INTO EVERY PLACE THE FORM HAS FREE (`waitlist.ts`), then tells each
-   * person promoted, once. Called by every event that frees a place, after that event's commit: a
-   * cancel or a release (`moveLockedSubmission`), a manager's delete, an expiry, a capacity raised,
-   * and the five-minute sweep. The promotion is its own READ COMMITTED transaction under the form's
-   * seat lock, the lock `submit` counts under - and `submit` promotes first too, so a new answer
-   * never takes the place in between.
+   * PROMOTES THE FIRST IN LINE INTO EVERY PLACE THE FORM HAS FREE (`waitlist.ts`), in a transaction
+   * of its own under the form's seat lock, then tells each person promoted, once. For the events
+   * that free places with no submission write to share a transaction with: a capacity raised or
+   * cleared by an edit (`update`, `publishChanges`, after their save), and a submit or a resume whose
+   * own transaction promoted and then rolled back on a refusal. Every freeing that writes a row
+   * promotes inside that write's transaction instead.
    *
-   * NEVER THROWS: the event that called it has already happened. A failure is logged at ERROR with
-   * the form, and nothing is lost - the place stays free and the people stay waiting, in durable
-   * rows the next event or the sweep promotes from.
+   * THROWS on a failure, after logging it at ERROR: nothing retries a promotion on a timer, so the
+   * caller's request fails visibly rather than leaving a free place with someone waiting unsaid.
    */
   async promoteWaitlist(formId: string, trigger: WaitlistTrigger): Promise<PromotedAnswer[]> {
     let promoted: PromotedAnswer[];
@@ -5236,44 +5380,26 @@ export class FormsService {
     } catch (e: unknown) {
       this.logger.error(
         `[WAITLIST] ${trigger}: promotion on form ${formId.slice(0, 8)} FAILED - the place stays ` +
-          'free and the answers waiting, for the next event or the five-minute sweep',
+          'free and the answers waiting until the next capacity event of this form',
         e
       );
-      return [];
+      throw e;
     }
     await this.tellPromoted(promoted);
     return promoted;
   }
 
   /**
-   * The five-minute sweep (`FormReminderScheduler`): every form with someone waiting is promoted
-   * into its free places, if any. It catches what no event announced (an event whose promotion
-   * failed), which `promoteFromWaitlist` then accuses at WARN. A try per form (`promoteWaitlist`
-   * never throws).
+   * Tells the people a committed promotion registered (`FormWaitlistNoticeService`, once each). A
+   * notice that cannot be written leaves its claim free in the row, retried by the five-minute
+   * `tellPending` - the only thing that job does for the waiting list.
    */
-  async promoteEveryWaitlist(): Promise<number> {
-    const forms = (await this.submissionRepo.query(
-      `SELECT DISTINCT s."formId" FROM submissions s JOIN forms f ON f.id = s."formId"
-        WHERE s."paymentStatus" = $1 AND f."deletedAt" IS NULL`,
-      [WAITING]
-    )) as Array<{ formId: string }>;
-    let promoted = 0;
-    for (const { formId } of forms) {
-      promoted += (await this.promoteWaitlist(formId, 'sweep')).length;
-    }
-    this.logger.debug(
-      `[WAITLIST] sweep: ${forms.length} form(s) with answers waiting, ${promoted} promoted`
-    );
-    return promoted;
-  }
-
-  /** Tells the people a committed promotion registered (`FormWaitlistNoticeService`, once each). */
   private async tellPromoted(promoted: readonly PromotedAnswer[]): Promise<void> {
     const ids = promoted.filter((p) => p.userId).map((p) => p.submissionId);
     if (ids.length === 0) return;
     if (!this.waitlistNotice) {
       this.logger.error(
-        `[WAITLIST] ${ids.length} promotion(s) committed with no notifier wired - left for the sweep`
+        `[WAITLIST] ${ids.length} promotion(s) committed with no notifier wired - their notices are owed`
       );
       return;
     }
@@ -5339,6 +5465,17 @@ export class FormsService {
         throw new ConflictException({
           code: WAITLIST_ANSWER_NOT_WAITING,
           message: 'This answer is no longer on the waiting list.',
+        });
+      }
+      const status = promotedStatusOf(row);
+      if (!promotionPayable(status, form)) {
+        this.logger.warn(
+          `[WAITLIST] by-hand promotion of ${submissionId.slice(0, 8)} refused: it would be ${status}, ` +
+            `and form ${formId.slice(0, 8)} takes no such payment now`
+        );
+        throw new ConflictException({
+          code: WAITLIST_NO_PAYMENT_PATH,
+          message: 'This answer would owe a payment the form no longer takes.',
         });
       }
       const held = await m.count(Submission, { where: seatHoldingWhere(formId) });
@@ -5462,32 +5599,66 @@ export class FormsService {
 
   /** Called by the hourly cron - expires cash submissions past their deadline. */
   async expireStalecashPayments(): Promise<number> {
-    const result = await this.submissionRepo
-      .createQueryBuilder()
-      .update()
-      .set({ paymentStatus: 'expired' })
-      .where('paymentStatus = :status', { status: 'pending_cash' })
-      .andWhere('cashExpiresAt IS NOT NULL')
-      .andWhere('cashExpiresAt < NOW()')
-      .returning(['formId'])
-      .execute();
-    const count = result.affected ?? 0;
+    const count = await this.expirePerForm(
+      'cash-expiry',
+      `"paymentStatus" = 'pending_cash' AND "cashExpiresAt" IS NOT NULL AND "cashExpiresAt" < now()`,
+      []
+    );
     if (count > 0) {
       this.logger.log(`[Forms] Expired ${count} stale cash payment(s)`);
     }
-    // Each expiry freed a seat: the first in line of each form takes it.
-    await this.promoteFormsOf(result.raw, 'cash-expiry');
     return count;
   }
 
-  /** Promotes the waiting list of every distinct form among `rows` (an `UPDATE ... RETURNING`). */
-  private async promoteFormsOf(rows: unknown, trigger: WaitlistTrigger): Promise<void> {
-    const formIds = new Set(
-      (Array.isArray(rows) ? (rows as Array<{ formId?: string }>) : [])
-        .map((row) => row.formId)
-        .filter((id): id is string => typeof id === 'string')
-    );
-    for (const formId of formIds) await this.promoteWaitlist(formId, trigger);
+  /**
+   * Moves to `expired` every row matching `due` (SQL over `submissions`, its parameters `params` as
+   * `$1`...), ONE FORM AT A TIME: each form's expiry takes its seat lock first and promotes the first
+   * in line into the places it freed IN THE SAME TRANSACTION (`promoteFromWaitlist`), so an expiry
+   * and its promotion commit together or not at all. A try per form: one form's failure (logged at
+   * ERROR) leaves its rows as they are for the next run and costs the other forms nothing. Answers
+   * how many rows were expired. Idempotent from the rows: `due` names the only states it moves out of.
+   */
+  private async expirePerForm(
+    trigger: Extract<WaitlistTrigger, 'cash-expiry' | 'online-expiry'>,
+    due: string,
+    params: unknown[]
+  ): Promise<number> {
+    const forms = (await this.submissionRepo.query(
+      `SELECT DISTINCT "formId" FROM submissions WHERE ${due}`,
+      params
+    )) as Array<{ formId: string }>;
+    const formParam = `$${params.length + 1}`;
+    let expired = 0;
+    for (const { formId } of forms) {
+      try {
+        const { moved, promoted } = await this.submissionRepo.manager.transaction(
+          'READ COMMITTED',
+          async (manager) => {
+            await lockFormSeats(manager, formId);
+            const [rows] = (await manager.query(
+              `UPDATE submissions SET "paymentStatus" = 'expired'
+                WHERE "formId" = ${formParam} AND ${due} RETURNING id`,
+              [...params, formId]
+            )) as [unknown[], number];
+            return {
+              moved: rows.length,
+              promoted:
+                rows.length > 0
+                  ? await promoteFromWaitlist(manager, formId, trigger, this.logger)
+                  : [],
+            };
+          }
+        );
+        expired += moved;
+        await this.tellPromoted(promoted);
+      } catch (e: unknown) {
+        this.logger.error(
+          `[Forms] ${trigger} on form ${formId.slice(0, 8)} FAILED - its rows stay as they are for the next run`,
+          e
+        );
+      }
+    }
+    return expired;
   }
 
   /**
@@ -5516,24 +5687,17 @@ export class FormsService {
    * neither read nor expired this tick, but both next tick - never expired unread.
    */
   async expireStalePendingPayments(cutoff: Date): Promise<number> {
-    const result = await this.submissionRepo
-      .createQueryBuilder()
-      .update()
-      .set({ paymentStatus: 'expired' })
-      // A promoted answer owing its payment (`payment_due`) has the same hold, from its promotion.
-      .where('"paymentStatus" IN (:...statuses)', { statuses: ['pending', PAYMENT_DUE] })
-      // An INSTANT, compared as `PENDING_HOLD_CUTOFF_SQL` was: the column is a `timestamp` with no
-      // zone, and an uncast parameter would be read as one, dropping the offset the driver sends.
-      .andWhere('"paymentRequestedAt" <= CAST(:cutoff AS timestamptz)', { cutoff })
-      .returning(['formId'])
-      .execute();
-    const count = result.affected ?? 0;
+    // A promoted answer owing its payment (`payment_due`) has the same hold, from its promotion. The
+    // cutoff is an INSTANT, compared as `PENDING_HOLD_CUTOFF_SQL` was: the column is a `timestamp`
+    // with no zone, and an uncast parameter would be read as one, dropping the offset the driver sends.
+    const count = await this.expirePerForm(
+      'online-expiry',
+      `"paymentStatus" IN ('pending', '${PAYMENT_DUE}') AND "paymentRequestedAt" <= CAST($1 AS timestamptz)`,
+      [cutoff]
+    );
     if (count > 0) {
       this.logger.log(`[Forms] Expired ${count} online payment(s) left pending past the hold`);
     }
-    // The seat was already free in every count (the hold is read from the row); the expiry is the
-    // event that says so, and the first in line of each form takes it now.
-    await this.promoteFormsOf(result.raw, 'online-expiry');
     return count;
   }
 

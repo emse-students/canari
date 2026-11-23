@@ -417,11 +417,17 @@ class NotificationService: UNNotificationServiceExtension {
     // A watched form (owner, 2026-11-17): the association that runs it names the title and the
     // form's own title the body, the same facts as the bell row; each falls back to the fixed
     // sentence when the server sends none.
-    // A waiting answer became a registration (owner, 2026-11-23) reads the same way.
-    case "form_opening_soon", "form_open", "form_waitlist_promoted":
+    // A waiting answer became a registration (owner, 2026-11-23) reads the same way, and so does
+    // one whose place is held for its payment (`form_waitlist_promoted_payment_due`).
+    case "form_opening_soon", "form_open", "form_waitlist_promoted",
+      "form_waitlist_promoted_payment_due":
       let stem =
         key == "form_open"
-        ? "form.open" : key == "form_waitlist_promoted" ? "form.waitlist_promoted" : "form.opening_soon"
+        ? "form.open"
+        : key == "form_waitlist_promoted"
+          ? "form.waitlist_promoted"
+          : key == "form_waitlist_promoted_payment_due"
+            ? "form.waitlist_promoted_payment_due" : "form.opening_soon"
       composed = (
         actor.isEmpty
           ? Self.localized("notif.\(stem).title", locale: locale)

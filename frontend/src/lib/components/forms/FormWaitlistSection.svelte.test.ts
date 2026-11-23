@@ -93,11 +93,15 @@ const SUBMISSIONS: Submission[] = [
   }),
 ];
 
-async function render(onDelete = vi.fn(), onReload = vi.fn(async () => {})) {
+async function render(
+  onDelete = vi.fn(),
+  onReload = vi.fn(async () => {}),
+  shown: { form: Form; submissions: Submission[] } = { form, submissions: SUBMISSIONS }
+) {
   const target = document.body.appendChild(document.createElement('div'));
   const instance = mount(FormResponsesPanel, {
     target,
-    props: { form, submissions: SUBMISSIONS, deletingId: null, onDelete, onReload },
+    props: { ...shown, deletingId: null, onDelete, onReload },
   });
   mounted.push(() => unmount(instance));
   for (let i = 0; i < 6; i++) {
@@ -153,5 +157,23 @@ describe('the waiting list on the responses screen', () => {
     const { onDelete } = await render();
     buttonIn(rows()[0], m.form_waitlist_remove_button()).click();
     expect(onDelete).toHaveBeenCalledWith(expect.objectContaining({ id: 'first' }));
+  });
+
+  it('says nothing is frozen while the first in line can pay', async () => {
+    await render();
+    expect(document.querySelector('[data-testid="form-waitlist-frozen"]')).toBeNull();
+  });
+
+  it('says the line is frozen when the first in line owes a payment the form no longer takes', async () => {
+    const paid = { ...form, requiresPayment: true, allowOnlinePayment: false } as Form;
+    const owing = SUBMISSIONS.map((s) => (s.id === 'first' ? { ...s, totalPaid: 1500 } : s));
+    await render(
+      vi.fn(),
+      vi.fn(async () => {}),
+      { form: paid, submissions: owing }
+    );
+    expect(document.querySelector('[data-testid="form-waitlist-frozen"]')?.textContent).toContain(
+      m.form_waitlist_frozen_note()
+    );
   });
 });

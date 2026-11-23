@@ -48,6 +48,7 @@ maybe('Lydia refunds against PostgreSQL', () => {
   let ds: DataSource;
   let service: RefundsService;
   let notifier: { tell: jest.Mock };
+  let waitlistNotice: { tell: jest.Mock };
   let post: jest.SpyInstance;
 
   const options = (synchronize: boolean, entities: Function[]) => ({
@@ -80,7 +81,8 @@ maybe('Lydia refunds against PostgreSQL', () => {
       // The capacity and the waiting list a freed seat is promoted on (migration 183).
       `CREATE TABLE forms (id uuid PRIMARY KEY, "grantsCotisation" boolean NOT NULL DEFAULT false,
          "maxSubmissions" integer NULL, "cashPaymentExpiryDays" integer NULL,
-         "deletedAt" timestamptz NULL)`
+         "deletedAt" timestamptz NULL, "allowOnlinePayment" boolean NOT NULL DEFAULT true,
+         "allowCashPayment" boolean NOT NULL DEFAULT false)`
     );
     // Migration 120 from the file, twice: it must be idempotent. On the admin connection, so its
     // `SET lock_timeout` does not stay on a pool connection.
@@ -114,11 +116,13 @@ maybe('Lydia refunds against PostgreSQL', () => {
     );
     await ds.initialize();
     notifier = { tell: jest.fn().mockResolvedValue(undefined) };
+    waitlistNotice = { tell: jest.fn().mockResolvedValue(undefined) };
     service = Object.assign(Object.create(RefundsService.prototype) as object, {
       logger: new Logger('RefundsService'),
       refundRepo: ds.getRepository(LydiaRefund),
       associations: { canManagePayoutAccount: jest.fn().mockResolvedValue(true) },
       notifier,
+      waitlistNotice,
     }) as unknown as RefundsService;
     for (const level of ['log', 'warn', 'error', 'debug'] as const) {
       jest.spyOn(Logger.prototype, level).mockImplementation(() => undefined);
@@ -450,7 +454,7 @@ maybe('Lydia refunds against PostgreSQL', () => {
     expect((await refundOf(record.id))[0].sideEffect).toBe('seat-freed');
   });
 
-  it('a TOTAL refund of a form answer gives the freed seat to the first in line, its notice to the sweep', async () => {
+  it('a TOTAL refund of a form answer gives the freed seat to the first in line, told after its commit', async () => {
     const { record, submission } = await formPayment(false);
     await ds.query(`UPDATE forms SET "maxSubmissions" = 1 WHERE id = $1`, [submission.formId]);
     const waiting = await ds.getRepository(Submission).save(
@@ -458,22 +462,25 @@ maybe('Lydia refunds against PostgreSQL', () => {
         formId: submission.formId,
         userId: 'w'.repeat(64),
         answers: {},
-        // What it will owe, priced at its submit, online.
+        // What it will owe, priced at its submit, online: `paymentMethod` NULL, as submit stores it.
         totalPaid: 800,
-        paymentMethod: 'online',
+        paymentMethod: null,
         paymentStatus: 'waiting',
         waitlistOrder: '1',
       })
     );
+    waitlistNotice.tell.mockClear();
     await service.refund(ASSO, record.id, MANAGER, total());
     const [after] = await ds.query(
       `SELECT "paymentStatus", "promotedAt", "promotionNotifiedAt" FROM submissions WHERE id = $1`,
       [waiting.id]
     );
-    // An online answer: the promoted one owes its payment, and is told by the sweep.
+    // An online answer: the promoted one owes its payment, and is told by the refund itself, once
+    // its transaction committed (the notice service is this spec's double: nothing stamped here).
     expect(after.paymentStatus).toBe('payment_due');
     expect(after.promotedAt).not.toBeNull();
-    expect(after.promotionNotifiedAt).toBeNull();
+    expect(waitlistNotice.tell).toHaveBeenCalledTimes(1);
+    expect(waitlistNotice.tell).toHaveBeenCalledWith([waiting.id]);
     expect((await refundOf(record.id))[0].sideEffect).toBe('seat-freed');
   });
 
@@ -881,6 +888,7 @@ maybe('Lydia refunds against PostgreSQL', () => {
         refundRepo: narrow.getRepository(LydiaRefund),
         associations: { canManagePayoutAccount: jest.fn() },
         notifier,
+        waitlistNotice,
       }) as unknown as RefundsService;
       // A second connection asked by the settle path would wait for the only one, and time out.
       await expect(single.refund(ASSO, record.id, MANAGER, total())).resolves.toMatchObject({

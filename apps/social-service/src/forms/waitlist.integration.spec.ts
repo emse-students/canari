@@ -6,9 +6,12 @@
  * by hand - and so does the one notice (`FormWaitlistNoticeService`, its bell row and push recorded).
  * core-service is the `axios.post` mock. What only a database shows: migration 183 as written (and
  * the draft fingerprints it re-bases), the promotion of the first in line on each freeing event under
- * the form's seat lock, two freeings promoting two people, a submit queued behind a freeing never
- * jumping the line, a promoted paid answer owing its payment with its own hold, the notice claimed
- * once.
+ * the form's seat lock and IN THAT EVENT'S TRANSACTION (a failed promotion rolls the freeing back),
+ * two freeings promoting two people, a submit queued behind a freeing never jumping the line, a
+ * promoted paid answer owing its payment with its own hold and its own notice, a promoted answer
+ * keeping its place when its payment cannot be issued, a late payment taking its payer off the line,
+ * the list frozen when no payment path is left, the account erasure deleting a waiting answer, and
+ * the notice claimed once, in the transaction that writes its bell row.
  *
  * GATED ON `SOCIAL_IT_DATABASE_URL`, like the other integration files; CI's
  * `test-social-integration` sets it. Locally:
@@ -30,11 +33,20 @@ import { OpeningReminder } from '../openings/entities/opening-reminder.entity';
 import { FormRespondent } from './entities/form-respondent.entity';
 import { PurchaseRecord } from '../users/entities/purchase-record.entity';
 import { PurchaseRecordService } from '../users/purchase-record.service';
-import { FormsService, WAITLIST_ANSWER_NOT_WAITING } from './forms.service';
-import { FormWaitlistNoticeService, FORM_WAITLIST_PROMOTED_TYPE } from './waitlist-notice.service';
+import { PostNotification } from '../posts/entities/post-notification.entity';
+import { ERASURE_ROW_STATEMENTS, erasureParams } from '../internal/account-erasure';
+import {
+  FormsService,
+  WAITLIST_ANSWER_NOT_WAITING,
+  WAITLIST_NO_PAYMENT_PATH,
+} from './forms.service';
+import {
+  FormWaitlistNoticeService,
+  FORM_WAITLIST_PROMOTED_PAYMENT_DUE_TYPE,
+  FORM_WAITLIST_PROMOTED_TYPE,
+} from './waitlist-notice.service';
 import { lockFormSeats, PENDING_PAYMENT_HOLD_SECONDS } from './seat-hold';
 import { FORM_FINGERPRINT_SQL } from './form-draft-revision';
-import { promoteFromWaitlist } from './waitlist';
 import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
@@ -76,9 +88,7 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
   let ds: DataSource;
   let service: FormsService;
   let notice: FormWaitlistNoticeService;
-  /** The bell rows the notice wrote, and the pushes it sent. */
-  const rowsWritten: { recipientId: string; type: string; postId: string; actorName: string }[] =
-    [];
+  /** The pushes the notice sent (its bell rows are read from `post_notifications`, `bellRows`). */
   const pushes: { userId: string; key: string }[] = [];
   let issued = 0;
 
@@ -89,7 +99,15 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
     ds = new DataSource({
       type: 'postgres',
       url: URL,
-      entities: [Form, Submission, FormReminder, OpeningReminder, FormRespondent, PurchaseRecord],
+      entities: [
+        Form,
+        Submission,
+        FormReminder,
+        OpeningReminder,
+        FormRespondent,
+        PurchaseRecord,
+        PostNotification,
+      ],
       synchronize: true,
       extra: { options: `-c search_path=${schema},public` },
     });
@@ -133,19 +151,11 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
     await ds.query(migration);
     await ds.query('RESET lock_timeout');
 
-    notice = new FormWaitlistNoticeService(
-      ds.getRepository(Submission),
-      {
-        createNotification: async (row: any) => {
-          rowsWritten.push(row);
-        },
-      } as any,
-      {
-        notifyContent: async (userId: string, content: { key: string }) => {
-          pushes.push({ userId, key: content.key });
-        },
-      } as any
-    );
+    notice = new FormWaitlistNoticeService(ds.getRepository(Submission), {
+      notifyContent: async (userId: string, content: { key: string }) => {
+        pushes.push({ userId, key: content.key });
+      },
+    } as any);
     service = new FormsService(
       ds.getRepository(Form),
       ds.getRepository(Submission),
@@ -200,10 +210,54 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
     await admin?.end();
   });
 
-  beforeEach(() => {
-    rowsWritten.length = 0;
+  beforeEach(async () => {
     pushes.length = 0;
+    await ds.query(`DELETE FROM post_notifications`);
   });
+
+  /** The bell rows the notice wrote, oldest first. */
+  const bellRows = async () =>
+    (await ds.query(
+      `SELECT "recipientId", type, "postId", "actorName" FROM post_notifications ORDER BY "createdAt"`
+    )) as { recipientId: string; type: string; postId: string; actorName: string }[];
+
+  /** Makes every promotion fail in the database, for the time of `body`: the write is refused. */
+  async function withPromotionRefused(body: () => Promise<void>): Promise<void> {
+    await ds.query(
+      `CREATE OR REPLACE FUNCTION waitlist_it_refuse() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN RAISE EXCEPTION 'promotion refused by the spec'; END $$`
+    );
+    await ds.query(
+      `CREATE TRIGGER waitlist_it_refuse BEFORE UPDATE ON submissions FOR EACH ROW
+         WHEN (OLD."paymentStatus" = 'waiting' AND NEW."paymentStatus" <> 'waiting')
+         EXECUTE FUNCTION waitlist_it_refuse()`
+    );
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    try {
+      await body();
+    } finally {
+      await ds.query(`DROP TRIGGER waitlist_it_refuse ON submissions`);
+      error.mockRestore();
+    }
+  }
+
+  /** Past the online hold on the DATABASE clock, the one every write of the column uses. */
+  const pastHold = (id: string) =>
+    ds.query(
+      `UPDATE submissions
+          SET "paymentRequestedAt" = now() - make_interval(secs => ${PENDING_PAYMENT_HOLD_SECONDS + 60})
+        WHERE id = $1`,
+      [id]
+    );
+
+  /** A paid online form, limited to one. */
+  const paidOnlineForm = (over: Partial<Form> = {}) =>
+    makeForm({
+      requiresPayment: true,
+      basePrice: 1500,
+      allowOnlinePayment: true,
+      ...over,
+    } as Partial<Form>);
 
   /** A published, limited form; free unless told otherwise, its list on unless told otherwise. */
   async function makeForm(over: Partial<Form> = {}): Promise<string> {
@@ -350,7 +404,7 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
     expect(promoted.paymentStatus).toBe('free');
     expect(promoted.promotedAt).not.toBeNull();
     expect(promoted.promotionNotifiedAt).not.toBeNull();
-    expect(rowsWritten).toEqual([
+    expect(await bellRows()).toEqual([
       expect.objectContaining({
         recipientId: BOB,
         type: FORM_WAITLIST_PROMOTED_TYPE,
@@ -360,7 +414,7 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
     ]);
     expect(pushes).toEqual([{ userId: BOB, key: 'form_waitlist_promoted' }]);
     expect(await rankOf(formId, CAROL)).toBe(1);
-    // The sweep finds nothing owed: the notice was claimed once.
+    // Nothing owed to the retry: the notice was claimed once, with its bell row.
     expect(await notice.tellPending()).toBe(0);
   });
 
@@ -439,30 +493,24 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
   });
 
   it('an online answer past its hold promotes the next, who owes the payment within their own hold', async () => {
-    const formId = await makeForm({
-      requiresPayment: true,
-      basePrice: 1500,
-      allowOnlinePayment: true,
-    } as Partial<Form>);
+    const formId = await paidOnlineForm();
     const alice: any = await send(formId, ALICE, { payerEmail: 'a@example.org' });
     expect(alice.checkoutUrl).toBeDefined();
     const bob: any = await send(formId, BOB);
     const carol: any = await send(formId, CAROL);
     expect(bob).toMatchObject({ waiting: true, waitlistRank: 1 });
-    // Past the hold on the DATABASE clock, the one every write of the column uses.
-    const pastHold = (id: string) =>
-      ds.query(
-        `UPDATE submissions
-            SET "paymentRequestedAt" = now() - make_interval(secs => ${PENDING_PAYMENT_HOLD_SECONDS + 60})
-          WHERE id = $1`,
-        [id]
-      );
     await pastHold(alice.submissionId);
     await service.expireStalePendingPayments(await service.pendingHoldCutoff());
     expect((await status(alice.submissionId)).paymentStatus).toBe('expired');
     const due = await status(bob.submissionId);
     expect(due.paymentStatus).toBe('payment_due');
     expect(due.paymentRequestedAt).not.toBeNull();
+    // Told that the place is HELD for the payment: its own bell row and push.
+    await noticesLand();
+    expect(await bellRows()).toEqual([
+      expect.objectContaining({ recipientId: BOB, type: FORM_WAITLIST_PROMOTED_PAYMENT_DUE_TYPE }),
+    ]);
+    expect(pushes).toEqual([{ userId: BOB, key: 'form_waitlist_promoted_payment_due' }]);
     // Bob is offered the payment of THAT answer, and still holds the place: the form stays full.
     const check = await service.hasSubmission(formId, BOB);
     expect(check.resumable).toMatchObject({ submissionId: bob.submissionId });
@@ -479,47 +527,181 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
     expect((await status(dave.submissionId)).paymentStatus).toBe('payment_due');
   });
 
-  it('a place freed with no promotion run (a failure, a stopped process) is taken by the sweep', async () => {
-    const formId = await makeForm();
-    const alice: any = await send(formId, ALICE);
-    const bob: any = await send(formId, BOB);
-    await ds.query(`DELETE FROM submissions WHERE id = $1`, [alice.submissionId]);
-    expect((await status(bob.submissionId)).paymentStatus).toBe('waiting');
-    expect(await service.promoteEveryWaitlist()).toBeGreaterThanOrEqual(1);
-    expect((await status(bob.submissionId)).paymentStatus).toBe('free');
-    // Its notice is owed to the sweep of notices when the promotion's own did not run.
-    await ds.query(`UPDATE submissions SET "promotionNotifiedAt" = NULL WHERE id = $1`, [
-      bob.submissionId,
-    ]);
-    rowsWritten.length = 0;
-    expect(await notice.tellPending()).toBeGreaterThanOrEqual(1);
-    expect(rowsWritten.map((r) => r.recipientId)).toContain(BOB);
+  it('a failed promotion rolls back the freeing it follows: a delete, a cancel, an expiry', async () => {
+    const formId = await paidOnlineForm({ maxSubmissions: 2 } as Partial<Form>);
+    const alice: any = await send(formId, ALICE, { payerEmail: 'a@example.org' });
+    const bob: any = await send(formId, BOB, { payerEmail: 'b@example.org' });
+    const carol: any = await send(formId, CAROL);
+    expect(carol).toMatchObject({ waiting: true });
+    // Bob's request is settled as never issued, so a manager may delete his answer outright.
+    await ds.query(
+      `UPDATE submissions SET "paymentStatus" = 'payment_due', "paymentRequestId" = NULL,
+              "stripeSessionId" = NULL WHERE id = $1`,
+      [bob.submissionId]
+    );
+    await withPromotionRefused(async () => {
+      // A delete whose promotion fails keeps the answer: the place is never free with Carol waiting.
+      await expect(service.deleteSubmission(bob.submissionId, OWNER, false)).rejects.toThrow(
+        'promotion refused by the spec'
+      );
+      expect((await status(bob.submissionId)).paymentStatus).toBe('payment_due');
+      // A cancel too (`moveLockedSubmission`).
+      await expect(service.cancelSubmission(bob.submissionId, BOB, false)).rejects.toThrow(
+        'promotion refused by the spec'
+      );
+      expect((await status(bob.submissionId)).paymentStatus).toBe('payment_due');
+      // An expiry is left for the next run, its form's rows untouched.
+      await pastHold(alice.submissionId);
+      expect(await service.expireStalePendingPayments(await service.pendingHoldCutoff())).toBe(0);
+      expect((await status(alice.submissionId)).paymentStatus).toBe('pending');
+    });
+    expect((await status(carol.submissionId)).paymentStatus).toBe('waiting');
+    // The next run, with the promotion working, expires and promotes in one step.
+    expect(await service.expireStalePendingPayments(await service.pendingHoldCutoff())).toBe(1);
+    expect((await status(alice.submissionId)).paymentStatus).toBe('expired');
+    expect((await status(carol.submissionId)).paymentStatus).toBe('payment_due');
   });
 
-  it('a bell row that cannot be written releases the notice for the next sweep, never loses it', async () => {
+  it('a bell row that cannot be written rolls its claim back: the notice is owed, never lost', async () => {
     const formId = await makeForm();
     const alice: any = await send(formId, ALICE);
     const bob: any = await send(formId, BOB);
-    const failing = new FormWaitlistNoticeService(
-      ds.getRepository(Submission),
-      {
-        createNotification: async () => {
-          throw new Error('bell store down');
-        },
-      } as any,
-      { notifyContent: async () => undefined } as any
+    await ds.query(
+      `CREATE OR REPLACE FUNCTION waitlist_it_bell_down() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN RAISE EXCEPTION 'bell store down'; END $$`
     );
-    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
-    await ds.query(`DELETE FROM submissions WHERE id = $1`, [alice.submissionId]);
-    await ds.transaction('READ COMMITTED', async (m) => {
-      await lockFormSeats(m, formId);
-      await promoteFromWaitlist(m, formId, 'sweep', new Logger('it'));
-    });
-    await failing.tell([bob.submissionId]);
+    await ds.query(
+      `CREATE TRIGGER waitlist_it_bell_down BEFORE INSERT ON post_notifications
+         FOR EACH ROW EXECUTE FUNCTION waitlist_it_bell_down()`
+    );
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    try {
+      await service.deleteSubmission(alice.submissionId, OWNER, false);
+      await noticesLand();
+    } finally {
+      await ds.query(`DROP TRIGGER waitlist_it_bell_down ON post_notifications`);
+      error.mockRestore();
+    }
+    // Promoted, but the claim went with the failed bell row: owed, and no push was sent.
+    expect((await status(bob.submissionId)).paymentStatus).toBe('free');
     expect((await status(bob.submissionId)).promotionNotifiedAt).toBeNull();
-    await notice.tell([bob.submissionId]);
+    expect(pushes).toEqual([]);
+    expect(await notice.tellPending()).toBe(1);
+    await noticesLand();
     expect((await status(bob.submissionId)).promotionNotifiedAt).not.toBeNull();
-    expect(rowsWritten.map((r) => r.recipientId)).toEqual([BOB]);
+    expect((await bellRows()).map((r) => r.recipientId)).toEqual([BOB]);
+    expect(pushes).toEqual([{ userId: BOB, key: 'form_waitlist_promoted' }]);
+  });
+
+  it('a promoted answer whose payment request is refused before it exists keeps its place', async () => {
+    const formId = await paidOnlineForm();
+    const alice: any = await send(formId, ALICE, { payerEmail: 'a@example.org' });
+    const bob: any = await send(formId, BOB);
+    const carol: any = await send(formId, CAROL);
+    await pastHold(alice.submissionId);
+    await service.expireStalePendingPayments(await service.pendingHoldCutoff());
+    expect((await status(bob.submissionId)).paymentStatus).toBe('payment_due');
+    // Core refuses the request with a typed refusal: nothing exists at Lydia (its ERROR line silenced).
+    jest.spyOn(Logger.prototype, 'error').mockImplementationOnce(() => undefined);
+    jest.spyOn(axios, 'post').mockRejectedValueOnce({
+      response: { status: 400, data: { code: 'CHECKOUT_REQUEST_INVALID' } },
+    });
+    await expect(
+      service.resumePayment(bob.submissionId, BOB, { payerEmail: 'b@example.org' })
+    ).rejects.toBeDefined();
+    // Back to owing its payment, holding the place; Carol still waits.
+    expect((await status(bob.submissionId)).paymentStatus).toBe('payment_due');
+    expect((await status(carol.submissionId)).paymentStatus).toBe('waiting');
+    expect((await service.hasSubmission(formId, BOB)).resumable).toMatchObject({
+      submissionId: bob.submissionId,
+    });
+  });
+
+  it('a request whose issue has an unknown outcome keeps the seat until its hold lapses', async () => {
+    const formId = await paidOnlineForm();
+    const alice: any = await send(formId, ALICE, { payerEmail: 'a@example.org' });
+    const bob: any = await send(formId, BOB);
+    // The call was sent and failed: Lydia may hold a request this row does not name.
+    jest.spyOn(axios, 'post').mockRejectedValueOnce({ response: { status: 502 } });
+    await pastHold(alice.submissionId);
+    await service.expireStalePendingPayments(await service.pendingHoldCutoff());
+    jest.spyOn(Logger.prototype, 'error').mockImplementationOnce(() => undefined);
+    await expect(
+      service.resumePayment(bob.submissionId, BOB, { payerEmail: 'b@example.org' })
+    ).rejects.toBeDefined();
+    const carol: any = await send(formId, CAROL);
+    // Still pending, holding the seat: nobody is promoted into a place that request may claim.
+    expect((await status(bob.submissionId)).paymentStatus).toBe('pending');
+    expect(carol).toMatchObject({ waiting: true, waitlistRank: 1 });
+    // And never offered for a resume, now or once its hold has lapsed.
+    expect((await service.hasSubmission(formId, BOB)).resumable).toBeNull();
+    await pastHold(bob.submissionId);
+    await service.expireStalePendingPayments(await service.pendingHoldCutoff());
+    expect((await status(bob.submissionId)).paymentStatus).toBe('expired');
+    expect((await status(carol.submissionId)).paymentStatus).toBe('payment_due');
+    expect((await service.hasSubmission(formId, BOB)).resumable).toBeNull();
+  });
+
+  it('a late payment on an old answer takes its payer off the line: never paid AND promoted', async () => {
+    const formId = await paidOnlineForm();
+    const alice: any = await send(formId, ALICE, { payerEmail: 'a@example.org' });
+    const bob: any = await send(formId, BOB);
+    await pastHold(alice.submissionId);
+    await service.expireStalePendingPayments(await service.pendingHoldCutoff());
+    expect((await status(bob.submissionId)).paymentStatus).toBe('payment_due');
+    // Alice, her answer expired, joins the line behind the place Bob now holds.
+    const again: any = await send(formId, ALICE);
+    expect(again).toMatchObject({ waiting: true, waitlistRank: 1 });
+    // Her first payment lands late: over capacity (Bob holds the place), and she leaves the line.
+    await service.markPaid(alice.submissionId);
+    expect((await status(alice.submissionId)).paymentStatus).toBe('paid_over_capacity');
+    expect(await status(again.submissionId)).toBeUndefined();
+  });
+
+  it('a list whose first in line can no longer pay is FROZEN: nobody promoted, the form full', async () => {
+    const formId = await paidOnlineForm();
+    await send(formId, ALICE, { payerEmail: 'a@example.org' });
+    const bob: any = await send(formId, BOB);
+    // Online switched off: Bob would owe an online payment nobody can take.
+    await ds.getRepository(Form).update(formId, {
+      allowOnlinePayment: false,
+      allowCashPayment: true,
+      maxSubmissions: 2,
+    });
+    expect(await service.promoteWaitlist(formId, 'form-edit')).toEqual([]);
+    expect((await status(bob.submissionId)).paymentStatus).toBe('waiting');
+    // The free place is Bob's, not a newcomer's: the form reads full while he waits.
+    expect((await service.hasSubmission(formId, DAVE)).formFull).toBe(true);
+    // Nor can a manager register him into a payment that cannot be made.
+    expect(await refusal(service.promoteByHand(formId, bob.submissionId, OWNER, false))).toEqual({
+      status: 409,
+      code: WAITLIST_NO_PAYMENT_PATH,
+    });
+    // Online back on: the next capacity event promotes him.
+    await ds.getRepository(Form).update(formId, { allowOnlinePayment: true });
+    expect((await service.promoteWaitlist(formId, 'form-edit')).length).toBe(1);
+    expect((await status(bob.submissionId)).paymentStatus).toBe('payment_due');
+  });
+
+  it("the account erasure deletes the account's waiting answer, so nobody is promoted into it", async () => {
+    const formId = await makeForm();
+    const alice: any = await send(formId, ALICE);
+    const bob: any = await send(formId, BOB);
+    const carol: any = await send(formId, CAROL);
+    const statements = ERASURE_ROW_STATEMENTS.filter((st) =>
+      ['submissions_waiting_forms_locked', 'submissions_waiting', 'submissions'].includes(st.label)
+    );
+    expect(statements.map((st) => st.label)).toEqual([
+      'submissions_waiting_forms_locked',
+      'submissions_waiting',
+      'submissions',
+    ]);
+    await ds.transaction(async (m) => {
+      for (const st of statements) await m.query(st.sql, erasureParams(st, BOB));
+    });
+    expect(await status(bob.submissionId)).toBeUndefined();
+    await service.deleteSubmission(alice.submissionId, OWNER, false);
+    expect((await status(carol.submissionId)).paymentStatus).toBe('free');
   });
 
   it('a member leaves the list; a promoted answer and another member are refused, typed', async () => {
@@ -566,8 +748,22 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
     const bob: any = await send(formId, BOB);
     const carol: any = await send(formId, CAROL);
     const dave: any = await send(formId, DAVE);
-    await ds.getRepository(Form).update(formId, { maxSubmissions: 3 });
-    expect((await service.promoteWaitlist(formId, 'form-edit')).length).toBe(2);
+    const stored = await ds.getRepository(Form).findOneByOrFail({ id: formId });
+    // The edit raising the capacity promotes in its own save's transaction (`update`).
+    await service.update(
+      formId,
+      {
+        title: stored.title,
+        items: ITEMS,
+        maxSubmissions: 3,
+        waitlistEnabled: true,
+        associationId: ASSO,
+      } as any,
+      OWNER,
+      false
+    );
+    await noticesLand();
+    expect(pushes.map((p) => p.userId).sort()).toEqual([BOB, CAROL].sort());
     expect((await status(bob.submissionId)).paymentStatus).toBe('free');
     expect((await status(carol.submissionId)).paymentStatus).toBe('free');
     expect((await status(dave.submissionId)).paymentStatus).toBe('waiting');

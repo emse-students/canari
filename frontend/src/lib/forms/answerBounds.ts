@@ -110,6 +110,12 @@ export const FORM_BLOCK_INVALID = 'FORM_BLOCK_INVALID';
 export const WAITLIST_ANSWER_NOT_WAITING = 'WAITLIST_ANSWER_NOT_WAITING';
 
 /**
+ * A promotion by hand refused: the answer would owe a payment the form no longer takes
+ * (`forms.service.ts`, `WAITLIST_NO_PAYMENT_PATH`).
+ */
+export const WAITLIST_NO_PAYMENT_PATH = 'WAITLIST_NO_PAYMENT_PATH';
+
+/**
  * The sentence for a form's CODED refusal, or `null` when the code is none of a form's (the
  * caller then tries the next mapper, and ends on its own generic line). Classified by the code,
  * never by the message.
@@ -177,6 +183,8 @@ export function formCodeMessage(code: string | null): string | null {
       return m.form_refusal_block_invalid();
     case WAITLIST_ANSWER_NOT_WAITING:
       return m.form_refusal_waitlist_not_waiting();
+    case WAITLIST_NO_PAYMENT_PATH:
+      return m.form_refusal_waitlist_no_payment_path();
     default:
       // A priced grid's coded refusal (`PRODUCT_GRID_*`): an answer's, else a definition's at save.
       return productGridRefusalMessage(code) ?? productGridDefinitionMessage(code);

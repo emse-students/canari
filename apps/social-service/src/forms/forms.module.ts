@@ -17,7 +17,6 @@ import { FormItemImage } from './entities/form-item-image.entity';
 import { FormItemImagesService } from './form-item-images.service';
 import { FormFilesService } from './form-files.service';
 import { FormOrganiserAlertService } from './organiser-alert.service';
-import { FormWaitlistNoticeService } from './waitlist-notice.service';
 import { FormFileRetentionScheduler } from './form-file-retention.scheduler';
 import { StaleOpenFormScheduler } from './stale-open-form.scheduler';
 import { AnonymousAnswerReleaseScheduler } from './anonymous-answer-release.scheduler';
@@ -63,7 +62,6 @@ import { LydiaReconciliationScheduler } from './lydia-reconciliation.scheduler';
   providers: [
     FormsService,
     FormOrganiserAlertService,
-    FormWaitlistNoticeService,
     FormFilesService,
     FormItemImagesService,
     FormReminderScheduler,

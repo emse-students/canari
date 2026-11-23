@@ -877,9 +877,10 @@ earlier reaches the floor clients as a wrong sentence and a dead link, which no 
 no native table), floor `1.8.0` (`FORM_STALE_OPEN_MIN_CLIENT_VERSION`): a build below it is never served the
 row, so it draws nothing unknown ([forms](frontend/modules/forms.md#the-question-put-to-a-form-left-open-owner-2026-11-21-migration-180)).
 
-**`form_waitlist_promoted` (owner, 2026-11-23)**: a waiting answer became a registration, a bell row AND a push
-key (with its Android and iOS tables), floor `1.8.0` (`FORM_WAITLIST_MIN_CLIENT_VERSION`) for both: a build
-below it is never served the row nor the push ([forms](frontend/modules/forms.md#a-waiting-list-on-a-limited-form-owner-decision-of-2026-11-23-180)).
+**`form_waitlist_promoted` and `form_waitlist_promoted_payment_due` (owner, 2026-11-23)**: a waiting answer
+became a registration (the second: its place is held for an online payment), each a bell row AND a push
+key (with its Android and iOS tables), floor `1.8.0` (`FORM_WAITLIST_MIN_CLIENT_VERSION`) for all four: a build
+below it is never served the rows nor the pushes ([forms](frontend/modules/forms.md#a-waiting-list-on-a-limited-form-owner-decision-of-2026-11-23-180)).
 
 ### The client floor of every notification type (owner, 2026-11-10)
 

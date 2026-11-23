@@ -382,14 +382,9 @@ export class FormReminderScheduler {
           this.logger.warn('[PENDING] Error expiring stale online payments', e);
         }
       }
-      // THE WAITING LIST (`waitlist.ts`), after the expiry (which promotes for what it expired): a
-      // free place no event promoted is promoted now and accused, then every promotion whose notice
-      // was not written is told. Each its own `try`.
-      try {
-        await this.formsService.promoteEveryWaitlist();
-      } catch (e) {
-        this.logger.error('[WAITLIST] sweep failed before promoting any form', e);
-      }
+      // THE WAITING LIST'S NOTICES OWED (`waitlist.ts`): a NOTICE, never a promotion, is retried here
+      // - every event that frees a place promotes in its own transaction, and tells right after its
+      // commit; this tells a promotion whose notice could not be written then. Its own `try`.
       if (this.waitlistNotice) {
         try {
           await this.waitlistNotice.tellPending();

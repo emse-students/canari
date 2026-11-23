@@ -61,6 +61,7 @@ export type PushContentKey =
   | 'form_open'
   | 'form_paid_over_capacity'
   | 'form_waitlist_promoted'
+  | 'form_waitlist_promoted_payment_due'
   | 'lydia_payments_active'
   | 'lydia_payments_paused'
   | 'lydia_refund_issued'
@@ -154,7 +155,8 @@ export type PushContent = {
    * - the two admin queue keys (`social_admin_profile_correction`, `social_admin_report`): nothing,
    *   always empty - the content-free rule
    * - `form_paid_over_capacity`: the form's own title - never the payer's name, never the amount
-   * - `form_waitlist_promoted`: the form's own title (`actorName` is its association, or empty)
+   * - `form_waitlist_promoted` and `form_waitlist_promoted_payment_due`: the form's own title
+   *   (`actorName` is its association, or empty)
    * - the two `lydia_payments_*` keys: the association's name, nothing else
    * - the five event keys: the event's own title, which is not translatable either
    * - the four booking keys (WP-N): the PLACE of the booking (its space, and its column when it has
@@ -472,6 +474,32 @@ export function formWaitlistPromotedContent(subject: FormReminderSubject = {}): 
     legacyBody: title
       ? `Vous êtes inscrit à ${quoted(title)}. Ouvrez le formulaire pour voir votre inscription.`
       : 'Vous êtes inscrit au formulaire. Ouvrez-le pour voir votre inscription.',
+  };
+}
+
+/**
+ * A PLACE WAS FREED FOR THE READER, FIRST ON A PAID FORM'S WAITING LIST, AND IS HELD FOR THEIR
+ * PAYMENT (`payment_due`, `waitlist.ts`): the place is theirs for the online hold
+ * (`PENDING_PAYMENT_HOLD_SECONDS`, 30 minutes) counted from the promotion, and goes to the next in
+ * line if it is not paid by then - so the sentence says so, where the plain promotion's says
+ * "registered". Never an amount on a lock screen: the form shows it.
+ */
+export function formWaitlistPromotedPaymentDueContent(
+  subject: FormReminderSubject = {}
+): PushContent {
+  const title = subject.formTitle?.trim() ?? '';
+  const association = subject.associationName?.trim() ?? '';
+  return {
+    key: 'form_waitlist_promoted_payment_due',
+    ...(subject.icon ? { icon: subject.icon } : {}),
+    actorName: association,
+    arg: title,
+    legacyTitle: association
+      ? `${association} : une place vous est gardée`
+      : 'Une place vous est gardée',
+    legacyBody: title
+      ? `Une place s'est libérée sur ${quoted(title)} : réglez-la dans les 30 minutes pour la garder.`
+      : "Une place s'est libérée : réglez-la dans les 30 minutes pour la garder.",
   };
 }
 

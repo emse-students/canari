@@ -222,8 +222,6 @@ export class FormsController {
       dto.overwrite === true,
       dto.confirmOpeningNotify ?? null
     );
-    // A capacity raised (or cleared) by the revision frees places: the first in line takes them.
-    await this.service.promoteWaitlist(id, 'form-edit');
     return published;
   }
 
@@ -258,8 +256,6 @@ export class FormsController {
       undefined,
       confirmedAskersOf(confirmOpeningNotify)
     );
-    // A capacity raised (or cleared) frees places: the first in line takes them (`waitlist.ts`).
-    await this.service.promoteWaitlist(id, 'form-edit');
     return saved;
   }
 

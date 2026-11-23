@@ -6,6 +6,7 @@ import {
   waitingInOrder,
   waitlistPayload,
   waitlistRankText,
+  waitlistFrozen,
   waitlistSettable,
 } from './waitlist';
 
@@ -96,5 +97,27 @@ describe('the waiting list switch in the editors', () => {
       waitlistEnabled: false,
     });
     expect(waitlistPayload(true, false, limited)).toEqual({ waitlistEnabled: false });
+  });
+});
+
+describe('a waiting list frozen by its payment modes', () => {
+  const online = { totalPaid: 1500, paymentMethod: null };
+  const cash = { totalPaid: 1500, paymentMethod: 'cash' as const };
+
+  it('is frozen when the first in line owes by a mode the form no longer takes', () => {
+    expect(waitlistFrozen({ allowOnlinePayment: false, allowCashPayment: true }, online)).toBe(
+      true
+    );
+    expect(waitlistFrozen({ allowOnlinePayment: true, allowCashPayment: false }, cash)).toBe(true);
+  });
+
+  it('is not frozen when that mode is offered, nothing is owed, or nobody waits', () => {
+    expect(waitlistFrozen({ allowOnlinePayment: true }, online)).toBe(false);
+    expect(waitlistFrozen({}, online)).toBe(false);
+    expect(waitlistFrozen({ allowCashPayment: true }, cash)).toBe(false);
+    expect(
+      waitlistFrozen({ allowOnlinePayment: false }, { totalPaid: 0, paymentMethod: null })
+    ).toBe(false);
+    expect(waitlistFrozen({ allowOnlinePayment: false }, undefined)).toBe(false);
   });
 });

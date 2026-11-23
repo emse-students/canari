@@ -188,27 +188,30 @@ describe('FormsService - the seat a pending payment holds', () => {
       holdsTierDeliveredBy: jest.fn(() => Promise.resolve(false)),
     };
 
-    /** The two UPDATE shapes the service builds: the expiry job and a fulfilment claim. */
+    /** The two UPDATE shapes the builder makes: an unknown issue's mark and a fulfilment claim. */
     function runUpdate(state: {
       set: Record<string, unknown>;
       where: string[];
       params: Record<string, unknown>;
     }) {
-      if (state.where[0] === '"paymentStatus" IN (:...statuses)') {
-        // The online expiry: a `pending` row and a promoted `payment_due` one share the hold.
+      if ('paymentCancelOrigin' in state.set) {
+        // An issue whose outcome is unknown: the row stays pending, marked, while it names nothing.
+        expect(state.set).toEqual({ paymentCancelOrigin: 'issue-unknown' });
         expect(state.where).toEqual([
-          '"paymentStatus" IN (:...statuses)',
-          '"paymentRequestedAt" <= CAST(:cutoff AS timestamptz)',
+          'id = :id',
+          '"paymentStatus" = :pending',
+          '"paymentRequestId" IS NULL AND "stripeSessionId" IS NULL',
         ]);
-        expect(state.params.statuses).toEqual(['pending', 'payment_due']);
-        const cutoff = state.params.cutoff as Date;
-        const moved = rows.filter(
-          (r) =>
-            (state.params.statuses as string[]).includes(r.paymentStatus) &&
-            r.paymentRequestedAt.getTime() <= cutoff.getTime()
-        );
-        moved.forEach((r) => Object.assign(r, state.set));
-        return { affected: moved.length, raw: moved.map((r) => ({ formId: r.formId })) };
+        const target = byId(state.params.id as string);
+        if (
+          target.paymentStatus !== 'pending' ||
+          target.paymentRequestId ||
+          target.stripeSessionId
+        ) {
+          return { affected: 0 };
+        }
+        target.paymentCancelOrigin = 'issue-unknown';
+        return { affected: 1 };
       }
       const [flag] = Object.keys(state.set) as Flag[];
       expect(state.where).toEqual(['id = :id', `"${flag}" IS NULL`]);
@@ -218,7 +221,30 @@ describe('FormsService - the seat a pending payment holds', () => {
       return { affected: 1 };
     }
 
+    /** The online expiry's rows (`expireStalePendingPayments`): `pending` and `payment_due` past `cutoff`. */
+    const onlineDue = (sql: string, cutoff: Date, formId?: string) => {
+      expect(sql).toContain(
+        `"paymentStatus" IN ('pending', 'payment_due') AND "paymentRequestedAt" <= CAST($1 AS timestamptz)`
+      );
+      return rows.filter(
+        (r) =>
+          (formId === undefined || r.formId === formId) &&
+          ['pending', 'payment_due'].includes(r.paymentStatus) &&
+          r.paymentRequestedAt.getTime() <= cutoff.getTime()
+      );
+    };
+
     const submissionRepo: any = {
+      // The expiry's first read: the forms whose rows are due, each then expired under its lock.
+      query: jest.fn(async (sql: string, params: unknown[]) => {
+        await roundTrip();
+        expect(sql.startsWith('SELECT DISTINCT "formId" FROM submissions WHERE')).toBe(true);
+        return [...new Set(onlineDue(sql, params[0] as Date).map((r) => r.formId))].map(
+          (formId) => ({
+            formId,
+          })
+        );
+      }),
       findOne: jest.fn(async ({ where }: { where: Record<string, unknown> }) => {
         const row = rows.find((r) => matches(r, where));
         return row ? { ...row } : null;
@@ -255,8 +281,6 @@ describe('FormsService - the seat a pending payment holds', () => {
             Object.assign(state.params, params),
             builder
           ),
-          // The expiry answers the forms it touched, for the waiting list to promote.
-          returning: (columns: string[]) => (expect(columns).toEqual(['formId']), builder),
           execute: async () => {
             await roundTrip();
             return runUpdate(state);
@@ -274,10 +298,32 @@ describe('FormsService - the seat a pending payment holds', () => {
           expect(level).toBe('READ COMMITTED');
           const releases: (() => void)[] = [];
           const manager = {
-            query: async (sql: string, [formId]: string[]) => {
+            query: async (sql: string, params: unknown[]) => {
               // The association's archive, read FOR SHARE before the seat lock: never archived
               // here (the archive itself is proven on PostgreSQL, answer-edit.integration).
               if (sql.includes('FROM associations')) return [];
+              // A late payment takes its payer's WAITING answer off the line (`markPaid`).
+              if (sql.startsWith('DELETE FROM submissions WHERE "formId" = $1 AND "userId" = $2')) {
+                await roundTrip();
+                const [f, u, st, keep] = params as string[];
+                const gone = rows.filter(
+                  (r) => r.formId === f && r.userId === u && r.paymentStatus === st && r.id !== keep
+                );
+                gone.forEach((r) => rows.splice(rows.indexOf(r), 1));
+                return [gone.map((r) => ({ id: r.id })), gone.length];
+              }
+              // The online expiry of ONE form, under its seat lock (`expirePerForm`).
+              if (sql.startsWith(`UPDATE submissions SET "paymentStatus" = 'expired'`)) {
+                await roundTrip();
+                const [cutoff, f] = params as [Date, string];
+                // The form is the LAST parameter, after the cutoff the due rows are read by.
+                if (!sql.includes('WHERE "formId" = $2 AND'))
+                  throw new Error(`unexpected expiry: ${sql}`);
+                const moved = onlineDue(sql, cutoff, f);
+                moved.forEach((r) => (r.paymentStatus = 'expired'));
+                return [moved.map((r) => ({ id: r.id })), moved.length];
+              }
+              const [formId] = params as string[];
               expect(sql).toBe('SELECT 1 FROM forms WHERE id = $1 FOR UPDATE');
               while (locks.has(formId)) await locks.get(formId);
               let release!: () => void;
@@ -2645,14 +2691,15 @@ describe('FormsService - the seat a pending payment holds', () => {
       });
     });
 
-    // A TIMED-OUT ISSUE may have left a request at Lydia the row does not name: released, and NOT
-    // offered for a resume (it would make a second payable request for one answer repeatable).
-    it('releases an answer whose issuing call failed after it was sent as issue-unknown', async () => {
+    // A TIMED-OUT ISSUE may have left a request at Lydia the row does not name: the answer KEEPS its
+    // seat until its hold lapses (the next in line must not be promoted into a place that request
+    // may claim), marked, and is NOT offered for a resume (a second payable request for one answer).
+    it('keeps an answer whose issuing call failed after it was sent pending, as issue-unknown', async () => {
       const { service, rows, core } = lydia([released()]);
       core.createAnswer = new Error('socket hang up');
       await expect(resume(service)).rejects.toBeDefined();
       expect(rows[0]).toMatchObject({
-        paymentStatus: 'cancelled',
+        paymentStatus: 'pending',
         paymentRequestId: null,
         paymentCancelOrigin: 'issue-unknown',
       });
@@ -2681,7 +2728,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       core.createAnswer = coreAnswered(status, { message: 'Payment error: timeout' });
       await expect(resume(service)).rejects.toBeDefined();
       expect(rows[0]).toMatchObject({
-        paymentStatus: 'cancelled',
+        paymentStatus: 'pending',
         paymentRequestId: null,
         paymentCancelOrigin: 'issue-unknown',
       });

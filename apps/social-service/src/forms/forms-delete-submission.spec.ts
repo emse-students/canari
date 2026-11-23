@@ -15,14 +15,28 @@ function serviceWith(rows: {
 }) {
   const service = Object.create(FormsService.prototype) as FormsService;
   // The shape TypeORM's postgres driver answers a DELETE with: the rows, then the count.
-  const query = jest.fn(async () => [rows.deleted, rows.deleted.length]);
+  const query = jest.fn(async (_sql: string, _params: unknown[]) => [
+    rows.deleted,
+    rows.deleted.length,
+  ]);
   const findOne = jest
     .fn()
     .mockResolvedValueOnce({ id: 's1', formId: 'f1', paymentStatus: rows.before ?? 'cancelled' })
     .mockResolvedValueOnce(rows.after ? { id: 's1', ...rows.after } : null);
   const cancelSubmission = jest.fn(async () => ({ ok: true }));
+  // The delete runs in a transaction under the form's seat lock, which promotes the first in line
+  // into the seat it frees: the lock answers nothing, and nobody waits here.
+  const manager = {
+    query: jest.fn(async (sql: string, params: unknown[]) =>
+      sql.startsWith('SELECT 1 FROM forms') ? [] : query(sql, params)
+    ),
+    count: jest.fn(async () => 0),
+  };
+  const transaction = jest.fn(async (_level: string, run: (m: unknown) => Promise<unknown>) =>
+    run(manager)
+  );
   Object.assign(service, {
-    submissionRepo: { findOne, query },
+    submissionRepo: { findOne, query, manager: { transaction } },
     logger: new Logger('test'),
     assertFormManager: jest.fn(async () => ({ id: 'f1' })),
     cancelSubmission,

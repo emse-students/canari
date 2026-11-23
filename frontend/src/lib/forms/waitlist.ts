@@ -48,6 +48,28 @@ export function waitingInOrder<
   });
 }
 
+/** The payment modes of a form, as the manager's page holds them. */
+export interface WaitlistPaymentModes {
+  allowOnlinePayment?: boolean | null;
+  allowCashPayment?: boolean | null;
+}
+
+/**
+ * Whether the line is FROZEN - the server's own rule (`promotionPayable`, `waitlist.ts`): the first
+ * in line owes a payment (`totalPaid` > 0) by a mode the form no longer takes - online switched off
+ * for an online answer (`paymentMethod` null), cash for a cash one. The server then promotes nobody
+ * past them (the line is never reordered), and refuses to promote them by hand; the manager reopens
+ * the mode or removes the answer. False with nobody waiting.
+ */
+export function waitlistFrozen(
+  form: WaitlistPaymentModes,
+  first: { totalPaid: number; paymentMethod?: 'online' | 'cash' | null } | undefined
+): boolean {
+  if (!first || !(first.totalPaid > 0)) return false;
+  if (first.paymentMethod === 'cash') return form.allowCashPayment !== true;
+  return form.allowOnlinePayment === false;
+}
+
 /** The answers that are registrations: every row but the waiting ones. */
 export function registeredOnly<T extends { paymentStatus: string }>(subs: readonly T[]): T[] {
   return subs.filter((sub) => !isWaiting(sub));
