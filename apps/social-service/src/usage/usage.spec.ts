@@ -26,6 +26,8 @@ import {
   peopleKey,
   peopleVersionKey,
   peopleVersionsKey,
+  isFoldableVersion,
+  USAGE_RELEASE_VERSION,
 } from './usage-contract';
 import { foldSpans, readFigures, writeFigures, type UsageRedisReader } from './usage-fold';
 import { hourSlots, readHourMap, shapePeriods } from './usage-read';
@@ -38,6 +40,8 @@ const contract = JSON.parse(
   activityMetrics: string[];
   dayKeyTtlSecs: number;
   hourKeyTtlSecs: number;
+  versionGrammar: string;
+  versions: { given: string; counted: string }[];
   parisTime: { instant: string; day: string; hour: number }[];
 };
 
@@ -71,6 +75,13 @@ describe('the usage dashboard (docs/wiki/usage-dashboard.md)', () => {
       expect([...USAGE_ACTIVITY_METRICS]).toEqual(contract.activityMetrics);
       expect(USAGE_DAY_KEY_TTL_SECS).toBe(contract.dayKeyTtlSecs);
       expect(USAGE_HOUR_KEY_TTL_SECS).toBe(contract.hourKeyTtlSecs);
+      expect(USAGE_RELEASE_VERSION.source).toBe(contract.versionGrammar);
+    });
+
+    it('folds a version only when the gateway would have counted it as itself', () => {
+      for (const c of contract.versions) {
+        expect([c.given, isFoldableVersion(c.given)]).toEqual([c.given, c.counted === c.given]);
+      }
     });
 
     it('names the keys the gateway writes', () => {
@@ -177,6 +188,28 @@ describe('the usage dashboard (docs/wiki/usage-dashboard.md)', () => {
       expect(october?.days).toHaveLength(31);
       const thisWeek = spans.find((s) => s.period === 'week' && s.start === '2026-11-23');
       expect(thisWeek?.days).toEqual(['2026-11-23']);
+    });
+
+    it('never folds a version that is not a release, and says how many it refused', async () => {
+      const mon = '2026-11-16';
+      const { reader } = fakeRedis(
+        {
+          [peopleKey(mon)]: ['alice', 'bob'],
+          [peopleVersionKey(mon, '1.8.0')]: ['alice'],
+          [peopleVersionKey(mon, 'Jean.Dupont')]: ['bob'],
+        },
+        { [peopleVersionsKey(mon)]: ['1.8.0', 'Jean.Dupont'] },
+        {}
+      );
+      const refused: string[] = [];
+      const figures = await readFigures(reader, '2026-11-23', (v) => refused.push(v));
+      const dims = new Set(figures.map((f) => f.dimension));
+      expect(dims.has('ver:1.8.0')).toBe(true);
+      expect([...dims].some((d) => d.includes('Dupont'))).toBe(false);
+      expect(refused).toEqual(['Jean.Dupont']);
+      expect(
+        figures.find((f) => f.period === 'day' && f.start === mon && f.dimension === 'all')?.value
+      ).toBe(2);
     });
 
     it('counts a person once per week, however many days, devices and categories', async () => {

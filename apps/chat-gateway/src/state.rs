@@ -109,6 +109,8 @@ pub struct AppState {
     pub instance_id: String,
     /// HS256 secret used to validate the `canari_ws_token` JWT on upgrade.
     pub jwt_secret: String,
+    /// The usage dashboard's element key, derived from `jwt_secret` ([`crate::usage::UsageKey`]).
+    pub usage_key: crate::usage::UsageKey,
     /// Who may see whose presence: asked of chat-delivery and social-service on every
     /// `POST /api/presence` and its legacy `GET` (WP-PRESENCE).
     pub presence_audience: PresenceAudience,
@@ -144,6 +146,7 @@ impl AppState {
             frame_limits: crate::frame_census::FrameLimits::default(),
             limit_endings: crate::frame_census::LimitEndings::default(),
             instance_id: uuid::Uuid::new_v4().to_string(),
+            usage_key: crate::usage::UsageKey::derive(jwt_secret.as_bytes()),
             jwt_secret,
             presence_audience,
             legacy_presence_gets: crate::presence::LegacyGetTally::new(std::time::Instant::now()),

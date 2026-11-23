@@ -8,6 +8,7 @@ import {
   activityKey,
   peopleCategoryKey,
   peopleKey,
+  isFoldableVersion,
   peopleVersionKey,
   peopleVersionsKey,
   USAGE_ACTIVITY_METRICS,
@@ -67,9 +68,15 @@ export function foldSpans(today: string): Span[] {
  * week or a month is the UNION of its days' HyperLogLogs - a person on Monday and Friday is one
  * person in the week. Activity is folded per day only (a week's or a month's is the sum of its days,
  * done at read). A category or a version with nobody is no row; `people/all` and the six activity
- * metrics of a day are always written, so a folded day with nobody says 0, not nothing.
+ * metrics of a day are always written, so a folded day with nobody says 0, not nothing. A version
+ * that is not a release ({@link isFoldableVersion}) is never a row: it is handed to `onRefused`, and
+ * its people stay in `all` and their category.
  */
-export async function readFigures(reader: UsageRedisReader, today: string): Promise<UsageFigure[]> {
+export async function readFigures(
+  reader: UsageRedisReader,
+  today: string,
+  onRefused: (version: string) => void = () => undefined
+): Promise<UsageFigure[]> {
   const spans = foldSpans(today);
   const days = spans.filter((s) => s.period === 'day').map((s) => s.start);
   const versionSets = await reader.smembersEach(days.map(peopleVersionsKey));
@@ -89,6 +96,10 @@ export async function readFigures(reader: UsageRedisReader, today: string): Prom
     }
     const versions = new Set(span.days.flatMap((d) => versionsOf.get(d) ?? []));
     for (const v of [...versions].sort()) {
+      if (!isFoldableVersion(v)) {
+        if (span.period === 'day') onRefused(v);
+        continue;
+      }
       asked.push({
         span,
         dimension: `ver:${v}`,
@@ -188,7 +199,17 @@ export class UsageFold {
   async foldOnce(now: Date): Promise<{ today: string; written: number }> {
     const { day: today } = parisSlot(now);
     this.logger.debug(`${TAG} folding the ${USAGE_FOLD_DAYS} days up to ${today}`);
-    const figures = await readFigures(this.redis, today);
+    let refused = 0;
+    const figures = await readFigures(this.redis, today, () => {
+      refused += 1;
+    });
+    if (refused > 0) {
+      // The gateway counts a non-release as `other`, so a set holding one means a writer that skipped
+      // that rule. Its text is not logged: it is exactly what must not be kept.
+      this.logger.warn(
+        `${TAG} ${refused} day-version(s) in Redis are not releases - not folded; a writer bypassed usage::release_version`
+      );
+    }
     const written = await writeFigures(this.ds, figures);
     this.logger.log(`${TAG} folded ${written} figure(s) up to ${today}`);
     return { today, written };

@@ -1,5 +1,5 @@
 {
-  "$comment": "The usage dashboard's shared facts (docs/wiki/usage-dashboard.md). Read by chat-gateway (usage.rs), chat-delivery-service (utils/usage-activity.ts) and social-service (usage/). parisTime: the Paris day and hour of an instant, on each side of both changes of the hour and of midnight - the gateway applies the EU rule, the services Intl, and both must agree. userAgents: the category of a web socket by its User-Agent (gateway only).",
+  "$comment": "The usage dashboard's shared facts (docs/wiki/usage-dashboard.md). Read by chat-gateway (usage.rs), chat-delivery-service (utils/usage-activity.ts) and social-service (usage/). parisTime: the Paris day and hour of an instant, on each side of both changes of the hour and of midnight - the gateway applies the EU rule, the services Intl, and both must agree. userAgents: the category of a web socket by its User-Agent (gateway only). versionGrammar/versions: the only versions that get a key of their own (a release); anything else but `unknown` is counted as `other` (gateway at the count, social-service again at the fold).",
   "keyPrefix": "usage:",
   "categories": [
     "app_android",
@@ -12,6 +12,24 @@
   ],
   "activityMetrics": ["messages", "posts", "reels", "lives", "calls", "forms"],
   "maxVersionsPerDay": 32,
+  "versionGrammar": "^\\d+\\.\\d+\\.\\d+(-alpha\\.\\d+)?$",
+  "versions": [
+    { "given": "1.8.0", "counted": "1.8.0" },
+    { "given": "1.8.0-alpha.2", "counted": "1.8.0-alpha.2" },
+    { "given": "10.20.30-alpha.400", "counted": "10.20.30-alpha.400" },
+    { "given": "unknown", "counted": "unknown" },
+    { "given": "other", "counted": "other" },
+    { "given": "Jean.Dupont", "counted": "other" },
+    { "given": "1.8", "counted": "other" },
+    { "given": "1.8.0.1", "counted": "other" },
+    { "given": "1.8.0-beta.1", "counted": "other" },
+    { "given": "1.8.0-alpha", "counted": "other" },
+    { "given": "1.8.0-alpha.", "counted": "other" },
+    { "given": "1.8.0-alpha.2-alpha.3", "counted": "other" },
+    { "given": "v1.8.0", "counted": "other" },
+    { "given": "1..0", "counted": "other" },
+    { "given": "", "counted": "other" }
+  ],
   "dayKeyTtlSecs": 3456000,
   "hourKeyTtlSecs": 2592000,
   "parisTime": [
