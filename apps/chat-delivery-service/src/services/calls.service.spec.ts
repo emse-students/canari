@@ -93,7 +93,21 @@ describe('CallsService', () => {
       redisStore.delete(key);
       return Promise.resolve(1);
     }),
+    /** The usage dashboard's daily count (`utils/usage-activity.ts`): the metrics it was told of. */
+    multi: jest.fn(() => {
+      const chain = {
+        hincrby: (_key: string, metric: string) => (usageCounted(metric), chain),
+        expire: () => chain,
+        exec: () =>
+          Promise.resolve([
+            [null, 1],
+            [null, 1],
+          ]),
+      };
+      return chain;
+    }),
   };
+  const usageCounted = jest.fn();
   /** Cloudflare's metered egress for the month, in bytes - the TURN budget's only evidence (B7). */
   const turnMeter = { monthEgressBytes: jest.fn(() => Promise.resolve(0)) };
 
@@ -496,6 +510,17 @@ describe('CallsService', () => {
 
       await expect(service.initiateCall('caller', 'group-1')).rejects.toThrow(/unknown value: on/);
       expect(redis.set).not.toHaveBeenCalled();
+    });
+
+    it('counts one call started per room minted, and none for a refusal (docs/wiki/usage-dashboard.md)', async () => {
+      callsMode = 'audio';
+      usageCounted.mockClear();
+      await service.initiateCall('caller', 'group-1');
+      expect(usageCounted.mock.calls).toEqual([['calls']]);
+      usageCounted.mockClear();
+      callsMode = 'off';
+      await expect(service.initiateCall('caller', 'group-1')).rejects.toThrow(ForbiddenException);
+      expect(usageCounted).not.toHaveBeenCalled();
     });
 
     it('audio places and rings an audio call', async () => {

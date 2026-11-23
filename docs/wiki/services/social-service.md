@@ -1089,7 +1089,7 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   **iOS does the same** (2026-11-22): its activation (`CanariPushCancelMessageNotifications`) removes only a
   call's ring alert and the pending-sync notice and recomputes the badge; the page's `read_here` and `conversation_ended` reach
   `cancel_conversation_notifications`, which takes the conversation's delivered notifications down by
-  thread ([reading owed](../backlog.d/reading-owed-ios-banners-go-with-their-conversation.md)). The
+  thread ([reading owed](../device-verification.md#the-readings-of-2026-11-23-180-alpha3-iphone-12-the-resume-from-settings-the-pushes-name-and-logo-the-banners-the-share-logos-the-ios-27-launch)). The
   page's own banners carry that thread too since 2026-11-22 (`group: <conversation>`): on
   `1.7.3-alpha.6` a deleted group kept the four the page had raised, `removed=1` of 5
   ([ios-notification-ownership](../frontend/ios-notification-ownership.md)).

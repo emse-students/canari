@@ -8,6 +8,7 @@
  * what the media service did not confirm gone, because the worker will never come back for a row
  * that no longer exists.
  */
+import type { UsageActivity } from '../usage/usage-activity';
 import { authorDoorHoldsSql } from '../spaces/reader-spaces';
 import { pinnedForViewerSql } from './space-pins';
 import {
@@ -85,6 +86,8 @@ function makeService(opts: {
     claimReelFor: jest.fn(opts.claim ?? (() => Promise.resolve({ refused: [] }))),
     purgeReelBlobs: jest.fn(opts.purge ?? (() => Promise.resolve({}))),
   };
+  /** The usage dashboard's daily count (`usage/usage-activity.ts`): the metrics it was told of. */
+  const usage = { count: jest.fn(() => Promise.resolve()) };
   const service = new PostsService(
     postRepo as unknown as Repository<Post>,
     {
@@ -112,9 +115,10 @@ function makeService(opts: {
       mayActOnAny: () => Promise.resolve(new Set()),
     } as unknown as AssociationsService,
     { resolveMentionedUserIds: () => [] } as unknown as PostNotificationsService,
-    retention as unknown as PostMediaRetentionService
+    retention as unknown as PostMediaRetentionService,
+    usage as unknown as UsageActivity
   );
-  return { service, postRepo, retention, saved, queries };
+  return { service, postRepo, retention, saved, queries, usage };
 }
 
 beforeEach(() => {
@@ -188,6 +192,21 @@ describe('createPost - a reel', () => {
 
     await expect(service.createPost(reelBody(), false)).rejects.toThrow('db down');
     expect(retention.release).toHaveBeenCalledWith([BLOB]);
+  });
+});
+
+describe('createPost - the usage dashboard counts what was made (docs/wiki/usage-dashboard.md)', () => {
+  it('counts a reel under reels and a post under posts, once each', async () => {
+    const { service, usage } = makeService({});
+    await service.createPost(reelBody(), false);
+    await service.createPost({ markdown: 'hello', authorId: 'alice' }, false);
+    expect(usage.count.mock.calls).toEqual([['reels'], ['posts']]);
+  });
+
+  it('counts nothing for a post that could not be saved', async () => {
+    const { service, usage } = makeService({ saveFails: true });
+    await expect(service.createPost(reelBody(), false)).rejects.toThrow('db down');
+    expect(usage.count).not.toHaveBeenCalled();
   });
 });
 

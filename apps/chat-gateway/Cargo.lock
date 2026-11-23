@@ -237,18 +237,20 @@ dependencies = [
 
 [[package]]
 name = "chat-gateway"
-version = "1.8.0-alpha.3"
+version = "1.8.0-alpha.4"
 dependencies = [
  "axum",
  "base64 0.23.1",
  "bytes",
  "chrono",
  "futures",
+ "hmac",
  "jsonwebtoken",
  "redis",
  "reqwest",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
  "tokio-tungstenite",
  "tower",
