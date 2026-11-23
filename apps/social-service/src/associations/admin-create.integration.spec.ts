@@ -110,7 +110,7 @@ maybe('platform admin create and catalogue against PostgreSQL', () => {
       unused,
       unused,
       unused,
-      unused, // redis: the post-cache sweep after addMember is caught and logged
+      { incr: () => Promise.resolve(1), deleteByPattern: () => Promise.resolve(0) } as never, // redis: the post-cache sweep after addMember
       unused,
       unused,
       unused,

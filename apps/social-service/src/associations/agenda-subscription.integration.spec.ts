@@ -216,7 +216,10 @@ maybe('the agenda subscription link against PostgreSQL (migration 173)', () => {
     }
 
     const none = {} as never;
-    const redis = { deleteByPattern: () => Promise.resolve(0) } as never;
+    const redis = {
+      incr: () => Promise.resolve(1),
+      deleteByPattern: () => Promise.resolve(0),
+    } as never;
     service = new AssociationsService(
       ds.getRepository(Association),
       ds.getRepository(AssociationMember),
@@ -462,7 +465,7 @@ maybe('the agenda subscription link against PostgreSQL (migration 173)', () => {
         none,
         fromEntity.getRepository(Form),
         none,
-        { deleteByPattern: () => Promise.resolve(0) } as never,
+        { incr: () => Promise.resolve(1), deleteByPattern: () => Promise.resolve(0) } as never,
         none,
         none,
         none,

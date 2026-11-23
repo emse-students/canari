@@ -28,6 +28,7 @@ import { join } from 'path';
 import { Client } from 'pg';
 import { DataSource } from 'typeorm';
 import { HttpStatus, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { capturingErrors } from './log-capture.it-fixture';
 import { LIVE_ENTITIES } from './lives.module';
 import { LivesService } from './lives.service';
 import { LiveChatService } from './live-chat.service';
@@ -1966,11 +1967,16 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         await lives.get(BOB, live.id);
         await lives.removeViewer(ALICE, live.id, CAROL);
         seats.wipe();
-        expect(await refusal(lives.get(BOB, live.id))).toEqual({
-          status: HttpStatus.SERVICE_UNAVAILABLE,
-          code: 'LIVE_SEATS_UNAVAILABLE',
+        const errors = await capturingErrors(async () => {
+          expect(await refusal(lives.get(BOB, live.id))).toEqual({
+            status: HttpStatus.SERVICE_UNAVAILABLE,
+            code: 'LIVE_SEATS_UNAVAILABLE',
+          });
+          expect((await refusal(lives.manifest(BOB, live.id))).code).toBe('LIVE_SEATS_UNAVAILABLE');
         });
-        expect((await refusal(lives.manifest(BOB, live.id))).code).toBe('LIVE_SEATS_UNAVAILABLE');
+        // ONE accusing line for the outage, the second refusal is counted (see the service).
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toContain('Redis does not hold the live open while its row is open');
         expect(seats.held.size).toBe(0);
         // The broadcaster's next segment reopens the live, the removals re-read from the database.
         await lives.ingest(ALICE, live.id, 1, segment(1));
@@ -1986,13 +1992,19 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         await lives.removeViewer(ALICE, live.id, CAROL);
         // The erasure's own statement for this table: the row goes, Redis is not told.
         await q(`DELETE FROM live_removed_viewers WHERE "viewerId" = $1`, [CAROL]);
-        expect(await refusal(lives.get(CAROL, live.id))).toEqual({
-          status: HttpStatus.SERVICE_UNAVAILABLE,
-          code: 'LIVE_SEATS_UNAVAILABLE',
+        const errors = await capturingErrors(async () => {
+          expect(await refusal(lives.get(CAROL, live.id))).toEqual({
+            status: HttpStatus.SERVICE_UNAVAILABLE,
+            code: 'LIVE_SEATS_UNAVAILABLE',
+          });
+          // A segment re-reads the removals and finds none: the bar is added to, never replaced.
+          await lives.ingest(ALICE, live.id, 1, segment(1));
+          expect((await refusal(lives.manifest(CAROL, live.id))).code).toBe(
+            'LIVE_SEATS_UNAVAILABLE'
+          );
         });
-        // A segment re-reads the removals and finds none: the bar is added to, never replaced.
-        await lives.ingest(ALICE, live.id, 1, segment(1));
-        expect((await refusal(lives.manifest(CAROL, live.id))).code).toBe('LIVE_SEATS_UNAVAILABLE');
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toContain('Redis bars a viewer the row allows');
         await expect(lives.manifest(BOB, live.id)).resolves.toMatchObject({ viewers: 1 });
         expect([...seats.held]).toEqual([`${live.id}:${BOB}`]);
       });
@@ -2124,10 +2136,18 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       it('answers null, never throws, when the log does not; the poll then omits the fields', async () => {
         const live = await start();
         seats.arrivalsDown = true;
-        await expect(arrivalsFor(ALICE, live.id, 0)).resolves.toBeNull();
-        // A take whose arrival cannot be noted still seats the viewer.
-        await expect(lives.get(BOB, live.id)).resolves.toMatchObject({ id: live.id });
-        seats.arrivalsDown = false;
+        const errors = await capturingErrors(async () => {
+          await expect(arrivalsFor(ALICE, live.id, 0)).resolves.toBeNull();
+          // A take whose arrival cannot be noted still seats the viewer.
+          await expect(lives.get(BOB, live.id)).resolves.toMatchObject({ id: live.id });
+        }).finally(() => {
+          seats.arrivalsDown = false;
+        });
+        // The read and the note each accuse, once (the outage is per operation).
+        expect(errors).toHaveLength(2);
+        expect(errors[0]).toContain('[LIVE_ARRIVAL]');
+        expect(errors[0]).toContain('the arrivals did not answer');
+        expect(errors[1]).toContain('an arrival was not noted');
       });
 
       it('announces NO platform admin who opens a reported review-cohort live across the cohort wall', async () => {
@@ -2434,6 +2454,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       await follow(BOB);
       await follow(CAROL);
       const requests = new FollowRequestsService({} as never, {} as never, ds, {
+        incr: () => Promise.resolve(1),
         deleteByPattern: () => Promise.resolve(0),
       } as never);
       expect(await requests.removeFollower(ALICE, CAROL)).toEqual({ ok: true });
@@ -3668,9 +3689,13 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       await lives.cut(MOD, live.id, { reason: 'spam' });
       await q(`UPDATE live_cuts SET "cutAt" = now() - interval '90 days'`);
       const spy = jest.spyOn(lives, 'pruneStarts').mockRejectedValueOnce(new Error('boom'));
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
       try {
         await expect(sweeper.sweepOnce()).resolves.toMatchObject({ cutsPruned: 1 });
+        // The skipped prune is SAID, with its cause, and the cut prune ran regardless.
+        expect(warn).toHaveBeenCalledWith('[LIVE_GC] start prune skipped this run: Error: boom');
       } finally {
+        warn.mockRestore();
         spy.mockRestore();
       }
       expect(await q(`SELECT 1 FROM live_cuts`)).toEqual([]);

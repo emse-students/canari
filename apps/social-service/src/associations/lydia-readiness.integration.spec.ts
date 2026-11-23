@@ -144,7 +144,7 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
     associations = Object.assign(Object.create(AssociationsService.prototype) as object, {
       assoRepo,
       logger: new Logger('AssociationsService'),
-      redis: { deleteByPattern: async () => 0 },
+      redis: { incr: () => Promise.resolve(1), deleteByPattern: async () => 0 },
       lydiaNotifier: { enabled: () => true, tell, tellDelegation },
       listFlagHolders: async () => ['manager-1'],
       isMember: async () => true,

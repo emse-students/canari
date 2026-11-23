@@ -266,7 +266,10 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
     } as unknown as PostNotificationsService;
     const none = {} as never;
     // The feed-cache sweep an association delete ends with: nothing is cached here.
-    const redis = { deleteByPattern: () => Promise.resolve(0) } as never;
+    const redis = {
+      incr: () => Promise.resolve(1),
+      deleteByPattern: () => Promise.resolve(0),
+    } as never;
     associations = new AssociationsService(
       ds.getRepository(Association),
       ds.getRepository(AssociationMember),

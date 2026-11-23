@@ -76,7 +76,7 @@ maybe('reel worker against PostgreSQL (migration 069 included)', () => {
     new ReelRetentionScheduler(
       { manager: adapter() } as never,
       retention as never,
-      { deleteByPattern: () => Promise.resolve(0) } as never
+      { incr: () => Promise.resolve(1), deleteByPattern: () => Promise.resolve(0) } as never
     );
 
   const insertReel = async (
@@ -230,7 +230,7 @@ maybe('reel worker against PostgreSQL (migration 069 included)', () => {
     const s = new ReelRetentionScheduler(
       { manager: failingManager } as never,
       retention as never,
-      { deleteByPattern: () => Promise.resolve(0) } as never
+      { incr: () => Promise.resolve(1), deleteByPattern: () => Promise.resolve(0) } as never
     );
 
     const report = await s.purgeOnce();

@@ -115,7 +115,7 @@ maybe('a list collects through an accepted payment delegation (PostgreSQL)', () 
     associations = Object.assign(Object.create(AssociationsService.prototype) as object, {
       assoRepo,
       logger: new Logger('AssociationsService'),
-      redis: { deleteByPattern: async () => 0 },
+      redis: { incr: () => Promise.resolve(1), deleteByPattern: async () => 0 },
       lydiaNotifier: { enabled: () => true, tell, tellDelegation },
       listFlagHolders: async (id: string) => [`shop-manager-of-${id.slice(-2)}`],
       // The receiver's OWN shop manager holds MANAGE_PRODUCTS on it; the BDE star only through the
