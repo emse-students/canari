@@ -77,6 +77,21 @@ export const CONFIRMABLE_PAYMENT_STATUSES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * The statuses a VERIFIED confirm callback still reads the row's own request for: the confirmable
+ * ones plus `pending_cash`. An answer switched to cash (`switchToCash`, owner decision of
+ * 2026-11-23) keeps naming the online request it left, settled dead at Lydia before the switch; a
+ * confirmation of that request is therefore not expected, and if Lydia ever reads it paid all the
+ * same, the money landed and is recorded (`markPaid`: the answer is paid online and its cash hold
+ * ends) rather than lost behind a status nothing reads. A direct cash answer names no request, so
+ * it is never read. The payer's return (`confirmPayment`) keeps the narrower set: a page's poll of a
+ * cash answer asks Lydia nothing.
+ */
+export const CALLBACK_CONFIRMABLE_PAYMENT_STATUSES: ReadonlySet<string> = new Set([
+  ...CONFIRMABLE_PAYMENT_STATUSES,
+  'pending_cash',
+]);
+
+/**
  * What a payment request IS, as core-service's `payments/request-state` classified it at the
  * provider boundary (`CheckoutRequestStateKind` there; Lydia 0 / 1 / 5 / 6, measured on the
  * sandbox). `declined` (the payer refused) and `cancelled-or-expired` are FINAL and leave nothing

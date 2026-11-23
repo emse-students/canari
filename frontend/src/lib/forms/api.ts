@@ -657,6 +657,12 @@ export async function checkSubmission(
    */
   resumable?: ResumableAnswer | null;
   /**
+   * The caller's answer whose online payment ended without money and may be settled IN PERSON
+   * instead ("Payer en direct"), or null - the server decides (the form takes cash, open, a free
+   * seat, nothing else answering for them). Absent from a server older than it: no action.
+   */
+  cashSwitchable?: ResumableAnswer | null;
+  /**
    * The caller's own answers, newest first, each with the questions that fixed its price - only
    * when asked (`withAnswers`). Always empty on an anonymous form (its rows name nobody). Absent from
    * a server older than it (2026-11-21): the page then draws what it drew before.
@@ -695,6 +701,32 @@ export async function resumeSubmissionPayment(
     }
   );
   if (!res.ok) throw await refusal(res, 'Failed to resume the payment');
+  return res.json();
+}
+
+/** What a switch to cash answers: the answer now waits for cash, or its card payment landed. */
+export interface CashSwitchReply {
+  submissionId: string;
+  /** The answer waits for cash (`pending_cash`); absent when `alreadyPaid`. */
+  cashPayment?: true;
+  /** Until when the answer keeps its seat waiting for cash (ISO); null when the form sets none. */
+  cashExpiresAt?: string | null;
+  /** The card payment was found PAID while it was being cancelled: nothing was switched. */
+  alreadyPaid?: true;
+}
+
+/**
+ * "PAYER EN DIRECT": the caller's OWN answer, whose card payment failed, now waits for cash - its
+ * Lydia request cancelled first by the server, so it can never also be paid online. A refusal
+ * carries its typed `code` (`PAYMENT_NOT_SWITCHABLE`, `FORM_CASH_NOT_OFFERED`,
+ * `PREVIOUS_PAYMENT_OPEN`, `FORM_FULL`, `FORM_CLOSED`...). A second press answers the same.
+ */
+export async function switchSubmissionToCash(submissionId: string): Promise<CashSwitchReply> {
+  const res = await apiFetch(
+    `${socialUrl()}/api/forms/submissions/${encodeURIComponent(submissionId)}/switch-to-cash`,
+    { method: 'POST' }
+  );
+  if (!res.ok) throw await refusal(res, 'Failed to switch the payment to cash');
   return res.json();
 }
 
@@ -1283,6 +1315,8 @@ export interface GuestReceipt {
   paymentStatus: string;
   /** The provider state the server read on THIS call; absent when none was. */
   requestState?: PaymentRequestState;
+  /** The failed card payment may be settled in person instead ("Payer en direct"). */
+  cashSwitchOffered?: true;
 }
 
 /**
@@ -1299,6 +1333,22 @@ export async function confirmGuestReceipt(receipt: string): Promise<GuestReceipt
     body: JSON.stringify({ receipt }),
   });
   if (!res.ok) throw await refusal(res, 'Receipt could not be read');
+  return res.json();
+}
+
+/**
+ * "PAYER EN DIRECT" for the answer a guest's RECEIPT proves: it now waits for cash, its Lydia
+ * request cancelled first by the server. Answers the receipt's own view (`paymentStatus`
+ * `pending_cash` and the reference to give the organiser). Plain `fetch`, the receipt in the body,
+ * as `confirmGuestReceipt`; a refusal is a `SocialApiError` carrying its typed code.
+ */
+export async function switchGuestReceiptToCash(receipt: string): Promise<GuestReceipt> {
+  const res = await fetch(`${socialUrl()}/api/public/forms/receipts/switch-to-cash`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ receipt }),
+  });
+  if (!res.ok) throw await refusal(res, 'Payment could not be switched to cash');
   return res.json();
 }
 

@@ -69,6 +69,12 @@ export function providerRefusalMessage(err: unknown): string | null {
   if (err instanceof SocialApiError && err.code === PAYMENT_PRICE_CHANGED) {
     return m.form_payment_resume_price_changed();
   }
+  if (err instanceof SocialApiError && err.code === PAYMENT_NOT_SWITCHABLE) {
+    return m.form_payment_not_switchable();
+  }
+  if (err instanceof SocialApiError && err.code === FORM_CASH_NOT_OFFERED) {
+    return m.form_cash_not_offered();
+  }
   if (err instanceof SocialApiError && err.code === AMOUNT_OUT_OF_RANGE && err.amountBounds) {
     const { minCents, maxCents } = err.amountBounds;
     const min = formatAmount(minCents);
@@ -351,3 +357,15 @@ const PAYMENT_NOT_RESUMABLE = 'PAYMENT_NOT_RESUMABLE';
  * charged (`payment-resume.ts`): the member fills the form again, as anyone would.
  */
 const PAYMENT_PRICE_CHANGED = 'PAYMENT_PRICE_CHANGED';
+
+/**
+ * The body `code` of the 409 a switch to cash ("Payer en direct") gets on an answer with no failed
+ * online payment to settle in person (`payment-cash-switch.ts`).
+ */
+export const PAYMENT_NOT_SWITCHABLE = 'PAYMENT_NOT_SWITCHABLE';
+
+/**
+ * The body `code` of the 409 a switch to cash gets on a form that does not take cash - or, for a
+ * guest, takes it with no deadline (`payment-cash-switch.ts`).
+ */
+export const FORM_CASH_NOT_OFFERED = 'FORM_CASH_NOT_OFFERED';

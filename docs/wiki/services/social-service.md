@@ -1183,6 +1183,7 @@ mark is handed over, moved or not, and a peer's is not), `nativeNotification.tes
 | GET | `/api/forms/:id/held-answers` | An anonymous form's answers waiting for their batch, and the batch size (managers only; [forms](../frontend/modules/forms.md#an-anonymous-forms-answers-are-released-in-batches-2026-11-21)) |
 | POST | `/api/forms/:id/image` | Upload form banner image |
 | POST | `/api/forms/submissions/:submissionId/resume-payment` | Pay the caller's own released online answer again: a new Lydia request for the SAME answer, typed refusals `PAYMENT_IN_PROGRESS` / `PAYMENT_NOT_RESUMABLE` ([forms](../frontend/modules/forms.md#a-released-payment-is-resumed-on-the-same-answer-owner-decision-of-2026-11-21)) |
+| POST | `/api/forms/submissions/:submissionId/switch-to-cash` | Settle the caller's own failed card payment IN PERSON instead ("Payer en direct"): the SAME answer moves to `pending_cash` after its Lydia request is settled, typed refusals `PAYMENT_NOT_SWITCHABLE` / `FORM_CASH_NOT_OFFERED` ([forms](../frontend/modules/forms.md#a-failed-card-payment-is-settled-in-person-instead-owner-decision-of-2026-11-23)) |
 
 The hourly cash tick (`expireStaleCashPayments`) first tells each member once, by a bell row
 `form_cash_expiring` and no push, that their cash hold is about to expire, then expires the holds

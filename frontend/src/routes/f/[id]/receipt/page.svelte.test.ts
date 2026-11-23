@@ -10,7 +10,7 @@ import { SocialApiError } from '$lib/associations/api';
 
 const RECEIPT = 'R'.repeat(43);
 const at = vi.hoisted(() => ({ url: new URL('https://canari.test/') }));
-const answer = vi.hoisted(() => ({ confirm: vi.fn() }));
+const answer = vi.hoisted(() => ({ confirm: vi.fn(), toCash: vi.fn() }));
 
 vi.mock('$app/state', () => ({
   page: {
@@ -24,6 +24,7 @@ vi.mock('$app/state', () => ({
 vi.mock('$lib/forms/api', async (orig) => ({
   ...(await orig<typeof import('$lib/forms/api')>()),
   confirmGuestReceipt: answer.confirm,
+  switchGuestReceiptToCash: answer.toCash,
 }));
 
 import Page from './+page.svelte';
@@ -34,6 +35,7 @@ afterEach(() => {
   document.body.innerHTML = '';
   document.head.innerHTML = '';
   answer.confirm.mockReset();
+  answer.toCash.mockReset();
   vi.restoreAllMocks();
 });
 
@@ -112,5 +114,62 @@ describe('the guest receipt page', () => {
     await render(`?receipt=${RECEIPT}`);
     expect(text()).toContain(m.form_guest_receipt_not_found_desc());
     expect(document.querySelector('[data-guest-reference]')).toBeNull();
+  });
+
+  // "PAYER EN DIRECT" (owner decision of 2026-11-23): the same answer, settled in person instead.
+  describe('a failed card payment settled in person', () => {
+    const declined = {
+      reference: '1A2B-3C4D',
+      formId: 'f1',
+      totalPaid: 1200,
+      currency: 'eur',
+      paymentStatus: 'cancelled',
+      requestState: 'declined',
+    };
+    const cashButton = () => document.querySelector<HTMLButtonElement>('[data-guest-cash-switch]');
+
+    it('offers it when the server does, and switches the answer by its receipt alone', async () => {
+      answer.confirm.mockResolvedValue({ ...declined, cashSwitchOffered: true });
+      answer.toCash.mockResolvedValue({ ...declined, paymentStatus: 'pending_cash' });
+      await render(`?receipt=${RECEIPT}`);
+      expect(cashButton()).not.toBeNull();
+      cashButton()!.click();
+      for (let i = 0; i < 5; i++) await tick();
+      flushSync();
+      expect(answer.toCash.mock.calls).toEqual([[RECEIPT]]);
+      expect(text()).toContain(m.form_success_cash_heading());
+      expect(text()).toContain(m.form_guest_receipt_cash_desc());
+      expect(text()).toContain(m.form_guest_reference({ reference: '1A2B-3C4D' }));
+      expect(cashButton()).toBeNull();
+    });
+
+    it('offers nothing when the server does not, or is older and sends no field', async () => {
+      answer.confirm.mockResolvedValue(declined);
+      await render(`?receipt=${RECEIPT}`);
+      expect(text()).toContain(m.form_success_declined_heading());
+      expect(cashButton()).toBeNull();
+    });
+
+    it('words a refusal from its code', async () => {
+      answer.confirm.mockResolvedValue({ ...declined, cashSwitchOffered: true });
+      answer.toCash.mockRejectedValue(new SocialApiError('full', 'FORM_FULL', 409));
+      await render(`?receipt=${RECEIPT}`);
+      cashButton()!.click();
+      for (let i = 0; i < 5; i++) await tick();
+      flushSync();
+      expect(document.querySelector('[role="alert"]')?.textContent).not.toBe('');
+      expect(text()).toContain(m.form_success_declined_heading());
+    });
+
+    it('shows an answer already waiting for cash as such, never as not found', async () => {
+      answer.confirm.mockResolvedValue({
+        ...declined,
+        paymentStatus: 'pending_cash',
+        requestState: undefined,
+      });
+      await render(`?receipt=${RECEIPT}`);
+      expect(text()).toContain(m.form_success_cash_heading());
+      expect(text()).not.toContain(m.form_guest_receipt_not_found_desc());
+    });
   });
 });

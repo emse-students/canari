@@ -83,7 +83,7 @@ The form UI offers Lydia and cash since 2026-10-07; Stripe and saved cards are g
 |---|---|
 | Free | Direct submit, no payment |
 | Lydia (online) | The payer types the address Lydia sends the request to (never stored); redirect to Lydia's payer page, return to `/forms/success?submission_id=...` (see the flow above) |
-| Cash | Submit marked `pending_cash`, association admin validates manually before its deadline; the member is told once before it expires ([cash notice](#a-cash-hold-is-announced-once-before-it-expires-owner-decision-of-2026-11-21)) |
+| Cash | Submit marked `pending_cash`, association admin validates manually before its deadline; the member is told once before it expires ([cash notice](#a-cash-hold-is-announced-once-before-it-expires-owner-decision-of-2026-11-21)); a failed card payment can be moved here on the same answer ([cash switch](#a-failed-card-payment-is-settled-in-person-instead-owner-decision-of-2026-11-23)) |
 
 Online is offered only while the editor accepts it AND the association can collect; a form that takes
 cash is answered in cash meanwhile - [drafts and publication](#a-form-is-a-draft-until-it-is-published-owner-2026-11-08).
@@ -2950,7 +2950,105 @@ a payment cancelled before 179 (no origin) is never resumed, an `expired` one is
 
 **Not covered**: a guest (no account owns the answer), a form taking several answers (the check offers
 nothing there, and the route refuses it `PAYMENT_NOT_RESUMABLE`), and an answer whose request is still OPEN, which stays pending until
-its hold ends - then it is resumable.
+its hold ends - then it is resumable. On a form taking cash, the same answer may instead be settled
+in person ([cash switch](#a-failed-card-payment-is-settled-in-person-instead-owner-decision-of-2026-11-23)).
+
+### A failed card payment is settled in person instead (owner decision of 2026-11-23)
+
+**Why.** A member or a guest whose Lydia payment failed (declined, cancelled, expired, or still stuck on
+Lydia's page) had one way forward: pay online again. On a form that ALSO takes cash, the owner wants a
+second one, "Payer en direct": the SAME answer, no re-fill, now waiting for the association to validate
+the cash by hand, exactly like an answer given in cash from the start.
+
+**What the person sees.** On the form page the failed-payment card offers "Reprendre le paiement"
+([resume](#a-released-payment-is-resumed-on-the-same-answer-owner-decision-of-2026-11-21)), "Payer en
+direct", or both, from what `GET forms/:id/check` names (`resumable`, `cashSwitchable`;
+`failedPaymentOffer`). Paused online payments drop the resume, never the cash (cash reaches no account).
+Beside a payment still in progress the page offers "Payer en direct" when the form takes cash, and the
+server judges the rest. A guest finds the same button on the receipt page when `receipts/confirm`
+answers `cashSwitchOffered: true`. Every return page reads `pending_cash` as the new verdict `cash`.
+
+**Routes.** `POST forms/submissions/:submissionId/switch-to-cash` (member, own answer only, 404
+otherwise) and `POST public/forms/receipts/switch-to-cash` (guest, by RECEIPT alone, throttled like
+`receipts/confirm`). Both run `switchToCash` (`forms.service.ts`); the row rule is
+`cashSwitchRowRefusal` (`payment-cash-switch.ts`), one rule for the offer and the route.
+
+**What may be switched**: an ONLINE, charged answer that is `pending` (within or past its hold),
+`expired`, or `cancelled` by an origin the resume also accepts (`member`, `provider`, `unissued` - never
+`manager`, `issue-unknown` or a NULL origin), on a form that is open and whose `allowCashPayment` is on,
+priced today at what the answer paid (`assertResumeQuote`, as a resume), and - for a member on a
+single-answer form - with no other answer since (`assertNoOtherAnswer`). A guest needs
+`cashPaymentExpiryDays` set, as a direct guest cash answer does. `check` offers it on single-answer
+forms only; the route also serves a guest's answer on a form taking several.
+
+**The state machine** (who: the answer's owner, a member by session or a guest by receipt; nobody
+else):
+
+| From | Event | To |
+|---|---|---|
+| `pending` within its hold | switch, the request settled dead | `pending_cash`, the seat KEPT throughout (no capacity count) |
+| `pending` past its hold / `expired` / `cancelled` (member, provider, unissued) | switch, the request settled dead or never issued | `pending_cash`, a seat RE-TAKEN under the form lock - or unchanged, 409 `FORM_FULL` |
+| same | switch, the request read PAID | `paid` / `paid_over_capacity` (`markPaid`); answers `alreadyPaid` |
+| same | switch, the request open or unreadable | unchanged, 409 `PREVIOUS_PAYMENT_OPEN` |
+| `pending_cash` | switch again (a replay, a second tab) | unchanged; answers the same `cashExpiresAt`, no Lydia call |
+| `pending_cash` (switched) | a VERIFIED late Lydia confirmation of the old request | `paid` online (`paymentMethod` reset to NULL), once |
+| `pending_cash` | the association validates the cash / the cash deadline passes | as any cash answer |
+| `paid`, `free`, `refunded`, `paid_over_capacity`, a cash row, `cancelled` by `manager` / `issue-unknown` / NULL | switch | unchanged, 409 `PAYMENT_NOT_SWITCHABLE` |
+| any | switch on a form not taking cash (or a guest form with no cash deadline) | unchanged, 409 `FORM_CASH_NOT_OFFERED` |
+| any | switch on an ANONYMOUS form | unchanged, 409 `PAYMENT_NOT_SWITCHABLE` |
+| any | closed form, price changed, answered again | unchanged, `FORM_CLOSED` / `PAYMENT_PRICE_CHANGED` / `ALREADY_ANSWERED` |
+
+**No double payment.** The Lydia request is settled BEFORE the row moves (`settleOpenRequest`, the
+resume's own): cancelled or read final, it can never be paid; read paid, it is recorded and the switch
+answers `alreadyPaid`; open or unreadable, the switch is refused. Then, under the form lock, the row
+must still name the same request ids (409 `PAYMENT_IN_PROGRESS` otherwise) and is moved with named
+columns: `paymentStatus = pending_cash`, `paymentMethod = cash`, `cashExpiresAt` (now +
+`cashPaymentExpiryDays`), the member's `cashReminderDueAt`, the guest's visitor key. **The request ids
+are KEPT**: they are what a late callback is matched against.
+
+**A late Lydia confirmation is decided, not raced.** A request cancelled at Lydia cannot normally be
+paid; if a verified confirmation still arrives for it, `confirmPaymentFromCallback` reads it for a
+`pending_cash` row too (`CALLBACK_CONFIRMABLE_PAYMENT_STATUSES`) and `markPaid` records the answer
+`paid` ONLINE, resetting `paymentMethod` to NULL (logged at WARN): the money is at Lydia, so the cash
+hold ends and the association no longer waits for cash. If the association had ALREADY validated the
+cash (settled status, method cash) the callback finds a row it does not move and logs an ERROR naming
+TWO PAYMENTS - the refund is a human's, from the Achats tab. The payer's own poll (`confirmPayment`)
+never reads a `pending_cash` row: only a verified callback can.
+
+**The seat.** The owner's rule: the seat is held until `cashExpiresAt`, the cash reminder included. A
+`pending` answer still within its 30-minute hold keeps its seat continuously (it is counted by
+`seatHoldingWhere` both before and after). A released one re-takes a seat under `lockFormSeats` with
+the capacity count a resume makes, so a full form answers `FORM_FULL`. **One known gap**: the switch's
+own cancel can make Lydia call the cancel callback between the settle and the lock, which releases an
+in-hold row; the switch then finds it released and re-takes a seat with the capacity check - on a form
+filled in that window it answers `FORM_FULL` rather than switching. Tested ("the cancel-callback race").
+
+**Guests.** The receipt is the only credential (its SHA-256 is looked up; unknown is
+`GUEST_RECEIPT_NOT_FOUND`), the form must still be public, the guest pending ceiling
+(`GUEST_PENDING_CEILING`, the row itself excluded) answers 429 `GUEST_PENDING_LIMIT`, and the visitor
+key is recorded as a direct guest cash answer records it. A guest gets no reminder (no account).
+
+**Anonymous forms are refused** (`PAYMENT_NOT_SWITCHABLE`): a cash payment is validated by the
+association matching the person in front of it to the answer, which an anonymous form exists to make
+impossible - the responses table does not name the payer. Its card offers only the resume.
+
+**Idempotence comes from the row**: a second press reads `pending_cash` and answers the recorded
+deadline (before the lock and again under it), two simultaneous presses queue on the lock and the
+second finds the row moved. No clock, no flag. Every decision logs (`[Forms] switch to cash ...`).
+
+**Tests**: `forms.service.seat-hold.spec.ts`, "a failed card payment settled in person" (42 cases:
+in-hold kept, released re-taken, never-issued, full, cash not offered, paid meanwhile, open and
+unreadable, a request being issued, replay, simultaneous presses, every non-switchable status, the
+anonymous form, another person, closed, price changed, answered again, the cancel-callback race, a late
+confirmation paid online once, the TWO PAYMENTS accusation, guests and their ceiling, what `check` and
+`receipts/confirm` offer). Controls, each run by deleting the guard: the settle before the move (6
+fail), the capacity count (2), the in-hold keep (1), `pending_cash` among the callback statuses (1),
+`markPaid`'s method reset (1), the replay under the lock (1), the one-answer check (1). Client:
+`paymentResume.test.ts`, `paymentReturn.test.ts`, `paymentReturnPoll.test.ts`,
+`page.paymentResume.svelte.test.ts` and the receipt page's test.
+
+**Old clients** ignore `cashSwitchable`, `cashSwitchOffered` and the routes; a new client on an older
+server reads neither field and offers only what it did. No migration: every column existed.
 
 ### A cash hold is announced once before it expires (owner decision of 2026-11-21)
 
