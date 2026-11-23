@@ -14,7 +14,7 @@
     "format:check": "oxfmt -c ../../oxfmt.json --check \"src/**/*.ts\""
   },
   "dependencies": {
-    "@nestjs/common": "^12.5.1",
+    "@nestjs/common": "^12.6.0",
     "@nestjs/core": "^12.5.1",
     "@nestjs/platform-express": "^12.5.1",
     "@nestjs/throttler": "^6.8.0",
