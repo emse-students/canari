@@ -286,7 +286,17 @@
     >
       {#if !isDeleted && canReact}
         <!-- Quick emoji reaction strip (WhatsApp/Messenger style) -->
+        <!--
+          A NAMED GROUP OF NAMED BUTTONS (S17, 2026-11-20): the strip was an anonymous div of
+          glyph-only buttons and the iOS accessibility tree did not list the emojis (VoiceOver and the
+          rig could not reach them). The group carries the picker's own name ("React"), each button
+          its "React with X" name and its pressed state on a 44 px target, and the glyph is
+          decoration so it is not read a second time.
+        -->
         <div
+          role="group"
+          aria-label={m.msg_react_label()}
+          data-quick-reactions
           class="bg-cn-surface flex items-center gap-1 rounded-full border border-black/10 px-3 py-2 shadow-2xl dark:border-white/10"
         >
           {#each QUICK_REACTION_EMOJIS as emoji (emoji)}
@@ -297,13 +307,14 @@
                 ? 'bg-accent/20 ring-accent-icon ring-2'
                 : 'hover:bg-black/5 dark:hover:bg-white/10'}"
               aria-label={m.msg_react_with_emoji({ emoji })}
+              title={m.msg_react_with_emoji({ emoji })}
               aria-pressed={isActive}
               onclick={() => {
                 onReactEmoji?.(emoji);
                 onClose?.();
               }}
             >
-              <EmojiText text={emoji} />
+              <span aria-hidden="true"><EmojiText text={emoji} /></span>
             </button>
           {/each}
           <button

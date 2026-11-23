@@ -41,7 +41,14 @@ beforeAll(async () => {
   await keyAs('caller');
   expect(posted.some((m) => m.type === 'keyReady')).toBe(true);
   key = await crypto.subtle.importKey('raw', CALLER_KEY, { name: 'AES-GCM' }, false, ['encrypt']);
-});
+  // The engine's first AES-GCM call is a cold path too: paid HERE, so no test is the one that pays it.
+  await encrypt(new Uint8Array(1));
+  // WHY THIS HOOK, AND ITS OWN BUDGET: every test of the file is a few ms (measured 2026-11-23, alone
+  // and with sixteen busy loops beside it: none above 0.2 s), so a loaded run's 5 s timeout never
+  // belonged to an assertion - it belonged to whichever test came first and paid the worker module's
+  // load and the first key. That cost is setup; it gets a budget of its own, and the tests keep the
+  // default one.
+}, 60_000);
 
 /**
  * Keys the worker as one end of the call (`utils/callKeys.ts`): the caller sends with the caller
