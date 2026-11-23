@@ -39,6 +39,13 @@ export class User {
   @Column({ type: 'text', array: true, default: () => `'{}'` })
   posts?: Post[];
 
+  /**
+   * The `alumni_linked` claim of the last sign-in (D44, migration 028): `null` is unknown (the
+   * provider did not say), never "not linked". Served to its owner only, for the reminder banner.
+   */
+  @Column({ type: 'boolean', nullable: true })
+  alumniLinked?: boolean | null;
+
   @Column({ type: 'text', nullable: true })
   bio?: string | null;
 

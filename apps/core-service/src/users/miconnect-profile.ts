@@ -20,6 +20,12 @@ export interface MiconnectProfile {
   campus: Campus | null;
   cursus: CursusEntry[];
   posts: Post[];
+  /**
+   * Whether the MiConnect account holds the Alumni link (claim `alumni_linked`, D44). `null` is
+   * UNKNOWN - a provider that does not emit the claim yet - and never reads as "not linked": the
+   * reminder banner shows only on an explicit `false`.
+   */
+  alumniLinked: boolean | null;
 }
 
 /** The claims authentik emits on scope `profile` for Canari (WP1), all optional by contract. */
@@ -28,6 +34,7 @@ export interface MiconnectClaims {
   campus?: unknown;
   cursus?: unknown;
   posts?: unknown;
+  alumni_linked?: unknown;
 }
 
 const logger = new Logger('MiconnectProfile');
@@ -90,7 +97,13 @@ export function parseProfileClaims(claims: MiconnectClaims, who = 'an account'):
     typeof claims.miconnect_uuid === 'string' && claims.miconnect_uuid
       ? claims.miconnect_uuid
       : null;
-  return { miconnectUuid, campus, cursus, posts };
+  const alumniLinked = typeof claims.alumni_linked === 'boolean' ? claims.alumni_linked : null;
+  if (claims.alumni_linked !== undefined && alumniLinked === null) {
+    logger.warn(
+      `profile claim: alumni_linked is not a boolean (${typeof claims.alumni_linked}), read as unknown`
+    );
+  }
+  return { miconnectUuid, campus, cursus, posts, alumniLinked };
 }
 
 /**
@@ -298,4 +311,5 @@ export const EMPTY_PROFILE: MiconnectProfile = {
   campus: null,
   cursus: [],
   posts: [],
+  alumniLinked: null,
 };
