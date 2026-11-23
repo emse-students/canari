@@ -68,9 +68,15 @@ export function isCounted(sub: Pick<Submission, 'paymentStatus' | 'holdsSeat'>):
 /**
  * The seats taken, for the "47 / 50 places" counter: the answers the server says hold one, plus the
  * anonymous answers still waiting for their batch (`held`, not in the list yet). The same notion
- * as the server's `submissionCount`, summed from the same predicate.
+ * as the server's `submissionCount`, summed from the same predicate. Null when any answer carries
+ * no `holdsSeat` (a server that predates it): the counter is then hidden, never shown as 0.
  */
-export function seatsTaken(subs: readonly Pick<Submission, 'holdsSeat'>[], held = 0): number {
+export function seatsTaken(
+  subs: readonly Pick<Submission, 'holdsSeat'>[],
+  held = 0
+): number | null {
+  // An older server sends no verdict: the number cannot be known, and 0 would be a confident lie.
+  if (subs.some((sub) => sub.holdsSeat === undefined)) return null;
   return subs.filter((sub) => sub.holdsSeat === true).length + held;
 }
 

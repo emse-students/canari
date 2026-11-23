@@ -155,12 +155,12 @@ const SUBMISSIONS: Submission[] = [
   }),
 ];
 
-function render(submissions = SUBMISSIONS) {
+function render(submissions = SUBMISSIONS, shownForm: Form = form) {
   const target = document.body.appendChild(document.createElement('div'));
   const instance = mount(FormResponsesPanel, {
     target,
     props: {
-      form,
+      form: shownForm,
       submissions,
       deletingId: null,
       onDelete: () => {},
@@ -238,6 +238,13 @@ describe('the "Réponses" tab', () => {
     mounted.push(() => unmount(instance));
     flushSync();
     expect(target.textContent).toContain(m.form_responses_seats({ taken: 1, max: 50 }));
+  });
+
+  it('hides the seats card when the server sent no holdsSeat, rather than show 0', () => {
+    const capped = { ...form, maxSubmissions: 50 } as Form;
+    const target = render([sub({ id: 'a' }), sub({ id: 'b' })], capped);
+    expect(target.textContent).not.toContain(m.form_responses_seats({ taken: 0, max: 50 }));
+    expect(target.textContent).not.toContain(m.form_responses_card_seats());
   });
 
   it('searches the names and the answers, accents folded', async () => {

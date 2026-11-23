@@ -90,4 +90,9 @@ describe('seatsTaken', () => {
     expect(seatsTaken(gala, 2)).toBe(49);
     expect(seatsTaken([])).toBe(0);
   });
+
+  it('is null, never 0, when the server sent no verdict (an older server)', () => {
+    expect(seatsTaken([sub('a', 'paid'), sub('b', 'paid')])).toBeNull();
+    expect(seatsTaken([sub('a', 'paid', true), sub('b', 'paid')], 2)).toBeNull();
+  });
 });

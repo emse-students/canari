@@ -265,7 +265,7 @@
       String(summary.answers),
       summary.guests ? m.form_responses_card_guests({ count: summary.guests }) : null
     )}
-    {#if form.maxSubmissions}
+    {#if form.maxSubmissions && seats !== null}
       {@render card(
         m.form_responses_card_seats(),
         m.form_responses_seats({ taken: seats, max: form.maxSubmissions }),
