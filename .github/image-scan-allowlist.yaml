@@ -381,3 +381,142 @@ vulnerabilities:
     purls:
       - "pkg:pypi/setuptools@70.3.0"
     statement: "authentik server (): still present in authentik 2026.8.6; no authentik release ships the fix yet. Upstream image."
+
+  # --- krb5 1.21.3-5+deb13u1, Debian, in the same authentik image (2026-11-23) ------------------
+  # The Trivy DB of 2026-11-23 (~02:00Z) reported 14 HIGH krb5 advisories, each on the six Debian
+  # binary packages of source krb5 the image carries (84 findings), fixed by Debian 1.21.3-5+deb13u2.
+  # The same 14 ids are already allowlisted above for Alpine's krb5-libs in postgres:18-alpine; these
+  # entries are separate, scoped to the Debian purls, so neither forgives the other. Read that day from
+  # ghcr.io: no authentik tag newer than 2026.8.6, and 2026.8.6 is the same digest as on 2026-11-20
+  # (da89d833..., config created 2026-11-20T01:32Z), so there was no pin to move to. Why the libraries
+  # are there: authentik's Kerberos source (`gssapi`, `python-kadmin-rs` in its pyproject at
+  # version/2026.8.6). No Kerberos source, LDAP source or LDAP provider is configured: counted
+  # read-only in both estates' authentik databases on 2026-11-23 (0 each). The pin is a tag, so an
+  # in-place upstream rebuild of 2026.8.6 carrying deb13u2 retires these entries too. Nine are kadmind flaws, two KDC-only, one in ticket authdata a SERVICE verifies, two in
+  # the ASN.1 decoder a client shares - the statements say which.
+  - id: CVE-2026-107364
+    purls:
+      - "pkg:deb/debian/libgssapi-krb5-2@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libgssrpc4t64@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libk5crypto3@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkadm5clnt-mit12@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkrb5-3@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkrb5support0@1.21.3-5+deb13u1"
+    statement: "krb5 1.21.3-5+deb13u1 in authentik 2026.8.6's Debian base: the ASN.1 decoder is in libkrb5-3, which a client also uses on KDC replies, so this one is reachable in principle - but only if authentik speaks Kerberos, and nothing here makes it. authentik 2026.8.6 ships these client libraries for its optional Kerberos source (python gssapi, python-kadmin-rs), and no Kerberos source is configured (checked read-only on both estates, 2026-11-23). Upstream image: 2026.8.6 (built 2026-11-20) is the newest authentik release and carries deb13u1; remove when an authentik release, or an in-place rebuild of the 2026.8.6 tag, ships krb5 1.21.3-5+deb13u2."
+  - id: CVE-2026-119079
+    purls:
+      - "pkg:deb/debian/libgssapi-krb5-2@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libgssrpc4t64@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libk5crypto3@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkadm5clnt-mit12@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkrb5-3@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkrb5support0@1.21.3-5+deb13u1"
+    statement: "krb5 1.21.3-5+deb13u1 in authentik 2026.8.6's Debian base: the ASN.1 decoder is in libkrb5-3, which a client also uses on KDC replies, so this one is reachable in principle - but only if authentik speaks Kerberos, and nothing here makes it. authentik 2026.8.6 ships these client libraries for its optional Kerberos source (python gssapi, python-kadmin-rs), and no Kerberos source is configured (checked read-only on both estates, 2026-11-23). Upstream image: 2026.8.6 (built 2026-11-20) is the newest authentik release and carries deb13u1; remove when an authentik release, or an in-place rebuild of the 2026.8.6 tag, ships krb5 1.21.3-5+deb13u2."
+  - id: CVE-2026-112317
+    purls:
+      - "pkg:deb/debian/libgssapi-krb5-2@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libgssrpc4t64@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libk5crypto3@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkadm5clnt-mit12@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkrb5-3@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkrb5support0@1.21.3-5+deb13u1"
+    statement: "krb5 1.21.3-5+deb13u1 in authentik 2026.8.6's Debian base: a KDC-side flaw, in krb5kdc and its plugins (krb5-kdc, libkdb5), which the image does not ship - only the client libraries are reported. authentik 2026.8.6 ships these client libraries for its optional Kerberos source (python gssapi, python-kadmin-rs), and no Kerberos source is configured (checked read-only on both estates, 2026-11-23). Upstream image: 2026.8.6 (built 2026-11-20) is the newest authentik release and carries deb13u1; remove when an authentik release, or an in-place rebuild of the 2026.8.6 tag, ships krb5 1.21.3-5+deb13u2."
+  - id: CVE-2026-71199
+    purls:
+      - "pkg:deb/debian/libgssapi-krb5-2@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libgssrpc4t64@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libk5crypto3@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkadm5clnt-mit12@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkrb5-3@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkrb5support0@1.21.3-5+deb13u1"
+    statement: "krb5 1.21.3-5+deb13u1 in authentik 2026.8.6's Debian base: the CAMMAC authorization data is checked by whatever accepts a Kerberos ticket (the KDC, or a service with a keytab); authentik accepts tickets only through a configured Kerberos source (SPNEGO, its keytab stored in authentik's database), and none is configured. authentik 2026.8.6 ships these client libraries for its optional Kerberos source (python gssapi, python-kadmin-rs), and no Kerberos source is configured (checked read-only on both estates, 2026-11-23). Upstream image: 2026.8.6 (built 2026-11-20) is the newest authentik release and carries deb13u1; remove when an authentik release, or an in-place rebuild of the 2026.8.6 tag, ships krb5 1.21.3-5+deb13u2."
+  - id: CVE-2026-71200
+    purls:
+      - "pkg:deb/debian/libgssapi-krb5-2@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libgssrpc4t64@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libk5crypto3@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkadm5clnt-mit12@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkrb5-3@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkrb5support0@1.21.3-5+deb13u1"
+    statement: "krb5 1.21.3-5+deb13u1 in authentik 2026.8.6's Debian base: a KDC-side flaw, in krb5kdc and its plugins (krb5-kdc, libkdb5), which the image does not ship - only the client libraries are reported. authentik 2026.8.6 ships these client libraries for its optional Kerberos source (python gssapi, python-kadmin-rs), and no Kerberos source is configured (checked read-only on both estates, 2026-11-23). Upstream image: 2026.8.6 (built 2026-11-20) is the newest authentik release and carries deb13u1; remove when an authentik release, or an in-place rebuild of the 2026.8.6 tag, ships krb5 1.21.3-5+deb13u2."
+  - id: CVE-2026-112315
+    purls:
+      - "pkg:deb/debian/libgssapi-krb5-2@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libgssrpc4t64@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libk5crypto3@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkadm5clnt-mit12@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkrb5-3@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkrb5support0@1.21.3-5+deb13u1"
+    statement: "krb5 1.21.3-5+deb13u1 in authentik 2026.8.6's Debian base: a kadmind-side flaw (the admin server, krb5-admin-server and libkadm5srv), which the image does not ship - only the client libraries (libkadm5clnt, libgssrpc) are reported, and they decode replies, not the requests these advisories are about. authentik 2026.8.6 ships these client libraries for its optional Kerberos source (python gssapi, python-kadmin-rs), and no Kerberos source is configured (checked read-only on both estates, 2026-11-23). Upstream image: 2026.8.6 (built 2026-11-20) is the newest authentik release and carries deb13u1; remove when an authentik release, or an in-place rebuild of the 2026.8.6 tag, ships krb5 1.21.3-5+deb13u2."
+  - id: CVE-2026-112316
+    purls:
+      - "pkg:deb/debian/libgssapi-krb5-2@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libgssrpc4t64@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libk5crypto3@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkadm5clnt-mit12@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkrb5-3@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkrb5support0@1.21.3-5+deb13u1"
+    statement: "krb5 1.21.3-5+deb13u1 in authentik 2026.8.6's Debian base: a kadmind-side flaw (the admin server, krb5-admin-server and libkadm5srv), which the image does not ship - only the client libraries (libkadm5clnt, libgssrpc) are reported, and they decode replies, not the requests these advisories are about. authentik 2026.8.6 ships these client libraries for its optional Kerberos source (python gssapi, python-kadmin-rs), and no Kerberos source is configured (checked read-only on both estates, 2026-11-23). Upstream image: 2026.8.6 (built 2026-11-20) is the newest authentik release and carries deb13u1; remove when an authentik release, or an in-place rebuild of the 2026.8.6 tag, ships krb5 1.21.3-5+deb13u2."
+  - id: CVE-2026-112318
+    purls:
+      - "pkg:deb/debian/libgssapi-krb5-2@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libgssrpc4t64@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libk5crypto3@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkadm5clnt-mit12@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkrb5-3@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkrb5support0@1.21.3-5+deb13u1"
+    statement: "krb5 1.21.3-5+deb13u1 in authentik 2026.8.6's Debian base: a kadmind-side flaw (the admin server, krb5-admin-server and libkadm5srv), which the image does not ship - only the client libraries (libkadm5clnt, libgssrpc) are reported, and they decode replies, not the requests these advisories are about. authentik 2026.8.6 ships these client libraries for its optional Kerberos source (python gssapi, python-kadmin-rs), and no Kerberos source is configured (checked read-only on both estates, 2026-11-23). Upstream image: 2026.8.6 (built 2026-11-20) is the newest authentik release and carries deb13u1; remove when an authentik release, or an in-place rebuild of the 2026.8.6 tag, ships krb5 1.21.3-5+deb13u2."
+  - id: CVE-2026-112319
+    purls:
+      - "pkg:deb/debian/libgssapi-krb5-2@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libgssrpc4t64@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libk5crypto3@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkadm5clnt-mit12@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkrb5-3@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkrb5support0@1.21.3-5+deb13u1"
+    statement: "krb5 1.21.3-5+deb13u1 in authentik 2026.8.6's Debian base: a kadmind-side flaw (the admin server, krb5-admin-server and libkadm5srv), which the image does not ship - only the client libraries (libkadm5clnt, libgssrpc) are reported, and they decode replies, not the requests these advisories are about. authentik 2026.8.6 ships these client libraries for its optional Kerberos source (python gssapi, python-kadmin-rs), and no Kerberos source is configured (checked read-only on both estates, 2026-11-23). Upstream image: 2026.8.6 (built 2026-11-20) is the newest authentik release and carries deb13u1; remove when an authentik release, or an in-place rebuild of the 2026.8.6 tag, ships krb5 1.21.3-5+deb13u2."
+  - id: CVE-2026-112320
+    purls:
+      - "pkg:deb/debian/libgssapi-krb5-2@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libgssrpc4t64@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libk5crypto3@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkadm5clnt-mit12@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkrb5-3@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkrb5support0@1.21.3-5+deb13u1"
+    statement: "krb5 1.21.3-5+deb13u1 in authentik 2026.8.6's Debian base: a kadmind-side flaw (the admin server, krb5-admin-server and libkadm5srv), which the image does not ship - only the client libraries (libkadm5clnt, libgssrpc) are reported, and they decode replies, not the requests these advisories are about. authentik 2026.8.6 ships these client libraries for its optional Kerberos source (python gssapi, python-kadmin-rs), and no Kerberos source is configured (checked read-only on both estates, 2026-11-23). Upstream image: 2026.8.6 (built 2026-11-20) is the newest authentik release and carries deb13u1; remove when an authentik release, or an in-place rebuild of the 2026.8.6 tag, ships krb5 1.21.3-5+deb13u2."
+  - id: CVE-2026-112321
+    purls:
+      - "pkg:deb/debian/libgssapi-krb5-2@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libgssrpc4t64@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libk5crypto3@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkadm5clnt-mit12@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkrb5-3@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkrb5support0@1.21.3-5+deb13u1"
+    statement: "krb5 1.21.3-5+deb13u1 in authentik 2026.8.6's Debian base: a kadmind-side flaw (the admin server, krb5-admin-server and libkadm5srv), which the image does not ship - only the client libraries (libkadm5clnt, libgssrpc) are reported, and they decode replies, not the requests these advisories are about. authentik 2026.8.6 ships these client libraries for its optional Kerberos source (python gssapi, python-kadmin-rs), and no Kerberos source is configured (checked read-only on both estates, 2026-11-23). Upstream image: 2026.8.6 (built 2026-11-20) is the newest authentik release and carries deb13u1; remove when an authentik release, or an in-place rebuild of the 2026.8.6 tag, ships krb5 1.21.3-5+deb13u2."
+  - id: CVE-2026-112322
+    purls:
+      - "pkg:deb/debian/libgssapi-krb5-2@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libgssrpc4t64@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libk5crypto3@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkadm5clnt-mit12@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkrb5-3@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkrb5support0@1.21.3-5+deb13u1"
+    statement: "krb5 1.21.3-5+deb13u1 in authentik 2026.8.6's Debian base: a kadmind-side flaw (the admin server, krb5-admin-server and libkadm5srv), which the image does not ship - only the client libraries (libkadm5clnt, libgssrpc) are reported, and they decode replies, not the requests these advisories are about. authentik 2026.8.6 ships these client libraries for its optional Kerberos source (python gssapi, python-kadmin-rs), and no Kerberos source is configured (checked read-only on both estates, 2026-11-23). Upstream image: 2026.8.6 (built 2026-11-20) is the newest authentik release and carries deb13u1; remove when an authentik release, or an in-place rebuild of the 2026.8.6 tag, ships krb5 1.21.3-5+deb13u2."
+  - id: CVE-2026-112323
+    purls:
+      - "pkg:deb/debian/libgssapi-krb5-2@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libgssrpc4t64@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libk5crypto3@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkadm5clnt-mit12@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkrb5-3@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkrb5support0@1.21.3-5+deb13u1"
+    statement: "krb5 1.21.3-5+deb13u1 in authentik 2026.8.6's Debian base: a kadmind-side flaw (the admin server, krb5-admin-server and libkadm5srv), which the image does not ship - only the client libraries (libkadm5clnt, libgssrpc) are reported, and they decode replies, not the requests these advisories are about. authentik 2026.8.6 ships these client libraries for its optional Kerberos source (python gssapi, python-kadmin-rs), and no Kerberos source is configured (checked read-only on both estates, 2026-11-23). Upstream image: 2026.8.6 (built 2026-11-20) is the newest authentik release and carries deb13u1; remove when an authentik release, or an in-place rebuild of the 2026.8.6 tag, ships krb5 1.21.3-5+deb13u2."
+  - id: CVE-2026-118380
+    purls:
+      - "pkg:deb/debian/libgssapi-krb5-2@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libgssrpc4t64@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libk5crypto3@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkadm5clnt-mit12@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkrb5-3@1.21.3-5+deb13u1"
+      - "pkg:deb/debian/libkrb5support0@1.21.3-5+deb13u1"
+    statement: "krb5 1.21.3-5+deb13u1 in authentik 2026.8.6's Debian base: a kadmind-side flaw (the admin server, krb5-admin-server and libkadm5srv), which the image does not ship - only the client libraries (libkadm5clnt, libgssrpc) are reported, and they decode replies, not the requests these advisories are about. authentik 2026.8.6 ships these client libraries for its optional Kerberos source (python gssapi, python-kadmin-rs), and no Kerberos source is configured (checked read-only on both estates, 2026-11-23). Upstream image: 2026.8.6 (built 2026-11-20) is the newest authentik release and carries deb13u1; remove when an authentik release, or an in-place rebuild of the 2026.8.6 tag, ships krb5 1.21.3-5+deb13u2."
