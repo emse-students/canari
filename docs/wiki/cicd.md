@@ -3753,8 +3753,10 @@ refused for load, not code). The owner: *"Je veux que ce soit le plus rapide pos
 laquelle on a fait du pre-push sur le PC, c'est que la PR échouait souvent au bout de 20 minutes pour
 des raisons futiles. Si on ne gagne pas de temps, ça ne sert à rien."* So the push keeps ONLY what
 catches those futile failures in minutes - the path rules and whole-tree scans, the ratchet, the
-lockfile and Tauri-parity guards, `frontend-generated`, `frontend-lint` (lint + `svelte-check`) and
-the vitest run of the tests the range reaches. Everything else in `JOB_TIERS` is `ci-only` or
+lockfile and Tauri-parity guards, `frontend-generated`, `frontend-lint` (lint + `svelte-check`), the
+per-service `typecheck` of each NestJS app the range touches (2026-11-23: 3-12 s, the only gate that
+types the specs) and the
+vitest run of the tests the range reaches. Everything else in `JOB_TIERS` is `ci-only` or
 `split`, and the push names each on stderr (`CI only: ...`), so the reader knows what it did not
 prove. Agents push with at most four developers at once (owner, same evening).
 4. **The pre-push hook merges the latest `origin/main` before its checks.** The failures that day

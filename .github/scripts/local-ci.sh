@@ -300,7 +300,7 @@ push_plan() {
   fi
   # A TYPE ERROR IN A SERVICE, SPECS INCLUDED, FAILS HERE (2026-11-23, #3989). Jest runs ts-jest with
   # `isolatedModules`, which transpiles without types, so no spec run ever sees one; only `tsc --noEmit`
-  # does (4-11 s per service, incremental). The services come from the scope CI's matrix uses.
+  # does (3-12 s per service, incremental). The services come from the scope CI's matrix uses.
   local svc
   while read -r svc; do
     echo "typecheck-${svc#apps/}|bash .github/scripts/checks.sh ts $svc install typecheck"
