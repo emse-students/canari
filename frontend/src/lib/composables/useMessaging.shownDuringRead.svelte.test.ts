@@ -23,6 +23,7 @@ import {
   deleteFrame,
   editFrame,
   makeDevice,
+  reactionFrame,
   freshStoreName,
 } from './pendingMutations.test-helper';
 
@@ -287,7 +288,7 @@ describe('an upgrade never inserts into a conversation removed during its await 
     );
 
     expect((await d.storage.getMessagesByIds(CONVO, ['p1'], KEY)).rows.has('p1')).toBe(false);
-    expect(warn.mock.calls.some(([line]) => String(line).includes('NOT inserted'))).toBe(true);
+    expect(warn.mock.calls.some(([line]) => String(line).includes('not inserted'))).toBe(true);
   });
 
   it('THE SHOWN PREVIEW (the live upgrade): the body is not inserted, a WARN says so', async () => {
@@ -305,6 +306,82 @@ describe('an upgrade never inserts into a conversation removed during its await 
 
     expect(d.conversations.has(CONVO)).toBe(false);
     expect((await d.storage.getMessagesByIds(CONVO, ['p1'], KEY)).rows.has('p1')).toBe(false);
-    expect(warn.mock.calls.some(([line]) => String(line).includes('NOT inserted'))).toBe(true);
+    expect(warn.mock.calls.some(([line]) => String(line).includes('not inserted'))).toBe(true);
+  });
+});
+
+describe('the last gaps (final check of #3988)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    window.history.pushState({}, '', '/posts');
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  it("THE REACTIONS MAP: a late-held preview's reaction and a pending one both reach the bubble", async () => {
+    const onPreview = { emoji: 'heart', userId: 'someone', at: 4_000 };
+    const { d } = await deviceWithGap(
+      (dev) => {
+        const current = dev.conversations.get(CONVO)!;
+        dev.conversations.set(CONVO, {
+          ...current,
+          messages: [{ ...preview('p1'), reactions: [onPreview] }],
+          unreadCount: 1,
+        });
+      },
+      (dev) => reactionFrame(dev, 'another', 'p1', 'plus-one', 4_500)
+    );
+
+    await d.messaging.batchAddMessages(
+      [{ senderId: PEER, content: BODY, messageId: 'p1', serverTimestamp: 5_000 }],
+      CONVO,
+      d.ctx,
+      'arrival'
+    );
+
+    // What the bubble reads: the map first, the row's own reactions otherwise.
+    const [shown] = d.shown();
+    const bubble = d.messaging.messageReactions.get('p1') ?? shown.reactions ?? [];
+    expect(bubble.map((r) => r.emoji).sort()).toEqual(['heart', 'plus-one']);
+  });
+
+  it('A KEPT WRITE RETRIED AFTER ITS CONVERSATION LEFT: nothing inserted, the hold is released', async () => {
+    const { d } = await deviceWithGap(previewShown('p1'));
+    // The batch's write fails transiently: kept for the next checkpoint's hold.
+    vi.spyOn(d.storage, 'saveMessagesIfAbsent').mockRejectedValueOnce(
+      new DOMException('full', 'QuotaExceededError')
+    );
+    await d.messaging.batchAddMessages(
+      [
+        { senderId: PEER, content: BODY, messageId: 'p1', serverTimestamp: 5_000 },
+        { senderId: PEER, content: BODY, messageId: 'm2', serverTimestamp: 6_000 },
+      ],
+      CONVO,
+      d.ctx,
+      'arrival'
+    );
+    expect(
+      d
+        .shown()
+        .map((m) => m.id)
+        .sort()
+    ).toEqual(['m2', 'p1']);
+    // The conversation is removed while the retry's merge waits.
+    const merge = d.storage.mergeMessages.bind(d.storage);
+    vi.spyOn(d.storage, 'mergeMessages').mockImplementationOnce(async (...args) => {
+      d.conversations.delete(CONVO);
+      await d.storage.deleteMessagesForConversation(CONVO);
+      return merge(...args);
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const release = await d.messaging.holdRowsForCheckpoint(d.ctx);
+    release();
+
+    expect(d.conversations.has(CONVO)).toBe(false);
+    expect(await d.storage.getMessage('p1', KEY)).toBeFalsy();
+    expect(await d.storage.getMessage('m2', KEY)).toBeFalsy();
+    expect(warn.mock.calls.some(([line]) => String(line).includes('not inserted'))).toBe(true);
   });
 });

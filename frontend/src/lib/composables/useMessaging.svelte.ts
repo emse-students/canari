@@ -2236,7 +2236,7 @@ export function useMessaging() {
           );
         }
         if (ctx.storage && !(options.skipDbSave ?? isChannelConversationId(normalized))) {
-          // Folded onto the stored row by compare-and-set (`writeShownUpgrades`): a reaction that
+          // Folded onto the stored row by compare-and-set (`mergeShownUpgrades`): a reaction that
           // landed on the stored preview meanwhile is kept, and a row no longer a preview is left.
           // THE BATCH'S OWN WRITE (review of #3851): logged and dropped, a failure left the stored
           // row the notification's caption while the frame was acknowledged and its generation
@@ -2691,18 +2691,21 @@ export function useMessaging() {
   }
 
   /**
-   * Writes the upgrades of SHOWN previews: a compare-and-set onto each stored row
+   * Merges the upgrades of SHOWN previews onto their stored rows: a compare-and-set onto each
    * (`previewUpgradeOnto`, which re-asks `shouldUpgradeMessage` of the row as it stands at the
-   * write), and an insert only where no row stands. Never a whole-row write: the stored preview may
-   * have taken a reaction, a deletion or another writer's upgrade since memory was read. Resolves
-   * with the ids written either way; a row left as it was is said.
+   * write). Never a whole-row write: the stored preview may have taken a reaction, a deletion or
+   * another writer's upgrade since memory was read. Resolves the ids merged and the upgrades NOT
+   * merged - no row stands under the id, or the row that stands is no longer a preview - which
+   * {@link writeBatchRows} inserts where no row stands, once it has asked the map.
    */
-  async function writeShownUpgrades(
+  async function mergeShownUpgrades(
     ctx: MessagingContext,
     conversationId: string,
     upgrades: readonly StoredMessage[]
-  ): Promise<ReadonlySet<string>> {
-    if (!ctx.storage || upgrades.length === 0) return new SvelteSet<string>();
+  ): Promise<{ merged: ReadonlySet<string>; notMerged: StoredMessage[] }> {
+    if (!ctx.storage || upgrades.length === 0) {
+      return { merged: new SvelteSet<string>(), notMerged: [] };
+    }
     const byId = new SvelteMap(upgrades.map((row) => [row.id, row]));
     const merged = await ctx.storage.mergeMessages(
       conversationId,
@@ -2713,26 +2716,7 @@ export function useMessaging() {
       },
       ctx.deviceKeyB64
     );
-    const absent = upgrades.filter((row) => !merged.has(row.id));
-    // NEVER AN INSERT INTO A CONVERSATION THAT LEFT THE MAP (review of #3988). An upgrade read its
-    // row, then awaited; a conversation deleted meanwhile took its rows with it, and inserting the
-    // body would resurrect one row of a removed conversation. The merge above is safe (it rewrites
-    // only a row that stands); the insert is asked of the map as it is NOW, after that await.
-    if (absent.length > 0 && !ctx.conversations.has(conversationId)) {
-      console.warn(
-        `[ADD_MSG] ${absent.length} upgrade(s) of "${conversationId}" found no stored row and are NOT inserted: the conversation left the map - nothing is written into a removed conversation`
-      );
-      return new SvelteSet(merged);
-    }
-    const inserted = await ctx.storage.saveMessagesIfAbsent(absent, ctx.deviceKeyB64);
-    const written = new SvelteSet([...merged, ...inserted]);
-    const left = upgrades.length - written.size;
-    if (left > 0) {
-      console.log(
-        `[ADD_MSG] ${left} shown preview(s) of "${conversationId}" are no longer previews in the store - the arriving body leaves them as they are`
-      );
-    }
-    return written;
+    return { merged, notMerged: upgrades.filter((row) => !merged.has(row.id)) };
   }
 
   /** Removes the pending entries a written body consumed; a failure costs a re-settle, which is a no-op. */
@@ -3151,9 +3135,13 @@ export function useMessaging() {
         // and the reactions, land on the row shown - never the bare body until a reload.
         const consumed = consumedById.get(msg.id) ?? [];
         if (shouldUpgradeMessage(shown, body)) {
+          const upgraded = resettled(mergeMessageUpgrade(shown, upgrade), consumed);
+          // THE BUBBLE READS `messageReactions` FIRST: `settledWith` set it against the bare body,
+          // without the preview's own reactions. It follows the row shown, as the live upgrade's.
+          if (upgraded.reactions) messageReactions.set(msg.id, upgraded.reactions);
           upgradedById.set(msg.id, {
             from: shown,
-            shown: resettled(mergeMessageUpgrade(shown, upgrade), consumed),
+            shown: upgraded,
             reshow: (now) =>
               resettled(
                 shouldUpgradeMessage(now, body) ? mergeMessageUpgrade(now, upgrade) : now,
@@ -3354,13 +3342,41 @@ export function useMessaging() {
     try {
       // An upgrade row carries no reactions, edit or deletion of its own: written by
       // compare-and-set onto the stored row, it adds to them and never erases them.
-      const upgraded = await writeShownUpgrades(ctx, conversationId, upgradeRows);
+      const { merged, notMerged } = await mergeShownUpgrades(ctx, conversationId, upgradeRows);
+      // NEVER AN INSERT INTO A CONVERSATION THAT LEFT THE MAP (reviews of #3988). ONE question,
+      // asked after the merge's await and before every insert and the conversation's own write: a
+      // conversation deleted while this write waited - a live batch, a stored preview's upgrade, a
+      // kept write retried by a checkpoint's hold - took its rows with it, and inserting them would
+      // resurrect rows of a removed conversation. The merge above is safe (it rewrites only a row
+      // that stands). The rows are DROPPED, said with their frames, and the write reports success:
+      // there is nothing left to retry, so the hold it refused is released.
+      if (!ctx.conversations.has(conversationId)) {
+        const dropped = [...notMerged, ...newRows];
+        if (dropped.length > 0) {
+          const frames = dropped.flatMap((row) => write.framesByRow.get(row.id) ?? []);
+          console.warn(
+            `[ADD_MSG] ${dropped.length} row(s) of "${conversationId}" dropped, not inserted: the conversation left the map before their write (${ORPHAN_REMOVERS}) - nothing written into it, frame(s) ${frames.join(',')}`
+          );
+        }
+        await removeSettled(
+          ctx,
+          [...merged].flatMap((id) => consumedById.get(id) ?? [])
+        );
+        return null;
+      }
+      const inserted = await ctx.storage.saveMessagesIfAbsent(notMerged, ctx.deviceKeyB64);
+      const left = notMerged.length - inserted.size;
+      if (left > 0) {
+        console.log(
+          `[ADD_MSG] ${left} shown preview(s) of "${conversationId}" are no longer previews in the store - the arriving body leaves them as they are`
+        );
+      }
       const written = await ctx.storage.saveMessagesIfAbsent(newRows, ctx.deviceKeyB64);
       const standing = newRows.filter((row) => !written.has(row.id)).map((row) => row.id);
       if (standing.length > 0) await showStoredInstead(ctx, conversationId, standing);
       await removeSettled(
         ctx,
-        [...upgraded, ...written].flatMap((id) => consumedById.get(id) ?? [])
+        [...merged, ...inserted, ...written].flatMap((id) => consumedById.get(id) ?? [])
       );
       await ctx.saveConversation(conversationId);
       return null;

@@ -1560,15 +1560,18 @@ at entry can be false after the store read, and neither may be answered by the n
   takes the body (`mergeMessageUpgrade`), a body or a tombstone is left - and none of the arrival's
   effects run (no second count, tone or banner). The batch path does the same for its late-held ids:
   a preview is reshown upgraded WITH what waited for the body (a deletion, an edit, reactions -
-  `resettled`, the same settlement the stored row gets), the row is written as an UPGRADE
-  (compare-and-set onto a stored preview, inserted only where none stands, `writeShownUpgrades`),
-  and only the messages actually added are counted and announced;
+  `resettled`, the same settlement the stored row gets; `messageReactions`, which the bubble reads
+  first, follows the row shown), the row is written as an UPGRADE (compare-and-set onto a stored
+  preview, `mergeShownUpgrades`, inserted only where none stands), and only the messages actually
+  added are counted and announced;
 - **the conversation left the map.** Storing its rows would resurrect a deleted conversation, so
   both paths hand the messages to the orphan buffer, as the live path's entry does, with a WARN. The
-  writes that run BEFORE that check - the upgrade of a stored preview (`settleStoredBodies`) and the
-  live upgrade whose conversation left during it - go through `writeShownUpgrades`, which asks the map
-  after its own await: the compare-and-set onto a row that stands still runs, the insert does not,
-  and a WARN says so.
+  writes that run BEFORE that check - the upgrade of a stored preview (`settleStoredBodies`), the
+  live upgrade whose conversation left during it, and a kept write retried by a checkpoint's hold -
+  all go through `writeBatchRows`, which asks the map ONCE, after the merge's await and before every
+  insert and `saveConversation`: the compare-and-set onto a row that stands still runs, nothing is
+  inserted, the rows are dropped with their frames at WARN, and the write reports success so the
+  hold it refused is released rather than retried for ever.
 
 The live path's re-entry cannot loop: both branches it lands in return, and nothing is awaited
 between the read that sent it back and the re-entry's own.
@@ -1582,8 +1585,9 @@ after its last await, and takes the entry's decisions again if what they read ha
 `useMessaging.interleavedAdds.svelte.test.ts` holds the store read of one arrival open while a second
 arrival, then an own send, lands: both are kept and counted. `useMessaging.shownDuringRead.svelte.test.ts`
 shows a preview of the same id, then removes the conversation, during the store read, on both paths:
-one message, counted once, upgraded on screen and on disk, nothing announced; nothing stored into a
-removed conversation. `useMessaging.editRereads.svelte.test.ts` lands a message and moves the reader
+one message, counted once, upgraded on screen and on disk (with a pending deletion, edit or reaction),
+nothing announced; nothing stored into a removed conversation, a kept write retried after the removal
+included. `useMessaging.editRereads.svelte.test.ts` lands a message and moves the reader
 during an edit's send. Each fails on the entry-copy code.
 
 ## Outbox (outbound delivery)
@@ -3603,7 +3607,7 @@ the batch's own seam (`writeBatchRows`, via `writeOrKeep`) and keeps a failed wr
 UPGRADE writes of the live path** (review of #3851): the upgrade of a SHOWN push preview in
 `addMessageToChat` and the upgrade of a STORED one in `settleStoredBodies` caught, logged and went on,
 so the frame was acknowledged while the stored row was still the notification's caption. Both are
-`upgradeRows` of a `BatchRowWrite` now (a compare-and-set, `writeShownUpgrades`), kept on failure. **A
+`upgradeRows` of a `BatchRowWrite` now (a compare-and-set, `mergeShownUpgrades`), kept on failure. **A
 failed CONVERSATION-row write withholds too**: `writeBatchRows` ends with `saveConversation`, and a
 write is stored only once that landed, so a refused conversation row keeps its rows' frames on the
 server like a refused message row. **A reaction whose write onto its stored row
