@@ -100,6 +100,11 @@
     /** The comment a notification tap opened this post at: scrolled to and marked once drawn. */
     focusCommentId?: string;
     /**
+     * How many times the route was navigated to (the page's `afterNavigate`): a push naming the SAME
+     * comment again changes no URL, so the count is what makes it an event. 0 when the caller has none.
+     */
+    focusNonce?: number;
+    /**
      * THE POST IS SCHEDULED AND NOT YET PUBLISHED (owner, 2026-11-13): drawn for its editors only, in
      * the "not final" style of a proposed event (dimmed, dashed ring) with its publication date.
      * What needs readers is HIDDEN, not disabled - reactions, the comment preview and the share and
@@ -119,6 +124,7 @@
     onDelete,
     commentsOpen = false,
     focusCommentId,
+    focusNonce = 0,
     scheduled: scheduledProp = false,
     onEdited,
   }: Props = $props();
@@ -214,6 +220,38 @@
     sheetWrite = opts.write;
     commentsSheetOpen = true;
   }
+
+  /**
+   * A NEW `focusCommentId` ON A CARD ALREADY DRAWN is a notification link to the route on screen
+   * (same post, another `?comment=`): the page does not remount, so the sheet's initial state is no
+   * longer the answer. The sheet opens on the thread, and when the named comment is not in what the
+   * card holds (a reply that arrived after the post was read) the post is read again, so the row
+   * exists to be scrolled to and ringed (`PostComments` acts once the row is there). The value the
+   * card mounted with is the initial state's business, not this effect's.
+   */
+  let lastFocusSeen = untrack(() => `${focusCommentId}#${focusNonce}`);
+  $effect(() => {
+    const id = focusCommentId;
+    // The key is the id AND the arrival count: the same `?comment=` pushed again after the reader
+    // closed the sheet changes no URL, only the count, and must open it again.
+    const key = `${id}#${focusNonce}`;
+    if (key === lastFocusSeen) return;
+    lastFocusSeen = key;
+    if (!id) return;
+    untrack(() => {
+      Log.d('PostCard.focus', `${localPost.id}: comment ${id.slice(0, 8)} named while open`);
+      openCommentsSheet({ write: false });
+      if ((localPost.comments ?? []).some((c) => c.id === id)) return;
+      Log.d('PostCard.focus', `comment ${id.slice(0, 8)} not held - reading the post again`);
+      void getPost(localPost.id)
+        .then((fresh) => {
+          localPost = ledger.mergeRead(localPost, fresh, servedAt(fresh));
+        })
+        .catch((err: unknown) =>
+          Log.d('PostCard.focus', `re-read for comment ${id.slice(0, 8)} failed: ${String(err)}`)
+        );
+    });
+  });
   /**
    * The comment writes (`posts/postCommentThread.svelte.ts`), shared with the reel viewer's comments
    * sheet: this card lends its copy of the post, its ledger and its inline line. Its `pending` set

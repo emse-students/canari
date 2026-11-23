@@ -4596,3 +4596,28 @@ export async function sanity(cx) {
     )
   );
 }
+
+/**
+ * A SEAT'S ORDINARY START LINES, which a row that RELOADS a seat meets on every run (KILL-3 of
+ * 2026-11-17: twelve runs, every assertion held, and the row still `PASS-DIRTY` on 20 and 30
+ * `unexplained` lines per window). Each is a decision the client narrates as it opens, expected AND
+ * necessary, so it gets a rule naming its EXACT shape rather than its tag: a `[PENDING]`, `[REGISTER]`
+ * or `[GRAINE]` line of any other wording (an error, a refusal, a line that says something is stuck)
+ * is still `unexplained`. Scoped to the rows that reload a seat - never in `BENIGN`, because the same
+ * line on a row that did not open the seat would have found something.
+ *
+ * Sources, one per rule: `repair.ts` (the history ask), `stateLedgers.ts`, `conversationNicknames`
+ * (the mirror restated for the notifications), `threadAnchor.ts` (`chatViewEntryLine`), `ChatArea`
+ * (the entry window), `actions.ts` (a fulfilled invitation vouched for) and `registerOwed.ts`.
+ */
+export const SEAT_START_NARRATION = [
+  /^\[GRAINE\] the history of community [0-9a-f]{8} is already being asked - this trigger waits for that ask$/,
+  /^\[GRAINE\] the history of community [0-9a-f]{8} is not asked: no other member, and none of our other devices on its key group is online to receive the request$/,
+  /^\[LEDGER\] opened the ledgers the MLS state carries for [0-9a-f]{8}\.\.\. - \d+ key\(s\)$/,
+  /^\[NICKNAME\] \d+ nickname\(s\) of \d+ conversation\(s\) restated for the notifications$/,
+  /^\[CHAT_VIEW\] [0-9a-f]{8} entry settled: pinned=(?:true|false) isNearBottom=(?:true|false) newestVisible=(?:true|false) rows=\d+ fromBottom=\d+$/,
+  /^\[chat\.entry\] widening window \d+ -> \d+ \(target \d+\)$/,
+  /^\[PENDING\] \S+ already in tree for \S+ - invitation fulfilled, vouching$/,
+  /^\[REGISTER\] [0-9a-f]{8}\.\.\. owes its register - the next reconciliation asks for it$/,
+  /^\[REGISTER\] [0-9a-f]{8}\.\.\. register received \((?:join push|register answer)\) - no longer asked$/,
+];

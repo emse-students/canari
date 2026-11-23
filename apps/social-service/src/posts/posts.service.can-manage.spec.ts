@@ -598,6 +598,30 @@ describe('PostsService post management rights', () => {
       expect(row.canMuteAuthor).toBe(can);
     });
 
+    it('/posts/hidden carries the publishing association (id, name, logo) read from the associations table', async () => {
+      const { service, postRepo } = makeService(assoPost, {}, ['bde']);
+      const statements: string[] = [];
+      (postRepo.manager.query as jest.Mock).mockImplementation((sql: string) => {
+        if (!sql.includes('"hiddenByModeration" = true')) return Promise.resolve([]);
+        statements.push(sql);
+        return Promise.resolve([
+          {
+            ...assoPost,
+            anonymous: false,
+            associationName: 'Bureau des Eleves',
+            associationLogoUrl: '/api/media/public/bde-logo',
+          },
+        ]);
+      });
+      const [row] = await service.getHiddenPosts({ userId: 'bde', isGlobalAdmin: false });
+      expect(statements[0]).toContain('LEFT JOIN associations a ON a.id = p."associationId"');
+      expect(statements[0]).toContain('a.name AS "associationName"');
+      expect(row).toMatchObject({
+        associationName: 'Bureau des Eleves',
+        associationLogoUrl: '/api/media/public/bde-logo',
+      });
+    });
+
     it('/posts/hidden builds every row through the shaping that serves the card - a raw column cannot pass', async () => {
       const { service, postRepo } = makeService(assoPost, {}, ['bde']);
       const rows = [
