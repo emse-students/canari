@@ -136,3 +136,12 @@ it('both ways to the picker are reachable by role and name', () => {
   expect(named).toHaveLength(1);
   expect(target.querySelector(`button[aria-label="${m.post_react()}"]`)).not.toBeNull();
 });
+
+it('a tap on the assistive button while the picker is open is not an outside click', () => {
+  mountBar(null, true);
+  target.querySelector<HTMLButtonElement>('button[data-post-react-picker-open]')!.click();
+  expect(close).not.toHaveBeenCalled();
+  expect(open).toHaveBeenCalledTimes(1);
+  document.body.click();
+  expect(close).toHaveBeenCalledTimes(1);
+});

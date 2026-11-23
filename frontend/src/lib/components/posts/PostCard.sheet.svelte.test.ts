@@ -233,6 +233,62 @@ describe('the card', () => {
     expect(scrolled).toEqual(['comment-c3']);
   });
 
+  it('reopens on the SAME comment pushed again after the sheet was closed (the count is the event)', async () => {
+    const props = $state<{
+      post: PostEntity;
+      currentUserId: string;
+      focusCommentId?: string;
+      focusNonce: number;
+    }>({
+      post: row([comment(1), comment(2)]),
+      currentUserId: 'alice',
+      focusCommentId: 'c2',
+      focusNonce: 1,
+    });
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const instance = mount(PostCard, { target, props });
+    mounted.push(() => void unmount(instance));
+    flushSync();
+    expect(sheetOpen()).toBe(false);
+
+    props.focusNonce = 2;
+    await settle();
+    expect(sheetOpen()).toBe(true);
+
+    document.body.querySelector<HTMLButtonElement>('button[aria-label="Fermer"]')!.click();
+    await vi.waitFor(() => expect(sheetOpen()).toBe(false), { timeout: 2000 });
+
+    props.focusNonce = 3;
+    await settle();
+    expect(sheetOpen()).toBe(true);
+  });
+
+  it('reads the post ONCE when the re-read still lacks the comment, and logs the miss once', async () => {
+    const debug = vi.spyOn(console, 'debug');
+    vi.mocked(getPost).mockResolvedValue(row([comment(1), comment(2)]));
+    const props = $state<{ post: PostEntity; currentUserId: string; focusCommentId?: string }>({
+      post: row([comment(1), comment(2)]),
+      currentUserId: 'alice',
+    });
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const instance = mount(PostCard, { target, props });
+    mounted.push(() => void unmount(instance));
+    flushSync();
+
+    props.focusCommentId = 'c9';
+    await settle();
+    await settle();
+
+    expect(getPost).toHaveBeenCalledTimes(1);
+    expect(sheetOpen()).toBe(true);
+    const misses = debug.mock.calls.filter((c) =>
+      String(c.join(' ')).includes('c9 not in the thread')
+    );
+    expect(misses).toHaveLength(1);
+  });
+
   it('keeps what was typed when the sheet is closed and opened again', async () => {
     mountCard(row([comment(1), comment(2)]));
     buttonWith(m.post_show_comments_label({ count: 2 }))!.click();

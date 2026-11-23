@@ -67,7 +67,12 @@
   const ACTION =
     'flex h-11 min-w-11 items-center justify-center gap-1.5 rounded-lg px-2.5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent-icon';
 
+  /** The assistive chevron is a hint beside the 20 px action icons, not one of them. */
+  const CHEVRON_SIZE = 16;
+
   let reactButton = $state<HTMLElement | null>(null);
+  /** The react button and its assistive twin: a tap on either while the picker is open is a toggle. */
+  let openers = $state<HTMLElement | null>(null);
 
   /** The picker is opened by a hold, a context menu, ArrowUp or the assistive button. */
   function openPicker(via: string) {
@@ -131,47 +136,51 @@
     change it. The assistive ways: the context menu (Menu key, Shift+F10), ArrowUp, and the
     screen-reader-only button below, so the picker never depends on a gesture.
   -->
-  <button
-    type="button"
-    bind:this={reactButton}
-    onclick={onQuickReact}
-    onkeydown={onReactKeydown}
-    use:longPress={{
-      onHold: () => openPicker('hold'),
-      onContextMenu: () => openPicker('contextmenu'),
-    }}
-    class="{ACTION} text-text-muted touch-manipulation select-none hover:bg-(--cn-surface)"
-    aria-label={userReaction ? reactionTypeToLabel(userReaction) : m.post_react()}
-    title={m.post_react_hold_hint()}
-    aria-expanded={showReactionPicker}
-    aria-pressed={userReaction != null}
-    data-post-react
-  >
-    {#if userReaction}
-      <span class="text-lg" aria-hidden="true"
-        ><EmojiText text={reactionList.find((r) => r.type === userReaction)?.emoji ?? '😊'} /></span
-      >
-    {:else}
-      <FaceSlightlySmiling size={20} />
-    {/if}
-  </button>
-  <!--
+  <span class="flex items-center" bind:this={openers}>
+    <button
+      type="button"
+      bind:this={reactButton}
+      onclick={onQuickReact}
+      onkeydown={onReactKeydown}
+      use:longPress={{
+        onHold: () => openPicker('hold'),
+        onContextMenu: () => openPicker('contextmenu'),
+      }}
+      class="{ACTION} text-text-muted touch-manipulation select-none hover:bg-(--cn-surface)"
+      aria-label={userReaction ? reactionTypeToLabel(userReaction) : m.post_react()}
+      title={m.post_react_hold_hint()}
+      aria-expanded={showReactionPicker}
+      aria-pressed={userReaction != null}
+      data-post-react
+    >
+      {#if userReaction}
+        <span class="text-lg" aria-hidden="true"
+          ><EmojiText
+            text={reactionList.find((r) => r.type === userReaction)?.emoji ?? '😊'}
+          /></span
+        >
+      {:else}
+        <FaceSlightlySmiling size={20} />
+      {/if}
+    </button>
+    <!--
     THE ASSISTIVE WAY TO THE PICKER IS A REAL TARGET (S17, 2026-11-20). It was a `sr-only` button: 1 pt
     by 1 pt, so the iOS accessibility tree listed it with no usable frame and neither VoiceOver's
     touch exploration nor the rig could land on it. It now sits in the row beside the react button
     with its own ACTION-sized (44 px) hit area, a name ("Add reaction") and a small chevron, and
     never overlaps the react button: a tap on an overlay would have liked the post instead.
   -->
-  <Button
-    variant="bare"
-    onclick={() => openPicker('assistive button')}
-    class="{ACTION} text-text-muted/70 touch-manipulation hover:bg-(--cn-surface)"
-    aria-label={m.post_reacter()}
-    aria-expanded={showReactionPicker}
-    data-post-react-picker-open
-  >
-    <ChevronUp size={14} aria-hidden="true" />
-  </Button>
+    <Button
+      variant="bare"
+      onclick={() => openPicker('assistive button')}
+      class="{ACTION} text-text-muted focus-visible:ring-accent-icon! touch-manipulation hover:bg-(--cn-surface) focus-visible:ring-2! focus-visible:[--tw-ring-inset:initial]!"
+      aria-label={m.post_reacter()}
+      aria-expanded={showReactionPicker}
+      data-post-react-picker-open
+    >
+      <ChevronUp size={CHEVRON_SIZE} aria-hidden="true" />
+    </Button>
+  </span>
 
   {#if onCommentClick}
     <button
@@ -202,7 +211,7 @@
       use:clickOutside={{
         enabled: true,
         callback: onCloseReactionPicker,
-        ignore: () => reactButton,
+        ignore: () => openers,
       }}
     >
       {#each reactionList as reaction (reaction.type)}
