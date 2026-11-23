@@ -5247,3 +5247,18 @@ Release APK `1.8.0-alpha.4` over the alpha.3 install, dev serving the same versi
 **Dev data written** (all in `WRITTEN-IDS.txt`): a poll post with a comment and a follow and unfollow, a report with the mute and unmute of `beta`, a group made for the creation-log reading, and a private salon in the BancOuverture-1 community with no second member.
 
 **Left open, not read in this sitting:** the broadcaster's control column (long title, keyboard up, studio on a short screen) and the form blocks; both stay in the plan.
+
+## The readings of 2026-11-23 (`1.8.0-alpha.4`, Mi 9T, second group): the salon access search, the broadcaster's column, the form blocks
+
+Same install as [the first group](#the-readings-of-2026-11-23-180-alpha4-mi-9t-the-live-sheets-camera-sentence-the-switch-the-bell-the-mute-the-group-creation-log).
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| The restricted salon's "Ajouter un utilisateur" returned no result for the second account (first group) | **NOT A DEFECT** | The field offers the members of the salon's COMMUNITY only (`filterUserIds` is the community's member list, `ChannelSettingsPanel.svelte`). The test community held one member (the creator), and the second account's own community list does not show it. The community's own "Membres" search is global: it found the account, "Generer une invitation" made it a member at once ("2 membres"), and the salon field then listed it, "Ajouter" put it in "Membres autorises" |
+| #4005 the salon's "member added" notice | **NOT TAKEN, narrowed** | After the add, the salon's timeline on the creator's phone stayed empty, and the second account's discussion list showed one row "Canari Test Alpha vous a invite a rejoindre BancOuverture-1" (no duplicate), but it was stamped "2 h" and was not proven to be the notice written by this add. The minted-id path is `inviteMemberToChannel` (the community invitation card), which the access-list add does not call. Entry for the unit test unchanged; no phone reading can separate the two on this rig |
+| The broadcaster's column, a LONG title | **PASS** | A 67-character title on air is cut with an ellipsis at about 60 % of the width, well clear of the right-edge column |
+| The broadcaster's column, the KEYBOARD up in portrait | **PASS** | With the comment box focused the column keeps its place (End first, then flip, mic, camera, share, chat) and the comment bar rises under it, no control overlaps |
+| The broadcaster's column, the studio on a SHORT screen | **CLOSED, cannot be read** | No studio control is offered on this phone's pre-live or on-air screen, and the live screen did not rotate when the system rotation was forced (landscape is covered by the owner's validation of the live-screen rotation). The rotation setting was restored |
+| Form text and image blocks (Mi 9T) | **NO MI PART OWED** | The Mi half passed on `alpha.3`; what is left is the editor's arrows in a browser |
+
+**Dev data written** (all in `WRITTEN-IDS.txt`): the second account made a member of the test community, added to the private salon, and one live with its replay OFF (ended; "Rien n'en est garde").
