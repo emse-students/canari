@@ -86,6 +86,31 @@ describe('the iOS keyboard hand-off (canari_ios.mm)', () => {
     expect(rest.slice(superseded, rest.indexOf('return;', superseded))).not.toContain('NSLog');
   });
 
+  /**
+   * A STALE REST NEVER ENDS A NEWER TRANSITION (review of #4023): a rest waiting for its proof when a
+   * will-show arrives with no frame change (the app returning with the keyboard up) belongs to the
+   * transition before; the will-show bumps its own counter, the rest captured it before the proof and
+   * drops itself after it. Not `g_keyboardChangeSeq`, which a rise's own proof also reads.
+   */
+  it('a will-show supersedes a rest still waiting for its proof, without touching the rise counter', () => {
+    const shows = body('static void CanariTellPageKeyboardShows(');
+    expect(shows).toContain('g_keyboardShowSeq++;');
+    expect(shows.indexOf('g_keyboardShowSeq++;')).toBeLessThan(
+      shows.indexOf('window.canariKeyboardShows?.()')
+    );
+    expect(shows).not.toContain('g_keyboardChangeSeq');
+
+    const rest = body('static void CanariTellPageKeyboardAtRest(');
+    const captured = rest.indexOf('NSUInteger shows = g_keyboardShowSeq;');
+    const proved = rest.indexOf('CanariAfterScreenUpdates(webView, ^');
+    const dropped = rest.indexOf('shows != g_keyboardShowSeq', proved);
+    const told = rest.indexOf('window.canariKeyboardAtRest?.()', dropped);
+    expect(captured).toBeGreaterThan(-1);
+    expect(captured).toBeLessThan(proved);
+    expect(dropped).toBeGreaterThan(proved);
+    expect(told).toBeGreaterThan(dropped);
+  });
+
   it('the proof is the public screen-update snapshot, never the private presentation hook', () => {
     expect(proof).toContain('proof.afterScreenUpdates = YES;');
     expect(proof).toContain('[webView takeSnapshotWithConfiguration:proof');

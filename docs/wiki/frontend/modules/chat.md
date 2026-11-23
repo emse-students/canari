@@ -6150,7 +6150,12 @@ registered with the rest observers once the WebView exists, sent at once with no
 page before the did-show reveal's scroll), and the page starts a keyboard transition - or joins the one a
 resize already started, as on every ordinary rise. UIKit pairs every will-show with a did-show or, when
 the show is cancelled, a did-hide, and both already rest the transition (`canariKeyboardAtRest`): so the
-transition starts on a fact and ends on one, and none is left moving. The put-back rule is unchanged:
+transition starts on a fact and ends on one, and none is left moving. **A rest belongs to the transition it was
+asked in**: a rest still waiting for its screen-update proof when a will-show arrives (with no frame
+change, so `g_keyboardChangeSeq` does not move) is dropped, because the will-show bumps its own counter
+(`g_keyboardShowSeq`) and the rest compares it after the proof - otherwise the older rest would end
+the new transition before its reveal (review of #4023). The rise counter is left alone: a rise's own
+proof reads it, and a will-show must not cancel that. The put-back rule is unchanged:
 one put-back per transition, spent; a reader's touch before the reveal takes the move as theirs; no
 clock anywhere.
 

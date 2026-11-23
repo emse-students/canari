@@ -352,6 +352,10 @@ static void CanariSnapKeyboardFrame(WKWebView *webView, CGRect target) {
 /// while it is set belongs to them (UIKit posts it BEFORE did-show, in the same turn).
 static BOOL g_keyboardShowHidePending = NO;
 
+/// Counts `UIKeyboardWillShow`s: a rest waiting for its proof belongs to the transition that was moving
+/// when it was asked, and a will-show since then started a newer one (`CanariTellPageKeyboardShows`).
+static NSUInteger g_keyboardShowSeq = 0;
+
 /// Tells the page the keyboard has come to rest (`window.canariKeyboardAtRest`, `keyboardTransition.ts`):
 /// the end of the keyboard transition during which the page may put back the thread pane WebKit moved
 /// around the keyboard (docs/wiki/frontend/modules/chat.md, "the engine's keyboard move is put back,
@@ -372,8 +376,11 @@ static void CanariTellPageKeyboardAtRest(void) {
     return;
   }
   NSUInteger seq = g_keyboardChangeSeq;
+  NSUInteger shows = g_keyboardShowSeq;
   CanariAfterScreenUpdates(webView, ^(__unused double proofMs, NSError *error) {
-    if (seq != g_keyboardChangeSeq) {
+    // A newer change, or a newer will-show (which need not come with a frame change - the return of an
+    // app with the keyboard up), started a transition this rest does not belong to: it must not end it.
+    if (seq != g_keyboardChangeSeq || shows != g_keyboardShowSeq) {
       return;
     }
     if (error != nil) {
@@ -394,6 +401,10 @@ static void CanariTellPageKeyboardAtRest(void) {
 /// (`CanariTellPageKeyboardAtRest`): it starts on a fact and ends on one, never on a clock. Sent at once,
 /// with no proof, so it reaches the page before the reveal's scroll, which comes after did-show.
 static void CanariTellPageKeyboardShows(void) {
+  // Supersedes a rest still waiting for its proof (`CanariTellPageKeyboardAtRest`): that rest belongs to
+  // the transition before this one. Its own counter, not the change counter, which a rise's own
+  // proof also reads and a will-show must not cancel.
+  g_keyboardShowSeq++;
   WKWebView *webView = CanariFindWebView();
   if (webView == nil) {
     return;
