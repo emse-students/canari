@@ -53,6 +53,14 @@
   }: Props = $props();
   const Icon = $derived(icon);
   const labelTone = $derived(tone === 'on-media' ? 'text-white' : 'text-text-main');
+  /**
+   * The OFF track. `--cn-border` is a near-background grey that vanishes on a dark camera image
+   * (Mi 9T, S17), so `on-media` draws a translucent white fill with a white ring, both reading on
+   * any dark picture; ON is the accent in both tones (`peer-checked`).
+   */
+  const trackTone = $derived(
+    tone === 'on-media' ? 'bg-white/30 ring-1 ring-white/70 ring-inset' : 'bg-cn-border'
+  );
   const hintTone = $derived(tone === 'on-media' ? 'text-white/70' : 'text-text-muted');
 </script>
 
@@ -94,7 +102,10 @@
       onchange={() => onchange?.(checked)}
       class="peer sr-only"
     />
-    <div class="bg-cn-border peer-checked:bg-accent h-6 w-11 rounded-full transition-colors"></div>
+    <div
+      data-toggle-track
+      class="{trackTone} peer-checked:bg-accent h-6 w-11 rounded-full transition-colors"
+    ></div>
     <div
       class="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-5"
     ></div>

@@ -1793,3 +1793,7 @@ the comment box is on the left in landscape (`landscape:max-w-sm`), so the colum
 
 Test: `LiveBroadcaster.svelte.test.ts` pins the structure and classes (happy-dom has no layout, so the
 pixels are NOT asserted). Owed: a phone reading, see the backlog entry.
+
+## A refused camera on the pre-live sheet (2026-11-23)
+
+**Seen on the Mi 9T (`1.7.0-alpha.2`, 2026-11-16):** with the `CAMERA` permission off the sheet said "another app is using the camera". On the phone apps the OS refusal reaches the page as `NotReadableError`, the name of a camera another app holds, so `classifyCameraError` (by error NAME, never the message) reads it `busy`; the error type cannot tell the two apart, and no native permission query exists to ask (owed: one would let the throw classify it `denied`). What the sheet does instead: a `denied` fault (the WebView's own `NotAllowedError`) names the permission with `reels_camera_denied_body`; a `busy` fault on a native build says both causes (`live_camera_busy_or_denied_body`); both offer "Ouvrir les réglages" (`openAppSettings`, `data-live-open-settings`), as the camera tab already did. The web keeps the plain busy sentence and no settings button. Pinned in `LiveBroadcaster.svelte.test.ts`. Owed: a Mi 9T reading with the permission off, and the camera tab and the composer's camera read for the same wording (the camera tab shows the denied sentence and settings only for a true `denied`).

@@ -13,6 +13,7 @@ import LiveBroadcasterChat from './LiveBroadcasterChat.svelte';
 import LiveOverlayHandle from './LiveOverlayHandle.svelte';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { LiveBroadcast } from '$lib/live/liveBroadcast.svelte';
+import { CameraAccessError } from '$lib/reels/cameraAccess';
 import { shareLiveLink } from '$lib/live/shareLive';
 import { setCurrentUserId } from '$lib/stores/userState.svelte';
 import { fakeCamera, fakeDeps } from '$lib/live/liveBroadcast.test-helper';
@@ -48,6 +49,13 @@ const replays = vi.hoisted(() => ({ mode: 'off' as 'off' | 'on' }));
 vi.mock('$lib/stores/appVersionCheck.svelte', async (orig) => ({
   ...(await orig<typeof import('$lib/stores/appVersionCheck.svelte')>()),
   serverLiveReplaysMode: () => replays.mode,
+}));
+// The phone apps' settings route: a build that has it is `runtime.android` here, and the spy records the click.
+const settingsPage = vi.hoisted(() => ({ open: vi.fn(() => Promise.resolve()) }));
+vi.mock('$lib/reels/gallery', async (orig) => ({
+  ...(await orig<typeof import('$lib/reels/gallery')>()),
+  hasNativeGallery: () => runtime.android,
+  openAppSettings: settingsPage.open,
 }));
 vi.mock('$lib/stores/confirm.svelte', () => ({ showConfirm: vi.fn(() => Promise.resolve(true)) }));
 vi.mock('$lib/components/shared/Avatar.svelte', () => ({ default: () => {} }));
@@ -168,6 +176,11 @@ describe('LiveBroadcaster', () => {
     expect(label.className).toContain('text-white');
     expect(label.className).not.toContain('text-text-main');
     expect(q('[data-live-replay-switch] p')!.className).toContain('text-white/70');
+    // OFF must read on the dark image too: a translucent white fill with a white ring, never the near-background border grey.
+    const track = q('[data-live-replay-switch] [data-toggle-track]')!;
+    expect(track.className).toContain('bg-white/30');
+    expect(track.className).toContain('ring-white/70');
+    expect(track.className).not.toContain('bg-cn-border');
     expect(on.broadcast.replayOffered).toBe(true);
     q<HTMLButtonElement>('[data-live-start]')!.click();
     await settle();
@@ -1118,5 +1131,43 @@ describe('LiveBroadcaster - the orientation (owner, 2026-11-09)', () => {
     expect(q('[data-rotate-button]')).toBeNull();
     unmount(mounted.pop()!);
     expect(sent.at(-1)).toBe('portrait');
+  });
+});
+
+describe('LiveBroadcaster - a refused camera on the pre-live sheet (Mi 9T, 2026-11-16)', () => {
+  /** Opens the sheet over a camera whose next open throws `fault`, classified as the real opener does. */
+  async function refused(fault: 'denied' | 'busy', android: boolean) {
+    runtime.android = android;
+    const view = screen();
+    await settle();
+    view.cam.control.nextFailure = new CameraAccessError(fault, `live camera: ${fault}`);
+    await view.cam.session.start();
+    await settle();
+    return view;
+  }
+  afterEach(() => {
+    runtime.android = false;
+    settingsPage.open.mockClear();
+  });
+
+  it('a denied permission says so and offers the phone settings, not a hunt for another app', async () => {
+    await refused('denied', true);
+    const text = q('[role="alert"]')!.textContent!;
+    expect(text).toContain(m.reels_camera_denied_body());
+    expect(text).not.toContain(m.reels_camera_busy_body());
+    q<HTMLButtonElement>('[data-live-open-settings]')!.click();
+    expect(settingsPage.open).toHaveBeenCalledTimes(1);
+  });
+
+  it('on a phone app a camera the engine could not start names the permission too and offers the settings', async () => {
+    await refused('busy', true);
+    expect(q('[role="alert"]')!.textContent).toContain(m.live_camera_busy_or_denied_body());
+    expect(q('[data-live-open-settings]')).not.toBeNull();
+  });
+
+  it('on the web a busy camera keeps its own sentence and there is no settings page to offer', async () => {
+    await refused('busy', false);
+    expect(q('[role="alert"]')!.textContent).toContain(m.reels_camera_busy_body());
+    expect(q('[data-live-open-settings]')).toBeNull();
   });
 });

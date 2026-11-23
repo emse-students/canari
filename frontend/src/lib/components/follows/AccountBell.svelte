@@ -18,7 +18,7 @@
    * or entity - posts and lives, lives only, or nothing. Drawn by the app (`Picker`: a sheet on a
    * phone, a popover on a wide window), never a native select.
    *
-   * The CALLER decides where it is offered (L7): on a person the reader follows (accepted), and on
+   * The level follows the follow answer (`level`, bindable). The CALLER decides where it is offered (L7): on a person the reader follows (accepted), and on
    * any entity the reader sees, followed or not. It reads its level once mounted and writes on a
    * pick, optimistically: the trigger shows the new level at once and goes back if the server
    * refuses, with a toast that says so.
@@ -40,13 +40,24 @@
      * promise that predates a write.
      */
     takeInitial?: () => Promise<BellLevel> | undefined;
+    /**
+     * The level shown, bindable: the page that learns the level changed elsewhere - a re-follow
+     * whose answer says the server reset the bell - writes it here and the picker follows, with
+     * no second read and no timer. The bell writes it back on its own reads and picks.
+     */
+    level?: BellLevel;
   }
 
-  let { kind, targetId, iconOnly = false, takeInitial }: Props = $props();
+  let {
+    kind,
+    targetId,
+    iconOnly = false,
+    takeInitial,
+    level = $bindable<BellLevel>('all'),
+  }: Props = $props();
   /** The head start is for the first read only. */
   let headStartSpent = false;
 
-  let level = $state<BellLevel>('all');
   let loaded = $state(false);
   let saving = $state(false);
   const options = bellOptions();

@@ -183,3 +183,32 @@ describe('AccountBell, a read started by the page (weak-network audit, C3)', () 
     expect(bell().dataset.level).toBe('lives');
   });
 });
+
+describe('AccountBell, a level changed by the page (a re-follow reset, 2026-11-15)', () => {
+  it('follows the level its page hands down after the first read, without reading again', async () => {
+    api.getBellLevel.mockResolvedValue('none');
+    const props = $state<{
+      kind: 'association';
+      targetId: string;
+      level: 'all' | 'lives' | 'none';
+    }>({
+      kind: 'association',
+      targetId: 'a1',
+      level: 'all',
+    });
+    component = mount(AccountBell, { target: document.body, props });
+    await settle();
+    expect(bell().dataset.level).toBe('none');
+    expect(props.level).toBe('none');
+    // "Ne plus suivre", then "Suivre": the follow answer says the bell was reset.
+    props.level = 'all';
+    await settle();
+    expect(bell().dataset.level).toBe('all');
+    expect(bell().textContent).toContain(m.bell_level_all());
+    expect(api.getBellLevel).toHaveBeenCalledTimes(1);
+    // A pick after the reset writes from the new level and reports it back to the page.
+    await pick(m.bell_level_lives());
+    expect(api.setBellLevel).toHaveBeenLastCalledWith('association', 'a1', 'lives');
+    expect(props.level).toBe('lives');
+  });
+});
