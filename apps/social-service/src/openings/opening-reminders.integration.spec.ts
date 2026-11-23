@@ -121,7 +121,8 @@ maybe('opening reminders against PostgreSQL (engagement WP-4)', () => {
         cursus jsonb NOT NULL DEFAULT '[]', admin boolean NOT NULL DEFAULT false);
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL, slug varchar NOT NULL,
         type varchar NOT NULL DEFAULT 'association', archived boolean NOT NULL DEFAULT false,
-        "isBDE" boolean NOT NULL DEFAULT false, "createdBy" varchar(255), "logoUrl" varchar);
+        "isBDE" boolean NOT NULL DEFAULT false, "createdBy" varchar(255), "logoUrl" varchar,
+        "logoMediaId" uuid);
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL, "associationId" uuid,
         anonymous boolean NOT NULL DEFAULT false, "hiddenByModeration" boolean NOT NULL DEFAULT false,
         "publishedAt" timestamptz NOT NULL DEFAULT now());

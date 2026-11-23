@@ -1,4 +1,5 @@
 import { Logger } from '@nestjs/common';
+import { DUE_HEADS_UP_SQL } from '../openings/opening-reminders';
 import { FormReminderScheduler } from './forms-reminder.scheduler';
 
 /**
@@ -224,5 +225,113 @@ describe('FormReminderScheduler.expireStaleCashPayments - the one notice before 
     ).expireStaleCashPayments();
     expect(expire).toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+/**
+ * THE LOCK SCREEN SAYS WHAT THE BELL SAYS (reading of 2026-11-23, Mi 9T): a form opening pushed
+ * "Formulaire ouvert !" with no picture while its bell row named the association and carried its
+ * logo. Both come from the same statement's row, and the push carries the association as the actor,
+ * its logo as the picture and the form's title.
+ */
+describe('FormReminderScheduler.checkReminders - the push carries the facts of the bell row', () => {
+  const facts = {
+    associationId: 'asso-1',
+    associationName: 'Club photo',
+    associationLogoUrl: '/api/media/public/logo-1?v=1',
+    associationLogoMediaId: 'logo-1',
+    targetName: 'Sortie macro',
+  };
+  const opening = {
+    id: 'rem-1',
+    kind: 'form',
+    targetId: 'form-1',
+    userId: 'user-1',
+    origin: 'asked',
+    targetLive: true,
+    stillOwed: true,
+    linkOnly: false,
+    bellWithholds: false,
+    ...facts,
+  };
+
+  async function run(due: { headsUp?: object[]; openings?: object[] }) {
+    const query = jest.fn(async (sql: string) =>
+      sql === DUE_HEADS_UP_SQL ? (due.headsUp ?? []) : (due.openings ?? [])
+    );
+    const notifyContent = jest.fn(
+      async (_userId: string, _content: unknown, _data?: unknown) => {}
+    );
+    const createNotification = jest.fn(async (_row: Record<string, unknown>) => {});
+    const scheduler = new FormReminderScheduler(
+      { manager: { query }, update: jest.fn(async () => ({ affected: 1 })) } as never,
+      { notifyContent } as never,
+      { createNotification } as never,
+      {} as never,
+      {} as never
+    );
+    await scheduler.checkReminders();
+    return { notifyContent, createNotification };
+  }
+
+  it('an opening pushes the association, its logo and the form title - as the bell row does', async () => {
+    const { notifyContent, createNotification } = await run({ openings: [opening] });
+    const content = notifyContent.mock.calls[0][1] as Record<string, unknown>;
+    expect(content).toMatchObject({
+      key: 'form_open',
+      actorName: 'Club photo',
+      arg: 'Sortie macro',
+      icon: { kind: 'publicMedia', mediaId: 'logo-1' },
+    });
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorName: 'Club photo',
+        associationId: 'asso-1',
+        associationLogoUrl: '/api/media/public/logo-1?v=1',
+      })
+    );
+  });
+
+  it('the heads-up carries them too', async () => {
+    const { notifyContent } = await run({ headsUp: [opening] });
+    expect(notifyContent.mock.calls[0][1]).toMatchObject({
+      key: 'form_opening_soon',
+      actorName: 'Club photo',
+      arg: 'Sortie macro',
+      icon: { kind: 'publicMedia', mediaId: 'logo-1' },
+    });
+  });
+
+  it.each(['booking', 'event'])(
+    'a %s opening hands the bell row the logo id the push picture needs',
+    async (kind) => {
+      const { createNotification } = await run({ openings: [{ ...opening, kind }] });
+      expect(createNotification).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorName: 'Club photo',
+          associationId: 'asso-1',
+          associationLogoUrl: '/api/media/public/logo-1?v=1',
+          associationLogoMediaId: 'logo-1',
+          text: 'Sortie macro',
+        })
+      );
+    }
+  );
+
+  it('a personal form pushes no picture, never a member face', async () => {
+    const { notifyContent } = await run({
+      openings: [
+        {
+          ...opening,
+          associationId: null,
+          associationName: null,
+          associationLogoUrl: null,
+          associationLogoMediaId: null,
+        },
+      ],
+    });
+    const content = notifyContent.mock.calls[0][1] as Record<string, unknown>;
+    expect(content.actorName).toBe('');
+    expect(content).not.toHaveProperty('icon');
   });
 });
