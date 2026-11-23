@@ -216,6 +216,32 @@ if [ "$(manifest_field AVATAR_OVERRIDE_EXTRA 2)" = "skip" ] && [ "$(manifest_fie
 else
   fail "AVATAR_OVERRIDE_EXTRA must be skip in production and warn on dev"
 fi
+# The upload key's restore origin is DEV ONLY: skipped in the production manifest and absent from the
+# production compose and workflow, so production accepts the Play key only.
+if [ "$(manifest_field ANDROID_UPLOAD_KEY_SHA256 2)" = "skip" ] &&
+  ! grep -q 'ANDROID_UPLOAD_KEY_SHA256' infrastructure/docker-compose.prod.yml &&
+  ! grep -q 'ANDROID_UPLOAD_KEY_SHA256' .github/workflows/serve-prod.yml &&
+  grep -q 'ANDROID_UPLOAD_KEY_SHA256' infrastructure/docker-compose.dev.yml; then
+  pass "ANDROID_UPLOAD_KEY_SHA256 is skipped in production and reaches the dev compose only"
+else
+  fail "ANDROID_UPLOAD_KEY_SHA256 must be skip in production, absent from prod compose and serve-prod, present in dev compose"
+fi
+
+# Behavioural: a production render with the upload key present in its environment must not write it,
+# while dev (reading DEV_ANDROID_UPLOAD_KEY_SHA256) does - the control proving the probe can see it.
+upload_probe="${TMP}/upload-key-prod.env"
+# shellcheck disable=SC2046 # each line is one VAR=value assignment
+render prod "$upload_probe" $(prod_env) ANDROID_UPLOAD_KEY_SHA256=AB:CD:EF DEV_ANDROID_UPLOAD_KEY_SHA256=AB:CD:EF >"$TMP/upload-key-prod.log" 2>&1 || true
+upload_probe_dev="${TMP}/upload-key-dev.env"
+# shellcheck disable=SC2046
+render dev "$upload_probe_dev" $(dev_env) DEV_ANDROID_UPLOAD_KEY_SHA256=AB:CD:EF >"$TMP/upload-key-dev.log" 2>&1 || true
+if [ -f "$upload_probe" ] && [ -f "$upload_probe_dev" ] &&
+  ! grep -q '^ANDROID_UPLOAD_KEY_SHA256=.\+' "$upload_probe" &&
+  grep -q '^ANDROID_UPLOAD_KEY_SHA256=AB:CD:EF' "$upload_probe_dev"; then
+  pass "a production render never writes ANDROID_UPLOAD_KEY_SHA256, even when it is in the environment; dev does"
+else
+  fail "production must not render ANDROID_UPLOAD_KEY_SHA256 (and dev must) - see $TMP/upload-key-*.log"
+fi
 
 # ═════════════════════════════════════════════════════════════════════════════
 printf '\nthe two estates never publish the same host port\n'
