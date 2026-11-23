@@ -30,6 +30,7 @@ import {
   restoreKeySupported,
   restoreSigning,
   PLAY_STORE_INSTALLER,
+  type RestoreSigning,
   writeRestoreKeyRecord,
 } from '$lib/services/restoreKey';
 
@@ -179,18 +180,19 @@ async function ensureRestoreKeyOnce(userId: string): Promise<void> {
   // accused at error and the registration goes ahead: the server stays the judge.
   // The checks above still run: they are this session's, not this build's.
   if (Array.isArray(accepted)) {
-    let signing;
+    let signing: RestoreSigning | null = null;
     try {
       signing = await restoreSigning();
     } catch (e) {
-      // The platform could not say how this APK is signed: a defect, said here and once (the
-      // caller adds nothing). No key is minted on a guess; the read is not cached, so the next
-      // start asks again.
-      console.error(`[RESTORE] register: the signing origin could not be read: ${String(e)}`);
-      return;
+      // The platform could not say how this APK is signed: a defect, accused here. It is NOT a
+      // reason to skip - that would leave a Play install keyless with nothing else reporting it -
+      // so the registration goes ahead and the server judges. Not cached: the next start reads again.
+      console.error(
+        `[RESTORE] register: the signing origin could not be read (${String(e)}) - registering anyway, the server judges`
+      );
     }
-    const own = signing.origins.join(', ') || 'nothing';
-    if (!signing.origins.some((origin) => accepted.includes(origin))) {
+    const own = signing?.origins.join(', ') || 'nothing';
+    if (signing && !signing.origins.some((origin) => accepted.includes(origin))) {
       if (signing.installer !== PLAY_STORE_INSTALLER) {
         rlog(
           `register not attempted: this build is signed as ${own}, which this estate does not vouch for (accepts ${accepted.length} origin(s)), and was not installed by Play - a sideloaded APK; this install holds no restore key`

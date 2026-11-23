@@ -267,15 +267,18 @@ describe('ensureRestoreKey', () => {
     expect(error).toHaveBeenCalledWith(expect.stringContaining('a Play install read its signer'));
   });
 
-  it('a signer the platform cannot read mints no key, is said at error, and is asked again next start', async () => {
+  it('a signer the platform cannot read is said at error and registers anyway; the read is retried next start', async () => {
     platform({
       create: { responseJson: '{"id":"k"}', cloudBackup: true },
       signingThrows: new Error('no signing info'),
     });
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    apiFetch.mockImplementation(async () => options(null));
+    apiFetch
+      .mockResolvedValueOnce(options(null))
+      .mockResolvedValueOnce(json({ registered: true, credentialId: 'k' }));
     await ensureRestoreKey('user-1');
-    expect(created()).toBe(0);
+    // Never skipped on a failed read: a Play install must not be left keyless, the server judges.
+    expect(created()).toBe(1);
     expect(error).toHaveBeenCalledWith(
       expect.stringContaining('the signing origin could not be read')
     );
@@ -287,7 +290,7 @@ describe('ensureRestoreKey', () => {
       .mockResolvedValueOnce(options(null))
       .mockResolvedValueOnce(json({ registered: true, credentialId: 'k' }));
     await ensureRestoreKey('user-1');
-    expect(created()).toBe(1);
+    expect(created()).toBe(2);
     expect(
       invoke.mock.calls.filter(([cmd]) => cmd === 'plugin:restore|signing_origins')
     ).toHaveLength(2);

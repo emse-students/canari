@@ -211,11 +211,19 @@ class RestorePlugin(private val activity: Activity) : Plugin(activity) {
             }
             val origins = JSArray()
             for (cert in certs) origins.put(ApkKeyHash.origin(cert.toByteArray()))
-            val installer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                pm.getInstallSourceInfo(activity.packageName).installingPackageName
-            } else {
-                @Suppress("DEPRECATION")
-                pm.getInstallerPackageName(activity.packageName)
+            // A separate try: the installer is a hint for the frontend's skip, the origins are the
+            // fact. An installer the platform will not name reads as unknown (null), which the
+            // frontend treats as "not Play" only for an origin the estate does not list.
+            val installer = try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    pm.getInstallSourceInfo(activity.packageName).installingPackageName
+                } else {
+                    @Suppress("DEPRECATION")
+                    pm.getInstallerPackageName(activity.packageName)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "signingOrigins: installer unreadable (${e.javaClass.simpleName}) - answered as unknown")
+                null
             }
             Log.d(TAG, "signingOrigins: ${certs.size} signer(s), installer known: ${installer != null}")
             val answer = JSObject()

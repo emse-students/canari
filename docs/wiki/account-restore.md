@@ -275,8 +275,9 @@ registration, and says so once per start at `log`: `register not attempted: this
 is never skipped on this read** (review of #3990): Play signs with the key the estates name, so a
 Play origin missing from the list means the read or the configuration is wrong, and skipping would
 leave every real user keyless with nothing reporting it. It is accused at `error` and registers
-anyway; the server judges. A read the platform cannot answer is said at `error`, mints nothing, and
-is not cached. Nothing is refused, so nothing is recorded; an estate
+anyway; the server judges. A read the platform cannot answer is said at `error` and registers
+anyway too (never a reason to skip), and is not cached; an installer the platform will not name
+reads as unknown, which matters only for an origin the estate does not list. Nothing is refused, so nothing is recorded; an estate
 that starts naming the build is read at the next start. The session's own check (the key it holds)
 still runs first. A server older than `1.8.0` sends no `origins`: the client then registers as before.
 The legacy record `canari_restore_origin_refused` is dropped at the first check, and `originsDigest`
