@@ -41,6 +41,8 @@
      * no like, no "write a comment" line; the sheet still opens, to read.
      */
     readOnly?: boolean;
+    /** The server's `canLikeComments`: false draws the like disabled (a muted account). */
+    canLike?: boolean;
   }
 
   let {
@@ -52,6 +54,7 @@
     onLike,
     onOpen,
     readOnly = false,
+    canLike = true,
   }: Props = $props();
 
   /** The newest top-level comment: the one a reader opening the post would see first. */
@@ -127,6 +130,7 @@
             liked={latest.likes?.includes(currentUserId) ?? false}
             count={latest.likes?.length ?? 0}
             onLike={() => onLike(latest.id)}
+            enabled={canLike || (latest.likes?.includes(currentUserId) ?? false)}
             class="mt-0.5 shrink-0"
           />
         {/if}

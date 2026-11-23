@@ -31,12 +31,17 @@ describe('PostsService republication fields', () => {
     repostOnly?: boolean;
     /** D38b: among `republishAs`, the associations of the kind that may ask an author. */
     personalAs?: string[];
+    /** The reader's account is muted (`user_moderation.isMuted`). */
+    muted?: boolean;
     /** D38b: the server's requestable predicate holds for the post. */
     requestable?: boolean;
     /** D38b: the standing requests of the reader's associations for the post. */
     standing?: { fromAssociationId: string; associationName: string; id: string; status: string }[];
   }) {
     const query = jest.fn((sql: string) => {
+      if (sql.startsWith('SELECT "isMuted" FROM user_moderation')) {
+        return Promise.resolve(opts.muted ? [{ isMuted: true }] : []);
+      }
       if (sql.startsWith('SELECT posts.id AS "requestableId"')) {
         return Promise.resolve(opts.requestable ? [{ requestableId: opts.post.id }] : []);
       }
@@ -169,6 +174,22 @@ describe('PostsService republication fields', () => {
   it('offers the vote to a reader who sees the post without a grant', async () => {
     const service = makeService({ post: assoPost });
     expect((await service.getById('p1', { viewerId: 'reader' })).canVote).toBe(true);
+  });
+
+  it('offers no vote and no comment like to a MUTED reader, who is refused both (decision 9)', async () => {
+    const service = makeService({ post: assoPost, muted: true });
+    expect(await service.getById('p1', { viewerId: 'reader' })).toMatchObject({
+      canVote: false,
+      canLikeComments: false,
+    });
+  });
+
+  it('CONTROL: an unmuted reader is offered the vote and the comment like', async () => {
+    const service = makeService({ post: assoPost });
+    expect(await service.getById('p1', { viewerId: 'reader' })).toMatchObject({
+      canVote: true,
+      canLikeComments: true,
+    });
   });
 
   it('offers no vote to an anonymous reader', async () => {

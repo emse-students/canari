@@ -501,6 +501,132 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     });
   });
 
+  describe('a product must be priced, and its free-amount bounds payable', () => {
+    const unpriced = { name: 'Mystery', type: 'other' } as const;
+
+    it('refuses a product with no amount, no free amount and no grid at create, typed', async () => {
+      const { service, assoRepo, productRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+      jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
+      const err = await service.create('asso1', unpriced, false).catch((e: unknown) => e);
+      expect((err as BadRequestException).getResponse()).toMatchObject({
+        code: 'PRODUCT_HAS_NO_PRICE',
+      });
+      expect(productRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('refuses an update that leaves a product with nothing to price it', async () => {
+      const { service, assoRepo, productRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+      productRepo.findOne.mockResolvedValue(
+        product({ type: 'other', amountCents: 500, allowCustomAmount: false, priceMatrix: null })
+      );
+      jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
+      const err = await service
+        .update('asso1', 'prod1', { amountCents: null }, false)
+        .catch((e: unknown) => e);
+      expect((err as BadRequestException).getResponse()).toMatchObject({
+        code: 'PRODUCT_HAS_NO_PRICE',
+      });
+      expect(productRepo.save).not.toHaveBeenCalled();
+    });
+
+    it("CONTROL: the editor's real settings save (priceMatrix null + the settings fields) still saves a product saved unpriced before the rule", async () => {
+      const { service, assoRepo, productRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+      productRepo.findOne.mockResolvedValue(
+        product({ type: 'other', amountCents: null, allowCustomAmount: false, priceMatrix: null })
+      );
+      // `EditBoutiqueTab.handleSaveProductSettings`: it always sends `priceMatrix`, null without a grid.
+      await expect(
+        service.update(
+          'asso1',
+          'prod1',
+          {
+            allowRepeatPurchase: true,
+            maxPurchasesPerUser: null,
+            maxPurchasesTotal: null,
+            membersOnly: false,
+            priceMatrix: null,
+            amountCentsMember: null,
+            badgeText: null,
+          },
+          false
+        )
+      ).resolves.toBeDefined();
+      expect(productRepo.save).toHaveBeenCalled();
+    });
+
+    it('refuses the TRANSITION: a grid product whose grid is removed with no price left', async () => {
+      const { service, assoRepo, productRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+      productRepo.findOne.mockResolvedValue(
+        product({
+          type: 'other',
+          amountCents: null,
+          allowCustomAmount: false,
+          priceMatrix: {} as never,
+        })
+      );
+      jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
+      const err = await service
+        .update('asso1', 'prod1', { priceMatrix: null }, false)
+        .catch((e: unknown) => e);
+      expect((err as BadRequestException).getResponse()).toMatchObject({
+        code: 'PRODUCT_HAS_NO_PRICE',
+      });
+    });
+
+    it('CONTROL: a free-amount product with no fixed price is accepted', async () => {
+      const { service, assoRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+      await expect(
+        service.create('asso1', { ...unpriced, allowCustomAmount: true }, false)
+      ).resolves.toBeDefined();
+    });
+
+    it.each([
+      ['a minimum below the provider minimum', { customAmountMinCents: 10 }],
+      ['a maximum above the provider maximum', { customAmountMaxCents: 100_001 }],
+    ])('refuses %s at create with the payable range', async (_name, bounds) => {
+      const { service, assoRepo, productRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+      jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
+      const err = await service
+        .create('asso1', { ...unpriced, allowCustomAmount: true, ...bounds }, false)
+        .catch((e: unknown) => e);
+      expect((err as BadRequestException).getResponse()).toMatchObject({
+        code: 'AMOUNT_OUT_OF_RANGE',
+        minCents: 50,
+        maxCents: 100_000,
+      });
+      expect(productRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('refuses an out-of-range bound at update, and accepts the edges', async () => {
+      const { service, assoRepo, productRepo } = makeService();
+      assoRepo.findOne.mockResolvedValue(asso());
+      productRepo.findOne.mockResolvedValue(
+        product({ type: 'other', amountCents: null, allowCustomAmount: true })
+      );
+      jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
+      const err = await service
+        .update('asso1', 'prod1', { customAmountMaxCents: 200_000 }, false)
+        .catch((e: unknown) => e);
+      expect((err as BadRequestException).getResponse()).toMatchObject({
+        code: 'AMOUNT_OUT_OF_RANGE',
+      });
+      await expect(
+        service.update(
+          'asso1',
+          'prod1',
+          { customAmountMinCents: 50, customAmountMaxCents: 100_000 },
+          false
+        )
+      ).resolves.toBeDefined();
+    });
+  });
+
   describe('a free amount outside the product bounds', () => {
     const bounded = () =>
       product({
@@ -1065,7 +1191,11 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       const { service, productRepo, assoRepo } = makeService();
       assoRepo.findOne.mockResolvedValue(asso());
 
-      await service.create('asso1', { name: 'Recharge', type: 'balance_topup' }, true);
+      await service.create(
+        'asso1',
+        { name: 'Recharge', type: 'balance_topup', allowCustomAmount: true },
+        true
+      );
       expect(productRepo.save).toHaveBeenCalled();
     });
 
@@ -1075,7 +1205,11 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       const { service, productRepo, assoRepo } = makeService();
       assoRepo.findOne.mockResolvedValue(asso());
 
-      await service.create('asso1', { name: 'Recharge', type: 'balance_topup' }, true);
+      await service.create(
+        'asso1',
+        { name: 'Recharge', type: 'balance_topup', allowCustomAmount: true },
+        true
+      );
       expect(productRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({ allowRepeatPurchase: true })
       );
@@ -1177,7 +1311,13 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         assoRepo.findOne.mockResolvedValue(asso({ cotisationMode: null }));
         await service.create(
           'asso1',
-          { name: 'Soiree', type: 'other', membersOnly: true, requiredTags: ['vip:bde'] },
+          {
+            name: 'Soiree',
+            type: 'other',
+            amountCents: 500,
+            membersOnly: true,
+            requiredTags: ['vip:bde'],
+          },
           false
         );
         expect(productRepo.save).toHaveBeenCalled();
@@ -1971,6 +2111,37 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
         expect.objectContaining({ paymentMethod: 'cash', amountCents: 1000 }),
         expect.anything()
       );
+    });
+
+    describe('the default is quoted UNDER the buyer tier lock, from the transaction of the sale', () => {
+      it('reads the beneficiary tiers through the transaction manager, after the lock is taken', async () => {
+        const { service, productRepo, userTagService } = setUp(true);
+        await service.grantProductPurchase('asso1', 'prod1', 'admin1', { userId: 'user1' });
+
+        const lockOrder = (productRepo.manager.query as jest.Mock).mock.calls
+          .map((c, i) => ({
+            sql: String(c[0]),
+            order: (productRepo.manager.query as jest.Mock).mock.invocationCallOrder[i],
+          }))
+          .find((c) => c.sql.includes('pg_advisory_xact_lock'))?.order;
+        expect(lockOrder).toBeDefined();
+        const reads = (userTagService.hasActiveTag as jest.Mock).mock;
+        expect(reads.calls.length).toBeGreaterThan(0);
+        reads.calls.forEach((call, i) => {
+          // (userId, tagName, associationId, manager): the manager is the sale's transaction.
+          expect(call[3]).toBe(productRepo.manager);
+          expect(reads.invocationCallOrder[i]).toBeGreaterThan(lockOrder as number);
+        });
+      });
+
+      it('CONTROL: the cashier screen quote reads outside any transaction, as before', async () => {
+        const { service, productRepo, userTagService } = setUp(true);
+        await service.quoteCashSale('asso1', 'prod1', 'user1');
+        expect(productRepo.manager.transaction).not.toHaveBeenCalled();
+        const reads = (userTagService.hasActiveTag as jest.Mock).mock.calls;
+        expect(reads.length).toBeGreaterThan(0);
+        reads.forEach((call) => expect(call[3]).toBe(productRepo.manager));
+      });
     });
 
     describe('the bounds of a free amount bind only an amount the cashier TYPES', () => {

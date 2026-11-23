@@ -14,18 +14,28 @@
     /** How many people liked it. */
     count: number;
     onLike: () => void;
+    /**
+     * False when the server says this reader may not like (a muted account) AND they do not hold a
+     * like to take back: the heart stays drawn but disabled and says why, so no tap ends in a
+     * refusal. Taking a like back adds nothing, so the callers keep it usable while `liked`.
+     */
+    enabled?: boolean;
     class?: string;
   }
 
-  let { liked, count, onLike, class: className = '' }: Props = $props();
+  let { liked, count, onLike, enabled = true, class: className = '' }: Props = $props();
 </script>
 
 <button
   type="button"
   onclick={onLike}
+  disabled={!enabled}
+  title={enabled ? undefined : m.post_like_muted_label()}
   aria-pressed={liked}
   aria-label={count > 0 ? m.post_likes_count_label({ count }) : m.post_like_label()}
-  class="tap-target text-2xs focus-visible:ring-accent-icon flex items-center gap-1 font-bold transition-colors outline-none focus-visible:ring-2 {liked
+  class="tap-target text-2xs focus-visible:ring-accent-icon flex items-center gap-1 font-bold transition-colors outline-none focus-visible:ring-2 {enabled
+    ? ''
+    : 'cursor-not-allowed opacity-50'} {liked
     ? 'text-red-500'
     : 'text-text-muted hover:text-text-main'} {className}"
 >

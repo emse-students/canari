@@ -828,6 +828,7 @@
   "post_report_label": "Report",
   "post_report_comment_label": "Report this comment",
   "post_like_label": "Like",
+  "post_like_muted_label": "Your account is restricted: you cannot like comments.",
   "post_likes_count_label": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],
@@ -1731,6 +1732,8 @@
   "admin_cercle_members_only_label": "Reserved to cotisants",
   "admin_cercle_members_only_hint": "Ticked, only the association's cotisants (any active tier) can top up. Unticked, anyone signed in can top up.",
   "admin_cotisation_mode_in_use": "The cotisation cannot be turned off while products or partnership cards are still reserved to cotisants. Untick \"reserved to cotisants\" on them first, then try again.",
+  "admin_product_has_no_price": "Give this product a fixed price, a free amount or a price grid: without one nobody can buy it.",
+  "admin_product_bounds_not_payable": "The free-amount limits must stay between {min} and {max}, the range the payment provider accepts.",
   "admin_members_only_without_cotisation": "Enable the association's cotisation first: without it nobody can be a cotisant, so nothing can be reserved to cotisants.",
   "admin_cercle_webhook_secret_set": "A secret is stored. Leave empty to keep it, or type a new value to replace it.",
   "admin_cercle_saved": "Saved",
