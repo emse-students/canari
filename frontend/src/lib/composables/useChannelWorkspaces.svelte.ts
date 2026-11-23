@@ -26,7 +26,7 @@ import type {
 } from '$lib/services/ChannelService';
 import type { IMlsService } from '$lib/mlsService';
 import type { AddMessageToChatOptions, Conversation } from '$lib/types';
-import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
+import { encodeAppMessage, mkSystem, mkVisibleSystem } from '$lib/proto/codec';
 import {
   mkChannelInviteSentEnvelope,
   serializeEnvelope,
@@ -2155,7 +2155,7 @@ export function useChannelWorkspaces() {
       // for the salon's members nor ring their phones.
       try {
         const systemBytes = encodeAppMessage(
-          mkSystem('memberAdded', channelMemberAddedData(memberId))
+          mkVisibleSystem('memberAdded', channelMemberAddedData(memberId))
         );
         await sendEncryptedChannelMessage(
           channelConversationId,

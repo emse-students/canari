@@ -2930,7 +2930,17 @@ names exactly one invitee.
 
 **A channel notice never had the problem.** Channel messages are server-authoritative, so
 `decodeChannelMessageRow` takes `id: String(row.id)` - one identity, issued by the server, shared by
-every reader.
+every reader. **The salon's own `memberAdded`** (`inviteMemberToChannel`) is a frame the SENDER writes,
+and it too goes through `mkVisibleSystem` since 2026-11-23 (an id-less one had nothing to dedupe on
+across a replay or a re-fetch); `useChannelWorkspaces.svelte.test.ts` pins the minted id.
+
+**The salon seams of the push cache and of the history page** (2026-11-23). `fcmMemoryMerge.ts`
+refuses a `channel_` id with a warning: the native side never caches a salon push, so the guard is
+defence in depth for a seam that would otherwise invent an MLS-style placeholder row for a salon.
+**ACCEPTED RISK, written down rather than guarded:** the live frame and the history page key a salon
+row by the same field (`messageId` alone, #2248). Should the server ever give ONE row two ids, the
+first path to open it claims the key and the other is refused as a replay - a duplicate-free
+outcome, with the row drawn once; there is no second id to guard against today.
 
 Pinned by `systemMessageHandler.noticeIdentity.test.ts`, which asserts the convergence property
 directly: one frame handed to both paths produces one id. Old frames carry none and stay

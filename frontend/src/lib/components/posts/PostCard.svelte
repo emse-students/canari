@@ -291,6 +291,9 @@
   // moderation read outside their own audience. They read it to moderate; no reaction or comment
   // control is drawn, since the server would refuse it. Absent is true (an older server).
   const participates = $derived(localPost.canParticipate !== false);
+  // The server's answer (decision 9 of the moderation authority): false for a MUTED account, whose
+  // comment like is refused. The heart is drawn disabled; absent is true (an older server).
+  const canLikeComments = $derived(localPost.canLikeComments !== false);
   let comments = $derived<PostComment[]>(localPost.comments ?? []);
   let topLevelComments = $derived(comments.filter((c) => !c.parentId));
 
@@ -879,6 +882,7 @@
               onLike={(id) => void thread.like(id)}
               onOpen={openCommentsSheet}
               readOnly={!participates}
+              canLike={canLikeComments}
             />
           </div>
         {/if}
@@ -911,6 +915,7 @@
       {focusCommentId}
       autofocusComposer={sheetWrite}
       readOnly={!participates}
+      canLike={canLikeComments}
       onCommentTextChange={async (text) => {
         commentText = text;
         commentError = '';

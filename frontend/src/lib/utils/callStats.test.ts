@@ -8,6 +8,7 @@ import {
   describeAudioCodecs,
   describeCandidateCounts,
   describeSelectedPair,
+  selectedPathToLog,
   describeVideoStats,
   emptyCandidateCounts,
   iceCandidateKindOf,
@@ -457,5 +458,34 @@ describe('iceServerHost', () => {
     expect(iceServerHost('stun:stun.cloudflare.com:3478')).toBe('stun.cloudflare.com:3478');
     expect(iceServerHost('https://example.org')).toBeNull();
     expect(iceServerHost(undefined)).toBeNull();
+  });
+});
+
+describe('selectedPathToLog', () => {
+  const pairOn = (local: Record<string, unknown>, rtt?: number) =>
+    report([
+      { id: 'T', type: 'transport', selectedCandidatePairId: 'P' },
+      {
+        id: 'P',
+        type: 'candidate-pair',
+        localCandidateId: local.id,
+        remoteCandidateId: 'R1',
+        ...(rtt === undefined ? {} : { currentRoundTripTime: rtt }),
+      },
+      local,
+      srflxRemote,
+    ]);
+
+  it('logs the first pair, and logs again when ICE moves to another one', () => {
+    const relayed = selectedPathToLog(null, pairOn(relayLocal));
+    expect(relayed).toContain('relayed=yes');
+    const moved = selectedPathToLog(relayed, pairOn(hostLocal));
+    expect(moved).toContain('pair=host/udp->srflx/udp');
+    expect(moved).toContain('relayed=no');
+  });
+
+  it('stays silent while the pair is the same, whatever the round-trip time does', () => {
+    const first = selectedPathToLog(null, pairOn(hostLocal, 0.01));
+    expect(selectedPathToLog(first, pairOn(hostLocal, 0.042))).toBeNull();
   });
 });

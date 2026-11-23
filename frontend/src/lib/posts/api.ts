@@ -229,8 +229,17 @@ export interface PostEntity {
    * has not republished it yet. Which one is chosen in `RepublishDialog`; the server checks it again.
    */
   canRepublish?: boolean;
-  /** The poll may be voted: false for a reader who sees the post only through a read grant. */
+  /**
+   * The poll may be voted: false for a reader who sees the post only through a read grant, and for a
+   * MUTED account (the mute refuses a vote; moderation-authority, decision 9).
+   */
   canVote?: boolean;
+  /**
+   * A comment of this post may be liked by the reader: false for a muted account (and a post the
+   * reader may not act on), so the heart is drawn disabled instead of refused after a tap. Absent is
+   * true (an older server).
+   */
+  canLikeComments?: boolean;
   /**
    * The comments (button, count, thread) and the lists of people (who reacted, who voted what) are
    * shown. False only for a named reader whose ONLY door is a read grant with "voit les

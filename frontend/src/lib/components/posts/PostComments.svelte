@@ -97,6 +97,8 @@
      * comment drawn read-only (`CommentItem`).
      */
     readOnly?: boolean;
+    /** The server's `canLikeComments`: false draws every like disabled (a muted account). */
+    canLike?: boolean;
   }
 
   let {
@@ -123,6 +125,7 @@
     focusCommentId,
     autofocusComposer = false,
     readOnly = false,
+    canLike = true,
   }: Props = $props();
 
   /** The focus id already acted on, so a later redraw (a new comment, a like) never scrolls again. */
@@ -322,6 +325,7 @@
               onDelete={onDeleteComment}
               {onReport}
               {readOnly}
+              {canLike}
             />
           </div>
         {/each}

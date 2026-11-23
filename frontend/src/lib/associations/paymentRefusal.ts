@@ -224,13 +224,31 @@ const ASSOCIATION_ARCHIVED = 'ASSOCIATION_ARCHIVED';
 const MEMBERS_ONLY_WITHOUT_COTISATION = 'MEMBERS_ONLY_WITHOUT_COTISATION';
 
 /**
+ * The body `code` of social-service's 400 when a product is saved with nothing to price it: no fixed
+ * amount, no free amount, no grid (`product-save-rules.ts`).
+ */
+const PRODUCT_HAS_NO_PRICE = 'PRODUCT_HAS_NO_PRICE';
+
+/**
  * The sentence for a refusal of a product or partnership-card SAVE that the admin can act on, or
  * `null` for anything else (the caller keeps its generic error). Classified by the typed `code`,
- * never by the message.
+ * never by the message. `AMOUNT_OUT_OF_RANGE` on a SAVE is a free-amount limit outside what the
+ * payment provider takes (its range rides on the refusal); at checkout the same code is worded by
+ * `providerRefusalMessage`.
  */
 export function membersOnlySaveRefusalMessage(err: unknown): string | null {
   if (err instanceof SocialApiError && err.code === MEMBERS_ONLY_WITHOUT_COTISATION) {
     return m.admin_members_only_without_cotisation();
+  }
+  if (err instanceof SocialApiError && err.code === PRODUCT_HAS_NO_PRICE) {
+    return m.admin_product_has_no_price();
+  }
+  if (err instanceof SocialApiError && err.code === AMOUNT_OUT_OF_RANGE && err.amountBounds) {
+    const { minCents, maxCents } = err.amountBounds;
+    return m.admin_product_bounds_not_payable({
+      min: formatAmount(minCents),
+      max: formatAmount(maxCents ?? minCents),
+    });
   }
   return null;
 }

@@ -9,6 +9,9 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Post } from './entities/post.entity';
+
+/** The 403 a muted account gets for a gesture that ADDS something (`assertNotMuted`, `likeComment`). */
+export const MUTED_REFUSAL_MESSAGE = 'Your account has been restricted. You cannot post or react.';
 import { sameSideOfReviewCohort } from '../review-cohort';
 import { isUnsafeObjectKey, withOwnEntry } from '../common/object-keys';
 import {
@@ -485,8 +488,20 @@ export class PostInteractionsService {
   /**
    * Toggles a like on a comment - adds the userId if not present, removes it if already liked. A
    * moderation tombstone takes none (409 `COMMENT_REMOVED_BY_MODERATION`).
+   *
+   * THE MUTE IS JUDGED BY STATE, never by the message: a muted caller (`opts.muted`) who does not
+   * like the comment yet would ADD a like, which the mute refuses (403, decision 9); one who already
+   * likes it would only take it back, which adds nothing and goes through - the rationale of
+   * `removeReaction`. The state is read under the comment write's own lock, so it is the one the
+   * toggle acts on.
    */
-  async likeComment(postId: string, commentId: string, userId: string, isGlobalAdmin = false) {
+  async likeComment(
+    postId: string,
+    commentId: string,
+    userId: string,
+    isGlobalAdmin = false,
+    opts: { muted?: boolean } = {}
+  ) {
     const post = await this.postRepo.findOne({ where: { id: postId } });
     if (!post) throw new NotFoundException('Post not found');
     const comment = await writeComments(this.postRepo.manager, postId, (comments) => {
@@ -494,6 +509,9 @@ export class PostInteractionsService {
       if (!found) throw new NotFoundException('Comment not found');
       refuseRemovedByModeration(found, 'like');
       const likes = (found.likes as string[] | undefined) ?? [];
+      if (opts.muted && !likes.includes(userId)) {
+        throw new ForbiddenException(MUTED_REFUSAL_MESSAGE);
+      }
       const liked = {
         ...found,
         likes: likes.includes(userId) ? likes.filter((id) => id !== userId) : [...likes, userId],

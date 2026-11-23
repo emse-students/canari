@@ -364,7 +364,18 @@ words them in the reader's locale (`formatAmount`), never echoing the server's E
 product's free amount (`customAmountCents`) and a manager's cash grant go through ONE bounds check
 (`assertWithinCustomBounds`, `products.service.ts`); the checkout body is typed inline and so never
 validated by the pipe, which is why `wholeCentsOf` refuses anything but a non-negative safe integer
-at the controller (`AMOUNT_INVALID`) - `5000.5` used to be charged rounded and recorded as sent. In homologation the payer page offers a card form and, at its end, buttons to
+at the controller (`AMOUNT_INVALID`) - `5000.5` used to be charged rounded and recorded as sent. **A product is refused at the SAVE, typed, when it cannot be bought**
+(`product-save-rules.ts`, called by `ProductsService.create` and `update`): a product with no fixed
+`amountCents`, no free amount and no `priceMatrix` answers 400 `PRODUCT_HAS_NO_PRICE` (its checkout
+used to answer a bare 400 with no log), and a free-amount bound outside the payable range answers 400
+`AMOUNT_OUT_OF_RANGE` carrying that range - a bound the provider would refuse at checkout for an amount
+the product itself allowed. Membership tiers are outside the first rule (their own rank,
+`rankPriceCents`). An update refuses only the TRANSITION from priced to unpriced, judged on the merged
+result against the stored row (the editor's settings save always sends `priceMatrix`, null without a
+grid, so a product saved unpriced before the rule stays editable); a bound is judged only when the
+request sets it. The editor words both in the manager's locale
+(`membersOnlySaveRefusalMessage`: `admin_product_has_no_price`, `admin_product_bounds_not_payable`).
+In homologation the payer page offers a card form and, at its end, buttons to
 choose the final status - a real card is refused at the 3-D Secure step, so never type one there.
 
 ## Where Lydia sends the payer back (2026-10-05)

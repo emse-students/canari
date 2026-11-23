@@ -104,6 +104,8 @@ export class CallLeg {
   e2eProven = false;
   e2eClaimWithdrawn = false;
   e2eConnectChecked = false;
+  /** The last `selected path` line logged for this peer connection (see `selectedPathToLog`). */
+  lastPathLine: string | null = null;
   e2ePathCheckTimer: number | null = null;
   e2ePathCheckReason = '';
   e2eRechecks = 0;
