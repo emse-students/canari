@@ -1,12 +1,10 @@
 ## The owner's decisions of 2026-11-11
 
-target: 1.8.0
-
 - **`1.6.10` shipped to production on 2026-11-11** ([roadmap](../roadmap.md)).
 - **Fewer features, the backlog first.** *"On va se calmer un peu sur les features pour la suite. Il
   faut réduire et traiter le backlog, et corriger des bugs de longue date."*
   - **The slow-link chantier stays FIRST**: it is a fix, not a feature
-    ([chantier](slow-link-local-first-chantier.md)).
+    ([chantier](../backlog.d/slow-link-local-first-chantier.md)).
   - **Then the backlog, OLDEST entries first.**
   - **An entry blocked only on a phone reading**: the lead takes the reading himself on the bench
     Mi 9T / iPhone 12, closes what passes, and reopens as a bug what fails.
@@ -30,7 +28,7 @@ target: 1.8.0
    and encryption (why a PIN exists, what to do when it is forgotten), and communities (salons and
    channels).
 4. **Slow link**: media already seen is kept on the device within a **200 MB** budget, the oldest
-   evicted first (gap 3 of the [chantier](slow-link-local-first-chantier.md)).
+   evicted first (gap 3 of the [chantier](../backlog.d/slow-link-local-first-chantier.md)).
 5. **The profile-photo prompt stays limited to ICM at Saint-Etienne, and it is no longer temporary**:
    *"MiGallery est faite avant tout pour les ICM/Saint-Etienne"*. The server gate
    (`PROFILE_PHOTO_PROMPT_SPACES`) stays ([guided-help](../frontend/guided-help.md#the-profile-photo-prompt-owner-2026-11-07)).
@@ -45,7 +43,7 @@ target: 1.8.0
    for the video hold were rejected as verbose and useless (#3333 removed both), not because any
    indicator is forbidden. **The connection indicator the owner wants is the header avatar's ring**:
    green connected, amber slow, grey offline - replacing the "Hors connexion" banner and the desktop
-   "connecté" pill. Built in a separate draft PR ([chantier](slow-link-local-first-chantier.md)).
+   "connecté" pill. Built in a separate draft PR ([chantier](../backlog.d/slow-link-local-first-chantier.md)).
 8. **Feed media smoothness**: before a media is ready, the page draws the best picture it knows -
    the decoded first frame, else the ThumbHash, photos included - never black. The next 3 pages are
    preloaded in parallel on a fast link and 1 on a slow link, heads only, and the stream joins the

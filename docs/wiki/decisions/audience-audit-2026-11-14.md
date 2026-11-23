@@ -1,7 +1,5 @@
 ## P2 - the audience audit of 2026-11-14: what the campus x formation model leaves open
 
-target: 1.8.0
-
 _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
 _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._

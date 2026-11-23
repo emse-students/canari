@@ -470,7 +470,7 @@ duration is present or absent.
 ## The end-to-end call in CI
 
 **Decided by the owner on 2026-11-01 (D3):** the SFU is kept working for the day the School opens
-UDP to it (D2, [group calls](../backlog.d/group-calls-p2p-mesh-up-to-4-audio-3-video-decided-2026-10-31.md)),
+UDP to it (D2, [group calls](../decisions/group-calls-p2p-mesh-up-to-4-audio-3-video-decided-2026-10-31.md)),
 and what proves it works is a CALL, run in CI on every change that touches it - never a compile, and
 never a by-hand session nobody repeats.
 

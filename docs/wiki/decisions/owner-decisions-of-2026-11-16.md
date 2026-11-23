@@ -1,7 +1,5 @@
 ## The owner's decisions of 2026-11-15 and 2026-11-16
 
-target: 1.8.0
-
 Recorded so no question answered here is asked again. Each line names where its detail lives.
 
 ### Test accounts and the bench
@@ -96,7 +94,7 @@ Recorded so no question answered here is asked again. Each line names where its 
   destinataires" (the same list, that conversation ticked) and the conversation's name, which sends
   there in one tap. The list's first row reads **"Publier"**, not "Publier sur CanaReels". **No save
   button** on the review. **No camera icon on the conversation rows.** **Community salons in the list
-  move to `1.7.1`** ([reels-in-salons](reels-in-salons.md)).
+  move to `1.7.1`** ([reels-in-salons](../backlog.d/reels-in-salons.md)).
 - **A PHOTO taken in the CanaReels tab gets the same review as a video** ("Publier" / "Envoyer à...")
   and arrives as an ordinary image in the chosen chats (D-photo).
 - **The `1.7.0` stable ships once every reading is taken**, even if that is tomorrow.

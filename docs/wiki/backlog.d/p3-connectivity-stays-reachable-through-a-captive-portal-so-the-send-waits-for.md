@@ -8,7 +8,7 @@ _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
 _2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
-_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md))._
+_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](../decisions/owner-decisions-of-2026-11-17.md))._
 
 `trackedFetch` no longer counts the portal's page as an answer, and the probe no longer ends on it
 ([offline-and-weak-network section 22](../frontend/offline-and-weak-network.md#22-only-our-apis-answer-proves-the-server-is-there-2026-11-01)):

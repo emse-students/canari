@@ -2,7 +2,7 @@
 
 target: 1.8.0
 
-**Owner, 2026-11-19:** *"comme on l'a fait pour MiGallery, il faut qu'arriver sur le Cercle, Sky etc, via Canari connecte automatiquement"* - each MiConnect site Canari opens adopts the verification contract and its `handoff` flag is turned on, as MiGallery's was; independent of WP5 ([decisions](owner-decisions-of-2026-11-19.md)).
+**Owner, 2026-11-19:** *"comme on l'a fait pour MiGallery, il faut qu'arriver sur le Cercle, Sky etc, via Canari connecte automatiquement"* - each MiConnect site Canari opens adopts the verification contract and its `handoff` flag is turned on, as MiGallery's was; independent of WP5 ([decisions](../decisions/owner-decisions-of-2026-11-19.md)).
 
 **The owner's decisions of 2026-11-07, recorded as decided.**
 

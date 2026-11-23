@@ -1,7 +1,5 @@
 ## The owner's decisions of 2026-11-17
 
-target: 1.8.0
-
 Recorded so no question answered here is asked again. Each line names where its detail lives. The
 lead's own reversible readings, taken under the owner's delegation, are marked as such.
 
@@ -41,7 +39,7 @@ the counts.
   re-verifies each one; deleting is fine, and a wrong deletion is restored later.
 - **The usage dashboard** - distinct people per day, week and month, six platform categories, a
   week-by-hour map, daily activity totals, no small-number threshold, anonymous by construction:
-  [its entry](usage-dashboard-who-uses-canari-anonymously.md), `1.8.0`.
+  [its entry](../backlog.d/usage-dashboard-who-uses-canari-anonymously.md), `1.8.0`.
 - **(lead, reversible) The push-token P1 is reduced to a reading taken in production AFTER the
   `1.7.0` stable** (#3765 makes the outcome name its cause). It does not block the stable; it is
   taken the day after both stores carry `1.7.0`, and a non-zero count opens a `1.7.1` P1
@@ -54,10 +52,10 @@ the counts.
 ### The afternoon (the owner present)
 
 - **Opening a community: the P1 closes for `1.7.0`** once #3769 and its phone reading are in; the
-  200 ms budget moves to the [slow-link chantier](slow-link-local-first-chantier.md) (`1.7.1`).
+  200 ms budget moves to the [slow-link chantier](../backlog.d/slow-link-local-first-chantier.md) (`1.7.1`).
 - **The admission rule: step 1 (#3774, the count as a table) ships in `1.7.0`; steps 2-5 in `1.7.1`
   and `1.8.0`.** Step 2's card reuses "X veut rejoindre la conversation - Accepter / Refuser" as it
-  is, and **a Decline removes the seat** ([entry](p1-the-admission-rule-fix-forward.md)).
+  is, and **a Decline removes the seat** ([entry](../backlog.d/p1-the-admission-rule-fix-forward.md)).
 - **The live viewer cap: NO Cloudflare R2, NO Cloudflare Stream.** Stream must read the cleartext,
   which breaks principle 1 of [the charter](../../principes.md), and it bills per viewer-minute. The
   owner: *"rester totalement sur le serveur, quitte a degrader la qualite si trop de spectateurs"*
@@ -72,7 +70,7 @@ the counts.
   "Content Delivery Network", read on [live-scaling (a)](../frontend/modules/live-scaling.md#a-segments-from-cloudflare-not-from-the-host));
   whether a free R2 bucket qualifies is unresolved.
 - **Push payloads (content-free push): the whole chantier goes after `1.7.0`** (`1.7.1`,
-  [entry](push-payloads-carry-nothing-for-google-and-apple.md)); only its ring-end step ships in
+  [entry](../backlog.d/push-payloads-carry-nothing-for-google-and-apple.md)); only its ring-end step ships in
   `1.7.0` (#3779, merged the same day).
 - **Live bitrate.** The owner asked about H.265 or AV1 at about 2 Mb/s for 720p. The answer given:
   the server transcodes nothing (the content is end-to-end encrypted), so every viewer must decode
@@ -86,33 +84,33 @@ the counts.
   host serves ~600 Mb/s and more to a close client
   ([realtime-media-feasibility 4](../infrastructure/realtime-media-feasibility.md#4-network-capacity)).
   `LIVE_HOST_EGRESS_BPS` rests on the wrong number:
-  [re-derive it](live-host-egress-constant-rests-on-the-workstation-path.md), `1.8.0`.
+  [re-derive it](../backlog.d/live-host-egress-constant-rests-on-the-workstation-path.md), `1.8.0`.
 - **The departed roster seats are deleted in production** (asked twice; the first answer had not
   been written): *"au pire ils seront reinvites"*; a 1:1 goes with its departed seat. Done the same
   day - departed seats left: 0
-  ([entry](p2-the-group-panel-lists-22-roster-seats-that-hold-no-device.md), `1.7.1` for the panel).
+  ([entry](../backlog.d/p2-the-group-panel-lists-22-roster-seats-that-hold-no-device.md), `1.7.1` for the panel).
 - **Sealed names (#3785):** an invitation link carries the name in its `#fragment` (never sent to a
   server; link unfurlers show a generic card); the minimum client version for step 2 is the version
   carrying step 1 plus the creation dating
-  ([entry](p1-encrypt-the-names-of-groups-communities-and-salons.md)).
+  ([entry](../backlog.d/p1-encrypt-the-names-of-groups-communities-and-salons.md)).
 - **(lead, reversible, #3784)** A mention in the sender's own bubble takes the own-bubble variant
   (`currentColor`, no tint); incoming bubbles keep the accent.
 - **Noise filed** (P3, `1.7.1`, none of them a regression shown since `1.6.12`):
-  [a CSP refusal on every dev page load](p3-dev-logs-a-csp-inline-script-error-on-every-page-load.md),
+  [a CSP refusal on every dev page load](../backlog.d/p3-dev-logs-a-csp-inline-script-error-on-every-page-load.md),
   a dropped 1:1 logged as a key group (fixed in `1.7.1`, entry deleted),
   and [the iPhone's landscape close circle clipped](../device-verification.md).
 - **Seat counting for capped forms stays at submit, under the form's lock, for now.** A hold taken
   when the form is opened is refused (every browser that opens it blocks a seat, and a script can hold
   every seat of a public form); a 10-minute hold behind an explicit "Réserver ma place" button, one per
   signed-in person with a countdown, is the design kept: *"Plus tard (1.8.0)"*
-  ([entry](a-capped-form-holds-a-seat-behind-a-reserve-button.md)).
+  ([entry](../backlog.d/a-capped-form-holds-a-seat-behind-a-reserve-button.md)).
 - **An organiser's test no longer notifies the people who asked** (seen on production that day: an
   opening moved to "now" for a test sent the opening reminder to everyone who had pressed the bell).
   *"A + B + affichage, en 1.7.1"*: (A) a "Tester l'envoi" in the preview, a test submission counted
   nowhere and the form not opened; (B) moving the opening earlier asks first, naming how many people
   asked to be told; (display) the reminder names the association (its logo) and the form's title.
   Refused: (C) notifying only once the link "was distributed", which nothing can know
-  ([entry](p2-an-organiser-test-of-a-form-notifies-everyone-who-asked.md), `1.7.1`).
+  ([entry](../backlog.d/p2-an-organiser-test-of-a-form-notifies-everyone-who-asked.md), `1.7.1`).
 - **A form notifies only the people who pressed its bell.** *"Je ne pense pas que les formulaires
   doivent notifier les gens (sauf quand ils ont cliqué sur la cloche du formulaire)."* A form's opening
   writes no row for the association's followers any more; only an "asked" row ("Me prévenir") gets
@@ -120,7 +118,7 @@ the counts.
   entry, with a defect found that day: an opening moved later after it fired leaves the follower rows
   stamped as told, so the real opening tells nobody - every kind's moved opening must re-arm what has
   not really opened; that day's case was repaired by hand on production with the owner's yes
-  ([entry](p2-an-organiser-test-of-a-form-notifies-everyone-who-asked.md), `1.7.1`).
+  ([entry](../backlog.d/p2-an-organiser-test-of-a-form-notifies-everyone-who-asked.md), `1.7.1`).
 
 ### The evening (the owner present)
 
@@ -131,9 +129,9 @@ the counts.
 - **The new-discussion panel (#3793):**
   - a push for an UNNAMED group shows the sender alone;
   - the members' first names in that notification are a `1.7.1` entry, native on Android and iOS
-    ([entry](an-unnamed-group-s-push-names-its-members-by-first-name.md));
+    ([entry](../backlog.d/an-unnamed-group-s-push-names-its-members-by-first-name.md));
   - an older build shows "Groupe" for an unnamed group until step 3 of
-    [sealed names](p1-encrypt-the-names-of-groups-communities-and-salons.md) raises the minimum
+    [sealed names](../backlog.d/p1-encrypt-the-names-of-groups-communities-and-salons.md) raises the minimum
     version - accepted;
   - **a named group can NEVER be un-named** - a decision, not an open question;
   - group creation stays create-then-invite, and a partial invite names who is missing (the

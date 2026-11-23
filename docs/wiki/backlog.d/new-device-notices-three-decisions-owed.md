@@ -2,7 +2,7 @@
 
 target: 1.9.0
 
-**The three answered by the owner, 2026-11-19** ([decisions](owner-decisions-of-2026-11-19.md)):
+**The three answered by the owner, 2026-11-19** ([decisions](../decisions/owner-decisions-of-2026-11-19.md)):
 1. **Yes**: a phone whose WebView is alive in the background also raises a LOCAL notification for a new
    device, disabled in one gesture (its own notification category, Paraglide strings);
 2. **No**: a device first seen in a tree this device has just joined is NOT announced; only a device that

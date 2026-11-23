@@ -8,7 +8,7 @@ _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 
 _2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
-_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md))._
+_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](../decisions/owner-decisions-of-2026-11-17.md))._
 
 **The defect (read from `main`, 2026-11-14).** The Notification Service Extension shows a push and
 acknowledges nothing, so its row is redelivered when the app next connects. After a cold start the
@@ -54,7 +54,7 @@ the push cache before `notifyInbound`; the same title and body shape as the exte
 a tap from a killed state nor after a background tap and a resume; a foreground group message is titled
 by the group; new messages still notify.
 
-**2026-11-22, [I1 sitting](../device-verification.md#the-iphone-12-readings-of-2026-11-22-173-alpha5-the-backup-domains-the-banners-the-reactions-the-replay-bar-the-outage-drill) (`1.7.3-alpha.5`): the defect is reproduced on this build** (two cold launches, one of them through the share notice; [details](p2-ios-opening-the-app-through-the-share-notice-reshowed-a-banner-for-a-delivered-message.md)): the notification of a message the extension showed is raised again at the launch (`[NOTIF] Inbound ... asking`), its row jumping to "now". The reading that closes this entry is a cold launch after a killed-app push with that row's time unchanged.
+**2026-11-22, [I1 sitting](../device-verification.md#the-iphone-12-readings-of-2026-11-22-173-alpha5-the-backup-domains-the-banners-the-reactions-the-replay-bar-the-outage-drill) (`1.7.3-alpha.5`): the defect is reproduced on this build** (two cold launches, one of them through the share notice; details): the notification of a message the extension showed is raised again at the launch (`[NOTIF] Inbound ... asking`), its row jumping to "now". The reading that closes this entry is a cold launch after a killed-app push with that row's time unchanged.
 
 **2026-11-22, `1.7.3-alpha.6` (iPhone 12): still FAILING, and a second defect beside it.** App killed,
 Notification Center clean, one DM from `delta`: the extension showed ONE row; a cold launch left TWO

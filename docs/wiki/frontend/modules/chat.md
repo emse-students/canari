@@ -7544,7 +7544,7 @@ a video in a conversation with both, rotate a video, then move on.
 
 ## Mes notes - the conversation with oneself (2026-11-22)
 
-**What the owner decided** ([decisions](../../backlog.d/owner-decisions-of-2026-11-22.md), charter
+**What the owner decided** ([decisions](../../decisions/owner-decisions-of-2026-11-22.md), charter
 principles 1 then 2): the personal notepad moves into `/chat` as a conversation whose only members
 are the account's own devices, end-to-end like any other. The server side is
 [chat-delivery](../../services/chat-delivery.md#mes-notes---the-self-conversation).

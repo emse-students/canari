@@ -6,10 +6,10 @@ _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
 _2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
-Asked by the owner on 2026-11-19, its four answers taken the same day ([decisions](owner-decisions-of-2026-11-19.md)).
+Asked by the owner on 2026-11-19, its four answers taken the same day ([decisions](../decisions/owner-decisions-of-2026-11-19.md)).
 It is a TEST tool: the audience model (campus x formation x public,
 `apps/social-service/src/spaces/reader-spaces.ts`, [reform](../spaces-and-audiences-reform.md)) is
-hard to check by hand, and the [audience audit](audience-audit-2026-11-14.md) had to read it from the
+hard to check by hand, and the [audience audit](../decisions/audience-audit-2026-11-14.md) had to read it from the
 code. With this a platform admin checks it on the real data.
 
 **What was decided:**

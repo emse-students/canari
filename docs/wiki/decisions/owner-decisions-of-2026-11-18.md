@@ -1,7 +1,5 @@
 ## The owner's decisions of 2026-11-18
 
-target: 1.8.0
-
 Recorded so no question answered here is asked again. Taken by the owner in person, about 01:20 on
 2026-11-18. Each line names where its detail lives.
 
@@ -17,7 +15,7 @@ Recorded so no question answered here is asked again. Taken by the owner in pers
    **and is not a regression is deferred by the lead alone to the next version's alpha**, written in
    [device-verification](../device-verification.md) and the [plan](../plan.md) (its entry's `target:`
    line moves). **A regression stays blocking.**
-3. **After `1.7.1` the lead continues the plan** - the [slow-link chantier](slow-link-local-first-chantier.md),
+3. **After `1.7.1` the lead continues the plan** - the [slow-link chantier](../backlog.d/slow-link-local-first-chantier.md),
    then the oldest entries - under the same release rules: pre-releases and stables after readings on
    both phones and nothing blocking, the owner told each time, no feature he did not ask for.
 4. **Production data repairs: the lead runs them alone under four conditions** - the rows backed up
@@ -38,8 +36,8 @@ Taken by the owner in person, about 09:10 and later that morning, relayed to the
    created, read, deleted from Settings and removed from the identity provider in S7.
 6. **Birthdays' "gone the next day" and campus trends (from 2026-11-23) are read AFTER the `1.7.0`
    stable**: both move to `1.7.1`
-   ([birthdays](reading-owed-birthdays-on-profiles-3180-first-stable-v1-6-9-birthdays.md),
-   [campus trends](reading-owed-campus-trends-and-the-daily-cap-wp-8-wp-10-and-the-quieter-batch.md)).
+   ([birthdays](../backlog.d/reading-owed-birthdays-on-profiles-3180-first-stable-v1-6-9-birthdays.md),
+   [campus trends](../backlog.d/reading-owed-campus-trends-and-the-daily-cap-wp-8-wp-10-and-the-quieter-batch.md)).
 7. **The `1.7.0` stable is cut as soon as this last sitting is green.**
 8. **After `1.7.0`: the `1.7.1` defects first, then group calls.** `1.7.1` keeps its WHOLE list, even if
    it takes several weeks.

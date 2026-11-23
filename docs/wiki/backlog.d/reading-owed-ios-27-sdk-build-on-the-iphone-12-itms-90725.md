@@ -1,4 +1,4 @@
-## P2 - iOS builds need the iOS 27 SDK before April 2027 (Apple's ITMS-90725 on build 100700011)
+## Reading owed - the iOS 27 SDK build (#3813, `xcode-27`) read on the iPhone 12, and an upload without ITMS-90725
 
 target: 1.8.0
 
@@ -43,7 +43,7 @@ scene lifecycle Apple announced as mandatory after iOS 26 (tao's `TaoSceneDelega
 `applicationIconBadgeNumber` in `canari_push.mm`, sits in the unreachable pre-16 branch of an
 `@available(iOS 16.0, *)` and does not warn at a 16.0 target. No target treats warnings as errors.
 
-**Closes with:** on the first `1.7.1` pre-release, read on the iPhone 12 from TestFlight - the install
+**Closes with (no Xcode-27 reading is recorded in [device-verification](../device-verification.md), 2026-11-23; the build is merged and the signed path proved by `ios.yml` run 44278923984, so only this bench reading is owed):** on the next pre-release, read on the iPhone 12 from TestFlight - the install
 itself, then the surfaces the new SDK may change (the glass tab bar; the notification service
 extension, a push decrypted with the app killed; CallKit, a ring and an answer; the share extension,
 a photo shared into a conversation), then one concrete action per Swift plugin, because llvm-objcopy

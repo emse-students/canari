@@ -3,7 +3,7 @@
 target: 1.8.0
 
 **Decided by the owner on 2026-11-19** (*"Oui, par campus, comme les posts"*,
-[decisions](owner-decisions-of-2026-11-19.md)). The audience audit of 2026-11-14 found a staff account
+[decisions](../decisions/owner-decisions-of-2026-11-19.md)). The audience audit of 2026-11-14 found a staff account
 (a campus, no cursus) sees nothing of an institution beyond its targeted posts: the shop
 (`ProductsService`, `associationVisibleToViewerSql`), the partnerships (`PartnershipsService`), the
 association directory and the institution's lives. They open to every staff account whose campus is

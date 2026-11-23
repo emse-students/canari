@@ -1116,7 +1116,7 @@ removes the unproven new one. Changing the Responsable to another PERSON is the 
 
 The owner's decision: a Responsable may not leave while they are the Responsable - *"il doit d'abord
 passer la main lui-même. C'est pour ça qu'il est important de pouvoir gérer les caissiers sur Canari"*
-([decisions](../../backlog.d/owner-decisions-of-2026-11-19.md), item 31). Before this step, the cashier
+([decisions](../../decisions/owner-decisions-of-2026-11-19.md), item 31). Before this step, the cashier
 screens could not name another person: one live Responsable per Business (`LYDIA_RESPONSABLE_ALREADY_SET`).
 
 **Behind its own compiled switch, OFF**: `LYDIA_RESPONSABLE_HANDOVER_ENABLED` in core

@@ -2,7 +2,7 @@
 
 target: 1.8.0
 
-**Decided by the owner on 2026-11-19** ([decisions](owner-decisions-of-2026-11-19.md)): the door built on
+**Decided by the owner on 2026-11-19** ([decisions](../decisions/owner-decisions-of-2026-11-19.md)): the door built on
 2026-11-14 for an institution's POSTS ("Oui, par campus") opens on its CALENDAR EVENTS too. An event
 whose public is "Personnel" or "Tous" reaches every staff account (a campus, no cursus) whose campus
 is the campus of a space the event TICKS. The per-event choice of spaces stays as built

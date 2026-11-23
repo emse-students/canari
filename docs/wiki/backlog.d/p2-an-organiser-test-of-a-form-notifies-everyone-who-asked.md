@@ -20,7 +20,7 @@ it was open. What shipped closes the harm; [engagement L30](../engagement.md) is
 - a moved opening re-arms a stamp already spent, for every kind;
 - the reminder's bell row and push name the association (its logo as the actor) and the form's title.
 
-**Still owed - (A), "Tester l'envoi" in the preview** (owner, 2026-11-17, [decisions](owner-decisions-of-2026-11-17.md)):
+**Still owed - (A), "Tester l'envoi" in the preview** (owner, 2026-11-17, [decisions](../decisions/owner-decisions-of-2026-11-17.md)):
 the organiser submits the form from its preview as a submission marked as a TEST - a sandbox or
 simulated payment, counted in no seat (`seatHoldingWhere` excludes it), in no export or responses
 list, and in no organiser alert - and the form is NOT opened, so nobody is notified. It was left out

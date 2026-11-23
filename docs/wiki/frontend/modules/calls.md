@@ -1717,7 +1717,7 @@ ring the in-app UI either: `handleCallSignal` asks `isBlockedWith` before it rin
 ask does not ring (logged at error). Pinned by `calls.service.spec.ts`, `callFailure.test.ts`,
 `CallService.callsEnabled.test.ts` and `CallService.p2p.test.ts`. **Any block with any other member
 refuses the WHOLE call** - right for 1:1, which only the client enforces today; WP-C11 must decide it
-for a group ([group calls](../../backlog.d/group-calls-p2p-mesh-up-to-4-audio-3-video-decided-2026-10-31.md)).
+for a group ([group calls](../../decisions/group-calls-p2p-mesh-up-to-4-audio-3-video-decided-2026-10-31.md)).
 
 ## Audio quality, measured 2026-10-19
 
@@ -1978,7 +1978,7 @@ server-side setting picks (D2); `call-service` is proven by an encrypted end-to-
 masking (D4). Per-sender keys are built ([below](#one-key-per-sender-wp-gc1-2026-11-13)); the TURN
 volume of a relayed mesh stays open, and the work
 packages that follow are listed in order:
-[backlog](../../backlog.d/group-calls-p2p-mesh-up-to-4-audio-3-video-decided-2026-10-31.md).
+[backlog](../../decisions/group-calls-p2p-mesh-up-to-4-audio-3-video-decided-2026-10-31.md).
 
 ### One key per sender (WP-GC1, 2026-11-13)
 
