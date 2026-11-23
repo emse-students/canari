@@ -879,8 +879,8 @@ which also holds **the contract a site implements**. This section is what Canari
   equals the file. The client names a site by id; **core-service composes the URL**
   (`<origin>/auth/handoff#<token>`), so the route is no open redirect. `dest` must equal one path
   of the site's allowlist exactly (`{uuid}` one lowercase UUID segment; no query, no fragment, no
-  normalisation). A site is minted for only while its `handoff` flag is true; **MiGallery's is true since 2026-11-14, every other flag ships
-  false**. A flag goes on only when core-service runs MiConnect's access check at mint (F3-bound,
+  normalisation). A site is minted for only while its `handoff` flag is true; **MiGallery's is true since 2026-11-14, Le Cercle's since 2026-11-23 (acting from the first
+  stable after its redemption is live), Sky's ships false**. A flag goes on only when core-service runs MiConnect's access check at mint (F3-bound,
   above - without it a handoff bypasses MiConnect's decisions), the site's provider `sub_mode` was read as `hashed_user_id`, and the site's
   redemption is live with handoff sessions MARKED and stepped up through a MiConnect sign-in before
   any state-changing action - the answer to login CSRF ([the design note](backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md),

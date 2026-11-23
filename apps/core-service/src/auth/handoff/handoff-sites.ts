@@ -42,7 +42,7 @@ export const ECOSYSTEM_SITES: readonly EcosystemSiteContract[] = [
     origin: 'https://cercle.emse.fr',
     miconnect: true,
     miconnectApplication: 'cercle',
-    handoff: false,
+    handoff: true,
     dests: ['/'],
   },
   {
