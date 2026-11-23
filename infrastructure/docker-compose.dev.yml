@@ -520,6 +520,9 @@ services:
       # restore key's origin is computed from. Empty, every /api/auth/restore route answers 503
       # (docs/wiki/account-restore.md).
       ANDROID_APP_LINK_SHA256: ${ANDROID_APP_LINK_SHA256:-}
+      # DEV ONLY: the upload key's fingerprint, so a bench APK installed by hand can register a restore
+      # key. Production's compose never carries it (docs/wiki/account-restore.md).
+      ANDROID_UPLOAD_KEY_SHA256: ${ANDROID_UPLOAD_KEY_SHA256:-}
       # THE ONE FIELD THAT TELLS THE TWO ESTATES APART AT RUNTIME, and until 2026-09-02 nothing
       # delivered it. `render-env.sh` computes it, the manifest declares it, `deploy-build.ts`
       # parses it and `version.service.spec.ts` tests it - and no compose file passed it in, so

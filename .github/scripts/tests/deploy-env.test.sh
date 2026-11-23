@@ -216,6 +216,16 @@ if [ "$(manifest_field AVATAR_OVERRIDE_EXTRA 2)" = "skip" ] && [ "$(manifest_fie
 else
   fail "AVATAR_OVERRIDE_EXTRA must be skip in production and warn on dev"
 fi
+# The upload key's restore origin is DEV ONLY: skipped in the production manifest and absent from the
+# production compose and workflow, so production accepts the Play key only.
+if [ "$(manifest_field ANDROID_UPLOAD_KEY_SHA256 2)" = "skip" ] &&
+  ! grep -q 'ANDROID_UPLOAD_KEY_SHA256' infrastructure/docker-compose.prod.yml &&
+  ! grep -q 'ANDROID_UPLOAD_KEY_SHA256' .github/workflows/serve-prod.yml &&
+  grep -q 'ANDROID_UPLOAD_KEY_SHA256' infrastructure/docker-compose.dev.yml; then
+  pass "ANDROID_UPLOAD_KEY_SHA256 is skipped in production and reaches the dev compose only"
+else
+  fail "ANDROID_UPLOAD_KEY_SHA256 must be skip in production, absent from prod compose and serve-prod, present in dev compose"
+fi
 
 # ═════════════════════════════════════════════════════════════════════════════
 printf '\nthe two estates never publish the same host port\n'

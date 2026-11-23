@@ -173,10 +173,16 @@ export class RestoreCredentialsService implements OnModuleInit, OnModuleDestroy 
     // The controller refuses to start without JWT_SECRET; this is the same secret under its own
     // label, so an empty one throws here too rather than deriving a key anyone can compute.
     this.challengeKey = deriveRestoreChallengeKey(process.env.JWT_SECRET ?? '');
-    this.config = readRestoreConfig(process.env.ANDROID_APP_LINK_SHA256, process.env.FRONTEND_URL);
+    this.config = readRestoreConfig(
+      process.env.ANDROID_APP_LINK_SHA256,
+      process.env.FRONTEND_URL,
+      process.env.ANDROID_UPLOAD_KEY_SHA256
+    );
     if (this.config.available) {
+      // The hashes are public certificate digests, not secrets: naming them is how a refused
+      // origin is compared by eye with what this estate accepts.
       this.logger.log(
-        `[RESTORE] available: rpId=${this.config.rpId} origins=${this.config.origins.length}`
+        `[RESTORE] available: rpId=${this.config.rpId} origins=${this.config.origins.length} accepted=${this.config.origins.join(',')}`
       );
     } else {
       // An estate that should offer restore and cannot is a deployment defect, so it accuses - once,
