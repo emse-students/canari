@@ -1,4 +1,8 @@
-import type { DistributionFrame, IMlsService } from '$lib/mls-client/IMlsService';
+import {
+  MailboxListingIncompleteError,
+  type DistributionFrame,
+  type IMlsService,
+} from '$lib/mls-client/IMlsService';
 import type { ChannelMemberDto } from '$lib/services/ChannelService';
 import { ChannelService } from '$lib/services/ChannelService';
 import {
@@ -263,8 +267,18 @@ function observeWhenDrained(mls: IMlsService, workspaceId: string, keyGroupId: s
   waiting.add(key);
   const armedFor = waiting;
   void mls.whenGroupDrained(keyGroupId).then(onDrained, (e: unknown) => {
-    // The service ended first (`GroupDrainAbandonedError`, sign-out): nothing left to observe for.
     armedFor.delete(key);
+    // A PULL THAT ENDED INCOMPLETE: a voucher observed now would be placed at an epoch the unlisted
+    // part of the mailbox may still move, so the observation DEFERS - armed again for the next pull,
+    // never dropped (the parked asks it decides wait on the same drain, `parkedAsks.ts`).
+    if (e instanceof MailboxListingIncompleteError) {
+      console.info(
+        `[GRAINE] observing community ${workspaceId.slice(0, 8)} deferred to the next complete pull: ${e.message}`
+      );
+      observeWhenDrained(mls, workspaceId, keyGroupId);
+      return;
+    }
+    // The service ended first (`GroupDrainAbandonedError`, sign-out): nothing left to observe for.
     console.info(
       `[GRAINE] stopped waiting to observe community ${workspaceId.slice(0, 8)}: ${String(e)}`
     );

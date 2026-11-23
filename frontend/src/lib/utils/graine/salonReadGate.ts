@@ -1,4 +1,8 @@
-import { GroupDrainAbandonedError, type IMlsService } from '$lib/mls-client/IMlsService';
+import {
+  GroupDrainAbandonedError,
+  MailboxListingIncompleteError,
+  type IMlsService,
+} from '$lib/mls-client/IMlsService';
 import { getTabLeadership, onLeaderTabChanged } from '$lib/mls-client/tabLeader';
 import { isGraineReady, rawChannelId, requireGraineRuntime, scopeForChannel } from './runtime';
 
@@ -14,13 +18,20 @@ import { isGraineReady, rawChannelId, requireGraineRuntime, scopeForChannel } fr
  * - `follower`: a web follower tab holds no socket and drains nothing; the leader writes the seeds.
  *   Also what a leader DEMOTED during the wait answers: from then on it drains nothing either.
  * - `closed`: the MLS service ended before the drain did (`GroupDrainAbandonedError`).
+ * - `pull-incomplete`: the pull the wait stood on ended WITHOUT listing the whole mailbox (a refused
+ *   page, or a page of one row that never arrived: `MailboxListingIncompleteError`). The queue may
+ *   still hold a seed, but no event this page can name will say so soon - the next pull may be hours
+ *   away on a quiet account - so the page is decoded now. A row still missing its seed is asked for
+ *   (`noteMissingSeed`), and that ask waits for the next COMPLETE pull by itself (`repair.ts`), so a
+ *   seed that was only queued is never asked of a peer.
  */
 type SalonReadUnwaited =
   | 'no-runtime'
   | 'no-scope'
   | 'key-group-unregistered'
   | 'follower'
-  | 'closed';
+  | 'closed'
+  | 'pull-incomplete';
 
 /** What a salon reader learns about the seeds its page may still be waiting for. */
 export type SalonReadGate =
@@ -79,9 +90,10 @@ export function salonKeysNow(channelId: string): SalonReadGate | SalonKeysDraini
 }
 
 /**
- * The wait behind {@link SalonKeysDraining.drained}. It settles on the FIRST of three events, each a
+ * The wait behind {@link SalonKeysDraining.drained}. It settles on the FIRST of four events, each a
  * proof and none a clock: the group drains (`whenGroupDrained`), the service closes
- * (`GroupDrainAbandonedError`), or this tab is demoted to follower - which closes its socket, so the
+ * (`GroupDrainAbandonedError`), a pull ends without listing the whole mailbox
+ * (`MailboxListingIncompleteError`), or this tab is demoted to follower - which closes its socket, so the
  * group would never read drained here again and the wait would hang until the reload the demotion
  * schedules. A demotion BEFORE the wait is read from state, for the same reason.
  */
@@ -109,6 +121,7 @@ async function waitForDrain(
     return { kind: 'drained', groupId, waited: true };
   } catch (e) {
     if (e instanceof GroupDrainAbandonedError) return unwaited(tag, 'closed');
+    if (e instanceof MailboxListingIncompleteError) return unwaited(tag, 'pull-incomplete');
     throw e;
   } finally {
     stopWatching();

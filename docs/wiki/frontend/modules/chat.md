@@ -6131,7 +6131,7 @@ Home, back 3 to 10 s later): 4 returns of 10 left the thread 65 to 87 pt above i
 "Scroll to bottom" arrow up. The web view was 390 x 543 pt (the keyboard-up size) in passing and
 failing returns alike, and the exported log had no `left the bottom with no finger on the pane` line
 and no `[CHAT_VIEW]` line at any return
-([the entry](../../backlog.d/reading-owed-a-dm-thread-left-above-its-end-after-a-resume-from-ios-settings.md)).
+([the entry](../../backlog.d/reading-owed-a-dm-thread-keeps-its-end-after-a-return-with-the-keyboard-up.md)).
 
 **Why, by reading.** iOS re-presents the keyboard when the app comes back, and WebKit reveals the
 focused field from that presentation's `_keyboardDidShow:` exactly as it does for a rise: it scrolls the

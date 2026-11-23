@@ -17,6 +17,8 @@ import type {
 } from '$lib/mls-client';
 import {
   GroupDrainAbandonedError,
+  MailboxListingIncompleteError,
+  untilListedWhole,
   LocalStateNotReadyError,
   MlsDeliveryApi,
   isKeystoreKeyUnavailable,
@@ -45,6 +47,8 @@ import {
   type GroupRosterAtGeneration,
   type PendingInvitationRow,
   WelcomeTargetUnknownError,
+  PendingPullIncompleteError,
+  PendingPageNeverArrivedError,
   isTerminalWelcomeRefusal,
   whyWelcomeUndeliverable,
   type RefusedAdmit,
@@ -697,13 +701,39 @@ export abstract class BaseMlsService implements IMlsService {
    */
   private readonly heldAtHydration = new Set<string>();
 
-  /** Resolves {@link initialDrain}; null once it has. */
-  private resolveInitialDrain: (() => void) | null = null;
+  /**
+   * Whether the last pull ended WITHOUT EMPTYING the mailbox - a refused page
+   * ({@link PendingPullIncompleteError}), a page of one row that never arrived
+   * ({@link PendingPageNeverArrivedError}), a deadline, a transport failure or any other throw; never
+   * on a revoked device - and none has listed the whole mailbox since. NOT what releases the drain waiters: the failed pull settled them itself,
+   * with {@link MailboxListingIncompleteError} ({@link settleDrainWaitersIncomplete}). This is an
+   * ADDITIONAL trigger to pull again, named and not timed: the next live frame the socket delivers
+   * (the gateway is up and the history service behind it may be too). The reconnect's own pull, and
+   * every barrier that finds the mailbox unlisted, are the others.
+   */
+  private pullIncompleteOwed = false;
 
-  /** See {@link whenInitialDrainSettled}. Created with the service, so one per session. */
-  private readonly initialDrain = new Promise<void>((resolve) => {
-    this.resolveInitialDrain = resolve;
-  });
+  /** Settles {@link initialDrain}; null once a complete pull has resolved it. */
+  private settleInitialDrain: { resolve: () => void; reject: (e: Error) => void } | null = null;
+
+  /**
+   * See {@link whenInitialDrainSettled}. Resolved once, by the first complete pull of the session;
+   * until then, each pull that ends incomplete REJECTS it and puts a fresh one in its place
+   * ({@link armInitialDrain}), so a later wait is settled by the next pull.
+   */
+  private initialDrain: Promise<void> = this.armInitialDrain();
+
+  /**
+   * A fresh pending {@link initialDrain}. Its rejection is marked handled here: nobody may be
+   * waiting when a pull ends incomplete, and that must not read as an unhandled rejection.
+   */
+  private armInitialDrain(): Promise<void> {
+    const drain = new Promise<void>((resolve, reject) => {
+      this.settleInitialDrain = { resolve, reject };
+    });
+    drain.catch(() => {});
+    return drain;
+  }
 
   /** The {@link verifyDistributionEpoch} checks still answering, by group. Deleted as each settles. */
   private readonly distributionEpochChecks = new Map<
@@ -2676,6 +2706,32 @@ export abstract class BaseMlsService implements IMlsService {
     this.groupDrainedArmed.clear();
   }
 
+  /**
+   * Settles every pending drain wait with {@link MailboxListingIncompleteError}: the pull that just
+   * ended did not list the whole mailbox, so "drained" is unknown, and that pull IS the event the
+   * waits are owed - not the next pull, which may never come on a quiet account. Every
+   * {@link whenGroupDrained} waiter is rejected, and so is {@link initialDrain} while no complete
+   * pull has resolved it (a fresh one takes its place in the same tick, so a wait registered from the
+   * rejection is settled by the next pull's end). The map is emptied BEFORE the rejections run, so
+   * a waiter re-registered from its handler waits for that next pull and is not caught by this one.
+   */
+  private settleDrainWaitersIncomplete(endedBy: Error): void {
+    const waiters = [...this.groupDrainedWaiters];
+    this.groupDrainedWaiters.clear();
+    const settle = this.settleInitialDrain;
+    if (settle) this.initialDrain = this.armInitialDrain();
+    const pending = waiters.reduce((n, [, w]) => n + w.length, 0);
+    if (pending > 0 || settle) {
+      console.warn(
+        `[QUEUE] the mailbox was not listed whole - ${pending} drain waiter(s)${settle ? ' and the initial drain' : ''} settled as incomplete; each caller decides what an unknown mailbox means for it`
+      );
+    }
+    for (const [groupId, list] of waiters) {
+      for (const { reject } of list) reject(new MailboxListingIncompleteError(groupId, endedBy));
+    }
+    settle?.reject(new MailboxListingIncompleteError(null, endedBy));
+  }
+
   private async settleMailbox(): Promise<void> {
     await this.pendingPullInFlight?.catch(() => {});
     // AN OWED PULL IS PART OF THE MAILBOX this barrier speaks for: something asked for a listing
@@ -3036,6 +3092,17 @@ export abstract class BaseMlsService implements IMlsService {
     channel: DeliveryChannel,
     listedAfterAck?: number
   ): void {
+    if (channel === 'live' && this.pullIncompleteOwed) {
+      // THE NAMED EVENT that retries a pull a refused page stopped: a live frame proves the gateway
+      // link is up, and the pull it asks for lists the backlog this frame may be ahead of.
+      this.pullIncompleteOwed = false;
+      console.log('[PENDING] a live frame arrived after an incomplete pull - pulling again');
+      void this.fetchPendingMessages().catch((e: unknown) =>
+        console.warn(
+          `[PENDING] the pull after an incomplete one failed: ${sanitizeForLog(String(e))}`
+        )
+      );
+    }
     const arrival: DeliveryArrival =
       channel === 'pull' ? { channel, listedAfterAck: listedAfterAck! } : { channel };
     if (!this.admitDelivery(msg.queuedMessageId, arrival)) return;
@@ -3589,6 +3656,7 @@ export abstract class BaseMlsService implements IMlsService {
           );
         }
         emptied = true;
+        this.pullIncompleteOwed = false;
         if (fetched === 0) {
           console.log(
             `[PENDING] No pending MLS messages for ${sanitizeForLog(this.userId)}:${sanitizeForLog(
@@ -3618,6 +3686,22 @@ export abstract class BaseMlsService implements IMlsService {
           console.info(
             `[PENDING] Pending fetch ended after ${fetched} message(s): this device was revoked by its owner, nothing remains to drain`
           );
+        } else if (
+          e instanceof PendingPullIncompleteError ||
+          e instanceof PendingPageNeverArrivedError
+        ) {
+          // THE PULL ENDED INCOMPLETE - never a drained mailbox (`emptied` and the mailbox flag stay
+          // unset). A refused page is the server's or the edge's ANSWER; a page of one row that never
+          // arrived is a fault no smaller question can get round, so it accuses.
+          if (e instanceof PendingPullIncompleteError) {
+            console.warn(
+              `[PENDING] Pending fetch stopped by a ${e.status} from the ${e.origin} after ${fetched} message(s) - ${where}`
+            );
+          } else {
+            console.error(
+              `[PENDING] Pending fetch gave up after ${fetched} message(s): a page of ONE row never arrived (${String(e.reason)}) - ${where}`
+            );
+          }
         } else if (isTransportFailure(e)) {
           console.warn(
             `[PENDING] Pending fetch got no answer after ${fetched} message(s) - ${where}: ${String(e)}`
@@ -3636,14 +3720,16 @@ export abstract class BaseMlsService implements IMlsService {
             e
           );
         }
-        // WHAT THIS FAILURE HOLDS UP, made visible: a drain waiter (a parked seed ask, an admission
-        // observation) is woken only by a pull that ENDS whole, so it waits for the next one.
-        // Not on a revoked device: no pull will ever complete there, so the line would promise one.
-        const waiting = revokedHere ? 0 : this.pendingGroupDrainWaiters();
-        if (waiting > 0) {
-          console.info(
-            `[PENDING] ${waiting} drain waiter(s) (parked seed asks, admission observations) wait for a pull that completes`
-          );
+        // EVERY ENDING THAT DID NOT EMPTY THE MAILBOX IS THE PROOF that settles the drain waits -
+        // a refused page, a ladder run out, a deadline (a token renewal's included), a transport
+        // failure while the gateway socket stays open, an unclassified throw. The mailbox state is
+        // unknown, and the next pull may be hours away on a quiet account: waiting for it was a wait
+        // on nothing. Each caller says what an unknown mailbox means for it
+        // ({@link MailboxListingIncompleteError}), and the next live frame pulls again. Not on a
+        // revoked device: its backlog is deleted and the wipe that follows ends the service.
+        if (!revokedHere) {
+          this.pullIncompleteOwed = true;
+          this.settleDrainWaitersIncomplete(e instanceof Error ? e : new Error(String(e)));
         }
       }
     })();
@@ -3687,9 +3773,9 @@ export abstract class BaseMlsService implements IMlsService {
     // refused to acknowledge is known only once the queue has drained. Without this, a device that
     // re-fetches the same backlog on every reconnect reports a perfectly healthy pull each time.
     reportUnackedFrames((msg) => console.warn(msg));
-    if (emptied && this.resolveInitialDrain) {
-      this.resolveInitialDrain();
-      this.resolveInitialDrain = null;
+    if (emptied && this.settleInitialDrain) {
+      this.settleInitialDrain.resolve();
+      this.settleInitialDrain = null;
     }
   }
 
@@ -7561,8 +7647,13 @@ export abstract class BaseMlsService implements IMlsService {
       // old and the reconnect's pull had not always started, so "the group is idle" read true over a
       // mailbox nobody had listed, and the replay jumped the seeds still in it (2026-11-04).
       // `whenGroupDrained` is the fact: a pull listed the whole mailbox since the socket opened, and
-      // the scheduler applied this group's share of it.
-      await this.whenGroupDrained(groupId);
+      // the scheduler applied this group's share of it. A pull that ends INCOMPLETE proves nothing
+      // about "behind" either, so the check DEFERS to the next complete one rather than replay on an
+      // unknown mailbox (`untilListedWhole`, said once per deferral).
+      await untilListedWhole(
+        () => this.whenGroupDrained(groupId),
+        `epoch check of key group ${short}...`
+      );
       const local = this.getEpoch(groupId);
       if (local >= activeEpoch) return 'current';
       // A PROOF, AND SAID AS ONE: the drain has settled and the group is still short of an epoch the

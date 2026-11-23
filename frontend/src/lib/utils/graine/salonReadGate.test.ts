@@ -10,7 +10,11 @@ vi.mock('$lib/mls-client/tabLeader', () => ({
   },
 }));
 
-import { GroupDrainAbandonedError, type IMlsService } from '$lib/mls-client/IMlsService';
+import {
+  GroupDrainAbandonedError,
+  MailboxListingIncompleteError,
+  type IMlsService,
+} from '$lib/mls-client/IMlsService';
 import { registerChannelWorkspace, setGraineRuntime } from './runtime';
 import { salonKeysNow, type SalonKeysDraining } from './salonReadGate';
 
@@ -133,5 +137,17 @@ describe('salonKeysNow', () => {
     await vi.waitFor(() => expect(stub.whenGroupDrained).toHaveBeenCalled());
     stub.settle().reject(new GroupDrainAbandonedError(KEY_GROUP));
     await expect(gate).resolves.toEqual({ kind: 'unwaited', reason: 'closed' });
+  });
+
+  it('a pull that ended incomplete releases the read to decode now, named as such', async () => {
+    // A quiet account whose history service answers 502 may see no further pull for hours: the page
+    // is decoded now, and a row still missing its seed is asked for by the ask path, which defers
+    // to the next complete pull by itself (`repair.ts`, `whenAskable`).
+    const stub = drainStub();
+    install(stub.mlsService);
+    const gate = draining(SALON).drained();
+    await vi.waitFor(() => expect(stub.whenGroupDrained).toHaveBeenCalled());
+    stub.settle().reject(new MailboxListingIncompleteError(KEY_GROUP, new Error('a 502')));
+    await expect(gate).resolves.toEqual({ kind: 'unwaited', reason: 'pull-incomplete' });
   });
 });

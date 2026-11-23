@@ -359,6 +359,32 @@ describe('a missing seed and this device own backlog', () => {
     info.mockRestore();
   });
 
+  it('asks nothing after a pull that ended incomplete, and asks at the next complete one', async () => {
+    // The seed may be in the part of the mailbox nobody listed: asking a peer now could be asking for
+    // a seed already on the way. The flush DEFERS - its asks stay outstanding, never dropped.
+    const { MailboxListingIncompleteError } = await import('$lib/mls-client/IMlsService');
+    let drained!: () => void;
+    whenGroupDrained
+      .mockRejectedValueOnce(new MailboxListingIncompleteError('dist-group', new Error('a 502')))
+      .mockReturnValueOnce(new Promise<void>((r) => (drained = r)));
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    noteMissingSeed('chan-1', 'sess-1', 'bob', SENT_AT);
+    await settle();
+    expect(whenGroupDrained).toHaveBeenCalledTimes(2);
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(infoLines(info)).toContainEqual(
+      expect.stringContaining('deferred to the next complete pull')
+    );
+
+    drained();
+    await settle();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const request = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineRequest;
+    expect(request?.sessionIds).toEqual(['sess-1']);
+    info.mockRestore();
+  });
+
   it('ends the whole flush when the MLS service closes, and a later note flushes again', async () => {
     const { GroupDrainAbandonedError } = await import('$lib/mls-client/IMlsService');
     registerChannelWorkspace('chan-2', 'ws-1', false);
