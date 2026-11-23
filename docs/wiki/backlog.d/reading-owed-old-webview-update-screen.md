@@ -32,3 +32,5 @@ real engine. Owed, by the lead, on the pre-release:
    browser user.
 
 **2026-11-22, `1.8.0-alpha.1` triage (readings rule).** Rows 1 and 7 are PASS on dev (web seat, user-agent override, screen drawn before the app mounts and removed by it): `Chrome/67 ... wv` draws the screen with "Version detectee : 67"; `Chrome/120 ... wv`, a desktop agent and a `Chrome/67` agent without `wv` draw nothing. Row 4 is closed by `webviewGuard.test.ts`. Rows 3 and 5 close: no bench device carries an old engine, and the button's route is the same opener call every external link uses. Left, Mi 9T only: rows 2 and 6 (the `logWebViewVersion` line once per start; no screen after a failed `JSON.parse` before mount).
+
+**2026-11-23, `1.8.0-alpha.3` (Mi 9T): row 2 PASS.** A cold start logged `CanariApp: logWebViewVersion: com.android.webview 152.0.7977.64` once, and the app started with no update screen. **Left, Mi 9T only:** row 6 (no screen after a failed `JSON.parse` before mount, which needs the network cut).
