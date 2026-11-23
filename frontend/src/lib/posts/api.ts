@@ -1013,7 +1013,11 @@ export async function setPostRepostConsent(
 export interface HiddenPost {
   id: string;
   authorId: string | null;
+  /** The association that published the post, or null for a personal one. */
   associationId: string | null;
+  /** Its name and logo as the database holds them (null when `associationId` is). */
+  associationName?: string | null;
+  associationLogoUrl?: string | null;
   markdown: string;
   createdAt: string;
   pendingReportCount: number;

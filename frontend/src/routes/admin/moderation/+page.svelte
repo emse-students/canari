@@ -61,6 +61,7 @@
   import { showToast } from '$lib/stores/toast.svelte';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
+  import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { m } from '$lib/paraglide/messages';
   import { copyId } from '$lib/utils/copyId';
@@ -920,14 +921,42 @@
         >
           <!-- Meta -->
           <div class="mb-2 flex flex-wrap items-center gap-2">
+            <!--
+              THE INSTITUTION SPEAKS FIRST (principes: an institution's word is the institution's):
+              an association's post names the association - its name and logo as the database holds
+              them - and the person who wrote it comes second. The generic label stays only for a
+              row whose association the server could not name.
+            -->
+            {#if post.associationId}
+              <div class="flex items-center gap-1.5" data-hidden-association>
+                {#if post.associationName}
+                  <AssociationAvatar
+                    id={post.associationId}
+                    name={post.associationName}
+                    logoUrl={post.associationLogoUrl}
+                    size="sm"
+                    shape="circle"
+                  />
+                  <span class="text-text-main text-xs font-semibold">{post.associationName}</span>
+                {:else}
+                  <span class="text-text-muted text-xs italic"
+                    >{m.moderation_association_post_label()}</span
+                  >
+                {/if}
+              </div>
+            {/if}
             {#if post.authorId}
-              <div class="flex items-center gap-1.5">
+              <div class="flex items-center gap-1.5" data-hidden-author>
                 <Avatar userId={post.authorId} size="xs" />
-                <span class="text-text-main text-xs font-medium">
+                <span
+                  class={post.associationId
+                    ? 'text-text-muted text-xs'
+                    : 'text-text-main text-xs font-medium'}
+                >
                   {names[post.authorId] ?? post.authorId.slice(0, 8) + '…'}
                 </span>
               </div>
-            {:else}
+            {:else if !post.associationId}
               <span class="text-text-muted text-xs italic"
                 >{m.moderation_association_post_label()}</span
               >

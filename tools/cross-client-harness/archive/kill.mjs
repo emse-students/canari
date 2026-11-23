@@ -43,7 +43,7 @@ import { errorDetail, finishObserved, keepConsoles, record } from '../results.mj
 import { composeVerdict, invariantDetail, rowMessageMark } from '../rowkit.mjs';
 import { commitSequence, settleNarration } from '../settlerows.mjs';
 import { RM8_W1_NARRATION } from '../offlinerows.mjs';
-import { GROUP_CREATION_NARRATION, consoleDump, consoleLines, consoleSinceAttach, report } from '../watch.mjs';
+import { GROUP_CREATION_NARRATION, SEAT_START_NARRATION, consoleDump, consoleLines, consoleSinceAttach, report } from '../watch.mjs';
 import { addMembers, openGroupSettings, removeMember } from './addmember.mjs';
 import { killSeat, reviveSeat } from './reopen.mjs';
 
@@ -488,7 +488,12 @@ try {
   // RM-3 adds two: W1's collection of W4's surviving leaf is the REPAIR the row measures (one
   // departed member, the same sweep RM-8 reads), and W2's Add of W5 says what any Add says.
   const ownerLogs = [...GROUP_CREATION_NARRATION, ...(out.detail?.group ? settleNarration(out.detail.group) : [])];
-  const logs = id === 'RM-3' ? { [owner]: [...ownerLogs, ...RM8_W1_NARRATION], W2: GROUP_CREATION_NARRATION } : { [owner]: ownerLogs };
+  // EVERY SEAT THE ROW RELOADS NARRATES ITS OWN START (`SEAT_START_NARRATION`), exact shapes only.
+  const logs = Object.fromEntries(spec.devices.map((d) => [d, [...SEAT_START_NARRATION, ...(d === owner ? ownerLogs : [])]]));
+  if (id === 'RM-3') {
+    logs[owner].push(...RM8_W1_NARRATION);
+    logs.W2 = [...(logs.W2 ?? SEAT_START_NARRATION), ...GROUP_CREATION_NARRATION];
+  }
   const observers = await observersOf(seats, { logs, offline: out.offline ?? [] });
   await finishObserved(
     id,
