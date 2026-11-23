@@ -11,4 +11,6 @@ the only copy. WP0, WPA, WP1, WP4 and WP6a-6b are in production (the spaces sinc
 the applications, a group `acces-<app>` for nominative exceptions, then Sky deletes its ICM gate and
 the Cercle drops `promo` and `formation` from `requiredClaims`. Not started on 2026-11-11: Sky still
 gates on `SKY_ADMIN_SUBS` in its callback, and the Cercle's Authentik client still requires the two
-claims. WP7-WP9 follow ([dependencies](../profiles-and-access.md)).
+claims. WP7-WP9 follow ([dependencies](../profiles-and-access.md)). **WP8 is unblocked (2026-11-23)**: the
+Alumni SAML source is enabled, not promoted, and linked one real alumni identity onto a CAS account
+([authentik](../infrastructure/authentik.md#the-alumni-saml-source-enabled-not-promoted-measured-2026-11-23)).
