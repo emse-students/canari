@@ -1490,6 +1490,38 @@ describe('ensureCommunityDistributionGroup - a converged pass on an unchanged ke
       await enter(mls, channels, null);
       expect(channels.getDistributionGroup).toHaveBeenCalledTimes(2);
     });
+
+    it('a salon join that did not converge withdraws the salon record, whoever asked for it', async () => {
+      const salon = channelScope('ws-1', 'ch-1');
+      const mls = heldSalon();
+      const channels = makeChannels({ getDistributionGroup: vi.fn().mockResolvedValue(salonRef) });
+      await enter(mls, channels, salonVersion('s1'));
+      const before = convergenceTicket(salon).withdrawn;
+      // Through the join's own entry (a creation, an in-session join, the re-join of a group behind).
+      reconcile.mockResolvedValueOnce({ removedUserIds: [], heldUserIds: null });
+      await ensureDistributionGroupFor(mls as never, channels as never, salon);
+      expect(convergenceTicket(salon).withdrawn).toBe(before + 1);
+
+      // The next load on the same version runs the salon's pass in full.
+      await enter(mls, channels, salonVersion('s1'));
+      expect(channels.getDistributionGroup).toHaveBeenCalledTimes(3);
+    });
+
+    it('a salon join that THREW withdraws the salon record', async () => {
+      const salon = channelScope('ws-1', 'ch-1');
+      const mls = heldSalon();
+      const channels = makeChannels({ getDistributionGroup: vi.fn().mockResolvedValue(salonRef) });
+      await enter(mls, channels, salonVersion('s1'));
+      const before = convergenceTicket(salon).withdrawn;
+      mls.isGroupActive.mockRejectedValueOnce(new Error('wasm gone'));
+      await expect(
+        ensureDistributionGroupFor(mls as never, channels as never, salon)
+      ).rejects.toThrow('wasm gone');
+      expect(convergenceTicket(salon).withdrawn).toBe(before + 1);
+
+      await enter(mls, channels, salonVersion('s1'));
+      expect(channels.getDistributionGroup).toHaveBeenCalledTimes(3);
+    });
   });
 
   it('a join that did not converge withdraws the record, whoever asked for it (the re-join of a group behind)', async () => {

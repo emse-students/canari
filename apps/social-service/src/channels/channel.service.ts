@@ -2719,57 +2719,79 @@ export class ChannelService implements OnApplicationBootstrap {
   /**
    * The key-group version of every PRIVATE salon of `workspaceId` that `userId` reads - the salon
    * twin of {@link listKeyGroupVersions}'s community digest, carried on the community's item.
+   * Called only AFTER that community's own read answered, which asserted membership.
    *
    * WHY (the 1.8.0-alpha.1 reading on the Mi 9T, 2026-11-23): with every community pass skipped, a
    * resume still read `GET :channelId/distribution-group` and `GET :channelId/members` for each
    * private salon the account reads, every one ending "agrees with its roster". A salon's pass reads
    * exactly those two answers, so its version is the same digest ({@link keyGroupVersionOf}) of the
-   * same two bodies, read through the routes' own readers without their lines:
-   * `readDistributionGroup` on the salon's scope with no device (as the pass asks it) and
-   * {@link listChannelMembers} on the channel roster with no presence.
+   * same two bodies: the salon's key-group reference with no device (as the pass asks it) and the
+   * channel roster {@link listChannelMembers} serves with no presence, derived by the same
+   * {@link channelRosterRows}.
    *
    * ONLY THE SALONS THE ROUTE WOULD SERVE ({@link isChannelReader}): an admin who has not joined is
-   * served no GroupInfo, so its client never enters the salon and is owed no version. A salon NOT
-   * NAMED runs its full pass on the client, so leaving one out is never wrong, only a pass more: a
-   * salon with no key group (its route logs that, once, at error) and a salon whose read failed
-   * (said here, at warn). One salon at a time: a community holds few, and this already runs beside
-   * nine other communities ({@link COMMUNITY_BOOT_READS_CONCURRENCY}).
+   * served no GroupInfo, so its client never enters the salon and is owed no version. That predicate
+   * is the membership row, the review-cohort side, and {@link channelIsReadableBy}; the first two are
+   * the community's and were just asserted by its read (`assertWorkspaceMember`), so per salon only
+   * the third remains - a pure check, no query, and no cohort line repeated per salon and resume.
+   * `key-group-versions.spec.ts` asserts the selection against the real `isChannelReader`.
+   *
+   * ON THE FIRST PASS'S CRITICAL PATH (the client awaits the versions before any pass), so the
+   * community's members and roles are read ONCE here, not per salon, and the per-salon reads of
+   * chat-delivery run {@link SALON_KEY_GROUP_READS_CONCURRENCY} at a time. A salon NOT NAMED runs its
+   * full pass on the client, so leaving one out is never wrong, only a pass more: a salon with no
+   * key group (its route logs that, once, at error) and a salon whose read failed (said here, at
+   * warn).
    */
   private async readSalonKeyGroupVersions(
     workspaceId: string,
     userId: string
   ): Promise<SalonKeyGroupVersionItem[]> {
-    let salons: Channel[];
+    let readable: Channel[];
+    let members: ChannelMember[];
+    let roles: ChannelRole[];
     try {
-      salons = await this.channelRepo.find({ where: { workspaceId, isPrivate: true } });
+      const salons = await this.channelRepo.find({ where: { workspaceId, isPrivate: true } });
+      readable = salons.filter((channel) => channelIsReadableBy(channel, userId));
+      if (readable.length === 0) return [];
+      [members, roles] = await Promise.all([
+        this.memberRepo.find({ where: { workspaceId } }),
+        this.roleRepo.find({ where: { workspaceId } }),
+      ]);
     } catch (e) {
       this.logger.warn(
-        `[KEY_GROUP_VERSIONS] workspace=${workspaceId} user=${userId.slice(0, 8)} private salons not listed - each runs its full pass: ${e instanceof Error ? e.message : String(e)}`
+        `[KEY_GROUP_VERSIONS] workspace=${workspaceId} user=${userId.slice(0, 8)} private salons not read - each runs its full pass: ${e instanceof Error ? e.message : String(e)}`
       );
       return [];
     }
     const items: SalonKeyGroupVersionItem[] = [];
-    for (const channel of salons) {
-      try {
-        if (!(await this.isChannelReader(channel, userId))) continue;
-        const [ref, roster] = await Promise.all([
-          this.readSalonDistributionGroup(channel.id, userId),
-          this.listChannelMembers(channel.id, userId, 'channel'),
-        ]);
-        // NOT LOGGED HERE: the client runs the full pass, and the route it reads says it once.
-        if (!ref) continue;
-        items.push({
-          channelId: channel.id,
-          version: keyGroupVersionOf(ref, roster),
-          groupId: ref.groupId,
-          activeEpoch: ref.activeEpoch,
-          baseEpoch: ref.baseEpoch,
-        });
-      } catch (e) {
-        this.logger.warn(
-          `[KEY_GROUP_VERSIONS] channel=${channel.id} user=${userId.slice(0, 8)} not versioned - its client runs the full pass: ${e instanceof Error ? e.message : String(e)}`
-        );
-      }
+    for (let i = 0; i < readable.length; i += SALON_KEY_GROUP_READS_CONCURRENCY) {
+      const slice = readable.slice(i, i + SALON_KEY_GROUP_READS_CONCURRENCY);
+      const answered = await Promise.all(
+        slice.map(async (channel): Promise<SalonKeyGroupVersionItem | null> => {
+          try {
+            const ref = await this.readSalonDistributionGroup(channel.id, userId);
+            // NOT LOGGED HERE: the client runs the full pass, and the route it reads says it once.
+            if (!ref) return null;
+            return {
+              channelId: channel.id,
+              version: keyGroupVersionOf(
+                ref,
+                this.channelRosterRows(channel, members, roles, 'channel')
+              ),
+              groupId: ref.groupId,
+              activeEpoch: ref.activeEpoch,
+              baseEpoch: ref.baseEpoch,
+            };
+          } catch (e) {
+            this.logger.warn(
+              `[KEY_GROUP_VERSIONS] channel=${channel.id} user=${userId.slice(0, 8)} not versioned - its client runs the full pass: ${e instanceof Error ? e.message : String(e)}`
+            );
+            return null;
+          }
+        })
+      );
+      for (const item of answered) if (item) items.push(item);
     }
     return items;
   }
@@ -5221,12 +5243,28 @@ export class ChannelService implements OnApplicationBootstrap {
 
     const members = await this.memberRepo.find({ where: { workspaceId: channel.workspaceId } });
     const roles = await this.roleRepo.find({ where: { workspaceId: channel.workspaceId } });
-    const roleMap = new Map(roles.map((r) => [r.id, r]));
+    const rows = this.channelRosterRows(channel, members, roles, scope);
+    return withPresence ? this.withPresence(rows) : rows;
+  }
 
-    // A private channel has its own roster: returning the workspace's listed people who cannot
-    // read the channel at all. Mirrors canAccessChannel (explicit allowedUsers, plus anyone
-    // holding workspace.manage) but resolved from the roles already loaded above, so scoping the
-    // list costs no extra query.
+  /**
+   * The rows {@link listChannelMembers} answers, from the community's members and roles already
+   * loaded - the ONE derivation, shared with {@link readSalonKeyGroupVersions}, which loads them
+   * once per community and must digest exactly what the route serves (`key-group-versions.spec.ts`
+   * asserts the two agree).
+   *
+   * A private channel has its own roster: returning the workspace's listed people who cannot read
+   * the channel at all would be wrong. Mirrors canAccessChannel (explicit allowedUsers, plus anyone
+   * holding workspace.manage) but resolved from the roles given, so scoping the list costs no
+   * query.
+   */
+  private channelRosterRows(
+    channel: Pick<Channel, 'isPrivate' | 'allowedUsers'>,
+    members: readonly ChannelMember[],
+    roles: readonly ChannelRole[],
+    scope: 'channel' | 'workspace'
+  ) {
+    const roleMap = new Map(roles.map((r) => [r.id, r]));
     const allowedUsers = new Set((channel.allowedUsers || []).map((u) => u.trim().toLowerCase()));
     const belongsToChannel = (member: ChannelMember): boolean => {
       if (scope === 'workspace' || !channel.isPrivate) return true;
@@ -5235,8 +5273,7 @@ export class ChannelService implements OnApplicationBootstrap {
         roleMap.get(roleId)?.permissions.includes(CHANNEL_PERMISSIONS.MANAGE_WORKSPACE)
       );
     };
-
-    const rows = members.filter(belongsToChannel).map((m) => {
+    return members.filter(belongsToChannel).map((m) => {
       const memberRoles = (m.roleIds || []).map((rid) => roleMap.get(rid)).filter(Boolean);
       const highestRole = memberRoles.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0))[0];
       return {
@@ -5246,7 +5283,6 @@ export class ChannelService implements OnApplicationBootstrap {
         joinedAt: m.createdAt,
       };
     });
-    return withPresence ? this.withPresence(rows) : rows;
   }
 
   /**
@@ -7498,6 +7534,13 @@ export interface BootReadRefusal {
 
 /** How many communities one batched read lists at a time (database reads, so a small bound). */
 export const COMMUNITY_BOOT_READS_CONCURRENCY = 10;
+
+/**
+ * How many private salons of ONE community have their key group read from chat-delivery at a time
+ * (`readSalonKeyGroupVersions`), inside the {@link COMMUNITY_BOOT_READS_CONCURRENCY} communities
+ * already read together - so one request holds at most 40 delivery reads in flight.
+ */
+export const SALON_KEY_GROUP_READS_CONCURRENCY = 4;
 
 /** One community's part of the batched boot read: its salon listing or its refusal. */
 export interface CommunityBootReadItem {

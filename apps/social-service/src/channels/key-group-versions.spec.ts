@@ -1,5 +1,10 @@
 import { ForbiddenException, Logger } from '@nestjs/common';
-import { ChannelService, COMMUNITY_BOOT_READS_MAX, keyGroupVersionOf } from './channel.service';
+import {
+  ChannelService,
+  COMMUNITY_BOOT_READS_MAX,
+  keyGroupVersionOf,
+  SALON_KEY_GROUP_READS_CONCURRENCY,
+} from './channel.service';
 
 /**
  * The key-group version (`GET workspaces/key-group-versions`): a digest of the two answers a roster
@@ -70,13 +75,41 @@ describe('keyGroupVersionOf', () => {
 describe('ChannelService.listKeyGroupVersions', () => {
   const USER = 'u1';
 
-  function makeService(privateSalons: { id: string }[] = []) {
-    const channelRepo = { find: jest.fn().mockResolvedValue(privateSalons) };
+  /** A salon row as the repository holds it: only what the reader check and the roster read. */
+  type SalonRow = { id: string; workspaceId: string; isPrivate: boolean; allowedUsers: string[] };
+  /** A community member row: what the roster derivation reads. */
+  type MemberRow = { id: string; userId: string; roleIds: string[]; createdAt: Date };
+  /** A community role: what decides a manager's place on a private salon's roster. */
+  type RoleRow = { id: string; name: string; priority: number; permissions: string[] };
+
+  /**
+   * The service on fake repositories. The salon half runs on REAL rows: the reader selection, the
+   * roster derivation and the route `listChannelMembers` are the service's own code, only the
+   * community read and chat-delivery's salon reference are stubbed.
+   */
+  function makeService(db: { salons?: SalonRow[]; members?: MemberRow[]; roles?: RoleRow[] } = {}) {
+    const salons = db.salons ?? [];
+    const memberRows = db.members ?? [];
+    const channelRepo = {
+      find: jest.fn().mockResolvedValue(salons),
+      findOne: jest.fn(({ where: { id } }: { where: { id: string } }) =>
+        Promise.resolve(salons.find((c) => c.id === id) ?? null)
+      ),
+    };
+    const memberRepo = {
+      find: jest.fn().mockResolvedValue(memberRows),
+      findOne: jest.fn(({ where: { userId } }: { where: { userId: string } }) =>
+        Promise.resolve(memberRows.find((m) => m.userId === userId) ?? null)
+      ),
+      // The review-cohort query of the real `isChannelReader`: no creator row, so nobody is across.
+      manager: { query: jest.fn().mockResolvedValue([]) },
+    };
+    const roleRepo = { find: jest.fn().mockResolvedValue(db.roles ?? []) };
     const service = new ChannelService(
       {} as never,
       channelRepo as never,
-      {} as never,
-      {} as never,
+      roleRepo as never,
+      memberRepo as never,
       {} as never,
       {} as never,
       {} as never
@@ -94,19 +127,18 @@ describe('ChannelService.listKeyGroupVersions', () => {
     const members = jest.spyOn(service, 'listWorkspaceMembers');
     const internals = service as unknown as {
       readSalonDistributionGroup: (channelId: string, user: string) => Promise<unknown>;
-      isChannelReader: (channel: { id: string }, user: string) => Promise<boolean>;
+      isChannelReader: (channel: SalonRow, user: string) => Promise<boolean>;
     };
     const salonKeyGroup = jest.spyOn(internals, 'readSalonDistributionGroup');
-    const reader = jest.spyOn(internals, 'isChannelReader').mockResolvedValue(true);
-    const salonMembers = jest.spyOn(service, 'listChannelMembers');
     return {
       service,
+      internals,
       channelRepo,
+      memberRepo,
+      roleRepo,
       keyGroup,
       members,
       salonKeyGroup,
-      reader,
-      salonMembers,
       warn,
       error,
     };
@@ -176,49 +208,109 @@ describe('ChannelService.listKeyGroupVersions', () => {
   });
 
   // The salons were what a resume still read once the communities skipped (1.8.0-alpha.1, Mi 9T).
-  it('carries each private salon this user reads, with the digest of ITS two answers', async () => {
-    const { service, keyGroup, members, salonKeyGroup, reader, salonMembers } = makeService([
-      { id: 's-read' },
-      { id: 's-not-read' },
-      { id: 's-bare' },
-    ]);
-    keyGroup.mockResolvedValue({ groupId: 'g', groupInfo: 'X', baseEpoch: 1, activeEpoch: 1 });
+  const salonDb = () => ({
+    salons: [
+      { id: 's-read', workspaceId: 'a', isPrivate: true, allowedUsers: [USER, 'u2'] },
+      { id: 's-not-read', workspaceId: 'a', isPrivate: true, allowedUsers: ['u2'] },
+      { id: 's-bare', workspaceId: 'a', isPrivate: true, allowedUsers: [USER] },
+    ],
+    members: [
+      { id: 'm1', userId: USER, roleIds: [], createdAt: new Date('2026-10-01T00:00:00Z') },
+      { id: 'm2', userId: 'u2', roleIds: ['r-mod'], createdAt: new Date('2026-10-02T00:00:00Z') },
+      // A manager: on every private salon's roster without being in `allowedUsers`.
+      { id: 'm3', userId: 'u3', roleIds: ['r-admin'], createdAt: new Date('2026-10-03T00:00:00Z') },
+      // Neither: on no private salon's roster.
+      { id: 'm4', userId: 'u4', roleIds: [], createdAt: new Date('2026-10-04T00:00:00Z') },
+    ],
+    roles: [
+      { id: 'r-mod', name: 'Moderator', priority: 50, permissions: [] },
+      { id: 'r-admin', name: 'Admin', priority: 100, permissions: ['workspace.manage'] },
+    ],
+  });
+  const communityRef = { groupId: 'g', groupInfo: 'X', baseEpoch: 1, activeEpoch: 1 };
+  const salonRef = { groupId: 'gs', groupInfo: 'Y', baseEpoch: 7, activeEpoch: 7 };
+
+  it('carries each private salon this user reads - the real reader predicate leaves the others out', async () => {
+    const db = salonDb();
+    const { service, internals, keyGroup, members, salonKeyGroup } = makeService(db);
+    keyGroup.mockResolvedValue(communityRef);
     members.mockResolvedValue([] as never);
-    reader.mockImplementation((channel) => Promise.resolve(channel.id !== 's-not-read'));
-    const salonRef = { groupId: 'gs', groupInfo: 'Y', baseEpoch: 7, activeEpoch: 7 };
     salonKeyGroup.mockImplementation((channelId) =>
       Promise.resolve(channelId === 's-bare' ? null : salonRef)
     );
-    const salonRoster = [{ id: 'm1', userId: USER, role: 'member', joinedAt: new Date(0) }];
-    salonMembers.mockResolvedValue(salonRoster as never);
 
     const { items } = await service.listKeyGroupVersions(USER, ['a']);
 
-    // Only the salon whose GroupInfo the route would serve; a salon with no key group is left to
-    // its full pass, whose route says so.
-    expect(items[0].salons).toEqual([
-      {
-        channelId: 's-read',
-        version: keyGroupVersionOf(salonRef, salonRoster),
-        groupId: 'gs',
-        activeEpoch: 7,
-        baseEpoch: 7,
-      },
-    ]);
-    // Read as the salon's pass reads them: no device (no seat), the channel roster, no presence.
-    expect(salonKeyGroup).toHaveBeenCalledWith('s-read', USER);
-    expect(salonMembers).toHaveBeenCalledWith('s-read', USER, 'channel');
+    // A salon with no key group is left to its full pass, whose route says so.
+    expect(items[0].salons.map((s) => s.channelId)).toEqual(['s-read']);
+    expect(items[0].salons[0]).toMatchObject({ groupId: 'gs', activeEpoch: 7, baseEpoch: 7 });
     expect(salonKeyGroup).not.toHaveBeenCalledWith('s-not-read', USER);
+    // The selection is the route's own: the REAL `isChannelReader` on the same rows.
+    const readers: string[] = [];
+    for (const salon of db.salons) {
+      if (await internals.isChannelReader(salon, USER)) readers.push(salon.id);
+    }
+    expect(readers).toEqual(['s-read', 's-bare']);
+  });
+
+  it('digests exactly what the two salon routes serve - the shared reads cannot drift from them', async () => {
+    const { service, keyGroup, members, salonKeyGroup } = makeService(salonDb());
+    keyGroup.mockResolvedValue(communityRef);
+    members.mockResolvedValue([] as never);
+    salonKeyGroup.mockResolvedValue(salonRef);
+
+    const { items } = await service.listKeyGroupVersions(USER, ['a']);
+    // What the client's salon pass reads: the reference with no device, the channel roster with no
+    // presence - through the route's own method.
+    const routeRoster = await service.listChannelMembers('s-read', USER, 'channel');
+
+    expect(routeRoster.map((r) => r.userId)).toEqual([USER, 'u2', 'u3']);
+    const version = items[0].salons.find((s) => s.channelId === 's-read')?.version;
+    expect(version).toBe(keyGroupVersionOf(salonRef, routeRoster));
+  });
+
+  it('reads the community members and roles once, not per salon, and no cohort line per salon', async () => {
+    const db = salonDb();
+    db.salons = Array.from({ length: 9 }, (_, i) => ({
+      id: `s${i}`,
+      workspaceId: 'a',
+      isPrivate: true,
+      allowedUsers: [USER],
+    }));
+    const { service, memberRepo, roleRepo, keyGroup, members, salonKeyGroup, warn } =
+      makeService(db);
+    keyGroup.mockResolvedValue(communityRef);
+    members.mockResolvedValue([] as never);
+    let inFlight = 0;
+    let most = 0;
+    salonKeyGroup.mockImplementation(async () => {
+      inFlight += 1;
+      most = Math.max(most, inFlight);
+      await Promise.resolve();
+      inFlight -= 1;
+      return salonRef;
+    });
+
+    const { items } = await service.listKeyGroupVersions(USER, ['a']);
+
+    expect(items[0].salons).toHaveLength(9);
+    expect(memberRepo.find).toHaveBeenCalledTimes(1);
+    expect(roleRepo.find).toHaveBeenCalledTimes(1);
+    expect(memberRepo.findOne).not.toHaveBeenCalled();
+    expect(memberRepo.manager.query).not.toHaveBeenCalled();
+    // In parallel, under the bound.
+    expect(most).toBeGreaterThan(1);
+    expect(most).toBeLessThanOrEqual(SALON_KEY_GROUP_READS_CONCURRENCY);
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it('leaves out a salon whose read failed, says so, and still answers the community', async () => {
-    const { service, keyGroup, members, salonKeyGroup, salonMembers, warn } = makeService([
-      { id: 's-down' },
-    ]);
-    keyGroup.mockResolvedValue({ groupId: 'g', groupInfo: 'X', baseEpoch: 1, activeEpoch: 1 });
+    const db = salonDb();
+    db.salons = [{ id: 's-down', workspaceId: 'a', isPrivate: true, allowedUsers: [USER] }];
+    const { service, keyGroup, members, salonKeyGroup, warn } = makeService(db);
+    keyGroup.mockResolvedValue(communityRef);
     members.mockResolvedValue([] as never);
     salonKeyGroup.mockRejectedValue(new Error('delivery down'));
-    salonMembers.mockResolvedValue([] as never);
 
     const { items } = await service.listKeyGroupVersions(USER, ['a']);
 
