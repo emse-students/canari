@@ -918,14 +918,17 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     *body = [NSString stringWithFormat:CanariLocalized(@"notif.social.reaction.body"), actor, arg];
     return;
   }
-  if ([key isEqualToString:@"form_opening_soon"]) {
-    *title = CanariLocalized(@"notif.form.opening_soon.title");
-    *body = CanariLocalized(@"notif.form.opening_soon.body");
-    return;
-  }
-  if ([key isEqualToString:@"form_open"]) {
-    *title = CanariLocalized(@"notif.form.open.title");
-    *body = CanariLocalized(@"notif.form.open.body");
+  // A watched form (owner, 2026-11-17): the association that runs it names the title and the
+  // form's own title the body, the same facts as the bell row; the fixed sentence stands for a form
+  // that has neither.
+  if ([key isEqualToString:@"form_opening_soon"] || [key isEqualToString:@"form_open"]) {
+    NSString *stem = [key isEqualToString:@"form_open"] ? @"notif.form.open" : @"notif.form.opening_soon";
+    *title = actor.length > 0
+                 ? [NSString stringWithFormat:CanariLocalized([stem stringByAppendingString:@".title_named"]), actor]
+                 : CanariLocalized([stem stringByAppendingString:@".title"]);
+    *body = arg.length > 0
+                ? [NSString stringWithFormat:CanariLocalized([stem stringByAppendingString:@".body_named"]), arg]
+                : CanariLocalized([stem stringByAppendingString:@".body"]);
     return;
   }
   // A payment landed on a full form, to the form's managers: `arg` is the form's title only.

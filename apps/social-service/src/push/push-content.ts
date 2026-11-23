@@ -405,6 +405,8 @@ export function reactionContent(
 export interface FormReminderSubject {
   formTitle?: string | null;
   associationName?: string | null;
+  /** The association's logo, when it has a usable one: the push's picture. */
+  icon?: PushIcon;
 }
 
 const quoted = (title: string) => `« ${title} »`;
@@ -418,6 +420,7 @@ export function formOpeningSoonContent(subject: FormReminderSubject = {}): PushC
   const association = subject.associationName?.trim() ?? '';
   return {
     key: 'form_opening_soon',
+    ...(subject.icon ? { icon: subject.icon } : {}),
     actorName: association,
     arg: title,
     legacyTitle: association
@@ -435,6 +438,7 @@ export function formOpenContent(subject: FormReminderSubject = {}): PushContent 
   const association = subject.associationName?.trim() ?? '';
   return {
     key: 'form_open',
+    ...(subject.icon ? { icon: subject.icon } : {}),
     actorName: association,
     arg: title,
     legacyTitle: association ? `${association} : formulaire ouvert !` : 'Formulaire ouvert !',
