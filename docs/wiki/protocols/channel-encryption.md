@@ -346,6 +346,11 @@ arrival is counted only when the store holds the seed now.
   rejects at once on a destroyed service, `GroupDrainAbandonedError`), the runtime gone (said at
   warn, never thrown - the flush is fire-and-forget), or this tab a follower. The accumulator is
   emptied, the wants kept; the next decode naming the rows starts a fresh flush.
+- **A pull that ends incomplete DEFERS the flush, never ends it** (2026-11-23): a refused page or a
+  page of one row that never arrived settles the drain waits with `MailboxListingIncompleteError`,
+  and the seed may be in the part of the mailbox nobody listed, so `whenAskable` waits again for the
+  next complete pull (`untilListedWhole`, `[QUEUE] ... deferred to the next complete pull`); the
+  history ask does the same on `whenDistributionEpochSettled`. The asks stay outstanding.
 - **A web follower tab asks nothing**, said once per flush: it holds no socket and drains nothing,
   and the state a request is sealed with is the leader's to advance; the leader decodes the same
   salon and asks for itself. Leadership is read again after the wait, so a leader demoted while it
@@ -385,7 +390,10 @@ and the request then say something true. A page whose every seed is held registe
   registered here (`key-group-unregistered`), a web follower tab (`follower` - it drains nothing),
   and, DURING the wait, a demotion of this tab (`follower` again, settled by `onLeaderTabChanged`:
   the demoted tab closes its socket, so the group would never read drained here) or the service
-  closing (`closed`, `GroupDrainAbandonedError`). The non-routine ones are said in the log
+  closing (`closed`, `GroupDrainAbandonedError`), or a pull that ended without listing the whole
+  mailbox (`pull-incomplete`, `MailboxListingIncompleteError`: the next pull may be hours away on a
+  quiet account, so the page decodes now; a row still missing its seed is asked for, and that ask
+  defers to the next complete pull by itself). The non-routine ones are said in the log
   (`[CHANNEL] page of x decoded without its key-group drain - reason`); a page that deferred rows
   says how many, and again when they are decoded after the drain. A demotion decodes the deferred
   rows as a follower would (reported, never asked); `closed` decodes NOTHING more - the session
@@ -4776,8 +4784,11 @@ admissions, per account) and its MLS layer (pins and departures):
   **Consequence: the answer waits for the key group to catch up on the answering device.** A parked
   ask lost with the app is acceptable: the asking device asks again at its next start. A SESSIONS
   repair naming only seeds this device does not hold is answered at once (`missing` does not depend
-  on the admission). A failed pull wakes nothing - only a pull that ends whole does - and says how
-  many drain waiters it holds up. Sign-out forgets the parked asks (`clearParkedAsks`), and the MLS
+  on the admission). A pull that ends INCOMPLETE (a refused page, a ladder run out) settles the
+  drain waits as `MailboxListingIncompleteError`: the observation and the parked asks are ARMED
+  AGAIN for the next pull - an observation on an unknown mailbox could place a voucher at an epoch
+  the unlisted part still moves - and said; never dropped. Any other failed pull wakes nothing and
+  says how many drain waiters it holds up. Sign-out forgets the parked asks (`clearParkedAsks`), and the MLS
   service's `destroy` rejects its pending drain waiters (`GroupDrainAbandonedError`).
 - **Removals**: the epochs at which a commit this device merged - live or on catch-up - removed the
   user's last leaf from the key group (`removalEpochs`, [mls-protocol](mls-protocol.md)); a device

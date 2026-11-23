@@ -588,6 +588,22 @@ export class PendingPullIncompleteError extends Error {
 }
 
 /**
+ * The pending pull STOPPED because a page of ONE row did not arrive: the page-halving ladder ran out.
+ * One row is the smallest question that can be asked, so this is not a page asked for too big - and
+ * the mailbox is NOT drained. Typed for the same reason as {@link PendingPullIncompleteError}: the
+ * caller must never read the end of the pull as an empty queue, and must never tell this end from
+ * another by its message. `reason` is what the last attempt threw.
+ */
+export class PendingPageNeverArrivedError extends Error {
+  constructor(readonly reason: unknown) {
+    super(
+      `[PENDING] a page of one row did not arrive (${String(reason)}) - the mailbox is NOT drained`
+    );
+    this.name = 'PendingPageNeverArrivedError';
+  }
+}
+
+/**
  * The resend after a 401 (the page asked again with the renewed token) did not arrive. Wraps what
  * the resend threw so the pull's halving ladder can tell it from a failed RENEWAL, which is thrown as
  * itself and never halved: only a page that did not arrive is a page asked for too big.
@@ -1310,6 +1326,8 @@ export class MlsDeliveryApi {
    *
    * @throws {PendingPullIncompleteError} A page answered non-2xx: the pull is INCOMPLETE, never a
    *   drained mailbox (pages already handed to `onPage` stay handed on).
+   * @throws {PendingPageNeverArrivedError} A page of one row did not arrive (the ladder ran out): the
+   *   pull is INCOMPLETE in the same sense.
    */
   async pullPendingMessagesJson(opts?: {
     /** The longest SILENCE tolerated on one page. Defaults to {@link PENDING_PAGE_STALL_MS}. */
@@ -1377,7 +1395,9 @@ export class MlsDeliveryApi {
           );
           return;
         }
-        throw e;
+        // THE LADDER RAN OUT: typed, so the end of the pull is an INCOMPLETE listing to its caller,
+        // never an unclassified failure read by its message (`BaseMlsService.fetchPendingMessages`).
+        throw new PendingPageNeverArrivedError(e);
       };
       let page: ProgressDeadlineResult<Array<{ createdAt?: string }>>;
       try {

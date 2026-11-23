@@ -1,6 +1,10 @@
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { connectivity } from '$lib/stores/connectivity.svelte';
-import { MlsDeliveryApi, PendingPullIncompleteError } from './mlsDeliveryApi';
+import {
+  MlsDeliveryApi,
+  PendingPageNeverArrivedError,
+  PendingPullIncompleteError,
+} from './mlsDeliveryApi';
 import { ADDRESSED_HISTORY_CAPABILITY } from './frameDelivery';
 
 /**
@@ -204,7 +208,11 @@ describe('MlsDeliveryApi.pullPendingMessagesJson', () => {
     // 1 MB, so a one-row page really is small enough to cross any link this app runs on.
     const fetchFn = vi.fn().mockRejectedValue(new Error('aborted'));
 
-    await expect(api(fetchFn).pullPendingMessagesJson()).rejects.toThrow('aborted');
+    const pull = api(fetchFn).pullPendingMessagesJson();
+    await expect(pull).rejects.toThrow('aborted');
+    // TYPED, so the caller reads an INCOMPLETE listing and settles its drain waiters on it - never an
+    // unclassified failure told apart by its message.
+    await expect(pull).rejects.toBeInstanceOf(PendingPageNeverArrivedError);
 
     const limits = fetchFn.mock.calls.map((c) => new URL(String(c[0])).searchParams.get('limit'));
     expect(limits).toEqual(['500', '250', '125', '62', '31', '15', '7', '3', '1']);

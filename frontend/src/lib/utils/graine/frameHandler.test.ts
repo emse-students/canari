@@ -27,6 +27,7 @@ import {
   redeemInviteLinkGrant,
 } from '$lib/crypto/graineAdmission';
 import type { DeviceSignatureKeys } from '$lib/mls-client/deviceKeyPackage';
+import { MailboxListingIncompleteError } from '$lib/mls-client/IMlsService';
 import { handleDistributionFrame, resetAnswerDecisionsSaid } from './frameHandler';
 import { clearParkedAsks, MAX_PARKED_ASKS, parkedAskCount } from './parkedAsks';
 import { GRAINE_HISTORY_BUNDLE_MAX_SEEDS } from '$lib/crypto/graineConstants';
@@ -2855,7 +2856,7 @@ describe('the past goes only to an admission this device can verify (section 25)
    */
   describe('an ask that arrives before its voucher could be observed', () => {
     let drained = false;
-    let drainWaiters: Array<() => void> = [];
+    let drainWaiters: Array<{ wake: () => void; fail: (e: Error) => void }> = [];
     beforeEach(() => {
       drained = false;
       drainWaiters = [];
@@ -2881,7 +2882,9 @@ describe('the past goes only to an admission this device can verify (section 25)
           sendMessage,
           isGroupDrained: () => drained,
           whenGroupDrained: () =>
-            drained ? Promise.resolve() : new Promise<void>((wake) => drainWaiters.push(wake)),
+            drained
+              ? Promise.resolve()
+              : new Promise<void>((wake, fail) => drainWaiters.push({ wake, fail })),
         }),
       });
       return sendMessage;
@@ -2890,8 +2893,42 @@ describe('the past goes only to an admission this device can verify (section 25)
       drained = true;
       const woken = drainWaiters;
       drainWaiters = [];
-      for (const wake of woken) wake();
+      for (const { wake } of woken) wake();
     }
+    /** A pull ends without listing the whole mailbox: every drain waiter is settled as incomplete. */
+    function pullEndsIncomplete() {
+      const settled = drainWaiters;
+      drainWaiters = [];
+      for (const { fail } of settled) {
+        fail(new MailboxListingIncompleteError('g-1', new Error('a 502')));
+      }
+    }
+
+    it('keeps the ask parked through a pull that ended incomplete, and answers it at the next complete one', async () => {
+      newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));
+      const sendMessage = wireUndrainedAnswerer();
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+      await handleDistributionFrame(ask('history'));
+      expect(parkedAskCount()).toBe(1);
+      const armed = drainWaiters.length;
+      expect(armed).toBeGreaterThan(0);
+
+      // The mailbox state is unknown: answering now would only meet `unobserved` again. The ask stays
+      // parked and its wait is registered again - never lost, never answered on a guess.
+      pullEndsIncomplete();
+      await vi.waitFor(() => expect(drainWaiters).toHaveLength(armed));
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(parkedAskCount()).toBe(1);
+      expect(info.mock.calls.flat().join(' ')).toContain(
+        'stay parked - deferred to the next complete pull'
+      );
+
+      drainNow();
+      await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+      expect(parkedAskCount()).toBe(0);
+      info.mockRestore();
+    });
 
     it('answers a newcomer who asked at once, after the drain, with no restart', async () => {
       newcomerArrives(await directVoucher('newcomer', carolDevice, CAROL_DEVICE_SECRET));

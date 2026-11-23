@@ -10,6 +10,7 @@ import {
 } from '$lib/crypto/graineAdmission';
 import type { DeviceSignatureKeys } from '$lib/mls-client/deviceKeyPackage';
 import type { DevicePin } from '$lib/mls-client/deviceTrust';
+import { MailboxListingIncompleteError } from '$lib/mls-client/IMlsService';
 import {
   canonicalIdentity,
   canonicalUserId,
@@ -61,13 +62,19 @@ let epoch = 5;
 /** Whether this device has merged everything the server holds for the key group (`isGroupDrained`). */
 let drained = true;
 /** Who waits on `whenGroupDrained` - woken by {@link drainNow}, as the MLS layer's events wake them. */
-let drainWaiters: Array<() => void> = [];
+let drainWaiters: Array<{ wake: () => void; fail: (e: Error) => void }> = [];
 /** The key group drains: `isGroupDrained` holds, and every `whenGroupDrained` waiter is woken. */
 function drainNow() {
   drained = true;
   const woken = drainWaiters;
   drainWaiters = [];
-  for (const wake of woken) wake();
+  for (const { wake } of woken) wake();
+}
+/** A pull ends without listing the whole mailbox: every waiter is settled as incomplete. */
+function pullEndsIncomplete() {
+  const settled = drainWaiters;
+  drainWaiters = [];
+  for (const { fail } of settled) fail(new MailboxListingIncompleteError(KG, new Error('a 502')));
 }
 /**
  * The MLS layer's pins (`pinnedSignatureKeys`, #2268): the keys it saw for a device in a signed
@@ -128,7 +135,9 @@ function installRuntime(userId: string) {
       getEpoch: () => epoch,
       isGroupDrained: () => drained,
       whenGroupDrained: () =>
-        drained ? Promise.resolve() : new Promise<void>((wake) => drainWaiters.push(wake)),
+        drained
+          ? Promise.resolve()
+          : new Promise<void>((wake, fail) => drainWaiters.push({ wake, fail })),
       pinnedSignatureKeys: async (user: string, deviceId: string) =>
         pins.get(canonicalIdentity(`${user}:${deviceId}`) ?? '') ?? null,
       removalEpochs: async (_g: string, user: string) =>
@@ -436,6 +445,35 @@ describe('a signer counts as of when THIS device first observed the voucher, not
     );
 
     // Recorded: a later undrained moment no longer matters to this voucher.
+    drained = false;
+    expect(await admissionVerdict('ws-1', KG, 'newcomer')).toBe('proven');
+  });
+
+  it('a pull that ends incomplete defers the observation to the next complete one, never drops it', async () => {
+    leaves.push('newcomer:dev-n');
+    listWorkspaceMembers.mockResolvedValue([
+      member('alice'),
+      member('carol'),
+      member('newcomer', AFTER_THE_PROOF, {
+        admissionVoucher: await voucher('newcomer', carol, CAROL_SECRET),
+      }),
+    ]);
+    drained = false;
+    await observeAdmissionState('ws-1', KG);
+    expect(drainWaiters).toHaveLength(1);
+
+    // The mailbox state is unknown: nothing is observed at an epoch the unlisted part may move, and
+    // the wait is registered again, for the next pull.
+    const info = vi.mocked(console.info);
+    pullEndsIncomplete();
+    await vi.waitFor(() => expect(drainWaiters).toHaveLength(1));
+    expect(info.mock.calls.flat().join(' ')).toContain('deferred to the next complete pull');
+    expect(await admissionVerdict('ws-1', KG, 'newcomer')).toBe('unobserved');
+
+    drainNow();
+    await vi.waitFor(() =>
+      expect(info.mock.calls.flat().join(' ')).toContain('admission vouchers observed')
+    );
     drained = false;
     expect(await admissionVerdict('ws-1', KG, 'newcomer')).toBe('proven');
   });
