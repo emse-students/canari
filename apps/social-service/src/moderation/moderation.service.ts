@@ -1022,7 +1022,11 @@ export class ModerationService {
 
   // ── User mute/unmute ──────────────────────────────────────────────────────
 
-  /** Mutes a user: they can still read but cannot post, react, or comment. */
+  /**
+   * Mutes a user: they can still read but cannot post, react, comment, vote in a poll or like a
+   * comment. The sanctions table is the one copy of everything the mute covers (republications,
+   * reposts, follow requests, lives and their chat too): docs/wiki/moderation-authority.md#sanctions.
+   */
   async muteUser(userId: string, mutedBy: string, reason?: string): Promise<UserModeration> {
     // ONE statement keyed by the user's unique index, never a read then a save: there is no copy
     // of the record to go stale, and two first mutes cannot both insert.

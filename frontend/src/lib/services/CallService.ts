@@ -72,7 +72,7 @@ import {
   countCandidate,
   describeAudioCodecs,
   describeCandidateCounts,
-  describeSelectedPair,
+  selectedPathToLog,
   describeVideoStats,
   emptyCandidateCounts,
   iceCandidateKindOf,
@@ -3408,9 +3408,10 @@ export class CallService {
         }
         void pc
           .getStats()
-          .then((stats) =>
-            appendLog(`[Call]${leg.tag} selected path ${describeSelectedPair(stats)}`)
-          )
+          .then((stats) => {
+            // A peer connection replaced meanwhile must not write ITS pair as this leg's last line.
+            if (leg.pc === pc) this.logSelectedPath(leg, stats);
+          })
           .catch((e: unknown) => appendLog(`[Call]${leg.tag} getStats failed: ${String(e)}`));
         // The RTP streams bind their codec on the first packet, after `connected`: read once
         // the media has had time to flow (a diagnostic read, nothing waits on it).
@@ -3563,6 +3564,7 @@ export class CallService {
       leg.e2ePathCheckTimer = null;
     }
     leg.e2eConnectChecked = false;
+    leg.lastPathLine = null;
     // A rebuilt peer connection's end report judges frames only once ITS check has run.
     this.e2eReportFired = false;
     leg.e2eRechecks = 0;
@@ -3575,6 +3577,14 @@ export class CallService {
     leg.e2eReceiverSeen = false;
     leg.e2eProven = false;
     this.syncE2eProven();
+  }
+
+  /** Writes the `selected path` line when the pair differs from the last one logged for `leg`. */
+  private logSelectedPath(leg: CallLeg, stats: RTCStatsReport): void {
+    const line = selectedPathToLog(leg.lastPathLine, stats);
+    if (line === null) return;
+    leg.lastPathLine = line;
+    appendLog(`[Call]${leg.tag} selected path ${line}`);
   }
 
   /**
@@ -3651,6 +3661,8 @@ export class CallService {
       );
       return;
     }
+    // After the stale guard: only the live peer connection's pair is the leg's path.
+    if (stats) this.logSelectedPath(leg, stats);
     if (!packets) {
       // Unverifiable, exactly as a worker that does not answer: withdrawn, and re-checked.
       this.withdrawE2eClaim(leg, why, 'the stats cannot be read');
