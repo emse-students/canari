@@ -3060,7 +3060,7 @@ call, up to two calls of 60 s each at core, made every path that takes the form 
 - a submit's retry, a resume, `markPaid` from a callback - queue behind it with the FORM lock held, so
 every submit of the form waited, ten waiters exhausted the pool and the whole service failed; and the
 expiry `UPDATE` blocked on it while holding rows of other forms. A timeout would only have bounded it).
-The switch runs as a durable CLAIM instead (`submissions."cashSwitchClaimId"`, migration 183):
+The switch runs as a durable CLAIM instead (`submissions."cashSwitchClaimId"`, migration 184):
 
 1. **Claim** (`claimCashSwitch`, one short row-locked write): a row still `pending` within its hold -
    the one whose seat a release would take - gets a token of this press. A row already released
@@ -3149,7 +3149,7 @@ after a refusal), `FormsManagerList.svelte.test.ts` (an answer already paid onli
 `paymentRefusal.test.ts` (the submit's withdrawn code).
 
 **Old clients** ignore `cashSwitchable`, `cashSwitchOffered` and the routes; a new client on an older
-server reads neither field and offers only what it did. **Migration 183** adds the one nullable column
+server reads neither field and offers only what it did. **Migration 184** adds the one nullable column
 (additive, no backfill: no row is being switched before the image that writes it runs); an older image
 ignores it.
 

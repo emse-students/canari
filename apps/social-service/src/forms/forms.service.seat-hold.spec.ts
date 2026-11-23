@@ -80,7 +80,7 @@ describe('FormsService - the seat a pending payment holds', () => {
     /** The priced grids' lines and the price questions, snapshotted at submit (137, 166). */
     lines?: unknown[] | null;
     priceLockedItemIds?: string[] | null;
-    /** A switch to cash in progress (migration 183, `claimCashSwitch`). */
+    /** A switch to cash in progress (migration 184, `claimCashSwitch`). */
     cashSwitchClaimId?: string | null;
     /** The cash hold and its one notice (`pending_cash`, migration 179). */
     cashExpiresAt?: Date | null;

@@ -131,7 +131,7 @@ export class Submission {
   cashReminderNotifiedAt: Date | null;
 
   /**
-   * A switch to cash in progress on this row (migration 183, `FormsService.switchToCash`): the token
+   * A switch to cash in progress on this row (migration 184, `FormsService.switchToCash`): the token
    * of the press that CLAIMED a `pending` row still within its hold, written before the call to Lydia
    * and cleared by every outcome of the switch. While set, nothing releases the row's seat - the
    * cancel callback, the return poll and the reconciliation leave it, a resume and a submit's retry

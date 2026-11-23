@@ -1,4 +1,4 @@
--- Migration 183: a switch to cash in progress is a durable CLAIM on the answer, so no database lock
+-- Migration 184: a switch to cash in progress is a durable CLAIM on the answer, so no database lock
 -- is held across the call to Lydia (review of #4019; docs/wiki/frontend/modules/forms.md, "A failed
 -- card payment is settled in person instead").
 --
