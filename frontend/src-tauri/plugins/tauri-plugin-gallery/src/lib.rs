@@ -64,6 +64,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             commands::save_video,
             commands::discard_video,
             commands::open_app_settings,
+            commands::camera_permission,
             commands::share_text,
             commands::share_staged,
             commands::discard_shared_out,

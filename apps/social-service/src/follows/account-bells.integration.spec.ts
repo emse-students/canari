@@ -266,17 +266,21 @@ maybe('the bell against PostgreSQL (engagement WP-3)', () => {
 
     it('a NEW association follow resets the bell; a retried one does not', async () => {
       await bells.setLevel('ann', 'association', BDE, 'none');
-      // Following a muted association unmutes it (L3).
-      await follows.followAssociation('ann', BDE);
+      // Following a muted association unmutes it (L3), and the ANSWER says so: an open bell picker
+      // drops its old level from `bellReset`, never from a second read.
+      expect(await follows.followAssociation('ann', BDE)).toEqual({ ok: true, bellReset: true });
       expect(await bellRows()).toEqual([]);
       // The reader reduces it again; a retried follow, or five at once, creates nothing and resets nothing.
       await bells.setLevel('ann', 'association', BDE, 'lives');
-      await Promise.all(Array.from({ length: 5 }, () => follows.followAssociation('ann', BDE)));
+      const retried = await Promise.all(
+        Array.from({ length: 5 }, () => follows.followAssociation('ann', BDE))
+      );
+      expect(retried.map((a) => a.bellReset)).toEqual([false, false, false, false, false]);
       expect(await bellRows()).toEqual([`ann>association:${BDE}=lives`]);
       expect((await q(`SELECT 1 FROM association_follows`)).rowCount).toBe(1);
-      // Unfollow then follow is a new follow.
+      // Unfollow then follow is a new follow: the reduced bell is reset and the answer says it.
       await follows.unfollowAssociation('ann', BDE);
-      await follows.followAssociation('ann', BDE);
+      expect(await follows.followAssociation('ann', BDE)).toEqual({ ok: true, bellReset: true });
       expect(await bellRows()).toEqual([]);
     });
 
