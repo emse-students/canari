@@ -70,6 +70,7 @@ import {
   canSeeArrivalNow,
   type ArrivalVerdict,
 } from '$lib/utils/chat/arrivalRuntime';
+import { beginConversationRowWrite } from '$lib/utils/chat/conversationRowWrites';
 import { ATTENTION_WINDOW_MS, windowAttention } from '$lib/utils/windowAttention.svelte';
 import {
   MAX_DISTINCT_MESSAGE_REACTIONS,
@@ -140,7 +141,11 @@ import {
   settlementHeld,
   type OutboxSettlement,
 } from '$lib/utils/chat/outbox';
-import { MessagePairWriteError, MessageWrittenError } from '$lib/utils/chat/messageWrittenError';
+import {
+  ConversationGoneError,
+  MessagePairWriteError,
+  MessageWrittenError,
+} from '$lib/utils/chat/messageWrittenError';
 import { beginOutboxEnqueue } from '$lib/utils/chat/outboxActivity.svelte';
 import { unregisterDeviceNotices } from '$lib/utils/chat/deviceNoticeWiring';
 import { resetJoinRequests } from '$lib/utils/chat/joinRequests.svelte';
@@ -2399,7 +2404,7 @@ export function useMessaging() {
     };
 
     const skipDbSave = options.skipDbSave ?? isChannelConversationId(normalized);
-    let pairWriteFailure: MessagePairWriteError | null = null;
+    let pairWriteFailure: MessagePairWriteError | ConversationGoneError | null = null;
     if (ctx.storage && !skipDbSave) {
       try {
         const row = {
@@ -2418,25 +2423,42 @@ export function useMessaging() {
         // message the sender could see and no queue would ever send (TAB-5, 2026-09-05). Every other
         // caller - an inbound message, an FCM upgrade - has no entry and takes the single-store path.
         if (options.outboxEntry) {
-          try {
-            await ctx.storage.saveMessageWithOutboxEntry(
-              row,
-              options.outboxEntry,
-              ctx.deviceKeyB64
+          // ASKED AND REGISTERED IN ONE STEP, as `writeBatchRows` does (`conversationRowWrites.ts`):
+          // a removal clears the store only after this pair has landed, and a conversation already
+          // out of the map gets neither the row nor the entry - which would otherwise send into a
+          // deleted group. Refused with its OWN type (review of #3992): a `MessagePairWriteError`
+          // makes the send path hand the entry to the queue anyway; this one stops the send.
+          if (!ctx.conversations.has(normalized)) {
+            pairWriteFailure = new ConversationGoneError(newMsg.id, normalized);
+            console.warn(
+              `[ADD_MSG] own message ${newMsg.id.slice(0, 8)} refused, nothing written or queued: the conversation "${normalized}" left the map before its write (${ORPHAN_REMOVERS}) - the send stops and the member is told`
             );
-            options.onPairWritten?.();
-          } catch (e) {
-            // REPORTED, NEVER SWALLOWED (review of #2843, M1): the caller would otherwise tell the
-            // outbox the row is on disk when nothing is. Thrown once the conversation is saved.
-            pairWriteFailure = new MessagePairWriteError(newMsg.id, e);
-            console.error(
-              pairWriteFailure.entryWritten
-                ? '[DB] the outbox entry was written WITHOUT its message:'
-                : '[DB] the message and its outbox entry were NOT written:',
-              e
-            );
+          } else {
+            const releaseRowWrite = beginConversationRowWrite(normalized);
+            try {
+              try {
+                await ctx.storage.saveMessageWithOutboxEntry(
+                  row,
+                  options.outboxEntry,
+                  ctx.deviceKeyB64
+                );
+                options.onPairWritten?.();
+              } catch (e) {
+                // REPORTED, NEVER SWALLOWED (review of #2843, M1): the caller would otherwise tell
+                // the outbox the row is on disk when nothing is. Thrown once the conversation is saved.
+                pairWriteFailure = new MessagePairWriteError(newMsg.id, e);
+                console.error(
+                  pairWriteFailure.entryWritten
+                    ? '[DB] the outbox entry was written WITHOUT its message:'
+                    : '[DB] the message and its outbox entry were NOT written:',
+                  e
+                );
+              }
+              await ctx.saveConversation(normalized);
+            } finally {
+              releaseRowWrite();
+            }
           }
-          await ctx.saveConversation(normalized);
         } else {
           // NEVER OVER A ROW: the store was read above, and another writer (the archive replay runs
           // outside the inbound drain) may have written the id since. Its row stands, and memory
@@ -3135,19 +3157,19 @@ export function useMessaging() {
         // and the reactions, land on the row shown - never the bare body until a reload.
         const consumed = consumedById.get(msg.id) ?? [];
         if (shouldUpgradeMessage(shown, body)) {
-          const upgraded = resettled(mergeMessageUpgrade(shown, upgrade), consumed);
+          // ONE FUNCTION FOR THE ROW SHOWN NOW AND FOR A RESHOW, so neither can forget a half of it.
           // THE BUBBLE READS `messageReactions` FIRST: `settledWith` set it against the bare body,
-          // without the preview's own reactions. It follows the row shown, as the live upgrade's.
-          if (upgraded.reactions) messageReactions.set(msg.id, upgraded.reactions);
-          upgradedById.set(msg.id, {
-            from: shown,
-            shown: upgraded,
-            reshow: (now) =>
-              resettled(
-                shouldUpgradeMessage(now, body) ? mergeMessageUpgrade(now, upgrade) : now,
-                consumed
-              ),
-          });
+          // without the preview's own reactions, so it follows the row this returns, as the live
+          // upgrade's does.
+          const lateUpgrade = (now: ChatMessage): ChatMessage => {
+            const row = resettled(
+              shouldUpgradeMessage(now, body) ? mergeMessageUpgrade(now, upgrade) : now,
+              consumed
+            );
+            if (row.reactions) messageReactions.set(msg.id, row.reactions);
+            return row;
+          };
+          upgradedById.set(msg.id, { from: shown, shown: lateUpgrade(shown), reshow: lateUpgrade });
         }
       }
       for (let i = newRows.length - 1; i >= 0; i--) {
@@ -3364,25 +3386,45 @@ export function useMessaging() {
         );
         return null;
       }
-      const inserted = await ctx.storage.saveMessagesIfAbsent(notMerged, ctx.deviceKeyB64);
-      const left = notMerged.length - inserted.size;
-      if (left > 0) {
-        console.log(
-          `[ADD_MSG] ${left} shown preview(s) of "${conversationId}" are no longer previews in the store - the arriving body leaves them as they are`
-        );
+      // REGISTERED IN THE SAME STEP AS THE CHECK, no await between them (`conversationRowWrites.ts`):
+      // a removal takes the conversation out of the map, then waits for this before clearing the
+      // store, so these inserts land before the clear and are taken by it - never after it.
+      const releaseRowWrite = beginConversationRowWrite(conversationId);
+      try {
+        return await insertBatchRows(ctx, write, merged, notMerged);
+      } finally {
+        releaseRowWrite();
       }
-      const written = await ctx.storage.saveMessagesIfAbsent(newRows, ctx.deviceKeyB64);
-      const standing = newRows.filter((row) => !written.has(row.id)).map((row) => row.id);
-      if (standing.length > 0) await showStoredInstead(ctx, conversationId, standing);
-      await removeSettled(
-        ctx,
-        [...merged, ...inserted, ...written].flatMap((id) => consumedById.get(id) ?? [])
-      );
-      await ctx.saveConversation(conversationId);
-      return null;
     } catch (e) {
       return e ?? new Error('batch write failed');
     }
+  }
+
+  /** {@link writeBatchRows}' inserts and conversation row, once the map has said the conversation stands. */
+  async function insertBatchRows(
+    ctx: MessagingContext,
+    write: BatchRowWrite,
+    merged: ReadonlySet<string>,
+    notMerged: StoredMessage[]
+  ): Promise<null> {
+    const { conversationId, newRows, consumedById } = write;
+    if (!ctx.storage) return null;
+    const inserted = await ctx.storage.saveMessagesIfAbsent(notMerged, ctx.deviceKeyB64);
+    const left = notMerged.length - inserted.size;
+    if (left > 0) {
+      console.log(
+        `[ADD_MSG] ${left} shown preview(s) of "${conversationId}" are no longer previews in the store - the arriving body leaves them as they are`
+      );
+    }
+    const written = await ctx.storage.saveMessagesIfAbsent(newRows, ctx.deviceKeyB64);
+    const standing = newRows.filter((row) => !written.has(row.id)).map((row) => row.id);
+    if (standing.length > 0) await showStoredInstead(ctx, conversationId, standing);
+    await removeSettled(
+      ctx,
+      [...merged, ...inserted, ...written].flatMap((id) => consumedById.get(id) ?? [])
+    );
+    await ctx.saveConversation(conversationId);
+    return null;
   }
 
   // ── Send ──────────────────────────────────────────────────────────────────
@@ -3702,6 +3744,16 @@ export function useMessaging() {
                   ...(echoReplyForFile ? { replyTo: echoReplyForFile } : {}),
                 });
               } catch (pairError) {
+                // GONE BETWEEN THE CHECK ABOVE AND THE WRITE: nothing was written, and nothing may be
+                // queued - the same answer as the check, said to the member the same way.
+                if (pairError instanceof ConversationGoneError) {
+                  ctx.log(
+                    `[MEDIA] ${messageId.slice(0, 8)}… refused at its write: ${sendKey.slice(0, 8)}… left the conversation list - ${fileEntries.length - index} file(s) not sent`
+                  );
+                  sayOnScreen(m.chat_media_conversation_gone());
+                  conversationGoneDuringSend = true;
+                  break;
+                }
                 if (!(pairError instanceof MessagePairWriteError)) throw pairError;
                 // THE ENTRY REACHED DISK ALONE (SQLite writes it first): the queue owns it, so it
                 // is not written a second time and the file is not given back (M2).

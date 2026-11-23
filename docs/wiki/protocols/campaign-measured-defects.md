@@ -97,7 +97,7 @@ text above forbids. The standing ERROR line is the DESIGNED front of that report
 and the known ones age out with the retention floor), so it is not a second defect. The one question
 left, whether a device that dropped a frame should say so, was answered by the owner on 2026-11-19:
 it does not; the server reports the drop to the team
-([decisions](../backlog.d/owner-decisions-of-2026-11-19.md)).
+([decisions](../decisions/owner-decisions-of-2026-11-19.md)).
 
 ## A new device's join reaches the commit gate before its KeyPackage (2026-10-09)
 

@@ -62,7 +62,7 @@ who leaves kept the row and Lydia's rights - is BUILT with the flip
    2026-11-19: the departure is REFUSED while the person is Responsable** - *"il doit d'abord passer
    la main lui-même. C'est pour ça qu'il est important de pouvoir gérer les caissiers sur Canari"*: the
    Responsable hands over to another member through the cashier screens first (that hand-over step is
-   owed if the screens cannot do it yet), and only then may leave ([decisions](owner-decisions-of-2026-11-19.md)).
+   owed if the screens cannot do it yet), and only then may leave ([decisions](../decisions/owner-decisions-of-2026-11-19.md)).
    **Built 2026-11-20, behind its own switch, OFF**: "Transférer le rôle", the hand-over (add the heir
    with the 13 rights, record, remove the old number through the verified removal) and the departure
    refusal `LYDIA_RESPONSABLE_MUST_HAND_OVER` (a platform admin may remove a Responsable anyway after a

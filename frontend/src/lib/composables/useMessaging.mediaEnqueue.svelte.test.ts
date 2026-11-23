@@ -642,6 +642,32 @@ describe('a send whose conversation left the map, and the orphan buffer', () => 
     );
   });
 
+  // Review of #3992: gone AFTER the caller's check, at the write itself - the refusal is its own type,
+  // and the caller must not hand the file to the queue the way it does a failed pair write.
+  it('a conversation gone at the pair write: nothing queued, and the MEMBER is told', async () => {
+    const messaging = await freshMessaging();
+    const pair = vi.fn();
+    const ctx = withStorage(makeContext(), pair);
+    // The echo's render sets the row; the removal lands right after it, before the write.
+    const set = ctx.conversations.set.bind(ctx.conversations);
+    vi.spyOn(ctx.conversations, 'set').mockImplementationOnce((key, value) => {
+      const out = set(key, value);
+      ctx.conversations.delete(CONVO);
+      return out;
+    });
+
+    expect(
+      await messaging.handleSendChat(ctx, 'caption', {
+        files: [entryOf(async () => new ArrayBuffer(3))],
+      })
+    ).toBe(false);
+
+    expect(pair).not.toHaveBeenCalled();
+    expect(enqueueMock).not.toHaveBeenCalled();
+    expect(ctx.setSendError).toHaveBeenCalledWith(m.chat_media_conversation_gone());
+    expect(logLines(ctx).some((l) => l.includes('refused at its write'))).toBe(true);
+  });
+
   it('a DM re-keyed by a duplicate-group merge during the file read: the file follows it', async () => {
     const messaging = await freshMessaging();
     const pairs: Array<{ row: StoredMessage; entry: OutboxEntry }> = [];

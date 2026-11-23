@@ -2,7 +2,7 @@
 
 target: 1.8.0
 
-**Owner, 2026-11-19:** the dashboard is seen by the PLATFORM ADMINS ONLY - aggregated figures, never a person ([decisions](owner-decisions-of-2026-11-19.md)).
+**Owner, 2026-11-19:** the dashboard is seen by the PLATFORM ADMINS ONLY - aggregated figures, never a person ([decisions](../decisions/owner-decisions-of-2026-11-19.md)).
 
 `/admin/status` today shows one measure: live sockets, sampled each minute, the period's peak, by
 platform (web / android / ios) and app version ([chat-gateway census](../services/chat-gateway.md#the-anonymous-census-and-its-24-hour-series-2026-11-02)).

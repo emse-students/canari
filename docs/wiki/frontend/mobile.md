@@ -3911,7 +3911,7 @@ but not the at-rest key, a `ThisDeviceOnly` Keychain item that never migrates (A
 new device"). The PIN screen then said the data was unreadable. **None of it may travel**: without
 the key it is ciphertext nothing opens, and with the key it would be a second holder of one MLS
 device identity. A new phone enrols as a new device ([backup](backup.md)). **The decision, and its
-cost** ([owner, 2026-11-20](../backlog.d/owner-decisions-of-2026-11-20.md), item 5): an encrypted
+cost** ([owner, 2026-11-20](../decisions/owner-decisions-of-2026-11-20.md), item 5): an encrypted
 backup restored onto the SAME iPhone also brings back no data and no at-rest marker, and the phone
 enrols as a new device, its history from the account's other devices, from peers or from a
 `.canari` backup. Charter principle 1 (no second holder) wins over principle 2 for that restore;

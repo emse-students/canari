@@ -52,6 +52,26 @@ export class PostBodyOrMediaConstraint implements ValidatorConstraintInterface {
   }
 }
 
+/**
+ * A comment says something: a non-blank text or its picture. Both fields are optional on the wire
+ * (a picture-only comment is legitimate), so the DTO decides that one of them is there: a body with
+ * neither (a misnamed field) was stored as an empty comment and pushed "Nouveau commentaire" to the
+ * post's author. The refusal is a class-validator constraint (`commentTextOrMedia`); on the wire the
+ * default ValidationPipe sends only a 400 with its message array, so that name is the type for the
+ * spec and the validator, and no client branches on it.
+ */
+@ValidatorConstraint({ name: 'commentTextOrMedia', async: false })
+export class CommentTextOrMediaConstraint implements ValidatorConstraintInterface {
+  validate(text: unknown, args: ValidationArguments): boolean {
+    if (typeof text === 'string' && text.trim().length > 0) return true;
+    return (args.object as { media?: unknown }).media != null;
+  }
+
+  defaultMessage(): string {
+    return 'a comment needs text or media';
+  }
+}
+
 /** A ThumbHash is at most a few dozen bytes; its base64 never approaches this. */
 export const MEDIA_PLACEHOLDER_MAX_LENGTH = 128;
 
@@ -548,8 +568,10 @@ export class AddCommentDto {
   @IsOptional()
   userId?: string;
 
+  /** Checked when present, and ALSO when the comment has no media: text-or-media is the contract. */
+  @ValidateIf((o: AddCommentDto) => o.text != null || o.media == null)
   @IsString()
-  @IsOptional()
+  @Validate(CommentTextOrMediaConstraint)
   @MaxLength(COMMENT_MAX_LENGTH)
   text?: string;
 
@@ -588,6 +610,8 @@ export class AddReactionDto {
 export class EditCommentDto {
   @IsString()
   @IsNotEmpty()
+  // A whitespace-only edit would blank the comment: the same refusal as an empty one.
+  @Matches(/\S/, { message: 'text should not be blank' })
   @MaxLength(COMMENT_MAX_LENGTH)
   text: string;
 }

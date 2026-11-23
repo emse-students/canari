@@ -928,7 +928,7 @@ BDE's id, name, slug or logo, and no member read lists the colours against the a
 the EDIT_PROFILE holders of the BDE read its own; a BDE member who is no steward still learns it
 from its BDE's masked rows in the pending queue, as that queue already tells them whose rows they
 are). Not an owner answer: the lead's reversible call,
-recorded in [the decisions of 2026-11-14](../../backlog.d/owner-decisions-of-2026-11-14.md#the-colour-of-neutral-campus-events-3539).
+recorded in [the decisions of 2026-11-14](../../decisions/owner-decisions-of-2026-11-14.md#the-colour-of-neutral-campus-events-3539).
 
 ### Every surface that names an organiser, checked
 

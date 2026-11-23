@@ -1573,6 +1573,68 @@ at entry can be false after the store read, and neither may be answered by the n
   inserted, the rows are dropped with their frames at WARN, and the write reports success so the
   hold it refused is released rather than retried for ever.
 
+**And a removal is ordered after the writes that already asked (follow-up of #3988).** The map check
+in `writeBatchRows` is followed by awaits (the inserts, `saveConversation`), and `purgeConversation`
+cleared the STORE first and took the row out of the map last: a write that asked the map before the
+removal inserted after the clear, and the rows of a removed conversation came back at the next
+restore. Closed by construction, no clock (`conversationRowWrites.ts`): the writer asks the map and
+registers its write in ONE synchronous step, releasing it in a `finally`; `purgeConversation` and
+`purgeLocalConversationRecord` take the conversation out of the map FIRST, wait for the writes
+registered under its key, and only then clear the store. A write that asked before the removal lands
+before the clear, which takes it; one that asks after finds no conversation. (The DM merge moves its
+loser's rows to the winner's key and re-homes a kept write by `homeOfWrite`; the restore prune and
+the landing preview touch only the map.)
+
+**Every row writer keyed by a conversation, and why it cannot land after a purge (review of #3992):**
+
+| Writer | Ordering |
+| --- | --- |
+| `writeBatchRows` (live batch, stored-preview upgrade, kept write retried by a hold) | asks the map and registers in one step |
+| the own-send pair `saveMessageWithOutboxEntry` (`addMessageToChatOnce`) | asks the map and registers in one step; out of the map, refused as a `ConversationGoneError` at WARN - neither row nor entry is written, and both send paths STOP on that type (no `enqueueOutboxMessage`) and tell the member (`chat_send_conversation_gone`, `chat_media_conversation_gone`). Never a `MessagePairWriteError`, whose callers hand the entry to the queue to write its own row |
+| the outbox's write-back of a queued text's missing row (`outbox.ts`) | re-asks the map after its store read and registers in one step |
+| the outbox's whole-row write of a SENT message whose compare-and-set found no row (`persistSent`, re-keyed mid-send) | an insert: after its awaits it asks the map for the group's conversation and registers in one step; none holds it, the row is not written (one WARN) |
+| edits, deletions, pins, reactions, pending-mutation settlement, `updateMessage` (`persistLocalMutation`, `reactionFrame`, `systemMessageHandler`, `pendingMutationStore`, `history`, `outbox` marks) | `mergeMessages` / `updateMessage` are compare-and-set onto a row that STANDS: after the clear there is none, and nothing is inserted |
+| `saveConversation` (`useConversations`) | reads the map and writes nothing for a key not in it |
+| the push-preview cache (`fcmCache.ts`) | not a stale writer: it writes the conversation's own placeholder row with the preview - an ARRIVAL re-creating a conversation, by design |
+| the native outbox mirror adoption (`outboxMirror.ts`) | adopts only for a conversation the STORE holds, read just before; a removal in that gap is not ordered (it is keyed by group id, not the map key) - see the limits below |
+| a salon's page (`useConversations` `channel` page write) | salons are removed by the community paths (`useChannelWorkspaces`, `ChatBackgroundService`), not by these two purges - see the limits below |
+| the DM merge (`conversations.ts`), the legacy migration (`migration.ts`) | move or seed rows at boot, before any purge can run |
+
+On SQLite (the phone apps) a message row also carries a FOREIGN KEY onto its conversation row, so an
+insert after `deleteConversation` fails at the store; IndexedDB has no such key, which is why the
+ordering above is what holds there.
+
+**Known limits, stated rather than hidden:**
+
+- **A conversation re-created under the same key during the purge's wait** (a Welcome for the same
+  group landing in the milliseconds a write is in flight) has its new writes waited for too, and the
+  purge's clear then takes them. Accepted for now because the window is one in-flight write long and
+  needs a re-creation of the very conversation being removed; it is not proven harmless. It would be
+  closed by giving
+  the purge the row OBJECT it removed and, after the wait, clearing only if the map does not hold a
+  newer one under the key - which needs the clear to tell old rows from new (a per-conversation epoch
+  on the stored row).
+- **What a purge leaves in the outbox depends on who removed the conversation.** The member's own
+  delete or leave settles the queue BEFORE its server step: `drainOutboxForExit` sends what still can
+  go and withdraws the rest, and the owed exit it recorded first makes every later enqueue for the
+  group refuse itself and every flush withdraw the group's rows - so an entry the purge's wait let
+  land is withdrawn, never sent. The other purges (a deletion by this account on another device, a
+  never-admitted ask that ended, a phantom the server confirms absent, the local delete of a
+  `deletedRemotely` row) do not touch the outbox; an entry they leave meets the group's own answer:
+  its POST refused as deleted (`group-deleted`), or - the tree dropped - the unsendable branch, which
+  HOLDS it and asks for a re-add on every flush and every start, for ever. `requestReAdd` does not
+  stop for a purged row (its `removed` guard reads the row, and the row is gone), and with the
+  account's seat still held its external join would build the thrown-away conversation back. An
+  absence from the map is NOT proof of removal and nothing retires on it: a DM re-keyed onto a new
+  group by a Welcome (`setupMessageHandler`, `moveDirectConversationRows`) also leaves its old group
+  held by no conversation, and its queued entries are not moved with its rows - retiring them would
+  lose a live DM's unsent message (review of #3992). Both halves - entries following a re-key, and a
+  removal withdrawing its group's entries on its own evidence - are
+  [p2-outbox-entries-follow-their-conversation](../../backlog.d/p2-outbox-entries-follow-their-conversation.md).
+- **The mirror adoption and a salon's page** are not registered: neither runs through these purges'
+  key (group id vs map key; salons have their own removal), and closing them means registering their
+  removers too.
+
 The live path's re-entry cannot loop: both branches it lands in return, and nothing is awaited
 between the read that sent it back and the re-entry's own.
 
@@ -1587,7 +1649,9 @@ arrival, then an own send, lands: both are kept and counted. `useMessaging.shown
 shows a preview of the same id, then removes the conversation, during the store read, on both paths:
 one message, counted once, upgraded on screen and on disk (with a pending deletion, edit or reaction),
 nothing announced; nothing stored into a removed conversation, a kept write retried after the removal
-included. `useMessaging.editRereads.svelte.test.ts` lands a message and moves the reader
+included, and a purge racing a write held after its map check (out of the map at once, the store
+cleared only after the insert, nothing left; the registry itself in `conversationRowWrites.test.ts`).
+`useMessaging.editRereads.svelte.test.ts` lands a message and moves the reader
 during an edit's send. Each fails on the entry-copy code.
 
 ## Outbox (outbound delivery)
@@ -2236,7 +2300,9 @@ refusal, its sentence (`chat_send_session_establishing`) and `MessagingContext.v
 - **At the tap**: the staged files are claimed before the first await (a second Send finds nothing),
   each file is READ, then its `mediaId: ''` placeholder and its media entry (`fileBytes` included) are
   written in ONE write (`saveMessageWithOutboxEntry`, `alreadyDurable`), as a text's echo and entry
-  are. A failed pair write lets the queue write its own row (`MessagePairWriteError`); a refused
+  are. A failed pair write lets the queue write its own row (`MessagePairWriteError`); a conversation
+  that left the map before the write is refused as `ConversationGoneError` - nothing written, nothing
+  queued, the member told (review of #3992); a refused
   enqueue (`OutboxEnqueueError`) withdraws the placeholder and re-stages the file; a
   `MessageWrittenError` (the row is on disk, the live queue refused it) keeps both - the next flush
   sends it. The one refusal left is the text path's: a `removed` row takes nothing new.
@@ -7478,7 +7544,7 @@ a video in a conversation with both, rotate a video, then move on.
 
 ## Mes notes - the conversation with oneself (2026-11-22)
 
-**What the owner decided** ([decisions](../../backlog.d/owner-decisions-of-2026-11-22.md), charter
+**What the owner decided** ([decisions](../../decisions/owner-decisions-of-2026-11-22.md), charter
 principles 1 then 2): the personal notepad moves into `/chat` as a conversation whose only members
 are the account's own devices, end-to-end like any other. The server side is
 [chat-delivery](../../services/chat-delivery.md#mes-notes---the-self-conversation).

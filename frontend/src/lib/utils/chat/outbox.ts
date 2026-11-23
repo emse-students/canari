@@ -137,6 +137,7 @@ import { FollowerTabSendError } from '$lib/mls-client/commitSubmission';
 import { insertMessageOrdered, replaceMessageOrdered } from './messageOrder';
 import { mapStoredMessagesToChatMessages } from './messageUtils';
 import { noteServerTime } from './serverClock';
+import { beginConversationRowWrite } from './conversationRowWrites';
 
 /** How the queue left one message for now - see {@link OutboxController.awaitSettled}. */
 export type OutboxSettlement = 'sent' | 'failed' | 'pending';
@@ -1801,6 +1802,17 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     );
     const proofs = { ...(await storedProofs(messageId)), ...own_ };
     const reactions = reactionSigned ? reactionSigned(m.reactions) : m.reactions;
+    // ASKED AND REGISTERED IN ONE STEP, after the awaits above (`conversationRowWrites.ts`, review
+    // of #3992): a whole-row write is an INSERT where no row stands, and a removal of the group's
+    // conversation since then must not get the row back after its clear.
+    const holderKey = findConversationKeyByGroupId(conversations, liveConvId);
+    if (!holderKey) {
+      console.warn(
+        `[OUTBOX] ${messageId.slice(0, 8)}… sent, its row NOT written under ${liveConvId.slice(0, 8)}…: no conversation in the map holds that group any more - nothing written into a removed conversation`
+      );
+      return;
+    }
+    const releaseRowWrite = beginConversationRowWrite(holderKey);
     await storage
       .saveMessage(
         {
@@ -1821,7 +1833,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         },
         deviceKey()
       )
-      .catch((e) => log(`[OUTBOX] Persist sent ${messageId.slice(0, 8)}… failed: ${String(e)}`));
+      .catch((e) => log(`[OUTBOX] Persist sent ${messageId.slice(0, 8)}… failed: ${String(e)}`))
+      .finally(releaseRowWrite);
   }
 
   /**
@@ -2748,6 +2761,15 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         );
         return;
       }
+      // ASKED AND REGISTERED IN ONE STEP (`conversationRowWrites.ts`): the map was read before the
+      // store's await above, and a removal since then must not get this row back after its clear.
+      if (!conversations.has(holder[0])) {
+        console.warn(
+          `[OUTBOX] ${entry.id.slice(0, 8)}… row not written back: its conversation left the map meanwhile - nothing written into a removed conversation`
+        );
+        return;
+      }
+      const releaseRowWrite = beginConversationRowWrite(holder[0]);
       try {
         await storage.saveMessagesIfAbsent([rebuilt], deviceKey());
       } catch (e) {
@@ -2755,6 +2777,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           `[OUTBOX] ${entry.id.slice(0, 8)}… is queued with no stored message, and its row could not be written back: ${String(e)}`
         );
         return;
+      } finally {
+        releaseRowWrite();
       }
       console.error(
         `[OUTBOX] ${entry.id.slice(0, 8)}… was queued with no stored message (left alone by an earlier writer) - its row is written back from the entry`

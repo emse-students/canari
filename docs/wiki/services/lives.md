@@ -84,6 +84,8 @@ live-list routes, so a live started while the switches were open is still ended 
 they close. What must be true before lives open in production, and in what order:
 [live-production](../frontend/modules/live-production.md).
 
+**The relay log (2026-11-23).** media-service asks `GET /api/internal/lives/mode` on every live segment, so social-service logs the answer only when it differs from the last one it gave (the first answer of a process counts), never per request.
+
 ## The numbers, and where each is the ONE copy
 
 | Number | Value | Lives in | Clients read it from |
@@ -602,7 +604,7 @@ broadcaster and the viewers alike, with no asymmetry between them.
 
 **The decision, and the rule it reverses.** The owner decided on 2026-11-07 that "X a rejoint" lines are
 VISIBLE TO EVERY VIEWER, rate-limited (decision 12 of the owner's list of that day,
-`docs/wiki/backlog.d/owner-decisions-of-2026-11-07.md`), answering knowing it shows everyone who
+`docs/wiki/decisions/owner-decisions-of-2026-11-07.md`), answering knowing it shows everyone who
 joined. It deliberately reverses "a count, never an identity" for ARRIVALS ([above](#the-viewer-count-2026-10-21)),
 and the reasoning of [exact, not rounded](#exact-not-rounded---confirmed-by-the-owner-2026-10-21) ("an
 arrival is otherwise invisible") no longer holds: an arrival is now the one thing shown. What stays:

@@ -1680,7 +1680,7 @@ departures before it are known only through the departure record above.
   `returning` - and then appears under that member's name. The roster verdict and the departure-only
   verdict before it had the same hole. What closes it is **cross-signing of a user's devices**,
   planned as **step 8 of the privacy chantier, after the sealed community state, designed in the
-  wiki first** (owner, 2026-11-14; [decisions](../backlog.d/owner-decisions-of-2026-11-14.md));
+  wiki first** (owner, 2026-11-14; [decisions](../decisions/owner-decisions-of-2026-11-14.md));
   #3519 ships without it, and until then a `returning` entry writes nothing.
 
 **Designed, not built: a member's signed word for a device that was not there.** A member device
@@ -3474,7 +3474,7 @@ hand-over (#3321, 2026-11-14) a VISIBLE tab with a queued message takes the lead
 browser profile work in ordinary use; what remains is two accounts VISIBLE side by side, where only the
 leading one sends. *"Pour le moment, rien à faire, tout marche bien"* - a worker independent of the tabs
 may come later; a lock per account (`canari-tab-leader.<userId>`, one socket per signed-in account) is
-not planned ([decisions](../backlog.d/owner-decisions-of-2026-11-19.md)).
+not planned ([decisions](../decisions/owner-decisions-of-2026-11-19.md)).
 **And the second review of #3371, same day - order, the leader's own gate, the promotion window:**
 
 - **A follower's requests run in the order it made them.** A record was keyed by a random UUID and

@@ -1729,7 +1729,7 @@ AND copies rows into it ships TWO files: the `CREATE TABLE` (plain) and the copy
 | drop of `form_reminders` | after WP-4 has served one stable | **yes** (a `DROP`) | destructive; it must also `DROP FUNCTION canari_form_reminder_to_opening()` and unmap `FormReminder` |
 
 **Approval.** Each held file is approved by the owner or by the lead under the 2026-11-03 delegation
-([the conditions](backlog.d/owner-decisions-of-2026-11-03-evening.md)). **A held migration on `main`
+([the conditions](decisions/owner-decisions-of-2026-11-03-evening.md)). **A held migration on `main`
 blocks EVERY release - pre-release and stable - until it is approved or reverted** (gate 6,
 [cicd](cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01)), and `apply_migrations` refuses
 an unapproved held file on dev exactly as on production. So the file CANNOT run on dev before its
