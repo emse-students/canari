@@ -377,6 +377,22 @@ pub struct ShareTarget {
     pub id: String,
     pub label: String,
     pub link: String,
+    /// WHICH picture to draw (an id, never bytes). Without this field serde dropped the page's
+    /// `avatar` before the native side saw it, so no shortcut picture ever travelled this way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar: Option<ShareTargetAvatar>,
+}
+
+/// The picture of a [`ShareTarget`]: `kind` is `user` (a person's photo) or `media` (a public
+/// media object), `id` names it; `has_photo` is true only when the page KNOWS the user has a photo,
+/// so the native side drops its remembered "no photo" (`avatar-presence`, `AvatarAbsence.kt`).
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareTargetAvatar {
+    pub kind: String,
+    pub id: String,
+    #[serde(default)]
+    pub has_photo: bool,
 }
 
 /// What a publish left: the suggestions the platform lists afterwards (`present`), and the stale
@@ -472,6 +488,20 @@ pub(crate) async fn open_app_settings<R: Runtime>(app: AppHandle<R>) -> crate::R
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn share_target_avatar_survives_into_the_payload_sent_to_mobile() {
+        let page = r#"[{"id":"c:a","label":"A","link":"l","avatar":{"kind":"user","id":"u1","hasPhoto":true}},
+            {"id":"c:b","label":"B","link":"l","avatar":{"kind":"media","id":"m1"}},
+            {"id":"c:c","label":"C","link":"l"}]"#;
+        let targets: Vec<super::ShareTarget> = serde_json::from_str(page).unwrap();
+        let sent = serde_json::to_value(&targets).unwrap();
+        assert_eq!(sent[0]["avatar"]["kind"], "user");
+        assert_eq!(sent[0]["avatar"]["id"], "u1");
+        assert_eq!(sent[0]["avatar"]["hasPhoto"], true);
+        assert_eq!(sent[1]["avatar"]["hasPhoto"], false);
+        assert!(sent[2].get("avatar").is_none());
+    }
+
     use super::{
         renamed_to_extension_of, valid_document_uri, valid_mime, valid_name, valid_session,
     };

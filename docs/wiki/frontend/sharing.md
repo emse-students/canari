@@ -246,6 +246,32 @@ preselection, never a destination by itself.
   sheet), which the user accepted knowingly; the privacy policy (section 7) and the register (C22)
   say so.
 
+#### The picture of a shortcut: absence yields to presence
+
+A remembered 404 (`avatar_<id>.absent`, 24 h) answers only "did the server say none when I asked".
+Mi 9T, `1.8.0-alpha.1`: three contacts had photos (`avatar-presence` listed them) and their shortcuts
+kept initials because the 404 predated the upload. The fact now invalidates the marker: `selectShareTargets`
+sets `avatar.hasPhoto: true` for a DM peer when the session already knows the photo exists
+(`knownAvatarPresence`, no request at a departure), `hasPhoto` is part of the publish key so it is
+sent even when nothing else changed, and `ShareTargets.publish` calls `Source.forgetAbsence` before
+reading the cache (`AvatarAbsence.yieldToPresence`). Not knowing is never a claim: the clock stays
+as the fallback. Tests: `AvatarAbsenceTest.kt`, `shareTargets.test.ts`.
+
+**The deeper cause (found in review of #3982): the Rust command dropped the picture.** `publish_share_targets`
+deserializes into the plugin's `ShareTarget`, which had only `id`, `label` and `link`, so serde discarded
+`avatar` before Kotlin was called: NO share-target picture, user or media, ever arrived through this
+path since #3908 (2026-11-20, the commit that added the picture to the page and to Kotlin but not to the Rust struct, which dates from #2292), and every shortcut was initials whatever the cache held. That alone explains
+the Mi 9T reading, media icons included; the absent marker was a second, hidden defect behind it.
+`ShareTarget` now carries `avatar` (`kind`, `id`, `hasPhoto`, camelCase), pinned by a serde test in
+`commands.rs`, and Kotlin logs the counts per publish (`publishShareTargets: N user avatar(s), N media
+avatar(s), N known to have a photo`) so a reading can prove the field arrived.
+
+**A bounded stale-true loop.** `known` presence lives for the session: a photo removed afterwards keeps
+`hasPhoto` true, so each publish drops the marker and costs one extra avatar request for that user; the
+404 re-creates the marker, and the next publish drops it again. One request per publish for that user,
+until the app restarts. No test covers the re-creation of the marker by the 404 (it is in the FCM
+service's fetch path, which a JVM test cannot reach).
+
 **Known limits.** Android 9 (API 28, the app's minimum) does not list them: that needs
 `androidx.sharetarget` and its chooser service, not shipped for one API level. A shortcut with a
 picture NOT yet cached shows the initials until the fetch lands (seconds; the process may be frozen
