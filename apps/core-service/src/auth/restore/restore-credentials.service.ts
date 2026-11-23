@@ -90,8 +90,9 @@ export function loggableOrigin(origin: string): string {
 
 /**
  * A digest of the origins an estate accepts - ORDER-FREE, so the same set always reads the same.
- * The client keeps it beside a `RESTORE_ORIGIN_NOT_ALLOWED` it was given: the refusal is a verdict
- * on the PAIR (this build's signer, these origins), and a changed set is the event that lifts it.
+ * Builds before `1.8.0` keep it beside a `RESTORE_ORIGIN_NOT_ALLOWED` they were given (the refusal
+ * was a verdict on the PAIR: their signer, these origins); `1.8.0` compares the origins themselves.
+ * Kept for those builds only (docs/wiki/legacy-compatibility.md).
  * Not a secret: the same fingerprints are published in `/.well-known/assetlinks.json`.
  */
 export function originsDigest(origins: readonly string[]): string {
@@ -200,6 +201,15 @@ export class RestoreCredentialsService implements OnModuleInit, OnModuleDestroy 
   /** Whether this estate can verify a restore key at all (a fingerprint and an RP id are configured). */
   get available(): boolean {
     return this.config.available;
+  }
+
+  /**
+   * The origins this estate accepts now. Not a secret - the fingerprints they derive from are
+   * published in `/.well-known/assetlinks.json` - and handed to the client so it can tell, BEFORE it
+   * mints a key, whether its own signing certificate is one of them.
+   */
+  allowedOrigins(): string[] {
+    return [...this.requireConfig().origins];
   }
 
   /** The {@link originsDigest} of the origins this estate accepts now. */

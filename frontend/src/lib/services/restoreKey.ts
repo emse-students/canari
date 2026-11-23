@@ -131,41 +131,44 @@ export function markRestoreAttempted(): void {
 }
 
 /**
- * Per install: the PAIR a `RESTORE_ORIGIN_NOT_ALLOWED` was a verdict on - this build (its
- * version, standing for its signing certificate, which only an uninstall can change, and an
- * uninstall clears this) and the estate's accepted origins (`originsDigest`, the digest the
- * registration options carry of `ANDROID_APP_LINK_SHA256`). While BOTH still match, a start does
- * not mint a key only to have it refused again; a new version OR a changed configuration lifts it
- * at the next start, so a misconfiguration fixed on the server heals without a release.
+ * The WebAuthn origin(s) of the certificate that signs THIS APK, as Credential Manager writes them
+ * into a key's `clientDataJSON` (`android:apk-key-hash:...`). A FACT of the install - only an
+ * uninstall changes the signer - so it is read once per process and kept. The registration options
+ * carry the origins the estate accepts; comparing the two tells, before any key is minted, whether
+ * the estate would refuse it (docs/wiki/account-restore.md). A rejected read is not cached: the next
+ * start asks again.
  */
-export const RESTORE_ORIGIN_REFUSED_KEY = 'canari_restore_origin_refused';
+let signingOriginsRead: Promise<string[]> | null = null;
 
-/** What a `RESTORE_ORIGIN_NOT_ALLOWED` was given against (see the key above). */
-export interface RestoreOriginRefusal {
-  version: string;
-  originsDigest: string;
-}
-
-/** The recorded {@link RestoreOriginRefusal}, or null when there is none (or it is unreadable). */
-export function restoreOriginRefusal(): RestoreOriginRefusal | null {
-  const raw = readStorage(RESTORE_ORIGIN_REFUSED_KEY);
-  if (raw === null) return null;
-  try {
-    const parsed = JSON.parse(raw) as Partial<RestoreOriginRefusal>;
-    if (typeof parsed.version === 'string' && typeof parsed.originsDigest === 'string') {
-      return { version: parsed.version, originsDigest: parsed.originsDigest };
+/** This install's signing origin(s), read once per process (see above). */
+export function restoreSigningOrigins(): Promise<string[]> {
+  signingOriginsRead ??= invoke<{ origins: string[] }>(restoreCommand('signingOrigins')).then(
+    ({ origins }) => origins,
+    (e: unknown) => {
+      signingOriginsRead = null;
+      throw e;
     }
-  } catch {
-    // An unreadable record lifts nothing it cannot name: the next refusal rewrites it.
-  }
-  rwarn(`unreadable origin refusal record dropped: ${raw.slice(0, 80)}`);
-  writeStorage(RESTORE_ORIGIN_REFUSED_KEY, null);
-  return null;
+  );
+  return signingOriginsRead;
 }
 
-/** Records the pair a `RESTORE_ORIGIN_NOT_ALLOWED` was given against (see the key above). */
-export function recordRestoreOriginRefused(refusal: RestoreOriginRefusal): void {
-  writeStorage(RESTORE_ORIGIN_REFUSED_KEY, JSON.stringify(refusal));
+/** Test seam: forgets the cached signing origins. */
+export function resetRestoreSigningOriginsForTests(): void {
+  signingOriginsRead = null;
+}
+
+/**
+ * The per-install record of a `RESTORE_ORIGIN_NOT_ALLOWED` verdict that builds before `1.8.0` kept
+ * (`canari_restore_origin_refused`). This build reads the signer as a fact instead, so the record is
+ * dropped at the first registration check (docs/wiki/legacy-compatibility.md).
+ */
+export const LEGACY_RESTORE_ORIGIN_REFUSED_KEY = 'canari_restore_origin_refused';
+
+/** Drops {@link LEGACY_RESTORE_ORIGIN_REFUSED_KEY} if an older build left it. */
+export function dropLegacyOriginRefusal(): void {
+  if (readStorage(LEGACY_RESTORE_ORIGIN_REFUSED_KEY) === null) return;
+  writeStorage(LEGACY_RESTORE_ORIGIN_REFUSED_KEY, null);
+  rlog('legacy origin refusal record dropped - the signer is read as a fact now');
 }
 
 /** Creates (or replaces) this install's key from the server's registration options. */
