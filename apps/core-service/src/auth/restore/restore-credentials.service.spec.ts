@@ -546,6 +546,16 @@ describe('RestoreCredentialsService', () => {
     expect(originsDigest([ORIGIN])).toMatch(/^[0-9a-f]{16}$/);
   });
 
+  it('hands out exactly the origin the verifier accepts, so a client can compare its own', () => {
+    // The client mints no key unless its signing origin is in this list: a list that named the
+    // certificate in another form than the verifier's would silence every registration.
+    const { service } = makeStore();
+    expect(service.allowedOrigins()).toEqual([ORIGIN]);
+    // A copy: a caller cannot widen what the verifier accepts.
+    service.allowedOrigins().push('android:apk-key-hash:forged');
+    expect(service.allowedOrigins()).toEqual([ORIGIN]);
+  });
+
   it('logs a client-supplied origin quoted, escaped and bounded', () => {
     expect(loggableOrigin('a\nforged [RESTORE] line')).toBe('"a\\nforged [RESTORE] line"');
     const long = loggableOrigin('x'.repeat(5000));

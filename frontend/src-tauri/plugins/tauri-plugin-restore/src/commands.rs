@@ -24,6 +24,19 @@ pub struct FoundRestoreCredential {
     pub response_json: Option<String>,
 }
 
+/// What `signing_origins` answers: the WebAuthn origin(s) Credential Manager names this APK by
+/// (`android:apk-key-hash:<base64url SHA-256 of the signing certificate>`), so the frontend knows,
+/// before it mints a key, whether the estate's accepted origins include this build.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SigningOrigins {
+    pub origins: Vec<String>,
+    /// The package that installed this APK (`com.android.vending` for Play), or `None` for `adb`
+    /// / `pm install`: only a non-Play install may skip registration on the origins alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installer: Option<String>,
+}
+
 /// Creates (or replaces) this install's restore key from the server's registration options.
 #[command]
 pub(crate) async fn create_restore_credential<R: Runtime>(
@@ -72,6 +85,22 @@ pub(crate) async fn clear_restore_credential<R: Runtime>(app: AppHandle<R>) -> c
     }
 }
 
+/// Reads the origin(s) of the certificate signing this APK (see [`SigningOrigins`]).
+#[command]
+pub(crate) async fn signing_origins<R: Runtime>(
+    app: AppHandle<R>,
+) -> crate::Result<SigningOrigins> {
+    #[cfg(target_os = "android")]
+    {
+        app.restore().signing_origins()
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Err(crate::Error::Unsupported)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -98,6 +127,18 @@ mod tests {
         assert!(v.absent);
         assert_eq!(v.response_json, None);
         assert_eq!(serde_json::to_string(&v).unwrap(), r#"{"absent":true}"#);
+    }
+
+    #[test]
+    fn signing_origins_reads_the_kotlin_shape() {
+        let v: SigningOrigins =
+            serde_json::from_str(r#"{"origins":["android:apk-key-hash:abc"]}"#).unwrap();
+        assert_eq!(v.origins, vec!["android:apk-key-hash:abc".to_string()]);
+        // A sideload: Kotlin puts no `installer` key at all.
+        assert_eq!(v.installer, None);
+        let v: SigningOrigins =
+            serde_json::from_str(r#"{"origins":[],"installer":"com.android.vending"}"#).unwrap();
+        assert_eq!(v.installer.as_deref(), Some("com.android.vending"));
     }
 
     #[test]
