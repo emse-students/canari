@@ -3796,9 +3796,23 @@ notification, the message read on arrival - announced zero times and marked read
 reads of `selectedContact` (send, retry, reaction, edit, delete, pin) are the reader's own gesture on
 the screen they started it from and stay as they are.
 
+**And it is ONE verdict, taken after the row's writes (review of #3985).** The single-message path
+(`addMessageToChatOnce`) took the read on arrival before writing the row (`saveMessageWithOutboxEntry`
+or `writeOrKeep`, then `settlePendingFor`), while the tone and `notifyInbound` asked `canSeeArrival`
+again after those awaits. A reader who left A during the write (the home gesture, Back out of a salon)
+got the message counted read on arrival - no unread, and for a salon the read signal that retires the
+banners on their other devices - AND a banner on this device. Now the message is rendered first with
+the count it found, and `arrivalVerdictNow` (`arrivalRuntime.ts`: `reading` and `seen`, both on
+`ctx.selectedNow()` and the app-in-front fact, asked in one synchronous step) is taken once, after the
+last await, and handed to all four effects: the unread count, the read signal, the tone and the
+notification decision (`notifyInbound`'s `arrivalSeen`, never re-asked inside, the salon-level
+re-entry included). The batch path already had no await between its verdict and its notify; it takes
+the same verdict object. The poster's last-step re-ask (`stillOwed` / `readerNowSees`) stays: it
+guards the post's own awaits, and can only stand a post down. No timer.
+
 Tests: `appForeground.test.ts`, `appForeground.contract.test.ts`, `arrivalRuntime.ios.test.ts`,
 `useMessaging.reactionNotification.svelte.test.ts`, `reactionNotification.test.ts`,
-`useMessaging.latePost.svelte.test.ts`, `useNotifications.iosAnnounced.svelte.test.ts`. Owed on the iPhone:
+`useMessaging.latePost.svelte.test.ts` (the write held open while the reader leaves, and its control), `useNotifications.iosAnnounced.svelte.test.ts`. Owed on the iPhone:
 [reading](../backlog.d/reading-owed-an-inactive-iphone-announces-what-it-acks.md).
 
 #### Background MLS decrypt ladder

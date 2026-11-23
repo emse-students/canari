@@ -65,7 +65,11 @@ import {
 } from '$lib/utils/chat/messageOrder';
 import { isOwnMessage } from '$lib/utils/chat/messageUtils';
 import { countingReadPoint, isUnreadForUser } from '$lib/utils/chat/readState';
-import { canSeeArrivalNow, isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
+import {
+  arrivalVerdictNow,
+  canSeeArrivalNow,
+  type ArrivalVerdict,
+} from '$lib/utils/chat/arrivalRuntime';
 import { ATTENTION_WINDOW_MS, windowAttention } from '$lib/utils/windowAttention.svelte';
 import {
   MAX_DISTINCT_MESSAGE_REACTIONS,
@@ -1346,11 +1350,12 @@ export function useMessaging() {
    * backgrounded Tauri app reports `visible`/`hasFocus` exactly as a foregrounded one does.
    */
   function canSeeArrival(ctx: MessagingContext, conversationKey: string): boolean {
-    // THE LIVE SELECTION, NEVER THE SNAPSHOT (final review of #3985): every inbound caller - the
-    // notification (`notifyInbound`), the reaction trigger and the tone - asks this AFTER the row's
-    // storage awaits, and `ctx.selectedContact` is the selection from before them. A burst landing in
-    // A while the reader moved to C was judged "A open": a tone, no notification, read on arrival -
-    // and ACKed, so no push: announced zero times, marked read unseen.
+    // THE LIVE SELECTION, NEVER THE SNAPSHOT (final review of #3985): every inbound caller asks this
+    // AFTER its storage awaits - the reaction trigger here, the message paths through ONE verdict
+    // (`arrivalVerdictNow`, the same predicate) handed to their read, tone and notification - and
+    // `ctx.selectedContact` is the selection from before them. A burst landing in A while the reader
+    // moved to C was judged "A open": a tone, no notification, read on arrival - and ACKed, so no
+    // push: announced zero times, marked read unseen.
     return canSeeArrivalNow(conversationKey, ctx.selectedNow());
   }
 
@@ -1414,6 +1419,14 @@ export function useMessaging() {
     announced: readonly AnnouncedMessage[],
     /** Whether the open proved the banner's author - see `NativeMessageNotification.authorProven`. */
     authorProven: boolean,
+    /**
+     * Whether the reader can see this arrival land - the caller's ONE verdict (`arrivalVerdictNow`),
+     * the same answer its read on arrival and its tone took. Never re-asked here: a reader who backed
+     * out between the caller's verdict and this decision would otherwise get a message counted read on
+     * arrival AND a banner for it. The poster's own last-step re-ask (`stillOwed`) still guards the
+     * awaits between this decision and the post.
+     */
+    arrivalSeen: boolean,
     /** True on the re-entry that follows the read of a salon's level - see the salon branch below. */
     salonLevelRead = false
   ): void {
@@ -1488,6 +1501,7 @@ export function useMessaging() {
             covers,
             announced,
             authorProven,
+            arrivalSeen,
             true
           );
         });
@@ -1530,11 +1544,12 @@ export function useMessaging() {
     // `hasFocus: true` - byte for byte its foreground answer - so BOTH halves of the check below
     // would return early and this fix would have been inert. `isAppInForeground` reads the fact the
     // Android activity states for itself; see `appForeground.ts` for the measurement.
-    // ONE PREDICATE FOR BOTH SIGNALS - see `canSeeArrival`. This used to ask only whether the app
+    // ONE PREDICATE FOR BOTH SIGNALS - `canSeeArrival`'s, taken ONCE by the caller (`arrivalSeen`)
+    // with its read on arrival and its tone. This used to ask only whether the app
     // was in front of the reader, which answered the wrong question: on a narrow screen an app in
     // the foreground still shows exactly one conversation, so a message for any OTHER conversation
     // was visible nowhere and notified nobody.
-    if (canSeeArrival(ctx, conversationKey)) return;
+    if (arrivalSeen) return;
     // A NOTIFICATION IS ONLY "EXPECTED" IF ONE CAN BE RAISED AT ALL. The line below exists to make
     // "no notification" distinguishable from "never asked for one", and on a session the browser has
     // permanently refused it did the opposite: it announced an ask, per message, for something that
@@ -2310,32 +2325,48 @@ export function useMessaging() {
       Object.assign(newMsg, settled.message);
     }
 
-    // READ ON ARRIVAL ONLY WHERE THE READER IS READING. The bare selection stays true after they walk
-    // to another route or put the window away, which counted a message nobody saw as read.
-    // LIVE: read after the storage awaits above (see `canSeeArrival`).
-    const isConversationOpen = isReadingConversationNow(normalized, ctx.selectedNow());
-    // The same question the batch path asks, which until 2026-08-30 it did not: this one forgot
-    // the watermark AND counted system messages, so a replayed frame taking the single path could
-    // still raise a badge for something already read, and a "X joined" notice raised one for
-    // something nobody reads at all.
-    const mineNow = countingReadPoint(convo, ctx.userId.toLowerCase());
-    const shouldMarkUnread =
-      !isConversationOpen &&
-      !isSalonMuted(normalized) &&
-      isUnreadForUser(newMsg, mineNow.stamped, mineNow.server);
-    const nextUnreadCount = shouldMarkUnread
-      ? (convo.unreadCount ?? 0) + 1
-      : isConversationOpen
-        ? 0
-        : (convo.unreadCount ?? 0);
-
+    // SHOWN NOW, COUNTED LATER. The unread count is the arrival verdict's, and the verdict is taken
+    // after the row's writes (`takeArrivalVerdict`, below): rendered here, the message keeps the
+    // count it found until then.
     ctx.conversations.set(normalized, {
       ...convo,
-      unreadCount: nextUnreadCount,
       messages: insertMessageOrdered(convo.messages, newMsg),
       lastMessageAt: advanceLastMessageAt(convo.lastMessageAt, [newMsg]),
     });
     console.log(`[ADD_MSG] ✓ Message added: id=${newMsg.id} ${clockGapNote(newMsg)}`);
+
+    // ONE ARRIVAL VERDICT, AFTER THE LAST AWAIT BEFORE THE EFFECTS (review of #3985). It was taken
+    // here, before the row's writes, while the tone and the notification asked again after them: a
+    // reader who backed out of A during the write got the message counted read on arrival (no
+    // unread, and for a salon the read signal that clears the banners on their other devices) AND a
+    // banner on this one. Taken once, after the writes, it is handed to all four effects - the read
+    // on arrival, the read signal, the tone and the notification decision - so they cannot disagree.
+    // READ ON ARRIVAL ONLY WHERE THE READER IS READING: the bare selection stays true after they walk
+    // to another route or put the window away, which counted a message nobody saw as read. LIVE: the
+    // selection of this instant (`ctx.selectedNow()`), with the app-in-front fact.
+    const takeArrivalVerdict = (): ArrivalVerdict & { unreadCount: number } => {
+      const verdict = arrivalVerdictNow(normalized, ctx.selectedNow());
+      const shown = ctx.conversations.get(normalized);
+      const row = shown ?? convo;
+      // The same question the batch path asks, which until 2026-08-30 it did not: this one forgot
+      // the watermark AND counted system messages, so a replayed frame taking the single path could
+      // still raise a badge for something already read, and a "X joined" notice raised one for
+      // something nobody reads at all.
+      const mineNow = countingReadPoint(row, ctx.userId.toLowerCase());
+      const shouldMarkUnread =
+        !verdict.reading &&
+        !isSalonMuted(normalized) &&
+        isUnreadForUser(newMsg, mineNow.stamped, mineNow.server);
+      const unreadCount = shouldMarkUnread
+        ? (row.unreadCount ?? 0) + 1
+        : verdict.reading
+          ? 0
+          : (row.unreadCount ?? 0);
+      if (shown && shown.unreadCount !== unreadCount) {
+        ctx.conversations.set(normalized, { ...shown, unreadCount });
+      }
+      return { ...verdict, unreadCount };
+    };
 
     const skipDbSave = options.skipDbSave ?? isChannelConversationId(normalized);
     let pairWriteFailure: MessagePairWriteError | null = null;
@@ -2400,8 +2431,12 @@ export function useMessaging() {
       } catch (e) {
         console.error('[DB] Failed to persist message:', e);
         // AN INBOUND ROW THAT WAS NEITHER WRITTEN NOR KEPT IS NOT SWALLOWED: rethrown, its caller
-        // keeps the message with its frame (`addMessageToChat`), and the rerun asks the store.
-        if (!options.outboxEntry) throw e;
+        // keeps the message with its frame (`addMessageToChat`), and the rerun asks the store. It is
+        // shown, so it is counted first, as it was when the count was taken before the write.
+        if (!options.outboxEntry) {
+          takeArrivalVerdict();
+          throw e;
+        }
       }
       // Kept between the read above and the write - or while the message was shown and not stored
       // yet, whoever wrote it: settled now, against the row that stands. The row is written or
@@ -2415,6 +2450,10 @@ export function useMessaging() {
         );
       }
     }
+
+    // No await from here to the effects: each reads this verdict, none asks again.
+    const arrival = takeArrivalVerdict();
+    const nextUnreadCount = arrival.unreadCount;
 
     // THE ROW IS WRITTEN OR KEPT BEFORE ANYTHING THAT MAY THROW (third review of #3851). The
     // effects below - the other tabs, the read signal, the tone, the notification - ran between the
@@ -2458,7 +2497,7 @@ export function useMessaging() {
     // a sibling device holding its banner has been told nothing. See `channelReadSignal`.
     afterTheRow('signalling the read on arrival', newMsg.id, () => {
       if (
-        isConversationOpen &&
+        arrival.reading &&
         !isOwn &&
         !isSystem &&
         isChannelConversationId(normalized) &&
@@ -2480,7 +2519,7 @@ export function useMessaging() {
         !newMsg.isDeleted &&
         // Stale by the SERVER's clock when the row has it: a message delivered late arrives now.
         !isStaleInboundMessage(messageDate(newMsg)) &&
-        canSeeArrival(ctx, normalized)
+        arrival.seen
       ) {
         if (ctx.playReceiveTone) {
           ctx.playReceiveTone(mentionsUser(content, ctx.userId));
@@ -2506,7 +2545,8 @@ export function useMessaging() {
           newMsg.serverTimestamp,
           1,
           [{ senderId, at: resolvedTimestamp.getTime() }],
-          options.authorProven === true
+          options.authorProven === true,
+          arrival.seen
         )
       );
     }
@@ -3006,8 +3046,10 @@ export function useMessaging() {
 
     // READ ON ARRIVAL ONLY WHERE THE READER IS READING. The bare selection stays true after they walk
     // to another route or put the window away, which counted a message nobody saw as read.
-    // LIVE: read after the storage awaits above (see `canSeeArrival`).
-    const isConversationOpen = isReadingConversationNow(normalized, ctx.selectedNow());
+    // LIVE: read after the storage awaits above (see `canSeeArrival`). ONE VERDICT for the flush's
+    // read on arrival and its notification decision, with no await between it and either.
+    const arrival = arrivalVerdictNow(normalized, ctx.selectedNow());
+    const isConversationOpen = arrival.reading;
     // COUNTED AGAINST THIS USER'S OWN WATERMARK, not against "arrived just now". The two are the
     // same thing only for live traffic; a reconciliation delivers frames that are new to THIS
     // device and were read long ago on another one, and counting those raised a badge the next
@@ -3142,7 +3184,8 @@ export function useMessaging() {
           inbound.length,
           inbound.map((msg) => ({ senderId: msg.senderId, at: msg.timestamp.getTime() })),
           // The banner's message is the LAST one, so its proof is the one that names the speaker.
-          authorProvenIds.has(lastInbound.id)
+          authorProvenIds.has(lastInbound.id),
+          arrival.seen
         );
       }
 
