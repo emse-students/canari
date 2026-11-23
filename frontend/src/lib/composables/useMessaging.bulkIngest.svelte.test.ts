@@ -76,6 +76,9 @@ function makeContext() {
     deviceKeyB64: 'device-key',
     authToken: 'token',
     selectedContact: CONVO,
+    selectedNow(this: { selectedContact: string | null }) {
+      return this.selectedContact;
+    },
     // An arriving row is written only where none stands (`saveMessagesIfAbsent`); it lands in
     // `saveMessage` here, the one sink these assertions read.
     storage: {

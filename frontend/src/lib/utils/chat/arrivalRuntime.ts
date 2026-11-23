@@ -1,5 +1,5 @@
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
-import { isAppInForeground } from '$lib/utils/appForeground';
+import { isAppInFront } from '$lib/utils/appForeground';
 import { isNarrowChatLayout } from '$lib/utils/viewport';
 import { windowAttention } from '$lib/utils/windowAttention.svelte';
 import { resumeOpeningHolds } from './resumeOpening.svelte';
@@ -28,13 +28,15 @@ export function arrivalContextNow(
     conversationKey,
     selectedConversationKey,
     pathname: window.location.pathname,
-    // `isAppInForeground` on a phone, for the reason `appForeground.ts` gives: a backgrounded Tauri
-    // app reports `visible` / `hasFocus` exactly as a foregrounded one does. Elsewhere a window left
+    // `isAppInFront` on a phone, for the reason `appForeground.ts` gives: a backgrounded Tauri
+    // app reports `visible` / `hasFocus` exactly as a foregrounded one does - and an iPhone that is
+    // no longer ACTIVE (the home gesture, the app switcher) is not in front of anyone, though its
+    // background edge may come many seconds later with the socket still open. Elsewhere a window left
     // in front answers `visible` and focused with nobody there, so a person's recent gesture is
     // asked too (`windowAttention.svelte.ts`, owner 2026-11-11): an idle window's arrival stays
     // unread and notifies.
     appOnScreen: mobile
-      ? isAppInForeground()
+      ? isAppInFront()
       : document.visibilityState === 'visible' && document.hasFocus() && windowAttention.attentive,
     narrowLayout: isNarrowChatLayout(),
   };

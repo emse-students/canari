@@ -42,6 +42,9 @@ function makeContext(saveMessageWithOutboxEntry: () => Promise<void>) {
     deviceKeyB64: 'device-key',
     authToken: 'token',
     selectedContact: CONVO,
+    selectedNow(this: { selectedContact: string | null }) {
+      return this.selectedContact;
+    },
     storage: {
       saveMessage: vi.fn().mockResolvedValue(undefined),
       saveMessageWithOutboxEntry: vi.fn(saveMessageWithOutboxEntry),

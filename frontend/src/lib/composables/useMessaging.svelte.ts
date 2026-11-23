@@ -7,7 +7,7 @@
  * - File selection + validation
  */
 import { sendFrameFromThisTab } from '$lib/mls-client/frameFromAnyTab';
-import { isAppInForeground } from '$lib/utils/appForeground';
+import { isAppActive, isAppInForeground, isAppInFront } from '$lib/utils/appForeground';
 import { isSalonMuted } from '$lib/utils/chat/salonUnread';
 import type { AnnouncedMessage } from '$lib/utils/chat/announcedMessages';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
@@ -303,14 +303,22 @@ export interface MessagingContext {
     body: string,
     conversationId?: string,
     mentionsMe?: boolean,
-    native?: NativeMessageNotification
+    native?: NativeMessageNotification,
+    /**
+     * The LIVE re-ask the poster runs as its last synchronous step before posting: true while the
+     * reader still cannot see the arrival (`useNotifications.readerNowSees`).
+     */
+    stillOwed?: () => boolean
   ) => Promise<void>;
   /**
    * Raises a REACTION's notification (`useNotifications.sendReactionNotification`). Optional only so
    * a test context may leave it out; a context without it says so, because a reaction it would have
    * raised is then raised by nobody.
    */
-  sendReactionNotification?: (reaction: NativeReactionNotification) => Promise<void>;
+  sendReactionNotification?: (
+    reaction: NativeReactionNotification,
+    stillOwed?: () => boolean
+  ) => Promise<void>;
   /**
    * Tells this user's OTHER devices that a salon has been read, so any of them still showing its
    * notification drops it. Optional: only the layer holding a channel client can provide it, and
@@ -1338,7 +1346,12 @@ export function useMessaging() {
    * backgrounded Tauri app reports `visible`/`hasFocus` exactly as a foregrounded one does.
    */
   function canSeeArrival(ctx: MessagingContext, conversationKey: string): boolean {
-    return canSeeArrivalNow(conversationKey, ctx.selectedContact);
+    // THE LIVE SELECTION, NEVER THE SNAPSHOT (final review of #3985): every inbound caller - the
+    // notification (`notifyInbound`), the reaction trigger and the tone - asks this AFTER the row's
+    // storage awaits, and `ctx.selectedContact` is the selection from before them. A burst landing in
+    // A while the reader moved to C was judged "A open": a tone, no notification, read on arrival -
+    // and ACKed, so no push: announced zero times, marked read unseen.
+    return canSeeArrivalNow(conversationKey, ctx.selectedNow());
   }
 
   /**
@@ -1542,13 +1555,15 @@ export function useMessaging() {
     const away = isMobileTauriRuntime()
       ? !isAppInForeground()
         ? 'the app is backgrounded (no push is sent for a frame this client ACKed)'
-        : `the app is open on ${window.location.pathname} showing ${ctx.selectedContact || 'the list'}`
+        : !isAppActive()
+          ? 'the app is no longer active - the reader left it, its socket still open (no push is sent for a frame this client ACKed)'
+          : `the app is open on ${window.location.pathname} showing ${ctx.selectedNow() || 'the list'}`
       : document.visibilityState !== 'visible' || !document.hasFocus()
         ? `the tab is ${document.visibilityState}${document.hasFocus() ? '' : ' and unfocused'}`
         : // In front, but nobody has touched it for the attention window (`windowAttention`).
           !windowAttention.attentive
           ? `the window is in front but idle (no gesture for ${ATTENTION_WINDOW_MS / 1000} s)`
-          : `the window is open on ${window.location.pathname} showing ${ctx.selectedContact || 'the list'}`;
+          : `the window is open on ${window.location.pathname} showing ${ctx.selectedNow() || 'the list'}`;
     console.log(`[NOTIF] Inbound in ${conversationKey} while ${away} - asking.`);
     const preview = getPreviewText(parseEnvelope(content));
     const notificationBody = preview || m.notif_new_message();
@@ -1566,30 +1581,41 @@ export function useMessaging() {
         await flushNicknameMirror();
         return senderName;
       })
-      .then((senderName) =>
-        ctx.sendSystemNotification(senderName, notificationBody, conversationKey, mentionsMe, {
-          // ON ANDROID THIS IS THE CALL, not an enrichment of it: the frame no longer builds its own
-          // plain notification, it asks the native builder for the SAME one a push would raise. See
-          // `nativeNotification.ts` for the pair of notifications this replaced.
-          conversationId: conversationKey,
-          senderId,
+      .then((senderName) => {
+        return ctx.sendSystemNotification(
           senderName,
-          groupName: notificationGroupName(
-            convo.conversationType,
-            convo.contactName,
-            convo.name,
-            notificationGroupTitle(convo, ctx.userId)
-          ),
-          isGroup: notificationIsGroup(convo.conversationType),
-          body: notificationBody,
+          notificationBody,
+          conversationKey,
           mentionsMe,
-          sentAt,
-          serverAt: serverAt ?? 0,
-          covers,
-          announced,
-          authorProven,
-        })
-      );
+          {
+            // ON ANDROID THIS IS THE CALL, not an enrichment of it: the frame no longer builds its own
+            // plain notification, it asks the native builder for the SAME one a push would raise. See
+            // `nativeNotification.ts` for the pair of notifications this replaced.
+            conversationId: conversationKey,
+            senderId,
+            senderName,
+            groupName: notificationGroupName(
+              convo.conversationType,
+              convo.contactName,
+              convo.name,
+              notificationGroupTitle(convo, ctx.userId)
+            ),
+            isGroup: notificationIsGroup(convo.conversationType),
+            body: notificationBody,
+            mentionsMe,
+            sentAt,
+            serverAt: serverAt ?? 0,
+            covers,
+            announced,
+            authorProven,
+          },
+          // ASKED AGAIN AT THE POST, ON THE LIVE SELECTION (reviews of #3985): the awaits above let
+          // the app come back in front, or the reader move to another conversation, after the
+          // decision - and `ctx.selectedContact` is a snapshot from before them. The poster runs this
+          // as its LAST synchronous step, after its own awaits (`readerNowSees`).
+          () => !canSeeArrivalNow(conversationKey, ctx.selectedNow())
+        );
+      });
   }
 
   /**
@@ -1641,7 +1667,9 @@ export function useMessaging() {
     const convo = ctx.conversations.get(key);
     const isSalon = key.startsWith('channel_');
     const refusal = reactionTriggerRefusal({
-      conversationOnScreen: canSeeArrival(ctx, key),
+      // THE MESSAGE PATH'S OWN PREDICATE, shared and never re-derived: a reaction never announces
+      // louder than a message would in the same place (`ReactionTriggerFacts.arrivalSeen`).
+      arrivalSeen: canSeeArrival(ctx, key),
       // A phone has a reaction push that may draw it too; web and desktop have none.
       pushMayDraw: isMobileTauriRuntime(),
       at: reaction.at,
@@ -1662,7 +1690,7 @@ export function useMessaging() {
     }
     const send = ctx.sendReactionNotification;
     console.log(
-      `[NOTIF] Reaction to my message ${tag} while the app is open on ${window.location.pathname} showing ${ctx.selectedContact || 'the list'} - asking.`
+      `[NOTIF] Reaction to my message ${tag} while the app is open on ${window.location.pathname} showing ${ctx.selectedNow() || 'the list'} - asking.`
     );
     void resolveNotificationSenderName(
       reaction.reactorId,
@@ -1676,16 +1704,20 @@ export function useMessaging() {
         await flushNicknameMirror();
         return actorName;
       })
-      .then((actorName) =>
-        send({
-          conversationId: key,
-          messageId: reaction.messageId,
-          actorId: reaction.reactorId,
-          actorName,
-          emoji: reaction.emoji,
-          at: reaction.at,
-        })
-      )
+      .then((actorName) => {
+        return send(
+          {
+            conversationId: key,
+            messageId: reaction.messageId,
+            actorId: reaction.reactorId,
+            actorName,
+            emoji: reaction.emoji,
+            at: reaction.at,
+          },
+          // The live re-ask, as for a message (`notifyInbound`).
+          () => !canSeeArrivalNow(key, ctx.selectedNow())
+        );
+      })
       .catch((e: unknown) =>
         console.error(`[NOTIF] Reaction to my message ${tag} was not raised: ${String(e)}`)
       );
@@ -2244,7 +2276,7 @@ export function useMessaging() {
         }
         // `selected=` pairs it with the pane's `[CHAT_VIEW]` lines, like the batch line's.
         console.log(
-          `[ADD_MSG] ✓ Message upgraded: id=${newMsg.id} selected=${ctx.selectedContact === normalized}`
+          `[ADD_MSG] ✓ Message upgraded: id=${newMsg.id} selected=${ctx.selectedNow() === normalized}`
         );
         return;
       }
@@ -2280,7 +2312,8 @@ export function useMessaging() {
 
     // READ ON ARRIVAL ONLY WHERE THE READER IS READING. The bare selection stays true after they walk
     // to another route or put the window away, which counted a message nobody saw as read.
-    const isConversationOpen = isReadingConversationNow(normalized, ctx.selectedContact);
+    // LIVE: read after the storage awaits above (see `canSeeArrival`).
+    const isConversationOpen = isReadingConversationNow(normalized, ctx.selectedNow());
     // The same question the batch path asks, which until 2026-08-30 it did not: this one forgot
     // the watermark AND counted system messages, so a replayed frame taking the single path could
     // still raise a badge for something already read, and a "X joined" notice raised one for
@@ -2973,7 +3006,8 @@ export function useMessaging() {
 
     // READ ON ARRIVAL ONLY WHERE THE READER IS READING. The bare selection stays true after they walk
     // to another route or put the window away, which counted a message nobody saw as read.
-    const isConversationOpen = isReadingConversationNow(normalized, ctx.selectedContact);
+    // LIVE: read after the storage awaits above (see `canSeeArrival`).
+    const isConversationOpen = isReadingConversationNow(normalized, ctx.selectedNow());
     // COUNTED AGAINST THIS USER'S OWN WATERMARK, not against "arrived just now". The two are the
     // same thing only for live traffic; a reconciliation delivers frames that are new to THIS
     // device and were read long ago on another one, and counting those raised a badge the next
@@ -3029,7 +3063,7 @@ export function useMessaging() {
     // System messages are named individually because they are few, and because a card is one.
     const systemIds = brandNew.filter((m) => m.isSystem).map((m) => m.id);
     console.log(
-      `[ADD_MSG] Batch into "${normalized}": ${brandNew.length} added, ${upgradedById.size} upgraded, selected=${ctx.selectedContact === normalized}` +
+      `[ADD_MSG] Batch into "${normalized}": ${brandNew.length} added, ${upgradedById.size} upgraded, selected=${ctx.selectedNow() === normalized}` +
         (systemIds.length > 0 ? ` - system: ${systemIds.join(', ')}` : '') +
         largestClockGapNote(brandNew)
     );
@@ -3059,12 +3093,16 @@ export function useMessaging() {
       // same predicate, and the label names the state it actually observed rather than the
       // document's opinion of it.
       const appAway = isMobileTauriRuntime()
-        ? !isAppInForeground()
+        ? !isAppInFront()
         : typeof document !== 'undefined' && document.visibilityState !== 'visible';
       if (!lastInbound && brandNew.length && appAway) {
         // The other half of the same question: a flush that added messages while the app was away and
         // raised nothing has either seen only own/system rows, or lost them to a predicate.
-        const awayState = isMobileTauriRuntime() ? 'backgrounded' : document.visibilityState;
+        const awayState = isMobileTauriRuntime()
+          ? isAppInForeground()
+            ? 'no longer active'
+            : 'backgrounded'
+          : document.visibilityState;
         console.log(
           `[NOTIF] Batch into "${normalized}" added ${brandNew.length} while ${awayState}, none of them an inbound message - nothing to raise.`
         );

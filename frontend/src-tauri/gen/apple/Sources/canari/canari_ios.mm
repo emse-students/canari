@@ -134,6 +134,7 @@ static void CanariSetupFirebaseIfAvailable(void) {
 static void CanariPublishSafeAreaInsets(void);
 static void CanariPublishDynamicType(void);
 static void CanariPublishForeground(NSString *_Nullable opening);
+static void CanariPublishActive(void);
 
 /// Puts the WebView's own scroll view back inside its content whenever it has left it.
 ///
@@ -1404,6 +1405,7 @@ static void CanariRegisterCallPageHandlers(NSString *where) {
     CanariPublishSafeAreaInsets();
     CanariPublishDynamicType();
     CanariPublishForeground(nil);
+    CanariPublishActive();
   }
 }
 @end
@@ -1572,6 +1574,44 @@ static void CanariPublishForeground(NSString *_Nullable opening) {
             }];
   NSLog(@"[CanariIOS] foreground=%@ published to the page (opens a link=%d)", value,
         opening.length > 0 ? 1 : 0);
+}
+
+/// Hands the page whether the app is ACTIVE - `window.__canariActive` and a `canari:active` event -
+/// from the two handlers of the active pair, which write `g_isInForeground` (docs/wiki/frontend/mobile.md,
+/// "An app that is not active is not read").
+///
+/// A SECOND FACT, NOT A SECOND OPINION ON THE FIRST. `canari:foreground` is the background/foreground
+/// pair, and it must stay that pair: the resume work keys on it, and a Face ID sheet must not re-run
+/// it. But the reader stops looking at `willResignActive` - the home gesture, the app switcher, the
+/// Notification Center or Control Center pulled over the app - and `didEnterBackground` can come many
+/// seconds later or not at all (measured on dev, iPhone 12, `1.8.0-alpha.1`: a frame routed and ACKed
+/// 8 s before the page's own `disconnect`, after the user had left the app). In that window the page
+/// held its socket, ACKed every frame - so the server owed no push - and judged the reader on screen,
+/// so it raised nothing: the message was announced zero times. The page now asks this fact too before
+/// it decides a reader saw an arrival (`isAppInFront`, `appForeground.ts`).
+///
+/// Written by the thing whose state it is, on the lifecycle edge, and once more after every page load
+/// (a page that loads behind an inactive or launching app must not start believing it is in front).
+static void CanariPublishActive(void) {
+  WKWebView *webView = CanariFindWebView();
+  BOOL active = g_isInForeground;
+  if (webView == nil) {
+    NSLog(@"[CanariIOS] active=%d not published: no WebView yet (the page load publishes it)", active ? 1 : 0);
+    return;
+  }
+  NSString *value = active ? @"true" : @"false";
+  NSString *js = [NSString
+      stringWithFormat:@"window.__canariActive=%@;"
+                        "window.dispatchEvent(new CustomEvent('canari:active',{detail:{active:%@}}));",
+                       value, value];
+  [webView evaluateJavaScript:js
+            completionHandler:^(__unused id result, NSError *error) {
+              if (error != nil) {
+                // Said, because a page that keeps `true` reads exactly like the defect this fixes.
+                NSLog(@"[CanariIOS] ERROR active=%@ not published to the page: %@", value, CanariErrorReason(error));
+              }
+            }];
+  NSLog(@"[CanariIOS] active=%@ published to the page", value);
 }
 
 /// Hands the page the user's Dynamic Type body size, as `canari:dynamic-type` (detail `bodyPx`) and
@@ -1938,6 +1978,7 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   CanariWriteNotificationDeliveryState();
   g_isInForeground = true;
   CanariSetAppGroupForegroundFlag(YES);
+  CanariPublishActive();
   canari_ios_on_resume();
   CanariApplyWebViewTransparency();
   CanariObserveDocumentScrollRange();
@@ -1978,6 +2019,9 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
 
 static void CanariOnWillResignActive(__unused NSNotification *note) {
   g_isInForeground = false;
+  // FIRST after the flag it reads, before any file write: a frame the page takes from now on is not
+  // seen landing.
+  CanariPublishActive();
   CanariSetAppGroupForegroundFlag(NO);
   canari_ios_on_pause();
   // Snapshot the push context and secret into the App Group container before suspending

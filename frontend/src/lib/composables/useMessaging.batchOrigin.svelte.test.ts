@@ -79,6 +79,9 @@ function makeContext() {
     deviceKeyB64: 'device-key',
     authToken: 'token',
     selectedContact: 'some-other-conversation',
+    selectedNow(this: { selectedContact: string | null }) {
+      return this.selectedContact;
+    },
     storage: { saveMessages: vi.fn().mockResolvedValue(undefined) } as never,
     setAuthToken: vi.fn(),
     getSendError: () => '',

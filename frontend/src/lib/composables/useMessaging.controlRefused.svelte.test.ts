@@ -68,6 +68,9 @@ function ctxFor(message: Partial<ChatMessage> = {}) {
   const ctx = {
     conversations,
     selectedContact: 'alice',
+    selectedNow(this: { selectedContact: string | null }) {
+      return this.selectedContact;
+    },
     userId: 'me',
     deviceKeyB64: 'k',
     log: vi.fn(),

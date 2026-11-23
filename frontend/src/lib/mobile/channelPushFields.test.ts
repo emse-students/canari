@@ -321,13 +321,16 @@ describe('channel push payload contract (social-service writer vs the three nati
       'void resolveNotificationSenderName(senderId, conversationKey, convo)'
     );
     const flushed = messaging.indexOf('await flushNameMirror();', resolved);
-    const posted = messaging.indexOf(
-      'ctx.sendSystemNotification(senderName, notificationBody',
-      resolved
+    const posted = messaging.indexOf('return ctx.sendSystemNotification(', resolved);
+    // ...and the post carries the LIVE re-ask the poster runs last (reviews of #3985).
+    const reask = messaging.indexOf(
+      '() => !canSeeArrivalNow(conversationKey, ctx.selectedNow())',
+      posted
     );
     expect(resolved).toBeGreaterThan(-1);
     expect(flushed).toBeGreaterThan(resolved);
     expect(posted).toBeGreaterThan(flushed);
+    expect(reask).toBeGreaterThan(posted);
     // NEVER A BORROWED FACE: a line not added (the other trigger posted it first) lends no icon.
     expect(kotlinSource).toMatch(
       /\} else if \(alreadyPosted\) \{[\s\S]{0,600}style\.messages\s*\.lastOrNull \{[^}]*\}\s*\?\.person\?\.icon/

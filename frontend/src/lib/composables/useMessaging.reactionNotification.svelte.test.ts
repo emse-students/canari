@@ -24,6 +24,11 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
 }));
 
 let MOBILE = true;
+let NARROW = true;
+vi.mock('$lib/utils/viewport', async (orig) => ({
+  ...(await orig<Record<string, unknown>>()),
+  isNarrowChatLayout: () => NARROW,
+}));
 vi.mock('$lib/utils/appVersion', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),
   isMobileTauriRuntime: () => MOBILE,
@@ -59,6 +64,9 @@ function makeContext(lookingAt = 'something-else') {
     conversations,
     userId: ME,
     selectedContact: lookingAt,
+    selectedNow(this: { selectedContact: string | null }) {
+      return this.selectedContact;
+    },
     log: vi.fn(),
     sendSystemNotification: vi.fn().mockResolvedValue(undefined),
     sendReactionNotification,
@@ -86,6 +94,7 @@ function foreground(value: boolean | undefined) {
   const w = window as unknown as Record<string, unknown>;
   if (value === undefined) delete w.__canariForeground;
   else w.__canariForeground = value;
+  delete w.__canariActive;
 }
 
 describe('the frame trigger of a reaction to my message', () => {
@@ -94,6 +103,7 @@ describe('the frame trigger of a reaction to my message', () => {
     window.history.pushState({}, '', '/posts');
     vi.spyOn(console, 'log').mockImplementation(() => {});
     MOBILE = true;
+    NARROW = true;
   });
 
   it('THE DEFECT: the app open on another screen is told, with the actor and the emoji', async () => {
@@ -104,14 +114,18 @@ describe('the frame trigger of a reaction to my message', () => {
     messaging.notifyInboundReaction(REACTION, ctx);
 
     await vi.waitFor(() => expect(sendReactionNotification).toHaveBeenCalledTimes(1));
-    expect(sendReactionNotification).toHaveBeenCalledWith({
-      conversationId: CONVO,
-      messageId: 'msg-1',
-      actorId: PEER,
-      actorName: 'Peer',
-      emoji: '❤️',
-      at: 1_700_000_000_123,
-    });
+    expect(sendReactionNotification).toHaveBeenCalledWith(
+      {
+        conversationId: CONVO,
+        messageId: 'msg-1',
+        actorId: PEER,
+        actorName: 'Peer',
+        emoji: '❤️',
+        at: 1_700_000_000_123,
+      },
+      // The live re-ask the poster runs last (`useMessaging.latePost.svelte.test.ts`).
+      expect.any(Function)
+    );
   });
 
   it('NEVER A LOSS: a phone not in front still posts it - the push of the same reaction is made ONE with it', async () => {
@@ -162,6 +176,63 @@ describe('the frame trigger of a reaction to my message', () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(sendReactionNotification).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A REACTION NEVER ANNOUNCES LOUDER THAN A MESSAGE WOULD IN THE SAME PLACE (coordinator, 2026-11-23,
+   * principle 3). Each case asks the message path's own predicate through the same runtime, so the
+   * two cannot drift: a banner for the reaction exactly where a message would raise one.
+   */
+  it.each([
+    // [what is on screen, route, selected, narrow, a message there raises a banner]
+    [
+      'phone, a salon left with Back (the salon list does not draw it)',
+      '/communities',
+      '',
+      true,
+      true,
+    ],
+    ['phone, the chat list after Back (its row would light up)', '/chat', '', true, false],
+    ['phone, that conversation open', '/chat', CONVO, true, false],
+    ['phone, another conversation open', '/chat', 'other', true, true],
+    ['wide, reading another conversation beside the list', '/chat', 'other', false, false],
+    ['wide, that conversation open', '/chat', CONVO, false, false],
+    ['wide, another page entirely', '/posts', 'other', false, true],
+  ])(
+    '%s: a notification exactly where a message would raise one',
+    async (_what, path, selected, narrow, banner) => {
+      NARROW = narrow;
+      MOBILE = narrow;
+      const messaging = useMessaging();
+      const { ctx, sendReactionNotification } = makeContext(selected);
+      window.history.pushState({}, '', path);
+      foreground(true);
+      vi.spyOn(document, 'hasFocus').mockReturnValue(true);
+      // A person at the desktop window (a phone is exempt from the attention term).
+      const { windowAttention } = await import('$lib/utils/windowAttention.svelte');
+      windowAttention.noteGesture();
+      const { canSeeArrivalNow } = await import('$lib/utils/chat/arrivalRuntime');
+      // The message path's answer for the same place, through the same runtime.
+      expect(!canSeeArrivalNow(CONVO, selected)).toBe(banner);
+
+      messaging.notifyInboundReaction(REACTION, ctx);
+      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(sendReactionNotification).toHaveBeenCalledTimes(banner ? 1 : 0);
+    }
+  );
+
+  it('an iPhone that is no longer ACTIVE is told, even with that conversation open (the app switcher)', async () => {
+    const messaging = useMessaging();
+    const { ctx, sendReactionNotification } = makeContext(CONVO);
+    window.history.pushState({}, '', '/chat');
+    foreground(true);
+    (window as unknown as Record<string, unknown>).__canariActive = false;
+
+    messaging.notifyInboundReaction(REACTION, ctx);
+
+    await vi.waitFor(() => expect(sendReactionNotification).toHaveBeenCalledTimes(1));
   });
 
   it("obeys the account's reactions switch", async () => {

@@ -155,8 +155,14 @@ export function inboundReactionVerdict(
 
 /** The runtime facts the trigger is decided on, gathered by the caller. */
 export interface ReactionTriggerFacts {
-  /** Whether the reader can see the conversation (`canSeeArrival`): the bubble then carries it. */
-  conversationOnScreen: boolean;
+  /**
+   * Whether a MESSAGE landing in this conversation would be seen where it lands (`canSeeArrival`, the
+   * message path's own predicate): the conversation open, or its row in a list on screen. A message
+   * there gets a tone at most and never an OS notification, so neither does a reaction - A REACTION
+   * NEVER ANNOUNCES LOUDER THAN A MESSAGE WOULD IN THE SAME PLACE (coordinator, 2026-11-23,
+   * principle 3; docs/wiki/frontend/mobile.md#the-frame-trigger-of-a-reaction-2026-11-17).
+   */
+  arrivalSeen: boolean;
   /**
    * Whether this runtime has a reaction PUSH that may draw the same reaction (a phone). Web and
    * desktop have none: the frame is their only trigger.
@@ -180,7 +186,9 @@ export interface ReactionTriggerFacts {
  * one (see the file header).
  */
 export function reactionTriggerRefusal(facts: ReactionTriggerFacts): string | null {
-  if (facts.conversationOnScreen) return 'its conversation is on screen - the bubble shows it';
+  if (facts.arrivalSeen) {
+    return 'a message landing there would be seen, so it would raise no notification - nor does a reaction';
+  }
   if (facts.pushMayDraw && !(facts.at > 0)) {
     return 'it carries no instant, so it cannot be told apart from its push - the push draws it';
   }

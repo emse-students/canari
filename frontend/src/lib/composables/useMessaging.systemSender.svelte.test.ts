@@ -85,6 +85,9 @@ function makeContext() {
     authToken: 'token',
     // NOT the open conversation: nothing may zero the badge as a side effect of being on screen.
     selectedContact: 'some-other-conversation',
+    selectedNow(this: { selectedContact: string | null }) {
+      return this.selectedContact;
+    },
     storage: { saveMessage: vi.fn().mockResolvedValue(undefined) } as never,
     setAuthToken: vi.fn(),
     getSendError: () => '',

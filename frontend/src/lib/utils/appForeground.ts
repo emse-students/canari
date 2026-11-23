@@ -74,6 +74,54 @@ export function onAppForegroundChange(
   return () => window.removeEventListener(APP_FOREGROUND_EVENT, handler);
 }
 
+/** The global the iOS shell writes on every edge of the ACTIVE pair (`CanariPublishActive`). */
+const ACTIVE_FLAG = '__canariActive';
+
+/** The event it dispatches at the same moment. */
+export const APP_ACTIVE_EVENT = 'canari:active';
+
+/**
+ * True unless the shell says the app has stopped being ACTIVE - on iOS from `willResignActive` (the
+ * home gesture, the app switcher, Notification Center or Control Center pulled over the app) until
+ * `didBecomeActive`. READ, NEVER CACHED, for the reason {@link isAppInForeground} gives.
+ *
+ * A SEPARATE FACT FROM THE FOREGROUND, ON PURPOSE. The foreground is the background/foreground pair,
+ * which the resume work keys on and which a Face ID sheet must not move. But the reader stops looking
+ * at the app when it stops being active, and on an iPhone `didEnterBackground` came 8 s and more
+ * after that, with the socket still open (`1.8.0-alpha.1`, dev logs): every frame of that window was
+ * ACKed - so the server owed no push - and judged seen, so nothing announced it. Android writes no
+ * such flag: its `onPause` already ends the foreground, so `true` there loses nothing.
+ */
+export function isAppActive(): boolean {
+  if (typeof window === 'undefined') return true;
+  const value = (window as unknown as Record<string, unknown>)[ACTIVE_FLAG];
+  return typeof value === 'boolean' ? value : true;
+}
+
+/**
+ * Calls `onChange(active)` on every edge of the active pair the shell publishes. No-op where no
+ * shell publishes it. Returns the unsubscribe.
+ */
+export function onAppActiveChange(onChange: (active: boolean) => void): () => void {
+  if (typeof window === 'undefined') return () => {};
+  const handler = (e: Event) => {
+    const detail = (e as CustomEvent<{ active?: unknown }>).detail;
+    if (typeof detail?.active !== 'boolean') return;
+    onChange(detail.active);
+  };
+  window.addEventListener(APP_ACTIVE_EVENT, handler);
+  return () => window.removeEventListener(APP_ACTIVE_EVENT, handler);
+}
+
+/**
+ * Whether the native app is IN FRONT OF THE READER: in the foreground AND active. The one question
+ * behind "did the reader see this arrival" and "is this conversation being read" on a phone
+ * (`arrivalRuntime.ts`); every other consumer keeps the foreground alone.
+ */
+export function isAppInFront(): boolean {
+  return isAppInForeground() && isAppActive();
+}
+
 /**
  * True when the app is on screen by EVERY signal the runtime gives: the native foreground flag (the
  * only one Android tells the truth through) and the page's own visibility (the only one web and

@@ -80,6 +80,9 @@ describe('an own act on a message whose row is still moving', () => {
     const ctx = {
       conversations,
       selectedContact: JOINED,
+      selectedNow(this: { selectedContact: string | null }) {
+        return this.selectedContact;
+      },
       userId: 'me',
       deviceKeyB64: 'k',
       storage: store,
@@ -143,6 +146,9 @@ describe('an own act on a message whose row is still moving', () => {
     const ctx = {
       conversations,
       selectedContact: JOINED,
+      selectedNow(this: { selectedContact: string | null }) {
+        return this.selectedContact;
+      },
       userId: 'me',
       deviceKeyB64: 'k',
       storage: store,
@@ -181,6 +187,9 @@ describe('an own act on a message whose row is still moving', () => {
     const ctx = {
       conversations,
       selectedContact: shown,
+      selectedNow(this: { selectedContact: string | null }) {
+        return this.selectedContact;
+      },
       userId: 'me',
       deviceKeyB64: 'k',
       storage: store,
@@ -225,6 +234,9 @@ describe('an own act on a message whose row is still moving', () => {
       const ctx = {
         conversations,
         selectedContact: JOINED,
+        selectedNow(this: { selectedContact: string | null }) {
+          return this.selectedContact;
+        },
         userId: 'me',
         deviceKeyB64: 'k',
         storage: store,
@@ -270,6 +282,9 @@ describe('an own act on a message whose row is still moving', () => {
     const ctx = {
       conversations,
       selectedContact: JOINED,
+      selectedNow(this: { selectedContact: string | null }) {
+        return this.selectedContact;
+      },
       userId: 'me',
       deviceKeyB64: 'k',
       storage: store,

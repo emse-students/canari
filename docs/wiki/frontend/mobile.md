@@ -3620,7 +3620,7 @@ its whole matrix asserted beside it:
 | --- | --- |
 | the frame (`inboundReactionVerdict`) | my own reaction, or a reaction to somebody else's message (said nowhere: the ordinary frame); a removal, a replay or older state, or a frame that is not LIVE (said: it is a reaction to me). The author is the row held (window, then store), else the one the frame STATES (`ReactionMsg.target_author_id`, the reactor's own claim - the one `notify-reaction` already rests on). News whose author is still unknown is `unresolved` (WARNED each time) when the store FAILED to answer, `unattributed` (said ONCE per session) when the frame comes from a reactor predating `target_author_id` |
 | live (`isLiveDelivery`) | not `channel === 'live'`, or `aheadOfMailbox`, or an `addressed` history answer - a catch-up on resume may carry a reaction already announced and dismissed. A page of salon history raises nothing, except the ONE row that arrived live before its seed (below) |
-| the screen (`reactionTriggerRefusal`) | the conversation is on screen (`canSeeArrival`); on a phone, a frame with no `at` (it could not be made one with its push, so the push draws it); the `reactions` category is off; a private conversation's level is not `all` (a reaction is never a mention). **The app's foreground state is NOT a term** |
+| the screen (`reactionTriggerRefusal`) | a MESSAGE landing in that conversation would be seen where it lands (`canSeeArrival`, the message path's own predicate, passed as `arrivalSeen`): **a reaction never announces louder than a message would in the same place** ([below](#an-app-that-is-not-active-is-not-read-2026-11-23)); on a phone, a frame with no `at` (it could not be made one with its push, so the push draws it); the `reactions` category is off; a private conversation's level is not `all` (a reaction is never a mention). **The app's foreground state is NOT a term** |
 
 **A live salon reaction that arrives BEFORE its seed is still decided live (2026-11-18).** The first
 frame of a reactor's new seed session (the distribution epoch moved: a member added or removed) often
@@ -3726,6 +3726,80 @@ identity reading, read PASS on `1.7.0-alpha.10` ([readings](../device-verificati
 `apns-collapse-id` (and the reverse) is what a post's twin already relies on, and is proven by no
 test here: a reaction under Control Center shows ONE entry (a second sound on the replacement is
 acceptable), and a reaction while ACTIVE on another screen keeps an entry (the `List` answer).
+
+#### An app that is not active is not read (2026-11-23)
+
+Two losses read on the iPhone 12 (`1.8.0-alpha.1`, iOS 27), both a reader judged "looking" who was not.
+
+**A message in the seconds after the home gesture was announced zero times.** Dev logs, one device,
+one sitting: the gateway routed a frame to the iPhone and the page ACKed it within 300 ms, then the
+page's own `disconnect` arrived 8 s later. The page was running and held its socket, so the server
+(correctly) owed no push: `scheduleDeferredPush` fires only for a row still unACKed after 10 s, and
+no `[PUSH_DEFERRED]` line exists for the whole sitting. The page then judged the reader on screen and
+raised nothing. Both of its signals are keyed on `didEnterBackground` - `__canariForeground`
+(`CanariPublishForeground`) and the WebView's `visibilitychange`, which is what pauses the socket - and
+the home gesture first makes the app INACTIVE (`willResignActive`): the app switcher, a slow swipe,
+Notification Center or Control Center leave it there for seconds before the background edge, or for
+good. So of the three candidates, the server's presence was right (the socket WAS live and read), and
+the client's suppression was the defect.
+
+**The fix is a second fact, written by the thing whose state it is.** The shell publishes the ACTIVE
+pair as its own global and event - `window.__canariActive` / `canari:active` (`CanariPublishActive`,
+from `willResignActive` first thing, `didBecomeActive`, and every page load), from `g_isInForeground`.
+`canari:foreground` stays the background/foreground pair: the resume work keys on it and a Face ID
+sheet must not re-run it (`appForeground.contract.test.ts` holds both). The page asks
+`isAppInFront()` = foreground AND active (`appForeground.ts`) wherever it decides that a reader saw an
+arrival or is reading a conversation (`arrivalRuntime.ts`), and the receipt effect follows the active
+fact as state (`MainChatPage`), so returning to active marks what landed - no timer anywhere. Android
+writes no such flag: its `onPause` already ends the foreground.
+
+**Exactly once, by construction.** While inactive with the socket live, the page decrypts, ACKs and
+announces (`notifyInbound`, through the announced-messages ledger,
+[ios-notification-ownership](ios-notification-ownership.md)); the ACK means no push. If the page is
+frozen instead, nothing ACKs and the deferred push carries it to the extension. The ledger keeps the
+two from doubling when both happen.
+
+**A reaction is never louder than a message in the same place (coordinator decision, 2026-11-23,
+reversible; [principle 3](../../principes.md), "your attention is not for sale").** The sitting also
+read "a reaction in a conversation left with Back raised nothing". `goBackToMenu` clears the selection
+and a phone then shows the list, where `canSeeArrival` is true: a MESSAGE landing there gets the tone
+and its row lights up, no OS notification. A first version of this change made the reaction trigger
+ask `isReadingConversationNow` instead - which also made a wide layout (desktop, web, an iPad) raise
+an OS notification for a reaction in conversation B while the reader reads A, where a message in B
+gets only a tone. Refused at review: a reaction is the lesser news, so it may not be louder. The
+trigger asks exactly the message path's predicate (`canSeeArrival`, `ReactionTriggerFacts.arrivalSeen`),
+shared and never re-derived: where a message would raise a banner, so does the reaction (a salon left
+with Back on `/communities`, another route, an app not in front); where a message gets a tone or
+nothing (the chat list on screen, that conversation open), the reaction raises no notification. So the
+Back-to-list case on `/chat` is the RULE, not a defect; the inactive-app half of it is fixed above.
+
+**A late banner for a message already read (reviews of #3985).** The decision and the post are apart
+by the sender-name resolution, two mirror flushes, and in the poster the permission read and the
+announcement claim (two IPC calls). If the app comes back in front in between (`didBecomeActive`),
+the receipt effect hands over `read_here` - which retires the conversation's banners - and a banner
+posted after it stays up for a read message; if the reader moves to another conversation in between,
+the snapshot selection (`ctx.selectedContact`) answers for the old screen, in both directions (a lost
+post, a stale banner). So the caller hands the poster a LIVE re-ask
+(`() => !canSeeArrivalNow(key, ctx.selectedNow())`), and every builder (`useNotifications`,
+`readerNowSees`) runs it as the LAST SYNCHRONOUS STEP before the call that posts - after the
+permission read and the claim, with no await between it and the post. A stand-down after the claim
+leaves the claim standing, deliberately: the reader saw the message land, so the screen announced it.
+One debug line says so. No clock: the same predicate, asked on the facts of the post's instant.
+
+**The decision itself reads the live selection too (final review of #3985).** `addMessageToChat` and
+`batchAddMessages` read the store (`getMessagesByIds`, the pending mutations) BEFORE they decide, and
+the context they were handed is a snapshot from their entry. So `canSeeArrival` (whose consumers are
+all inbound: the message notification, the reaction trigger, the tone) and the read-on-arrival verdict
+of both paths (`isReadingConversationNow`) ask `ctx.selectedNow()`, never `ctx.selectedContact`. A
+reader who moved from A to C during that read was otherwise judged "on A": a tone instead of a
+notification, the message read on arrival - announced zero times and marked read unseen. The outbound
+reads of `selectedContact` (send, retry, reaction, edit, delete, pin) are the reader's own gesture on
+the screen they started it from and stay as they are.
+
+Tests: `appForeground.test.ts`, `appForeground.contract.test.ts`, `arrivalRuntime.ios.test.ts`,
+`useMessaging.reactionNotification.svelte.test.ts`, `reactionNotification.test.ts`,
+`useMessaging.latePost.svelte.test.ts`, `useNotifications.iosAnnounced.svelte.test.ts`. Owed on the iPhone:
+[reading](../backlog.d/reading-owed-an-inactive-iphone-announces-what-it-acks.md).
 
 #### Background MLS decrypt ladder
 

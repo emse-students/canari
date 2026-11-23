@@ -114,6 +114,9 @@ function device(userId: string): Device {
     authToken: 'token',
     // The conversation is OPEN on every device: the reader is looking at it as messages land.
     selectedContact: CONVO,
+    selectedNow(this: { selectedContact: string | null }) {
+      return this.selectedContact;
+    },
     storage: null,
     setAuthToken: vi.fn(),
     getSendError: () => '',

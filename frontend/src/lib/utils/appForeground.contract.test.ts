@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { APP_FOREGROUND_EVENT } from './appForeground';
+import { APP_ACTIVE_EVENT, APP_FOREGROUND_EVENT } from './appForeground';
 
 /**
  * BOTH PHONE SHELLS TELL THE PAGE WHETHER THE APP IS ON SCREEN, IN ONE CONTRACT (2026-11-02).
@@ -116,5 +116,30 @@ describe('the foreground contract between the shells and the page', () => {
     ]) {
       expect(objcBody(ios, signature), signature).not.toContain('CanariPublishForeground');
     }
+  });
+
+  it('iOS publishes the ACTIVE pair as its own fact, first thing on each edge and after every page load', () => {
+    expect(APP_ACTIVE_EVENT).toBe('canari:active');
+    expect(ios).toContain('window.__canariActive=');
+    expect(ios).toContain(`new CustomEvent('${APP_ACTIVE_EVENT}',{detail:{active:`);
+    // Written from the flag the active pair maintains, never from the on-screen one.
+    expect(objcBody(ios, 'static void CanariPublishActive(void) {')).toContain('g_isInForeground');
+    const resign = objcBody(ios, 'static void CanariOnWillResignActive(');
+    expect(resign.indexOf('CanariPublishActive();')).toBeGreaterThan(
+      resign.indexOf('g_isInForeground = false;')
+    );
+    // Before the slower work of the edge: a frame taken from here on is not seen landing.
+    expect(resign.indexOf('CanariPublishActive();')).toBeLessThan(
+      resign.indexOf('CanariSetAppGroupForegroundFlag(NO);')
+    );
+    const become = objcBody(ios, 'static void CanariOnDidBecomeActive(');
+    expect(become.indexOf('CanariPublishActive();')).toBeGreaterThan(
+      become.indexOf('g_isInForeground = true;')
+    );
+    const loadObserver = ios.slice(
+      ios.indexOf('@implementation CanariLoadObserver'),
+      ios.indexOf('@end', ios.indexOf('@implementation CanariLoadObserver'))
+    );
+    expect(loadObserver).toContain('CanariPublishActive();');
   });
 });

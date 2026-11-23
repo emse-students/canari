@@ -162,4 +162,63 @@ describe('an iPhone announces a message once, whichever process draws it', () =>
     expect(sent).toHaveLength(1);
     expect(sent[0].group).toBe(GROUP);
   });
+
+  /**
+   * NO AWAIT BETWEEN THE LAST RE-ASK AND THE POST (review of #3985). The claim is an IPC: an app that
+   * comes back in front while it is in flight has run its receipt effect, whose `read_here` retired
+   * the conversation's banners - so the reader's state is asked AFTER the claim answers, right before
+   * the post, and a reader now looking raises nothing. The claim stands: the screen announced it.
+   */
+  it('asks the reader LAST, after the claim IPC: back in front meanwhile, nothing is posted', async () => {
+    let releaseClaim: () => void = () => {};
+    const claimed = new Promise<void>((resolve) => {
+      releaseClaim = resolve;
+    });
+    answer = () =>
+      claimed.then(() => ({
+        raise: true,
+        fresh: 1,
+        byExtension: 0,
+        byPage: 0,
+        keys: [`${GROUP}:delta:5`],
+      }));
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    let readerAway = true;
+    const asked: boolean[] = [];
+    const notifs = useNotifications();
+    const posting = notifs.sendSystemNotification(
+      'Delta',
+      'a6 row2 del1',
+      GROUP,
+      false,
+      message([5]),
+      () => {
+        asked.push(readerAway);
+        return readerAway;
+      }
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    // The claim is in flight and the reader has not been asked yet: asking before it would be stale.
+    expect(invoked.map((i) => i.cmd)).toEqual(['claim_message_announcement']);
+    expect(asked).toEqual([]);
+    readerAway = false; // didBecomeActive, on the conversation
+    releaseClaim();
+    await posting;
+    expect(asked).toEqual([false]);
+    expect(sent).toEqual([]);
+  });
+
+  it('still away when the claim answers: posted once', async () => {
+    answer = () => ({
+      raise: true,
+      fresh: 1,
+      byExtension: 0,
+      byPage: 0,
+      keys: [`${GROUP}:delta:7`],
+    });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const notifs = useNotifications();
+    await notifs.sendSystemNotification('Delta', 'x', GROUP, false, message([7]), () => true);
+    expect(sent).toHaveLength(1);
+  });
 });
