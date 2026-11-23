@@ -107,6 +107,7 @@
   import { Log } from '$lib/utils/Log';
   import { CircleAlert, ExternalLink, FileText, ImagePlus, Users, X } from '@lucide/svelte';
   import { editorChoicesOf, respondentSettingsPayload } from '$lib/forms/respondentFields';
+  import { transmittedFieldsOf } from '$lib/forms/identityDuplicate';
   import {
     draftRefusalMessage,
     formViewHref,
@@ -1043,6 +1044,7 @@
       {formTiers}
       {isPublic}
       {gridFault}
+      transmittedFields={transmittedFieldsOf(identityChoices, { isPublic, anonymous })}
       {orderedCells}
       {orderedReady}
       onPricedGridAdded={() =>

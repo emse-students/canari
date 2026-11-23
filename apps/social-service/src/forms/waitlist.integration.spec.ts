@@ -174,6 +174,7 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
       {} as any,
       { enabled: () => false } as any,
       {} as any,
+      undefined, // UsageActivity: nothing counted here
       notice
     );
     jest.spyOn(axios, 'post').mockImplementation(async () => {

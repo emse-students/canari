@@ -1,4 +1,5 @@
 /* eslint-disable */
+import { UsageActivity } from '../usage/usage-activity';
 import { mapWithConcurrency } from '../common/map-with-concurrency';
 import { assertMayCollect } from '../associations/collection-policy';
 import {
@@ -631,6 +632,7 @@ export class FormsService {
     private readonly formFiles: FormFilesService,
     private readonly organiserAlert: FormOrganiserAlertService,
     private readonly formItemImages: FormItemImagesService,
+    private readonly usage?: UsageActivity,
     // The waiting list's one notice (`waitlist-notice.service.ts`). Always injected by Nest; a unit
     // spec that never promotes anyone may leave it out, and a promotion told without it is an ERROR.
     private readonly waitlistNotice?: FormWaitlistNoticeService
@@ -3210,6 +3212,11 @@ export class FormsService {
     let savedSubmission!: Submission;
     // An anonymous answer is held for its batch: it has no submission id to hand back.
     let heldAnswer = false;
+    // A NEW named answer was stored (a member's, a guest's) - the usage dashboard's "forms answered"
+    // (docs/wiki/usage-dashboard.md). A retry that re-uses its pending payment row is the same answer,
+    // and is not counted again. AN ANONYMOUS ANSWER IS NOT COUNTED: it keeps only its week (owner,
+    // 2026-11-22, migration 181), and a daily total would date it to the day again.
+    let answered = false;
     // THE WAITING LIST (`waitlist.ts`): a member whose page asked to join it, on a form where it
     // applies, waits in line instead of being refused when every place is taken.
     const mayWait =
@@ -3384,6 +3391,7 @@ export class FormsService {
               cashExpiresAt: null,
             })
           );
+          answered = true;
           return;
         }
 
@@ -3409,6 +3417,8 @@ export class FormsService {
             paymentCancelOrigin: null,
             waitlistOrder: order,
           };
+          // A new row is a new answer (counted like any other); a reused one was counted already.
+          answered = !existingPending;
           savedSubmission = existingPending
             ? await manager.save(Object.assign(existingPending, waiting))
             : await manager.save(
@@ -3467,6 +3477,7 @@ export class FormsService {
             guestVisitorKey: visitorKey,
           });
           savedSubmission = await manager.save(submission);
+          answered = true;
         }
         if (storedFileAnswers.length > 0) {
           await this.formFiles.attach(
@@ -3489,6 +3500,7 @@ export class FormsService {
       }
       throw e;
     }
+    if (answered) void this.usage?.count('forms');
     await this.tellPromoted(promotedHere);
 
     if (joinsWaitlist) {

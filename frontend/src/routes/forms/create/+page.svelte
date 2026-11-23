@@ -100,6 +100,7 @@
   import { Log } from '$lib/utils/Log';
   import { CircleAlert, FileText } from '@lucide/svelte';
   import { respondentSettingsPayload } from '$lib/forms/respondentFields';
+  import { transmittedFieldsOf } from '$lib/forms/identityDuplicate';
   import { m } from '$lib/paraglide/messages';
 
   // General
@@ -662,6 +663,7 @@
       {formTiers}
       {isPublic}
       {gridFault}
+      transmittedFields={transmittedFieldsOf(identityChoices, { isPublic, anonymous })}
       onPricedGridAdded={() =>
         applyMultipleSubmissions(multipleSubmissionsAfterGridAdded(multipleSubmissions()))}
       onPricedGridGone={() =>

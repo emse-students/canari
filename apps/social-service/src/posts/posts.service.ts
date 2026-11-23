@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-argument */
+import { UsageActivity } from '../usage/usage-activity';
 import { assertWithinPostAttachmentCap } from './post-attachment-cap';
 import { readRetentionDays } from '../common/retention-settings';
 import {
@@ -399,7 +400,8 @@ export class PostsService {
     private readonly followsService: FollowsService,
     private readonly associationsService: AssociationsService,
     private readonly notifications: PostNotificationsService,
-    private readonly mediaRetention: PostMediaRetentionService
+    private readonly mediaRetention: PostMediaRetentionService,
+    private readonly usage?: UsageActivity
   ) {}
 
   private commentIdentityService?: CommentIdentityService;
@@ -1517,6 +1519,9 @@ export class PostsService {
       throw new GoneException('This post was deleted');
     }
     await this.invalidateListCache();
+    // The usage dashboard's daily total (docs/wiki/usage-dashboard.md): a post or a CanaReel MADE
+    // today - counted once its row committed, never for a replayed client id (answered above).
+    void this.usage?.count(entity.kind === 'reel' ? 'reels' : 'posts');
 
     // The mentions are STORED here and told by `PostAnnounceScheduler` alone, under its one-shot
     // `feedNotifiedAt` claim, when the post is first published - at once (within a sweep) for a post
