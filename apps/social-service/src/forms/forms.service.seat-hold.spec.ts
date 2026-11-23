@@ -34,6 +34,7 @@ import {
 import {
   CASH_ALREADY_PAID_ONLINE,
   FORM_CASH_NOT_OFFERED,
+  CASH_SWITCH_LOST_AFTER_CANCEL,
   PAYMENT_ISSUE_WITHDRAWN,
   PAYMENT_NOT_SWITCHABLE,
 } from './payment-cash-switch';
@@ -3203,6 +3204,49 @@ describe('FormsService - the seat a pending payment holds', () => {
       expect(rows[0]).toMatchObject({ paymentStatus: 'pending_cash', cashSwitchClaimId: null });
     });
 
+    // A SECOND PRESS ADOPTS THE CLAIM (third review of #4019, D1): press 2 arrives while press 1 is
+    // mid-call, its own settle is refused (Lydia unreadable) - and its refusal must not clear press
+    // 1's claim, or the cancel callback releases the seat and press 1 finishes on a released row.
+    it("keeps the seat when a second press's settle is refused while the first is mid-call", async () => {
+      const { service, rows, core, transitions } = cashForm(
+        [card({ paymentStatus: 'pending', paymentRequestedAt: ago(60_000) })],
+        { maxSubmissions: 1 }
+      );
+      jest.spyOn((service as any).logger, 'error').mockImplementation(() => undefined);
+      let second: unknown;
+      let third: unknown;
+      core.duringCancel = async () => {
+        core.duringCancel = null;
+        const claimOfFirst = rows[0].cashSwitchClaimId;
+        core.cancelAnswer = new Error('core down');
+        core.stateAnswer = new Error('core down');
+        second = await toCash(service).catch((e: unknown) => e);
+        // Adopted, not overwritten, and not cleared by the second press's refusal.
+        expect(rows[0].cashSwitchClaimId).toBe(claimOfFirst);
+        core.cancelAnswer = 'cancelled';
+        core.stateAnswer = 'cancelled-or-expired';
+        await service.cancelPendingSubmission('ans', { requestId: '555' }, 'vendor');
+        third = await service
+          .submit('f1', { userId: 'u2', answers: {} } as any)
+          .catch((e: unknown) => e);
+      };
+      await expect(toCash(service)).resolves.toMatchObject({ cashPayment: true });
+      expect(second).toMatchObject({ response: { code: PREVIOUS_PAYMENT_OPEN } });
+      expect(third).toMatchObject({ response: { code: 'FORM_FULL' } });
+      expect(transitions).toEqual(['ans:pending->pending_cash']);
+      expect(rows[0]).toMatchObject({ paymentStatus: 'pending_cash', cashSwitchClaimId: null });
+    });
+
+    // A crash between a settle that read `paid` and the release: the payment clears the claim.
+    it('clears a switch claim when the payment is recorded', async () => {
+      const { service, rows } = cashForm([
+        card({ paymentStatus: 'pending', paymentRequestedAt: ago(60_000) }),
+      ]);
+      rows[0].cashSwitchClaimId = 'left-by-a-crash';
+      await service.markPaid('ans', '555');
+      expect(rows[0]).toMatchObject({ paymentStatus: 'paid', cashSwitchClaimId: null });
+    });
+
     // NO LOCK ACROSS THE PROVIDER CALL (review of #4019): a slow Lydia never holds up the form's
     // other submits, nor the expiry sweep - even on this very row, whose hold lapses mid-call.
     it('lets another submit and the expiry sweep complete while the call to Lydia is pending', async () => {
@@ -3389,10 +3433,26 @@ describe('FormsService - the seat a pending payment holds', () => {
         // The seat the lapsed hold freed is taken by someone else meanwhile.
         taken.rows.push(row({ id: 'third', userId: 'u3', paymentStatus: 'paid' }));
       };
+      // The card request is already cancelled: told as what happened to the payer.
       await expect(toCash(taken.service)).rejects.toMatchObject({
-        response: { code: 'FORM_FULL' },
+        response: { code: CASH_SWITCH_LOST_AFTER_CANCEL },
       });
       expect(taken.rows[0].paymentStatus).toBe('pending');
+    });
+
+    it('answers an association archived DURING the call as the cash switch lost after the cancel', async () => {
+      const { service, rows, core } = cashForm([
+        card({ paymentStatus: 'pending', paymentRequestedAt: ago(60_000) }),
+      ]);
+      jest
+        .spyOn(service as any, 'assertAssociationLiveUnderLock')
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new NotFoundException('Form not found'));
+      await expect(toCash(service)).rejects.toMatchObject({
+        response: { code: CASH_SWITCH_LOST_AFTER_CANCEL },
+      });
+      expect(core.calls.map((c) => c.route)).toEqual(['cancel-request']);
+      expect(rows[0]).toMatchObject({ paymentStatus: 'pending', cashSwitchClaimId: null });
     });
 
     // NEVER A CASH ANSWER UNDER A REQUEST BEING ISSUED: tab A resumes the released answer (pending,

@@ -3441,6 +3441,7 @@
   "form_cash_not_offered": "This form does not accept payment in person.",
   "form_cash_already_paid_online": "This answer was already paid online: there is nothing to collect. If cash was also handed over, it must be given back.",
   "form_payment_issue_withdrawn": "Your answer changed while its payment was being prepared: nothing was charged. Reload the form.",
+  "form_cash_switch_lost_after_cancel": "Your card payment was cancelled, but the cash payment could not be kept: the form filled up or closed meanwhile. Nothing was charged.",
   "form_success_cash_heading": "Payment in person",
   "form_success_cash_desc": "Your answer is saved and waits for your payment in person: pay the organiser, who will confirm it.",
   "form_guest_receipt_cash_desc": "Your answer is saved. Pay the amount to the organiser in person and give them your reference: your answer counts as soon as they confirm the payment.",

@@ -31,6 +31,11 @@ describe('providerRefusalMessage', () => {
     expect(providerRefusalMessage(err)).toBe(m.form_payment_issue_withdrawn());
   });
 
+  it('words a cash switch refused after its card request was cancelled from its code', () => {
+    const err = new SocialApiError('lost', 'CASH_SWITCH_LOST_AFTER_CANCEL', 409);
+    expect(providerRefusalMessage(err)).toBe(m.form_cash_switch_lost_after_cancel());
+  });
+
   it('words an association whose payments are not active, and one Lydia blocked, apart', () => {
     const notActive = new SocialApiError('Payments off', 'PAYMENTS_NOT_ACTIVATED', 409);
     const blocked = new SocialApiError('Blocked', 'PAYMENTS_BLOCKED', 409);

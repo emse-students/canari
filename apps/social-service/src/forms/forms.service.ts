@@ -101,6 +101,7 @@ import {
 } from './payment-resume';
 import {
   CASH_ALREADY_PAID_ONLINE,
+  CASH_SWITCH_LOST_AFTER_CANCEL,
   FORM_CASH_NOT_OFFERED,
   PAYMENT_ISSUE_WITHDRAWN,
   PAYMENT_NOT_SWITCHABLE,
@@ -3735,15 +3736,25 @@ export class FormsService {
       await this.assertGuestCeiling(this.submissionRepo.manager, form, submissionId, visitorKey);
     }
 
+    // The claim THIS press created, the only one its refusal may clear (an adopted one is another
+    // press's, which may still be mid-call: clearing it would expose that press's seat).
     let claim: string | null = null;
+    // What the finish's refusal means to the payer: whether the request was cancelled at Lydia by
+    // this press, and whether the row still held its seat then (a FORM_FULL is then a hold that
+    // lapsed DURING the call, not a released answer's plain refusal).
+    let cancelledAtLydia = false;
+    let heldAtClaim = false;
     try {
       if (row.paymentRequestId || row.stripeSessionId) {
         const claimed = await this.claimCashSwitch(row, form, settleable);
-        if (typeof claimed === 'string') claim = claimed;
-        else if (claimed) return claimed;
+        if (claimed?.kind === 'replay') return claimed.outcome;
+        heldAtClaim = claimed?.kind === 'claim';
+        if (claimed?.created) claim = claimed.token;
         // NO LOCK HELD: the claim keeps the row's seat from every release while Lydia answers.
         const settled = await this.settleRequestAtProvider(row, form);
+        cancelledAtLydia = true;
         if (settled === 'paid') {
+          // `markPaid` clears the claim with the payment; this release covers a write that fails.
           if (claim) await this.releaseCashSwitchClaim(submissionId, claim, 'request paid');
           claim = null;
           this.logger.log(
@@ -3769,29 +3780,71 @@ export class FormsService {
         oneAnswer,
         userId,
         visitorKey,
+      }).catch((err: unknown) => {
+        throw cancelledAtLydia
+          ? this.cashSwitchLostAfterCancel(submissionId, err, heldAtClaim)
+          : err;
       });
       claim = null;
       return done;
     } catch (err: unknown) {
-      // Every refusal clears the claim it made: the row is the payer's again, as it was.
+      // Every refusal clears the claim it CREATED: the row is the payer's again, as it was.
       if (claim) await this.releaseCashSwitchClaim(submissionId, claim, 'switch refused');
       throw err;
     }
   }
 
   /**
+   * A finish refused AFTER the request was cancelled at Lydia (irreversible): the form filled up
+   * once a hold that ran at the claim lapsed mid-call (`FORM_FULL`), or the form or its association closed mid-call
+   * (404). Answered as what happened to the payer - the card request is gone, the cash answer could
+   * not be kept, nothing was charged - instead of the bare refusal a fresh submit would read.
+   * Any other refusal (one answer, the guest ceiling, a moved row) passes through unchanged.
+   */
+  private cashSwitchLostAfterCancel(
+    submissionId: string,
+    err: unknown,
+    heldAtClaim: boolean
+  ): unknown {
+    const code =
+      err instanceof BadRequestException
+        ? (err.getResponse() as { code?: string } | string)
+        : undefined;
+    // A released answer's FORM_FULL is the plain refusal: it held no seat before the call either.
+    const full = heldAtClaim && typeof code === 'object' && code?.code === FORM_FULL;
+    if (!full && !(err instanceof NotFoundException)) return err;
+    this.logger.warn(
+      `[Forms] switchToCash ${submissionId} refused after its request was cancelled at Lydia: ` +
+        `${full ? 'the form filled up after the hold lapsed' : 'the form or its association closed'} mid-call`
+    );
+    return new ConflictException({
+      code: CASH_SWITCH_LOST_AFTER_CANCEL,
+      message:
+        'Your card payment was cancelled, but the cash payment could not be kept: the form filled up or closed meanwhile. Nothing was charged.',
+    });
+  }
+
+  /**
    * THE CLAIM of `switchToCash`, in one short row-locked transaction: a row still `pending` within
    * its hold (the only one whose seat a release would take) gets `cashSwitchClaimId`, a token of
-   * this press. Answers the token; null when the row holds no seat to protect (released already,
-   * or past its hold - settled with no claim); or the replay when the switch was made meanwhile.
-   * A row already claimed (another press, or one a crash left) is claimed again: the press re-drives
-   * it, and the earlier press's own release of the claim matches its token only.
+   * this press. Answers the token and whether this press created it; null when the row holds no
+   * seat to protect (released already, or past its hold - settled with no claim); or the replay
+   * when the switch was made meanwhile.
+   *
+   * A row ALREADY claimed (another press still mid-call, or one a crash left) is ADOPTED, never
+   * overwritten: this press re-drives it but owns no claim, so its refusal clears nothing - the
+   * other press's seat stays kept until a finish (which clears whatever claim is there) or the
+   * sweep at the end of the hold (review of #4019, D1).
    */
   private async claimCashSwitch(
     row: Submission,
     form: Form,
     settleable: boolean
-  ): Promise<string | null | CashSwitchOutcome> {
+  ): Promise<
+    | { kind: 'claim'; token: string; created: boolean }
+    | { kind: 'replay'; outcome: CashSwitchOutcome }
+    | null
+  > {
     const submissionId = row.id;
     return this.submissionRepo.manager.transaction('READ COMMITTED', async (manager) => {
       const locked = await manager.findOne(Submission, {
@@ -3800,7 +3853,7 @@ export class FormsService {
       });
       if (!locked) throw new NotFoundException('Submission not found');
       const replay = this.switchReplayOrRefusal(row, locked, settleable);
-      if (replay) return replay;
+      if (replay) return { kind: 'replay', outcome: replay };
       const holds =
         (await manager.count(Submission, {
           where: livePendingAtClockWhere(form.id, { id: submissionId }),
@@ -3811,12 +3864,18 @@ export class FormsService {
         );
         return null;
       }
+      if (locked.cashSwitchClaimId) {
+        this.logger.log(
+          `[Forms] switchToCash ${submissionId}: already claimed - adopted, re-driving it (its seat stays kept)`
+        );
+        return { kind: 'claim', token: locked.cashSwitchClaimId, created: false };
+      }
       const token = crypto.randomUUID();
       await manager.update(Submission, submissionId, { cashSwitchClaimId: token });
       this.logger.log(
-        `[Forms] switchToCash ${submissionId}: claimed (${locked.cashSwitchClaimId ? 're-driving an earlier claim' : 'new'}) - its seat is kept from every release while Lydia answers`
+        `[Forms] switchToCash ${submissionId}: claimed - its seat is kept from every release while Lydia answers`
       );
-      return token;
+      return { kind: 'claim', token, created: true };
     });
   }
 
@@ -5142,6 +5201,9 @@ export class FormsService {
           submission.paymentMethod = null;
         }
         submission.paymentStatus = status;
+        // A switch to cash's claim ends with the payment it found (a crash between its settle and
+        // its release would otherwise leave one on a paid row).
+        submission.cashSwitchClaimId = null;
         // The id that settled the row, in its own column: `stripeSessionId` keeps naming the
         // request (`request_uuid`) and is no longer overwritten with whichever id arrived first.
         submission.paymentSettledBy = sessionId ?? null;

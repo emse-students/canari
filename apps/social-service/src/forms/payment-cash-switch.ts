@@ -47,6 +47,14 @@ export const CASH_ALREADY_PAID_ONLINE = 'CASH_ALREADY_PAID_ONLINE';
  */
 export const PAYMENT_ISSUE_WITHDRAWN = 'PAYMENT_ISSUE_WITHDRAWN';
 
+/**
+ * The `code` of the 409 a switch gets when its finish is refused AFTER the card request was
+ * cancelled at Lydia: the hold lapsed during the call and the form filled up, or the form or its
+ * association closed during it. The card request is gone, the cash answer could not be kept,
+ * nothing was charged. Words: `form_cash_switch_lost_after_cancel`.
+ */
+export const CASH_SWITCH_LOST_AFTER_CANCEL = 'CASH_SWITCH_LOST_AFTER_CANCEL';
+
 /** What of a row the rule reads. */
 export type CashSwitchRow = Pick<
   Submission,

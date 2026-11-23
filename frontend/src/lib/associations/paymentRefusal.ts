@@ -78,6 +78,9 @@ export function providerRefusalMessage(err: unknown): string | null {
   if (err instanceof SocialApiError && err.code === PAYMENT_ISSUE_WITHDRAWN) {
     return m.form_payment_issue_withdrawn();
   }
+  if (err instanceof SocialApiError && err.code === CASH_SWITCH_LOST_AFTER_CANCEL) {
+    return m.form_cash_switch_lost_after_cancel();
+  }
   if (err instanceof SocialApiError && err.code === AMOUNT_OUT_OF_RANGE && err.amountBounds) {
     const { minCents, maxCents } = err.amountBounds;
     const min = formatAmount(minCents);
@@ -385,3 +388,9 @@ export const CASH_ALREADY_PAID_ONLINE = 'CASH_ALREADY_PAID_ONLINE';
  * being created (`payment-cash-switch.ts`): nothing was charged, the form is to be reloaded.
  */
 export const PAYMENT_ISSUE_WITHDRAWN = 'PAYMENT_ISSUE_WITHDRAWN';
+
+/**
+ * The body `code` of a switch to cash refused AFTER its card request was cancelled at Lydia (the
+ * form filled up or closed during the call): the card request is gone, nothing was charged.
+ */
+export const CASH_SWITCH_LOST_AFTER_CANCEL = 'CASH_SWITCH_LOST_AFTER_CANCEL';
