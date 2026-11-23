@@ -248,7 +248,7 @@ services:
       # Dev is served over HTTPS behind the tunnel and must keep production's attributes.
       NODE_ENV: production
       PORT: "3010"
-      # Pinned with the image: zone-less timestamps are read in the process zone.
+      # Pinned in the image (`ENV TZ`) AND here, and the Postgres session zone in the app (`PG_SESSION_OPTIONS`): zone-less timestamps are read in the process zone.
       TZ: UTC
       POSTGRES_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/auth_db
       REDIS_HOST: redis
@@ -463,7 +463,7 @@ services:
       # Dev is served over HTTPS behind the tunnel and must keep production's attributes.
       NODE_ENV: production
       PORT: "3012"
-      # Pinned with the image: zone-less timestamps are read in the process zone.
+      # Pinned in the image (`ENV TZ`) AND here, and the Postgres session zone in the app (`PG_SESSION_OPTIONS`): zone-less timestamps are read in the process zone.
       TZ: UTC
       JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required - see .env.example}"
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
@@ -566,7 +566,7 @@ services:
       # Dev is served over HTTPS behind the tunnel and must keep production's attributes.
       NODE_ENV: production
       PORT: "3014"
-      # Pinned with the image (Dockerfile.social-service): zone-less timestamps are read in the process zone.
+      # Pinned in the image (`ENV TZ`) AND here, and the Postgres session zone in the app (`PG_SESSION_OPTIONS`): zone-less timestamps are read in the process zone.
       TZ: UTC
       DB_HOST: postgres
       DB_PORT: "5432"

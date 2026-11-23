@@ -148,7 +148,7 @@ services:
       # The review cohort (review-cohort.ts): no conversation, call or invitation crosses it.
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
       PORT: "3010"
-      # Pinned with the image: zone-less timestamps are read in the process zone.
+      # Pinned in the image (`ENV TZ`) AND here, and the Postgres session zone in the app (`PG_SESSION_OPTIONS`): zone-less timestamps are read in the process zone.
       TZ: UTC
       NODE_ENV: development
       # Set explicitly, as the deployed estates set them to the mesh; this stack has no rolling
@@ -338,7 +338,7 @@ services:
       # compose-wiring.test.sh holds this estate to the keys production forwards.
       BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS: "2"
       PORT: "3012"
-      # Pinned with the image: zone-less timestamps are read in the process zone.
+      # Pinned in the image (`ENV TZ`) AND here, and the Postgres session zone in the app (`PG_SESSION_OPTIONS`): zone-less timestamps are read in the process zone.
       TZ: UTC
       NODE_ENV: development
       # Set explicitly, as the deployed estates set it to the mesh; this stack names the peer.
@@ -428,7 +428,7 @@ services:
       # compose-wiring.test.sh holds this estate to the keys production forwards.
       BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS: "2"
       PORT: "3014"
-      # Pinned with the image (Dockerfile.social-service): zone-less timestamps are read in the process zone.
+      # Pinned in the image (`ENV TZ`) AND here, and the Postgres session zone in the app (`PG_SESSION_OPTIONS`): zone-less timestamps are read in the process zone.
       TZ: UTC
       NODE_ENV: development
       # This stack builds its schema from the entities, by name (typeorm-synchronize.ts). The
