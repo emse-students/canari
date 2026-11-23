@@ -7,7 +7,7 @@ Production calls do not touch the SFU: 1:1 audio and video run peer to peer with
 so the SFU path cannot connect from production at all
 ([calls](../frontend/modules/calls.md#the-sfu-runs-six-webrtc-majors-it-has-never-placed-a-call-on-2026-08-27)).
 The SFU is kept for the day the School opens UDP to it (D2,
-[group calls](group-calls-p2p-mesh-up-to-4-audio-3-video-decided-2026-10-31.md)), and that day is when
+[group calls](../decisions/group-calls-p2p-mesh-up-to-4-audio-3-video-decided-2026-10-31.md)), and that day is when
 this entry becomes P1.
 
 **Done (D3, #2878, 2026-11-01):** `test-call-service-e2e` places an encrypted AUDIO call through the

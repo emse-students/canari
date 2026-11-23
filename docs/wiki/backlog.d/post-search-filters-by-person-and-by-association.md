@@ -4,7 +4,7 @@ target: 1.8.0
 
 **Asked by the owner on 2026-11-19, in place of the global search.** He did not see what a global
 search would be for; what he wants is a better POST search: *"filtrer les posts d'une personne, ou
-d'une asso"* ([decisions](owner-decisions-of-2026-11-19.md)). The global-search entry is deleted.
+d'une asso"* ([decisions](../decisions/owner-decisions-of-2026-11-19.md)). The global-search entry is deleted.
 
 It serves the product principle of 2026-11-10 - a reader finds their information fast
 ([engagement](../engagement.md#the-product-principle-owner-2026-11-10)).

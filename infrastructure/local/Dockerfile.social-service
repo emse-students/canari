@@ -43,6 +43,11 @@ COPY --from=builder /app/apps/social-service/dist ./dist
 COPY --from=prod-deps /app/apps/social-service/node_modules ./node_modules
 COPY --from=builder /app/apps/social-service/package.json ./
 
+# THE ZONE IS PINNED, not inherited from the base image: the `submissions` dates are zone-less
+# `timestamp` columns written on the UTC wall clock and read back in the PROCESS's zone, so every
+# reader that formats them (the anonymous week cut, the XLSX date cells) agrees only while this is UTC.
+ENV TZ=UTC
+
 EXPOSE 3014
 
 # NON-ROOT: the image's own `bun` user (uid 1000). This service writes nothing to disk and mounts no

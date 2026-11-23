@@ -512,36 +512,62 @@ application slugs are in each client's issuer URL, a rename deferred with the OI
 `password-login` is the test campaign's `PASSWORD_LOGIN_FLOW_SLUG`. Stage, prompt, policy, mapping and
 provider names are read by nothing outside authentik, and those are the ones renamed.
 
-## The Alumni SAML source: what to hand the IdP, and what is still missing (2026-10-22)
+## The Alumni SAML source: enabled, not promoted, measured (2026-11-23)
 
-MiConnect is the Service Provider, Alumnforce (the alumni portal) the Identity Provider. Measured
-2026-10-22 on the public host, no login needed:
+MiConnect is the Service Provider, Alumnforce (the alumni portal, run by Mevia) the Identity
+Provider.
 
 - **SP metadata**: `https://miconnect.emse.fr/source/saml/alumni/metadata/` answers `200` XML. The
   `entityID` is that same URL, the ACS is `https://miconnect.emse.fr/source/saml/alumni/acs/`
-  (HTTP-POST), the NameID format is `persistent`. The slug `alumni` is in both URLs, hence never
-  renamed. `auth.canari-emse.fr/...` answers `301`: hand the `miconnect.emse.fr` form only.
-- **The metadata carries NO certificate** (no `KeyDescriptor`): the source has no signing keypair,
-  so authentik does not sign its requests. An IdP that insists on a SP certificate needs one created
-  and attached to the source first, which is a production write.
-- **The source ships DISABLED, and may only be enabled with its verification certificate**
-  (`30-sources.yaml`, `enabled: false`). A SAML source verifies a response's signature only when a
-  verification key pair is attached, so enabling one without the IdP's certificate would mean no
-  signature is checked. The precondition for re-enabling, in one step: import Alumnforce's
-  certificate, attach it as the source's `verification_kp`, and keep `signed_response` and
-  `signed_assertion` true. `test-blueprints.sh` enforces this as a CI gate - it refuses any enabled
-  SAML source that has no verification key pair, and refuses an unsigned, weakly-signed (SHA-1/MD5)
-  or IdP-initiated configuration on ANY source, so the source cannot be enabled half-configured.
-- **What the IdP gives back goes into the source**: its metadata URL (Alumnforce's looks like
-  `https://mines-saint-etienne.org/sso/saml/metadata`) fills `sso_url`, the issuer and the
-  verification certificate. The blueprint (`30-sources.yaml`) still carries a PLACEHOLDER `sso_url`,
-  and the source has NO property mapping: the attributes the IdP will send (id, e-mail, first name,
-  last name) map to nothing until one is written, as `miconnect-cas-identity` does for the CAS.
-- **The entry point** is `/source/saml/login/alumni/`; after the assertion the person lands on the
-  single `miconnect-enrollment` flow ([profiles-and-access](../profiles-and-access.md), D7, WP8).
-- **Not read**: the live source's fields (signing keypair, NameID policy, linked users) - a read
-  through `ak shell` on the production host was refused by the session's guard, and the blueprint
-  does not set them.
+  (HTTP-POST). The slug `alumni` is in both URLs, hence never renamed. `auth.canari-emse.fr/...`
+  answers `301`: hand the `miconnect.emse.fr` form only. The metadata carries no certificate: the
+  source has no signing key pair, so its AuthnRequests are unsigned.
+- **The entry point is `/source/saml/alumni/`** (authentik's initiate view), which answers `302` to
+  the IdP's SSO URL with a `SAMLRequest`. `/source/saml/login/alumni/`, written here before,
+  is a `404`.
+- **The IdP's metadata** (`https://mines-saint-etienne.org/sso/saml/metadata`, read 2026-11-23):
+  entityID `alumnforce-mines-saint-etienne.org`; ONE SingleSignOnService,
+  `https://mines-saint-etienne.org/sso/saml/ssoservice`, HTTP-Redirect; a self-signed certificate
+  (`CN=alumnforce`, 2025-02-11 -> 2035-02-11) for signing and encryption; and ONLY
+  `nameid-format:transient`. The provider announced, by e-mail, a `persistent` NameID equal to the
+  alumni id `af_id`, plus the attributes `af_id`, `firstname`, `lastname`, `email` and `cotisant`
+  (`"1"`/`"0"` as text). **The owner chose (2026-11-23) to ask the provider nothing and to measure
+  instead**: what really arrives is read from the first logins.
+- **What the blueprint sets** (`30-sources.yaml`): that certificate as `miconnect-alumni-idp-signing`
+  attached as `verification_kp`; `signed_response` and `signed_assertion` true; `enabled: true`,
+  `promoted: false` (no button on the login page, only the direct entry); `binding_type: REDIRECT`;
+  `name_id_policy: persistent`; the property mapping `miconnect-alumni-identity`, which maps the
+  display name from `firstname` + `lastname`.
+- **What authentik does with each NameID format** (read in 2026.8.6's `response.py`): a `transient`
+  NameID skips every flow - a temporary user `ak-<id>-transient` is created, flagged to be deleted
+  at logout and after `temporary_user_delete_after` (`days=1`), so a test leaves no lasting
+  account, but such a user can never be LINKED (the colle, WP8, needs `persistent`). A `persistent`
+  one goes through the source flows, the username being the NameID. The SIGNATURE algorithm of the
+  IdP is not bounded by authentik (xmlsec verifies whatever is declared); the `signature_algorithm`
+  and `digest_algorithm` fields the CI gate checks are those of OUR requests.
+- **The certificate's serial number is 0**, which `cryptography` warns about on every apply
+  (`CryptographyDeprecationWarning: Parsed a serial number which wasn't positive`), announcing an
+  exception "in a future release". When authentik ships that release, this certificate stops
+  loading: the fix is a certificate from the IdP with a positive serial.
+- **`cotisant` is not used** (owner, 2026-11-23): revisited once the login works.
+- **Applied to production by hand on 2026-11-23**, with the master session's agreement and nothing
+  deploying: the blueprints of the released `v1.7.3` with only this `30-sources.yaml` swapped in, a
+  dry-run showing exactly the 7 changes of this source, then `apply`. Until the stable that carries
+  this file, the daily `drift` job reports those 7 changes - expected, not a hand edit to undo.
+
+**Measured on the first real login (2026-11-23)**, by a probe line in the mapping that logged
+formats and names, never values, then was removed:
+
+| What | Measured |
+| --- | --- |
+| NameID | `persistent` despite the metadata's `transient`; a 5-digit number, the `af_id` |
+| Attributes | `af_id`, `cotisant`, `email`, `firstname`, `lastname` - plain names, no URI form |
+| Signatures | the Response AND the Assertion, each `rsa-sha256` with `sha256` digests, verified against the certificate above |
+| Encryption | none (no `EncryptedAssertion`; the source has no `encryption_kp`) |
+| Signed in through the CAS first | `source_linked`: authentik attached the alumni identity to the account already signed in - the colle of WP8, observed |
+
+**Next**: what an alumnus with NO MiConnect account meets (the `miconnect-enrollment` flow, with the
+`af_id` as username), then `promoted: true` and WP8 ([profiles-and-access](../profiles-and-access.md)).
 
 Traps found while writing this, each measured on authentik 2026.8.0:
 

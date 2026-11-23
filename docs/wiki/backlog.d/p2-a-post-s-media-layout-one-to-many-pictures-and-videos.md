@@ -7,9 +7,9 @@ _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 _2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 **Owner, 2026-11-19:** a post with several pictures or videos shows a CAROUSEL with a counter (as
-Instagram); a single one shows at its own shape ([decisions](owner-decisions-of-2026-11-19.md)).
+Instagram); a single one shows at its own shape ([decisions](../decisions/owner-decisions-of-2026-11-19.md)).
 
-_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](owner-decisions-of-2026-11-17.md))._
+_2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](../decisions/owner-decisions-of-2026-11-17.md))._
 
 The second half of the owner's decision "Une seule famille de cartes" of 2026-11-15. The first half
 shipped as the card zone - one card family for every non-media attachment, the fixed order text,

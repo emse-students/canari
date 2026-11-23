@@ -9,7 +9,7 @@ _2026-11-20: moved to 1.7.2 when 1.7.1 shipped._
 _2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 Moved out of `1.7.0` by the owner on 2026-11-16
-([decisions](owner-decisions-of-2026-11-16.md#decided-the-evening-of-2026-11-16)): the "Envoyer à..."
+([decisions](../decisions/owner-decisions-of-2026-11-16.md#decided-the-evening-of-2026-11-16)): the "Envoyer à..."
 list can draw salon rows (the share picker's rows,
 [reels-in-chat section 22](../frontend/modules/reels-in-chat.md#22-the-two-paths-owner-2026-11-16)),
 but the reel sheet lists none and a salon's camera takes photos only until this ships

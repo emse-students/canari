@@ -10,7 +10,7 @@ _2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 The lead removes everything left of Stripe in the code and the database (the three columns, the
 permission's old name), in held migrations shipped in `1.7.1` (#3852); the Stripe webhook endpoint,
 the Lydia contract and the payer e-mail proof are the owner's. The three GitHub secrets were read gone on
-2026-11-19 ([decisions](owner-decisions-of-2026-11-19.md)).
+2026-11-19 ([decisions](../decisions/owner-decisions-of-2026-11-19.md)).
 
 What is left is administrative, and no agent can do it ([stripe-archive](../stripe-archive.md#owed-by-the-user-one-off)):
 

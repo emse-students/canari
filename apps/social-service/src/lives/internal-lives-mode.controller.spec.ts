@@ -1,4 +1,4 @@
-import { HttpStatus } from '@nestjs/common';
+import { HttpStatus, Logger } from '@nestjs/common';
 import { GUARDS_METADATA } from '@nestjs/common/constants';
 import type { DataSource } from 'typeorm';
 import { InternalLivesModeController } from './internal-lives-mode.controller';
@@ -28,6 +28,25 @@ describe('InternalLivesModeController', () => {
   it.each(['off', 'on'])('answers the mode the database holds: %s', async (mode) => {
     const { controller } = controllerOver([{ lives_mode: mode }]);
     await expect(controller.mode('the-secret')).resolves.toEqual({ mode });
+  });
+
+  it('logs the relayed mode when it changes, never once per request', async () => {
+    const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    const debug = jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
+    try {
+      const rows = [{ lives_mode: 'on' }];
+      const { controller } = controllerOver(rows);
+      for (let i = 0; i < 5; i++) await controller.mode('the-secret');
+      expect(log).toHaveBeenCalledTimes(1);
+      rows[0] = { lives_mode: 'off' };
+      for (let i = 0; i < 5; i++) await controller.mode('the-secret');
+      expect(log).toHaveBeenCalledTimes(2);
+      expect(log.mock.calls[1][0]).toContain('off (previously on)');
+      expect(debug).not.toHaveBeenCalled();
+    } finally {
+      log.mockRestore();
+      debug.mockRestore();
+    }
   });
 
   it('refuses a caller without the secret, before reading anything', async () => {

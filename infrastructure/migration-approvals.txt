@@ -47,7 +47,7 @@ apps/social-service/src/migrations/131_dependency_triggers.sql 9e6eb4f7d8006f639
 # 134: `posts.pinned` dropped, the retired global pin (#3024) - one release after #3023 unmapped it,
 # so no image a deploy or a rollback may reach still names the column in an INSERT (rollback floor
 # `v1.6.4-alpha.3` on dev, `v1.6.5` on production). Approved by the lead under the owner's 2026-11-03
-# delegation (docs/wiki/backlog.d/owner-decisions-of-2026-11-03-evening.md), as the owner's 2026-11-04
+# delegation (docs/wiki/decisions/owner-decisions-of-2026-11-03-evening.md), as the owner's 2026-11-04
 # decision asked once production carried `1.6.5`; adversarial review passed 2026-11-07. Any edit to
 # the file holds it again.
 apps/social-service/src/migrations/134_drop_posts_pinned.sql d571439f26c22c40b33f70dfca9eb90ff3782bc8718a88ebc987ee52026d79a8
@@ -65,7 +65,7 @@ apps/social-service/src/migrations/143_account_bells_copy_push_mutes.sql 72153fd
 # attached when unambiguous, else left unattached and offline. Held because it REWRITES the live carte
 # (its document keeps only the associations switched ON, an emptied directory zone dropped, its
 # fingerprint cleared) and DROPS the single-live index for one live map per space. Approved by the lead
-# under the owner's 2026-11-03 delegation (docs/wiki/backlog.d/owner-decisions-of-2026-11-03-evening.md);
+# under the owner's 2026-11-03 delegation (docs/wiki/decisions/owner-decisions-of-2026-11-03-evening.md);
 # adversarial review passed 2026-11-08 in two rounds; the dev reading is taken through the 1.6.8
 # pre-release before the stable. Any edit to the file holds it again.
 apps/social-service/src/migrations/147_poster_spaces_and_zones.sql 1f6b76ff3f6b2dec2dae701fbdc33c9aefb8ab6ba2f781796881b46cda0bf491
@@ -74,7 +74,7 @@ apps/social-service/src/migrations/147_poster_spaces_and_zones.sql 1f6b76ff3f6b2
 # every claim an older social-service image makes on form_reminders during the deploy (heads-up only in
 # the five minutes before the opening and never after "it's open"; the opening only once open). A copy
 # (INSERT ... SELECT, ON CONFLICT DO NOTHING) of one small table, non-destructive. Approved by the lead
-# under the owner's 2026-11-03 delegation (docs/wiki/backlog.d/owner-decisions-of-2026-11-03-evening.md),
+# under the owner's 2026-11-03 delegation (docs/wiki/decisions/owner-decisions-of-2026-11-03-evening.md),
 # the owner confirming on 2026-11-09 that it merges first and runs on dev (with a backup) through the
 # next pre-release before any stable; adversarial review passed 2026-11-09 in three rounds. Any edit to
 # the file holds it again.

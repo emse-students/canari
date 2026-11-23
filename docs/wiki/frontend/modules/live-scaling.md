@@ -225,7 +225,7 @@ and (before (a2)) the uplink. A guard there is legitimate; a `live complet` scre
 **DECIDED by the owner, 2026-11-17: the lives stay wholly on the server.** *"Rester totalement sur le
 serveur, quitte a degrader la qualite si trop de spectateurs"* (principle 4 of
 [the charter](../../../principes.md), independence;
-[decisions](../../backlog.d/owner-decisions-of-2026-11-17.md)). **No R2 and no Cloudflare Stream**:
+[decisions](../../decisions/owner-decisions-of-2026-11-17.md)). **No R2 and no Cloudflare Stream**:
 Stream must read the cleartext to transcode, which breaks principle 1, and it bills per viewer-minute;
 R2 is refused for now. The storage stays S3-generic (media-service already speaks S3 to Garage), so
 moving the segments to a SELF-HOSTED store, or to R2 if ever reopened, stays a configuration change and
@@ -409,7 +409,7 @@ moves ciphertext and counts; none moves a key.**
 
 ## 7. The decisions owed by the owner
 
-**Answered by the owner on 2026-11-17** ([decisions](../../backlog.d/owner-decisions-of-2026-11-17.md));
+**Answered by the owner on 2026-11-17** ([decisions](../../decisions/owner-decisions-of-2026-11-17.md));
 the recommendations of 2026-10-21 are kept in the third column as the record.
 
 | # | Decision | Recommended 2026-10-21 | **Answer, 2026-11-17** |

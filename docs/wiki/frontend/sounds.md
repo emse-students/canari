@@ -305,7 +305,7 @@ agc=unsupported rate=48000 size=16 ch=unsupported rec=mono-downmix`.
 **Other apps' audio is INTERRUPTED by a voice note on iOS, on purpose (owner, 2026-11-22).** Recording
 a note stops the music another app plays, as WhatsApp does, and the owner wants that behaviour: no
 code tries to mix with or duck other audio during a note. A reading that hears the music stop while
-recording is a PASS, not a defect. ([decision](../backlog.d/owner-decisions-of-2026-11-22.md))
+recording is a PASS, not a defect. ([decision](../decisions/owner-decisions-of-2026-11-22.md))
 
 **The hold ends when a prompt takes the finger (iPhone 12, `1.7.3-alpha.4`).** On the FIRST note the
 microphone permission prompt took the touch: no `pointerup` nor `pointercancel` reached the page, the
