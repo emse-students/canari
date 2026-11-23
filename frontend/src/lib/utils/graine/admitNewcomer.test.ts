@@ -7,6 +7,7 @@ import {
 import { registerChannelWorkspace, setGraineRuntime } from './runtime';
 import { channelScope, workspaceScope } from '$lib/mls-client/distributionScope';
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
+import { MailboxListingIncompleteError } from '$lib/mls-client/IMlsService';
 
 /**
  * Whoever admits a newcomer Welcomes them (channel-encryption section 20).
@@ -267,6 +268,35 @@ describe('admitNewcomerToDistributionGroup', () => {
     expect(out).toMatchObject({ kind: 'admitted' });
     expect(mls.whenGroupDrained).toHaveBeenCalledWith('key-group');
     expect(mls.addMembersBulk).toHaveBeenCalledTimes(2);
+  });
+
+  it('defers the rebuild past a pull that ended incomplete, to the next complete one', async () => {
+    // The epoch the queue reaches is unknown while part of the mailbox is unlisted: reading it then
+    // would rebuild on - or give up at - an epoch the rest of the queue may still move.
+    let epoch = 5;
+    mls.getEpoch.mockImplementation(() => epoch);
+    mls.whenGroupDrained
+      .mockRejectedValueOnce(new MailboxListingIncompleteError('key-group', new Error('a 502')))
+      .mockImplementationOnce(async () => {
+        epoch = 7; // the next pull listed the mailbox whole, and its commits applied in order
+      });
+    mls.addMembersBulk
+      .mockRejectedValueOnce(new CommitRefusedError('epoch_mismatch', 5, 7))
+      .mockResolvedValueOnce({
+        welcome: new Uint8Array([9]),
+        ratchetTree: new Uint8Array([8]),
+        addedDeviceIds: ['phone', 'web'],
+        skipped: [],
+      });
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+
+    const out = await admitNewcomerToDistributionGroup(workspaceScope('ws-1'), 'bob', log);
+
+    expect(out).toMatchObject({ kind: 'admitted' });
+    expect(mls.whenGroupDrained).toHaveBeenCalledTimes(2);
+    expect(mls.addMembersBulk).toHaveBeenCalledTimes(2);
+    expect(info.mock.calls.flat().join(' ')).toContain('deferred to the next complete pull');
+    info.mockRestore();
   });
 
   it('does not wait for a drain when the refusal already moved the epoch', async () => {

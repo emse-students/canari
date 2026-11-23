@@ -442,6 +442,11 @@ post page's header all open it. Canari has no presence and no story, so neither 
    tap, like the card's `PostMedia`), continuing with the other reels. There was no deep-link entry
    into the viewer to reuse: it is opened by its owner, as `PostContent` and `ReelsEntryButton`
    do. A tap before the card has read its post still opens the page - the card does not know yet.
+   **One owner decides the tap**: once the card holds its `reelPost` its anchor carries
+   `OWNS_CLICK_ATTRIBUTE` (`utils/openExternal.ts`), which the document's capture-phase
+   `handleAppLinkClick` steps aside for, as it does for `ECOSYSTEM_SITE_ATTRIBUTE`; before that
+   listener learned it, it navigated to `/posts/<id>` first and the card's `preventDefault` came too
+   late (S10, both phones). Tested through the document listener in `SharedPostCard.svelte.test.ts`.
 2. **The post page's header "Partager" opens the same sheet** - BUILT (`routes/posts/[postId]`);
    its in-place "Lien copie !" is gone, and its string with it.
 3. **No sender warning** about recipients outside the post's spaces: it would be a new question

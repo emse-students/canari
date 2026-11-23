@@ -3,6 +3,7 @@
  * THE SHARED-POST BUBBLE, state by state: loading, image, video, reel, text-only, unavailable - and
  * the rule that only a card that came near the viewport asks the server anything.
  */
+import { handleAppLinkClick, installAppLinkClickHandler } from '$lib/utils/openExternal';
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 
@@ -196,11 +197,18 @@ describe('SharedPostCard', () => {
     await settled(target, 'reel');
     const box = target.querySelector('[data-shared-post-media]') as HTMLElement;
     expect(box.getAttribute('style')).toContain('aspect-ratio: 0.5625');
-    tap(target);
-    await vi.waitFor(() =>
-      expect(document.querySelector(`[data-reel-viewer-stub="${P1}"]`)).not.toBeNull()
-    );
-    expect(navigateInAppFromHref).not.toHaveBeenCalled();
+    // The app's capture-phase link handler is on the document in the real shell: the card must not
+    // let it navigate to the post page before its own tap opens the viewer.
+    installAppLinkClickHandler();
+    try {
+      tap(target);
+      await vi.waitFor(() =>
+        expect(document.querySelector(`[data-reel-viewer-stub="${P1}"]`)).not.toBeNull()
+      );
+      expect(navigateInAppFromHref).not.toHaveBeenCalled();
+    } finally {
+      document.removeEventListener('click', handleAppLinkClick, true);
+    }
   });
 
   it('draws a text-only post with no media box', async () => {

@@ -26,6 +26,8 @@ export {
   VaultOwnerUnprovenError,
   LocalStateNotReadyError,
   GroupDrainAbandonedError,
+  MailboxListingIncompleteError,
+  untilListedWhole,
   type VaultRefusal,
 } from './IMlsService';
 export {
