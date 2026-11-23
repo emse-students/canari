@@ -35,16 +35,16 @@ export interface AlumniHoldings {
 }
 
 /** The merge's own refusal codes (`alumni-merge.errors.ts`). */
-export const ALUMNI_MERGE_CODES = [
+const ALUMNI_MERGE_CODES = [
   'ALUMNI_MERGE_NOT_FOUND',
   'ALUMNI_MERGE_NOT_DUPLICATE',
   'ALUMNI_MERGE_NO_MATCH',
   'ALUMNI_MERGE_HOLDINGS_UNAVAILABLE',
 ] as const;
-export type AlumniMergeCode = (typeof ALUMNI_MERGE_CODES)[number];
+type AlumniMergeCode = (typeof ALUMNI_MERGE_CODES)[number];
 
 /** A refused merge call carrying the merge's own code. */
-export class AlumniMergeError extends Error {
+class AlumniMergeError extends Error {
   constructor(
     readonly status: number,
     readonly code: AlumniMergeCode

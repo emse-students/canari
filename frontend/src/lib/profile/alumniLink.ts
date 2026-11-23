@@ -9,13 +9,13 @@
 import type { CursusEntry } from './miconnectProfile';
 
 /** The page of MiConnect's user settings where a source (the Alumni one) is linked. */
-export const MICONNECT_SOURCES_SETTINGS_PATH = '/if/user/#/settings;page-sources';
+const MICONNECT_SOURCES_SETTINGS_PATH = '/if/user/#/settings;page-sources';
 
 /**
  * The first day the reminder is due for an entry year: 1 September of the following year, LOCAL
  * midnight - the school's calendar, not UTC.
  */
-export function alumniReminderStart(promo: number): Date {
+function alumniReminderStart(promo: number): Date {
   return new Date(promo + 1, 8, 1);
 }
 

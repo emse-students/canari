@@ -6836,7 +6836,6 @@
   "alumni_duplicates_card_desc": "Comptes créés par une connexion Alumni qui ressemblent à un compte existant",
   "alumni_duplicates_subtitle": "Même nom et même promo qu'un compte existant. Rattacher supprime le doublon.",
   "alumni_duplicates_empty": "Aucun doublon.",
-  "alumni_duplicates_load_error": "Impossible de charger les doublons.",
   "alumni_duplicates_duplicate_label": "Doublon",
   "alumni_duplicates_target_label": "Compte existant",
   "alumni_duplicates_promos": "Promo {promos}",

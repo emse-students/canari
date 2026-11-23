@@ -6827,7 +6827,6 @@
   "alumni_duplicates_card_desc": "Accounts an Alumni sign-in created that match an existing account",
   "alumni_duplicates_subtitle": "Same name and promo as an existing account. Merging deletes the duplicate.",
   "alumni_duplicates_empty": "No duplicate.",
-  "alumni_duplicates_load_error": "Could not load the duplicates.",
   "alumni_duplicates_duplicate_label": "Duplicate",
   "alumni_duplicates_target_label": "Existing account",
   "alumni_duplicates_promos": "Promo {promos}",
