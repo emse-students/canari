@@ -455,11 +455,11 @@ export async function leavePerson(userId: string): Promise<void> {
 
 /**
  * Follows an association and writes it. Throws on failure. Returns the server's answer, whose
- * `bellReset` tells a bell still on screen to take its default level (undefined from a fake).
+ * `bellReset` tells a bell still on screen to take its default level.
  */
 export async function followAssociationLedgered(
   associationId: string
-): Promise<FollowAssociationAnswer | undefined> {
+): Promise<FollowAssociationAnswer> {
   const at = epoch;
   const answer = await followAssociation(associationId);
   recordAssociationFollowed(associationId, true, at);

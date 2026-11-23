@@ -1,5 +1,7 @@
-### Fixed - the live sheet no longer sends a member to close apps when the camera permission is off
+### Fixed - a camera refused by the Android permission is said to be denied, with a way to the settings
 
-A denied camera names the permission and, on the phone apps, opens the system settings; a camera the
-engine could not start there says both causes (Android reports a missing permission as the same
-error as a busy camera) ([live replays](docs/wiki/frontend/modules/live.md#a-refused-camera-on-the-pre-live-sheet-2026-11-23)).
+Android reports a camera the OS refused as the same error as a busy one, so a member was told to close
+other apps. The camera error is now classified at the throw from the OS's own permission state (a native
+plugin command); the denied sentence appears on the live sheet, the camera tab and the composer, and the
+"Ouvrir les réglages" button is native-only and shown only for a denied camera, never a busy one
+([live module](docs/wiki/frontend/modules/live.md#a-refused-camera-on-the-pre-live-sheet-2026-11-23)).

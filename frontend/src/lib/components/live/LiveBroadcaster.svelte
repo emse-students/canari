@@ -429,19 +429,16 @@
   };
 
   /**
-   * ON THE PHONE APPS a camera the OS refuses (permission off in the system settings) reaches the
-   * page as `NotReadableError`, the same name as a camera another app holds (Mi 9T, 2026-11-16:
-   * `REJECT ... without camera permission`, read as "busy"). The error TYPE cannot tell them apart
-   * there, so a `busy` fault on a native build says both causes and offers the settings page,
-   * rather than sending the member to close apps that are not the cause. A genuine `denied` (the
-   * WebView's own refusal) names the permission alone, with the same route.
+   * A refused permission is `denied` on both phone platforms: iOS says `NotAllowedError`, and
+   * Android's `NotReadableError` is told apart from a busy camera by the OS's own answer
+   * (`classifyCameraRefusal`, Mi 9T 2026-11-16). Only `denied` is undone in the system settings, so
+   * only `denied` offers them, and only where an app settings page exists (the phone apps).
    */
   const canOpenSettings = hasNativeGallery();
   const CAMERA_FAULT_TEXT: Record<CameraFault, () => string> = {
     denied: m.reels_camera_denied_body,
     unavailable: m.reels_camera_unavailable_body,
-    busy: () =>
-      canOpenSettings ? m.live_camera_busy_or_denied_body() : m.reels_camera_busy_body(),
+    busy: m.reels_camera_busy_body,
     interrupted: m.reels_camera_interrupted_body,
   };
 
@@ -903,7 +900,7 @@
             {m.reels_camera_retry()}
           </button>
         </div>
-        {#if canOpenSettings && (camera.fault === 'denied' || camera.fault === 'busy')}
+        {#if canOpenSettings && camera.fault === 'denied'}
           <Button
             variant="secondary"
             class="justify-center"

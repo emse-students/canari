@@ -21,6 +21,8 @@ import { cameraVideoConstraints } from './framedCapture';
 import { captureUserMedia } from '$lib/utils/audioSession';
 import { logCaptureAudioLayout } from '$lib/utils/audioLayout';
 import { REEL_FRAME_RATIO, containFrame } from './reelFrame';
+import { cameraPermission, type CameraPermissionState } from './gallery';
+import { isAndroidTauriRuntime } from '$lib/utils/appVersion';
 
 /** Why the camera could not be opened. One code per cause the screen draws differently. */
 export type CameraFault =
@@ -77,6 +79,40 @@ export function classifyCameraError(err: unknown): CameraFault {
     default:
       console.warn(`[camera] unclassified getUserMedia rejection "${name}" - read as unavailable`);
       return 'unavailable';
+  }
+}
+
+/**
+ * The fault of a `NotReadableError` on Android, from the OS's camera permission: not granted
+ * (denied, or still to be asked) is a refusal the member can undo in the settings; granted, or no
+ * answer, is the hardware held by another app. Pure, so the mapping is pinned by a test.
+ */
+export function faultForNotReadable(state: CameraPermissionState): CameraFault {
+  return state === 'denied' || state === 'prompt' ? 'denied' : 'busy';
+}
+
+/**
+ * {@link classifyCameraError}, plus the one fact the error name cannot carry. Android's WebView
+ * rejects a camera the OS refused (permission off in the settings) with `NotReadableError`, the
+ * very name of a camera another app holds (Mi 9T, 2026-11-16: `REJECT ... without camera
+ * permission`, drawn as "another app is using the camera"). So on Android, and only for that name,
+ * the plugin is asked what the OS says; a read that fails is logged and leaves `busy`.
+ */
+export async function classifyCameraRefusal(err: unknown): Promise<CameraFault> {
+  const fault = classifyCameraError(err);
+  const name = err instanceof Error || err instanceof DOMException ? err.name : '';
+  if (fault !== 'busy' || name !== 'NotReadableError' || !isAndroidTauriRuntime()) return fault;
+  try {
+    const state = await cameraPermission();
+    const refined = faultForNotReadable(state);
+    console.warn(`[camera] NotReadableError on Android, camera permission ${state} -> ${refined}`);
+    return refined;
+  } catch (readErr) {
+    console.warn(
+      '[camera] NotReadableError on Android, permission unreadable - read as busy',
+      readErr
+    );
+    return fault;
   }
 }
 
@@ -143,7 +179,7 @@ export async function openReelCamera(
     console.debug(`[camera] opened ${facing}: ${video?.label ?? 'no video track'}`);
     return stream;
   } catch (err) {
-    const fault = classifyCameraError(err);
+    const fault = await classifyCameraRefusal(err);
     console.warn(`[camera] refused (${fault})`, err);
     throw new CameraAccessError(fault, `camera: ${fault}`, { cause: err });
   }

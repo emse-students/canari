@@ -370,7 +370,7 @@
       if (wasFollowing) await unfollowAssociationLedgered(asso.id);
       else {
         const answer = await followAssociationLedgered(asso.id);
-        if (answer?.bellReset) bellShown = 'all';
+        if (answer.bellReset) bellShown = 'all';
         followedHereId = asso.id;
       }
     } catch (err) {

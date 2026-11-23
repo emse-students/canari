@@ -5157,7 +5157,6 @@
   "reels_camera_denied_body_camera_only": "Autorisez la caméra pour Canari dans les réglages du téléphone, puis réessayez.",
   "reels_camera_unavailable_title": "Aucune caméra disponible",
   "reels_camera_unavailable_body": "Canari ne trouve aucune caméra utilisable sur cet appareil.",
-  "live_camera_busy_or_denied_body": "La caméra ne s'ouvre pas : une autre application l'utilise, ou Canari n'a pas l'autorisation de l'utiliser. Vérifiez-la dans les réglages du téléphone, puis réessayez.",
   "reels_camera_busy_title": "La caméra est occupée",
   "reels_camera_busy_body": "Une autre application l'utilise. Fermez-la, puis réessayez.",
   "reels_camera_interrupted_title": "La caméra s'est arrêtée",

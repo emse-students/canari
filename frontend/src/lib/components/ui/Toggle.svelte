@@ -55,11 +55,13 @@
   const labelTone = $derived(tone === 'on-media' ? 'text-white' : 'text-text-main');
   /**
    * The OFF track. `--cn-border` is a near-background grey that vanishes on a dark camera image
-   * (Mi 9T, S17), so `on-media` draws a translucent white fill with a white ring, both reading on
-   * any dark picture; ON is the accent in both tones (`peer-checked`).
+   * (Mi 9T, S17), so `on-media` draws `--toggle-off-on-media` with the glass edge as a ring, both
+   * reading on any dark picture; ON is the accent in both tones (`peer-checked`).
    */
   const trackTone = $derived(
-    tone === 'on-media' ? 'bg-white/30 ring-1 ring-white/70 ring-inset' : 'bg-cn-border'
+    tone === 'on-media'
+      ? 'bg-(--toggle-off-on-media) ring-(color:--glass-video-edge) ring-1 ring-inset'
+      : 'bg-cn-border'
   );
   const hintTone = $derived(tone === 'on-media' ? 'text-white/70' : 'text-text-muted');
 </script>

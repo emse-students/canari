@@ -178,8 +178,8 @@ describe('LiveBroadcaster', () => {
     expect(q('[data-live-replay-switch] p')!.className).toContain('text-white/70');
     // OFF must read on the dark image too: a translucent white fill with a white ring, never the near-background border grey.
     const track = q('[data-live-replay-switch] [data-toggle-track]')!;
-    expect(track.className).toContain('bg-white/30');
-    expect(track.className).toContain('ring-white/70');
+    expect(track.className).toContain('bg-(--toggle-off-on-media)');
+    expect(track.className).toContain('ring-(color:--glass-video-edge)');
     expect(track.className).not.toContain('bg-cn-border');
     expect(on.broadcast.replayOffered).toBe(true);
     q<HTMLButtonElement>('[data-live-start]')!.click();
@@ -1159,15 +1159,15 @@ describe('LiveBroadcaster - a refused camera on the pre-live sheet (Mi 9T, 2026-
     expect(settingsPage.open).toHaveBeenCalledTimes(1);
   });
 
-  it('on a phone app a camera the engine could not start names the permission too and offers the settings', async () => {
+  it('a busy camera is never given the settings button: closing the other app is the remedy', async () => {
     await refused('busy', true);
-    expect(q('[role="alert"]')!.textContent).toContain(m.live_camera_busy_or_denied_body());
-    expect(q('[data-live-open-settings]')).not.toBeNull();
+    expect(q('[role="alert"]')!.textContent).toContain(m.reels_camera_busy_body());
+    expect(q('[data-live-open-settings]')).toBeNull();
   });
 
-  it('on the web a busy camera keeps its own sentence and there is no settings page to offer', async () => {
-    await refused('busy', false);
-    expect(q('[role="alert"]')!.textContent).toContain(m.reels_camera_busy_body());
+  it('on the web a denied camera has no settings page to offer', async () => {
+    await refused('denied', false);
+    expect(q('[role="alert"]')!.textContent).toContain(m.reels_camera_denied_body());
     expect(q('[data-live-open-settings]')).toBeNull();
   });
 });
