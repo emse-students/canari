@@ -333,6 +333,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/compose-wiring.test.sh
 	@bash .github/scripts/tests/compose-logging.test.sh
 	@bun .github/scripts/tests/image-user.test.mjs
+	@bun .github/scripts/tests/social-service-tz.test.mjs
 	@bun .github/scripts/tests/image-prod-deps.test.mjs
 	@bun .github/scripts/tests/route-params-wired.test.mjs
 	@bun .github/scripts/tests/brand-css-alignment.test.mjs

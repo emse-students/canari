@@ -1674,3 +1674,5 @@ of those rows is the sweep's, not this file's. Applied twice by the integration 
 - [reels](reels.md) - the server model this copies (state is the row, blobs then row, a `try` per item)
 - [media-streaming-upload](media-streaming-upload.md) - the 8 MiB body invariant the segment bound sits under
 - [account-erasure](../account-erasure.md)
+
+**The relay log (2026-11-23).** media-service asks `GET /api/internal/lives/mode` on every live segment, so social-service logs the answer only when it differs from the last one it gave (or is the first of the process), never per request.

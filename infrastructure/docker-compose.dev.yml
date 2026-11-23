@@ -562,6 +562,8 @@ services:
       # Dev is served over HTTPS behind the tunnel and must keep production's attributes.
       NODE_ENV: production
       PORT: "3014"
+      # Pinned with the image (Dockerfile.social-service): zone-less timestamps are read in the process zone.
+      TZ: UTC
       DB_HOST: postgres
       DB_PORT: "5432"
       DB_USERNAME: ${POSTGRES_USER:?POSTGRES_USER is required}

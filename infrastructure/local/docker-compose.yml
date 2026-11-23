@@ -424,6 +424,8 @@ services:
       # compose-wiring.test.sh holds this estate to the keys production forwards.
       BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS: "2"
       PORT: "3014"
+      # Pinned with the image (Dockerfile.social-service): zone-less timestamps are read in the process zone.
+      TZ: UTC
       NODE_ENV: development
       # This stack builds its schema from the entities, by name (typeorm-synchronize.ts). The
       # production and dev compose files never set it, and a service refuses it next to production.

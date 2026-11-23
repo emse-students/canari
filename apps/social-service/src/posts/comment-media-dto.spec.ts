@@ -57,3 +57,28 @@ describe('AddCommentDto.media', () => {
     expect(plainToInstance(AddCommentDto, { media }).media?.width).toBe(800);
   });
 });
+
+/**
+ * A comment carries text or its picture. A body with neither (a misnamed `content` field) answered
+ * 201 and stored an empty comment that pushed "Nouveau commentaire" to the author.
+ */
+describe('AddCommentDto text-or-media', () => {
+  const refusedBy = async (body: object) =>
+    (await check(body)).flatMap((e) => Object.keys(e.constraints ?? {}));
+
+  it.each([
+    ['an empty body', {}],
+    ['a misnamed field', { content: 'hello' }],
+    ['an empty text', { text: '' }],
+    ['a whitespace text', { text: '  \n' }],
+    ['a null text', { text: null }],
+  ])('refuses %s, typed by the constraint name', async (_label, body) => {
+    expect(await refusedBy(body)).toContain('commentTextOrMedia');
+  });
+
+  it('accepts a text, or a media with an empty text', async () => {
+    expect(await check({ text: 'hi' })).toHaveLength(0);
+    expect(await check({ text: '', media })).toHaveLength(0);
+    expect(await check({ media })).toHaveLength(0);
+  });
+});

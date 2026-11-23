@@ -563,6 +563,8 @@ services:
       # that long. The resolver lifetime instead (deploy-replace.test.sh holds them equal).
       BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS: "2"
       PORT: "3014"
+      # Pinned with the image (Dockerfile.social-service): zone-less timestamps are read in the process zone.
+      TZ: UTC
       NODE_ENV: ${NODE_ENV:-production}
       FRONTEND_URL: ${FRONTEND_URL:-}
       DB_HOST: postgres
