@@ -6043,8 +6043,8 @@ moves give one put-back; a change during a moving transition counts once.
 scroll to the end, the arrow absent) and the assistive case with no transition and after one at rest
 (the DEBUG line, the arrow shown). `iosKeyboardRiseHandoff.test.ts` holds the native relay: the did-show / did-hide
 observers registered once the WebView exists, did-change-frame only with no show or hide pending, then
-the screen-update proof, the silent superseded check and the page hook. Owed:
-[the reading](../../backlog.d/reading-owed-a-dm-ending-in-photos-stays-at-its-end-when-the-keyboard-opens.md).
+the screen-update proof, the silent superseded check and the page hook. Read on both phones on 1.8.0-alpha.2
+([device-verification](../../device-verification.md#the-readings-of-2026-11-23-180-alpha2-the-resume-with-salons-the-share-shortcuts-the-keyboard-on-a-photo-dm-the-inactive-iphone)).
 
 ### A short thread sits at the bottom, and asks for its past at entry (2026-11-14)
 
