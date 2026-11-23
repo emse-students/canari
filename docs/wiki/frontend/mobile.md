@@ -5095,6 +5095,15 @@ two hops, and the second one is slower than the first:
 | Android Keystore / iOS Keychain | `CanariApplication.processPendingPushSecret` (also run from `MainActivity.onResume`) / `CanariRetrievePushSecret` | at process start and at each resume - always BEFORE the registration that writes the file |
 | `push_secret.txt` in the App Group (iOS only, the NSE's copy) | `store_push_secret`, in the SAME call as the file above; `CanariMirrorPushStateToAppGroup` rewrites the same value at each activation and resignation | at every `/register` since 2026-10-12 |
 
+**A secret the sign-out erased is not a lost Keystore** (S17, 2026-11-20; fixed 2026-11-23).
+`CanariApplication.checkKeystoreHealth` logged `Keystore lost - background push disabled` at ERROR
+after every ordinary sign-out, reading the sign-out's own erasure as a loss. The fact is now carried
+to the check as positive evidence: `PushRegistrationEnd.eraseSecret` writes
+`push_secret_erased_by_sign_out` once `PushSecretKeystore.clear` succeeded, and the next
+`PushSecretKeystore.store` removes it. An absent secret with the mark is logged at INFO; without it
+it is still the ERROR (`push/KeystoreHealth.kt`, `KeystoreHealthTest`). The mark answers that one
+question only. **Owed on the Mi 9T**: a sign-out then sign-in leaves no `Keystore lost` line.
+
 ### The extension's copy that followed the lifecycle, and the iPhones that presented a dead secret
 
 **Measured, prod, 2026-10-12, 09:15-09:35 UTC** (the only window the container's 30 MB log rotation

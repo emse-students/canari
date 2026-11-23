@@ -14,6 +14,7 @@ import androidx.webkit.WebViewCompat
 import app.tauri.gallery.ConversationShortcuts
 import app.tauri.gallery.ShortcutIcons
 import fr.emse.canari.call.IncomingRing
+import fr.emse.canari.push.KeystoreHealth
 import java.io.File
 
 /**
@@ -181,7 +182,8 @@ class CanariApplication : Application() {
 
     /**
      * Verifies that the Android Keystore can read the push secret (key not lost).
-     * Writes `keystore_ok.flag` if OK, deletes it otherwise.
+     * Writes `keystore_ok.flag` if OK, deletes it otherwise. A secret the sign-out erased on purpose
+     * ([PushSecretKeystore.erasedBySignOut]) is not a loss and is not accused ([KeystoreHealth]).
      * The Tauri command `check_push_secret_health` reads this flag to signal the UI.
      * Silent call: an error here must not block startup.
      */
@@ -200,12 +202,21 @@ class CanariApplication : Application() {
             if (!contextFile.exists()) return // not authenticated yet, no secret expected
             val markerFile = File(dataDir, "keystore_ok.flag")
             val secret = PushSecretKeystore.retrieve(this)
-            if (secret != null) {
-                markerFile.writeText("ok")
-                Log.d(TAG, "checkKeystoreHealth: Keystore operational")
-            } else {
-                markerFile.delete()
-                Log.e(TAG, "checkKeystoreHealth: Keystore lost - background push disabled")
+            val erasedBySignOut = PushSecretKeystore.erasedBySignOut(this)
+            when (KeystoreHealth.of(secret != null, erasedBySignOut)) {
+                KeystoreHealth.OPERATIONAL -> {
+                    markerFile.writeText("ok")
+                    Log.d(TAG, "checkKeystoreHealth: Keystore operational")
+                }
+                KeystoreHealth.ERASED_BY_SIGN_OUT -> {
+                    // The sign-out erased the secret on purpose and none was stored since: no loss.
+                    markerFile.delete()
+                    Log.i(TAG, "checkKeystoreHealth: no push secret - erased by the sign-out, none stored since")
+                }
+                KeystoreHealth.LOST -> {
+                    markerFile.delete()
+                    Log.e(TAG, "checkKeystoreHealth: Keystore lost - background push disabled")
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "checkKeystoreHealth: exception: ${e.javaClass.simpleName}")

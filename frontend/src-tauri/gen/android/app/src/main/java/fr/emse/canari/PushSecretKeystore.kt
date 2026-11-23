@@ -5,6 +5,7 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import android.util.Log
+import java.io.File
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -18,6 +19,13 @@ object PushSecretKeystore {
     private const val PREFS_KEY_ENC = "push_secret_enc"
     private const val PREFS_KEY_IV = "push_secret_iv"
     private const val GCM_TAG_LENGTH = 128
+
+    /**
+     * The durable mark "the sign-out erased the secret on purpose, and none was stored since",
+     * written by [markErasedBySignOut] once [clear] succeeded and removed by the next [store]. It
+     * answers ONE question, the one `checkKeystoreHealth` asks of an absent secret ([erasedBySignOut]).
+     */
+    private const val ERASED_BY_SIGN_OUT_FILE = "push_secret_erased_by_sign_out"
 
     /**
      * Held by every move of a secret between `pending_push_secret.txt` and this store
@@ -50,7 +58,34 @@ object PushSecretKeystore {
             .putString(PREFS_KEY_ENC, Base64.encodeToString(encrypted, Base64.NO_WRAP))
             .putString(PREFS_KEY_IV, Base64.encodeToString(iv, Base64.NO_WRAP))
             .apply()
+        // A secret is held again: from now on its absence is a loss, never the sign-out's erasure.
+        val mark = File(MlsContextLoader.tauriDataDir(context), ERASED_BY_SIGN_OUT_FILE)
+        if (mark.exists()) {
+            if (mark.delete()) {
+                Log.i(TAG, "store: secret stored - the sign-out's erasure mark is removed")
+            } else {
+                Log.e(TAG, "store: $ERASED_BY_SIGN_OUT_FILE not removed - a later loss would not be accused")
+            }
+        }
     }
+
+    /**
+     * Records that the sign-out erased the secret on purpose ([PushRegistrationEnd]), so the health
+     * check reads the absence as that erasure and not as a lost Keystore. Called only after [clear]
+     * returned true: the mark is positive evidence of an erasure that happened.
+     */
+    fun markErasedBySignOut(context: Context) {
+        try {
+            File(MlsContextLoader.tauriDataDir(context), ERASED_BY_SIGN_OUT_FILE).writeText("1")
+            Log.i(TAG, "markErasedBySignOut: the secret's absence is the sign-out's, until the next store")
+        } catch (e: Exception) {
+            Log.e(TAG, "markErasedBySignOut: mark not written - the next health check will report a loss: ${e.javaClass.simpleName}")
+        }
+    }
+
+    /** Whether the sign-out erased the secret and none was stored since ([markErasedBySignOut]). */
+    fun erasedBySignOut(context: Context): Boolean =
+        File(MlsContextLoader.tauriDataDir(context), ERASED_BY_SIGN_OUT_FILE).exists()
 
     /**
      * Erases the stored secret: a sign-out ends the registration it authenticated

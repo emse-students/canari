@@ -729,13 +729,17 @@ private class CallAudio(
             Log.i(TAG, "mode $found -> MODE_IN_COMMUNICATION, set by the service (read back ${manager.mode})")
         }
         val granted = manager.requestAudioFocus(focus)
-        if (granted == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+        val taken = granted == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        if (taken) {
             Log.i(TAG, "audio focus taken (transient, voice communication) - other players pause for the call")
         } else {
-            // Refused while another call holds the focus (a phone call ringing in): the call goes on,
-            // and what else is playing keeps playing - said, so a reading can tell why.
-            Log.w(TAG, "audio focus NOT granted ($granted) - other players keep playing during the call")
+            // Refused while another call holds the focus (a phone call in progress): no LOSS will
+            // ever come, so the call STARTS HELD ([CallFocusHold.onOpen]) - the microphone is not
+            // heard under the phone call, and the ask paths (a mute tap, the app back on screen)
+            // release it once the platform grants the focus.
+            Log.w(TAG, "audio focus NOT granted ($granted) at the call's start - the call starts held")
         }
+        apply(hold.onOpen(taken), if (taken) "granted at the call's start" else "refused at the call's start")
         this.speaker = speaker
         this.speakerChosen = speakerChosen
         route("call started")
