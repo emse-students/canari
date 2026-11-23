@@ -1214,50 +1214,6 @@ describe('outbox flusher', () => {
     outbox.dispose();
   });
 
-  // REVIEW OF #3992: the device lost its tree (removed, evicted), and the member deleted or left the
-  // conversation, whose purge took the row. The entry asked for a re-add on every flush and start,
-  // because `requestReAdd` reads the row it would stop on, and the row was gone.
-  it.each([
-    [true, 'retired at once, no re-add asked'],
-    [false, 'held, re-add asked: a map not known complete is no verdict'],
-  ])(
-    'an unsendable entry whose group no conversation holds, map complete=%s: %s',
-    async (complete) => {
-      const storage = makeStorage([textEntry('m1', 'g1', 100)]);
-      const mlsService = makeMls();
-      const conversations = new SvelteMap<string, Conversation>();
-      const requestReAdd = vi.fn(async () => {});
-      const lines: string[] = [];
-      const outbox = createOutbox(
-        makeDeps({
-          mlsService,
-          storage,
-          conversations,
-          requestReAdd,
-          isGroupHealthy: () => false,
-          conversationMapComplete: () => complete,
-          log: (l: string) => lines.push(l),
-        })
-      );
-
-      await outbox.flush();
-
-      expect(mlsService.sendMessage).not.toHaveBeenCalled();
-      if (complete) {
-        expect(requestReAdd).not.toHaveBeenCalled();
-        expect(storage._map.has('m1')).toBe(false);
-        expect(lines).toContainEqual(
-          expect.stringContaining('retired: no conversation holds group g1')
-        );
-      } else {
-        expect(requestReAdd).toHaveBeenCalledWith('g1');
-        expect(storage._map.has('m1')).toBe(true);
-        expect(lines.some((l) => l.includes('retired: no conversation holds'))).toBe(false);
-      }
-      outbox.dispose();
-    }
-  );
-
   it("a group becoming ready resumes only ITS held entries, and leaves another group's on their clock", async () => {
     const storage = makeStorage([textEntry('m1', 'g1', 100), textEntry('m2', 'g2', 101)]);
     let healthy = false;

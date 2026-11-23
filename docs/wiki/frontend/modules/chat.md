@@ -1622,13 +1622,15 @@ ordering above is what holds there.
   never-admitted ask that ended, a phantom the server confirms absent, the local delete of a
   `deletedRemotely` row) do not touch the outbox; an entry they leave meets the group's own answer:
   its POST refused as deleted (`group-deleted`), or - the tree dropped - the unsendable branch, which
-  RETIRES it as `removed` when no conversation holds its group on a map known complete
-  (`conversationMapComplete`: the restore SUCCEEDED and no startup source is still adding; reset at
-  sign-out). Before that, on a cold start, the absence is no verdict and the entry is held like any
-  other. This retire is what stops the asking: `requestReAdd` does not stop for a purged row (its
-  `removed` guard reads the row, and the row is gone), so the entry used to ask for a re-add on every
-  flush and start - and, with the account's seat still held, could JOIN the thrown-away
-  conversation back. Review of #3992.
+  HOLDS it and asks for a re-add on every flush and every start, for ever. `requestReAdd` does not
+  stop for a purged row (its `removed` guard reads the row, and the row is gone), and with the
+  account's seat still held its external join would build the thrown-away conversation back. An
+  absence from the map is NOT proof of removal and nothing retires on it: a DM re-keyed onto a new
+  group by a Welcome (`setupMessageHandler`, `moveDirectConversationRows`) also leaves its old group
+  held by no conversation, and its queued entries are not moved with its rows - retiring them would
+  lose a live DM's unsent message (review of #3992). Both halves - entries following a re-key, and a
+  removal withdrawing its group's entries on its own evidence - are
+  [p2-outbox-entries-follow-their-conversation](../../backlog.d/p2-outbox-entries-follow-their-conversation.md).
 - **The mirror adoption and a salon's page** are not registered: neither runs through these purges'
   key (group id vs map key; salons have their own removal), and closing them means registering their
   removers too.

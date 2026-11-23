@@ -571,14 +571,6 @@ export interface OutboxDeps {
   deviceKey: () => string;
   conversations: SvelteMap<string, Conversation>;
   log: (msg: string) => void;
-  /**
-   * True when {@link conversations} holds EVERY conversation of this device - the restore succeeded
-   * and no startup source can still add one (`useConversations`' `conversationMapComplete`). Only
-   * then is "no conversation holds this group" a verdict: an unsendable entry whose group nobody
-   * holds is retired on it instead of re-adding a purged conversation for ever (review of #3992).
-   * Absent, the map is never known complete and nothing is retired on an absence.
-   */
-  conversationMapComplete?: () => boolean;
   /** Emit a non-destructive welcome_request for a group missing from the WASM. */
   requestReAdd: (groupId: string) => Promise<void>;
   /**
@@ -3123,22 +3115,6 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // Logged because this branch holds a message back indefinitely while reporting nothing: a
     // conversation stuck here looks, from the outside, exactly like a message that was delivered.
     if (!sendable) {
-      // NO CONVERSATION HOLDS THIS GROUP, ON A MAP KNOWN COMPLETE (review of #3992): the member
-      // deleted or left it and the purge took its row - the device having lost its tree meanwhile
-      // (removed, evicted). `requestReAdd` does not stop for a row that is gone (its `removed` guard
-      // reads the row), so this entry asked for a re-add on every flush and every start, for a
-      // conversation the member had thrown away - and a seat still held would have JOINED it back.
-      // The absence is read only once the restore succeeded and no source is still adding: a cold
-      // start, its map still empty, holds the entry instead.
-      if (
-        deps.conversationMapComplete?.() === true &&
-        !findConversationKeyByGroupId(conversations, terminalId)
-      ) {
-        log(
-          `[OUTBOX] ${entry.id.slice(0, 8)}… retired: no conversation holds group ${terminalId.slice(0, 8)}… on a restored map (deleted or left, then purged) - no re-add for it`
-        );
-        return failPermanently(entry, terminalId, 'removed');
-      }
       await deps
         .requestReAdd(terminalId)
         .catch((e) =>
