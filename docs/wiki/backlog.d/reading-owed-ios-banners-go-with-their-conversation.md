@@ -35,3 +35,5 @@ body of `CanariPushCancelMessageNotifications` and a new class at the end of the
 is textual and resolves by keeping both.
 
 **2026-11-22, `1.8.0-alpha.1` triage (readings rule).** Fix shipped in `1.7.3`: takeable now on the iPhone 12 (rows 1 to 5).
+
+**2026-11-23, [`1.8.0-alpha.2`](../device-verification.md#the-readings-of-2026-11-23-180-alpha2-the-resume-with-salons-the-share-shortcuts-the-keyboard-on-a-photo-dm-the-inactive-iphone) (iPhone 12): rows 4 and 5 are CLOSED, not takeable.** A call rings through CallKit and leaves no call-id notification to retire (row 4), and the bench cannot produce a pending-sync notice (row 5); `iosBannersGoWithTheirConversation.test.ts` pins both from source. Rows 1 to 3 were not taken in that sitting: they stay, on the next alpha.

@@ -26,3 +26,5 @@ the bell row headed "Canari" / "CA".
 **Gaps:** (1) no push was read (web seats, no device for `third`); (2) a later move is not refused, so the "à la nouvelle ouverture" wording was not seen; (3) the sentence is French for a reader whose interface is English.
 
 **2026-11-22, `1.8.0-alpha.1` triage (readings rule).** Gaps 2 and 3 of the web reading are closed: both wordings are Paraglide strings in `fr.json` and `en.json` (`form_opening_notifies_now_refusal`, `form_opening_notifies_later_refusal`) pinned by `publish.test.ts`. Left, one phone row: the asker's push on a real device (the Mi 9T follows the association and presses the bell, the organiser publishes from a web seat).
+
+**2026-11-23, [`1.8.0-alpha.2`](../device-verification.md#the-readings-of-2026-11-23-180-alpha2-the-resume-with-salons-the-share-shortcuts-the-keyboard-on-a-photo-dm-the-inactive-iphone) (Mi 9T): the server half PASS, the Android push FAIL, now fixed by #3989.** The push carried neither the association nor the form title; the bell row was right. Re-read on the next alpha.
