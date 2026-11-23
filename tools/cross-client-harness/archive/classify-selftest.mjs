@@ -33,6 +33,7 @@ import {
   ignoringExpectedLog,
   OWNER_DEVICE_NOTICE_NARRATION,
   PRIVACY_REFUSED_EXCEEDS_ACTOR_NARRATION,
+  SEAT_START_NARRATION,
   mintedKeyPackageVettedNarration,
   admissionJoinerNarration,
   admissionMemberNarration,
@@ -2128,6 +2129,20 @@ const FORGIVE_CASES = [
     ],
     PRIVACY_REFUSED_EXCEEDS_ACTOR_NARRATION,
     { clean: false, unmatched: 1, warnings: 1 },
+  ],
+  // THE SEAT'S ORDINARY START LINES (KILL-3, 2026-11-17): each ordinary shape is forgiven BY SHAPE, and
+  // a line of the same tag saying anything else stays dirt - the narration is not a tag whitelist.
+  [
+    'SEAT_START_NARRATION forgives every ordinary start line, each rule matched',
+    [["log","[10:01:02] [GRAINE] the history of community 9b4e7436 is already being asked - this trigger waits for that ask"],["log","[10:01:02] [GRAINE] the history of community 9b4e7436 is not asked: no other member, and none of our other devices on its key group is online to receive the request"],["log","[10:01:02] [LEDGER] opened the ledgers the MLS state carries for 12345678... - 3 key(s)"],["log","[10:01:02] [NICKNAME] 4 nickname(s) of 2 conversation(s) restated for the notifications"],["log","[10:01:02] [CHAT_VIEW] 12345678 entry settled: pinned=true isNearBottom=true newestVisible=true rows=12 fromBottom=0"],["log","[10:01:02] [chat.entry] widening window 0 -> 40 (target 40)"],["log","[10:01:02] [PENDING] web-d82cd226-abc-def already in tree for 5b186d04-aaaa-bbbb-cccc - invitation fulfilled, vouching"],["log","[10:01:02] [REGISTER] 12345678... owes its register - the next reconciliation asks for it"],["log","[10:01:02] [REGISTER] 12345678... register received (join push) - no longer asked"],["log","[10:01:02] [REGISTER] 12345678... register received (register answer) - no longer asked"]],
+    SEAT_START_NARRATION,
+    { clean: true, unmatched: 0 },
+  ],
+  [
+    'control: the same tags worded abnormally stay unexplained, no rule claims them',
+    [["log","[10:01:02] [GRAINE] the history of community 9b4e7436 is not asked: the key group is gone and nothing explains it"],["log","[10:01:02] [LEDGER] a read for 12345678... before the MLS state opened - answering nothing; the caller runs ahead of the login"],["log","[10:01:02] [NICKNAME] REFUSED a nickname frame from 12345678 in 87654321...: it carries no server time to bound it"],["log","[10:01:02] [PENDING] Error fetching pending invitations: TypeError: fetch failed"],["log","[10:01:02] [REGISTER] Could not seal abc's register in 12345678...: boom; nothing sent"],["log","[10:01:02] [REGISTER] 12345678... register received (a surprise) - no longer asked"],["log","[10:01:02] [chat.entry] widening window sideways"]],
+    SEAT_START_NARRATION,
+    { clean: false, unmatched: 9 },
   ],
 ];
 for (const [what, lines, needles, want] of FORGIVE_CASES) {

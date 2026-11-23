@@ -9,6 +9,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 import { flushSync, mount, tick, unmount } from 'svelte';
 import PostCard from './PostCard.svelte';
 import type { PostComment, PostEntity } from '$lib/posts/api';
+import { getPost } from '$lib/posts/api';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { m } from '$lib/paraglide/messages';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
@@ -18,6 +19,10 @@ afterAll(adoptTransitionAnimations());
 vi.mock('$lib/utils/apiFetch', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/utils/apiFetch')>()),
   apiFetch: vi.fn(),
+}));
+vi.mock('$lib/posts/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/posts/api')>()),
+  getPost: vi.fn(),
 }));
 vi.mock('$lib/associations/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/associations/api')>()),
@@ -173,6 +178,142 @@ describe('the card', () => {
 
     expect(sheetOpen()).toBe(true);
     expect(scrolled).toEqual(['comment-c2']);
+  });
+
+  it('opens on the comment a notification names for the post ALREADY on screen, and rings it', async () => {
+    const scrolled: string[] = [];
+    vi.spyOn(HTMLElement.prototype, 'scrollIntoView').mockImplementation(function (
+      this: HTMLElement
+    ) {
+      scrolled.push(this.id);
+    });
+    const props = $state<{ post: PostEntity; currentUserId: string; focusCommentId?: string }>({
+      post: row([comment(1), comment(2)]),
+      currentUserId: 'alice',
+    });
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const instance = mount(PostCard, { target, props });
+    mounted.push(() => void unmount(instance));
+    flushSync();
+    expect(sheetOpen()).toBe(false);
+
+    props.focusCommentId = 'c2';
+    await settle();
+
+    expect(sheetOpen()).toBe(true);
+    expect(scrolled).toEqual(['comment-c2']);
+    expect(getPost).not.toHaveBeenCalled();
+  });
+
+  it('reads the post again when the named comment arrived after it was read, then rings it', async () => {
+    const scrolled: string[] = [];
+    vi.spyOn(HTMLElement.prototype, 'scrollIntoView').mockImplementation(function (
+      this: HTMLElement
+    ) {
+      scrolled.push(this.id);
+    });
+    vi.mocked(getPost).mockResolvedValue(row([comment(1), comment(2), comment(3)]));
+    const props = $state<{ post: PostEntity; currentUserId: string; focusCommentId?: string }>({
+      post: row([comment(1), comment(2)]),
+      currentUserId: 'alice',
+    });
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const instance = mount(PostCard, { target, props });
+    mounted.push(() => void unmount(instance));
+    flushSync();
+
+    props.focusCommentId = 'c3';
+    await settle();
+
+    expect(getPost).toHaveBeenCalledWith('p1');
+    expect(sheetOpen()).toBe(true);
+    expect(threadRows()).toBe(3);
+    expect(scrolled).toEqual(['comment-c3']);
+  });
+
+  it('reopens on the SAME comment pushed again after the sheet was closed (the count is the event)', async () => {
+    const props = $state<{
+      post: PostEntity;
+      currentUserId: string;
+      focusCommentId?: string;
+      focusNonce: number;
+    }>({
+      post: row([comment(1), comment(2)]),
+      currentUserId: 'alice',
+      focusCommentId: 'c2',
+      focusNonce: 1,
+    });
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const instance = mount(PostCard, { target, props });
+    mounted.push(() => void unmount(instance));
+    flushSync();
+    expect(sheetOpen()).toBe(false);
+
+    props.focusNonce = 2;
+    await settle();
+    expect(sheetOpen()).toBe(true);
+
+    document.body.querySelector<HTMLButtonElement>('button[aria-label="Fermer"]')!.click();
+    await vi.waitFor(() => expect(sheetOpen()).toBe(false), { timeout: 2000 });
+
+    props.focusNonce = 3;
+    await settle();
+    expect(sheetOpen()).toBe(true);
+  });
+
+  it('reads the post ONCE when the re-read still lacks the comment, and logs the miss once', async () => {
+    const debug = vi.spyOn(console, 'debug');
+    vi.mocked(getPost).mockResolvedValue(row([comment(1), comment(2)]));
+    const props = $state<{ post: PostEntity; currentUserId: string; focusCommentId?: string }>({
+      post: row([comment(1), comment(2)]),
+      currentUserId: 'alice',
+    });
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const instance = mount(PostCard, { target, props });
+    mounted.push(() => void unmount(instance));
+    flushSync();
+
+    props.focusCommentId = 'c9';
+    await settle();
+    await settle();
+
+    expect(getPost).toHaveBeenCalledTimes(1);
+    expect(sheetOpen()).toBe(true);
+    const misses = debug.mock.calls.filter((c) =>
+      String(c.join(' ')).includes('c9 not in the thread')
+    );
+    expect(misses).toHaveLength(1);
+  });
+
+  it('mounted on a comment it does not hold: no re-read and no open from the mount; a later push does both', async () => {
+    vi.mocked(getPost).mockResolvedValue(row([comment(1), comment(2), comment(3)]));
+    const props = $state<{
+      post: PostEntity;
+      currentUserId: string;
+      focusCommentId?: string;
+      focusNonce: number;
+    }>({
+      post: row([comment(1), comment(2)]),
+      currentUserId: 'alice',
+      focusCommentId: 'c3',
+      focusNonce: 0,
+    });
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const instance = mount(PostCard, { target, props });
+    mounted.push(() => void unmount(instance));
+    flushSync();
+    await settle();
+    expect(getPost).not.toHaveBeenCalled();
+
+    props.focusNonce = 1;
+    await settle();
+    expect(getPost).toHaveBeenCalledTimes(1);
+    expect(sheetOpen()).toBe(true);
   });
 
   it('keeps what was typed when the sheet is closed and opened again', async () => {

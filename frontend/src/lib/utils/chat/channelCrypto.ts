@@ -183,6 +183,22 @@ function unreadableCauseClass(err: unknown): string {
 }
 
 /**
+ * EVERY (salon, class, sorted row ids) fact a page has already said about unreadable rows. Every open
+ * of a salon re-reads the rows it can never read (a Graine v1 session this device does not hold, a
+ * missing seed) and used to warn again for ever; the history pages, the post-drain re-read and the
+ * search each feed different id sets, so the memory is of EVERY set said, not only the last one: page
+ * 1, page 2, then a reopen of page 1 says nothing the second time. A set never seen is a new fact and
+ * is said. Durable state, not a clock; bounded by the sets one session meets; memory only, so a reload
+ * says it once more.
+ */
+const unreadableSaid = new Set<string>();
+
+/** Forgets what pages said (an account switch, sign-out, tests). */
+export function resetUnreadableRowLatch(): void {
+  unreadableSaid.clear();
+}
+
+/**
  * One page of a salon's history, said as ONE line per unreadable class instead of one per row.
  *
  * A page is 200 rows, and a salon whose past predates this device's seeds used to print 200 warns
@@ -221,6 +237,12 @@ export class UnreadableRowTally {
   report(): void {
     const channel = rawChannelId(this.channelId).slice(0, 8);
     for (const [causeClass, { rows, causes, fault }] of this.byClass) {
+      // A refusal ACCUSES and is never latched; an honest unreadable class is said once per id set.
+      if (!fault) {
+        const fact = `${this.channelId}|${causeClass}|${[...rows].sort().join(',')}`;
+        if (unreadableSaid.has(fact)) continue;
+        unreadableSaid.add(fact);
+      }
       const samples = [...causes].slice(0, 3).join('; ');
       (fault ? console.error : console.warn)(
         `[CHANNEL] ${rows.length} message(s) of ${channel} are ${fault ? 'REFUSED' : 'unreadable'} and not rendered - ` +

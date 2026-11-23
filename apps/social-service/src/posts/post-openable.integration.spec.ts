@@ -99,7 +99,8 @@ maybe("writes and notifications on a post follow the read's gate, against Postgr
         "displayName" varchar, "firstName" varchar, "lastName" varchar);
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL,
         type varchar NOT NULL DEFAULT 'association', "isBDE" boolean NOT NULL DEFAULT false,
-        archived boolean NOT NULL DEFAULT false, "parentAssociationId" uuid);
+        archived boolean NOT NULL DEFAULT false, "parentAssociationId" uuid,
+        "logoUrl" varchar);
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL,
         "associationId" uuid, "studentsOnly" boolean NOT NULL DEFAULT false, "reachPublic" varchar(16), "reachSpaces" jsonb, anonymous boolean NOT NULL DEFAULT false,
         "hiddenByModeration" boolean NOT NULL DEFAULT false, "scheduledAt" timestamp,
@@ -472,6 +473,42 @@ maybe("writes and notifications on a post follow the read's gate, against Postgr
       } finally {
         await client.query(`DELETE FROM content_reports`);
         await client.query(`DELETE FROM posts WHERE id = $1`, [post]);
+      }
+    });
+
+    it('/posts/hidden carries the publishing association name and logo from the associations row, and null for both on a personal post', async () => {
+      const asso = id(806);
+      const assoPost = id(807);
+      const personal = id(808);
+      await client.query(
+        `ALTER TABLE posts ADD COLUMN IF NOT EXISTS markdown text,
+           ADD COLUMN IF NOT EXISTS "createdAt" timestamp NOT NULL DEFAULT now()`
+      );
+      await client.query(
+        `INSERT INTO associations (id, name, "logoUrl") VALUES ($1, 'Club Photo', '/api/media/public/club-logo')`,
+        [asso]
+      );
+      await client.query(
+        `INSERT INTO posts (id, "authorId", "associationId", "hiddenByModeration", markdown)
+           VALUES ($1, 'author', $3, true, 'by the club'), ($2, 'author', NULL, true, 'by a person')`,
+        [assoPost, personal, asso]
+      );
+      try {
+        const rows = await service.getHiddenPosts({ userId: 'adminOutside', isGlobalAdmin: true });
+        const find = (postId: string) => rows.find((r: { id?: unknown }) => r.id === postId);
+        expect(find(assoPost)).toMatchObject({
+          associationId: asso,
+          associationName: 'Club Photo',
+          associationLogoUrl: '/api/media/public/club-logo',
+        });
+        expect(find(personal)).toMatchObject({
+          associationId: null,
+          associationName: null,
+          associationLogoUrl: null,
+        });
+      } finally {
+        await client.query(`DELETE FROM posts WHERE id IN ($1, $2)`, [assoPost, personal]);
+        await client.query(`DELETE FROM associations WHERE id = $1`, [asso]);
       }
     });
 
