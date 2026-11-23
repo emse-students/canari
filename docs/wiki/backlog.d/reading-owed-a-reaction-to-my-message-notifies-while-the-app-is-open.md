@@ -33,3 +33,5 @@ conversation ([mobile](../frontend/mobile.md#the-frame-trigger-of-a-reaction-202
    keeps it out of the foreground).
 
 **2026-11-22, `1.8.0-alpha.1` triage (readings rule).** Fix shipped in `1.7.3`: takeable now. Row 3 (the hidden web tab) cannot be read, the rig seats are denied notification permission; it is closed by `reactionNotification.test.ts` and the harness entry linked in the row. Left: rows 1 and 2 on the Mi 9T, row 4 on the iPhone 12.
+
+**2026-11-23, [`1.8.0-alpha.2`](../device-verification.md#the-readings-of-2026-11-23-180-alpha2-the-resume-with-salons-the-share-shortcuts-the-keyboard-on-a-photo-dm-the-inactive-iphone) (Mi 9T): row 2 PASS on its outcome.** A salon reaction after two epoch moves raised ONE notification and none with the salon open; the `parked until its seed` line did not appear because the seed arrived 130 ms after the frame, and that path is closed on `useConversations.owedLiveReaction.svelte.test.ts`. Left: row 1 on the Mi 9T and row 4 on the iPhone 12.
