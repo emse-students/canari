@@ -998,7 +998,7 @@ claim and calls the editor account.
   Alumni source and changing a flow. **authentik has no per-account scope for a global permission**:
   the token could delete any user, a superuser included. Canari's allowlist is what holds that line;
   the owner's open wish that the editor token not reach admin accounts
-  ([backlog](backlog.d/decided-by-the-user-on-2026-10-23-bookings-redesign-sharing-reels-calls.md))
+  ([backlog](backlog.d/p3-the-rust-runtimes-base-image-and-two-miconnect-hardenings.md))
   is still open, and this widening is in its scope. The token itself is unchanged (no new secret).
 - **Not observed**: the claim on a real sign-in (MiConnect does not emit it yet), the list and a merge
   against production MiConnect. The first flagged duplicate is the observation.
