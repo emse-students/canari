@@ -1534,6 +1534,32 @@ it, and a pull records the serial of its flush (`listedAfterAck` on `DeliveryArr
 `BaseMlsService.singleFlightPull.test.ts` drives both through the real pull, scheduler and drain:
 two asks during a drain give exactly one second pull, after the drain's ack, and no repeat.
 
+### Adds to one conversation are NOT serialized, so an add renders onto the row as it is now (2026-11-23)
+
+Asked after the review of #3987: does anything serialize `addMessageToChatOnce` per conversation? **No.**
+The MLS drain applies one frame at a time (`MlsPerGroupScheduler.drain`, one borrower at a time under
+a commit's loan), so two FRAMES never interleave. But many writers call `addMessageToChat` outside the
+drain: a send and its placeholders (`useMessaging` send paths, `messaging.ts`), own visible notices
+(`visibleNotices.ts`, `removalNotice.ts`, `deviceNotices.svelte.ts`, `callSystemMessages.ts`), the
+outbox's own lines (`outbox.ts`), and the salon event handler (`channelEventHandler.ts`). An inbound
+add awaits the store (`getMessagesByIds`, then `settleWithPending`) between reading the conversation
+and rendering, and it used to render by spreading the copy it read at ENTRY: a message another writer
+showed in that gap - an own message just sent, a second arrival - was erased from memory along with its
+unread count (it stayed in the store, so it came back at the next load).
+
+The fix is the one the batch path and the preview upgrade already used: re-read after the last await
+and render onto the row as it stands. A message the row gained meanwhile under the same id is not
+shown twice (the write still runs; where the other writer's row stands, memory takes it,
+`showStoredInstead`), and a conversation that left the map meanwhile is stored and not rendered, with
+a warning. The effects after the write (the other tabs' seed, the notification's watermark) read the
+live row too. No lock and no timer: every writer that awaits re-reads, and the ones that do not await
+before rendering cannot hold a stale copy.
+
+**INVARIANT: an add that awaits between reading the conversation and writing it back re-reads it
+after its last await.** `useMessaging.interleavedAdds.svelte.test.ts` holds the store read of one
+arrival open while a second arrival, then an own send, lands: both are kept and counted (both fail on
+the entry-copy spread).
+
 ## Outbox (outbound delivery)
 
 `utils/chat/outbox.ts` owns every outbound message. A send is persisted first and transmitted

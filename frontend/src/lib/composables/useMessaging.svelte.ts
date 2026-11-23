@@ -2328,12 +2328,31 @@ export function useMessaging() {
     // SHOWN NOW, COUNTED LATER. The unread count is the arrival verdict's, and the verdict is taken
     // after the row's writes (`takeArrivalVerdict`, below): rendered here, the message keeps the
     // count it found until then.
-    ctx.conversations.set(normalized, {
-      ...convo,
-      messages: insertMessageOrdered(convo.messages, newMsg),
-      lastMessageAt: advanceLastMessageAt(convo.lastMessageAt, [newMsg]),
-    });
-    console.log(`[ADD_MSG] ✓ Message added: id=${newMsg.id} ${clockGapNote(newMsg)}`);
+    //
+    // ONTO THE ROW AS IT IS NOW, NOT AS IT WAS AT ENTRY, as the batch path and the upgrade above do.
+    // `convo` was read before the store read and `settleWithPending`, and this path is not serialized
+    // per conversation: the MLS drain applies one frame at a time, but a send, an own notice, a call
+    // or device notice and the outbox's lines call `addMessageToChat` outside it. Spreading the entry
+    // copy erased whatever such a writer showed in the gap - an own message just sent, its unread
+    // count - from memory. A message the row gained meanwhile under this id is not shown twice; the
+    // write below still runs, and where the other writer's row stands, memory takes it.
+    const shownNow = ctx.conversations.get(normalized);
+    if (!shownNow) {
+      console.warn(
+        `[ADD_MSG] conversation "${normalized}" left the map during the store read of id=${newMsg.id} - stored, not rendered`
+      );
+    } else if (shownNow.messages.some((m) => m.id === newMsg.id)) {
+      console.log(
+        `[ADD_MSG] id=${newMsg.id} was shown by another writer during the store read - not shown twice`
+      );
+    } else {
+      ctx.conversations.set(normalized, {
+        ...shownNow,
+        messages: insertMessageOrdered(shownNow.messages, newMsg),
+        lastMessageAt: advanceLastMessageAt(shownNow.lastMessageAt, [newMsg]),
+      });
+      console.log(`[ADD_MSG] ✓ Message added: id=${newMsg.id} ${clockGapNote(newMsg)}`);
+    }
 
     // ONE ARRIVAL VERDICT, AFTER THE LAST AWAIT BEFORE THE EFFECTS (review of #3985). It was taken
     // here, before the row's writes, while the tone and the notification asked again after them: a
@@ -2454,6 +2473,8 @@ export function useMessaging() {
     // No await from here to the effects: each reads this verdict, none asks again.
     const arrival = takeArrivalVerdict();
     const nextUnreadCount = arrival.unreadCount;
+    // The row the effects describe: the one shown now, the entry copy only if it left the map.
+    const rowNow = ctx.conversations.get(normalized) ?? convo;
 
     // THE ROW IS WRITTEN OR KEPT BEFORE ANYTHING THAT MAY THROW (third review of #3851). The
     // effects below - the other tabs, the read signal, the tone, the notification - ran between the
@@ -2469,7 +2490,7 @@ export function useMessaging() {
           type: 'message_added',
           conversationId: normalized,
           message: newMsg,
-          ...tabSeed(advanceLastMessageAt(convo.lastMessageAt, [newMsg])),
+          ...tabSeed(advanceLastMessageAt(rowNow.lastMessageAt, [newMsg])),
           unreadCount: nextUnreadCount,
           ...(options.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
         })
@@ -2487,7 +2508,7 @@ export function useMessaging() {
           type: 'own_message_composed',
           conversationId: normalized,
           message: newMsg,
-          ...tabSeed(advanceLastMessageAt(convo.lastMessageAt, [newMsg])),
+          ...tabSeed(advanceLastMessageAt(rowNow.lastMessageAt, [newMsg])),
         })
       );
     }
@@ -2535,7 +2556,7 @@ export function useMessaging() {
         notifyInbound(
           ctx,
           normalized,
-          convo,
+          rowNow,
           senderId,
           content,
           mentionsUser(content, ctx.userId),
