@@ -36,4 +36,13 @@ account in at least 5 communities.
 A fail is a resume reading `distribution-group` for an unchanged community, the removed member's
 community skipped, or a cold-start key-group step a round trip slower than before.
 
-**2026-11-22, `1.8.0-alpha.1` triage (readings rule).** In `1.8.0-alpha.1` (#3960): takeable now on the Mi 9T, with the test account in at least 5 communities.
+**2026-11-23, triage after the `1.8.0-alpha.1` reading (Mi 9T, 27 communities).** The communities
+pass: one versions request per resume, every community `roster pass skipped (no read owed)`, zero
+community `distribution-group` or `members` request, and the removed-member community runs its pass.
+It FAILED on the private salons: each resume still read `distribution-group` and `members` for the 3
+private salons the account reads (14 requests per resume where 0 are owed) - the versions answer named
+communities only. Fixed by carrying each read salon's version in its community's item
+([offline-and-weak-network](../frontend/offline-and-weak-network.md#a-return-re-reads-the-key-group-only-of-a-community-that-changed-2026-11-22)).
+**Re-read on the next alpha: 0 salon requests per resume** - step 2 above, with each private salon of
+the account logging `salon ... roster pass skipped (no read owed)` and no `GET /api/channels/<salon>/distribution-group`
+or `/members`; and step 3 on a private salon too (a reader removed: THAT salon runs its pass).

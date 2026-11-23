@@ -8,7 +8,7 @@ import {
 } from './distributionGroup';
 import { ChannelApiError } from '$lib/services/ChannelService';
 import { setGraineRuntime } from './runtime';
-import { workspaceScope } from '$lib/mls-client/distributionScope';
+import { channelScope, workspaceScope } from '$lib/mls-client/distributionScope';
 import {
   convergenceTicket,
   forgetAllKeyGroupConvergence,
@@ -1377,7 +1377,7 @@ describe('ensureCommunityDistributionGroup - a converged pass on an unchanged ke
     const load = runOn(mls, channels, version('v1'), (m) => lines.push(m));
     // While the load's roster pass runs, another caller's pass (the actor of a removal) does not
     // converge - the lane withdraws the record, which this load must not overwrite.
-    forgetKeyGroupConvergence('ws-1');
+    forgetKeyGroupConvergence(workspaceScope('ws-1'));
     release(null);
     await load;
     expect(lines.join(' | ')).toContain('not recorded');
@@ -1409,16 +1409,131 @@ describe('ensureCommunityDistributionGroup - a converged pass on an unchanged ke
     expect(channels.getDistributionGroup).toHaveBeenCalledTimes(2);
   });
 
+  // THE 1.8.0-alpha.1 READING (Mi 9T): with every community skipped, each resume still read
+  // `distribution-group` and `members` for every private salon the account reads. A salon's pass is
+  // the same pass on its own key group, so it skips on the same terms - through the salon entry.
+  describe('a private salon, entered by a load holding its version', () => {
+    const salonRef = { ...ref, groupId: 'g-s' };
+    const salonVersion = (v: string) => version(v, { groupId: 'g-s' });
+    const enter = (
+      mls: unknown,
+      channels: unknown,
+      v: unknown,
+      log: (m: string) => void = () => {}
+    ) =>
+      enterPrivateSalonGroup(channels as never, 'ws-1', 'ch-1', {
+        isPrivate: true,
+        viewerHasAccess: true,
+        ensureMls: () => mls as never,
+        log,
+        version: v as never,
+      });
+    const heldSalon = () =>
+      makeHeldMls({
+        distributionGroupFor: vi.fn().mockReturnValue('g-s'),
+        getLocalGroups: vi.fn().mockReturnValue(['g-s']),
+      });
+
+    it('makes no request on the second load of an unchanged salon', async () => {
+      const mls = heldSalon();
+      const channels = makeChannels({ getDistributionGroup: vi.fn().mockResolvedValue(salonRef) });
+      const lines: string[] = [];
+
+      expect(await enter(mls, channels, salonVersion('s1'), (m) => lines.push(m))).toBe(true);
+      expect(channels.getDistributionGroup).toHaveBeenCalledTimes(1);
+      expect(reconcile).toHaveBeenCalledTimes(1);
+
+      expect(await enter(mls, channels, salonVersion('s1'), (m) => lines.push(m))).toBe(true);
+      // Neither the salon's reference nor its roster pass: no request at all.
+      expect(channels.getDistributionGroup).toHaveBeenCalledTimes(1);
+      expect(reconcile).toHaveBeenCalledTimes(1);
+      expect(mls.registerDistributionGroup).toHaveBeenCalledWith(
+        channelScope('ws-1', 'ch-1'),
+        'g-s'
+      );
+      expect(lines.join(' | ')).toContain('salon ch-1 of ws-1');
+      expect(lines.join(' | ')).toContain('roster pass skipped');
+    });
+
+    it('runs the pass of a salon whose version moved (a reader removed, a commit landed)', async () => {
+      const mls = heldSalon();
+      const channels = makeChannels({ getDistributionGroup: vi.fn().mockResolvedValue(salonRef) });
+      await enter(mls, channels, salonVersion('s1'));
+      const lines: string[] = [];
+
+      await enter(mls, channels, salonVersion('s2'), (m) => lines.push(m));
+
+      expect(channels.getDistributionGroup).toHaveBeenCalledTimes(2);
+      expect(reconcile).toHaveBeenCalledTimes(2);
+      expect(reconcile.mock.calls[1][1]).toEqual(channelScope('ws-1', 'ch-1'));
+      expect(lines.join(' | ')).toContain('changed since the last converged pass');
+    });
+
+    it('keeps the salon record apart from its community record', async () => {
+      const mls = heldSalon();
+      const channels = makeChannels({ getDistributionGroup: vi.fn().mockResolvedValue(salonRef) });
+      await enter(mls, channels, salonVersion('s1'));
+      // The community's pass failing withdraws the COMMUNITY's record only.
+      forgetKeyGroupConvergence(workspaceScope('ws-1'));
+      await enter(mls, channels, salonVersion('s1'));
+      expect(channels.getDistributionGroup).toHaveBeenCalledTimes(1);
+      // Its own withdrawal does.
+      forgetKeyGroupConvergence(channelScope('ws-1', 'ch-1'));
+      await enter(mls, channels, salonVersion('s1'));
+      expect(channels.getDistributionGroup).toHaveBeenCalledTimes(2);
+    });
+
+    it('with no salon version (an older server, a salon it did not name) runs every pass', async () => {
+      const mls = heldSalon();
+      const channels = makeChannels({ getDistributionGroup: vi.fn().mockResolvedValue(salonRef) });
+      await enter(mls, channels, null);
+      await enter(mls, channels, null);
+      expect(channels.getDistributionGroup).toHaveBeenCalledTimes(2);
+    });
+
+    it('a salon join that did not converge withdraws the salon record, whoever asked for it', async () => {
+      const salon = channelScope('ws-1', 'ch-1');
+      const mls = heldSalon();
+      const channels = makeChannels({ getDistributionGroup: vi.fn().mockResolvedValue(salonRef) });
+      await enter(mls, channels, salonVersion('s1'));
+      const before = convergenceTicket(salon).withdrawn;
+      // Through the join's own entry (a creation, an in-session join, the re-join of a group behind).
+      reconcile.mockResolvedValueOnce({ removedUserIds: [], heldUserIds: null });
+      await ensureDistributionGroupFor(mls as never, channels as never, salon);
+      expect(convergenceTicket(salon).withdrawn).toBe(before + 1);
+
+      // The next load on the same version runs the salon's pass in full.
+      await enter(mls, channels, salonVersion('s1'));
+      expect(channels.getDistributionGroup).toHaveBeenCalledTimes(3);
+    });
+
+    it('a salon join that THREW withdraws the salon record', async () => {
+      const salon = channelScope('ws-1', 'ch-1');
+      const mls = heldSalon();
+      const channels = makeChannels({ getDistributionGroup: vi.fn().mockResolvedValue(salonRef) });
+      await enter(mls, channels, salonVersion('s1'));
+      const before = convergenceTicket(salon).withdrawn;
+      mls.isGroupActive.mockRejectedValueOnce(new Error('wasm gone'));
+      await expect(
+        ensureDistributionGroupFor(mls as never, channels as never, salon)
+      ).rejects.toThrow('wasm gone');
+      expect(convergenceTicket(salon).withdrawn).toBe(before + 1);
+
+      await enter(mls, channels, salonVersion('s1'));
+      expect(channels.getDistributionGroup).toHaveBeenCalledTimes(3);
+    });
+  });
+
   it('a join that did not converge withdraws the record, whoever asked for it (the re-join of a group behind)', async () => {
     const mls = current();
     const channels = makeChannels({ getDistributionGroup: vi.fn().mockResolvedValue(ref) });
     await runOn(mls, channels, version('v1'));
     // Counters are never cleared (only the session ends), so the assertion is on the delta.
-    const before = convergenceTicket('ws-1').withdrawn;
+    const before = convergenceTicket(workspaceScope('ws-1')).withdrawn;
     // Through the join's own entry, as `rejoinBehindDistributionGroup` reaches it.
     reconcile.mockResolvedValueOnce({ removedUserIds: [], heldUserIds: null });
     await ensureDistributionGroupFor(mls as never, channels as never, workspaceScope('ws-1'));
-    expect(convergenceTicket('ws-1').withdrawn).toBe(before + 1);
+    expect(convergenceTicket(workspaceScope('ws-1')).withdrawn).toBe(before + 1);
 
     await runOn(mls, channels, version('v1'));
     expect(channels.getDistributionGroup).toHaveBeenCalledTimes(3);

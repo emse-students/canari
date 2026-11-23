@@ -2,11 +2,18 @@ import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { KeyGroupVersion } from '$lib/services/ChannelService';
 import { canonicalUserId } from '$lib/mls-client/leafIdentity';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
+import { scopeKey, scopeLabel, type DistributionScope } from '$lib/mls-client/distributionScope';
 import { isGraineReady, requireGraineRuntime } from './runtime';
 
 /**
- * WHICH KEY-GROUP VERSION THIS DEVICE'S LAST CONVERGED ROSTER PASS STARTED FROM, per community - and
- * the one decision it serves: may a load skip the next pass.
+ * WHICH KEY-GROUP VERSION THIS DEVICE'S LAST CONVERGED ROSTER PASS STARTED FROM, per key group - a
+ * community's or a private salon's (one {@link DistributionScope}) - and the one decision it serves:
+ * may a load skip the next pass.
+ *
+ * BOTH SCOPES, SINCE THE 1.8.0-alpha.1 READING (Mi 9T, 2026-11-23): the community passes skipped, and
+ * every resume still read `distribution-group` and `members` for each private salon this account
+ * reads, concluding "agrees with its roster" every time - the versions answer named communities
+ * only. A salon's pass is the same pass on a smaller roster, so it is the same record, keyed by scope.
  *
  * WHAT THE PASS IS FOR. A community's roster pass (`ensureDistributionGroupFor` +
  * `reconcileDistributionGroupRoster`) reads two answers - the key-group reference and the roster -
@@ -32,13 +39,19 @@ import { isGraineReady, requireGraineRuntime } from './runtime';
  *    here because a reload of `mls.bin` or a forget can move them without the server noticing.
  * Same inputs on both sides, same decision: the pass would conclude "nothing to do" again.
  *
+ * A PRIVATE SALON'S ROSTER CAN RETURN TO AN EARLIER VALUE - its rows are the community's membership
+ * rows, and a reader taken off `allowedUsers` and put back is the same row. That reaches no decision
+ * either: the active epoch is inside the digest and checked against the local tree, so an unchanged
+ * version means the same tree AND the same roster - the pass's whole input - whatever happened
+ * between. A Remove committed in between moved the epoch, and with it the version.
+ *
  * CAPTURED BEFORE ASKING. The version recorded is the one read before the pass ran; a change landing
  * between that read and the pass's own reads makes the next version differ from the recorded one, so
  * the next load runs the pass again. The error can only cost a pass, never skip one that was owed.
  *
  * A PASS THAT DID NOT CONVERGE WITHDRAWS THE RECORD, WHOEVER RAN IT, BY CONSTRUCTION: the roster
  * lane (`rosterReconcile.ts`) and the coalesced join (`distributionGroup.ts`) both call
- * {@link forgetKeyGroupConvergence} on a community scope whose pass did not converge - every caller
+ * {@link forgetKeyGroupConvergence} on any scope whose pass did not converge - every caller
  * goes through one of the two. And a withdrawal is COUNTED: a load takes a {@link convergenceTicket}
  * before its pass, and {@link recordKeyGroupConvergence} refuses to record when any withdrawal
  * landed since - so a pass of another caller that failed while this load's pass ran can never be
@@ -53,9 +66,9 @@ import { isGraineReady, requireGraineRuntime } from './runtime';
 const converged = new Map<string, string>();
 
 /**
- * Withdrawals per community, EVER - never cleared, not even at sign-out: a count that went back to
+ * Withdrawals per scope, EVER - never cleared, not even at sign-out: a count that went back to
  * zero would let a ticket taken before it match again (see {@link forgetAllKeyGroupConvergence}).
- * One integer per account, device and community seen.
+ * One integer per account, device and scope seen.
  */
 const withdrawals = new Map<string, number>();
 
@@ -72,43 +85,44 @@ export interface ConvergenceTicket {
 }
 
 /**
- * The record's key: the account, THIS DEVICE and the community. A record vouches for one device's
- * tree; an identity rotation (a revoked id re-enrolled) is a new device with a tree of its own.
+ * The record's key: the account, THIS DEVICE and the scope (`scopeKey`, so a salon's record never
+ * meets its community's). A record vouches for one device's tree; an identity rotation (a revoked id
+ * re-enrolled) is a new device with a tree of its own.
  */
-function keyOf(workspaceId: string): string | null {
+function keyOf(scope: DistributionScope): string | null {
   if (!isGraineReady()) return null;
   const { userId, mlsService } = requireGraineRuntime('key-group convergence');
-  return `${canonicalUserId(userId)}|${mlsService.getDeviceId()}|${workspaceId}`;
+  return `${canonicalUserId(userId)}|${mlsService.getDeviceId()}|${scopeKey(scope)}`;
 }
 
 /**
  * Taken by a load BEFORE its pass: the session and the withdrawals so far, which
  * {@link recordKeyGroupConvergence} compares with both when the pass ends.
  */
-export function convergenceTicket(workspaceId: string): ConvergenceTicket {
-  const key = keyOf(workspaceId);
+export function convergenceTicket(scope: DistributionScope): ConvergenceTicket {
+  const key = keyOf(scope);
   return { session: sessionsEnded, withdrawn: key ? (withdrawals.get(key) ?? 0) : 0 };
 }
 
 /**
- * Whether `workspaceId`'s roster pass may be skipped on `version` (see the module doc for the two
+ * Whether `scope`'s roster pass may be skipped on `version` (see the module doc for the two
  * conditions). Says which way it went when a record exists, so a skipped pass and a pass that ran
- * are told apart in the log; a community with no record runs silently, as every first pass does.
+ * are told apart in the log; a scope with no record runs silently, as every first pass does.
  */
 export async function convergedPassCanBeSkipped(
   mlsService: IMlsService,
-  workspaceId: string,
+  scope: DistributionScope,
   version: KeyGroupVersion,
   log: (message: string) => void
 ): Promise<boolean> {
-  const key = keyOf(workspaceId);
+  const key = keyOf(scope);
   if (!key) return false;
   const recorded = converged.get(key);
   if (recorded === undefined) return false;
-  const short = workspaceId.slice(0, 8);
+  const label = scopeLabel(scope);
   if (recorded !== version.version) {
     log(
-      `[GRAINE] community ${short}: its key group or roster changed since the last converged pass - running it`
+      `[GRAINE] ${label}: its key group or roster changed since the last converged pass - running it`
     );
     return false;
   }
@@ -120,19 +134,19 @@ export async function convergedPassCanBeSkipped(
     member = localEpoch !== null && (await mlsService.isGroupActive(version.groupId));
   } catch (e) {
     log(
-      `[GRAINE] community ${short}: whether this device is still in its key group could not be read (${String(e)}) - running the pass`
+      `[GRAINE] ${label}: whether this device is still in its key group could not be read (${String(e)}) - running the pass`
     );
     return false;
   }
   const baseUsable = version.baseEpoch !== null && version.baseEpoch >= version.activeEpoch;
   if (!member || localEpoch !== version.activeEpoch || !baseUsable) {
     log(
-      `[GRAINE] community ${short}: unchanged on the server, but this device's tree is not where the last converged pass left it (held=${localEpoch !== null} member=${member} local=${localEpoch ?? 'none'} active=${version.activeEpoch} base=${version.baseEpoch ?? 'none'}) - running the pass`
+      `[GRAINE] ${label}: unchanged on the server, but this device's tree is not where the last converged pass left it (held=${localEpoch !== null} member=${member} local=${localEpoch ?? 'none'} active=${version.activeEpoch} base=${version.baseEpoch ?? 'none'}) - running the pass`
     );
     return false;
   }
   log(
-    `[GRAINE] community ${short}: key group and roster unchanged since the last converged pass, tree at the active epoch ${version.activeEpoch} - roster pass skipped (no read owed)`
+    `[GRAINE] ${label}: key group and roster unchanged since the last converged pass, tree at the active epoch ${version.activeEpoch} - roster pass skipped (no read owed)`
   );
   return true;
 }
@@ -143,36 +157,37 @@ export async function convergedPassCanBeSkipped(
  * whoever ran it, is newer evidence than this one - and said so.
  */
 export function recordKeyGroupConvergence(
-  workspaceId: string,
+  scope: DistributionScope,
   version: KeyGroupVersion,
   ticket: ConvergenceTicket,
   log: (message: string) => void
 ): void {
-  const key = keyOf(workspaceId);
+  const key = keyOf(scope);
   if (!key) return;
+  const label = scopeLabel(scope);
   if (ticket.session !== sessionsEnded) {
     log(
-      `[GRAINE] community ${workspaceId.slice(0, 8)}: roster pass converged in a session that has since ended - not recorded, the new session runs its own first pass`
+      `[GRAINE] ${label}: roster pass converged in a session that has since ended - not recorded, the new session runs its own first pass`
     );
     return;
   }
   if ((withdrawals.get(key) ?? 0) !== ticket.withdrawn) {
     log(
-      `[GRAINE] community ${workspaceId.slice(0, 8)}: roster pass converged, but another pass that did not converge ended while it ran - not recorded, the next load runs it in full`
+      `[GRAINE] ${label}: roster pass converged, but another pass that did not converge ended while it ran - not recorded, the next load runs it in full`
     );
     return;
   }
   if (converged.get(key) !== version.version) {
     log(
-      `[GRAINE] community ${workspaceId.slice(0, 8)}: roster pass converged at epoch ${version.activeEpoch} - an unchanged version skips the next one`
+      `[GRAINE] ${label}: roster pass converged at epoch ${version.activeEpoch} - an unchanged version skips the next one`
     );
   }
   converged.set(key, version.version);
 }
 
-/** Drops `workspaceId`'s record and counts the withdrawal: a pass that did not converge vouches against it. */
-export function forgetKeyGroupConvergence(workspaceId: string): void {
-  const key = keyOf(workspaceId);
+/** Drops `scope`'s record and counts the withdrawal: a pass that did not converge vouches against it. */
+export function forgetKeyGroupConvergence(scope: DistributionScope): void {
+  const key = keyOf(scope);
   if (!key) return;
   converged.delete(key);
   withdrawals.set(key, (withdrawals.get(key) ?? 0) + 1);
