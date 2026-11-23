@@ -3257,6 +3257,7 @@
   "form_waitlist_hint_unavailable": "Seulement sur un formulaire limité, nominatif et à une réponse par personne.",
   "form_status_refunded": "Remboursé",
   "form_responses_card_answers": "Réponses",
+  "form_responses_card_seats": "Places occupées",
   "form_responses_card_guests": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],
@@ -3283,7 +3284,9 @@
   "form_responses_filter_all": "Toutes",
   "form_responses_filter_paid": "Payées",
   "form_responses_filter_unpaid": "Non payées",
+  "form_responses_filter_abandoned": "Abandonnées",
   "form_responses_filter_refunded": "Remboursées",
+  "form_responses_seats": "{taken} / {max} places",
   "form_responses_held_notice": "Réponses en attente : {count}. Sur un formulaire anonyme, elles s'affichent par groupes de {size}, et les dernières à la clôture du formulaire.",
   "form_responses_no_match": "Aucune réponse ne correspond.",
   "form_responses_status_with_method": "{status} · {method}",

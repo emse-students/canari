@@ -723,6 +723,11 @@ export interface Submission {
   answers: Record<string, unknown>;
   totalPaid: number;
   paymentStatus: string;
+  /**
+   * Whether the answer holds a seat NOW, judged by the server with the predicate its capacity count
+   * uses (the pending hold's clock included). Absent from a server that predates it.
+   */
+  holdsSeat?: boolean;
   /** How the answer pays - online (Lydia) or cash; null on a free answer. */
   paymentMethod?: 'online' | 'cash' | null;
   /** What each ordered cell of a priced grid was CHARGED (migration 137); null without a grid. */

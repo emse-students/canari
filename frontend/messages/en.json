@@ -3225,6 +3225,7 @@
   "form_waitlist_hint_unavailable": "Only on a limited, named form taking one answer per person.",
   "form_status_refunded": "Refunded",
   "form_responses_card_answers": "Responses",
+  "form_responses_card_seats": "Seats taken",
   "form_responses_card_guests": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],
@@ -3251,7 +3252,9 @@
   "form_responses_filter_all": "All",
   "form_responses_filter_paid": "Paid",
   "form_responses_filter_unpaid": "Unpaid",
+  "form_responses_filter_abandoned": "Abandoned",
   "form_responses_filter_refunded": "Refunded",
+  "form_responses_seats": "{taken} / {max} seats",
   "form_responses_held_notice": "Answers waiting: {count}. On an anonymous form they appear in groups of {size}, and the last ones once the form is closed.",
   "form_responses_no_match": "No response matches.",
   "form_responses_status_with_method": "{status} · {method}",

@@ -23,6 +23,7 @@
     RESPONSE_FILTERS,
     filterCounts,
     gridTotalsViews,
+    seatsTaken,
     productGridQuestions,
     responsesSummary,
     visibleResponses,
@@ -72,9 +73,18 @@
     onDelete: (sub: Submission) => void;
     /** Re-reads the answers once a payment action settled, so every card and tab follows. */
     onReload: () => Promise<void>;
+    /** Anonymous answers still waiting for their batch: they hold a seat but are not listed yet. */
+    heldCount?: number;
   }
 
-  let { form, submissions: allSubmissions, deletingId, onDelete, onReload }: Props = $props();
+  let {
+    form,
+    submissions: allSubmissions,
+    deletingId,
+    onDelete,
+    onReload,
+    heldCount = 0,
+  }: Props = $props();
 
   /**
    * THE REGISTRATIONS, which every card, filter, total and export of this screen counts; the
@@ -96,6 +106,8 @@
     })
   );
   const counts = $derived(filterCounts(submissions));
+  /** "47 / 50 places": the seats the server says are taken, shown only on a capped form. */
+  const seats = $derived(seatsTaken(submissions, heldCount));
 
   type Tab = 'list' | 'totals' | 'summary';
   let tab = $state<Tab>('list');
@@ -132,6 +144,7 @@
     all: () => m.form_responses_filter_all(),
     paid: () => m.form_responses_filter_paid(),
     unpaid: () => m.form_responses_filter_unpaid(),
+    abandoned: () => m.form_responses_filter_abandoned(),
     refunded: () => m.form_responses_filter_refunded(),
   };
 
@@ -269,6 +282,13 @@
       String(summary.answers),
       summary.guests ? m.form_responses_card_guests({ count: summary.guests }) : null
     )}
+    {#if form.maxSubmissions && seats !== null}
+      {@render card(
+        m.form_responses_card_seats(),
+        m.form_responses_seats({ taken: seats, max: form.maxSubmissions }),
+        null
+      )}
+    {/if}
     {#if requiresPayment}
       {@render card(
         m.form_responses_card_paid(),

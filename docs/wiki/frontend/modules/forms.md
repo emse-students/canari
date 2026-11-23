@@ -3590,9 +3590,10 @@ functions in `lib/forms/responsesView.ts`.
   refunded; a manager the refunds list refuses (403) cannot read it, and the card says the amount
   is gross of partial refunds rather than show a net it does not know.
 - **"Réponses"**: a search over the name, a guest's reference and every answer's text (case and
-  accents folded), and four filter chips - *Toutes*, *Payées* (`paid`, `paid_over_capacity`), *Non
-  payées* (`pending_cash`: the unpaid state a manager acts on; an online `pending` is the payer's to
-  finish and reads under *Toutes* only), *Remboursées* (`refunded`). The table is
+  accents folded), and five filter chips - *Toutes*, *Payées* (`paid`, `paid_over_capacity`), *Non
+  payées* (`pending_cash`: the unpaid state a manager acts on; an online `pending` within its hold
+  is the payer's to finish and reads under *Toutes* only), *Abandonnées* (see below), *Remboursées*
+  (`refunded`). The table is
   `FormSubmissionsTable`, which now marks a guest's answer **Invité** (no account on a non-anonymous
   form; its name is the reference it was given), says how a paid answer paid (*Payé · Lydia* /
   *Payé · espèces*), strikes a refunded amount, and draws two row actions: **Marquer payé** on a
@@ -3600,6 +3601,22 @@ functions in `lib/forms/responsesView.ts`.
   association form, which opens the association's own `RefundDialog` on the payment that paid that
   answer. The purchases list now carries `submissionId` for that; a manager without
   `MANAGE_PRODUCTS` + `MANAGE_PAYOUT_ACCOUNT` gets a 403 there and simply sees no refund control.
+- **"Toutes" counts the answers that count, and a capped form shows its seats (owner,
+  2026-11-23).** A paid form capped at 50 held 50 rows - 47 `paid`, 2 `cancelled`, 1 `expired` -
+  and the chip read "Toutes · 50" while the server counted 47 seats (3 free, form still open): the
+  organiser read "full" and turned people away. Now *Toutes* (chip, list and the "Réponses" card)
+  holds only answers that hold a seat; an online payment that was `cancelled`, `expired` or is
+  `pending` past its 30-minute hold sits under *Abandonnées*, so nothing disappears. **One
+  definition of "holds a seat":** `getSubmissions` serves a per-row `holdsSeat`, read with the very
+  `seatHoldingWhere` the capacity checks use (the hold's clock included), and the client never
+  re-implements the 30-minute rule (`isAbandoned`, `isCounted` in `responsesView.ts`). The field is
+  additive: an older server sends none and a `pending` row then stays under *Toutes*. *Remboursées*
+  keeps its own chip and is NOT under *Toutes*: a total refund gave the seat back (`seatHoldingWhere`
+  excludes `refunded`), so counting it would again exceed the seats taken. `paid_over_capacity`
+  STAYS under *Toutes*: it holds no seat, but the money landed and the organiser owes a refund, and
+  it is listed first for that reason. On a form with `maxSubmissions` a card reads "47 / 50 places"
+  (`seatsTaken`: the rows flagged `holdsSeat` plus the anonymous answers still held, which the list
+  does not carry yet) - the same number as `submissionCount`, from the same predicate.
 - **"Totaux"** (a form with a priced grid): one row x column table per grid with row, column and
   grid totals, a grand total in pieces, and the switch **Compter les réponses non payées** (on by
   default). **The counting rule is ONE implementation**: `PRODUCT_GRID_RECEIVED_STATUSES` (`paid`,

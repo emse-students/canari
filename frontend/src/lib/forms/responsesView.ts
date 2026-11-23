@@ -22,20 +22,62 @@ import { submitterName } from './submissionTable';
  * (`product-grid-contract.ts`, copied byte for byte) - so the tab and the file cannot disagree.
  */
 
-/** The four views of the "Réponses" tab's filter chips. */
-export const RESPONSE_FILTERS = ['all', 'paid', 'unpaid', 'refunded'] as const;
+/** The five views of the "Réponses" tab's filter chips. */
+export const RESPONSE_FILTERS = ['all', 'paid', 'unpaid', 'abandoned', 'refunded'] as const;
 export type ResponseFilter = (typeof RESPONSE_FILTERS)[number];
 
 /**
- * Which filter chip an answer falls under, besides "all". `paid` is money landed; `unpaid` is cash
- * not yet received (`pending_cash`) - the one unpaid state a manager acts on, by marking it paid; an
- * online answer still at Lydia (`pending`) is the payer's to finish and reads under "all" only.
+ * Whether an online answer was ABANDONED: its payment was cancelled or expired, or it is still
+ * `pending` but past its hold - the server says so (`holdsSeat`, the predicate the capacity count
+ * uses), the 30-minute rule is never re-implemented here. An older server sends no `holdsSeat`:
+ * a `pending` row then stays counted, as before.
  */
-export function filterOf(paymentStatus: string): Exclude<ResponseFilter, 'all'> | null {
-  if (paymentStatus === 'paid' || paymentStatus === 'paid_over_capacity') return 'paid';
-  if (paymentStatus === 'pending_cash') return 'unpaid';
-  if (paymentStatus === 'refunded') return 'refunded';
+export function isAbandoned(sub: Pick<Submission, 'paymentStatus' | 'holdsSeat'>): boolean {
+  if (sub.paymentStatus === 'cancelled' || sub.paymentStatus === 'expired') return true;
+  return sub.paymentStatus === 'pending' && sub.holdsSeat === false;
+}
+
+/**
+ * Which filter chip an answer falls under, besides "all". `paid` is money landed; `unpaid` is cash
+ * not yet received (`pending_cash`) - the one unpaid state a manager acts on, by marking it paid;
+ * `abandoned` is an online payment that never landed (`isAbandoned`); `refunded` has its own chip.
+ * An online answer still within its hold is the payer's to finish and reads under "all" only.
+ */
+export function filterOf(
+  sub: Pick<Submission, 'paymentStatus' | 'holdsSeat'>
+): Exclude<ResponseFilter, 'all'> | null {
+  const status = sub.paymentStatus;
+  if (status === 'paid' || status === 'paid_over_capacity') return 'paid';
+  if (status === 'pending_cash') return 'unpaid';
+  if (status === 'refunded') return 'refunded';
+  if (isAbandoned(sub)) return 'abandoned';
   return null;
+}
+
+/**
+ * Whether "Toutes" lists an answer: the ones that COUNT. An abandoned payment holds no seat and a
+ * refunded one gave its seat back (the server's `seatHoldingWhere` excludes both), so each reads
+ * under its own chip. `paid_over_capacity` stays: the money landed, the organiser owes a refund,
+ * and hiding that row would hide the one thing to act on.
+ */
+export function isCounted(sub: Pick<Submission, 'paymentStatus' | 'holdsSeat'>): boolean {
+  const filter = filterOf(sub);
+  return filter !== 'abandoned' && filter !== 'refunded';
+}
+
+/**
+ * The seats taken, for the "47 / 50 places" counter: the answers the server says hold one, plus the
+ * anonymous answers still waiting for their batch (`held`, not in the list yet). The same notion
+ * as the server's `submissionCount`, summed from the same predicate. Null when any answer carries
+ * no `holdsSeat` (a server that predates it): the counter is then hidden, never shown as 0.
+ */
+export function seatsTaken(
+  subs: readonly Pick<Submission, 'holdsSeat'>[],
+  held = 0
+): number | null {
+  // An older server sends no verdict: the number cannot be known, and 0 would be a confident lie.
+  if (subs.some((sub) => sub.holdsSeat === undefined)) return null;
+  return subs.filter((sub) => sub.holdsSeat === true).length + held;
 }
 
 /**
@@ -78,7 +120,7 @@ export function responsesSummary(
   partialRefundedCents: (sub: Submission) => number = () => 0
 ): ResponsesSummary {
   const summary: ResponsesSummary = {
-    answers: subs.length,
+    answers: 0,
     guests: 0,
     paid: 0,
     unpaidCash: 0,
@@ -88,8 +130,11 @@ export function responsesSummary(
     refundedCents: 0,
   };
   for (const sub of subs) {
-    if (isGuestAnswer(sub, anonymous)) summary.guests += 1;
-    const filter = filterOf(sub.paymentStatus);
+    if (isCounted(sub)) {
+      summary.answers += 1;
+      if (isGuestAnswer(sub, anonymous)) summary.guests += 1;
+    }
+    const filter = filterOf(sub);
     const cents = sub.totalPaid || 0;
     if (filter === 'paid') {
       // Never more than the answer paid: a standing cannot give back what was not received.
@@ -111,13 +156,15 @@ export function responsesSummary(
 /** How many answers each filter chip holds. */
 export function filterCounts(subs: readonly Submission[]): Record<ResponseFilter, number> {
   const counts: Record<ResponseFilter, number> = {
-    all: subs.length,
+    all: 0,
     paid: 0,
     unpaid: 0,
+    abandoned: 0,
     refunded: 0,
   };
   for (const sub of subs) {
-    const filter = filterOf(sub.paymentStatus);
+    if (isCounted(sub)) counts.all += 1;
+    const filter = filterOf(sub);
     if (filter) counts[filter] += 1;
   }
   return counts;
@@ -138,7 +185,7 @@ export function visibleResponses(
 ): Submission[] {
   const needle = fold(query.trim());
   return subs.filter((sub) => {
-    if (filter !== 'all' && filterOf(sub.paymentStatus) !== filter) return false;
+    if (filter === 'all' ? !isCounted(sub) : filterOf(sub) !== filter) return false;
     if (!needle) return true;
     return fold(searchText(sub, items, words, anonymous)).includes(needle);
   });
