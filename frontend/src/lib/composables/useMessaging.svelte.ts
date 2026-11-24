@@ -64,6 +64,7 @@ import {
   tabSeed,
 } from '$lib/utils/chat/messageOrder';
 import { isOwnMessage } from '$lib/utils/chat/messageUtils';
+import { bulkWindowHolds } from '$lib/utils/chat/bulkIngestAdmission';
 import { countingReadPoint, isUnreadForUser } from '$lib/utils/chat/readState';
 import {
   arrivalVerdictNow,
@@ -542,6 +543,13 @@ export function useMessaging() {
    * announced a synchronisation of exactly zero messages - for four seconds, every time the app came
    * back to the foreground. It is raised from the BUFFER instead, which holds decrypted messages and
    * therefore knows what it has.
+   *
+   * **AND FROM ANY OPEN UI WINDOW, NOT ONLY ONE THAT STARTED WITH SEVERAL FRAMES** (2026-11-24). The
+   * overlay depth is still decided at drain start from `pendingCount`, and a resume's drain starts on
+   * the FIRST frame of the pull's page (`Drain start ... messages=1`) while the other 147 are queued
+   * behind it: the depth stayed 0 and a ten-second catch-up said nothing. The buffer's own count is
+   * the honest measure whatever the start saw, and the window's close lowers what it raised
+   * ({@link endBulkMessageIngest}) - the drain's own completion, never a clock.
    */
   let isCatchupOverlayVisible = $state(false);
   /** When true, incoming messages are buffered and flushed in one UI update (MLS queue catch-up). */
@@ -624,7 +632,7 @@ export function useMessaging() {
    * banner is up, and the scan itself is over CONVERSATIONS rather than messages.
    */
   function raiseOverlayIfWorthAnnouncing() {
-    if (isCatchupOverlayVisible || messageCatchupDepth === 0) return;
+    if (isCatchupOverlayVisible || (messageCatchupDepth === 0 && !bulkIngestActive)) return;
     let buffered = 0;
     for (const msgs of bulkIngestBuffer.values()) {
       buffered += msgs.length;
@@ -1308,6 +1316,9 @@ export function useMessaging() {
         bulkIngestActive = false;
         warnIfDiscardingBuffered('endBulkMessageIngest');
         bulkIngestBuffer.clear();
+        // A banner this window raised with no overlay depth behind it ends with the window: its
+        // rows are on screen now (see `isCatchupOverlayVisible`).
+        if (messageCatchupDepth === 0) isCatchupOverlayVisible = false;
       }
       if (showOverlay) {
         messageCatchupDepth = Math.max(0, messageCatchupDepth - 1);
@@ -2060,8 +2071,9 @@ export function useMessaging() {
   ) {
     const normalized = contactName.toLowerCase();
 
-    // An OWN message is never deferred, and that is a difference in kind rather than a tuning
-    // choice. The bulk buffer exists to stop a large inbound drain re-rendering the list message by
+    // An OWN message THIS DEVICE COMPOSED is never deferred, and that is a difference in kind rather
+    // than a tuning choice (`bulkWindowHolds` says which arrivals wait for the flush - an own message
+    // decrypted from a frame, written on this account's other device, is one of them). The bulk buffer exists to stop a large inbound drain re-rendering the list message by
     // message - but MLS gives no echo of your own message, so THIS call is the only writer the
     // sender's copy will ever get, and the buffer is discarded without flushing by a second drain
     // (`beginBulkMessageIngest` clears unconditionally) and by `resetMessageCatchupState`. The
@@ -2078,8 +2090,11 @@ export function useMessaging() {
     if (
       bulkIngestActive &&
       checkpointsHoldingRows === 0 &&
-      !isOwnMessage(senderId, ctx.userId) &&
-      options.soleWriter !== true
+      bulkWindowHolds({
+        own: isOwnMessage(senderId, ctx.userId),
+        framed: options.frameId !== undefined && !options.outboxEntry,
+        soleWriter: options.soleWriter === true,
+      })
     ) {
       const convo = ctx.conversations.get(normalized);
       if (!convo) {
@@ -2108,13 +2123,17 @@ export function useMessaging() {
        * 04:51:44, `messageCallback → true` in the same millisecond. It is the user's 2026-09-22
        * report, reproduced.
        *
-       * The upgrade FALLS THROUGH to the live path rather than being buffered, and that is not a
-       * shortcut: buffering exists to stop a bulk arrival re-rendering the list once per message,
-       * and an upgrade adds no row - it replaces the content of one already on screen. There is no
-       * jank to avoid, and there IS a write to do that only the live path performs.
+       * **AND THE UPGRADE WAITS FOR THE FLUSH LIKE ANY OTHER ARRIVAL** (2026-11-24). It used to fall
+       * through to the live path ("an upgrade adds no row"), which cost a store read, a store write
+       * and a render PER PREVIEW: a catch-up of a conversation whose messages had all been notified
+       * upgraded them one by one under the open pane (34 of them at ~80 ms on the owner's Android).
+       * `batchAddMessages` upgrades a shown preview and writes it by compare-and-set as the live
+       * path does, and the frame's ack waits for the close's store (rows before ratchet), so the
+       * repair above no longer depends on doing it now. A second copy of the same id in the buffer
+       * is still a duplicate.
        */
       const upgrades = held !== undefined && shouldUpgradeMessage(held, content);
-      if (!upgrades && (existing.some((m) => m.messageId === id) || held !== undefined)) {
+      if (existing.some((m) => m.messageId === id) || (held !== undefined && !upgrades)) {
         // A duplicate is ordinary and this is not an accusation - but it is the FIRST of two silent
         // returns on the only path an inbound message can take, and between them they can absorb a
         // message without leaving anything behind. A card that never appeared has to be explainable
@@ -2122,19 +2141,16 @@ export function useMessaging() {
         console.log(`[ADD_MSG] Duplicate ignored during a bulk ingest id=${id}`);
         return;
       }
-      if (!upgrades) {
-        existing.push({
-          senderId,
-          content,
-          ...options,
-          messageId: id,
-          ingestSequence: options.ingestSequence ?? bulkIngestSeq++,
-        });
-        bulkIngestBuffer.set(normalized, existing);
-        raiseOverlayIfWorthAnnouncing();
-        return;
-      }
-      console.log(`[ADD_MSG] Preview upgrade during a bulk ingest id=${id} - taking the live path`);
+      existing.push({
+        senderId,
+        content,
+        ...options,
+        messageId: id,
+        ingestSequence: options.ingestSequence ?? bulkIngestSeq++,
+      });
+      bulkIngestBuffer.set(normalized, existing);
+      raiseOverlayIfWorthAnnouncing();
+      return;
     }
 
     const convo = ctx.conversations.get(normalized);

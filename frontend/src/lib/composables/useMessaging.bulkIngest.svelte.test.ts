@@ -141,6 +141,111 @@ describe('addMessageToChat during a bulk-ingest window', () => {
   });
 
   /**
+   * AN OWN MESSAGE FROM A FRAME IS NOT AN OWN SEND (2026-11-24). Written on this account's other
+   * device, it reaches this one as a frame like a peer's message - the frame stays on the server until
+   * the close stored its row - so it waits for the flush with the rest of the drain instead of paying
+   * a render and a store write of its own (23 of them at ~90 ms in the owner's 1.7.3 catch-up).
+   */
+  it("buffers an own message decrypted from a frame (this account's other device)", async () => {
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.addMessageToChat(ME, 'from my laptop', CONVO, ctx, {
+      messageId: 'sibling-1',
+      frameId: 'frame-1',
+    });
+
+    expect(idsIn(conversations)).toEqual([]);
+    expect(saveMessage).not.toHaveBeenCalled();
+
+    await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
+    expect(idsIn(conversations)).toEqual(['sibling-1']);
+    expect(conversations.get(CONVO)?.messages[0].isOwn).toBe(true);
+    expect(saveMessage).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * THE OPEN CONVERSATION RECEIVES A DRAIN IN ONE RENDER. A catch-up mixing a peer's new messages,
+   * upgrades of the previews their notifications left and messages from this account's other device
+   * changes the conversation's row ONCE, at the window's close, and writes the store once: the pane
+   * sees one change of its list, so one anchor decision, instead of one per row.
+   */
+  it('commits a mixed catch-up to the conversation in ONE change at the close', async () => {
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+    conversations.set(CONVO, {
+      ...(conversations.get(CONVO) as Conversation),
+      messages: [
+        {
+          id: 'preview-1',
+          senderId: PEER,
+          content: '\u{1F4F7} Photo',
+          timestamp: new Date(1_700_000_000_000),
+          isOwn: false,
+          isFcmPreview: true,
+        },
+      ] as never,
+    });
+    const sets = vi.spyOn(conversations, 'set');
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    const envelope = JSON.stringify({ kind: 'media', mediaId: 'm-1', mimeType: 'image/jpeg' });
+    await messaging.addMessageToChat(PEER, envelope, CONVO, ctx, {
+      messageId: 'preview-1',
+      frameId: 'f-1',
+      serverTimestamp: 1_700_000_000_000,
+    });
+    await messaging.addMessageToChat(ME, 'mine, from my laptop', CONVO, ctx, {
+      messageId: 'sibling-1',
+      frameId: 'f-2',
+      serverTimestamp: 1_700_000_001_000,
+    });
+    await messaging.addMessageToChat(PEER, 'a new one', CONVO, ctx, {
+      messageId: 'theirs-1',
+      frameId: 'f-3',
+      serverTimestamp: 1_700_000_002_000,
+    });
+    expect(sets).not.toHaveBeenCalled();
+
+    await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
+
+    expect(sets.mock.calls.filter(([key]) => key === CONVO)).toHaveLength(1);
+    expect(idsIn(conversations)).toEqual(['preview-1', 'sibling-1', 'theirs-1']);
+    expect(conversations.get(CONVO)?.messages[0].content).toBe(envelope);
+    // One batch write: the upgraded row and the two new ones, each once.
+    expect(saveMessage.mock.calls.map((c) => (c[0] as { id: string }).id).sort()).toEqual([
+      'preview-1',
+      'sibling-1',
+      'theirs-1',
+    ]);
+    expect(ctx.saveConversation).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * THE BANNER SAYS A CATCH-UP THE DRAIN'S START COULD NOT SEE (2026-11-24). A resume's drain
+   * starts on the first frame of the pull's page, so its phase carries no overlay; the buffer's
+   * count raises the banner anyway, and the window's close - the drain's own completion - lowers it.
+   */
+  it('raises the banner from the buffer of a window opened without an overlay, and lowers it at the close', async () => {
+    const messaging = useMessaging();
+    const { ctx } = makeContext();
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    for (let i = 0; i < 4; i++) {
+      await messaging.addMessageToChat(PEER, `m${i}`, CONVO, ctx, { messageId: `m-${i}` });
+    }
+    expect(messaging.isCatchupOverlayVisible).toBe(false);
+    await messaging.addMessageToChat(PEER, 'm4', CONVO, ctx, { messageId: 'm-4' });
+    expect(messaging.isCatchupOverlayVisible).toBe(true);
+    // Raising the banner is not the drain-wide catch-up state the concurrency guards read.
+    expect(messaging.isMessageCatchupActive).toBe(false);
+
+    await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
+    expect(messaging.isCatchupOverlayVisible).toBe(false);
+  });
+
+  /**
    * THE TWO SILENT RETURNS ON THE INBOUND PATH, and they are only findable because they now speak.
    *
    * COMM-4 watched an invitation card be written - the handler logged the conversation it went into
@@ -297,14 +402,25 @@ describe('an FCM preview upgraded during a bulk-ingest window', () => {
     return made;
   }
 
-  it('replaces the caption with the envelope and persists it, without waiting for the flush', async () => {
+  /**
+   * THE UPGRADE WAITS FOR THE FLUSH (2026-11-24). It used to be done at once on the live path,
+   * because the frame was acknowledged the moment the handler returned; the ack now waits for the
+   * window's close to store the row (rows before ratchet), so the upgrade is held with the drain's
+   * other rows and lands in the same render and the same write - one per conversation, not one per
+   * preview (`bulkWindowHolds`).
+   */
+  it('holds the upgrade for the window, then replaces the caption and persists it at the close', async () => {
     const messaging = useMessaging();
     const { ctx, conversations, saveMessage } = withPreview();
 
     messaging.beginBulkMessageIngest(LIVE_DRAIN);
     await messaging.addMessageToChat(PEER, ENVELOPE, CONVO, ctx, { messageId: 'photo-1' });
 
-    // The frame is acked the moment this returns, so the repair may not be owed to the flush.
+    expect(conversations.get(CONVO)?.messages[0].content).toBe(PREVIEW);
+    expect(saveMessage).not.toHaveBeenCalled();
+
+    await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
+
     const held = conversations.get(CONVO)?.messages ?? [];
     expect(held.map((m) => m.id)).toEqual(['photo-1']);
     expect(held[0].content).toBe(ENVELOPE);
@@ -377,10 +493,10 @@ describe('an FCM preview upgraded during a bulk-ingest window', () => {
 
     messaging.beginBulkMessageIngest(LIVE_DRAIN);
     await messaging.addMessageToChat(PEER, ENVELOPE, CONVO, ctx, { messageId: 'photo-1' });
-    saveMessage.mockClear();
     await messaging.addMessageToChat(PEER, ENVELOPE, CONVO, ctx, { messageId: 'photo-1' });
+    await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
 
-    expect(saveMessage).not.toHaveBeenCalled();
+    expect(saveMessage).toHaveBeenCalledTimes(1);
     expect((conversations.get(CONVO)?.messages ?? []).length).toBe(1);
     expect(logged).toHaveBeenCalledWith(
       expect.stringContaining('Duplicate ignored during a bulk ingest')
