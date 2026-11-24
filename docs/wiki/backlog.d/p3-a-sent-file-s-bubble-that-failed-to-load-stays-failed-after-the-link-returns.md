@@ -1,6 +1,6 @@
 ## P3 - a sent file's bubble that failed to load during an outage stays failed after the link returns
 
-target: 1.8.0
+target: 1.10.0
 
 _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 

@@ -1,6 +1,6 @@
 ## P3 - an accepted but unannounced Add: audit the adder paths, then one rig row
 
-target: 1.8.0
+target: 1.10.0
 
 _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 

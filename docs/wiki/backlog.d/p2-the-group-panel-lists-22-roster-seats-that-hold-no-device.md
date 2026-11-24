@@ -1,6 +1,6 @@
 ## P2 - the group panel lists 22 roster seats that hold no device (18 are departed people, 4 are a join that never completed; counted on production 2026-11-14)
 
-target: 1.8.0
+target: 1.9.0
 
 _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
