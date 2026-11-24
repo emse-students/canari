@@ -132,7 +132,6 @@ static void CanariSetupFirebaseIfAvailable(void) {
 }
 
 static void CanariPublishSafeAreaInsets(void);
-static void CanariApplyEdgeToEdge(WKWebView *webView);
 static void CanariPublishDynamicType(void);
 static void CanariPublishForeground(NSString *_Nullable opening);
 static void CanariPublishActive(void);
@@ -225,19 +224,26 @@ static void CanariObserveDocumentScrollRange(void) {
 /// reveals nothing any more and the rest observers below still come after it.
 ///
 /// A WebView that already heard a keyboard before this ran keeps that inset for its life (its
-/// will-hide, which would undo it, is gone too): an ERROR line, with the inset, says so. The page is
-/// made edge to edge FIRST (`CanariApplyEdgeToEdge`, idempotent): until then UIKit adds the safe area to
-/// `adjustedContentInset` - the 34 pt home-indicator strip at an activation, where this runs before the
-/// safe-area publish - and the ERROR would accuse WebKit of UIKit's inset, once, with no second check.
-/// After the switch the scroll view's bottom inset is WebKit's alone. Once per WebView; called from
-/// every activation and from every keyboard change, whichever finds it first.
+/// will-hide, which would undo it, is gone too): an ERROR line, with the inset, says so.
+///
+/// IT RUNS ONLY ONCE THE PAGE IS EDGE TO EDGE, which `CanariPublishSafeAreaInsets` alone makes it (the
+/// top inset's one owner, `iosTopInsetOwner.test.ts`). Before that UIKit adds the safe area to
+/// `adjustedContentInset` - the 34 pt home-indicator strip - and the ERROR would accuse WebKit of
+/// UIKit's inset. So the activation calls this AFTER the publish, and a keyboard change that would find
+/// the page not yet edge to edge does not detach: it logs an ERROR (a keyboard before any publish, which
+/// the launch, activation and load publishes make impossible) and leaves the detach to the next caller.
+/// Once edge to edge the scroll view's bottom inset is WebKit's alone. Once per WebView.
 static void CanariDetachWebKitKeyboardInset(WKWebView *webView) {
   static __weak WKWebView *detached = nil;
   if (webView == nil || webView == detached) {
     return;
   }
+  if (webView.scrollView.contentInsetAdjustmentBehavior != UIScrollViewContentInsetAdjustmentNever) {
+    NSLog(@"[CanariIOS] ERROR WebKit's keyboard inset NOT detached yet: the page is not edge to edge (no "
+          @"safe-area publish has run), so its inset cannot be told from UIKit's - the next caller detaches");
+    return;
+  }
   detached = webView;
-  CanariApplyEdgeToEdge(webView);
   NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
   [nc removeObserver:webView name:UIKeyboardWillShowNotification object:nil];
   [nc removeObserver:webView name:UIKeyboardWillHideNotification object:nil];
@@ -2108,13 +2114,14 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   canari_ios_on_resume();
   CanariApplyWebViewTransparency();
   CanariObserveDocumentScrollRange();
-  CanariDetachWebKitKeyboardInset(CanariFindWebView());
   CanariObserveTheme();
   CanariObserveOrientation();
   CanariObserveCamera();
   CanariRegisterCallPageHandlers(@"activation");
   CanariHideKeyboardAccessoryBar();
   CanariPublishSafeAreaInsets();
+  // After the publish: the page is edge to edge, so the inset the detach reads is WebKit's alone.
+  CanariDetachWebKitKeyboardInset(CanariFindWebView());
   CanariPublishDynamicType();
   CanariProcessPendingPushSecret();
   CanariCheckKeystoreHealth();

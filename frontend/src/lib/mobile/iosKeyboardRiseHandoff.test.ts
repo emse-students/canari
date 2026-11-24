@@ -150,13 +150,19 @@ describe('the iOS keyboard hand-off (canari_ios.mm)', () => {
       );
     }
     expect(detach).not.toContain('UIKeyboardDidShowNotification');
-    // Edge to edge BEFORE the inset is read: UIKit's safe-area inset (34 pt at an activation, where
-    // the detach runs before the safe-area publish) is not WebKit's, and must not raise the ERROR.
-    const edge = detach.indexOf('CanariApplyEdgeToEdge(webView);');
-    expect(edge).toBeGreaterThan(-1);
-    expect(edge).toBeLessThan(detach.indexOf('adjustedContentInset.bottom'));
-    expect(native.indexOf('static void CanariApplyEdgeToEdge(WKWebView *webView);')).toBeLessThan(
-      native.indexOf('static void CanariDetachWebKitKeyboardInset(')
+    // The inset is read only once the page is edge to edge, which the publisher alone makes it
+    // (iosTopInsetOwner.test.ts): UIKit's safe-area inset is not WebKit's and must not raise the ERROR.
+    expect(detach).not.toContain('CanariApplyEdgeToEdge(');
+    const edgeCheck = detach.indexOf(
+      'if (webView.scrollView.contentInsetAdjustmentBehavior != UIScrollViewContentInsetAdjustmentNever) {'
+    );
+    expect(edgeCheck).toBeGreaterThan(-1);
+    expect(edgeCheck).toBeLessThan(detach.indexOf('detached = webView;'));
+    expect(edgeCheck).toBeLessThan(detach.indexOf('adjustedContentInset.bottom'));
+    // The activation detaches AFTER the safe-area publish.
+    const active = body('static void CanariOnDidBecomeActive(');
+    expect(active.indexOf('CanariDetachWebKitKeyboardInset(CanariFindWebView());')).toBeGreaterThan(
+      active.indexOf('CanariPublishSafeAreaInsets();')
     );
     // A WebView that heard a keyboard before the detach keeps that inset for its life: an ERROR says so.
     const tooLate = detach.indexOf('if (inset > 0.5) {');

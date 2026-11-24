@@ -277,7 +277,7 @@ frame less the keyboard again.
 change. The keyboard is taken off the page once, by the frame. WebKit registers those observers once,
 from `_initializeWithConfiguration:` (`_registerForNotifications`, `addObserver:self`, the same since
 iOS 8), so they stay removed. A WebView that heard a keyboard before the detach would keep that inset
-for its life (its will-hide is gone too): the detach then logs an ERROR with the inset It makes the page edge to edge first (`CanariApplyEdgeToEdge`), so the inset it reads is WebKit's alone and never UIKit's 34 pt home-indicator strip.
+for its life (its will-hide is gone too): the detach then logs an ERROR with the inset. It reads that inset only once the page is edge to edge, which the safe-area publisher alone makes it (the top inset's one owner): the activation detaches AFTER the publish, and a keyboard change that would find the page not yet edge to edge logs an ERROR and leaves the detach to the next caller, so UIKit's 34 pt home-indicator strip is never read as WebKit's.
 
 **WebKit's reveal of the focused field goes with them** (review of #4058). Its
 `RevealFocusedElementDeferrer` waits for a keyboard will-show that only `_keyboardWillShow:` fulfils;
