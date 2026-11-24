@@ -331,8 +331,9 @@ fi
 
 # -- MiConnect's blueprints --
 # Everything the fresh-instance test reads is under this one directory: the compose file it
-# boots, the blueprints it applies and the two scripts that do it.
-if has '^infrastructure/authentik/'; then
+# boots, the blueprints it applies and the two scripts that do it - and one contract, the Alumni
+# access cases its consent test runs through MiConnect's policies (core-service runs them too).
+if has '^infrastructure/authentik/' || has '^libs/contracts/alumni-access\.json$'; then
   echo "miconnect=true"
 else
   echo "miconnect=false"

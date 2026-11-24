@@ -84,6 +84,16 @@ export const HandoffRefusal = {
    * is its own code: logged at info on both sides, never at warn.
    */
   termsNotAccepted: 'HANDOFF_TERMS_NOT_ACCEPTED',
+  /**
+   * 403 - MiConnect's Alumni link step (D44) would hold this person: an OIDC sign-in shows them the
+   * page that links their Alumni account. Expected for a whole cohort each 1 February: info.
+   */
+  alumniLinkRequired: 'HANDOFF_ALUMNI_LINK_REQUIRED',
+  /**
+   * 403 - MiGallery or Le Cercle's Alumni gate (D42-D43) would refuse this person: MiConnect tells
+   * them why on its own page. Expected for every alumna past the window who did not contribute: info.
+   */
+  alumniCotisantRequired: 'HANDOFF_ALUMNI_COTISANT_REQUIRED',
   /** 503 - MiConnect could not be asked (no reader token, no answer, an unexpected status). */
   miconnectUnavailable: 'HANDOFF_MICONNECT_UNAVAILABLE',
 } as const;

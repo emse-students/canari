@@ -3,8 +3,11 @@ import {
   awaitProbe,
   digestIdentity,
   forgetGroupDigests,
+  MAX_STORED_PROBES_PER_ASKER,
+  noteDigestSolicited,
   noteProbeReceived,
   resetHistoryDigestRendezvousForTests,
+  takeDigestSolicitation,
 } from './historyDigestRendezvous';
 import type { HistoryDigest } from './historyManifest';
 
@@ -103,12 +106,93 @@ describe('historyDigestRendezvous', () => {
     await expect(pending).resolves.toBeNull();
   });
 
-  it('gives a late digest to every request still waiting for that peer', async () => {
+  it('gives one probe to ONE waiter, the oldest - one ask is answered once', async () => {
+    // Reproduces 2026-11-24: an answerer elected twice for one asker held two waiters, and the one
+    // probe woke both - so it answered the same requestId twice, and the asker refused the second
+    // answer at error. The second election's own probe is what wakes the second waiter.
+    const first = awaitProbe(GROUP, PEER, 5000);
+    const second = awaitProbe(GROUP, PEER, 5000);
+    let secondSettled = false;
+    void second.then(() => (secondSettled = true));
+    expect(noteProbeReceived(GROUP, PEER, solicited(digest))).toBe('waiter');
+    await expect(first).resolves.toEqual(solicited(digest));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(secondSettled).toBe(false);
+
+    const again = { ...solicited(other), requestId: 'ask-00000002' };
+    expect(noteProbeReceived(GROUP, PEER, again)).toBe('waiter');
+    await expect(second).resolves.toEqual(again);
+  });
+
+  it('claims a late digest for the solicitation and never stores it for a later election', async () => {
+    // The sibling of the double answer: a digest that nobody waits for but that WE solicited is
+    // answered by the late path. Stored as well, a later election of this device for the same asker
+    // consumed it again from `awaitProbe` and answered the same requestId a second time.
+    noteDigestSolicited(GROUP, PEER, 1_000);
+    expect(noteProbeReceived(GROUP, PEER, solicited(digest), 2_000)).toBe('solicitation');
+    expect(takeDigestSolicitation(GROUP, PEER, 2_000)).toBe(false);
+
+    const later = awaitProbe(GROUP, PEER, 5000, 0);
+    await vi.advanceTimersByTimeAsync(5000);
+    await expect(later).resolves.toBeNull();
+  });
+
+  it('a digest a waiter took also answers the solicitation, so a stale one cannot make us a second answerer', async () => {
+    noteDigestSolicited(GROUP, PEER, 1_000);
+    const waiting = awaitProbe(GROUP, PEER, 5000, 0);
+    expect(noteProbeReceived(GROUP, PEER, solicited(digest), 2_000)).toBe('waiter');
+    await expect(waiting).resolves.toEqual(solicited(digest));
+    // The asker's next digest - an exchange with another member - is stored, never answered late.
+    expect(noteProbeReceived(GROUP, PEER, solicited(other), 3_000)).toBe('stored');
+  });
+
+  it(`keeps at most ${MAX_STORED_PROBES_PER_ASKER} stored probes per asker, dropping the oldest at warn`, async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const nth = (i: number) => ({
+      ...solicited(digest),
+      requestId: `ask-${String(i).padStart(8, '0')}`,
+    });
+    for (let i = 0; i <= MAX_STORED_PROBES_PER_ASKER; i++) noteProbeReceived(GROUP, PEER, nth(i));
+    expect(warn.mock.calls.map(([l]) => String(l))).toEqual([
+      expect.stringContaining('[HISTORY_PROBE]'),
+    ]);
+    // The oldest (ask 0) went; the next one out is ask 1.
+    await expect(awaitProbe(GROUP, PEER, 2000)).resolves.toEqual(nth(1));
+    warn.mockRestore();
+  });
+
+  it('stores an unsolicited digest nobody waits for', () => {
+    expect(noteProbeReceived(GROUP, PEER, solicited(digest))).toBe('stored');
+  });
+
+  it('keeps every probe that lands before its election, oldest first', async () => {
+    // Two asks whose probes both beat their elections: one slot per key kept only the second, and
+    // the first election took the second ask's probe while the second found nothing.
+    const first = solicited(digest);
+    const second = { ...solicited(other), requestId: 'ask-00000002' };
+    expect(noteProbeReceived(GROUP, PEER, first)).toBe('stored');
+    expect(noteProbeReceived(GROUP, PEER, second)).toBe('stored');
+    await expect(awaitProbe(GROUP, PEER, 2000)).resolves.toEqual(first);
+    await expect(awaitProbe(GROUP, PEER, 2000)).resolves.toEqual(second);
+  });
+
+  it('takes the oldest stored probe that postdates the election, leaving the older one', async () => {
+    const stale = solicited(digest);
+    const fresh = { ...solicited(other), requestId: 'ask-00000002' };
+    noteProbeReceived(GROUP, PEER, stale, Date.now());
+    vi.advanceTimersByTime(10);
+    const electedAt = Date.now();
+    noteProbeReceived(GROUP, PEER, fresh, electedAt);
+    await expect(awaitProbe(GROUP, PEER, 2000, electedAt)).resolves.toEqual(fresh);
+  });
+
+  it('ends a waiter whose probe never comes on its deadline, after another took the one probe', async () => {
     const first = awaitProbe(GROUP, PEER, 5000);
     const second = awaitProbe(GROUP, PEER, 5000);
     noteDigestReceived(GROUP, PEER, digest);
     await expect(first).resolves.toEqual(solicited(digest));
-    await expect(second).resolves.toEqual(solicited(digest));
+    await vi.advanceTimersByTimeAsync(5000);
+    await expect(second).resolves.toBeNull();
   });
 
   it('lets a second waiter survive the first one timing out', async () => {
@@ -213,12 +297,13 @@ describe('historyDigestRendezvous', () => {
       await expect(awaitProbe(GROUP, PEER, 2000)).resolves.toEqual(solicited(digest, 0));
     });
 
-    it('gives every waiter the SAME window, not just the first', async () => {
+    it('gives each waiter the window of the probe it took', async () => {
       const first = awaitProbe(GROUP, PEER, 5000);
       const second = awaitProbe(GROUP, PEER, 5000);
       noteDigestReceived(GROUP, PEER, digest, 42_000);
+      noteDigestReceived(GROUP, PEER, digest, 43_000);
       await expect(first).resolves.toEqual(solicited(digest, 42_000));
-      await expect(second).resolves.toEqual(solicited(digest, 42_000));
+      await expect(second).resolves.toEqual(solicited(digest, 43_000));
     });
   });
 

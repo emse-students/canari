@@ -47,14 +47,14 @@ describe('historyAddressing - the open asks', () => {
   it(`takes at most ${MAX_ANSWERERS_PER_ASK} answerers per ask, and closes once they are done`, () => {
     noteHistoryAsk(GROUP, 'req-a', { kind: 'digest', since: 0, askedAt: ASKED_AT }, askSecret());
 
-    expect(takeAddressedAsk(GROUP, 'req-a', 'bob:p1', false)).not.toBeNull();
-    expect(takeAddressedAsk(GROUP, 'req-a', 'carol:p2', false)).not.toBeNull();
+    expect(takeAddressedAsk(GROUP, 'req-a', 'bob:p1', false).taken).toBeDefined();
+    expect(takeAddressedAsk(GROUP, 'req-a', 'carol:p2', false).taken).toBeDefined();
     // A third device is refused while the ask is open...
-    expect(takeAddressedAsk(GROUP, 'req-a', 'dave:p3', false)).toBeNull();
-    expect(takeAddressedAsk(GROUP, 'req-a', 'bob:p1', true)).not.toBeNull();
-    expect(takeAddressedAsk(GROUP, 'req-a', 'carol:p2', true)).not.toBeNull();
+    expect(takeAddressedAsk(GROUP, 'req-a', 'dave:p3', false).refused).toBe('answerers-full');
+    expect(takeAddressedAsk(GROUP, 'req-a', 'bob:p1', true).taken).toBeDefined();
+    expect(takeAddressedAsk(GROUP, 'req-a', 'carol:p2', true).taken).toBeDefined();
     // ...and once both answerers are done the ask is gone for everybody.
-    expect(takeAddressedAsk(GROUP, 'req-a', 'dave:p3', false)).toBeNull();
+    expect(takeAddressedAsk(GROUP, 'req-a', 'dave:p3', false).refused).toBe('no-open-ask');
     noteHistoryAsk(GROUP, 'req-b', { kind: 'digest', since: 0, askedAt: ASKED_AT }, askSecret());
     expect(openHistoryAskCount(GROUP)).toBe(1);
   });
@@ -62,37 +62,45 @@ describe('historyAddressing - the open asks', () => {
   it('a second answerer is accepted after the first one closed the ask, the first is not', () => {
     noteHistoryAsk(GROUP, 'req-a', { kind: 'digest', since: 0, askedAt: ASKED_AT }, askSecret());
 
-    expect(takeAddressedAsk(GROUP, 'req-a', ANSWERER, true)?.ask.kind).toBe('digest');
-    expect(takeAddressedAsk(GROUP, 'req-a', 'carol:carol-laptop', false)?.ask.kind).toBe('digest');
-    expect(takeAddressedAsk(GROUP, 'req-a', 'carol:carol-laptop', true)?.ask.kind).toBe('digest');
-    expect(takeAddressedAsk(GROUP, 'req-a', ANSWERER, false)).toBeNull();
-    expect(takeAddressedAsk(GROUP, 'req-a', 'carol:carol-laptop', false)).toBeNull();
+    expect(takeAddressedAsk(GROUP, 'req-a', ANSWERER, true).taken?.ask.kind).toBe('digest');
+    expect(takeAddressedAsk(GROUP, 'req-a', 'carol:carol-laptop', false).taken?.ask.kind).toBe(
+      'digest'
+    );
+    expect(takeAddressedAsk(GROUP, 'req-a', 'carol:carol-laptop', true).taken?.ask.kind).toBe(
+      'digest'
+    );
+    expect(takeAddressedAsk(GROUP, 'req-a', ANSWERER, false).refused).toBe('no-open-ask');
+    expect(takeAddressedAsk(GROUP, 'req-a', 'carol:carol-laptop', false).refused).toBe(
+      'no-open-ask'
+    );
   });
 
   it('an ask is taken by its answer, and consumed only by the chunk marked last', () => {
     noteHistoryAsk(GROUP, 'req-a', { kind: 'digest', since: 0, askedAt: ASKED_AT }, askSecret());
 
-    expect(takeAddressedAsk(GROUP, 'req-a', ANSWERER, false)?.ask.kind).toBe('digest');
-    expect(takeAddressedAsk(GROUP, 'req-a', ANSWERER, true)?.ask.kind).toBe('digest');
-    expect(takeAddressedAsk(GROUP, 'req-a', ANSWERER, true)).toBeNull();
+    expect(takeAddressedAsk(GROUP, 'req-a', ANSWERER, false).taken?.ask.kind).toBe('digest');
+    expect(takeAddressedAsk(GROUP, 'req-a', ANSWERER, true).taken?.ask.kind).toBe('digest');
+    expect(takeAddressedAsk(GROUP, 'req-a', ANSWERER, true).refused).toBe('answered-already');
   });
 
   it('an ask belongs to its conversation', () => {
     noteHistoryAsk(GROUP, 'req-a', { kind: 'digest', since: 0, askedAt: ASKED_AT }, askSecret());
 
-    expect(takeAddressedAsk('other-group', 'req-a', ANSWERER, true)).toBeNull();
+    expect(takeAddressedAsk('other-group', 'req-a', ANSWERER, true).refused).toBe('no-open-ask');
   });
 
   it("the push is taken from a device of the user the Welcome came from, never another member's", () => {
     noteJoinSolicited(GROUP, 'Bob', ASKED_AT);
-    expect(takeAddressedAsk(GROUP, undefined, 'carol:carol-phone', true)).toBeNull();
-    expect(takeAddressedAsk(GROUP, undefined, ANSWERER, true)?.ask.kind).toBe('join');
+    expect(takeAddressedAsk(GROUP, undefined, 'carol:carol-phone', true).refused).toBe(
+      'not-the-inviter'
+    );
+    expect(takeAddressedAsk(GROUP, undefined, ANSWERER, true).taken?.ask.kind).toBe('join');
   });
 
   it('the push is solicited by an admission, and by nothing else', () => {
-    expect(takeAddressedAsk(GROUP, undefined, ANSWERER, true)).toBeNull();
+    expect(takeAddressedAsk(GROUP, undefined, ANSWERER, true).refused).toBe('no-open-ask');
     noteJoinSolicited(GROUP, 'bob', ASKED_AT);
-    expect(takeAddressedAsk(GROUP, undefined, ANSWERER, true)?.ask.kind).toBe('join');
+    expect(takeAddressedAsk(GROUP, undefined, ANSWERER, true).taken?.ask.kind).toBe('join');
   });
 
   it(`keeps at most ${MAX_OPEN_ASKS_PER_GROUP} asks per conversation - the oldest goes first, no clock`, () => {
@@ -105,11 +113,11 @@ describe('historyAddressing - the open asks', () => {
       );
     }
 
-    expect(takeAddressedAsk(GROUP, 'req-0', ANSWERER, false)).toBeNull();
-    expect(takeAddressedAsk(GROUP, 'req-1', ANSWERER, false)).not.toBeNull();
+    expect(takeAddressedAsk(GROUP, 'req-0', ANSWERER, false).refused).toBe('no-open-ask');
+    expect(takeAddressedAsk(GROUP, 'req-1', ANSWERER, false).taken).toBeDefined();
     expect(
-      takeAddressedAsk(GROUP, `req-${MAX_OPEN_ASKS_PER_GROUP}`, ANSWERER, false)
-    ).not.toBeNull();
+      takeAddressedAsk(GROUP, `req-${MAX_OPEN_ASKS_PER_GROUP}`, ANSWERER, false).taken
+    ).toBeDefined();
   });
 
   it('a request id is letters, digits and hyphens - anything else is no id', () => {
@@ -183,7 +191,7 @@ describe('every ask carries a fresh request id, recorded before it leaves', () =
     );
 
     const [{ requestId }] = payloads(mlsService);
-    expect(takeAddressedAsk(GROUP, requestId, ANSWERER, true)).toMatchObject({
+    expect(takeAddressedAsk(GROUP, requestId, ANSWERER, true).taken).toMatchObject({
       ask: {
         kind: 'range',
         since: 100,
@@ -207,7 +215,7 @@ describe('every ask carries a fresh request id, recorded before it leaves', () =
     });
 
     const [{ requestId }] = payloads(mlsService);
-    expect(takeAddressedAsk(GROUP, requestId, ANSWERER, true)?.ask.kind).toBe('digest');
+    expect(takeAddressedAsk(GROUP, requestId, ANSWERER, true).taken?.ask.kind).toBe('digest');
   });
 
   it('a pull - one ask per frame, each naming its own ids', async () => {
@@ -220,7 +228,7 @@ describe('every ask carries a fresh request id, recorded before it leaves', () =
     );
 
     const [{ requestId }] = payloads(mlsService);
-    expect(takeAddressedAsk(GROUP, requestId, ANSWERER, true)).toMatchObject({
+    expect(takeAddressedAsk(GROUP, requestId, ANSWERER, true).taken).toMatchObject({
       ask: {
         kind: 'pull',
         ids: ['a', 'b'],
@@ -278,7 +286,7 @@ describe('every ask carries its own answer key, and keeps the secret that opens 
     for (const { requestId, answerKey } of sent) {
       expect(parseHistoryAnswerKey(answerKey)).toBe(answerKey);
       expect(pairs(answerSecretOf(GROUP, requestId), answerKey)).toBe(true);
-      expect(takeAddressedAsk(GROUP, requestId, ANSWERER, true)?.keyed).toBe(true);
+      expect(takeAddressedAsk(GROUP, requestId, ANSWERER, true).taken?.keyed).toBe(true);
     }
   });
 
@@ -306,7 +314,7 @@ describe('every ask carries its own answer key, and keeps the secret that opens 
 
   it('the join push is an ask with no key', () => {
     noteJoinSolicited(GROUP, 'bob', ASKED_AT);
-    expect(takeAddressedAsk(GROUP, undefined, ANSWERER, true)?.keyed).toBe(false);
+    expect(takeAddressedAsk(GROUP, undefined, ANSWERER, true).taken?.keyed).toBe(false);
   });
 });
 

@@ -5,7 +5,9 @@ import { AccountErasureService } from '../account-erasure/account-erasure.servic
 import { chatDeliveryUrl, socialUrl } from '../internal/service-urls';
 import { MiconnectEditorClient, type MiconnectUserListing } from './miconnect-editor.client';
 import {
+  AlumniMergeAlreadyMergedError,
   AlumniMergeHoldingsUnavailableError,
+  AlumniMergeInProgressError,
   AlumniMergeNoMatchError,
   AlumniMergeNotDuplicateError,
   AlumniMergeNotFoundError,
@@ -16,14 +18,39 @@ export const ALUMNI_USERNAME_PREFIX = 'alumni-';
 /** The slug of the Alumni SAML source (`30-sources.yaml`); never renamed, it is in two URLs. */
 export const ALUMNI_SOURCE_SLUG = 'alumni';
 
+/**
+ * The attributes of the MARK "Rattacher" writes on a duplicate. MiConnect reads the first at the
+ * duplicate's next Alumni sign-in and merges (30-sources.yaml, `miconnect-alumni-merge-or-refuse`):
+ * these names are a contract with that policy.
+ */
+export const MERGE_MARK = {
+  into: 'alumni_merge_into',
+  by: 'alumni_merge_marked_by',
+  at: 'alumni_merge_marked_at',
+} as const;
+
 /** How long one internal count may take before the holdings count as unknown. */
 const HOLDINGS_TIMEOUT_MS = 5_000;
+
+/**
+ * How long a merge may stay REQUESTED (its trace written, the mark or the erasure not yet recorded)
+ * before the list calls it interrupted. "Rattacher" does both in one request, seconds apart; a row
+ * still requested an hour later is a request that died between them, resumed by "Rattacher" again.
+ */
+const INTERRUPTED_AFTER_MS = 60 * 60 * 1000;
+
+/** A MiConnect uuid; an erasure blanks a merge's target to a value that is not one. */
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** One MiConnect account as the admin's duplicates list shows it. */
 export interface AlumniAccount {
   uuid: string;
   username: string;
   name: string;
+  /** Shown so an admin can tell two homonyms apart (the review of 2026-11-23). */
+  email: string;
+  /** ISO time of the last sign-in at MiConnect, null when it never signed in. */
+  lastLogin: string | null;
   /** The entry years of its cursus (`attributes.profile.cursus[].promo`). */
   promos: number[];
   /** The Canari account it signed in as, or null when it never did. */
@@ -34,6 +61,20 @@ export interface AlumniAccount {
 export interface AlumniDuplicate {
   duplicate: AlumniAccount;
   targets: AlumniAccount[];
+}
+
+/**
+ * An open merge, as the admin page lists it: REQUESTED (the trace written, the mark or the erasure
+ * not recorded - an interrupted "Rattacher", resumed by the same action) or MARKED (waiting for the
+ * duplicate's next Alumni sign-in, when MiConnect merges it). Either can be cancelled.
+ */
+export interface AlumniOpenMerge {
+  duplicateUuid: string;
+  duplicateUsername: string;
+  targetUuid: string;
+  status: 'requested' | 'marked';
+  requestedAt: string;
+  markedAt: string | null;
 }
 
 /**
@@ -58,17 +99,42 @@ const NOTHING_HELD: AlumniHoldings = {
   conversations: 0,
 };
 
+/** An `alumni_merges` row that is neither completed nor cancelled. */
+interface OpenRow {
+  id: string;
+  duplicateUuid: string;
+  duplicateUsername: string;
+  targetUuid: string;
+  held: AlumniHoldings;
+  requestedAt: Date;
+  markedAt: Date | null;
+}
+
+/** Letters NFKD does not decompose, spelled out; and the typographic apostrophe as the plain one. */
+const LIGATURES: Record<string, string> = {
+  '\u0153': 'oe',
+  '\u0152': 'oe',
+  '\u00e6': 'ae',
+  '\u00c6': 'ae',
+  '\u00df': 'ss',
+  '\u2019': "'",
+};
+
 /**
- * A person's name as the duplicate check compares it: accents, case, hyphens and repeated spaces
- * folded. The CAS and Alumnforce spell one person differently ("Jean-Marie DUPONT" against
- * "Jean Marie Dupont"), and a miss here is a duplicate nobody is shown.
+ * A person's name as the duplicate check compares it: ligatures spelled out, accents and case
+ * folded, the typographic apostrophe made plain, and hyphens, dots, apostrophes and spaces to one
+ * space. The CAS and Alumnforce spell one person differently ("Jean-Marie DUPONT" against
+ * "Jean Marie Dupont"), and a miss here is a duplicate nobody is shown. MiConnect's merge policy
+ * (30-sources.yaml, `folded`) is the SAME function, step for step: change both together.
  */
 export function normalizeName(name: string): string {
-  return name
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
+  return [...name]
+    .map((c) => LIGATURES[c] ?? c)
+    .join('')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
-    .replace(/[\s\-']+/g, ' ')
+    .replace(/[\s\-'.]+/g, ' ')
     .trim();
 }
 
@@ -104,28 +170,45 @@ function isPersonAccount(user: { type: string }): boolean {
   return user.type === 'internal' || user.type === 'external';
 }
 
+/** The attribute bag with the merge mark removed. */
+function withoutMark(attributes: Record<string, unknown>): Record<string, unknown> {
+  const rest = { ...attributes };
+  for (const key of Object.values(MERGE_MARK)) delete rest[key];
+  return rest;
+}
+
 /**
  * THE ALUMNI DUPLICATES AND THEIR MERGE (D47, D48), through the profile editor's MiConnect account.
  *
  * A person who signs in through Alumni before linking may create a second MiConnect account
- * (`alumni-<af_id>`). The admins see such an account when its name and promo match an existing one,
- * and "Rattacher" ends it: the duplicate is DELETED at MiConnect - its Alumni identity goes with it,
- * free to be linked onto the person's real account from MiConnect's settings page - and its Canari
- * account is erased through the account-erasure queue, the one path that erases an account.
+ * (`alumni-<af_id>`). The admins see such an account when its name and promo match exactly ONE
+ * existing account - both SELF-DECLARED, which is why MiConnect checks more before it moves anything -
+ * and "Rattacher" MARKS it: `attributes.alumni_merge_into` names that account, with who marked it and
+ * when. MiConnect does the merge itself at the duplicate's next Alumni sign-in - after checking that
+ * the target holds a CAS link and carries the name Alumnforce asserts then, the Alumni link moved onto
+ * it and the duplicate deleted in one transaction, the person signed in as the target
+ * (30-sources.yaml). Only THEN is the duplicate's Canari account erased, through the account-erasure
+ * queue, the one path that erases an account ({@link complete}). The editor token can only mark.
  *
- * WHY THE LINK IS NOT MOVED. authentik's API serves a source connection's `user` READ-ONLY (2026.8:
- * `UserSourceConnectionSerializer`), so no token can re-point a link; and while the duplicate holds
- * the Alumni identity, a linking attempt from the real account signs the person INTO the duplicate
- * (`SourceFlowManager.get_action`: an existing connection is an `AUTH`). Deleting the duplicate first
- * is what makes the re-link possible at all; the reminder banner (D44) then asks for it.
+ * WHY MiConnect DOES IT. authentik's API serves a source connection's `user` READ-ONLY, so no token
+ * can re-point a link, and while the duplicate holds the Alumni identity a linking attempt from the
+ * real account signs the person INTO the duplicate (`SourceFlowManager.get_action`). Only authentik
+ * itself can move the link, and the sign-in is where it holds the duplicate in hand.
  *
- * PRINCIPLE 2 ("the essential is never lost", docs/principes.md) is touched, knowingly: the owner
- * chose deletion over deactivation (2026-11-23). What answers it is that the admin confirms after
- * being SHOWN what the duplicate holds ({@link holdings}), and that the merge is traced.
+ * PRINCIPLE 2 ("the essential is never lost", docs/principes.md): the person keeps their Alumni
+ * identity, now on their real account, and nothing is deleted at MiConnect until that move succeeds.
+ * The admin confirms after being SHOWN what the duplicate's Canari account holds ({@link holdings}).
  *
- * THE DESTRUCTIVE CONTROL HAS AN ALLOWLIST: it deletes an account only if its username starts with
- * `alumni-`, it holds no link but the Alumni one, and the target is a different, non-Alumni account
- * matching it by name and promo - each re-read from MiConnect at the moment of the merge.
+ * THE MARK HAS AN ALLOWLIST, re-read from MiConnect at the moment of the mark and AGAIN by MiConnect
+ * at the merge: the duplicate was created by an Alumni sign-in and its links are exactly ['alumni'];
+ * the target is the ONE other, non-Alumni, active person account matching it by name and promo, and
+ * holds no Alumni link yet.
+ *
+ * THE TRACE (`alumni_merges`) IS THE DURABLE STATE: written REQUESTED before the mark, MARKED once
+ * the mark is written, COMPLETED when the list sees the duplicate gone from MiConnect (the duplicate's
+ * Canari account is erased then), or CANCELLED (closed too: `cancelledAt` and `completedAt`). One
+ * open row per duplicate (migration 028's partial unique index on `"completedAt" IS NULL`), so two
+ * concurrent "Rattacher" cannot both proceed.
  */
 @Injectable()
 export class AlumniMergeService {
@@ -138,23 +221,19 @@ export class AlumniMergeService {
     private readonly accountErasure: AccountErasureService
   ) {}
 
-  /** Every Alumni-created account that matches an existing account by name and promo (D47). */
+  /**
+   * Every Alumni-created account that matches an existing account by name and promo (D47), but not
+   * one already in an open merge: those are listed by {@link listOpenMerges}.
+   */
   async listDuplicates(): Promise<AlumniDuplicate[]> {
     this.logger.log('[ALUMNI_MERGE] listing the duplicates');
+    const open = new Set((await this.openRows()).map((r) => r.duplicateUuid));
     const alumni = (await this.editor.searchUsers(ALUMNI_USERNAME_PREFIX)).filter(
-      (u) => isAlumniCreated(u) && isPersonAccount(u)
+      (u) => isAlumniCreated(u) && isPersonAccount(u) && !open.has(u.uuid)
     );
     const found: { duplicate: MiconnectUserListing; targets: MiconnectUserListing[] }[] = [];
     for (const dup of alumni) {
-      const dupKey = { name: dup.name, promos: promosOf(dup.attributes) };
-      if (dupKey.promos.length === 0 || normalizeName(dup.name) === '') continue;
-      const targets = (await this.editor.searchUsers(dup.name)).filter(
-        (t) =>
-          t.uuid !== dup.uuid &&
-          !isAlumniCreated(t) &&
-          isPersonAccount(t) &&
-          sameNameAndPromo(dupKey, { name: t.name, promos: promosOf(t.attributes) })
-      );
+      const targets = await this.targetsOf(dup);
       if (targets.length > 0) found.push({ duplicate: dup, targets });
     }
     const canariIds = await this.canariIdsOf(
@@ -164,6 +243,8 @@ export class AlumniMergeService {
       uuid: u.uuid,
       username: u.username,
       name: u.name,
+      email: u.email ?? '',
+      lastLogin: u.last_login ?? null,
       promos: promosOf(u.attributes),
       canariUserId: canariIds.get(u.uuid) ?? null,
     });
@@ -171,6 +252,42 @@ export class AlumniMergeService {
       `[ALUMNI_MERGE] ${alumni.length} Alumni-created account(s), ${found.length} flagged`
     );
     return found.map((f) => ({ duplicate: view(f.duplicate), targets: f.targets.map(view) }));
+  }
+
+  /**
+   * The open merges, each first reconciled with MiConnect: a duplicate MiConnect no longer has was
+   * merged at its sign-in, and its row is COMPLETED here rather than listed. A row still REQUESTED
+   * after {@link INTERRUPTED_AFTER_MS} is a "Rattacher" that died half-way: listed, and logged at error.
+   */
+  async listOpenMerges(): Promise<AlumniOpenMerge[]> {
+    this.editor.assertAvailable();
+    const out: AlumniOpenMerge[] = [];
+    for (const row of await this.openRows()) {
+      const tag = `dup=${row.duplicateUuid.slice(0, 8)} target=${row.targetUuid.slice(0, 8)}`;
+      if (!(await this.editor.userByUuid(row.duplicateUuid))) {
+        await this.complete(row, tag);
+        continue;
+      }
+      if (
+        !row.markedAt &&
+        Date.now() - new Date(row.requestedAt).getTime() > INTERRUPTED_AFTER_MS
+      ) {
+        this.logger.error(
+          `[ALUMNI_MERGE] interrupted ${tag}: requested at ${new Date(row.requestedAt).toISOString()} ` +
+            'and never marked - "Rattacher" again resumes it, "Annuler" drops it'
+        );
+      }
+      out.push({
+        duplicateUuid: row.duplicateUuid,
+        duplicateUsername: row.duplicateUsername,
+        targetUuid: row.targetUuid,
+        status: row.markedAt ? 'marked' : 'requested',
+        requestedAt: new Date(row.requestedAt).toISOString(),
+        markedAt: row.markedAt ? new Date(row.markedAt).toISOString() : null,
+      });
+    }
+    this.logger.log(`[ALUMNI_MERGE] ${out.length} open merge(s)`);
+    return out;
   }
 
   /**
@@ -212,87 +329,150 @@ export class AlumniMergeService {
   }
 
   /**
-   * "Rattacher" (D48): deletes the duplicate at MiConnect and erases its Canari account, on behalf of
-   * `actorId`, traced in `alumni_merges`.
+   * "Rattacher" (D48): MARKS the duplicate at MiConnect for a merge into `targetUuid`, on behalf of
+   * `actorId`, traced in `alumni_merges`. MiConnect merges at the duplicate's next Alumni sign-in, and
+   * its Canari account is erased once that is seen ({@link complete}), never at the mark.
    *
-   * THE ORDER IS THE DESIGN, AND THE TRACE ROW IS ITS DURABLE STATE. The row is written before the
-   * deletion at MiConnect and completed after the erasure is recorded; a merge that stopped between
-   * the two (MiConnect deleted, Canari not yet) is found by its pending row and RESUMED by the same
-   * call - the duplicate is then gone from MiConnect, and only the erasure is left to record, which
-   * is itself idempotent. A duplicate that is gone with no pending row was never merged here: 404.
+   * THE ORDER IS THE DESIGN. The trace row is written first (REQUESTED); the INSERT that finds an
+   * open row already there inserts nothing, and this call then stops ({@link
+   * AlumniMergeInProgressError}) unless that row is this same merge, which it resumes. The mark is
+   * idempotent, and the row turns MARKED only after it: a call that died in between is resumed by
+   * calling again.
    */
   async merge(
     duplicateUuid: string,
     targetUuid: string,
     actorId: string
-  ): Promise<{ held: AlumniHoldings; resumed: boolean }> {
+  ): Promise<{ held: AlumniHoldings; status: 'marked' }> {
     const tag = `dup=${duplicateUuid.slice(0, 8)} target=${targetUuid.slice(0, 8)} actor=${actorId.slice(0, 8)}`;
     this.logger.log(`[ALUMNI_MERGE] requested ${tag}`);
     this.editor.assertAvailable();
 
-    const [pending] = (await this.dataSource.query(
-      `SELECT "targetUuid", held FROM alumni_merges
-        WHERE "duplicateUuid" = $1 AND "completedAt" IS NULL`,
-      [duplicateUuid]
-    )) as { targetUuid: string; held: AlumniHoldings }[];
-    if (pending && pending.targetUuid !== targetUuid) {
-      this.logger.warn(`[ALUMNI_MERGE] refused ${tag}: pending into another account`);
-      throw new AlumniMergeNoMatchError(
-        'a merge of this duplicate into another account is pending'
+    let open = await this.openRow(duplicateUuid);
+    if (open && open.targetUuid !== targetUuid) {
+      this.logger.warn(`[ALUMNI_MERGE] refused ${tag}: open into another account`);
+      throw new AlumniMergeNoMatchError('a merge of this duplicate into another account is open');
+    }
+    const dup = await this.editor.userByUuid(duplicateUuid);
+    if (!dup) {
+      if (open?.markedAt) {
+        await this.complete(open, tag);
+        throw new AlumniMergeAlreadyMergedError();
+      }
+      this.logger.warn(`[ALUMNI_MERGE] refused ${tag}: no such account`);
+      throw new AlumniMergeNotFoundError();
+    }
+    await this.assertMergeable(dup, targetUuid, tag);
+
+    if (!open) {
+      const held = await this.holdings(duplicateUuid);
+      const targetUserId = (await this.canariIdsOf([targetUuid])).get(targetUuid) ?? null;
+      const inserted = (await this.dataSource.query(
+        `INSERT INTO alumni_merges
+           ("actorId", "duplicateUuid", "duplicateUsername", "targetUuid", "targetUserId", held)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT ("duplicateUuid") WHERE "completedAt" IS NULL
+         DO NOTHING
+         RETURNING id`,
+        [actorId, duplicateUuid, dup.username, targetUuid, targetUserId, JSON.stringify(held)]
+      )) as { id: string }[];
+      if (inserted.length !== 1) {
+        this.logger.warn(`[ALUMNI_MERGE] refused ${tag}: another request opened it first`);
+        throw new AlumniMergeInProgressError();
+      }
+      open = await this.openRow(duplicateUuid);
+      if (!open) {
+        this.logger.error(`[ALUMNI_MERGE] ${tag}: the row just inserted is not open`);
+        throw new AlumniMergeInProgressError();
+      }
+    } else {
+      this.logger.log(
+        `[ALUMNI_MERGE] resuming ${tag}: its row is open, ${open.markedAt ? 'marked' : 'requested'}`
       );
     }
 
-    const [dup] = await this.editor.usersByUuid(duplicateUuid);
-    let held: AlumniHoldings;
-    if (!dup) {
-      if (!pending) {
-        this.logger.warn(`[ALUMNI_MERGE] refused ${tag}: no such account, nothing pending`);
-        throw new AlumniMergeNotFoundError();
-      }
-      this.logger.log(`[ALUMNI_MERGE] resuming ${tag}: MiConnect already deleted it`);
-      held = pending.held;
-    } else {
-      await this.assertMergeable(dup, duplicateUuid, targetUuid, tag);
-      if (pending) {
-        held = pending.held;
-      } else {
-        held = await this.holdings(duplicateUuid);
-        const targetUserId = (await this.canariIdsOf([targetUuid])).get(targetUuid) ?? null;
-        await this.dataSource.query(
-          `INSERT INTO alumni_merges
-             ("actorId", "duplicateUuid", "duplicateUsername", "targetUuid", "targetUserId", held)
-           VALUES ($1, $2, $3, $4, $5, $6)
-           ON CONFLICT ("duplicateUuid") WHERE "completedAt" IS NULL DO NOTHING`,
-          [actorId, duplicateUuid, dup.username, targetUuid, targetUserId, JSON.stringify(held)]
-        );
-      }
-      await this.editor.deleteUser(dup.pk);
-      this.logger.log(`[ALUMNI_MERGE] MiConnect account deleted ${tag}`);
+    // RE-READ JUST BEFORE THE WRITE, and only the mark's keys changed: authentik's PATCH replaces the
+    // whole bag, so the bag written is the one read now, not the one read before the holdings were
+    // counted - the window for a concurrent edit is the two calls' own, not the whole request's.
+    const fresh = await this.editor.userByUuid(duplicateUuid);
+    if (!fresh) {
+      this.logger.warn(
+        `[ALUMNI_MERGE] refused ${tag}: the duplicate left MiConnect before its mark`
+      );
+      throw new AlumniMergeNotFoundError();
     }
-
-    const duplicateUserId = (await this.canariIdsOf([duplicateUuid])).get(duplicateUuid);
-    if (duplicateUserId) {
-      await this.accountErasure.requestErasure(duplicateUserId);
-    } else {
-      this.logger.log(`[ALUMNI_MERGE] ${tag}: no Canari account left to erase`);
-    }
+    await this.editor.writeUser(fresh.pk, {
+      attributes: {
+        ...fresh.attributes,
+        [MERGE_MARK.into]: targetUuid,
+        [MERGE_MARK.by]: actorId,
+        [MERGE_MARK.at]: new Date().toISOString(),
+      },
+    });
+    this.logger.log(`[ALUMNI_MERGE] marked at MiConnect ${tag}`);
     await this.dataSource.query(
-      `UPDATE alumni_merges SET "completedAt" = now()
-        WHERE "duplicateUuid" = $1 AND "completedAt" IS NULL`,
-      [duplicateUuid]
+      `UPDATE alumni_merges SET "markedAt" = COALESCE("markedAt", now()) WHERE id = $1`,
+      [open.id]
     );
-    this.logger.log(`[ALUMNI_MERGE] done ${tag} held=${JSON.stringify(held)}`);
-    return { held, resumed: !dup };
+    this.logger.log(`[ALUMNI_MERGE] marked ${tag} held=${JSON.stringify(open.held)}`);
+    return { held: open.held, status: 'marked' };
   }
 
   /**
-   * The allowlist of the deletion, re-read from MiConnect now: the duplicate was created by an
-   * Alumni sign-in and holds no other link; the target is another, non-Alumni person account
-   * matching it by name and promo.
+   * "Annuler": removes the mark at MiConnect and closes the row CANCELLED. Too late once MiConnect
+   * merged ({@link AlumniMergeAlreadyMergedError}, the row completed). Nothing was erased in Canari:
+   * the erasure waits for the merge.
+   */
+  async cancel(duplicateUuid: string, actorId: string): Promise<void> {
+    const tag = `dup=${duplicateUuid.slice(0, 8)} actor=${actorId.slice(0, 8)}`;
+    this.logger.log(`[ALUMNI_MERGE] cancel requested ${tag}`);
+    this.editor.assertAvailable();
+    const open = await this.openRow(duplicateUuid);
+    if (!open) {
+      this.logger.warn(`[ALUMNI_MERGE] cancel refused ${tag}: no open merge`);
+      throw new AlumniMergeNotFoundError();
+    }
+    const dup = await this.editor.userByUuid(duplicateUuid);
+    if (!dup) {
+      await this.complete(open, tag);
+      throw new AlumniMergeAlreadyMergedError();
+    }
+    if (Object.values(MERGE_MARK).some((key) => key in dup.attributes)) {
+      await this.editor.writeUser(dup.pk, { attributes: withoutMark(dup.attributes) });
+      this.logger.log(`[ALUMNI_MERGE] mark removed at MiConnect ${tag}`);
+    }
+    await this.dataSource.query(
+      `UPDATE alumni_merges SET "cancelledAt" = now(), "cancelledBy" = $2, "completedAt" = now()
+        WHERE id = $1 AND "completedAt" IS NULL`,
+      [open.id, actorId]
+    );
+    this.logger.log(`[ALUMNI_MERGE] cancelled ${tag}`);
+  }
+
+  /**
+   * The accounts `dup` matches: other, non-Alumni, active person accounts with the same name and a
+   * promo in common. Read through authentik's search, a superset narrowed here.
+   */
+  private async targetsOf(dup: MiconnectUserListing): Promise<MiconnectUserListing[]> {
+    const dupKey = { name: dup.name, promos: promosOf(dup.attributes) };
+    if (dupKey.promos.length === 0 || normalizeName(dup.name) === '') return [];
+    return (await this.editor.searchUsers(dup.name)).filter(
+      (t) =>
+        t.uuid !== dup.uuid &&
+        !isAlumniCreated(t) &&
+        isPersonAccount(t) &&
+        t.is_active !== false &&
+        sameNameAndPromo(dupKey, { name: t.name, promos: promosOf(t.attributes) })
+    );
+  }
+
+  /**
+   * The allowlist of the mark, re-read from MiConnect now: the duplicate was created by an Alumni
+   * sign-in and its links are exactly ['alumni']; the target is the ONE account it matches (a
+   * homonym makes the match ambiguous, and an ambiguous match is refused), and holds no Alumni link.
    */
   private async assertMergeable(
     dup: MiconnectUserListing,
-    duplicateUuid: string,
     targetUuid: string,
     tag: string
   ): Promise<void> {
@@ -304,19 +484,113 @@ export class AlumniMergeService {
       refuse(new AlumniMergeNotDuplicateError('not created by an Alumni sign-in'));
     }
     const slugs = await this.editor.sourceSlugsOf(dup.pk);
-    if (slugs.some((s) => s !== ALUMNI_SOURCE_SLUG)) {
-      refuse(new AlumniMergeNotDuplicateError(`also linked to ${slugs.join(', ')}`));
+    if (slugs.length !== 1 || slugs[0] !== ALUMNI_SOURCE_SLUG) {
+      refuse(new AlumniMergeNotDuplicateError(`its links are [${slugs.join(', ')}], not [alumni]`));
     }
-    if (targetUuid === duplicateUuid) refuse(new AlumniMergeNoMatchError('the same account'));
-    const [target] = await this.editor.usersByUuid(targetUuid);
+    if (targetUuid === dup.uuid) refuse(new AlumniMergeNoMatchError('the same account'));
+    const target = await this.editor.userByUuid(targetUuid);
     if (!target) return refuse(new AlumniMergeNoMatchError('no such target account'));
-    if (isAlumniCreated(target) || !isPersonAccount(target)) {
-      refuse(new AlumniMergeNoMatchError('the target is not a CAS person account'));
+    if (isAlumniCreated(target) || !isPersonAccount(target) || target.is_active === false) {
+      refuse(new AlumniMergeNoMatchError('the target is not an active CAS person account'));
     }
-    const dupKey = { name: dup.name, promos: promosOf(dup.attributes) };
-    if (!sameNameAndPromo(dupKey, { name: target.name, promos: promosOf(target.attributes) })) {
-      refuse(new AlumniMergeNoMatchError('name and promo differ'));
+    const matches = await this.targetsOf(dup);
+    if (matches.length !== 1 || matches[0].uuid !== targetUuid) {
+      refuse(
+        new AlumniMergeNoMatchError(
+          matches.length > 1
+            ? `${matches.length} accounts match by name and promo`
+            : 'name and promo differ'
+        )
+      );
     }
+    if ((await this.editor.sourceSlugsOf(target.pk)).includes(ALUMNI_SOURCE_SLUG)) {
+      refuse(new AlumniMergeNoMatchError('the target already holds an Alumni link'));
+    }
+  }
+
+  /** The open row of a duplicate, or undefined. */
+  private async openRow(duplicateUuid: string): Promise<OpenRow | undefined> {
+    const [row] = (await this.dataSource.query(
+      `SELECT id, "duplicateUuid", "duplicateUsername", "targetUuid", held, "requestedAt", "markedAt"
+         FROM alumni_merges
+        WHERE "duplicateUuid" = $1 AND "completedAt" IS NULL`,
+      [duplicateUuid]
+    )) as OpenRow[];
+    return row;
+  }
+
+  /** Every open row, oldest first. */
+  private async openRows(): Promise<OpenRow[]> {
+    return (await this.dataSource.query(
+      `SELECT id, "duplicateUuid", "duplicateUsername", "targetUuid", held, "requestedAt", "markedAt"
+         FROM alumni_merges
+        WHERE "completedAt" IS NULL
+        ORDER BY "requestedAt"`
+    )) as OpenRow[];
+  }
+
+  /**
+   * Closes a row whose duplicate MiConnect no longer has. A MARKED row is the expected end: the
+   * sign-in merged it, and the duplicate's Canari account is erased NOW, after the merge and never
+   * before it (owner, 2026-11-24) - requested first, the row closed after, so a call that dies in
+   * between finds the row still open and requests again (the erasure is idempotent). A duplicate
+   * gone is not by itself proof of a merge: the erasure needs the TARGET to hold the Alumni link
+   * now, read from MiConnect. A marked duplicate gone with the target holding no Alumni link went
+   * some other way (deleted by hand in MiConnect's admin, or the target itself gone): logged at
+   * error, nothing erased, the row closed. A REQUESTED one likewise erases nothing.
+   *
+   * Run when the admin list is read: the duplicate's Canari account is unusable from the merge on
+   * (its MiConnect account is gone, so it can no longer sign in), and is erased at the next reading.
+   */
+  private async complete(row: OpenRow, tag: string): Promise<void> {
+    const merged = row.markedAt
+      ? await this.targetHoldsTheAlumniLink(row.targetUuid, row.duplicateUsername)
+      : false;
+    if (merged) {
+      const duplicateUserId = (await this.canariIdsOf([row.duplicateUuid])).get(row.duplicateUuid);
+      if (duplicateUserId) {
+        await this.accountErasure.requestErasure(duplicateUserId);
+      } else {
+        this.logger.log(`[ALUMNI_MERGE] ${tag}: no Canari account to erase`);
+      }
+    }
+    await this.dataSource.query(
+      `UPDATE alumni_merges SET "completedAt" = now() WHERE id = $1 AND "completedAt" IS NULL`,
+      [row.id]
+    );
+    if (merged) {
+      this.logger.log(`[ALUMNI_MERGE] completed ${tag}: MiConnect merged it at its sign-in`);
+    } else if (row.markedAt) {
+      this.logger.error(
+        `[ALUMNI_MERGE] completed ${tag}: the marked duplicate left MiConnect but the target holds ` +
+          'not its Alumni link - not a merge, nothing erased in Canari'
+      );
+    } else {
+      this.logger.warn(
+        `[ALUMNI_MERGE] completed ${tag}: the duplicate left MiConnect before it was marked`
+      );
+    }
+  }
+
+  /**
+   * Whether the merge's target holds, at MiConnect now, THE DUPLICATE'S Alumni link - the one fact
+   * that proves the sign-in merged that duplicate into it: an Alumni connection whose identifier is
+   * the `af_id` of the duplicate's username (`alumni-<af_id>`). A target blanked by an erasure (not a
+   * uuid) or gone holds none.
+   */
+  private async targetHoldsTheAlumniLink(
+    targetUuid: string,
+    duplicateUsername: string
+  ): Promise<boolean> {
+    if (!UUID_SHAPE.test(targetUuid) || !duplicateUsername.startsWith(ALUMNI_USERNAME_PREFIX)) {
+      return false;
+    }
+    const afId = duplicateUsername.slice(ALUMNI_USERNAME_PREFIX.length);
+    const target = await this.editor.userByUuid(targetUuid);
+    if (!target) return false;
+    return (await this.editor.sourceLinksOf(target.pk)).some(
+      (link) => link.slug === ALUMNI_SOURCE_SLUG && link.identifier === afId
+    );
   }
 
   /** The Canari account of each MiConnect uuid that has one. */

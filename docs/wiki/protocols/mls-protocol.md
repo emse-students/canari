@@ -3602,7 +3602,14 @@ reload and no other tab reads), and the election of the page it starts requests 
 reload queues like any other. A leader whose lock is stolen sees its request reject with
 `AbortError` and hands over exactly as a take-over does (`onLeaderLockRejected`: follower, back in the
 queue, the demotion handler reloads it) - two tabs advancing one ratchet is what this module exists to
-prevent. Guarded by the `a promotion reload reclaims the lock` cases in `tabLeader.test.ts`.
+prevent.
+
+**Superseded on 2026-11-24 (fourth review of #4053, M1): the reload no longer steals.** A steal
+ignored what the holder was doing, and two tabs promoted in place reloading in turn made the second
+page steal from the first, already loaded as the leader. The reloaded page now waits in the queue
+while no tab holds `canari-tab-serving`, and follows the tab that does
+([chat](../frontend/modules/chat.md#a-leader-whose-own-session-ended-gives-the-lead-up-2026-11-24));
+guarded by `tabLeader.reclaim.test.ts`.
 
 ### A document on its way out took the lead back, and the take-over looped (2026-09-29)
 

@@ -67,10 +67,10 @@ maybe('account erasure queue against PostgreSQL', () => {
     await ds.query(
       readFileSync(join(__dirname, '..', 'migrations', '012_account_erasure_jobs.sql'), 'utf8')
     );
-    // `alumni_merges` has no entity (raw SQL in `AlumniMergeService`): its migration builds it here.
-    await ds.query(
-      readFileSync(join(__dirname, '..', 'migrations', '028_alumni_link_and_merges.sql'), 'utf8')
-    );
+    // `alumni_merges` is not in CORE_TABLES' copy: its two migrations build it here.
+    for (const file of ['028_alumni_link_and_merges.sql', '029_alumni_merge_marks.sql']) {
+      await ds.query(readFileSync(join(__dirname, '..', 'migrations', file), 'utf8'));
+    }
     jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
     jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
   }, 60_000);
@@ -88,7 +88,19 @@ maybe('account erasure queue against PostgreSQL', () => {
 
   it('deactivates at once, retries a failing service, completes after the final pass', async () => {
     for (const id of [SUBJECT, OTHER]) {
-      await ds.query(`INSERT INTO users (id, "displayName") VALUES ($1, 'Somebody')`, [id]);
+      await ds.query(
+        `INSERT INTO users (id, "displayName", "miconnectUuid") VALUES ($1, 'Somebody', $2)`,
+        [id, `mc-${id.slice(0, 8)}`]
+      );
+      // Two Alumni merges INTO the account made while it had no Canari account: no "targetUserId",
+      // found by its MiConnect uuid (D48). One CLOSED, one still OPEN (waiting for MiConnect).
+      await ds.query(
+        `INSERT INTO alumni_merges
+           ("actorId", "duplicateUuid", "duplicateUsername", "targetUuid", held, "completedAt")
+         VALUES ('admin', $1, 'alumni-1', $3, '{}'::jsonb, now()),
+                ('admin', $2, 'alumni-2', $3, '{}'::jsonb, NULL)`,
+        [`closed-${id.slice(0, 8)}`, `open-${id.slice(0, 8)}`, `mc-${id.slice(0, 8)}`]
+      );
       await ds.query(
         `INSERT INTO auth_sessions (id, "userId", "tokenId", "expiresAt")
          VALUES (gen_random_uuid(), $1, gen_random_uuid(), now() + interval '1 day')`,
@@ -140,6 +152,21 @@ maybe('account erasure queue against PostgreSQL', () => {
     expect(await count(`user_blocks`)).toBe(0);
     expect(await count(`help_seen WHERE user_id = $1`, [SUBJECT])).toBe(0);
     expect(await count(`help_seen WHERE user_id = $1`, [OTHER])).toBe(1);
+    // The closed merge is gone; the open one stays with the target blanked, so the duplicate's own
+    // erasure still runs once MiConnect merges.
+    const merges = (dup: string) => count(`alumni_merges WHERE "duplicateUuid" = $1`, [dup]);
+    expect(
+      await count(`alumni_merges WHERE "targetUuid" = $1`, [`mc-${SUBJECT.slice(0, 8)}`])
+    ).toBe(0);
+    expect(await merges(`closed-${SUBJECT.slice(0, 8)}`)).toBe(0);
+    expect(
+      await count(`alumni_merges WHERE "duplicateUuid" = $1 AND "targetUuid" = '[deleted]'`, [
+        `open-${SUBJECT.slice(0, 8)}`,
+      ])
+    ).toBe(1);
+    expect(await count(`alumni_merges WHERE "targetUuid" = $1`, [`mc-${OTHER.slice(0, 8)}`])).toBe(
+      2
+    );
     // ...and the other account untouched, its history kept without the erased admin's id.
     expect(await count(`users WHERE id = $1`, [OTHER])).toBe(1);
     expect(

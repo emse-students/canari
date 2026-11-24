@@ -22,11 +22,7 @@ import { clearMessageControlRefusals } from '$lib/utils/chat/controlRefusals.sve
 import { purgeConversation, retireConversation } from '$lib/utils/chat/conversations';
 import { dropGroupState } from '$lib/utils/chat/dropGroupState';
 import { recordEviction } from '$lib/utils/chat/eviction';
-import {
-  digestIdentity,
-  noteProbeReceived,
-  takeDigestSolicitation,
-} from '$lib/utils/chat/historyDigestRendezvous';
+import { digestIdentity, noteProbeReceived } from '$lib/utils/chat/historyDigestRendezvous';
 import { answerHistoryDigest, pullFromOverheardDigest } from '$lib/utils/chat/historyDiffAnswer';
 import { parseHistoryDigest, selectEntryIdsForPrefixes } from '$lib/utils/chat/historyManifest';
 import { mergeHistoryFloor, parseHistorySince } from '$lib/utils/chat/historyWindow';
@@ -940,7 +936,7 @@ export async function handleSystemEvent(
     if (answerKey === null) return true;
     const incomplete = data?.incomplete === true;
     const register = data?.register === true;
-    const takenByAWaiter = noteProbeReceived(convoKey, from, {
+    const destination = noteProbeReceived(convoKey, from, {
       kind: 'digest',
       digest,
       since,
@@ -968,7 +964,10 @@ export async function handleSystemEvent(
     // window, our store carries the rest. `takeDigestSolicitation` is what keeps it addressed - this
     // leg is a group broadcast, so every member records it, and only the one that ASKED consumes an
     // outstanding solicitation and answers. The election still elects exactly one responder.
-    if (!takenByAWaiter && takeDigestSolicitation(convoKey, from)) {
+    // `noteProbeReceived` claims the solicitation IN THE SAME STEP and never stores this digest: a
+    // stored copy was consumed again by a later election of ours for the same asker, which answered
+    // the same `requestId` twice.
+    if (destination === 'solicitation') {
       // SILENT, because this IS the road now and it says nothing a reader can act on. The line above
       // reports the digest, and `[HISTORY_REQ] ... diff with <them>` reports what it produced; a
       // third line between them announced a road that no longer has an alternative, once per group
@@ -994,7 +993,7 @@ export async function handleSystemEvent(
           )
         )
       );
-    } else if (!takenByAWaiter) {
+    } else if (destination === 'stored') {
       // OVERHEARD: an exchange between two other members, and the author's full list of what it
       // holds. Not ours to ANSWER - the election picked one responder - but it is the only evidence
       // this device may ever get of a message it lacks, so we ask the author for that and nothing
@@ -1678,8 +1677,19 @@ export async function handleSystemEvent(
           secret.fill(0);
         }
       }
-      const taken =
-        addressee.toLowerCase() === me && answeringDevice && (requestId !== undefined || claimsJoin)
+      // WHY THIS FRAME IS REFUSED, by name: each cause is a different defect or a different peer,
+      // and one sentence covering all of them could not tell the 2026-11-24 repeats (one answerer's
+      // second copy of an ask it had already closed) from a forgery or an ask lost to a reload.
+      const refusal: string | null =
+        addressee.toLowerCase() !== me
+          ? 'not-addressed-to-us'
+          : !answeringDevice
+            ? 'no-sending-device'
+            : requestId === undefined && !claimsJoin
+              ? 'names-no-ask'
+              : null;
+      const result =
+        refusal === null && answeringDevice
           ? takeAddressedAsk(
               convoKey,
               requestId,
@@ -1687,19 +1697,27 @@ export async function handleSystemEvent(
               data?.last === true
             )
           : null;
-      const ask = taken?.ask ?? null;
-      if (taken === null || ask === null || (ask.kind === 'join') !== claimsJoin) {
+      const taken = result?.taken ?? null;
+      const reason =
+        refusal ??
+        result?.refused ??
+        (taken !== null && (taken.ask.kind === 'join') !== claimsJoin ? 'kind-mismatch' : null);
+      if (reason !== null || taken === null) {
         // At error: an honest peer answers only an ask that carried an id, and closes it once, so
-        // this is a forged frame, a defect, or an ask this page no longer holds (a reload between
-        // ask and answer, or more than MAX_OPEN_ASKS_PER_GROUP open at once) - each worth a
+        // each of these is a forged frame, a defect, or an ask this page no longer holds (a reload
+        // between ask and answer, or more than MAX_OPEN_ASKS_PER_GROUP open at once) - each worth a
         // reader's attention, and the comparison runs again on the next connection either way. A
         // SECOND responder to the same ask is not here (the rendezvous can re-elect once); a THIRD
-        // is, because nothing honest produces one (MAX_ANSWERERS_PER_ASK).
+        // is `answerers-full`, because nothing honest produces one (MAX_ANSWERERS_PER_ASK).
+        // `answered-already` is the same answerer closing the same ask twice. Names in
+        // `AskRefusal`, plus the envelope checks above and `kind-mismatch` (a join push answering a
+        // non-join ask, or the reverse).
         console.error(
-          `[HISTORY_ADDRESSED] REFUSED an addressed history_bundle in ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)} - ${addressee.toLowerCase() !== me ? `addressed to ${addressee.slice(0, 8) || 'nobody'}…, not us` : !answeringDevice ? 'its envelope names no sending device' : requestId === undefined && !claimsJoin ? 'it names no ask' : 'it answers no ask this device has open, or its answerers are all taken'} (${incoming.length} message(s) not ingested)`
+          `[HISTORY_ADDRESSED] REFUSED an addressed history_bundle in ${convoKey.slice(0, 8)}… from ${senderNorm.slice(0, 8)} - ${reason}${reason === 'not-addressed-to-us' ? ` (addressed to ${addressee.slice(0, 8) || 'nobody'}…)` : ''} (${incoming.length} message(s) not ingested)`
         );
         return true;
       }
+      const ask = taken.ask;
       if (sealed !== undefined && !taken.keyed) {
         // Nothing honest seals an answer to an ask that carried no key - the join push today.
         console.error(

@@ -165,6 +165,18 @@ entries:
       expression: "return {\"miconnect_uuid\": str(request.user.uuid)}"
       scope_name: "profile"
       description: "Gives the MiConnect account uuid"
+  # Whether the account holds the Alumni link (WP8, D44), on Canari's providers only: Canari shows
+  # the reminder banner from it. A boolean and nothing else - never the alumni id, never `cotisant`.
+  # The name `alumni_linked` is read by core-service; renaming it is a change on both sides.
+  - model: authentik_providers_oauth2.scopemapping
+    identifiers:
+      name: "miconnect-claim-alumni-linked"
+    attrs:
+      expression: |-
+        from authentik.core.models import UserSourceConnection
+        return {"alumni_linked": UserSourceConnection.objects.filter(user=request.user, source__slug="alumni").exists()}
+      scope_name: "profile"
+      description: "Says whether the account is linked to its Alumni account"
   - model: authentik_sources_oauth.oauthsourcepropertymapping
     identifiers:
       name: "miconnect-cas-identity"

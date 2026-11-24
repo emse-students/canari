@@ -660,8 +660,31 @@ export class UsersController {
   }
 
   /**
-   * "Rattacher" (D48): deletes the duplicate MiConnect account and erases its Canari account, traced
-   * (`alumni_merges`). The body names the account it belongs with, `{ targetUuid }`.
+   * The open Alumni merges (D48): requested (interrupted, resumable) or marked (waiting for the
+   * duplicate's next Alumni sign-in, when MiConnect merges it), each cancellable.
+   */
+  @UseGuards(NginxAuthGuard, GlobalAdminGuard)
+  @Get('admin/alumni-merges')
+  listAlumniMerges() {
+    return this.alumniMerge.listOpenMerges();
+  }
+
+  /** "Annuler" an open merge: the mark is removed at MiConnect, the trace closed as cancelled. */
+  @UseGuards(NginxAuthGuard, GlobalAdminGuard)
+  @Post('admin/alumni-duplicates/:duplicateUuid/cancel')
+  @HttpCode(204)
+  async cancelAlumniMerge(
+    @Param('duplicateUuid') duplicateUuid: string,
+    @Headers('x-user-id') actorId: string
+  ): Promise<void> {
+    await this.alumniMerge.cancel(duplicateUuid, actorId);
+  }
+
+  /**
+   * "Rattacher" (D48): MARKS the duplicate MiConnect account for a merge into `{ targetUuid }`, which
+   * MiConnect carries out at its next Alumni sign-in, traced (`alumni_merges`). Its Canari account is
+   * erased only after that merge, when the open merges are next read. Calling it again resumes an
+   * interrupted one.
    */
   @UseGuards(NginxAuthGuard, GlobalAdminGuard)
   @Post('admin/alumni-duplicates/:duplicateUuid/merge')
