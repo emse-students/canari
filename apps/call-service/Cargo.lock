@@ -303,7 +303,7 @@ checksum = "776dfebd015e2d8732c684a2c71003674ccb49457b539b9e82151ba38e96dd7c"
 
 [[package]]
 name = "call-service"
-version = "1.8.0-alpha.8"
+version = "1.8.0-alpha.9"
 dependencies = [
  "anyhow",
  "axum",
