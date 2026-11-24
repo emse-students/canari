@@ -272,13 +272,6 @@ export interface SessionContext {
   reloadForPromotion(log: (message: string) => void): void;
   /** Callback for the tab-leader promotion -> WebSocket reconnection. */
   setTabLeaderSessionCb(cb: ChatSessionCallbacks | null): void;
-  /**
-   * Keeps this tab's lead while `finalWrite` - a sign-out's last MLS checkpoint, which never rejects -
-   * is in flight. A session that ends gives the lead up (`setTabLeadEligibility`), and the write latch
-   * refuses a put from a document that no longer leads: given up at the flag, the checkpoint the next
-   * sign-in reads would be refused. Called BEFORE the flag falls; the lead goes once the write settles.
-   */
-  holdLeadUntilWritten(finalWrite: Promise<void>): void;
 
   // ── Reconnection constants ─────────────────────────────────────────────────
   /** Backoff ladder; the last entry is the steady-state interval, which is climbed for ever. */

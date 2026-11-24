@@ -109,6 +109,11 @@ function hearLeaderAnnouncements(channel: BroadcastChannel): void {
     if (type === 'leader_promoted' || type === 'leader_closing') {
       notifyLeaderTabChanged(`another tab sent ${type}`);
     }
+    if (type === 'leader_promotion_reloading') promotionReloadAnnounced = true;
+    if (type === 'leader_promoted') {
+      promotionReloadAnnounced = false;
+      endDeferredRejoin('a tab announced it holds the lead');
+    }
   });
 }
 
@@ -448,6 +453,9 @@ const PROMOTION_RELOAD_KEY = 'canari_tab_promotion_reload';
  * tab that was granted it in between.
  */
 export function markPromotionReload(): void {
+  // Told to the other tabs, so a tab whose session comes back meanwhile does not take the lock in
+  // the gap this reload opens, only to have it reclaimed from under its login (review of #4053).
+  tabChannel?.postMessage({ type: 'leader_promotion_reloading', tabId: TAB_ID });
   try {
     sessionStorage.setItem(PROMOTION_RELOAD_KEY, '1');
   } catch (e) {
@@ -697,6 +705,9 @@ async function initWithWebLocks(log: (msg: string) => void): Promise<boolean> {
           decide('leader');
           log('[TAB] Leadership acquired (Web Locks).');
           requeueForPromotion = () => queueForPromotion(log);
+          // A RECLAIM ENDS THE GAP its reload opened: the tabs that deferred their rejoin for it
+          // queue now, behind this hold ({@link endDeferredRejoin}).
+          if (reclaim) tabChannel?.postMessage({ type: 'leader_promoted', tabId: TAB_ID });
           resolveLeadership(true);
           await holdLeaderLockUntilUnload((letGo) => (hold = letGo));
         }
@@ -737,6 +748,13 @@ async function initWithWebLocks(log: (msg: string) => void): Promise<boolean> {
 let leadEligible = true;
 /** This document left the election because its session could not serve: its next login rejoins it. */
 let rejoinOwed = false;
+/**
+ * Another tab said it reloads after a promotion (`leader_promotion_reloading`) and no tab has said it
+ * holds the lead since (`leader_promoted`): the lock may be free only for the length of that reload.
+ */
+let promotionReloadAnnounced = false;
+/** This document's rejoin waits for that tab's lead, or for its own session to go live. */
+let rejoinDeferred = false;
 /** The logger of this document's election, kept so a rejoin and a step-down say what they do. */
 let electionLog: ((msg: string) => void) | null = null;
 
@@ -781,8 +799,39 @@ export function setTabLeadEligibility(eligible: boolean, why: string): void {
   }
   if (!rejoinOwed || leaving) return;
   rejoinOwed = false;
+  if (promotionReloadAnnounced) {
+    // ANOTHER TAB IS RELOADING AFTER ITS PROMOTION, and its page will reclaim the lock with a steal:
+    // taken in the gap, the lock would be stolen from under this login. So this document joins as a
+    // follower and queues once that tab says it holds the lead - or once this session goes live
+    // ({@link noteTabSessionLive}), whichever comes first: no clock, and never waiting for ever.
+    rejoinDeferred = true;
+    log(
+      `[TAB] This tab's session can serve again (${why}), but another tab is reloading after its promotion - it joins as a follower and queues once that tab holds the lead.`
+    );
+    election = Promise.resolve(false);
+    return;
+  }
   log(`[TAB] This tab's session can serve again (${why}) - it rejoins the election.`);
   election = initWithWebLocks(log);
+}
+
+/**
+ * This document's session is live. A rejoin deferred for another tab's promotion reload that never
+ * announced its lead (the tab closed during its reload) ends here, so a live session is never left
+ * outside the election: the lock is queued for, and granted if nobody holds it.
+ */
+export function noteTabSessionLive(): void {
+  endDeferredRejoin('this tab went live before the reloading tab announced its lead');
+}
+
+/** Ends a deferred rejoin, if one is owed: this document queues for the lead. */
+function endDeferredRejoin(why: string): void {
+  if (!rejoinDeferred) return;
+  rejoinDeferred = false;
+  const log = electionLog;
+  if (!log || leaving || !leadEligible || leadership === 'leader') return;
+  log(`[TAB] Deferred rejoin ends (${why}) - queueing for the lead.`);
+  queueForPromotion(log);
 }
 
 /** The `false` half of {@link setTabLeadEligibility}: this document lets go of everything it holds. */
@@ -1023,6 +1072,8 @@ export function resetTabLeaderStateForTests(): void {
   leaving = false;
   leadEligible = true;
   rejoinOwed = false;
+  promotionReloadAnnounced = false;
+  rejoinDeferred = false;
   electionLog = null;
   handoverAsked = false;
   // The channel is closed above: the next election's channel needs its own listener.

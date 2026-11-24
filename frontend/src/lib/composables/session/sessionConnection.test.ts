@@ -18,6 +18,14 @@ const syncConnectionAfterWsOpen = vi.hoisted(() => vi.fn(async () => {}));
 const discoverMissingGroups = vi.hoisted(() => vi.fn(async () => {}));
 
 vi.mock('./sessionWatchdogs', () => ({ startSyncWatchdogImpl }));
+const order = vi.hoisted(() => [] as string[]);
+const endSessionStatePersister = vi.hoisted(() =>
+  vi.fn(async (finalCheckpoint: boolean) => {
+    order.push(`persister ended (final checkpoint: ${finalCheckpoint})`);
+  })
+);
+vi.mock('./sessionStatePersisterEnd', () => ({ endSessionStatePersister }));
+vi.mock('$lib/navigation/gotoLoginAfterExpiry', () => ({ gotoLoginAfterExpiry: vi.fn() }));
 vi.mock('./sessionAuth', () => ({
   makeRecoveryDeps: vi.fn(() => ({})),
   processDeviceInvitationsLocally: vi.fn(),
@@ -36,8 +44,9 @@ vi.mock('$lib/utils/sessionLog', async (importOriginal) => ({
   appendLog: sessionLogLines,
 }));
 
-const { pauseConnectionImpl, resumeConnectionImpl, scheduleReconnectImpl } =
+const { attemptReconnectImpl, pauseConnectionImpl, resumeConnectionImpl, scheduleReconnectImpl } =
   await import('./sessionConnection');
+const { SessionExpiredError } = await import('$lib/stores/auth');
 import type { SessionContext, ChatSessionCallbacks } from './sessionTypes';
 
 /** Minimal SessionContext covering only what these three functions read or write. */
@@ -268,5 +277,24 @@ describe('the foreground line', () => {
       .map((c) => String(c[0]))
       .find((l) => l.includes('App in foreground'));
     expect(line).toBe('[LIFECYCLE] App in foreground - re-arming watchdogs and reconnecting...');
+  });
+});
+
+describe('an expired session (review of #4053)', () => {
+  it('ends its state persister, final checkpoint included, BEFORE the session flag falls', async () => {
+    const { ctx, state } = makeCtx();
+    order.length = 0;
+    (ctx as unknown as { setIsLoggedIn: (v: boolean) => void }).setIsLoggedIn = (v) => {
+      state.loggedIn = v;
+      order.push(`logged in: ${v}`);
+    };
+    openGatewayConnection.mockRejectedValueOnce(new SessionExpiredError());
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await attemptReconnectImpl(ctx, makeCb());
+
+    // The flag falling is what lets the lead go (`leadPublisher`): the persister - and the lead hold
+    // its final write takes - must already be there, and no checkpoint of this client lands after.
+    expect(order).toEqual(['persister ended (final checkpoint: true)', 'logged in: false']);
   });
 });

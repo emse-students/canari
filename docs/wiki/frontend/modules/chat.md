@@ -1995,17 +1995,59 @@ and no clock is used:
   answers nothing (`answersFollowerCommits` is false). A record it was deciding is left `pending`.
   A record it had already claimed is handed back to `pending` under its run lock, since nothing ran.
   The tab that took the lead runs it, instead of the follower being told `leader-unavailable`.
-- **a sign-out's final checkpoint keeps the lead until it lands**: `tearDownLiveSession` registers
-  the write (`holdLeadUntilWritten`) before the session flag falls. The write latch refuses a put
-  from a document that no longer leads, so giving the lead up at the flag would have refused the
-  checkpoint the next sign-in reads. The lead goes when the write settles (it never rejects).
+- **the lead stays while MLS work that needs it is in flight** (`leadHolds.ts`, review of #4053).
+  The write latch refuses a put from a document that no longer leads, so giving the lead up at the
+  instant the flag fell refused the very writes the session still owed. Every such operation is
+  COUNTED while it runs: a commit under the MLS lock (`runCommitUnderMlsLock`, posted to the server,
+  its checkpoint not yet landed), a delegated executor, a key-package mint, a checkpoint (the
+  structural one included), and the final checkpoint of an ended session. The session's eligibility
+  (`createLeadPublisher`, `leadPublisher.ts`) stays `true` while the count is above zero and is
+  published again when it returns to zero. Each operation settles on success AND on failure (a
+  `finally`), so termination comes from the operations, never from a clock. The encrypt worker's
+  round trip, which a checkpoint waits on, rejects on the worker's `error`, on `messageerror`, and
+  when the worker is terminated (`MlsEncryptWorkerTerminatedError`), so a hold never waits on a
+  dead worker.
+- **an ended session's persister ends first** (`endSessionStatePersister`,
+  `sessionStatePersisterEnd.ts`), before the session flag falls, on BOTH paths that end a session in
+  place: a sign-out (`tearDownLiveSession`), and an expired session (`attemptReconnectImpl`, which
+  used to leave the persister installed and the client in the holder). Its final checkpoint is a
+  hold; the persister is unregistered once that write settles, so no checkpoint of the ended client
+  lands after the next election. The sign-out that follows the expiry finds no live session and
+  retires the client behind that write (`whenEndedSessionStateWritten`).
+- **a follower's request waits through all this**: while the leader's readiness is `unavailable`, a
+  request is left `pending` (it used to be answered `leader-unavailable`), because that leader gives
+  the lead up as soon as its holds settle and the next leader runs it. A claim made before the
+  session ended is handed back. Both are narrated, not warned: this is the designed hand-back.
+- **the asker may be the tab the lead goes to.** A promotion reloads that tab, and the reload frees
+  the requester lock of every request it made as a follower, so the new leader used to delete them
+  as "the tab that asked is gone". The tab now carries its requester identity across that one reload
+  (`carryTabCommitRequesterAcrossReload`, `sessionStorage`, read and removed at load, so a tab
+  duplicated later never shares it). The new page ADOPTS its own earlier requests: a gesture whose
+  effect is the outcome (a conversation created, a member invited or removed, a key group entered)
+  is run and its record removed. A frame to emit or a message to seal was only a step of the page
+  that asked; it is removed unrun, and that page's own durable queue drives it again.
+- **a quick PIN retry does not race another tab's promotion reload.** A promoted tab announces its
+  reload (`leader_promotion_reloading`), and its new page reclaims the lock with a steal, then says
+  so (`leader_promoted`). A tab whose session comes back in that gap does not take the free lock,
+  which would be stolen from under its login: it joins as a follower and queues once a tab announces
+  the lead, or once its own session goes live (`noteTabSessionLive`), whichever comes first. Both
+  are facts, and the second guarantees it is never left outside the election when the reloading tab
+  was closed instead.
 - the grant callbacks (a queued promotion, the hand-over's steal, the first election) read
   eligibility too. A lock granted to a document whose withdrawal raced the grant is passed on
   rather than held, and a follower that cannot serve asks no hidden leader for the lead.
 
-**What the member sees now:** the gesture works from the tab they are in. If that tab is the one
-promoted, it reloads first, as every promotion does
-([why](#the-lead-goes-to-a-tab-that-can-serve-a-hidden-leader-hands-it-over-2026-11-10)).
+**What the member sees now:** the gesture works from the tab they are in.
+
+**The promotion reload is visible, and it is deliberate.** When the lead goes to the tab the member
+is using, that tab RELOADS (`reloadForPromotion`), as every promotion does
+([why](#the-lead-goes-to-a-tab-that-can-serve-a-hidden-leader-hands-it-over-2026-11-10)): it loaded
+its MLS state as a follower, and the old leader has advanced that state since. The member sees the
+page blink and come back on the same route, typically right after they unlocked, signed out, or let
+a session expire in ANOTHER tab. A gesture the tab had handed to the old leader is adopted and run
+by the reloaded page (above). The reload goes away only with the browser-wide worker of `1.9.0`,
+where one worker holds the state and no tab needs to reload to lead
+([design](../../backlog.d/a-browser-wide-worker-holds-the-mls-state-instead-of-a-leader-tab.md)).
 `leader-unavailable` remains in two places only:
 - a follower that is itself signed out;
 - an engine without Web Locks, where nothing is handed over in the first place (`not-delegable`).
@@ -2015,7 +2057,12 @@ promoted, it reloads first, as every promotion does
   lock is released so a tab that can serve takes the lead.`;
 - the tab that serves: `[TAB] Promoted to leader (Web Locks).` and its reload;
 - the old leader at its next login: `[TAB] This tab's session can serve again (session starting) -
-  it rejoins the election.`
+  it rejoins the election.`, or, during another tab's promotion reload, `... it joins as a follower
+  and queues once that tab holds the lead.` then `[TAB] Deferred rejoin ends (...)`;
+- a session ending with work in flight: `session unavailable, N MLS operation(s) still in flight`,
+  then the release when the last one settles;
+- the new leader adopting its own earlier request: `asked by this tab before its promotion reload -
+  adopted and run here`.
 
 **Still not covered, unchanged:**
 - a leader whose main thread is wedged;
@@ -2035,13 +2082,21 @@ worker in `1.9.0` ([design](../../backlog.d/a-browser-wide-worker-holds-the-mls-
   - a locked follower withdraws, so a closing leader never hands the lock to it;
   - a lone tab leaves the lock free and takes it back without queueing behind itself;
   - repeating a state is a no-op;
-  - a follower that cannot serve asks for no hand-over.
+  - a follower that cannot serve asks for no hand-over;
+  - a tab whose session returns during another tab's promotion reload leaves the lock free and
+    queues behind the reclaim once it is announced; its own live session ends the deferral otherwise.
 - `tabCommitDelegation.test.ts`: a leader that gives the lead up between the claim and the run
-  hands the record back, and the next leader runs it.
-- `tabLeadership.test.ts`, the session wiring:
-  - no reload on `session-cannot-serve`;
-  - eligibility is published before the readiness;
-  - the sign-out's hold is registered before the flag falls.
+  hands the record back, and the next leader runs it; an `unavailable` leader leaves the request
+  `pending` for the next one; a promoted asker adopts and runs its own gesture, drops a frame, and
+  still removes another tab's orphan.
+- `leadPublisher.test.ts`: eligibility before readiness; the lead kept while a hold is in flight and
+  given up when it settles, on success or failure, after the last of several holds.
+- `sessionStatePersisterEnd.test.ts`: the final checkpoint holds the lead, the persister is removed
+  once it settles (also on failure), and the worker is kept for a newer session's persister.
+- `sessionConnection.test.ts`: an expired session ends its persister before its flag falls.
+- `mlsEncryptWorkerSession.test.ts`: the round trip rejects on termination, `error` and
+  `messageerror`.
+- `tabLeadership.test.ts`: no reload on `session-cannot-serve`.
 
 **Owed:** a two-tab reading on dev with the web rig. Lock the leader tab (the keypad), or let its
 session expire, then start a conversation from the other tab.

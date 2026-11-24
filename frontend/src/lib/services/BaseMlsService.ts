@@ -185,6 +185,7 @@ import {
   promotedSinceLoad,
   refusesCommitsHere,
 } from '$lib/mls-client/stateAuthority';
+import { holdLeadWhile, takeLeadHold } from '$lib/mls-client/leadHolds';
 import {
   checkpointWroteNothing,
   fromBase64,
@@ -2781,11 +2782,16 @@ export abstract class BaseMlsService implements IMlsService {
    * other kinds it could not apply without waiting), so they are resumed here when it ends.
    */
   protected async runCommitUnderMlsLock<T>(groupId: string, fn: () => Promise<T>): Promise<T> {
-    try {
-      return await this.messageScheduler.runCommitUnderMlsLock(groupId, fn);
-    } finally {
-      this.resumeFramesHeldByCommit(groupId);
-    }
+    // THE LEAD IS HELD FOR THE COMMIT'S WHOLE RUN (`leadHolds.ts`): a session that ends mid-commit
+    // gives the lead up only once the commit settled, so its checkpoint is not refused as a
+    // follower's after the server already took the commit.
+    return holdLeadWhile(`commit in ${groupId.slice(0, 8)}`, async () => {
+      try {
+        return await this.messageScheduler.runCommitUnderMlsLock(groupId, fn);
+      } finally {
+        this.resumeFramesHeldByCommit(groupId);
+      }
+    });
   }
 
   /** Lends the MLS mutex to the drain while `work` - a commit request of `groupId` - is pending. */
@@ -4323,7 +4329,11 @@ export abstract class BaseMlsService implements IMlsService {
         throw new Error('key package round abandoned before it started');
       }
       try {
-        const published = await this.generateKeyPackageImpl(deviceKeyB64);
+        // The lead is held while the mint runs (`leadHolds.ts`): its private half must reach the
+        // checkpoint of the copy that minted it, which a follower's latch would refuse.
+        const published = await holdLeadWhile('key-package mint', () =>
+          this.generateKeyPackageImpl(deviceKeyB64)
+        );
         // A published round proves this page's identity is accepted: any refused-rotation run ended.
         forgetRefusedRotationReloads();
         // And the server is reachable: an abandoned id a rotation could not delete is retried here.
@@ -5537,88 +5547,96 @@ export abstract class BaseMlsService implements IMlsService {
    * sets the latch in the very transaction that refuses it.
    */
   async persistCheckpoint(options?: { endsDocumentOnRefusal?: boolean }): Promise<void> {
-    if (this.stateWritesEnded === true) throw new MlsStateWriteRefusedError('ended');
-    // A FOLLOWER TAB NEVER WRITES THE ACCOUNT'S MLS STATE, for the reason it never commits
-    // (`refusesCommitsHere`, the same fact): its copy was loaded once and the leader keeps moving
-    // the real one. Its checkpoints used to land - every history window a follower closed wrote its
-    // copy tagged one above the version it loaded, so the leader's next write of that number was
-    // refused as a collision (owner, web `1.6.10`, 2026-11-11), and while the follower's counter ran
-    // ahead every leader write was refused as stale and the disk held the follower's copy, behind
-    // every frame and commit the leader had applied. Refused here, before anything is captured, so
-    // nothing marks the send ledger or the replay marks durable either: the leader's checkpoints do.
-    //
-    // A LEADER UNLOADING IS REFUSED TOO, and rightly: on `beforeunload` it releases the leader lock
-    // (`holdLeaderLockUntilUnload`), so its `pagehide` flush runs in a document another tab may
-    // already have replaced as leader - one that loaded the state on disk, which this late write
-    // would overwrite or collide with. What the unload loses is what any kill loses (the advance
-    // since the last checkpoint), recovered by the send ledger's burn and by inbound replay.
-    if (refusesCommitsHere()) {
-      if (!this.followerStateWriteRefusalSaid) {
-        this.followerStateWriteRefusalSaid = true;
-        Log.i(
-          'MLS',
-          leaderLockReleasedForUnload()
-            ? 'checkpoint not written: this tab released the leader lock to unload - a tab elected after it reads the state on disk, so nothing is written over it'
-            : `checkpoint not written: this tab does not own the MLS state (${getTabLeadership()}) - its copy is read-only and the leader tab writes it. Said once per page.`
-        );
-      }
-      throw new MlsStateWriteRefusedError('follower-tab');
-    }
-    // Before the state opened there is no ledger to stage: the state being written is the one the
-    // load is building (a fresh start, a rotation), and the opening reads what it carries.
-    // Read first: a send landing after the read costs one burnt generation too many, never too few.
-    const emitted = stateLedgersHydrated(this.userId)
-      ? await this.emittedForCheckpoint()
-      : undefined;
-    // ROWS BEFORE RATCHET, IN TWO STEPS AND IN THIS ORDER. First the frames between their decrypt
-    // and their row: no new one is decrypted until the export is taken, and those already decrypted
-    // store or buffer their row ({@link RowsOwedLedger}). Then the rows held in memory for frames
-    // already applied - the buffers those handlers may just have filled - are stored before the
-    // export claims those frames' ratchet advance, and none is held again until the export is taken.
-    const releaseOwed = await this.rowsOwed.hold();
-    let releaseRows: () => void = () => {};
+    // A CHECKPOINT HOLDS THE LEAD UNTIL ITS PUT SETTLED (`leadHolds.ts`): the session it belongs to
+    // may end while it seals, and given up then, the latch refuses the put as a follower's. Taken
+    // synchronously, at the call, and released on every exit.
+    const releaseLead = takeLeadHold('checkpoint');
     try {
-      releaseRows = await this.holdRowsForExport();
-      const ledgers = emitted ? this.stageCheckpointLedgers(emitted) : undefined;
-      // What this write holds of the inbound frames, read BEFORE it exports: a frame applied while it
-      // seals is not in it ({@link durableApplied}).
-      const appliedAtExport = this.inboundApplied;
-      // NOTHING IS AWAITED BETWEEN THE STAGING ABOVE AND THE CALL BELOW: on the web the platform
-      // applies the ledgers and exports in this same turn, so every mark staged describes an advance
-      // the export holds.
+      if (this.stateWritesEnded === true) throw new MlsStateWriteRefusedError('ended');
+      // A FOLLOWER TAB NEVER WRITES THE ACCOUNT'S MLS STATE, for the reason it never commits
+      // (`refusesCommitsHere`, the same fact): its copy was loaded once and the leader keeps moving
+      // the real one. Its checkpoints used to land - every history window a follower closed wrote its
+      // copy tagged one above the version it loaded, so the leader's next write of that number was
+      // refused as a collision (owner, web `1.6.10`, 2026-11-11), and while the follower's counter ran
+      // ahead every leader write was refused as stale and the disk held the follower's copy, behind
+      // every frame and commit the leader had applied. Refused here, before anything is captured, so
+      // nothing marks the send ledger or the replay marks durable either: the leader's checkpoints do.
+      //
+      // A LEADER UNLOADING IS REFUSED TOO, and rightly: on `beforeunload` it releases the leader lock
+      // (`holdLeaderLockUntilUnload`), so its `pagehide` flush runs in a document another tab may
+      // already have replaced as leader - one that loaded the state on disk, which this late write
+      // would overwrite or collide with. What the unload loses is what any kill loses (the advance
+      // since the last checkpoint), recovered by the send ledger's burn and by inbound replay.
+      if (refusesCommitsHere()) {
+        if (!this.followerStateWriteRefusalSaid) {
+          this.followerStateWriteRefusalSaid = true;
+          Log.i(
+            'MLS',
+            leaderLockReleasedForUnload()
+              ? 'checkpoint not written: this tab released the leader lock to unload - a tab elected after it reads the state on disk, so nothing is written over it'
+              : `checkpoint not written: this tab does not own the MLS state (${getTabLeadership()}) - its copy is read-only and the leader tab writes it. Said once per page.`
+          );
+        }
+        throw new MlsStateWriteRefusedError('follower-tab');
+      }
+      // Before the state opened there is no ledger to stage: the state being written is the one the
+      // load is building (a fresh start, a rotation), and the opening reads what it carries.
+      // Read first: a send landing after the read costs one burnt generation too many, never too few.
+      const emitted = stateLedgersHydrated(this.userId)
+        ? await this.emittedForCheckpoint()
+        : undefined;
+      // ROWS BEFORE RATCHET, IN TWO STEPS AND IN THIS ORDER. First the frames between their decrypt
+      // and their row: no new one is decrypted until the export is taken, and those already decrypted
+      // store or buffer their row ({@link RowsOwedLedger}). Then the rows held in memory for frames
+      // already applied - the buffers those handlers may just have filled - are stored before the
+      // export claims those frames' ratchet advance, and none is held again until the export is taken.
+      const releaseOwed = await this.rowsOwed.hold();
+      let releaseRows: () => void = () => {};
       try {
-        const writing = this.writeCheckpoint(
-          this.currentDeviceKeyB64,
-          {
-            isEnded: () => this.stateWritesEnded === true,
-            holdsNoLead: refusesCommitsHere,
-            endOnRefusal: options?.endsDocumentOnRefusal
-              ? () => {
-                  this.stateWritesEnded = true;
-                }
-              : undefined,
-          },
-          ledgers
-        );
-        // ON THE WEB THE EXPORT IS TAKEN BY NOW (the call's synchronous part): a frame decrypted from
-        // here on is not in it, so the decrypts resume without waiting for the seal and the put.
-        if (this.checkpointCapturesAtCall) releaseOwed();
-        await writing;
-        // Only a write that LANDED holds what it exported: the ledgers in it, and the frames counted
-        // into `appliedAtExport`.
-        if (appliedAtExport > this.durableApplied) this.durableApplied = appliedAtExport;
-      } catch (e) {
-        // The next checkpoint carries them. A client that already took them re-applies the same
-        // value, a no-op; one that never got them (a native call refused before it ran) takes them then.
-        if (ledgers) restageStateLedgers(this.userId, ledgers);
-        throw e;
+        releaseRows = await this.holdRowsForExport();
+        const ledgers = emitted ? this.stageCheckpointLedgers(emitted) : undefined;
+        // What this write holds of the inbound frames, read BEFORE it exports: a frame applied while it
+        // seals is not in it ({@link durableApplied}).
+        const appliedAtExport = this.inboundApplied;
+        // NOTHING IS AWAITED BETWEEN THE STAGING ABOVE AND THE CALL BELOW: on the web the platform
+        // applies the ledgers and exports in this same turn, so every mark staged describes an advance
+        // the export holds.
+        try {
+          const writing = this.writeCheckpoint(
+            this.currentDeviceKeyB64,
+            {
+              isEnded: () => this.stateWritesEnded === true,
+              holdsNoLead: refusesCommitsHere,
+              endOnRefusal: options?.endsDocumentOnRefusal
+                ? () => {
+                    this.stateWritesEnded = true;
+                  }
+                : undefined,
+            },
+            ledgers
+          );
+          // ON THE WEB THE EXPORT IS TAKEN BY NOW (the call's synchronous part): a frame decrypted from
+          // here on is not in it, so the decrypts resume without waiting for the seal and the put.
+          if (this.checkpointCapturesAtCall) releaseOwed();
+          await writing;
+          // Only a write that LANDED holds what it exported: the ledgers in it, and the frames counted
+          // into `appliedAtExport`.
+          if (appliedAtExport > this.durableApplied) this.durableApplied = appliedAtExport;
+        } catch (e) {
+          // The next checkpoint carries them. A client that already took them re-applies the same
+          // value, a no-op; one that never got them (a native call refused before it ran) takes them then.
+          if (ledgers) restageStateLedgers(this.userId, ledgers);
+          throw e;
+        }
+      } finally {
+        // Released once the write settled, not at the capture: on native the export runs in the
+        // command, so both holds have to outlast the call (on the web the decrypt gate was reopened at
+        // the capture; releasing twice is a no-op). A hold of the rows that threw released its own.
+        releaseRows();
+        releaseOwed();
       }
     } finally {
-      // Released once the write settled, not at the capture: on native the export runs in the
-      // command, so both holds have to outlast the call (on the web the decrypt gate was reopened at
-      // the capture; releasing twice is a no-op). A hold of the rows that threw released its own.
-      releaseRows();
-      releaseOwed();
+      releaseLead();
     }
   }
 

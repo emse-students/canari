@@ -1,3 +1,4 @@
+import { takeLeadHold } from './leadHolds';
 import type { BulkIngestPhase, IMlsService } from './IMlsService';
 import { recordMlsSaveStateMs } from './catchupBenchmark';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
@@ -209,10 +210,15 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
     if (bulkIngestDepth > 0) return;
     if (immediateFlushQueued) return;
     immediateFlushQueued = true;
+    // HELD FROM THE CALL, not from the microtask: a commit asks for this checkpoint as it ends, and a
+    // session flag falling in between must not give the lead up before the write starts (`leadHolds`).
+    const release = takeLeadHold('structural checkpoint');
     queueMicrotask(() => {
       immediateFlushQueued = false;
       // Already logged by `startFlight`; nobody awaits this one, so its rejection stops here.
-      void flushEncryptedInternal().catch(() => {});
+      void flushEncryptedInternal()
+        .catch(() => {})
+        .finally(release);
     });
   }
 

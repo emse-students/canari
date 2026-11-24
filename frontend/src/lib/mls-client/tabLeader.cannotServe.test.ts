@@ -11,7 +11,12 @@
  * Two documents of one browser, sharing one lock manager (`tabLeaderDocuments.test-helper.ts`).
  * Eligibility is what the session's flags say (`useChatSession.publishDelegationReadiness`).
  */
-import { fakeLockManager, openDocument, settle } from './tabLeaderDocuments.test-helper';
+import {
+  FakeBroadcastChannel,
+  fakeLockManager,
+  openDocument,
+  settle,
+} from './tabLeaderDocuments.test-helper';
 
 describe('tabLeader - a tab whose session cannot serve gives the lead up', () => {
   let manager: ReturnType<typeof fakeLockManager>;
@@ -20,10 +25,13 @@ describe('tabLeader - a tab whose session cannot serve gives the lead up', () =>
   beforeEach(() => {
     manager = fakeLockManager();
     Object.defineProperty(navigator, 'locks', { configurable: true, value: manager.locks });
+    FakeBroadcastChannel.reset();
+    vi.stubGlobal('BroadcastChannel', FakeBroadcastChannel);
   });
 
   afterEach(() => {
     Object.defineProperty(navigator, 'locks', { configurable: true, value: origLocks });
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
@@ -151,5 +159,59 @@ describe('tabLeader - a tab whose session cannot serve gives the lead up', () =>
     ).toEqual([]);
     expect(leader.mod.getTabLeadership()).toBe('leader');
     ear.close();
+  });
+
+  /** A leaves the lead, B is promoted and reloads for it: the lock is free for that reload only. */
+  async function promotionReloadInFlight() {
+    const a = await openDocument();
+    const b = await openDocument();
+    a.mod.setTabLeadEligibility(false, 'session unavailable');
+    await settle();
+    expect(b.mod.getTabLeadership()).toBe('leader');
+    // What `useChatSession.reloadForPromotion` does, then the reload unloads B. Its hold listens on
+    // the window from its promotion on (after `openDocument` stopped recording); only B holds a lock.
+    b.mod.markPromotionReload();
+    window.dispatchEvent(new Event('beforeunload'));
+    await settle();
+    expect(manager.isHeld()).toBe(false);
+    return { a, b };
+  }
+
+  it("a quick PIN retry during another tab's promotion reload does not take the lock in the gap (review of #4053)", async () => {
+    const { a } = await promotionReloadInFlight();
+
+    a.mod.setTabLeadEligibility(true, 'session starting');
+    expect(await a.mod.initTabLeadershipAsync(() => {})).toBe(false);
+    await settle();
+    // THE RACE: taken here, the lock was stolen from under A's login by B's reclaim a moment later.
+    expect(manager.isHeld()).toBe(false);
+    expect(a.mod.getTabLeadership()).toBe('follower');
+    expect(a.logs.some((l) => l.includes('another tab is reloading after its promotion'))).toBe(
+      true
+    );
+
+    // B's new page reclaims and says so; A queues behind it.
+    const reloaded = await openDocument();
+    await settle();
+    expect(reloaded.mod.getTabLeadership()).toBe('leader');
+    expect(manager.queued()).toBe(1);
+    expect(
+      a.logs.some((l) => l.includes('Deferred rejoin ends (a tab announced it holds the lead)'))
+    ).toBe(true);
+    expect(a.mod.getTabLeadership()).toBe('follower');
+  });
+
+  it("a deferred rejoin ends when this tab's own session goes live, if the reloading tab never says it leads", async () => {
+    const { a } = await promotionReloadInFlight();
+    a.mod.setTabLeadEligibility(true, 'session starting');
+    await a.mod.initTabLeadershipAsync(() => {});
+    // The reloading tab was closed instead: nobody will announce the lead.
+    sessionStorage.removeItem('canari_tab_promotion_reload');
+
+    a.mod.noteTabSessionLive();
+    await settle();
+
+    expect(a.mod.getTabLeadership()).toBe('leader');
+    expect(a.promoted).toBe(1);
   });
 });

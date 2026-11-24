@@ -197,6 +197,8 @@ interface Role {
   wiped?: Set<string>;
   /** Request ids that sort against the order the requests were made in. */
   idsAgainstOrder?: boolean;
+  /** The requester identity this page carried across its promotion reload (`adopts`). */
+  carries?: string;
 }
 
 function makeWorld() {
@@ -224,7 +226,8 @@ function tab(doc: string, world: ReturnType<typeof makeWorld>, role: Role) {
     newId: () => (role.idsAgainstOrder ? `${doc}-req-${9999 - ++n}` : `${doc}-req-${++n}`),
     // A clock that never moves: the order holds by the per-tab counter alone.
     orderKey: createOrderKeys(() => 0),
-    documentId: () => doc,
+    documentId: () => role.carries ?? doc,
+    adopts: (requester) => role.carries !== undefined && requester === role.carries,
     log: (message, level) => void lines.push({ message, level }),
   };
   const client = createDelegationClient(env);
@@ -450,19 +453,25 @@ describe('a follower is answered by a leader that lives', () => {
   it.each([
     ['at the PIN gate, its state not loaded yet', 'unknown'],
     ['locked again after its session', 'leader'],
-  ] as const)('a leader %s answers leader-unavailable and runs nothing', async (_, loaded) => {
-    const w = makeWorld();
-    const { runs } = servingLeader('L', w, { loaded, readiness: 'unavailable' });
-    const follower = tab('F', w, { leader: false });
+  ] as const)(
+    'a leader %s runs nothing and answers nothing: the tab that takes the lead runs it (review of #4053)',
+    async (_, loaded) => {
+      // Such a leader still leads only while its last MLS work settles (`leadHolds.ts`), then gives
+      // the lead up: answered `leader-unavailable` by it, the gesture would dead-end.
+      const w = makeWorld();
+      const { runs } = servingLeader('L', w, { loaded, readiness: 'unavailable' });
+      const follower = tab('F', w, { leader: false });
 
-    expect(await follower.delegate({ kind: 'create-group', name: 'club' })).toEqual({
-      status: 'refused',
-      reason: 'leader-unavailable',
-    });
-    await settle();
-    expect(runs).toEqual([]);
-    expect(w.databases.ids()).toEqual([]);
-  });
+      const answer = follower.delegate({ kind: 'create-group', name: 'club' });
+      await settle();
+      expect(runs).toEqual([]);
+      expect(w.databases.ids()).toEqual(['F-req-1']);
+
+      const next = servingLeader('N', w);
+      expect(await answer).toEqual({ status: 'done', value: { ok: true, key: 'g-club' } });
+      expect(next.runs).toEqual(['create-group:club']);
+    }
+  );
 
   it('a request no executor in the leader runs is answered not-delegable', async () => {
     const w = makeWorld();
@@ -569,6 +578,65 @@ describe('a request nobody waits for is never run', () => {
     );
   });
 
+  describe('the asker is the tab the lead goes to (review of #4053)', () => {
+    /** L leads with a session that ended; F asks; the lead goes to F, whose promotion reloads it. */
+    async function askThenPromoteTheAsker(op: Parameters<ReturnType<typeof tab>['delegate']>[0]) {
+      const w = makeWorld();
+      const old = servingLeader('L', w, { readiness: 'unavailable' });
+      const asker = tab('F', w, { leader: false });
+      void asker.delegate(op);
+      await settle();
+      expect(w.databases.ids()).toEqual(['F-req-1']);
+      // L gives the lead up; F is promoted, and its promotion reload ends the page that asked -
+      // freeing its requester lock. The page the reload starts is the same TAB: it carries F.
+      old.leader.role.leader = false;
+      asker.kill();
+      const reloaded = servingLeader('F2', w, { carries: 'F' });
+      await settle();
+      return { w, reloaded };
+    }
+
+    it('the reloaded asker adopts its own gesture and runs it - never removed as a closed tab', async () => {
+      const { w, reloaded } = await askThenPromoteTheAsker({
+        kind: 'start-direct',
+        contact: 'bob',
+      });
+
+      expect(reloaded.runs).toEqual(['start-direct:bob']);
+      // Nobody reads the answer (the asking page is gone): the record is removed once run.
+      expect(w.databases.ids()).toEqual([]);
+      const said = reloaded.leader.lines.map((l) => l.message).join('\n');
+      expect(said).toContain('adopted and run here');
+      expect(reloaded.leader.lines.some((l) => l.level === 'warn')).toBe(false);
+    });
+
+    it('a frame it asked for is not run late for a page that is gone', async () => {
+      const { w, reloaded } = await askThenPromoteTheAsker({
+        kind: 'emit-frame',
+        groupId: 'g1',
+        frame: { bytes: [1] },
+        delivery: 'standard',
+      } as never);
+
+      expect(reloaded.runs).toEqual([]);
+      expect(w.databases.ids()).toEqual([]);
+    });
+
+    it("another tab's orphan is still removed unrun by a reloaded leader", async () => {
+      const w = makeWorld();
+      const other = tab('X', w, { leader: false });
+      void other.delegate({ kind: 'create-group', name: 'club' });
+      await settle();
+      other.kill();
+
+      const reloaded = servingLeader('F2', w, { carries: 'F' });
+      await settle();
+
+      expect(reloaded.runs).toEqual([]);
+      expect(w.databases.ids()).toEqual([]);
+    });
+  });
+
   it("a signed-out session's request is answered, deleted, and never run for the next one", async () => {
     const w = makeWorld();
     const follower = tab('F', w, { leader: false });
@@ -635,20 +703,24 @@ describe('the refusals that cannot be avoided', () => {
 });
 
 describe('round 2 of the review of #3160', () => {
-  it('a session that ends between the claim and the run runs nothing: leader-unavailable', async () => {
+  it('a session that ends between the claim and the run runs nothing there: handed back, run by the next leader (review of #4053)', async () => {
     const w = makeWorld();
     let reads = 0;
-    // Ready when the record is decided, signed out by the time the claim has committed.
+    // Ready when the record is decided (two reads), signed out by the time the claim has committed -
+    // the lead still held while the session's last MLS work settles (`leadHolds.ts`).
     const { runs } = servingLeader('L', w, {
-      readiness: () => (++reads === 1 ? 'ready' : 'unavailable'),
+      readiness: () => (++reads <= 2 ? 'ready' : 'unavailable'),
     });
     const follower = tab('F', w, { leader: false });
 
-    expect(await follower.delegate({ kind: 'remove', groupId: 'g1', memberId: 'bob' })).toEqual({
-      status: 'refused',
-      reason: 'leader-unavailable',
-    });
+    const answer = follower.delegate({ kind: 'remove', groupId: 'g1', memberId: 'bob' });
+    await settle();
     expect(runs).toEqual([]);
+    expect(w.databases.ids()).toEqual(['F-req-1']);
+
+    const next = servingLeader('N', w);
+    expect(await answer).toEqual({ status: 'done', value: 'committed' });
+    expect(next.runs).toEqual(['remove:g1:bob']);
   });
 
   it('a leader that gives the lead up between the claim and the run hands the request back, and the tab that takes the lead runs it (2026-11-24)', async () => {
@@ -658,7 +730,7 @@ describe('round 2 of the review of #3160', () => {
     // gave the lead up (`setTabLeadEligibility`), which is what `answers` reads.
     const { leader, runs } = servingLeader('L', w, {
       readiness: () => {
-        if (++reads === 1) return 'ready';
+        if (++reads <= 2) return 'ready';
         leader.role.leader = false;
         return 'unavailable';
       },

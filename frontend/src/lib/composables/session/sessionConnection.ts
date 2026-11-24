@@ -22,6 +22,7 @@ import type { IMlsService } from '$lib/mlsService';
 import type { SessionContext, ChatSessionCallbacks } from './sessionTypes';
 import { makeRecoveryDeps, processDeviceInvitationsLocally } from './sessionAuth';
 import { startSyncWatchdogImpl } from './sessionWatchdogs';
+import { endSessionStatePersister } from './sessionStatePersisterEnd';
 import { IdentitySplitError } from '$lib/stores/tokenIdentity.svelte';
 import { SessionExpiredError, SignOutInProgressError } from '$lib/stores/auth';
 
@@ -196,6 +197,12 @@ export async function attemptReconnectImpl(
     // By TYPE, never by name: a session its owner's device revocation ended is a subclass with a
     // name of its own, and a name compare let it through to the retry below (DEV-3, 2026-10-25).
     if (err instanceof SessionExpiredError) {
+      // THE SESSION'S STATE PERSISTER ENDS FIRST, with a final checkpoint (the state in memory is
+      // still the account's; only its credential expired), and BEFORE the flag falls: that write
+      // holds the lead until it lands, and with the persister gone no checkpoint of this client can
+      // land after the next election (review of #4053). The client itself is retired by the sign-out
+      // that follows, behind this write (`whenEndedSessionStateWritten`).
+      void endSessionStatePersister(true, cb.log);
       ctx.setIsLoggedIn(false);
       cb.log('[AUTH] Session expired - redirecting to /login.');
       console.warn('[WS] Session expired, stopping reconnect loop');

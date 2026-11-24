@@ -73,7 +73,6 @@ function liveSession() {
     setStorage: vi.fn(),
     setReconnectAttempts: vi.fn(),
     setTabLeaderSessionCb: vi.fn(),
-    holdLeadUntilWritten: vi.fn(),
     setIsWsConnected: vi.fn(),
     isWsConnected: () => false,
     setConnectionPaused: vi.fn(),

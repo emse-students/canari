@@ -153,3 +153,37 @@ export async function openDocument(opts: { reloadsOnDemotion?: boolean } = {}): 
   winAdd.mockRestore();
   return doc;
 }
+
+/**
+ * The browser's BroadcastChannel between the documents of one test, delivered on a microtask so
+ * {@link settle} lets every message arrive: Node's own channel crosses event-loop turns, and a test
+ * that waited for it with a timer passed or failed with the machine's load.
+ */
+export class FakeBroadcastChannel {
+  private static readonly open = new Map<string, Set<FakeBroadcastChannel>>();
+  private readonly listeners = new Set<(event: MessageEvent) => void>();
+  constructor(readonly name: string) {
+    const peers = FakeBroadcastChannel.open.get(name) ?? new Set();
+    peers.add(this);
+    FakeBroadcastChannel.open.set(name, peers);
+  }
+  postMessage(data: unknown): void {
+    for (const peer of FakeBroadcastChannel.open.get(this.name) ?? []) {
+      if (peer === this) continue;
+      queueMicrotask(() => peer.listeners.forEach((l) => l({ data } as MessageEvent)));
+    }
+  }
+  addEventListener(type: string, listener: (event: MessageEvent) => void): void {
+    if (type === 'message') this.listeners.add(listener);
+  }
+  removeEventListener(type: string, listener: (event: MessageEvent) => void): void {
+    if (type === 'message') this.listeners.delete(listener);
+  }
+  close(): void {
+    FakeBroadcastChannel.open.get(this.name)?.delete(this);
+  }
+  /** Forgets every channel, between tests. */
+  static reset(): void {
+    FakeBroadcastChannel.open.clear();
+  }
+}

@@ -50,27 +50,6 @@ describe('a change of tab leadership never leaves a stale ratchet sending', () =
     expect(early).toBeLessThan(body.indexOf('window.location.reload()'));
   });
 
-  it('gives the lead up BEFORE the readiness drains, from the one writer of the session flags', () => {
-    const start = useChatSession.indexOf('function publishDelegationReadiness(');
-    const body = useChatSession.slice(start, useChatSession.indexOf('\n  }\n', start));
-    const eligibility = body.indexOf('setTabLeadEligibility(');
-    expect(eligibility).toBeGreaterThan(-1);
-    expect(eligibility).toBeLessThan(body.indexOf('setDelegationReadiness(readiness)'));
-    // A sign-out's final checkpoint in flight keeps the lead: the latch would refuse that write.
-    expect(body).toContain("readiness !== 'unavailable' || holding");
-  });
-
-  it("holds the lead for a sign-out's final checkpoint, registered BEFORE the session flag falls", () => {
-    const auth = read('./session/sessionAuth.ts');
-    const start = auth.indexOf('export function tearDownLiveSession(');
-    const body = auth.slice(start, auth.indexOf('\n}\n', start));
-    const hold = body.indexOf('ctx.holdLeadUntilWritten(finalWrite)');
-    expect(hold).toBeGreaterThan(-1);
-    expect(hold).toBeLessThan(body.indexOf('ctx.setIsLoggedIn(false)'));
-    // And the hold ends with the write, whatever it answers.
-    expect(useChatSession).toContain('void finalWrite.then(landed, landed);');
-  });
-
   it('reloads on demotion only behind the ingest windows open then (review of #3321)', () => {
     // A reload while a drain still buffers its rows loses a message a landed checkpoint already
     // spent; the wait itself is pinned in `BaseMlsService.leadLostAck.test.ts`.

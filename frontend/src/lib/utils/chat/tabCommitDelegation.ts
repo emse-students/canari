@@ -33,14 +33,15 @@
  * kept-commit machinery settles that at the next connection; a second run is the double commit.
  *
  * A REQUEST IS ALWAYS ANSWERED while its follower lives. The leader's readiness decides how
- * ({@link setDelegationReadiness}): `ready` (a live session) runs it; `unavailable` (the PIN gate, a
- * sign-out) answers `leader-unavailable` at once, nothing run - but a leader whose session ends GIVES
- * THE LEAD UP first (`setTabLeadEligibility`, 2026-11-24), and a document that no longer leads answers
- * nothing: the record stays `pending` for the tab that took the lead, a claim it made is handed back.
- * So that answer is met only where the lead cannot move; `starting` (a login in progress) leaves it `pending` until the login ends in one of the
- * other two. A kind no executor here runs is answered `not-delegable`. A request whose follower is
- * gone (its requester lock free) is deleted and never run - the gesture is nobody's any more, and a
- * request of a session that signed out is gone with it ({@link abandonDelegatedCommits}).
+ * ({@link setDelegationReadiness}): `ready` (a live session) runs it; `starting` (a login in progress)
+ * leaves it `pending` until the login ends; `unavailable` (the PIN gate, a sign-out) leaves it
+ * `pending` too, because a leader whose session ended GIVES THE LEAD UP once its last MLS work settles
+ * (`setTabLeadEligibility`, `leadHolds.ts`, 2026-11-24) and the tab that takes the lead runs it; a
+ * claim made before the session ended is handed back to `pending`. A kind no executor here runs is
+ * answered `not-delegable`. A request whose follower is gone (its requester lock free) is deleted and
+ * never run - the gesture is nobody's any more, and a request of a session that signed out is gone
+ * with it ({@link abandonDelegatedCommits}) - unless its requester is THIS tab before its promotion
+ * reload, which adopts it ({@link carryTabCommitRequesterAcrossReload}).
  *
  * The refusals, all typed: `leader-gone`, `leader-unavailable`, `not-delegable` (no Web Locks in
  * this engine, or a leader signed in to ANOTHER account - the lock is per browser), `failed` (an
@@ -64,6 +65,7 @@ import {
   type TabCommitEvent,
 } from '$lib/mls-client/tabMessageSync';
 import { answersFollowerCommits, servesFollowerCommits } from '$lib/mls-client/stateAuthority';
+import { holdLeadWhile } from '$lib/mls-client/leadHolds';
 import { currentUserId } from '$lib/stores/userState.svelte';
 import {
   IdbTabCommitStore,
@@ -263,9 +265,31 @@ export interface DelegationEnv {
   orderKey(): string;
   /** This document's identity, the same for every request it makes. */
   documentId(): string;
+  /**
+   * Whether `requester` is THIS tab before its promotion reload ({@link carryTabCommitRequesterAcrossReload}):
+   * its requests outlived the page that made them, and this page - the same tab, now the leader -
+   * adopts them instead of deleting them as a closed tab's.
+   */
+  adopts(requester: string | undefined): boolean;
   /** `warn` for a line that ACCUSES (a refusal, a death), `error` for a defect; info otherwise. */
   log(message: string, level?: 'warn' | 'error'): void;
 }
+
+/**
+ * The kinds a tab adopts from before its promotion reload: gestures whose effect is the outcome (a
+ * conversation, a membership, a key group), visible to the member once run. A frame to emit or a
+ * message to seal is only a step of the page that asked, which the reload ended.
+ */
+const ADOPTABLE_KINDS: ReadonlySet<DelegatedCommitKind> = new Set<DelegatedCommitKind>([
+  'create-group',
+  'create-self',
+  'start-direct',
+  'invite',
+  'remove',
+  'enter-community-key-group',
+  'enter-salon-group',
+  'note-missing-seeds',
+]);
 
 const RUN_LOCK_PREFIX = 'canari.tab-commit.run.';
 const REQUESTER_LOCK_PREFIX = 'canari.tab-commit.requester.';
@@ -520,7 +544,12 @@ export function createDelegationServer(env: DelegationEnv) {
       | undefined;
     if (!execute) return { status: 'refused', reason: 'not-delegable' };
     try {
-      return { status: 'done', value: await execute(op) };
+      // The lead is held while the executor runs (`leadHolds.ts`): a session ending mid-gesture
+      // gives it up only once the gesture's commit and checkpoint settled.
+      return {
+        status: 'done',
+        value: await holdLeadWhile(`delegated ${op.kind}`, () => execute(op)),
+      };
     } catch (e) {
       // AN EXECUTOR ANSWERS BY VALUE: a throw reaching here is a gesture whose own classification
       // missed a case - said once, at error, and the follower is told it failed.
@@ -576,11 +605,35 @@ export function createDelegationServer(env: DelegationEnv) {
         await settle(store, current, 'running', { status: 'refused', reason: 'leader-gone' });
         return 'answered';
       }
+      let adopted = false;
       if (await lockIsFree(locks, `${REQUESTER_LOCK_PREFIX}${id}`)) {
-        // Nobody waits for it any more (a closed tab, a sign-out): the gesture is nobody's.
-        await store.update(id, (r) => (r?.state === 'pending' ? 'delete' : null));
-        env.log(`${tag}: the tab that asked is gone - removed, NOT run`, 'warn');
-        return 'orphan';
+        if (!env.adopts(current.requester)) {
+          // Nobody waits for it any more (a closed tab, a sign-out): the gesture is nobody's.
+          await store.update(id, (r) => (r?.state === 'pending' ? 'delete' : null));
+          env.log(`${tag}: the tab that asked is gone - removed, NOT run`, 'warn');
+          return 'orphan';
+        }
+        if (!ADOPTABLE_KINDS.has(current.op.kind)) {
+          // A frame or a seal is a step of the asking page, and the reload ended that page: run now,
+          // its answer would reach nobody. Its own durable queue drives it again.
+          await store.update(id, (r) => (r?.state === 'pending' ? 'delete' : null));
+          env.log(
+            `${tag}: asked by this tab before its promotion reload - its answer was for that page, removed, not run`
+          );
+          return 'orphan';
+        }
+        // THIS TAB ASKED IT BEFORE ITS PROMOTION RELOAD (review of #4053): the asker was the tab the
+        // lead went to, and the reload that promotion owes freed its requester lock. Deleted as a
+        // closed tab's, the member's gesture vanished; this page is that tab, now able to run it.
+        adopted = true;
+        env.log(`${tag}: asked by this tab before its promotion reload - adopted and run here`);
+      }
+      if (env.readiness() === 'unavailable') {
+        // A LEADER WHOSE SESSION ENDED STILL LEADS ONLY WHILE ITS LAST MLS WORK SETTLES
+        // (`leadHolds.ts`), and gives the lead up then: the request is the next leader's to run,
+        // never answered `leader-unavailable` by a tab on its way out.
+        env.log(`${tag} waits: this leader's session ended - left to the tab that takes the lead`);
+        return 'waits';
       }
       const account = env.account();
       if (current.account !== account) {
@@ -593,21 +646,9 @@ export function createDelegationServer(env: DelegationEnv) {
         await settle(store, current, 'pending', { status: 'refused', reason });
         return 'answered';
       }
-      const readiness = env.readiness();
-      if (readiness === 'starting') {
+      if (env.readiness() === 'starting') {
         env.log(`${tag} waits: this leader's session is still starting`);
         return 'waits';
-      }
-      if (readiness === 'unavailable') {
-        env.log(
-          `${tag}: this leader has no session (locked or signed out) - leader-unavailable`,
-          'warn'
-        );
-        await settle(store, current, 'pending', {
-          status: 'refused',
-          reason: 'leader-unavailable',
-        });
-        return 'answered';
       }
       if (!env.serves()) {
         // Ready, but on a copy this document did not load as the leader: never run here.
@@ -627,18 +668,18 @@ export function createDelegationServer(env: DelegationEnv) {
       // between the decision and here must not run the gesture against a session that is ending -
       // an executor reaching for MLS then would build a client for nobody.
       const stillReady = env.readiness() === 'ready';
-      if (!env.answers()) {
-        // The lead left this document during the claim (a session that ended gives it up first):
-        // nothing ran, so the claim is undone - still under the run lock - and the tab that took
-        // the lead runs it. A `leader-unavailable` here would dead-end a gesture a leader can serve.
+      if (!env.answers() || !stillReady || !env.serves()) {
+        // The session ended, or the lead left this document, during the claim: nothing ran, so the
+        // claim is undone - still under the run lock - and the tab that takes the lead runs it. A
+        // `leader-unavailable` here would dead-end a gesture a leader can serve. The designed
+        // path, so said as narration, not accused.
         await store.update(id, (r) => (r?.state === 'running' ? { ...r, state: 'pending' } : null));
         env.log(
-          `${tag}: this tab gave the lead up before the run - handed back as pending to the tab that took it, not run`,
-          'warn'
+          `${tag}: this tab's session ended or its lead left before the run - handed back as pending for the tab that takes the lead, not run`
         );
         return 'waits';
       }
-      if (!stillReady || !env.serves() || env.account() !== claimed.account) {
+      if (env.account() !== claimed.account) {
         env.log(
           `${tag}: this leader's session ended before the run - leader-unavailable, not run`,
           'warn'
@@ -651,6 +692,11 @@ export function createDelegationServer(env: DelegationEnv) {
       }
       env.log(`${tag} run for a follower tab`);
       await settle(store, claimed, 'running', await runExecutor(claimed.op));
+      if (adopted) {
+        // Nobody reads this answer (the page that asked was reloaded): its effect is the answer.
+        await store.update(id, (r) => (r?.state === 'done' ? 'delete' : null));
+        env.log(`${tag}: adopted request settled - its record removed`);
+      }
       return 'served';
     });
   }
@@ -793,11 +839,45 @@ const localHandlers = new Set<(event: TabCommitEvent) => void>();
 const stores = new Map<string, IdbTabCommitStore<DelegationRecord>>();
 let readiness: DelegationReadiness = 'starting';
 const nextOrderKey = createOrderKeys(() => Date.now());
-/** Made at the first request: `crypto.randomUUID` exists wherever a request can be made. */
-let thisDocument: string | null = null;
+/**
+ * The identity this TAB carried across its promotion reload, read (and removed) once at load.
+ * Removed at once so a tab DUPLICATED later - which copies `sessionStorage` - never shares it: the
+ * key exists only between a promotion reload and the load it starts.
+ */
+const CARRIED_REQUESTER_KEY = 'canari_tab_commit_requester';
+const carriedRequester: string | null = (() => {
+  try {
+    if (typeof sessionStorage === 'undefined') return null;
+    const carried = sessionStorage.getItem(CARRIED_REQUESTER_KEY);
+    sessionStorage.removeItem(CARRIED_REQUESTER_KEY);
+    return carried;
+  } catch {
+    return null;
+  }
+})();
+/** Made at the first request, or carried from before a promotion reload. */
+let thisDocument: string | null = carriedRequester;
 function documentId(): string {
   thisDocument ??= crypto.randomUUID();
   return thisDocument;
+}
+
+/**
+ * Called right before a PROMOTION reload (`useChatSession.reloadForPromotion`): this tab's requester
+ * identity survives the reload, so the page it starts - the leader now - adopts the requests this
+ * tab made as a follower instead of deleting them as a closed tab's (review of #4053). A tab that
+ * made no request carries nothing.
+ */
+export function carryTabCommitRequesterAcrossReload(): void {
+  if (thisDocument === null) return;
+  try {
+    sessionStorage.setItem(CARRIED_REQUESTER_KEY, thisDocument);
+  } catch (e) {
+    // Said, because the only other symptom is a gesture removed as a closed tab's after the reload.
+    console.warn(
+      `[TAB-COMMIT] could not carry this tab's identity across its reload: ${String(e)}`
+    );
+  }
 }
 
 function productionEnv(): DelegationEnv {
@@ -837,6 +917,7 @@ function productionEnv(): DelegationEnv {
     newId: () => crypto.randomUUID(),
     orderKey: nextOrderKey,
     documentId,
+    adopts: (requester) => carriedRequester !== null && requester === carriedRequester,
     log: (message, level) =>
       level === 'error'
         ? console.error(message)

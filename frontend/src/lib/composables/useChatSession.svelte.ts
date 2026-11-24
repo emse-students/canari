@@ -17,6 +17,7 @@ import {
   markPromotionReload,
   setTabLeaderDemotedHandler,
   setTabLeadEligibility,
+  noteTabSessionLive,
   getIsTabLeader,
 } from '$lib/utils/chat/connection';
 import { CallService } from '$lib/services/CallService';
@@ -61,11 +62,14 @@ import {
 } from './session/sessionConnection';
 import { exportBackupImpl, importBackupImpl, restoreAfterImport } from './session/sessionBackup';
 import { createMlsHolder } from './session/mlsHolder';
+import { leadHoldsInFlight, onLeadHoldsReleased } from '$lib/mls-client/leadHolds';
+import { createLeadPublisher } from '$lib/mls-client/leadPublisher';
 import { endNativeMlsSession } from '$lib/utils/nativeMlsSession';
 import { setMlsReady } from './session/mlsReadiness';
 import {
   sessionDelegationReadiness,
   setDelegationReadiness,
+  carryTabCommitRequesterAcrossReload,
 } from '$lib/utils/chat/tabCommitDelegation';
 import { processDeviceInvitationsLocally } from './session/sessionAuth';
 import {
@@ -154,8 +158,6 @@ export function useChatSession() {
   let isExporting = $state(false);
   let isImporting = $state(false);
   let isLoginInProgress = false; // plain boolean - guards against concurrent login() calls
-  /** Sign-outs whose final checkpoint is still being written - see `holdLeadUntilWritten`. */
-  let finalWritesHoldingLead = 0;
   let isWipingRevokedDevice = false; // plain boolean - a login must not race the wipe that erases it
   /** True from MLS unlock until the full startup login path finishes (messaging catch-up). */
   let isMessagingInitializing = $state(false);
@@ -296,15 +298,6 @@ export function useChatSession() {
       tabLeaderSessionCb = cb;
     },
     reloadForPromotion: (log) => reloadForPromotion(log),
-    holdLeadUntilWritten: (finalWrite) => {
-      finalWritesHoldingLead += 1;
-      const landed = () => {
-        finalWritesHoldingLead -= 1;
-        // The write settled: a session that cannot serve gives the lead up now.
-        publishDelegationReadiness();
-      };
-      void finalWrite.then(landed, landed);
-    },
 
     // Constants
     RECONNECT_DELAYS,
@@ -324,6 +317,9 @@ export function useChatSession() {
     // The reload releases the lock this tab was just granted; the mark is what lets the page it
     // starts take it back rather than queue behind the tab it took over from.
     markPromotionReload();
+    // A gesture this tab handed over as a follower is adopted by the page the reload starts, the
+    // leader now, rather than removed as a closed tab's (`tabCommitDelegation.ts`).
+    carryTabCommitRequesterAcrossReload();
     rememberSelectionForReload(log);
     setTimeout(() => window.location.reload(), 50);
     return true;
@@ -334,18 +330,16 @@ export function useChatSession() {
    * from the two flags this composable is the one writer of - so the readiness follows every login
    * start and every end (success, early return, failure, sign-out), whoever flips the flag.
    */
+  /** The session's state, published as the tab's lead and its answer to followers (`leadPublisher.ts`). */
+  const leadPublisher = createLeadPublisher({
+    setTabLeadEligibility,
+    setDelegationReadiness,
+    noteTabSessionLive,
+    leadHoldsInFlight,
+    onLeadHoldsReleased,
+  });
   function publishDelegationReadiness(): void {
-    const readiness = sessionDelegationReadiness(isLoggedIn, isLoginInProgress);
-    // THE LEAD FIRST, THEN THE ANSWER: a session that cannot serve gives the lead up before its
-    // drain runs, so a follower's request is left for the tab that takes the lead rather than
-    // answered `leader-unavailable` by a leader that will never serve it (`setTabLeadEligibility`).
-    // A sign-out's final checkpoint still in flight keeps it: the latch would refuse that write.
-    const holding = finalWritesHoldingLead > 0;
-    setTabLeadEligibility(
-      readiness !== 'unavailable' || holding,
-      holding ? `session ${readiness}, final checkpoint in flight` : `session ${readiness}`
-    );
-    setDelegationReadiness(readiness);
+    leadPublisher.publish(sessionDelegationReadiness(isLoggedIn, isLoginInProgress));
   }
 
   // This tab has just been handed leadership: the previous leader advanced the MLS ratchet on disk

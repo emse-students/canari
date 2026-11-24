@@ -73,6 +73,7 @@ export {
   setTabLeaderPromotedHandler,
   setTabLeaderDemotedHandler,
   setTabLeadEligibility,
+  noteTabSessionLive,
   markPromotionReload,
 } from './tabLeader';
 export {
