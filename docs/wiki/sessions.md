@@ -860,19 +860,39 @@ which also holds **the contract a site implements**. This section is what Canari
   ask no more than a signed-in user, and the tenant flag `core_default_app_access` must not be false (unset is authentik's default, true).
   That is exactly when authentik's `check_access` answers passing; `check_access?for_user` itself
   cannot be asked, because authentik 2026.8 honours `for_user` for a superuser only. A bound
-  application is REFUSED, never evaluated in Canari - except the two bindings of the terms-of-use
-  flow (`miconnect-authorization`), recognised by an allowlist of policy and stage names and answered
-  from the person's `cgu_version` ([authentik](infrastructure/authentik.md#the-terms-of-use-are-a-stage-of-the-authorization-flow-2026-10-16)). Refusals are typed and logged
+  application is REFUSED, never evaluated in Canari - except the bindings on an ALLOWLIST of policy,
+  stage, group and application names (`miconnect-reader.client.ts`), each answered from what the
+  reader reads: the two bindings of the terms-of-use flow (`miconnect-authorization`), from the
+  person's `cgu_version` ([authentik](infrastructure/authentik.md#the-terms-of-use-are-a-stage-of-the-authorization-flow-2026-10-16));
+  and since `1.8.0` the Alumni rule (D42-D44, lead 2026-11-23): on the same flow the link step's
+  reminder (skippable, so it never stops a mint) and its block, and on MiGallery and Le Cercle the
+  gate in its exact shape (engine mode `any`, the policy `miconnect-access-window-post-or-cotisant`
+  and the group `acces-<app>`, nothing else). Those two are answered by `alumni-access.ts` from the
+  profile's cursus and posts, `attributes.alumni`, the user's direct groups and, only when it can
+  change the answer, whether an Alumni user-source connection exists. **Why a second implementation
+  of the rule:** the same as for the terms - authentik answers `check_access?for_user` for a
+  superuser only. **Why it cannot drift:** `libs/contracts/alumni-access.json` holds the constants
+  and a case table that BOTH run - `alumni-access.spec.ts` here, and `test-consent-flow.py` through
+  the real flow and policy engine - with a case on each side of every date constant. A membership
+  inherited through a child group is not read; such a person is refused, and MiConnect, which
+  reads it, lets them in through the plain open. Refusals are typed and logged
   `[HANDOFF] refused class=<class> aud=<site> user=<sub>`: `not_linked`, `unknown_miconnect_user`,
-  `inactive`, `identity_mismatch`, `policy_bound`, `flow_restricted`, `default_access_off`, `terms_not_accepted` (the person has not accepted the current MiConnect terms, which the authorization flow would have asked; 403
-  `HANDOFF_ACCESS_REFUSED`, at warn), and
+  `inactive`, `identity_mismatch`, `policy_bound`, `flow_restricted`, `default_access_off` (403
+  `HANDOFF_ACCESS_REFUSED`, at warn); `terms_not_accepted`, `alumni_link_required`,
+  `alumni_cotisant_required` - a page MiConnect shows the person first, the terms, the Alumni link
+  step or why the Alumni gate stops them - each with its OWN 403 code
+  (`HANDOFF_TERMS_NOT_ACCEPTED`, `HANDOFF_ALUMNI_LINK_REQUIRED`, `HANDOFF_ALUMNI_COTISANT_REQUIRED`)
+  at info on both sides: the client opens the site plainly, and its MiConnect sign-in is that
+  person's PRIMARY path, not a fallback; and
   `miconnect_not_configured`, `miconnect_unreachable`, `miconnect_refused` (503
   `HANDOFF_MICONNECT_UNAVAILABLE`, at error) - a MiConnect failure never mints. **The watch:** each
   boot logs one `[HANDOFF_ACCESS]` line per handoff application, at warn when it has gained a
-  binding (its handoff is then refused until authentik can answer for a non-superuser). The
-  account's real API is proven in CI by `test-handoff-reader.py` (reads work, a binding added later
-  on the application, a flow or a stage is seen; another application, any write and any binding
-  change are refused). Production only: dev holds no reader token and refuses
+  binding outside the allowlist (its handoff is then refused until authentik can answer for a
+  non-superuser), at log when its bindings are all allowlisted, naming what they ask. The
+  account's real API is proven in CI by `test-handoff-reader.py` (reads work - a user's group names,
+  their Alumni connection, the names on every allowlisted binding; a binding added later on the
+  application, a flow or a stage is seen; another application, any write, any binding change, a
+  connection change and a group change are refused). Production only: dev holds no reader token and refuses
   `miconnect_not_configured`, by design.
 - **The registry is closed and server-side.** `libs/contracts/ecosystem-sites.json`, copied by
   core-service (`handoff-sites.ts`) and by the client (`ecosystemSites.ts`), each asserting its copy

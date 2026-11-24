@@ -55,6 +55,7 @@ entries:
         - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-openid"]]
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-profile"]]
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-uuid"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-alumni-linked"]]
         - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-profile"]]
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-school-status"]]
       grant_types:
@@ -105,6 +106,7 @@ entries:
         - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-openid"]]
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-profile"]]
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-uuid"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-alumni-linked"]]
         - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-profile"]]
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-school-status"]]
       grant_types:
@@ -145,6 +147,7 @@ entries:
         - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-openid"]]
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-profile"]]
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-uuid"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-alumni-linked"]]
         - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-profile"]]
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-school-status"]]
       grant_types:
@@ -200,6 +203,11 @@ entries:
         - "authorization_code"
         - "refresh_token"
       client_id: "7s6QrKeD12XeAreOp4DV0L8vfOs6vHx4v22MPdYA"
+      # PINNED (owner 2026-11-23): the `sub` this site keys its accounts by, and the subject a Canari
+      # handoff names. authentik's default is the same value (2026.8.6 `OAuth2Provider.sub_mode`), and
+      # production read it on all three site providers, so pinning changes no subject; it stops a
+      # change of default, or a click in the admin, from renaming every account of the site.
+      sub_mode: "hashed_user_id"
       access_token_validity: "seconds=30"
       refresh_token_validity: "minutes=2"
       refresh_token_threshold: "hours=1"
@@ -232,6 +240,11 @@ entries:
         - "authorization_code"
         - "refresh_token"
       client_id: "GMU5F3Dnq4reety8ve9k9CReNt9wYnO6EIJdKP0H"
+      # PINNED (owner 2026-11-23): the `sub` this site keys its accounts by, and the subject a Canari
+      # handoff names. authentik's default is the same value (2026.8.6 `OAuth2Provider.sub_mode`), and
+      # production read it on all three site providers, so pinning changes no subject; it stops a
+      # change of default, or a click in the admin, from renaming every account of the site.
+      sub_mode: "hashed_user_id"
       access_token_validity: "minutes=5"
       refresh_token_threshold: "hours=1"
       signing_key: !Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]
@@ -295,6 +308,11 @@ entries:
         - "authorization_code"
         - "refresh_token"
       client_id: "JJqZZbhIxfcE7aZblmPONEWKe9v2ZW5RayDFLsCG"
+      # PINNED (owner 2026-11-23): the `sub` this site keys its accounts by, and the subject a Canari
+      # handoff names. authentik's default is the same value (2026.8.6 `OAuth2Provider.sub_mode`), and
+      # production read it on all three site providers, so pinning changes no subject; it stops a
+      # change of default, or a click in the admin, from renaming every account of the site.
+      sub_mode: "hashed_user_id"
       access_token_validity: "minutes=5"
       refresh_token_threshold: "hours=1"
       signing_key: !Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]

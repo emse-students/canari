@@ -1,4 +1,4 @@
-# Where people come from: the school CAS (OIDC) and the Alumni SAML source (Alumnforce, enabled but not promoted since 2026-11-23).
+# Where people come from: the school CAS (OIDC) and the Alumni SAML source (Alumnforce), both on the login page; the Alumni source's own sign-in and pre-authentication flows.
 #
 # Applied by infrastructure/authentik/apply-blueprints.py, never by the worker's own discovery
 # (instantiate: false) - see infrastructure/authentik/README.md. Every reference is a !Find on a
@@ -71,25 +71,360 @@ entries:
         -----END CERTIFICATE-----
       key_data: ""
   # The IdP sends `af_id`, `firstname`, `lastname`, `email`, `cotisant` as plain attribute names
-  # (measured on a real login, 2026-11-23); the base properties already hold them by those names.
-  # Only the display name is mapped: `cotisant` is not used yet (owner, 2026-11-23).
+  # (measured on a real login, 2026-11-23); the base properties already hold them by those names,
+  # `username` being the persistent NameID, which IS the `af_id` (measured the same day).
+  # THE MAPPING BUILDS WHAT EVERY ALUMNI SIGN-IN CARRIES (WP8, D43 and D46, owner 2026-11-23):
+  #   - `username` `alumni-<af_id>`: read only by the enrolment write, so an account CREATED through
+  #     Alumni is named so (D46); a sign-in into an existing account never writes it (the sign-in
+  #     flow below writes the cotisant read alone);
+  #   - `name`, from the two names;
+  #   - `alumni_read` = {cotisant, read_on}: the membership read at THIS sign-in and its date
+  #     (Europe/Paris), stored as `attributes.alumni` by the enrolment (20-enrollment.yaml) and by the
+  #     sign-in flow below, and honoured by the access policy of 60-applications.yaml within that
+  #     calendar year only (D43). A key of its own, not `attributes`: the cursus page of the
+  #     enrolment REPLACES the prompt's `attributes` with what it asked. The e-mail stays in the base properties: the enrolment writes it on the
+  #     account (D46), and no claim ever sends it (10-mappings.yaml sends a synthetic address).
+  # A `cotisant` that is neither "1" nor "0" writes no read at all, and says so at warning: the
+  # previous read keeps its own date, so it expires on its own instead of being guessed.
   - model: authentik_sources_saml.samlsourcepropertymapping
     identifiers:
       name: "miconnect-alumni-identity"
     attrs:
       expression: |-
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        out = {"username": f"alumni-{properties['username']}"}
         name = f"{properties.get('firstname') or ''} {properties.get('lastname') or ''}".strip()
-        return {"name": name} if name else {}
+        if name:
+            out["name"] = name
+        cotisant = properties.get("cotisant")
+        if cotisant in ("1", "0"):
+            read_on = datetime.now(ZoneInfo("Europe/Paris")).date().isoformat()
+            out["alumni_read"] = {"cotisant": cotisant == "1", "read_on": read_on}
+        else:
+            ak_logger.warning("miconnect-alumni-identity: cotisant is neither 1 nor 0, no membership read is written", present=cotisant is not None)
+        return out
+  # THE ALUMNI SIGN-IN (D43): every sign-in of an account that already holds the Alumni link writes
+  # the membership read, then logs the person in. Only `attributes.alumni` is written, so the
+  # username, the name and the e-mail the mapping also carries never touch an existing account (a CAS
+  # account keeps its own); the prompt data is emptied in place so nothing later reads them.
+  #
+  # THE POLICY WRITES THE READ ITSELF, under a row lock, and returns False, so the user write stage it
+  # is bound on never runs. That stage would save the plan's pending user WHOLE - the object loaded
+  # when the sign-in began - and a profile edit made since (Canari's editor, an admin) would be lost.
+  # Here only the key this flow owns is written, on the row as it is now (`select_for_update`), and
+  # the plan's object is refreshed with what was saved. test-enrollment-flow.py (step J) proves an
+  # edit made during the sign-in survives. No `execution_logging`: it runs at every Alumni sign-in.
+  - model: authentik_policies_expression.expressionpolicy
+    identifiers:
+      name: "miconnect-alumni-keep-only-the-read"
+    attrs:
+      execution_logging: false
+      expression: |-
+        from django.db import transaction
+
+        from authentik.core.models import User
+        from authentik.flows.planner import PLAN_CONTEXT_PENDING_USER
+
+        prompt_data = request.context.get("prompt_data", {})
+        read = prompt_data.get("alumni_read")
+        for key in list(prompt_data):
+            del prompt_data[key]
+        if not read:
+            ak_logger.warning("miconnect-alumni-sign-in: no membership read in this sign-in, nothing is written")
+            return False
+        pending = request.context.get(PLAN_CONTEXT_PENDING_USER)
+        with transaction.atomic():
+            user = User.objects.select_for_update().get(pk=pending.pk)
+            user.attributes["alumni"] = read
+            user.save(update_fields=["attributes"])
+        pending.attributes = user.attributes
+        return False
+  - model: authentik_stages_user_write.userwritestage
+    identifiers:
+      name: "miconnect-alumni-sign-in-write"
+    attrs:
+      user_creation_mode: "never_create"
+  - model: authentik_flows.flow
+    identifiers:
+      slug: "miconnect-alumni-authentication"
+    attrs:
+      name: "miconnect-alumni-authentication"
+      title: "Connexion avec ton compte Alumni"
+      designation: "authentication"
+  # Only a source starts it, as for the enrolment flow (20-enrollment.yaml, same policy).
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_policies.policybindingmodel, [flow__slug, "miconnect-alumni-authentication"]]
+      policy: !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-enrollment-from-a-source"]]
+      order: 0
+  # THE MERGE OF A DUPLICATE, AT ITS NEXT ALUMNI SIGN-IN (D48, redesigned 2026-11-23, hardened by the
+  # owner's decisions of 2026-11-24, D51: never automatic for two accounts created independently, a
+  # Canari admin verifies, and the Alumni base's names and promos are reliable). A Canari admin's
+  # "Rattacher" does not delete anything at MiConnect: through the profile editor's token it writes on
+  # the duplicate an Alumni sign-in created `attributes.alumni_merge_into` = the uuid of the account it
+  # belongs with, plus who marked it and when. The merge happens HERE, the next time that Alumni
+  # identity signs in, because only authentik can move a source connection (its API serves `user`
+  # read-only), and MiConnect checks the mark against what Alumnforce asserts at that sign-in.
+  #
+  # The policy below runs when the deny stage at order 1 is due - re-evaluated, never cached, so the
+  # mark is read as it is at that moment. With no mark it returns False and the stage is skipped:
+  # every other sign-in is untouched. A mark naming an account that no longer exists (deleted since
+  # it was made) is an ORPHAN: it is cleared (only if the duplicate, read under its row lock, still
+  # carries that same mark), logged at warning, and the sign-in goes on as an ordinary one. Otherwise the policy re-reads both accounts under a row lock and, if ALL of these
+  # hold, moves the Alumni connection onto the target, deletes the duplicate (its mark with it) - the
+  # two in ONE transaction - records an authentik Event `custom_alumni_merge` (both pks, who marked,
+  # the af_id), and switches the plan's pending user to the target, so the write below records the
+  # membership read on the target and the login signs the TARGET in:
+  #   - the duplicate's username starts with `alumni-` and its links are exactly ['alumni'];
+  #   - exactly one account carries the target uuid; it is another account, not `alumni-`, active,
+  #     a person (internal or external), not a superuser (no superuser group);
+  #   - the target holds a CAS link (`cas-emse`) and no Alumni link yet;
+  #   - the target's name is the name Alumnforce asserts AT THIS SIGN-IN (`firstname` `lastname` of
+  #     the assertion, in the plan's prompt data - never the name stored on the duplicate), both
+  #     FOLDED as core-service's `normalizeName`: ligatures, accents and case, the typographic
+  #     apostrophe, and hyphens, dots, apostrophes and spaces to one space (`name_mismatch`);
+  #   - the duplicate still carries THE mark this sign-in began with (`mark_changed`).
+  # If any fails, nothing is changed, the mark is kept, the refusal is logged at error with
+  # `[ALUMNI_MERGE]` and journalled as an Event `custom_alumni_merge_refused` (with the client's
+  # address, as the merge's own Event), and the deny stage tells the person to contact an admin; a
+  # merge MiConnect refuses is done by hand by a MiConnect admin. A policy that raises is a refusal too
+  # (`failure_result: true`). A crash after the commit leaves a state a retry reads as an ordinary
+  # sign-in of the target: the connection is already its own.
+  #
+  # IN-PROCESS, AS THE READ BELOW: the plan the policy changes is the executor's own object, which
+  # holds because authentik runs a lone policy in the request's process outside a daemon (the
+  # `keep-only-the-read` policy relies on the same). test-enrollment-flow.py (step M) drives it.
+  # No `execution_logging`: it runs at every Alumni sign-in (see the wiki on the re-evaluation line).
+  - model: authentik_stages_deny.denystage
+    identifiers:
+      name: "miconnect-alumni-merge-refused"
+    attrs:
+      deny_message: "Ton compte Alumni devait être rattaché à ton compte MiConnect, mais ce rattachement n'a pas pu se faire. Rien n'a été modifié : contacte un administrateur."
+  - model: authentik_policies_expression.expressionpolicy
+    identifiers:
+      name: "miconnect-alumni-merge-or-refuse"
+    attrs:
+      execution_logging: false
+      expression: |-
+        import re
+        import uuid
+        from unicodedata import normalize
+
+        from django.db import transaction
+
+        from authentik.core.models import User, UserSourceConnection
+        from authentik.core.sources.stage import PLAN_CONTEXT_SOURCES_CONNECTION
+        from authentik.events.models import Event
+        from authentik.flows.planner import PLAN_CONTEXT_PENDING_USER
+
+        MARK = ("alumni_merge_into", "alumni_merge_marked_by", "alumni_merge_marked_at")
+        pending = request.context.get(PLAN_CONTEXT_PENDING_USER)
+        attributes = (pending.attributes or {}) if pending else {}
+        into = str(attributes.get("alumni_merge_into") or "")
+        if not into:
+            return False
+        marked_by = str(attributes.get("alumni_merge_marked_by") or "")
+        plan = request.context.get("flow_plan")
+        prompt = request.context.get("prompt_data") or {}
+        asserted = f"{prompt.get('firstname') or ''} {prompt.get('lastname') or ''}"
+        LIGATURES = {"\u0153": "oe", "\u0152": "oe", "\u00e6": "ae", "\u00c6": "ae", "\u00df": "ss", "\u2019": "'"}
+        folded = lambda name: " ".join(re.sub(r"[\s\-'.]+", " ", re.sub("[\u0300-\u036f]", "", normalize("NFKD", "".join(LIGATURES.get(c, c) for c in (name or "")))).lower()).split())
+        connection = request.context.get(PLAN_CONTEXT_SOURCES_CONNECTION)
+        af_id = getattr(connection, "identifier", None)
+        # The Events carry the client's address and the request's context (`from_http` saves them).
+        journal = lambda event: event.from_http(request.http_request) if request.http_request is not None else event.save()
+        try:
+            target_uuid = uuid.UUID(into)
+        except ValueError:
+            target_uuid = None
+        if target_uuid is not None and not User.objects.filter(uuid=target_uuid).exists():
+            with transaction.atomic():
+                locked = User.objects.select_for_update().filter(pk=pending.pk).first()
+                if locked is not None and str(locked.attributes.get("alumni_merge_into") or "") == into:
+                    for key in MARK:
+                        locked.attributes.pop(key, None)
+                    locked.save(update_fields=["attributes"])
+            for key in MARK:
+                attributes.pop(key, None)
+            ak_logger.warning("[ALUMNI_MERGE] orphaned mark cleared: its target no longer exists, an ordinary sign-in", duplicate=pending.username, into=into)
+            return False
+        refused = []
+        target = None
+        if plan is None:
+            refused.append("no flow plan to sign the target in")
+        elif target_uuid is None:
+            refused.append("the mark is not a uuid")
+        else:
+            with transaction.atomic():
+                duplicate = User.objects.select_for_update().filter(pk=pending.pk).first()
+                links = list(UserSourceConnection.objects.filter(user=duplicate).select_related("source")) if duplicate else []
+                targets = list(User.objects.select_for_update().filter(uuid=target_uuid))
+                if duplicate is None:
+                    refused.append("the marked account is gone")
+                elif not duplicate.username.startswith("alumni-"):
+                    refused.append("the marked account was not created by an Alumni sign-in")
+                if duplicate is not None and sorted(link.source.slug for link in links) != ["alumni"]:
+                    refused.append(f"the marked account's links are {sorted(link.source.slug for link in links)}, not exactly ['alumni']")
+                if len(targets) != 1:
+                    refused.append(f"{len(targets)} account(s) carry the target uuid")
+                else:
+                    target = targets[0]
+                    target_slugs = set(UserSourceConnection.objects.filter(user=target).values_list("source__slug", flat=True))
+                    if duplicate is not None and target.pk == duplicate.pk:
+                        refused.append("the target is the marked account itself")
+                    if target.username.startswith("alumni-"):
+                        refused.append("the target was itself created by an Alumni sign-in")
+                    if not target.is_active:
+                        refused.append("the target is inactive")
+                    if target.type not in ("internal", "external"):
+                        refused.append(f"the target is a {target.type} account")
+                    if target.is_superuser:
+                        refused.append("the target is a superuser")
+                    if "cas-emse" not in target_slugs:
+                        refused.append("the target holds no CAS link")
+                    if "alumni" in target_slugs:
+                        refused.append("the target already holds an Alumni link")
+                    if folded(asserted) == "" or folded(target.name) != folded(asserted):
+                        refused.append("name_mismatch")
+                if duplicate is not None and str(duplicate.attributes.get("alumni_merge_into") or "") != into:
+                    refused.append("mark_changed")
+                if not refused:
+                    UserSourceConnection.objects.filter(pk=links[0].pk).update(user=target)
+                    duplicate_pk = duplicate.pk
+                    duplicate.delete()
+                    journal(Event.new("alumni_merge", app="miconnect", duplicate_pk=duplicate_pk, duplicate_username=pending.username, target_pk=target.pk, target_username=target.username, marked_by=marked_by, af_id=af_id))
+        if refused:
+            ak_logger.error("[ALUMNI_MERGE] refused at sign-in, nothing changed and the mark is kept", duplicate=pending.username, into=into, reasons=refused)
+            journal(Event.new("alumni_merge_refused", app="miconnect", duplicate_pk=pending.pk, duplicate_username=pending.username, into=into, marked_by=marked_by, af_id=af_id, reasons=refused))
+            return True
+        plan.context[PLAN_CONTEXT_PENDING_USER] = target
+        if connection is not None:
+            connection.user = target
+        ak_logger.info("[ALUMNI_MERGE] merged at sign-in: the Alumni link moved, the duplicate deleted", duplicate=pending.username, target=target.username)
+        return False
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "miconnect-alumni-authentication"]]
+      stage: !Find [authentik_stages_deny.denystage, [name, "miconnect-alumni-merge-refused"]]
+      order: 1
+    attrs:
+      # Decided when the stage is due, from the mark as it is then - never a plan-time cached result.
+      evaluate_on_plan: false
+      re_evaluate_policies: true
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_policies.policybindingmodel, [flowstagebinding__target__slug, "miconnect-alumni-authentication"], [flowstagebinding__stage__name, "miconnect-alumni-merge-refused"], [flowstagebinding__order, 1]]
+      policy: !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-alumni-merge-or-refuse"]]
+      order: 0
+    attrs:
+      # A policy that raises shows the refusal, never a sign-in into the duplicate.
+      failure_result: true
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "miconnect-alumni-authentication"]]
+      stage: !Find [authentik_stages_user_write.userwritestage, [name, "miconnect-alumni-sign-in-write"]]
+      order: 10
+    attrs:
+      evaluate_on_plan: false
+      re_evaluate_policies: true
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_policies.policybindingmodel, [flowstagebinding__target__slug, "miconnect-alumni-authentication"], [flowstagebinding__stage__name, "miconnect-alumni-sign-in-write"], [flowstagebinding__order, 10]]
+      policy: !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-alumni-keep-only-the-read"]]
+      order: 0
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "miconnect-alumni-authentication"]]
+      stage: !Find [authentik_stages_user_login.userloginstage, [name, "miconnect-login"]]
+      order: 20
+  # THE LINK CONFIRMATION (D49, owner 2026-11-23), LIVE. A person ALREADY signed in who reaches the
+  # Alumni source is LINKED by authentik at once, with no page (`handle_existing_link`): the owner
+  # was, by the Alumni entry. D49 asks every link MiConnect did not propose to name the account
+  # first. authentik runs a SAML source's pre-authentication flow only for the POST bindings
+  # (`InitiateView`), so the source is `POST_AUTO` below: read on production 2026-11-23, Alumnforce
+  # accepts the POSTed request although its metadata names HTTP-Redirect only (the reading is in
+  # docs/wiki/infrastructure/authentik.md). The page shows to
+  # every signed-in person, the link step of 45-consent.yaml included: a marker in the URL would be
+  # read at plan time, where authentik CACHES a policy result per session and user, so one visit
+  # from the step would silence the page for the next direct one - the one D49 is about.
+  - model: authentik_policies_expression.expressionpolicy
+    identifiers:
+      name: "miconnect-alumni-link-unconfirmed"
+    attrs:
+      execution_logging: false
+      expression: "return bool(request.user.is_authenticated)"
+  - model: authentik_policies_expression.expressionpolicy
+    identifiers:
+      name: "miconnect-alumni-link-validate-confirm"
+    attrs:
+      execution_logging: false
+      expression: |-
+        if request.context.get("prompt_data", {}).get("alumni_link_confirm") is True:
+            return True
+        ak_message("Coche la case pour lier ton compte Alumni, ou ferme cette page pour ne rien lier.")
+        return False
+  - model: authentik_stages_prompt.prompt
+    identifiers:
+      name: "miconnect-alumni-link-prompt-notice"
+    attrs:
+      field_key: "alumni_link_notice"
+      label: "Lier ton compte Alumni"
+      type: "static"
+      order: 1
+      initial_value_expression: true
+      initial_value: |-
+        from html import escape
+        return f"<p>Tu es connecté à MiConnect avec le compte <strong>{escape(user.name)}</strong> ({escape(user.username)}). Lier ton compte Alumni à ce compte MiConnect ?</p><p>Si ce n'est pas ton compte, ferme cette page : rien ne sera lié.</p>"
+  - model: authentik_stages_prompt.prompt
+    identifiers:
+      name: "miconnect-alumni-link-prompt-confirm"
+    attrs:
+      field_key: "alumni_link_confirm"
+      label: "Oui, lier mon compte Alumni à ce compte MiConnect."
+      type: "checkbox"
+      order: 2
+      required: true
+  - model: authentik_stages_prompt.promptstage
+    identifiers:
+      name: "miconnect-alumni-link-confirm"
+    attrs:
+      fields:
+        - !Find [authentik_stages_prompt.prompt, [name, "miconnect-alumni-link-prompt-notice"]]
+        - !Find [authentik_stages_prompt.prompt, [name, "miconnect-alumni-link-prompt-confirm"]]
+      validation_policies:
+        - !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-alumni-link-validate-confirm"]]
+  - model: authentik_flows.flow
+    identifiers:
+      slug: "miconnect-alumni-pre-authentication"
+    attrs:
+      name: "miconnect-alumni-pre-authentication"
+      title: "Connexion avec ton compte Alumni"
+      designation: "stage_configuration"
+      authentication: "none"
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "miconnect-alumni-pre-authentication"]]
+      stage: !Find [authentik_stages_prompt.promptstage, [name, "miconnect-alumni-link-confirm"]]
+      order: 10
+    attrs:
+      # Decided when the page is due, never from a cached plan-time result.
+      evaluate_on_plan: false
+      re_evaluate_policies: true
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_policies.policybindingmodel, [flowstagebinding__target__slug, "miconnect-alumni-pre-authentication"], [flowstagebinding__stage__name, "miconnect-alumni-link-confirm"], [flowstagebinding__order, 10]]
+      policy: !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-alumni-link-unconfirmed"]]
+      order: 0
   - model: authentik_sources_saml.samlsource
     identifiers:
       slug: "alumni"
     attrs:
       name: "Mines Saint-Etienne Alumni"
-      # ENABLED WITH ITS VERIFICATION CERTIFICATE, NOT PROMOTED (2026-11-23). A SAML source without a
-      # verification key pair verifies no signature at all (test-blueprints.sh refuses that shape),
-      # so `verification_kp` and the two `signed_*` flags below are what make `enabled` safe. Not
-      # promoted: no button on the login page, only the direct entry `/source/saml/alumni/`,
-      # until a real login has been read end to end (docs/wiki/infrastructure/authentik.md).
+      # ENABLED WITH ITS VERIFICATION CERTIFICATE (2026-11-23). A SAML source without a verification
+      # key pair verifies no signature at all (test-blueprints.sh refuses that shape), so
+      # `verification_kp` and the two `signed_*` flags below are what make `enabled` safe.
       enabled: true
       verification_kp: !Find [authentik_crypto.certificatekeypair, [name, "miconnect-alumni-idp-signing"]]
       # Signed on both levels - an unsigned response or assertion is refused.
@@ -97,17 +432,23 @@ entries:
       signed_assertion: true
       # IdP-initiated SSO skips request-ID validation; it stays off.
       allow_idp_initiated: false
-      promoted: false
-      authentication_flow: !Find [authentik_flows.flow, [slug, "default-source-authentication"]]
+      # PROMOTED BESIDE THE CAS (D45, owner 2026-11-23): the login page's identification stage lists
+      # it (40-authentication.yaml).
+      promoted: true
+      # Its own sign-in flow writes the membership read (D43); enrolment is the shared flow, whose
+      # routing page only an Alumni identity meets (D47, 20-enrollment.yaml).
+      authentication_flow: !Find [authentik_flows.flow, [slug, "miconnect-alumni-authentication"]]
       enrollment_flow: !Find [authentik_flows.flow, [slug, "miconnect-enrollment"]]
       user_path_template: "users"
-      pre_authentication_flow: !Find [authentik_flows.flow, [slug, "default-source-pre-authentication"]]
+      # Runs because the binding is POST: the link confirmation above, then the auto-submitted request.
+      pre_authentication_flow: !Find [authentik_flows.flow, [slug, "miconnect-alumni-pre-authentication"]]
       user_property_mappings:
         - !Find [authentik_sources_saml.samlsourcepropertymapping, [name, "miconnect-alumni-identity"]]
-      # The IdP's metadata offers ONE SingleSignOnService, HTTP-Redirect; the answer comes back by POST
-      # to our ACS whatever the request binding.
+      # The IdP's metadata offers ONE SingleSignOnService, HTTP-Redirect, yet the same URL accepts a
+      # POSTed request (read on production 2026-11-23, cold and repeat sign-ins): POST_AUTO is what
+      # runs the pre-authentication flow, D49's page. The answer comes back by POST to our ACS.
       sso_url: "https://mines-saint-etienne.org/sso/saml/ssoservice"
-      binding_type: "REDIRECT"
+      binding_type: "POST_AUTO"
       # The IdP's metadata lists only `transient`, but asked for persistent it answers persistent:
       # the alumni id `af_id` (measured 2026-11-23). Persistent is what lets a link last (WP8).
       name_id_policy: "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent"

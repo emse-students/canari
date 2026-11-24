@@ -831,7 +831,16 @@ export class IndexedDbStorage implements IStorage {
    * whatever was written, including a value an older build got wrong.
    */
   private rowToMeta(r: ConversationMeta & { isReady?: boolean }): ConversationMeta {
-    const { nameAt, nameSync, nameFromStatement, nameRenameAt, nameRenamedBy, kind, ...rest } = r;
+    const {
+      nameAt,
+      nameSync,
+      nameFromStatement,
+      nameRenameAt,
+      nameRenamedBy,
+      kind,
+      serverLastMessageAt,
+      ...rest
+    } = r;
     const positive = (v: unknown): v is number =>
       typeof v === 'number' && Number.isFinite(v) && v > 0;
     return {
@@ -854,6 +863,8 @@ export class IndexedDbStorage implements IStorage {
       localReadSeed: parseLocalReadSeed(r.localReadSeed),
       // "Mes notes", or nothing: validated on the way out like every other field.
       ...(kind === 'self' ? { kind } : {}),
+      // A positive server time or nothing, like `nameAt`.
+      ...(positive(serverLastMessageAt) ? { serverLastMessageAt } : {}),
     };
   }
 

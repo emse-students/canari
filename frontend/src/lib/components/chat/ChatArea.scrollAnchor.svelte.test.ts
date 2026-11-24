@@ -11,7 +11,12 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import ChatArea from './ChatArea.svelte';
 import { clearConversationAnchors } from '$lib/utils/chat/scrollAnchors';
-import { noteKeyboardAtRest, noteKeyboardTransition } from '$lib/stores/keyboardTransition';
+import {
+  noteKeyboardAtRest,
+  noteKeyboardFrameAwaited,
+  noteKeyboardFrameLanded,
+  noteKeyboardTransition,
+} from '$lib/stores/keyboardTransition';
 import { Log } from '$lib/utils/Log';
 import type { ChatMessage, Conversation } from '$lib/types';
 
@@ -480,6 +485,32 @@ describe('ChatArea and a move of the pane no reader made', () => {
     expect(geometry[1]).toMatch(
       /at rest \(its frame\): .* pinned=true isNearBottom=true .* at rest$/
     );
+  });
+
+  /**
+   * THE RETURN WHOSE REST CAME FIRST (iPhone 12, `1.8.0-alpha.6`, 5 of 11): the keyboard comes back with
+   * no animation, the shell's word of rest reaches the page before the WebView's frame, and the engine's
+   * move lands after it. The rest is held until the frame lands, so the move is still the keyboard's.
+   */
+  it('puts back the move that lands after an early rest, while the frame is still awaited', async () => {
+    const info = vi.spyOn(Log, 'i');
+    vi.spyOn(Log, 'w').mockImplementation(() => {});
+    const area = mountArea();
+    await settleEntry();
+    const scroller = scrollerOf(area.target);
+    noteKeyboardTransition('the shell: a keyboard will show');
+    noteKeyboardFrameAwaited('a hand-off of 301px');
+    noteKeyboardAtRest('the shell: did show, ahead of its frame');
+    await vi.advanceTimersByTimeAsync(50);
+    await engineMove(scroller);
+    noteKeyboardFrameLanded('keyboard target 301 spent');
+    await vi.advanceTimersByTimeAsync(50);
+
+    expect(scroller.scrollTop).toBeGreaterThanOrEqual(reach());
+    expect(arrowShown(area.target)).toBe(false);
+    const lines = info.mock.calls.filter(([, line]) => String(line).includes('left the bottom'));
+    expect(lines).toHaveLength(1);
+    expect(String(lines[0][1])).toContain("the engine's keyboard move, put back at the end");
   });
 
   it('reads a start and a rest heard in one task in their order, each with its own state', async () => {

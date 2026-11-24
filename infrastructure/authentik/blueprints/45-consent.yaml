@@ -20,10 +20,12 @@
 # PLACES BELOW, the policy and the hidden prompt - change both, or the stage re-asks forever.
 # check-consent-version.sh (run by test-blueprints.sh in CI) fails while they, the page's `updated`
 # date, the test's VERSION and core-service's CONSENT_VERSION (the handoff mint's gate) disagree.
-# THE TWO BINDINGS OF THE POLICY `miconnect-consent-needed` BELOW ARE AN ALLOWLIST OF core-service's
-# handoff gate (miconnect-reader.client.ts): it recognises exactly them, by policy and stage names,
-# and answers them from the person's `cgu_version`. Rename a stage or the policy and the handoff to
-# Sky, MiGallery and Le Cercle is refused `policy_bound` until the gate follows.
+# EVERY BINDING ON THIS FLOW IS ON AN ALLOWLIST OF core-service's handoff gate
+# (miconnect-reader.client.ts CONSENT_FLOW_ALLOWLIST): it recognises exactly them, by policy and
+# stage names - the two terms bindings, answered from the person's `cgu_version`, and the two Alumni
+# link-step bindings, answered from the rule both sides run (libs/contracts/alumni-access.json).
+# Rename a stage or a policy, or bind anything else here, and the handoff to Sky, MiGallery and
+# Le Cercle is refused `policy_bound` until the gate follows.
 version: 1
 metadata:
   name: miconnect-consent
@@ -48,7 +50,7 @@ entries:
       label: "Information"
       type: "static"
       order: 1
-      initial_value: "<p>MiConnect te connecte aux services des associations de l'École avec ton compte du CAS ou des Alumni. Pour cela, nous enregistrons ton <strong>nom</strong>, ton <strong>prénom</strong>, ton identifiant, ton campus, ta ou tes formations, ton année d'entrée et tes appartenances, et nous les transmettons aux services auxquels tu te connectes (Canari, Sky, MiGallery, Le Cercle, le wiki Mino, les archives). C'est nécessaire pour te reconnaître : sans cela, la connexion est impossible.</p><p><a href=\"https://canari.emse.fr/legal/miconnect\" target=\"_blank\" rel=\"noopener\">Lire les conditions d'utilisation et la politique de données</a></p>"
+      initial_value: "<p>MiConnect te connecte aux services des associations de l'École avec ton compte du CAS ou des Alumni. Pour cela, nous enregistrons ton <strong>nom</strong>, ton <strong>prénom</strong>, ton identifiant, ton campus, ta ou tes formations, ton année d'entrée et tes appartenances, et nous les transmettons aux services auxquels tu te connectes (Canari, Sky, MiGallery, Le Cercle, le wiki Mino, les archives). C'est nécessaire pour te reconnaître : sans cela, la connexion est impossible.</p><p>Si tu te connectes avec ton compte Alumni, nous enregistrons aussi si tu es <strong>cotisant</strong> de l'association des Alumni, avec la date de cette lecture, et, si ton compte MiConnect a été créé par les Alumni, ton <strong>adresse e-mail</strong>. Ils ne sont transmis à aucun service : MiConnect s'en sert seul, pour ouvrir MiGallery et Le Cercle aux cotisants après tes cinq premières années.</p><p><a href=\"https://canari.emse.fr/legal/miconnect\" target=\"_blank\" rel=\"noopener\">Lire les conditions d'utilisation et la politique de données</a></p>"
   - model: authentik_stages_prompt.prompt
     identifiers:
       name: "miconnect-consent-prompt-accept"
@@ -66,7 +68,7 @@ entries:
       label: "Version des conditions"
       type: "hidden"
       order: 3
-      initial_value: "2026-11-20"
+      initial_value: "2026-11-24"
   - model: authentik_stages_prompt.prompt
     identifiers:
       name: "miconnect-consent-prompt-date"
@@ -97,7 +99,7 @@ entries:
         if "authentik/impersonate/user" in session:
             ak_logger.info("miconnect-consent: impersonated session, terms neither shown nor written")
             return False
-        return request.user.attributes.get("cgu_version") != "2026-11-20"
+        return request.user.attributes.get("cgu_version") != "2026-11-24"
   # THE TICK IS CHECKED HERE, because `required` on a checkbox is not: authentik builds a checkbox as
   # a BooleanField with required=False, so `required: true` above only reaches the browser's form,
   # and a POST without the tick was ACCEPTED and written (driven 2026-10-16 by test-consent-flow.py).
@@ -146,4 +148,180 @@ entries:
     identifiers:
       target: !Find [authentik_policies.policybindingmodel, [flowstagebinding__target__slug, "miconnect-authorization"], [flowstagebinding__stage__name, "miconnect-consent-write"], [flowstagebinding__order, 20]]
       policy: !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-consent-needed"]]
+      order: 0
+  # THE ALUMNI LINK STEP (D44, owner 2026-11-23). For a person whose earliest cursus has entry year P
+  # and whose account holds no Alumni link: a skippable reminder from 1 September P+1, a BLOCKING
+  # page from 1 February P+2 - or from 2027-02-01 if that is later, which is the grace for the promos
+  # already past their date when the step shipped (one `max`, so no launch date is written anywhere).
+  # Every student has an Alumnforce account from entry, so the blocking page has no "not yet" exit.
+  # The reminder shows ONCE PER MiConnect SESSION (owner, 2026-11-24): the first authorization of a
+  # session meets it, the next ones of that session do not - a marker in the session, keyed by the
+  # account, set when the stage is due (and in that authorization's plan, which keeps its own reminder
+  # due through its "Continuer"). The blocking page shows at EVERY authorization.
+  #
+  # WHY HERE: this flow is the one EVERY application sign-in passes, signed in (a provider plans it
+  # at each authorization, whichever source the session came from). Being signed in is what makes
+  # the link possible at all: authentik links an Alumni identity to the account of the session that
+  # reaches the source. In the CAS source's own flow the page would sit after the login, where a
+  # person refusing the block is already signed in and walks past it at the next authorization.
+  #
+  # WHAT IT CANNOT DO: resume the authorization after the link. authentik resumes a flow after a
+  # source only through its Source stage, which is an ENTERPRISE stage (a licence MiConnect does not
+  # hold); so the page links to the source, authentik links and shows the account's settings with
+  # "Successfully linked", and the person signs in to the application again - where this step, now
+  # satisfied, no longer shows. Under the reminder, "Continuer" goes on without linking.
+  #
+  # THE SIGN-IN HANDOFF ANSWERS THESE TWO BINDINGS ITSELF (lead, 2026-11-23): core-service's gate
+  # allowlists them by policy and stage names; the reminder never stops a mint (it is skippable),
+  # the block refuses `alumni_link_required` when it would hold, and Canari then opens the site
+  # through its MiConnect sign-in, which shows the person this page. The dates are ONE rule run by
+  # both sides: change a constant here and in libs/contracts/alumni-access.json together, or
+  # test-consent-flow.py (which runs that file's cases) fails.
+  #
+  # "TODAY" IS THE PARIS DATE, unless the plan context carries a `date` under `miconnect_today`:
+  # nothing a person sends can put a date object there, and test-consent-flow.py drives every
+  # boundary through it instead of a wall clock. NEVER IN AN IMPERSONATED SESSION, for the reason the
+  # terms are not. Driven by test-consent-flow.py.
+  - model: authentik_policies_expression.expressionpolicy
+    identifiers:
+      name: "miconnect-alumni-link-reminder"
+    attrs:
+      execution_logging: false
+      expression: |-
+        from datetime import date, datetime
+        from zoneinfo import ZoneInfo
+        from authentik.core.models import UserSourceConnection
+
+        REMINDED = "miconnect/alumni-link-reminded"
+
+        session = request.http_request.session if request.http_request else {}
+        if "authentik/impersonate/user" in session:
+            return False
+        user = request.user
+        today = context.get("miconnect_today")
+        if not isinstance(today, date):
+            today = datetime.now(ZoneInfo("Europe/Paris")).date()
+        profile = user.attributes.get("profile")
+        cursus = profile.get("cursus") if isinstance(profile, dict) else None
+        # An entry year is an int that is not a bool (True is an int in Python), in an entry that is
+        # an object: anything else is ignored, as core-service ignores it (libs/contracts cases).
+        promos = [c["promo"] for c in (cursus if isinstance(cursus, list) else []) if isinstance(c, dict) and type(c.get("promo")) is int]
+        if not promos or UserSourceConnection.objects.filter(user=user, source__slug="alumni").exists():
+            return False
+        first = min(promos)
+        if not date(first + 1, 9, 1) <= today < max(date(first + 2, 2, 1), date(2027, 2, 1)):
+            return False
+        # ONCE PER MiConnect SESSION (owner, 2026-11-24): the reminder is shown at the first
+        # authorization of a session and not at the next ones. The marker is the session's own, keyed
+        # by the account (a sign-in as someone else in the same browser is reminded), set at the
+        # moment the stage is due - no clock, nothing written on the account. The executor re-evaluates
+        # this binding at EVERY request of the stage (its "Continuer" POST included), so the plan that
+        # set the marker carries it too and keeps its own reminder due to its end.
+        plan = context.get("flow_plan")
+        if plan is not None and plan.context.get(REMINDED) == user.pk:
+            return True
+        if session.get(REMINDED) == user.pk:
+            return False
+        if request.http_request is not None:
+            session[REMINDED] = user.pk
+            if plan is not None:
+                plan.context[REMINDED] = user.pk
+        return True
+  - model: authentik_policies_expression.expressionpolicy
+    identifiers:
+      name: "miconnect-alumni-link-required"
+    attrs:
+      execution_logging: false
+      expression: |-
+        from datetime import date, datetime
+        from zoneinfo import ZoneInfo
+        from authentik.core.models import UserSourceConnection
+
+        session = request.http_request.session if request.http_request else {}
+        if "authentik/impersonate/user" in session:
+            return False
+        user = request.user
+        today = context.get("miconnect_today")
+        if not isinstance(today, date):
+            today = datetime.now(ZoneInfo("Europe/Paris")).date()
+        profile = user.attributes.get("profile")
+        cursus = profile.get("cursus") if isinstance(profile, dict) else None
+        # An entry year is an int that is not a bool (True is an int in Python), in an entry that is
+        # an object: anything else is ignored, as core-service ignores it (libs/contracts cases).
+        promos = [c["promo"] for c in (cursus if isinstance(cursus, list) else []) if isinstance(c, dict) and type(c.get("promo")) is int]
+        if not promos or UserSourceConnection.objects.filter(user=user, source__slug="alumni").exists():
+            return False
+        first = min(promos)
+        return today >= max(date(first + 2, 2, 1), date(2027, 2, 1))
+  # The blocking page cannot be submitted until the link exists (a person who linked in another tab
+  # goes on from here).
+  - model: authentik_policies_expression.expressionpolicy
+    identifiers:
+      name: "miconnect-alumni-link-validate-linked"
+    attrs:
+      execution_logging: false
+      expression: |-
+        from authentik.core.models import UserSourceConnection
+
+        if UserSourceConnection.objects.filter(user=request.user, source__slug="alumni").exists():
+            return True
+        ak_message("Lie d'abord ton compte Alumni avec le lien ci-dessus, puis reconnecte-toi au service.")
+        return False
+  - model: authentik_stages_prompt.prompt
+    identifiers:
+      name: "miconnect-alumni-link-prompt-reminder"
+    attrs:
+      field_key: "alumni_link_reminder"
+      label: "Ton compte Alumni"
+      type: "static"
+      order: 1
+      initial_value: "<p>Ton compte MiConnect n'est pas encore lié à ton compte <strong>Alumni</strong> (le réseau des anciens des Mines de Saint-Étienne, où tu as un compte depuis ton entrée à l'École). Lie-le maintenant : quand ton compte de l'École disparaîtra, à la fin de tes études, c'est lui qui te connectera, avec le même profil.</p><p><a href=\"/source/saml/alumni/\">Lier mon compte Alumni</a></p><p>Le lien sera obligatoire au milieu de ta deuxième année. Pour l'instant, tu peux continuer sans.</p>"
+  - model: authentik_stages_prompt.prompt
+    identifiers:
+      name: "miconnect-alumni-link-prompt-required"
+    attrs:
+      field_key: "alumni_link_required"
+      label: "Ton compte Alumni"
+      type: "static"
+      order: 1
+      initial_value: "<p>Pour continuer, lie ton compte MiConnect à ton compte <strong>Alumni</strong> (le réseau des anciens des Mines de Saint-Étienne, où tu as un compte depuis ton entrée à l'École). Quand ton compte de l'École disparaîtra, c'est lui qui te connectera, avec le même profil.</p><p><a href=\"/source/saml/alumni/\">Lier mon compte Alumni</a></p><p>Une fois le lien fait, reconnecte-toi au service.</p>"
+  - model: authentik_stages_prompt.promptstage
+    identifiers:
+      name: "miconnect-alumni-link-remind"
+    attrs:
+      fields:
+        - !Find [authentik_stages_prompt.prompt, [name, "miconnect-alumni-link-prompt-reminder"]]
+  - model: authentik_stages_prompt.promptstage
+    identifiers:
+      name: "miconnect-alumni-link-require"
+    attrs:
+      fields:
+        - !Find [authentik_stages_prompt.prompt, [name, "miconnect-alumni-link-prompt-required"]]
+      validation_policies:
+        - !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-alumni-link-validate-linked"]]
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "miconnect-authorization"]]
+      stage: !Find [authentik_stages_prompt.promptstage, [name, "miconnect-alumni-link-remind"]]
+      order: 30
+    attrs:
+      evaluate_on_plan: false
+      re_evaluate_policies: true
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_policies.policybindingmodel, [flowstagebinding__target__slug, "miconnect-authorization"], [flowstagebinding__stage__name, "miconnect-alumni-link-remind"], [flowstagebinding__order, 30]]
+      policy: !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-alumni-link-reminder"]]
+      order: 0
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "miconnect-authorization"]]
+      stage: !Find [authentik_stages_prompt.promptstage, [name, "miconnect-alumni-link-require"]]
+      order: 40
+    attrs:
+      evaluate_on_plan: false
+      re_evaluate_policies: true
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_policies.policybindingmodel, [flowstagebinding__target__slug, "miconnect-authorization"], [flowstagebinding__stage__name, "miconnect-alumni-link-require"], [flowstagebinding__order, 40]]
+      policy: !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-alumni-link-required"]]
       order: 0

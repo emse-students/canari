@@ -716,6 +716,23 @@ function historyEligible(
 const HISTORY_SCAN_PAGE = 200;
 
 /**
+ * The note of a group's newest visible frame (`MessagingService.noteLastMessage`, migration 057):
+ * an upsert into `dm_group_last_message` that keeps the GREATEST instant. Exported so a spec pins
+ * its shape - it must never become an UPDATE of `dm_groups`, whose row lock every send waits on.
+ *
+ * ONLY FOR A LIVE GROUP, AND READ UNDER `FOR SHARE`. The note runs after the send's commit, so a
+ * deletion can land in between; an unconditional insert would then leave a row on a tombstone,
+ * which `GROUP_OWNED_TABLES` had already swept. `FOR SHARE` makes the note wait for a deletion that
+ * holds the group row, then see its `deletedAt` and insert nothing - and it never conflicts with the
+ * `FOR SHARE` concurrent sends take.
+ */
+export const NOTE_LAST_MESSAGE_SQL =
+  `INSERT INTO dm_group_last_message ("groupId", "lastMessageAt") ` +
+  `SELECT id, $2::timestamptz FROM dm_groups WHERE id = $1 AND "deletedAt" IS NULL FOR SHARE ` +
+  `ON CONFLICT ("groupId") DO UPDATE SET "lastMessageAt" = ` +
+  `GREATEST(dm_group_last_message."lastMessageAt", EXCLUDED."lastMessageAt")`;
+
+/**
  * Thrown INSIDE the enqueue transaction when the receipt for this `(group, sender, device,
  * messageId)` already exists: the message was accepted before and this send is its repeat. Nothing
  * is written (the transaction rolls back, and it had written nothing), and {@link
@@ -2513,6 +2530,12 @@ export class MessagingService {
         receivedAt,
         traceId
       );
+      // 1c. The group's newest VISIBLE frame, so a device holding no history yet can order its
+      // conversation list (migration 057). A mutation (reaction, edit, read mark) is silent and
+      // moves nothing, as it moves nothing on a device that holds the messages.
+      if (!body.silent) {
+        await this.noteLastMessage(body.groupId as string, receivedAt, traceId);
+      }
     }
 
     // 2. Best-effort real-time delivery for online recipients, through the one delivery.
@@ -7323,6 +7346,9 @@ export class MessagingService {
     );
     let historyAppended = false;
     if (historyEligible(body, durable, addressed)) {
+      // The first send may have stopped before its note: written again at the FIRST copy's instant,
+      // which the GREATEST makes a no-op when it had been written.
+      if (!body.silent) await this.noteLastMessage(groupId, first.receivedAt, traceId);
       const held = await this.historyHoldsFirstCopy(groupId, receipt.senderDeviceId, first);
       if (!held) {
         // The first copy's own ciphertext when a queued row still carries it; when every copy was
@@ -7480,6 +7506,31 @@ export class MessagingService {
       this.logger.log(`[HISTORY][${traceId}] XADD group=${groupId}`);
     } catch (e) {
       this.logger.warn(`[HISTORY][${traceId}] XADD failed group=${groupId}: ${String(e)}`);
+    }
+  }
+
+  /**
+   * Moves the group's newest visible frame time (`dm_group_last_message`, migration 057) forward to
+   * `receivedAt`, never back: an upsert keeping the GREATEST of the two, so two sends racing write
+   * the later one whatever their order, and a repeat writing the same instant again changes nothing.
+   *
+   * A ROW OF ITS OWN, NEVER THE GROUP ROW: an UPDATE of `dm_groups` would take FOR NO KEY UPDATE on
+   * it, which conflicts with the FOR SHARE every concurrent send into the same group takes there
+   * (`enqueueForLiveGroup`) - the sends of one group would queue behind each other's note. This
+   * insert reads the group row FOR SHARE (live groups only, see {@link NOTE_LAST_MESSAGE_SQL}),
+   * which conflicts with no send, and takes a row lock on its own table, held for one statement.
+   *
+   * After the frame is queued and appended, so it records only what was accepted, and outside the
+   * enqueue transaction. A failure is said and swallowed - the frame is delivered either way, and the
+   * next visible frame of the group writes the fact again.
+   */
+  private async noteLastMessage(groupId: string, receivedAt: Date, traceId: string): Promise<void> {
+    try {
+      await this.groupRepo.manager.query(NOTE_LAST_MESSAGE_SQL, [groupId, receivedAt]);
+    } catch (e) {
+      this.logger.warn(
+        `[SEND][${traceId}] LAST_MESSAGE_NOT_NOTED group=${groupId} - the conversation list of a device with no history orders it by its previous visible frame until the next one: ${String(e)}`
+      );
     }
   }
 

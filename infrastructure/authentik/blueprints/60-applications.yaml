@@ -1,4 +1,4 @@
-# The application each provider is attached to, and its launch URL.
+# The application each provider is attached to, its launch URL, and who may enter MiGallery and Le Cercle (D42-D43).
 #
 # Applied by infrastructure/authentik/apply-blueprints.py, never by the worker's own discovery
 # (instantiate: false) - see infrastructure/authentik/README.md. Every reference is a !Find on a
@@ -44,6 +44,8 @@ entries:
         role: !Find [authentik_rbac.role, [name, "miconnect-handoff-reader"]]
     attrs:
       name: "Cercle"
+      # D43: any ONE binding admits (the policy, or the `acces-cercle` group).
+      policy_engine_mode: "any"
       provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "miconnect-cercle"]]
       meta_launch_url: "https://cercle.emse.fr"
   - model: authentik_core.application
@@ -55,6 +57,8 @@ entries:
         role: !Find [authentik_rbac.role, [name, "miconnect-handoff-reader"]]
     attrs:
       name: "MiGallery"
+      # D43: any ONE binding admits (the policy, or the `acces-migallery` group).
+      policy_engine_mode: "any"
       provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "miconnect-migallery"]]
       meta_launch_url: "https://gallery.mitv.fr/"
   - model: authentik_core.application
@@ -75,3 +79,80 @@ entries:
       name: "Sky"
       provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "miconnect-sky"]]
       meta_launch_url: "https://sky.emse.fr"
+  # THE COTISANT GATE (D42-D43, owner 2026-11-23), on MiGallery and Le Cercle only. A person enters
+  # when ANY of these holds:
+  #   - the free window: one of their cursus has entry year P and today is on or before 31 August P+5;
+  #   - a post (EMSE, ME or ALUMNI) - staff are not alumni and are not asked to be;
+  #   - `attributes.alumni.cotisant` is true and was read (`read_on`, written at every Alumni sign-in
+  #     by 30-sources.yaml) within the CURRENT calendar year;
+  #   - membership of the group `acces-<app>`: the nominative exception an admin grants.
+  # This is the binding shape WP5 describes for every application (backlog.d/the-miconnect-profile-
+  # reform-wp5-is-next.md, D15): expression policies plus a group `acces-<app>`, engine mode `any`.
+  # WP5 extends it to the others; it does not replace these two. `cotisant` reaches no application
+  # in a claim (D43); core-service's handoff gate reads it through its read-only account, below.
+  #
+  # THE SIGN-IN HANDOFF ANSWERS THIS GATE ITSELF (lead, 2026-11-23): core-service's gate recognises
+  # it in this EXACT shape (engine mode `any`, this policy and the group `acces-<app>`, nothing else
+  # bound, on these two applications) and re-evaluates the rule from what its read-only account
+  # reads, refusing `alumni_cotisant_required`; Canari then opens the site through its MiConnect
+  # sign-in, which applies this gate and tells the person why. Any other shape refuses
+  # `policy_bound`. The window and the posts are ONE rule run by both sides: change them here and in
+  # libs/contracts/alumni-access.json together, or test-consent-flow.py (which runs its cases) fails.
+  #
+  # "TODAY" IS THE PARIS DATE, unless the request context carries a `date` under `miconnect_today`
+  # (test-consent-flow.py drives every boundary through it, never a wall clock).
+  - model: authentik_policies_expression.expressionpolicy
+    identifiers:
+      name: "miconnect-access-window-post-or-cotisant"
+    attrs:
+      execution_logging: false
+      expression: |-
+        from datetime import date, datetime
+        from zoneinfo import ZoneInfo
+
+        user = request.user
+        today = context.get("miconnect_today")
+        if not isinstance(today, date):
+            today = datetime.now(ZoneInfo("Europe/Paris")).date()
+        profile = user.attributes.get("profile")
+        profile = profile if isinstance(profile, dict) else {}
+        posts = profile.get("posts")
+        if any(post in ("EMSE", "ME", "ALUMNI") for post in (posts if isinstance(posts, list) else [])):
+            return True
+        cursus = profile.get("cursus")
+        # An entry year is an int that is not a bool, in an entry that is an object (libs/contracts).
+        promos = [c["promo"] for c in (cursus if isinstance(cursus, list) else []) if isinstance(c, dict) and type(c.get("promo")) is int]
+        if any(today <= date(promo + 5, 8, 31) for promo in promos):
+            return True
+        alumni = user.attributes.get("alumni") or {}
+        read_on = alumni.get("read_on")
+        if alumni.get("cotisant") is True and isinstance(read_on, str) and read_on[:4] == str(today.year):
+            return True
+        ak_message("Après tes cinq premières années, ce service est réservé aux cotisants de l'association des Alumni. Si tu as cotisé cette année, connecte-toi une fois à MiConnect avec ton compte Alumni pour qu'il le sache.")
+        return False
+  - model: authentik_core.group
+    identifiers:
+      name: "acces-migallery"
+  - model: authentik_core.group
+    identifiers:
+      name: "acces-cercle"
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_policies.policybindingmodel, [application__slug, "migallery"]]
+      policy: !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-access-window-post-or-cotisant"]]
+      order: 0
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_policies.policybindingmodel, [application__slug, "migallery"]]
+      group: !Find [authentik_core.group, [name, "acces-migallery"]]
+      order: 1
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_policies.policybindingmodel, [application__slug, "cercle"]]
+      policy: !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-access-window-post-or-cotisant"]]
+      order: 0
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_policies.policybindingmodel, [application__slug, "cercle"]]
+      group: !Find [authentik_core.group, [name, "acces-cercle"]]
+      order: 1

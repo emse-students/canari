@@ -24,7 +24,13 @@
 
 import { detectRuntimeDeviceOs } from '$lib/mls-client/mlsPlatform';
 import { orientationOf, rememberKeyboardHeight } from './keyboardHeightMemory';
-import { noteKeyboardAtRest, noteKeyboardTransition } from './keyboardTransition';
+import {
+  noteKeyboardAtRest,
+  noteKeyboardFrameAwaited,
+  noteKeyboardFrameLanded,
+  noteKeyboardTransition,
+  noteKeyboardWillShow,
+} from './keyboardTransition';
 import { isTauriRuntime } from '$lib/utils/tauriRuntime';
 import { cssColorToHex, groundOf } from './imeGround';
 import { parseImeTarget, resolveImeTarget, type ImeAnimation, type ImeTarget } from './imeTarget';
@@ -402,10 +408,10 @@ function measureViewport(w: WindowReading = readWindow()): ViewportMeasurement {
   const raw = { winH, vvHeight: w.vvHeight, offsetTop: w.offsetTop, scale: w.scale };
   const { measurement, drop } = resolveImeTarget(raw, baselineHeight, imeTarget);
   if (drop) {
-    Log.d(
-      'keyboardViewport',
-      `keyboard target ${imeTarget?.px} spent (layout ${winH}, visual ${raw.vvHeight})`
-    );
+    const spent = `keyboard target ${imeTarget?.px} spent (layout ${winH}, visual ${raw.vvHeight})`;
+    Log.d('keyboardViewport', spent);
+    // The hand-off's frame is on the page: a keyboard transition may now rest (`keyboardTransition.ts`).
+    if (imeTarget?.kind === 'handoff') noteKeyboardFrameLanded(spent);
     imeTarget = null;
   }
   return measurement;
@@ -615,6 +621,44 @@ export function revealBehavior(requested: ScrollBehavior, reducedMotion: boolean
 }
 
 /**
+ * Whether the PAGE reveals this focused field above the keyboard, or leaves it where it is.
+ *
+ * The chat composer never: it sits on the keyboard by layout. Inside `.app-layout` (the main page),
+ * everywhere but the iOS shell, the engine reveals the field itself - Chromium scrolls the focused
+ * editable into view on its own resize - and the page stays out of its way (05d09031a, 2026-05). In
+ * the iOS shell WebKit's own reveal is GONE since its keyboard observers were detached
+ * (`CanariDetachWebKitKeyboardInset`, `canari_ios.mm`): its reveal waits for a keyboard will-show that
+ * it no longer hears. The page is then the ONLY reveal, so it reveals every field but the composer.
+ *
+ * @param el the focused field.
+ * @param iosShell whether this runs in the iOS app.
+ */
+export function pageRevealsField(el: Element, iosShell: boolean): boolean {
+  if (el.closest('.chat-composer-footer')) return false;
+  return iosShell || el.closest('.app-layout') === null;
+}
+
+/** The boxes of the main page that never scroll: a reveal that moves one shifts the whole page. */
+const PINNED_PAGE_BOXES = ['.page-scroll-wrap', '.app-layout'] as const;
+
+/**
+ * Which pinned box of the main page a `scroll` moved off its top, by selector - or null when the
+ * scroll is any other element's, or leaves the box at 0.
+ *
+ * In the iOS shell the page reveals every field of `.app-layout` itself ({@link pageRevealsField}), and
+ * `scrollIntoView` scrolls every scrollable ancestor - an `overflow: hidden` one too. A wrapper taller
+ * than its box was scrolled that way once and showed a blank band above the page (`mobile.md`, the 39 px
+ * sliver, fixed in CSS on 2026-08-07). Read from the scroll itself, a smooth reveal is caught on its
+ * first step as an instant one is.
+ *
+ * @param target the element a `scroll` event was fired at.
+ */
+export function shiftedPageBox(target: EventTarget | null): string | null {
+  if (!(target instanceof HTMLElement) || target.scrollTop === 0) return null;
+  return PINNED_PAGE_BOXES.find((selector) => target.matches(selector)) ?? null;
+}
+
+/**
  * Scrolls the focused field into the visible viewport (above the virtual keyboard).
  *
  * `nearest`, so a field already in view does not move. The room for the field AFTER it is not
@@ -626,7 +670,7 @@ export function revealBehavior(requested: ScrollBehavior, reducedMotion: boolean
 export function scrollFocusedFieldIntoView(behavior: ScrollBehavior = 'smooth'): void {
   const el = document.activeElement;
   if (!(el instanceof HTMLElement) || !isFocusableField(el)) return;
-  if (el.closest('.chat-composer-footer, .app-layout')) return;
+  if (!pageRevealsField(el, isTauriRuntime() && detectRuntimeDeviceOs() === 'ios')) return;
   const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
   const how = revealBehavior(behavior, reduced);
   Log.d('keyboardViewport', `revealing the focused field (${how})`);
@@ -1168,6 +1212,8 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
       // A rise ends any fall still waiting for its resize, and any ride still running: the rise's
       // layout, and the screen-update proof the shell takes of it, must carry no stale transform.
       if (target.px > 0) endRides('a rise');
+      // No keyboard transition rests before the WebView takes this frame (`keyboardTransition.ts`).
+      if (target.px > 0) noteKeyboardFrameAwaited(`a hand-off of ${target.px}px`);
       imeTarget = target;
       update();
       return true;
@@ -1238,8 +1284,8 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
   /**
    * `window.canariKeyboardAtRest`: the iOS shell's word that the keyboard has come to rest
    * (`UIKeyboardDidShow` / `DidHide`, or `DidChangeFrame` for a height change while open, once
-   * WebKit's pending updates are on screen) - the end of the keyboard transition
-   * (`keyboardTransition.ts`).
+   * WebKit's pending updates are on screen and a rise's frame is set) - the end of the keyboard
+   * transition (`keyboardTransition.ts`), which also waits for the hand-off's frame to land here.
    */
   (window as unknown as { canariKeyboardAtRest?: () => void }).canariKeyboardAtRest = () =>
     noteKeyboardAtRest('the shell: the keyboard did show, hide or change height, on screen');
@@ -1251,7 +1297,32 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
    * it left with - and merges into the one a resize started otherwise (`keyboardTransition.ts`).
    */
   (window as unknown as { canariKeyboardShows?: () => void }).canariKeyboardShows = () =>
-    noteKeyboardTransition('the shell: a keyboard will show');
+    noteKeyboardWillShow('the shell: a keyboard will show');
+
+  /**
+   * THE WITNESS OF A SHIFTED MAIN PAGE, in the iOS shell where the page reveals the main page's fields
+   * itself ({@link shiftedPageBox}): a WARN naming the box, once until it is back at its top - never per
+   * frame of a smooth scroll. `scroll` does not bubble, so it is heard in the capture phase.
+   */
+  const accusedBoxes = new WeakSet<HTMLElement>();
+  const witnessShiftedPage = (e: Event) => {
+    const box = e.target;
+    if (!(box instanceof HTMLElement)) return;
+    const shifted = shiftedPageBox(box);
+    if (shifted === null) {
+      accusedBoxes.delete(box);
+      return;
+    }
+    if (accusedBoxes.has(box)) return;
+    accusedBoxes.add(box);
+    Log.w(
+      'keyboardViewport',
+      `the main page shifted: ${shifted} scrolled to ${Math.round(box.scrollTop)} ` +
+        `(focus ${document.activeElement?.tagName ?? 'none'}, keyboard ${snapshot.isOpen ? 'open' : 'closed'})`
+    );
+  };
+  const witnessesPage = isTauriRuntime() && detectRuntimeDeviceOs() === 'ios';
+  if (witnessesPage) document.addEventListener('scroll', witnessShiftedPage, true);
 
   // A press during a ride (a picker opening, a tap on a row) ends it: while a piece rides it is the
   // containing block of its fixed descendants (`keyboardRide.ts`).
@@ -1274,6 +1345,7 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
     window.removeEventListener('transitionend', handleTransitionEnd, true);
     window.visualViewport?.removeEventListener('resize', onViewportEvent);
     window.visualViewport?.removeEventListener('scroll', updateOffsetOnly);
+    if (witnessesPage) document.removeEventListener('scroll', witnessShiftedPage, true);
     delete (window as unknown as { canariImeTarget?: unknown }).canariImeTarget;
     delete (window as unknown as { canariKeyboardFall?: unknown }).canariKeyboardFall;
     delete (window as unknown as { canariKeyboardAtRest?: unknown }).canariKeyboardAtRest;
@@ -1283,6 +1355,7 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
         navigator as unknown as { virtualKeyboard: { overlaysContent: boolean } }
       ).virtualKeyboard.overlaysContent = false;
     }
+    if (imeTarget?.kind === 'handoff') noteKeyboardFrameLanded('teardown');
     imeTarget = null;
     endRides('teardown');
     cancelPlacement?.();

@@ -22,7 +22,6 @@ function publisher() {
       calls.push(`eligible:${eligible}`);
     },
     setDelegationReadiness: (r) => calls.push(`readiness:${r}`),
-    noteTabSessionLive: () => calls.push('live'),
     leadHoldsInFlight,
     describeLeadHolds,
     onLeadHoldsReleased,
@@ -34,10 +33,10 @@ function publisher() {
 describe('a session that cannot serve gives the lead up only once its MLS work settled', () => {
   beforeEach(() => resetLeadHoldsForTests());
 
-  it('publishes the eligibility BEFORE the readiness, and a live session last', () => {
+  it('publishes the eligibility BEFORE the readiness', () => {
     const { p, calls } = publisher();
     p.publish('ready');
-    expect(calls).toEqual(['eligible:true', 'readiness:ready', 'live']);
+    expect(calls).toEqual(['eligible:true', 'readiness:ready']);
     calls.length = 0;
     p.publish('unavailable');
     expect(calls).toEqual(['eligible:false', 'readiness:unavailable']);

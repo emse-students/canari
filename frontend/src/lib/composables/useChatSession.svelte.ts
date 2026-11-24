@@ -17,7 +17,6 @@ import {
   markPromotionReload,
   setTabLeaderDemotedHandler,
   setTabLeadEligibility,
-  noteTabSessionLive,
   getIsTabLeader,
 } from '$lib/utils/chat/connection';
 import { CallService } from '$lib/services/CallService';
@@ -319,7 +318,8 @@ export function useChatSession() {
       return false;
     }
     // The reload releases the lock this tab was just granted; the mark is what lets the page it
-    // starts take it back rather than queue behind the tab it took over from.
+    // starts wait in the queue for the lead while no tab serves it, rather than follow a tab only
+    // promoted in place meanwhile (`tabLeader.waitForTheLead`).
     markPromotionReload();
     // A gesture this tab handed over as a follower is adopted by the page the reload starts, the
     // leader now, rather than removed as a closed tab's (`tabCommitDelegation.ts`).
@@ -338,7 +338,6 @@ export function useChatSession() {
   const leadPublisher = createLeadPublisher({
     setTabLeadEligibility,
     setDelegationReadiness,
-    noteTabSessionLive,
     leadHoldsInFlight,
     describeLeadHolds,
     onLeadHoldsReleased,

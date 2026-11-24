@@ -10,7 +10,6 @@ export {
   setTabLeaderPromotedHandler,
   setTabLeaderDemotedHandler,
   setTabLeadEligibility,
-  noteTabSessionLive,
   markPromotionReload,
   type MessageHandlerDeps,
   type ConnectionDeps,

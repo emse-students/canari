@@ -689,7 +689,7 @@ Read in the running server's own source and through read-only ORM queries; **not
 | user by `uuid` | `core/api/users.py`: a `UUIDFilter` on `uuid` | **yes**, with `view_user` |
 | `check_access?for_user` | `core/api/applications.py`, `check_access`: `for_user` is honoured **only when the caller `is_superuser`**; for anyone else it is silently IGNORED and the policy engine runs for the CALLER | **no** - a non-superuser gets the service account's own answer, a silent wrong answer, and a superuser token is the opposite of read-only |
 | `preview_user` | `providers/oauth2/api/providers.py`: `view_oauth2provider` on the provider + `authentik_core.preview_user` on the user | **yes** |
-| `sub_mode` | read from each provider row | **`hashed_user_id` on all three**: `miconnect-migallery`, `miconnect-sky`, `miconnect-cercle` (and on every other production provider) |
+| `sub_mode` | read from each provider row | **`hashed_user_id` on all three**: `miconnect-migallery`, `miconnect-sky`, `miconnect-cercle` (and on every other production provider); since 2026-11-23 PINNED to that value on the three in `50-providers.yaml`, equal to authentik's default, so no subject changed ([identity-sources](../infrastructure/identity-sources.md)) |
 
 **What decides access today, measured.** The three production applications (`migallery`, `sky`,
 `cercle`) have **zero enabled policy bindings** (engine mode `any`), and the tenant flag
@@ -744,6 +744,18 @@ recreated BEFORE the merge (the applier refuses an unset `!Env`), then the GitHu
   never assumed open. Read on production 2026-11-11, read-only: 0 bindings on the three
   applications, on both flows and on their stage bindings; authorization flows
   `require_authenticated`.
+- **Extended for the Alumni rule (lead, 2026-11-23, `1.8.0`).** The allowlist is a table, stage name
+  -> policy name, on `miconnect-authorization` (`CONSENT_FLOW_ALLOWLIST`): the two terms bindings,
+  plus the Alumni link step's reminder (skippable: it never stops a mint) and block (answered from
+  the earliest cursus promo, the Paris date and whether an Alumni user-source connection exists:
+  `alumni_link_required`). And on MiGallery and Le Cercle the Alumni gate, recognised only in its
+  exact shape - engine mode `any`, the policy `miconnect-access-window-post-or-cotisant` and the
+  group `acces-<app>`, nothing else - and answered from cursus, posts, `attributes.alumni` and the
+  user's direct groups (`alumni_cotisant_required`). Both are 403s with their own codes, at info on
+  both sides, like the terms: the app opens the site through MiConnect, which shows the person the
+  page. The rule is ONE contract both implementations run (`libs/contracts/alumni-access.json`), so
+  they cannot drift; the reader gained global `view_usersourceconnection`, proven by use. Anything
+  else bound still refuses `policy_bound`.
 - **The limit that remains, named in every boot line:** what a STAGE itself decides from the user
   (a group test written inside an expression stage, an identification stage's own rules) is not a
   binding, so no count sees it. Today's flows bind none; a site that needs such a rule must put it

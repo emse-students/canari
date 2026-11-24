@@ -1,31 +1,43 @@
 <script lang="ts">
   /**
    * The Alumni duplicates (D47): accounts an Alumni sign-in created whose name and promo match an
-   * existing account. "Rattacher" (D48) deletes the duplicate at MiConnect and erases its Canari
-   * account - so the confirmation first NAMES what the duplicate holds in Canari, counted by the
-   * services that hold it. Global admin only.
+   * existing account. "Rattacher" (D48) MARKS the duplicate - MiConnect moves its Alumni link onto
+   * the existing account and deletes it at its next Alumni sign-in, and its Canari account is erased
+   * after that merge - so the confirmation first NAMES what the duplicate holds in Canari, counted by
+   * the services that hold it. THE ADMIN VERIFIES (D51): the duplicate shows what the Alumni base
+   * holds (its e-mail, its `af_id`, the name it signed up with), the existing account its name, promo and
+   * last MiConnect sign-in - a homonym is not the same person, and the Alumni e-mail is how to ask. The open merges (marked, or interrupted) are listed below, each cancellable, an
+   * interrupted one resumable. Global admin only.
    */
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
-  import { RefreshCw, Link2 } from '@lucide/svelte';
+  import { RefreshCw, Link2, RotateCcw, X } from '@lucide/svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import { Log } from '$lib/utils/Log';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { m } from '$lib/paraglide/messages';
+  import { intlLocale } from '$lib/utils/intlLocale';
   import {
     alumniMergeErrorMessage,
+    cancelAlumniMerge,
     fetchAlumniDuplicates,
     fetchAlumniHoldings,
+    fetchAlumniOpenMerges,
     mergeAlumniDuplicate,
     type AlumniAccount,
     type AlumniDuplicate,
     type AlumniHoldings,
+    type AlumniOpenMerge,
   } from '$lib/profile/alumniMerge';
 
+  /** The username prefix of an account an Alumni sign-in created: `alumni-<af_id>` (D46). */
+  const ALUMNI_PREFIX = 'alumni-';
+
   let rows = $state<AlumniDuplicate[]>([]);
+  let merges = $state<AlumniOpenMerge[]>([]);
   let loading = $state(true);
   let error = $state('');
   let notice = $state('');
@@ -40,7 +52,7 @@
     loading = true;
     error = '';
     try {
-      rows = await fetchAlumniDuplicates();
+      [rows, merges] = await Promise.all([fetchAlumniDuplicates(), fetchAlumniOpenMerges()]);
     } catch (err) {
       Log.d('admin.alumni-duplicates.load failed', err);
       error = alumniMergeErrorMessage(err);
@@ -82,6 +94,41 @@
     }
   }
 
+  /** "Reprendre" an interrupted merge: the same call, which resumes its open row. */
+  async function resume(open: AlumniOpenMerge) {
+    busy = true;
+    error = '';
+    notice = '';
+    try {
+      await mergeAlumniDuplicate(open.duplicateUuid, open.targetUuid);
+      notice = m.alumni_merges_resumed();
+      await load();
+    } catch (err) {
+      Log.d('admin.alumni-duplicates.resume failed', err);
+      error = alumniMergeErrorMessage(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function cancel(open: AlumniOpenMerge) {
+    busy = true;
+    error = '';
+    notice = '';
+    try {
+      await cancelAlumniMerge(open.duplicateUuid);
+      notice = m.alumni_merges_cancelled();
+      await load();
+    } catch (err) {
+      Log.d('admin.alumni-duplicates.cancel failed', err);
+      error = alumniMergeErrorMessage(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  const day = (iso: string) => new Date(iso).toLocaleDateString(intlLocale());
+
   const heldLines = (h: AlumniHoldings): string[] => [
     m.alumni_duplicates_held_posts({ count: h.personalPosts }),
     m.alumni_duplicates_held_associations({ count: h.associations }),
@@ -103,11 +150,29 @@
   <div class="min-w-0">
     <p class="text-text-muted text-xs font-semibold">{label}</p>
     <p class="text-text-main truncate text-sm font-semibold">{a.name}</p>
+    {#if a.username.startsWith(ALUMNI_PREFIX)}
+      <p class="text-text-muted truncate text-xs">
+        {m.alumni_duplicates_alumni_identity({
+          afId: a.username.slice(ALUMNI_PREFIX.length),
+          name: a.name,
+        })}
+      </p>
+    {/if}
     <p class="text-text-muted truncate text-xs">
       {a.username} - {m.alumni_duplicates_promos({ promos: a.promos.join(', ') })}
       {#if !a.canariUserId}
         - {m.alumni_duplicates_no_canari()}
       {/if}
+    </p>
+    <p class="text-text-muted truncate text-xs">
+      {a.email
+        ? a.username.startsWith(ALUMNI_PREFIX)
+          ? m.alumni_duplicates_alumni_email({ email: a.email })
+          : m.alumni_duplicates_email({ email: a.email })
+        : m.alumni_duplicates_no_email()}
+      - {a.lastLogin
+        ? m.alumni_duplicates_last_login({ date: day(a.lastLogin) })
+        : m.alumni_duplicates_never_logged_in()}
     </p>
   </div>
 {/snippet}
@@ -128,6 +193,7 @@
 </PageHeader>
 
 <div class="space-y-4">
+  <p class="text-text-muted text-sm">{m.alumni_duplicates_self_declared()}</p>
   {#if error}
     <div class="bg-red-err/10 text-red-err border-red-err/30 rounded-xl border p-4 text-sm">
       {error}
@@ -163,6 +229,46 @@
               </Button>
             </div>
           {/each}
+        </li>
+      {/each}
+    </ul>
+  {/if}
+
+  {#if merges.length > 0}
+    <h2 class="text-text-main pt-2 text-sm font-semibold">{m.alumni_merges_title()}</h2>
+    <ul class="space-y-3">
+      {#each merges as open (open.duplicateUuid)}
+        <li
+          class="bg-cn-surface flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-black/5 p-4 shadow-sm dark:border-white/10"
+        >
+          <div class="min-w-0">
+            <p class="text-text-main truncate text-sm font-semibold">{open.duplicateUsername}</p>
+            <p class="text-text-muted truncate text-xs">
+              {open.status === 'marked' && open.markedAt
+                ? m.alumni_merges_marked({ date: day(open.markedAt) })
+                : m.alumni_merges_requested({ date: day(open.requestedAt) })}
+            </p>
+            <p class="text-text-muted truncate text-xs">
+              {m.alumni_merges_into({ uuid: open.targetUuid })}
+            </p>
+          </div>
+          <div class="flex gap-2">
+            {#if open.status === 'requested'}
+              <Button size="compact" disabled={busy} onclick={() => void resume(open)}>
+                <RotateCcw size={14} />
+                {m.alumni_merges_resume()}
+              </Button>
+            {/if}
+            <Button
+              size="compact"
+              variant="secondary"
+              disabled={busy}
+              onclick={() => void cancel(open)}
+            >
+              <X size={14} />
+              {m.alumni_merges_cancel()}
+            </Button>
+          </div>
         </li>
       {/each}
     </ul>

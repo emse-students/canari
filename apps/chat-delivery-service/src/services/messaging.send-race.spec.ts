@@ -3,7 +3,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, GoneException, ServiceUnavailableException } from '@nestjs/common';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { MessagingService } from './messaging.service';
+import { MessagingService, NOTE_LAST_MESSAGE_SQL } from './messaging.service';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { QueuedPayload } from '../entities/queued-payload.entity';
 import { GroupMember } from '../entities/group-member.entity';
@@ -73,6 +73,8 @@ describe('MessagingService - a send cannot outlive its group', () => {
   let receipts: Map<string, { receivedAt: Date; protoSha256: string; settled: boolean }>;
   /** Every history-stream append (`XADD` through the pipeline), by group key. */
   let historyAppends: string[];
+  /** Every note of the group's newest visible frame (`noteLastMessage`), as its receive instant. */
+  let lastMessageNotes: number[];
   /**
    * The session advisory locks PostgreSQL holds, by key. Each query runner is one session: its
    * locks end with it, through its unlock or through the connection being destroyed.
@@ -182,6 +184,7 @@ describe('MessagingService - a send cannot outlive its group', () => {
     payloadSaves = [];
     receipts = new Map();
     historyAppends = [];
+    lastMessageNotes = [];
     historyEntries = [];
     advisoryLocks = new Set();
     unlockFails = false;
@@ -313,7 +316,17 @@ describe('MessagingService - a send cannot outlive its group', () => {
       { provide: getRepositoryToken(GroupMember), useValue: emptyRepo() },
       {
         provide: getRepositoryToken(Group),
-        useValue: { ...emptyRepo(), manager: { transaction: jest.fn(transaction) } },
+        useValue: {
+          ...emptyRepo(),
+          manager: {
+            transaction: jest.fn(transaction),
+            query: jest.fn(async (sql: string, params: unknown[]) => {
+              if (sql !== NOTE_LAST_MESSAGE_SQL) throw new Error(`unexpected group query: ${sql}`);
+              lastMessageNotes.push((params[1] as Date).getTime());
+              return [];
+            }),
+          },
+        },
       },
       { provide: getRepositoryToken(KeyPackage), useValue: keyPackageRepo },
       { provide: getRepositoryToken(OneTimeKeyPackage), useValue: emptyRepo() },
@@ -759,6 +772,18 @@ describe('MessagingService - a send cannot outlive its group', () => {
         await sendId(MSG);
         expect(historyAppends).toHaveLength(1);
         expect(push).toHaveBeenCalledTimes(1);
+      });
+
+      it("died before its note: the repeat notes the group's newest message at the FIRST copy's instant", async () => {
+        offlinePeer();
+        pushes();
+        dieOnce('appendToHistory');
+        await expect(sendId(MSG)).rejects.toThrow('the process died here');
+        expect(lastMessageNotes).toEqual([]);
+
+        await sendId(MSG);
+
+        expect(lastMessageNotes).toEqual([receipt()?.receivedAt.getTime()]);
       });
 
       it('died after the history append: the repeat appends NOTHING and delivers once', async () => {

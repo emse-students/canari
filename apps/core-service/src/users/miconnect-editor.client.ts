@@ -14,11 +14,18 @@ export interface MiconnectUserRecord {
   attributes: Record<string, unknown>;
 }
 
-/** An authentik user as a LIST reads it: what the Alumni duplicates check needs (D47). */
+/**
+ * An authentik user as a LIST reads it: what the Alumni duplicates check needs (D47), and what an
+ * admin is shown to tell two homonyms apart (the e-mail, the last sign-in).
+ */
 export interface MiconnectUserListing extends MiconnectUserRecord {
   uuid: string;
   username: string;
   type: string;
+  email: string;
+  is_active: boolean;
+  /** ISO time of the last sign-in at MiConnect, null when it never signed in. */
+  last_login: string | null;
 }
 
 /** One page of authentik's paginated list answer. */
@@ -33,7 +40,7 @@ const MAX_LIST_PAGES = 50;
 /**
  * Reads and writes a person at the source of truth: authentik, through the service account
  * `miconnect-canari-editor` (infrastructure/authentik/blueprints/80-profile-editor.yaml), whose role
- * may view, change and delete users and read their source connections, and nothing else.
+ * may view and change users and read their source connections, and nothing else.
  *
  * PRODUCTION ONLY, and the refusal is a type. Dev and production share ONE MiConnect, so a dev
  * write would change a real person: {@link assertAvailable} throws
@@ -120,37 +127,50 @@ export class MiconnectEditorClient {
     throw new ProfileEditUpstreamError(null, 'listing longer than the page bound');
   }
 
-  /** The authentik users with this uuid: none (deleted) or one - a uuid is unique there. */
-  async usersByUuid(uuid: string): Promise<MiconnectUserListing[]> {
+  /**
+   * The authentik user with this uuid, or null when there is none (deleted). Anything but zero or ONE
+   * answer carrying exactly this uuid is an upstream fault, refused: the merge must never act on an
+   * account it did not ask for because a filter was ignored.
+   */
+  async userByUuid(uuid: string): Promise<MiconnectUserListing | null> {
     const { baseUrl, token } = this.assertAvailable();
     const url = `${baseUrl}/api/v3/core/users/?uuid=${encodeURIComponent(uuid)}&include_groups=false`;
-    const body = await this.call<AuthentikPage<MiconnectUserListing>>('GET', url, token);
-    return body.results ?? [];
+    const results =
+      (await this.call<AuthentikPage<MiconnectUserListing>>('GET', url, token)).results ?? [];
+    if (results.length === 0) return null;
+    if (results.length !== 1 || results[0].uuid !== uuid) {
+      this.logger.error(
+        `[ALUMNI_MERGE] uuid ${uuid.slice(0, 8)} answered ${results.length} user(s), ` +
+          `first ${results[0].uuid?.slice(0, 8)}`
+      );
+      throw new ProfileEditUpstreamError(null, `uuid answered ${results.length} users`);
+    }
+    return results[0];
   }
 
   /**
    * The slugs of every source the user `pk` is linked to (`cas-emse`, `alumni`...), read through
    * `view_usersourceconnection`. How the merge knows a duplicate holds the Alumni link and nothing
-   * else before deleting it (D48).
+   * else, and that the target holds none, before marking it (D48).
    */
   async sourceSlugsOf(pk: number): Promise<string[]> {
-    const { baseUrl, token } = this.assertAvailable();
-    const url = `${baseUrl}/api/v3/sources/user_connections/all/?user=${pk}&page_size=100`;
-    const body = await this.call<AuthentikPage<{ source_obj?: { slug?: string } }>>(
-      'GET',
-      url,
-      token
-    );
-    return (body.results ?? []).map((c) => c.source_obj?.slug ?? '?');
+    return (await this.sourceLinksOf(pk)).map((link) => link.slug);
   }
 
   /**
-   * DELETES the authentik user `pk`; its source connections go with it (authentik cascades). Only
-   * the Alumni merge calls this, and only after `AlumniMergeService` proved the account a duplicate.
+   * The source connections of user `pk`: each source's slug and the identifier the source signs in
+   * with (for the Alumni source, the person's `af_id`). An unreadable slug or identifier is `'?'`/`null`.
    */
-  async deleteUser(pk: number): Promise<void> {
+  async sourceLinksOf(pk: number): Promise<{ slug: string; identifier: string | null }[]> {
     const { baseUrl, token } = this.assertAvailable();
-    await this.call('DELETE', `${baseUrl}/api/v3/core/users/${pk}/`, token);
+    const url = `${baseUrl}/api/v3/sources/user_connections/all/?user=${pk}&page_size=100`;
+    const body = await this.call<
+      AuthentikPage<{ source_obj?: { slug?: string }; identifier?: unknown }>
+    >('GET', url, token);
+    return (body.results ?? []).map((c) => ({
+      slug: c.source_obj?.slug ?? '?',
+      identifier: typeof c.identifier === 'string' ? c.identifier : null,
+    }));
   }
 
   private async call<T = unknown>(
