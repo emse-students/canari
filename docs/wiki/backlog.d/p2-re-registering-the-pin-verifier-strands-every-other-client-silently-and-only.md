@@ -1,6 +1,6 @@
 ## P2 - re-registering the PIN verifier strands every other client SILENTLY, and only its next unlock finds out (2026-09-04)
 
-target: 1.8.0
+target: 1.9.0
 
 Open: nothing tells an unlocked client its vault material was replaced; every HEAL-NEW row strands W1/W2.
 The wipe repair is measured (`newdevice.mjs --device W1`). Owed: do the same digits give an acceptable

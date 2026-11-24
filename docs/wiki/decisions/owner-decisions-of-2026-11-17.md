@@ -39,7 +39,7 @@ the counts.
   re-verifies each one; deleting is fine, and a wrong deletion is restored later.
 - **The usage dashboard** - distinct people per day, week and month, six platform categories, a
   week-by-hour map, daily activity totals, no small-number threshold, anonymous by construction:
-  [its entry](../backlog.d/usage-dashboard-who-uses-canari-anonymously.md), `1.8.0`.
+  [its entry](../usage-dashboard.md), `1.8.0`.
 - **(lead, reversible) The push-token P1 is reduced to a reading taken in production AFTER the
   `1.7.0` stable** (#3765 makes the outcome name its cause). It does not block the stable; it is
   taken the day after both stores carry `1.7.0`, and a non-zero count opens a `1.7.1` P1

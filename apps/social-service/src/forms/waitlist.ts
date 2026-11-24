@@ -40,6 +40,7 @@ export const PAYMENT_DUE = 'payment_due';
 export type WaitlistTrigger =
   | 'submit'
   | 'resume'
+  | 'cash-switch'
   | 'member-cancel'
   | 'manager-cancel'
   | 'provider-release'

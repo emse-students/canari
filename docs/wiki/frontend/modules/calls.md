@@ -3863,10 +3863,11 @@ playing. What changed:
   delivers - every `GAIN*` code maps to `GAIN` in `focusListener` - releases the hold with no tap.
   The ask paths above still release it too. Tests: `CallFocusHoldTest`
   (`aFocusRefusedAtTheStartIsReleasedByTheDelayedGain`, the ask path, the held -> no-step branch)
-  and `androidCallService.test.ts` (the page receives `lost` before any GAIN). **Owed on the Mi
-  9T**: (1) start a Canari call during a cellular call - the peer sees the microphone cut; (2) the
-  cellular call ends while Canari stays on screen, with no tap - the microphone comes back by
-  itself.
+  and `androidCallService.test.ts` (the page receives `lost` before any GAIN). **Both readings are
+  CLOSED, not owed** (owner, 2026-11-24, [decisions](../../decisions/owner-decisions-of-2026-11-24.md)): (1) a
+  Canari call started during a cellular call (the peer sees the microphone cut) and (2) the microphone
+  coming back by itself when the cellular call ends need a SIM, and the bench Mi 9T has none; the
+  focus hold and the audio slot are covered by `CallFocusHoldTest` and `CallAudioSlotTest`.
 - **A call that REPLACES another in the service TAKES ITS AUDIO OVER** (2026-11-23, review of
   #4012). A start of another call while one held the foreground (`CallServiceEffect.Replace`, the
   earlier call's stop never arrived) used to keep the `CallAudio` labelled with the OLD call id: its
@@ -3923,8 +3924,8 @@ speaker and in another app - Android `proximity screen-off held`, iPhone `call p
 and the name alone for an account with none; (E) music playing before the call pauses for it and
 resumes after (`audio focus taken`); (F) the notification's mute: the peer stops hearing, the call
 screen shows muted, the action reads "Réactiver le micro", a second press undoes it; (G) Android
-only, a cellular call rung into a Canari call: the peer sees the microphone cut, the member the
-banner, and both come back when the phone call ends (`focus`/`lost` then `gained` in the app log).
+only, a cellular call rung into a Canari call: CLOSED, not owed (owner, 2026-11-24, [decisions](../../decisions/owner-decisions-of-2026-11-24.md)):
+the bench Mi 9T has no SIM, and `CallFocusHoldTest` and `CallAudioSlotTest` cover the hold and its release.
 
 **Four log lines the same call's log misread, fixed with it.** (1) `audio_level_in` read `0.000` on
 4 ticks of 5 while 32-41 kbps of voice arrived: it was the INSTANTANEOUS `audioLevel`, one sample

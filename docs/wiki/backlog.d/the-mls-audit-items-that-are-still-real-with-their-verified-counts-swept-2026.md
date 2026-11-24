@@ -1,6 +1,6 @@
 ## The MLS audit items that are still real, with their verified counts (swept 2026-09-12)
 
-target: 1.8.0
+target: 1.9.0
 
 **Work to the swept numbers, never the audit's** (eight came back LARGER than claimed). The duplicate
 half is gone ([triage](../protocols/mls-graine-state-machine.md#8-several-paths-to-one-thing---the-duplicates),

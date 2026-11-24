@@ -53,6 +53,12 @@ export interface GuestReceiptView {
   paymentStatus: string;
   /** The provider state read on THIS call, as `confirmPayment` answers it; absent when none was. */
   requestState?: string;
+  /**
+   * The answer's failed card payment may be settled in person instead ("Payer en direct",
+   * `payment-cash-switch.ts`): the form takes cash with a deadline, is open, and the row may move.
+   * Absent when not offered, or from a server older than the switch.
+   */
+  cashSwitchOffered?: true;
 }
 
 /** Picks the guest's view out of what `FormsService.confirmPayment` answers. */

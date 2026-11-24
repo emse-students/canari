@@ -1,6 +1,6 @@
 ## P3 - core-service's boot read of Sky's handoff access timed out against MiConnect, once (2026-11-20)
 
-target: 1.8.0
+target: 1.10.0
 
 _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 

@@ -418,7 +418,6 @@ describe('ChatArea and a move of the pane no reader made', () => {
     ['a keyboard transition that came to rest', true],
   ])('lets an unexplained move after %s lower the flag (the assistive case)', async (_, opened) => {
     const info = vi.spyOn(Log, 'i');
-    const debug = vi.spyOn(Log, 'd');
     const area = mountArea();
     await settleEntry();
     const scroller = scrollerOf(area.target);
@@ -430,11 +429,59 @@ describe('ChatArea and a move of the pane no reader made', () => {
 
     expect(scroller.scrollTop).toBe(reach() - ENGINE_MOVE);
     expect(arrowShown(area.target)).toBe(true);
-    const hasLine = ([, line]: unknown[]) => String(line).includes('left the bottom');
-    // The expected path of every assistive scroll from the end: DEBUG, never INFO.
-    expect(info.mock.calls.filter(hasLine)).toHaveLength(0);
-    const lines = debug.mock.calls.filter(hasLine);
+    // INFO, so the exported log names it (the home-button return of 2026-11-23 had nothing to read).
+    const lines = info.mock.calls.filter(([, line]) => String(line).includes('left the bottom'));
     expect(lines).toHaveLength(1);
     expect(String(lines[0][1])).toContain('the flag falls');
+  });
+
+  /**
+   * THE HOME-BUTTON RETURN WITH THE KEYBOARD UP (iPhone 12, 1.8.0-alpha.4, 4 of 10): the transition the
+   * shell's will-show started (`canariKeyboardShows`) is moving when WebKit's reveal moves the pane at
+   * the return, so the move is put back; the geometry lines say where the pane stood at each edge.
+   */
+  it('puts back the reveal of a keyboard that came back with the app, and reports each edge', async () => {
+    const info = vi.spyOn(Log, 'i');
+    const area = mountArea();
+    await settleEntry();
+    const scroller = scrollerOf(area.target);
+    noteKeyboardTransition('the shell: a keyboard will show');
+    await vi.advanceTimersByTimeAsync(50);
+    await engineMove(scroller);
+    noteKeyboardAtRest('the shell: did show');
+    await vi.advanceTimersByTimeAsync(50);
+
+    expect(scroller.scrollTop).toBeGreaterThanOrEqual(reach());
+    expect(arrowShown(area.target)).toBe(false);
+    const geometry = info.mock.calls
+      .filter(([tag]) => tag === 'CHAT_VIEW')
+      .map(([, line]) => String(line))
+      .filter((line) => line.includes('keyboard transition'));
+    expect(geometry).toHaveLength(2);
+    expect(geometry[0]).toMatch(/starts \(its frame\): .* isNearBottom=true .* moving$/);
+    expect(geometry[1]).toMatch(
+      /at rest \(its frame\): .* pinned=true isNearBottom=true .* at rest$/
+    );
+  });
+
+  it('reads a start and a rest heard in one task in their order, each with its own state', async () => {
+    const info = vi.spyOn(Log, 'i');
+    const area = mountArea();
+    await settleEntry();
+    noteKeyboardTransition('keyboard opened');
+    noteKeyboardAtRest('the viewport reading is the keyboard where it stands');
+    // Nothing is read inside the keyboard's own update: both wait for the frame.
+    const geometryLines = () =>
+      info.mock.calls
+        .filter(([tag]) => tag === 'CHAT_VIEW')
+        .map(([, line]) => String(line))
+        .filter((line) => line.includes('keyboard transition'));
+    expect(geometryLines()).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(50);
+    const lines = geometryLines();
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatch(/starts \(its frame\): .* moving$/);
+    expect(lines[1]).toMatch(/at rest \(its frame\): .* at rest$/);
+    expect(area.target).toBeTruthy();
   });
 });

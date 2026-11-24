@@ -11,6 +11,7 @@ export type PaymentReturnOutcome =
   | 'overCapacity'
   | 'declined'
   | 'ended'
+  | 'cash'
   | 'error';
 
 /** Ceiling on how long a return page keeps asking before it says the payment is unconfirmed. */
@@ -23,7 +24,7 @@ export const RETURN_POLL_INTERVAL_MS = 3000;
  * the payer's return to the app (`checkoutReturn.ts`), so the two can never word a state apart.
  */
 export function returnOutcomeOf(verdict: PaymentReturnVerdict): PaymentReturnOutcome | null {
-  if (verdict === 'confirmed' || verdict === 'overCapacity') return verdict;
+  if (verdict === 'confirmed' || verdict === 'overCapacity' || verdict === 'cash') return verdict;
   if (verdict === 'declined' || verdict === 'ended') {
     // The request is dead and the server released the answer: the payer may try again.
     console.info(`[paymentReturn] request ${verdict}, the answer is released for a retry`);

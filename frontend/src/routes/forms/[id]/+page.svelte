@@ -24,11 +24,14 @@
     getMyEditableAnswers,
     resumeSubmissionPayment,
     leaveWaitlist,
+    switchSubmissionToCash,
+    type CashSwitchReply,
     type EditableAnswer,
     type Form,
     type ResumableAnswer,
   } from '$lib/forms/api';
-  import { offersPaymentResume } from '$lib/forms/paymentResume';
+  import { failedPaymentOffer } from '$lib/forms/paymentResume';
+  import { intlLocale } from '$lib/utils/intlLocale';
   import {
     PAYMENT_DUE_STATUS,
     WAITING_STATUS,
@@ -102,6 +105,7 @@
     Bell,
     BellOff,
     CreditCard,
+    Banknote,
     Link,
     Lock,
     Ban,
@@ -192,6 +196,11 @@
   let ownStatus = $state<string | null>(null);
   /** The id of the caller's own answer, which "Quitter la liste" deletes. */
   let ownSubmissionId = $state<string | null>(null);
+  /**
+   * The caller's answer whose card payment failed and may be settled IN PERSON instead, as the
+   * server named it (`cashSwitchable`), or null. "Payer en direct" moves THAT answer to cash.
+   */
+  let cashSwitchable = $state<ResumableAnswer | null>(null);
   /** Which send the payer's e-mail prompt is for: a new answer, or the resume of the released one. */
   let payerPromptFor = $state<'submit' | 'resume'>('submit');
   let formFull = $state(false);
@@ -429,6 +438,7 @@
     waitlist = null;
     ownStatus = null;
     ownSubmissionId = null;
+    cashSwitchable = null;
     payerPromptFor = 'submit';
     formFull = false;
     slices = NO_PRICING_SLICE;
@@ -561,6 +571,7 @@
       formFull = full;
       resumable = submission.resumable ?? null;
       adoptWaitlist(submission);
+      cashSwitchable = submission.cashSwitchable ?? null;
       slices = cursusSlicesOf(submission);
       hiddenItemIds = hidden ?? [];
       maySubmit = allowed ?? true;
@@ -736,6 +747,11 @@
     } else if (outcome === 'overCapacity') {
       submitted = true;
       paidOverCapacity = true;
+    } else if (outcome === 'cash') {
+      // Switched to cash elsewhere (another tab, another device): recorded, waiting in person.
+      submitted = true;
+      successMessage = m.form_success_cash_heading();
+      successDetail = m.form_success_cash_desc();
     } else {
       if (outcome === 'declined' || outcome === 'ended') {
         paymentRetry = outcome;
@@ -752,8 +768,10 @@
       const check = await checkSubmission(formShown);
       if (form?.id !== formShown) return;
       formFull = check.formFull;
-      // The released answer may now be paid again on itself (`resumable`), rather than re-filled.
+      // The released answer may now be paid again on itself (`resumable`), or settled in person
+      // (`cashSwitchable`), rather than re-filled.
       resumable = check.resumable ?? null;
+      cashSwitchable = check.cashSwitchable ?? null;
       if (outcome === 'error') {
         submitted = check.hasSubmitted;
         if (!submitted) shownAnswer = null;
@@ -1079,6 +1097,7 @@
       submitted = check.hasSubmitted;
       formFull = check.formFull;
       resumable = check.resumable ?? null;
+      cashSwitchable = check.cashSwitchable ?? null;
       adoptWaitlist(check);
     } catch (err) {
       console.warn(
@@ -1088,10 +1107,11 @@
     }
   }
 
-  /** Whether "Reprendre le paiement" is offered now (`offersPaymentResume`). */
-  const resumeOffered = $derived(
-    offersPaymentResume({
+  /** What is offered now for a failed card payment (`failedPaymentOffer`), or null. */
+  const failedOffer = $derived(
+    failedPaymentOffer({
       resumable,
+      cashSwitchable,
       paymentDue,
       submitted,
       paymentPending,
@@ -1154,6 +1174,7 @@
         const check = await checkSubmission(formShown);
         if (form?.id !== formShown) return;
         resumable = check.resumable ?? null;
+        cashSwitchable = check.cashSwitchable ?? null;
         formFull = check.formFull;
         submitted = check.hasSubmitted;
         adoptWaitlist(check);
@@ -1168,6 +1189,80 @@
       submitting = false;
     }
   }
+
+  /** What the success banner says once an answer waits for a payment in person. */
+  function cashSwitchedDetail(reply: CashSwitchReply): string {
+    if (!reply.cashExpiresAt) return m.form_payment_cash_switched_desc();
+    const date = new Date(reply.cashExpiresAt).toLocaleDateString(intlLocale(), {
+      day: 'numeric',
+      month: 'long',
+    });
+    return m.form_payment_cash_switched_desc_deadline({ date });
+  }
+
+  /**
+   * "PAYER EN DIRECT": the SAME answer, whose card payment failed (or is still pending on Lydia's
+   * page), now waits for cash (`switchSubmissionToCash`). The server cancels the Lydia request first,
+   * so the answer can never also be paid online; a request found paid meanwhile answers
+   * `alreadyPaid`. A refusal is worded from its code and the server's offer is read again.
+   */
+  async function switchToCash(submissionId: string): Promise<void> {
+    if (!form || submitting) return;
+    Log.d('FormView', `switch to cash of ${submissionId}`);
+    error = '';
+    submitting = true;
+    const formShown = form.id;
+    try {
+      const res = await switchSubmissionToCash(submissionId);
+      if (form?.id !== formShown) return;
+      resumable = null;
+      cashSwitchable = null;
+      paymentRetry = null;
+      paymentPending = false;
+      pendingCheckout = null;
+      submitted = true;
+      Log.d('FormView', `switched to cash (alreadyPaid=${!!res.alreadyPaid})`);
+      if (res.alreadyPaid) {
+        successMessage = m.form_view_submission_already_paid();
+        successDetail = '';
+      } else {
+        successMessage = m.form_payment_cash_switched_heading();
+        successDetail = cashSwitchedDetail(res);
+      }
+    } catch (e: unknown) {
+      Log.d('FormView', `switch to cash refused status=${refusalStatus(e) ?? 'transport'}`);
+      win.adopt(e);
+      error = formSubmitRefusalMessage(e, m.form_guest_submit_failed());
+      // What the server offers NOW (a seat taken meanwhile, a payment found in progress).
+      try {
+        const check = await checkSubmission(formShown);
+        if (form?.id !== formShown) return;
+        resumable = check.resumable ?? null;
+        cashSwitchable = check.cashSwitchable ?? null;
+        formFull = check.formFull;
+        // A form full with a list open: the person joins it by the ordinary send (`joinOffered`).
+        adoptWaitlist(check);
+        submitted = check.hasSubmitted;
+        paymentPending = check.hasSubmitted && check.paymentStatus === 'pending';
+        if (!paymentPending) pendingCheckout = null;
+      } catch (err) {
+        console.warn(
+          `[FormView] re-reading the answer after a refused switch to cash failed status=${refusalStatus(err) ?? 'transport'}`,
+          err
+        );
+      }
+    } finally {
+      submitting = false;
+    }
+  }
+
+  /**
+   * "Payer en direct" beside a payment still in progress: the form takes cash and this page knows
+   * the pending answer. The server judges the rest (open, the hold, the request at Lydia).
+   */
+  const cashOfferedWhilePending = $derived(
+    !!form?.allowCashPayment && !!pendingCheckout && paymentPending && !isClosed && !preview
+  );
 
   // ── Progress bar ─────────────────────────────────────────────────
   /**
@@ -1249,6 +1344,29 @@
     }
   });
 </script>
+
+<!-- "Payer en direct" beside a card payment still pending: the server cancels the request first. -->
+{#snippet cashWhilePending()}
+  {#if cashOfferedWhilePending && pendingCheckout}
+    {@const target = pendingCheckout.submissionId}
+    <div
+      class="mt-2 flex flex-col items-center gap-2"
+      data-testid="form-payment-cash-switch-pending"
+    >
+      <p class="text-text-muted text-center text-xs">
+        {m.form_view_payment_cash_switch_in_progress_note()}
+      </p>
+      <Button
+        variant="secondary"
+        disabled={submitting}
+        loading={submitting}
+        onclick={() => void switchToCash(target)}
+      >
+        <Banknote size={16} class="mr-1.5" />{m.form_view_payment_cash_switch_button()}
+      </Button>
+    </div>
+  {/if}
+{/snippet}
 
 <!-- The send button, one markup for the plain bar and the order bar of a form with priced grids. -->
 {#snippet payButton()}
@@ -1623,8 +1741,8 @@
       </div>
     {/if}
 
-    <!-- ── A released payment: the SAME answer is paid again, nothing to re-fill ── -->
-    {#if resumeOffered && resumable}
+    <!-- ── A failed card payment: the SAME answer, paid again online or in person, nothing to re-fill ── -->
+    {#if failedOffer}
       <div
         class="border-amber-warn/30 bg-amber-warn/10 mb-4 flex flex-col gap-3 rounded-2xl border px-5 py-4 sm:flex-row sm:items-center"
         role="status"
@@ -1635,24 +1753,47 @@
             {paymentDue ? m.form_waitlist_payment_due_title() : m.form_view_payment_resume_title()}
           </p>
           <p class="text-text-muted mt-0.5 text-sm">
-            {paymentDue
-              ? m.form_waitlist_payment_due_note({
-                  amount: formatCurrency(resumable.amountCents, form.currency),
-                })
-              : m.form_view_payment_resume_note({
-                  amount: formatCurrency(resumable.amountCents, form.currency),
-                })}
+            {#if paymentDue}
+              {m.form_waitlist_payment_due_note({
+                amount: formatCurrency(failedOffer.answer.amountCents, form.currency),
+              })}
+            {:else if failedOffer.resume && failedOffer.cash}
+              {m.form_view_payment_failed_choice_note({
+                amount: formatCurrency(failedOffer.answer.amountCents, form.currency),
+              })}
+            {:else if failedOffer.cash}
+              {m.form_view_payment_failed_cash_note({
+                amount: formatCurrency(failedOffer.answer.amountCents, form.currency),
+              })}
+            {:else}
+              {m.form_view_payment_resume_note({
+                amount: formatCurrency(failedOffer.answer.amountCents, form.currency),
+              })}
+            {/if}
           </p>
         </div>
-        <Button
-          variant="primary"
-          class="shrink-0"
-          disabled={submitting}
-          loading={submitting}
-          onclick={() => void resumePayment()}
-        >
-          <CreditCard size={16} class="mr-1.5" />{m.form_view_payment_resume_button()}
-        </Button>
+        <div class="flex shrink-0 flex-wrap gap-2">
+          {#if failedOffer.resume}
+            <Button
+              variant="primary"
+              disabled={submitting}
+              loading={submitting}
+              onclick={() => void resumePayment()}
+            >
+              <CreditCard size={16} class="mr-1.5" />{m.form_view_payment_resume_button()}
+            </Button>
+          {/if}
+          {#if failedOffer.cash}
+            {@const target = failedOffer.answer.submissionId}
+            <Button
+              variant={failedOffer.resume ? 'secondary' : 'primary'}
+              disabled={submitting}
+              onclick={() => void switchToCash(target)}
+            >
+              <Banknote size={16} class="mr-1.5" />{m.form_view_payment_cash_switch_button()}
+            </Button>
+          {/if}
+        </div>
       </div>
     {/if}
 
@@ -1861,11 +2002,13 @@
             </Button>
           {/if}
         </div>
+        {@render cashWhilePending()}
       </div>
     {:else if paymentPending}
       <p class="text-amber-warn-text mt-2 text-center text-sm font-medium">
         {m.form_view_payment_pending_note()}
       </p>
+      {@render cashWhilePending()}
     {:else if paidOverCapacity}
       <p class="text-amber-warn-text mt-2 text-center text-sm font-medium" role="status">
         {m.form_success_over_capacity_heading()} - {m.form_success_over_capacity_desc()}

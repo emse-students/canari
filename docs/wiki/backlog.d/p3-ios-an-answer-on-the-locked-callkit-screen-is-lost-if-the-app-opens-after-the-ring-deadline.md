@@ -1,6 +1,6 @@
 ## P3 - iOS: an answer on the locked CallKit screen is lost if the app is opened after the ring deadline
 
-target: 1.8.0
+target: 1.9.0
 
 **Seen 2026-11-15 on the iPhone 12** (TestFlight `1.6.12-alpha.2`, dev, app killed, phone locked).
 The member slid to answer at 04:17:30, about 13 s into the ring. CallKit showed the call answered and

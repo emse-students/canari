@@ -1,6 +1,6 @@
 ## CanaReels sent to community salons (RC-8): the salon send path and the salon rows of "Envoyer à..."
 
-target: 1.8.0
+target: 1.10.0
 
 _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 

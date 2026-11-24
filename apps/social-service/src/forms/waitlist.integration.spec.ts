@@ -539,6 +539,46 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
     expect((await status(dave.submissionId)).paymentStatus).toBe('payment_due');
   });
 
+  it('a claimed row expired by the sweep promotes the next in line, and the switch then answers FORM_FULL', async () => {
+    const formId = await paidOnlineForm({
+      allowCashPayment: true,
+      cashPaymentExpiryDays: 3,
+    } as Partial<Form>);
+    const alice: any = await send(formId, ALICE, { payerEmail: 'a@example.org' });
+    expect(alice.checkoutUrl).toBeDefined();
+    const bob: any = await send(formId, BOB);
+    await send(formId, CAROL);
+    expect(bob).toMatchObject({ waiting: true, waitlistRank: 1 });
+    // A switch to cash claimed Alice's row (`claimCashSwitch`), and its hold ran out under it: the
+    // sweep expires the row, clears the claim with it, and hands the place to the first in line.
+    await ds.query(`UPDATE submissions SET "cashSwitchClaimId" = gen_random_uuid() WHERE id = $1`, [
+      alice.submissionId,
+    ]);
+    await pastHold(alice.submissionId);
+    await service.expireStalePendingPayments(await service.pendingHoldCutoff());
+    const [expired] = await ds.query(
+      `SELECT "paymentStatus", "cashSwitchClaimId" FROM submissions WHERE id = $1`,
+      [alice.submissionId]
+    );
+    expect(expired).toEqual({ paymentStatus: 'expired', cashSwitchClaimId: null });
+    expect((await status(bob.submissionId)).paymentStatus).toBe('payment_due');
+    // The switch, pressed now: its request is cancelled at Lydia, and the waiting list goes first -
+    // Bob holds the only place, so the released answer is refused FORM_FULL, never seated over him.
+    (axios.post as jest.Mock).mockImplementationOnce(async () => ({
+      data: { outcome: 'cancelled' },
+    }));
+    expect(
+      await refusal(
+        service.switchToCash({ kind: 'member', submissionId: alice.submissionId, userId: ALICE })
+      )
+    ).toEqual({ status: 400, code: 'FORM_FULL' });
+    expect((await status(alice.submissionId)).paymentStatus).toBe('expired');
+    expect((await status(bob.submissionId)).paymentStatus).toBe('payment_due');
+    expect(await rankOf(formId, CAROL)).toBe(1);
+    // The list is open: Alice joins it by the ordinary send, behind those already waiting.
+    expect(await send(formId, ALICE)).toMatchObject({ waiting: true, waitlistRank: 2 });
+  });
+
   it('a failed promotion rolls back the freeing it follows: a delete, a cancel, an expiry', async () => {
     const formId = await paidOnlineForm({ maxSubmissions: 2 } as Partial<Form>);
     const alice: any = await send(formId, ALICE, { payerEmail: 'a@example.org' });

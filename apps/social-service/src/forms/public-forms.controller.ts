@@ -106,6 +106,21 @@ export class PublicFormsController {
   confirmReceipt(@Body() dto: GuestReceiptDto): Promise<GuestReceiptView> {
     return this.service.confirmGuestReceipt(dto.receipt);
   }
+
+  /**
+   * "PAYER EN DIRECT" FROM THE GUEST RETURN PAGE (owner decision of 2026-11-23): the answer the
+   * RECEIPT proves, whose card payment failed, now waits for cash (`FormsService.switchToCash`) -
+   * by the rules of a direct guest cash answer (a cash deadline, the visitor's ceiling counted on
+   * this address). Answers the receipt's own view (`GuestReceiptView`), never an id. Throttled per
+   * receipt like the confirmation: each switch may ask Lydia to settle the request.
+   */
+  @UseGuards(GuestReceiptThrottlerGuard)
+  @Throttle({ default: { limit: CONFIRM_PAYMENT_PER_MINUTE, ttl: 60_000 } })
+  @Post('receipts/switch-to-cash')
+  @HttpCode(200)
+  switchToCash(@Body() dto: GuestReceiptDto, @Req() req: Request): Promise<GuestReceiptView> {
+    return this.service.switchGuestToCash(dto.receipt, clientAddress(req));
+  }
 }
 
 /** What a guest is answered after a submit: these fields and nothing else. */

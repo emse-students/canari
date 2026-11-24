@@ -77,6 +77,21 @@ export const CONFIRMABLE_PAYMENT_STATUSES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * The statuses a VERIFIED confirm callback still reads the row's own request for: the confirmable
+ * ones plus `pending_cash`. An answer switched to cash (`switchToCash`, owner decision of
+ * 2026-11-23) keeps naming the online request it left, settled dead at Lydia before the switch; a
+ * confirmation of that request is therefore not expected, and if Lydia ever reads it paid all the
+ * same, the money landed and is recorded (`markPaid`: the answer is paid online and its cash hold
+ * ends) rather than lost behind a status nothing reads. A direct cash answer names no request, so
+ * it is never read. The payer's return (`confirmPayment`) keeps the narrower set: a page's poll of a
+ * cash answer asks Lydia nothing.
+ */
+export const CALLBACK_CONFIRMABLE_PAYMENT_STATUSES: ReadonlySet<string> = new Set([
+  ...CONFIRMABLE_PAYMENT_STATUSES,
+  'pending_cash',
+]);
+
+/**
  * What a payment request IS, as core-service's `payments/request-state` classified it at the
  * provider boundary (`CheckoutRequestStateKind` there; Lydia 0 / 1 / 5 / 6, measured on the
  * sandbox). `declined` (the payer refused) and `cancelled-or-expired` are FINAL and leave nothing
@@ -185,6 +200,30 @@ export function livePendingWhere(
     formId,
     paymentStatus: 'pending',
     paymentRequestedAt: Raw((column) => `${column} > ${PENDING_HOLD_CUTOFF_SQL}`),
+  };
+}
+
+/**
+ * The hold cutoff on the WALL clock (`clock_timestamp()`), not the transaction's start (`now()`): for
+ * a decision taken inside a transaction that may have WAITED (on a lock) or CALLED OUT (to Lydia)
+ * since it began, whose answer must be "does the hold still run at this instant". Same interval,
+ * same comparison as {@link PENDING_HOLD_CUTOFF_SQL}; only `switchToCash` reads it.
+ */
+export const PENDING_HOLD_CUTOFF_CLOCK_SQL = `clock_timestamp() - make_interval(secs => ${PENDING_PAYMENT_HOLD_SECONDS})`;
+
+/**
+ * {@link livePendingWhere} judged at THIS instant ({@link PENDING_HOLD_CUTOFF_CLOCK_SQL}): a
+ * `pending` row still within its hold now, however long the transaction asking has run.
+ */
+export function livePendingAtClockWhere(
+  formId: string,
+  extra: FindOptionsWhere<Submission> = {}
+): FindOptionsWhere<Submission> {
+  return {
+    ...extra,
+    formId,
+    paymentStatus: 'pending',
+    paymentRequestedAt: Raw((column) => `${column} > ${PENDING_HOLD_CUTOFF_CLOCK_SQL}`),
   };
 }
 
