@@ -14,7 +14,7 @@
       "origin": "https://cercle.emse.fr",
       "miconnect": true,
       "miconnectApplication": "cercle",
-      "handoff": false,
+      "handoff": true,
       "dests": ["/"]
     },
     {

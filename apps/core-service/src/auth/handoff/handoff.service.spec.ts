@@ -30,8 +30,14 @@ const keyB64 = (curve = 'P-256') =>
     .privateKey.export({ format: 'der', type: 'pkcs8' })
     .toString('base64');
 
+// A fixture of its own, not the contract's flags: Le Cercle stays OFF here so the "flag off" case
+// keeps a real registered site to refuse, whatever the contract file turns on.
 const SITES: EcosystemSiteContract[] = ECOSYSTEM_SITES.map((s) =>
-  s.id === 'migallery' || s.id === 'sky' ? { ...s, handoff: true } : s
+  s.id === 'migallery' || s.id === 'sky'
+    ? { ...s, handoff: true }
+    : s.id === 'le-cercle'
+      ? { ...s, handoff: false }
+      : s
 );
 
 /** MiConnect lets everybody in: the mint's own rules are what these cases pin. */
@@ -161,12 +167,15 @@ describe('HandoffService', () => {
     }
   );
 
-  it('the contract registry mints for MiGallery only (owner, 2026-11-14); every other flag is off', async () => {
+  it('the contract registry mints for MiGallery (owner, 2026-11-14) and Le Cercle (2026-11-23); Sky is off', async () => {
     const service = new HandoffService(undefined, OPEN);
     await expect(service.mint('user-a', 'migallery', '/')).resolves.toMatchObject({
       url: expect.stringMatching(/^https:\/\/gallery\.mitv\.fr\/auth\/handoff#/),
     });
-    for (const aud of ['le-cercle', 'sky']) {
+    await expect(service.mint('user-a', 'le-cercle', '/')).resolves.toMatchObject({
+      url: expect.stringMatching(/^https:\/\/cercle\.emse\.fr\/auth\/handoff#/),
+    });
+    for (const aud of ['sky']) {
       await expect(service.mint('user-a', aud, '/')).rejects.toBeInstanceOf(BadRequestException);
     }
   });

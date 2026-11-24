@@ -1,4 +1,4 @@
-## P2 - one tap from Canari signs the user into its MiConnect sites, and MiGallery's notifications go through Canari (owner, 2026-11-07: decided; Canari's half of the handoff built 2026-11-08, MiGallery's flag ON 2026-11-14, the others OFF)
+## P2 - one tap from Canari signs the user into its MiConnect sites, and MiGallery's notifications go through Canari (owner, 2026-11-07: decided; Canari's half of the handoff built 2026-11-08, MiGallery's flag ON 2026-11-14, Le Cercle's 2026-11-23, Sky's OFF)
 
 target: 1.9.0
 
@@ -49,6 +49,28 @@ production, and core-service logged no `MICONNECT_READER_TOKEN is unset` line ov
 (its #461) ships in its `v2.24.1`, `/auth/handoff` answers 200, and its `hooks.server.ts` refuses
 a state-changing request of a `viaHandoff` session until a fresh MiConnect sign-in. The flag acts
 only from the next Canari stable.
+
+**Le Cercle's three conditions, read 2026-11-23** (owner's order of 2026-11-19, the lead's flip in
+Canari's draft pull request): (1) F3-bound reads the application `cercle` at every mint, as for
+MiGallery (the reader's grant on it is in `60-applications.yaml`); (2) `miconnect-cercle`'s
+`sub_mode` was read `hashed_user_id` by H0 on 2026-11-11 (section 9) - `50-providers.yaml` names no
+`sub_mode` for any provider, so the blueprint leaves the live value as it is and pins nothing; (3)
+Le Cercle's redemption is `rootz/le-cercle` !41 (draft): the vendored verifier and vectors, the
+interstitial always, the `handoff_redemptions` ledger, admission F1 on the existing row (an unknown
+or deleted account goes through MiConnect), the session opened by the SAME `openSession` its
+MiConnect callback now calls, marked `sessions.via_handoff`, and a DEFAULT-DENY step-up: every
+`POST`/`PUT`/`PATCH`/`DELETE` of a marked session, form actions included, is refused until a
+MiConnect sign-in - the till, krach, forum prices, roles, the membership resync, the account
+deletion, the ledger and every `/gestion` write, enumerated from its route tree by its
+`step-up.test.ts`; exempt only `/auth/logout`, the redemption and the CSP report. **Condition 3 is
+met only once !41 is merged, the two CI variables (`CANARI_HANDOFF_ISSUER`, `CANARI_HANDOFF_JWKS`)
+are set and its `/auth/handoff` answers 200 in production; Canari's pull request stays a draft
+until then.** Le Cercle is on GitLab, so `shape.mjs` claim 6 does not compare its vendored copies;
+its own vector test is the guard (section 4).
+
+**Portail-etu is out of scope, measured 2026-11-23:** it has no sign-in at all - no OIDC client, no
+session, no provider in `50-providers.yaml`, and its only state-changing route is the CSP report -
+so there is nothing to hand off to, and its registry entry stays `miconnect: false`.
 
 Two notes from the review of the flip (#3575), neither blocking: MiGallery's admin
 `login-as` / `stop-impersonating` are GET routes, so the step-up (which guards every non-GET of a
