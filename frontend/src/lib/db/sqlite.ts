@@ -1013,9 +1013,10 @@ export class SqliteStorage implements IStorage {
   }
 
   /**
-   * The two steps a move adds to the compare-and-set. `rekeyAbsent`: ONE `UPDATE OR IGNORE` re-keys
-   * every named row the destination does not hold - one statement, atomic, the largest unit the
-   * plugin gives (`sqliteBatch.ts`) - and what is still under the source afterwards is what collided.
+   * The two steps a move adds to the compare-and-set. `rekeyAbsent`: ONE `UPDATE OR IGNORE ...
+   * RETURNING id` re-keys every named row the destination does not hold and names exactly those -
+   * one statement, atomic, the largest unit the plugin gives (`sqliteBatch.ts`) - and what is still
+   * under the source afterwards is what collided.
    * `deleteIfUnchanged`: one statement per row, matching its revision and iv.
    */
   private movableRows() {
@@ -1024,22 +1025,22 @@ export class SqliteStorage implements IStorage {
         const moved: string[] = [];
         const collided: string[] = [];
         for (const batch of chunk([...new Set(ids)], MAX_BOUND_PARAMETERS - 2)) {
-          const placeholders = batch.map((_, i) => `$${i + 2}`).join(', ');
-          const before: Array<{ id: string }> = await this.db.select(
-            `SELECT id FROM messages WHERE conversation_id = $1 AND id IN (${placeholders})`,
-            [from, ...batch]
-          );
           const movePlaceholders = batch.map((_, i) => `$${i + 3}`).join(', ');
-          await this.db.execute(
-            `UPDATE OR IGNORE messages SET conversation_id = $2, rev = rev + 1 WHERE conversation_id = $1 AND id IN (${movePlaceholders})`,
+          // `RETURNING` names exactly the rows this statement re-keyed, nothing a concurrent
+          // writer did: run through `select`, the plugin's call that hands rows back.
+          const rekeyed: Array<{ id: string }> = await this.db.select(
+            `UPDATE OR IGNORE messages SET conversation_id = $2, rev = rev + 1 WHERE conversation_id = $1 AND id IN (${movePlaceholders}) RETURNING id`,
             [from, to, ...batch]
           );
-          const after: Array<{ id: string }> = await this.db.select(
+          moved.push(...rekeyed.map((r) => String(r.id)));
+          // What is still under `from` held the destination's key. A row deleted since is simply
+          // absent from the read that follows, and the move lets it go.
+          const placeholders = batch.map((_, i) => `$${i + 2}`).join(', ');
+          const still: Array<{ id: string }> = await this.db.select(
             `SELECT id FROM messages WHERE conversation_id = $1 AND id IN (${placeholders})`,
             [from, ...batch]
           );
-          const still = new Set(after.map((r) => String(r.id)));
-          for (const { id } of before) (still.has(String(id)) ? collided : moved).push(String(id));
+          collided.push(...still.map((r) => String(r.id)));
         }
         return { moved, collided };
       },

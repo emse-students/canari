@@ -1260,6 +1260,11 @@ export class IndexedDbStorage implements IStorage {
                   return;
                 }
                 if (!guardedPut(store, { ...row, conversationId: to, rev: revisionOf(row) + 1 })) {
+                  // The transaction is ABORTED: none of this call's writes land, `moved` included,
+                  // and `rekeyAbsent` rejects - the move fails whole, every row where it was.
+                  console.error(
+                    `[IDB] re-key of message ${id.slice(0, 8)}... refused - the move is abandoned, nothing moved`
+                  );
                   return;
                 }
                 store.delete([from, id]);

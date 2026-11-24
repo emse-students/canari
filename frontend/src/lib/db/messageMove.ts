@@ -15,8 +15,9 @@ import type { MessageMove, StoredMessage } from './types';
  * through the compare-and-set, and only then deleted, and only while it is still the row that was
  * read. A row one side cannot open is never united and never deleted: it stays where it is.
  *
- * TERMINATION IS A PROOF, as in the compare-and-set (`messageCas.ts`): a round repeats for a row only
- * when another writer committed to its source between this round's read and its delete.
+ * TERMINATION IS A PROOF, as in the compare-and-set (`messageCas.ts`): a round repeats for a row
+ * when another writer committed to its source between this round's read and its delete, and at
+ * most ONCE for a row not united - a side that does not open, or a row deleted since the re-key.
  */
 
 /** What a backend provides for {@link moveMessageRows}, beyond the compare-and-set's own two halves. */
@@ -48,6 +49,10 @@ export async function moveMessageRows(
   const out: MessageMove = { moved: [], alreadyThere: [], kept: [] };
   let pending = [...new Set(ids)];
   if (pending.length === 0 || from === to) return out;
+  // An id that collided and was not united, already sent back through `rekeyAbsent` once.
+  const retried = new Set<string>();
+  let keptSourceSealed = 0;
+  let keptTargetSealed = 0;
   let round = 0;
   while (pending.length > 0) {
     round++;
@@ -71,19 +76,40 @@ export async function moveMessageRows(
       })
     );
     out.alreadyThere.push(...deleted);
-    // A row one side cannot open is neither united nor deleted - it stays under `from`.
-    out.kept.push(...collided.filter((id) => !united.has(id)));
+    // Not united: a side that does not open, OR a row deleted since `rekeyAbsent` saw it (the
+    // destination's, so the source now moves; the source's, so nothing is left to move). The read
+    // cannot tell them apart, so the id goes back through `rekeyAbsent` ONCE, which settles the
+    // second and third. Collided again and still not united, a side really does not open: it
+    // stays under `from`. One retry per id, so this ends.
+    const notUnited = collided.filter((id) => !united.has(id));
+    const retry: string[] = [];
+    for (const id of notUnited) {
+      if (!retried.has(id)) {
+        retried.add(id);
+        retry.push(id);
+        continue;
+      }
+      out.kept.push(id);
+      if (sources.has(id)) keptTargetSealed++;
+      else keptSourceSealed++;
+    }
     // Written to since it was read: read, united and deleted again.
-    pending = [...united].filter((id) => !deleted.has(id));
-    if (pending.length > 0) {
+    const changed = [...united].filter((id) => !deleted.has(id));
+    if (changed.length > 0) {
       console.debug(
-        `[DB] move round ${round}: ${pending.length} source row(s) of ${from.slice(0, 8)}... changed since read - united again`
+        `[DB] move round ${round}: ${changed.length} source row(s) of ${from.slice(0, 8)}... changed since read - united again`
       );
     }
+    if (retry.length > 0) {
+      console.debug(
+        `[DB] move round ${round}: ${retry.length} row(s) of ${from.slice(0, 8)}... not united (a side unopened, or deleted since the re-key) - re-keyed again`
+      );
+    }
+    pending = [...changed, ...retry];
   }
   if (out.kept.length > 0) {
     console.warn(
-      `[DB] ${out.kept.length} message row(s) of ${from.slice(0, 8)}... NOT moved to ${to.slice(0, 8)}...: both hold the id and one side does not open on this device - left under ${from.slice(0, 8)}...`
+      `[DB] ${out.kept.length} message row(s) of ${from.slice(0, 8)}... NOT moved to ${to.slice(0, 8)}...: both hold the id and one side does not open on this device (${keptSourceSealed} source, ${keptTargetSealed} destination) - left under ${from.slice(0, 8)}...`
     );
   }
   console.debug(

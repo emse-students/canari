@@ -349,6 +349,35 @@ describe.each(backends)('%s - moveMessages', (_name, open) => {
   });
 });
 
+describe('IndexedDbStorage - a re-key the store refuses', () => {
+  it('rejects the move whole: no row reported, every row where it was', async () => {
+    const { storage } = await idbRig();
+    await twoConversations(storage);
+    await storage.saveMessages(
+      [row(A, 'first', { id: 'm1' }), row(A, 'second', { id: 'm2' })],
+      KEY
+    );
+    const put = IDBObjectStore.prototype.put;
+    vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementation(function (
+      this: IDBObjectStore,
+      value: unknown,
+      key?: IDBValidKey
+    ) {
+      if ((value as { id?: string }).id === 'm2')
+        throw new DOMException('full', 'QuotaExceededError');
+      return put.call(this, value, key);
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    await expect(storage.moveMessages(A, B, ['m1', 'm2'], KEY)).rejects.toBeDefined();
+    vi.mocked(IDBObjectStore.prototype.put).mockRestore();
+
+    expect(await storage.getMessage(A, 'm1', KEY)).toMatchObject({ content: 'first' });
+    expect(await storage.getMessage(A, 'm2', KEY)).toMatchObject({ content: 'second' });
+    expect(await storage.getMessage(B, 'm1', KEY)).toBeNull();
+  });
+});
+
 describe('SQLite v22 -> v23: the messages table re-keyed by its conversation', () => {
   /** The `messages` table every build up to v22 created: keyed by the id alone. */
   const V22_MESSAGES = `
