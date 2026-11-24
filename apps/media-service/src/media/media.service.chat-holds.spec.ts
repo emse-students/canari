@@ -307,6 +307,20 @@ describe('one file, two holds: published on CanaReels and sent to conversations'
     expect(deleted).toEqual([FILE]);
     expect(items[FILE].purgeReason).toBe('reel_moderated');
     expect((await service.download(FILE)).status).toBe('purged');
+    // NEVER "expired": a publisher told so would upload moderated content again.
+    expect((await service.claimReels([FILE], ALICE)).expired).toEqual([]);
+  });
+
+  it('a published reel whose chat hold lapsed after its post ended is refused, never expired', async () => {
+    const { service, items } = await publishedAndSent();
+    await service.purgeReels([{ mediaId: FILE, ownerId: ALICE }], 'retention', NOW + WINDOW + DAY);
+    expect(items[FILE].purgeReason).toBe('reel_expired');
+    // A claimed `reel`, not a pending upload: no upload of it is owed again.
+    expect(await service.claimReels([FILE], ALICE)).toEqual({
+      claimed: [],
+      refused: [FILE],
+      expired: [],
+    });
   });
 
   it("goes AT ONCE on a salon moderator's purge, and reads 410 after", async () => {
@@ -360,6 +374,9 @@ describe("the sender's delete of a chats-only file", () => {
     expect(await service.removeChatReel(CHAT_ONLY, ALICE)).toBe('deleted');
     expect(deleted).toEqual([CHAT_ONLY]);
     expect((await service.download(CHAT_ONLY)).status).toBe('purged');
+    // The sender took it back: refused to a claim, never "expired".
+    expect(items[CHAT_ONLY].purgeReason).toBe('reel_deleted');
+    expect((await service.claimReels([CHAT_ONLY], ALICE)).expired).toEqual([]);
   });
 
   it("refuses a feed reel nobody sent, and somebody else's held file", async () => {

@@ -86,9 +86,12 @@ describe('PublishScreenHold', () => {
   });
 
   it('a want born on a hidden page is not asked until the page is visible', () => {
-    const { hold, screen, visible } = holdOver({ on: false });
+    const { hold, screen, visible, logs } = holdOver({ on: false });
     hold.rows([row('uploading')]);
     expect(screen.asked).toBe(0);
+    // Never said "held" while nothing is: the line says it is only wanted.
+    expect(logs.some((l) => l.includes('held on:'))).toBe(false);
+    expect(logs.some((l) => l.includes('screen wanted on, NOT held'))).toBe(true);
     visible.on = true;
     hold.becameVisible();
     expect(screen.asked).toBe(1);

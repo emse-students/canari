@@ -220,6 +220,12 @@ Four consequences, all of which matter and none of which are obvious:
   service answers `410` with `purgeReason = retention_expired` and all four media surfaces render an
   expired state (`isMediaPurgedError`). **The label names no number**, because a message rendered
   today may be explaining an object swept under a different window.
+- **What a tombstone keeps (review of #4055).** Every purge writes its tombstone through ONE builder,
+  `tombstoneOf`. A purge BY TIME (`retention_expired`, `reel_expired`) keeps `ownerId` and
+  `retentionClass`, so the reel claim can answer the uploader that their own pending upload
+  `expired` (social-service turns it into `reel_media_expired`, and the publish queue uploads the
+  file again). A delete, a moderation or an erasure keeps neither, and the account erasure strips
+  the owner from the time-purge tombstones it finds. Tombstones count toward no daily upload bound.
 
 The index is a **JSON file** (`media_meta/media_metadata.json`), not a database table. If it is lost,
 `download()`'s `setAccess` re-creates the entry with `createdAt = now`, silently restarting every

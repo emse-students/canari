@@ -68,10 +68,15 @@ export class PublishScreenHold {
     this.wanted = hold;
     if (hold) {
       // Asked only on screen: a hidden page is refused the lock, and `becameVisible` asks again.
-      if (this.isVisible()) void this.screen.hold();
-      this.log(
-        `[PUBLISH-QUEUE] screen held on: ${holdWhy}${this.isVisible() ? '' : ' (asked once back on screen)'}`
-      );
+      // Said as it is: on a hidden page nothing is held yet, only wanted.
+      if (this.isVisible()) {
+        void this.screen.hold();
+        this.log(`[PUBLISH-QUEUE] screen held on: ${holdWhy}`);
+      } else {
+        this.log(
+          `[PUBLISH-QUEUE] screen wanted on, NOT held: ${holdWhy} while the page is hidden - asked once back on screen`
+        );
+      }
     } else {
       this.screen.release();
       this.log(`[PUBLISH-QUEUE] screen released: ${releaseWhy}`);

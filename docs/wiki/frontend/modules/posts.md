@@ -592,7 +592,8 @@ on each return to visible while wanted, never once per progress row (a refused l
 ask, and the runner draws a row per uploaded part). Nothing working - every post waiting, paused,
 stopped, or none - releases it, and so does EVERY end of the pass (`passEnded`, from `drain()`'s
 `finally`: an emptied queue, a `halt`, an unexpected error, a last post gone with no row drawn
-after it) and a sign-out. One line per change (`[PUBLISH-QUEUE] screen held on` / `released`).
+after it) and a sign-out. One line per change (`[PUBLISH-QUEUE] screen held on` / `released`; on a
+hidden page `screen wanted on, NOT held`, since nothing is asked until the page is back).
 
 **The CanaReels camera publishes through this queue (2026-11-24).** Its take is queued with
 `QueuedMedia.take` - the cap, the removed sound, the trim to the picture, prepared under the encoder
@@ -604,14 +605,18 @@ ADOPTS the file and its wait ends (`handOverTake`, `takeHandedOver` written so a
 tells it twice; the outbox answers `adopted`, `declined` or `forwarded`, and the line says which);
 a post that stops, is paused or deleted, or a sign-out, ends the wait instead, and the take uploads
 its own. **A post a chat take waits on goes before older posts** in the pass (until it is handed
-over), so a slow post queued earlier never holds the conversations; and an estate that does not
+over), so a slow post queued earlier never holds the conversations - which means a CanaReel sent
+to chats can appear in the feed BEFORE a composer post queued before it; and an estate that does not
 serve the queue (`publishQueue` absent from `/api/version`) hands the take over at once, durably,
 since no row would move there. A withdrawal names only the `archive` media: media-service refuses
 any other class there, and a `reel-pending` file is ended by its 24 h sweep or kept by the chat
 hold. **A create delayed past the `reel-pending` window** (a post paused, failed or offline that
 long) is refused at the claim with a TYPED `400`, `reel_media_expired` (social-service, only when
 every refused file is the author's own pending upload that expired - media-service's `claimReels`
-now answers `expired` beside `refused`): the queue clears that media's ref and session and uploads
+now answers `expired` beside `refused`, read from the object's state or, once the sweep took it,
+from its tombstone - a purge BY TIME (`retention_expired`, `reel_expired`) keeps the owner and the
+class there, built by the one `tombstoneOf`; a delete, a moderation or an erasure keeps neither, so a
+moderated file is never "expired" and never uploaded again): the queue clears that media's ref and session and uploads
 the same prepared file again (`uploadAgain`), never re-sending the dead reference; any other
 refusal stays the failure it is. **On the web with two tabs** the take's wait lives in the outbox
 LEADER: a runner tab that is a follower forwards the end of the wait (`outbox_reel_take_end_wait`)
