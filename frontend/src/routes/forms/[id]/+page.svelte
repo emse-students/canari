@@ -31,6 +31,7 @@
     type ResumableAnswer,
   } from '$lib/forms/api';
   import { failedPaymentOffer } from '$lib/forms/paymentResume';
+  import { overCapacityDescription } from '$lib/forms/paymentReturn';
   import { intlLocale } from '$lib/utils/intlLocale';
   import {
     PAYMENT_DUE_STATUS,
@@ -182,6 +183,8 @@
   const updatesOnReturn = isMobileTauri();
   /** The payment landed after the form filled up: final, and the organiser owes a refund. */
   let paidOverCapacity = $state(false);
+  /** That payer is on the form's waiting list: their place is kept, nothing more is charged. */
+  let paidOverCapacityInLine = $state(false);
   /**
    * The caller's answer whose payment ended without money and may be paid again, as the server
    * named it (`GET forms/:id/check`), or null. "Reprendre le paiement" pays THAT answer, not a new one.
@@ -434,6 +437,7 @@
     paymentRetry = null;
     pendingCheckout = null;
     paidOverCapacity = false;
+    paidOverCapacityInLine = false;
     resumable = null;
     waitlist = null;
     ownStatus = null;
@@ -694,7 +698,12 @@
     pendingCheckout = {
       submissionId,
       checkoutUrl,
-      reader: createPaymentReader(() => confirmSubmissionPayment(submissionId)),
+      reader: createPaymentReader(() =>
+        confirmSubmissionPayment(submissionId).then((answer) => {
+          paidOverCapacityInLine = answer.waitlisted === true;
+          return answer;
+        })
+      ),
     };
   }
 
@@ -2011,7 +2020,7 @@
       {@render cashWhilePending()}
     {:else if paidOverCapacity}
       <p class="text-amber-warn-text mt-2 text-center text-sm font-medium" role="status">
-        {m.form_success_over_capacity_heading()} - {m.form_success_over_capacity_desc()}
+        {m.form_success_over_capacity_heading()} - {overCapacityDescription(paidOverCapacityInLine)}
       </p>
     {:else if paymentRetry && !submitted}
       <p class="text-amber-warn-text mt-2 text-center text-sm font-medium" role="status">

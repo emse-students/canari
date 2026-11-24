@@ -883,6 +883,8 @@ export async function getSubmissionPayment(submissionId: string): Promise<{
   paymentStatus: string;
   /** The request's state, typed, when the server read it on this call. */
   requestState?: PaymentRequestState;
+  /** Paid over capacity by a payer on the waiting list: their place in line is kept. */
+  waitlisted?: true;
 }> {
   const res = await apiFetch(
     `${socialUrl()}/api/forms/submissions/${encodeURIComponent(submissionId)}`
@@ -904,6 +906,8 @@ export async function confirmSubmissionPayment(submissionId: string): Promise<{
   paymentStatus: string;
   /** The request's state, typed, when the server read it on this call. */
   requestState?: PaymentRequestState;
+  /** Paid over capacity by a payer on the waiting list: their place in line is kept. */
+  waitlisted?: true;
 }> {
   const res = await apiFetch(
     `${socialUrl()}/api/forms/submissions/${encodeURIComponent(submissionId)}/confirm-payment`,

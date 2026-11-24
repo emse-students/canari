@@ -5453,7 +5453,19 @@ export class FormsService {
   private async submitterAnswer(submission: Submission) {
     const form = await this.formRepo.findOne({ where: { id: submission.formId } });
     const { id, formId, totalPaid, paymentStatus } = toSubmitterView(submission);
-    return { id, formId, totalPaid, currency: form?.currency ?? 'eur', paymentStatus };
+    // A payment over capacity by a member on the form's waiting list keeps their place, and their
+    // turn converts this answer with nothing more charged (`payerWaitsInLine`): the page says so
+    // instead of "ask for a refund". A guest never waits, and its receipt view drops the field.
+    const waitlisted =
+      paymentStatus === 'paid_over_capacity' && (await this.payerWaitsInLine(submission));
+    return {
+      id,
+      formId,
+      totalPaid,
+      currency: form?.currency ?? 'eur',
+      paymentStatus,
+      ...(waitlisted ? { waitlisted: true as const } : {}),
+    };
   }
 
   /**

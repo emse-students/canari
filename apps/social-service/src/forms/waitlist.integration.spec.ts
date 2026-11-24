@@ -775,6 +775,11 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
     await service.markPaid(alice.submissionId);
     expect((await status(alice.submissionId)).paymentStatus).toBe('paid_over_capacity');
     expect((await status(again.submissionId)).paymentStatus).toBe('waiting');
+    // Her return pages say so: her place in line is kept, nothing more charged - not "ask a refund".
+    expect(await service.getSubmissionById(alice.submissionId)).toMatchObject({
+      paymentStatus: 'paid_over_capacity',
+      waitlisted: true,
+    });
     // Bob does not pay: his place is hers. Her PAID answer becomes the registration - no second
     // charge, no payment owed - and her waiting answer is gone.
     const before = issued;
@@ -783,6 +788,7 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
     await noticesLand();
     expect((await status(alice.submissionId)).paymentStatus).toBe('paid');
     expect((await status(alice.submissionId)).promotedAt).not.toBeNull();
+    expect((await service.getSubmissionById(alice.submissionId)).waitlisted).toBeUndefined();
     expect(await status(again.submissionId)).toBeUndefined();
     expect(issued).toBe(before);
     expect(pushes).toEqual([

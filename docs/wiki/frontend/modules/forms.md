@@ -3383,7 +3383,10 @@ only if they are never promoted, and that is what is SAID: the WARN of `markPaid
 alert (`FormOrganiserAlertService.tell(form, { payerInLine })`: the bell row carries
 `meta.payerInLine` and reads `notif_form_paid_over_capacity_waitlisted_text`, the push its own key
 `form_paid_over_capacity_waitlisted`, native strings shipped with the list) say the place is kept and a
-refund is due only if they are never promoted. The retry runs the grant with the row's OWN payment
+refund is due only if they are never promoted; the payer's own pages say it too (`waitlisted` on the
+submitter's answer, `overCapacityDescription` in `paymentReturn.ts`: `/forms/success`, `/forms/cancel`
+and the form page read `form_success_over_capacity_waitlisted_desc` - the place is kept, nothing more
+charged at the promotion; a guest never waits, so its receipt keeps its own sentence). The retry runs the grant with the row's OWN payment
 method (a cash promotee validated by hand says cash). Confirmed by the owner on 2026-11-24. Before, the late payment
 deleted the waiting answer: the person who had paid lost their place AND was owed a refund.
 

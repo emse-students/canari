@@ -2968,6 +2968,7 @@
   "form_success_back_to_forms": "Retour aux formulaires",
   "form_success_over_capacity_heading": "Paiement reçu, formulaire complet",
   "form_success_over_capacity_desc": "Votre paiement est arrivé après la libération de votre place, et le formulaire s'est rempli entre-temps. Votre paiement apparaît en tête des réponses de l'organisateur : contactez-le pour le remboursement.",
+  "form_success_over_capacity_waitlisted_desc": "Votre paiement est arrivé après la libération de votre place, et le formulaire s'est rempli entre-temps. Vous gardez votre place sur la liste d'attente : quand une place se libère pour vous, ce paiement devient votre inscription, sans rien payer de plus.",
   "form_list_title": "Mes formulaires",
   "form_list_count": "{count} formulaires",
   "form_list_count_one": "1 formulaire",
