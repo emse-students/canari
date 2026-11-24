@@ -532,3 +532,24 @@ describe('the suggestion a share arrives with', () => {
     expect(suggestionIfHeld(null, held)).toBeNull();
   });
 });
+
+describe('the erase says its outcome at a level the exported log keeps (iPhone 12, 1.8.0-alpha.6)', () => {
+  it('a performed erase is INFO, never DEBUG, and a skipped one is INFO too', async () => {
+    const { Log } = await import('$lib/utils/Log');
+    const info = vi.spyOn(Log, 'i').mockImplementation(() => {});
+    const debug = vi.spyOn(Log, 'd').mockImplementation(() => {});
+    platform = 'ios';
+    invoke.mockImplementation(async (cmd: string) => (cmd === OWED ? null : 0));
+    await eraseAccountShortcuts('signed out');
+    const said = info.mock.calls.map(([, m]) => String(m));
+    expect(said.some((m) => m.includes('conversation shortcuts erased'))).toBe(true);
+    expect(debug.mock.calls.some(([, m]) => String(m).includes('shortcuts erased'))).toBe(false);
+    info.mockClear();
+    await honourOwedNotificationErase('launch');
+    expect(
+      info.mock.calls.some(([, m]) => String(m).includes('no conversation shortcuts erase owed'))
+    ).toBe(true);
+    info.mockRestore();
+    debug.mockRestore();
+  });
+});

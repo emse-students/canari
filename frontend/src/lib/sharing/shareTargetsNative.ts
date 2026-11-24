@@ -202,7 +202,7 @@ export function clearShareTargets(
       const removed = await invoke<number>(galleryCommand('clearShareTargets'));
       lastPublished = NOTHING;
       lastTargets = [];
-      Log.d('ShareTargets', `cleared ${removed} (${reason})`);
+      Log.i('ShareTargets', `cleared ${removed} (${reason})`);
     } catch (err) {
       lastPublished = null;
       lastTargets = null;
@@ -286,7 +286,7 @@ function eraseNotificationShortcuts(
     }
     if (!readFailed && owed === null) {
       if (when === 'if-owed') {
-        Log.d('ShareTargets', `no conversation shortcuts erase owed (${reason})`);
+        Log.i('ShareTargets', `no conversation shortcuts erase owed (${reason})`);
         return;
       }
       if (ticket !== null) {
@@ -300,7 +300,7 @@ function eraseNotificationShortcuts(
     try {
       const removed = await invoke<number>(galleryCommand('clearConversationShortcuts'));
       // iOS deletes a donation group without counting it, so it always answers 0.
-      Log.d('ShareTargets', `conversation shortcuts erased, ${removed} counted (${reason})`);
+      Log.i('ShareTargets', `conversation shortcuts erased, ${removed} counted (${reason})`);
     } catch (err) {
       console.error(
         `[share-targets] the conversation shortcuts were not erased - still owed (${reason})`,
