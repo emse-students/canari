@@ -36,6 +36,7 @@ import { PurchaseRecordService } from '../users/purchase-record.service';
 import { FormsService } from './forms.service';
 import { GUEST_RECEIPT_NOT_FOUND, hashGuestReceipt } from './guest-receipt';
 import { GUEST_PENDING_CEILING, GUEST_PENDING_LIMIT, guestVisitorKey } from './guest-visitor';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -335,6 +336,8 @@ maybe('a guest who pays, against PostgreSQL (migrations 103, 104 and 105)', () =
       }
       // Nothing was asked of the provider for any of them.
       expect(stateReads).toBe(reads);
+
+      takeLogged('warn', '[Forms] guest receipt refused: it matches no answer', 9);
     });
 
     // ATTACK 2 - a receipt replayed after settlement does nothing more. Control (2026-10-22):
@@ -423,6 +426,12 @@ maybe('a guest who pays, against PostgreSQL (migrations 103, 104 and 105)', () =
       await expect(submitAs(await publicPaidForm(null), address)).resolves.toHaveProperty(
         'checkoutUrl'
       );
+
+      takeLogged(
+        'warn',
+        /^\[Forms\] guest answer refused on form=[0-9a-f]{6,8}: this visitor already has 3 answers waiting for payment \(ceiling 3\)$/,
+        5
+      );
     });
 
     it('frees a place as soon as a waiting answer is paid or past its hold - no job needed', async () => {
@@ -445,6 +454,12 @@ maybe('a guest who pays, against PostgreSQL (migrations 103, 104 and 105)', () =
       );
       await expect(submitAs(formId, address)).resolves.toHaveProperty('checkoutUrl');
       await expect(submitAs(formId, address)).rejects.toMatchObject({ status: 429 });
+
+      takeLogged(
+        'warn',
+        /^\[Forms\] guest answer refused on form=[0-9a-f]{6,8}: this visitor already has 3 answers waiting for payment \(ceiling 3\)$/,
+        2
+      );
     });
 
     // Control (2026-10-22): the `paymentStatus NOT IN` clause removed -> the waiting rows lost their

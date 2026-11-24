@@ -43,6 +43,7 @@ import {
   TagHeldByAnotherIssuerError,
   UserTagService,
 } from './user-tag.service';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -272,6 +273,11 @@ RESET lock_timeout;`
       await expect(refused).rejects.toBeInstanceOf(ForbiddenException);
       await notATier(refused);
       expect(await rowsOf(user)).toEqual([]);
+
+      takeLogged(
+        'warn',
+        /^\[UserTag\] raw grant of "cotisant:scope-it-b" refused for assoc=[0-9a-f]{6,8}: not one of its cotisation tier tags$/
+      );
     });
 
     it('refuses a name that is none of its own tier tags', async () => {
@@ -288,6 +294,15 @@ RESET lock_timeout;`
         tags.grantTagForAssociation(OWN, { userId: user, tagName: 'vip:scope-it', grantedBy: 'it' })
       );
       expect(await rowsOf(user)).toEqual([]);
+
+      takeLogged(
+        'warn',
+        /^\[UserTag\] raw grant of "cotisant:scope-it-annexe" refused for assoc=[0-9a-f]{6,8}: not one of its cotisation tier tags$/
+      );
+      takeLogged(
+        'warn',
+        /^\[UserTag\] raw grant of "vip:scope-it" refused for assoc=[0-9a-f]{6,8}: not one of its cotisation tier tags$/
+      );
     });
 
     it('grants one of its own tier tags, issued by itself, and that tag then holds the tier', async () => {
@@ -387,6 +402,15 @@ RESET lock_timeout;`
         ]);
         expect(record.status).toBe('paid_not_granted');
         await unchanged(user);
+
+        takeLogged(
+          'error',
+          /^\[UserTag\] grant of cotisant:scope-it-a to scope-user-\d+ by assoc=[0-9a-f-]{36} NOT written: the user holds that name under another issuer$/
+        );
+        takeLogged(
+          'error',
+          /^\[SHOP\] checkout [0-9a-f]{6,8}: paid tier product=[0-9a-f]{6,8} NOT granted - user=scope-us holds its tag name under another issuer; a refund or a fix is owed$/
+        );
       });
 
       it('a cash sale is refused 409 and records nothing', async () => {
@@ -407,6 +431,11 @@ RESET lock_timeout;`
           await ds.query(`SELECT 1 FROM purchase_records WHERE "userId" = $1`, [user])
         ).toEqual([]);
         await unchanged(user);
+
+        takeLogged(
+          'error',
+          /^\[UserTag\] grant of cotisant:scope-it-a to scope-user-\d+ by assoc=[0-9a-f-]{36} NOT written: the user holds that name under another issuer$/
+        );
       });
 
       it("a paid form's grant answers the refusal", async () => {
@@ -416,6 +445,11 @@ RESET lock_timeout;`
           refused: TAG_HELD_BY_ANOTHER_ISSUER,
         });
         await unchanged(user);
+
+        takeLogged(
+          'error',
+          /^\[UserTag\] grant of cotisant:scope-it-a to scope-user-\d+ by assoc=[0-9a-f-]{36} NOT written: the user holds that name under another issuer$/
+        );
       });
 
       it('the manual add, the legacy claim and the raw grant are refused 409', async () => {
@@ -427,6 +461,12 @@ RESET lock_timeout;`
           tags.grantTagForAssociation(OWN, { userId: user, tagName: TAG_A, grantedBy: 'it' })
         );
         expect(await rowsOf(user)).toEqual([{ tagName: TAG_A, issuingAssocId: issuer }]);
+
+        takeLogged(
+          'error',
+          /^\[UserTag\] grant of cotisant:scope-it-a to scope-user-\d+ by assoc=[0-9a-f-]{36} NOT written: the user holds that name under another issuer$/,
+          3
+        );
       });
     });
   });
@@ -441,6 +481,11 @@ RESET lock_timeout;`
       await disabled(products.createCheckoutSession(DISABLED, DISABLED_TIER, user));
       expect(await ds.query(`SELECT 1 FROM product_checkouts WHERE "userId" = $1`, [user])).toEqual(
         []
+      );
+
+      takeLogged(
+        'warn',
+        "[SHOP] refused (COTISATION_DISABLED): membership product=00000000 of assoc=00000000: This association's cotisations are disabled: the product cannot be sold."
       );
     });
 
@@ -463,6 +508,11 @@ RESET lock_timeout;`
       expect(await ds.query(`SELECT 1 FROM purchase_records WHERE "userId" = $1`, [user])).toEqual(
         []
       );
+
+      takeLogged(
+        'warn',
+        "[SHOP] refused (COTISATION_DISABLED): membership product=00000000 of assoc=00000000: This association's cotisations are disabled: the product cannot be sold."
+      );
     });
 
     it('a payment already taken is recorded paid but not granted, and grants nothing', async () => {
@@ -476,6 +526,15 @@ RESET lock_timeout;`
       ]);
       expect(record.status).toBe('paid_not_granted');
       expect(await rowsOf(user)).toEqual([]);
+
+      takeLogged(
+        'warn',
+        /^\[SHOP\] membership product=[0-9a-f]{6,8} of an association with no cotisation mode - no tag granted$/
+      );
+      takeLogged(
+        'error',
+        /^\[SHOP\] membership product=[0-9a-f]{6,8} resolves to no tag - payment by user=scope-us recorded paid but NOT granted; a refund or a grant is owed$/
+      );
     });
   });
 
@@ -494,6 +553,10 @@ RESET lock_timeout;`
       await expect(assertCotisationStemFree(ds.manager, asking, stem)).rejects.toMatchObject({
         response: { code: COTISATION_TAG_COLLISION },
       });
+      takeLogged(
+        'warn',
+        `[COTISATION] stem "${stem}" refused for assoc=${asking ? asking.slice(0, 8) : 'new'}: its tag names can coincide with another association's`
+      );
     });
 
     it('accepts a stem that only extends another one, and its own stems', async () => {
@@ -514,6 +577,11 @@ RESET lock_timeout;`
         TIER_C,
       ]);
       expect(row.variantKey).toBe('c');
+
+      takeLogged(
+        'warn',
+        /^\[COTISATION\] stem "scope-it-annexe" refused for assoc=[0-9a-f]{6,8}: its tag names can coincide with another association's$/
+      );
     });
   });
 
@@ -534,6 +602,11 @@ RESET lock_timeout;`
       TIER_C,
     ]);
     expect(row.variantKey).toBe('c');
+
+    takeLogged(
+      'warn',
+      '[COTISATION] retag "cotisant:scope-it-c" -> "cotisant:scope-it-c2" refused: a holder already has a row of the new name'
+    );
   });
 
   it("an update cannot type a membership product's granted tag: the derived one stays", async () => {

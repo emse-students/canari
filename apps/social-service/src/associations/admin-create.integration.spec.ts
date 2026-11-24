@@ -29,6 +29,7 @@ import { AssociationAudience } from '../spaces/association-audience.entity';
 import { Space } from '../spaces/space.entity';
 import { ADMIN_ASSOCIATION_ERROR } from './admin-catalogue';
 import { AUDIENCE_ERROR } from '../spaces/audience-policy';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -110,7 +111,7 @@ maybe('platform admin create and catalogue against PostgreSQL', () => {
       unused,
       unused,
       unused,
-      unused, // redis: the post-cache sweep after addMember is caught and logged
+      { incr: () => Promise.resolve(1), deleteByPattern: () => Promise.resolve(0) } as never, // redis: the post-cache sweep after addMember
       unused,
       unused,
       unused,
@@ -172,6 +173,8 @@ maybe('platform admin create and catalogue against PostgreSQL', () => {
       response: { code: ADMIN_ASSOCIATION_ERROR.FIRST_ADMIN_UNKNOWN },
     });
     expect(await assos.count()).toBe(before);
+
+    takeLogged('warn', '[create] first admin nobody names no account');
   });
 
   it("an institution's first admin never manages its members - the platform admin's alone", async () => {
@@ -193,6 +196,11 @@ maybe('platform admin create and catalogue against PostgreSQL', () => {
     });
     const [only] = await members.find({ where: { associationId: created.id } });
     expect(only.permissions & AssociationPermissionFlag.MANAGE_MEMBERS).toBe(0);
+
+    takeLogged(
+      'warn',
+      /^\[MEMBER-CEILING\] create\.firstAdmin refused: institution [0-9a-f-]{36} member asked MANAGE_MEMBERS$/
+    );
   });
 
   it('refuses it through the ONE member writer: the same code the roster editor gets, no row left', async () => {
@@ -237,6 +245,19 @@ maybe('platform admin create and catalogue against PostgreSQL', () => {
       response: { code: ADMIN_ASSOCIATION_ERROR.INSTITUTION_MEMBERS_PLATFORM_ONLY },
     });
     expect(await members.count({ where: { associationId: school.id } })).toBe(0);
+
+    takeLogged(
+      'warn',
+      /^\[MEMBER-CEILING\] create\.firstAdmin refused: institution [0-9a-f-]{36} member asked MANAGE_MEMBERS$/
+    );
+    takeLogged(
+      'warn',
+      /^\[MEMBER-CEILING\] addMember refused: institution [0-9a-f-]{36} member asked MANAGE_MEMBERS$/
+    );
+    takeLogged(
+      'warn',
+      /^\[MEMBER-CEILING\] addMember refused: institution [0-9a-f-]{36} members are the platform admin's$/
+    );
   });
 
   it('a name already taken gets -2, and the preview named it before the create', async () => {
@@ -247,6 +268,11 @@ maybe('platform admin create and catalogue against PostgreSQL', () => {
 
     expect(second.slug).toBe('doublon-2');
     expect(await service.previewDerivedSlug('Doublon')).toBe('doublon-3');
+
+    takeLogged(
+      'warn',
+      '[COTISATION] stem "doublon" refused for assoc=new: its tag names can coincide with another association\'s'
+    );
   });
 
   it('the preview walks past a cotisation-stem collision exactly as the create does', async () => {
@@ -260,6 +286,11 @@ maybe('platform admin create and catalogue against PostgreSQL', () => {
 
     expect(preview).toBe('stem-2026-2027-2');
     expect(dated.slug).toBe(preview);
+
+    takeLogged(
+      'warn',
+      '[COTISATION] stem "stem-2026-2027" refused for assoc=new: its tag names can coincide with another association\'s'
+    );
   });
 
   it('writes exactly the spaces chosen - never the creator campus default', async () => {
@@ -337,6 +368,8 @@ maybe('platform admin create and catalogue against PostgreSQL', () => {
     // Unchanged: the BDE still creates through its own path, in its own campus.
     const own = await service.create({ name: 'Club Du BDE' } as never, 'bde-star', false);
     expect(own.slug).toBe('club-du-bde');
+
+    takeLogged('warn', '[create] placement refused: bde-star is not a platform admin');
   });
 
   it('pages every entity of a kind by keyset, ties on the name included, with search and counts', async () => {
@@ -373,6 +406,26 @@ maybe('platform admin create and catalogue against PostgreSQL', () => {
 
     const bySlug = await service.adminCatalogue({ type: 'list', q: 'liste-pareille-3' });
     expect(bySlug.rows.map((r) => r.slug)).toEqual(['liste-pareille-3']);
+
+    takeLogged(
+      'warn',
+      '[COTISATION] stem "liste-pareille" refused for assoc=new: its tag names can coincide with another association\'s',
+      4
+    );
+    takeLogged(
+      'warn',
+      '[COTISATION] stem "liste-pareille-2" refused for assoc=new: its tag names can coincide with another association\'s',
+      3
+    );
+    takeLogged(
+      'warn',
+      '[COTISATION] stem "liste-pareille-3" refused for assoc=new: its tag names can coincide with another association\'s',
+      2
+    );
+    takeLogged(
+      'warn',
+      '[COTISATION] stem "liste-pareille-4" refused for assoc=new: its tag names can coincide with another association\'s'
+    );
   });
 
   it('a row carries its audience rules; a forged cursor is a typed 400', async () => {
@@ -395,6 +448,9 @@ maybe('platform admin create and catalogue against PostgreSQL', () => {
         response: { code: ADMIN_ASSOCIATION_ERROR.BAD_CURSOR },
       });
     }
+
+    takeLogged('warn', '[ADMIN_CATALOGUE] cursor refused: not one this server wrote (12 chars)', 2);
+    takeLogged('warn', '[ADMIN_CATALOGUE] cursor refused: not one this server wrote (68 chars)');
   });
 
   it('a BDE governing spaces of two campuses: its child gets the creator campus, and a creator of neither is refused with nothing kept', async () => {

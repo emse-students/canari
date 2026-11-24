@@ -30,6 +30,7 @@ import { ChannelMessage } from './entities/channel-message.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import type { RedisService } from '../common/redis';
 import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -239,6 +240,12 @@ maybe('a repeated salon send against PostgreSQL (migration 090)', () => {
     expect(publish).not.toHaveBeenCalled();
     // Leave the table as the later tests expect it: their counts are of THEIR rows.
     await q(`DELETE FROM channel_messages WHERE id = $1`, [lost.id]);
+
+    takeLogged(
+      'error',
+      /^\[CHANNEL_PUSH\] fan-out failed channel=[0-9a-f-]{36} message=[0-9a-f-]{36}: Error: the fan-out did not complete$/
+    );
+    takeLogged('warn', '[CHANNEL_FANOUT] 1 entries left by a process that died');
   });
 
   it('a send whose outbox entry cannot be written leaves no row at all', async () => {
@@ -282,6 +289,11 @@ maybe('a repeated salon send against PostgreSQL (migration 090)', () => {
     expect(await rows()).toBe(before);
     // Another author's message under the same id is untouched by this author's tombstone.
     await expect(send(OTHER, gone)).resolves.toBeDefined();
+
+    takeLogged(
+      'warn',
+      /^\[CHANNEL_SEND\] repeat of DELETED client message [0-9a-f]{6,8} channel=[0-9a-f-]{36} sender=author refused - the message was removed after its first send landed$/
+    );
   });
 
   it('a delete that falls between a repeat lookup and its insert still wins: no re-post', async () => {
@@ -313,6 +325,11 @@ maybe('a repeated salon send against PostgreSQL (migration 090)', () => {
       await deleter.query('ROLLBACK').catch(() => undefined);
       await deleter.end();
     }
+
+    takeLogged(
+      'warn',
+      /^\[CHANNEL_SEND\] repeat of DELETED client message [0-9a-f]{6,8} channel=[0-9a-f-]{36} sender=author refused - the message was removed after its first send landed$/
+    );
   });
 
   it('a delete racing an account erasure leaves NO tombstone of the erased account', async () => {
@@ -372,6 +389,11 @@ maybe('a repeated salon send against PostgreSQL (migration 090)', () => {
     await expect(send(OTHER, expired)).resolves.toBeDefined();
     const refused = await send(OTHER, kept).catch((e: unknown) => e);
     expect((refused as { getStatus?: () => number }).getStatus?.()).toBe(410);
+
+    takeLogged(
+      'warn',
+      /^\[CHANNEL_SEND\] repeat of DELETED client message [0-9a-f]{6,8} channel=[0-9a-f-]{36} sender=someone- refused - the message was removed after its first send landed$/
+    );
   });
 
   it('two repeats racing past the lookup leave ONE row and both get it', async () => {

@@ -11,6 +11,7 @@ import {
   postMediaIds,
 } from './post-media-retention.service';
 import type { ReelPurgeOutcome } from '../internal/reel-media';
+import { describeError } from '../common/log.utils';
 
 /** How many due reels one query takes. Bounds memory (a reel row carries its comments) and nothing else - the run loops until none is due. */
 const BATCH = 50;
@@ -131,7 +132,9 @@ export class ReelRetentionScheduler {
       try {
         await invalidatePostListCache(this.redis);
       } catch (e) {
-        this.logger.warn('[REEL_GC] feed cache sweep failed - pages stay stale for up to 30 s', e);
+        this.logger.warn(
+          `[REEL_GC] feed cache sweep failed - pages stay stale for up to 30 s: ${describeError(e)}`
+        );
       }
     }
     if (report.due > 0) {
@@ -170,7 +173,9 @@ export class ReelRetentionScheduler {
       try {
         await invalidatePostListCache(this.redis);
       } catch (e) {
-        this.logger.warn('[REEL_GC] feed cache sweep failed - pages stay stale for up to 30 s', e);
+        this.logger.warn(
+          `[REEL_GC] feed cache sweep failed - pages stay stale for up to 30 s: ${describeError(e)}`
+        );
       }
     }
     return gone;

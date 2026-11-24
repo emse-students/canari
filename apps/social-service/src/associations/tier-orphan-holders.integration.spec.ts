@@ -38,6 +38,7 @@ import { PurchaseRecordService } from '../users/purchase-record.service';
 import { UserTagService } from '../users/user-tag.service';
 import { ProductsService } from './products.service';
 import { untilWaiting } from '../common/lock-wait.it-fixture';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -489,6 +490,11 @@ maybe('a tier deleted while people still hold it (PostgreSQL)', () => {
       refused: 'unranked',
     });
     expect(await heldTags(buyer)).toEqual([GONE]);
+
+    takeLogged(
+      'error',
+      /^\[UserTag\] paid grant of tier low of assoc=[0-9a-f]{6,8} refused for user=orphan-1: unranked against the tier held - nothing granted$/
+    );
   });
 
   it("a manager's grant swaps the tag of a DELETED tier out, and touches no other issuer's row", async () => {
@@ -506,6 +512,11 @@ maybe('a tier deleted while people still hold it (PostgreSQL)', () => {
 
     expect(await heldTags(buyer)).toEqual([tag('low')]);
     expect(await heldTags(stranger)).toEqual([GONE, tag('low')]);
+
+    takeLogged(
+      'warn',
+      /^\[UserTag\] Revoked cotisant:orph-it-gone for orphan-\d+: its tier no longer exists in assoc=[0-9a-f]{6,8}, replaced by tier low$/
+    );
   });
 
   it('the legacy claim leaves the tag of a DELETED tier to a manager: nothing granted, nothing swapped', async () => {
@@ -527,6 +538,11 @@ maybe('a tier deleted while people still hold it (PostgreSQL)', () => {
       'TAG_NOT_ISSUER_TIER'
     );
     expect(await heldTags(buyer)).toEqual([]);
+
+    takeLogged(
+      'warn',
+      /^\[UserTag\] raw grant of "cotisant:orph-it-gone" refused for assoc=[0-9a-f]{6,8}: not one of its cotisation tier tags$/
+    );
   });
 
   it("a count that crosses associations: another association's holders neither block a delete nor are told", async () => {
@@ -590,6 +606,15 @@ maybe('a tier deleted while people still hold it (PostgreSQL)', () => {
     const closed = await service.closePaidNotGranted(ASSO, record, 'm', 'granted', true);
     expect(closed).toMatchObject({ closedOutcome: 'granted' });
     expect(await closingsOf(record)).toEqual([{ outcome: 'granted' }]);
+
+    takeLogged(
+      'warn',
+      /^\[SHOP\] closing refused \(PURCHASE_HELD_TIER_DELETED\): purchase=[0-9a-f]{6,8} - the buyer holds tier gone, which was deleted; only a refund can be recorded$/
+    );
+    takeLogged(
+      'warn',
+      /^\[UserTag\] Revoked cotisant:orph-it-gone for orphan-\d+: its tier no longer exists in assoc=[0-9a-f]{6,8}, replaced by tier low$/
+    );
   });
 
   it('CONTROL: the same closing for a buyer holding no orphan grants the tier', async () => {

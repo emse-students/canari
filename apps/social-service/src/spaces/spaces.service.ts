@@ -54,6 +54,7 @@ export const FORMER_PARENT_SEATS_SQL = `SELECT seat."userId", seat.permissions
   ORDER BY seat."userId"`;
 import { Space, SPACE_CAMPUSES, SPACE_FORMATIONS } from './space.entity';
 import type { SpaceCampus, SpaceFormation } from './space.entity';
+import { describeError } from '../common/log.utils';
 
 /** A space as the admin page shows it. */
 export interface SpaceView {
@@ -178,7 +179,9 @@ export class SpacesService {
       const dropped = await invalidatePostListCache(this.redis);
       this.logger.debug(`[spaces] feed cache dropped: ${dropped} key(s)`);
     } catch (e: unknown) {
-      this.logger.warn('[spaces] feed cache sweep failed - pages stay stale until their TTL', e);
+      this.logger.warn(
+        `[spaces] feed cache sweep failed - pages stay stale until their TTL: ${describeError(e)}`
+      );
     }
   }
 
