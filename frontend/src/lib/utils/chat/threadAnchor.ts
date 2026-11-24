@@ -324,14 +324,20 @@ export interface NewMessageState {
  * every such page read as 'I just sent': the pane followed the bottom and threw them out of the
  * history they were reading. The newest id is what tells an append from a prepend.
  *
+ * **AND 'MINE' IS 'COMPOSED HERE', NOT 'WRITTEN BY THIS ACCOUNT'** (review of #4054). A message this
+ * account wrote on its OTHER device arrives as a frame, and since #4054 lands with the rest of a
+ * drain's flush: a flush ending with one read as "I just sent" and pulled a reader who had scrolled
+ * up to the bottom. A message composed here carries its send state (`status`, set by every send
+ * path from the moment it is drawn - pending, sending, sent, error); an arrival carries none.
+ *
  * @param previousNewestId the id of the newest message before this growth, `undefined` for an empty list
  * @param newest the newest message now
  */
 export function ownMessageAppended(
   previousNewestId: string | undefined,
-  newest: { id: string; isOwn?: boolean } | undefined
+  newest: { id: string; isOwn?: boolean; status?: unknown } | undefined
 ): boolean {
-  return newest?.isOwn === true && newest.id !== previousNewestId;
+  return newest?.isOwn === true && newest.status !== undefined && newest.id !== previousNewestId;
 }
 
 export function respondToNewMessage(state: NewMessageState): NewMessageResponse {
