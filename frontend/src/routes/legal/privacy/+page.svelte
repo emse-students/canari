@@ -1304,11 +1304,11 @@
             </td>
             <td
               >Publications : environ 25 heures après leur publication, 500 au plus (la copie de
-              l'application et du navigateur peut les garder jusqu'à la prochaine consultation de la
-              cloche qui couvre la période de leur publication) ; décisions sur les notifications :
-              tant que celles-ci peuvent figurer dans votre cloche (90 jours). Effacées à la
-              déconnexion, à la suppression du compte, à l'effacement des données de l'application
-              ou à sa désinstallation</td
+              l'application et du navigateur peut les garder jusqu'à la prochaine mise à jour de vos
+              notifications par l'application) ; décisions sur les notifications : tant que
+              celles-ci peuvent figurer dans votre cloche (90 jours). Effacées à la déconnexion, à
+              la suppression du compte, à l'effacement des données de l'application ou à sa
+              désinstallation</td
             >
           </tr>
           <tr>

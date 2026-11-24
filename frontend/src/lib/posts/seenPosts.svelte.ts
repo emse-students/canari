@@ -88,7 +88,7 @@ let coverage: BellCoverage = { answeredAt: 0, coveredFrom: 0 };
 /** The account whose sealed copy is merged into memory: decisions wait for it, withholding does not. */
 let mergedFor: string | null = null;
 /** The last bell answer, decided again once the sealed copy is merged. */
-let lastAnswer: { rows: BellRow[]; complete: boolean } | null = null;
+let lastAnswer: { rows: BellRow[]; coversAll: boolean } | null = null;
 /** A write is queued on the microtask queue. */
 let scheduled = false;
 /** Something was noted since the last write. */
@@ -179,7 +179,7 @@ onLocalCopiesOpen((access) => {
     }
     mergedFor = access.userId;
     revision++;
-    if (lastAnswer) seenPostsStore.decideRows(lastAnswer.rows, lastAnswer.complete);
+    if (lastAnswer) seenPostsStore.decideRows(lastAnswer.rows, lastAnswer.coversAll);
   })();
 });
 
@@ -229,15 +229,16 @@ export const seenPostsStore = {
    * A bell answer: every trend row not yet decided is decided NOW, once - WITHHELD if its post is in
    * the record, KEPT if it is not - and the decision is kept as long as the row can exist. Before this
    * account's sealed copy is merged nothing is decided (the answer is kept and decided at the merge), so
-   * a record not yet read never keeps a row it would have withheld. `complete` says the answer listed
-   * EVERY row (it was shorter than the page asked for); otherwise it still proves it listed every row
-   * newer than its oldest, which is what lets the record age out per post.
+   * a record not yet read never keeps a row it would have withheld. `coversAll` says the answer listed
+   * EVERY row the bell will ever show: it was shorter than the page asked for, or it filled the bell's
+   * whole page (a row beyond it is never shown). Otherwise it still proves it listed every row newer than
+   * its oldest, which is what lets the record age out per post.
    */
-  decideRows(rows: readonly BellRow[], complete: boolean): void {
+  decideRows(rows: readonly BellRow[], coversAll: boolean): void {
     const who = currentOwner();
     if (!who) return;
     if (awaitingCopy(who)) {
-      lastAnswer = { rows: [...rows], complete };
+      lastAnswer = { rows: [...rows], coversAll };
       return;
     }
     let withheldNow = 0;
@@ -268,8 +269,8 @@ export const seenPostsStore = {
     const created = rows
       .map((r) => Date.parse(r.createdAt ?? ''))
       .filter((n) => Number.isFinite(n));
-    if (complete || (rows.length > 0 && created.length === rows.length)) {
-      coverage = { answeredAt: Date.now(), coveredFrom: complete ? 0 : Math.min(...created) };
+    if (coversAll || (rows.length > 0 && created.length === rows.length)) {
+      coverage = { answeredAt: Date.now(), coveredFrom: coversAll ? 0 : Math.min(...created) };
       changed = true;
       if (ageRecord() > 0) revision++;
     }

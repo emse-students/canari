@@ -120,6 +120,26 @@ describe('the bell withholds a campus trend for a post this device displayed', (
     expect(postNotifStore.notifications.some((n) => n.id === 'r0')).toBe(false);
   });
 
+  it('drops a post even when a burst of rows fills the page after its publication', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    seenPostsStore.note('p1', PUBLISHED);
+    const base = Date.now();
+    // More than a page of rows, ALL newer than the post: the page never reaches back before it.
+    api.get.mockResolvedValue(
+      Array.from({ length: 50 }, (_, i) => ({
+        ...row(`b${i}`, 'friend_comment', 'p9'),
+        createdAt: new Date(base + 10 * 60_000 - i * 1000).toISOString(),
+      }))
+    );
+    await postNotifStore.load();
+    expect(seenPostsStore.size).toBe(1);
+    // Past the post's window, the poll's page is full again: no row beyond it is ever shown, so the
+    // entry goes.
+    vi.setSystemTime(base + 30 * HOURS);
+    await postNotifStore.load();
+    expect(seenPostsStore.size).toBe(0);
+  });
+
   it('never withholds under another account', async () => {
     seenPostsStore.note('p1', PUBLISHED);
     saved.id = 'someone-else';

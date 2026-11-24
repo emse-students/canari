@@ -136,7 +136,7 @@ export const postNotifStore = {
     return fromCopy;
   },
   /** Fetches the latest notifications from the backend and updates the store. */
-  async load(limit = 30): Promise<void> {
+  async load(limit = MAX_STORED_NOTIFICATIONS): Promise<void> {
     if (loading) return;
     loading = true;
     // THE ACCOUNT IS TAKEN BEFORE THE REQUEST, never when the answer lands (review of #3347, as
@@ -157,7 +157,12 @@ export const postNotifStore = {
       // EVERY trend row is decided HERE, the first time it appears (withheld if its post was already
       // displayed on this device, kept for good if not); an answer shorter than the page asked for
       // listed every row, which is what lets the record of displayed posts start ageing out.
-      seenPostsStore.decideRows(answer, answer.length < limit);
+      // `coversAll`: the answer listed every row (a short page) or filled the bell's whole page, past
+      // which no row is ever shown. The automatic poll asks for that whole page.
+      seenPostsStore.decideRows(
+        answer,
+        answer.length < limit || answer.length >= MAX_STORED_NOTIFICATIONS
+      );
       // Only the full page seals: the dropdown's shorter one must not shrink the sealed list.
       if (limit >= MAX_STORED_NOTIFICATIONS) persist();
     } catch (e) {
