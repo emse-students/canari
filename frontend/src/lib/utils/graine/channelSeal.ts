@@ -47,6 +47,7 @@ import {
   type DelegatedCommitExecutors,
   type DelegationRefusal,
 } from '$lib/utils/chat/tabCommitDelegation';
+import { postSealedChannelMessage, type SalonPost } from '$lib/utils/chat/channelPost';
 
 /**
  * Sealing and opening ONE channel message under a Graine session.
@@ -233,7 +234,11 @@ export class GraineUnknownChannelError extends GraineSealUnavailableError {
 export async function sealChannelMessage(
   channelId: string,
   payload: Uint8Array,
-  options: { asExecutor?: boolean } = {}
+  options: {
+    asExecutor?: boolean;
+    /** What to post with it, carried only when no durable queue of the caller re-sends it. */
+    postIfAdopted?: SalonPost;
+  } = {}
 ): Promise<SealedChannelMessage> {
   const channel = rawChannelId(channelId);
   // A LEADER EXECUTOR NEVER DELEGATES: it runs a follower's request, and handing that request on to
@@ -252,7 +257,7 @@ export async function sealChannelMessage(
         'tab-reloading'
       );
     }
-    return sealOnLeaderTab(channel, payload);
+    return sealOnLeaderTab(channel, payload, options.postIfAdopted);
   }
   const { storage, deviceKey, userId, mlsService } = requireGraineRuntime(
     `cannot seal a message for channel ${channel.slice(0, 8)}`
@@ -693,12 +698,14 @@ function isLeadLostDuringReservation(e: unknown): boolean {
 /** The follower half of {@link sealChannelMessage}: the leader seals, this tab posts. */
 async function sealOnLeaderTab(
   channel: string,
-  payload: Uint8Array
+  payload: Uint8Array,
+  postIfAdopted: SalonPost | undefined
 ): Promise<SealedChannelMessage> {
   const answer = await delegateCommitToLeader({
     kind: 'seal-salon-message',
     channelId: channel,
     payload: await sealForHandover(payload),
+    ...(postIfAdopted ? { postIfAdopted } : {}),
   });
   if (answer.status === 'refused') {
     console.warn(
@@ -745,7 +752,7 @@ async function sealOnLeaderTab(
 
 /** The leader half: seals a follower's salon message on this tab's own Graine session. */
 export const salonSealExecutors: Pick<DelegatedCommitExecutors, 'seal-salon-message'> = {
-  'seal-salon-message': async (op) => {
+  'seal-salon-message': async (op, run) => {
     const payload = await openHandedOver(op.payload);
     if (!payload) {
       console.warn(
@@ -785,6 +792,16 @@ export const salonSealExecutors: Pick<DelegatedCommitExecutors, 'seal-salon-mess
     try {
       const sealed = await sealChannelMessage(op.channelId, payload, { asExecutor: true });
       if (refusesCommitsHere()) return leadLeft();
+      if (run?.adopted && op.postIfAdopted) {
+        // THE PAGE THAT ASKED WAS RELOADED (`tabCommitDelegation.onAdoption`): nobody is left to post
+        // what is sealed, and no queue of that page sends it again - so the leader posts it, with
+        // what that page would have posted it with.
+        await postSealedChannelMessage(op.channelId, sealed, op.postIfAdopted);
+        console.debug(
+          `[SEND] message for channel ${op.channelId.slice(0, 8)} sealed and posted for a reloaded page`
+        );
+        return { sealed };
+      }
       console.debug(
         `[SEND] message for channel ${op.channelId.slice(0, 8)} sealed for a follower tab`
       );

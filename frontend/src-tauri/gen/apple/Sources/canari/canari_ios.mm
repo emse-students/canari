@@ -194,6 +194,73 @@ static void CanariObserveDocumentScrollRange(void) {
   NSLog(@"[CanariIOS] watching the WebView scroll view's range");
 }
 
+/// THE SHELL IS THE ONE AUTHORITY OVER THE KEYBOARD'S ROOM: WebKit's own keyboard inset is detached from
+/// the WebView, so the keyboard is taken off the page exactly once, by the frame `CanariApplyKeyboardLayout`
+/// sets.
+///
+/// WKWebView observes `UIKeyboardWillShow` / `WillHide` / `WillChangeFrame` / `DidChangeFrame` itself and,
+/// on each, insets and scrolls its own scroll view by the keyboard's overlap OF ITS FRAME AT THAT MOMENT.
+/// The shell's rise is handed to the page first and the frame set only after the page's layout is on
+/// screen (`CanariHandKeyboardRiseToPage`), so WebKit always measured the keyboard against the full-height
+/// frame: a second keyboard inset of 301 pt on a WebView already 301 pt short. Measured on the iPhone 12,
+/// `1.8.0-alpha.6`, 2026-11-24: on nearly every rise the document scrolled 301 pt (the native glass pieces
+/// "compensating a document scroll: scrollY=301") until the clamp put it back, which is the native "+"
+/// seen mid-screen over an unpainted page for ~300 ms; twice the inset stayed (`keyboard settled: native
+/// offset=301.0 content=543.0 bounds=543.0`, an offset the clamp left alone, so its range carried the
+/// inset) and the page read `keyboard open 602px`, `clientHeight 195`, blank until the keyboard hid. The
+/// same 301 pt was seen on `v1.2.9-alpha.7` (`CanariReportSettledKeyboardGeometry`).
+///
+/// Removing an observer is public API (`removeObserver:name:object:`). WebKit registers these in
+/// `-[WKWebView _registerForNotifications]` with `addObserver:self`, once, from
+/// `_initializeWithConfiguration:`, and never again (the same since iOS 8), so they stay removed.
+///
+/// WEBKIT'S REVEAL OF THE FOCUSED FIELD GOES WITH THEM. Its `RevealFocusedElementDeferrer` waits for a
+/// keyboard will-show that only `_keyboardWillShow:` fulfils (`UIKeyboardDidShow` is not in its set
+/// while first-responder keyboard avoidance is on), so `_zoomToRevealFocusedElement` no longer runs.
+/// The PAGE is the one reveal in this shell: `scrollFocusedFieldIntoView` (`keyboardViewport.svelte.ts`,
+/// `pageRevealsField`), on every keyboard opening and every focus with the keyboard up, every field but
+/// the composer, which sits on the keyboard by layout. One authority for the keyboard's room (this
+/// frame), one for the reveal (the page). WebKit's `UIKeyboardDidShow` observer is left registered; it
+/// reveals nothing any more and the rest observers below still come after it.
+///
+/// A WebView that already heard a keyboard before this ran keeps that inset for its life (its
+/// will-hide, which would undo it, is gone too): an ERROR line, with the inset, says so.
+///
+/// IT RUNS ONLY ONCE THE PAGE IS EDGE TO EDGE, which `CanariPublishSafeAreaInsets` alone makes it (the
+/// top inset's one owner, `iosTopInsetOwner.test.ts`). Before that UIKit adds the safe area to
+/// `adjustedContentInset` - the 34 pt home-indicator strip - and the ERROR would accuse WebKit of
+/// UIKit's inset. So the activation calls this AFTER the publish, and a keyboard change that would find
+/// the page not yet edge to edge does not detach: it logs an ERROR (a keyboard before any publish, which
+/// the launch, activation and load publishes make impossible) and leaves the detach to the next caller.
+/// Once edge to edge the scroll view's bottom inset is WebKit's alone. Once per WebView.
+static void CanariDetachWebKitKeyboardInset(WKWebView *webView) {
+  static __weak WKWebView *detached = nil;
+  if (webView == nil || webView == detached) {
+    return;
+  }
+  if (webView.scrollView.contentInsetAdjustmentBehavior != UIScrollViewContentInsetAdjustmentNever) {
+    NSLog(@"[CanariIOS] ERROR WebKit's keyboard inset NOT detached yet: the page is not edge to edge (no "
+          @"safe-area publish has run), so its inset cannot be told from UIKit's - the next caller detaches");
+    return;
+  }
+  detached = webView;
+  NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+  [nc removeObserver:webView name:UIKeyboardWillShowNotification object:nil];
+  [nc removeObserver:webView name:UIKeyboardWillHideNotification object:nil];
+  [nc removeObserver:webView name:UIKeyboardWillChangeFrameNotification object:nil];
+  [nc removeObserver:webView name:UIKeyboardDidChangeFrameNotification object:nil];
+  CGFloat inset = webView.scrollView.adjustedContentInset.bottom;
+  if (inset > 0.5) {
+    NSLog(@"[CanariIOS] ERROR WebKit's own keyboard inset detached too late: the scroll view already "
+          @"carries a bottom inset of %.1f, kept for the WebView's life",
+          inset);
+    return;
+  }
+  NSLog(@"[CanariIOS] WebKit's own keyboard inset detached: the shell's frame is the keyboard's one "
+        @"inset (scroll view inset bottom %.1f)",
+        inset);
+}
+
 /// One line per settled keyboard change: the scroll view's offset and range as UIKit holds them, beside
 /// the document's scroll and viewport and the composer's top as the PAGE reads them.
 ///
@@ -221,6 +288,8 @@ static void CanariReportSettledKeyboardGeometry(WKWebView *webView) {
   CGFloat offset = scrollView.contentOffset.y;
   CGFloat content = scrollView.contentSize.height;
   CGFloat bounds = CGRectGetHeight(scrollView.bounds);
+  // A second keyboard inset shows here first (`CanariDetachWebKitKeyboardInset`): 0 with the shell alone.
+  CGFloat inset = scrollView.adjustedContentInset.bottom;
   NSString *js =
       @"(function(){var s=document.scrollingElement,v=window.visualViewport,"
        "f=document.querySelector('.chat-composer-footer'),"
@@ -238,13 +307,14 @@ static void CanariReportSettledKeyboardGeometry(WKWebView *webView) {
   [webView evaluateJavaScript:js
             completionHandler:^(id result, NSError *error) {
               if (error != nil || ![result isKindOfClass:[NSString class]]) {
-                NSLog(@"[CanariIOS] keyboard settled: native offset=%.1f content=%.1f bounds=%.1f | "
-                      @"page geometry NOT read: %@",
-                      offset, content, bounds, CanariErrorReason(error));
+                NSLog(@"[CanariIOS] keyboard settled: native offset=%.1f content=%.1f bounds=%.1f "
+                      @"inset bottom=%.1f | page geometry NOT read: %@",
+                      offset, content, bounds, inset, CanariErrorReason(error));
                 return;
               }
-              NSLog(@"[CanariIOS] keyboard settled: native offset=%.1f content=%.1f bounds=%.1f | page %@",
-                    offset, content, bounds, result);
+              NSLog(@"[CanariIOS] keyboard settled: native offset=%.1f content=%.1f bounds=%.1f "
+                    @"inset bottom=%.1f | page %@",
+                    offset, content, bounds, inset, result);
             }];
 }
 
@@ -299,12 +369,21 @@ static CFTimeInterval g_keyboardRiseAsked = 0;
 /// keyboard's shortcut bar is under it, and its fall is not announced.
 static const CGFloat kCanariKeyboardOpenThresholdPt = 100.0;
 
-/// What follows every keyboard layout once it is in place: the scroll range, the safe area and the
-/// one settled report.
+/// A rest the keyboard gave while a rise had not yet set the WebView's frame (`CanariTellPageKeyboardAtRest`):
+/// told by the settle of that frame, once it is on screen.
+static BOOL g_keyboardRestOwed = NO;
+
+static void CanariTellPageKeyboardAtRest(void);
+
+/// What follows every keyboard layout once it is in place: the scroll range, the safe area, the
+/// one settled report - and the keyboard's rest, if it came before this frame.
 static void CanariKeyboardLayoutSettled(WKWebView *webView) {
   CanariClampDocumentScroll(webView.scrollView);
   CanariPublishSafeAreaInsets();
   CanariReportSettledKeyboardGeometry(webView);
+  if (g_keyboardRestOwed && !g_keyboardRisePending) {
+    CanariTellPageKeyboardAtRest();
+  }
 }
 
 /// Calls `then` once WebKit has put on screen every update pending NOW - the page's reaction to a
@@ -361,16 +440,32 @@ static NSUInteger g_keyboardShowSeq = 0;
 /// around the keyboard (docs/wiki/frontend/modules/chat.md, "the engine's keyboard move is put back,
 /// and only it").
 ///
-/// IT RESTS ON THE FACTS WEBKIT ACTS ON. WebKit reveals the focused field from its own
-/// `_keyboardDidShow:`, so a show rests on `UIKeyboardDidShow` and a hide on `UIKeyboardDidHide`;
+/// IT RESTS ON THE KEYBOARD'S OWN FACTS: a show on `UIKeyboardDidShow`, a hide on `UIKeyboardDidHide`
+/// (WebKit's reveal used to run from its did-show; since `CanariDetachWebKitKeyboardInset` it does not
+/// run at all, and the page reveals its own fields);
 /// `UIKeyboardDidChangeFrame` rests only a height change while the keyboard is open (no show or hide
 /// pending), since UIKit posts it before did-show. The observers are registered once the WKWebView
 /// exists (`CanariObserveKeyboardRest`), so they come after WebKit's own in the notification center's
 /// delivery order and its `_keyboardDidShow:` has run when this does; the screen-update proof then
-/// waits for the web process to render after it, so the page has measured the scroll the reveal caused
-/// before it hears the keyboard is at rest. A newer keyboard change supersedes it, silently: that one
+/// waits for the web process to render after it, so the page has measured any scroll the keyboard
+/// caused before it hears the keyboard is at rest. A newer keyboard change supersedes it, silently: that one
 /// rests on its own.
+///
+/// AND IT RESTS ONLY ONCE THE RISE HAS SET ITS FRAME. A keyboard that comes back with the app shows with
+/// no animation: its did-show arrives while the rise is still waiting for the page's layout, BEFORE the
+/// WebView is resized (iPhone 12, `1.8.0-alpha.6`, 5 returns of 11: the page rested 36 to 45 ms before
+/// the thread pane's move and read that move as the reader's). Such a rest is OWED, and told by the
+/// settle of the rise's frame (`CanariKeyboardLayoutSettled`), after its screen-update proof - two facts,
+/// the keyboard's rest and the frame on screen, and never a clock.
 static void CanariTellPageKeyboardAtRest(void) {
+  if (g_keyboardRisePending) {
+    g_keyboardRestOwed = YES;
+    NSLog(@"[CanariIOS] keyboard at rest before rise #%lu set its frame - told once that frame is on "
+          @"screen",
+          (unsigned long)g_keyboardRiseSeq);
+    return;
+  }
+  g_keyboardRestOwed = NO;
   WKWebView *webView = CanariFindWebView();
   if (webView == nil) {
     return;
@@ -395,16 +490,19 @@ static void CanariTellPageKeyboardAtRest(void) {
 /// Tells the page a keyboard is about to show (`window.canariKeyboardShows`, `keyboardTransition.ts`): the
 /// START of a keyboard transition the page may not see in its own viewport. The case that needs it: an
 /// app returning with the keyboard up (iPhone 12, `1.8.0-alpha.4`, 4 returns of 10 above the thread's
-/// end) comes back at the WebView size it left with, so no resize reaches the page, while WebKit's
-/// `_keyboardDidShow:` still reveals the focused field and scrolls the thread pane. UIKit pairs every
+/// end) comes back at the WebView size it left with, so no resize reaches the page, while the pane was
+/// still moved (on `alpha.4`, by WebKit's reveal, detached since; the transition stays the page's word
+/// that a keyboard is moving, whatever moves the pane). UIKit pairs every
 /// will-show with a did-show or, when the show is cancelled, a did-hide, and both rest the transition
 /// (`CanariTellPageKeyboardAtRest`): it starts on a fact and ends on one, never on a clock. Sent at once,
-/// with no proof, so it reaches the page before the reveal's scroll, which comes after did-show.
+/// with no proof, so it reaches the page before anything the show moves.
 static void CanariTellPageKeyboardShows(void) {
   // Supersedes a rest still waiting for its proof (`CanariTellPageKeyboardAtRest`): that rest belongs to
   // the transition before this one. Its own counter, not the change counter, which a rise's own
   // proof also reads and a will-show must not cancel.
   g_keyboardShowSeq++;
+  // A rest owed to the transition before is superseded the same way: this show's did-show rests it.
+  g_keyboardRestOwed = NO;
   WKWebView *webView = CanariFindWebView();
   if (webView == nil) {
     return;
@@ -604,6 +702,7 @@ static void CanariApplyKeyboardLayout(NSNotification *note) {
   }
   CanariObserveKeyboardNavigation(webView);
   CanariObserveKeyboardRest();
+  CanariDetachWebKitKeyboardInset(webView);
 
   CGRect keyboardEnd = [note.userInfo[UIKeyboardFrameEndUserInfoKey] CGRectValue];
   CGRect overlapRect =
@@ -2021,6 +2120,8 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   CanariRegisterCallPageHandlers(@"activation");
   CanariHideKeyboardAccessoryBar();
   CanariPublishSafeAreaInsets();
+  // After the publish: the page is edge to edge, so the inset the detach reads is WebKit's alone.
+  CanariDetachWebKitKeyboardInset(CanariFindWebView());
   CanariPublishDynamicType();
   CanariProcessPendingPushSecret();
   CanariCheckKeystoreHealth();

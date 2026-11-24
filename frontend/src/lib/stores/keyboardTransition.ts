@@ -23,12 +23,24 @@
  * 4 returns of 10 above the end). UIKit pairs every will-show with a did-show or did-hide, and either
  * rests it - a fact at both ends, so no transition is left moving.
  *
+ * IN THE iOS SHELL A REST NEEDS TWO FACTS, NOT ONE: the keyboard at rest (the shell's word) AND the
+ * WebView's frame for it landed (the hand-off target spent by the resize, `imeTarget.ts`). iPhone 12,
+ * `1.8.0-alpha.6`, 5 returns of 11 with the keyboard up: the keyboard comes back with no animation, its
+ * did-show and the rest land BEFORE the shell has set the WebView's frame, and the engine's move the
+ * resize brings arrived 36 to 45 ms after a rest - read as the reader's. Whichever fact comes first
+ * waits for the other ({@link noteKeyboardFrameAwaited}); the shell holds its own rest until its frame
+ * is on screen too (`canari_ios.mm`), so a rest held here is a broken contract and logged as one.
+ *
  * A reader compares counts - durable state, ordered against its own events.
  */
 import { Log } from '$lib/utils/Log';
 
 let count = 0;
 let restingThrough = 0;
+/** Why the WebView's frame for the keyboard is awaited (an iOS hand-off not yet spent), or null. */
+let frameAwaited: string | null = null;
+/** The shell's word of rest, heard while the frame was still awaited, or null. */
+let restHeld: string | null = null;
 
 /** How many keyboard transitions have started in this document. */
 export function keyboardTransitionCount(): number {
@@ -53,15 +65,77 @@ export function noteKeyboardTransition(why: string): void {
 }
 
 /**
+ * The iOS shell's word that a keyboard will show (`canariKeyboardShows`): a transition starts, or this
+ * show joins the one moving. A rest held for an OLDER show is dropped, since this show's own did-show
+ * rests it - exactly the shell's cancel of a rest it owes (`CanariTellPageKeyboardShows`). Only this
+ * fact drops it: a note the viewport derives in `update()` is the same keyboard change seen from the
+ * page, and the rest it was held for still belongs to it.
+ *
+ * @param why what said so, for the log.
+ */
+export function noteKeyboardWillShow(why: string): void {
+  if (restHeld !== null && keyboardTransitionMoving()) {
+    Log.d(
+      'keyboardTransition',
+      `#${count}: a newer show (${why}) drops the rest held (${restHeld})`
+    );
+    restHeld = null;
+  }
+  noteKeyboardTransition(why);
+}
+
+/**
  * The keyboard is at rest: the transition moving, if any, is over.
  *
  * @param why what said so, for the log.
  */
 export function noteKeyboardAtRest(why: string): void {
   if (!keyboardTransitionMoving()) return;
+  if (frameAwaited !== null) {
+    restHeld = why;
+    Log.w(
+      'keyboardTransition',
+      `#${count}: a rest heard before the keyboard's frame landed (${frameAwaited}) - held until it ` +
+        `lands; the shell owes its rest after its frame (${why})`
+    );
+    return;
+  }
+  rest(why);
+}
+
+function rest(why: string): void {
   restingThrough = count;
+  restHeld = null;
   Log.d('keyboardTransition', `#${count} at rest: ${why}`);
   announceEdge('at rest', why);
+}
+
+/**
+ * The WebView's frame for the keyboard is announced and not yet set: the iOS shell's rise hand-off
+ * (`canariImeTarget` with a height, `keyboardViewport.svelte.ts`). Until it lands no transition rests,
+ * whatever the shell says - the resize still to come moves the page.
+ *
+ * @param why the announcement, for the log.
+ */
+export function noteKeyboardFrameAwaited(why: string): void {
+  frameAwaited = why;
+  Log.d('keyboardTransition', `#${count}: the keyboard's frame is awaited (${why})`);
+}
+
+/**
+ * The WebView's frame for the keyboard has landed (the hand-off target spent, or withdrawn): a rest
+ * the shell gave meanwhile takes effect now.
+ *
+ * @param why what landed, for the log.
+ */
+export function noteKeyboardFrameLanded(why: string): void {
+  if (frameAwaited === null) return;
+  frameAwaited = null;
+  Log.d('keyboardTransition', `#${count}: the keyboard's frame landed (${why})`);
+  if (restHeld !== null && keyboardTransitionMoving()) {
+    rest(`${restHeld}, held until the frame landed (${why})`);
+  }
+  restHeld = null;
 }
 
 /** An edge of a keyboard transition, as {@link onKeyboardTransitionEdge} hands it. */

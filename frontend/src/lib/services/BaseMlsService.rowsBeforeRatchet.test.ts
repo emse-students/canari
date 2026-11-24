@@ -24,6 +24,7 @@ import { MlsCheckpointNotWrittenError } from '$lib/utils/hex';
 import { hydrateStateLedgers, resetStateLedgersForTests } from '$lib/mls-client/stateLedgers';
 import { BaseMlsService } from './BaseMlsService';
 import { RowsOwedLedger } from '$lib/mls-client/rowsOwed';
+import { leadHoldsInFlight, resetLeadHoldsForTests } from '$lib/mls-client/leadHolds';
 
 /**
  * ROWS BEFORE RATCHET (P1, second review of #3321): a checkpoint stores the rows held in memory for
@@ -90,6 +91,40 @@ describe('BaseMlsService.persistCheckpoint - rows before ratchet', () => {
     await persist(ctx);
 
     expect(order).toEqual(['rows stored', 'export', 'written', 'released']);
+  });
+
+  // SECOND REVIEW OF #4053: the tab's lead is held from the EXPORT to the put, not across the row
+  // waits before it - those end when the row writes settle, and nothing about a session ending makes
+  // that sooner. A checkpoint that must not be refused runs inside an outer hold, which covers them.
+  it('holds the tab lead from its export until its put settled - not while it waits on the rows', async () => {
+    resetLeadHoldsForTests();
+    let storeRows!: () => void;
+    const during: Record<string, number> = {};
+    const observer = {
+      onBulkIngestStart: vi.fn(),
+      onBulkIngestEnd: vi.fn(),
+      holdRowsForCheckpoint: vi.fn(async () => {
+        during.rowWait = leadHoldsInFlight();
+        await new Promise<void>((r) => (storeRows = r));
+        return () => {};
+      }),
+    };
+    const ctx = makeCtx([observer], {
+      writeCheckpoint: vi.fn(async () => {
+        during.put = leadHoldsInFlight();
+      }),
+    });
+
+    const written = persist(ctx);
+    await vi.waitFor(() => expect(during.rowWait).toBeDefined());
+    // No outer hold here: a session ending now gives the lead up, whatever the rows take.
+    expect(during.rowWait).toBe(0);
+    expect(leadHoldsInFlight()).toBe(0);
+
+    storeRows();
+    await written;
+    expect(during.put).toBe(1);
+    expect(leadHoldsInFlight()).toBe(0);
   });
 
   it('releases the hold when the write FAILS too', async () => {

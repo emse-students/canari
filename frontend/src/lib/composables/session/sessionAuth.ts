@@ -155,13 +155,7 @@ import {
   resetGraineSweepState,
   runGraineSweep,
 } from '$lib/utils/graine/retention';
-import {
-  unregisterMlsStatePersister,
-  activeMlsStatePersister,
-  flushActiveMlsStateEncrypted,
-} from '$lib/mls-client/mlsStatePersisterRegistry';
-import { uninstallMlsStatePersisterLifecycle } from '$lib/mls-client/mlsStatePersisterLifecycle';
-import { disposeMlsEncryptWorker } from '$lib/mls-client/mlsEncryptWorkerSession';
+import { endSessionStatePersister, whenEndedSessionStateWritten } from './sessionStatePersisterEnd';
 import { forgetRefusedRotationReloads } from '$lib/mls-client/refusedRotationReloads';
 import {
   setupMessageHandler,
@@ -3824,37 +3818,13 @@ export function tearDownLiveSession(
   unregisterPeerReturn?.();
   unregisterPeerReturn = null;
 
-  // THE PERSISTER THIS SESSION REGISTERED, named now: the removal below runs after the final flush,
-  // and only what this session installed may be removed then (see `unregisterMlsStatePersister`).
-  const persister = activeMlsStatePersister();
-  const releasePersister = () => {
-    uninstallMlsStatePersisterLifecycle(persister);
-    unregisterMlsStatePersister(persister);
-    // The encrypt worker is shared and recreated on demand; it is disposed only when no session
-    // has registered a persister since - the one that has may be using it.
-    if (activeMlsStatePersister() === null) disposeMlsEncryptWorker();
-  };
-  let finalWrite: Promise<void>;
-  if (reason === 'logout') {
-    // Dispose after the final flush: flushEncrypted relies on the encrypt worker. NEVER REJECTS:
-    // the caller chains the MLS client's retirement, and the next login's wait, on it.
-    finalWrite = flushActiveMlsStateEncrypted()
-      .catch((e) => {
-        // A REFUSAL HAS BEEN SAID WHERE IT WAS DECIDED (the version guard, or a follower tab, which
-        // owns no MLS state to write); only an unexplained failure is said here.
-        if (e instanceof MlsStateWriteRefusedError) return;
-        console.error(`[LOGOUT] Final MLS checkpoint failed: ${String(e)}`);
-      })
-      .then(releasePersister);
-  } else {
-    // NO FINAL FLUSH FOR A REVOKED DEVICE. Persisting the state the next step deletes is precisely
-    // the write that must not survive the wipe, so the persister is uninstalled without one.
-    // NOR FOR A LOST SESSION (`endLostSessionImpl`): the client in memory no longer describes what
-    // is installed - no manager at all, or an identity a failed rotation never recorded - and its
-    // checkpoint would write that over the state the PIN gate is about to reopen.
-    releasePersister();
-    finalWrite = Promise.resolve();
-  }
+  // THE PERSISTER THIS SESSION REGISTERED ends here, BEFORE the session flag falls below: its final
+  // checkpoint holds the lead until it lands (`endSessionStatePersister`). NO FINAL FLUSH FOR A
+  // REVOKED DEVICE - persisting the state the next step deletes is precisely the write that must not
+  // survive the wipe - NOR FOR A LOST SESSION (`endLostSessionImpl`): the client in memory no longer
+  // describes what is installed, and its checkpoint would write that over the state the PIN gate is
+  // about to reopen.
+  const finalWrite = endSessionStatePersister(reason === 'logout', cb.log);
 
   if (ctx.timers.reconnect !== null) {
     clearTimeout(ctx.timers.reconnect);
@@ -3980,13 +3950,15 @@ export function endSessionImpl(ctx: SessionContext, cb: ChatSessionCallbacks): P
       return Promise.resolve();
     }
     cb.log('[LOGOUT] Signed out with no live session on this device - nothing to stop.');
+    // AN EXPIRED SESSION ENDED WITH A FINAL CHECKPOINT (`attemptReconnectImpl`) that may still be
+    // sealing through this client: it is destroyed only once that write settled.
     // BUT A CLIENT MAY STILL HOLD A STATE THAT WAS OPENED. The PIN gate's recovery opens the state
     // with the old PIN (`openLocalStateWithKey`) before its PIN change; when that change fails the
     // gate stays up with no session and no login in flight - and the opened manager and its key
     // installed. Retired like any account's client: destroyed now (nothing is being written), and
     // the native session ended in the chain the next sign-in waits on. With no client it ends only
     // the native session, which is then already empty.
-    void ctx.retireMls(Promise.resolve());
+    void ctx.retireMls(whenEndedSessionStateWritten());
     return Promise.resolve();
   }
   cb.log(`[LOGOUT] Signing out userId=${ctx.getUserId()?.slice(0, 8) ?? 'unknown'}...`);

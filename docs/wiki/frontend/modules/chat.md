@@ -1951,6 +1951,225 @@ guard refused the leader's (`MLS state write REFUSED as stale`) - closed by #337
 **Owed:** two-tab readings on dev in Firefox (hide the leader, send a photo from the other tab, and
 see it promoted and the photo sent) and in Chrome (freeze the leader from `chrome://discards`).
 
+### A leader whose own session ended gives the lead up (2026-11-24)
+
+**The report (owner, screenshot, web, desktop browser, 2026-11-24):** in a second tab, "Nouvelle
+discussion" with a recipient selected answered *"L'onglet principal de Canari n'est pas prêt
+(verrouillé ou déconnecté) : déverrouillez-le, ou faites-le depuis cet onglet."*. The owner added
+that tabs behave oddly in general, especially when some of them go to sleep.
+
+**The case it hit.** That sentence is the follower's rendering of `leader-unavailable`, which a
+leader answers when its readiness is `unavailable`: no live session and no login running. Such a
+leader still held `canari-tab-leader`. The election takes the lock in a login and held it until the
+document unloaded, whatever became of the session afterwards. A session ends in place, with no
+unload, in three ordinary ways:
+- a failed login puts the PIN keypad back up after the election;
+- a sign-out;
+- an expired session: a tab asleep for hours wakes, its reconnect is answered
+  `SessionExpiredError`, and `gotoLoginAfterExpiry` is a client-side navigation.
+
+From then on that tab served nothing and kept the lead, and no other tab could take it. Every
+gesture a follower handed over was refused, for as long as that tab stayed open. The same fact had
+a mirror: a follower whose own login failed stayed in the lock's queue, so when the leader closed,
+the lock could go to a tab at the keypad, and stay there.
+
+**The fix: the lead belongs to a tab whose session can serve it** (`setTabLeadEligibility`,
+`tabLeader.ts`). Eligibility is computed from the session's two flags by their one writer
+(`publishDelegationReadiness` in `useChatSession`), the same readiness that already told a
+follower's request how it would be answered. Nothing is decided from a reply that does not come,
+and no clock is used:
+- **eligibility falls** (`unavailable`): a leader decides `follower` first, then releases the lock
+  into the queue. The browser grants it at once to the next tab that asked, and only a tab whose
+  session can serve is ever in that queue. A follower withdraws its queued request. A hold handed
+  over and not yet stolen is released too. From then on the document holds no lock and no request.
+  Its demotion handler is told `session-cannot-serve` and does NOT reload: there is no live session
+  to tear down, and a reload would throw the member out of the keypad or a recovery screen.
+- **eligibility returns** (a login starts, `starting`): the document runs the election again, and
+  the login awaits it as its own (`initTabLeadershipAsync` reads the memo). Running it twice is safe
+  here and only here, because the document holds nothing and so cannot be its own rival
+  ([the 2026-09-21 rule](../../durable-rules.md#mls-state-and-keys---mls-protocol-auth)).
+  It leads if the lock is free and follows otherwise. A promotion that lands after its state was
+  loaded as a follower is `promotedSinceLoad`, which reloads as before.
+- **the lead first, then the answer**: eligibility is published BEFORE the delegation readiness, so
+  the drain that the readiness change starts runs in a document that no longer leads. That drain
+  answers nothing (`answersFollowerCommits` is false). A record it was deciding is left `pending`.
+  A record it had already claimed is handed back to `pending` under its run lock, since nothing ran.
+  The tab that took the lead runs it, instead of the follower being told `leader-unavailable`.
+- **the lead stays while MLS work that needs it is in flight** (`leadHolds.ts`, reviews of #4053).
+  The write latch refuses a put from a document that no longer leads, so giving the lead up at the
+  instant the flag fell refused the very writes the session still owed. Such work is COUNTED while
+  it runs, at the places where the state changes, so no path can be forgotten:
+  - **the MLS mutex holds the lead from its grant to its release**
+    (`MlsPerGroupScheduler.grantMain`): every frame, Welcome, commit, catch-up, rejoin and settlement
+    runs under it, with the checkpoints they await inside. Taken at the GRANT, never at the request,
+    so a commit queued behind a busy drain holds nothing; handed from one holder to the next without
+    the count touching zero;
+  - **an external join holds it from its build until its structural checkpoint settled**: between
+    its two lock sections the commit is on the wire with no lock held. Without it, a session that
+    expired during a wake-up rejoin gave the lead up, the server took the commit, the checkpoint was
+    refused, and the next leader joined again from the new base - a fork;
+  - **a key-package mint, and the identity rotation a revocation starts in it**;
+  - **a distribution group this device creates, from its creation until a checkpoint covers its
+    published base** (`ensureDistributionGroup`): the base is published outside the MLS mutex, so a
+    session ending between the publish and a checkpoint left a base on the server whose creator's
+    keys were in memory only;
+  - **a checkpoint, from its export until its put settled** - not across the row waits before the
+    export, which end when the row writes they wait for settle; a checkpoint that must not be
+    refused (a commit's, a join's) runs inside one of the holds above, which covers them. A
+    structural checkpoint asked by the drain (`persistNow`) takes no hold of its own: what asks for
+    it is inbound, acknowledged only once a checkpoint lands, so a refused one is redelivered;
+  - **the final checkpoint of an ended session** (`endSessionStatePersister`).
+
+  The session's eligibility (`createLeadPublisher`, `leadPublisher.ts`) stays `true` while the count
+  is above zero and is published again when it returns to zero; a session that ends with holds in
+  flight says so ONCE, at warn, naming them. Each hold settles on success AND on failure (a
+  `finally`), never by a clock. What a hold can wait on ends by itself: a request in an answer or a
+  transport failure, an IndexedDB put in success or error, the encrypt worker's round trip in a reply,
+  an `error`, a `messageerror`, or its termination - a job still QUEUED behind it when the worker is
+  disposed is rejected too, never run on a worker made after. A wait OUTSIDE the MLS state - a
+  delegated salon seal waiting on the salon's send gate - holds nothing: the delegated executor takes
+  no hold of its own, and an expired session refuses those waits at once (`resetSalonSendGate`), as a
+  sign-out does.
+- **an ended session's persister ends first** (`endSessionStatePersister`,
+  `sessionStatePersisterEnd.ts`), before the session flag falls, on BOTH paths that end a session in
+  place: a sign-out (`tearDownLiveSession`), and an expired session (`attemptReconnectImpl`, which
+  used to leave the persister installed and the client in the holder). Its final checkpoint is a
+  hold; the persister is unregistered once that write settles, so it schedules no further
+  checkpoint of the ended client. What fences a write ALREADY under way is not the registry but the
+  write latch (read at the put) and the state's version guard. The sign-out that follows the expiry
+  finds no live session and retires the client behind the LAST ended session's write
+  (`whenEndedSessionStateWritten`) - not a chain of every one, so one put that never settles cannot
+  stall every later sign-out.
+- **a follower's request waits through all this**: while the leader's readiness is `unavailable`, a
+  request is left `pending`, because that leader gives the lead up as soon as its holds settle and
+  the next leader runs it. A claim made before the session ended is handed back. Both are narrated,
+  not warned: this is the designed hand-back.
+- **the asker may be the tab the lead goes to.** A promotion reloads that tab, and the reload frees
+  the requester lock of every request it made as a follower, so the new leader used to delete them
+  as "the tab that asked is gone". The tab now carries its requester identity across that one reload
+  (`carryTabCommitRequesterAcrossReload`, `sessionStorage`), read and removed synchronously when the
+  module loads, and honoured only by a page whose navigation IS a reload - a tab duplicated in that
+  window copies the key, but its first page is a navigation, so it never adopts. The new page
+  ADOPTS its own earlier requests (`onAdoption`):
+  - run: a conversation created, a member invited or removed, a key group entered, and a frame the
+    member sent - a forward, a channel invitation, a notice, an edit or a reaction. None of those
+    callers keeps a durable queue, so dropping the frame lost the gesture (charter principle 2). It
+    is sent; what the asking page would have done with the answer (a forward's own echo, the time
+    the server took it) died with that page, and that is said at warn;
+  - a salon message's seal, decided by its CALLER, not by its kind (third review of #4053): only the
+    salon text queue (`messaging.ts`) sends a seal again after a reload, under the same client id,
+    and it says so (`resentByQueue`), so its seal is dropped. Every other caller - an edit, a
+    reaction, a poll, a media forward, a member-added notice - has no queue: its seal carries what
+    it is posted with (`postIfAdopted`, a `SalonPost`), and the adopting leader seals AND posts it
+    (`postSealedChannelMessage`, `channelPost.ts`, the one place a salon row is built);
+  - not run: a call's transport frame (the call ended with the page that held it).
+- **a promotion reload leaves NOTHING behind that a live tab waits on** (third review of #4053). A
+  promoted tab announces its reload (`leader_promotion_reloading`) and its new page reclaims the lock
+  with a steal and says so (`leader_promoted`). In the gap between its two pages, no page of that
+  tab exists: it holds no lock, answers nothing, and is indistinguishable from a tab CLOSED during
+  its reload - so no liveness proof exists to wait on (a `navigator.locks.query` sees no holder in
+  both cases). An earlier fix marked the reload durably (`localStorage`) and made a live tab granted
+  the lock in the gap pass it on: a tab closed mid-reload left that mark behind, and a later tab
+  granted the lock read it and handed the lock to nobody - every tab without a leader (charter
+  principle 2). So:
+  - a live tab QUEUED for the lead takes the lock when it is granted in the gap, and leads. If the
+    reloading page comes back, its reclaim steals the lock and demotes that tab: at most one extra
+    reload, never a tab without a leader;
+  - only a tab whose session COMES BACK in the gap (a quick PIN retry) is held back: the announcement
+    is kept IN MEMORY, and that login joins as a follower, queueing once a tab announces the lead
+    or once its own session goes live (`noteTabSessionLive`), whichever comes first. Both end on
+    their own; neither needs the reloading tab to exist.
+- the grant callbacks (a queued promotion, the hand-over's steal, the first election) read
+  eligibility too. A lock granted to a document whose withdrawal raced the grant is passed on
+  rather than held, and a follower that cannot serve asks no hidden leader for the lead.
+
+**What the member sees now:** the gesture works from the tab they are in.
+
+**The promotion reload is visible, and it is deliberate.** When the lead goes to the tab the member
+is using, that tab RELOADS (`reloadForPromotion`), as every promotion does
+([why](#the-lead-goes-to-a-tab-that-can-serve-a-hidden-leader-hands-it-over-2026-11-10)): it loaded
+its MLS state as a follower, and the old leader has advanced that state since. The member sees the
+page blink and come back on the same route, typically right after they unlocked, signed out, or let
+a session expire in ANOTHER tab. A gesture the tab had handed to the old leader is adopted and run
+by the reloaded page (above). The reload goes away only with the browser-wide worker of `1.9.0`,
+where one worker holds the state and no tab needs to reload to lead
+([design](../../backlog.d/a-browser-wide-worker-holds-the-mls-state-instead-of-a-leader-tab.md)).
+`leader-unavailable` remains in the four branches listed
+[above](#a-follower-tabs-commits-are-run-by-the-leader-2026-11-08) (an asker signed out, an asking
+session ended, and two account mismatches); an engine without Web Locks hands nothing over in the
+first place (`not-delegable`).
+
+**The log:**
+- the old leader: `[TAB] This tab's session cannot serve (session unavailable) while leading - the
+  lock is released so a tab that can serve takes the lead.`;
+- the tab that serves: `[TAB] Promoted to leader (Web Locks).` and its reload;
+- the old leader at its next login: `[TAB] This tab's session can serve again (session starting) -
+  it rejoins the election.`, or, during another tab's promotion reload, `... it joins as a follower
+  and queues once that tab holds the lead.` then `[TAB] Deferred rejoin ends (...)`;
+- a session ending with work in flight: `session unavailable, N MLS operation(s) still in flight`,
+  then the release when the last one settles;
+- the new leader adopting its own earlier request: `asked by this tab before its promotion reload -
+  adopted and run here`.
+
+**Still not covered, unchanged:**
+- a leader whose main thread is wedged;
+- an engine that suspends a page without dispatching `freeze`
+  ([above](#the-lead-goes-to-a-tab-that-can-serve-a-hidden-leader-hands-it-over-2026-11-10)).
+
+A tab asleep in Firefox or Safari keeps the lead while it lives and is answered for by the
+hand-over. The owner's decision of the same day is to replace the leader tab with one browser-wide
+worker in `1.9.0` ([design](../../backlog.d/a-browser-wide-worker-holds-the-mls-state-instead-of-a-leader-tab.md)).
+
+**Pinned by:**
+- `tabLeader.cannotServe.test.ts`, two documents sharing one lock manager
+  (`tabLeaderDocuments.test-helper.ts`, now shared with `tabLeader.freeze.test.ts`):
+  - a leader whose session ends releases the lock, and the ready follower is promoted;
+  - the old leader is a follower first, refuses commits, and is not queued;
+  - it rejoins at its next login as a follower, and is promoted when that leader's session ends;
+  - a locked follower withdraws, so a closing leader never hands the lock to it;
+  - a lone tab leaves the lock free and takes it back without queueing behind itself;
+  - repeating a state is a no-op;
+  - a follower that cannot serve asks for no hand-over;
+  - a tab whose session returns during another tab's promotion reload leaves the lock free and
+    queues behind the reclaim once it is announced; its own live session ends the deferral otherwise;
+  - a tab closed during its promotion reload leaves nothing behind: the queued tab leads, and when it
+    closes, a later visible tab leads in turn;
+  - a live tab granted the lock in a reload gap leads, and the reclaim demotes it once. The channel
+    there delivers on a later task, as the real one does (`FakeBroadcastChannel`).
+- `mlsPerGroupScheduler.leadHold.test.ts`: the mutex holds the lead from grant to release, a waiter
+  holds nothing, the hand-over never touches zero, a throw releases.
+- `BaseMlsService.externalJoin.test.ts`: the lead is held while the join's commit is on the wire and
+  until its checkpoint settled.
+- `tabCommitDelegation.test.ts`: a leader that gives the lead up between the claim and the run
+  hands the record back, and the next leader runs it; an `unavailable` leader leaves the request
+  `pending` for the next one; a promoted asker adopts and runs its own gesture and its visible or
+  mutation frame (said at warn), drops a call's frame, runs as adopted a salon seal that carries its
+  post and drops one a queue re-sends, and still removes another tab's orphan.
+  A delegated salon seal parked on its send gate holds no lead.
+  `tabCommitDelegation.carry.test.ts`: the carried id is adopted on a reload only.
+- `channelSeal.followerTab.test.ts`: an adopted seal that carries its post is sealed AND posted with
+  it, and nothing is posted when the lead left during the seal. `channelCrypto.test.ts`: every caller
+  carries its post into the seal except one that says a queue re-sends it;
+  `messagingChannelRefusal.test.ts`: the salon text queue says so.
+- `BaseMlsService.distributionGroup.test.ts`: a created distribution group holds the lead through
+  its publish and until its checkpoint.
+- `BaseMlsService.rowsBeforeRatchet.test.ts`: a checkpoint holds the lead from its export to its
+  put, and none while it waits on the row writes before it.
+- `leadPublisher.test.ts`: eligibility before readiness; the lead kept while a hold is in flight and
+  given up when it settles, on success or failure, after the last of several holds; one warn naming
+  the holds of an ended session.
+- `sessionStatePersisterEnd.test.ts`: the final checkpoint holds the lead, the persister is removed
+  once it settles (also on failure), the worker is kept for a newer session's persister, and a hung
+  older put never stalls a later sign-out.
+- `sessionConnection.test.ts`: an expired session ends its persister and refuses the salon sends
+  waiting on its gate before its flag falls.
+- `mlsEncryptWorkerSession.test.ts`: the round trip rejects on termination, `error` and
+  `messageerror`, and a job queued behind it is rejected on termination too.
+- `tabLeadership.test.ts`: no reload on `session-cannot-serve`.
+
+**Owed:** a two-tab reading on dev with the web rig. Lock the leader tab (the keypad), or let its
+session expire, then start a conversation from the other tab.
+
 ### A follower tab's commits are run by the leader (2026-11-08)
 
 **Decided by the owner on 2026-11-08: the permanent "Messagerie chiffrée active dans un autre
@@ -2042,18 +2261,21 @@ leader's readiness decides how. It is set by the ONE writer of the session's two
 (`useChatSession`'s `setIsLoggedIn` and both `setIsLoginInProgress` setters, through
 `sessionDelegationReadiness`), so it follows every login start and every end - success, early
 return, failure, sign-out - whoever flips the flag; a component effect could not, since
-`isLoginInProgress` is a plain boolean no effect re-runs on (`delegationReadinessWiring.test.ts`): `ready` (a live session) runs it; `unavailable` (the PIN keypad up, or nobody signed in) answers
-`leader-unavailable` at once and runs nothing (`chat_error_main_tab_unavailable`: unlock the main tab,
-or do it there); `starting` (a login actually running) keeps it `pending` until the login ends in one
-of the other two. Nothing waits on `whenMlsReady` any more, so no request blocks the drain behind it;
-instead the readiness, the load fact and the account are read AGAIN after the claim, right before the
-executor runs, so a sign-out landing between the decision and the run answers `leader-unavailable`
+`isLoginInProgress` is a plain boolean no effect re-runs on (`delegationReadinessWiring.test.ts`): `ready` (a live session) runs it; `starting` (a login actually running) keeps it `pending`
+until the login ends; `unavailable` (the PIN keypad up, a sign-out, an expired session) keeps it
+`pending` TOO since 2026-11-24 - it used to be answered `leader-unavailable` at once - because such a
+leader gives the lead up as soon as the MLS work holding it settles, and the tab that takes the lead
+runs the request ([below](#a-leader-whose-own-session-ended-gives-the-lead-up-2026-11-24)). Nothing
+waits on `whenMlsReady` any more, so no request blocks the drain behind it; instead the readiness,
+the load fact and the account are read AGAIN after the claim, right before the executor runs: a
+session that ended, or a lead that left, in between hands the claim back to `pending` (narrated),
 and builds no MLS client for a session that is ending.
 A kind no executor in the leader runs is answered `not-delegable`. A `pending` record whose REQUESTER
 LOCK is free - its tab closed, or signed out - is deleted under the run lock and never run, with a
 line saying so: the gesture is nobody's any more, and a same-account sign-in afterwards never runs a
 previous session's request. **A leader tab that cannot serve gives the lead up** - a hidden one hands
-it to the visible tab that asks, a frozen one releases it at `freeze` ([below](#the-lead-goes-to-a-tab-that-can-serve-a-hidden-leader-hands-it-over-2026-11-10)), so a waiting request is run by the
+it to the visible tab that asks, a frozen one releases it at `freeze` ([below](#the-lead-goes-to-a-tab-that-can-serve-a-hidden-leader-hands-it-over-2026-11-10)), one whose own session ended
+(the keypad, a sign-out, an expired session) releases it once its in-flight MLS work settled ([below](#a-leader-whose-own-session-ended-gives-the-lead-up-2026-11-24)), so a waiting request is run by the
 tab promoted in its place; a discarded tab is gone, and its locks with it. What is still not covered:
 a leader whose main thread is wedged, which runs no handler, and no clock is added to cut that wait
 short - a timeout there would be a guess about a live document. **And right after a deploy**, a leader tab still
@@ -2062,8 +2284,18 @@ request waits until that tab reloads (and is then run, or deleted unrun if its f
 
 **The other refusals, all typed and said with Paraglide.** `not-delegable`: the engine has no Web
 Locks, or the leader tab is signed in to ANOTHER account (the leader lock is per browser) - said with
-the old `chat_error_follower_tab` sentence, which is exactly the instruction left; a leader signed out
-answers `leader-unavailable`. `failed`: an executor threw instead of answering by value - the visible
+the old `chat_error_follower_tab` sentence, which is exactly the instruction left. `leader-unavailable`
+(`chat_error_main_tab_unavailable`) is answered by EXACTLY four branches of `tabCommitDelegation.ts`,
+none of them a leader that can still hand the lead on:
+- the asking tab is itself signed out (`createDelegationClient`, before anything is stored);
+- the asking session ended (`abandonDelegatedCommits`, at its sign-out): its waits end so;
+- the record's account differs from the leader's and the leader has NO account while its session
+  reads as serving (`ready` or `starting`, decided before the claim): a state the flags' one writer
+  does not produce, kept typed rather than left waiting;
+- after the claim, the leader's account is no longer the record's (another account signed in between
+  the claim and the run): the gesture belongs to a session this leader no longer has.
+
+`failed`: an executor threw instead of answering by value - the visible
 end of a defect, logged ONCE, at error, in the leader (`chat_error_main_tab_failed`). A creation says
 every one in its modal (`leader-gone` and `leader-unavailable` are `ConversationRefusal`s). A
 gesture with two entries (joining a salon: the community's key group, then the salon's) stops at the
@@ -2088,8 +2320,9 @@ never delivers to its poster and delivers to the others a turn later: every gest
 answered; a repeated signal and concurrent drains run once; two documents that both believe they
 lead run once between them; a request asked before any leader is run by the one that comes; a
 promoted-in-place document runs nothing and its reloaded successor runs the request; a starting
-leader keeps it and runs it once ready; a locked or not-yet-loaded leader answers
-`leader-unavailable`; a leader killed mid-request answers `leader-gone` and runs nothing again; a
+leader keeps it and runs it once ready; a locked leader leaves it `pending` and the next leader runs
+it; a leader that gave the lead up between the claim and the run hands the record back for the next
+leader; a leader killed mid-request answers `leader-gone` and runs nothing again; a
 request held by a live document is waited for; a pending request whose tab closed is deleted, not
 run; a signed-out session's request is never run for the next one; another account and a signed-out
 leader refuse; a throwing executor is said once, at error. `stateAuthority.test.ts` for the load
@@ -6298,6 +6531,39 @@ transition joins it), `iosKeyboardRiseHandoff.test.ts` (the will-show observer, 
 `keyboardTransition.test.ts` (one edge per start and per rest, a throwing listener isolated),
 `ChatArea.scrollAnchor.svelte.test.ts` (the reveal put back, the geometry lines read in their frame and
 in order, the assistive fall at INFO), `threadAnchor.test.ts` (the line). **Owed: the iPhone reading of the same gesture, ten cycles.**
+
+### A rest is two facts: the keyboard at rest AND its frame landed (2026-11-24)
+
+**What the iPhone said** (`1.8.0-alpha.6`, iPhone 12, the same gesture): #4023 passed 6 returns of 11.
+Every failing return logged `not a keyboard move of the engine, the flag falls (keyboard transition #N at
+rest)`, the transition at rest 36 to 45 ms before the move
+([the entry](../../backlog.d/p2-a-dm-thread-is-left-above-its-end-by-a-keyboard-reveal-that-lands-after-the-transition-rests.md)).
+
+**Why, from the syslog.** A keyboard that comes back with the app shows with no animation: UIKit's
+did-show follows its will-show at once, while the shell's rise is still waiting for the page's layout
+and its screen-update proof - before the WebView's frame is set. The rest went out from that did-show,
+the frame landed after it, and the move came with or after the frame (return #26: rest .750, the rise's
+proof .768, the move .795). On an ordinary rise the keyboard animates for ~400 ms and the frame lands
+long before the did-show, which is why only returns failed, and only some.
+
+**The fix: the iOS rest needs both facts, at both ends of the bridge.** The shell holds a rest heard
+while a rise has not set its frame and tells it from the settle of that frame, after its proof
+(`CanariTellPageKeyboardAtRest`, `CanariKeyboardLayoutSettled`; a newer will-show supersedes it). The
+page rests a transition only once the shell has said so AND the hand-off target has been spent by the
+resize (`noteKeyboardFrameAwaited` when `canariImeTarget` announces a height, `noteKeyboardFrameLanded`
+when `measureViewport` spends or withdraws it): whichever comes first waits for the other, and a rest
+the page has to hold is a WARN, since the shell now owes it after the frame. And WebKit's own keyboard
+inset, which scrolled the document 301 pt on the failing return #31 before any frame was set, is
+detached from the WebView, and WebKit's reveal with it, so the move the put-back exists for may simply
+never come any more; the two-fact rest keeps whatever still moves the pane classified ([the doubled inset](../keyboard-and-send-motion.md#the-shell-is-the-one-authority-over-the-keyboards-room-2026-11-24)).
+No clock: the rest is the conjunction of two facts, each carried from where it is known.
+
+Tests: `keyboardTransition.test.ts` (a rest before the frame is held, a frame first leaves the rest to
+the shell, a landing with nothing held rests nothing), `keyboardViewport.appReturn.test.ts` (the hand-off
+through `canariImeTarget` and the resize, in both orders), `ChatArea.scrollAnchor.svelte.test.ts` (a move
+after an early rest, frame still awaited, is put back), `iosKeyboardRiseHandoff.test.ts` (the owed rest
+and its settle), `keyboardTransition.test.ts` again (a newer change drops a held rest). **Owed: the iPhone
+reading of the same gesture, eleven returns, eleven at the end.**
 
 ### A short thread sits at the bottom, and asks for its past at entry (2026-11-14)
 

@@ -38,6 +38,8 @@ const mirrorGraineSeed = vi.hoisted(() => vi.fn());
 vi.mock('./graineMirror', () => ({ mirrorGraineSeed }));
 const delegateCommitToLeader = vi.hoisted(() => vi.fn());
 vi.mock('$lib/utils/chat/tabCommitDelegation', () => ({ delegateCommitToLeader }));
+const postSealedChannelMessage = vi.hoisted(() => vi.fn());
+vi.mock('$lib/utils/chat/channelPost', () => ({ postSealedChannelMessage }));
 
 import {
   GraineSealHandoverRefusedError,
@@ -252,6 +254,44 @@ describe("the leader's seal of a follower's message when the lead leaves at each
 
   it('with the lead kept throughout, seals and hands the message back', async () => {
     await expect(run()).resolves.toMatchObject({ sealed: { messageIndex: 3 } });
+    expect(postSealedChannelMessage).not.toHaveBeenCalled();
+  });
+
+  // Third review of #4053: adopted from a reloaded page, nobody is left to post it - the leader does.
+  it('adopted with the post it carries: sealed AND posted here, with that post', async () => {
+    const answer = await salonSealExecutors['seal-salon-message'](
+      {
+        kind: 'seal-salon-message',
+        channelId: 'abcdef123456',
+        payload: await sealForHandover(new Uint8Array([3])),
+        postIfAdopted: { messageId: 'm-1', silent: true },
+      },
+      { adopted: true }
+    );
+    expect(answer).toMatchObject({ sealed: { messageIndex: 3 } });
+    expect(postSealedChannelMessage).toHaveBeenCalledWith(
+      'abcdef123456',
+      expect.objectContaining({ messageIndex: 3 }),
+      { messageId: 'm-1', silent: true }
+    );
+  });
+
+  it('adopted, but the lead left during the seal: nothing posted', async () => {
+    sealWithGraineV2.mockImplementation(async () => {
+      loseTheLead();
+      return { ciphertext: 'c', nonce: 'n', signature: 's' };
+    });
+    const answer = await salonSealExecutors['seal-salon-message'](
+      {
+        kind: 'seal-salon-message',
+        channelId: 'abcdef123456',
+        payload: await sealForHandover(new Uint8Array([3])),
+        postIfAdopted: { messageId: 'm-1' },
+      },
+      { adopted: true }
+    );
+    expect(answer).toEqual({ unsent: 'lead-lost' });
+    expect(postSealedChannelMessage).not.toHaveBeenCalled();
   });
 
   it("during the gate: refused at the seal's entry, nothing reserved", async () => {
