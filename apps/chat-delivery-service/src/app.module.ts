@@ -48,6 +48,7 @@ import { PushEnvelope } from './entities/push-envelope.entity';
 import { PushDeliveryDaily } from './entities/push-delivery-daily.entity';
 import { SentFrameReceipt } from './entities/sent-frame-receipt.entity';
 import { UninvitedEntry } from './entities/uninvited-entry.entity';
+import { GroupLastMessage } from './entities/group-last-message.entity';
 import { ReportAccusation } from './entities/report-accusation.entity';
 import Redis from 'ioredis';
 import { typeormSynchronize } from './typeorm-synchronize';
@@ -121,6 +122,7 @@ class RedisShutdown implements OnModuleDestroy {
         PushDeliveryDaily,
         SentFrameReceipt,
         UninvitedEntry,
+        GroupLastMessage,
         ReportAccusation,
       ],
       synchronize: typeormSynchronize(),

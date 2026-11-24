@@ -46,6 +46,7 @@ import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
 import { SentFrameReceipt } from '../entities/sent-frame-receipt.entity';
 import { UninvitedEntry } from '../entities/uninvited-entry.entity';
+import { GroupLastMessage } from '../entities/group-last-message.entity';
 import { InvitationsController } from '../controllers/invitations.controller';
 import { DevicesController } from '../controllers/devices.controller';
 import { InternalController } from '../controllers/internal.controller';
@@ -290,6 +291,8 @@ maybe('the seat lock orders claims, evictions, routes and queued rows (PostgreSQ
         SentFrameReceipt,
         // The uninvited-entry count (migration 053): an erasure deletes the account's rows.
         UninvitedEntry,
+        // The newest visible frame's time (migration 057), swept with a group.
+        GroupLastMessage,
       ],
       synchronize: false,
       uuidExtension: 'pgcrypto',
