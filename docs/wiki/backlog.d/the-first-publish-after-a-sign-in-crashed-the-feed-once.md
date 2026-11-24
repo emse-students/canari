@@ -23,6 +23,18 @@ not proven.
 Error as its name and message only. Since this entry, `handleClientError` writes the first frames
 of the stack (`describeCaughtError`), so the next occurrence names the chunk and column to map.
 
+**What was found (2026-11-25).** The alpha.9 frames named the feed's keyed `{#each}`
+(`resolvedPosts.slice(0, mounted.count)`), and the crash reproduces on the real page in happy-dom
+(`routes/posts/page.tabSwitch.svelte.test.ts`): a FULLY MOUNTED feed switched to a tab this process
+never loaded. The publish from Pour toi moves the reader to Campus (`feedToShowAfterPublish`); with
+no in-memory entry for Campus yet, the tab load empties the list (`shownPosts` null, the skeleton).
+In the same flush `progressiveCount` wrote its reset count from its `$effect`, which re-ran the
+each eagerly, and the commit that run registered re-read the collection - null - before the `{#if}`
+around it was torn down. First per process because Campus is cached after the first visit. Fixed by
+deriving the reset (rule and mechanism:
+[architecture](../frontend/architecture.md#a-write-from-an-effect-re-runs-a-block-that-re-reads-later-svelte-559-2026-11-25)).
+The entry stays until the reading below passes.
+
 **Closing reading.** On the iPhone 12, sign in, set the remembered feed to "Pour toi", open the
 composer from the header and publish a personal text post, three times across fresh sign-ins.
 Either no crash, or a crash line WITH frames - which then names the fix.
