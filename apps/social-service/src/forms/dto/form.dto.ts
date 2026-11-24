@@ -423,6 +423,15 @@ export class CreateFormDto {
   allowMultipleSubmissions?: boolean;
 
   /**
+   * Whether a member's answer given once every place is taken waits in line (migration 183, owner
+   * 2026-11-23, opt-in). Absent keeps the stored value on an edit. Inert where `waitlistApplies`
+   * says no (an unlimited, anonymous or multiple-answer form), never refused (`waitlist.ts`).
+   */
+  @IsBoolean()
+  @IsOptional()
+  waitlistEnabled?: boolean;
+
+  /**
    * Whether a respondent with an account may change their own answer while the form is open
    * (migration 166, owner 2026-11-13). Absent keeps the stored value on an edit; refused on an
    * anonymous form (`FORM_ANONYMOUS_ANSWER_EDIT`).
@@ -649,6 +658,16 @@ export class SubmitFormDto extends DeclaredIdentityDto {
   @ArrayMaxSize(10)
   @IsString({ each: true })
   announcedFields?: string[];
+
+  /**
+   * THE MEMBER ASKED TO JOIN THE WAITING LIST (owner, 2026-11-23, `waitlist.ts`): sent by a page that
+   * knows the list, on a form whose list is open. An answer arriving once every place is taken is
+   * then stored `waiting` instead of refused `FORM_FULL`. A build older than `1.8.0` never sends it,
+   * so it is never put in line without saying so: it is refused as full, as it always was.
+   */
+  @IsOptional()
+  @IsBoolean()
+  joinWaitlist?: boolean;
 
   @IsValidAnswers()
   answers: Record<string, FormAnswerValue>;

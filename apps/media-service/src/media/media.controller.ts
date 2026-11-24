@@ -763,7 +763,7 @@ export class MediaController {
   async claimReels(
     @Body() body: { mediaIds?: unknown; ownerId?: unknown },
     @Headers('x-internal-secret') internalSecret: string | undefined
-  ): Promise<{ claimed: string[]; refused: string[] }> {
+  ): Promise<{ claimed: string[]; refused: string[]; expired: string[] }> {
     assertInternalSecret(internalSecret);
     const ids = this.boundedIds(body?.mediaIds, 'mediaIds');
     if (typeof body?.ownerId !== 'string' || body.ownerId.length === 0) {

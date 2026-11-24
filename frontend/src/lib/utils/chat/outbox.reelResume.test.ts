@@ -77,8 +77,14 @@ import { OUTBOX_COLUMNS, REEL_TAKE_MAX_SENDS } from '$lib/db/sqliteBatch';
 import { acquireEncoderLease, withEncoderLease } from '$lib/video/encoderLease';
 import { SqliteStorage } from '$lib/db/sqlite';
 import { buildChatReelTake } from '$lib/reels/chatReelTake';
-import { publishReel, ReelPublishError } from '$lib/reels/publishReel';
-import type { PreparedVideo } from '$lib/video/prepareVideoForUpload';
+import { PublishQueue } from '$lib/posts/publishQueue/publishQueue';
+import {
+  runnerWrite,
+  markedPost,
+  type QueuedFile,
+  type QueuedPost,
+} from '$lib/posts/publishQueue/publishQueueStore';
+import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { m } from '$lib/paraglide/messages';
 import { attachFakeOutboxSql } from '../../../test/outboxSqlFake';
 import { FakeSessionServer } from '../../../test/fakeUploadSessionServer';
@@ -1109,37 +1115,78 @@ describe('one take, several conversations (RC-13)', () => {
     const w = world();
     const l = life(w);
     await enqueueTake(l, 3, { awaitsPublish: true });
-    const published = publishReel(
-      {
-        clip: { blob: new Blob([RAW.slice().buffer as ArrayBuffer]), source: 'camera' },
-        caption: '',
-        identity: '',
-        maxDurationMs: 90_000,
-        rule: { maxDurationMs: 90_000, maxAspectRatio: 0.8 },
-        video: {},
-        onUploaded: (uploaded) => l.outbox.adoptPublishedUpload(ID, uploaded),
-      },
-      {
-        assertNotMuted: async () => undefined,
-        getToken: async () => 'token',
-        uploadLimits: async () => null,
-        prepare: async () =>
-          ({
-            file: new File([PREPARED.slice().buffer as ArrayBuffer], 'reel.mp4', {
-              type: 'video/mp4',
-            }),
-            width: 720,
-            height: 1280,
-            durationSeconds: 4.2,
-          }) as PreparedVideo,
-        upload: () => publishStepUpload(w),
-        placeholder: async () => null,
-        createPost: async () => {
-          throw new Error('422: the post was refused');
+    // THE PUBLISH QUEUE, as the CanaReels step hands it the take (2026-11-24), wired to THIS outbox.
+    const posts = new Map<string, QueuedPost>();
+    const files = new Map<string, QueuedFile>();
+    posts.set('reel-post', {
+      id: 'reel-post',
+      queuedAt: 1,
+      payload: { markdown: '' },
+      media: [
+        {
+          name: 'canareel.mp4',
+          type: 'video/mp4',
+          size: RAW.length,
+          take: { maxDurationMs: 90_000 },
         },
-      }
-    ).finally(() => l.outbox.endPublishWait(ID));
-    await expect(published).rejects.toBeInstanceOf(ReelPublishError);
+      ],
+      landing: 'all',
+      chatTakeId: ID,
+    });
+    files.set('reel-post/0', {
+      bytes: RAW.slice().buffer as ArrayBuffer,
+      name: 'canareel.mp4',
+      type: 'video/mp4',
+    });
+    const queue = new PublishQueue({
+      store: {
+        list: async () => [...posts.values()].map((p) => structuredClone(p)),
+        get: async (id) => structuredClone(posts.get(id) ?? null),
+        readFile: async (id, i) => files.get(`${id}/${i}`)!,
+        update: async (post, bytes) => {
+          const stored = posts.get(post.id);
+          if (!stored) return false;
+          posts.set(post.id, structuredClone(runnerWrite(stored, post)));
+          if (bytes) files.set(`${post.id}/${bytes.index}`, bytes.file);
+          return true;
+        },
+        mark: async (id, marks) => {
+          const stored = posts.get(id);
+          if (!stored) return null;
+          posts.set(id, markedPost(stored, marks));
+          return structuredClone(posts.get(id)!);
+        },
+        remove: async (id) => void posts.delete(id),
+      },
+      prepare: async () => ({
+        file: new File([PREPARED.slice().buffer as ArrayBuffer], 'reel.mp4', { type: 'video/mp4' }),
+        dims: { width: 720, height: 1280 },
+        durationMs: 4200,
+      }),
+      reelRule: async () => ({ maxDurationMs: 90_000, maxAspectRatio: 0.8 }),
+      encodingFor: () => 'single-block',
+      upload: () => publishStepUpload(w),
+      adoptChatTake: (takeId, uploaded) => l.outbox.adoptPublishedUpload(takeId, uploaded),
+      endChatTakeWait: (takeId) => l.outbox.endPublishWait(takeId),
+      release: async () => undefined,
+      createPost: async () => {
+        throw new ApiRefusalError(422, null, 'the post was refused');
+      },
+      withdrawPost: async () => ({ deleted: false }),
+      serverReady: () => true,
+      assertAccount: async () => undefined,
+      sessionEnded: () => false,
+      assertNotMuted: async () => undefined,
+      failureMessage: () => 'refused',
+      lock: (fn) => fn(),
+      sleep: async () => undefined,
+      onViews: () => undefined,
+      onPublished: () => undefined,
+      passEnded: () => undefined,
+      log: () => undefined,
+    });
+    await queue.drain();
+    expect(posts.get('reel-post')?.failure?.stage).toBe('createPost');
     await expectDeliveredOnce(w, l, 3);
     expect(w.uploads).toBe(0);
   });
@@ -1542,25 +1589,84 @@ describe('one take, several conversations (RC-13)', () => {
     expect(w.events.some((e) => e.startsWith('release'))).toBe(false);
   });
 
-  it("L2: a follower's forwarded adoption the leader never acknowledged is SAID when its publish step ends, with its cost; an acknowledged one is not", async () => {
+  it("L2: a follower's end of a publish wait goes to the LEADER, which holds the wait - after the leader acknowledged the adoption forwarded before it, never before", async () => {
     tab.role = 'follower';
     const w = world();
     const l = life(w, { prepare: () => NEVER() });
-    await enqueueTake(l, 1, { awaitsPublish: true });
     const ref = await publishStepUpload(w);
+    const endsForwarded = () =>
+      tabOutboxMock.forwardReelTakeWrite.mock.calls.filter(
+        (c) => (c[0] as { type: string }).type === 'outbox_reel_take_end_wait'
+      );
+    tabOutboxMock.forwardReelTakeWrite.mockClear();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
-      await l.outbox.adoptPublishedUpload(ID, { ref, durationMs: 4200 });
-      l.outbox.endPublishWait(ID);
-      expect(warn.mock.calls.filter((c) => String(c[0]).includes('NOT taken'))).toHaveLength(1);
+      // No adoption forwarded: the end goes at once.
+      l.outbox.endPublishWait('take-without-adoption');
+      expect(endsForwarded()).toEqual([
+        [{ type: 'outbox_reel_take_end_wait', takeId: 'take-without-adoption' }],
+      ]);
 
-      await l.outbox.adoptPublishedUpload(ID, { ref, durationMs: 4200 });
-      tab.handlers.at(-1)!({ type: 'outbox_reel_take_adopt_ack', takeId: ID });
+      // An adoption forwarded: its end is HELD until the leader's acknowledgement.
+      expect(await l.outbox.adoptPublishedUpload(ID, { ref, durationMs: 4200 })).toBe('forwarded');
       l.outbox.endPublishWait(ID);
-      expect(warn.mock.calls.filter((c) => String(c[0]).includes('NOT taken'))).toHaveLength(1);
+      expect(endsForwarded()).toHaveLength(1);
+      tab.handlers.at(-1)!({ type: 'outbox_reel_take_adopt_ack', takeId: ID });
+      expect(endsForwarded()).toEqual([
+        [{ type: 'outbox_reel_take_end_wait', takeId: 'take-without-adoption' }],
+        [{ type: 'outbox_reel_take_end_wait', takeId: ID }],
+      ]);
+      // Said once, never twice, and never as a loss: the old "NOT taken" warning is gone.
+      tab.handlers.at(-1)!({ type: 'outbox_reel_take_adopt_ack', takeId: ID });
+      expect(endsForwarded()).toHaveLength(2);
+      expect(warn.mock.calls.filter((c) => String(c[0]).includes('NOT taken'))).toHaveLength(0);
     } finally {
       warn.mockRestore();
       l.kill();
+    }
+  });
+
+  it('TWO TABS (L2): the publish runs in a follower, the take waits in the leader - the forwarded adoption, then the forwarded end, and the chats send the ONE file', async () => {
+    const w = world();
+    const leader = life(w);
+    await enqueueTake(leader, 1, { awaitsPublish: true });
+    const leaderHandler = tab.handlers.at(-1)!;
+    const ref = await publishStepUpload(w);
+
+    tab.role = 'follower';
+    const follower = life(w, { prepare: () => NEVER() });
+    const followerHandler = tab.handlers.at(-1)!;
+    // The channel: a follower's write reaches the leader's handler, the leader's ack the follower's.
+    const asLeader = (event: TabOutboxEvent) => {
+      const was = tab.role;
+      tab.role = 'leader';
+      try {
+        leaderHandler(event);
+      } finally {
+        tab.role = was;
+      }
+    };
+    tabOutboxMock.forwardReelTakeWrite.mockImplementation(asLeader);
+    tabOutboxMock.acknowledgeReelTakeAdoption.mockImplementation((takeId: string) =>
+      followerHandler({ type: 'outbox_reel_take_adopt_ack', takeId })
+    );
+    try {
+      expect(await follower.outbox.adoptPublishedUpload(ID, { ref, durationMs: 4200 })).toBe(
+        'forwarded'
+      );
+      // The publish step ends in the follower at once - before the leader has written the adoption.
+      follower.outbox.endPublishWait(ID);
+      tab.role = 'leader';
+      await expectDeliveredOnce(w, leader, 1);
+      // The adopted file was sent: the leader never prepared or uploaded its own.
+      expect(w.prepares).toHaveLength(0);
+      expect(w.uploads).toBe(0);
+      expect(w.server.reservations).toBe(1);
+      expect((await sentReel(w, leader)).media.mediaId).toBe(ref.mediaId);
+    } finally {
+      tabOutboxMock.forwardReelTakeWrite.mockReset();
+      tabOutboxMock.acknowledgeReelTakeAdoption.mockReset();
+      follower.kill();
     }
   });
 

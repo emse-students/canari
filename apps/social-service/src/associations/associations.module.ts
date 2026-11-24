@@ -27,6 +27,8 @@ import { ReadGrantsController } from '../read-grants/read-grants.controller';
 import { ReadGrantsService } from '../read-grants/read-grants.service';
 import { Post } from '../posts/entities/post.entity';
 import { Form } from '../forms/entities/form.entity';
+import { Submission } from '../forms/entities/submission.entity';
+import { FormWaitlistNoticeService } from '../forms/waitlist-notice.service';
 import { PostNotification } from '../posts/entities/post-notification.entity';
 import { PostNotificationsService } from '../posts/post-notifications.service';
 import { AssociationsService } from './associations.service';
@@ -77,6 +79,8 @@ import { RefundsController } from './refunds/refunds.controller';
       PartnershipCode,
       Post,
       Form,
+      // The answers a refund's promotion tells (`FormWaitlistNoticeService`, provided below).
+      Submission,
       PostNotification,
       Space,
       AssociationAudience,
@@ -114,6 +118,10 @@ import { RefundsController } from './refunds/refunds.controller';
     LydiaCashiersService,
     RefundsService,
     LydiaRefundNotifier,
+    // THE WAITING LIST'S ONE NOTICE, provided HERE so both its promoters reach the same instance: a
+    // refund (`RefundsService`, this module) and every form event (`FormsService`, whose module
+    // imports this one - the reverse edge would be a cycle).
+    FormWaitlistNoticeService,
   ],
   // The category shim and the poster controller are listed FIRST so their literal `associations/categories`
   // and `associations/poster` routes register before the `associations/:id` matcher.
@@ -142,6 +150,7 @@ import { RefundsController } from './refunds/refunds.controller';
     // edge back to `PostsModule` would be a cycle. `InternalModule` imports both modules, so it may
     // be handed either instance - harmless, the service holds no state (see the provider above).
     PostNotificationsService,
+    FormWaitlistNoticeService,
   ],
 })
 export class AssociationsModule {}

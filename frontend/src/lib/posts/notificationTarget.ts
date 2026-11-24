@@ -80,6 +80,9 @@ export function notificationHref(
     // The member's own cash answer about to expire opens the same form page, where the answer is.
     case 'form_reminder':
     case 'form_cash_expiring':
+    // A waiting answer became a registration: the form page shows it, with its payment when due.
+    case 'form_waitlist_promoted':
+    case 'form_waitlist_promoted_payment_due':
       return `/forms/${notif.postId}`;
     // A payment landed on a full form (`postId` is the FORM): its manager is sent to that form's
     // responses, where the paid-over-capacity answer is, not to the page that answers the form.
@@ -216,6 +219,8 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'form_paid_over_capacity',
   'form_cash_expiring',
   'form_stale_open',
+  'form_waitlist_promoted',
+  'form_waitlist_promoted_payment_due',
   'association_post',
   'followed_post',
   'association_repost',

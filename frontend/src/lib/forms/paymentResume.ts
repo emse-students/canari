@@ -21,11 +21,17 @@ export interface FailedPaymentOffer {
  * edited, a form that closed while the page was open, a preview - and online payments paused, which
  * stop the resume and NOT the cash (cash never reaches an account). Null when nothing is offered.
  * Nothing here is a clock.
+ *
+ * A PROMOTED ANSWER OWING ITS PAYMENT (`paymentDue`, the waiting list of 2026-11-23) is a
+ * registration already - so the page counts it as answered - and holds its own seat whatever the
+ * form's window: neither "answered" nor "closed" withholds its payment.
  */
 export function failedPaymentOffer(state: {
   resumable: ResumableAnswer | null | undefined;
   cashSwitchable: ResumableAnswer | null | undefined;
   submitted: boolean;
+  /** The caller's answer is a promoted one whose payment is owed (`payment_due`). */
+  paymentDue?: boolean;
   paymentPending: boolean;
   editing: boolean;
   closed: boolean;
@@ -33,12 +39,12 @@ export function failedPaymentOffer(state: {
   paymentsPaused: boolean;
   preview: boolean;
 }): FailedPaymentOffer | null {
+  const due = !!state.paymentDue;
   if (
-    state.submitted ||
+    (state.submitted && !due) ||
     state.paymentPending ||
     state.editing ||
-    state.closed ||
-    state.notOpenYet ||
+    ((state.closed || state.notOpenYet) && !due) ||
     state.preview
   ) {
     return null;

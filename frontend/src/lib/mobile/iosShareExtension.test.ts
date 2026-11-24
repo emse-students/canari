@@ -448,9 +448,26 @@ describe('the conversation suggestions (lot S5, the iOS twin of Android sharing 
   });
 
   it('deletes by its own group identifier - before every publish and at every clear', () => {
-    // ONE delete, the group's: never `deleteAll`, which would take what the system learned of the
-    // app beyond the suggestions.
-    expect(suggestions).not.toContain('deleteAll');
+    // The suggestions' publish and clear delete ONE group, never `deleteAll`, which would take what
+    // the system learned of the app beyond the suggestions. Only the SIGN-OUT's erase
+    // (`clearMessageNotifications`) also runs `deleteAll`: the share sheet still offered the
+    // previous account's sender after the group delete alone (iPhone 12, 1.8.0-alpha.6).
+    const signOut = capture(
+      suggestions,
+      /static func clearMessageNotifications\(([\s\S]*?)\n {2}\/\/\/ `INInteraction\.deleteAll`/
+    );
+    expect(signOut).toContain('deleteGroup(messageNotificationsGroup)');
+    expect(signOut).toContain('deleteEverything()');
+    expect(signOut.indexOf('deleteGroup(messageNotificationsGroup)')).toBeLessThan(
+      signOut.indexOf('deleteEverything()')
+    );
+    expect(suggestions.match(/INInteraction\.deleteAll \{/g)?.length).toBe(1);
+    const publishAndClear = capture(
+      suggestions,
+      /(static func publish\([\s\S]*?)\n {2}\/\/\/ Erases everything/
+    );
+    expect(publishAndClear).not.toContain('deleteAll');
+    expect(publishAndClear).not.toContain('deleteEverything');
     // ONE delete call, parametrised by the group: the suggestions' own by default, the notification
     // extension's for `clearMessageNotifications` (iosCommunicationNotifications.test.ts).
     expect(suggestions.match(/INInteraction\.delete\(with: /g)?.length).toBe(1);

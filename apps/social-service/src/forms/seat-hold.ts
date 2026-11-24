@@ -130,11 +130,13 @@ export function toRequestState(wire: unknown): RequestState {
 export const LYDIA_REQUEST_UUID_RE = /^[0-9a-f]{32}$/i;
 
 /**
- * The submissions that hold a seat on a form, as a TypeORM `where` (an OR of four rows).
+ * The submissions that hold a seat on a form, as a TypeORM `where` (an OR of five rows).
  *
  * A `pending` row holds one only while it is younger than the hold, and that is decided HERE, from
- * the row, so a count is right whether or not the expiry job has run. `extra` narrows every branch
- * the same way (one submitter, one submission id).
+ * the row, so a count is right whether or not the expiry job has run. So does a `payment_due` row -
+ * a waiting answer promoted on a paid form, owing its online payment (`waitlist.ts`) - by the same
+ * hold, counted from its promotion. A `waiting` row holds NONE: the waiting list never counts toward
+ * capacity. `extra` narrows every branch the same way (one submitter, one submission id).
  */
 export function seatHoldingWhere(
   formId: string,
@@ -145,14 +147,16 @@ export function seatHoldingWhere(
     { ...extra, formId, paymentStatus: 'free' },
     livePendingWhere(formId, extra),
     { ...extra, formId, paymentStatus: 'pending_cash' },
+    livePaymentDueWhere(formId, extra),
   ];
 }
 
 /**
  * The submissions that ARE a person's answer on a single-answer form: every seat-holding row, plus
  * `paid_over_capacity` - the money landed, so a second submit would be a second charge for one
- * answer even though no seat was given. A `cancelled` or `expired` row (a request declined,
- * cancelled or expired) is not an answer: the person may answer again.
+ * answer even though no seat was given - and `waiting`: a place in line is an answer too, so one
+ * person is never twice on the list nor both on it and registered. A `cancelled` or `expired` row (a
+ * request declined, cancelled or expired) is not an answer: the person may answer again.
  */
 export function answerHoldingWhere(
   formId: string,
@@ -161,6 +165,7 @@ export function answerHoldingWhere(
   return [
     ...seatHoldingWhere(formId, extra),
     { ...extra, formId, paymentStatus: 'paid_over_capacity' },
+    { ...extra, formId, paymentStatus: 'waiting' },
   ];
 }
 
@@ -174,7 +179,11 @@ export function pickShownAnswer<T extends { paymentStatus: string }>(
   newestFirst: readonly T[]
 ): T | undefined {
   const rank = (row: T) =>
-    SETTLED_PAYMENT_STATUSES.has(row.paymentStatus) ? 0 : row.paymentStatus === 'pending' ? 2 : 1;
+    SETTLED_PAYMENT_STATUSES.has(row.paymentStatus)
+      ? 0
+      : row.paymentStatus === 'pending' || row.paymentStatus === 'payment_due'
+        ? 2
+        : 1;
   return newestFirst.reduce<T | undefined>(
     (best, row) => (best === undefined || rank(row) < rank(best) ? row : best),
     undefined
@@ -215,6 +224,24 @@ export function livePendingAtClockWhere(
     formId,
     paymentStatus: 'pending',
     paymentRequestedAt: Raw((column) => `${column} > ${PENDING_HOLD_CUTOFF_CLOCK_SQL}`),
+  };
+}
+
+/**
+ * A `payment_due` submission - promoted from the waiting list, owing its online payment - still
+ * younger than the online hold, counted from its promotion (`paymentRequestedAt`): the same clock
+ * and the same cutoff as {@link livePendingWhere}, so a promoted payer has exactly the window of a
+ * fresh one (owner, 2026-11-23: "the existing payment window applies").
+ */
+export function livePaymentDueWhere(
+  formId: string,
+  extra: FindOptionsWhere<Submission> = {}
+): FindOptionsWhere<Submission> {
+  return {
+    ...extra,
+    formId,
+    paymentStatus: 'payment_due',
+    paymentRequestedAt: Raw((column) => `${column} > ${PENDING_HOLD_CUTOFF_SQL}`),
   };
 }
 

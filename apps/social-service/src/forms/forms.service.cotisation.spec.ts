@@ -70,11 +70,12 @@ describe('FormsService - cotisation configuration and granting', () => {
     };
     // `markPaid`'s and the cash desk's transactions: the seat lock, the locked row (whatever the
     // test made `findOne` answer), and a count of 1 that says the row still holds its seat - the
-    // late-payment branches have their own file.
+    // late-payment branches have their own file. A DELETE answers as the driver does, `[rows,
+    // count]`: no waiting answer of the payer to take off the line here.
     submissionRepo.manager = {
       transaction: jest.fn((_level: string, run: (m: unknown) => Promise<unknown>) =>
         run({
-          query: jest.fn(() => Promise.resolve([])),
+          query: jest.fn((sql: string) => Promise.resolve(sql.startsWith('DELETE') ? [[], 0] : [])),
           findOne: jest.fn(() => submissionRepo.findOne()),
           count: jest.fn(() => Promise.resolve(1)),
           create: jest.fn((_entity: unknown, x: unknown) => x),

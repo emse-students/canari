@@ -23,6 +23,7 @@ import { ProductCheckout } from '../entities/product-checkout.entity';
 import { AssociationProduct } from '../entities/association-product.entity';
 import { Submission } from '../../forms/entities/submission.entity';
 import { Association } from '../entities/association.entity';
+import { Form } from '../../forms/entities/form.entity';
 import { LydiaRefund } from './lydia-refund.entity';
 import { REFUND_CALL_BOUND_MS, REFUND_CALL_LOCK_KEY, RefundsService } from './refunds.service';
 import { ERASURE_STATEMENTS, erasureParams } from '../../internal/account-erasure';
@@ -48,6 +49,7 @@ maybe('Lydia refunds against PostgreSQL', () => {
   let ds: DataSource;
   let service: RefundsService;
   let notifier: { tell: jest.Mock };
+  let waitlistNotice: { afterCommit: jest.Mock };
   let post: jest.SpyInstance;
 
   const options = (synchronize: boolean, entities: Function[]) => ({
@@ -77,7 +79,11 @@ maybe('Lydia refunds against PostgreSQL', () => {
          "lydiaOnboardingComplete" boolean NOT NULL DEFAULT false)`
     );
     await admin.query(
-      `CREATE TABLE forms (id uuid PRIMARY KEY, "grantsCotisation" boolean NOT NULL DEFAULT false)`
+      // The capacity and the waiting list a freed seat is promoted on (migration 183).
+      `CREATE TABLE forms (id uuid PRIMARY KEY, "grantsCotisation" boolean NOT NULL DEFAULT false,
+         "maxSubmissions" integer NULL, "cashPaymentExpiryDays" integer NULL,
+         "deletedAt" timestamptz NULL, "allowOnlinePayment" boolean NOT NULL DEFAULT true,
+         "allowCashPayment" boolean NOT NULL DEFAULT false, "associationId" uuid NULL)`
     );
     // Migration 120 from the file, twice: it must be idempotent. On the admin connection, so its
     // `SET lock_timeout` does not stay on a pool connection.
@@ -105,15 +111,23 @@ maybe('Lydia refunds against PostgreSQL', () => {
         Submission,
         LydiaRefund,
         Association,
+        // Read by the promotion of the waiting list a freed seat runs (`waitlist.ts`).
+        Form,
       ])
     );
     await ds.initialize();
     notifier = { tell: jest.fn().mockResolvedValue(undefined) };
+    waitlistNotice = { afterCommit: jest.fn().mockResolvedValue(undefined) };
     service = Object.assign(Object.create(RefundsService.prototype) as object, {
       logger: new Logger('RefundsService'),
       refundRepo: ds.getRepository(LydiaRefund),
-      associations: { canManagePayoutAccount: jest.fn().mockResolvedValue(true) },
+      associations: {
+        canManagePayoutAccount: jest.fn().mockResolvedValue(true),
+        // The waiting list asks whether the association can collect online (`promotionPayable`).
+        collectsNow: jest.fn().mockResolvedValue(true),
+      },
       notifier,
+      waitlistNotice,
     }) as unknown as RefundsService;
     for (const level of ['log', 'warn', 'error', 'debug'] as const) {
       jest.spyOn(Logger.prototype, level).mockImplementation(() => undefined);
@@ -483,6 +497,89 @@ maybe('Lydia refunds against PostgreSQL', () => {
     ]);
     expect(after.paymentStatus).toBe('refunded');
     expect((await refundOf(record.id))[0].sideEffect).toBe('seat-freed');
+  });
+
+  it('a TOTAL refund of a form answer gives the freed seat to the first in line, told after its commit', async () => {
+    const { record, submission } = await formPayment(false);
+    await ds.query(`UPDATE forms SET "maxSubmissions" = 1 WHERE id = $1`, [submission.formId]);
+    const waiting = await ds.getRepository(Submission).save(
+      ds.getRepository(Submission).create({
+        formId: submission.formId,
+        userId: 'w'.repeat(64),
+        answers: {},
+        // What it will owe, priced at its submit, online: `paymentMethod` NULL, as submit stores it.
+        totalPaid: 800,
+        paymentMethod: null,
+        paymentStatus: 'waiting',
+        waitlistOrder: '1',
+      })
+    );
+    waitlistNotice.afterCommit.mockClear();
+    await service.refund(ASSO, record.id, MANAGER, total());
+    const [after] = await ds.query(
+      `SELECT "paymentStatus", "promotedAt", "promotionNotifiedAt" FROM submissions WHERE id = $1`,
+      [waiting.id]
+    );
+    // An online answer: the promoted one owes its payment, and is told by the refund itself, once
+    // its transaction committed (the notice service is this spec's double: nothing stamped here).
+    expect(after.paymentStatus).toBe('payment_due');
+    expect(after.promotedAt).not.toBeNull();
+    expect(waitlistNotice.afterCommit).toHaveBeenCalledTimes(1);
+    expect(waitlistNotice.afterCommit).toHaveBeenCalledWith([
+      {
+        submissionId: waiting.id,
+        userId: 'w'.repeat(64),
+        formId: submission.formId,
+        status: 'payment_due',
+      },
+    ]);
+    expect((await refundOf(record.id))[0].sideEffect).toBe('seat-freed');
+  });
+
+  it("a TOTAL refund whose freed seat goes to a person with a payment landed over capacity converts it, handed over after the refund's commit", async () => {
+    const { record, submission } = await formPayment(false);
+    await ds.query(`UPDATE forms SET "maxSubmissions" = 1 WHERE id = $1`, [submission.formId]);
+    const person = 'v'.repeat(64);
+    const repo = ds.getRepository(Submission);
+    // A late payment of theirs landed over capacity while they waited (`markPaid`): kept in line.
+    const overCapacity = await repo.save(
+      repo.create({
+        formId: submission.formId,
+        userId: person,
+        answers: {},
+        totalPaid: 800,
+        paymentStatus: 'paid_over_capacity',
+      })
+    );
+    const waiting = await repo.save(
+      repo.create({
+        formId: submission.formId,
+        userId: person,
+        answers: {},
+        totalPaid: 800,
+        paymentMethod: null,
+        paymentStatus: 'waiting',
+        waitlistOrder: '1',
+      })
+    );
+    waitlistNotice.afterCommit.mockClear();
+    await service.refund(ASSO, record.id, MANAGER, total());
+    const statusOf = async (id: string) =>
+      (
+        (await ds.query(`SELECT "paymentStatus" FROM submissions WHERE id = $1`, [id]))[0] as
+          | { paymentStatus: string }
+          | undefined
+      )?.paymentStatus;
+    // Their paid answer is the registration now - no second charge - and the waiting one is gone.
+    expect(await statusOf(overCapacity.id)).toBe('paid');
+    expect(await statusOf(waiting.id)).toBeUndefined();
+    // Handed to the after-commit step BY THE REFUND, once, as a conversion: what the payment buys
+    // runs there (`FormWaitlistNoticeService.afterCommit`, proven in waitlist.integration.spec.ts),
+    // never left for the five-minute retry.
+    expect(waitlistNotice.afterCommit).toHaveBeenCalledTimes(1);
+    expect(waitlistNotice.afterCommit).toHaveBeenCalledWith([
+      { submissionId: overCapacity.id, userId: person, formId: submission.formId, status: 'paid' },
+    ]);
   });
 
   it('a TOTAL refund of a priced-grid order frees its seat and keeps the lines it was charged', async () => {
@@ -971,6 +1068,7 @@ maybe('Lydia refunds against PostgreSQL', () => {
         refundRepo: narrow.getRepository(LydiaRefund),
         associations: { canManagePayoutAccount: jest.fn() },
         notifier,
+        waitlistNotice,
       }) as unknown as RefundsService;
       // A second connection asked by the settle path would wait for the only one, and time out.
       await expect(single.refund(ASSO, record.id, MANAGER, total())).resolves.toMatchObject({

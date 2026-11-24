@@ -27,8 +27,9 @@ Release order: held by itself - the client sends nothing until `/api/version` sa
    with an expedited job) and an iOS background `URLSession` upload task, fed the queue's prepared,
    encrypted parts, so a send does not wait for the member to come back. Step 1 only resumes on return.
 2. **The other composers on the same queue**: `EditPostForm` (a media added on edit), the comment
-   composer, the CanaReels publish, and chat media sharing it (the chat outbox has its own resumable
-   path for reels only, RC-5).
+   composer, and chat media sharing it (the chat outbox has its own resumable path for reels only,
+   RC-5). The CanaReels camera's publish moved onto it on 2026-11-24, with the screen held on while
+   a post is worked on ([posts](../frontend/modules/posts.md#the-background-publish-queue)).
 3. **The reductions the measurements point to**, each a quality decision for the owner, none taken:
    [the numbers and the three proposals](../frontend/modules/posts.md#what-a-post-sends-measured-2026-11-06-local-estate-desktop-chrome).
    In short: a 12 MP photo leaves as 436 KB (~10 s at 50 kB/s), a 16 s 1080p video as 2.83 MB.
