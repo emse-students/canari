@@ -6,7 +6,7 @@ import { m } from '$lib/paraglide/messages';
  */
 
 /** Distinct people in a period. */
-export interface PeopleFigures {
+interface PeopleFigures {
   all: number;
   categories: Record<string, number>;
   versions: Record<string, number>;
@@ -14,7 +14,7 @@ export interface PeopleFigures {
 
 /** The six daily activity totals (owner, 2026-11-16): per day only, never finer. */
 export const ACTIVITY_METRICS = ['messages', 'posts', 'reels', 'lives', 'calls', 'forms'] as const;
-export type ActivityMetric = (typeof ACTIVITY_METRICS)[number];
+type ActivityMetric = (typeof ACTIVITY_METRICS)[number];
 
 /** One period of the answer; `activity` on days only. */
 export interface UsagePeriod {

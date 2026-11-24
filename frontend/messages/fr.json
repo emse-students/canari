@@ -6849,7 +6849,16 @@
   "admin_usage_period_week": "Cette semaine",
   "admin_usage_period_month": "Ce mois",
   "admin_usage_days_heading": "Personnes par jour, {days} derniers jours",
-  "admin_usage_day_tooltip": "{day} : {count} personne(s)",
+  "admin_usage_day_tooltip": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{day} : {count} personne",
+        "countPlural=other": "{day} : {count} personnes"
+      }
+    }
+  ],
   "admin_usage_categories_heading": "Par type d'appareil",
   "admin_usage_categories_hint": "Une personne sur deux types d'appareils compte dans chacun, une seule fois au total.",
   "admin_usage_category_column": "Type d'appareil",
@@ -6861,10 +6870,28 @@
   "admin_usage_category_web_desktop": "Web sur ordinateur",
   "admin_usage_category_other": "Ancienne version (non déclarée)",
   "admin_usage_versions_heading": "Versions ce mois-ci",
-  "admin_usage_people_count": "{count} personne(s)",
+  "admin_usage_people_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} personne",
+        "countPlural=other": "{count} personnes"
+      }
+    }
+  ],
   "admin_usage_hours_heading": "Heures d'utilisation",
   "admin_usage_hours_hint": "Personnes connectées en moyenne à chaque heure de la semaine, du {from} au {to}.",
-  "admin_usage_hour_tooltip": "{day} {hour} h : {count} personne(s) en moyenne",
+  "admin_usage_hour_tooltip": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{day} {hour} h : {count} personne en moyenne",
+        "countPlural=other": "{day} {hour} h : {count} personnes en moyenne"
+      }
+    }
+  ],
   "admin_usage_activity_heading": "Activité de la plateforme",
   "admin_usage_activity_hint": "Totaux par jour pour toute la plateforme : jamais par conversation, par personne ni par heure. Les réponses aux formulaires anonymes ne sont pas comptées.",
   "admin_usage_day_column": "Jour",

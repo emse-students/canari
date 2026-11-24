@@ -6840,7 +6840,16 @@
   "admin_usage_period_week": "This week",
   "admin_usage_period_month": "This month",
   "admin_usage_days_heading": "People per day, last {days} days",
-  "admin_usage_day_tooltip": "{day}: {count} person(s)",
+  "admin_usage_day_tooltip": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{day}: {count} person",
+        "countPlural=other": "{day}: {count} people"
+      }
+    }
+  ],
   "admin_usage_categories_heading": "By device type",
   "admin_usage_categories_hint": "A person on two device types counts in each, and once in the total.",
   "admin_usage_category_column": "Device type",
@@ -6852,10 +6861,28 @@
   "admin_usage_category_web_desktop": "Web on a computer",
   "admin_usage_category_other": "Older version (undeclared)",
   "admin_usage_versions_heading": "Versions this month",
-  "admin_usage_people_count": "{count} person(s)",
+  "admin_usage_people_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} person",
+        "countPlural=other": "{count} people"
+      }
+    }
+  ],
   "admin_usage_hours_heading": "Usage hours",
   "admin_usage_hours_hint": "Mean number of people connected in each hour of the week, from {from} to {to}.",
-  "admin_usage_hour_tooltip": "{day} {hour}:00: {count} person(s) on average",
+  "admin_usage_hour_tooltip": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{day} {hour}:00: {count} person on average",
+        "countPlural=other": "{day} {hour}:00: {count} people on average"
+      }
+    }
+  ],
   "admin_usage_activity_heading": "Platform activity",
   "admin_usage_activity_hint": "Daily totals for the whole platform: never per conversation, per person or per hour. Answers to anonymous forms are not counted.",
   "admin_usage_day_column": "Day",
