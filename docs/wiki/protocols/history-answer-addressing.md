@@ -138,7 +138,23 @@ a member of any age, and that push is filtered for its own reader like every oth
      the ask for itself with its chunk marked `last`; once both have, the ask is gone, and a third
      device is refused at error, because nothing honest produces one. *Changed twice by the #2270
      reviews: the first build consumed the ask on the FIRST answerer and dropped the second one's
-     content at error; the second let any number of answerers in.* **The answerer is the device MLS
+     content at error; the second let any number of answerers in.* **One device answers one ask
+     once (2026-11-24):** the answerer's rendezvous (`historyDigestRendezvous.ts`, `noteProbeReceived`)
+     hands a probe to ONE waiting election, the oldest; it used to wake every election waiting for the
+     same asker, so a device elected twice answered the same `requestId` twice, and the asker took
+     the first copy and refused the second here (four conversations of a new web device on prod
+     `1.7.3`, every refused frame the same size as the answer just ingested - nothing was lost). Its
+     sibling had the same effect: a digest nobody waited for was the late half of an exchange this
+     device opened, answered by the late path (`takeDigestSolicitation`) AND stored, so a later
+     election for the same asker consumed it again; `noteProbeReceived` now claims the solicitation
+     in the same step and never stores that digest. Probes nobody waits for are a FIFO per asker,
+     like the waiters (one slot dropped the older of two). A refusal here is logged at error BY
+     NAME, classified where it is decided (`AskRefusal` in `historyAddressing.ts`:
+     `no-open-ask`, `answered-already` - the same answerer's second copy -, `not-the-inviter`,
+     `answerers-full`; plus `not-addressed-to-us`, `no-sending-device`, `names-no-ask` and
+     `kind-mismatch` from the envelope), so the next such line says which cause it is. An answerer still on `1.7.3` or older keeps answering twice, so one
+     `answered-already` ERROR per late chunk is expected until it updates - the rollout tail, dated in
+     [legacy-compatibility](../legacy-compatibility.md). **The answerer is the device MLS
      verified**: the decrypt compares the envelope's sending device with the credential and refuses
      a disagreement (`verifiedSender`), which it can do only when the envelope names one - so an
      addressed answer naming none is refused. chat-delivery has no device in its auth context (the

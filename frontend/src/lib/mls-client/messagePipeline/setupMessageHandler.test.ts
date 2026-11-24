@@ -1104,8 +1104,12 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     expect(await onMsg('peer', new Uint8Array([1]), groupId, true, undefined)).toBe(true);
     expect(mls.noteWelcomeInstalled.mock.calls).toEqual([[groupId]]);
     // The inviter's push is solicited, from the user the Welcome came from only.
-    expect(takeAddressedAsk(groupId, undefined, 'carol:carol-dev', true)).toBeNull();
-    expect(takeAddressedAsk(groupId, undefined, 'peer:peer-dev', true)?.ask.kind).toBe('join');
+    expect(takeAddressedAsk(groupId, undefined, 'carol:carol-dev', true).refused).toBe(
+      'not-the-inviter'
+    );
+    expect(takeAddressedAsk(groupId, undefined, 'peer:peer-dev', true).taken?.ask.kind).toBe(
+      'join'
+    );
 
     // A second redelivery is a redelivery like any other.
     expect(await onMsg('peer', new Uint8Array([1]), groupId, true, undefined)).toBe(true);

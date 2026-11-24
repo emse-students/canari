@@ -100,7 +100,23 @@ type OpenAsk = {
  * What {@link takeAddressedAsk} hands the receiver: the ask, and whether it carried a key (its answer
  * must then have come sealed). The secret itself is read before the take ({@link answerSecretOf}).
  */
-export type TakenAsk = { ask: HistoryAsk; keyed: boolean };
+type TakenAsk = { ask: HistoryAsk; keyed: boolean };
+
+/**
+ * Why {@link takeAddressedAsk} refused an answer, classified where it is decided so the receiver
+ * logs each cause by NAME rather than one sentence covering all of them:
+ * - `no-open-ask`: this device holds no such ask in this conversation - never made, evicted
+ *   ({@link MAX_OPEN_ASKS_PER_GROUP}), lost to a reload, or already closed by every answerer it took;
+ * - `answered-already`: the ask is still open, but THIS answerer already closed it - a second copy
+ *   of one answer, which is what one device elected twice for one ask produced (2026-11-24);
+ * - `not-the-inviter`: a join push from a device of a user other than the one the Welcome came from;
+ * - `answerers-full`: a device beyond the first {@link MAX_ANSWERERS_PER_ASK}, which nothing honest
+ *   produces.
+ */
+type AskRefusal = 'no-open-ask' | 'answered-already' | 'not-the-inviter' | 'answerers-full';
+
+/** What {@link takeAddressedAsk} decided: the ask taken, or the named reason it was refused. */
+type TakeAskResult = { taken: TakenAsk; refused?: never } | { taken?: never; refused: AskRefusal };
 
 /** Overwrites a secret this module is letting go of - JS frees nothing on demand, so it is wiped. */
 function wipe(open: OpenAsk | undefined): void {
@@ -183,8 +199,8 @@ export function noteJoinSolicited(
 }
 
 /**
- * The ask an addressed answer in `groupId` claims to answer, or `null` when this device asked no
- * such thing - the frame is then refused by the caller. `requestId` absent is the inviter's push.
+ * The ask an addressed answer in `groupId` claims to answer, or the reason it is refused
+ * ({@link AskRefusal}) - the frame is then refused by the caller, which logs that reason. `requestId` absent is the inviter's push.
  * `answerer` is the device the answer came from (`sender:senderDeviceId`, checked against the MLS
  * credential on decrypt): its chunk marked `last` closes the ask FOR IT, a device beyond the first
  * {@link MAX_ANSWERERS_PER_ASK} is refused, and the ask is gone once every answerer it took is done.
@@ -196,17 +212,18 @@ export function takeAddressedAsk(
   requestId: string | undefined,
   answerer: string,
   last: boolean
-): TakenAsk | null {
+): TakeAskResult {
   const asks = openAsks.get(groupId);
   const id = requestId ?? JOIN_ASK;
   const open = asks?.get(id);
-  if (!open || open.closedBy.has(answerer)) return null;
+  if (!open) return { refused: 'no-open-ask' };
+  if (open.closedBy.has(answerer)) return { refused: 'answered-already' };
   // THE PUSH IS THE INVITER'S: a join ask takes no device of another member, whatever slot is free.
   if (open.ask.kind === 'join' && userIdOfLeaf(answerer) !== open.ask.inviter) {
-    return null;
+    return { refused: 'not-the-inviter' };
   }
   if (!open.answerers.has(answerer)) {
-    if (open.answerers.size >= MAX_ANSWERERS_PER_ASK) return null;
+    if (open.answerers.size >= MAX_ANSWERERS_PER_ASK) return { refused: 'answerers-full' };
     open.answerers.add(answerer);
   }
   if (last) {
@@ -217,7 +234,7 @@ export function takeAddressedAsk(
       if (asks?.size === 0) openAsks.delete(groupId);
     }
   }
-  return { ask: open.ask, keyed: open.answerSecret !== null };
+  return { taken: { ask: open.ask, keyed: open.answerSecret !== null } };
 }
 
 /**
