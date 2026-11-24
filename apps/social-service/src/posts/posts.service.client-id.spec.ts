@@ -88,7 +88,7 @@ function makeService(
       Promise.resolve({ deleted: 0, absent: 0, cited: 0, refused: 0 })
     ),
     claimReelFor: jest.fn((_a: string, ids: string[]) =>
-      Promise.resolve({ claimed: ids, refused: [] })
+      Promise.resolve({ claimed: ids, refused: [], expired: [] })
     ),
   };
   const service = new PostsService(

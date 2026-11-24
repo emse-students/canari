@@ -5313,6 +5313,8 @@
   "reels_publish_caption_placeholder": "Add a caption...",
   "reels_publish_submit": "Publish",
   "reels_publish_queued": "Your CanaReel is being sent: you can leave the app, the upload picks up where it stopped.",
+  "reels_publish_enqueue_error": "Your CanaReel could not be saved on this device. It is still here: try again.",
+  "reels_publish_no_account": "You are no longer signed in: sign in again to publish this CanaReel. It is still here.",
   "reels_publish_expiry_note": "Visible for {lifetime}, then deleted automatically. You can save it to your gallery before then.",
   "reels_lifetime_years": [
     {

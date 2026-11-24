@@ -1251,19 +1251,38 @@ export class MediaService {
    * file lives as long as the longer of the two. One whose chat hold has already lapsed is refused,
    * as an overdue `reel-pending` is.
    *
-   * @returns the ids claimed (including ones already classified `reel`) and the ids refused.
+   * THE REFUSALS ARE TOLD APART, because the publisher's remedy differs: an `expired` id is the
+   * member's OWN pending upload whose window ran out (refused here, or already taken by the sweep) -
+   * the file was theirs and only time took it, so uploading it again is the answer; every other
+   * refusal (unknown, public, not theirs) is not curable by an upload.
+   *
+   * @returns the ids claimed (including ones already classified `reel`), the ids refused, and the
+   *   subset of `refused` that is the owner's own expired pending upload.
    */
   async claimReels(
     mediaIds: string[],
     ownerId: string
-  ): Promise<{ claimed: string[]; refused: string[] }> {
+  ): Promise<{ claimed: string[]; refused: string[]; expired: string[] }> {
     const claimed: string[] = [];
     const refused: string[] = [];
-    let pastWindow = 0;
+    const expired: string[] = [];
     let changed = false;
 
     for (const mediaId of new Set(mediaIds)) {
       const entry = UUID_REGEX.test(mediaId) ? this.meta.items[mediaId] : undefined;
+      if (
+        entry?.purgedAt &&
+        entry.ownerId === ownerId &&
+        (entry.retentionClass === 'reel-pending' || holdsOf(entry)?.chat)
+      ) {
+        // The member's own pending upload, already taken by the sweep at its window's end.
+        this.logger.warn(
+          `Reel claim by ${ownerId}: ${mediaId} is a pending upload the sweep already took - refused as expired`
+        );
+        refused.push(mediaId);
+        expired.push(mediaId);
+        continue;
+      }
       if (
         !entry ||
         entry.purgedAt ||
@@ -1284,7 +1303,7 @@ export class MediaService {
           `Reel claim by ${ownerId}: ${mediaId} is a ${entry.retentionClass ?? 'unclassified'} object past its window - refused, not promoted`
         );
         refused.push(mediaId);
-        pastWindow += 1;
+        expired.push(mediaId);
         continue;
       }
       if (holds?.chat) {
@@ -1307,10 +1326,10 @@ export class MediaService {
     if (changed) await this.persistMetadata();
     if (refused.length > 0) {
       this.logger.warn(
-        `Reel claim by ${ownerId}: ${refused.length} object(s) refused (${pastWindow} past their pending window, ${refused.length - pastWindow} unknown, purged, public or not theirs)`
+        `Reel claim by ${ownerId}: ${refused.length} object(s) refused (${expired.length} past their pending window, ${refused.length - expired.length} unknown, purged, public or not theirs)`
       );
     }
-    return { claimed, refused };
+    return { claimed, refused, expired };
   }
 
   /**

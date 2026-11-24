@@ -148,7 +148,11 @@ describe('form-file: stored by social-service, read by nobody else', () => {
 
   it('cannot be claimed as a reel, nor promoted to a public asset', async () => {
     const { service } = serviceWith({ [CV]: formFile(ALICE) });
-    expect(await service.claimReels([CV], ALICE)).toEqual({ claimed: [], refused: [CV] });
+    expect(await service.claimReels([CV], ALICE)).toEqual({
+      claimed: [],
+      refused: [CV],
+      expired: [],
+    });
     expect((await service.promoteToPublicAssets([CV])).refused).toEqual([CV]);
   });
 

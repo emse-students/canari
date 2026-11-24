@@ -60,6 +60,7 @@ import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { TokenAccountChangedError } from '$lib/utils/renewOn401';
 import { IdentitySplitError } from '$lib/stores/tokenIdentity.svelte';
+import { REEL_MEDIA_EXPIRED } from '$lib/reels/reelMediaExpired';
 import {
   INSTITUTION_REACH_INVALID,
   INSTITUTION_REACH_NOT_OFFERED,
@@ -148,8 +149,13 @@ export interface PublishQueueDeps {
   /**
    * The chat take of the same press adopts this post's uploaded file (reels-in-chat 15.5) - written
    * on the take BEFORE the post is created, so the conversations keep it however the post ends.
+   * Answers what it did: written, declined (the take holds its own file, or its sends are gone), or
+   * forwarded to the tab that writes take rows.
    */
-  adoptChatTake: (takeId: string, uploaded: { ref: MediaRef; durationMs: number }) => Promise<void>;
+  adoptChatTake: (
+    takeId: string,
+    uploaded: { ref: MediaRef; durationMs: number }
+  ) => Promise<ChatTakeAdoption>;
   /** The chat take stops waiting for this post: adopted, or left to upload its own file. */
   endChatTakeWait: (takeId: string) => void;
   /** Gives a resumable session back to the server, best effort (a deleted post). */
@@ -186,8 +192,16 @@ export interface PublishQueueDeps {
    */
   onViews: (views: PublishView[], fromRunner: boolean) => void;
   onPublished: (post: QueuedPost) => void;
+  /**
+   * The pass ended, HOWEVER it ended - the queue empty or stopped, a `halt`, an unexpected error, or
+   * a last post gone with no row drawn after it. What the runner holds for a pass (the screen) goes.
+   */
+  passEnded: () => void;
   log: (line: string) => void;
 }
+
+/** What the chat take did with the file it was handed (the outbox's `ReelTakeAdoption`). */
+export type ChatTakeAdoption = 'adopted' | 'declined' | 'forwarded';
 
 /** How one pass over a post ended. `halt`: the session is not the queue's account - the pass ends. */
 type Outcome = 'published' | 'failed' | 'wait' | 'again' | 'gone' | 'halt';
@@ -234,6 +248,11 @@ const FINAL_REFUSAL_CODES: ReadonlySet<string> = new Set([
   INSTITUTION_REACH_INVALID,
   INSTITUTION_REACH_OUTSIDE_AUDIENCE,
 ]);
+
+/** Whether `error` is the typed refusal of a reel whose own pending upload expired (`uploadAgain`). */
+function reelUploadExpired(error: unknown): boolean {
+  return error instanceof ApiRefusalError && error.code === REEL_MEDIA_EXPIRED;
+}
 
 /** Whether `error` is an answer about the stored payload that a Retry would only repeat. */
 export function retryCannotCure(error: unknown): boolean {
@@ -337,6 +356,11 @@ export class PublishQueue {
       )
       .finally(() => {
         this.draining = null;
+        try {
+          this.deps.passEnded();
+        } catch (e) {
+          console.error('[PUBLISH-QUEUE] the end of a pass could not be handled:', e);
+        }
       });
     return this.draining;
   }
@@ -505,12 +529,23 @@ export class PublishQueue {
       // was picked again at once and asked 51 times in a few ms (review of #3061). Only the member's
       // Retry or Delete clears the failure.
       const workable = posts.filter((p) => !p.failure);
-      const next = workable.find((p) => p.withdrawn) ?? workable.find((p) => !p.paused);
+      // A post a CHAT TAKE waits on goes before the others (15.5): the take's conversations send
+      // nothing until it is handed over, and a slow post queued earlier is no reason to hold them.
+      const next =
+        workable.find((p) => p.withdrawn) ??
+        workable.find((p) => !p.paused && p.chatTakeId && !p.takeHandedOver) ??
+        workable.find((p) => !p.paused);
       if (!next) return;
       if (!this.estateServes()) {
         // No ladder: nothing here would change by asking again. The answer of `/api/version` that
-        // says so starts the next pass (`publishQueue.svelte.ts`).
-        for (const p of workable) this.setView(p, { phase: 'waiting' });
+        // says so starts the next pass (`publishQueue.svelte.ts`). A chat take waiting on one of
+        // these posts would wait as long: it is told now and uploads its own file.
+        for (const p of workable) {
+          if (p.chatTakeId && !p.takeHandedOver) {
+            await this.handOverTake(p, 'the estate does not serve the publish queue');
+          }
+          this.setView(p, { phase: 'waiting' });
+        }
         return;
       }
       const outcome: Outcome = next.withdrawn
@@ -778,6 +813,7 @@ export class PublishQueue {
         // An abort nobody here asked for (a transport's own cancel): waited out like no answer.
         return 'wait';
       }
+      if (stage === 'createPost' && reelUploadExpired(error)) return this.uploadAgain(post);
       return this.failed(post, stage, error);
     } finally {
       if (this.current?.abort === abort) this.current = null;
@@ -831,6 +867,39 @@ export class PublishQueue {
   }
 
   /**
+   * The server refused the create because the reel's own pending upload outlived its window (a
+   * create delayed past the media service's window: a post paused, failed or offline that long).
+   * The file is still on the device: its reference and session are cleared and the pass uploads it
+   * again - the one remedy, as a Retry would re-send the same reference for ever. Not a loop: each
+   * round needs the whole window to pass again before the create.
+   */
+  private async uploadAgain(post: QueuedPost): Promise<Outcome> {
+    const expired = post.media.filter((m) => m.ref && m.uploadClass === 'reel-pending');
+    if (expired.length === 0) {
+      // ACCUSED: the server says a pending upload expired, but this post holds none - nothing to
+      // upload again, so it is the failure it was answered.
+      console.error(
+        `[PUBLISH-QUEUE] ${post.id} told its reel upload expired, but it cites no pending upload`
+      );
+      return this.failed(
+        post,
+        'createPost',
+        new Error('reel upload expired with no pending upload')
+      );
+    }
+    console.warn(
+      `[PUBLISH-QUEUE] ${post.id} its reel upload expired before the create (${expired.map((m) => m.ref!.mediaId).join(', ')}): uploading it again`
+    );
+    for (const media of expired) {
+      delete media.ref;
+      delete media.upload;
+    }
+    if (!(await this.deps.store.update(post))) return 'gone';
+    this.busy = 0;
+    return 'again';
+  }
+
+  /**
    * Tells the chat take of the same press (15.5) how it ends, ONCE (`takeHandedOver`, durable): with
    * `durationMs` and a `reel-pending` file uploaded, it ADOPTS that file; otherwise it stops waiting
    * and uploads its own. An adoption that fails is accused and costs a second upload, never the take.
@@ -841,9 +910,18 @@ export class PublishQueue {
     const media = post.media[0];
     if (durationMs && media?.ref && media.uploadClass === 'reel-pending') {
       try {
-        await this.deps.adoptChatTake(takeId, { ref: media.ref as MediaRef, durationMs });
+        const adoption = await this.deps.adoptChatTake(takeId, {
+          ref: media.ref as MediaRef,
+          durationMs,
+        });
         this.deps.log(
-          `[PUBLISH-QUEUE] ${post.id} its chat take ${takeId.slice(0, 8)} adopts ${media.ref.mediaId} (${why})`
+          `[PUBLISH-QUEUE] ${post.id} its chat take ${takeId.slice(0, 8)} ${
+            adoption === 'adopted'
+              ? `adopts ${media.ref.mediaId}`
+              : adoption === 'forwarded'
+                ? `is handed ${media.ref.mediaId} through the tab that writes takes`
+                : `declined ${media.ref.mediaId} (its sends are gone, or it holds its own file)`
+          } (${why})`
         );
       } catch (e) {
         console.error(

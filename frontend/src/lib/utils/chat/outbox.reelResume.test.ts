@@ -1182,6 +1182,7 @@ describe('one take, several conversations (RC-13)', () => {
       sleep: async () => undefined,
       onViews: () => undefined,
       onPublished: () => undefined,
+      passEnded: () => undefined,
       log: () => undefined,
     });
     await queue.drain();
@@ -1588,25 +1589,84 @@ describe('one take, several conversations (RC-13)', () => {
     expect(w.events.some((e) => e.startsWith('release'))).toBe(false);
   });
 
-  it("L2: a follower's forwarded adoption the leader never acknowledged is SAID when its publish step ends, with its cost; an acknowledged one is not", async () => {
+  it("L2: a follower's end of a publish wait goes to the LEADER, which holds the wait - after the leader acknowledged the adoption forwarded before it, never before", async () => {
     tab.role = 'follower';
     const w = world();
     const l = life(w, { prepare: () => NEVER() });
-    await enqueueTake(l, 1, { awaitsPublish: true });
     const ref = await publishStepUpload(w);
+    const endsForwarded = () =>
+      tabOutboxMock.forwardReelTakeWrite.mock.calls.filter(
+        (c) => (c[0] as { type: string }).type === 'outbox_reel_take_end_wait'
+      );
+    tabOutboxMock.forwardReelTakeWrite.mockClear();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
-      await l.outbox.adoptPublishedUpload(ID, { ref, durationMs: 4200 });
-      l.outbox.endPublishWait(ID);
-      expect(warn.mock.calls.filter((c) => String(c[0]).includes('NOT taken'))).toHaveLength(1);
+      // No adoption forwarded: the end goes at once.
+      l.outbox.endPublishWait('take-without-adoption');
+      expect(endsForwarded()).toEqual([
+        [{ type: 'outbox_reel_take_end_wait', takeId: 'take-without-adoption' }],
+      ]);
 
-      await l.outbox.adoptPublishedUpload(ID, { ref, durationMs: 4200 });
-      tab.handlers.at(-1)!({ type: 'outbox_reel_take_adopt_ack', takeId: ID });
+      // An adoption forwarded: its end is HELD until the leader's acknowledgement.
+      expect(await l.outbox.adoptPublishedUpload(ID, { ref, durationMs: 4200 })).toBe('forwarded');
       l.outbox.endPublishWait(ID);
-      expect(warn.mock.calls.filter((c) => String(c[0]).includes('NOT taken'))).toHaveLength(1);
+      expect(endsForwarded()).toHaveLength(1);
+      tab.handlers.at(-1)!({ type: 'outbox_reel_take_adopt_ack', takeId: ID });
+      expect(endsForwarded()).toEqual([
+        [{ type: 'outbox_reel_take_end_wait', takeId: 'take-without-adoption' }],
+        [{ type: 'outbox_reel_take_end_wait', takeId: ID }],
+      ]);
+      // Said once, never twice, and never as a loss: the old "NOT taken" warning is gone.
+      tab.handlers.at(-1)!({ type: 'outbox_reel_take_adopt_ack', takeId: ID });
+      expect(endsForwarded()).toHaveLength(2);
+      expect(warn.mock.calls.filter((c) => String(c[0]).includes('NOT taken'))).toHaveLength(0);
     } finally {
       warn.mockRestore();
       l.kill();
+    }
+  });
+
+  it('TWO TABS (L2): the publish runs in a follower, the take waits in the leader - the forwarded adoption, then the forwarded end, and the chats send the ONE file', async () => {
+    const w = world();
+    const leader = life(w);
+    await enqueueTake(leader, 1, { awaitsPublish: true });
+    const leaderHandler = tab.handlers.at(-1)!;
+    const ref = await publishStepUpload(w);
+
+    tab.role = 'follower';
+    const follower = life(w, { prepare: () => NEVER() });
+    const followerHandler = tab.handlers.at(-1)!;
+    // The channel: a follower's write reaches the leader's handler, the leader's ack the follower's.
+    const asLeader = (event: TabOutboxEvent) => {
+      const was = tab.role;
+      tab.role = 'leader';
+      try {
+        leaderHandler(event);
+      } finally {
+        tab.role = was;
+      }
+    };
+    tabOutboxMock.forwardReelTakeWrite.mockImplementation(asLeader);
+    tabOutboxMock.acknowledgeReelTakeAdoption.mockImplementation((takeId: string) =>
+      followerHandler({ type: 'outbox_reel_take_adopt_ack', takeId })
+    );
+    try {
+      expect(await follower.outbox.adoptPublishedUpload(ID, { ref, durationMs: 4200 })).toBe(
+        'forwarded'
+      );
+      // The publish step ends in the follower at once - before the leader has written the adoption.
+      follower.outbox.endPublishWait(ID);
+      tab.role = 'leader';
+      await expectDeliveredOnce(w, leader, 1);
+      // The adopted file was sent: the leader never prepared or uploaded its own.
+      expect(w.prepares).toHaveLength(0);
+      expect(w.uploads).toBe(0);
+      expect(w.server.reservations).toBe(1);
+      expect((await sentReel(w, leader)).media.mediaId).toBe(ref.mediaId);
+    } finally {
+      tabOutboxMock.forwardReelTakeWrite.mockReset();
+      tabOutboxMock.acknowledgeReelTakeAdoption.mockReset();
+      follower.kill();
     }
   });
 

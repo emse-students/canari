@@ -145,8 +145,34 @@ describe('reel-pending: an unclaimed feed reel upload expires', () => {
 
     const out = await service.claimReels([PENDING_OLD], ALICE);
 
-    expect(out).toEqual({ claimed: [], refused: [PENDING_OLD] });
+    expect(out).toEqual({ claimed: [], refused: [PENDING_OLD], expired: [PENDING_OLD] });
     expect(items[PENDING_OLD].retentionClass).toBe('reel-pending');
+  });
+
+  it("tells the owner's own pending upload the sweep already took apart as EXPIRED", async () => {
+    const items: Record<string, Entry> = {
+      [PENDING_OLD]: { ...pending(2 * DAY), purgedAt: Date.now() - DAY },
+    };
+    const { service } = serviceWith(items);
+
+    expect(await service.claimReels([PENDING_OLD], ALICE)).toEqual({
+      claimed: [],
+      refused: [PENDING_OLD],
+      expired: [PENDING_OLD],
+    });
+  });
+
+  it("an object not the claimant's, or unknown, is refused but NEVER expired - no upload cures it", async () => {
+    const items: Record<string, Entry> = {
+      [PENDING_OLD]: { ...pending(2 * DAY), ownerId: 'someone-else' },
+    };
+    const { service } = serviceWith(items);
+
+    expect(await service.claimReels([PENDING_OLD, PENDING_NEW], ALICE)).toEqual({
+      claimed: [],
+      refused: [PENDING_OLD, PENDING_NEW],
+      expired: [],
+    });
   });
 
   /**

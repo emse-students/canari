@@ -241,7 +241,7 @@ describe('one file, two holds: published on CanaReels and sent to conversations'
     const harness = serviceWith(items);
     await harness.service.holdForChat(FILE, ALICE, NOW);
     const claim = await harness.service.claimReels([FILE], ALICE);
-    expect(claim).toEqual({ claimed: [FILE], refused: [] });
+    expect(claim).toEqual({ claimed: [FILE], refused: [], expired: [] });
     return { items, ...harness };
   }
 
@@ -456,7 +456,8 @@ describe('a delete in flight is never overwritten by a hold or a claim placed du
     const claim = await service.claimReels([CHAT_ONLY], ALICE);
     gate.open();
 
-    expect(claim).toEqual({ claimed: [], refused: [CHAT_ONLY] });
+    expect(claim.claimed).toEqual([]);
+    expect(claim.refused).toEqual([CHAT_ONLY]);
     expect(await removing).toBe('deleted');
     expect(deleted).toEqual([CHAT_ONLY]);
     expect(items[CHAT_ONLY].purgeReason).toBe('reel_deleted');

@@ -130,7 +130,7 @@ const host = {
   sendImage: vi.fn(
     async (_f: File, keys: readonly string[]): Promise<number | null> => keys.length
   ),
-  adopt: vi.fn(async () => {}),
+  adopt: vi.fn(async () => 'adopted' as const),
   endWait: vi.fn(),
   groupMembers: vi.fn(async () => new Map<string, string[]>()),
 } satisfies ReelSendHost;

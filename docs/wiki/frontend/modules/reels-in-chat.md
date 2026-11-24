@@ -1387,9 +1387,11 @@ single conversation (RC-5) is now a take with ONE send, and `handleSendChat` no 
 - **A forwarded write no leader takes is never silent.** A DELETION is durable without the event: the
   tombstone is on the shared message row, and the next leader re-derives it (`maintainTakeRecords`
   above; a promotion reloads the page, so a new leader always starts with it) - lost, it only waits.
-  An ADOPTION is acknowledged (`outbox_reel_take_adopt_ack`); one still unacknowledged when the
-  follower's publish step ends (`endPublishWait`, an event, never a clock) is said at warn with its
-  cost - the take uploads its own file, a second upload.
+  An ADOPTION is acknowledged (`outbox_reel_take_adopt_ack`, sent even when the leader's write of it
+  failed). The END of the publish wait is the leader's too, since the wait lives where the take was
+  composed: a follower that runs the publish queue forwards it (`outbox_reel_take_end_wait`, review
+  of #4055), and one following a forwarded adoption is HELD until that adoption's acknowledgement -
+  an event, never a clock - so the leader never ends the wait before writing the file it was handed.
 - **Failures.** The take's upload failure takes an attachment's dispositions; a refusal for good
   (`too-large`, `refused`, `unpreparable`, `over-budget`) fails EACH queued send for good, its sentence
   in each thread (`failTakeSends`). **`over-budget` is media-service's own 429 for the daily

@@ -137,10 +137,24 @@ describe('ReelPublishSheet', () => {
     submit().click();
     await settle();
     expect(target.querySelector('[role="alert"]')?.textContent).toContain(
-      m.publish_queue_enqueue_error()
+      m.reels_publish_enqueue_error()
     );
     expect(goto).not.toHaveBeenCalled();
     expect(submit().disabled).toBe(false);
+  });
+
+  it('a session that ended says so, in its own words - never as a write that failed', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const d = deps();
+    d.userId = () => null;
+    const { target, submit } = await render(d);
+    submit().click();
+    await settle();
+    expect(d.enqueue).not.toHaveBeenCalled();
+    expect(target.querySelector('[role="alert"]')?.textContent).toContain(
+      m.reels_publish_no_account()
+    );
+    expect(goto).not.toHaveBeenCalled();
   });
 
   it('a full disk says so', async () => {

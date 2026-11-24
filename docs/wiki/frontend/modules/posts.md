@@ -586,10 +586,13 @@ STOPS the app - the page is `hidden`, `[LIFECYCLE] App in background` - and unde
 stopped app loses the network within seconds: a member who watched a slow CanaReel publish, never
 leaving the app, saw it fail four times ([reels](reels.md#publishing-r3-on-c2-and-c3)). The runner's
 rows decide (`publishHoldsTheScreen`): a post being prepared, sent or created holds the screen
-(`screenAwakeHolder('publish')`: the Screen Wake Lock, the idle timer on iOS), asked again on the
-first row drawn after a return; nothing working - every post waiting, paused, stopped, or none -
-releases it, and a sign-out releases it. One line per change (`[PUBLISH-QUEUE] screen held on` /
-`released`).
+(`screenAwakeHolder('publish')`: the Screen Wake Lock, the idle timer on iOS). `PublishScreenHold`
+asks the platform only when the hold is NEWLY wanted - nothing worked on, then something - and once
+on each return to visible while wanted, never once per progress row (a refused lock warns on every
+ask, and the runner draws a row per uploaded part). Nothing working - every post waiting, paused,
+stopped, or none - releases it, and so does EVERY end of the pass (`passEnded`, from `drain()`'s
+`finally`: an emptied queue, a `halt`, an unexpected error, a last post gone with no row drawn
+after it) and a sign-out. One line per change (`[PUBLISH-QUEUE] screen held on` / `released`).
 
 **The CanaReels camera publishes through this queue (2026-11-24).** Its take is queued with
 `QueuedMedia.take` - the cap, the removed sound, the trim to the picture, prepared under the encoder
@@ -598,15 +601,32 @@ take's id (`chatTakeId`, reels-in-chat 15.5): before its session opens, the medi
 once and recorded (`uploadClass`): `reel-pending` when the prepared take is a reel (the only class a
 chat hold can be put on), `archive` otherwise. After the upload and BEFORE the create, the chat take
 ADOPTS the file and its wait ends (`handOverTake`, `takeHandedOver` written so a resumed pass never
-tells it twice); a post that stops, is paused or deleted, or a sign-out, ends the wait instead, and
-the take uploads its own. A withdrawal names only the `archive` media: media-service refuses any
-other class there, and a `reel-pending` file is ended by its 24 h sweep or kept by the chat hold.
-**Bound, stated:** a reel whose create waits more than the `reel-pending` window (24 h) after its
-upload is refused at the claim, and its Retry meets the same refusal - the member deletes and
-publishes again; the session window (24 h) bounds every queued upload the same way. On the web
-with two tabs, a stop decided in the runner tab ends the take's wait only in that tab; the take
-waiting in another tab uploads its own at its next page life (an adoption is forwarded to the
-leader and needs no wait).
+tells it twice; the outbox answers `adopted`, `declined` or `forwarded`, and the line says which);
+a post that stops, is paused or deleted, or a sign-out, ends the wait instead, and the take uploads
+its own. **A post a chat take waits on goes before older posts** in the pass (until it is handed
+over), so a slow post queued earlier never holds the conversations; and an estate that does not
+serve the queue (`publishQueue` absent from `/api/version`) hands the take over at once, durably,
+since no row would move there. A withdrawal names only the `archive` media: media-service refuses
+any other class there, and a `reel-pending` file is ended by its 24 h sweep or kept by the chat
+hold. **A create delayed past the `reel-pending` window** (a post paused, failed or offline that
+long) is refused at the claim with a TYPED `400`, `reel_media_expired` (social-service, only when
+every refused file is the author's own pending upload that expired - media-service's `claimReels`
+now answers `expired` beside `refused`): the queue clears that media's ref and session and uploads
+the same prepared file again (`uploadAgain`), never re-sending the dead reference; any other
+refusal stays the failure it is. **On the web with two tabs** the take's wait lives in the outbox
+LEADER: a runner tab that is a follower forwards the end of the wait (`outbox_reel_take_end_wait`)
+the way it forwards the adoption, and an end following a forwarded adoption is held until the
+leader acknowledges that adoption (`outbox_reel_take_adopt_ack`, sent even when the adoption
+failed), so the leader never ends the wait before writing the file it was handed.
+
+**What the camera's queue keeps on the device, in the clear.** A CanaReels take queued here sits in
+`CanariDBPublish_<userId>` unencrypted - the camera's original bytes, then the prepared file - until
+it is published (the record and its files go at the create's success) or the member deletes it in
+the progress line. **A sign-out keeps it**, exactly as it keeps a composer post in the same queue
+(above): the next sign-in of that account resumes it. The account's deletion or revocation deletes
+it (`accountIndexedDbNames`). On a shared browser, a member who signs out with a take still queued
+leaves that video on the browser until they sign in again, delete it, or delete their account - the
+composer queue's behaviour, unchanged, now also the camera's.
 
 **The composer forgets the media it handed over.** `holdPostComposerMedia([])` is called before
 `onPostCreated`: the hold `$effect` would only have run on its next flush, after the parent had

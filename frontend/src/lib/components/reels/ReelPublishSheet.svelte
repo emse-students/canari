@@ -34,7 +34,11 @@
   import type { ReelLimits } from '$lib/posts/api';
   import { listPostAsAssociations } from '$lib/posts/postIdentity';
   import type { ReelClip } from '$lib/reels/reelCapture';
-  import { queueReelPublish, type PublishReelDeps } from '$lib/reels/publishReel';
+  import {
+    queueReelPublish,
+    ReelPublishNoAccountError,
+    type PublishReelDeps,
+  } from '$lib/reels/publishReel';
   import { enqueuePost } from '$lib/posts/publishQueue/publishQueue.svelte';
   import { currentUserId } from '$lib/stores/userState.svelte';
   import { isQuotaError } from '$lib/db/outboxBlob';
@@ -228,9 +232,12 @@
     } catch (err) {
       // ACCUSED: nothing was queued, and the sheet keeps everything for another press.
       console.error('[reel-publish] the take could not be written to the device', err);
-      errorMessage = isQuotaError(err)
-        ? m.publish_queue_enqueue_storage_full()
-        : m.publish_queue_enqueue_error();
+      errorMessage =
+        err instanceof ReelPublishNoAccountError
+          ? m.reels_publish_no_account()
+          : isQuotaError(err)
+            ? m.publish_queue_enqueue_storage_full()
+            : m.reels_publish_enqueue_error();
     } finally {
       publishing = false;
     }
