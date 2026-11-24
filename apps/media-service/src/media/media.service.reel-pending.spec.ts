@@ -145,8 +145,93 @@ describe('reel-pending: an unclaimed feed reel upload expires', () => {
 
     const out = await service.claimReels([PENDING_OLD], ALICE);
 
-    expect(out).toEqual({ claimed: [], refused: [PENDING_OLD] });
+    expect(out).toEqual({ claimed: [], refused: [PENDING_OLD], expired: [PENDING_OLD] });
     expect(items[PENDING_OLD].retentionClass).toBe('reel-pending');
+  });
+
+  it('a pending upload THE REAL SWEEP took is answered EXPIRED to its owner - and to nobody else', async () => {
+    const items: Record<string, Entry> = { [PENDING_OLD]: pending(2 * DAY) };
+    const { service, deleted } = serviceWith(items);
+
+    await purge(service);
+    expect(deleted).toEqual([PENDING_OLD]);
+    expect(items[PENDING_OLD]).toMatchObject({
+      purgeReason: 'retention_expired',
+      ownerId: ALICE,
+      retentionClass: 'reel-pending',
+    });
+
+    expect(await service.claimReels([PENDING_OLD], ALICE)).toEqual({
+      claimed: [],
+      refused: [PENDING_OLD],
+      expired: [PENDING_OLD],
+    });
+    expect(await service.claimReels([PENDING_OLD], 'someone-else')).toEqual({
+      claimed: [],
+      refused: [PENDING_OLD],
+      expired: [],
+    });
+  });
+
+  it('DATA MINIMISATION: a swept ephemeral attachment keeps no owner on its tombstone - only a pending reel does', async () => {
+    const ATTACHMENT = '55555555-5555-4555-8555-555555555555';
+    const items: Record<string, Entry> = {
+      [ATTACHMENT]: {
+        createdAt: Date.now() - 400 * DAY,
+        lastAccessAt: Date.now() - 400 * DAY,
+        retentionClass: 'ephemeral',
+        ownerId: ALICE,
+      },
+      [PENDING_OLD]: pending(2 * DAY),
+    };
+    const { service, deleted } = serviceWith(items);
+
+    await purge(service);
+    expect(deleted.sort()).toEqual([ATTACHMENT, PENDING_OLD].sort());
+    expect(items[ATTACHMENT].purgeReason).toBe('retention_expired');
+    expect(items[ATTACHMENT].ownerId).toBeUndefined();
+    expect(items[ATTACHMENT].retentionClass).toBeUndefined();
+    expect(items[PENDING_OLD].ownerId).toBe(ALICE);
+    expect((await service.claimReels([ATTACHMENT], ALICE)).expired).toEqual([]);
+  });
+
+  it('a pending upload the member DELETED is refused but never expired: its tombstone keeps no owner', async () => {
+    const items: Record<string, Entry> = { [PENDING_NEW]: pending(60_000) };
+    const { service } = serviceWith(items);
+
+    await service.remove(PENDING_NEW);
+    expect(items[PENDING_NEW].purgeReason).toBe('manual_delete');
+    expect(items[PENDING_NEW].ownerId).toBeUndefined();
+    expect(await service.claimReels([PENDING_NEW], ALICE)).toEqual({
+      claimed: [],
+      refused: [PENDING_NEW],
+      expired: [],
+    });
+  });
+
+  it("the account's erasure strips its id from the tombstones the sweep left", async () => {
+    const items: Record<string, Entry> = { [PENDING_OLD]: pending(2 * DAY) };
+    const { service } = serviceWith(items);
+
+    await purge(service);
+    expect(items[PENDING_OLD].ownerId).toBe(ALICE);
+    await service.removeAllOwnedBy(ALICE);
+    expect(items[PENDING_OLD].ownerId).toBeUndefined();
+    expect(items[PENDING_OLD].retentionClass).toBeUndefined();
+    expect(items[PENDING_OLD].purgeReason).toBe('retention_expired');
+  });
+
+  it("an object not the claimant's, or unknown, is refused but NEVER expired - no upload cures it", async () => {
+    const items: Record<string, Entry> = {
+      [PENDING_OLD]: { ...pending(2 * DAY), ownerId: 'someone-else' },
+    };
+    const { service } = serviceWith(items);
+
+    expect(await service.claimReels([PENDING_OLD, PENDING_NEW], ALICE)).toEqual({
+      claimed: [],
+      refused: [PENDING_OLD, PENDING_NEW],
+      expired: [],
+    });
   });
 
   /**

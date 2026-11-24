@@ -1,6 +1,6 @@
 /**
  * ONE VIDEO ENCODE AT A TIME (reels-in-chat 15.2, RC-13): the CanaReels publish step
- * (`publishReel`) and the outbox's preparation of a chat-reel take (`prepareQueuedChatReel`) each
+ * (`prepareForQueue` in the publish queue) and the outbox's preparation of a chat-reel take (`prepareQueuedChatReel`) each
  * take this lease around their encode. With one file for the feed and the chats (D-onefile) the
  * normal case encodes once; the exception is a publish step that ends without an upload while the
  * take then prepares its own - and two WebCodecs encodes of a 60 s take at once are unmeasured on

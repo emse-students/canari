@@ -43,7 +43,7 @@ import {
   type PostKind,
 } from './reel.constants';
 import { assertReelEditShape } from './reel-rules';
-import type { ReelPurgeReason } from '../internal/reel-media';
+import { REEL_MEDIA_EXPIRED, type ReelPurgeReason } from '../internal/reel-media';
 import { singleMediaModeOf, singleMediaSql, type SingleMediaMode } from './full-screen-post-sql';
 import { publicationTime } from './publication-time';
 import { clientIdVerdict } from './post-client-id';
@@ -1290,8 +1290,9 @@ export class PostsService {
    */
   private async claimReelBlob(authorId: string, mediaIds: string[]): Promise<void> {
     let refused: string[];
+    let expired: string[];
     try {
-      ({ refused } = await this.mediaRetention.claimReelFor(authorId, mediaIds));
+      ({ refused, expired } = await this.mediaRetention.claimReelFor(authorId, mediaIds));
     } catch (e) {
       this.logger.warn(
         `[REEL] claim could not be confirmed for author ${authorId.slice(0, 8)}: ${
@@ -1304,6 +1305,18 @@ export class PostsService {
       this.logger.warn(
         `[REEL] ${authorId.slice(0, 8)} cited ${refused.length} blob(s) that are not theirs, gone, or a pending upload past its window`
       );
+      // EVERY refused blob is the author's own upload that only time took: TYPED, so the publisher
+      // uploads it again rather than re-sending the same id for ever (it never reads the message).
+      const expiredIds = new Set(expired);
+      if (refused.every((id) => expiredIds.has(id))) {
+        this.logger.warn(
+          `[REEL] ${authorId.slice(0, 8)}: all ${refused.length} refused blob(s) are their own pending upload past its window - answered ${REEL_MEDIA_EXPIRED}`
+        );
+        throw new BadRequestException({
+          code: REEL_MEDIA_EXPIRED,
+          message: "the reel's upload expired before it was published - upload it again",
+        });
+      }
       // The pending window is the MEDIA service's (MEDIA_PENDING_REEL_TTL_MS), so it is not spelled
       // here: a duration written in this sentence is one env change away from a lie.
       throw new BadRequestException(
