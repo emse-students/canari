@@ -1,6 +1,6 @@
 ## P3 - the migration 056 integration spec fails when the integration specs run in parallel
 
-target: 1.8.0
+target: 1.8.1
 
 **Seen 2026-11-24** (review of #4064): `056_dm_groups_self_kind.integration.spec.ts` passes alone and in
 band (`--runInBand`, which is how the `test-chat-delivery-integration` job in `ci.yml` runs it), and

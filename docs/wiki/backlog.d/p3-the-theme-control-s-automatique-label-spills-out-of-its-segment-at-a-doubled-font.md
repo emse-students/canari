@@ -1,6 +1,6 @@
 ## P3 - the Thème control's "Automatique" label spills out of its segment at a doubled font
 
-target: 1.8.0
+target: 1.8.1
 
 **Seen** on `1.7.1-alpha.3`, Mi 9T, Settings > Préférences at `font_scale` 2.0
 ([S9](../device-verification.md#the-phone-readings-of-2026-11-19-s9-171-alpha3)). The fix this

@@ -1,6 +1,6 @@
 ## P2 - forms: answer formats on a short text question (G-VALID), and no more empty strings
 
-target: 1.8.0
+target: 1.8.1
 
 Owner decision 2026-11-21 (read-only production survey: of 419 short answers 18% bare numbers, 6 phone numbers,
 18 hand-typed oui/non/x; 93 skipped optional answers stored as `""`). Built: `number` (min, max, decimals off by

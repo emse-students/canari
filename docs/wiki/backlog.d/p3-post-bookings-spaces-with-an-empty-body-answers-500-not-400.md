@@ -1,6 +1,6 @@
 ## P3 - `POST /api/bookings/spaces` with an empty body answers 500, not 400 (dev, 2026-11-23)
 
-target: 1.8.0
+target: 1.8.1
 
 Seen on dev during the readings of `1.8.0-alpha.3` (handed to the `alpha.4` iPhone sitting by the lead, not re-run there): a `POST /api/bookings/spaces` with an EMPTY body answered **HTTP 500** where the route's DTO should refuse it with a 400. `CreateSpaceDto` (`apps/social-service/src/bookings/dto/space.dto.ts`) declares `name` as `@IsString() @IsNotEmpty()`, and `main.ts` installs a global `ValidationPipe({ whitelist: true, transform: true })`, so an empty JSON object is refused before the service; a 500 therefore means the request reached something that does not go through the pipe's message, or the body arrived as `undefined` (no JSON content type) and the pipe's input was not an object.
 

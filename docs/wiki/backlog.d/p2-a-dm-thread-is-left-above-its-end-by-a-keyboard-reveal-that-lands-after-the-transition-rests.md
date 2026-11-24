@@ -1,6 +1,6 @@
 ## P2 - a DM thread is left above its end when the keyboard comes back with the app: #4023 fixed 6 of 11 returns, the reveal lands after the transition has rested (2026-11-24)
 
-target: 1.8.0
+target: 1.8.1
 
 **Seen on the iPhone 12 on `1.8.0-alpha.6`, which carries #4023** ([sitting](../device-verification.md#the-readings-of-2026-11-24-180-alpha6-iphone-12-the-dm-thread-again-the-composer-the-ios-27-sdk-build-the-broadcasters-column-the-voice-note-the-sign-out-row)). The reading entry that this one continues is [a DM thread keeps its end after a return to the app with the keyboard up](reading-owed-a-dm-thread-keeps-its-end-after-a-return-with-the-keyboard-up.md); it keeps the history, this entry carries the defect. Fixed by `fix/ios-keyboard-reveal-and-inset` (below), unread on a phone.
 

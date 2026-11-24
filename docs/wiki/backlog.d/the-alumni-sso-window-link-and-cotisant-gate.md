@@ -48,9 +48,9 @@ first read at the next Alumni sign-in.
    person lands in the target, the duplicate is gone, an Event `custom_alumni_merge` with its IP, and
    at the next reading of the admin page the duplicate's Canari account is erased.
 
-### Owed by hand before the 1.8.0 stable
+### Set by hand before the 1.8.0 stable (2026-11-24)
 
-Before the stable is cut, these accounts get NO cursus and the post `EMSE` in MiConnect, so that the
+Before the stable was cut, these accounts got NO cursus and the post `EMSE` in MiConnect, so that the
 free window, the link step and the cotisant gate never lock them out (no cursus means no link step
 ever; the post opens MiGallery and Le Cercle whatever the date, by OIDC and by the sign-in handoff):
 
@@ -59,3 +59,8 @@ ever; the post opens MiGallery and Le Cercle whatever the date, by OIDC and by t
   reviewer and its counterpart.
 
 A data change on MiConnect, the lead's; named here by variable and role only.
+
+**DONE on 2026-11-24.** The review cohort and the dev smoke account now have no cursus and the post
+`EMSE`. The service account behind `SERVICE_ACCOUNT_USER_ID` turned out to be the store reviewer
+itself, so three accounts were changed. The rollback details are in the private operations
+notes.

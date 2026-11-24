@@ -1,6 +1,6 @@
 ## P2 - an upload that finishes after the account erasure keeps the erased owner on a live file
 
-target: 1.8.0
+target: 1.8.1
 
 **Found** in the review of #4055 (pre-existing). media-service's erasure route
 (`DELETE /media/internal/users/:userId`) first ends the account's open upload sessions
