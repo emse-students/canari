@@ -38,6 +38,7 @@ import { LYDIA_ENROLMENT_IN_FLIGHT } from './lydia-readiness';
 import { LYDIA_CASHIER_CLAIM_LOST } from './lydia-cashier-claim';
 import { LYDIA_PAYMENTS_PAUSED_TYPE } from './lydia-payments-notifier.service';
 import { ProductsService } from './products.service';
+import { takeEvery, takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -304,6 +305,15 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
     expect(await flags(offSale.id)).toEqual({ isActive: false, activationWithheld: false });
     // Released in the readiness transaction, and told so.
     expect(delegationTells(CLUB)).toEqual(['receiver-not-ready', 'resumed']);
+
+    takeLogged(
+      'error',
+      /^\[LYDIA-READINESS\] holder [0-9a-f-]{36} reverted: request\/do answered error 5 \(shop checkout-it\); before: was marked by webhook-validated at \d{4}-\d{2}-\d{2}T[0-9:.]+Z; 3 on-sale product\(s\) withheld; 1 global admin\(s\) told; managers told next$/
+    );
+    takeLogged(
+      'warn',
+      /^\[LYDIA-READINESS\] holder [0-9a-f-]{36}: an unsigned BUSINESS_VALIDATED does not clear Lydia's own request-refused \(webhook\) - nothing written; a global admin re-checks and validates by hand$/
+    );
   });
 
   it('a revert committed while the purchase is prepared: the typed 409 under the lock, and NO request/do', async () => {
@@ -333,6 +343,15 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
     expect(
       await ds.query(`SELECT id FROM product_checkouts WHERE "productId" = $1`, [item.id])
     ).toEqual([]);
+
+    takeLogged(
+      'error',
+      /^\[LYDIA-READINESS\] holder [0-9a-f-]{36} reverted: request\/do answered error 2701 \(shop another-payer\); before: was marked by admin at \d{4}-\d{2}-\d{2}T[0-9:.]+Z; 4 on-sale product\(s\) withheld; 1 global admin\(s\) told; managers told next$/
+    );
+    takeLogged(
+      'warn',
+      /^\[SHOP\] refused under the lock: product=[0-9a-f]{6,8} - payments stopped being ready while the purchase was being prepared \(cause=request-blocked\)$/
+    );
   });
 
   describe('under concurrency (Promise.all, one connection each)', () => {
@@ -383,6 +402,11 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
       expect((lost.reason as ConflictException).getResponse()).toMatchObject({
         code: LYDIA_ENROLMENT_IN_FLIGHT,
       });
+
+      takeLogged(
+        'warn',
+        /^\[LYDIA\] enrolment refused on association [0-9a-f-]{36}: another one is in flight since \d{4}-\d{2}-\d{2}T[0-9:.]+Z$/
+      );
     });
 
     it('a VALIDATED racing a revert: consistent, and nothing withheld goes back on sale while not ready', async () => {
@@ -409,6 +433,16 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
         expect((await flags(withheld.id)).isActive).toBe(false);
         expect((await flags(onSale.id)).isActive).toBe(false);
       }
+      // Each round races a revert against a VALIDATED, so how many revert (and are then told they clear nothing) is the race's to decide: 0 to 10 of them.
+      // told it clears nothing, is the race's to decide: 0 to 10 of them.
+      takeEvery(
+        'error',
+        /^\[LYDIA-READINESS\] holder [0-9a-f-]{36} reverted: request\/do answered error 5 \(shop race-\d+\); before: was marked by webhook-validated at \d{4}-\d{2}-\d{2}T[0-9:.]+Z; 2 on-sale product\(s\) withheld/
+      );
+      takeEvery(
+        'warn',
+        /^\[LYDIA-READINESS\] holder [0-9a-f-]{36}: an unsigned BUSINESS_VALIDATED does not clear Lydia's own request-refused \(webhook\) - nothing written; a global admin re-checks and validates by hand$/
+      );
     });
 
     it('a release that runs AFTER a revert undid the ready re-reads under its lock and releases nothing', async () => {
@@ -423,6 +457,11 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
       });
       await expect(products.releaseWithheldProducts(HOLDER)).resolves.toBe(0);
       expect(await flags(item.id)).toEqual({ isActive: false, activationWithheld: true });
+
+      takeLogged(
+        'error',
+        /^\[LYDIA-READINESS\] holder [0-9a-f-]{36} reverted: request\/do answered error 5 \(shop\); before: was marked by webhook-validated at an unrecorded date; 0 on-sale product\(s\) withheld; 1 global admin\(s\) told; managers told next$/
+      );
     });
 
     it('two simultaneous Responsable steps: ONE row, ONE typed conflict, ONE addcashier', async () => {
@@ -454,6 +493,11 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
       expect(
         await ds.query(`SELECT count(*)::int AS n FROM lydia_cashiers WHERE "removedAt" IS NULL`)
       ).toEqual([{ n: 1 }]);
+
+      takeLogged(
+        'warn',
+        /^\[LYDIA\] Responsable claim refused on [0-9a-f-]{36}: another cashier operation is in flight$/
+      );
     });
 
     it('an UNCONFIRMED Responsable locks its number and the one-Responsable rule; the same number confirms it', async () => {
@@ -495,6 +539,11 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
              FROM lydia_cashiers WHERE "removedAt" IS NULL`
         )
       ).toEqual([{ n: 1, confirmed: true }]);
+
+      takeLogged(
+        'error',
+        /^\[AUDIT\] Lydia Responsable recorded on association [0-9a-f-]{36}: user member-1, phone ending 78, by treasure - live: a new row - UNCONFIRMED: added at Lydia, rights not read back$/
+      );
     });
 
     it('a VALIDATED is retried (503) ONLY for the pending token of an unlinked enrolment', async () => {
@@ -526,6 +575,20 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
           ENROLLING,
         ])
       ).toEqual([{ t: null }]);
+
+      takeLogged(
+        'warn',
+        /^\[LYDIA\] pending enrolment token NOT recorded on association [0-9a-f-]{36}: no enrolment in flight there$/
+      );
+      takeLogged(
+        'warn',
+        "[LYDIA-READINESS] no association holds the vendor token - nothing written (webhook); it is a pending enrolment's, a retry is asked for"
+      );
+      takeLogged(
+        'warn',
+        '[LYDIA-READINESS] no association holds the vendor token - nothing written (webhook)',
+        2
+      );
     });
 
     it('two simultaneous records of two people under one claim: ONE row, the other the typed CLAIM_LOST', async () => {
@@ -549,6 +612,15 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
       expect(
         await ds.query(`SELECT count(*)::int AS n FROM lydia_cashiers WHERE "removedAt" IS NULL`)
       ).toEqual([{ n: 1 }]);
+
+      takeLogged(
+        'error',
+        /^\[LYDIA\] Responsable record refused on [0-9a-f-]{36}: the claim no longer carries its token - Lydia may hold a number this record does not keep$/
+      );
+      takeLogged(
+        'warn',
+        /^\[LYDIA\] Responsable step release on association [0-9a-f-]{36} ignored: the claim no longer carries that token$/
+      );
     });
   });
 });

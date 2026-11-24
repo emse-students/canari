@@ -42,6 +42,7 @@ import {
   erasureParams,
 } from '../internal/account-erasure';
 import { untilWaiting } from '../common/lock-wait.it-fixture';
+import { takeEvery, takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -416,6 +417,11 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     expect(await heldTags(buyer)).toEqual([TAG_B]);
     const [row] = await ds.query(`SELECT status FROM product_checkouts WHERE id = $1`, [a.id]);
     expect(row.status).toBe('paid');
+
+    takeLogged(
+      'error',
+      /^\[SHOP\] checkout [0-9a-f]{6,8}: paid tier is held-changed at settlement \(product=[0-9a-f]{6,8} user=buyer-00 held=\[b\] opened-over=none\) - payment recorded, tier NOT granted; a refund is owed$/
+    );
   });
 
   it('two CONCURRENT settlements of sibling tiers grant exactly ONE, and record both payments', async () => {
@@ -436,6 +442,11 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     ]);
     expect(records).toHaveLength(2);
     expect(refundsLogged()).toBe(1);
+
+    takeLogged(
+      'error',
+      /^\[SHOP\] checkout [0-9a-f]{6,8}: paid tier is held-changed at settlement \(product=[0-9a-f]{6,8} user=buyer-00 held=\[[ab]\] opened-over=none\) - payment recorded, tier NOT granted; a refund is owed$/
+    );
   });
 
   it('a settlement waits for the lock, then re-reads: a tier granted meanwhile makes it not a rise', async () => {
@@ -449,6 +460,11 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     const [row] = await ds.query(`SELECT status FROM product_checkouts WHERE id = $1`, [a.id]);
     expect(row.status).toBe('paid');
     expect(refundsLogged()).toBe(1);
+
+    takeLogged(
+      'error',
+      /^\[SHOP\] checkout [0-9a-f]{6,8}: paid tier is held-changed at settlement \(product=[0-9a-f]{6,8} user=buyer-00 held=\[b\] opened-over=none\) - payment recorded, tier NOT granted; a refund is owed$/
+    );
   });
 
   it('a checkout opening waits for the lock, then re-reads: it refuses a tier that is no longer a rise', async () => {
@@ -489,6 +505,11 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
       [buyer]
     );
     expect(open).toHaveLength(1);
+
+    takeLogged(
+      'warn',
+      /^\[SHOP\] checkout refused: product=[0-9a-f]{6,8} user=buyer-00 \(an attempt of sibling tier [0-9a-f]{6,8} is open\)$/
+    );
   });
 
   it('every locked path runs on ONE pool connection: a pool of one does not wait for a second', async () => {
@@ -515,6 +536,11 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     } finally {
       await single.destroy();
     }
+
+    takeLogged(
+      'error',
+      /^\[UserTag\] paid grant of tier a of assoc=[0-9a-f]{6,8} refused for user=buyer-00: already held when the payment landed - nothing renewed, a refund is owed$/
+    );
   });
 
   it('a retag and a settlement of the same tier never leave the OLD tag behind', async () => {
@@ -634,6 +660,11 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     );
     expect(records).toEqual([{ status: 'paid_not_granted' }]);
     expect(refundsLogged()).toBe(1);
+
+    takeLogged(
+      'error',
+      /^\[SHOP\] checkout [0-9a-f]{6,8}: paid tier is held-changed at settlement \(product=[0-9a-f]{6,8} user=buyer-00 held=\[b\] opened-over=a\) - payment recorded, tier NOT granted; a refund is owed$/
+    );
   });
 
   it('a marked payment is closed ONCE: a second closing is refused with a typed code', async () => {
@@ -657,6 +688,15 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     const [status] = await ds.query(`SELECT status FROM purchase_records WHERE id = $1`, [record]);
     expect(status.status).toBe('paid_not_granted');
     expect(await heldTags(buyer)).toEqual([TAG_B]);
+
+    takeLogged(
+      'error',
+      /^\[SHOP\] checkout [0-9a-f]{6,8}: paid tier is held-changed at settlement \(product=[0-9a-f]{6,8} user=buyer-00 held=\[b\] opened-over=a\) - payment recorded, tier NOT granted; a refund is owed$/
+    );
+    takeLogged(
+      'warn',
+      /^\[SHOP\] closing refused \(PURCHASE_ALREADY_CLOSED\): purchase=[0-9a-f]{6,8} was already closed$/
+    );
   });
 
   it('two closings of one payment at once: exactly one row, the other refused', async () => {
@@ -677,6 +717,15 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
       [record]
     );
     expect(rows[0].n).toBe(1);
+
+    takeLogged(
+      'error',
+      /^\[SHOP\] checkout [0-9a-f]{6,8}: paid tier is held-changed at settlement \(product=[0-9a-f]{6,8} user=buyer-00 held=\[b\] opened-over=a\) - payment recorded, tier NOT granted; a refund is owed$/
+    );
+    takeLogged(
+      'warn',
+      /^\[SHOP\] closing refused \(PURCHASE_ALREADY_CLOSED\): purchase=[0-9a-f]{6,8} was already closed$/
+    );
   });
 
   it('closing as GRANTED grants the tier paid for, by hand, and swaps the held tier out', async () => {
@@ -687,6 +736,11 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
 
     expect(closed.closedOutcome).toBe('granted');
     expect(await heldTags(buyer)).toEqual([TAG_D]);
+
+    takeLogged(
+      'error',
+      /^\[SHOP\] checkout [0-9a-f]{6,8}: paid tier is held-changed at settlement \(product=[0-9a-f]{6,8} user=buyer-00 held=\[b\] opened-over=a\) - payment recorded, tier NOT granted; a refund is owed$/
+    );
   });
 
   it('a payment that is not marked cannot be closed', async () => {
@@ -700,6 +754,11 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     );
 
     expect(codeOf(refused.error)).toBe('PURCHASE_NOT_CLOSABLE');
+
+    takeLogged(
+      'warn',
+      /^\[SHOP\] closing refused \(PURCHASE_NOT_CLOSABLE\): purchase=[0-9a-f]{6,8} is paid$/
+    );
   });
 
   /**
@@ -753,6 +812,11 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
       [record]
     );
     expect(rows).toHaveLength(0);
+
+    takeLogged(
+      'warn',
+      /^\[SHOP\] closing refused \(PURCHASE_TIER_GONE\): purchase=[0-9a-f]{6,8} - tier no-such-tier is absent from the cotisation catalogue; only a refund can be recorded$/
+    );
   });
 
   it('an ERASED buyer cannot be closed as granted - no cotisant is minted - but can be refunded', async () => {
@@ -764,6 +828,11 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
 
     const closed = await service.closePaidNotGranted(ASSO, record, 'm', 'refunded', false);
     expect(closed).toMatchObject({ closedOutcome: 'refunded' });
+
+    takeLogged(
+      'warn',
+      /^\[SHOP\] closing refused \(PURCHASE_BUYER_ERASED\): purchase=[0-9a-f]{6,8} - its buyer account was erased; only a refund can be recorded$/
+    );
   });
 
   it('an erasure committed while a granted closing waits for the row is SEEN: refused, no tag', async () => {
@@ -782,6 +851,11 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     expect(codeOf(outcome.error)).toBe('PURCHASE_BUYER_ERASED');
     expect(await heldTags(buyer)).toEqual([]);
     expect(await heldTags('[deleted]')).toEqual([]);
+
+    takeLogged(
+      'warn',
+      /^\[SHOP\] closing refused \(PURCHASE_BUYER_ERASED\): purchase=[0-9a-f]{6,8} - its buyer account was erased; only a refund can be recorded$/
+    );
   });
 
   it.each(['refunded', 'granted'] as const)(
@@ -802,6 +876,15 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
       );
       expect(rows).toHaveLength(0);
       expect(await heldTags(buyer)).toEqual([TAG_B]);
+
+      takeLogged(
+        'error',
+        /^\[SHOP\] checkout [0-9a-f]{6,8}: paid tier is held-changed at settlement \(product=[0-9a-f]{6,8} user=buyer-00 held=\[b\] opened-over=a\) - payment recorded, tier NOT granted; a refund is owed$/
+      );
+      takeLogged(
+        'warn',
+        /^\[SHOP\] closing refused: purchase=[0-9a-f]{6,8} is not a purchase of association=[0-9a-f]{6,8}$/
+      );
     }
   );
 
@@ -828,6 +911,11 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
       { ...before[0], metadata: { ...before[0].metadata, purchaseRecordId: record } },
     ]);
     expect(await purchases.countUnclosedPaidNotGranted()).toBe(unclosed - 1);
+
+    takeLogged(
+      'error',
+      /^\[SHOP\] checkout [0-9a-f]{6,8}: paid tier is held-changed at settlement \(product=[0-9a-f]{6,8} user=buyer-00 held=\[b\] opened-over=a\) - payment recorded, tier NOT granted; a refund is owed$/
+    );
   });
 
   it("a tier delivered by the buyer's SECOND payment does not close the first one as granted", async () => {
@@ -850,6 +938,15 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
       [first]
     );
     expect(rows).toHaveLength(0);
+
+    takeLogged(
+      'error',
+      /^\[SHOP\] checkout [0-9a-f]{6,8}: paid tier is held-changed at settlement \(product=[0-9a-f]{6,8} user=buyer-00 held=\[b\] opened-over=a\) - payment recorded, tier NOT granted; a refund is owed$/
+    );
+    takeLogged(
+      'warn',
+      /^\[SHOP\] closing refused \(PURCHASE_TARGET_ALREADY_HELD\): purchase=[0-9a-f]{6,8} - the buyer holds tier d: its tag was granted by another payment, or names none; only a refund can be recorded$/
+    );
   });
 
   it('one delivery closes ONE payment: a second payment of the same tier stays reported', async () => {
@@ -865,6 +962,11 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     expect(codeOf(refused.error)).toBe('PURCHASE_TARGET_ALREADY_HELD');
     const [row] = (await service.listAssociationPurchases(ASSO)).filter((r) => r.id === second);
     expect(row).toMatchObject({ grantRefusal: 'target-held', delivered: false });
+
+    takeLogged(
+      'warn',
+      /^\[SHOP\] closing refused \(PURCHASE_TARGET_ALREADY_HELD\): purchase=[0-9a-f]{6,8} - the buyer holds tier d: its tag is already the delivery of another payment; only a refund can be recorded$/
+    );
   });
 
   it('a tag is stamped as the delivery of ONE record: a second stamp writes nothing', async () => {
@@ -881,6 +983,11 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     expect(stamps).toEqual([true, false]);
     const [row] = await ds.query(`SELECT metadata FROM user_tags WHERE id = $1`, [id]);
     expect(row.metadata).toEqual({ purchaseRecordId: first });
+
+    takeLogged(
+      'warn',
+      /^\[UserTag\] tag [0-9a-f]{6,8} NOT stamped for purchase=[0-9a-f]{6,8}: it is already the delivery of another payment$/
+    );
   });
 
   /** The form a record was paid on. */
@@ -964,6 +1071,11 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     expect(codeOf(refused.error)).toBe('PURCHASE_TARGET_ALREADY_HELD');
     const [row] = (await service.listAssociationPurchases(ASSO)).filter((r) => r.id === record);
     expect(row).toMatchObject({ grantRefusal: 'target-held', delivered: false });
+
+    takeLogged(
+      'warn',
+      /^\[SHOP\] closing refused \(PURCHASE_TARGET_ALREADY_HELD\): purchase=[0-9a-f]{6,8} - the buyer holds tier d: its tag was granted by another form answer; only a refund can be recorded$/
+    );
   });
 
   it('a tag revoked between the list and the click: the "nothing is granted" closing grants nothing', async () => {
@@ -983,6 +1095,15 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
       [record]
     );
     expect(rows).toHaveLength(0);
+
+    takeLogged(
+      'error',
+      /^\[SHOP\] checkout [0-9a-f]{6,8}: paid tier is held-changed at settlement \(product=[0-9a-f]{6,8} user=buyer-00 held=\[b\] opened-over=a\) - payment recorded, tier NOT granted; a refund is owed$/
+    );
+    takeLogged(
+      'warn',
+      /^\[SHOP\] closing refused \(PURCHASE_CLOSING_CHANGED\): purchase=[0-9a-f]{6,8} was confirmed as already delivered, and no longer is - nothing written$/
+    );
   });
 
   it('GRANTED is refused PURCHASE_TARGET_ALREADY_HELD when the tier was held BEFORE the payment: it stays reported', async () => {
@@ -1000,6 +1121,11 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     expect(await heldTags(buyer)).toEqual([TAG_D]);
     const [row] = (await service.listAssociationPurchases(ASSO)).filter((r) => r.id === record);
     expect(row).toMatchObject({ grantRefusal: 'target-held' });
+
+    takeLogged(
+      'warn',
+      /^\[SHOP\] closing refused \(PURCHASE_TARGET_ALREADY_HELD\): purchase=[0-9a-f]{6,8} - the buyer holds tier d: its tag was held before the payment; only a refund can be recorded$/
+    );
   });
 
   it('a tier frozen at the opening and gone at the settlement is MARKED, not granted at the rise price', async () => {
@@ -1019,6 +1145,11 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     );
     expect(records).toEqual([{ status: 'paid_not_granted' }]);
     expect(refundsLogged()).toBe(1);
+
+    takeLogged(
+      'error',
+      /^\[SHOP\] checkout [0-9a-f]{6,8}: paid tier is frozen-gone at settlement \(product=[0-9a-f]{6,8} user=buyer-00 held=\[\] opened-over=b\) - payment recorded, tier NOT granted; a refund is owed$/
+    );
   });
 
   it('GRANTED is refused PURCHASE_NOT_A_RISE when the buyer holds a tier worth as much: never a move down', async () => {
@@ -1037,6 +1168,15 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     expect(await heldTags(buyer)).toEqual([`cotisant:cercle-it-${variantKey}`]);
     const [row] = (await service.listAssociationPurchases(ASSO)).filter((r) => r.id === record);
     expect(row).toMatchObject({ grantRefusal: 'not-a-rise', buyerTier: 'Tier c' });
+
+    takeLogged(
+      'error',
+      /^\[SHOP\] checkout [0-9a-f]{6,8}: paid tier is held-changed at settlement \(product=[0-9a-f]{6,8} user=buyer-00 held=\[b\] opened-over=a\) - payment recorded, tier NOT granted; a refund is owed$/
+    );
+    takeLogged(
+      'warn',
+      /^\[SHOP\] closing refused \(PURCHASE_NOT_A_RISE\): purchase=[0-9a-f]{6,8} - tier d is lower against the tier held \(c2\); only a refund can be recorded$/
+    );
   });
 
   /** The erasure's tier statements, in the order `ERASURE_ROW_STATEMENTS` runs them. */
@@ -1067,6 +1207,11 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     expect(await heldTags(`[deleted]:${attempt.id}`)).toEqual([]);
     expect(await heldTags(buyer)).toEqual([]);
     expect(refundsLogged()).toBe(1);
+
+    takeLogged(
+      'error',
+      /^\[SHOP\] checkout [0-9a-f]{6,8}: its buyer account was erased before the payment landed - payment recorded paid_not_granted, nothing granted; a refund is owed$/
+    );
   });
 
   it('an erasure that meets a settlement mid-flight waits for it, then rewrites the record it wrote', async () => {
@@ -1115,6 +1260,11 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     expect(closed.closedOutcome).toBe('granted');
     // D (2000) is a rise over the dearer held (1500); the sibling XOR revoked BOTH held tiers.
     expect(await heldTags(buyer)).toEqual([TAG_D]);
+
+    takeLogged(
+      'error',
+      /^\[SHOP\] checkout [0-9a-f]{6,8}: paid tier is held-changed at settlement \(product=[0-9a-f]{6,8} user=buyer-00 held=\[b\] opened-over=a\) - payment recorded, tier NOT granted; a refund is owed$/
+    );
   });
 
   it('the hourly count reads only the marked payments nobody has closed', async () => {
@@ -1127,6 +1277,15 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     await service.closePaidNotGranted(ASSO, first, 'manager-1', 'refunded', false);
 
     expect(await purchases.countUnclosedPaidNotGranted()).toBe(before + 1);
+
+    takeEvery(
+      'error',
+      /^\[SHOP\] checkout [0-9a-f]{8}: paid tier is held-changed at settlement \(product=[0-9a-f]{6,8} user=buyer-00 held=\[b\] opened-over=a\) - payment recorded, tier NOT granted; a refund is owed$/
+    );
+    takeEvery(
+      'error',
+      /^\[SHOP\] checkout [0-9a-f]{8}: paid tier is held-changed at settlement \(product=[0-9a-f]{6,8} user=buyer-00 held=\[b\] opened-over=a\) - payment recorded, tier NOT granted; a refund is owed$/
+    );
   });
   it("a paid form's pre-check ranks against the real tables: held, not a rise, a rise", async () => {
     const buyer = newBuyer();
@@ -1164,5 +1323,10 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     ).toEqual([{ status: 'paid_not_granted' }]);
     expect(await heldTags(buyer)).toEqual([]);
     expect(refundsLogged()).toBe(1);
+
+    takeLogged(
+      'error',
+      /^\[SHOP\] checkout [0-9a-f]{6,8}: product [0-9a-f]{6,8} no longer exists - payment recorded paid_not_granted, nothing delivered; a refund is owed$/
+    );
   });
 });

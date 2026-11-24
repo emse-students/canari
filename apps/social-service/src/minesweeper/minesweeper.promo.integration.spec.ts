@@ -22,6 +22,7 @@ import { MinesweeperChallenge } from './entities/minesweeper-challenge.entity';
 import { MinesweeperReplay } from './entities/minesweeper-replay.entity';
 import { MinesweeperScore } from './entities/minesweeper-score.entity';
 import { MinesweeperService } from './minesweeper.service';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -162,5 +163,8 @@ maybe('minesweeper per-promo ranking against PostgreSQL', () => {
       { promo: 2027, players: 2 },
       { promo: 2026, players: 3 },
     ]);
+
+    takeLogged('warn', /^minesweeper score removed id=[0-9a-f-]{36} user=e ms=15000 by=admin$/);
+    takeLogged('warn', 'minesweeper unban user=c by=admin');
   });
 });

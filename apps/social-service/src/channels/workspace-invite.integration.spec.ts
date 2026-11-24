@@ -30,6 +30,7 @@ import { ChannelMessage } from './entities/channel-message.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import type { RedisService } from '../common/redis';
 import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -170,6 +171,11 @@ maybe('accepting a community invite link against PostgreSQL', () => {
       await other.client.query('ROLLBACK').catch(() => undefined);
       await other.client.end();
     }
+
+    takeLogged(
+      'warn',
+      /^\[INVITE\] refused - claim matched no row \(exhausted, revoked or expired meanwhile\) workspace=[0-9a-f-]{36} user=joiner-l$/
+    );
   });
 
   it('an accept concurrent with a rotation that revoked the link is refused', async () => {
@@ -190,6 +196,11 @@ maybe('accepting a community invite link against PostgreSQL', () => {
       await rotation.client.query('ROLLBACK').catch(() => undefined);
       await rotation.client.end();
     }
+
+    takeLogged(
+      'warn',
+      /^\[INVITE\] refused - claim matched no row \(exhausted, revoked or expired meanwhile\) workspace=[0-9a-f-]{36} user=joiner-r$/
+    );
   });
 
   it('four concurrent accepts on a cap of two admit exactly two', async () => {
@@ -202,6 +213,13 @@ maybe('accepting a community invite link against PostgreSQL', () => {
     expect(await usesOf(id)).toBe(2);
     const joined = await Promise.all(joiners.map(isMember));
     expect(joined.filter(Boolean)).toHaveLength(2);
+
+    // The losers of the claim are the ones past the cap; which of the four they are is the race's.
+    takeLogged(
+      'warn',
+      /^\[INVITE\] refused - claim matched no row \(exhausted, revoked or expired meanwhile\) workspace=[0-9a-f-]{36} user=many-[0-9]$/,
+      { min: 0, max: 2 }
+    );
   });
 
   /**
@@ -247,6 +265,12 @@ maybe('accepting a community invite link against PostgreSQL', () => {
       process.env.SERVICE_ACCOUNT_USER_ID = 'owner';
       expect(await service.isDistributionGroupEntitled('workspace', WS, 'rev-3')).toBe(false);
       expect(await service.isDistributionGroupEntitled('workspace', WS, 'owner')).toBe(true);
+
+      takeLogged(
+        'warn',
+        /^\[REVIEW_COHORT\] workspace=[0-9a-f-]{36} user=rev-3: a roster row across the review cohort's boundary entitles nothing$/,
+        2
+      );
     });
 
     it('entitles no member in a community a review account created, its member row notwithstanding', async () => {
@@ -278,6 +302,11 @@ maybe('accepting a community invite link against PostgreSQL', () => {
         await q(`DELETE FROM channel_members WHERE "workspaceId" = $1`, [REVIEW_WS]);
         await q(`DELETE FROM channel_workspaces WHERE id = $1`, [REVIEW_WS]);
       }
+
+      takeLogged(
+        'warn',
+        /^\[REVIEW_COHORT\] workspace=[0-9a-f-]{36} user=member-y: a roster row across the review cohort's boundary entitles nothing$/
+      );
     });
   });
 });

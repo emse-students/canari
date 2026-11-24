@@ -32,6 +32,7 @@ import { ChannelMember } from './entities/channel-member.entity';
 import { ChannelMessage } from './entities/channel-message.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import type { RedisService } from '../common/redis';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -144,6 +145,8 @@ maybe('clearing a community unread against PostgreSQL (migration 082)', () => {
       [ME]
     );
     expect(row.readMarks).toEqual({});
+
+    takeLogged('warn', '[CHANNEL_PUSH] notify failed for user=me: unknown error');
   });
 
   it('never lowers a mark, and a repeat moves nothing', async () => {
@@ -162,6 +165,8 @@ maybe('clearing a community unread against PostgreSQL (migration 082)', () => {
     await post(OPEN, '2026-10-14 08:00:00.000001');
     await post(EMPTY, '2026-10-14 08:00:00.000001');
     expect(await counts()).toMatchObject({ [OPEN]: 1, [EMPTY]: 1 });
+
+    takeLogged('warn', '[CHANNEL_PUSH] notify failed for user=me: unknown error');
   });
 
   it('never names the private salon the caller is not in', async () => {

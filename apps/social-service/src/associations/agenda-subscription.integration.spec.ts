@@ -40,6 +40,7 @@ import { Form } from '../forms/entities/form.entity';
 import { Submission } from '../forms/entities/submission.entity';
 import { signAgendaSelection } from './agenda-signature';
 import { ERASURE_STATEMENTS } from '../internal/account-erasure';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -341,6 +342,11 @@ maybe('the agenda subscription link against PostgreSQL (migration 173)', () => {
     // A pair is unchanged: every legitimate holder was in that space.
     expect(await servedLegacy({ campus: SE, formation: 'ICM' })).toEqual([EI, EN, EW].sort());
     expect(await servedLegacy({ campus: SE, formation: 'ICM', associationId: N })).toEqual([EN]);
+
+    takeLogged('warn', /^\[AGENDA_LEGACY_LINK\] shape=association link=[0-9a-f]{6,8}$/, 2);
+    takeLogged('warn', /^\[AGENDA_LEGACY_LINK\] shape=campus link=[0-9a-f]{6,8}$/);
+    takeLogged('warn', /^\[AGENDA_LEGACY_LINK\] shape=formation link=[0-9a-f]{6,8}$/);
+    takeLogged('warn', /^\[AGENDA_LEGACY_LINK\] shape=pair link=[0-9a-f]{6,8}$/, 2);
   });
 
   it('(f) a staff holder is served EXACTLY its in-app agenda: its grants and memberships, and nothing of its campus otherwise', async () => {
@@ -405,6 +411,8 @@ maybe('the agenda subscription link against PostgreSQL (migration 173)', () => {
     expect(statement).toBeDefined();
     await q(statement!.sql, ['si']);
     expect(await served(token)).toBe(403);
+
+    takeLogged('warn', /^\[AGENDA_SUBSCRIPTION_REFUSED\] id=[0-9a-f]{6,8} reason=unknown$/);
   });
 
   it('revocation: the old token answers 403, and the next ask mints a NEW link', async () => {
@@ -415,6 +423,8 @@ maybe('the agenda subscription link against PostgreSQL (migration 173)', () => {
     expect(after).not.toBe(before);
     expect(await served(after)).toEqual([EW]);
     await controller.revokeCalendarSubscriptions('si');
+
+    takeLogged('warn', /^\[AGENDA_SUBSCRIPTION_REFUSED\] id=[0-9a-f]{6,8} reason=unknown$/);
   });
 
   it('deleting the association deletes its subscriptions (ON DELETE CASCADE)', async () => {
@@ -422,6 +432,8 @@ maybe('the agenda subscription link against PostgreSQL (migration 173)', () => {
     await q(`DELETE FROM association_calendar_events WHERE "associationId" = $1`, [G]);
     await q(`DELETE FROM associations WHERE id = $1`, [G]);
     expect(await served(token)).toBe(403);
+
+    takeLogged('warn', /^\[AGENDA_SUBSCRIPTION_REFUSED\] id=[0-9a-f]{6,8} reason=unknown$/);
   });
 
   it('a table built from the ENTITY (synchronize, no migration) keeps one row per selection', async () => {

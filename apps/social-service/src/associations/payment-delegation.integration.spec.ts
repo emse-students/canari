@@ -25,6 +25,7 @@ import { PostNotification } from '../posts/entities/post-notification.entity';
 import { AssociationsService } from './associations.service';
 import { ProductsService } from './products.service';
 import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -190,6 +191,11 @@ maybe('a list collects through an accepted payment delegation (PostgreSQL)', () 
     expect(row.paymentDelegationStatus).toBe('pending');
     expect(await acceptances()).toEqual([]);
     expect(await associations.collectsNow(LIST)).toBe(false);
+
+    takeLogged(
+      'warn',
+      /^\[DELEGATION\] acceptance refused: user bde-gove is neither a shop manager of receiver [0-9a-f]{6,8} nor the platform administrator$/
+    );
   });
 
   it("the receiver's own manager accepts: approved and RECORDED together; the list collects", async () => {
@@ -231,6 +237,11 @@ maybe('a list collects through an accepted payment delegation (PostgreSQL)', () 
       })
     ).rejects.toMatchObject({ response: { code: 'DELEGATION_REVOKE_RECEIVER_ONLY' } });
     expect(await associations.collectsNow(LIST)).toBe(true);
+
+    takeLogged(
+      'warn',
+      /^\[DELEGATION\] reject\/revoke refused: user bde-gove is neither a shop manager of receiver [0-9a-f]{6,8} nor the platform administrator$/
+    );
   });
 
   it('a revoke by the receiver PAUSES the list: products withheld, managers told, form paused', async () => {
@@ -253,6 +264,11 @@ maybe('a list collects through an accepted payment delegation (PostgreSQL)', () 
       `shop-manager-of-${LIST.slice(-2)}`,
     ]);
     expect(await associations.collectsNow(LIST)).toBe(false);
+
+    takeLogged(
+      'warn',
+      /^\[DELEGATION\] delegation revoked: list [0-9a-f]{6,8} can no longer collect - 1 on-sale product\(s\) withheld$/
+    );
   });
 
   it('a NEW acceptance (another receiver, by the platform admin) is recorded and RESUMES the list', async () => {
@@ -304,6 +320,11 @@ maybe('a list collects through an accepted payment delegation (PostgreSQL)', () 
     expect(await associations.collectsNow(LIST)).toBe(false);
     // The release finds the receiver not ready: nothing goes back on sale.
     expect(await products.releaseWithheldProducts(LIST)).toBe(0);
+
+    takeLogged(
+      'warn',
+      /^\[AUDIT\] Lydia Business unlinked from association [0-9a-f-]{36}: 2 on-sale product\(s\) of it and its 1 approved delegate\(s\) withheld$/
+    );
   });
 
   // Owner review of #2967: a list that does not delegate resolves NOT ready whatever Lydia account
@@ -333,6 +354,11 @@ maybe('a list collects through an accepted payment delegation (PostgreSQL)', () 
       acceptedAs: 'member',
       accepterGoverningSuperAdmin: true,
     });
+
+    takeLogged(
+      'warn',
+      /^\[DELEGATION\] acceptance by bde-star as a member of receiver [0-9a-f]{6,8} who ALSO governs it as a BDE super-admin - recorded$/
+    );
   });
 
   // A receiver whose account is ready again releases its delegates IN the readiness transaction.
@@ -348,6 +374,11 @@ maybe('a list collects through an accepted payment delegation (PostgreSQL)', () 
     expect(tellDelegation).toHaveBeenCalledWith(expect.objectContaining({ id: LIST }), 'resumed', [
       `shop-manager-of-${LIST.slice(-2)}`,
     ]);
+
+    takeLogged(
+      'error',
+      /^\[LYDIA-READINESS\] holder [0-9a-f-]{36} reverted: request\/do answered error 5 \(shop\); before: no earlier marking on record; 2 on-sale product\(s\) withheld; 1 global admin\(s\) told; managers told next$/
+    );
   });
 
   // Owner review of #2967 (F1): the readiness reads its delegates, then releases them. A revoke
@@ -410,6 +441,11 @@ maybe('a list collects through an accepted payment delegation (PostgreSQL)', () 
     await associations.requestPaymentDelegation(LIST, RECEIVER);
     await accept(RECEIVER, TREASURER);
     await ds.query(`DELETE FROM association_products WHERE id = $1`, [tee.id]);
+
+    takeLogged(
+      'error',
+      /^\[LYDIA-READINESS\] holder [0-9a-f-]{36} reverted: request\/do answered error 5 \(shop\); before: was marked by admin at \d{4}-\d{2}-\d{2}T[0-9:.]+Z; 3 on-sale product\(s\) withheld; 1 global admin\(s\) told; managers told next$/
+    );
   });
 
   // Owner review of #2967 (F2): a list that sells through paid forms only has no product to
@@ -453,6 +489,15 @@ maybe('a list collects through an accepted payment delegation (PostgreSQL)', () 
     await associations.requestPaymentDelegation(LIST, RECEIVER);
     await accept(RECEIVER, TREASURER);
     expect(told()).toEqual(['resumed']);
+
+    takeLogged(
+      'error',
+      /^\[LYDIA-READINESS\] holder [0-9a-f-]{36} reverted: request\/do answered error 5 \(form\); before: was marked by admin at \d{4}-\d{2}-\d{2}T[0-9:.]+Z; 0 on-sale product\(s\) withheld; 1 global admin\(s\) told; managers told next$/
+    );
+    takeLogged(
+      'warn',
+      /^\[DELEGATION\] delegation revoked: list [0-9a-f]{6,8} can no longer collect - 0 on-sale product\(s\) withheld$/
+    );
   });
 
   it('a list holds no Lydia account of its own, and cannot RECEIVE a delegation', async () => {
@@ -461,6 +506,11 @@ maybe('a list collects through an accepted payment delegation (PostgreSQL)', () 
     await expect(associations.requestPaymentDelegation(RECEIVER, LIST)).rejects.toMatchObject({
       response: { code: 'LIST_NO_OWN_LYDIA_ACCOUNT' },
     });
+
+    takeLogged(
+      'error',
+      /^\[COLLECT\] payment delegation request \(receiver\) refused: list [0-9a-f]{6,8} holds no Lydia account of its own \(LIST_NO_OWN_LYDIA_ACCOUNT\)$/
+    );
   });
 
   // Review of #2967: the request checks "no chain" before any lock, so two CROSSED requests - A asks
@@ -531,6 +581,15 @@ maybe('a list collects through an accepted payment delegation (PostgreSQL)', () 
       await expect(approve(B, A)).rejects.toMatchObject(refused);
       expect(await status(A)).toBe('pending');
       expect(await accepted()).toBe(1);
+
+      takeLogged(
+        'warn',
+        /^\[DELEGATION\] acceptance refused, it would make a chain: receiver [0-9a-f]{6,8} itself delegates to [0-9a-f]{6,8} \(pending\)$/
+      );
+      takeLogged(
+        'warn',
+        /^\[DELEGATION\] acceptance refused, it would make a chain: receiver [0-9a-f]{6,8} itself delegates to [0-9a-f]{6,8} \(approved\)$/
+      );
     });
 
     it("A->B accepted before B's request lands: accepting B->C is refused, B already receives", async () => {
@@ -542,6 +601,11 @@ maybe('a list collects through an accepted payment delegation (PostgreSQL)', () 
       });
       expect(await status(B)).toBe('pending');
       expect(await accepted()).toBe(1);
+
+      takeLogged(
+        'warn',
+        /^\[DELEGATION\] acceptance refused, it would make a chain: receiver [0-9a-f]{6,8} - requester [0-9a-f]{6,8} already receives 1 approved delegation\(s\)$/
+      );
     });
   });
 });

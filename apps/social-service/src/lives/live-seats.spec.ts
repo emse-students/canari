@@ -15,7 +15,7 @@
  * WRITTEN with an old score rather than waited for: no wall clock is asserted.
  */
 import { HttpStatus } from '@nestjs/common';
-import { capturingErrors } from './log-capture.it-fixture';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 import Redis from 'ioredis';
 import { RedisService } from '../common/redis';
 import {
@@ -102,7 +102,7 @@ describe('the viewer cap, as the service types it', () => {
   });
 
   it('answers no count, never a wrong one, when Redis fails or answers nonsense', async () => {
-    const errors = await capturingErrors(async () => {
+    {
       for (const reply of [
         async () => {
           throw new Error('ECONNREFUSED');
@@ -114,10 +114,9 @@ describe('the viewer cap, as the service types it', () => {
         const { seats } = seatsAnswering(reply);
         await expect(seats.watching(LIVE)).resolves.toBeNull();
       }
-    });
+    }
     // Each failure accuses, once: a refused count is never silent.
-    expect(errors).toHaveLength(4);
-    expect(errors.every((line) => line.includes('[LIVE_SEAT]') && line.includes(LIVE))).toBe(true);
+    takeLogged('error', `[LIVE_SEAT] ${LIVE}: the viewer count`, 4);
   });
 
   it("reads the feed card's counts of several lives with ONE script, in the order asked", async () => {
@@ -142,7 +141,7 @@ describe('the viewer cap, as the service types it', () => {
   });
 
   it('answers no counts for the list, never wrong ones, when Redis fails or answers nonsense', async () => {
-    const errors = await capturingErrors(async () => {
+    {
       for (const reply of [
         async () => {
           throw new Error('ECONNREFUSED');
@@ -156,9 +155,8 @@ describe('the viewer cap, as the service types it', () => {
           seats.watchingMany([LIVE, '22222222-2222-4222-8222-222222222222'])
         ).resolves.toBeNull();
       }
-    });
-    expect(errors).toHaveLength(4);
-    expect(errors.every((line) => line.includes('[LIVE_SEAT]'))).toBe(true);
+    }
+    takeLogged('error', '[LIVE_SEAT]', 4);
   });
 
   it('keys a seat by the live id lower-cased, so a leave spelled in upper case frees the take', () => {
@@ -263,7 +261,7 @@ describe('the viewer cap, as the service types it', () => {
   });
 
   it('never calls a Redis failure or an unreadable reply "full"', async () => {
-    const errors = await capturingErrors(async () => {
+    {
       for (const reply of [
         async () => {
           throw new Error('ECONNREFUSED');
@@ -286,12 +284,9 @@ describe('the viewer cap, as the service types it', () => {
       expect((await refusal(seats.release(LIVE, 'bob'))).body).toEqual({
         code: 'LIVE_SEATS_UNAVAILABLE',
       });
-    });
+    }
     // Five refused takes and one refused release: six accusing lines, none a "full".
-    expect(errors).toHaveLength(6);
-    expect(errors.every((line) => line.includes('[LIVE_SEAT]') && !line.includes('FULL'))).toBe(
-      true
-    );
+    takeLogged('error', '[LIVE_SEAT]', 6);
   });
 });
 

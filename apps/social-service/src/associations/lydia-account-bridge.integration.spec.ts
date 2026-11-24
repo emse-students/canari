@@ -45,6 +45,7 @@ import {
 } from './lydia-account-bridge';
 import { LYDIA_PAYMENTS_PAUSED_TYPE } from './lydia-payments-notifier.service';
 import { ProductsService } from './products.service';
+import { takeEvery, takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -343,6 +344,11 @@ maybe(
         associationId: BDE,
         role: 'pending',
       });
+
+      takeLogged(
+        'warn',
+        /^\[LYDIA-BRIDGE\] enrolment refused on association [0-9a-f-]{36}: its enrolled Business still waits for Lydia's validation$/
+      );
     });
 
     it('a payment while the Business is pending goes to the historical account, a delegate`s too', async () => {
@@ -393,6 +399,15 @@ maybe(
       const managers = await associations.getPayoutAccount(BDE);
       expect(managers).toMatchObject({ lydiaAccountId: ENROLLED, lydiaOnboardingComplete: true });
       expect(JSON.stringify(managers)).not.toContain(HISTORICAL);
+
+      takeLogged(
+        'warn',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36} SWITCHED to its enrolled Business by webhook-validated \(webhook\), switch #1: the historical account stops collecting and is kept to refund the payments it took \(it was ready\)$/
+      );
+      takeLogged(
+        'warn',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36}: its switched-to Business PROVED itself \(Lydia issued a request on it\) - the payout managers are told "active"$/
+      );
     });
 
     it('a FORGED VALIDATED: error 5 switches back and the SAME purchase is issued on the historical account - ONE request at Lydia', async () => {
@@ -451,6 +466,27 @@ maybe(
         products.markLydiaReady(ENROLLED, 'admin', { path: 'admin' })
       ).resolves.toMatchObject({ kind: 'transitioned', bridgeSwitched: true });
       expect(await bridge()).toMatchObject({ state: 'switched', switchCount: 2 });
+
+      takeLogged(
+        'warn',
+        /^\[SHOP\] checkout [0-9a-f]{6,8} released: the request was refused, none was issued$/
+      );
+      takeLogged(
+        'error',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36} switched BACK to its historical account: request\/do answered error 5 on the enrolled Business a switch had made active \(shop [0-9a-f-]{36}\); switch back #1; the SAME payment is re-issued on the historical account \(the owner's decision for this bridge, 2026-11-13 - not a fallback\); the historical account is ready; 1 global admin\(s\) told$/
+      );
+      takeLogged(
+        'warn',
+        /^\[LYDIA-BRIDGE\] checkout [0-9a-f]{6,8}: error 5 on the Business a bridge switch made active, switched back - the SAME purchase is re-issued once on the historical account \(nothing was issued on the first\)$/
+      );
+      takeLogged(
+        'warn',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36}: an unsigned BUSINESS_VALIDATED does not switch onto its enrolled Business, which Lydia itself refused \(request-refused\) - nothing written \(webhook\); a global admin re-checks and validates by hand$/
+      );
+      takeLogged(
+        'warn',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36} SWITCHED to its enrolled Business by admin \(admin\), switch #2: the historical account stops collecting and is kept to refund the payments it took \(it was ready\)$/
+      );
     });
 
     /** Back to the historical account, if switched: one purchase meeting error 5 switches back. */
@@ -489,6 +525,24 @@ maybe(
       expect(core.issued).toHaveLength(4);
       expect(await bridge()).toEqual(before);
       expect(tell).not.toHaveBeenCalled();
+
+      takeLogged(
+        'warn',
+        /^\[SHOP\] checkout [0-9a-f]{6,8} released: the request was refused, none was issued$/
+      );
+      takeLogged(
+        'error',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36} switched BACK to its historical account: request\/do answered error 5 on the enrolled Business a switch had made active \(shop [0-9a-f-]{36}\); switch back #2; the SAME payment is re-issued on the historical account \(the owner's decision for this bridge, 2026-11-13 - not a fallback\); the historical account is ready; 1 global admin\(s\) told$/
+      );
+      takeLogged(
+        'warn',
+        /^\[LYDIA-BRIDGE\] checkout [0-9a-f]{6,8}: error 5 on the Business a bridge switch made active, switched back - the SAME purchase is re-issued once on the historical account \(nothing was issued on the first\)$/
+      );
+      takeLogged(
+        'warn',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36}: an unsigned BUSINESS_VALIDATED does not switch onto its enrolled Business, which Lydia itself refused \(request-refused\) - nothing written \(webhook\); a global admin re-checks and validates by hand$/,
+        10
+      );
     });
 
     it('a Business Lydia BLOCKED is never switched onto by an unsigned VALIDATED', async () => {
@@ -503,6 +557,19 @@ maybe(
         products.markLydiaReady(ENROLLED, 'webhook-validated', { path: 'webhook' })
       ).resolves.toMatchObject({ kind: 'held-by-lydia', previousCause: 'request-blocked' });
       expect(await active()).toEqual({ token: HISTORICAL, ready: true });
+
+      takeLogged(
+        'warn',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36}: request-blocked on its enrolled Business, pending again since a switch back \(shop late-2701\) - recorded on it, nothing re-issued$/
+      );
+      takeLogged(
+        'warn',
+        '[LYDIA-READINESS] no association holds the vendor token - nothing written (shop late-2701)'
+      );
+      takeLogged(
+        'warn',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36}: an unsigned BUSINESS_VALIDATED does not switch onto its enrolled Business, which Lydia itself refused \(request-blocked\) - nothing written \(webhook\); a global admin re-checks and validates by hand$/
+      );
     });
 
     it('the enrolled Business that took payments cannot be unlinked: its key stays for their callbacks and refunds', async () => {
@@ -550,6 +617,39 @@ maybe(
         await buy(associationId, item.id);
         expect(core.calls).toEqual([ENROLLED]);
       }
+
+      takeEvery(
+        'warn',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36} SWITCHED to its enrolled Business by admin \(admin\), switch #3: the historical account stops collecting and is kept to refund the payments it took \(it was ready\)$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] refused \(PAYMENT_ROUTING_CHANGED\): product=[0-9a-f]{6,8} - the payment routing changed while the purchase was being prepared$/
+      );
+      takeEvery(
+        'warn',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36}: its switched-to Business PROVED itself \(Lydia issued a request on it\) - the payout managers are told "active"$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] checkout [0-9a-f]{6,8} released: the request was refused, none was issued$/
+      );
+      takeEvery(
+        'error',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36} switched BACK to its historical account: request\/do answered error 5 on the enrolled Business a switch had made active \(shop [0-9a-f-]{36}\); switch back #3; the SAME payment is re-issued on the historical account \(the owner's decision for this bridge, 2026-11-13 - not a fallback\); the historical account is ready; 1 global admin\(s\) told$/
+      );
+      takeEvery(
+        'warn',
+        /^\[LYDIA-BRIDGE\] checkout [0-9a-f]{6,8}: error 5 on the Business a bridge switch made active, switched back - the SAME purchase is re-issued once on the historical account \(nothing was issued on the first\)$/
+      );
+      takeEvery(
+        'warn',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36} SWITCHED to its enrolled Business by admin \(admin\), switch #4: the historical account stops collecting and is kept to refund the payments it took \(it was ready\)$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] refused \(PAYMENT_ROUTING_CHANGED\): product=[0-9a-f]{6,8} - the payment routing changed while the purchase was being prepared$/
+      );
     });
 
     it('a switch racing purchases on separate connections: each is issued on the Business its row names, or refused unissued', async () => {
@@ -580,6 +680,167 @@ maybe(
         expect(await active()).toEqual({ token: ENROLLED, ready: true });
         expect((await bridge()).state).toBe('switched');
       }
+
+      takeEvery(
+        'warn',
+        /^\[SHOP\] checkout [0-9a-f]{6,8} released: the request was refused, none was issued$/
+      );
+      takeEvery(
+        'error',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36} switched BACK to its historical account: request\/do answered error 5 on the enrolled Business a switch had made active \(shop [0-9a-f-]{36}\); switch back #4; the SAME payment is re-issued on the historical account \(the owner's decision for this bridge, 2026-11-13 - not a fallback\); the historical account is ready; 1 global admin\(s\) told$/
+      );
+      takeEvery(
+        'warn',
+        /^\[LYDIA-BRIDGE\] checkout [0-9a-f]{6,8}: error 5 on the Business a bridge switch made active, switched back - the SAME purchase is re-issued once on the historical account \(nothing was issued on the first\)$/
+      );
+      takeEvery(
+        'warn',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36} SWITCHED to its enrolled Business by admin \(admin\), switch #5: the historical account stops collecting and is kept to refund the payments it took \(it was ready\)$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] refused \(PAYMENT_ROUTING_CHANGED\): product=[0-9a-f]{6,8} - the payment routing changed while the purchase was being prepared$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] refused \(PAYMENT_ROUTING_CHANGED\): product=[0-9a-f]{6,8} - the payment routing changed while the purchase was being prepared$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] refused \(PAYMENT_ROUTING_CHANGED\): product=[0-9a-f]{6,8} - the payment routing changed while the purchase was being prepared$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] refused \(PAYMENT_ROUTING_CHANGED\): product=[0-9a-f]{6,8} - the payment routing changed while the purchase was being prepared$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] checkout [0-9a-f]{6,8} released: the request was refused, none was issued$/
+      );
+      takeEvery(
+        'error',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36} switched BACK to its historical account: request\/do answered error 5 on the enrolled Business a switch had made active \(shop [0-9a-f-]{36}\); switch back #5; the SAME payment is re-issued on the historical account \(the owner's decision for this bridge, 2026-11-13 - not a fallback\); the historical account is ready; 1 global admin\(s\) told$/
+      );
+      takeEvery(
+        'warn',
+        /^\[LYDIA-BRIDGE\] checkout [0-9a-f]{6,8}: error 5 on the Business a bridge switch made active, switched back - the SAME purchase is re-issued once on the historical account \(nothing was issued on the first\)$/
+      );
+      takeEvery(
+        'warn',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36} SWITCHED to its enrolled Business by admin \(admin\), switch #6: the historical account stops collecting and is kept to refund the payments it took \(it was ready\)$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] refused \(PAYMENT_ROUTING_CHANGED\): product=[0-9a-f]{6,8} - the payment routing changed while the purchase was being prepared$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] refused \(PAYMENT_ROUTING_CHANGED\): product=[0-9a-f]{6,8} - the payment routing changed while the purchase was being prepared$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] refused \(PAYMENT_ROUTING_CHANGED\): product=[0-9a-f]{6,8} - the payment routing changed while the purchase was being prepared$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] refused \(PAYMENT_ROUTING_CHANGED\): product=[0-9a-f]{6,8} - the payment routing changed while the purchase was being prepared$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] checkout [0-9a-f]{6,8} released: the request was refused, none was issued$/
+      );
+      takeEvery(
+        'error',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36} switched BACK to its historical account: request\/do answered error 5 on the enrolled Business a switch had made active \(shop [0-9a-f-]{36}\); switch back #6; the SAME payment is re-issued on the historical account \(the owner's decision for this bridge, 2026-11-13 - not a fallback\); the historical account is ready; 1 global admin\(s\) told$/
+      );
+      takeEvery(
+        'warn',
+        /^\[LYDIA-BRIDGE\] checkout [0-9a-f]{6,8}: error 5 on the Business a bridge switch made active, switched back - the SAME purchase is re-issued once on the historical account \(nothing was issued on the first\)$/
+      );
+      takeEvery(
+        'warn',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36} SWITCHED to its enrolled Business by admin \(admin\), switch #7: the historical account stops collecting and is kept to refund the payments it took \(it was ready\)$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] refused \(PAYMENT_ROUTING_CHANGED\): product=[0-9a-f]{6,8} - the payment routing changed while the purchase was being prepared$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] refused \(PAYMENT_ROUTING_CHANGED\): product=[0-9a-f]{6,8} - the payment routing changed while the purchase was being prepared$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] refused \(PAYMENT_ROUTING_CHANGED\): product=[0-9a-f]{6,8} - the payment routing changed while the purchase was being prepared$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] refused \(PAYMENT_ROUTING_CHANGED\): product=[0-9a-f]{6,8} - the payment routing changed while the purchase was being prepared$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] checkout [0-9a-f]{6,8} released: the request was refused, none was issued$/
+      );
+      takeEvery(
+        'error',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36} switched BACK to its historical account: request\/do answered error 5 on the enrolled Business a switch had made active \(shop [0-9a-f-]{36}\); switch back #7; the SAME payment is re-issued on the historical account \(the owner's decision for this bridge, 2026-11-13 - not a fallback\); the historical account is ready; 1 global admin\(s\) told$/
+      );
+      takeEvery(
+        'warn',
+        /^\[LYDIA-BRIDGE\] checkout [0-9a-f]{6,8}: error 5 on the Business a bridge switch made active, switched back - the SAME purchase is re-issued once on the historical account \(nothing was issued on the first\)$/
+      );
+      takeEvery(
+        'warn',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36} SWITCHED to its enrolled Business by admin \(admin\), switch #8: the historical account stops collecting and is kept to refund the payments it took \(it was ready\)$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] refused \(PAYMENT_ROUTING_CHANGED\): product=[0-9a-f]{6,8} - the payment routing changed while the purchase was being prepared$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] refused \(PAYMENT_ROUTING_CHANGED\): product=[0-9a-f]{6,8} - the payment routing changed while the purchase was being prepared$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] refused \(PAYMENT_ROUTING_CHANGED\): product=[0-9a-f]{6,8} - the payment routing changed while the purchase was being prepared$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] refused \(PAYMENT_ROUTING_CHANGED\): product=[0-9a-f]{6,8} - the payment routing changed while the purchase was being prepared$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] checkout [0-9a-f]{6,8} released: the request was refused, none was issued$/
+      );
+      takeEvery(
+        'error',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36} switched BACK to its historical account: request\/do answered error 5 on the enrolled Business a switch had made active \(shop [0-9a-f-]{36}\); switch back #8; the SAME payment is re-issued on the historical account \(the owner's decision for this bridge, 2026-11-13 - not a fallback\); the historical account is ready; 1 global admin\(s\) told$/
+      );
+      takeEvery(
+        'warn',
+        /^\[LYDIA-BRIDGE\] checkout [0-9a-f]{6,8}: error 5 on the Business a bridge switch made active, switched back - the SAME purchase is re-issued once on the historical account \(nothing was issued on the first\)$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] refused \(PAYMENT_ROUTING_CHANGED\): product=[0-9a-f]{6,8} - the payment routing changed while the purchase was being prepared$/
+      );
+      takeEvery(
+        'warn',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36} SWITCHED to its enrolled Business by admin \(admin\), switch #9: the historical account stops collecting and is kept to refund the payments it took \(it was ready\)$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] refused \(PAYMENT_ROUTING_CHANGED\): product=[0-9a-f]{6,8} - the payment routing changed while the purchase was being prepared$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] refused \(PAYMENT_ROUTING_CHANGED\): product=[0-9a-f]{6,8} - the payment routing changed while the purchase was being prepared$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] refused \(PAYMENT_ROUTING_CHANGED\): product=[0-9a-f]{6,8} - the payment routing changed while the purchase was being prepared$/
+      );
     });
 
     // Three purchases fired together meet a switch back in one of THREE interleavings each: decided
@@ -627,6 +888,39 @@ maybe(
           ['open', HISTORICAL],
         ]);
       }
+
+      takeEvery(
+        'warn',
+        /^\[SHOP\] checkout [0-9a-f]{6,8} released: the request was refused, none was issued$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] checkout [0-9a-f]{6,8} released: the request was refused, none was issued$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] checkout [0-9a-f]{6,8} released: the request was refused, none was issued$/
+      );
+      takeEvery(
+        'error',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36} switched BACK to its historical account: request\/do answered error 5 on the enrolled Business a switch had made active \(shop [0-9a-f-]{36}\); switch back #9; the SAME payment is re-issued on the historical account \(the owner's decision for this bridge, 2026-11-13 - not a fallback\); the historical account is ready; 1 global admin\(s\) told$/
+      );
+      takeEvery(
+        'warn',
+        /^\[LYDIA-BRIDGE\] checkout [0-9a-f]{6,8}: error 5 on the Business a bridge switch made active, switched back - the SAME purchase is re-issued once on the historical account \(nothing was issued on the first\)$/
+      );
+      takeEvery(
+        'warn',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36}: error 5 on its enrolled Business, already switched back by a concurrent refusal \(shop [0-9a-f-]{36}\) - the payment is re-issued on the historical account$/
+      );
+      takeEvery(
+        'warn',
+        /^\[LYDIA-BRIDGE\] checkout [0-9a-f]{6,8}: error 5 on the Business a bridge switch made active, switched back - the SAME purchase is re-issued once on the historical account \(nothing was issued on the first\)$/
+      );
+      takeEvery(
+        'warn',
+        /^\[LYDIA-BRIDGE\] checkout [0-9a-f]{6,8}: error 5 on the Business a bridge switch made active, switched back - the SAME purchase is re-issued once on the historical account \(nothing was issued on the first\)$/
+      );
     });
 
     it('a purchase PREPARED on the switched Business, decided after the error 5 of another one switched back: re-issued ONCE by the server on the historical account, counted, nothing on the stale routing', async () => {
@@ -670,6 +964,55 @@ maybe(
           reissueCount: before.reissueCount + 2,
         });
       }
+
+      takeEvery(
+        'warn',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36} SWITCHED to its enrolled Business by admin \(admin\), switch #10: the historical account stops collecting and is kept to refund the payments it took \(it was ready\)$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] checkout [0-9a-f]{6,8} released: the request was refused, none was issued$/
+      );
+      takeEvery(
+        'error',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36} switched BACK to its historical account: request\/do answered error 5 on the enrolled Business a switch had made active \(shop [0-9a-f-]{36}\); switch back #10; the SAME payment is re-issued on the historical account \(the owner's decision for this bridge, 2026-11-13 - not a fallback\); the historical account is ready; 1 global admin\(s\) told$/
+      );
+      takeEvery(
+        'warn',
+        /^\[LYDIA-BRIDGE\] checkout [0-9a-f]{6,8}: error 5 on the Business a bridge switch made active, switched back - the SAME purchase is re-issued once on the historical account \(nothing was issued on the first\)$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] refused \(PAYMENT_ROUTING_CHANGED\): product=[0-9a-f]{6,8} - the payment routing changed while the purchase was being prepared$/
+      );
+      takeEvery(
+        'warn',
+        /^\[LYDIA-BRIDGE\] product=[0-9a-f]{6,8} user=buyer-[0-9a-f]{2}: prepared on the enrolled Business, decided after a switch back - the SAME purchase is re-issued once on the historical account \(nothing was issued on the first\)$/
+      );
+      takeEvery(
+        'warn',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36} SWITCHED to its enrolled Business by admin \(admin\), switch #11: the historical account stops collecting and is kept to refund the payments it took \(it was ready\)$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] checkout [0-9a-f]{6,8} released: the request was refused, none was issued$/
+      );
+      takeEvery(
+        'error',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36} switched BACK to its historical account: request\/do answered error 5 on the enrolled Business a switch had made active \(shop [0-9a-f-]{36}\); switch back #11; the SAME payment is re-issued on the historical account \(the owner's decision for this bridge, 2026-11-13 - not a fallback\); the historical account is ready; 1 global admin\(s\) told$/
+      );
+      takeEvery(
+        'warn',
+        /^\[LYDIA-BRIDGE\] checkout [0-9a-f]{6,8}: error 5 on the Business a bridge switch made active, switched back - the SAME purchase is re-issued once on the historical account \(nothing was issued on the first\)$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] refused \(PAYMENT_ROUTING_CHANGED\): product=[0-9a-f]{6,8} - the payment routing changed while the purchase was being prepared$/
+      );
+      takeEvery(
+        'warn',
+        /^\[LYDIA-BRIDGE\] product=[0-9a-f]{6,8} user=buyer-[0-9a-f]{2}: prepared on the enrolled Business, decided after a switch back - the SAME purchase is re-issued once on the historical account \(nothing was issued on the first\)$/
+      );
     });
 
     it('a routing change that is NOT a switch back keeps the 409, and a second change during the re-entry propagates it', async () => {
@@ -733,6 +1076,39 @@ maybe(
       ).toEqual([]);
       // The other's re-issue, and this one's single re-entry: two counted, not three.
       expect((await bridge()).reissueCount).toBe(before.reissueCount + 2);
+
+      takeEvery(
+        'warn',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36} SWITCHED to its enrolled Business by admin \(admin\), switch #12: the historical account stops collecting and is kept to refund the payments it took \(it was ready\)$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] refused \(PAYMENT_ROUTING_CHANGED\): product=[0-9a-f]{6,8} - the payment routing changed while the purchase was being prepared$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] checkout [0-9a-f]{6,8} released: the request was refused, none was issued$/
+      );
+      takeEvery(
+        'error',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36} switched BACK to its historical account: request\/do answered error 5 on the enrolled Business a switch had made active \(shop [0-9a-f-]{36}\); switch back #12; the SAME payment is re-issued on the historical account \(the owner's decision for this bridge, 2026-11-13 - not a fallback\); the historical account is ready; 1 global admin\(s\) told$/
+      );
+      takeEvery(
+        'warn',
+        /^\[LYDIA-BRIDGE\] checkout [0-9a-f]{6,8}: error 5 on the Business a bridge switch made active, switched back - the SAME purchase is re-issued once on the historical account \(nothing was issued on the first\)$/
+      );
+      takeEvery(
+        'warn',
+        /^\[SHOP\] refused \(PAYMENT_ROUTING_CHANGED\): product=[0-9a-f]{6,8} - the payment routing changed while the purchase was being prepared$/
+      );
+      takeEvery(
+        'warn',
+        /^\[LYDIA-BRIDGE\] product=[0-9a-f]{6,8} user=buyer-[0-9a-f]{2}: prepared on the enrolled Business, decided after a switch back - the SAME purchase is re-issued once on the historical account \(nothing was issued on the first\)$/
+      );
+      takeEvery(
+        'warn',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36} SWITCHED to its enrolled Business by admin \(admin\), switch #13: the historical account stops collecting and is kept to refund the payments it took \(it was ready\)$/
+      );
     });
 
     it('a switch back onto a historical account that is NOT ready: the re-issue and the retry answer the typed not-ready 409, never "not found", no request', async () => {
@@ -792,6 +1168,32 @@ maybe(
         [[own.id, delegated.id, straddling.id]]
       );
       expect(rows).toEqual([{ productId: own.id, status: 'cancelled' }]);
+
+      takeLogged(
+        'warn',
+        /^\[SHOP\] checkout [0-9a-f]{6,8} released: the request was refused, none was issued$/
+      );
+      takeLogged(
+        'error',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36} switched BACK to its historical account: request\/do answered error 5 on the enrolled Business a switch had made active \(shop [0-9a-f-]{36}\); switch back #13; the SAME payment is re-issued on the historical account \(the owner's decision for this bridge, 2026-11-13 - not a fallback\); the historical account is NOT ready, 51 on-sale product\(s\) withheld; 1 global admin\(s\) told$/
+      );
+      takeLogged(
+        'warn',
+        /^\[LYDIA-BRIDGE\] checkout [0-9a-f]{6,8}: error 5 on the Business a bridge switch made active, switched back - the SAME purchase is re-issued once on the historical account \(nothing was issued on the first\)$/
+      );
+      takeLogged(
+        'warn',
+        /^\[SHOP\] refused: product=[0-9a-f]{6,8} - payments not ready \(provider=lydia delegated=false cause=admin\)$/,
+        2
+      );
+      takeLogged(
+        'warn',
+        /^\[SHOP\] refused under the lock: product=[0-9a-f]{6,8} - payments stopped being ready while the purchase was being prepared \(cause=admin\)$/
+      );
+      takeLogged(
+        'warn',
+        /^\[SHOP\] refused: product=[0-9a-f]{6,8} - payments not ready \(provider=lydia delegated=true cause=admin\)$/
+      );
     });
 
     it('a VALIDATED naming a Business nobody holds is no-holder, the bridge untouched', async () => {
@@ -801,6 +1203,11 @@ maybe(
         products.markLydiaReady('vendor-token-nobody', 'webhook-validated', { path: 'webhook' })
       ).resolves.toMatchObject({ kind: 'no-holder' });
       expect(await bridge()).toEqual(before);
+
+      takeLogged(
+        'warn',
+        '[LYDIA-READINESS] no association holds the vendor token - nothing written (webhook)'
+      );
     });
 
     it('a 2701 on the switched-to Business is the ordinary pause, never a switch back', async () => {
@@ -816,6 +1223,15 @@ maybe(
       ).resolves.toBe(false);
       expect(await active()).toEqual({ token: ENROLLED, ready: false });
       expect(await bridge()).toMatchObject({ state: 'switched', switchBackCount: switchBacks });
+
+      takeLogged(
+        'warn',
+        /^\[LYDIA-BRIDGE\] association [0-9a-f-]{36} SWITCHED to its enrolled Business by admin \(admin\), switch #14: the historical account stops collecting and is kept to refund the payments it took \(it was NOT ready\)$/
+      );
+      takeLogged(
+        'error',
+        /^\[LYDIA-READINESS\] holder [0-9a-f-]{36} reverted: request\/do answered error 2701 \(shop blocked\); before: was marked by admin at \d{4}-\d{2}-\d{2}T[0-9:.]+Z; 51 on-sale product\(s\) withheld; 1 global admin\(s\) told; managers told next$/
+      );
     });
   }
 );

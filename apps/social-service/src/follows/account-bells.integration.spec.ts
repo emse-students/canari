@@ -183,7 +183,12 @@ maybe('the bell against PostgreSQL (engagement WP-3)', () => {
       ds.getRepository(UserFollow),
       assoRepo as never,
       // The feed cache is not this suite's subject: a follow's drop of the reader's pages lands here.
-      { incrEach: async () => undefined, deleteMatching: async () => 0 } as never
+      {
+        incr: async () => 1,
+        incrEach: async () => undefined,
+        deleteMatching: async () => 0,
+        deleteByPattern: async () => 0,
+      } as never
     );
     notifications = new PostNotificationsService(
       ds.getRepository(PostNotification),
@@ -191,7 +196,12 @@ maybe('the bell against PostgreSQL (engagement WP-3)', () => {
       push as never,
       bells
     );
-    const redis = { incr: () => Promise.resolve(1), deleteByPattern: () => Promise.resolve(1) };
+    const redis = {
+      incr: () => Promise.resolve(1),
+      incrEach: () => Promise.resolve(),
+      deleteMatching: () => Promise.resolve(0),
+      deleteByPattern: () => Promise.resolve(1),
+    };
     requests = new FollowRequestsService(follows, notifications, ds, redis as never);
   });
 
