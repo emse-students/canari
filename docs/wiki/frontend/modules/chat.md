@@ -3457,8 +3457,8 @@ message. Three facts turn that optimisation into a loss:
 
 - `bulkIngestActive` is raised by *every* inbound drain, not only a long one, so the window is
   ordinary rather than exceptional;
-- `beginBulkMessageIngest` and `resetMessageCatchupState` both `clear()` the buffer without
-  flushing, so a second drain starting mid-window discards whatever the first was holding;
+- `beginBulkMessageIngest` and `resetMessageCatchupState` both `clear()`ed the buffer without
+  flushing (until #4054), so a second drain starting mid-window discarded what the first held;
 - the outbox cannot repair it, because `persistSent` resolves the message through `findMessage`,
   which only scans `conversations` - a buffered message was never there, so it returns silently.
 
@@ -3469,7 +3469,7 @@ correct - offline there is no inbound drain, so the echo took the live path (MSG
 Fixed 2026-08-07: `if (bulkIngestActive && !isOwnMessage(senderId, ctx.userId))`. An own message was
 never deferred; one extra rendered item is not what the buffer exists to prevent. **Narrowed
 2026-11-24** to an own message THIS DEVICE COMPOSED: one decrypted from a frame (this account's other
-device) is held like a peer's, and no path discards the buffer any more
+device) is held like a peer's, and a buffered row leaves the buffer only for a store (or a sign-out)
 ([a catch-up lands in one render](#a-catch-up-lands-in-one-render-2026-11-24)). **The general rule: a UI buffer in front of a persistence call is a
 persistence bug.** Buffer after the durable write, or the early return skips the writer.
 
@@ -3572,16 +3572,28 @@ pin in one task keeps the end. The change removes the per-row path every fall fo
 below says whether a fall survives one render per drain, from the exported log (the fall line is
 INFO).
 
-**What holding more made load-bearing (review of #4054).** Four facts had to change with it:
+**What holding more made load-bearing (reviews of #4054).** Five facts had to change with it:
 
-- **no path discards the buffer.** `resetMessageCatchupState` (called from group creation, possibly
+- **a buffered row leaves the buffer only for a store.** `resetMessageCatchupState` (called from group creation, possibly
   mid-drain) cleared the buffer and lowered the window, so the close stored nothing and the dropped
   frames - in no ledger - were acknowledged and deleted by the server; a window opening and a window
   closing also `clear()`ed. True of a peer's text since the buffer existed, and this change would
   have extended it to upgrades and other-device messages. Now the reset touches the UI flags only,
   only a store takes rows out of the buffer (`storeBufferedRows`), what a store did not take is
   carried to the next one with one WARN (`noteBufferedRowsCarried`), and **every buffered frame is in
-  `framesLeftUnstored`**, so its ack is withheld until a store takes it;
+  `framesLeftUnstored`**, so its ack is withheld until a store takes it. The store takes each
+  conversation's rows at its own turn (a throw between two leaves the rest in the buffer), a close
+  ends only ITS window (`openBufferingWindows`, a count: windows overlap), and a sign-out
+  (`forgetAccount`) forgets the leaving account's buffer, kept batches and kept writes, said in one line;
+- **a row is written where its thread lives NOW.** A Welcome folding a duplicate DM onto the group it
+  joined re-keys the thread mid-window, and the close found the old key "vanished" and dropped the
+  rows - then acknowledged their frames: an upgrade stayed a caption for good. The re-key is now a
+  FACT (`recordConversationMove`, `utils/chat/conversationMoves.ts`), and ONE resolver
+  (`homeOfRows`) answers for the buffer, the framed orphans, the kept batches and the kept writes:
+  the key itself, else where it moved, else the conversation showing one of its rows, else nowhere.
+  With no home, the rows are held as framed orphans (`orphanHeldMessages`, also where
+  `batchAddMessages` sends a batch whose conversation is gone), dropped - said with their frames -
+  only on a real removal (`ORPHAN_REMOVERS`);
 - **a follower tab takes the upgrades.** The flush relayed only the NEW rows (`messages_batch`), so a
   tab showing the caption kept it: the relay now carries the upgraded rows as shown, and the follower
   merges them with `mergeRelayedBatch` (insert what it lacks, upgrade a shown preview, leave the rest);

@@ -3,9 +3,13 @@
  *
  * MLS gives no echo of your own message, so the optimistic `addMessageToChat` call is the ONLY
  * writer the sender's copy will ever get. The UI buffer sat IN FRONT of that write - it returned
- * early, so `saveMessage` never ran - and the buffer is discarded without flushing by a second
- * drain and by `resetMessageCatchupState`. A message composed during any inbound drain therefore
- * died before it was persisted: the receiver had it, the sender lost it at the next load.
+ * early, so `saveMessage` never ran - and the buffer was discarded without flushing by a second
+ * drain and by `resetMessageCatchupState` (neither discards it since #4054). A message composed
+ * during any inbound drain therefore died before it was persisted: the receiver had it, the sender
+ * lost it at the next load.
+ *
+ * Since #4054 the buffer itself loses nothing either: a row leaves it only for a store, written
+ * where its thread lives at the close - a Welcome's re-key included - or held as an orphan.
  *
  * The end-to-end reproduction is a RACE - `{ bufferUi: true, showOverlay: pendingCount > 1 }` means
  * a single-message live drain buffers for the few hundred milliseconds it takes to ingest, with the
@@ -57,6 +61,7 @@ import type { Conversation } from '$lib/types';
 import { createMlsServiceStub } from '../mls-client/test/fixtures/mlsServiceStub';
 import { decodeAppMessage } from '../proto/codec';
 import { sendVisibleNotice } from '../utils/chat/visibleNotices';
+import { forgetConversationMoves, recordConversationMove } from '../utils/chat/conversationMoves';
 
 const ME = 'me-user-id';
 const PEER = 'peer-user-id';
@@ -252,24 +257,23 @@ describe('addMessageToChat during a bulk-ingest window', () => {
    * - and never appear on screen or survive a reload. Between the buffer and the flush there were
    * exactly two places a message could be absorbed without leaving anything behind, and neither of
    * them said so, which made a delivered message and a lost one look identical from every log there
-   * is. Discarding may well be right; being silent about it never is.
+   * is. Since #4054 the first one no longer discards: a buffered message whose conversation went away
+   * is held as an orphan - stored if its thread comes back or moved, dropped only on a real removal.
    */
-  it('says so when it drops a buffered message because the conversation went away', async () => {
+  it('says so when it holds a buffered message as an orphan because the conversation went away', async () => {
     const messaging = useMessaging();
     const { ctx, conversations, saveMessage } = makeContext();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     messaging.beginBulkMessageIngest(LIVE_DRAIN);
     await messaging.addMessageToChat(PEER, 'their message', CONVO, ctx, { messageId: 'theirs-1' });
-    // The conversation was in the map when the message arrived, and is not any more - which is why
-    // this is not the orphan buffer: nothing will ever come back for it.
+    // The conversation was in the map when the message arrived, and is not any more: nothing writes
+    // it into a conversation that is gone, and nothing drops it silently either.
     conversations.delete(CONVO);
     await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
 
     expect(saveMessage).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining('vanished between buffering and flush')
-    );
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('held as orphans'));
   });
 
   it('says so when it ignores a buffered message it already holds', async () => {
@@ -312,10 +316,10 @@ describe('addMessageToChat during a bulk-ingest window', () => {
    * THE ACTING DEVICE'S OWN NOTICE IS THE SAME CASE UNDER A `system` SENDER (review of #2412): MLS
    * never echoes it, so `sendVisibleNotice`'s write is the only one it gets. Written through the
    * real `sendVisibleNotice` into the real `addMessageToChat`, inside a drain, then the drain is
-   * discarded both ways the buffer can be.
+   * interrupted both ways that used to discard the buffer.
    */
-  for (const discard of ['a second drain start', 'resetMessageCatchupState'] as const) {
-    it(`keeps the acting device's own visible notice across ${discard}`, async () => {
+  for (const interruption of ['a second drain start', 'resetMessageCatchupState'] as const) {
+    it(`keeps the acting device's own visible notice across ${interruption}`, async () => {
       const messaging = useMessaging();
       const { ctx, conversations, saveMessage } = makeContext();
       const mls = createMlsServiceStub();
@@ -333,7 +337,7 @@ describe('addMessageToChat during a bulk-ingest window', () => {
             messaging.addMessageToChat(senderId, content, key, ctx, options),
         }
       );
-      if (discard === 'a second drain start') {
+      if (interruption === 'a second drain start') {
         messaging.beginBulkMessageIngest(LIVE_DRAIN);
         await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
       } else {
@@ -346,7 +350,7 @@ describe('addMessageToChat during a bulk-ingest window', () => {
     });
   }
 
-  it('keeps the own message across resetMessageCatchupState, which also discards unflushed', async () => {
+  it('keeps the own message across resetMessageCatchupState, which leaves the buffer to its close', async () => {
     const messaging = useMessaging();
     const { ctx, conversations, saveMessage } = makeContext();
 
@@ -457,6 +461,125 @@ describe('addMessageToChat during a bulk-ingest window', () => {
     expect(idsIn(conversations)).toEqual(['own-1']);
     expect(saveMessageWithOutboxEntry).toHaveBeenCalledTimes(1);
     expect(saveMessageWithOutboxEntry.mock.calls[0][0]).toMatchObject({ id: 'own-1' });
+  });
+  /**
+   * A WELCOME'S RE-KEY DURING THE WINDOW (second review of #4054). The joined group takes the DM
+   * thread of the old key - same peer - and only the thread's shown messages move with it. The
+   * window still held a framed upgrade and a framed sibling under the old key, and its close found
+   * that key "vanished" and dropped them: the ledger emptied, the frames were acknowledged, the photo
+   * stayed a caption for good. They are written where the thread lives now.
+   */
+  for (const how of ['the move recorded', 'only the shown preview to find it by'] as const) {
+    it(`stores a framed upgrade and a framed sibling under the new key after a re-key mid-window (${how})`, async () => {
+      forgetConversationMoves();
+      const messaging = useMessaging();
+      const { ctx, conversations } = makeContext();
+      conversations.set(CONVO, {
+        ...(conversations.get(CONVO) as Conversation),
+        messages: [
+          {
+            id: 'preview-1',
+            senderId: PEER,
+            content: '\u{1F4F7} Photo',
+            timestamp: new Date(1_700_000_000_000),
+            isOwn: false,
+            isFcmPreview: true,
+          },
+        ] as never,
+      });
+      const ledger = messaging.bulkIngestObserver(() => ctx);
+      const envelope = JSON.stringify({ kind: 'media', mediaId: 'm-1', mimeType: 'image/jpeg' });
+
+      messaging.beginBulkMessageIngest(LIVE_DRAIN);
+      await messaging.addMessageToChat(PEER, envelope, CONVO, ctx, {
+        messageId: 'preview-1',
+        frameId: 'f-upgrade',
+      });
+      await messaging.addMessageToChat(ME, 'from my laptop', CONVO, ctx, {
+        messageId: 'sibling-1',
+        frameId: 'f-sibling',
+      });
+
+      // The Welcome's re-key, as `setupMessageHandler` does it: the thread moves to the new key.
+      const moved = conversations.get(CONVO) as Conversation;
+      conversations.delete(CONVO);
+      conversations.set('g2', { ...moved, id: 'g2', name: 'g2' });
+      if (how === 'the move recorded') recordConversationMove(CONVO, 'g2');
+      expect([...ledger.framesLeftUnstored()].sort()).toEqual(['f-sibling', 'f-upgrade']);
+
+      await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
+
+      const thread = conversations.get('g2')?.messages ?? [];
+      expect(thread.map((m) => m.id).sort()).toEqual(['preview-1', 'sibling-1']);
+      expect(thread.find((m) => m.id === 'preview-1')?.content).toBe(envelope);
+      expect(ledger.framesLeftUnstored().size).toBe(0);
+      expect(conversations.has(CONVO)).toBe(false);
+      forgetConversationMoves();
+    });
+  }
+
+  /**
+   * A REAL REMOVAL during the window is the one case its framed rows are dropped - said with their
+   * frames - and even then never before the store that decides it: until the close the ledger holds
+   * them, so no ack runs ahead of the decision.
+   */
+  it('drops a framed buffered row only when its conversation was really removed, and says so', async () => {
+    forgetConversationMoves();
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const ledger = messaging.bulkIngestObserver(() => ctx);
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.addMessageToChat(PEER, 'theirs', CONVO, ctx, {
+      messageId: 'theirs-1',
+      frameId: 'f-peer',
+    });
+    conversations.delete(CONVO);
+    expect([...ledger.framesLeftUnstored()]).toEqual(['f-peer']);
+
+    await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
+
+    expect(saveMessage).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('frame(s) f-peer'));
+    expect(ledger.framesLeftUnstored().size).toBe(0);
+  });
+
+  /**
+   * A CLOSE ENDS ITS OWN WINDOW (second review of #4054): windows overlap - each open paired with
+   * one close - and the first close lowered a single flag, so the window still open stopped
+   * buffering under its own drain.
+   */
+  it('keeps buffering for a window still open when an earlier one closes', async () => {
+    const messaging = useMessaging();
+    const { ctx, conversations } = makeContext();
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
+    await messaging.addMessageToChat(PEER, 'theirs', CONVO, ctx, { messageId: 'theirs-1' });
+    expect(idsIn(conversations)).toEqual([]);
+
+    await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
+    expect(idsIn(conversations)).toEqual(['theirs-1']);
+  });
+
+  it("forgets the leaving account's buffered rows at sign-out, and says so", async () => {
+    const messaging = useMessaging();
+    const { ctx } = makeContext();
+    const ledger = messaging.bulkIngestObserver(() => ctx);
+    const log = vi.fn();
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.addMessageToChat(PEER, 'theirs', CONVO, ctx, {
+      messageId: 'theirs-1',
+      frameId: 'f-peer',
+    });
+    messaging.forgetAccount(log);
+
+    expect(ledger.framesLeftUnstored().size).toBe(0);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('buffered rows of 1 conversation(s)'));
+    await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
   });
 });
 
