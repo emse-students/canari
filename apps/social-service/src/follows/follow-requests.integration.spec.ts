@@ -52,6 +52,7 @@ import {
 } from '../posts/post-notifications.it-schema';
 import type { PushContent } from '../push/push-content';
 import { FOLLOW_REQUESTS_TARGET, NOTIFICATIONS_TARGET } from '../push/push-target';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -594,6 +595,8 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
     // One answered or withdrawn, and the asker may ask again.
     await requests.leave('ann', 'p1');
     expect(await requests.ask('ann', 'bob')).toEqual({ ok: true, status: 'pending' });
+
+    takeLogged('warn', '[FOLLOW] ann refused: 100 requests already unanswered');
   });
 
   it(`an asker who told ${FOLLOW_ASKS_PER_DAY} new people today is refused 429 FOLLOW_DAILY_LIMIT, but may re-ask someone already told`, async () => {
@@ -620,6 +623,8 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
     await tellMany('25 hours');
     expect(await requests.ask('ann', 'bob')).toEqual({ ok: true, status: 'pending' });
     expect(pushed.map((x) => x.to)).toEqual(['bob']);
+
+    takeLogged('warn', '[FOLLOW] ann refused: 50 new people asked in a day');
   });
 
   describe('the caps hold under concurrency: one asker, many parallel asks to distinct people', () => {
@@ -669,6 +674,8 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
       );
       expect(rows[0].n).toBe(FOLLOW_PENDING_MAX);
       expect(pushed).toHaveLength(1);
+
+      takeLogged('warn', '[FOLLOW] ann refused: 100 requests already unanswered', 23);
     });
 
     it(`${FOLLOW_ASKS_PER_DAY - 1} people told today and ${PARALLEL} asks at once: exactly one more is told`, async () => {
@@ -686,6 +693,8 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
       );
       expect(rows[0].n).toBe(FOLLOW_ASKS_PER_DAY);
       expect(pushed).toHaveLength(1);
+
+      takeLogged('warn', '[FOLLOW] ann refused: 50 new people asked in a day', 23);
     });
   });
 
@@ -725,6 +734,8 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
     } finally {
       await q(`DROP TRIGGER block_during_ask ON user_follows; DROP FUNCTION block_during_ask()`);
     }
+
+    takeLogged('warn', '[FOLLOW] eve -> bob: a block committed during the ask - request retracted');
   });
 
   describe('a claim stands only for a notice sent', () => {
@@ -758,6 +769,11 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
       await requests.ask('ann', 'bob');
       expect(pushed.map((x) => x.to)).toEqual(['bob']);
       expect(await noticesOf('ann')).toEqual(['bob']);
+
+      takeLogged(
+        'warn',
+        '[FOLLOW-REQ] follow_request to bob not sent: a block now stands between them'
+      );
     });
 
     it('a notification that throws releases the claim, and a later ask pushes', async () => {
@@ -770,6 +786,8 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
       await requests.leave('ann', 'bob');
       await requests.ask('ann', 'bob');
       expect(pushed.map((x) => x.to)).toEqual(['bob']);
+
+      takeLogged('warn', '[FOLLOW-REQ] follow_request to bob not written: notification store down');
     });
   });
 
@@ -794,6 +812,11 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
         `DROP TRIGGER block_after_accept ON user_follows; DROP FUNCTION block_after_accept()`
       );
     }
+
+    takeLogged(
+      'warn',
+      '[FOLLOW-REQ] follow_accepted to ann not sent: a block now stands between them'
+    );
   });
 
   describe('the three lists page by cursor, never by offset', () => {

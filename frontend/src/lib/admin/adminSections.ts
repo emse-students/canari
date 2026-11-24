@@ -17,6 +17,7 @@ import {
   Building2,
   CalendarClock,
   CalendarDays,
+  ChartColumn,
   CirclePlus,
   Database,
   FileCheckCorner,
@@ -150,6 +151,15 @@ const ENTRIES: readonly AdminEntry[] = [
     label: () => m.admin_presence_connections_label(),
     summary: () => m.admin_card_status_desc(),
     icon: Activity,
+    may: GLOBAL,
+  },
+  {
+    key: 'usage',
+    href: '/admin/usage',
+    group: 'platform',
+    label: () => m.admin_usage_label(),
+    summary: () => m.admin_card_usage_desc(),
+    icon: ChartColumn,
     may: GLOBAL,
   },
   {

@@ -29,6 +29,7 @@ import {
   type FileBlobOutcome,
 } from './form-files.service';
 import { FormFileRetentionScheduler } from './form-file-retention.scheduler';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -202,23 +203,43 @@ maybe('form files against PostgreSQL (migration 085)', () => {
       const file = await upload({ ageHours: 25 });
       await expect(attach(await submission(), file)).rejects.toThrow(BadRequestException);
       expect((await row(file)).submissionId).toBeNull();
+
+      takeLogged(
+        'warn',
+        /^\[FORM_FILES\] submit refused: file [0-9a-f-]{36} is not user=alice's upload for item=q_cv of form=[0-9a-f]{6,8}, or has expired$/
+      );
     });
 
     it('refuses another member file, and leaves it unclaimed', async () => {
       const file = await upload({ uploaderId: 'bob' });
       await expect(attach(await submission(), file, 'alice')).rejects.toThrow(BadRequestException);
       expect((await row(file)).submissionId).toBeNull();
+
+      takeLogged(
+        'warn',
+        /^\[FORM_FILES\] submit refused: file [0-9a-f-]{36} is not user=alice's upload for item=q_cv of form=[0-9a-f]{6,8}, or has expired$/
+      );
     });
 
     it('refuses a purged file', async () => {
       const file = await upload({ purged: true });
       await expect(attach(await submission(), file)).rejects.toThrow(BadRequestException);
+
+      takeLogged(
+        'warn',
+        /^\[FORM_FILES\] submit refused: file [0-9a-f-]{36} is not user=alice's upload for item=q_cv of form=[0-9a-f]{6,8}, or has expired$/
+      );
     });
 
     it('refuses a file uploaded for another form', async () => {
       const file = await upload({ formId: FORM_B });
       await expect(attach(await submission(), file, 'alice', FORM_A)).rejects.toThrow(
         BadRequestException
+      );
+
+      takeLogged(
+        'warn',
+        /^\[FORM_FILES\] submit refused: file [0-9a-f-]{36} is not user=alice's upload for item=q_cv of form=[0-9a-f]{6,8}, or has expired$/
       );
     });
 
@@ -228,6 +249,11 @@ maybe('form files against PostgreSQL (migration 085)', () => {
       await attach(first, file);
       await expect(attach(await submission(), file)).rejects.toThrow(BadRequestException);
       expect((await row(file)).submissionId).toBe(first.id);
+
+      takeLogged(
+        'warn',
+        /^\[FORM_FILES\] submit refused: file [0-9a-f-]{36} is not user=alice's upload for item=q_cv of form=[0-9a-f]{6,8}, or has expired$/
+      );
     });
 
     it('settles two submissions claiming one file AT ONCE: one wins, one is refused', async () => {
@@ -237,6 +263,11 @@ maybe('form files against PostgreSQL (migration 085)', () => {
       expect(outcomes.filter((o) => o.status === 'fulfilled')).toHaveLength(1);
       expect(outcomes.filter((o) => o.status === 'rejected')).toHaveLength(1);
       expect([a.id, b.id]).toContain((await row(file)).submissionId);
+
+      takeLogged(
+        'warn',
+        /^\[FORM_FILES\] submit refused: file [0-9a-f-]{36} is not user=alice's upload for item=q_cv of form=[0-9a-f]{6,8}, or has expired$/
+      );
     });
 
     // A pending answer re-submitted keeps its old `createdAt`; the file's retention must count from
@@ -289,6 +320,17 @@ maybe('form files against PostgreSQL (migration 085)', () => {
       expect(n).toBe(FORM_FILE_MAX_PENDING);
       // Every blob left in the store is named by a row: the losers' were taken back.
       expect(blobs.size).toBe(FORM_FILE_MAX_PENDING);
+
+      takeLogged(
+        'warn',
+        /^\[FORM_FILES\] upload refused: user=carol holds 10 unsent files on form=[0-9a-f]{6,8}$/,
+        2
+      );
+      takeLogged(
+        'warn',
+        /^\[FORM_FILES\] [0-9a-f-]{36} lost the race for the last pending slot - taken back$/,
+        2
+      );
     });
   });
 
@@ -337,6 +379,11 @@ maybe('form files against PostgreSQL (migration 085)', () => {
       expect(report.blobs.refused).toBe(1);
       expect((await row(file)).purgedAt).toBeNull();
       expect(blobs.has(file)).toBe(true);
+
+      takeLogged(
+        'error',
+        /^\[FORM_FILE_GC\] file=[0-9a-f-]{36} refused by the media service \(not a form file of alice\) - left alone$/
+      );
     });
   });
 });

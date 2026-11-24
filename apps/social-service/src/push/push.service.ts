@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { clientVersionAtLeast } from '../common/client-version';
+import { describeError, errorNameOf } from '../common/log.utils';
 import { DELIVERY_TIMEOUT_MS, deliveryUrl } from '../internal/service-urls';
 import { MIN_APP_VERSION_DATA_KEY, PUSH_KEY_MIN_CLIENT } from './notification-client-floor';
 import { pushContentData, type PushContent } from './push-content';
@@ -7,12 +8,9 @@ import { socialDeepLink } from './push-target';
 
 /** One line for a failed delivery call: its name and message, and the budget a timeout ran out of. */
 export function describePushFailure(e: unknown): string {
-  // Duck-typed, not `instanceof Error`: a DOMException (the timeout) is not one in every realm.
-  const named =
-    typeof e === 'object' && e !== null ? (e as { name?: unknown; message?: unknown }) : null;
-  if (typeof named?.name !== 'string' || typeof named.message !== 'string') return String(e);
-  const detail = `${named.name}: ${named.message}`;
-  return named.name === 'TimeoutError'
+  const detail = describeError(e);
+  // Classified on the error's own type, never on the text of its message.
+  return errorNameOf(e) === 'TimeoutError'
     ? `${detail} (chat-delivery did not answer within ${DELIVERY_TIMEOUT_MS} ms)`
     : detail;
 }

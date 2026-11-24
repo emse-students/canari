@@ -31,6 +31,7 @@ import { PostNotificationsService } from './post-notifications.service';
 import { invalidatePostListCache } from './post-list-cache';
 import { lockPostRow, REPUBLISHING_ASSOCIATION_TYPES } from './republication-sql';
 import { isExpiredPost, type StoredPostKind } from './reel.constants';
+import { describeError } from '../common/log.utils';
 
 /** The columns of a post a republication decides on. */
 export interface PostRow {
@@ -511,7 +512,9 @@ export class RepublicationsService implements OnModuleInit, ProposalKindHandler 
     try {
       await invalidatePostListCache(this.redis);
     } catch (e: unknown) {
-      this.logger.warn('[CACHE] feed cache sweep failed after a republication', e);
+      this.logger.warn(
+        `[CACHE] feed cache sweep failed after a republication: ${describeError(e)}`
+      );
     }
   }
 }

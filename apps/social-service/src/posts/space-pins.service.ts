@@ -26,6 +26,7 @@ import {
   type PinSpace,
   type PinState,
 } from './space-pins';
+import { describeError } from '../common/log.utils';
 
 /** Who is acting: the caller's id and whether they administer the platform. */
 export interface PinActor {
@@ -243,7 +244,9 @@ export class SpacePinsService {
     try {
       await invalidatePostListCache(this.redis);
     } catch (e: unknown) {
-      this.logger.warn('[CACHE] feed cache sweep failed after a pin - pages stay stale', e);
+      this.logger.warn(
+        `[CACHE] feed cache sweep failed after a pin - pages stay stale: ${describeError(e)}`
+      );
     }
   }
 }

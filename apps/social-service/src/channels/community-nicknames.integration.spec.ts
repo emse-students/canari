@@ -26,6 +26,7 @@ import { ContentReport } from '../moderation/entities/content-report.entity';
 import { UserModeration } from '../moderation/entities/user-moderation.entity';
 import { ModerationService } from '../moderation/moderation.service';
 import type { RedisService } from '../common/redis';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -155,6 +156,15 @@ maybe('community nicknames against PostgreSQL (migration 149)', () => {
     expect(cleared).toMatchObject({ userId: TARGET, nickname: null, setBy: TARGET });
     // The clear stays listed with its date, so a client holding an older set drops it.
     expect(await service.list(WS, MOD)).toEqual([cleared]);
+
+    takeLogged(
+      'warn',
+      /^\[NICKNAME\] refused workspace=[0-9a-f-]{36} actor=member target=target: no moderation grant$/
+    );
+    takeLogged(
+      'warn',
+      /^\[NICKNAME\] refused workspace=[0-9a-f-]{36} actor=target target=target: no moderation grant$/
+    );
   });
 
   it('refuses a write across a block, either way round', async () => {
@@ -174,6 +184,12 @@ maybe('community nicknames against PostgreSQL (migration 149)', () => {
     await expect(service.set(WS, MOD, TARGET, 'x'.repeat(101))).rejects.toMatchObject({
       response: { code: 'nickname_too_long' },
     });
+
+    takeLogged(
+      'warn',
+      /^\[NICKNAME\] refused workspace=[0-9a-f-]{36} user=outsider: not a member$/,
+      2
+    );
   });
 
   it('keeps the nickname out of every TypeORM read and save of a membership', async () => {

@@ -65,6 +65,7 @@ import {
   postReachesSpaceSql,
   postVisibleToViewerSql,
 } from '../spaces/reader-spaces';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -604,6 +605,24 @@ maybe("an institution's reach against PostgreSQL (migration 162)", () => {
       // An association's post without one, and an edit that names none: nothing to decide.
       expect(await write(A, 'association', undefined)).toBeUndefined();
       expect(await write(I, 'institution', undefined, 'edit')).toBeUndefined();
+
+      takeLogged(
+        'warn',
+        '[INSTITUTION_REACH] refused (institution_reach_required): an institution post without a reach'
+      );
+      takeLogged(
+        'warn',
+        /^\[INSTITUTION_REACH\] refused \(institution_reach_outside_audience\): 1 space\(s\) outside the audience of [0-9a-f]{6,8}$/
+      );
+      takeLogged(
+        'warn',
+        '[INSTITUTION_REACH] refused (institution_reach_invalid): no space, or too many'
+      );
+      takeLogged('warn', '[INSTITUTION_REACH] refused (institution_reach_invalid): unknown public');
+      takeLogged(
+        'warn',
+        '[INSTITUTION_REACH] refused (institution_reach_not_offered): on a post of an entity of type association'
+      );
     });
   });
 });

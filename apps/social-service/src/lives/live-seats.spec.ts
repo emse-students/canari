@@ -15,6 +15,7 @@
  * WRITTEN with an old score rather than waited for: no wall clock is asserted.
  */
 import { HttpStatus } from '@nestjs/common';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 import Redis from 'ioredis';
 import { RedisService } from '../common/redis';
 import {
@@ -101,17 +102,27 @@ describe('the viewer cap, as the service types it', () => {
   });
 
   it('answers no count, never a wrong one, when Redis fails or answers nonsense', async () => {
-    for (const reply of [
-      async () => {
-        throw new Error('ECONNREFUSED');
-      },
-      async () => 'OK',
-      async () => -1,
-      async () => [1, 2],
-    ]) {
-      const { seats } = seatsAnswering(reply);
-      await expect(seats.watching(LIVE)).resolves.toBeNull();
+    {
+      for (const reply of [
+        async () => {
+          throw new Error('ECONNREFUSED');
+        },
+        async () => 'OK',
+        async () => -1,
+        async () => [1, 2],
+      ]) {
+        const { seats } = seatsAnswering(reply);
+        await expect(seats.watching(LIVE)).resolves.toBeNull();
+      }
     }
+    // Each failure accuses, once: a refused count is never silent.
+    takeLogged(
+      'error',
+      `[LIVE_SEAT] ${LIVE}: the viewer count did not answer: Error: ECONNREFUSED`
+    );
+    takeLogged('error', `[LIVE_SEAT] ${LIVE}: the viewer count: unreadable reply "OK"`);
+    takeLogged('error', `[LIVE_SEAT] ${LIVE}: the viewer count: unreadable reply -1`);
+    takeLogged('error', `[LIVE_SEAT] ${LIVE}: the viewer count: unreadable reply [1,2]`);
   });
 
   it("reads the feed card's counts of several lives with ONE script, in the order asked", async () => {
@@ -136,19 +147,28 @@ describe('the viewer cap, as the service types it', () => {
   });
 
   it('answers no counts for the list, never wrong ones, when Redis fails or answers nonsense', async () => {
-    for (const reply of [
-      async () => {
-        throw new Error('ECONNREFUSED');
-      },
-      async () => 'OK',
-      async () => [1],
-      async () => [1, -1],
-    ]) {
-      const { seats } = seatsAnswering(reply);
-      await expect(
-        seats.watchingMany([LIVE, '22222222-2222-4222-8222-222222222222'])
-      ).resolves.toBeNull();
+    {
+      for (const reply of [
+        async () => {
+          throw new Error('ECONNREFUSED');
+        },
+        async () => 'OK',
+        async () => [1],
+        async () => [1, -1],
+      ]) {
+        const { seats } = seatsAnswering(reply);
+        await expect(
+          seats.watchingMany([LIVE, '22222222-2222-4222-8222-222222222222'])
+        ).resolves.toBeNull();
+      }
     }
+    takeLogged(
+      'error',
+      '[LIVE_SEAT] the counts of 2 live(s) (list) did not answer: Error: ECONNREFUSED'
+    );
+    takeLogged('error', '[LIVE_SEAT] list counts: unreadable reply "OK"');
+    takeLogged('error', '[LIVE_SEAT] list counts: unreadable reply [1]');
+    takeLogged('error', '[LIVE_SEAT] list counts: unreadable reply [1,-1]');
   });
 
   it('keys a seat by the live id lower-cased, so a leave spelled in upper case frees the take', () => {
@@ -253,28 +273,38 @@ describe('the viewer cap, as the service types it', () => {
   });
 
   it('never calls a Redis failure or an unreadable reply "full"', async () => {
-    for (const reply of [
-      async () => {
+    {
+      for (const reply of [
+        async () => {
+          throw new Error('ECONNREFUSED');
+        },
+        async () => 'OK',
+        async () => [7, 1],
+        // A grant with no count of its own (the reply of the script before the count existed).
+        async () => [1, 3],
+        async () => [1, 3, 0],
+      ]) {
+        const { seats } = seatsAnswering(reply);
+        expect(await refusal(seats.take(LIVE, 'bob'))).toEqual({
+          status: HttpStatus.SERVICE_UNAVAILABLE,
+          body: { code: 'LIVE_SEATS_UNAVAILABLE' },
+        });
+      }
+      const { seats } = seatsAnswering(async () => {
         throw new Error('ECONNREFUSED');
-      },
-      async () => 'OK',
-      async () => [7, 1],
-      // A grant with no count of its own (the reply of the script before the count existed).
-      async () => [1, 3],
-      async () => [1, 3, 0],
-    ]) {
-      const { seats } = seatsAnswering(reply);
-      expect(await refusal(seats.take(LIVE, 'bob'))).toEqual({
-        status: HttpStatus.SERVICE_UNAVAILABLE,
-        body: { code: 'LIVE_SEATS_UNAVAILABLE' },
+      });
+      expect((await refusal(seats.release(LIVE, 'bob'))).body).toEqual({
+        code: 'LIVE_SEATS_UNAVAILABLE',
       });
     }
-    const { seats } = seatsAnswering(async () => {
-      throw new Error('ECONNREFUSED');
-    });
-    expect((await refusal(seats.release(LIVE, 'bob'))).body).toEqual({
-      code: 'LIVE_SEATS_UNAVAILABLE',
-    });
+    // Five refused takes and one refused release: six accusing lines, none a "full".
+    const seat = `[LIVE_SEAT] ${LIVE}:`;
+    takeLogged('error', `${seat} the seat count did not answer: Error: ECONNREFUSED`);
+    takeLogged('error', `${seat} unreadable reply "OK"`);
+    takeLogged('error', `${seat} unreadable reply [7,1]`);
+    takeLogged('error', `${seat} unreadable reply [1,3]`);
+    takeLogged('error', `${seat} unreadable reply [1,3,0]`);
+    takeLogged('error', `${seat} the seat release did not answer: Error: ECONNREFUSED`);
   });
 });
 

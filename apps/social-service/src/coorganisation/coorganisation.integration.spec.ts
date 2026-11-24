@@ -39,6 +39,7 @@ import { ProposalsService } from '../proposals/proposals.service';
 import { type ErasureDb, eraseSocialRows } from '../internal/account-erasure';
 import { CoorganisationService } from './coorganisation.service';
 import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
+import { takeLogged, whileRecording } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -266,7 +267,10 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
     } as unknown as PostNotificationsService;
     const none = {} as never;
     // The feed-cache sweep an association delete ends with: nothing is cached here.
-    const redis = { deleteByPattern: () => Promise.resolve(0) } as never;
+    const redis = {
+      incr: () => Promise.resolve(1),
+      deleteByPattern: () => Promise.resolve(0),
+    } as never;
     associations = new AssociationsService(
       ds.getRepository(Association),
       ds.getRepository(AssociationMember),
@@ -396,6 +400,11 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       expect(own.map((e) => e.id)).toEqual([E(1)]);
       const states = await coorg.listStatesFor(A3, E(1), 'coEd', false);
       expect(states.map((s) => [s.associationId, s.status])).toEqual([[A3, 'accepted']]);
+
+      takeLogged(
+        'warn',
+        /^\[notify\] event proposed for asso [0-9a-f-]{36} and nobody who may validate it was told$/
+      );
     });
 
     it('a co-organiser may not add or remove anyone but itself (403, nothing written)', async () => {
@@ -490,6 +499,11 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       await q(`DELETE FROM association_calendar_events WHERE id = $1`, [E(5)]);
       expect(await coOwnersOf(E(5))).toEqual([]);
       expect(await proposalRows(E(5))).toEqual([]);
+
+      takeLogged(
+        'warn',
+        /^\[notify\] event proposed for asso [0-9a-f-]{36} and nobody who may validate it was told$/
+      );
     });
   });
 
@@ -581,6 +595,15 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       expect(await q(`SELECT 1 FROM associations WHERE id = $1`, [A5])).toEqual([]);
       expect(await proposalRows(E(10))).toEqual([]);
       expect(await coOwnersOf(E(10))).toEqual([]);
+
+      takeLogged(
+        'warn',
+        /^\[ASSO\] DELETE [0-9a-f-]{36} by org - removing 1 member\(s\), 1 event\(s\) and 0 form\(s\); this is not reversible$/
+      );
+      takeLogged(
+        'warn',
+        /^\[notify\] event proposed for asso [0-9a-f-]{36} and nobody who may validate it was told$/
+      );
     }, 30_000);
 
     it('an account erasure and the delete of an association it created and belongs to both complete', async () => {
@@ -689,6 +712,11 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       expect(await removing).toEqual({ value: { ok: true } });
       expect(await q(`SELECT 1 FROM associations WHERE id = $1`, [A6])).toEqual([]);
       expect(await q(`SELECT 1 FROM association_members WHERE "userId" = $1`, [GONE])).toEqual([]);
+
+      takeLogged(
+        'warn',
+        /^\[ASSO\] DELETE [0-9a-f-]{36} by org - removing 2 member\(s\), 1 event\(s\) and 0 form\(s\); this is not reversible$/
+      );
     }, 30_000);
   });
 
@@ -771,33 +799,41 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       return row;
     }
 
-    beforeAll(async () => {
-      for (const [id, status] of [
-        [P, 'validated'],
-        [W, 'validated'],
-        [D, 'pending'],
-      ]) {
-        await q(
-          `INSERT INTO association_calendar_events (id, "associationId", title, "startsAt", "createdBy", status)
-             VALUES ($1, $2, $3, '2026-07-01T18:00:00Z', 'org', $4)`,
-          [id, A1, `Partner event ${id.slice(-3)}`, status]
-        );
-        await update(A1, id, [A3], 'org');
-        const pending = (await proposals.listPending(A3, 'coPub', false)).incoming.find(
-          (x) => x.subjectId === id
-        );
-        await proposals.accept(pending!.id, 'coPub', false);
-        // WP-Q2: the acceptance of a validated event returns it to pending. These cases are about the
-        // partner's rights over a VALIDATED event (a title edit must not reopen it), so a validator's
-        // decision is put back here, by SQL, after the acceptance.
-        if (status === 'validated') {
+    beforeAll(() =>
+      whileRecording(async () => {
+        for (const [id, status] of [
+          [P, 'validated'],
+          [W, 'validated'],
+          [D, 'pending'],
+        ]) {
           await q(
-            `UPDATE association_calendar_events SET status = 'validated', "validatedAt" = now(), "validatedBy" = 'bde' WHERE id = $1`,
-            [id]
+            `INSERT INTO association_calendar_events (id, "associationId", title, "startsAt", "createdBy", status)
+             VALUES ($1, $2, $3, '2026-07-01T18:00:00Z', 'org', $4)`,
+            [id, A1, `Partner event ${id.slice(-3)}`, status]
           );
+          await update(A1, id, [A3], 'org');
+          const pending = (await proposals.listPending(A3, 'coPub', false)).incoming.find(
+            (x) => x.subjectId === id
+          );
+          await proposals.accept(pending!.id, 'coPub', false);
+          // WP-Q2: the acceptance of a validated event returns it to pending. These cases are about the
+          // partner's rights over a VALIDATED event (a title edit must not reopen it), so a validator's
+          // decision is put back here, by SQL, after the acceptance.
+          if (status === 'validated') {
+            await q(
+              `UPDATE association_calendar_events SET status = 'validated', "validatedAt" = now(), "validatedBy" = 'bde' WHERE id = $1`,
+              [id]
+            );
+          }
         }
-      }
-    });
+        // Both VALIDATED events reach a partner with no BDE validator seeded: the notice says so.
+        takeLogged(
+          'warn',
+          /^\[notify\] event proposed for asso [0-9a-f-]{36} and nobody who may validate it was told$/,
+          2
+        );
+      })
+    );
 
     it('assertMayWriteEvent names the side: the organiser, a partner, and a platform admin above both', async () => {
       await expect(associations.assertMayWriteEvent('org', false, A1, P)).resolves.toMatchObject({
@@ -1315,6 +1351,11 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       expect(again).toBeUndefined();
       await expect(proposals.accept(proposalId, 'coPub', false)).rejects.toBeDefined();
       expect(reopenNotices()).toHaveLength(1);
+
+      takeLogged(
+        'warn',
+        /^\[notify\] event proposed for asso [0-9a-f-]{36} and nobody who may validate it was told$/
+      );
     });
 
     it('an event already PENDING is not touched and announces nothing', async () => {
@@ -1360,6 +1401,11 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
         eventId: MOVED,
       });
       expect((await stamp(MOVED)).status).toBe('pending');
+
+      takeLogged(
+        'warn',
+        /^\[notify\] event proposed for asso [0-9a-f-]{36} and nobody who may validate it was told$/
+      );
     });
 
     it("somebody who is a validator AND a party gets ONE notice, the validator's", async () => {
@@ -1558,6 +1604,11 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       // The second acceptance finds the event already pending (the event row is locked in turn).
       expect(reopenNotices()).toHaveLength(1);
       expect(validatorNotices()).toHaveLength(1);
+
+      takeLogged(
+        'warn',
+        /^\[notify\] event proposed for asso [0-9a-f-]{36} and nobody who may validate it was told$/
+      );
     }, 30_000);
 
     it('an acceptance interleaved with an organiser edit ends PENDING, with the validation stamps cleared', async () => {
@@ -1603,6 +1654,11 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
         validatedBy: null,
       });
       expect(await coOwnersOf(RACE)).toEqual([A3]);
+
+      takeLogged(
+        'warn',
+        /^\[notify\] event proposed for asso [0-9a-f-]{36} and nobody who may validate it was told$/
+      );
     }, 30_000);
 
     it('the OPPOSITE order: an acceptance commits first, and the edit that waited re-reads the pending row', async () => {
@@ -1646,6 +1702,11 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       expect(row.title).toBe('Edited after the acceptance');
       expect(await stamp(OPP)).toEqual({ status: 'pending', validatedAt: null, validatedBy: null });
       expect(await coOwnersOf(OPP)).toEqual([A3]);
+
+      takeLogged(
+        'warn',
+        /^\[notify\] event proposed for asso [0-9a-f-]{36} and nobody who may validate it was told$/
+      );
     }, 30_000);
   });
 
@@ -1721,6 +1782,11 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       expect(created).toHaveLength(1);
       expect((await coorganiseRows()).length).toBe(proposalsBefore + 2);
       expect(told.filter((t) => t.type === 'coorganise_proposed')).toHaveLength(2);
+
+      takeLogged(
+        'warn',
+        /^\[notify\] event proposed for asso [0-9a-f-]{36} and nobody who may validate it was told$/
+      );
     });
 
     it('the validators notice NEVER rejects: a failing read is logged at WARN with its stack and nobody is told', async () => {

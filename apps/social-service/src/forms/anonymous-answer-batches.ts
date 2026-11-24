@@ -140,6 +140,9 @@ export const SUBMISSION_COLUMNS_A_RELEASE_LEAVES_UNSET: readonly string[] = [
   'guestFirstName',
   'guestEmail',
   'editedAt',
+  // A switch to cash in progress: an anonymous form takes no money, and the switch refuses it
+  // (`cashSwitchRowRefusal`), so no anonymous answer is ever claimed.
+  'cashSwitchClaimId',
 ];
 
 /**

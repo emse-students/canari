@@ -5,6 +5,7 @@ import {
   firstRowBelow,
   isPinnedToBottom,
   keyboardChangeResponse,
+  paneGeometryLine,
   ownMessageAppended,
   respondToNewMessage,
   scrollMeasurementResponse,
@@ -492,5 +493,34 @@ describe('scrollMeasurementResponse', () => {
 
   it('never pulls a reader in history down to the end', () => {
     expect(scrollMeasurementResponse({ ...engineMove, wasNearBottom: false })).toBe('in-history');
+  });
+});
+
+describe('paneGeometryLine', () => {
+  it('names where the pane stands, the flag, and the keyboard transition', () => {
+    const line = paneGeometryLine(
+      'abcdef0123456789',
+      'page visible',
+      { scrollTop: 6464, scrollHeight: 8076, clientHeight: 543 },
+      true,
+      { open: true, height: 279, transition: 7, moving: true }
+    );
+    expect(line).toBe(
+      'abcdef01 page visible: scrollTop 6464 scrollHeight 8076 clientHeight 543 fromEnd 1069 ' +
+        'pinned=false isNearBottom=true keyboard open 279px transition #7 moving'
+    );
+  });
+
+  it('reads a pane at its end as pinned, with the keyboard closed', () => {
+    const line = paneGeometryLine(
+      'g1',
+      'keyboard transition #3 at rest',
+      { scrollTop: 1740, scrollHeight: 2440, clientHeight: 700 },
+      true,
+      { open: false, height: 0, transition: 3, moving: false }
+    );
+    expect(line).toContain(
+      'fromEnd 0 pinned=true isNearBottom=true keyboard closed transition #3 at rest'
+    );
   });
 });

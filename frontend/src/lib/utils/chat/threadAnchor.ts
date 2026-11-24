@@ -488,3 +488,41 @@ export function appendGlidePx(g: AppendGlide): number {
   if (delta <= 0 || delta > g.currentClientHeight * GLIDE_MAX_SHARE_OF_PANE) return 0;
   return delta;
 }
+
+/** Where the keyboard stands when {@link paneGeometryLine} is written. */
+export interface PaneKeyboard {
+  open: boolean;
+  /** The keyboard's height in px, 0 when closed. */
+  height: number;
+  /** The latest keyboard transition's number (`keyboardTransition.ts`). */
+  transition: number;
+  /** Whether that transition is still moving. */
+  moving: boolean;
+}
+
+/**
+ * The `[CHAT_VIEW]` line of the pane's geometry at ONE edge - the page hidden or shown, a keyboard
+ * transition starting or coming to rest: never per frame. INFO, so it reaches the exported log.
+ *
+ * It is the evidence the iPhone's home-button return lacked (`1.8.0-alpha.4`, 2026-11-23: 4 returns of
+ * 10 above the end, and no line at the return said where the pane stood or what the flag was), and it
+ * separates the causes the pane cannot tell apart itself: the flag down (`isNearBottom=false`) is a
+ * move read as the reader's; the flag up with the pane short of its end (`pinned=false`) is a pane the
+ * page did not put back; a reach that changed between two lines is the thread's measure, not its place.
+ */
+export function paneGeometryLine(
+  conversationId: string,
+  edge: string,
+  pane: ThreadScrollMetrics,
+  isNearBottom: boolean,
+  keyboard: PaneKeyboard
+): string {
+  const fromEnd = Math.round(threadReach(pane) - pane.scrollTop);
+  return (
+    `${conversationId.slice(0, 8)} ${edge}: scrollTop ${Math.round(pane.scrollTop)} ` +
+    `scrollHeight ${Math.round(pane.scrollHeight)} clientHeight ${Math.round(pane.clientHeight)} ` +
+    `fromEnd ${fromEnd} pinned=${isPinnedToBottom(pane)} isNearBottom=${isNearBottom} ` +
+    `keyboard ${keyboard.open ? `open ${Math.round(keyboard.height)}px` : 'closed'} ` +
+    `transition #${keyboard.transition} ${keyboard.moving ? 'moving' : 'at rest'}`
+  );
+}

@@ -5,6 +5,7 @@ export type PaymentReturnVerdict =
   | 'overCapacity'
   | 'declined'
   | 'ended'
+  | 'cash'
   | 'failed';
 
 /**
@@ -27,6 +28,10 @@ export type PaymentRequestState = 'open' | 'paid' | 'declined' | 'cancelled-or-e
  * while the row is still `pending`: a pending row waits on a request that is not the dead one
  * (a retry replaced it), and offering a retry there would cancel the request being paid. Anything
  * else that is not paid is final.
+ *
+ * `pending_cash` is `cash`: the answer waits for the organiser to validate a payment in person
+ * (it was answered in cash, or its failed card payment was switched to cash - "Payer en direct").
+ * Final for a return page, never a failure: the answer is recorded and keeps its seat.
  */
 export function paymentReturnVerdict(
   paymentStatus: string,
@@ -35,6 +40,7 @@ export function paymentReturnVerdict(
   if (paymentStatus === 'paid' || paymentStatus === 'free') return 'confirmed';
   if (paymentStatus === 'paid_over_capacity') return 'overCapacity';
   if (paymentStatus === 'pending') return 'wait';
+  if (paymentStatus === 'pending_cash') return 'cash';
   if (requestState === 'declined') return 'declined';
   if (requestState === 'cancelled-or-expired') return 'ended';
   if (paymentStatus === 'expired') return 'wait';

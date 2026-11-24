@@ -28,6 +28,7 @@ import { join } from 'path';
 import { Client } from 'pg';
 import { DataSource } from 'typeorm';
 import { HttpStatus, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 import { LIVE_ENTITIES } from './lives.module';
 import { LivesService } from './lives.service';
 import { LiveChatService } from './live-chat.service';
@@ -773,6 +774,12 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         status: HttpStatus.NOT_FOUND,
         code: 'LIVE_NOT_FOUND',
       });
+
+      takeLogged(
+        'warn',
+        /^\[LIVE\] [0-9a-f-]{36}: purge at end failed, the sweep retries: ECONNREFUSED store down$/,
+        2
+      );
     });
   });
 
@@ -978,6 +985,15 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       ]);
       await expect(lives.end(ALICE, live.id)).resolves.toMatchObject({ keepsReplay: false });
       expect(await replays(live.id)).toEqual([]);
+
+      takeLogged(
+        'warn',
+        /^\[LIVE\] [0-9a-f-]{36}: purge after a cut failed, the sweep retries: ECONNREFUSED store down$/
+      );
+      takeLogged(
+        'warn',
+        /^\[LIVE\] [0-9a-f-]{36}: purge at end failed, the sweep retries: ECONNREFUSED store down$/
+      );
     });
 
     it('AN ERASURE WRITES THE VERDICT FALSE on every live of the account', async () => {
@@ -1020,6 +1036,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         }[];
       expect(await verdict(long.id)).toEqual([{ keepsReplay: true }]);
       expect(await verdict(short.id)).toEqual([{ keepsReplay: false }]);
+
+      takeLogged(
+        'warn',
+        /^\[LIVE_ANNOUNCE\] [0-9a-f-]{36} NOT announced: broadcaster [0-9a-f]{6,8} has no display name$/
+      );
     });
 
     it('a live started with replays off answers no replay at its end', async () => {
@@ -1154,6 +1175,15 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       before = feedGenerations;
       await expect(lives.enforceReplayCap(1)).resolves.toHaveLength(1);
       expect(feedGenerations).toBe(before + 1);
+
+      takeLogged(
+        'warn',
+        /^\[LIVE_ANNOUNCE\] [0-9a-f-]{36} NOT announced: broadcaster [0-9a-f]{6,8} has no display name$/
+      );
+      takeLogged(
+        'warn',
+        /^\[LIVE_REPLAY_CAP\] [0-9a-f-]{36}: replay ended early, 32B of 32B over the 1B cap$/
+      );
     });
 
     it('serves the replay with its key and its time line - and the same 404 to an outsider, a removed viewer, a blocked one, and past its time', async () => {
@@ -1324,6 +1354,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       await lives.ingest(ALICE, kept.id, total, segment(total));
       await lives.trimsSettled();
       expect(await rows(kept.id)).toBe(total + 1 - 2);
+
+      takeLogged(
+        'warn',
+        /^\[LIVE_ANNOUNCE\] [0-9a-f-]{36} NOT announced: broadcaster [0-9a-f]{6,8} has no display name$/
+      );
     });
 
     it('THE TOTAL CAP ends the OLDEST replay first, records it, and stops under the cap (D5)', async () => {
@@ -1355,6 +1390,15 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       expect(await lives.pruneReplayEvictions()).toBe(0);
       await q(`UPDATE live_replay_cap_evictions SET "evictedAt" = now() - interval '31 days'`);
       expect(await lives.pruneReplayEvictions()).toBe(1);
+
+      takeLogged(
+        'warn',
+        /^\[LIVE_ANNOUNCE\] [0-9a-f-]{36} NOT announced: broadcaster [0-9a-f]{6,8} has no display name$/
+      );
+      takeLogged(
+        'warn',
+        /^\[LIVE_REPLAY_CAP\] [0-9a-f-]{36}: replay ended early, 600B of 1100B over the 1000B cap$/
+      );
     });
   });
 
@@ -1462,6 +1506,19 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       }
       expect(unhandled).toEqual([]);
       expect(await keeps(live.id)).toBe(false);
+
+      takeLogged(
+        'warn',
+        /^\[LIVE_TRIM\] [0-9a-f-]{36}: the trim failed, asked again by the next segment: ECONNREFUSED store down$/
+      );
+      takeLogged(
+        'error',
+        /^\[LIVE_REPLAY\] [0-9a-f-]{36}: counting what the failed trim left behind failed too: database down$/
+      );
+      takeLogged(
+        'error',
+        /^\[LIVE_REPLAY\] [0-9a-f-]{36}: the switched-off replay's trim is INCOMPLETE \(0 segment\(s\) deleted, an unknown number of still behind the window\) - the next segment or the end's purge takes them$/
+      );
     });
 
     it('a repeated switch-off while a drain is RUNNING queues no second drain', async () => {
@@ -1637,6 +1694,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         code: 'LIVE_KEY_UNAVAILABLE',
       });
       expect(seats.held.has(seatMember(b.id, CAROL))).toBe(false);
+
+      takeLogged(
+        'error',
+        /^\[LIVE_KEY\] the key of live [0-9a-f-]{36} cannot be read: does-not-open$/
+      );
     });
 
     it('the database holds exactly one form of a key, and a ciphertext always names its version', async () => {
@@ -1669,6 +1731,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         await expect(lives.get(EVE, id)).resolves.toMatchObject({ key: KEY });
       }
       expect(await sweeper.sweepOnce()).toMatchObject({ keysSealed: 0, keysUnsealed: 0 });
+
+      takeLogged(
+        'warn',
+        /^\[LIVE_KEY\] live [0-9a-f-]{36} still holds its key in the previous, plaintext form - the live sweep seals it$/
+      );
     });
 
     it('WITHOUT THE SECRET: no live starts (503, nothing written), and a plaintext row stays as it is', async () => {
@@ -1685,6 +1752,15 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       } finally {
         process.env[LIVE_KEY_ENCRYPTION_SECRET_ENV] = KEY_SECRET;
       }
+
+      takeLogged(
+        'error',
+        /^\[LIVE\] start refused for [0-9a-f]{6,8}: LIVE_KEY_ENCRYPTION_SECRET is unset or shorter than 32 characters$/
+      );
+      takeLogged(
+        'error',
+        '[LIVE_KEY] 1+ live(s) hold a plaintext key and none can be sealed: LIVE_KEY_ENCRYPTION_SECRET is unset or shorter than 32 characters'
+      );
     });
   });
 
@@ -1920,6 +1996,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         expect(
           await q(`SELECT "pendingName" IS NOT NULL AS pending FROM lives WHERE id = $1`, [live.id])
         ).toEqual([{ pending: false }]);
+
+        takeLogged(
+          'warn',
+          /^\[LIVE\] segment 0 of [0-9a-f-]{36} not stored, reservation released: ECONNREFUSED store down$/
+        );
       });
 
       it('a segment whose commit read the live open, then lost to the end, reopens nothing', async () => {
@@ -1934,6 +2015,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         expect(seats.openLives.has(live.id)).toBe(false);
         expect((await refusal(lives.get(BOB, live.id))).code).toBe('LIVE_ENDED');
         expect(seats.held.size).toBe(0);
+
+        takeLogged(
+          'warn',
+          /^\[LIVE\] [0-9a-f-]{36}: purge at end failed, the sweep retries: ECONNREFUSED store down$/
+        );
       });
 
       it('a PURGED live and a late reopen: the row is gone, so the watch rule refuses before any take', async () => {
@@ -1971,6 +2057,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
           code: 'LIVE_SEATS_UNAVAILABLE',
         });
         expect((await refusal(lives.manifest(BOB, live.id))).code).toBe('LIVE_SEATS_UNAVAILABLE');
+        // ONE accusing line for the outage, the second refusal is counted (see the service).
+        takeLogged(
+          'error',
+          `[LIVE_SEAT] ${live.id}: Redis does not hold the live open while its row is open - no seat until its next segment says it again (further refusals are counted, not logged)`
+        );
         expect(seats.held.size).toBe(0);
         // The broadcaster's next segment reopens the live, the removals re-read from the database.
         await lives.ingest(ALICE, live.id, 1, segment(1));
@@ -1993,6 +2084,10 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         // A segment re-reads the removals and finds none: the bar is added to, never replaced.
         await lives.ingest(ALICE, live.id, 1, segment(1));
         expect((await refusal(lives.manifest(CAROL, live.id))).code).toBe('LIVE_SEATS_UNAVAILABLE');
+        takeLogged(
+          'error',
+          `[LIVE_SEAT] ${live.id}: Redis bars a viewer the row allows - expected only for a removed viewer whose account was erased and who came back; no seat for that viewer until the live closes (further refusals are counted, not logged)`
+        );
         await expect(lives.manifest(BOB, live.id)).resolves.toMatchObject({ viewers: 1 });
         expect([...seats.held]).toEqual([`${live.id}:${BOB}`]);
       });
@@ -2124,10 +2219,22 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       it('answers null, never throws, when the log does not; the poll then omits the fields', async () => {
         const live = await start();
         seats.arrivalsDown = true;
-        await expect(arrivalsFor(ALICE, live.id, 0)).resolves.toBeNull();
-        // A take whose arrival cannot be noted still seats the viewer.
-        await expect(lives.get(BOB, live.id)).resolves.toMatchObject({ id: live.id });
-        seats.arrivalsDown = false;
+        try {
+          await expect(arrivalsFor(ALICE, live.id, 0)).resolves.toBeNull();
+          // A take whose arrival cannot be noted still seats the viewer.
+          await expect(lives.get(BOB, live.id)).resolves.toMatchObject({ id: live.id });
+        } finally {
+          seats.arrivalsDown = false;
+        }
+        // The read and the note each accuse, once (the outage is per operation).
+        takeLogged(
+          'error',
+          `[LIVE_ARRIVAL] ${live.id}: the arrivals did not answer: Error: ECONNREFUSED (the arrival lines stop until it answers; further failures are counted, not logged)`
+        );
+        takeLogged(
+          'error',
+          `[LIVE_ARRIVAL] ${live.id}: an arrival was not noted: Error: ECONNREFUSED (the arrival lines stop until it answers; further failures are counted, not logged)`
+        );
       });
 
       it('announces NO platform admin who opens a reported review-cohort live across the cohort wall', async () => {
@@ -2300,6 +2407,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         'LIVE_SEGMENT_CONFLICT'
       );
       expect(store.countFor(live.id)).toBe(1);
+
+      takeLogged('warn', /^\[LIVE\] segment 0 of [0-9a-f-]{36} repeated with DIFFERENT bytes$/);
     });
 
     it('takes segments from the broadcaster only, and tells nobody else the live exists', async () => {
@@ -2333,6 +2442,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       await expect(lives.ingest(ALICE, live.id, 0, segment(0))).resolves.toMatchObject({
         nextIndex: 1,
       });
+
+      takeLogged(
+        'warn',
+        /^\[LIVE\] segment 0 of [0-9a-f-]{36} not stored, reservation released: ECONNREFUSED store down$/
+      );
     });
 
     it('lists the newest window by default, from an index on request, with server-chosen names', async () => {
@@ -2434,6 +2548,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       await follow(BOB);
       await follow(CAROL);
       const requests = new FollowRequestsService({} as never, {} as never, ds, {
+        incr: () => Promise.resolve(1),
         deleteByPattern: () => Promise.resolve(0),
       } as never);
       expect(await requests.removeFollower(ALICE, CAROL)).toEqual({ ok: true });
@@ -2599,6 +2714,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
           ASSO,
         ]);
         expect(asso.lastLiveAnnouncedAt).toBeNull();
+
+        takeLogged(
+          'warn',
+          /^\[LIVE_ANNOUNCE\] [0-9a-f-]{36} not announced: association [0-9a-f]{6,8} was archived during the live$/
+        );
       });
 
       it('segment 0 locks the association BEFORE the live: an erasure holding the association, then updating the live, does not deadlock', async () => {
@@ -2760,6 +2880,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       // Claimed all the same: refused once, never retried.
       const [row] = await q(`SELECT "announcedAt" FROM lives WHERE id = $1`, [live.id]);
       expect(row.announcedAt).not.toBeNull();
+
+      takeLogged(
+        'warn',
+        /^\[LIVE_ANNOUNCE\] [0-9a-f-]{36} NOT announced: broadcaster [0-9a-f]{6,8} has no display name$/
+      );
     });
 
     it('sends nothing while LIVE_ENABLED is off, and the segment is still taken', async () => {
@@ -2834,6 +2959,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       });
       await broken.announcementsSettled();
       expect(attempts).toBe(1);
+
+      takeLogged('warn', /^\[LIVE_ANNOUNCE\] [0-9a-f-]{36} NOT announced: mute lookup down$/);
     });
 
     it('SEGMENT 0 DOES NOT WAIT FOR ITS ANNOUNCEMENT: the answer comes while the push is still held', async () => {
@@ -2954,6 +3081,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       await expect(lives.ingest(ALICE, live.id, 0, segment(0))).resolves.toMatchObject({
         nextIndex: 1,
       });
+
+      takeLogged(
+        'warn',
+        /^\[LIVE\] segment 0 of [0-9a-f-]{36} not stored, reservation released: ECONNREFUSED store down$/
+      );
     });
 
     it('refuses a second ingest of an index still storing, and takes over an ABANDONED reservation', async () => {
@@ -2977,6 +3109,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       await expect(lives.ingest(ALICE, live.id, 1, segment(1))).resolves.toMatchObject({
         nextIndex: 2,
       });
+
+      takeLogged(
+        'warn',
+        /^\[LIVE\] segment 1 of [0-9a-f-]{36}: an abandoned reservation \([0-9a-f-]{36}\) is taken over$/
+      );
     });
 
     it('a purge waits for a live reservation, and ignores an abandoned one', async () => {
@@ -3001,6 +3138,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       await lives.ingest(ALICE, live.id, 0, segment(0));
       await expect(lives.purgeEnded(live.id)).resolves.toBe('kept');
       expect(store.countFor(live.id)).toBe(1);
+
+      takeLogged('warn', /^\[LIVE_GC\] [0-9a-f-]{36} is OPEN: the purge path refuses it$/);
     });
 
     it(`refuses an ingest beyond ${LIVE_INGEST_MAX_CONCURRENT} storing at once: 503 LIVE_INGEST_BUSY`, async () => {
@@ -3041,6 +3180,16 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
           segment(0)
         )
       ).resolves.toMatchObject({ nextIndex: 1 });
+
+      takeLogged(
+        'warn',
+        /^\[LIVE\] segment 0 of [0-9a-f-]{36} refused: 4 ingests already storing$/
+      );
+      takeLogged(
+        'warn',
+        /^\[LIVE_ANNOUNCE\] [0-9a-f-]{36} NOT announced: broadcaster [0-9a-f]{6,8} has no display name$/,
+        4
+      );
     });
   });
 
@@ -3071,6 +3220,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       expect(await q(`SELECT "endedAt" FROM lives WHERE id = $1`, [live.id])).toEqual([
         { endedAt: null },
       ]);
+
+      takeLogged(
+        'warn',
+        /^\[LIVE_ANNOUNCE\] [0-9a-f-]{36} NOT announced: broadcaster [0-9a-f]{6,8} has no display name$/
+      );
     });
 
     it('a viewer at the window edge still gets every segment its manifest names, and one fetched just before a trim', async () => {
@@ -3120,6 +3274,16 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       await lives.trimsSettled();
       expect(await rowCount(live.id)).toBe(LIVE_RETAINED_SEGMENTS);
       expect(store.countFor(live.id)).toBe(LIVE_RETAINED_SEGMENTS);
+
+      takeLogged(
+        'warn',
+        /^\[LIVE_TRIM\] [0-9a-f-]{36}: the trim failed, asked again by the next segment: ECONNREFUSED store down$/,
+        5
+      );
+      takeLogged(
+        'warn',
+        /^\[LIVE_TRIM\] [0-9a-f-]{36}: the store refused 6 of 6 segment\(s\) - asked again by the next segment$/
+      );
     });
 
     it('the end still purges everything, trimmed or not, and the row goes', async () => {
@@ -3164,6 +3328,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       await expect(lives.ingest(ALICE, live.id, allowed, segment(allowed))).resolves.toMatchObject({
         nextIndex: allowed + 1,
       });
+
+      takeLogged(
+        'warn',
+        /^\[LIVE\] segment 5 of [0-9a-f-]{36} refused: faster than the live's age allows \(5\)$/
+      );
     });
 
     it(`refuses a ${LIVE_STARTS_PER_HOUR + 1}th start in the hour, and forgets a start after it`, async () => {
@@ -3181,6 +3350,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       await sweeper.sweepOnce();
       expect(await q(`SELECT 1 FROM live_starts WHERE "broadcasterId" = $1`, [CAROL])).toEqual([]);
       await expect(start(CAROL)).resolves.toBeDefined();
+
+      takeLogged('warn', /^\[LIVE\] start refused: [0-9a-f]{6,8} started 6 lives in the hour$/);
     });
   });
 
@@ -3200,6 +3371,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       expect(store.countFor(kept.id)).toBe(1);
       // Nothing left to reap.
       expect((await sweeper.sweepOnce()).orphans).toBe(0);
+
+      takeLogged(
+        'warn',
+        /^\[LIVE_GC\] [0-9a-f-]{36}: a segment folder with no live row - reaping it$/
+      );
     });
 
     it('answers a repeated end after the purge with 404, as the contract says', async () => {
@@ -3239,6 +3415,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       expect(store.countFor(silent.id)).toBe(0);
       await expect(lives.get(CAROL, talking.id)).resolves.toBeDefined();
       expect(store.countFor(talking.id)).toBe(1);
+
+      takeLogged(
+        'warn',
+        /^\[LIVE_ANNOUNCE\] [0-9a-f-]{36} NOT announced: broadcaster [0-9a-f]{6,8} has no display name$/
+      );
     });
 
     it('ends a live that never sent a segment within the window of its start', async () => {
@@ -3325,6 +3506,15 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         keysSealed: 0,
         keysUnsealed: 0,
       });
+
+      takeLogged(
+        'warn',
+        /^\[LIVE\] [0-9a-f-]{36}: purge at end failed, the sweep retries: ECONNREFUSED store down$/
+      );
+      takeLogged(
+        'warn',
+        /^\[LIVE_GC\] [0-9a-f-]{36} kept for the next run: ECONNREFUSED store down$/
+      );
     });
 
     it('keeps the row while the store still lists a segment, even when the call itself answered', async () => {
@@ -3360,12 +3550,16 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         keysSealed: 0,
         keysUnsealed: 0,
       });
+
+      takeLogged('warn', /^\[LIVE_GC\] [0-9a-f-]{36} kept: deleted=0 failed=1 remaining=1$/, 2);
     });
 
     it('never ends an open live through the purge path, whatever id reaches it', async () => {
       const live = await start();
       await lives.purgeEnded(live.id);
       await expect(lives.get(BOB, live.id)).resolves.toBeDefined();
+
+      takeLogged('warn', /^\[LIVE_GC\] [0-9a-f-]{36} is OPEN: the purge path refuses it$/);
     });
   });
 
@@ -3527,6 +3721,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       await expect(lives.cut(MOD, second.id, { reason: 'other' })).resolves.toMatchObject({
         priorCuts: 1,
       });
+
+      takeLogged(
+        'warn',
+        /^\[LIVE\] [0-9a-f-]{36}: purge after a cut failed, the sweep retries: ECONNREFUSED store down$/
+      );
     });
 
     it('a cut of a live ENDED BY ITS BROADCASTER records the decision and rewrites nothing - ONE answer before and after the purge, no notice', async () => {
@@ -3575,6 +3774,16 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         endReason: 'broadcaster',
         newlyCut: false,
       });
+
+      takeLogged(
+        'warn',
+        /^\[LIVE\] [0-9a-f-]{36}: purge at end failed, the sweep retries: ECONNREFUSED store down$/,
+        2
+      );
+      takeLogged(
+        'warn',
+        /^\[LIVE\] [0-9a-f-]{36}: purge after a cut failed, the sweep retries: ECONNREFUSED store down$/
+      );
     });
 
     it("a cut that ENDS the live answers cut before and after the purge, with the cut's own time", async () => {
@@ -3588,6 +3797,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       const after = await body(lives.get(BOB, live.id));
       expect(after).toEqual(before);
       expect(after).toEqual({ ...CUT, endedAt: cut.cutAt });
+
+      takeLogged(
+        'warn',
+        /^\[LIVE\] [0-9a-f-]{36}: purge after a cut failed, the sweep retries: ECONNREFUSED store down$/
+      );
     });
 
     it('refuses a cut with no reason code, an oversized note, or no live: every refusal typed', async () => {
@@ -3673,6 +3887,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       } finally {
         spy.mockRestore();
       }
+      // The skipped prune is SAID, with its cause, and the cut prune ran regardless.
+      takeLogged('warn', '[LIVE_GC] start prune skipped this run: Error: boom');
       expect(await q(`SELECT 1 FROM live_cuts`)).toEqual([]);
     });
 
@@ -4151,6 +4367,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       expect(next.messagesCursor).toBe(3);
       const idle = await chat.read(BOB, live.id, { messagesAfter: 3, reactionsAfter: 0 });
       expect(idle).toEqual({ messages: [], messagesCursor: 3, reactions: [], reactionsCursor: 0 });
+
+      takeLogged(
+        'warn',
+        /^\[LIVE_MENTION\] [0-9a-f-]{36}: 1 mention\(s\) NOT pushed: names are down$/
+      );
     });
 
     it('NEVER SKIPS A MESSAGE under concurrent writers: seqs are gapless, and a poller reading meanwhile sees each once', async () => {
@@ -4196,6 +4417,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       });
       // The same clientId from ANOTHER author is another message.
       await expect(say(CAROL, live.id, 'same', id)).resolves.toMatchObject({ seq: 2 });
+
+      takeLogged(
+        'warn',
+        /^\[LIVE_CHAT\] message [0-9a-f-]{36} on [0-9a-f-]{36} repeated with OTHER bytes$/
+      );
     });
 
     it('holds 3 messages per 5 s per account, counted from its rows', async () => {
@@ -4479,6 +4705,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       expect((await refusal(tap(BOB, live.id, { like: 3 }, id))).code).toBe(
         'LIVE_REACTION_CONFLICT'
       );
+
+      takeLogged(
+        'warn',
+        /^\[LIVE_REACT\] burst [0-9a-f-]{36} on [0-9a-f-]{36} repeated with OTHER counts$/
+      );
     });
 
     it("an account erasure deletes the account's messages and bursts on every live", async () => {
@@ -4620,6 +4851,17 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         consequence: 'suspended',
       });
       expect(bell.map((b) => b.type)).toEqual(['live_suspended']);
+
+      takeLogged(
+        'warn',
+        /^\[LIVE\] [0-9a-f-]{36}: purge at end failed, the sweep retries: ECONNREFUSED store down$/,
+        2
+      );
+      takeLogged(
+        'warn',
+        /^\[LIVE\] [0-9a-f-]{36}: purge after a cut failed, the sweep retries: ECONNREFUSED store down$/,
+        2
+      );
     });
 
     it('a repeated cut answers its first strike and changes nothing', async () => {
@@ -4643,6 +4885,16 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         lives.cut(MOD, open.id, { reason: 'spam' }),
       ]);
       expect(both.map((c) => c.strike).sort((a, b) => a - b)).toEqual([1, 2]);
+
+      takeLogged(
+        'warn',
+        /^\[LIVE\] [0-9a-f-]{36}: purge at end failed, the sweep retries: ECONNREFUSED store down$/
+      );
+      takeLogged(
+        'warn',
+        /^\[LIVE\] [0-9a-f-]{36}: purge after a cut failed, the sweep retries: ECONNREFUSED store down$/,
+        2
+      );
     });
 
     it('RACE: a start and a suspending cut at once - the start either ran first or is refused', async () => {
@@ -4668,6 +4920,16 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         `UPDATE lives SET "endedAt" = now(), "endReason" = 'broadcaster' WHERE "endedAt" IS NULL`
       );
       expect((await refusal(start())).code).toBe('LIVE_BROADCAST_SUSPENDED');
+
+      takeLogged(
+        'warn',
+        /^\[LIVE\] [0-9a-f-]{36}: purge after a cut failed, the sweep retries: ECONNREFUSED store down$/,
+        2
+      );
+      takeLogged(
+        'warn',
+        /^\[LIVE\] [0-9a-f-]{36}: purge at end failed, the sweep retries: ECONNREFUSED store down$/
+      );
     });
 
     it('3 cuts on record make a withdrawal DUE; staff withdraw it, and only staff lift it', async () => {
@@ -4752,6 +5014,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       expect(bell).toHaveLength(beforeLift + 1);
       await expect(lives.listWithdrawn(async (ids) => new Set(ids))).resolves.toEqual([]);
       await expect(start()).resolves.toBeDefined();
+
+      takeLogged('warn', /^\[LIVE_STRIKE\] standing asked of [0-9a-f]{6,8}: no such account$/);
     });
 
     it('the withdrawn list is newest first (whatever the row order) and scoped before it is cut', async () => {
@@ -5113,6 +5377,15 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       );
       expect(await q(`SELECT 1 FROM content_reports`)).toEqual([]);
       expect(await kept()).toEqual([]);
+
+      takeLogged(
+        'warn',
+        /^\[REPORT\] chat line [0-9a-f-]{36} on [0-9a-f-]{36}: the reporter's text does not match the sealed line \(another text\) - refused$/
+      );
+      takeLogged(
+        'warn',
+        /^\[REPORT\] chat line [0-9a-f-]{36} on [0-9a-f-]{36}: the reporter's text does not match the sealed line \(the line does not open\) - refused$/
+      );
     });
 
     it('is no oracle: another live, no shared space, a block with the author, a hidden line - all 404 LIVE_NOT_FOUND', async () => {
@@ -5139,6 +5412,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         code: 'LIVE_REPORT_SIGNING_UNAVAILABLE',
       });
       expect(await q(`SELECT 1 FROM content_reports`)).toEqual([]);
+
+      takeLogged(
+        'error',
+        '[REPORT] a live chat line cannot be kept: LIVE_REPORT_SIGNING_KEY is unset or too short'
+      );
     });
 
     it('OUTLIVES THE LIVE (the cascade stops at it) and a cut leaves its report pending', async () => {
@@ -5179,6 +5457,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       expect(await q(`SELECT status FROM content_reports WHERE id = $1`, [report.id])).toEqual([
         { status: 'pending' },
       ]);
+
+      takeLogged(
+        'warn',
+        '[LIVE_GC] 1 reported chat line(s) erased UNHANDLED: their report waited the 90-day bound'
+      );
     });
 
     it('a deleted report takes its line (the foreign key cascades)', async () => {
@@ -5462,6 +5745,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       const tenDays = 10 * 24 * 3_600_000;
       expect(reading.oldestWallMs).toBeGreaterThanOrEqual(tenDays);
       expect(reading.oldestWallMs).toBeLessThan(tenDays + 60_000);
+
+      takeLogged(
+        'error',
+        /^\[LIVE_REPORT_AGE\] pending=2 overdue=1 oldest=[0-9.]+h working \(240\.0h wall\): 1 live report\(s\) past the 24\.0h working-day commitment to the stores - answer them in \/admin\/moderation$/
+      );
     });
 
     it('reads an empty queue on one row, with the clock', async () => {
@@ -5570,6 +5858,15 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       );
       store.failStore = false;
       await expect(lives.ingestPoster(ALICE, live.id, poster(5))).resolves.toBeDefined();
+
+      takeLogged(
+        'warn',
+        /^\[LIVE_POSTER\] [0-9a-f-]{36} refused: sooner than the poster interval$/
+      );
+      takeLogged(
+        'warn',
+        /^\[LIVE_POSTER\] [0-9a-f-]{36}: poster not stored, reservation released: ECONNREFUSED store down$/
+      );
     });
 
     it('deletes nothing and does not throw when a poster exists with no previous name (a row written by the previous release)', async () => {
@@ -5669,6 +5966,11 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       } finally {
         errors.mockRestore();
       }
+
+      takeLogged(
+        'error',
+        /^\[LIVE_KEY\] [0-9a-f-]{36}: the key does not open \(does-not-open\) - its card shows no picture until it does$/
+      );
     });
 
     it('REFUSES the list, so the key and the poster, to a blocked account either way and to a removed viewer', async () => {

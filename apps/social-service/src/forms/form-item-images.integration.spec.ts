@@ -24,6 +24,7 @@ import { of } from 'rxjs';
 import { BadRequestException } from '@nestjs/common';
 import { FormItemImage } from './entities/form-item-image.entity';
 import { FormItemImagesService, questionImageUrl } from './form-item-images.service';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -148,6 +149,11 @@ maybe('question images against PostgreSQL (migrations 136, 146)', () => {
     await images.releaseUncited([logo], 'question edited');
     await images.reconcileOnce();
     expect(publicAssets.has(logo)).toBe(true);
+
+    takeLogged(
+      'warn',
+      /^\[FORM_IMAGE\] save refused: media=[0-9a-f]{6,8} is not a recorded question image, cited by user=alice-00 on form=[0-9a-f]{6,8}$/
+    );
   });
 
   it('binds an upload from the create page to the form its uploader saves, and refuses anyone else', async () => {
@@ -157,6 +163,11 @@ maybe('question images against PostgreSQL (migrations 136, 146)', () => {
     expect((await rowOf(mediaId)).formId).toBeNull();
     await save(formId, [item('q1', mediaId)], ALICE);
     expect((await rowOf(mediaId)).formId).toBe(formId);
+
+    takeLogged(
+      'warn',
+      /^\[FORM_IMAGE\] save refused: media=[0-9a-f]{6,8} is form=unbound's, cited by user=bob-0000 on form=[0-9a-f]{6,8}$/
+    );
   });
 
   it("refuses an image of another form, an unrecorded id, and lets the form's co-manager cite its own", async () => {
@@ -166,6 +177,15 @@ maybe('question images against PostgreSQL (migrations 136, 146)', () => {
     await expect(save(formB, [item('q1', ofA)])).rejects.toThrow(BadRequestException);
     await expect(save(formB, [item('q1', randomUUID())])).rejects.toThrow(BadRequestException);
     await save(formA, [item('q1', ofA)], BOB);
+
+    takeLogged(
+      'warn',
+      /^\[FORM_IMAGE\] save refused: media=[0-9a-f]{6,8} is form=[0-9a-f]{6,8}'s, cited by user=alice-00 on form=[0-9a-f]{6,8}$/
+    );
+    takeLogged(
+      'warn',
+      /^\[FORM_IMAGE\] save refused: media=[0-9a-f]{6,8} is not a recorded question image, cited by user=alice-00 on form=[0-9a-f]{6,8}$/
+    );
   });
 
   it('keeps an image a duplicated question still cites, and releases it with the last copy', async () => {
@@ -219,6 +239,11 @@ maybe('question images against PostgreSQL (migrations 136, 146)', () => {
     publicAssets.delete(mediaId); // the media service no longer calls it a public asset
     await images.releaseUncited([mediaId], 'question edited');
     expect(await rowOf(mediaId)).toBeDefined();
+
+    takeLogged(
+      'error',
+      /^\[FORM_IMAGE\] media=[0-9a-f-]{36} \(question edited\): the media service refused the delete - it is not a public asset, so the row is wrong; left for a look$/
+    );
   });
 
   it('reconciles only uploads past the grace that no form cites', async () => {
