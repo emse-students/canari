@@ -3414,20 +3414,26 @@ export abstract class BaseMlsService implements IMlsService {
             this.issueOwedPull('drain end');
 
             finishQueueDrainBench(ackIds.length);
-            if (drainIngest === null) {
-              // AT A LEVEL THAT ACCUSES: the scheduler pairs the two callbacks, so an end without its
-              // start is a scheduler that broke that contract - and there is no window to close.
-              console.error('[QUEUE] drain ended without having opened its bulk-ingest window');
-              return;
-            }
+          } finally {
+            // THE WINDOW CLOSES WHATEVER THREW ABOVE (review of #4054): a synchronous throw from the
+            // refetch, the owed pull or the bench used to skip this, leaving the window open - every
+            // later arrival buffered, never shown - for the rest of the page.
             const closing = drainIngest;
             drainIngest = null;
-            await this.endBulkIngest(closing);
-            // AFTER the window closes: a contact line is a row like any other, and the rows of the
-            // drain are flushed first. Not awaited - a notice must never hold the next drain.
-            void this.handOverDeviceEvents('drain end');
-          } finally {
-            windowClosed();
+            try {
+              if (closing === null) {
+                // AT A LEVEL THAT ACCUSES: the scheduler pairs the two callbacks, so an end without
+                // its start is a scheduler that broke that contract - and there is no window to close.
+                console.error('[QUEUE] drain ended without having opened its bulk-ingest window');
+              } else {
+                await this.endBulkIngest(closing);
+                // AFTER the window closes: a contact line is a row like any other, and the rows of
+                // the drain are flushed first. Not awaited - a notice must never hold the next drain.
+                void this.handOverDeviceEvents('drain end');
+              }
+            } finally {
+              windowClosed();
+            }
           }
         },
       }
