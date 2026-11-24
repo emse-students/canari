@@ -43,6 +43,7 @@ import { JoinAskPush } from '../entities/join-ask-push.entity';
 import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
 import { SentFrameReceipt } from '../entities/sent-frame-receipt.entity';
 import { UninvitedEntry } from '../entities/uninvited-entry.entity';
+import { GroupLastMessage } from '../entities/group-last-message.entity';
 import { GroupsController } from '../controllers/groups.controller';
 import type { MessagingService } from '../services/messaging.service';
 import { writePendingSeats } from '../utils/group-membership';
@@ -423,6 +424,7 @@ maybe('"Mes notes" gates against PostgreSQL', () => {
         RevokedDeviceGroup,
         SentFrameReceipt,
         UninvitedEntry,
+        GroupLastMessage,
       ],
       synchronize: false,
       uuidExtension: 'pgcrypto',

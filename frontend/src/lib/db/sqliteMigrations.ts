@@ -238,6 +238,23 @@ export function conversationKindStatement(columns: readonly string[]): string | 
 }
 
 /**
+ * The conversation row's `server_last_message_at` (`ConversationMeta.serverLastMessageAt`, INTEGER):
+ * the server's receive time of the newest visible frame, a floor under the sidebar key. Added on
+ * EVERY OPEN, guarded by name like `kind` - no version stamp, so no historical branch can skip it.
+ * NULL on arrival, which reads as never stated: the next group sweep fills it (`recordGroupStart`).
+ * Returns `null` when the column is there.
+ *
+ * @param columns Column names of the `conversations` table, from `PRAGMA table_info(conversations)`.
+ */
+export function conversationServerLastMessageAtStatement(
+  columns: readonly string[]
+): string | null {
+  return columns.includes('server_last_message_at')
+    ? null
+    : 'ALTER TABLE conversations ADD COLUMN server_last_message_at INTEGER';
+}
+
+/**
  * The v21 -> v22 step: the RANK of the dated name (`NameRank`, `groupNameSupersedes`), three columns:
  * - `name_from_statement` (`ConversationMeta.nameFromStatement`): 1 when a silent `groupNamed`
  *   statement dated it, which any rename beats;

@@ -22,6 +22,7 @@ import { JoinAskPush } from '../entities/join-ask-push.entity';
 import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
 import { SentFrameReceipt } from '../entities/sent-frame-receipt.entity';
 import { UninvitedEntry } from '../entities/uninvited-entry.entity';
+import { GroupLastMessage } from '../entities/group-last-message.entity';
 
 /**
  * This function is the single definition of "what a group owns", so what is pinned here is the
@@ -54,6 +55,7 @@ describe('deleteGroupOwnedRows', () => {
     RevokedDeviceGroup,
     SentFrameReceipt,
     UninvitedEntry,
+    GroupLastMessage,
     UserDismissedGroup,
   ];
 
@@ -95,9 +97,10 @@ describe('deleteGroupOwnedRows', () => {
       revokedDeviceGroups: 3,
       sentFrameReceipts: 3,
       uninvitedEntries: 3,
+      lastMessages: 3,
       dismissals: 3,
     });
-    expect(totalGroupOwnedRows(counts)).toBe(42);
+    expect(totalGroupOwnedRows(counts)).toBe(45);
   });
 
   it('spares the per-user dismissal markers when the group row SURVIVES', async () => {
@@ -152,8 +155,8 @@ describe('deleteGroupOwnedRows', () => {
 
     await deleteGroupOwnedRows(manager, ['g1', 'g2']);
 
-    // An allowlist: fourteen deletes, each carrying the same explicit id set and nothing else.
-    expect(deletes).toHaveLength(14);
+    // An allowlist: fifteen deletes, each carrying the same explicit id set and nothing else.
+    expect(deletes).toHaveLength(15);
     for (const where of deletes) {
       expect(Object.keys(where as object)).toEqual(['groupId']);
       expect(JSON.stringify(where)).toContain('g1');

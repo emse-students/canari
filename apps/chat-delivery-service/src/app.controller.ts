@@ -1,6 +1,7 @@
 import { Controller, Inject, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, LessThan, MoreThanOrEqual } from 'typeorm';
+import { GroupLastMessage } from './entities/group-last-message.entity';
 import { QueuedMessage } from './entities/queued-message.entity';
 import { QueuedPayload } from './entities/queued-payload.entity';
 import { collectUnreferencedPayloads } from './utils/queued-payload';
@@ -547,6 +548,19 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     if (receipts > 0) {
       this.logger.log(
         `[CRON] cleanupExpiredQueuedMessages: deleted ${receipts} sent-frame receipt(s)`
+      );
+    }
+    // A group's newest visible frame time (migration 057) is kept no longer than the queued copies
+    // it stands for: past this window it says nothing a device could still be given.
+    const lastMessagesCleared =
+      (
+        await this.queuedMessageRepo.manager
+          .getRepository(GroupLastMessage)
+          .delete({ lastMessageAt: LessThan(expiry) })
+      ).affected ?? 0;
+    if (lastMessagesCleared > 0) {
+      this.logger.log(
+        `[CRON] cleanupExpiredQueuedMessages: deleted ${lastMessagesCleared} group last-message time(s) past the window`
       );
     }
     const payloads = await collectUnreferencedPayloads(this.queuedMessageRepo.manager);
