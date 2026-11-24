@@ -92,22 +92,35 @@ const OTHER_KEY = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=';
 async function importRisingConversation(storage: {
   importEncryptedRow: IndexedDbStorage['importEncryptedRow'];
 }): Promise<Set<string>> {
-  const rows = Array.from({ length: 60 }, (_, i) =>
-    message(`m-${String(i).padStart(2, '0')}`, 'conv', T0 + (i + 1) * 1000)
-  );
-  rows[5] = { ...rows[5], id: 'rises', serverTimestamp: T0 + 55_500 };
-  const oldestTen = new Set<string>();
-  for (const msg of rows) {
-    const sealed = await encryptData(toMessagePayload(msg), KEY);
-    if (msg.timestamp <= T0 + 10_000) oldestTen.add(toBase64(sealed.iv));
-    await storage.importEncryptedRow({
-      id: msg.id,
-      conversationId: 'conv',
-      timestamp: msg.timestamp,
-      ...sealed,
-    });
-  }
-  return oldestTen;
+  const { sealedRows, oldestTen } = await risingConversation();
+  for (const row of sealedRows) await storage.importEncryptedRow({ ...row });
+  return new Set(oldestTen);
+}
+
+type SealedImport = Parameters<IndexedDbStorage['importEncryptedRow']>[0];
+let risingSealed: Promise<{ sealedRows: SealedImport[]; oldestTen: Set<string> }> | null = null;
+
+/**
+ * The sixty rows of {@link importRisingConversation}, SEALED ONCE for the file (in the `beforeAll`
+ * below): every case that imports them reads the same bytes, and sixty AES-GCM seals per case were
+ * the larger half of a case's own work - work a starved worker of a full parallel run multiplies.
+ */
+function risingConversation() {
+  risingSealed ??= (async () => {
+    const rows = Array.from({ length: 60 }, (_, i) =>
+      message(`m-${String(i).padStart(2, '0')}`, 'conv', T0 + (i + 1) * 1000)
+    );
+    rows[5] = { ...rows[5], id: 'rises', serverTimestamp: T0 + 55_500 };
+    const oldestTen = new Set<string>();
+    const sealedRows: SealedImport[] = [];
+    for (const msg of rows) {
+      const sealed = await encryptData(toMessagePayload(msg), KEY);
+      if (msg.timestamp <= T0 + 10_000) oldestTen.add(toBase64(sealed.iv));
+      sealedRows.push({ id: msg.id, conversationId: 'conv', timestamp: msg.timestamp, ...sealed });
+    }
+    return { sealedRows, oldestTen };
+  })();
+  return risingSealed;
 }
 
 /**
@@ -144,6 +157,7 @@ function deferRows(ivs: Set<string>) {
  * own describe, where its engine is built.
  */
 beforeAll(async () => {
+  await risingConversation();
   const warm = new IndexedDbStorage(`warm-${Date.now()}-${n++}`);
   await warm.init();
   await warm.saveMessages([message('warm', 'warm', T0)], KEY);
