@@ -63,11 +63,35 @@ export interface QueuedMedia {
     /** A video's measured sound (`MediaRef.loudness`), measured with its preparation. */
     loudness?: MediaLoudness;
   };
+  /**
+   * A take of the CanaReels camera (`queueReelPublish`): prepared as the camera's publish step
+   * always prepared it - capped at the reel's longest length, trimmed to its picture, its sound
+   * removed when the member removed it, under the encoder lease the chat take shares. Absent: an
+   * ordinary post media, prepared as the composer prepares it.
+   */
+  take?: QueuedTakePreparation;
+  /**
+   * The class the blob is uploaded under, decided ONCE before its session opens and kept with it:
+   * `archive` (absent) for a post's media, `reel-pending` for a reel whose file conversations adopt
+   * (reels-in-chat 15.5) - the only class a chat hold may be put on.
+   */
+  uploadClass?: QueuedUploadClass;
   /** The resumable session of this media's upload, written before its first part leaves. */
   upload?: OutboxResumableUpload;
   /** Set once the server holds the blob: the ref the post carries. Never uploaded again. */
   ref?: PostMediaRef;
 }
+
+/** How the camera's take is prepared, recorded with it so a resume prepares it the same way. */
+export interface QueuedTakePreparation {
+  /** The cap the take is prepared under, in ms (`longestReelMs` of the served rule). */
+  maxDurationMs: number;
+  /** The member removed the sound: the published file carries no audio track. */
+  removeAudio?: true;
+}
+
+/** The upload classes the queue uses; absent on a record means `archive`. */
+export type QueuedUploadClass = 'archive' | 'reel-pending';
 
 /** Why a queued post stopped for good until the member acts: a sentence and the stage it stopped at. */
 export interface QueuedPostFailure {
@@ -103,6 +127,16 @@ export interface QueuedPost {
   createSent?: true;
   /** The member deleted it: the queue takes it back everywhere, then forgets it (`withdraw`). */
   withdrawn?: true;
+  /**
+   * The chat take of the same press (reels-in-chat 15.5, D-onefile): it waits for THIS post's
+   * upload and adopts it. Set by the CanaReels camera when the take was also sent to conversations.
+   */
+  chatTakeId?: string;
+  /**
+   * Written once the chat take was told how it ends - adopted this post's file, or told to upload
+   * its own - so a resumed pass never tells it twice.
+   */
+  takeHandedOver?: true;
 }
 
 /**
