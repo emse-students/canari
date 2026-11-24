@@ -1,5 +1,6 @@
 import type { HandleClientError } from '@sveltejs/kit/hooks';
 import { match } from '$app/paths';
+import { describeCaughtError } from '$lib/utils/describeCaughtError';
 
 /**
  * THE ONE PLACE A PAGE CRASH IS REPORTED - a load that throws and a page that throws while it renders.
@@ -24,6 +25,11 @@ import { match } from '$app/paths';
  * opened directly. Its `url` is right in every case (the location at start, the target on a
  * navigation), so the route table is asked about that one field. `?` is an address no route matches.
  *
+ * THE LINE CARRIES THE FIRST FRAMES OF THE STACK (`describeCaughtError`). The in-app log renders an
+ * Error as its name and message only, and a minified `TypeError: null is not an object` names no
+ * module: the iPhone 12 reading of `1.8.0-alpha.7` had a crash on the first publish after a sign-in
+ * and nothing to say where it threw. The frames are code locations, never the member's data.
+ *
  * Nothing is returned, so SvelteKit's own status and safe message stand.
  */
 export const handleClientError: HandleClientError = async (caught) => {
@@ -33,5 +39,5 @@ export const handleClientError: HandleClientError = async (caught) => {
     console.warn(`[App] navigation error ${status} on ${route}:`, caught.error);
     return;
   }
-  console.error(`[App] page crash on ${route}:`, caught.error);
+  console.error(`[App] page crash on ${route}:`, describeCaughtError(caught.error));
 };

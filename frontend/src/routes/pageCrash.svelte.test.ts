@@ -119,6 +119,15 @@ describe('a page that crashes under SvelteKit 3', () => {
     expect(lines[0].join(' ')).not.toContain('p-1');
   });
 
+  it('names WHERE it threw: the first frames of the stack ride on the line (iPhone 12, 1.8.0-alpha.7)', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await crashAPage();
+    const line = error.mock.calls.find((c) => String(c[0]).includes('page crash'))!;
+    // The in-app log renders an Error as its name and message alone: the frames must be TEXT.
+    expect(typeof line[1]).toBe('string');
+    expect(String(line[1])).toMatch(/page effect threw \| \S/);
+  });
+
   it('draws the error page inside the layout, with the Retry the layout used to offer', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const target = await crashAPage();

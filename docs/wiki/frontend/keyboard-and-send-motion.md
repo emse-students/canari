@@ -291,7 +291,7 @@ still left to the engine (Chromium reveals the focused editable on its own resiz
 nothing else would reveal it, so the page does. One authority for the keyboard's room (the frame), one
 for the reveal (the page). A witness keeps the main page honest: in the iOS shell a scroll that moves `.page-scroll-wrap` or
 `.app-layout` off its top logs `the main page shifted: <box> scrolled to N`, once until it is back
-(`shiftedPageBox`), the case a reveal through an `overflow: hidden` wrapper once made.
+(`shiftedPageBox`), the case a reveal through an `overflow: hidden` wrapper once made. **A box counts only while its own computed overflow is `hidden` or `clip`**: `.page-scroll-wrap` is the scroller of every ordinary page and is pinned only around the chat shell (`:has(.app-layout)`), so a witness that named it by class accused every plain scroll of the feed, a profile or the settings (iPhone 12, `1.8.0-alpha.7`, eight WARNs with the keyboard closed). A box the reader cannot scroll can only have been moved by the page.
 Only the shell's will-show drops a rest the page holds (`noteKeyboardWillShow`), as the shell drops a rest it owes.
 
 The settled line carries `inset bottom=`, the scroll view's own bottom inset, so a second authority shows
