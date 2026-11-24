@@ -304,7 +304,8 @@ describe('a checkpoint during a bulk-ingest window (rows before ratchet)', () =>
     observer.onBulkIngestStart(LIVE_DRAIN);
     await messaging.addMessageToChat(PEER, 'a', CONVO, ctx, { messageId: 'in-a', frameId: 'q-a' });
     await messaging.addMessageToChat(PEER, 'b', CONVO, ctx, { messageId: 'in-b', frameId: 'q-b' });
-    expect(observer.framesLeftUnstored().size).toBe(0);
+    // Buffered and unstored: already in the ledger, so no ack can run ahead of the window's store (#4054).
+    expect([...observer.framesLeftUnstored()].sort()).toEqual(['q-a', 'q-b']);
     await observer.onBulkIngestEnd(LIVE_DRAIN);
     expect([...observer.framesLeftUnstored()].sort()).toEqual(['q-a', 'q-b']);
 

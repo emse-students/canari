@@ -12,4 +12,7 @@ The reading: on the Mi 9T, leave a DM open, put the app away, send ~100 messages
 peer AND from this account's other device (with a few reactions), come back. It passes when the pane
 is at the end once the drain closes, the exported log holds no `left the bottom with no finger on the
 pane` during the drain, the banner showed and went away with the close, and the `Drain complete` line
-gives the total time (expected about half of the ~10 s measured on `1.7.3` for 148 frames).
+gives the total time (expected about half of the ~10 s measured on `1.7.3` for 148 frames). Then
+the same with the reader SCROLLED UP in the thread before leaving, and the catch-up ending with a
+message from the other device: the pane must stay where the reader left it (`ownMessageAppended`
+follows only a message composed here), with the unread pill for what arrived below.

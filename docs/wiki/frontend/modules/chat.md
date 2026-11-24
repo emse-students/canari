@@ -3466,10 +3466,11 @@ Result: a message composed during any drain window was rendered by the peer and 
 sender at its next load, with nothing logged. It also explains why the offline path was always
 correct - offline there is no inbound drain, so the echo took the live path (MSG-10).
 
-Fixed 2026-08-07: `if (bulkIngestActive && !isOwnMessage(senderId, ctx.userId))`. An own message is
-never deferred; one extra rendered item is not what the buffer exists to prevent. Both clear sites
-now call `warnIfDiscardingBuffered`, because a dropped buffer and a message that never arrived are
-otherwise the same observation. **The general rule: a UI buffer in front of a persistence call is a
+Fixed 2026-08-07: `if (bulkIngestActive && !isOwnMessage(senderId, ctx.userId))`. An own message was
+never deferred; one extra rendered item is not what the buffer exists to prevent. **Narrowed
+2026-11-24** to an own message THIS DEVICE COMPOSED: one decrypted from a frame (this account's other
+device) is held like a peer's, and no path discards the buffer any more
+([a catch-up lands in one render](#a-catch-up-lands-in-one-render-2026-11-24)). **The general rule: a UI buffer in front of a persistence call is a
 persistence bug.** Buffer after the durable write, or the early return skips the writer.
 
 The at-rest projection of a message is shared by both storage backends
@@ -3571,6 +3572,26 @@ pin in one task keeps the end. The change removes the per-row path every fall fo
 below says whether a fall survives one render per drain, from the exported log (the fall line is
 INFO).
 
+**What holding more made load-bearing (review of #4054).** Four facts had to change with it:
+
+- **no path discards the buffer.** `resetMessageCatchupState` (called from group creation, possibly
+  mid-drain) cleared the buffer and lowered the window, so the close stored nothing and the dropped
+  frames - in no ledger - were acknowledged and deleted by the server; a window opening and a window
+  closing also `clear()`ed. True of a peer's text since the buffer existed, and this change would
+  have extended it to upgrades and other-device messages. Now the reset touches the UI flags only,
+  only a store takes rows out of the buffer (`storeBufferedRows`), what a store did not take is
+  carried to the next one with one WARN (`noteBufferedRowsCarried`), and **every buffered frame is in
+  `framesLeftUnstored`**, so its ack is withheld until a store takes it;
+- **a follower tab takes the upgrades.** The flush relayed only the NEW rows (`messages_batch`), so a
+  tab showing the caption kept it: the relay now carries the upgraded rows as shown, and the follower
+  merges them with `mergeRelayedBatch` (insert what it lacks, upgrade a shown preview, leave the rest);
+- **"my message was just added" means composed HERE** (`ownMessageAppended`): a flush ending with a
+  message from this account's other device used to read as "I just sent" and pull a reader who had
+  scrolled up to the bottom. A composed message carries its send state (`status`) from the moment it
+  is drawn; an arrival carries none - the forwarded medium now says `sent` too;
+- an upgrade held in the window still meets the reaction and the edit that follow it in the same
+  drain (both settle onto the row by id after the flush's write - pinned).
+
 **The banner says the catch-up.** "Réception des messages en attente..." was raised only for a
 window whose drain STARTED with several frames (`showOverlay: pendingCount > 1`), and a resume's drain
 starts on the first frame of the pull (`messages=1`) while the rest are queued behind it: ten
@@ -3580,7 +3601,8 @@ completion, no clock - lowers what it raised. `isMessageCatchupActive`, which th
 read, is unchanged.
 
 **One summary line per drain**, INFO: `[QUEUE] Drain complete: N frame(s) in T ms` - the frames
-handed to the handler and the time from the start to the window's close, `onDrainEnd` included
+handed to the handler (counted as they are handed, so one whose handler threw is counted too; a
+frame put back behind a commit is not) and the time from the start to the window's close, `onDrainEnd` included
 (`drainCompleteLine`, `mlsPerGroupScheduler.test.ts`). The rig's `[QUEUE] Drain complete` count reads
 the same prefix.
 

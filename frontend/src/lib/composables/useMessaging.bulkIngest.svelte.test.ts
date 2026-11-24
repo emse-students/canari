@@ -289,11 +289,11 @@ describe('addMessageToChat during a bulk-ingest window', () => {
   });
 
   /**
-   * The loss itself, and the reason a flush-based test would not catch it: a second drain starting
-   * before the first ended clears the buffer WITHOUT flushing (`beginBulkMessageIngest` clears
-   * unconditionally), so anything in it is gone for good. The own message must not be in there.
+   * The loss itself, as it was: a second drain starting before the first ended cleared the buffer
+   * WITHOUT flushing. The own message was never in there, and since #4054 the peer's is not lost
+   * either - the next window keeps it and stores it at its close.
    */
-  it('keeps the own message when a second drain discards the buffer unflushed', async () => {
+  it("keeps the own message, and the peer's, when a second window opens before the first closed", async () => {
     const messaging = useMessaging();
     const { ctx, conversations, saveMessage } = makeContext();
 
@@ -301,11 +301,11 @@ describe('addMessageToChat during a bulk-ingest window', () => {
     await messaging.addMessageToChat(PEER, 'their message', CONVO, ctx, { messageId: 'theirs-1' });
     await messaging.addMessageToChat(ME, 'my own message', CONVO, ctx, { messageId: 'own-1' });
 
-    messaging.beginBulkMessageIngest(LIVE_DRAIN); // discards the buffer, unflushed
+    messaging.beginBulkMessageIngest(LIVE_DRAIN); // used to discard the buffer, unflushed
     await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
 
-    expect(idsIn(conversations)).toEqual(['own-1']);
-    expect(saveMessage).toHaveBeenCalledTimes(1);
+    expect(idsIn(conversations).sort()).toEqual(['own-1', 'theirs-1']);
+    expect(saveMessage).toHaveBeenCalledTimes(2);
   });
 
   /**
@@ -357,6 +357,106 @@ describe('addMessageToChat during a bulk-ingest window', () => {
 
     expect(idsIn(conversations)).toEqual(['own-1']);
     expect(saveMessage).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * NO PATH DROPS A FRAMED BUFFERED ROW (review of #4054). `resetMessageCatchupState` - called by
+   * group creation while a drain may hold its window - cleared the buffer, so the close stored
+   * nothing and the frames, in no ledger, were acknowledged: the messages were lost. Now the reset
+   * touches the UI flags only, the buffered frames are in the unstored ledger until a store takes
+   * them, and the window's close stores them.
+   */
+  it('stores a framed upgrade, a framed sibling message and a peer text across a reset mid-window', async () => {
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+    conversations.set(CONVO, {
+      ...(conversations.get(CONVO) as Conversation),
+      messages: [
+        {
+          id: 'preview-1',
+          senderId: PEER,
+          content: '\u{1F4F7} Photo',
+          timestamp: new Date(1_700_000_000_000),
+          isOwn: false,
+          isFcmPreview: true,
+        },
+      ] as never,
+    });
+    const ledger = messaging.bulkIngestObserver(() => ctx);
+    const envelope = JSON.stringify({ kind: 'media', mediaId: 'm-1', mimeType: 'image/jpeg' });
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.addMessageToChat(PEER, envelope, CONVO, ctx, {
+      messageId: 'preview-1',
+      frameId: 'f-upgrade',
+    });
+    await messaging.addMessageToChat(ME, 'from my laptop', CONVO, ctx, {
+      messageId: 'sibling-1',
+      frameId: 'f-sibling',
+    });
+    await messaging.addMessageToChat(PEER, 'theirs', CONVO, ctx, {
+      messageId: 'theirs-1',
+      frameId: 'f-peer',
+    });
+    messaging.resetMessageCatchupState();
+
+    // Unstored, and the ledger says so: none of the three frames may be acknowledged yet.
+    expect([...ledger.framesLeftUnstored()].sort()).toEqual(['f-peer', 'f-sibling', 'f-upgrade']);
+
+    await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
+
+    expect(saveMessage.mock.calls.map((c) => (c[0] as { id: string }).id).sort()).toEqual([
+      'preview-1',
+      'sibling-1',
+      'theirs-1',
+    ]);
+    expect(conversations.get(CONVO)?.messages.find((m) => m.id === 'preview-1')?.content).toBe(
+      envelope
+    );
+    expect(ledger.framesLeftUnstored().size).toBe(0);
+  });
+
+  it('keeps what a window holds when the next window opens, and stores it at that close', async () => {
+    const messaging = useMessaging();
+    const { ctx, conversations } = makeContext();
+    const ledger = messaging.bulkIngestObserver(() => ctx);
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.addMessageToChat(PEER, 'first', CONVO, ctx, { messageId: 'a', frameId: 'f-a' });
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    expect([...ledger.framesLeftUnstored()]).toEqual(['f-a']);
+    await messaging.addMessageToChat(PEER, 'second', CONVO, ctx, {
+      messageId: 'b',
+      frameId: 'f-b',
+    });
+    await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
+
+    expect(idsIn(conversations)).toEqual(['a', 'b']);
+    expect(ledger.framesLeftUnstored().size).toBe(0);
+  });
+
+  /**
+   * A FRAMED ROW THAT IS ALSO AN OWN SEND is a send: its outbox entry makes this call the pair's only
+   * writer, so it is shown and stored at once, never held.
+   */
+  it('takes the live path for an own message carrying both a frame and an outbox entry', async () => {
+    const messaging = useMessaging();
+    const { ctx, conversations } = makeContext();
+    const saveMessageWithOutboxEntry = vi.fn().mockResolvedValue(undefined);
+    (ctx.storage as unknown as Record<string, unknown>).saveMessageWithOutboxEntry =
+      saveMessageWithOutboxEntry;
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.addMessageToChat(ME, 'sent from here', CONVO, ctx, {
+      messageId: 'own-1',
+      frameId: 'f-own',
+      status: 'pending',
+      outboxEntry: { id: 'own-1' } as never,
+    });
+
+    expect(idsIn(conversations)).toEqual(['own-1']);
+    expect(saveMessageWithOutboxEntry).toHaveBeenCalledTimes(1);
+    expect(saveMessageWithOutboxEntry.mock.calls[0][0]).toMatchObject({ id: 'own-1' });
   });
 });
 

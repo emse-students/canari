@@ -604,24 +604,27 @@ export function useMessaging() {
     }
     if (bufferUi) {
       bulkIngestActive = true;
-      bulkIngestSeq = 0;
-      warnIfDiscardingBuffered('beginBulkMessageIngest');
-      bulkIngestBuffer.clear();
+      // WHAT AN EARLIER WINDOW LEFT IS KEPT, never cleared: it is stored by THIS window's close (or
+      // by a checkpoint's hold before it), and its frames' acks wait for it (`framesLeftUnstored`).
+      if (bulkIngestBuffer.size === 0) bulkIngestSeq = 0;
+      else noteBufferedRowsCarried('a new window opened');
     }
   }
 
   /**
-   * Both clear sites below discard whatever is still buffered, and a drain restarting before the
-   * previous one ended is exactly that shape. Discarding is the deliberate behaviour - a flush here
-   * would re-enter the ingest path from inside its own reset - but it must never be SILENT, because
-   * a dropped buffer is indistinguishable from a message that never arrived. This is the only trace
-   * it leaves.
+   * **NO PATH DISCARDS A BUFFERED MESSAGE** (review of #4054). A buffered row was decrypted from a
+   * frame whose generation is spent: dropped unstored, and acknowledged, it was lost for good. Three
+   * sites used to `clear()` the buffer - a window opening, a window's close after its store, and
+   * `resetMessageCatchupState` - and the last one ran from group creation while a drain's window was
+   * open, so its close found nothing to store. Now only a STORE takes rows out of the buffer
+   * (`storeBufferedRows`), the buffer's frames are in the unstored ledger until it does, and what a
+   * window leaves behind is carried to the next store - said here, at WARN, because it means a store
+   * did not take everything it should have.
    */
-  function warnIfDiscardingBuffered(where: string) {
-    if (bulkIngestBuffer.size === 0) return;
+  function noteBufferedRowsCarried(where: string) {
     const count = [...bulkIngestBuffer.values()].reduce((sum, msgs) => sum + msgs.length, 0);
     console.warn(
-      `[ADD_MSG] ${where}: discarding ${count} buffered message(s) across ${bulkIngestBuffer.size} conversation(s) - they were never rendered nor persisted`
+      `[ADD_MSG] ${where} with ${count} buffered message(s) across ${bulkIngestBuffer.size} conversation(s) still unstored - kept for the next store, their frames' acks withheld until it`
     );
   }
 
@@ -643,14 +646,15 @@ export function useMessaging() {
     }
   }
 
-  /** Clears catch-up UI state (safety net if begin/end ever desync). */
+  /**
+   * Clears the catch-up UI flags (safety net if the overlay's begin/end ever desync). THE FLAGS ONLY:
+   * the buffering window and the rows it holds belong to the drain that opened it, whose close stores
+   * them (review of #4054 - group creation called this mid-drain and the close found nothing to store).
+   */
   function resetMessageCatchupState() {
     messageCatchupDepth = 0;
     isMessageCatchupActive = false;
     isCatchupOverlayVisible = false;
-    bulkIngestActive = false;
-    warnIfDiscardingBuffered('resetMessageCatchupState');
-    bulkIngestBuffer.clear();
   }
 
   /**
@@ -801,6 +805,10 @@ export function useMessaging() {
       for (const entry of entries) if (entry.options.frameId) frames.add(entry.options.frameId);
     }
     for (const id of framesBeingStored.keys()) frames.add(id);
+    // A buffered row is shown nowhere and stored nowhere until a store takes it.
+    for (const entries of bulkIngestBuffer.values()) {
+      for (const entry of entries) if (entry.frameId) frames.add(entry.frameId);
+    }
     return frames;
   }
 
@@ -1314,8 +1322,8 @@ export function useMessaging() {
     } finally {
       if (bufferUi) {
         bulkIngestActive = false;
-        warnIfDiscardingBuffered('endBulkMessageIngest');
-        bulkIngestBuffer.clear();
+        // Never cleared here: a store that did not take everything leaves it for the next one.
+        if (bulkIngestBuffer.size > 0) noteBufferedRowsCarried('a window closed');
         // A banner this window raised with no overlay depth behind it ends with the window: its
         // rows are on screen now (see `isCatchupOverlayVisible`).
         if (messageCatchupDepth === 0) isCatchupOverlayVisible = false;
@@ -2073,11 +2081,11 @@ export function useMessaging() {
 
     // An OWN message THIS DEVICE COMPOSED is never deferred, and that is a difference in kind rather
     // than a tuning choice (`bulkWindowHolds` says which arrivals wait for the flush - an own message
-    // decrypted from a frame, written on this account's other device, is one of them). The bulk buffer exists to stop a large inbound drain re-rendering the list message by
-    // message - but MLS gives no echo of your own message, so THIS call is the only writer the
-    // sender's copy will ever get, and the buffer is discarded without flushing by a second drain
-    // (`beginBulkMessageIngest` clears unconditionally) and by `resetMessageCatchupState`. The
-    // outbox cannot repair it either: `persistSent` looks the message up in `conversations`, which a
+    // decrypted from a frame, written on this account's other device, is one of them). The bulk
+    // buffer exists to stop a large inbound drain re-rendering the list message by message - but MLS
+    // gives no echo of your own message, so THIS call is the only writer the sender's copy will ever
+    // get, and the buffer used to be discarded without flushing (by a second drain and by
+    // `resetMessageCatchupState`, both closed since #4054). The outbox cannot repair it either: `persistSent` looks the message up in `conversations`, which a
     // buffered message never reached, and returns without writing. So a send composed during any
     // drain window died before it was persisted - the receiver had it and the sender lost it at the
     // next load (WP-ECHO-1). It also explains why the OFFLINE path was always correct: offline there
@@ -2893,7 +2901,7 @@ export function useMessaging() {
       // THE SECOND SILENT RETURN, and the more dangerous one: these messages were ACCEPTED into the
       // bulk buffer, which means the conversation was in the map when they arrived and is not any
       // more. They are dropped here without being rendered or persisted, and nothing else in the
-      // system would ever mention them again. Same rule as `warnIfDiscardingBuffered`: discarding
+      // system would ever mention them again. Same rule as `noteBufferedRowsCarried`: discarding
       // may be right, being silent about it never is.
       console.warn(
         `[ADD_MSG] conversation "${normalized}" vanished between buffering and flush - dropping ${messages.length} message(s), never rendered nor persisted`
@@ -3315,7 +3323,12 @@ export function useMessaging() {
       publishTabMessageUpdate({
         type: 'messages_batch',
         conversationId: normalized,
-        messages: toAdd,
+        // AND THE PREVIEWS IT UPGRADED, as shown: a follower holding the caption takes the body
+        // (`mergeRelayedBatch`) - the window holds upgrades since #4054, so this is their only relay.
+        messages:
+          upgradedById.size > 0
+            ? [...toAdd, ...merged.filter((m) => upgradedById.has(m.id))]
+            : toAdd,
         ...tabSeed(advanceLastMessageAt(base.lastMessageAt, toAdd)),
         unreadCount: nextUnreadCount,
       });
@@ -5147,7 +5160,8 @@ export function useMessaging() {
         // From whichever tab forwards: a follower hands the frame to the leader (`frameFromAnyTab`).
         await sendFrameFromThisTab(mlsService, convo.id, protoBytes, { messageId });
         const payload = serializeEnvelope(mkMediaEnvelope({ ...media }, env.caption));
-        await addMessageToChat(ctx.userId, payload, targetName, ctx, { messageId });
+        // Sent already (the frame left above): its state says it was composed here (`ownMessageAppended`).
+        await addMessageToChat(ctx.userId, payload, targetName, ctx, { messageId, status: 'sent' });
         return { success: true };
       }
 

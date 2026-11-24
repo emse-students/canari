@@ -775,8 +775,8 @@ export class MlsPerGroupScheduler {
         // Both branches go through `guarded`, and so does everything else awaited in this method:
         // an unguarded await here is the freeze this class has already shipped twice.
         if (msg.isWelcome) {
-          await this.guarded(`processMessage (Welcome, ${where})`, () => processMessage(msg));
           framesHandled++;
+          await this.guarded(`processMessage (Welcome, ${where})`, () => processMessage(msg));
         } else {
           // The ACQUISITION is guarded separately from the work, and the two must not nest:
           // wrapping `runUnderMlsLock` whole made a hung handler report BOTH labels, which is
@@ -801,8 +801,8 @@ export class MlsPerGroupScheduler {
             continue;
           }
           try {
-            await this.guarded(`processMessage (${where})`, () => processMessage(msg));
             framesHandled++;
+            await this.guarded(`processMessage (${where})`, () => processMessage(msg));
           } finally {
             release();
           }
