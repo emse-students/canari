@@ -16,3 +16,14 @@
 if ((expect.getState().testPath ?? '').endsWith('.integration.spec.ts')) {
   jest.setTimeout(60_000);
 }
+
+/**
+ * THE INTERNAL SECRET OF AN INTEGRATION SPEC. The services that call core-service read
+ * `INTERNAL_SECRET` when they are built and WARN that every internal call "will be refused" when it
+ * is unset - true of a deployment missing it, a false accusation in a spec whose core-service is a
+ * double. Set once here for the class (an explicit value from the environment wins), so the line is
+ * left to mean what it says: a spec that wants to see it unset deletes the variable and asserts it.
+ */
+if ((expect.getState().testPath ?? '').endsWith('.integration.spec.ts')) {
+  process.env.INTERNAL_SECRET ||= 'integration-spec-internal-secret';
+}

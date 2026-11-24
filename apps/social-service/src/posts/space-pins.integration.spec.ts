@@ -237,7 +237,10 @@ maybe('pins per space against PostgreSQL', () => {
       `INSERT INTO post_republications ("postId", "associationId", "republishedBy") VALUES ($1, $2, 'o')`,
       [P.ga, A.clubArch]
     );
-    const redis = { deleteByPattern: jest.fn(() => Promise.resolve(0)) };
+    const redis = {
+      incr: jest.fn(() => Promise.resolve(1)),
+      deleteByPattern: jest.fn(() => Promise.resolve(0)),
+    };
     service = new SpacePinsService(
       { manager: ds.manager } as unknown as Repository<Post>,
       redis as unknown as RedisService
@@ -380,6 +383,7 @@ maybe('pins per space against PostgreSQL', () => {
     return new SpacePinsService(
       { manager } as unknown as Repository<Post>,
       {
+        incr: () => Promise.resolve(1),
         deleteByPattern: () => Promise.resolve(0),
       } as unknown as RedisService
     );

@@ -32,6 +32,7 @@ import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import { RECORD_CANCELLED_SQL, RECORD_DEPARTED_SQL } from './distribution-departures';
 import type { RedisService } from '../common/redis';
 import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -245,6 +246,15 @@ maybe('a key-group departure against the drain asking how it ended (PostgreSQL)'
     } finally {
       await release(question);
     }
+
+    takeLogged(
+      'warn',
+      /^\[KEY_DISTRIBUTION\] departure CANCELLED before its roster write scope=channel:[0-9a-f-]{36} user=leaver-c departure=9 reason=left_channel - rolled back, retryable$/
+    );
+    takeLogged(
+      'warn',
+      '[KEY_DISTRIBUTION] departure ABANDONED reason=left_channel begun=1: The departure could not be completed, retry. - settling what it began'
+    );
   });
 
   /**
@@ -307,6 +317,11 @@ maybe('a key-group departure against the drain asking how it ended (PostgreSQL)'
     } finally {
       await release(removal);
     }
+
+    takeLogged(
+      'warn',
+      '[KEY_DISTRIBUTION] departure ABANDONED reason=removed_from_channel begun=1: REMOVAL_EXCEEDS_ACTOR - settling what it began'
+    );
   });
 
   it('refuses an outcome the CHECK does not name', async () => {

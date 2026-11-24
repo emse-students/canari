@@ -1,0 +1,3 @@
+### Fixed - the social-service integration job prints no WARN or ERROR line a spec did not assert
+
+The specs' doubles now implement what the code under test calls (`incr`, `incrEach`, `deleteMatching`, `notifyPostActivity`, the internal secret), so no run logs a harness gap. A log guard (`integration-log-guard.it-fixture.ts`) records every WARN/ERROR an integration test provokes and FAILS the test unless it asserted each with `takeLogged`; nothing is silenced. The five cache and reel sweeps that passed the error as Nest's context argument now describe it in the message (`describeError`, shared with the push service).

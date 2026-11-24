@@ -33,6 +33,7 @@ import { ChannelMember } from './entities/channel-member.entity';
 import { ChannelMessage } from './entities/channel-message.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import type { RedisService } from '../common/redis';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -171,6 +172,15 @@ maybe('role display names against PostgreSQL', () => {
     }
     expect((await rowOf(ids.member)).displayLabel).toBeNull();
     expect(publish).not.toHaveBeenCalled();
+
+    takeLogged(
+      'warn',
+      /^\[ROLE\] REFUSED rename role=[0-9a-f-]{36} - not an administrator workspace=[0-9a-f-]{36} by=mod1$/
+    );
+    takeLogged(
+      'warn',
+      /^\[ROLE\] REFUSED rename role=[0-9a-f-]{36} - not an administrator workspace=[0-9a-f-]{36} by=m1$/
+    );
   });
 
   it('refuses a stranger to the community with the same typed 403', async () => {
@@ -179,6 +189,11 @@ maybe('role display names against PostgreSQL', () => {
       status: 403,
       code: 'ROLE_RENAME_REQUIRES_ADMIN',
     });
+
+    takeLogged(
+      'warn',
+      /^\[ROLE\] REFUSED rename role=[0-9a-f-]{36} - not an administrator workspace=[0-9a-f-]{36} by=nobody$/
+    );
   });
 
   it('refuses a name that is too long or holds a control character, typed 400', async () => {
@@ -271,5 +286,10 @@ maybe('role display names against PostgreSQL', () => {
       status: 403,
       code: 'ROLE_RENAME_REQUIRES_ADMIN',
     });
+
+    takeLogged(
+      'warn',
+      /^\[ROLE\] REFUSED rename role=[0-9a-f-]{36} - not an administrator workspace=[0-9a-f-]{36} by=a2$/
+    );
   });
 });

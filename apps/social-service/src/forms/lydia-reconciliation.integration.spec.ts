@@ -32,6 +32,7 @@ import { AssociationProduct } from '../associations/entities/association-product
 import { ProductsService } from '../associations/products.service';
 import { LydiaReconciliationService } from './lydia-reconciliation.service';
 import { LYDIA_REFUSALS_FINAL, type LydiaRefusalsFinal } from '../common/core-payment-error';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -328,6 +329,11 @@ RESET lock_timeout;`
     expect(verifiedReads).toBe(1);
     await sweep.sweepFormPayments(await cutoffNow());
     expect(verifiedReads).toBe(1);
+
+    takeLogged(
+      'error',
+      /^\[RECONCILE\] submission [0-9a-f-]{36} \(request aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa14\): Lydia's answer \(paid, code 1\) does NOT verify over 1500 cents with the Business key - another amount, another key, or not Lydia; nothing settled$/
+    );
   });
 
   // With a clock each, the expiry's later now() took in a row the read's earlier SELECT had not:
@@ -406,6 +412,11 @@ RESET lock_timeout;`
 
       await sweep.sweepProductCheckouts();
       expect(verifiedReads).toBe(1);
+
+      takeLogged(
+        'error',
+        /^\[SHOP\] checkout [0-9a-f]{6,8}: product [0-9a-f]{6,8} no longer exists - payment recorded paid_not_granted, nothing delivered; a refund is owed$/
+      );
     });
 
     it('records ONE purchase when the sweep and seven payer returns settle one attempt at once', async () => {
@@ -421,6 +432,11 @@ RESET lock_timeout;`
         row.userId,
       ]);
       expect(records).toHaveLength(1);
+
+      takeLogged(
+        'error',
+        /^\[SHOP\] checkout [0-9a-f]{6,8}: product [0-9a-f]{6,8} no longer exists - payment recorded paid_not_granted, nothing delivered; a refund is owed$/
+      );
     });
 
     it('closes a verified expired attempt', async () => {
@@ -439,6 +455,15 @@ RESET lock_timeout;`
       await sweep.sweepProductCheckouts();
       expect(await statusOf(row.id)).toBe('paid');
       expect(verifiedReads).toBe(2);
+
+      takeLogged(
+        'warn',
+        '[RECONCILE] boutique: 1 call(s) got no answer this tick (core or Lydia unreachable, a 5xx, a timeout, an unknown verdict) - left open, read again next tick'
+      );
+      takeLogged(
+        'error',
+        /^\[SHOP\] checkout [0-9a-f]{6,8}: product [0-9a-f]{6,8} no longer exists - payment recorded paid_not_granted, nothing delivered; a refund is owed$/
+      );
     });
 
     // Control: the sweep that closed its attempt in a catch expired this one - Lydia said PAID and
@@ -456,6 +481,15 @@ RESET lock_timeout;`
       expect(
         await ds.query(`SELECT 1 FROM purchase_records WHERE "userId" = $1`, [row.userId])
       ).toHaveLength(1);
+
+      takeLogged(
+        'error',
+        /^\[RECONCILE\] boutique: 1 settlement write\(s\) FAILED this tick after a verified read \(first: deadlock detected\) - Lydia answered PAID for 1, NOT recorded yet: [0-9a-f-]{36} - left open, settled again next tick CheckoutSettlementFailed: deadlock detected$/
+      );
+      takeLogged(
+        'error',
+        /^\[SHOP\] checkout [0-9a-f]{6,8}: product [0-9a-f]{6,8} no longer exists - payment recorded paid_not_granted, nothing delivered; a refund is owed$/
+      );
     });
 
     // Closed only on a refusal on the allowlist - EMPTY for real until a code is measured final on
@@ -468,6 +502,15 @@ RESET lock_timeout;`
       expect(await statusOf(row.id)).toBe('expired');
       await withFinal.sweepProductCheckouts();
       expect(verifiedReads).toBe(1);
+
+      takeLogged(
+        'error',
+        /^\[RECONCILE\] checkout [0-9a-f-]{36} \(request aaaaaaaaaaaaaaaaaaaaaaaaaaaaa3f1\): the read was REFUSED by Lydia \(error test-only-final\) - nothing settled$/
+      );
+      takeLogged(
+        'error',
+        /^\[SHOP\] checkout [0-9a-f]{6,8} is past its expire_time and still unproven \(its reconciliation read: refused for good \(error test-only-final\)\) - closed as expired so its buyer may retry; a payment taken before it expired is still recorded by its confirm callback$/
+      );
     });
 
     // Error 2 was measured on a uuid Lydia never issued; on an issued one it is unmeasured, and a
@@ -480,6 +523,15 @@ RESET lock_timeout;`
       lydiaRefuses = null;
       await sweep.sweepProductCheckouts();
       expect(await statusOf(row.id)).toBe('paid');
+
+      takeLogged(
+        'error',
+        /^\[RECONCILE\] boutique: 1 attempt\(s\) left open on an answer that is not final - [0-9a-f-]{36} \(read refused, error 2, not known final\) - read again next tick; said again when this list changes \(0 before\)$/
+      );
+      takeLogged(
+        'error',
+        /^\[SHOP\] checkout [0-9a-f]{6,8}: product [0-9a-f]{6,8} no longer exists - payment recorded paid_not_granted, nothing delivered; a refund is owed$/
+      );
     });
 
     // Any OTHER refusal can be a state of Lydia (error 5, "temporarily blocked"): closing it lost
@@ -492,6 +544,15 @@ RESET lock_timeout;`
       lydiaRefuses = null;
       await sweep.sweepProductCheckouts();
       expect(await statusOf(row.id)).toBe('paid');
+
+      takeLogged(
+        'error',
+        /^\[RECONCILE\] boutique: 1 attempt\(s\) left open on an answer that is not final - [0-9a-f-]{36} \(read refused, error 5, not known final\) - read again next tick; said again when this list changes \(0 before\)$/
+      );
+      takeLogged(
+        'error',
+        /^\[SHOP\] checkout [0-9a-f]{6,8}: product [0-9a-f]{6,8} no longer exists - payment recorded paid_not_granted, nothing delivered; a refund is owed$/
+      );
     });
 
     it('leaves open an attempt read while core answers it is not ready (payments switched off)', async () => {
@@ -502,6 +563,15 @@ RESET lock_timeout;`
       coreNotReady = false;
       await sweep.sweepProductCheckouts();
       expect(await statusOf(row.id)).toBe('paid');
+
+      takeLogged(
+        'error',
+        /^\[RECONCILE\] boutique: 1 attempt\(s\) left open on an answer that is not final - [0-9a-f-]{36} \(read: core answered HTTP 503 about itself\) - read again next tick; said again when this list changes \(0 before\)$/
+      );
+      takeLogged(
+        'error',
+        /^\[SHOP\] checkout [0-9a-f]{6,8}: product [0-9a-f]{6,8} no longer exists - payment recorded paid_not_granted, nothing delivered; a refund is owed$/
+      );
     });
 
     // The cancel's allowlist is EMPTY for real; a code put on it through the same mechanism closes.
@@ -518,6 +588,15 @@ RESET lock_timeout;`
       const row = await attempt();
       await withFinal.sweepProductCheckouts();
       expect(await statusOf(row.id)).toBe('expired');
+
+      takeLogged(
+        'warn',
+        /^\[RECONCILE\] checkout [0-9a-f-]{36} \(request aaaaaaaaaaaaaaaaaaaaaaaaaaaaa3f5\): still OPEN at Lydia past the expire_time Canari sent it - cancelling it there, then closing it$/
+      );
+      takeLogged(
+        'error',
+        /^\[SHOP\] checkout [0-9a-f]{6,8} is past its expire_time and still unproven \(its reconciliation read: still open at Lydia past its end; its cancel at Lydia was refused for good \(error 3\)\) - closed as expired so its buyer may retry; a payment taken before it expired is still recorded by its confirm callback$/
+      );
     });
 
     it('leaves open an attempt whose CANCEL Lydia refused with a code not known final, accused once per tick', async () => {
@@ -541,6 +620,15 @@ RESET lock_timeout;`
       lydia = { state: 'cancelled-or-expired', raw: '6', verification: 'verified' };
       await sweep.sweepProductCheckouts();
       expect(await statusOf(row.id)).toBe('expired');
+
+      takeLogged(
+        'warn',
+        /^\[RECONCILE\] checkout [0-9a-f-]{36} \(request aaaaaaaaaaaaaaaaaaaaaaaaaaaaa3f6\): still OPEN at Lydia past the expire_time Canari sent it - cancelling it there, then closing it$/
+      );
+      takeLogged(
+        'error',
+        /^\[RECONCILE\] boutique: 1 attempt\(s\) left open on an answer that is not final - [0-9a-f-]{36} \(cancel refused, error 3, not known final\) - read again next tick; said again when this list changes \(0 before\)$/
+      );
     });
 
     it('cancels at Lydia, then closes, an attempt Lydia verifiably says is still open past its end', async () => {
@@ -550,6 +638,11 @@ RESET lock_timeout;`
       expect(await statusOf(row.id)).toBe('cancelled');
       await sweep.sweepProductCheckouts();
       expect(verifiedReads).toBe(1);
+
+      takeLogged(
+        'warn',
+        /^\[RECONCILE\] checkout [0-9a-f-]{36} \(request aaaaaaaaaaaaaaaaaaaaaaaaaaaaa3f7\): still OPEN at Lydia past the expire_time Canari sent it - cancelling it there, then closing it$/
+      );
     });
 
     it('closes an attempt its one read could not verify, never reads it again, and its callback still records the payment', async () => {
@@ -580,6 +673,23 @@ RESET lock_timeout;`
       expect(
         await ds.query(`SELECT 1 FROM purchase_records WHERE "userId" = $1`, [unproven.userId])
       ).toHaveLength(1);
+
+      takeLogged(
+        'warn',
+        /^\[RECONCILE\] checkout [0-9a-f-]{36} \(request aaaaaaaaaaaaaaaaaaaaaaaaaaaaa3f8\): Lydia's answer \(paid, code 1\) is unsigned, not verified - nothing settled$/
+      );
+      takeLogged(
+        'error',
+        /^\[SHOP\] checkout [0-9a-f]{6,8} is past its expire_time and still unproven \(its reconciliation read: unsigned\) - closed as expired so its buyer may retry; a payment taken before it expired is still recorded by its confirm callback$/
+      );
+      takeLogged(
+        'error',
+        /^\[SHOP\] checkout [0-9a-f]{6,8} was expired and the provider says PAID - recorded; check the buyer's other attempts of product 00000000 for a charge to refund$/
+      );
+      takeLogged(
+        'error',
+        /^\[SHOP\] checkout [0-9a-f]{6,8}: product [0-9a-f]{6,8} no longer exists - payment recorded paid_not_granted, nothing delivered; a refund is owed$/
+      );
     });
   });
 });

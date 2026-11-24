@@ -43,6 +43,7 @@ import {
   eventReachesSpaceMatchingSql,
   eventVisibleToViewerSql,
 } from '../spaces/reader-spaces';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 /** The service's own anonymous-read clause, run against a capturing query builder. */
 const restrictAnonymous = (
@@ -409,6 +410,23 @@ maybe("an institution's event reach against PostgreSQL (migration 165)", () => {
     expect(spaces).toEqual(expect.arrayContaining([ICM_SE, ISMIN_SE]));
     expect(await code(institutionReachOptionsOffered(ds.manager, A, 'association', 'event'))).toBe(
       INSTITUTION_REACH_CODES.notOffered
+    );
+
+    takeLogged(
+      'warn',
+      '[INSTITUTION_REACH] refused (institution_reach_required): an institution event without a reach'
+    );
+    takeLogged(
+      'warn',
+      /^\[INSTITUTION_REACH\] refused \(institution_reach_outside_audience\): 1 space\(s\) outside the audience of [0-9a-f]{6,8}$/
+    );
+    takeLogged(
+      'warn',
+      '[INSTITUTION_REACH] refused (institution_reach_not_offered): on an event of an entity of type association'
+    );
+    takeLogged(
+      'warn',
+      /^\[INSTITUTION_REACH\] refused \(institution_reach_not_offered\): options asked of [0-9a-f]{6,8} \(event\), which is not an institution$/
     );
   });
 });

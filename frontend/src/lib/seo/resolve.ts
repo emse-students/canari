@@ -140,6 +140,7 @@ const PAGE_TITLES: Record<string, () => string> = {
   '/admin/spaces': () => adminTitle(m.admin_spaces_title()),
   '/admin/status': () => adminTitle(m.admin_status_title()),
   '/admin/storage': () => adminTitle(m.admin_storage_label()),
+  '/admin/usage': () => adminTitle(m.admin_usage_label()),
   '/admin/database': () => adminTitle(m.admin_database_label()),
   '/admin/users': () => adminTitle(m.admin_admins_label()),
   '/associations/new': () => m.assoc_new_heading(),

@@ -465,6 +465,7 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
         {} as never,
         viaClient as never,
         {
+          incr: () => Promise.resolve(1),
           deleteByPattern: () => Promise.resolve(0),
         } as never
       );
