@@ -4933,7 +4933,7 @@ export function useMessaging() {
         `[REEL] 410 on ${messageId.slice(0, 8)} not recorded in memory: ${key ? 'its conversation does not hold it' : 'no conversation key was given'}`
       );
       ctx.log(
-        `[REEL] 410 on ${messageId.slice(0, 8)} not recorded in memory: no loaded conversation holds it`
+        `[REEL] 410 on ${messageId.slice(0, 8)} not recorded in memory: ${key ? 'its conversation does not hold the row' : 'no conversation key was given'}`
       );
     } else {
       if (convo.messages[idx].mediaPurgedAt) return;
@@ -4947,11 +4947,21 @@ export function useMessaging() {
       );
       return;
     }
+    if (!key) {
+      // The disk is scoped too: a read or a write by id alone could reach a same-id row of another
+      // conversation, and expire a message that is not the one whose tile answered 410.
+      ctx.log(
+        `[REEL] 410 on ${messageId.slice(0, 8)} NOT persisted: no conversation key to scope the row - a reload asks again`
+      );
+      return;
+    }
     try {
       // THE FIRST INSTANT IS THE STORED ONE when there is one: memory may not hold the message (or
       // hold it from before a reload of another tab), so "already recorded" is asked of the row
       // itself, and an existing record is never overwritten - memory is aligned to it instead.
-      const stored = await ctx.storage.getMessage(messageId, ctx.deviceKeyB64);
+      const stored = (
+        await ctx.storage.getMessagesByIds(key, [messageId], ctx.deviceKeyB64)
+      ).rows.get(messageId);
       if (!stored) {
         ctx.log(
           `[REEL] 410 on ${messageId.slice(0, 8)} NOT persisted (its row is absent or unreadable) - a reload asks again`
@@ -4959,19 +4969,16 @@ export function useMessaging() {
         return;
       }
       if (stored.mediaPurgedAt) {
-        alignMemoryPurge(messageId, stored.mediaPurgedAt, ctx, conversationKey);
+        alignMemoryPurge(messageId, stored.mediaPurgedAt, ctx, key);
         ctx.log(`[REEL] 410 on ${messageId.slice(0, 8)} already on its row - the first kept`);
         return;
       }
-      await ctx.storage.updateMessage(
-        stored.conversationId,
-        messageId,
-        { mediaPurgedAt: atMs },
-        ctx.deviceKeyB64
-      );
+      await ctx.storage.updateMessage(key, messageId, { mediaPurgedAt: atMs }, ctx.deviceKeyB64);
       // `updateMessage` writes nothing on a row it cannot read, and says nothing: the read back is
       // what tells "on disk" from "asked".
-      const back = await ctx.storage.getMessage(messageId, ctx.deviceKeyB64);
+      const back = (
+        await ctx.storage.getMessagesByIds(key, [messageId], ctx.deviceKeyB64)
+      ).rows.get(messageId);
       ctx.log(
         back?.mediaPurgedAt
           ? `[REEL] 410 on ${messageId.slice(0, 8)} recorded on its row`

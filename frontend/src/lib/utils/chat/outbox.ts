@@ -130,6 +130,7 @@ import {
   publishOutboxEntryFailed,
   publishOutboxEntryRetired,
   subscribeTabOutboxEvents,
+  type TabOutboxEvent,
   forwardReelTakeWrite,
   acknowledgeReelTakeAdoption,
 } from '$lib/mls-client/tabMessageSync';
@@ -1483,7 +1484,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
 
   // Cross-tab half of the leader gate: the leader drains on a follower's behalf, and the follower
   // settles the echo it is still showing as `pending` once the leader reports the send.
-  const unsubscribeTabOutbox = subscribeTabOutboxEvents((event) => {
+  const onTabOutboxEvent = (event: TabOutboxEvent): void => {
     if (event.type === 'outbox_flush_request') {
       if (!getIsTabLeader()) return;
       log('[OUTBOX] Flush requested by a follower tab.');
@@ -1528,6 +1529,31 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       return;
     }
     if (getIsTabLeader()) return;
+    // LEGACY SHIM (docs/wiki/legacy-compatibility.md): a leader tab of the previous build, during a
+    // rolling deploy, publishes these three without `conversationId`. The follower reads the
+    // conversation from the durable queue entry (this account's own, so scoped and own-only), and
+    // accuses only when even that fails - the row would otherwise keep spinning, unexplained.
+    if (
+      (event.type === 'outbox_entry_sent' ||
+        event.type === 'outbox_entry_failed' ||
+        event.type === 'outbox_entry_retired') &&
+      !event.conversationId
+    ) {
+      void readQueue('legacy tab event').then((queue) => {
+        const conversationId = queue.find((e) => e.id === event.messageId)?.conversationId;
+        if (!conversationId) {
+          console.warn(
+            `[OUTBOX] ${event.messageId.slice(0, 8)}… ${event.type} from a tab that names no conversation, and no queue entry names it either - nothing is patched`
+          );
+          return;
+        }
+        log(
+          `[OUTBOX] ${event.messageId.slice(0, 8)}… ${event.type} carried no conversation (older leader tab) - read from its queue entry`
+        );
+        onTabOutboxEvent({ ...event, conversationId });
+      });
+      return;
+    }
     if (event.type === 'outbox_entry_retired') {
       // ONLY A MESSAGE THIS TAB HOLDS: a reason for any other would sit in the map for the session,
       // and the row, when it loads, reads its own reason from the store anyway.
@@ -1559,7 +1585,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // A text this tab showed failed (and then retried elsewhere) keeps no `failed` view once sent.
     clearUpload(event.messageId);
     if (event.content) updateMessageContent(event.messageId, event.content, event.conversationId);
-  });
+  };
+  const unsubscribeTabOutbox = subscribeTabOutboxEvents(onTabOutboxEvent);
 
   /**
    * Locates a message in ITS OWN conversation: the one it was queued for, followed through a re-key
@@ -1583,13 +1610,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       );
       return null;
     }
-    const moved = movedKeyOf(conversationId);
-    const keys = [conversationId, conversationId.toLowerCase(), ...(moved ? [moved] : [])];
-    let key = keys.find((k) => conversations.has(k));
-    // The queue names the live group id, which may differ from the map key of a re-keyed thread.
-    if (key === undefined) key = [...conversations].find(([, c]) => c.id === conversationId)?.[0];
-    const convo = key === undefined ? undefined : conversations.get(key);
-    if (key === undefined || !convo) return null;
+    // THE MAP KEY IS THE ROW'S `id` (chat.md, "One key per conversation"): the key the thread was
+    // queued under, or the one a re-key moved it to - no other form of it exists to try.
+    const key = movedKeyOf(conversationId) ?? conversationId;
+    const convo = conversations.get(key);
+    if (!convo) return null;
     const idx = convo.messages.findIndex((m) => m.id === messageId && (!requireOwn || m.isOwn));
     return idx === -1 ? null : { key, convo, idx };
   }

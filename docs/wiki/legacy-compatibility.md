@@ -91,6 +91,19 @@ owner's go of 2026-11-09). An older figure on this page is the floor at the date
   `cartesWithheld` with the WARN `internal.controller.ts` writes from it. The publish refusal stays:
   it is the rule, not a shim.
 
+### A cross-tab `outbox_entry_*` event with no `conversationId` (2026-11-24)
+
+A follower tab patches a row from the leader tab's `outbox_entry_sent`, `outbox_entry_failed` and
+`outbox_entry_retired` events, and since this change those carry `conversationId`, because a message
+id travels to peers and a lookup by id alone can reach a peer's row of the same id
+([chat](frontend/modules/chat.md)). A leader tab of the previous build, alive during a rolling
+deploy, publishes them without it. The shim in `onTabOutboxEvent` (`outbox.ts`) reads the
+conversation from the durable queue entry of that id (this account's own), then handles the event
+as usual; only when no entry names it does it warn, and patch nothing. **Removal: 2026-12-15.** A
+tab lives one page life and the deploy reloads it, so three weeks past this version's first
+pre-release no tab of the old build is left: delete the shim block and make `conversationId`
+required on the three event types.
+
 ### The restore options' `originsDigest`, for builds before `1.8.0` (2026-11-23)
 
 - **What.** `POST /api/auth/restore/registration/options` still answers `originsDigest` beside the

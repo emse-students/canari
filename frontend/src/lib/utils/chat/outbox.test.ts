@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { SvelteMap } from 'svelte/reactivity';
 import { TransportFailureError } from '$lib/utils/transportFailure';
+import { forgetConversationMoves, recordConversationMove } from '$lib/utils/chat/conversationMoves';
 
 // Encryption is leader-only (WP-MULTITAB-1), so every flush case here is a leader unless it says
 // otherwise. The cross-tab channel is stubbed too: what matters is which side is asked to act,
@@ -1944,7 +1945,45 @@ describe('outbox flusher - tab leadership (WP-MULTITAB-1)', () => {
     outbox.dispose();
   });
 
-  it('an event with no conversation patches nothing and accuses (no search across conversations)', () => {
+  it('a follower follows a re-key: the conversation the message was queued under has moved', () => {
+    isTabLeaderMock.mockReturnValue(false);
+    recordConversationMove('old-g', 'g1');
+    const conversations = new SvelteMap<string, Conversation>([
+      ['other', peerConvoWith('other', ['t1'], 'pending')],
+      ['g1', convoWith('g1', ['t1'])],
+    ]);
+    const outbox = createOutbox(
+      makeDeps({ mlsService: makeMls(), storage: makeStorage([]), conversations })
+    );
+    const handler = tabOutboxMock.subscribeTabOutboxEvents.mock.calls.at(-1)![0];
+    handler({ type: 'outbox_entry_sent', messageId: 't1', conversationId: 'old-g' });
+    expect(conversations.get('g1')!.messages[0].status).toBe('sent');
+    expect(conversations.get('other')!.messages[0].status).toBe('pending');
+    outbox.dispose();
+    forgetConversationMoves();
+  });
+
+  it('an event from an older leader tab (no conversation) is resolved from the durable queue entry, scoped', async () => {
+    isTabLeaderMock.mockReturnValue(false);
+    const conversations = new SvelteMap<string, Conversation>([
+      ['other', peerConvoWith('other', ['t1'], 'pending')],
+      ['g1', convoWith('g1', ['t1'])],
+    ]);
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService: makeMls(),
+        storage: makeStorage([textEntry('t1', 'g1', 100)]),
+        conversations,
+      })
+    );
+    const handler = tabOutboxMock.subscribeTabOutboxEvents.mock.calls.at(-1)![0];
+    handler({ type: 'outbox_entry_sent', messageId: 't1' });
+    await vi.waitFor(() => expect(conversations.get('g1')!.messages[0].status).toBe('sent'));
+    expect(conversations.get('other')!.messages[0].status).toBe('pending');
+    outbox.dispose();
+  });
+
+  it('an older-tab event no queue entry names accuses and patches nothing', async () => {
     isTabLeaderMock.mockReturnValue(false);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['t1'])]]);
@@ -1953,8 +1992,10 @@ describe('outbox flusher - tab leadership (WP-MULTITAB-1)', () => {
     );
     const handler = tabOutboxMock.subscribeTabOutboxEvents.mock.calls.at(-1)![0];
     handler({ type: 'outbox_entry_sent', messageId: 't1' });
+    await vi.waitFor(() =>
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('no queue entry'))
+    );
     expect(conversations.get('g1')!.messages[0].status).toBe('pending');
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('no conversation key'));
     warn.mockRestore();
     outbox.dispose();
   });
