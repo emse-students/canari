@@ -3307,8 +3307,8 @@ account is never staff, whatever its posts (`review-cohort.ts`). Ships in `1.8.1
 2, *the essential is never lost* ([principes](../principes.md)): what the School addresses to its
 staff reaches all of its staff, an employee who also studied there included.
 
-- **ONE definition per layer.** Server: `STAFF_POSTS`, `isStaffSql` and its pure twin
-  `isStaffProfile` (`spaces/reader-spaces.ts`); `isCampusStaffSql` is a campus AND `isStaffSql`, and
+- **ONE definition per layer.** Server: `STAFF_POSTS`, `holdsStaffPost`, `isStaffSql` and its pure
+  twin `isStaffProfile` (`spaces/reader-spaces.ts`); `isCampusStaffSql` is a campus AND `isStaffSql`, and
   `campusWideReaderCampus` a campus AND `isStaffProfile`. `users.posts` is the shared `text[]` column
   core-service's migration 008 created and the OIDC callback rewrites at every sign-in, read in place
   - no migration, no copy. Client: `STAFF_POSTS` / `holdsStaffPost` (`profile/miconnectProfile.ts`),
@@ -3323,10 +3323,15 @@ staff reaches all of its staff, an employee who also studied there included.
   which hand-rolled "no cursus" and now asks `isCampusStaffSql`; its fingerprint therefore changes for
   an institution whose staff side changed, and a pending request is shown the new audience); the
   composer's "Personnel" hints and the privacy policy's sentence.
-- **Not changed (reversible, lead's choice):** `postReachesSpaceSql` and the anonymous agenda's
-  `eventReachesSpaceMatchingSql` still offer a "Personnel" item to no space as a space (pin, trend,
-  suggestion, anonymous feed); the forms' respondent status (`accountStatuses`, D2 of the forms: any
-  post, `ALUMNI` included) is a pricing fact of its own and keeps its rule.
+- **The space-level surfaces keep never showing a "Personnel" item (owner, 2026-11-24 evening).**
+  `postReachesSpaceSql` (pins, trends, suggestions) and the anonymous agenda's
+  `eventReachesSpaceMatchingSql` treat a space as its students: a "Personnel" post or event reaches
+  no space as a space, even though some of a space's students may now be staff - they read it through
+  their own doors.
+- **The forms' respondent status follows the same definition (owner, 2026-11-24 evening).**
+  `accountStatuses` (forms D2) made "staff" of ANY post, `ALUMNI` included; it now asks
+  `holdsStaffPost`, the same list, so an `ALUMNI` post alone is no longer "Personnel" on a form
+  ([forms](frontend/modules/forms.md)). The review-account exclusion stays the audiences' own.
 - **Measured on production, 2026-11-24 (read-only, counts only):** 594 accounts. The old rule's
   staff was every account with NO SPACE: 19 with no cursus (all with a campus) and 0 with a cursus
   naming no opened space. All 19 hold `EMSE` or `ME`, so **nobody stops being staff**; no account has

@@ -58,13 +58,23 @@ export interface StaffProfile extends ReaderProfile {
 const STAFF_POSTS: readonly string[] = ['EMSE', 'ME'];
 
 /**
- * The account is STAFF ({@link STAFF_POSTS}), and not a review account (`review-cohort.ts`: the
+ * `posts` holds a staff post ({@link STAFF_POSTS}); anything that is not an array holds none. The
+ * profile fact alone, which a form's respondent status reads too (owner, 2026-11-24 evening: "align
+ * the forms on EMSE/ME"); an AUDIENCE asks {@link isStaffProfile}, which also leaves review accounts
+ * out.
+ */
+export function holdsStaffPost(posts: unknown): boolean {
+  return Array.isArray(posts) && posts.some((p) => STAFF_POSTS.includes(p as string));
+}
+
+/**
+ * The account is STAFF ({@link holdsStaffPost}), and not a review account (`review-cohort.ts`: the
  * reviewers' accounts hold a post, and are kept out of every staff audience and count). The pure twin
  * of {@link isStaffSql}, which `reader-spaces.integration.spec.ts` holds it to.
  */
 export function isStaffProfile(user: StaffProfile): boolean {
   if (isInReviewCohort(user.id)) return false;
-  return Array.isArray(user.posts) && user.posts.some((p) => STAFF_POSTS.includes(p as string));
+  return holdsStaffPost(user.posts);
 }
 
 /**

@@ -1,5 +1,6 @@
 import { BadRequestException, Logger } from '@nestjs/common';
 import { clientVersionAtLeast } from '../common/client-version';
+import { holdsStaffPost } from '../spaces/reader-spaces';
 import { SPACE_CAMPUSES, SPACE_FORMATIONS } from '../spaces/space.entity';
 import type { IdentityExportLabels } from './export-labels';
 import {
@@ -44,7 +45,10 @@ export type AccountField = (typeof ACCOUNT_FIELDS)[number];
 export const DECLARED_FIELDS = ['cursus', 'status', 'campus'] as const;
 export type DeclaredField = (typeof DECLARED_FIELDS)[number];
 
-/** The respondent's status: a cursus makes a student, a post (EMSE, ME, Alumni) makes staff (D2). */
+/**
+ * The respondent's status: a cursus makes a student, a post EMSE or ME makes staff (D2, narrowed by
+ * the owner on 2026-11-24: ALUMNI alone is not staff - the one definition of the audiences).
+ */
 export const RESPONDENT_STATUSES = ['student', 'staff'] as const;
 export type RespondentStatus = (typeof RESPONDENT_STATUSES)[number];
 
@@ -243,15 +247,16 @@ export function askedOfMember(form: {
 }
 
 /**
- * The statuses an account holds: a student through any cursus, staff through any post. Both at
- * once is possible (D1, affiliations are cumulative); neither is an empty list.
+ * The statuses an account holds: a student through any cursus, staff through a post EMSE or ME
+ * (`holdsStaffPost`, owner 2026-11-24 - ALUMNI alone is neither). Both at once is possible (D1,
+ * affiliations are cumulative); neither is an empty list.
  */
 export function accountStatuses(account: AccountIdentity): RespondentStatus[] {
   const statuses: RespondentStatus[] = [];
   if (account.cursusViews.some((c) => c.promo !== null || c.formation !== null)) {
     statuses.push('student');
   }
-  if (account.posts.length > 0) statuses.push('staff');
+  if (holdsStaffPost(account.posts)) statuses.push('staff');
   return statuses;
 }
 
