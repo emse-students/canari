@@ -23,6 +23,7 @@ import {
   PENDING_MUTATIONS_PER_CONVERSATION,
   PENDING_MUTATIONS_PER_SENDER,
 } from '$lib/utils/chat/pendingMutations';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 const KEY = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
 const OTHER_KEY = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=';
@@ -834,7 +835,7 @@ describe.each(backends)('%s - a replay settles what it deferred', (_name, rig) =
       storage,
       deviceKey: () => KEY,
       conversations: new Map(),
-      messageReactions: new Map(),
+      messageReactions: new ReactionsByConversation(),
       log,
     } as unknown as PendingMutationDeps;
 
@@ -867,7 +868,7 @@ describe.each(backends)('%s - a replay never drops what it cannot settle', (_nam
       storage,
       deviceKey: () => KEY,
       conversations: new Map(),
-      messageReactions: new Map(),
+      messageReactions: new ReactionsByConversation(),
       log: vi.fn(),
     } as unknown as PendingMutationDeps;
 

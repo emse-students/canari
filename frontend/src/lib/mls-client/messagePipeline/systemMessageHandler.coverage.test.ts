@@ -1,4 +1,5 @@
 import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 /**
  * The frame that carries the fourth trigger: a peer stating where its OWN history begins.
@@ -47,7 +48,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     userId: ME,
     deviceKey: () => 'device-key',
     conversations,
-    messageReactions: new Map(),
+    messageReactions: new ReactionsByConversation(),
     addMessageToChat: vi.fn(),
     batchAddMessages: vi.fn(),
     deleteConversation: vi.fn(),

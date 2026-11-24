@@ -1,4 +1,5 @@
 import { handleSystemEvent } from './systemMessageHandler';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 /**
  * A `history_bundle` over a message this device ALREADY holds, carrying an edit it missed.
@@ -32,7 +33,7 @@ function makeCtx(senderNorm: string, held: Record<string, unknown>) {
     userId: 'me',
     deviceKey: () => 'device-key',
     conversations,
-    messageReactions: new Map(),
+    messageReactions: new ReactionsByConversation(),
     addMessageToChat: vi.fn(),
     batchAddMessages: vi.fn(),
     deleteConversation: vi.fn(),

@@ -4,6 +4,7 @@ import {
   resetHistoryDigestRendezvousForTests,
 } from '$lib/utils/chat/historyDigestRendezvous';
 import { flushMacrotask } from '../../../test/flush';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 /**
  * A DIGEST OVERHEARD BY A MEMBER THAT WAS NEITHER SIDE OF THE EXCHANGE.
@@ -44,7 +45,7 @@ function makeCtx(waitForGroupQueueIdle = vi.fn().mockResolvedValue(undefined)) {
     userId: ME,
     deviceKey: () => 'device-key',
     conversations,
-    messageReactions: new Map(),
+    messageReactions: new ReactionsByConversation(),
     addMessageToChat: vi.fn(),
     batchAddMessages: vi.fn(),
     deleteConversation: vi.fn(),

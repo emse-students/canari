@@ -1,4 +1,5 @@
-import type { Conversation, MessageReaction } from '$lib/types';
+import type { Conversation } from '$lib/types';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 /** Minimal Map-backed store matching `SvelteMap` usage in the message pipeline. */
 export function createTestConversations(
@@ -8,8 +9,9 @@ export function createTestConversations(
   return m as Map<string, Conversation> & { size: number };
 }
 
-export function createTestMessageReactions(): Map<string, MessageReaction[]> {
-  return new Map();
+/** An empty reactions store, keyed by conversation and message as the app's is. */
+export function createTestMessageReactions(): ReactionsByConversation {
+  return new ReactionsByConversation();
 }
 
 export function emptyConversation(id: string, overrides: Partial<Conversation> = {}): Conversation {

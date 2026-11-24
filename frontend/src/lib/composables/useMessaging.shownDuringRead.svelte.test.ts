@@ -343,7 +343,7 @@ describe('the last gaps (final check of #3988)', () => {
 
     // What the bubble reads: the map first, the row's own reactions otherwise.
     const [shown] = d.shown();
-    const bubble = d.messaging.messageReactions.get('p1') ?? shown.reactions ?? [];
+    const bubble = d.messaging.messageReactions.get(CONVO, 'p1') ?? shown.reactions ?? [];
     expect(bubble.map((r) => r.emoji).sort()).toEqual(['heart', 'plus-one']);
   });
 

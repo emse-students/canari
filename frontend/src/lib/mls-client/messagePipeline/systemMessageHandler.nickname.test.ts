@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 vi.mock('$lib/stores/userState.svelte', () => ({ currentUserId: () => 'me' }));
 vi.mock('$lib/users/blocks', () => ({ isBlockedWith: vi.fn(async () => false) }));
@@ -52,7 +53,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     userId: 'me',
     deviceKey: () => 'device-key',
     conversations,
-    messageReactions: new Map(),
+    messageReactions: new ReactionsByConversation(),
     addMessageToChat: vi.fn(),
     batchAddMessages: vi.fn(),
     deleteConversation: vi.fn(),

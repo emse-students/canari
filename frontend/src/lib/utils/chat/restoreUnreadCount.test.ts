@@ -15,6 +15,7 @@ import type { Conversation } from '$lib/types';
 import type { ConversationMeta, StoredMessage } from '$lib/db';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { connectivity } from '$lib/stores/connectivity.svelte';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   globalMessaging: { isMessageCatchupActive: false, resetMessageCatchupState: vi.fn() },
@@ -118,7 +119,7 @@ async function coldStart(
     storage: store,
     mlsService: opts.service ?? mls(),
     conversations,
-    messageReactions: new SvelteMap(),
+    messageReactions: new ReactionsByConversation(),
     userId: ME,
     deviceKeyB64: 'k',
     archivedConversationIds: [],

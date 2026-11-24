@@ -343,7 +343,7 @@ describe('a message and its mutations delivered in one drain', () => {
     );
     await bodyFrame(d, PEER, 'm1', 'a message');
 
-    expect(d.messaging.messageReactions.get('m1')).toEqual([
+    expect(d.messaging.messageReactions.get(CONVO, 'm1')).toEqual([
       expect.objectContaining({ emoji: '👍', userId: OTHER, removed: true }),
     ]);
     expect((await d.storage.getMessage(CONVO, 'm1', KEY))?.reactions).toEqual([

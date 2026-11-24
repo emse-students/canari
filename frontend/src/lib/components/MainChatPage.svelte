@@ -1800,7 +1800,9 @@
           onHideUnopenable={() => convs.handleHideUnopenable(convCtx())}
           onGroupLeave={() => void convs.handleLeaveGroup(convCtx())}
           onGroupRemoveMember={(memberId) => void convs.handleRemoveMember(memberId, convCtx())}
-          messageReactions={isSelectedChannel ? channelReactions : messaging.messageReactions}
+          messageReactions={isSelectedChannel
+            ? channelReactions
+            : messaging.messageReactions.of(convs.selectedContact ?? '')}
           replyingTo={messaging.replyFor(convs.selectedContact)}
           onReply={(message) => messaging.handleReply(convs.selectedContact ?? '', message)}
           onForward={handleForward}
@@ -1857,7 +1859,8 @@
                 )
             : (msgId, text) => void messaging.handleEditMessage(msgId, text, msgCtx())}
           onTogglePin={handleTogglePinMessage}
-          onReelPurged={(msgId, at) => void messaging.recordReelPurged(msgId, at, msgCtx())}
+          onReelPurged={(msgId, at) =>
+            void messaging.recordReelPurged(convs.selectedContact ?? '', msgId, at, msgCtx())}
           onCancelReply={() => messaging.cancelReply(convs.selectedContact ?? '')}
           authToken={session.authToken}
           onFilesSelected={handleFilesSelected}

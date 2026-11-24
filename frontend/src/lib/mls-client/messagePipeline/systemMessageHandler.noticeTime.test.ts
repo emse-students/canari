@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 // Resolve names offline: identity function so the handler runs without the user store / network.
 vi.mock('$lib/utils/users/displayName', () => ({
@@ -80,7 +81,7 @@ function phoneConversation(userId: string) {
     userId,
     deviceKey: () => 'device-key',
     conversations,
-    messageReactions: new Map(),
+    messageReactions: new ReactionsByConversation(),
     addMessageToChat,
     batchAddMessages: vi.fn(),
     deleteConversation: vi.fn().mockResolvedValue(undefined),

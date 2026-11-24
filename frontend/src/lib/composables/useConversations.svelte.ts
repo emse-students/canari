@@ -22,7 +22,6 @@ import { Log } from '$lib/utils/Log';
 import type {
   AddMessageToChatOptions,
   MessageBatchOrigin,
-  MessageReaction,
   Conversation,
   ChatMessage,
 } from '$lib/types';
@@ -160,6 +159,7 @@ import {
   abandonHistoryOverlay,
   isMobileOverlayLayout,
 } from '$lib/utils/historyOverlayStack';
+import type { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 /** Messages loaded per scroll-up DB page request. */
 const OLDER_MESSAGES_PAGE = 50;
@@ -182,7 +182,7 @@ export interface ConversationContext {
   userId: string;
   deviceKeyB64: string;
   historyBaseUrl: string;
-  messageReactions: SvelteMap<string, MessageReaction[]>;
+  messageReactions: ReactionsByConversation;
   log: (msg: string) => void;
   addMessageToChat: (
     senderId: string,
@@ -608,7 +608,7 @@ export function useConversations() {
       messages: mergeMessagePage(base, msgs),
     });
     for (const m of msgs) {
-      if (m.reactions && m.reactions.length > 0) ctx.messageReactions.set(m.id, m.reactions);
+      if (m.reactions && m.reactions.length > 0) ctx.messageReactions.set(id, m.id, m.reactions);
     }
     settleLoadedRows(contactName, id, ctx, msgs);
     return msgs;
@@ -1687,7 +1687,7 @@ export function useConversations() {
     storage: IStorage;
     deviceKeyB64: string;
     userId: string;
-    messageReactions: SvelteMap<string, MessageReaction[]>;
+    messageReactions: ReactionsByConversation;
     isSessionUp: () => boolean;
     log: (msg: string) => void;
     /** Reported on the drawn line, beside the read's own duration: the two costs of the preview. */
@@ -1728,7 +1728,9 @@ export function useConversations() {
     }
     conversations.set(targetId, preview.row);
     for (const m of preview.row.messages) {
-      if (m.reactions && m.reactions.length > 0) input.messageReactions.set(m.id, m.reactions);
+      if (m.reactions && m.reactions.length > 0) {
+        input.messageReactions.set(targetId, m.id, m.reactions);
+      }
     }
     const sessionUp = input.isSessionUp();
     if (!sessionUp) {
@@ -1775,7 +1777,7 @@ export function useConversations() {
    */
   function discardLandingPreview(
     reason: string,
-    messageReactions: SvelteMap<string, MessageReaction[]>,
+    messageReactions: ReactionsByConversation,
     log: (msg: string) => void,
     owner?: number
   ) {
@@ -1790,7 +1792,7 @@ export function useConversations() {
     landingPreviewKey = null;
     landingPreviewOwner = null;
     const row = conversations.get(key);
-    for (const m of row?.messages ?? []) messageReactions.delete(m.id);
+    for (const m of row?.messages ?? []) messageReactions.delete(key, m.id);
     conversations.delete(key);
     if (selectedContact === key) {
       if (mobileConvoHistoryClose) {

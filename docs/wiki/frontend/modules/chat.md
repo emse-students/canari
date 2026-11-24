@@ -3595,7 +3595,7 @@ nothing is chosen on the member's behalf, and the group's PRESENCE means the ser
 | | DM / group | Community channel |
 |---|---|---|
 | Transport | encrypted MLS system message (`add_reaction`/`remove_reaction`) | encrypted channel message, sealed under the sender's Graine session (WP-40, 2026-08-18) |
-| State | `useMessaging.messageReactions` | `stores/reactionStore.svelte.ts` |
+| State | `useMessaging.messageReactions`, a `ReactionsByConversation` keyed by conversation and message id like the stored row (the bubble reads `.of(conversation)`) | `stores/reactionStore.svelte.ts` |
 | Server sees | nothing | nothing - it stores one boolean, `silent`, saying whether the row may ring a phone |
 | Live update | replayed to every member by MLS | the ordinary `channel.message.created` fan-out |
 

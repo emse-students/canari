@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { ConversationReactions } from '$lib/utils/chat/reactionsByConversation';
   import type { ChannelWritePolicy } from '$lib/services/ChannelService';
   import { writePolicyLine } from '$lib/utils/chat/channelWritePolicy';
   import { usesGlassChrome } from '$lib/mobile/glassChrome';
@@ -76,7 +77,7 @@
   } from '$lib/utils/chat/visibleRow';
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
-  import type { ChatMessage, MessageReaction, Conversation } from '$lib/types';
+  import type { ChatMessage, Conversation } from '$lib/types';
   import type { PendingMediaFile } from '$lib/media';
   import type { VideoPreparationState } from '$lib/video/videoPreparationState.svelte';
   import { getKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
@@ -206,8 +207,8 @@
     /** Callback to remove a specific member from the group. */
     onGroupRemoveMember?: (userId: string) => void;
     // Reactions & replies
-    /** Map of emoji reactions keyed by message ID. */
-    messageReactions?: Record<string, MessageReaction[]> | Map<string, MessageReaction[]>;
+    /** The reactions of the shown conversation's messages, by message id (`ReactionsByConversation.of`). */
+    messageReactions?: Pick<ConversationReactions, 'get'>;
     /** Message currently being replied to, shown as a preview in the composer. */
     replyingTo?: ChatMessage | null;
     /** Callback fired when the user chooses to reply to a message. */

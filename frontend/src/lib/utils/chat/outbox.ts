@@ -4828,7 +4828,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         }
         for (const send of record.take?.sends ?? []) {
           if (!send.sent || send.deleted) continue;
-          const message = await storage.getMessage(send.conversationId, send.id, deviceKey());
+          // THE ROW WHERE IT STANDS NOW, not where the press queued it: a send re-keyed mid-flight
+          // (`persistSent`) or a thread merged since moved its row to another conversation. It is
+          // this account's own message under an id this device minted (`ownStoredMessage`).
+          const message = await ownStoredMessage(storage, send.id, deps.userId, deviceKey());
           if (!message?.isDeleted) continue;
           await reelSendDeletedHere(send.id);
           rederived++;

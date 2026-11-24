@@ -2,16 +2,12 @@ import type { IMlsService } from '../IMlsService';
 import type { ChannelWritePolicy, WriteVerdicts } from '$lib/services/ChannelService';
 import type { EventTime } from '$lib/utils/chat/visibleNotices';
 import type { IStorage } from '$lib/db';
-import type {
-  AddMessageToChatOptions,
-  Conversation,
-  MessageBatchOrigin,
-  MessageReaction,
-} from '$lib/types';
+import type { AddMessageToChatOptions, Conversation, MessageBatchOrigin } from '$lib/types';
 import type { SvelteMap } from 'svelte/reactivity';
 import type { AnnouncedJoinAsk } from '$lib/utils/chat/actions';
 import type { SettledJoinAsk } from '$lib/utils/chat/joinRequests.svelte';
 import type { InboundReaction } from '$lib/utils/chat/reactionNotification';
+import type { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 /**
  * Dependencies injected into setupMessageHandler.
@@ -33,7 +29,7 @@ export interface MessageHandlerDeps {
   deviceKey: () => string;
   historyBaseUrl: string;
   conversations: SvelteMap<string, Conversation>;
-  messageReactions: SvelteMap<string, MessageReaction[]>;
+  messageReactions: ReactionsByConversation;
   getSelectedContact: () => string | null;
   setSelectedContact: (value: string | null) => void;
   saveConversation: (contactName: string) => Promise<void>;

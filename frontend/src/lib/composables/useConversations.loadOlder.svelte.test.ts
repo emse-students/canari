@@ -5,11 +5,11 @@
  * it skipped every stored row in between.
  */
 import 'fake-indexeddb/auto';
-import { SvelteMap } from 'svelte/reactivity';
 import { IndexedDbStorage } from '$lib/db/indexeddb';
 import { mapStoredMessagesToChatMessages } from '$lib/utils/chat/messageUtils';
 import type { StoredMessage } from '$lib/db/types';
 import type { Conversation } from '$lib/types';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 // Same isolation reasoning as the other composable tests: the composable is reachable from the
 // global chat singleton's own module-scope instantiation, so importing it directly closes a cycle.
@@ -64,7 +64,7 @@ it('pages below the last stored page, not below a row injected far older than it
     storage,
     userId: 'me',
     deviceKeyB64: KEY,
-    messageReactions: new SvelteMap(),
+    messageReactions: new ReactionsByConversation(),
     log: vi.fn(),
   } as never;
 

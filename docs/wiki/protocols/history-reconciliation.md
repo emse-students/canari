@@ -1895,7 +1895,10 @@ device-key re-seal), the upsert (`saveMessages`) conflicts on the pair and never
 the one way a row changes conversation is `moveMessages` (the DM merge, a send re-keyed mid-flight):
 its old key deleted and its new one written in one atomic step, a row the destination already holds
 standing. A caller that knows only an id it minted (a quick reply, an own bubble) asks
-`findMessageConversations` and keeps the row THIS account authored (`ownStoredMessage`).
+`findMessageConversations` and keeps the row THIS account authored (`ownStoredMessage`). What the
+screen draws follows the same key: the in-memory reactions are a `ReactionsByConversation`
+(`utils/chat/reactionsByConversation.ts`), every read and write naming the conversation, the bubble
+reading one conversation's view (`.of`), and a thread re-keyed in memory carrying its own (`move`).
 
 THE MIGRATIONS KEEP EVERY ROW AND RESUME FROM THE FILE. IndexedDB copies the store into a staging
 store with the new key path inside the versionchange transaction, deletes the old one and renames

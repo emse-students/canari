@@ -19,6 +19,7 @@ import {
 } from './history';
 import { readMarkTarget } from './readState';
 import { resetServerClockForTests, serverTimeSeen } from './serverClock';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 const USER = 'user-1';
 const GROUP = 'group-1';
@@ -70,7 +71,7 @@ const replay = async (
     storage: null,
     getConversation: () => undefined,
     setConversation: () => undefined,
-    messageReactions: new Map(),
+    messageReactions: new ReactionsByConversation(),
     log: () => undefined,
     primedFirstPage: { rows },
   });

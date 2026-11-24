@@ -1387,6 +1387,8 @@ single conversation (RC-5) is now a take with ONE send, and `handleSendChat` no 
 - **A forwarded write no leader takes is never silent.** A DELETION is durable without the event: the
   tombstone is on the shared message row, and the next leader re-derives it (`maintainTakeRecords`
   above; a promotion reloads the page, so a new leader always starts with it) - lost, it only waits.
+  The row is read WHERE IT STANDS NOW (`ownStoredMessage`), not under the conversation the press
+  queued it for: a send re-keyed mid-flight or a merged thread moved it since.
   An ADOPTION is acknowledged (`outbox_reel_take_adopt_ack`, sent even when the leader's write of it
   failed). The END of the publish wait is the leader's too, since the wait lives where the take was
   composed: a follower that runs the publish queue forwards it (`outbox_reel_take_end_wait`, review
@@ -1453,7 +1455,9 @@ hint tombstone, the conversation viewer on one slide, no forward, no share). Thi
 - **It is recorded on the message's LOCAL row.** `StoredMessage.mediaPurgedAt` (Unix ms, this
   device's clock, written by both engines through `messagePayload`, never relayed: a history bundle
   is parsed field by field and does not carry it) and `ChatMessage.mediaPurgedAt`.
-  `useMessaging.recordReelPurged` writes it in memory and through `updateMessage`, keeps the FIRST
+  `useMessaging.recordReelPurged(conversation, message, ...)` - the conversation named by the caller,
+  the one the bubble is drawn in, since a stored row is keyed by it - writes it in memory (when the
+  message is loaded there) and through `updateMessage` (whether it is or not), keeps the FIRST
   instant, and reads the row back before saying it is on disk (`updateMessage` writes nothing on an
   absent row, silently). The tile draws the tombstone at once from its own state either way.
 - **Which tombstone** is one pure function, `reelTombstoneOf(ref, purgedAt, now)`: a `410` recorded

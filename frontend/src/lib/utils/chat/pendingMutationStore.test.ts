@@ -9,6 +9,7 @@ import {
   type PendingMutationDeps,
 } from './pendingMutationStore';
 import type { PendingMutationWrite } from '$lib/db/types';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 let n = 0;
 
@@ -27,7 +28,7 @@ function deps(writes: PendingMutationWrite[]) {
       storage,
       deviceKey: () => 'key',
       conversations: new Map(),
-      messageReactions: new Map(),
+      messageReactions: new ReactionsByConversation(),
       log,
     } as unknown as PendingMutationDeps,
   };

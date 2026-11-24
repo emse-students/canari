@@ -4,6 +4,7 @@ vi.mock('$lib/utils/users/displayName', () => ({
 }));
 
 import { handleSystemEvent } from './systemMessageHandler';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 /** Minimal context to exercise the `memberRemoved` (self-exclusion) path. */
 function makeCtx(overrides: Record<string, unknown> = {}) {
@@ -15,7 +16,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     userId: 'me',
     deviceKey: () => 'device-key',
     conversations,
-    messageReactions: new Map(),
+    messageReactions: new ReactionsByConversation(),
     addMessageToChat: vi.fn().mockResolvedValue(undefined),
     batchAddMessages: vi.fn(),
     deleteConversation: vi.fn().mockResolvedValue(undefined),

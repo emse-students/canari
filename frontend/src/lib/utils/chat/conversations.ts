@@ -39,6 +39,7 @@ import { classifyExitFailure, logBestEffortGroupDeleteFailure } from './pendingG
 import { PENDING_MUTATION_LIMITS } from './pendingMutations';
 import { settlePendingFor } from './pendingMutationStore';
 import { conversationRowWritesSettled } from './conversationRowWrites';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 /** Why a restore stopped asking the server part-way: the connectivity store saw the link drop. */
 class LinkDroppedMidPassError extends Error {
@@ -1000,7 +1001,7 @@ export async function mergeDirectConversationDuplicates(
               storage,
               deviceKey: () => deviceKeyB64,
               conversations: new Map(),
-              messageReactions: new Map(),
+              messageReactions: new ReactionsByConversation(),
               log,
             },
             survivor.id,
@@ -1082,7 +1083,7 @@ export interface LoadConversationsContext {
   /** Reactive map populated by this function - cleared and rebuilt on each call. */
   conversations: SvelteMap<string, Conversation>;
   /** Shared reactions map, updated while loading messages. */
-  messageReactions: SvelteMap<string, any>;
+  messageReactions: ReactionsByConversation;
   archivedConversationIds: string[];
   historyBaseUrl: string;
   log: (msg: string) => void;
@@ -1569,10 +1570,10 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
               messages: mergeMessagePage(existing.messages, msgs),
             });
 
-            // Restore reactions into the shared messageReactions map
+            // Restore reactions into the shared map, under this conversation
             for (const m of msgs) {
               if (m.reactions && m.reactions.length > 0) {
-                ctx.messageReactions.set(m.id, m.reactions);
+                ctx.messageReactions.set(meta.id, m.id, m.reactions);
               }
             }
           }
@@ -1631,7 +1632,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
             publishBootCount(meta.id, 'replay');
             for (const m of refreshedMsgs) {
               if (m.reactions && m.reactions.length > 0) {
-                ctx.messageReactions.set(m.id, m.reactions);
+                ctx.messageReactions.set(meta.id, m.id, m.reactions);
               }
             }
           }

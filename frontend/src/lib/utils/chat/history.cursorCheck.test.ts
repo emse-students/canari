@@ -9,6 +9,7 @@
  * reads, never a clock.
  */
 import 'fake-indexeddb/auto';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 vi.mock('$lib/utils/chat/historyReconcile', () => ({
   escalateReconciliation: vi.fn().mockResolvedValue(true),
@@ -51,7 +52,7 @@ async function replayWithCursor(storage: IndexedDbStorage) {
     storage,
     getConversation: () => undefined,
     setConversation: () => undefined,
-    messageReactions: new Map(),
+    messageReactions: new ReactionsByConversation(),
     log: () => undefined,
   });
 }

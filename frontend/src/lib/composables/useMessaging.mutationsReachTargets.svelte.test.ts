@@ -269,6 +269,32 @@ describe('a frame of one conversation naming a message of ANOTHER (review of #29
     expect((await rowOfBAfter())?.reactions ?? []).toEqual([]);
   });
 
+  it('a reaction in A, by a peer or by this user, never touches the reactions drawn for B', async () => {
+    d0 = await deviceWithRowOfB();
+    const drawnForB = [{ userId: OTHER, emoji: 'heart', at: 1 }];
+    d0.messaging.messageReactions.set(IN_B, 'b1', drawnForB);
+    await d0.storage.saveMessage(storedBody({ id: 'b1', content: BODY }), KEY);
+    const inA = d0.conversations.get(CONVO)!;
+    d0.conversations.set(CONVO, {
+      ...inA,
+      messages: [
+        { id: 'b1', senderId: PEER, content: BODY, timestamp: new Date(1000), isOwn: false },
+      ],
+    });
+
+    await reactionFrame(d0, OTHER, 'b1', '👍', 5_000);
+    d0.ctx.selectedContact = CONVO;
+    await d0.messaging.handleAddReaction('b1', '🔥', d0.ctx);
+
+    expect(d0.messaging.messageReactions.get(IN_B, 'b1')).toBe(drawnForB);
+    expect(d0.messaging.messageReactions.of(IN_B).get('b1')).toBe(drawnForB);
+    const drawnForA = d0.messaging.messageReactions.of(CONVO).get('b1') ?? [];
+    expect(drawnForA.map((r) => r.emoji).sort()).toEqual(['👍', '🔥'].sort());
+    const rowOfA = await d0.storage.getMessage(CONVO, 'b1', KEY);
+    expect(rowOfA?.reactions?.map((r) => r.emoji).sort()).toEqual(['👍', '🔥'].sort());
+    expect((await rowOfBAfter())?.reactions ?? []).toEqual([]);
+  });
+
   it('an edit sent in A rewrites the row of A under that id, never the row of B', async () => {
     d0 = await deviceWithRowOfB();
     await d0.storage.saveMessage(storedBody({ id: 'b1', content: BODY }), KEY);

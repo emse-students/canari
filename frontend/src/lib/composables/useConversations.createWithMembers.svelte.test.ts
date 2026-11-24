@@ -5,8 +5,8 @@
  * unhandled rejection: the panel would stay open over an existing group and a retry would create a
  * second one (review of #3793). The answer stays ok, with the key, and the cause is logged.
  */
-import { SvelteMap } from 'svelte/reactivity';
 import type { Conversation } from '$lib/types';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 const createGroup = vi.hoisted(() => vi.fn());
 const inviteMembersToGroup = vi.hoisted(() => vi.fn());
@@ -38,7 +38,7 @@ function makeCtx() {
       ensureMls: () => ({ getLocalGroups: () => [KEY] }),
       userId: 'u1',
       deviceKeyB64: 'k',
-      messageReactions: new SvelteMap(),
+      messageReactions: new ReactionsByConversation(),
       log,
       addMessageToChat: vi.fn(),
     } as never,

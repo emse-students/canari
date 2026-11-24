@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 /**
  * READ STATE BETWEEN DEVICES, PATH BY PATH (owner, 2026-11-02: "a conversation read on one device
@@ -125,7 +126,7 @@ function frameCtx(device: Device, me: string, sender: string, queuedCreatedAt: n
     userId: me,
     deviceKey: () => 'k',
     conversations: device,
-    messageReactions: new Map(),
+    messageReactions: new ReactionsByConversation(),
     addMessageToChat: vi.fn(),
     batchAddMessages: vi.fn(),
     deleteConversation: vi.fn(),

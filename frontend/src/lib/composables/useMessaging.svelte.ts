@@ -125,7 +125,6 @@ import type {
   AddMessageToChatOptions,
   ChatMessage,
   MessageBatchOrigin,
-  MessageReaction,
   Conversation,
 } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
@@ -198,6 +197,7 @@ import {
 } from '$lib/utils/chat/pendingMutationStore';
 import { publishComposedMessage, publishTabMessageUpdate } from '$lib/mls-client/tabMessageSync';
 import { canonicalUserId } from '$lib/mls-client/leafIdentity';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 import { claimChannelReadSignal } from '$lib/utils/chat/channelReadSignal';
 import { isVideoPrepareError, prepareVideoForUpload } from '$lib/video/prepareVideoForUpload';
 import { videoPrepareFailureMessage } from '$lib/video/videoPrepareMessages';
@@ -369,7 +369,7 @@ function notificationGroupTitle(
 
 /** Creates and returns the reactive messaging store covering send, receive, reactions, edit, delete, replies, and media uploads. */
 export function useMessaging() {
-  const messageReactions = new SvelteMap<string, MessageReaction[]>();
+  const messageReactions = new ReactionsByConversation();
   /**
    * The reply armed in each conversation, keyed by conversation id. A reply belongs to ONE
    * conversation: the composer shows (and a send consumes) only the entry of the conversation
@@ -2308,7 +2308,9 @@ export function useMessaging() {
             const refold =
               settled.consumed.length > 0 ? settleAgainstPending(onto, settled.consumed) : null;
             shownRow = refold?.fields ? settledChatMessage(onto, refold.fields) : onto;
-            if (refold?.fields?.reactions) messageReactions.set(onto.id, refold.fields.reactions);
+            if (refold?.fields?.reactions) {
+              messageReactions.set(normalized, onto.id, refold.fields.reactions);
+            }
           }
         }
         if (current) {
@@ -2770,7 +2772,7 @@ export function useMessaging() {
     msg: ChatMessage
   ): Promise<Settled> {
     const waiting = (await pendingFor(pendingDeps(ctx), normalized, [msg.id])).get(msg.id) ?? [];
-    return settledWith(msg, waiting);
+    return settledWith(normalized, msg, waiting);
   }
 
   /** {@link settleWithPending} on entries already read. */
@@ -2781,11 +2783,17 @@ export function useMessaging() {
     return settlement.fields ? settledChatMessage(msg, settlement.fields) : msg;
   }
 
-  function settledWith(msg: ChatMessage, waiting: readonly PendingMutation[]): Settled {
+  function settledWith(
+    conversationId: string,
+    msg: ChatMessage,
+    waiting: readonly PendingMutation[]
+  ): Settled {
     if (waiting.length === 0) return { message: msg, fields: null, consumed: [] };
     const settlement = settleAgainstPending(msg, waiting);
     logDiscarded(settlement, msg.senderId);
-    if (settlement.fields?.reactions) messageReactions.set(msg.id, settlement.fields.reactions);
+    if (settlement.fields?.reactions) {
+      messageReactions.set(conversationId, msg.id, settlement.fields.reactions);
+    }
     console.log(
       `[ADD_MSG] ${msg.id.slice(0, 8)} met ${waiting.length} mutation(s) that arrived before it`
     );
@@ -3032,6 +3040,7 @@ export function useMessaging() {
       }
       if (existingMsg && shouldUpgradeMessage(existingMsg, pm.content)) {
         const settled = settledWith(
+          normalized,
           mergeMessageUpgrade(existingMsg, {
             content: pm.content,
             senderId: pm.senderId,
@@ -3086,7 +3095,7 @@ export function useMessaging() {
           ctx.storage &&
           storedBodyVerdict(stored, id, pm.content).kind === 'new'
         ) {
-          const settled = settledWith(existingMsg, waiting.get(id) ?? []);
+          const settled = settledWith(normalized, existingMsg, waiting.get(id) ?? []);
           consumedById.set(id, settled.consumed);
           settledIds.add(id);
           if (settled.fields) {
@@ -3119,6 +3128,7 @@ export function useMessaging() {
       const resolvedTimestamp = resolveMessageTimestamp(pm, (mid) => byId.get(mid), isOwn);
       // What reached this device before the body lands WITH it (`settleAgainstPending`).
       const settled = settledWith(
+        normalized,
         {
           id,
           senderId: pm.senderId.toLowerCase(),
@@ -3245,7 +3255,7 @@ export function useMessaging() {
               shouldUpgradeMessage(now, body) ? mergeMessageUpgrade(now, upgrade) : now,
               consumed
             );
-            if (row.reactions) messageReactions.set(msg.id, row.reactions);
+            if (row.reactions) messageReactions.set(normalized, msg.id, row.reactions);
             return row;
           };
           upgradedById.set(msg.id, { from: shown, shown: lateUpgrade(shown), reshow: lateUpgrade });
@@ -4501,7 +4511,7 @@ export function useMessaging() {
     // one, and a full-row write erased it every time the user reacted.
     const patch = {
       content: msg.content,
-      reactions: messageReactions.get(msg.id),
+      reactions: messageReactions.get(conversationId, msg.id),
       isDeleted: msg.isDeleted,
       isEdited: msg.isEdited,
       ...(msg.editedAt ? { editedAt: msg.editedAt.getTime() } : {}),
@@ -4522,7 +4532,7 @@ export function useMessaging() {
     const convo = ctx.conversations.get(conversationKey);
     if (!convo) return;
     const meNorm = ctx.userId.toLowerCase();
-    const existing = messageReactions.get(messageId) ?? [];
+    const existing = messageReactions.get(conversationKey, messageId) ?? [];
     const alreadyReacted = activeReactions(existing).some(
       (r) => r.userId === meNorm && r.emoji === emoji
     );
@@ -4542,7 +4552,7 @@ export function useMessaging() {
     const updated = applyReaction(existing, meNorm, emoji, at, alreadyReacted);
     if (!updated) return;
 
-    messageReactions.set(messageId, updated);
+    messageReactions.set(conversationKey, messageId, updated);
 
     // Immediate in-memory and DB update to survive page reload.
     const msgIdx = convo.messages.findIndex((m) => m.id === messageId);
@@ -4639,7 +4649,7 @@ export function useMessaging() {
         return held?.at === act.at && held.pinned === act.pinned;
       }
       case 'reaction':
-        return (messageReactions.get(msg.id) ?? msg.reactions ?? []).some(
+        return (messageReactions.get(refusal.conversationId, msg.id) ?? msg.reactions ?? []).some(
           (r) =>
             r.userId.toLowerCase() === me &&
             r.emoji === act.emoji &&
@@ -4919,36 +4929,38 @@ export function useMessaging() {
    * its local row, so a reload does too - one `410` per message per device, never one per scroll.
    *
    * A local fact, the first one kept: a row already carrying it is left alone. The conversation is
-   * read from the map NOW (the one on screen first, the viewer was opened from it), and a write that
-   * fails is said with its cost - the next tap on that tile asks the server again.
+   * the one the viewer was opened from, NAMED BY THE CALLER (the bubble is drawn in it): a stored row
+   * is keyed by its conversation, so the row is written whether or not memory still holds the
+   * message. A write that fails is said with its cost - the next tap on that tile asks again.
    */
   async function recordReelPurged(
+    shownKey: string,
     messageId: string,
     atMs: number,
     ctx: MessagingContext
   ): Promise<void> {
-    const selected = ctx.selectedNow();
-    const keys = [
-      ...(selected ? [selected] : []),
-      ...[...ctx.conversations.keys()].filter((k) => k !== selected),
-    ];
-    const key = keys.find((k) =>
-      ctx.conversations.get(k)?.messages.some((msg) => msg.id === messageId)
-    );
-    const convo = key ? ctx.conversations.get(key) : undefined;
-    if (!key || !convo) {
-      // A stored row is keyed by its conversation, and none is known here: nothing is written.
-      ctx.log(
-        `[REEL] 410 on ${messageId.slice(0, 8)} not recorded: no loaded conversation holds it - a reload asks again`
+    if (!shownKey) {
+      console.error(
+        `[REEL] 410 on ${messageId.slice(0, 8)} reached with no conversation on screen - nothing recorded, a reload asks again`
       );
       return;
     }
-    const idx = convo.messages.findIndex((msg) => msg.id === messageId);
-    if (convo.messages[idx].mediaPurgedAt) return;
-    const msgs = [...convo.messages];
-    msgs[idx] = { ...msgs[idx], mediaPurgedAt: atMs };
-    ctx.conversations.set(key, { ...convo, messages: msgs });
-    const conversationId = convo.id;
+    const conversationId = shownKey.toLowerCase();
+    const convo = ctx.conversations.get(shownKey) ?? ctx.conversations.get(conversationId);
+    const idx = convo ? convo.messages.findIndex((msg) => msg.id === messageId) : -1;
+    if (convo && idx !== -1) {
+      if (convo.messages[idx].mediaPurgedAt) return;
+      const msgs = [...convo.messages];
+      msgs[idx] = { ...msgs[idx], mediaPurgedAt: atMs };
+      ctx.conversations.set(ctx.conversations.has(shownKey) ? shownKey : conversationId, {
+        ...convo,
+        messages: msgs,
+      });
+    } else {
+      console.debug(
+        `[REEL] 410 on ${messageId.slice(0, 8)}: not in memory under ${conversationId.slice(0, 8)}... - its row is still written`
+      );
+    }
     if (!ctx.storage) {
       ctx.log(
         `[REEL] 410 on ${messageId.slice(0, 8)} not persisted: no storage - a reload asks again`
@@ -4967,7 +4979,7 @@ export function useMessaging() {
         return;
       }
       if (stored.mediaPurgedAt) {
-        alignMemoryPurge(messageId, stored.mediaPurgedAt, ctx);
+        alignMemoryPurge(shownKey, messageId, stored.mediaPurgedAt, ctx);
         ctx.log(`[REEL] 410 on ${messageId.slice(0, 8)} already on its row - the first kept`);
         return;
       }
@@ -4992,17 +5004,20 @@ export function useMessaging() {
     }
   }
 
-  /** Sets memory's copy of a message's recorded 410 to the stored instant, read from the map NOW. */
-  function alignMemoryPurge(messageId: string, atMs: number, ctx: MessagingContext): void {
-    for (const [key, convo] of ctx.conversations) {
-      const idx = convo.messages.findIndex((msg) => msg.id === messageId);
-      if (idx === -1) continue;
-      if (convo.messages[idx].mediaPurgedAt === atMs) return;
-      const msgs = [...convo.messages];
-      msgs[idx] = { ...msgs[idx], mediaPurgedAt: atMs };
-      ctx.conversations.set(key, { ...convo, messages: msgs });
-      return;
-    }
+  /** Sets memory's copy of a message of `shownKey` to its stored 410 instant, read from the map NOW. */
+  function alignMemoryPurge(
+    shownKey: string,
+    messageId: string,
+    atMs: number,
+    ctx: MessagingContext
+  ): void {
+    const key = ctx.conversations.has(shownKey) ? shownKey : shownKey.toLowerCase();
+    const convo = ctx.conversations.get(key);
+    const idx = convo ? convo.messages.findIndex((msg) => msg.id === messageId) : -1;
+    if (!convo || idx === -1 || convo.messages[idx].mediaPurgedAt === atMs) return;
+    const msgs = [...convo.messages];
+    msgs[idx] = { ...msgs[idx], mediaPurgedAt: atMs };
+    ctx.conversations.set(key, { ...convo, messages: msgs });
   }
 
   /** Sends an "edit_message" MLS system message and updates the message content and editedAt in the local conversation state. Only the original sender can edit their own message. */

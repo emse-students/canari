@@ -1,5 +1,6 @@
 import { handleSystemEvent } from './systemMessageHandler';
 import { envelopeBodyText } from '$lib/envelope';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 /** A stored body is an envelope; a plain-text row is a push preview (`isPushPreview`). */
 const ORIGINAL = '{"kind":"text","text":"original"}';
@@ -25,7 +26,7 @@ function makeCtx(senderNorm: string, owner = 'peer') {
     userId: 'me',
     deviceKey: () => 'device-key',
     conversations,
-    messageReactions: new Map(),
+    messageReactions: new ReactionsByConversation(),
     addMessageToChat: vi.fn(),
     batchAddMessages: vi.fn(),
     deleteConversation: vi.fn(),

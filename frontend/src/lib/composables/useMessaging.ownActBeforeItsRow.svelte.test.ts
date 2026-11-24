@@ -8,6 +8,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SvelteMap } from 'svelte/reactivity';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   appendLog: () => {},
@@ -34,7 +35,7 @@ import {
   placement,
   storedRow,
 } from '$lib/mls-client/test/fixtures/messageRowStore';
-import type { Conversation, MessageReaction } from '$lib/types';
+import type { Conversation } from '$lib/types';
 import type { IStorage } from '$lib/db';
 
 type MessagingContext = import('./useMessaging.svelte').MessagingContext;
@@ -112,7 +113,7 @@ describe('an own act on a message whose row is still moving', () => {
         storage: store as unknown as IStorage,
         deviceKey: () => 'k',
         conversations,
-        messageReactions: new SvelteMap<string, MessageReaction[]>(),
+        messageReactions: new ReactionsByConversation(),
         log,
       },
       JOINED,
