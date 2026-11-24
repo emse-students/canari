@@ -122,6 +122,10 @@ function makeReadiness(
         const rows = ids.filter((id) => withheld.delete(id)).map((id) => ({ associationId: id }));
         return [rows, rows.length];
       }
+      if (sql.includes('FROM forms f')) {
+        // The forms whose waiting lists a holder collecting again promotes: none wait here.
+        return [];
+      }
       throw new Error(`unexpected SQL: ${sql}`);
     }),
     update,

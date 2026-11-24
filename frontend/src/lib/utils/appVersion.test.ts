@@ -94,6 +94,7 @@ describe('parseServerVersionInfo', () => {
       rankedFeeds: false,
       formAnswerEdit: false,
       eventReach: false,
+      formWaitlist: false,
       retention: null,
     });
   });
@@ -151,6 +152,16 @@ describe('parseServerVersionInfo', () => {
     expect(
       parseServerVersionInfo({ version: '1.6.12', formAnswerEdit: 'yes' })?.formAnswerEdit
     ).toBe(false);
+  });
+
+  it('reads the waiting list capability, absent or non-true as none, and stores it round-trip', () => {
+    const info = parseServerVersionInfo({ version: '1.8.0', formWaitlist: true });
+    expect(info?.formWaitlist).toBe(true);
+    expect(parseServerVersionInfo(serverVersionInfoToWire(info!))?.formWaitlist).toBe(true);
+    expect(parseServerVersionInfo({ version: '1.7.3' })?.formWaitlist).toBe(false);
+    expect(parseServerVersionInfo({ version: '1.8.0', formWaitlist: 'yes' })?.formWaitlist).toBe(
+      false
+    );
   });
 
   it('reads the event reach capability, absent or non-true as none, and stores it round-trip', () => {
@@ -281,6 +292,7 @@ describe('buildAppVersionCheckResult', () => {
       rankedFeeds: false,
       formAnswerEdit: false,
       eventReach: false,
+      formWaitlist: false,
       retention: null,
     });
     expect(result.callsMode).toBe('audio');
@@ -310,6 +322,7 @@ describe('buildAppVersionCheckResult', () => {
       rankedFeeds: false,
       formAnswerEdit: false,
       eventReach: false,
+      formWaitlist: false,
       retention: null,
     });
     expect(result.belowMinVersion).toBe(true);
@@ -387,6 +400,7 @@ describe('fetchServerAppVersionReliable', () => {
       rankedFeeds: false,
       formAnswerEdit: false,
       eventReach: false,
+      formWaitlist: false,
       retention: null,
     });
     expect(fetchFn).toHaveBeenCalledTimes(2);

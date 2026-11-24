@@ -115,8 +115,8 @@ export const SUBMISSION_COLUMNS_A_RELEASE_WRITES: readonly string[] = Object.key
 
 /**
  * The `submissions` columns a release leaves at their default (NULL): an anonymous answer never
- * carries them - no account, no guest, no payment, no grant, no edit (each refused on an anonymous
- * form). The integration spec compares the two lists with the table, so a column added to
+ * carries them - no account, no guest, no payment, no grant, no edit, no waiting list (each refused
+ * on an anonymous form). The integration spec compares the two lists with the table, so a column added to
  * `submissions` fails it until it is placed in one of them: a rewrite that silently dropped a new
  * column would lose it from every joined answer.
  */
@@ -140,6 +140,10 @@ export const SUBMISSION_COLUMNS_A_RELEASE_LEAVES_UNSET: readonly string[] = [
   'guestFirstName',
   'guestEmail',
   'editedAt',
+  // An anonymous form keeps no waiting list (`waitlistApplies`): no answer of it is ever in line.
+  'waitlistOrder',
+  'promotedAt',
+  'promotionNotifiedAt',
   // A switch to cash in progress: an anonymous form takes no money, and the switch refuses it
   // (`cashSwitchRowRefusal`), so no anonymous answer is ever claimed.
   'cashSwitchClaimId',

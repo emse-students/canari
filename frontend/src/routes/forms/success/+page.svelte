@@ -7,6 +7,7 @@
   import { pollPaymentReturn } from '$lib/forms/paymentReturnPoll';
   import { isConfirmThrottled, isConfirmUnreadableHere } from '$lib/forms/checkoutReturn';
   import { formPaymentReturnDeepLink } from '$lib/utils/checkoutCallbacks';
+  import { overCapacityDescription } from '$lib/forms/paymentReturn';
   import { setPageTitle } from '$lib/seo/pageTitle.svelte';
 
   /**
@@ -20,6 +21,8 @@
    * A return with no submission starts on its answer: its first title, the one the route announcer
    * reads at the navigation, is already "Paiement introuvable".
    */
+  /** The over-capacity payer is on the form's waiting list: their place is kept (`waitlisted`). */
+  let waitlisted = $state(false);
   let status = $state<
     | 'loading'
     | 'confirmed'
@@ -64,7 +67,10 @@
     try {
       status = await pollPaymentReturn(
         () => confirmSubmissionPayment(id),
-        (submission) => (formId = submission.formId)
+        (submission) => {
+          formId = submission.formId;
+          waitlisted = submission.waitlisted === true;
+        }
       );
     } catch (err) {
       if (isConfirmThrottled(err)) {
@@ -131,7 +137,7 @@
             : status === 'pending'
               ? m.form_success_pending_desc()
               : status === 'overCapacity'
-                ? m.form_success_over_capacity_desc()
+                ? overCapacityDescription(waitlisted)
                 : status === 'declined'
                   ? m.form_success_declined_desc()
                   : status === 'ended'
