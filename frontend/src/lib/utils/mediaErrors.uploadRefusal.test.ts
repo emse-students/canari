@@ -9,6 +9,7 @@ import {
   isOverBudgetBody,
   MediaUploadError,
   MEMBER_UPLOAD_OVER_BUDGET,
+  OWNER_ERASED,
   uploadRefusalCause,
   uploadRefusalFrom,
 } from './mediaErrors';
@@ -62,6 +63,26 @@ describe('uploadRefusalFrom', () => {
       headers: { 'Content-Type': 'application/json' },
     });
     expect(uploadRefusalCause(await uploadRefusalFrom(odd, 'x'))).toBe('refused');
+  });
+
+  it("reads an erased account's refusal from the CODE of media-service's 410, never the message", async () => {
+    const erased = new Response(
+      JSON.stringify({ statusCode: 410, message: 'anything', code: OWNER_ERASED }),
+      { status: 410, headers: { 'Content-Type': 'application/json' } }
+    );
+    const err = await uploadRefusalFrom(erased, 'upload session complete failed');
+    expect(err.ownerErased).toBe(true);
+    expect(uploadRefusalCause(err)).toBe('refused');
+    // A 410 with no code, a code under another status, or an edge 410 stay retried.
+    expect(uploadRefusalCause(await uploadRefusalFrom(json(410), 'x'))).toBeNull();
+    expect(uploadRefusalCause(await uploadRefusalFrom(html(410), 'x'))).toBeNull();
+    const elsewhere = new Response(JSON.stringify({ code: OWNER_ERASED }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json' },
+    });
+    expect(uploadRefusalCause(await uploadRefusalFrom(elsewhere, 'x'))).toBeNull();
+    // The message is never read: the same words without the code are not the verdict.
+    expect(uploadRefusalCause(new MediaUploadError(410, `x - ${OWNER_ERASED}`))).toBeNull();
   });
 
   it('keeps a short excerpt of the application own JSON answer', async () => {

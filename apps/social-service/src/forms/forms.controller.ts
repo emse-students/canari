@@ -388,11 +388,13 @@ export class FormsController {
     @Param('id') id: string,
     @UploadedFile() file: Express.Multer.File,
     @Body('itemId') itemId: string | undefined,
-    @Headers('x-user-id') xUserId: string
+    @Headers('x-user-id') xUserId: string,
+    @Headers('authorization') authorization?: string
   ): Promise<UploadedFormFile> {
     if (!file) throw new BadRequestException('No file provided');
     await this.service.assertMayUploadAnswerFile(id, xUserId);
-    return this.formFiles.upload(id, itemId, file, xUserId);
+    // The member's own token travels on to the media service, which dates the upload from it.
+    return this.formFiles.upload(id, itemId, file, xUserId, authorization);
   }
 
   /**

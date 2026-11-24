@@ -1140,6 +1140,118 @@ Built 2026-11-09 to the rule above, with `TREND_THRESHOLD = 4` as R1 read it the
   engaged accounts within a day pushes "Suggestion : <its opening>" once, and a second post crossing
   the same day pushes nothing to the same reader).
 
+### A campus trend for a post this device already displayed shows nothing (2026-11-24)
+
+**The decision** (owner, 2026-11-24, choice "Verif sur l'appareil",
+[decisions](decisions/owner-decisions-of-2026-11-24.md)): a "Suggestion : ..." can announce a post the
+member already saw in the feed. The server records no "seen" and must not - **principle 1** (your
+messages are yours: what a member looked at is theirs, so no "seen" column, no endpoint, no event
+leaves the device) and **principle 3** (your attention is not for sale: no look-tracking to tune a
+notification) of [principes](../principes.md). The DEVICE decides: it keeps a local record of the posts
+it displayed, and a trend for one of them shows NO banner and NO bell row. **Nothing is sent to the
+server.** The accepted limit: a post seen on another device is not recognised there.
+
+- **What counts as seen**: a post card with MOST of it on screen (`shownPost`, an `IntersectionObserver`
+  with threshold 0.5, or at least half of the scrolling box for a card taller than it), or a post opened
+  on its own page (the same card, drawn). Fired once per card, from `PostCard`, which the feed and the
+  post page both use. No dwell time: a clock would be a guess. A scheduled post is not recorded (it can
+  never be a trend). Reels are a different surface and are not recorded.
+- **The record** (`posts/seenPosts.ts`, store `posts/seenPosts.svelte.ts`): `post id -> epoch ms of the
+  post's publishedAt`, per account, bounded two ways. **Pruned by the post's age, a proof from the data**:
+  the server announces a trend only for a post published within `TREND_WINDOW_HOURS` (24), so an entry
+  older than that window plus one hour of clock slack names a post no trend can name again and leaves.
+  The window is held equal to the server's by `libs/contracts/notification-seen-trend.cases.json`
+  (`trendWindowHours`, asserted by `campus-trend-window.contract.spec.ts`). A hard cap of 500 (oldest
+  publication first) only bounds a pathological reader.
+- **Where it lives, all on the device**: memory (reactive, what the bell reads); the account's SEALED
+  local copy, slot `copy:seen-posts` of `feed_pages` under the device key (`localCopyStore.svelte.ts`,
+  ended by the sign-out's epoch with the bell's copy and the peer names) - what survives a reload on the
+  web and the desktop; and, on mobile only, `seen_posts.json` (Rust `commands/seen_posts.rs`, command
+  `store_seen_posts`; in the data directory and in the iOS App Group) because the FCM service, the iOS
+  extension and `canari_push.mm` compose banners while the app is closed and cannot ask the WebView. The
+  file names its owner; a reader uses it only when the owner is the account in `push_context.json`.
+  **Writes follow the note, not a timer and not the lifecycle** (review of #4065): a social push is
+  composed natively WHILE the app is in the foreground (Android `ForegroundGuard.actsInForeground`, iOS
+  `showsWhileForeground`), so a post noted in the open session must already be in the native file, and a
+  crash must not lose it. A note schedules one write on the microtask queue (cards noted in the same
+  tick share it); one write is in flight at a time and the next runs while the record is dirty. The
+  NATIVE file is written first, then the sealed copy, each mirror independently (a missing App Group
+  never stops the data-directory copy; each failure is logged and the record stays dirty). The
+  background flush stays as the last chance. A sealed copy merged into memory marks it dirty, so a
+  native file that was lost is written again.
+- **The bell decides ONCE, from state that outlives the record's age** (B2/L1 and re-review of
+  #4065): the record is by the post's age (25 h) but a bell row lives 90 days. The FIRST time a trend
+  row appears in this device's list (`seenPostsStore.decideRows`, called by every bell answer) its post is
+  either in the record - the row is WITHHELD for good - or not - the row is KEPT for good: one fact, no
+  comparison of two clocks (no `createdAt` against a device instant). So a withheld row never comes back
+  when its post ages out, and a trend the member already saw in the bell, or tapped from a shown push,
+  never vanishes afterwards. Both sets are in the sealed copy, each id with the row's own `createdAt`,
+  dropped when the row is older than its 90 days (`BELL_ROW_RETENTION_MS`) - bounded by age, not by the
+  page the server returns, so a row older than the newest 50 keeps its decision. Before the account's
+  sealed copy is merged an undecided trend row is not shown (decided at the merge): never shown and then
+  withdrawn.
+- **The record ages out in memory, per post, only on what the bell proved** (`pruneSeen`,
+  `BellCoverage`; re-review of #4065): a trend row for post P is created within the 24 h after P's
+  publication, so once a bell answer taken after that window (+ the hour of slack) reaches back BEFORE P
+  was published - its oldest row is older than P, or the page was short, OR the page was the bell's whole
+  50 (a row beyond it is never shown) (`coveredFrom`, kept with the instant in the sealed copy) - every
+  row that could name P has been decided and P may go. **The answer is the application's own refresh**
+  (`PostNotificationBell`'s 60-second poll, which asks for the bell's whole page of 50), whenever the app
+  is open - not the member opening the bell. The privacy policy and C32 say exactly that: a post is
+  kept "until the app's next update of the member's notifications". An app closed
+  through the whole window therefore still withholds, at its reopening, the row whose push was withheld
+  meanwhile. This holds for an account with more rows than the page too (a 60-row bell answered 50 at a
+  time). The NATIVE file keeps pruning by age (a push reads it, and a post past the window can never be
+  announced again). The stuck case is closed: a burst of rows between P's publication and the first
+  answer after its window fills the page, and a full page drops P too (a row older than the stored 50
+  is never shown anyway). The cap of 500 (oldest publication first) still bounds a reader who never
+  opens the app.
+- **A trend row with no decision yet is not shown**: drawn from the sealed bell copy by an app killed
+  before its first answer, or met before the account's record is read, it waits for the answer that
+  decides it - never shown and then withdrawn.
+- **One write per scroll frame, not per card**: `shownPost` shares ONE `IntersectionObserver` per scroll
+  root, so the cards crossing in one frame arrive in one callback, are noted in one tick and share one
+  microtask write. Never a timer.
+- **Erased with the other per-account stores**: the sign-out (`clearUserLocally` ->
+  `forgetSeenPosts`, which also removes the native copy if it is this account's), the account deletion
+  (`eraseAccountRecordsLocally`, and Rust's `remove_account_push_and_name_files` in the data directory and
+  the App Group), the factory wipe (`wipe_group_names`), a change of account (the epoch). Registered in the
+  backup-exclusion table as the mirror stem `seen_posts` (`OURS_STEMS`, `ShareCapture.rootStems`).
+- **Where the suppression happens, classified on a FIELD, never text** (the rule is
+  `libs/contracts/notification-seen-trend.cases.json`: a push is a trend when its `contentKey` is
+  `social_campus_trend`, `_photo` or `_video`, and it names its post in `postId`; a bell row when its `type` is
+  `campus_trend`):
+  - **The bell** (`postNotifStore.svelte.ts`): the list the reader sees, and the badge count, skip the row.
+    The server still holds it, so another device shows it - the accepted limit.
+  - **Web push**: there is none  (no service worker, no web push, as the one-live-notification section says): the bell is the web's only surface.
+  - **Android** (`CanariFirebaseMessagingService.isSeenTrend`, pure rule `push/SeenTrends.kt`): the push
+    returns before it is composed - no notification.
+  - **iOS extension** (`NotificationService.withholdsSeenTrend`): an extension cannot withhold an alert
+    push without Apple's filtering entitlement, which this app does not hold, so the trend is delivered as
+    the repo's blank passive content (no banner, no sound, no wake; the same form as
+    `blankSignedOutContent`); outcome `seen-trend`. **The blank row is removed by the app**: the
+    extension stamps `userInfo["canariWithheld"] = "seen-trend"` on it, and `canari_push.mm`
+    (`CanariRemoveWithheldTrendNotifications`) removes every delivered notification carrying the stamp at
+    each foreground and whenever its process runs for a push or a silent frame (`CanariHandleFcmData`, `CanariHandleBackgroundFrame`) - the precedent is
+    the `removeDeliveredNotificationsWithIdentifiers` of
+    [social-service](services/social-service.md). **Dropping the push outright needs the filtering
+    entitlement** (`com.apple.developer.usernotifications.filtering`, which lets the extension return no
+    content); applying for it is an owner action, and with it the stamp and the cleanup go.
+    `canari_push.mm` (the app-side twin that re-posts a background push) returns before it posts.
+- **Never silent**: a withheld trend is logged where the exported log keeps it and without the post id -
+  `[SEEN_TREND] bell: a campus trend row withheld` once per row (`console.log`), Android a RECORDED info
+  line (`Log.iRecorded`, the INFO stream the app log carries), iOS an `[CanariNSE] [SEEN_TREND]` notice and the
+  `seen-trend` outcome of `[NSE_OUTCOME]`, ObjC an `NSLog`.
+- **Proof**: `seenPosts.test.ts` (noting, pruning by age and by cap, the sealed body, and the shared
+  contract cases), `seenPosts.svelte.test.ts` (the store: one account's, flush to the sealed copy and
+  Rust, erase at sign-out), `postNotifStore.seenTrend.svelte.test.ts` (the bell filter and badge, the
+  once-per-row log), `shownPost.test.ts`; Rust `seen_posts` tests (the written file answers the contract;
+  the sign-out and deletion remove only the owner's copy); `SeenTrendsTest` (Kotlin, in CI);
+  `SeenTrendContractTests` (Swift, not wired to a target, like its siblings). **The native code is
+  verified by compiling only** - Kotlin and Rust compile and run their tests in CI, the Swift and
+  Objective-C are compiled by the iOS build; none of it has run on a device. The reading owed is
+  [an entry](backlog.d/reading-owed-a-campus-trend-for-a-displayed-post-shows-nothing.md).
+
 #### The deploy of 2026-11-10, and what it changed
 
 **What happened.** The 1.6.9 deploy started evaluating trends on posts already in the 24-hour window.

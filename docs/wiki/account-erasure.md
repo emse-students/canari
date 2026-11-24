@@ -89,7 +89,7 @@ status or an error code (`describeFailure`), never a URL, which would carry the 
 | --- | --- | --- |
 | chat-delivery | `DELETE /api/internal/users/:id` | every row in `ACCOUNT_ERASURE_COVERAGE` (`src/utils/account-erasure-coverage.ts`) is gone or anonymised |
 | social | `DELETE /api/internal/users/:id` | the account left every community (each repaired first), `ERASURE_STATEMENTS` ran in ONE transaction around the JSONB scrub (the proposal statements after it), the feed cache was dropped |
-| media | `DELETE /api/media/internal/users/:id` | every object the account uploaded is deleted, except what `survivesAccountDeletion` names; **503 while any delete failed**, and a failed object keeps its live entry so the retry finds it |
+| media | `DELETE /api/media/internal/users/:id` | every object the account uploaded is deleted, except what `survivesAccountDeletion` names; **503 while any delete failed**, and a failed object keeps its live entry so the retry finds it; the erasure is recorded first, so an upload registering afterwards is refused ([erased owner](services/media-service.md#an-erased-owner-registers-nothing-2026-11-24)) |
 
 ### The coverage is asserted against the schema
 

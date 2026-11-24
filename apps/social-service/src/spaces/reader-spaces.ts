@@ -55,7 +55,7 @@ export interface StaffProfile extends ReaderProfile {
  * INDEPENDENT: a student is an account with a space (a cursus), staff an account holding one of these
  * posts, and an account may be both or neither. The ONE list both twins below read.
  */
-export const STAFF_POSTS: readonly string[] = ['EMSE', 'ME'];
+const STAFF_POSTS: readonly string[] = ['EMSE', 'ME'];
 
 /**
  * The account is STAFF ({@link STAFF_POSTS}), and not a review account (`review-cohort.ts`: the

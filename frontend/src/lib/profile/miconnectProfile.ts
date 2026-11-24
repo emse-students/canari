@@ -13,7 +13,7 @@ export type Post = (typeof POSTS)[number];
  * independent of a cursus - a person may be a student and staff at once. Mirrors social-service
  * `STAFF_POSTS`, which decides every audience; this copy only shapes what the client offers.
  */
-export const STAFF_POSTS: readonly Post[] = ['EMSE', 'ME'];
+const STAFF_POSTS: readonly Post[] = ['EMSE', 'ME'];
 
 /** Whether `posts` holds a staff post ({@link STAFF_POSTS}). Absent or empty is not staff. */
 export function holdsStaffPost(posts: readonly Post[] | null | undefined): boolean {

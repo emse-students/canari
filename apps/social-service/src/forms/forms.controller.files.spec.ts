@@ -91,11 +91,17 @@ describe('FormsController - the file upload', () => {
     expect(formFiles.upload).not.toHaveBeenCalled();
   });
 
-  it('hands an eligible member file to the upload', async () => {
+  it("hands an eligible member file to the upload, with the member's own token", async () => {
     const { controller, service, formFiles } = makeController(true);
-    await controller.uploadAnswerFile('f1', file, 'q_cv', 'member');
+    await controller.uploadAnswerFile('f1', file, 'q_cv', 'member', 'Bearer member-token');
     expect(service.assertMayUploadAnswerFile).toHaveBeenCalledWith('f1', 'member');
-    expect(formFiles.upload).toHaveBeenCalledWith('f1', 'q_cv', file, 'member');
+    expect(formFiles.upload).toHaveBeenCalledWith(
+      'f1',
+      'q_cv',
+      file,
+      'member',
+      'Bearer member-token'
+    );
   });
 });
 

@@ -20,6 +20,9 @@ import {
 } from '@nestjs/common';
 import { CHAT_REEL_OVER_BUDGET, MediaService, isRetentionClass } from './media.service';
 
+// The account erasure keys its erased-owner record with this secret (erased-owners.ts).
+process.env.JWT_SECRET ??= 'test-erasure-key';
+
 const UUID_REEL_OLD = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const UUID_REEL_NEW = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const UUID_FEED_REEL = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';

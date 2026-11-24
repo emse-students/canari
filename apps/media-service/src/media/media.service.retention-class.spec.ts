@@ -14,6 +14,9 @@
  */
 import { MediaService, isRetentionClass } from './media.service';
 
+// The account erasure keys its erased-owner record with this secret (erased-owners.ts).
+process.env.JWT_SECRET ??= 'test-erasure-key';
+
 const UUID_CHAT = '11111111-1111-4111-8111-111111111111';
 const UUID_ARCHIVE = '22222222-2222-4222-8222-222222222222';
 const UUID_PURGED = '33333333-3333-4333-8333-333333333333';

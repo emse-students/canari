@@ -3211,7 +3211,9 @@ decision, an additive schema, and the owner wants it in `1.6.10`.
   are INDEPENDENT - an account with a cursus and such a post reads both a "Étudiants" and a
   "Personnel" item, one with only `ALUMNI` or no post reads neither "Personnel" nor, without a space,
   "Étudiants"; a review account is never staff. Before 2026-11-24 it was `NOT isStudentSql` (any
-  account with no space), so an EMSE employee who is also an alumnus never saw a "Personnel" post.
+  account with no space), so an EMSE employee who is also an alumnus never saw a "Personnel" post,
+  while an account whose cursus names a formation with no opened space did (it no longer does
+  without a staff post: 0 such accounts on production on 2026-11-24, measured below).
 - **Staff by campus, a door of its own (owner, 2026-11-14, "Oui, par campus")**:
   `institutionReachStaffCampusDoorSql` opens a "Tous" or "Personnel" post to every STAFF ACCOUNT OF
   A CAMPUS (`isCampusStaffSql`: a campus and `isStaffSql` - a post EMSE or ME, not a review account,
@@ -3325,11 +3327,17 @@ staff reaches all of its staff, an employee who also studied there included.
   `eventReachesSpaceMatchingSql` still offer a "Personnel" item to no space as a space (pin, trend,
   suggestion, anonymous feed); the forms' respondent status (`accountStatuses`, D2 of the forms: any
   post, `ALUMNI` included) is a pricing fact of its own and keeps its rule.
-- **Measured on production, 2026-11-24 (read-only, counts only):** 594 accounts. 19 had no cursus
-  (staff under the old rule, all with a campus) and all 19 hold `EMSE` or `ME`, so **nobody stops
-  being staff**; no account has no cursus and no staff post (no legacy no-post account, no
-  `ALUMNI`-only one); **1 account has a cursus AND a staff post and becomes staff** - the case the
-  owner raised. The one review account holds no staff post.
+- **Measured on production, 2026-11-24 (read-only, counts only):** 594 accounts. The old rule's
+  staff was every account with NO SPACE: 19 with no cursus (all with a campus) and 0 with a cursus
+  naming no opened space. All 19 hold `EMSE` or `ME`, so **nobody stops being staff**; no account has
+  no cursus and no staff post (no legacy no-post account, no `ALUMNI`-only one); 573 accounts have a
+  space and no staff post; **1 account has a space AND a staff post and becomes staff** - the case
+  the owner raised. The one review account holds no staff post.
+- **Staff is a declaration, and "Personnel" rests on it.** The post comes from a tick-box the person
+  fills at enrolment (MiConnect's `20-enrollment.yaml`): it is DECLARED, nothing checks it (D8), and a
+  wrong one is corrected after the fact by an admin (D10). So a "Personnel" item is confidential only
+  as far as those declarations are honest - the same footing as before, where "staff" was the
+  absence of a declared cursus.
 
 #### Decisions taken in the build, reversible
 

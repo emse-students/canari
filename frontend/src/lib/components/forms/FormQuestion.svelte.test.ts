@@ -13,6 +13,8 @@ import { uploadFormAnswerFile, type FormItem } from '$lib/forms/api';
 import { UploadAbortedError, type XhrUploadOptions } from '$lib/utils/uploadXhr';
 import { m } from '$lib/paraglide/messages';
 import { ANSWER_MAX_TEXT_LENGTH } from '$lib/forms/answerBounds';
+import { SocialApiError } from '$lib/associations/api';
+import { OWNER_ERASED } from '$lib/utils/mediaErrors';
 import FormQuestionHarness from './FormQuestionHarness.test.svelte';
 
 vi.mock('$lib/forms/api', async (importOriginal) => ({
@@ -190,6 +192,28 @@ describe('FormQuestion - a file on its way', () => {
     expect(state.value).toBe('');
     expect(target.querySelector('[role=alert]')).toBeNull();
     expect(busy.at(-1)).toBe(false);
+  });
+
+  it('says an erased account\'s refusal is final, never "try again"', async () => {
+    vi.mocked(uploadFormAnswerFile).mockRejectedValueOnce(
+      new SocialApiError('This account was deleted', OWNER_ERASED, 410)
+    );
+    const { target, state } = render(fileItem, '');
+    pick(target, new File(['x'], 'cv.pdf', { type: 'application/pdf' }));
+    await tick();
+    await tick();
+    flushSync();
+    expect(target.querySelector('[role=alert]')?.textContent).toBe(
+      m.form_file_error_account_erased()
+    );
+    expect(state.value).toBe('');
+    // Without the code, the same status is the store's failure, which may be retried.
+    vi.mocked(uploadFormAnswerFile).mockRejectedValueOnce(new SocialApiError('gone', null, 410));
+    pick(target, new File(['x'], 'cv.pdf', { type: 'application/pdf' }));
+    await tick();
+    await tick();
+    flushSync();
+    expect(target.querySelector('[role=alert]')?.textContent).toBe(m.form_file_error_generic());
   });
 
   it('refuses a HEIC photo before anything is sent', () => {

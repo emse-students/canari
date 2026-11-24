@@ -96,7 +96,7 @@ The 2026-10-02 fix above covered the QUEUED half of the same teardown; this is t
 | DELETE | `/api/media/upload/session/:id`        | JWT               | Cancel: aborts in-flight parts, removes the staging, releases the budget now |
 | GET    | `/api/media/public/:id`                | none              | Download public asset (cached 1 year, no auth)                                                                                                                                   |
 | GET    | `/api/media/:id`                       | JWT               | Download encrypted blob (no-cache, owner or group member); one `Range: bytes=a-b` answers `206` + `Content-Range`, `416` past the end ([ranges](#the-server-serves-byte-ranges)) |
-| DELETE | `/api/media/internal/users/:userId`    | `INTERNAL_SECRET` | Delete every blob uploaded by a user (account deletion)                                                                                                                          |
+| DELETE | `/api/media/internal/users/:userId`    | `INTERNAL_SECRET` | Delete every blob uploaded by a user (account deletion), after recording the erasure so nothing is registered for them afterwards ([erased owner](#an-erased-owner-registers-nothing-2026-11-24)), then end their upload sessions |
 | POST   | `/api/media/chat-reel/:id/hold`        | JWT               | The take's CHAT HOLD before its first send: owner-only, idempotent, on the caller's own `reel-pending`, `chat-reel` or `reel`; `{dueAt}`, `403` not theirs or not a reel file, `404` unknown, `410` gone or past its window, `429` past the daily budget ([holds](#holds-one-file-for-the-feed-and-the-chats-rc-14-2026-11-01)) |
 | DELETE | `/api/media/chat-reel/:id`             | JWT               | The SENDER takes back a reel sent in conversations: RELEASES the caller's OWN chat hold (a hold AND the owner), deleting the file when no post holds it; `403` otherwise, `410` on the next read once deleted ([chat-reel](#the-chat-reel-class-a-reel-sent-in-a-conversation-rc-2-2026-10-09), [holds](#holds-one-file-for-the-feed-and-the-chats-rc-14-2026-11-01)) |
 | POST   | `/api/media/internal/own-archive-delete` | `INTERNAL_SECRET` | `{items:[{mediaId, ownerId}]}` - the publish queue's Delete, from social-service's withdrawal, which checked that NO live post or comment cites the ids: each deleted only when it is `ownerId`'s own `archive` object, otherwise `refused`; an unknown or purged one `absent` (`removeOwnArchive`). Not a user route: owner and class do not prove an object uncited (review of #3061; [posts](../frontend/modules/posts.md#the-background-publish-queue)) |
@@ -890,6 +890,147 @@ its tag. The reader fetches one segment at a time, so its throughput is one roun
 bandwidth, and pipelining is a later choice, not a defect. The native push-thumbnail change is still
 compile- and `cargo test`-verified only. Evidence (JSON timelines, logs, screenshots) is kept
 machine-locally under the rig's state directory, `ios-bench/r2-evidence/`.
+
+## An erased owner registers nothing (2026-11-24)
+
+**The gap** (found in the review of #4055). The erasure route deleted what the account owned and
+answered `failed: 0`. An upload REGISTERED afterwards - a resumable `complete`, a single upload, a
+chunked `complete`, a form file - made with an access token still valid wrote a live entry carrying
+the erased id. core-service's queue does make a final pass once every token has expired
+([account-erasure](../account-erasure.md#the-mechanism)), which narrows the window without closing
+it: a request authenticated before the expiry can register after that pass started, and nothing
+calls the route again.
+
+**The record.** `removeAllOwnedBy` writes, in its FIRST synchronous run and before it reads the index,
+`erasedOwners[key] = now` in the media index (`media_metadata.json`, written atomically with the
+entries). `key` is `HMAC-SHA256(K, ownerId)` with `K = HMAC-SHA256(JWT_SECRET,
+"canari/media/erased-owner/v1")`: a PSEUDONYM, not the id, and not a plain digest either - an id
+guessable from the school's directory would be re-identified by hashing the list. The record key is
+derived under its own label, never the raw secret, which already signs the access tokens: one key
+signs one kind of thing (the rule of core's `adminer-access.service.ts` and
+`deriveRestoreChallengeKey`; `erased-owners.spec.ts` pins both constructions). It is derived from
+THAT secret on purpose: rotating it voids every credential the record exists to refuse, so a record
+that no longer matches has nothing left to guard. Every later call rewrites the time, so `erasedAt`
+is the LATEST call. The route answers 2xx only once that write is on disk, and refuses with `400
+USER_ID_INVALID` an id no account could carry (`user-id.ts`: core's file, kept byte-identical by
+the declared-duplicates gate), before anything is recorded.
+
+**What it refuses: what dates from before the call, never the person.** `users.id` IS the OIDC
+subject, and core lets the person sign in again under the same id once every erasure job, final pass
+included, has completed (`auth.controller.ts`, `refuseDuringErasure`). So the record is a
+discriminator, not a ban (`datesFromBeforeTheErasure`, `openedBeforeTheErasure`):
+
+- the access token's `iat` against `erasedAt`, compared at the SECOND (the grain of `iat`; a token of
+  the call's second counts as after it). A token with no `iat` cannot be dated and is judged old.
+  No skew margin either way: a margin after the call would refuse someone who came back (the client
+  reads this refusal as final), and an old token passing for new cannot happen at the latest call -
+  core's final pass starts once every token minted before the deactivation has expired - while after
+  an earlier call that pass still comes and erases what registered meanwhile. core and media read one
+  host's clock.
+- an upload session's `createdAt` against `erasedAt`, compared to the MILLISECOND (both are this
+  service's clock): a session opened before the call stays the erased account's, whatever fresh token
+  completes it.
+
+**Every registering path reads it** (`erased-owners.ts`, `MediaService.admitUploader` and
+`registerUnlessErased`), enumerated from every write of an entry naming an owner:
+
+| Path | Refused at | And at the registration |
+| --- | --- | --- |
+| `POST upload` (single) | admission, before the store | the stored object is deleted |
+| `POST upload/public` | admission (the token's subject; no owner is recorded, but nothing would cite it) | same |
+| `POST upload/chunk/init` | before staging | - |
+| `POST upload/chunk/:id/complete` | before the lock; the caller's staging is removed | object deleted, staging removed |
+| `POST upload/session` (init) | before staging or reserving | - |
+| `POST upload/session/:id/complete` | admission; the session is disposed (staging, sidecar, reservation) | object deleted, session disposed |
+| `POST internal/form-file` | admission, before the store (dated by the member's forwarded token, below) | object deleted |
+
+Not a registration, so not gated: a part `PUT` (staging only; its `complete` is refused), a
+claim, a hold or a class change (they act on an entry the owner already has, which the erasure
+tombstoned), `download()` re-creating a lost entry (it records no owner). **Live segments carry no
+owner here**: they live outside the index under `live/<liveId>/`, and the gate is social-service's -
+the erasure ends the broadcaster's live (`endReason: erased`), a segment ingest takes the live's
+row lock and refuses an ended live (`410 LIVE_ENDED`), the end purges the prefix, and a segment that
+still lands after it is a row-less folder for the orphan reaper ([lives](lives.md)).
+
+**The refusal** is `OwnerErasedException`: `410`, `code: OWNER_ERASED`, typed at the throw, with one
+`[ERASED_OWNER]` WARN naming the path and an 8-character prefix of the id. The app reads that code
+(never the message) as a final refusal (`uploadRefusalCause` -> `refused`, `frontend/src/lib/utils/mediaErrors.ts`),
+so its outbox does not retry an upload no retry can mend.
+
+**What would be left untracked, and how each ends.**
+
+- *A refused object whose delete fails* is OWED, not forgotten: an ownerless tombstone with
+  `deletePending: true` is written in its place (so `download()` cannot re-create a live entry for
+  it), the hourly sweep retries the delete until the store confirms, and the tombstone trim skips it
+  while it is owed. The end is the store's confirmation, not a clock.
+- *An object a session stored under its `intendedMediaId` and never registered* (a crash, a store
+  error after the write) is named only by the session's sidecar. When a session is ended by the
+  erasure or by a refusal, and the index has no entry for that id, the object is deleted
+  (`discardRefusedObject`, owed as above if the delete fails) before the sidecar goes.
+- *The legacy chunk route*: the erasure ends the owner's open chunk uploads (staging, under each
+  upload's lock - it waits for a completion in flight, which the registration then refuses) and
+  removes every `<uploadId>.done` completion memo naming them, with its kept staging.
+- *A legacy chunk upload open across a restart*: who opened it lives in memory only
+  (`chunkOwners`), and its staging (`chunks_temp/<uploadId>`) is ciphertext named by a random id,
+  carrying no owner name. The erasure cannot attribute it after a restart, and it does not need to:
+  its completion registers under the completer's own credential, which the record judges like any
+  other, and the 24 h orphan purge (`purgeOrphanedChunks`) removes the staging.
+- *A refusal whose owed delete cannot be written to the index yet* stays a `410`: the tombstone is
+  in memory, the next index write carries it, and the failed write is an ERROR.
+- *A session's staging whose removal fails* is a WARN naming the errno, and staging no session claims
+  is what the hourly orphan sweep removes - the end is a fact (the session is gone), so no in-line
+  retry loop: on the Linux hosts an open handle does not refuse an unlink, and a real fault (EACCES,
+  EIO) is not mended by retrying at once.
+
+**The order with the erasure, and why it is never "kept".** The record is written in the same
+synchronous run that starts the erasure, before it reads the index; the registration reads the
+record in the same synchronous run that writes the entry. So a racing upload either registered
+first - its entry is in the index the erasure reads, and is deleted - or reads the record and is
+refused. The route erases the objects BEFORE it ends the sessions (the reverse order left a window
+for a session opened after the cancel), and it ends the COMPLETED sessions too: their memo serves
+nobody and their sidecar names the owner for a day.
+
+**How long it is kept - derived** (`erasedOwnerKeptMs`), and why the number is no longer anyone's
+experience. Since the record refuses only an old credential or an old session, a person who came
+back is never refused by it, so its lifetime only has to outlast what it refuses: the larger of
+core's access-token lifetime plus skew (3600 + 120 s, mirrored from `token-lifetimes.ts`;
+`erased-owners.spec.ts` reads that file and fails on drift) - no token minted before the call is
+valid past it - and the upload session window (`MEDIA_UPLOAD_SESSION_TTL_MS`, 24 h), which is
+load-bearing because a session is judged by its opening and lives that long. Today: **24 h after the
+latest call**. What a clock cannot bound - an upload admitted before the call and still running - is
+counted in memory (`uploadsInFlight`, keyed by the raw id and never written; exact because a restart
+ends what it counted), with the date it was admitted under: the hourly sweep drops a record only past
+its window AND with no upload running that the record would still refuse (dated before the call, or
+undated), and says when it keeps one. An upload of a person who came back holds nothing.
+
+**The form file is dated by the member's own token.** social-service's `storeBlob` forwards the
+member's bearer header - the one nginx passed through on `/api/forms` and `/api/bookings`, whose
+header lists never clear `Authorization` - on `internal/form-file`, beside `X-Internal-Secret`.
+media-service verifies it itself (signature, type `access`, and that its subject is the `ownerId`
+named) and reads its `iat`; no date another service states is believed. Not its expiry
+(`datingAccessToken`): nginx and core authenticated the request when it arrived, and a large file on
+a slow link can outlast the token on the way - an expiry met there would leave a returning person's
+upload undated, and refused. No token, or one that does not verify
+or names another account: the upload is undated, judged old, and refused only for an erased owner.
+The `410 OWNER_ERASED` travels typed end to end: social answers it as its own `410` with the same code
+(`OwnerErasedRefusal`, a WARN, never a 502), and the app's form question shows that the account was
+deleted instead of "try again" (`FormQuestion.svelte`).
+
+**Not a migration, but a storage change.** The index gains an optional top-level `erasedOwners` and
+an optional per-entry `deletePending`; a build that predates them reads the entries and drops both at
+its next write. **A rollback reopens the gap for the owners erased within the last window** (their
+records are forgotten, and an owed delete becomes an ordinary tombstone whose object stays untracked);
+it stays bounded by core's final pass, which still erases what registered before it. Pinned by
+`erased-owners.spec.ts` (the drift, the window, the derived key, both date rules),
+`user-id.spec.ts`, `media.controller.account-erasure.spec.ts` (a malformed id is a 400),
+`media.controller.form-file-dating.spec.ts` (only a verified token of the uploader dates a form file),
+`media.service.erased-owner.spec.ts` (the single-upload closing test, a person who came back, the
+race both ways, form file dated and undated, public image, chunked init and complete, the owed
+delete and its unwritable index, the chunk memo, the window and the in-flight hold - none for a
+returning person's upload - the restart) and `upload-session.service.spec.ts` (the session
+closing test, a `complete` between the two halves of the erasure, the race both ways, a person who
+came back, a session opened before, an object stored and never registered - ended by the erasure and
+by a refusal - with no staging-removal WARN allowed).
 
 ## The test suite runs each file in a temporary directory (2026-11-09)
 

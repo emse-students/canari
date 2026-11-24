@@ -199,7 +199,8 @@ export class FormFilesService {
     formId: string,
     itemId: string | undefined,
     file: { buffer: Buffer; size: number; originalname?: string },
-    uploaderId: string
+    uploaderId: string,
+    authorization?: string
   ): Promise<UploadedFormFile> {
     if (
       typeof itemId !== 'string' ||
@@ -244,7 +245,11 @@ export class FormFilesService {
     // transaction that writes the row (below).
     await this.assertPendingRoom(this.fileRepo.manager, formId, uploaderId);
 
-    const { mediaId: fileId, sizeBytes } = await this.storeBlob(file.buffer, uploaderId);
+    const { mediaId: fileId, sizeBytes } = await this.storeBlob(
+      file.buffer,
+      uploaderId,
+      authorization
+    );
     const fileName = cleanFileName(file.originalname, contentType, fileId);
     try {
       await this.fileRepo.manager.transaction(async (tx) => {
@@ -488,10 +493,16 @@ export class FormFilesService {
    * Its 422 - an image that does not decode, declares over 40 Mpx, or cannot be re-encoded within
    * the cap - is the member's file, answered as a 400. Also the store of a booking's file
    * (`BookingFilesService`): one class, one route, two modules.
+   *
+   * `authorization` is the member's OWN bearer header, as nginx passed it: forwarded so the media
+   * service can date the upload from the token's mint time, which it verifies itself - this service
+   * states no date. Its `410 OWNER_ERASED` (an account erased after that token was minted) is
+   * answered as the same typed 410 ({@link OwnerErasedRefusal}), never a 502.
    */
   async storeBlob(
     data: Buffer,
-    uploaderId: string
+    uploaderId: string,
+    authorization?: string
   ): Promise<{ mediaId: string; sizeBytes: number }> {
     const fd = new FormData();
     fd.append('file', data, { filename: 'answer', contentType: 'application/octet-stream' });
@@ -505,6 +516,7 @@ export class FormFilesService {
             headers: {
               ...fd.getHeaders(),
               'x-internal-secret': process.env.INTERNAL_SECRET ?? '',
+              ...(authorization ? { authorization } : {}),
             },
             maxBodyLength: FORM_FILE_MAX_BYTES + 65_536,
           }
@@ -515,7 +527,15 @@ export class FormFilesService {
       }
       return { mediaId: res.data.mediaId, sizeBytes: res.data.sizeBytes };
     } catch (e) {
-      const status = (e as { response?: { status?: number } })?.response?.status;
+      const response = (e as { response?: { status?: number; data?: { code?: unknown } } })
+        ?.response;
+      const status = response?.status;
+      if (status === HttpStatus.GONE && response?.data?.code === OWNER_ERASED) {
+        this.logger.warn(
+          '[FORM_FILES] upload refused by the media service: the account was erased'
+        );
+        throw new OwnerErasedRefusal();
+      }
       if (status === HttpStatus.UNPROCESSABLE_ENTITY) {
         this.logger.warn(
           `[FORM_FILES] upload refused by the media service (422): ${describeHttpError(e)}`
@@ -527,6 +547,24 @@ export class FormFilesService {
       this.logger.error(`[FORM_FILES] media upload failed: ${describeHttpError(e)}`);
       throw new HttpException('The file could not be stored. Try again.', HttpStatus.BAD_GATEWAY);
     }
+  }
+}
+
+/**
+ * The `code` of the media service's 410 for an account whose erasure it recorded. The media
+ * service's copy is `OWNER_ERASED` in `apps/media-service/src/media/erased-owners.ts`; the app's is
+ * in `frontend/src/lib/utils/mediaErrors.ts`.
+ */
+export const OWNER_ERASED = 'OWNER_ERASED';
+
+/** The media service's `410 OWNER_ERASED`, answered to the member as the same typed refusal. */
+export class OwnerErasedRefusal extends GoneException {
+  constructor() {
+    super({
+      statusCode: HttpStatus.GONE,
+      code: OWNER_ERASED,
+      message: 'This account was deleted; the file was not stored.',
+    });
   }
 }
 

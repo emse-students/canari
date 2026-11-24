@@ -15,6 +15,16 @@ export const PART_MIN_BYTES = 1024;
 /** Bounds the sidecar and the per-session bookkeeping whatever `partBytes` is declared. */
 export const MAX_PARTS = 4096;
 
+/**
+ * How long a session may be addressed after it is opened: `MEDIA_UPLOAD_SESSION_TTL_MS`, 24 h by
+ * default, absolute. ONE reader, because two things depend on it agreeing: the session's own window
+ * and how long media-service keeps the record that an owner was erased (`erased-owners.ts`).
+ */
+export function uploadSessionTtlMs(): number {
+  const parsed = Number.parseInt(process.env.MEDIA_UPLOAD_SESSION_TTL_MS ?? '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 24 * 60 * 60 * 1000;
+}
+
 /** The public, keyless prefix of a `segmented-v1` blob (frontend `mediaSegmented.ts`). */
 export const SEGMENTED_HEADER_BYTES = 20;
 const SEGMENTED_MAGIC = Buffer.from('CANARIM', 'ascii');

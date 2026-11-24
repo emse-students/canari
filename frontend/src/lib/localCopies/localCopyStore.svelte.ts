@@ -41,6 +41,8 @@ interface Envelope {
 export const BELL_SLOT = 'copy:bell';
 /** The slot of the profiles already opened. */
 export const PROFILES_SLOT = 'copy:profiles';
+/** The slot of the posts this device displayed (a campus trend for one of them shows nothing). */
+export const SEEN_POSTS_SLOT = 'copy:seen-posts';
 
 let access: FeedStoreAccess | null = null;
 /** The account the copies are open for, reactive (a plain `let` tracks nothing). */
