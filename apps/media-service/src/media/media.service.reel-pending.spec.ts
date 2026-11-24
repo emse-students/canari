@@ -173,6 +173,28 @@ describe('reel-pending: an unclaimed feed reel upload expires', () => {
     });
   });
 
+  it('DATA MINIMISATION: a swept ephemeral attachment keeps no owner on its tombstone - only a pending reel does', async () => {
+    const ATTACHMENT = '55555555-5555-4555-8555-555555555555';
+    const items: Record<string, Entry> = {
+      [ATTACHMENT]: {
+        createdAt: Date.now() - 400 * DAY,
+        lastAccessAt: Date.now() - 400 * DAY,
+        retentionClass: 'ephemeral',
+        ownerId: ALICE,
+      },
+      [PENDING_OLD]: pending(2 * DAY),
+    };
+    const { service, deleted } = serviceWith(items);
+
+    await purge(service);
+    expect(deleted.sort()).toEqual([ATTACHMENT, PENDING_OLD].sort());
+    expect(items[ATTACHMENT].purgeReason).toBe('retention_expired');
+    expect(items[ATTACHMENT].ownerId).toBeUndefined();
+    expect(items[ATTACHMENT].retentionClass).toBeUndefined();
+    expect(items[PENDING_OLD].ownerId).toBe(ALICE);
+    expect((await service.claimReels([ATTACHMENT], ALICE)).expired).toEqual([]);
+  });
+
   it('a pending upload the member DELETED is refused but never expired: its tombstone keeps no owner', async () => {
     const items: Record<string, Entry> = { [PENDING_NEW]: pending(60_000) };
     const { service } = serviceWith(items);

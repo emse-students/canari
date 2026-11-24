@@ -323,6 +323,30 @@ describe('one file, two holds: published on CanaReels and sent to conversations'
     });
   });
 
+  it("its AUTHOR's end after the chat hold lapsed is reel_deleted, never expired, and names nobody", async () => {
+    const { service, items } = await publishedAndSent();
+    await service.purgeReels([{ mediaId: FILE, ownerId: ALICE }], 'author', NOW + WINDOW + DAY);
+    expect(items[FILE].purgeReason).toBe('reel_deleted');
+    expect(items[FILE]).not.toHaveProperty('ownerId');
+    expect((await service.claimReels([FILE], ALICE)).expired).toEqual([]);
+  });
+
+  it('a chat-reel kept after its post was deleted by its author: a later author end is reel_deleted too', async () => {
+    const { service, items } = await publishedAndSent();
+    // The post goes while the chats still hold the file: it stays, a chat-reel again.
+    expect(
+      await service.purgeReels([{ mediaId: FILE, ownerId: ALICE }], 'author', NOW + DAY)
+    ).toEqual({ [FILE]: 'released' });
+    expect(items[FILE].retentionClass).toBe('chat-reel');
+    // A repeat of the author's end once the chat hold lapsed: deleted, named for its author.
+    expect(
+      await service.purgeReels([{ mediaId: FILE, ownerId: ALICE }], 'author', NOW + WINDOW + DAY)
+    ).toEqual({ [FILE]: 'deleted' });
+    expect(items[FILE].purgeReason).toBe('reel_deleted');
+    expect(items[FILE]).not.toHaveProperty('ownerId');
+    expect((await service.claimReels([FILE], ALICE)).expired).toEqual([]);
+  });
+
   it("goes AT ONCE on a salon moderator's purge, and reads 410 after", async () => {
     const { service, items, deleted } = await publishedAndSent();
 

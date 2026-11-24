@@ -285,7 +285,9 @@ const PURGED_BY_TIME: ReadonlySet<PurgeReason> = new Set<PurgeReason>([
  * THE ONE TOMBSTONE BUILDER: the entry every purge leaves behind (sweep, reel purge, form-file purge,
  * manual delete, account erasure).
  *
- * A tombstone a purge BY TIME leaves keeps its `ownerId` and `retentionClass`: the reel claim reads
+ * A tombstone a purge BY TIME leaves on a pending REEL upload (`reel-pending`, `chat-reel`) keeps its
+ * `ownerId` and `retentionClass` - data minimisation: no other class does (review of #4055, register
+ * C6): the reel claim reads
  * them to tell its uploader that their own pending upload EXPIRED - curable by uploading it again -
  * from an id that was never theirs (review of #4055: dropped, the "already swept" answer could never
  * be given, and a create delayed past the sweep got a refusal no Retry could cure). Every other
@@ -300,14 +302,21 @@ function tombstoneOf(
   now: number,
   purgeReason: PurgeReason
 ): MediaMetaEntry {
-  const byTime = PURGED_BY_TIME.has(purgeReason);
+  // DATA MINIMISATION (review of #4055): only an expired pending REEL upload names its uploader -
+  // the one tombstone a reader (the claim) needs it on. A swept chat attachment, form file or poster
+  // keeps no personal data, as every tombstone kept none before.
+  const ownerId = entry?.ownerId;
+  const retentionClass = entry?.retentionClass;
+  const keeps =
+    PURGED_BY_TIME.has(purgeReason) &&
+    !!ownerId &&
+    EXPIRABLE_REEL_UPLOAD_CLASSES.has(retentionClass ?? '');
   return {
     createdAt: entry?.createdAt ?? now,
     lastAccessAt: entry?.lastAccessAt ?? now,
     purgedAt: now,
     purgeReason,
-    ...(byTime && entry?.ownerId ? { ownerId: entry.ownerId } : {}),
-    ...(byTime && entry?.retentionClass ? { retentionClass: entry.retentionClass } : {}),
+    ...(keeps ? { ownerId, retentionClass } : {}),
   };
 }
 
@@ -1586,12 +1595,16 @@ export class MediaService {
         continue;
       }
       // A file conversations held reads `410` everywhere, so their tiles draw the tombstone (15.4);
-      // one no conversation ever held keeps the reel purge's old `manual_delete`.
+      // one no conversation ever held keeps the reel purge's old `manual_delete`. Each end is named
+      // for what ended it: a moderator, its AUTHOR (a post the member deleted, never "expired" -
+      // review of #4055), or time.
       const purgeReason: PurgeReason = !chat
         ? 'manual_delete'
         : reason === 'moderation'
           ? 'reel_moderated'
-          : 'reel_expired';
+          : reason === 'author'
+            ? 'reel_deleted'
+            : 'reel_expired';
       if (
         !(await this.tombstoneThenDelete(mediaId, entry, now, purgeReason, `Reel purge (${label})`))
       ) {

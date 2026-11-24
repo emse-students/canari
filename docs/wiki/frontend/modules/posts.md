@@ -614,7 +614,7 @@ hold. **A create delayed past the `reel-pending` window** (a post paused, failed
 long) is refused at the claim with a TYPED `400`, `reel_media_expired` (social-service, only when
 every refused file is the author's own pending upload that expired - media-service's `claimReels`
 now answers `expired` beside `refused`, read from the object's state or, once the sweep took it,
-from its tombstone - a purge BY TIME (`retention_expired`, `reel_expired`) keeps the owner and the
+from its tombstone - a purge BY TIME (`retention_expired`, `reel_expired`) of a pending reel upload keeps the owner and the
 class there, built by the one `tombstoneOf`; a delete, a moderation or an erasure keeps neither, so a
 moderated file is never "expired" and never uploaded again): the queue clears that media's ref and session and uploads
 the same prepared file again (`uploadAgain`), never re-sending the dead reference; any other

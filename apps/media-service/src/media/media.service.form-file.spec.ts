@@ -297,6 +297,9 @@ describe('purgeFormFiles: the allowlist is the class AND the uploader', () => {
     expect(deleted).toEqual([CV]);
     expect(items[CV].purgedAt).toBeDefined();
     expect(items[CV].purgeReason).toBe('retention_expired');
+    // DATA MINIMISATION (review of #4055): a form file's tombstone names nobody.
+    expect(items[CV]).not.toHaveProperty('ownerId');
+    expect(items[CV]).not.toHaveProperty('retentionClass');
   });
 
   // An id quoted in an answer is not a licence: the SAME uploader's chat photo, reel or vault
