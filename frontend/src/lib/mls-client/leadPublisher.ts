@@ -4,7 +4,6 @@ import type { DelegationReadiness } from '$lib/utils/chat/tabCommitDelegation';
 export interface LeadPublisherDeps {
   setTabLeadEligibility(eligible: boolean, why: string): void;
   setDelegationReadiness(readiness: DelegationReadiness): void;
-  noteTabSessionLive(): void;
   leadHoldsInFlight(): number;
   /** The holds in flight, named. */
   describeLeadHolds(): string;
@@ -23,9 +22,7 @@ export interface LeadPublisherDeps {
  *    checkpointed, a delegated executor, a key-package mint, a final checkpoint. Given up earlier,
  *    the write latch would refuse their writes as a follower's;
  * 2. **then the delegation readiness**, so the drain that change starts runs in a document that no
- *    longer leads when it gave the lead up, and leaves the requests to the next leader;
- * 3. **a live session ends a deferred rejoin** (`noteTabSessionLive`), so a session is never left
- *    outside the election by a promotion reload that never concluded.
+ *    longer leads when it gave the lead up, and leaves the requests to the next leader.
  */
 export function createLeadPublisher(deps: LeadPublisherDeps): {
   publish(readiness: DelegationReadiness): void;
@@ -53,7 +50,6 @@ export function createLeadPublisher(deps: LeadPublisherDeps): {
         : `session ${readiness}`
     );
     deps.setDelegationReadiness(readiness);
-    if (readiness === 'ready') deps.noteTabSessionLive();
   }
   // The last operation that held the lead settled: a session that cannot serve gives it up now.
   deps.onLeadHoldsReleased(() => {
