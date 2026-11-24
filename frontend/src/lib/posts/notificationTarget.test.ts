@@ -43,6 +43,13 @@ describe('notificationHref', () => {
     expect(notificationHref({ type: 'form_reminder', postId: 'f1' })).toBe('/forms/f1');
   });
 
+  it('sends a member promoted from the waiting list to the form, where the registration is', () => {
+    expect(notificationHref({ type: 'form_waitlist_promoted', postId: 'f1' })).toBe('/forms/f1');
+    expect(notificationHref({ type: 'form_waitlist_promoted_payment_due', postId: 'f1' })).toBe(
+      '/forms/f1'
+    );
+  });
+
   it("sends the organiser of a form paid over capacity to that form's RESPONSES", () => {
     expect(notificationHref({ type: 'form_paid_over_capacity', postId: 'f1' })).toBe(
       '/forms?responses=f1'
@@ -103,7 +110,7 @@ describe('notificationHref', () => {
 
   it('gives every known type a destination, bar the two resolved by slug', () => {
     // Compared with a hand-written count so a type removed from the set cannot pass silently.
-    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(54);
+    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(56);
     // The live moderation notices go nowhere: a cut live is deleted when it ends, and a suspension
     // or a withdrawal has no page.
     const liveModeration = ['live_cut', 'live_suspended', 'live_withdrawn', 'live_reinstated'];

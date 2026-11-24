@@ -1,5 +1,6 @@
 import { m } from '$lib/paraglide/messages';
 import { statusLabels } from './paymentStatus';
+import type { WaitlistView } from './waitlist';
 import type { AnswerWords } from './answerText';
 import type { PaymentRequestState } from './paymentReturn';
 import type { ProductGridLine, ProductGridPrices, ProductGridView } from './productGridContract';
@@ -115,6 +116,12 @@ export interface CreateFormPayload {
   currency: string;
   items: FormItem[];
   maxSubmissions?: number;
+  /**
+   * A limited form's waiting list (migration 183, owner decision of 2026-11-23): past the capacity,
+   * a member's answer waits in line and a freed place registers the first. Sent only to an estate
+   * that serves it (`serverFormWaitlist`).
+   */
+  waitlistEnabled?: boolean;
   /** ISO 8601 - submissions blocked until this instant. */
   opensAt?: string;
   /**
@@ -657,6 +664,12 @@ export async function checkSubmission(
    */
   resumable?: ResumableAnswer | null;
   /**
+   * The form's waiting list (`waitlist.ts`): whether an answer given now while the form is full
+   * would wait in line, and the caller's own rank while theirs waits. Absent from a server older
+   * than it: the page then offers no list.
+   */
+  waitlist?: WaitlistView;
+  /**
    * The caller's answer whose online payment ended without money and may be settled IN PERSON
    * instead ("Payer en direct"), or null - the server decides (the form takes cash, open, a free
    * seat, nothing else answering for them). Absent from a server older than it: no action.
@@ -756,6 +769,10 @@ export interface Submission {
   editedAt?: string | null;
   /** The reference a PAYING GUEST was given ("1A2B-3C4D"); null on every other row. */
   reference?: string | null;
+  /** A waiting answer's place in the arrival order (a bigint, as text); null on any other row. */
+  waitlistOrder?: string | null;
+  /** When a waiting answer became a registration; null if it never waited. */
+  promotedAt?: string | null;
   /** What a guest typed when the public form asked for it (migration 138); null otherwise. */
   guestLastName?: string | null;
   guestFirstName?: string | null;
@@ -866,6 +883,8 @@ export async function getSubmissionPayment(submissionId: string): Promise<{
   paymentStatus: string;
   /** The request's state, typed, when the server read it on this call. */
   requestState?: PaymentRequestState;
+  /** Paid over capacity by a payer on the waiting list: their place in line is kept. */
+  waitlisted?: true;
 }> {
   const res = await apiFetch(
     `${socialUrl()}/api/forms/submissions/${encodeURIComponent(submissionId)}`
@@ -887,6 +906,8 @@ export async function confirmSubmissionPayment(submissionId: string): Promise<{
   paymentStatus: string;
   /** The request's state, typed, when the server read it on this call. */
   requestState?: PaymentRequestState;
+  /** Paid over capacity by a payer on the waiting list: their place in line is kept. */
+  waitlisted?: true;
 }> {
   const res = await apiFetch(
     `${socialUrl()}/api/forms/submissions/${encodeURIComponent(submissionId)}/confirm-payment`,
@@ -894,6 +915,32 @@ export async function confirmSubmissionPayment(submissionId: string): Promise<{
   );
   if (!res.ok) throw await refusal(res, 'Failed to confirm the payment');
   return res.json();
+}
+
+/**
+ * THE CALLER LEAVES THE WAITING LIST: their own waiting answer is deleted, and everyone behind moves
+ * up. A 409 `WAITLIST_ANSWER_NOT_WAITING` when it was promoted meanwhile (it is then a registration,
+ * withdrawn like any other).
+ */
+export async function leaveWaitlist(submissionId: string): Promise<void> {
+  const res = await apiFetch(
+    `${socialUrl()}/api/forms/submissions/${encodeURIComponent(submissionId)}/leave-waitlist`,
+    { method: 'POST' }
+  );
+  if (!res.ok) throw await refusal(res, 'Leaving the waiting list failed');
+}
+
+/**
+ * A MANAGER REGISTERS ONE WAITING ANSWER BY HAND, above the capacity if the form is full; its member
+ * is told by the same push as an automatic promotion. A 409 `WAITLIST_ANSWER_NOT_WAITING` when it no
+ * longer waits. Requires form manager access.
+ */
+export async function promoteFromWaitlist(formId: string, submissionId: string): Promise<void> {
+  const res = await apiFetch(
+    `${socialUrl()}/api/forms/${encodeURIComponent(formId)}/submissions/${encodeURIComponent(submissionId)}/promote`,
+    { method: 'POST' }
+  );
+  if (!res.ok) throw await refusal(res, 'Promotion from the waiting list failed');
 }
 
 /** Deletes a submission. Requires form manager access. */
@@ -1249,6 +1296,11 @@ export async function submitForm(
      * `FORM_RESPONDENT_FIELDS_CHANGED` when the form changed since (principle 1).
      */
     announcedFields?: string[];
+    /**
+     * The member asked to WAIT IN LINE if the form is full (`offersWaitlistJoin`): the answer is
+     * then kept as `waiting`, nothing charged. Never sent otherwise, so a full form still refuses.
+     */
+    joinWaitlist?: boolean;
   }
 ): Promise<any> {
   const res = await apiFetch(`${socialUrl()}/api/forms/${id}/submit`, {

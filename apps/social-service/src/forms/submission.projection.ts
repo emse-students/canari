@@ -46,6 +46,10 @@ const MANAGER_FIELDS = [
   // What the form joined from the account or asked to be declared (migration 174,
   // `respondent-identity.ts`): the manager chose to collect it, and the respondent was shown it.
   'respondentIdentity',
+  // The waiting list (migration 183, `waitlist.ts`): its arrival order, and when an answer that
+  // waited became a registration - what the manager's list draws the line and its promotions from.
+  'waitlistOrder',
+  'promotedAt',
 ] as const;
 
 export type SubmitterSubmissionView = Pick<Submission, (typeof SUBMITTER_FIELDS)[number]>;

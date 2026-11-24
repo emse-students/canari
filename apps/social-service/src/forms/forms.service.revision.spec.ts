@@ -146,6 +146,8 @@ describe('FormsService - unpublished revisions', () => {
       query: jest.fn(),
       // The publication's locked read of the form (`FOR UPDATE`): the row as it stands.
       findOne: jest.fn(async () => ({ ...row })),
+      // Every published revision runs the waiting list's promotion: nobody waits on this form.
+      count: jest.fn(async () => 0),
     };
     const formRepo: any = {
       findOne: jest.fn(async () => ({ ...row })),

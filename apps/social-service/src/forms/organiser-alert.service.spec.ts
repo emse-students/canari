@@ -54,6 +54,23 @@ describe('FormOrganiserAlertService', () => {
     );
   });
 
+  it('a payer on the waiting list: the row says so in its meta, and the push carries its own key', async () => {
+    const { service, notifications, push } = make();
+    await service.tell(
+      { id: 'f1', title: 'Gala', ownerId: 'owner', associationId: null as any },
+      { payerInLine: true }
+    );
+    await flush();
+    expect(notifications.createNotifications).toHaveBeenCalledWith(
+      expect.objectContaining({ type: FORM_PAID_OVER_CAPACITY_TYPE, meta: { payerInLine: true } })
+    );
+    expect(push.notifyContent).toHaveBeenCalledWith(
+      'owner',
+      expect.objectContaining({ key: 'form_paid_over_capacity_waitlisted', arg: 'Gala' }),
+      expect.anything()
+    );
+  });
+
   it('writes a row naming the form by its title only, with no person as its actor', async () => {
     const { service, notifications } = make();
     await service.tell({ id: 'f1', title: 'Gala', ownerId: 'owner', associationId: null as any });

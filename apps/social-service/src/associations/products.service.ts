@@ -2102,8 +2102,10 @@ export class ProductsService {
   /**
    * `assertNoOpenTierCheckout` for the OTHER way a tier is paid for: an answer to one of the
    * association's forms that grants tier `variantKey`, still waiting for its money - online and
-   * within its hold (`PENDING_HOLD_CUTOFF_SQL`, the forms' own definition of a live payment), or
-   * waiting for cash a manager will validate. Landing after the delete, its grant would name a tier
+   * within its hold (`PENDING_HOLD_CUTOFF_SQL`, the forms' own definition of a live payment; a
+   * promoted answer owing its payment, `payment_due`, has the same hold), waiting for cash a manager
+   * will validate, or a charged answer on the form's WAITING LIST, which a freed place turns into
+   * one of those at any moment (`waitlist.ts`). Landing after the delete, its grant would name a tier
    * that no longer exists and be recorded `paid_not_granted`, a refund owed. Same `409
    * TIER_CHECKOUT_OPEN`. A form submit takes no tier lock, so an answer opened in the instant of the
    * delete is not seen: it lands `paid_not_granted` and the hourly report names it.
@@ -2118,7 +2120,9 @@ export class ProductsService {
         WHERE f."associationId" = $1 AND f."grantsCotisation"
           AND f."cotisationVariantKey" IS NOT DISTINCT FROM $2
           AND (s."paymentStatus" = 'pending_cash'
-               OR (s."paymentStatus" = 'pending' AND s."paymentRequestedAt" > ${PENDING_HOLD_CUTOFF_SQL}))`,
+               OR (s."paymentStatus" IN ('pending', 'payment_due')
+                   AND s."paymentRequestedAt" > ${PENDING_HOLD_CUTOFF_SQL})
+               OR (s."paymentStatus" = 'waiting' AND s."totalPaid" > 0))`,
       [associationId, variantKey]
     );
     const open = rows[0]?.n ?? 0;
