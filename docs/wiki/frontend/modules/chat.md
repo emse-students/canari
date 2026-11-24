@@ -1951,6 +1951,101 @@ guard refused the leader's (`MLS state write REFUSED as stale`) - closed by #337
 **Owed:** two-tab readings on dev in Firefox (hide the leader, send a photo from the other tab, and
 see it promoted and the photo sent) and in Chrome (freeze the leader from `chrome://discards`).
 
+### A leader whose own session ended gives the lead up (2026-11-24)
+
+**The report (owner, screenshot, web, desktop browser, 2026-11-24):** in a second tab, "Nouvelle
+discussion" with a recipient selected answered *"L'onglet principal de Canari n'est pas prêt
+(verrouillé ou déconnecté) : déverrouillez-le, ou faites-le depuis cet onglet."*. The owner added
+that tabs behave oddly in general, especially when some of them go to sleep.
+
+**The case it hit.** That sentence is the follower's rendering of `leader-unavailable`, which a
+leader answers when its readiness is `unavailable`: no live session and no login running. Such a
+leader still held `canari-tab-leader`. The election takes the lock in a login and held it until the
+document unloaded, whatever became of the session afterwards. A session ends in place, with no
+unload, in three ordinary ways:
+- a failed login puts the PIN keypad back up after the election;
+- a sign-out;
+- an expired session: a tab asleep for hours wakes, its reconnect is answered
+  `SessionExpiredError`, and `gotoLoginAfterExpiry` is a client-side navigation.
+
+From then on that tab served nothing and kept the lead, and no other tab could take it. Every
+gesture a follower handed over was refused, for as long as that tab stayed open. The same fact had
+a mirror: a follower whose own login failed stayed in the lock's queue, so when the leader closed,
+the lock could go to a tab at the keypad, and stay there.
+
+**The fix: the lead belongs to a tab whose session can serve it** (`setTabLeadEligibility`,
+`tabLeader.ts`). Eligibility is computed from the session's two flags by their one writer
+(`publishDelegationReadiness` in `useChatSession`), the same readiness that already told a
+follower's request how it would be answered. Nothing is decided from a reply that does not come,
+and no clock is used:
+- **eligibility falls** (`unavailable`): a leader decides `follower` first, then releases the lock
+  into the queue. The browser grants it at once to the next tab that asked, and only a tab whose
+  session can serve is ever in that queue. A follower withdraws its queued request. A hold handed
+  over and not yet stolen is released too. From then on the document holds no lock and no request.
+  Its demotion handler is told `session-cannot-serve` and does NOT reload: there is no live session
+  to tear down, and a reload would throw the member out of the keypad or a recovery screen.
+- **eligibility returns** (a login starts, `starting`): the document runs the election again, and
+  the login awaits it as its own (`initTabLeadershipAsync` reads the memo). Running it twice is safe
+  here and only here, because the document holds nothing and so cannot be its own rival
+  ([the 2026-09-21 rule](../../durable-rules.md#mls-state-and-keys---mls-protocol-auth)).
+  It leads if the lock is free and follows otherwise. A promotion that lands after its state was
+  loaded as a follower is `promotedSinceLoad`, which reloads as before.
+- **the lead first, then the answer**: eligibility is published BEFORE the delegation readiness, so
+  the drain that the readiness change starts runs in a document that no longer leads. That drain
+  answers nothing (`answersFollowerCommits` is false). A record it was deciding is left `pending`.
+  A record it had already claimed is handed back to `pending` under its run lock, since nothing ran.
+  The tab that took the lead runs it, instead of the follower being told `leader-unavailable`.
+- **a sign-out's final checkpoint keeps the lead until it lands**: `tearDownLiveSession` registers
+  the write (`holdLeadUntilWritten`) before the session flag falls. The write latch refuses a put
+  from a document that no longer leads, so giving the lead up at the flag would have refused the
+  checkpoint the next sign-in reads. The lead goes when the write settles (it never rejects).
+- the grant callbacks (a queued promotion, the hand-over's steal, the first election) read
+  eligibility too. A lock granted to a document whose withdrawal raced the grant is passed on
+  rather than held, and a follower that cannot serve asks no hidden leader for the lead.
+
+**What the member sees now:** the gesture works from the tab they are in. If that tab is the one
+promoted, it reloads first, as every promotion does
+([why](#the-lead-goes-to-a-tab-that-can-serve-a-hidden-leader-hands-it-over-2026-11-10)).
+`leader-unavailable` remains in two places only:
+- a follower that is itself signed out;
+- an engine without Web Locks, where nothing is handed over in the first place (`not-delegable`).
+
+**The log:**
+- the old leader: `[TAB] This tab's session cannot serve (session unavailable) while leading - the
+  lock is released so a tab that can serve takes the lead.`;
+- the tab that serves: `[TAB] Promoted to leader (Web Locks).` and its reload;
+- the old leader at its next login: `[TAB] This tab's session can serve again (session starting) -
+  it rejoins the election.`
+
+**Still not covered, unchanged:**
+- a leader whose main thread is wedged;
+- an engine that suspends a page without dispatching `freeze`
+  ([above](#the-lead-goes-to-a-tab-that-can-serve-a-hidden-leader-hands-it-over-2026-11-10)).
+
+A tab asleep in Firefox or Safari keeps the lead while it lives and is answered for by the
+hand-over. The owner's decision of the same day is to replace the leader tab with one browser-wide
+worker in `1.9.0` ([design](../../backlog.d/a-browser-wide-worker-holds-the-mls-state-instead-of-a-leader-tab.md)).
+
+**Pinned by:**
+- `tabLeader.cannotServe.test.ts`, two documents sharing one lock manager
+  (`tabLeaderDocuments.test-helper.ts`, now shared with `tabLeader.freeze.test.ts`):
+  - a leader whose session ends releases the lock, and the ready follower is promoted;
+  - the old leader is a follower first, refuses commits, and is not queued;
+  - it rejoins at its next login as a follower, and is promoted when that leader's session ends;
+  - a locked follower withdraws, so a closing leader never hands the lock to it;
+  - a lone tab leaves the lock free and takes it back without queueing behind itself;
+  - repeating a state is a no-op;
+  - a follower that cannot serve asks for no hand-over.
+- `tabCommitDelegation.test.ts`: a leader that gives the lead up between the claim and the run
+  hands the record back, and the next leader runs it.
+- `tabLeadership.test.ts`, the session wiring:
+  - no reload on `session-cannot-serve`;
+  - eligibility is published before the readiness;
+  - the sign-out's hold is registered before the flag falls.
+
+**Owed:** a two-tab reading on dev with the web rig. Lock the leader tab (the keypad), or let its
+session expire, then start a conversation from the other tab.
+
 ### A follower tab's commits are run by the leader (2026-11-08)
 
 **Decided by the owner on 2026-11-08: the permanent "Messagerie chiffrée active dans un autre
@@ -2044,7 +2139,9 @@ leader's readiness decides how. It is set by the ONE writer of the session's two
 return, failure, sign-out - whoever flips the flag; a component effect could not, since
 `isLoginInProgress` is a plain boolean no effect re-runs on (`delegationReadinessWiring.test.ts`): `ready` (a live session) runs it; `unavailable` (the PIN keypad up, or nobody signed in) answers
 `leader-unavailable` at once and runs nothing (`chat_error_main_tab_unavailable`: unlock the main tab,
-or do it there); `starting` (a login actually running) keeps it `pending` until the login ends in one
+or do it there) - but since 2026-11-24 a leader whose session becomes `unavailable` gives the lead up
+FIRST, so a document in that state no longer leads and answers nothing; the tab that takes the lead
+runs the request ([below](#a-leader-whose-own-session-ended-gives-the-lead-up-2026-11-24)); `starting` (a login actually running) keeps it `pending` until the login ends in one
 of the other two. Nothing waits on `whenMlsReady` any more, so no request blocks the drain behind it;
 instead the readiness, the load fact and the account are read AGAIN after the claim, right before the
 executor runs, so a sign-out landing between the decision and the run answers `leader-unavailable`
@@ -2053,7 +2150,8 @@ A kind no executor in the leader runs is answered `not-delegable`. A `pending` r
 LOCK is free - its tab closed, or signed out - is deleted under the run lock and never run, with a
 line saying so: the gesture is nobody's any more, and a same-account sign-in afterwards never runs a
 previous session's request. **A leader tab that cannot serve gives the lead up** - a hidden one hands
-it to the visible tab that asks, a frozen one releases it at `freeze` ([below](#the-lead-goes-to-a-tab-that-can-serve-a-hidden-leader-hands-it-over-2026-11-10)), so a waiting request is run by the
+it to the visible tab that asks, a frozen one releases it at `freeze` ([below](#the-lead-goes-to-a-tab-that-can-serve-a-hidden-leader-hands-it-over-2026-11-10)), one whose own session ended
+(the keypad, a sign-out, an expired session) releases it at once ([below](#a-leader-whose-own-session-ended-gives-the-lead-up-2026-11-24)), so a waiting request is run by the
 tab promoted in its place; a discarded tab is gone, and its locks with it. What is still not covered:
 a leader whose main thread is wedged, which runs no handler, and no clock is added to cut that wait
 short - a timeout there would be a guess about a live document. **And right after a deploy**, a leader tab still
@@ -2089,7 +2187,8 @@ answered; a repeated signal and concurrent drains run once; two documents that b
 lead run once between them; a request asked before any leader is run by the one that comes; a
 promoted-in-place document runs nothing and its reloaded successor runs the request; a starting
 leader keeps it and runs it once ready; a locked or not-yet-loaded leader answers
-`leader-unavailable`; a leader killed mid-request answers `leader-gone` and runs nothing again; a
+`leader-unavailable` (where it still leads); a leader that gave the lead up between the claim and the
+run hands the record back for the next leader; a leader killed mid-request answers `leader-gone` and runs nothing again; a
 request held by a live document is waited for; a pending request whose tab closed is deleted, not
 run; a signed-out session's request is never run for the next one; another account and a signed-out
 leader refuse; a throwing executor is said once, at error. `stateAuthority.test.ts` for the load

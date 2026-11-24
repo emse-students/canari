@@ -16,6 +16,7 @@ import {
   setTabLeaderPromotedHandler,
   markPromotionReload,
   setTabLeaderDemotedHandler,
+  setTabLeadEligibility,
   getIsTabLeader,
 } from '$lib/utils/chat/connection';
 import { CallService } from '$lib/services/CallService';
@@ -153,6 +154,8 @@ export function useChatSession() {
   let isExporting = $state(false);
   let isImporting = $state(false);
   let isLoginInProgress = false; // plain boolean - guards against concurrent login() calls
+  /** Sign-outs whose final checkpoint is still being written - see `holdLeadUntilWritten`. */
+  let finalWritesHoldingLead = 0;
   let isWipingRevokedDevice = false; // plain boolean - a login must not race the wipe that erases it
   /** True from MLS unlock until the full startup login path finishes (messaging catch-up). */
   let isMessagingInitializing = $state(false);
@@ -293,6 +296,15 @@ export function useChatSession() {
       tabLeaderSessionCb = cb;
     },
     reloadForPromotion: (log) => reloadForPromotion(log),
+    holdLeadUntilWritten: (finalWrite) => {
+      finalWritesHoldingLead += 1;
+      const landed = () => {
+        finalWritesHoldingLead -= 1;
+        // The write settled: a session that cannot serve gives the lead up now.
+        publishDelegationReadiness();
+      };
+      void finalWrite.then(landed, landed);
+    },
 
     // Constants
     RECONNECT_DELAYS,
@@ -323,7 +335,17 @@ export function useChatSession() {
    * start and every end (success, early return, failure, sign-out), whoever flips the flag.
    */
   function publishDelegationReadiness(): void {
-    setDelegationReadiness(sessionDelegationReadiness(isLoggedIn, isLoginInProgress));
+    const readiness = sessionDelegationReadiness(isLoggedIn, isLoginInProgress);
+    // THE LEAD FIRST, THEN THE ANSWER: a session that cannot serve gives the lead up before its
+    // drain runs, so a follower's request is left for the tab that takes the lead rather than
+    // answered `leader-unavailable` by a leader that will never serve it (`setTabLeadEligibility`).
+    // A sign-out's final checkpoint still in flight keeps it: the latch would refuse that write.
+    const holding = finalWritesHoldingLead > 0;
+    setTabLeadEligibility(
+      readiness !== 'unavailable' || holding,
+      holding ? `session ${readiness}, final checkpoint in flight` : `session ${readiness}`
+    );
+    setDelegationReadiness(readiness);
   }
 
   // This tab has just been handed leadership: the previous leader advanced the MLS ratchet on disk
@@ -350,9 +372,13 @@ export function useChatSession() {
   // This tab just yielded leadership to another tab: reload to cleanly close the
   // WebSocket and restart in follower mode (MLS ratchet must never advance in two
   // tabs simultaneously).
-  setTabLeaderDemotedHandler(() => {
+  setTabLeaderDemotedHandler((cause) => {
     leadershipChanged();
     isTabLeaderState = false;
+    // A LEAD GIVEN UP BECAUSE THIS SESSION CANNOT SERVE (the keypad, a sign-out, a failed login): no
+    // live session, so no socket to close and no copy to drop - and no reload, which would throw the
+    // member out of the keypad or the recovery screen. It rejoins the election at its next login.
+    if (cause === 'session-cannot-serve') return;
     tabLeaderSessionCb?.log('[TAB] Leadership released - reloading as follower.');
     if (tabLeaderSessionCb) rememberSelectionForReload(tabLeaderSessionCb.log);
     // THE SOCKET GOES NOW, not with the reload: a lock released by a FREEZE (`tabLeader.ts`) reloads

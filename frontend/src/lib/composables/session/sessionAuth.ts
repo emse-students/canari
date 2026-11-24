@@ -3846,6 +3846,8 @@ export function tearDownLiveSession(
         console.error(`[LOGOUT] Final MLS checkpoint failed: ${String(e)}`);
       })
       .then(releasePersister);
+    // The session's flag falls below; its lead stays until this write has landed.
+    ctx.holdLeadUntilWritten(finalWrite);
   } else {
     // NO FINAL FLUSH FOR A REVOKED DEVICE. Persisting the state the next step deletes is precisely
     // the write that must not survive the wipe, so the persister is uninstalled without one.

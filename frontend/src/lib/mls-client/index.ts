@@ -72,6 +72,7 @@ export {
   getIsTabLeader,
   setTabLeaderPromotedHandler,
   setTabLeaderDemotedHandler,
+  setTabLeadEligibility,
   markPromotionReload,
 } from './tabLeader';
 export {

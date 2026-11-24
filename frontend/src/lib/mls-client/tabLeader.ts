@@ -132,7 +132,7 @@ export function whenTabLeadershipDecided(): Promise<'leader' | 'follower'> {
 
 let tabChannel: BroadcastChannel | null = null;
 let leaderPromotedHandler: (() => void) | null = null;
-let leaderDemotedHandler: (() => 'reloads' | void) | null = null;
+let leaderDemotedHandler: ((cause: TabDemotionCause) => 'reloads' | void) | null = null;
 
 /**
  * How to get back in the queue after handing leadership over - set by whatever took the lock.
@@ -164,6 +164,16 @@ function notifyTabLeaderPromoted(): void {
 }
 
 /**
+ * Why this document stopped leading, as told to the demotion handler:
+ * - `lead-moved`: the lock went to another tab (stolen by a promotion reload, handed to a visible
+ *   tab, released at a freeze) while this document may hold a live session - it tears it down;
+ * - `session-cannot-serve`: this document's own session ended or never went live (the PIN keypad,
+ *   a sign-out, a failed login), so it gave the lead up ({@link setTabLeadEligibility}). There is no
+ *   live session to tear down and nothing to reload: it rejoins the election at its next login.
+ */
+export type TabDemotionCause = 'lead-moved' | 'session-cannot-serve';
+
+/**
  * Registers a callback invoked when this tab loses leadership (another tab took over).
  * The handler should tear down this tab's WebSocket so the MLS ratchet only ever
  * advances in one tab.
@@ -171,7 +181,9 @@ function notifyTabLeaderPromoted(): void {
  * It returns `'reloads'` when it ends the document: this one then neither requeues nor accepts the
  * lead again, and the page its reload starts runs the election - see {@link handOver}.
  */
-export function setTabLeaderDemotedHandler(handler: (() => 'reloads' | void) | null): void {
+export function setTabLeaderDemotedHandler(
+  handler: ((cause: TabDemotionCause) => 'reloads' | void) | null
+): void {
   leaderDemotedHandler = handler;
 }
 
@@ -368,7 +380,7 @@ function handOver(): void {
   clearPromotionReload();
   // Notify the session to close its WebSocket (otherwise the MLS ratchet would advance in two tabs
   // simultaneously) - and learn from its answer whether this document is ending.
-  if (leaderDemotedHandler?.() === 'reloads') {
+  if (leaderDemotedHandler?.('lead-moved') === 'reloads') {
     leaving = true;
     return;
   }
@@ -496,6 +508,13 @@ function onLeaderLockRejected(e: unknown, log: (msg: string) => void): void {
  */
 function queueForPromotion(log: (msg: string) => void): void {
   if (leaving) return;
+  if (!leadEligible) {
+    rejoinOwed = true;
+    log(
+      "[TAB] Not queueing for the lead - this tab's session cannot serve it; it rejoins the election at its next login."
+    );
+    return;
+  }
   // Withdrawable, so a freeze can take it out of the queue (`watchPageLifecycle`).
   const request = new AbortController();
   promotionRequest = request;
@@ -508,6 +527,15 @@ function queueForPromotion(log: (msg: string) => void): void {
       // returning releases the lock to the next tab, and its resume queues this page again.
       if (request.signal.aborted) return;
       if (leadership === 'leader') return;
+      // GRANTED TO A DOCUMENT WHOSE SESSION CANNOT SERVE: its withdrawal raced the grant. It does
+      // not lead - returning releases the lock to the next tab - and rejoins at its next login.
+      if (!leadEligible) {
+        rejoinOwed = true;
+        log(
+          '[TAB] Lead granted to a tab whose session cannot serve it - passed on to the next tab.'
+        );
+        return;
+      }
       decide('leader');
       log('[TAB] Promoted to leader (Web Locks).');
       requeueForPromotion = () => queueForPromotion(log);
@@ -593,6 +621,15 @@ function takeHandedOverLead(log: (msg: string) => void): void {
   void navigator.locks
     .request('canari-tab-leader', { mode: 'exclusive', steal: true }, async () => {
       if (leadership === 'leader') return;
+      // The asker's session stopped being able to serve between its ask and the grant: the lock it
+      // stole goes on to the queue (returning releases it) rather than to a tab that cannot serve.
+      if (!leadEligible) {
+        rejoinOwed = true;
+        log(
+          '[TAB] Lead handed over to a tab whose session can no longer serve it - passed on to the next tab.'
+        );
+        return;
+      }
       decide('leader');
       log('[TAB] Lead handed over by the hidden leader tab - promoted (Web Locks).');
       requeueForPromotion = () => queueForPromotion(log);
@@ -614,7 +651,8 @@ function takeHandedOverLead(log: (msg: string) => void): void {
  * SAID once per visible stretch of this page (the line would otherwise repeat on every trigger).
  */
 export function requestLeaderHandover(log: (msg: string) => void): void {
-  if (leadership !== 'follower' || leaving || !tabChannel || !handoverWatched) return;
+  if (leadership !== 'follower' || leaving || !leadEligible || !tabChannel || !handoverWatched)
+    return;
   if (typeof document === 'undefined' || document.visibilityState !== 'visible') return;
   if (!handoverAsked) {
     handoverAsked = true;
@@ -649,7 +687,10 @@ async function initWithWebLocks(log: (msg: string) => void): Promise<boolean> {
         'canari-tab-leader',
         reclaim ? { mode: 'exclusive', steal: true } : { mode: 'exclusive', ifAvailable: true },
         async (lock) => {
-          if (lock === null) {
+          // A session that cannot serve does not lead even on a free lock (its login failed while the
+          // election was in flight): returning releases it, and the follower branch below owes the
+          // rejoin ({@link queueForPromotion}).
+          if (lock === null || !leadEligible) {
             resolveLeadership(false);
             return;
           }
@@ -685,6 +726,94 @@ async function initWithWebLocks(log: (msg: string) => void): Promise<boolean> {
   }
 
   return acquired;
+}
+
+// ── A lead only a session that can serve holds ─────────────────────────────
+
+/**
+ * Whether this document's session can serve the lead - see {@link setTabLeadEligibility}. `true`
+ * until a session says otherwise: the election itself runs inside a login, which can serve.
+ */
+let leadEligible = true;
+/** This document left the election because its session could not serve: its next login rejoins it. */
+let rejoinOwed = false;
+/** The logger of this document's election, kept so a rejoin and a step-down say what they do. */
+let electionLog: ((msg: string) => void) | null = null;
+
+/**
+ * THE LEAD BELONGS TO A TAB THAT CAN SERVE IT (owner, 2026-11-24).
+ *
+ * The lock used to be held from the login that won it until the document unloaded, whatever became
+ * of the session. A leader whose session ended in place - the PIN keypad back up after a failed
+ * login, a sign-out, an expired session sent to `/login` by a client-side navigation that unloads
+ * nothing - kept the lock while serving nothing, and every gesture a follower handed over was
+ * answered `leader-unavailable` ("L'onglet principal de Canari n'est pas pret"): a dead end, since no
+ * tab can take the lead from a document that still holds the lock. The same fact let a LOCKED
+ * follower be granted the lead when the leader closed, and keep it.
+ *
+ * So eligibility follows the session, set by the one writer of its flags (`useChatSession`, from the
+ * same readiness that tells a follower's request how it will be answered):
+ * - `false` (no session that can serve): a LEADER decides `follower` FIRST, then releases the lock to
+ *   the queue, where the browser grants it at once to the next tab that asked - and only a tab whose
+ *   session can serve is ever in that queue. Its demotion handler is told `session-cannot-serve`:
+ *   there is no live session to tear down, so it does not reload. A FOLLOWER withdraws its queued
+ *   request. A hold handed over and not yet taken is released too. From then on the document holds
+ *   no lock and no request.
+ * - `true` again (a login starts): a document that left owes a rejoin and runs the election again,
+ *   which the login then awaits as its own (`initTabLeadershipAsync` reads the memo). Running it a
+ *   second time is safe HERE and only here: the document holds nothing, so it cannot be its own
+ *   rival (the 2026-09-21 rule in `durable-rules`).
+ *
+ * Decided from durable facts only - the session's flags and the lock's ownership - never from a
+ * reply that does not come: no clock. A tab that cannot serve because it is FROZEN or hidden is the
+ * freeze and the hand-over above; this is the tab whose own session is gone. Web Locks path only:
+ * the localStorage fallback (WebKitGTK) delegates nothing (`not-delegable`), so nothing waits on it.
+ */
+export function setTabLeadEligibility(eligible: boolean, why: string): void {
+  if (leadEligible === eligible) return;
+  leadEligible = eligible;
+  const log = electionLog;
+  // No election ran in this document: it holds nothing and is queued nowhere.
+  if (!log) return;
+  if (!eligible) {
+    giveUpTheLead(why, log);
+    return;
+  }
+  if (!rejoinOwed || leaving) return;
+  rejoinOwed = false;
+  log(`[TAB] This tab's session can serve again (${why}) - it rejoins the election.`);
+  election = initWithWebLocks(log);
+}
+
+/** The `false` half of {@link setTabLeadEligibility}: this document lets go of everything it holds. */
+function giveUpTheLead(why: string, log: (msg: string) => void): void {
+  if (leadership === 'leader' && releaseLeaderLock) {
+    log(
+      `[TAB] This tab's session cannot serve (${why}) while leading - the lock is released so a tab that can serve takes the lead.`
+    );
+    // It comes back at its next login (a rejoin), never by requeueing on its own.
+    requeueForPromotion = null;
+    clearPromotionReload();
+    rejoinOwed = true;
+    // `follower` first, then the lock goes to the queue.
+    releaseLeaderLock();
+    leaderDemotedHandler?.('session-cannot-serve');
+  }
+  if (promotionRequest) {
+    log(
+      `[TAB] This tab's session cannot serve (${why}) - its request for the lead is withdrawn until it can.`
+    );
+    const request = promotionRequest;
+    promotionRequest = null;
+    rejoinOwed = true;
+    request.abort();
+  }
+  if (heldLock && leadership !== 'leader') {
+    log(
+      `[TAB] This tab's session cannot serve (${why}) and still holds a lead it handed over - the lock is released.`
+    );
+    heldLock();
+  }
 }
 
 // ── Legacy localStorage/heartbeat fallback ────────────────────────────────
@@ -834,6 +963,7 @@ export function initTabLeadershipAsync(log: (msg: string) => void): Promise<bool
 }
 
 async function runElection(log: (msg: string) => void): Promise<boolean> {
+  electionLog = log;
   // Single-tab environments (Tauri desktop, service workers without BroadcastChannel)
   // are always leader.
   if (typeof BroadcastChannel === 'undefined') {
@@ -891,6 +1021,9 @@ export function resetTabLeaderStateForTests(): void {
   promotionRequest = null;
   requestWithdrawnByFreeze = false;
   leaving = false;
+  leadEligible = true;
+  rejoinOwed = false;
+  electionLog = null;
   handoverAsked = false;
   // The channel is closed above: the next election's channel needs its own listener.
   handoverWatched = false;

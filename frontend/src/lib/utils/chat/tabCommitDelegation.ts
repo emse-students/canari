@@ -34,8 +34,10 @@
  *
  * A REQUEST IS ALWAYS ANSWERED while its follower lives. The leader's readiness decides how
  * ({@link setDelegationReadiness}): `ready` (a live session) runs it; `unavailable` (the PIN gate, a
- * sign-out) answers `leader-unavailable` at once, nothing run - the member unlocks the main tab or
- * retries; `starting` (a login in progress) leaves it `pending` until the login ends in one of the
+ * sign-out) answers `leader-unavailable` at once, nothing run - but a leader whose session ends GIVES
+ * THE LEAD UP first (`setTabLeadEligibility`, 2026-11-24), and a document that no longer leads answers
+ * nothing: the record stays `pending` for the tab that took the lead, a claim it made is handed back.
+ * So that answer is met only where the lead cannot move; `starting` (a login in progress) leaves it `pending` until the login ends in one of the
  * other two. A kind no executor here runs is answered `not-delegable`. A request whose follower is
  * gone (its requester lock free) is deleted and never run - the gesture is nobody's any more, and a
  * request of a session that signed out is gone with it ({@link abandonDelegatedCommits}).
@@ -559,6 +561,12 @@ export function createDelegationServer(env: DelegationEnv) {
       const current = await store.get(id);
       if (!current || current.state === 'done') return 'settled';
       const tag = `[TAB-COMMIT] ${id.slice(0, 8)}... ${describe(current.op)}`;
+      if (!env.answers()) {
+        // THIS DOCUMENT GAVE THE LEAD UP DURING THE PASS (its session can no longer serve, a
+        // freeze): the record is the next leader's to decide, never answered by a tab that left.
+        env.log(`${tag} waits: this tab no longer leads - left to the tab that took the lead`);
+        return 'waits';
+      }
       if (current.state === 'running') {
         // Claimed, unsettled, and its run lock free: the document that ran it is gone.
         env.log(
@@ -618,7 +626,19 @@ export function createDelegationServer(env: DelegationEnv) {
       // RE-READ AFTER THE CLAIM'S AWAIT, right before the run: a sign-out (or a demotion) landing
       // between the decision and here must not run the gesture against a session that is ending -
       // an executor reaching for MLS then would build a client for nobody.
-      if (env.readiness() !== 'ready' || !env.serves() || env.account() !== claimed.account) {
+      const stillReady = env.readiness() === 'ready';
+      if (!env.answers()) {
+        // The lead left this document during the claim (a session that ended gives it up first):
+        // nothing ran, so the claim is undone - still under the run lock - and the tab that took
+        // the lead runs it. A `leader-unavailable` here would dead-end a gesture a leader can serve.
+        await store.update(id, (r) => (r?.state === 'running' ? { ...r, state: 'pending' } : null));
+        env.log(
+          `${tag}: this tab gave the lead up before the run - handed back as pending to the tab that took it, not run`,
+          'warn'
+        );
+        return 'waits';
+      }
+      if (!stillReady || !env.serves() || env.account() !== claimed.account) {
         env.log(
           `${tag}: this leader's session ended before the run - leader-unavailable, not run`,
           'warn'

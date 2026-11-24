@@ -651,6 +651,31 @@ describe('round 2 of the review of #3160', () => {
     expect(runs).toEqual([]);
   });
 
+  it('a leader that gives the lead up between the claim and the run hands the request back, and the tab that takes the lead runs it (2026-11-24)', async () => {
+    const w = makeWorld();
+    let reads = 0;
+    // Ready when the record is decided; by the time the claim committed, its session ended and it
+    // gave the lead up (`setTabLeadEligibility`), which is what `answers` reads.
+    const { leader, runs } = servingLeader('L', w, {
+      readiness: () => {
+        if (++reads === 1) return 'ready';
+        leader.role.leader = false;
+        return 'unavailable';
+      },
+    });
+    const follower = tab('F', w, { leader: false });
+
+    const answer = follower.delegate({ kind: 'start-direct', contact: 'bob' });
+    await settle();
+    expect(runs).toEqual([]);
+    // Not answered `leader-unavailable`: the record is pending again, for the next leader.
+    expect(w.databases.ids()).toEqual(['F-req-1']);
+
+    const next = servingLeader('N', w);
+    expect(await answer).toEqual({ status: 'done', value: { ok: true, key: 'dm-bob' } });
+    expect(next.runs).toEqual(['start-direct:bob']);
+  });
+
   it("a wiped account's store is dropped and never read again", async () => {
     const w = makeWorld();
     const wiped = new Set<string>();
