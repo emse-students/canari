@@ -1,4 +1,4 @@
-# Signing in (miconnect-auth, CAS only), its failure page, the password flow the test campaign uses, Canari's sign-out flow and the MINO logout redirect.
+# Signing in (miconnect-auth: the CAS and the Alumni SSO), its failure page, the password flow the test campaign uses, Canari's sign-out flow and the MINO logout redirect.
 #
 # Applied by infrastructure/authentik/apply-blueprints.py, never by the worker's own discovery
 # (instantiate: false) - see infrastructure/authentik/README.md. Every reference is a !Find on a
@@ -77,8 +77,11 @@ entries:
       name: "miconnect-identification"
     attrs:
       user_fields: []
+      # Both ways in, side by side (D45, owner 2026-11-23): the CAS, and the Alumni SSO for whoever
+      # no longer has a School account (or prefers it).
       sources:
         - !Find [authentik_sources_oauth.oauthsource, [slug, "cas-emse"]]
+        - !Find [authentik_sources_saml.samlsource, [slug, "alumni"]]
       show_source_labels: true
   - model: authentik_stages_deny.denystage
     identifiers:

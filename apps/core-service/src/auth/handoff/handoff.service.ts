@@ -31,7 +31,40 @@ import {
   HandoffAccessClass,
   HandoffAccessRefused,
   type HandoffAccess,
+  type HandoffAccessClassCode,
 } from './handoff-access';
+
+/**
+ * The refusals a person settles on MiConnect's own page (it shows them the terms, the Alumni link
+ * step, or why the Alumni gate stops them): each has its own 403 code, so the app opens the site
+ * through MiConnect's sign-in as the person's PRIMARY path and says it at info.
+ */
+const PERSON_SETTLES_AT_MICONNECT: ReadonlyMap<
+  HandoffAccessClassCode,
+  { code: HandoffRefusalCode; message: string }
+> = new Map([
+  [
+    HandoffAccessClass.termsNotAccepted,
+    {
+      code: HandoffRefusal.termsNotAccepted,
+      message: 'the current MiConnect terms are not accepted yet',
+    },
+  ],
+  [
+    HandoffAccessClass.alumniLinkRequired,
+    {
+      code: HandoffRefusal.alumniLinkRequired,
+      message: 'MiConnect asks this account to link its Alumni account first',
+    },
+  ],
+  [
+    HandoffAccessClass.alumniCotisantRequired,
+    {
+      code: HandoffRefusal.alumniCotisantRequired,
+      message: 'MiConnect admits this account to the site as an Alumni contributor only',
+    },
+  ],
+]);
 
 /** Injection token for the registry, so a test can hand the service a site whose flag is ON. */
 export const HANDOFF_SITES = Symbol('HANDOFF_SITES');
@@ -203,14 +236,13 @@ export class HandoffService {
     } catch (e) {
       if (!(e instanceof HandoffAccessRefused)) throw e;
       const line = `[HANDOFF] refused class=${e.accessClass} aud=${site.id} user=${userId} (${e.detail})`;
-      if (e.accessClass === HandoffAccessClass.termsNotAccepted) {
-        // An expected, population-wide state after a terms version ships (the person's next MiConnect
-        // sign-in clears it): info, with its own code so the app can say the same.
+      // A refusal MiConnect's own page settles for the person - the terms, the Alumni link step, the
+      // Alumni gate - is an expected state of a whole population, not a failure: info, with its own
+      // code so the app opens the site through MiConnect, which shows them that page.
+      const settledAtMiconnect = PERSON_SETTLES_AT_MICONNECT.get(e.accessClass);
+      if (settledAtMiconnect) {
         this.logger.log(line);
-        throw this.refuse(
-          HandoffRefusal.termsNotAccepted,
-          'the current MiConnect terms are not accepted yet'
-        );
+        throw this.refuse(settledAtMiconnect.code, settledAtMiconnect.message);
       }
       if (e.unavailable) this.logger.error(line);
       else this.logger.warn(line);
@@ -227,6 +259,8 @@ export class HandoffService {
         return new NotFoundException(body);
       case HandoffRefusal.accessRefused:
       case HandoffRefusal.termsNotAccepted:
+      case HandoffRefusal.alumniLinkRequired:
+      case HandoffRefusal.alumniCotisantRequired:
         return new ForbiddenException(body);
       case HandoffRefusal.miconnectUnavailable:
         return new ServiceUnavailableException(body);

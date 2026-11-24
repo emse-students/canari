@@ -14,8 +14,25 @@ export interface AlumniAccount {
   uuid: string;
   username: string;
   name: string;
+  /** With `lastLogin`, what tells two homonyms apart. */
+  email: string;
+  /** ISO time of the last MiConnect sign-in, null when it never signed in. */
+  lastLogin: string | null;
   promos: number[];
   canariUserId: string | null;
+}
+
+/**
+ * An open merge: `marked` waits for the duplicate's next Alumni sign-in, when MiConnect merges it;
+ * `requested` is an interrupted "Rattacher", resumed by the same action. Either can be cancelled.
+ */
+export interface AlumniOpenMerge {
+  duplicateUuid: string;
+  duplicateUsername: string;
+  targetUuid: string;
+  status: 'requested' | 'marked';
+  requestedAt: string;
+  markedAt: string | null;
 }
 
 /** A flagged duplicate and the accounts it matches by name and promo. */
@@ -40,6 +57,8 @@ const ALUMNI_MERGE_CODES = [
   'ALUMNI_MERGE_NOT_DUPLICATE',
   'ALUMNI_MERGE_NO_MATCH',
   'ALUMNI_MERGE_HOLDINGS_UNAVAILABLE',
+  'ALUMNI_MERGE_IN_PROGRESS',
+  'ALUMNI_MERGE_ALREADY_MERGED',
 ] as const;
 type AlumniMergeCode = (typeof ALUMNI_MERGE_CODES)[number];
 
@@ -76,10 +95,15 @@ export function alumniMergeErrorMessage(err: unknown): string {
       return m.alumni_merge_error_no_match();
     case 'ALUMNI_MERGE_HOLDINGS_UNAVAILABLE':
       return m.alumni_merge_error_holdings();
+    case 'ALUMNI_MERGE_IN_PROGRESS':
+      return m.alumni_merge_error_in_progress();
+    case 'ALUMNI_MERGE_ALREADY_MERGED':
+      return m.alumni_merge_error_already_merged();
   }
 }
 
 const base = () => `${coreUrl()}/api/users/admin/alumni-duplicates`;
+const mergesUrl = () => `${coreUrl()}/api/users/admin/alumni-merges`;
 
 /** The flagged duplicates. */
 export async function fetchAlumniDuplicates(): Promise<AlumniDuplicate[]> {
@@ -95,7 +119,26 @@ export async function fetchAlumniHoldings(duplicateUuid: string): Promise<Alumni
   return (await res.json()) as AlumniHoldings;
 }
 
-/** "Rattacher": deletes the duplicate and erases its Canari account (D48). */
+/** The open merges, reconciled with MiConnect by the server. */
+export async function fetchAlumniOpenMerges(): Promise<AlumniOpenMerge[]> {
+  const res = await apiFetch(mergesUrl());
+  if (!res.ok) throw await refusal(res);
+  return (await res.json()) as AlumniOpenMerge[];
+}
+
+/** "Annuler": removes the mark at MiConnect and closes the merge. */
+export async function cancelAlumniMerge(duplicateUuid: string): Promise<void> {
+  Log.d('alumniMerge.cancel', { dup: duplicateUuid.slice(0, 8) });
+  const res = await apiFetch(`${base()}/${encodeURIComponent(duplicateUuid)}/cancel`, {
+    method: 'POST',
+  });
+  if (!res.ok) throw await refusal(res);
+}
+
+/**
+ * "Rattacher" (D48): marks the duplicate for MiConnect, which merges it at its next Alumni sign-in,
+ * and erases its Canari account. Called again, it resumes an interrupted one.
+ */
 export async function mergeAlumniDuplicate(
   duplicateUuid: string,
   targetUuid: string

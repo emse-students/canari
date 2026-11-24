@@ -5,7 +5,9 @@ Run through `ak shell` by test-blueprints.sh, after the blueprints applied. It c
 API in-process with the token the blueprint wrote, the reads core-service makes
 (apps/core-service/src/auth/handoff/miconnect-reader.client.ts): a user by uuid (with its `uid`), a
 handoff application by slug (with its provider's two flows), each flow and its stage bindings, the
-policy bindings on all of them, and the tenant's `core_default_app_access` flag. Then the limits: no other application, no write of any kind, and -
+policy bindings on all of them (with the names of what they bind), the tenant's `core_default_app_access`
+flag, a user's groups and whether they hold an Alumni connection. Then the limits: no other application,
+no write of any kind, and -
 the reason the design reads the INPUTS rather than the answer - `check_access?for_user` answers for
 the CALLER, not for the user named. It prints `HANDOFF-READER-OK` when every assertion held.
 
@@ -17,19 +19,30 @@ import os
 
 from django.test import Client
 
-from authentik.core.models import Application, Token, User
+from authentik.core.models import Application, Group, Token, User
 from authentik.flows.models import Flow, FlowStageBinding
 from authentik.policies.expression.models import ExpressionPolicy
 from authentik.policies.models import PolicyBinding
+from authentik.sources.saml.models import SAMLSource, UserSAMLSourceConnection
 
 TOKEN = os.environ["MICONNECT_READER_TOKEN"]
 USERNAME = "miconnect-canari-handoff-reader"
 PROBE = "miconnect-reader-probe"
 HANDOFF_APPS = ("migallery", "sky", "cercle")
-# The terms-of-use flow the handoff providers authorize through, and the only bindings the mint recognises on it.
+# The terms-of-use flow the handoff providers authorize through, and the ALLOWLIST the mint recognises on it
+# (miconnect-reader.client.ts CONSENT_FLOW_ALLOWLIST): stage name -> the one policy on its stage binding. The
+# terms prompt and write, and the Alumni link step's reminder and block (D44, 45-consent.yaml).
 CONSENT_FLOW = "miconnect-authorization"
-CONSENT_POLICY = "miconnect-consent-needed"
-CONSENT_STAGES = {"miconnect-consent-ask", "miconnect-consent-write"}
+ALLOWLIST = {
+    "miconnect-consent-ask": "miconnect-consent-needed",
+    "miconnect-consent-write": "miconnect-consent-needed",
+    "miconnect-alumni-link-remind": "miconnect-alumni-link-reminder",
+    "miconnect-alumni-link-require": "miconnect-alumni-link-required",
+}
+# The Alumni gate (D42-D43, 60-applications.yaml), recognised by the mint in this exact shape: engine mode
+# `any`, the policy and the group `acces-<app>`, on MiGallery and Le Cercle.
+GATE_POLICY = "miconnect-access-window-post-or-cotisant"
+APP_BINDINGS = {"migallery": 2, "sky": 0, "cercle": 2}
 
 
 def check(condition, message):
@@ -58,6 +71,8 @@ check(token.expiring is False, "the token does not expire")
 
 User.objects.filter(username=PROBE).delete()
 probe = User.objects.create(username=PROBE, name="Probe", is_active=True)
+probe.groups.add(Group.objects.get(name="acces-migallery"))
+alumni_source = SAMLSource.objects.get(slug="alumni")
 policy = None
 try:
     found = call("get", f"/api/v3/core/users/?uuid={probe.uuid}")
@@ -66,14 +81,31 @@ try:
     check(len(results) == 1 and results[0]["pk"] == probe.pk, "the uuid addresses exactly one user")
     check(results[0]["is_active"] is True, "the read carries is_active")
     check(results[0]["uid"] == probe.uid, "the read carries the uid the mint compares with the account id")
+    # The Alumni gate admits a member of `acces-<app>`: the mint reads the group NAMES from the user answer.
+    check([g["name"] for g in results[0].get("groups_obj") or []] == ["acces-migallery"], f"the read carries the names of the user's groups ({results[0].get('groups_obj')!r})")
+
+    # The Alumni link step asks whether a connection exists - read with the token, for THIS user only.
+    connections = f"/api/v3/sources/user_connections/all/?user={probe.pk}&source__slug=alumni"
+    unlinked = call("get", connections)
+    check(unlinked.status_code == 200 and unlinked.json()["pagination"]["count"] == 0, f"the reader reads that the user holds no Alumni connection ({unlinked.status_code})")
+    connection = UserSAMLSourceConnection.objects.create(source=alumni_source, user=probe, identifier="reader-probe-1")
+    linked = call("get", connections)
+    check(linked.json()["pagination"]["count"] == 1, "and SEES one once it exists - a missing grant would read it as none, not as a 403")
+    other_user = call("get", f"/api/v3/sources/user_connections/all/?user={reader.pk}&source__slug=alumni")
+    check(other_user.json()["pagination"]["count"] == 0, "the filter is by user: another user's answer does not count the probe's")
 
     for slug in HANDOFF_APPS:
         app = call("get", f"/api/v3/core/applications/{slug}/")
         check(app.status_code == 200, f"the reader sees the handoff application {slug}")
         pk = app.json()["pk"]
-        bindings = call("get", f"/api/v3/policies/bindings/?target={pk}&enabled=true")
+        bindings = call("get", f"/api/v3/policies/bindings/?target_in={pk}&enabled=true&page_size=100")
         check(bindings.status_code == 200, f"the reader lists {slug}'s bindings")
-        check(bindings.json()["pagination"]["count"] == 0, f"{slug} has no binding on a fresh instance")
+        check(bindings.json()["pagination"]["count"] == len(bindings.json()["results"]) == APP_BINDINGS[slug], f"{slug} carries {APP_BINDINGS[slug]} binding(s) on a fresh instance, all read ({bindings.json()['pagination']['count']})")
+        if APP_BINDINGS[slug]:
+            # The names the gate allowlist reads: the policy's, the group's, and the engine mode.
+            check(app.json()["policy_engine_mode"] == "any", f"the reader reads {slug}'s engine mode")
+            shape = sorted((b["policy_obj"] or {}).get("name") or "group:" + (b["group_obj"] or {}).get("name", "") for b in bindings.json()["results"])
+            check(shape == sorted([GATE_POLICY, f"group:acces-{slug}"]) and all(b["negate"] is False for b in bindings.json()["results"]), f"{slug}'s bindings are the Alumni gate, by name ({shape})")
         provider = app.json()["provider_obj"]
         for kind in ("authentication_flow", "authorization_flow"):
             flow_uuid = provider[kind]
@@ -97,16 +129,16 @@ try:
                 # policy `miconnect-consent-needed`, not negated, on the stage bindings of the prompt and the write.
                 # The reader must SEE the names the allowlist reads - a missing field would silently refuse every mint.
                 stage_names = {b["policybindingmodel_ptr_id"]: b["stage_obj"]["name"] for b in body["results"]}
-                check(set(stage_names.values()) == CONSENT_STAGES, f"{slug}'s {kind} is the consent flow, and the reader reads its stage names ({sorted(stage_names.values())})")
-                check(listed["pagination"]["count"] == len(listed["results"]) == 2, f"the consent flow carries exactly two bindings, all read ({listed['pagination']['count']})")
+                check(set(stage_names.values()) == set(ALLOWLIST), f"{slug}'s {kind} is the consent flow, and the reader reads its stage names ({sorted(stage_names.values())})")
+                check(listed["pagination"]["count"] == len(listed["results"]) == 4, f"the consent flow carries the two terms bindings and the two link-step bindings, all read ({listed['pagination']['count']})")
                 # Each consent stage binding is asked ALONE through the same `target_in` filter the client uses: a
                 # binding's own `target` field is not an id the client can compare (CI 2026-11-20), so the
                 # attribution is by query. Print what `target` is, so the next reader of a failure sees it.
                 print(f"  note target field of a consent binding: {listed['results'][0].get('target')!r}", flush=True)
                 for ptr, name in stage_names.items():
                     one = call("get", f"/api/v3/policies/bindings/?target_in={ptr}&enabled=true&page_size=100").json()
-                    check(one["pagination"]["count"] == len(one["results"]) == 1, f"the consent stage binding {name} carries exactly one binding")
-                    check(one["results"][0]["policy_obj"]["name"] == CONSENT_POLICY and one["results"][0]["negate"] is False, f"on {name} it is the consent policy, not negated")
+                    check(one["pagination"]["count"] == len(one["results"]) == 1, f"the allowlisted stage binding {name} carries exactly one binding")
+                    check(one["results"][0]["policy_obj"]["name"] == ALLOWLIST[name] and one["results"][0]["negate"] is False, f"on {name} it is {ALLOWLIST[name]}, not negated")
             else:
                 check(listed["pagination"]["count"] == 0, f"nothing is bound on {slug}'s {kind} or its stages")
 
@@ -118,7 +150,7 @@ try:
     policy = ExpressionPolicy.objects.create(name="miconnect-reader-probe-policy", expression="return True")
     PolicyBinding.objects.create(target=target, policy=policy, order=0, enabled=True)
     seen = call("get", f"/api/v3/policies/bindings/?target={target.pk}&enabled=true")
-    check(seen.json()["pagination"]["count"] == 1, "a binding added after the grant is seen")
+    check(seen.json()["pagination"]["count"] == APP_BINDINGS["migallery"] + 1, "a binding added after the grant is seen")
     # The same on a flow and on a stage binding: the grants are global, so a policy put on the
     # login tomorrow is counted, never read as none.
     flow = target.get_provider().authorization_flow
@@ -155,10 +187,20 @@ try:
     check(stage_patch.status_code == 403, f"the reader may NOT change a stage binding (got {stage_patch.status_code})")
     settings_patch = call("patch", "/api/v3/admin/settings/", {"flags": {"core_default_app_access": False}})
     check(settings_patch.status_code == 403, f"the reader may NOT change the settings (got {settings_patch.status_code})")
+    # The connection grant is a VIEW grant: the reader may not unlink a person, nor rewrite the link.
+    connection_patch = call("patch", f"/api/v3/sources/user_connections/all/{connection.pk}/", {"identifier": "hijacked"})
+    check(connection_patch.status_code == 403, f"the reader may NOT change an Alumni connection (got {connection_patch.status_code})")
+    connection_delete = call("delete", f"/api/v3/sources/user_connections/all/{connection.pk}/")
+    check(connection_delete.status_code == 403, f"the reader may NOT delete an Alumni connection (got {connection_delete.status_code})")
+    group_join = call("post", f"/api/v3/core/groups/{Group.objects.get(name='acces-cercle').pk}/add_user/", {"pk": probe.pk})
+    check(group_join.status_code in (403, 404), f"the reader may NOT put a user in an access group (got {group_join.status_code})")
     probe.refresh_from_db()
     check(probe.name == "Probe" and User.objects.filter(pk=probe.pk).exists(), "the user is untouched")
     check(not User.objects.filter(username="miconnect-reader-intruder").exists(), "no user was created")
     check(Application.objects.get(slug="migallery").name == "MiGallery", "the application is untouched")
+    connection.refresh_from_db()
+    check(connection.identifier == "reader-probe-1", "the Alumni connection is untouched")
+    check(not probe.groups.filter(name="acces-cercle").exists(), "the user's groups are untouched")
 finally:
     PolicyBinding.objects.filter(policy__name="miconnect-reader-probe-policy").delete()
     if policy is not None:

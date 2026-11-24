@@ -11,9 +11,11 @@ export const ALUMNI_MERGE_CODES = {
   notDuplicate: 'ALUMNI_MERGE_NOT_DUPLICATE',
   noMatch: 'ALUMNI_MERGE_NO_MATCH',
   holdingsUnavailable: 'ALUMNI_MERGE_HOLDINGS_UNAVAILABLE',
+  inProgress: 'ALUMNI_MERGE_IN_PROGRESS',
+  alreadyMerged: 'ALUMNI_MERGE_ALREADY_MERGED',
 } as const;
 
-/** The duplicate is not (or no longer) a MiConnect account, and no merge of it is pending. */
+/** No such duplicate at MiConnect with no merge of it open, or (a cancel) no open merge of it. */
 export class AlumniMergeNotFoundError extends HttpException {
   constructor() {
     super(
@@ -59,6 +61,32 @@ export class AlumniMergeHoldingsUnavailableError extends HttpException {
         message: `What the duplicate holds could not be read (${service}).`,
       },
       HttpStatus.BAD_GATEWAY
+    );
+  }
+}
+
+/**
+ * Another "Rattacher" of the same duplicate wrote its trace row first (the partial unique index on
+ * the open rows). Nothing was marked by this call; the list shows the other one.
+ */
+export class AlumniMergeInProgressError extends HttpException {
+  constructor() {
+    super(
+      { code: ALUMNI_MERGE_CODES.inProgress, message: 'A merge of this account is already open.' },
+      HttpStatus.CONFLICT
+    );
+  }
+}
+
+/**
+ * A cancel came too late: the duplicate already signed in through Alumni, and MiConnect merged it
+ * into the marked account (30-sources.yaml). The trace is completed; there is nothing to cancel.
+ */
+export class AlumniMergeAlreadyMergedError extends HttpException {
+  constructor() {
+    super(
+      { code: ALUMNI_MERGE_CODES.alreadyMerged, message: 'MiConnect already merged this account.' },
+      HttpStatus.CONFLICT
     );
   }
 }

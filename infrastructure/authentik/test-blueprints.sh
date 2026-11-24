@@ -138,7 +138,10 @@ echo "a challenged code is redeemed with its verifier only, and a verifier is ne
 # (2026-11-20). The driven test asserts that exact set, walks the page on a bound provider, and
 # proves production's provider stops a person who never accepted on it (test-consent-flow.py).
 echo "terms of use: driving the stage, and asserting which providers ask for it"
-if ! run_ak_shell "$worker" <"$here/test-consent-flow.py" 2>&1 | tee >(cat >&2) | grep -x 'CONSENT-OK' >/dev/null; then
+# It also runs every case of libs/contracts/alumni-access.json, the table core-service's handoff gate
+# runs too: handed in base64 ahead of the program, since the container holds no repository.
+alumni_access="$(base64 <"$here/../../libs/contracts/alumni-access.json" | tr -d '\n')"
+if ! { printf 'ALUMNI_ACCESS_B64 = "%s"\n' "$alumni_access"; cat "$here/test-consent-flow.py"; } | run_ak_shell "$worker" 2>&1 | tee >(cat >&2) | grep -x 'CONSENT-OK' >/dev/null; then
   echo "::error::the terms-of-use stage did not behave, or a provider outside the declared set asks for it - read the assertion above"
   exit 1
 fi

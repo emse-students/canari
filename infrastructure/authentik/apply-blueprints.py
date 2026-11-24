@@ -56,14 +56,18 @@ def concrete(obj):
 def natural(obj):
     """How an object is named on ANY instance: its slug, its managed id, or its name."""
     obj = concrete(obj)
-    if isinstance(obj, PolicyBindingModel) and not isinstance(obj, (Flow, FlowStageBinding)):
-        for child in ("flow", "flowstagebinding"):
+    # A bare binding target: named by the child it is (a child inherits these accessors, and an
+    # application asked for its own `application` would answer itself, forever).
+    if type(obj) is PolicyBindingModel:
+        for child in ("flow", "flowstagebinding", "application"):
             if hasattr(obj, child):
                 return natural(getattr(obj, child))
     if isinstance(obj, FlowStageBinding):
         return f"binding({natural(obj.target)} #{obj.order} {natural(obj.stage)})"
     if isinstance(obj, PolicyBinding):
-        return f"policy-binding({natural(obj.target)} #{obj.order} {natural(obj.policy)})"
+        # A binding names a policy, a group or a user (the `acces-<app>` groups of 60-applications.yaml).
+        bound = obj.policy or obj.group or obj.user
+        return f"policy-binding({natural(obj.target)} #{obj.order} {natural(bound)})"
     if isinstance(obj, PropertyMapping) and obj.managed:
         return f"managed:{obj.managed}"
     if isinstance(obj, Brand):
@@ -217,6 +221,37 @@ def refuse_unresolved(finds):
         raise RuntimeError(f"{len(missing)} tag(s) resolved to nothing")
 
 
+def exact_role_permissions():
+    """Revokes every GLOBAL permission a blueprint role holds beyond its `permissions:` list, and
+    returns one line per revocation.
+
+    authentik ASSIGNS a role's listed permissions and never removes one (`RoleSerializer.update` calls
+    `assign_perms` only, read in 2026.8.6), so a permission dropped from a blueprint would stay
+    granted on every instance that ever had it - the instance a release upgrades. Here the list is
+    the role's whole grant: the upgrade test (PREVIOUS_REF) and the token tests prove it on the
+    upgraded instance."""
+    from django.contrib.auth.models import Permission  # noqa: F401 - the FK below
+    from guardian.models import RoleModelPermission
+
+    from authentik.rbac.models import Role
+
+    revoked = []
+    for file_name, importer in importers():
+        for entry in importer.blueprint.iter_entries():
+            if entry_model(entry, importer.blueprint) is not Role or "permissions" not in (entry.attrs or {}):
+                continue
+            role = Role.objects.get(name=entry.identifiers["name"])
+            wanted = set(entry.attrs["permissions"])
+            held = {
+                f"{row.permission.content_type.app_label}.{row.permission.codename}"
+                for row in RoleModelPermission.objects.filter(role=role).select_related("permission__content_type")
+            }
+            for extra in sorted(held - wanted):
+                role.remove_perms(extra)
+                revoked.append(f"REVOKED  {file_name} role {role.name}: {extra}")
+    return revoked
+
+
 def diff(before, after):
     changes = []
     for key in sorted(set(before) | set(after)):
@@ -272,7 +307,8 @@ def run():
                 for line in left:
                     log(f"NOT RENAMED {line}")
                 raise RuntimeError(f"{len(left)} rename(s) left the old object")
-            changes = diff(before, snapshot())
+            revoked = exact_role_permissions()
+            changes = revoked + diff(before, snapshot())
             for line in changes:
                 log(line)
             log(f"{len(changes)} change(s)")
