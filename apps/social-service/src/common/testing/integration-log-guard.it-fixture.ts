@@ -1,3 +1,4 @@
+import { format } from 'node:util';
 import { Logger } from '@nestjs/common';
 
 /**
@@ -9,6 +10,9 @@ import { Logger } from '@nestjs/common';
  * alone would hide the second kind, so an unasserted line is a FAILURE that prints it, never a
  * silence. A spec that spies on the logger itself keeps doing so: its own spy replaces this one for
  * the lines it takes.
+ *
+ * Three entry points are recorded: an instance (`new Logger(X).warn`), the STATIC one
+ * (`Logger.error`, Nest's staticInstanceRef) and the console a service may write to directly.
  *
  * Wired through `setupFilesAfterEnv` and selected by file name, like the time budget
  * (`jest-integration-budget.cjs`): the integration specs and `lives/live-seats.spec.ts`, the same
@@ -31,18 +35,24 @@ function guarded(testPath: string): boolean {
   return path.endsWith('.integration.spec.ts') || path.endsWith('/lives/live-seats.spec.ts');
 }
 
+/** True when `text` is what `matcher` names: a string is the WHOLE message, a pattern anchors itself. */
+function matchesLine(matcher: string | RegExp, text: string): boolean {
+  return typeof matcher === 'string' ? text === matcher : matcher.test(text);
+}
+
 /**
- * Asserts that EXACTLY `count` not-yet-taken lines of `level` match `matcher` (a substring or a
- * pattern), and marks them taken. The line is the behaviour under test: a missing or extra one fails.
+ * Asserts that EXACTLY `count` not-yet-taken lines of `level` match `matcher` (a string is the
+ * WHOLE message, a pattern anchors itself with `^` and `$`), and marks them taken. The line is the
+ * behaviour under test: a missing or extra one fails.
  */
 export function takeLogged(
   level: Level,
   matcher: string | RegExp,
   count: number | { readonly min: number; readonly max: number } = 1
 ): void {
-  const matches = (text: string): boolean =>
-    typeof matcher === 'string' ? text.includes(matcher) : matcher.test(text);
-  const found = lines.filter((line) => !line.taken && line.level === level && matches(line.text));
+  const found = lines.filter(
+    (line) => !line.taken && line.level === level && matchesLine(matcher, line.text)
+  );
   const { min, max } = typeof count === 'number' ? { min: count, max: count } : count;
   // A RACE decides how many of its contenders lose, so its spec names the bounds instead.
   const wanted = min === max ? min : `${min}..${max}`;
@@ -57,33 +67,60 @@ export function takeLogged(
   for (const line of found) line.taken = true;
 }
 
-/** What each level held before recording: the real method, or a spy the spec installed itself. */
-const previous = new Map<Level, (...args: unknown[]) => void>();
+type Writer = (...args: unknown[]) => void;
+
+/** One patched logging entry point: where it lives, and what it held before recording. */
+interface Target {
+  readonly owner: Record<string, unknown>;
+  readonly level: Level;
+  /** How the arguments of this entry point become the one line recorded. */
+  readonly render: (args: unknown[]) => string;
+  before?: Writer;
+}
+
+/** One part of a Nest log call as text: an Error is its `name: message`, a stack only its first line. */
+function partText(part: unknown): string {
+  try {
+    if (part instanceof Error) return `${part.name}: ${part.message}`;
+    const text = String(part);
+    // A stack handed as `trace` prints its frames, which are paths: its FIRST line is the fact.
+    return text.includes('\n    at ') ? text.split('\n')[0] : text;
+  } catch {
+    return Object.prototype.toString.call(part);
+  }
+}
+
+/** A Nest call is `(message, ...context)`: the message stays WHOLE (a multi-line one included). */
+const renderNest = (args: unknown[]): string => args.map(partText).join(' ');
+
+/** A `console.warn/error` call, formatted the way the console would print it. */
+const renderConsole = (args: unknown[]): string => format(...args);
+
+const targets: Target[] = [];
+for (const level of LEVELS) {
+  targets.push({ owner: Logger.prototype as never, level, render: renderNest });
+  targets.push({ owner: Logger as never, level, render: renderNest });
+  targets.push({ owner: console as never, level, render: renderConsole });
+}
 
 /** Starts recording: lines are kept, and handed on ONLY to a spec's own spy, never to the real logger. */
 function startRecording(): void {
   lines = [];
-  for (const level of LEVELS) {
-    const before = Logger.prototype[level] as unknown as (...args: unknown[]) => void;
-    previous.set(level, before);
+  for (const target of targets) {
+    const before = target.owner[target.level] as Writer;
+    target.before = before;
     // Recorded here; handed on ONLY to a spec's own spy (so its `mock.calls` keep counting), never
     // to the real logger, which would print what the spec is about to assert.
-    Logger.prototype[level] = function (this: Logger, message: unknown, ...rest: unknown[]) {
-      // An Error handed as a context prints its stack: its FIRST line is the fact, the frames are paths.
-      const text = [message, ...rest]
-        .map((part) => String(part).split(String.fromCharCode(10))[0])
-        .join(' ');
-      lines.push({ level, text, taken: false });
-      if (jest.isMockFunction(before)) before.call(this, message, ...rest);
-    } as typeof Logger.prototype.warn;
+    target.owner[target.level] = function (this: unknown, ...args: unknown[]) {
+      lines.push({ level: target.level, text: target.render(args), taken: false });
+      if (jest.isMockFunction(before)) before.apply(this, args);
+    };
   }
 }
 
 /** Stops recording, and FAILS on every line nobody took: it is printed, never silenced. */
 function stopRecording(): void {
-  for (const level of LEVELS) {
-    Logger.prototype[level] = previous.get(level) as typeof Logger.prototype.warn;
-  }
+  for (const target of targets) target.owner[target.level] = target.before;
   const left = lines.filter((line) => !line.taken);
   lines = [];
   if (left.length > 0) {
@@ -116,12 +153,11 @@ if (guarded(expect.getState().testPath ?? '')) {
  * Takes EVERY untaken `level` line that matches `matcher`, however many a RACE produced (none
  * included): for a spec whose contenders decide which of several known refusals each one meets, so
  * no count is a fact of the code. A line that matches nothing the spec names still fails the test,
- * so this names what may be said, never silences what may not.
+ * so this names what may be said, never silences what may not. NEVER use it in a deterministic
+ * test: there the count is a fact, and {@link takeLogged} asserts it.
  */
 export function takeEvery(level: Level, matcher: string | RegExp): void {
-  const matches = (text: string): boolean =>
-    typeof matcher === 'string' ? text.includes(matcher) : matcher.test(text);
   for (const line of lines) {
-    if (!line.taken && line.level === level && matches(line.text)) line.taken = true;
+    if (!line.taken && line.level === level && matchesLine(matcher, line.text)) line.taken = true;
   }
 }

@@ -433,11 +433,11 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
         expect((await flags(withheld.id)).isActive).toBe(false);
         expect((await flags(onSale.id)).isActive).toBe(false);
       }
-      // Each round races a revert against a VALIDATED, so how many revert (and are then told they clear nothing) is the race's to decide: 0 to 10 of them.
-      // told it clears nothing, is the race's to decide: 0 to 10 of them.
+      // RACY COUNTS: each round races a revert against a VALIDATED, so how many revert (and are then
+      // told they clear nothing) is the race's to decide: 0 to 10 of them over the rounds.
       takeEvery(
         'error',
-        /^\[LYDIA-READINESS\] holder [0-9a-f-]{36} reverted: request\/do answered error 5 \(shop race-\d+\); before: was marked by webhook-validated at \d{4}-\d{2}-\d{2}T[0-9:.]+Z; 2 on-sale product\(s\) withheld/
+        /^\[LYDIA-READINESS\] holder [0-9a-f-]{36} reverted: request\/do answered error 5 \(shop race-\d+\); before: was marked by webhook-validated at \d{4}-\d{2}-\d{2}T[0-9:.]+Z; 2 on-sale product\(s\) withheld; \d+ global admin\(s\) told; managers told next$/
       );
       takeEvery(
         'warn',

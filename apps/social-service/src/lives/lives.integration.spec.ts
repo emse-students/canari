@@ -2058,7 +2058,10 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         });
         expect((await refusal(lives.manifest(BOB, live.id))).code).toBe('LIVE_SEATS_UNAVAILABLE');
         // ONE accusing line for the outage, the second refusal is counted (see the service).
-        takeLogged('error', 'Redis does not hold the live open while its row is open');
+        takeLogged(
+          'error',
+          `[LIVE_SEAT] ${live.id}: Redis does not hold the live open while its row is open - no seat until its next segment says it again (further refusals are counted, not logged)`
+        );
         expect(seats.held.size).toBe(0);
         // The broadcaster's next segment reopens the live, the removals re-read from the database.
         await lives.ingest(ALICE, live.id, 1, segment(1));
@@ -2081,7 +2084,10 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         // A segment re-reads the removals and finds none: the bar is added to, never replaced.
         await lives.ingest(ALICE, live.id, 1, segment(1));
         expect((await refusal(lives.manifest(CAROL, live.id))).code).toBe('LIVE_SEATS_UNAVAILABLE');
-        takeLogged('error', 'Redis bars a viewer the row allows');
+        takeLogged(
+          'error',
+          `[LIVE_SEAT] ${live.id}: Redis bars a viewer the row allows - expected only for a removed viewer whose account was erased and who came back; no seat for that viewer until the live closes (further refusals are counted, not logged)`
+        );
         await expect(lives.manifest(BOB, live.id)).resolves.toMatchObject({ viewers: 1 });
         expect([...seats.held]).toEqual([`${live.id}:${BOB}`]);
       });
@@ -2221,8 +2227,14 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
           seats.arrivalsDown = false;
         }
         // The read and the note each accuse, once (the outage is per operation).
-        takeLogged('error', '[LIVE_ARRIVAL] ' + live.id + ': the arrivals did not answer');
-        takeLogged('error', '[LIVE_ARRIVAL] ' + live.id + ': an arrival was not noted');
+        takeLogged(
+          'error',
+          `[LIVE_ARRIVAL] ${live.id}: the arrivals did not answer: Error: ECONNREFUSED (the arrival lines stop until it answers; further failures are counted, not logged)`
+        );
+        takeLogged(
+          'error',
+          `[LIVE_ARRIVAL] ${live.id}: an arrival was not noted: Error: ECONNREFUSED (the arrival lines stop until it answers; further failures are counted, not logged)`
+        );
       });
 
       it('announces NO platform admin who opens a reported review-cohort live across the cohort wall', async () => {

@@ -42,7 +42,7 @@ import {
   erasureParams,
 } from '../internal/account-erasure';
 import { untilWaiting } from '../common/lock-wait.it-fixture';
-import { takeEvery, takeLogged } from '../common/testing/integration-log-guard.it-fixture';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -1278,13 +1278,10 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
 
     expect(await purchases.countUnclosedPaidNotGranted()).toBe(before + 1);
 
-    takeEvery(
+    takeLogged(
       'error',
-      /^\[SHOP\] checkout [0-9a-f]{8}: paid tier is held-changed at settlement \(product=[0-9a-f]{6,8} user=buyer-00 held=\[b\] opened-over=a\) - payment recorded, tier NOT granted; a refund is owed$/
-    );
-    takeEvery(
-      'error',
-      /^\[SHOP\] checkout [0-9a-f]{8}: paid tier is held-changed at settlement \(product=[0-9a-f]{6,8} user=buyer-00 held=\[b\] opened-over=a\) - payment recorded, tier NOT granted; a refund is owed$/
+      /^\[SHOP\] checkout [0-9a-f]{8}: paid tier is held-changed at settlement \(product=[0-9a-f]{6,8} user=buyer-00 held=\[b\] opened-over=a\) - payment recorded, tier NOT granted; a refund is owed$/,
+      2
     );
   });
   it("a paid form's pre-check ranks against the real tables: held, not a rise, a rise", async () => {

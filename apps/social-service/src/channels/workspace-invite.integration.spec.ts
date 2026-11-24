@@ -214,7 +214,9 @@ maybe('accepting a community invite link against PostgreSQL', () => {
     const joined = await Promise.all(joiners.map(isMember));
     expect(joined.filter(Boolean)).toHaveLength(2);
 
-    // The losers of the claim are the ones past the cap; which of the four they are is the race's.
+    // RACY COUNT: a loser logs ONLY when it read the invite before the winners committed, so the claim
+    // refused it; one that read after is refused SILENTLY by the pre-check (`inviteIsValid`, a plain
+    // NotFound). Which of the two each loser meets is the interleaving's: 0 to 2 lines.
     takeLogged(
       'warn',
       /^\[INVITE\] refused - claim matched no row \(exhausted, revoked or expired meanwhile\) workspace=[0-9a-f-]{36} user=many-[0-9]$/,

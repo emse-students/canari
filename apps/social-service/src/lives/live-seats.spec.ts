@@ -116,7 +116,13 @@ describe('the viewer cap, as the service types it', () => {
       }
     }
     // Each failure accuses, once: a refused count is never silent.
-    takeLogged('error', `[LIVE_SEAT] ${LIVE}: the viewer count`, 4);
+    takeLogged(
+      'error',
+      `[LIVE_SEAT] ${LIVE}: the viewer count did not answer: Error: ECONNREFUSED`
+    );
+    takeLogged('error', `[LIVE_SEAT] ${LIVE}: the viewer count: unreadable reply "OK"`);
+    takeLogged('error', `[LIVE_SEAT] ${LIVE}: the viewer count: unreadable reply -1`);
+    takeLogged('error', `[LIVE_SEAT] ${LIVE}: the viewer count: unreadable reply [1,2]`);
   });
 
   it("reads the feed card's counts of several lives with ONE script, in the order asked", async () => {
@@ -156,7 +162,13 @@ describe('the viewer cap, as the service types it', () => {
         ).resolves.toBeNull();
       }
     }
-    takeLogged('error', '[LIVE_SEAT]', 4);
+    takeLogged(
+      'error',
+      '[LIVE_SEAT] the counts of 2 live(s) (list) did not answer: Error: ECONNREFUSED'
+    );
+    takeLogged('error', '[LIVE_SEAT] list counts: unreadable reply "OK"');
+    takeLogged('error', '[LIVE_SEAT] list counts: unreadable reply [1]');
+    takeLogged('error', '[LIVE_SEAT] list counts: unreadable reply [1,-1]');
   });
 
   it('keys a seat by the live id lower-cased, so a leave spelled in upper case frees the take', () => {
@@ -286,7 +298,13 @@ describe('the viewer cap, as the service types it', () => {
       });
     }
     // Five refused takes and one refused release: six accusing lines, none a "full".
-    takeLogged('error', '[LIVE_SEAT]', 6);
+    const seat = `[LIVE_SEAT] ${LIVE}:`;
+    takeLogged('error', `${seat} the seat count did not answer: Error: ECONNREFUSED`);
+    takeLogged('error', `${seat} unreadable reply "OK"`);
+    takeLogged('error', `${seat} unreadable reply [7,1]`);
+    takeLogged('error', `${seat} unreadable reply [1,3]`);
+    takeLogged('error', `${seat} unreadable reply [1,3,0]`);
+    takeLogged('error', `${seat} the seat release did not answer: Error: ECONNREFUSED`);
   });
 });
 

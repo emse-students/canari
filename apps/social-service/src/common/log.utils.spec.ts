@@ -18,3 +18,45 @@ describe('describeError', () => {
     expect(describeError(undefined)).toBe('undefined');
   });
 });
+
+describe('describeError, in a catch', () => {
+  it('never throws on a value String() cannot print', () => {
+    const bare = Object.create(null);
+    const hostile = {
+      toString() {
+        throw new Error('no text for you');
+      },
+    };
+    expect(describeError(bare)).toBe('[object Object]');
+    expect(describeError(hostile)).toBe('[object Object]');
+  });
+
+  it('includes the code when the error carries one', () => {
+    expect(describeError(Object.assign(new Error('refused'), { code: 'ECONNREFUSED' }))).toBe(
+      'Error: refused [ECONNREFUSED]'
+    );
+    expect(describeError(Object.assign(new Error('pg'), { code: 23505 }))).toBe(
+      'Error: pg [23505]'
+    );
+  });
+
+  it('names every inner error of an AggregateError', () => {
+    const aggregate = new AggregateError(
+      [new TypeError('first'), Object.assign(new Error('second'), { code: 'E2' }), 'third'],
+      'All promises were rejected'
+    );
+    expect(describeError(aggregate)).toBe(
+      'AggregateError: All promises were rejected (TypeError: first; Error: second [E2]; third)'
+    );
+  });
+
+  it('follows the cause ONE level, on one line', () => {
+    const withCause = (message: string, cause: unknown) =>
+      Object.assign(new Error(message), { cause });
+    const inner = withCause('inner\nsecond line', new Error('too deep'));
+    expect(describeError(withCause('outer', inner))).toBe(
+      'Error: outer <- Error: inner second line'
+    );
+    expect(describeError(withCause('outer', 'plain'))).toBe('Error: outer <- plain');
+  });
+});
