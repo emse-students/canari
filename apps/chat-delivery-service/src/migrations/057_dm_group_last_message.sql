@@ -10,8 +10,9 @@
 -- A TABLE OF ITS OWN, NOT A COLUMN OF `dm_groups`. An UPDATE of the group row takes FOR NO KEY
 -- UPDATE on it, which conflicts with the FOR SHARE every send into the group takes on the same row
 -- (`enqueueForLiveGroup`), so the sends of one group would queue behind each other's note. The
--- insert here takes only FOR KEY SHARE on `dm_groups` (the foreign key check), which conflicts with
--- neither. And it goes WITH THE CONVERSATION: ON DELETE CASCADE for a hard delete, and
+-- insert reads the group row FOR SHARE, live groups only (`NOTE_LAST_MESSAGE_SQL`), which conflicts
+-- with no send, and waits for a deletion holding the row, then inserts nothing. And it goes WITH
+-- THE CONVERSATION: ON DELETE CASCADE for a hard delete, and
 -- `GROUP_OWNED_TABLES` for the soft delete that keeps the tombstone. The hourly retention sweep
 -- deletes a row older than the queued copies it stands for (`MESSAGE_RETENTION_MS`, 90 days).
 --

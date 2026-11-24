@@ -719,9 +719,16 @@ const HISTORY_SCAN_PAGE = 200;
  * The note of a group's newest visible frame (`MessagingService.noteLastMessage`, migration 057):
  * an upsert into `dm_group_last_message` that keeps the GREATEST instant. Exported so a spec pins
  * its shape - it must never become an UPDATE of `dm_groups`, whose row lock every send waits on.
+ *
+ * ONLY FOR A LIVE GROUP, AND READ UNDER `FOR SHARE`. The note runs after the send's commit, so a
+ * deletion can land in between; an unconditional insert would then leave a row on a tombstone,
+ * which `GROUP_OWNED_TABLES` had already swept. `FOR SHARE` makes the note wait for a deletion that
+ * holds the group row, then see its `deletedAt` and insert nothing - and it never conflicts with the
+ * `FOR SHARE` concurrent sends take.
  */
 export const NOTE_LAST_MESSAGE_SQL =
-  `INSERT INTO dm_group_last_message ("groupId", "lastMessageAt") VALUES ($1, $2) ` +
+  `INSERT INTO dm_group_last_message ("groupId", "lastMessageAt") ` +
+  `SELECT id, $2::timestamptz FROM dm_groups WHERE id = $1 AND "deletedAt" IS NULL FOR SHARE ` +
   `ON CONFLICT ("groupId") DO UPDATE SET "lastMessageAt" = ` +
   `GREATEST(dm_group_last_message."lastMessageAt", EXCLUDED."lastMessageAt")`;
 
@@ -7510,8 +7517,8 @@ export class MessagingService {
    * A ROW OF ITS OWN, NEVER THE GROUP ROW: an UPDATE of `dm_groups` would take FOR NO KEY UPDATE on
    * it, which conflicts with the FOR SHARE every concurrent send into the same group takes there
    * (`enqueueForLiveGroup`) - the sends of one group would queue behind each other's note. This
-   * insert takes only FOR KEY SHARE on `dm_groups` (its foreign key check), which conflicts with
-   * neither, and a row lock on its own table, held for one statement.
+   * insert reads the group row FOR SHARE (live groups only, see {@link NOTE_LAST_MESSAGE_SQL}),
+   * which conflicts with no send, and takes a row lock on its own table, held for one statement.
    *
    * After the frame is queued and appended, so it records only what was accepted, and outside the
    * enqueue transaction. A failure is said and swallowed - the frame is delivered either way, and the

@@ -100,9 +100,7 @@ export function groupStartInstant(group: Pick<ServerGroupRow, 'createdAt'>): num
  * none usable - null (nothing inside the retention window), absent (an older server) or malformed.
  * `undefined` moves nothing: the row keeps whatever it already knew.
  */
-export function groupLastMessageInstant(
-  group: Pick<ServerGroupRow, 'lastMessageAt'>
-): number | undefined {
+function groupLastMessageInstant(group: Pick<ServerGroupRow, 'lastMessageAt'>): number | undefined {
   if (!group.lastMessageAt) return undefined;
   const at = Date.parse(group.lastMessageAt);
   return Number.isFinite(at) && at > 0 ? at : undefined;

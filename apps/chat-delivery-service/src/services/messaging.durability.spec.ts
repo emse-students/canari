@@ -309,7 +309,11 @@ describe('MessagingService - visibility vs durability', () => {
       expect(NOTE_LAST_MESSAGE_SQL).toContain(
         'GREATEST(dm_group_last_message."lastMessageAt", EXCLUDED."lastMessageAt")'
       );
-      expect(NOTE_LAST_MESSAGE_SQL).not.toMatch(/\bdm_groups\b/);
+      // The group row is READ, never written: FOR SHARE, live groups only.
+      expect(NOTE_LAST_MESSAGE_SQL).not.toMatch(/UPDATE\s+dm_groups/);
+      expect(NOTE_LAST_MESSAGE_SQL).toMatch(
+        /FROM dm_groups WHERE id = \$1 AND "deletedAt" IS NULL FOR SHARE /
+      );
     });
 
     it('is written once per visible message', async () => {

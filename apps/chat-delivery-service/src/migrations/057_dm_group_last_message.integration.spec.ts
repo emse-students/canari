@@ -26,7 +26,7 @@ const MIGRATION = readFileSync(join(__dirname, '057_dm_group_last_message.sql'),
 const GROUP = '57575757-5757-4575-8575-575757575757';
 
 /** The columns of `dm_groups` this probe touches; the migration needs only its primary key. */
-const GROUPS_TABLE = `CREATE TABLE dm_groups (id uuid PRIMARY KEY, name varchar NULL)`;
+const GROUPS_TABLE = `CREATE TABLE dm_groups (id uuid PRIMARY KEY, name varchar NULL, "deletedAt" timestamp NULL)`;
 
 maybe('migration 057 (dm_group_last_message) against PostgreSQL', () => {
   const schema = `it_057_${Date.now()}`;
@@ -85,6 +85,40 @@ maybe('migration 057 (dm_group_last_message) against PostgreSQL', () => {
   it('goes with its conversation: deleting the group row deletes the note', async () => {
     await a.query(NOTE_LAST_MESSAGE_SQL, [GROUP, new Date(2_000_000)]);
     await a.query(`DELETE FROM dm_groups WHERE id = $1`, [GROUP]);
+    expect(await noted()).toBeNull();
+  });
+
+  it('writes nothing on a tombstoned group', async () => {
+    await a.query(`UPDATE dm_groups SET "deletedAt" = now() WHERE id = $1`, [GROUP]);
+    await a.query(NOTE_LAST_MESSAGE_SQL, [GROUP, new Date(2_000_000)]);
+    expect(await noted()).toBeNull();
+  });
+
+  it('a deletion holding the group row while a note runs leaves no row behind', async () => {
+    // The soft delete: tombstone and sweep of the owned rows in one transaction, as
+    // `tombstoneGroups` does. The note, run after its send's commit, meets the row mid-deletion.
+    await a.query('BEGIN');
+    try {
+      await a.query(`UPDATE dm_groups SET "deletedAt" = now() WHERE id = $1`, [GROUP]);
+      await a.query(`DELETE FROM dm_group_last_message WHERE "groupId" = $1`, [GROUP]);
+      const notePid = (b as unknown as { processID: number }).processID;
+      const note = b.query(NOTE_LAST_MESSAGE_SQL, [GROUP, new Date(5_000_000)]);
+      // THE RACE IS PROVEN, NOT TIMED: the deletion commits only once the note is seen waiting on
+      // a lock (`pg_locks`, a state - never a sleep that hopes the note got there).
+      let waiting = false;
+      while (!waiting) {
+        const { rows } = await admin.query(
+          `SELECT 1 FROM pg_locks WHERE pid = $1 AND NOT granted`,
+          [notePid]
+        );
+        waiting = rows.length > 0;
+      }
+      await a.query('COMMIT');
+      await note;
+    } catch (e) {
+      await a.query('ROLLBACK');
+      throw e;
+    }
     expect(await noted()).toBeNull();
   });
 
