@@ -55,12 +55,9 @@ free window, the link step and the cotisant gate never lock them out (no cursus 
 ever; the post opens MiGallery and Le Cercle whatever the date, by OIDC and by the sign-in handoff):
 
 - the dev smoke account (`DEV_SMOKE_USERNAME`, `development` environment);
-- the review cohort on production: the service account behind `SERVICE_ACCOUNT_USER_ID`, the store
-  reviewer and its counterpart.
+- the review cohort on production (named in the private operations notes).
 
 A data change on MiConnect, the lead's; named here by variable and role only.
 
-**DONE on 2026-11-24.** The review cohort and the dev smoke account now have no cursus and the post
-`EMSE`. The service account behind `SERVICE_ACCOUNT_USER_ID` turned out to be the store reviewer
-itself, so three accounts were changed. The rollback details are in the private operations
-notes.
+**DONE on 2026-11-24.** The review cohort and the dev smoke account were set to no cursus and the post
+`EMSE`; rollback is in the private operations notes.
