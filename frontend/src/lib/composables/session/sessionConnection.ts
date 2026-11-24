@@ -23,6 +23,7 @@ import type { SessionContext, ChatSessionCallbacks } from './sessionTypes';
 import { makeRecoveryDeps, processDeviceInvitationsLocally } from './sessionAuth';
 import { startSyncWatchdogImpl } from './sessionWatchdogs';
 import { endSessionStatePersister } from './sessionStatePersisterEnd';
+import { resetSalonSendGate } from '$lib/utils/graine/salonSendGate';
 import { IdentitySplitError } from '$lib/stores/tokenIdentity.svelte';
 import { SessionExpiredError, SignOutInProgressError } from '$lib/stores/auth';
 
@@ -203,6 +204,11 @@ export async function attemptReconnectImpl(
       // land after the next election (review of #4053). The client itself is retired by the sign-out
       // that follows, behind this write (`whenEndedSessionStateWritten`).
       void endSessionStatePersister(true, cb.log);
+      // A SEND WAITING FOR A SALON OF THIS SESSION IS REFUSED NOW, as a sign-out refuses it
+      // (`setGraineRuntime(null)`): the sign-out that follows an expiry finds no live session to tear
+      // down, and a follower's delegated seal parked on the gate would otherwise wait for good, its
+      // record held `running` by this document (second review of #4053).
+      resetSalonSendGate();
       ctx.setIsLoggedIn(false);
       cb.log('[AUTH] Session expired - redirecting to /login.');
       console.warn('[WS] Session expired, stopping reconnect loop');

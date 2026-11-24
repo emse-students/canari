@@ -62,7 +62,11 @@ import {
 } from './session/sessionConnection';
 import { exportBackupImpl, importBackupImpl, restoreAfterImport } from './session/sessionBackup';
 import { createMlsHolder } from './session/mlsHolder';
-import { leadHoldsInFlight, onLeadHoldsReleased } from '$lib/mls-client/leadHolds';
+import {
+  describeLeadHolds,
+  leadHoldsInFlight,
+  onLeadHoldsReleased,
+} from '$lib/mls-client/leadHolds';
 import { createLeadPublisher } from '$lib/mls-client/leadPublisher';
 import { endNativeMlsSession } from '$lib/utils/nativeMlsSession';
 import { setMlsReady } from './session/mlsReadiness';
@@ -336,7 +340,9 @@ export function useChatSession() {
     setDelegationReadiness,
     noteTabSessionLive,
     leadHoldsInFlight,
+    describeLeadHolds,
     onLeadHoldsReleased,
+    warn: (message) => console.warn(message),
   });
   function publishDelegationReadiness(): void {
     leadPublisher.publish(sessionDelegationReadiness(isLoggedIn, isLoginInProgress));

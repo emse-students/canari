@@ -6,7 +6,11 @@ export interface LeadPublisherDeps {
   setDelegationReadiness(readiness: DelegationReadiness): void;
   noteTabSessionLive(): void;
   leadHoldsInFlight(): number;
+  /** The holds in flight, named. */
+  describeLeadHolds(): string;
   onLeadHoldsReleased(listener: () => void): () => void;
+  /** Where the accusation of a session ended with holds in flight goes. */
+  warn(message: string): void;
 }
 
 /**
@@ -27,9 +31,21 @@ export function createLeadPublisher(deps: LeadPublisherDeps): {
   publish(readiness: DelegationReadiness): void;
 } {
   let last: DelegationReadiness | null = null;
+  /** Said once per session end: a hold still in flight then is what keeps the lead here. */
+  let heldPastEndSaid = false;
   function publish(readiness: DelegationReadiness): void {
     last = readiness;
     const holding = deps.leadHoldsInFlight();
+    if (readiness !== 'unavailable') heldPastEndSaid = false;
+    else if (holding > 0 && !heldPastEndSaid) {
+      // SAID AT WARN, NAMING THEM (second review of #4053): every hold ends on its own, so this is
+      // normally a moment; a hold that never ends keeps the lead - and every follower's request -
+      // here for good, and this line is what names it.
+      heldPastEndSaid = true;
+      deps.warn(
+        `[TAB] the session cannot serve, but ${holding} MLS operation(s) still need the lead - it is kept until they settle: ${deps.describeLeadHolds()}`
+      );
+    }
     deps.setTabLeadEligibility(
       readiness !== 'unavailable' || holding > 0,
       holding > 0

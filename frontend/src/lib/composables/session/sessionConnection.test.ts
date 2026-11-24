@@ -25,6 +25,9 @@ const endSessionStatePersister = vi.hoisted(() =>
   })
 );
 vi.mock('./sessionStatePersisterEnd', () => ({ endSessionStatePersister }));
+vi.mock('$lib/utils/graine/salonSendGate', () => ({
+  resetSalonSendGate: () => order.push('salon send gate reset'),
+}));
 vi.mock('$lib/navigation/gotoLoginAfterExpiry', () => ({ gotoLoginAfterExpiry: vi.fn() }));
 vi.mock('./sessionAuth', () => ({
   makeRecoveryDeps: vi.fn(() => ({})),
@@ -295,6 +298,11 @@ describe('an expired session (review of #4053)', () => {
 
     // The flag falling is what lets the lead go (`leadPublisher`): the persister - and the lead hold
     // its final write takes - must already be there, and no checkpoint of this client lands after.
-    expect(order).toEqual(['persister ended (final checkpoint: true)', 'logged in: false']);
+    // And a send parked on a salon of this session is refused, so a follower's delegated seal ends.
+    expect(order).toEqual([
+      'persister ended (final checkpoint: true)',
+      'salon send gate reset',
+      'logged in: false',
+    ]);
   });
 });

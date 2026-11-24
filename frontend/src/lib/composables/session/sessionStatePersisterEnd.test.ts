@@ -91,4 +91,15 @@ describe('endSessionStatePersister', () => {
     expect(registry.active).toBe(newer);
     expect(disposeWorker).not.toHaveBeenCalled();
   });
+
+  it('a later sign-out waits for the LAST ended session only - never for an older put that hangs', async () => {
+    registry.active = {};
+    registry.flush.mockImplementationOnce(() => new Promise<void>(() => {}));
+    void endSessionStatePersister(true, () => {});
+    registry.active = {};
+    registry.flush.mockResolvedValueOnce(undefined);
+    await endSessionStatePersister(true, () => {});
+
+    await expect(whenEndedSessionStateWritten()).resolves.toBeUndefined();
+  });
 });

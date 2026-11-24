@@ -4,6 +4,7 @@
  */
 import { createLeadPublisher } from './leadPublisher';
 import {
+  describeLeadHolds,
   holdLeadWhile,
   leadHoldsInFlight,
   onLeadHoldsReleased,
@@ -14,6 +15,7 @@ import {
 function publisher() {
   const calls: string[] = [];
   const eligibility: boolean[] = [];
+  const warnings: string[] = [];
   const p = createLeadPublisher({
     setTabLeadEligibility: (eligible) => {
       eligibility.push(eligible);
@@ -22,9 +24,11 @@ function publisher() {
     setDelegationReadiness: (r) => calls.push(`readiness:${r}`),
     noteTabSessionLive: () => calls.push('live'),
     leadHoldsInFlight,
+    describeLeadHolds,
     onLeadHoldsReleased,
+    warn: (m) => warnings.push(m),
   });
-  return { p, calls, eligibility };
+  return { p, calls, eligibility, warnings };
 }
 
 describe('a session that cannot serve gives the lead up only once its MLS work settled', () => {
@@ -82,5 +86,19 @@ describe('a session that cannot serve gives the lead up only once its MLS work s
     p.publish('ready');
     hold();
     expect(eligibility.at(-1)).toBe(true);
+  });
+
+  it('says ONCE, at warn and naming them, that holds keep an ended session in the lead', () => {
+    const { p, warnings } = publisher();
+    const hold = takeLeadHold('external join of abcd1234');
+    p.publish('unavailable');
+    p.publish('unavailable');
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('external join of abcd1234');
+    hold();
+    // Nothing to say when nothing holds it.
+    p.publish('ready');
+    p.publish('unavailable');
+    expect(warnings).toHaveLength(1);
   });
 });

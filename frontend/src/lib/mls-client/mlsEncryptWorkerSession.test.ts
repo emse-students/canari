@@ -28,7 +28,6 @@ vi.mock('$lib/utils/tauriRuntime', () => ({ isTauriRuntime: () => isTauriRuntime
 import {
   disposeMlsEncryptWorker,
   encryptMlsStateOffThread,
-  MlsEncryptWorkerTerminatedError,
   sealWebMlsState,
 } from './mlsEncryptWorkerSession';
 import type { MlsEncryptRequest } from './mlsWorkerProtocol';
@@ -107,8 +106,29 @@ describe('encryptMlsStateOffThread', () => {
 
     disposeMlsEncryptWorker();
 
-    await expect(job).rejects.toBeInstanceOf(MlsEncryptWorkerTerminatedError);
+    await expect(job).rejects.toMatchObject({ name: 'MlsEncryptWorkerTerminatedError' });
     expect(worker.terminate).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a job still QUEUED behind the one in flight, instead of running it on a new worker', async () => {
+    const { worker } = silentWorker();
+    const factory = vi.fn(() => worker);
+    const first = encryptMlsStateOffThread(new Uint8Array([1]), 'k', {
+      enabled: true,
+      workerFactory: factory,
+    });
+    const queued = encryptMlsStateOffThread(new Uint8Array([2]), 'k', {
+      enabled: true,
+      workerFactory: factory,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    disposeMlsEncryptWorker();
+
+    await expect(first).rejects.toMatchObject({ name: 'MlsEncryptWorkerTerminatedError' });
+    await expect(queued).rejects.toMatchObject({ name: 'MlsEncryptWorkerTerminatedError' });
+    expect(factory).toHaveBeenCalledTimes(1);
   });
 
   it.each([

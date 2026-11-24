@@ -65,7 +65,6 @@ import {
   type TabCommitEvent,
 } from '$lib/mls-client/tabMessageSync';
 import { answersFollowerCommits, servesFollowerCommits } from '$lib/mls-client/stateAuthority';
-import { holdLeadWhile } from '$lib/mls-client/leadHolds';
 import { currentUserId } from '$lib/stores/userState.svelte';
 import {
   IdbTabCommitStore,
@@ -276,10 +275,21 @@ export interface DelegationEnv {
 }
 
 /**
- * The kinds a tab adopts from before its promotion reload: gestures whose effect is the outcome (a
- * conversation, a membership, a key group), visible to the member once run. A frame to emit or a
- * message to seal is only a step of the page that asked, which the reload ended.
+ * What a tab does with a request it made before its promotion reload (second review of #4053):
+ * - `run`: a gesture whose effect IS its outcome - a conversation, a membership, a key group, a frame
+ *   the member sent (a forward, an invitation, a notice, an edit or a reaction): none of their callers
+ *   keeps a durable queue, so dropped, the gesture was lost (charter principle 2). What the asking
+ *   page would have done with the answer - a forward's own echo, a `receivedAt` - is said not done;
+ * - `drop`: a call's transport frame, whose call ended with the page that held it, and a salon
+ *   message's seal, whose sender queue (`useMessaging`'s salon queue) sends it again under the same
+ *   client id once this page is live.
  */
+function onAdoption(op: DelegatedCommitOp): 'run' | 'drop' {
+  if (op.kind === 'emit-frame') return op.delivery === 'transport' ? 'drop' : 'run';
+  return ADOPTABLE_KINDS.has(op.kind) ? 'run' : 'drop';
+}
+
+/** The kinds run on adoption without condition - see {@link onAdoption}. */
 const ADOPTABLE_KINDS: ReadonlySet<DelegatedCommitKind> = new Set<DelegatedCommitKind>([
   'create-group',
   'create-self',
@@ -544,12 +554,10 @@ export function createDelegationServer(env: DelegationEnv) {
       | undefined;
     if (!execute) return { status: 'refused', reason: 'not-delegable' };
     try {
-      // The lead is held while the executor runs (`leadHolds.ts`): a session ending mid-gesture
-      // gives it up only once the gesture's commit and checkpoint settled.
-      return {
-        status: 'done',
-        value: await holdLeadWhile(`delegated ${op.kind}`, () => execute(op)),
-      };
+      // NO LEAD HOLD AROUND THE EXECUTOR (second review of #4053): what it changes in the MLS state
+      // holds the lead where it changes it - the MLS mutex, an external join, a mint - so a wait of
+      // the gesture outside those (a salon's send gate) never keeps an ended session in the lead.
+      return { status: 'done', value: await execute(op) };
     } catch (e) {
       // AN EXECUTOR ANSWERS BY VALUE: a throw reaching here is a gesture whose own classification
       // missed a case - said once, at error, and the follower is told it failed.
@@ -613,12 +621,11 @@ export function createDelegationServer(env: DelegationEnv) {
           env.log(`${tag}: the tab that asked is gone - removed, NOT run`, 'warn');
           return 'orphan';
         }
-        if (!ADOPTABLE_KINDS.has(current.op.kind)) {
-          // A frame or a seal is a step of the asking page, and the reload ended that page: run now,
-          // its answer would reach nobody. Its own durable queue drives it again.
+        if (onAdoption(current.op) === 'drop') {
+          // A call's frame or a salon seal: see `onAdoption` for why each is not run here.
           await store.update(id, (r) => (r?.state === 'pending' ? 'delete' : null));
           env.log(
-            `${tag}: asked by this tab before its promotion reload - its answer was for that page, removed, not run`
+            `${tag}: asked by this tab before its promotion reload - ${current.op.kind === 'emit-frame' ? 'its call ended with that page' : 'its sender queue sends it again'}, removed, not run`
           );
           return 'orphan';
         }
@@ -695,7 +702,16 @@ export function createDelegationServer(env: DelegationEnv) {
       if (adopted) {
         // Nobody reads this answer (the page that asked was reloaded): its effect is the answer.
         await store.update(id, (r) => (r?.state === 'done' ? 'delete' : null));
-        env.log(`${tag}: adopted request settled - its record removed`);
+        if (claimed.op.kind === 'emit-frame') {
+          // SAID, because it is a real gap: the frame reached its group, but what the asking page
+          // did with the answer (a forward's own echo, the time the server took it) died with it.
+          env.log(
+            `${tag}: adopted frame sent - the page that asked was reloaded, so its own record of the send is not written`,
+            'warn'
+          );
+        } else {
+          env.log(`${tag}: adopted request settled - its record removed`);
+        }
       }
       return 'served';
     });
@@ -840,9 +856,13 @@ const stores = new Map<string, IdbTabCommitStore<DelegationRecord>>();
 let readiness: DelegationReadiness = 'starting';
 const nextOrderKey = createOrderKeys(() => Date.now());
 /**
- * The identity this TAB carried across its promotion reload, read (and removed) once at load.
- * Removed at once so a tab DUPLICATED later - which copies `sessionStorage` - never shares it: the
- * key exists only between a promotion reload and the load it starts.
+ * The identity this TAB carried across its promotion reload, read and removed SYNCHRONOUSLY at module
+ * load, before anything of this page can await - the earliest point this module runs.
+ *
+ * BOUND TO THE RELOAD (second review of #4053): a tab duplicated in the window between the carry and
+ * the reload copies `sessionStorage`, key included, and would adopt the same requests. So the id is
+ * honoured only by a page whose own navigation IS a reload (`PerformanceNavigationTiming.type`), a
+ * fact of this page the copy cannot share - a duplicated tab's first page is a navigation.
  */
 const CARRIED_REQUESTER_KEY = 'canari_tab_commit_requester';
 const carriedRequester: string | null = (() => {
@@ -850,11 +870,26 @@ const carriedRequester: string | null = (() => {
     if (typeof sessionStorage === 'undefined') return null;
     const carried = sessionStorage.getItem(CARRIED_REQUESTER_KEY);
     sessionStorage.removeItem(CARRIED_REQUESTER_KEY);
+    if (carried === null) return null;
+    const [navigation] = performance.getEntriesByType(
+      'navigation'
+    ) as PerformanceNavigationTiming[];
+    if (navigation?.type !== 'reload') {
+      console.warn(
+        `[TAB-COMMIT] a carried requester id reached a page that is not a reload (${navigation?.type ?? 'unknown'}) - a duplicated tab, not adopted`
+      );
+      return null;
+    }
     return carried;
   } catch {
     return null;
   }
 })();
+/** @internal The requester id this page adopts, if its load carried one - for tests. */
+export function carriedTabCommitRequester(): string | null {
+  return carriedRequester;
+}
+
 /** Made at the first request, or carried from before a promotion reload. */
 let thisDocument: string | null = carriedRequester;
 function documentId(): string {

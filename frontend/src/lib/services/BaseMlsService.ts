@@ -2782,16 +2782,15 @@ export abstract class BaseMlsService implements IMlsService {
    * other kinds it could not apply without waiting), so they are resumed here when it ends.
    */
   protected async runCommitUnderMlsLock<T>(groupId: string, fn: () => Promise<T>): Promise<T> {
-    // THE LEAD IS HELD FOR THE COMMIT'S WHOLE RUN (`leadHolds.ts`): a session that ends mid-commit
-    // gives the lead up only once the commit settled, so its checkpoint is not refused as a
-    // follower's after the server already took the commit.
-    return holdLeadWhile(`commit in ${groupId.slice(0, 8)}`, async () => {
-      try {
-        return await this.messageScheduler.runCommitUnderMlsLock(groupId, fn);
-      } finally {
-        this.resumeFramesHeldByCommit(groupId);
-      }
-    });
+    // THE LEAD IS HELD BY THE MUTEX ITSELF, from its grant to its release
+    // (`MlsPerGroupScheduler.grantMain`, `leadHolds.ts`): the commit and the checkpoints it awaits
+    // inside are covered, and its WAIT for the mutex holds nothing - a commit queued behind a busy
+    // drain never keeps a session that ended in the lead.
+    try {
+      return await this.messageScheduler.runCommitUnderMlsLock(groupId, fn);
+    } finally {
+      this.resumeFramesHeldByCommit(groupId);
+    }
   }
 
   /** Lends the MLS mutex to the drain while `work` - a commit request of `groupId` - is pending. */
@@ -4353,7 +4352,11 @@ export abstract class BaseMlsService implements IMlsService {
         }
         let abandoned: string;
         try {
-          abandoned = await this.rotateDeviceIdentity(deviceKeyB64, 'revoked server-side');
+          // Held like the mint (second review of #4053): the rotation's checkpoint records the new
+          // identity, and a follower's latch would refuse it.
+          abandoned = await holdLeadWhile('identity rotation after a revocation', () =>
+            this.rotateDeviceIdentity(deviceKeyB64, 'revoked server-side')
+          );
         } catch (refused) {
           // The caller of this round logs and carries on (`syncConnectionAfterWsOpen`), so ending
           // the document is HERE or nowhere: the client in memory is the fresh, unrecorded one.
@@ -4403,7 +4406,9 @@ export abstract class BaseMlsService implements IMlsService {
           );
           throw new Error('key package round abandoned during re-enrolment');
         }
-        const republished = await this.generateKeyPackageImpl(deviceKeyB64);
+        const republished = await holdLeadWhile('key-package mint after re-enrolment', () =>
+          this.generateKeyPackageImpl(deviceKeyB64)
+        );
         forgetRefusedRotationReloads();
         return republished;
       }
@@ -5547,10 +5552,13 @@ export abstract class BaseMlsService implements IMlsService {
    * sets the latch in the very transaction that refuses it.
    */
   async persistCheckpoint(options?: { endsDocumentOnRefusal?: boolean }): Promise<void> {
-    // A CHECKPOINT HOLDS THE LEAD UNTIL ITS PUT SETTLED (`leadHolds.ts`): the session it belongs to
-    // may end while it seals, and given up then, the latch refuses the put as a follower's. Taken
-    // synchronously, at the call, and released on every exit.
-    const releaseLead = takeLeadHold('checkpoint');
+    // A CHECKPOINT HOLDS THE LEAD FROM ITS EXPORT UNTIL ITS PUT SETTLED (`leadHolds.ts`): the
+    // session it belongs to may end while it seals, and given up then, the latch refuses the put as a
+    // follower's. NOT across the row waits before the export (second review of #4053): those end when
+    // the row writes they wait for settle, and nothing about a session ending makes that sooner - a
+    // checkpoint that must not be refused (a commit's, a join's) runs inside a hold of its own, which
+    // covers them; a routine one refused after the lead left writes what the server replays.
+    let releaseLead: () => void = () => {};
     try {
       if (this.stateWritesEnded === true) throw new MlsStateWriteRefusedError('ended');
       // A FOLLOWER TAB NEVER WRITES THE ACCOUNT'S MLS STATE, for the reason it never commits
@@ -5594,6 +5602,7 @@ export abstract class BaseMlsService implements IMlsService {
       let releaseRows: () => void = () => {};
       try {
         releaseRows = await this.holdRowsForExport();
+        releaseLead = takeLeadHold('checkpoint');
         const ledgers = emitted ? this.stageCheckpointLedgers(emitted) : undefined;
         // What this write holds of the inbound frames, read BEFORE it exports: a frame applied while it
         // seals is not in it ({@link durableApplied}).
@@ -8555,6 +8564,12 @@ export abstract class BaseMlsService implements IMlsService {
         // dropped the state and the device waited for that very Welcome for good (iPhone 12,
         // 2026-11-16). Opened under the lock before the build, closed here whatever the outcome.
         let closeVerdictWindow: (() => void) | undefined;
+        // THE LEAD IS HELD FROM THE BUILD UNTIL THE STRUCTURAL CHECKPOINT SETTLED (`leadHolds.ts`,
+        // second review of #4053). Between the two lock sections the commit is on the wire with no
+        // lock held: a session ending then (an expired refresh during a wake-up rejoin) gave the lead
+        // up, the server took the commit, and the checkpoint below was refused as a follower's - the
+        // next leader joined again from the new base, the fork described below.
+        const releaseJoinLead = takeLeadHold(`external join of ${short}`);
         try {
           let joined: { groupId: string; commit: Uint8Array; nextBase: string } | 'already-held';
           try {
@@ -8757,6 +8772,7 @@ export abstract class BaseMlsService implements IMlsService {
             };
           }
         } finally {
+          releaseJoinLead();
           closeVerdictWindow?.();
         }
       }

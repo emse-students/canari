@@ -610,13 +610,34 @@ describe('a request nobody waits for is never run', () => {
       expect(reloaded.leader.lines.some((l) => l.level === 'warn')).toBe(false);
     });
 
-    it('a frame it asked for is not run late for a page that is gone', async () => {
+    // Second review of #4053: none of a frame's callers (a forward, an invitation, a notice, an edit)
+    // keeps a durable queue, so a frame dropped here was a gesture lost.
+    it.each(['visible', 'mutation'] as const)(
+      'a %s frame it asked for is sent, and the missing echo of the page that asked is said',
+      async (delivery) => {
+        const { w, reloaded } = await askThenPromoteTheAsker({
+          kind: 'emit-frame',
+          groupId: 'g1',
+          frame: { iv: 'aQ==', cipherText: 'aQ==' },
+          delivery,
+        });
+
+        expect(reloaded.runs).toHaveLength(1);
+        expect(w.databases.ids()).toEqual([]);
+        const warned = reloaded.leader.lines.filter((l) => l.level === 'warn');
+        expect(warned.map((l) => l.message).join(' | ')).toContain(
+          'its own record of the send is not written'
+        );
+      }
+    );
+
+    it("a call's transport frame is not sent late: its call ended with the page", async () => {
       const { w, reloaded } = await askThenPromoteTheAsker({
         kind: 'emit-frame',
         groupId: 'g1',
-        frame: { bytes: [1] },
-        delivery: 'standard',
-      } as never);
+        frame: { iv: 'aQ==', cipherText: 'aQ==' },
+        delivery: 'transport',
+      });
 
       expect(reloaded.runs).toEqual([]);
       expect(w.databases.ids()).toEqual([]);

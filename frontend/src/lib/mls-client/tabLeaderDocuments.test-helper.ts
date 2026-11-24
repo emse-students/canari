@@ -155,9 +155,11 @@ export async function openDocument(opts: { reloadsOnDemotion?: boolean } = {}): 
 }
 
 /**
- * The browser's BroadcastChannel between the documents of one test, delivered on a microtask so
- * {@link settle} lets every message arrive: Node's own channel crosses event-loop turns, and a test
- * that waited for it with a timer passed or failed with the machine's load.
+ * The browser's BroadcastChannel between the documents of one test, delivered as the real one is: on
+ * a LATER TASK than the post (so a lock released in the same task can be granted first), and never
+ * to a channel closed before delivery. Unlike Node's own channel - which crosses threads and made a
+ * test pass or fail with the machine's load - its tasks are this thread's timers, in order, so
+ * {@link deliverBroadcasts} delivers every message posted before it, deterministically.
  */
 export class FakeBroadcastChannel {
   private static readonly open = new Map<string, Set<FakeBroadcastChannel>>();
@@ -170,7 +172,10 @@ export class FakeBroadcastChannel {
   postMessage(data: unknown): void {
     for (const peer of FakeBroadcastChannel.open.get(this.name) ?? []) {
       if (peer === this) continue;
-      queueMicrotask(() => peer.listeners.forEach((l) => l({ data } as MessageEvent)));
+      setTimeout(() => {
+        if (!FakeBroadcastChannel.open.get(this.name)?.has(peer)) return;
+        peer.listeners.forEach((l) => l({ data } as MessageEvent));
+      }, 0);
     }
   }
   addEventListener(type: string, listener: (event: MessageEvent) => void): void {
@@ -186,4 +191,10 @@ export class FakeBroadcastChannel {
   static reset(): void {
     FakeBroadcastChannel.open.clear();
   }
+}
+
+/** Runs the tasks that deliver every broadcast posted so far, then every microtask they started. */
+export async function deliverBroadcasts(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await settle();
 }

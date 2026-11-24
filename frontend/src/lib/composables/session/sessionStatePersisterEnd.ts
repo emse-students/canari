@@ -8,8 +8,11 @@ import { disposeMlsEncryptWorker } from '$lib/mls-client/mlsEncryptWorkerSession
 import { holdLeadWhile } from '$lib/mls-client/leadHolds';
 import { MlsStateWriteRefusedError } from '$lib/utils/hex';
 
-/** The final writes of every session ended in this document, chained - see {@link whenEndedSessionStateWritten}. */
-let finalWrites: Promise<void> = Promise.resolve();
+/**
+ * The final write of the LAST session ended in this document - see {@link whenEndedSessionStateWritten}.
+ * Not a chain of every one: a put that never settled would then stall every later sign-out.
+ */
+let lastFinalWrite: Promise<void> = Promise.resolve();
 
 /**
  * Ends the MLS state persister of the session that is ending: with its final checkpoint when the
@@ -22,9 +25,12 @@ let finalWrites: Promise<void> = Promise.resolve();
  * once the write has landed - given up first, the write latch would refuse it from a follower.
  *
  * **ONLY WHAT THIS SESSION INSTALLED IS REMOVED**, once the write settled: a newer session may have
- * registered its own by then (`unregisterMlsStatePersister(owner)`). And with the persister gone
- * before the next election, no checkpoint of the ended session's client can land in a document that
- * leads again (review of #4053, the expired-session path, which used to leave it installed).
+ * registered its own by then (`unregisterMlsStatePersister(owner)`). Removing it stops this
+ * session's persister from SCHEDULING more checkpoints of the ended client (review of #4053, the
+ * expired-session path, which used to leave it installed). What fences a late write that is already
+ * under way is not the registry but the write latch (`refusesCommitsHere`, read at the put) and the
+ * state's version guard, which refuse it in a document that no longer leads or that a newer write
+ * has overtaken.
  *
  * NEVER REJECTS: the caller chains the MLS client's retirement, and the next login's wait, on it.
  */
@@ -59,15 +65,16 @@ export function endSessionStatePersister(
       console.error(`[SESSION] Final MLS checkpoint failed: ${String(e)}`);
     })
   ).then(release);
-  finalWrites = Promise.all([finalWrites, written]).then(() => undefined);
+  lastFinalWrite = written;
   return written;
 }
 
 /**
- * Settles once every final checkpoint started by {@link endSessionStatePersister} has landed (or
- * failed). A sign-out that finds no live session - the expired session it ends was already let go
- * of - retires the client behind this, so it is never destroyed under its own final write.
+ * Settles once the final checkpoint of the LAST session ended here has landed (or failed). A
+ * sign-out that finds no live session - the expired session it ends was already let go of - retires
+ * the client behind this, so it is never destroyed under its own final write. That client is the
+ * last session's: an older session's write, even one that never settles, is not waited for.
  */
 export function whenEndedSessionStateWritten(): Promise<void> {
-  return finalWrites;
+  return lastFinalWrite;
 }

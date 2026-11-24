@@ -104,17 +104,46 @@ function notifyLeaderTabChanged(why: string): void {
 
 /** Hears another tab's announcements on the election channel, whichever election path created it. */
 function hearLeaderAnnouncements(channel: BroadcastChannel): void {
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') endDeferredRejoin('the member came to this tab');
+    });
+  }
   channel.addEventListener('message', (ev: MessageEvent) => {
     const type = ev.data?.type;
     if (type === 'leader_promoted' || type === 'leader_closing') {
       notifyLeaderTabChanged(`another tab sent ${type}`);
     }
-    if (type === 'leader_promotion_reloading') promotionReloadAnnounced = true;
-    if (type === 'leader_promoted') {
-      promotionReloadAnnounced = false;
+    if (type === 'leader_promotion_reloading') {
+      promotionReloadAnnounced = true;
+      withdrawForPromotionReload();
+    }
+    // A `leader_promoted` posted by the RELOADING page itself, before its reload, says nothing about
+    // the reclaim: its next page is another document, with another id.
+    if (type === 'leader_promoted' && ev.data?.tabId !== reloadingTabId()) {
+      forgetPromotionReloading();
       endDeferredRejoin('a tab announced it holds the lead');
     }
   });
+}
+
+/**
+ * ANOTHER TAB RELOADS AFTER ITS PROMOTION, and its next page reclaims the lock with a steal: a request
+ * of this document still queued would be granted in the gap the reload opens, promote this tab - a
+ * reload of its own - and then be stolen from - a second one (second review of #4053). So it is
+ * withdrawn, and the rejoin is deferred to the facts that end the gap ({@link endDeferredRejoin}):
+ * that tab saying it holds the lead, this session going live, or the member coming to this tab - the
+ * one fact left when the reloading tab was closed instead, since nothing else would ever say so.
+ */
+function withdrawForPromotionReload(): void {
+  const request = promotionRequest;
+  if (!request || leadership === 'leader') return;
+  promotionRequest = null;
+  rejoinDeferred = true;
+  request.abort();
+  electionLog?.(
+    '[TAB] Another tab reloads after its promotion - this tab withdraws its request for the lead and queues once that tab holds it.'
+  );
 }
 
 /** What this tab currently knows: `undecided` until the election resolves, then its side of it. */
@@ -453,6 +482,13 @@ const PROMOTION_RELOAD_KEY = 'canari_tab_promotion_reload';
  * tab that was granted it in between.
  */
 export function markPromotionReload(): void {
+  // DURABLE AND SHARED, BEFORE THE LOCK IS RELEASED: a tab granted the lock in the gap this reload
+  // opens may run before the broadcast below reaches it, and reads this synchronously.
+  try {
+    localStorage.setItem(PROMOTION_RELOADING_KEY, TAB_ID);
+  } catch {
+    /* no storage: the broadcast alone tells the other tabs */
+  }
   // Told to the other tabs, so a tab whose session comes back meanwhile does not take the lock in
   // the gap this reload opens, only to have it reclaimed from under its login (review of #4053).
   tabChannel?.postMessage({ type: 'leader_promotion_reloading', tabId: TAB_ID });
@@ -464,6 +500,39 @@ export function markPromotionReload(): void {
       '[TAB] could not record the promotion reload - the lock may go back to the old leader:',
       String(e)
     );
+  }
+}
+
+/**
+ * Which tab is between its promotion and its reclaim, shared by every tab of the origin
+ * ({@link anotherTabReloadsForPromotion}). Cleared by the reclaim, and by every tab whose deferral
+ * ended: once a fact said the gap is over, the mark of a tab closed during its reload says nothing.
+ */
+const PROMOTION_RELOADING_KEY = 'canari_tab_promotion_reloading';
+
+/** The document that marked a promotion reload whose reclaim is owed, if any. */
+function reloadingTabId(): string | null {
+  try {
+    return localStorage.getItem(PROMOTION_RELOADING_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/** Whether another tab announced, or durably marked, a promotion reload whose reclaim is owed. */
+function anotherTabReloadsForPromotion(): boolean {
+  if (promotionReloadAnnounced) return true;
+  const tab = reloadingTabId();
+  return tab !== null && tab !== TAB_ID;
+}
+
+/** The gap of a promotion reload is over (its reclaim, or a fact that ended a deferral). */
+function forgetPromotionReloading(): void {
+  promotionReloadAnnounced = false;
+  try {
+    localStorage.removeItem(PROMOTION_RELOADING_KEY);
+  } catch {
+    /* no storage: nothing was marked */
   }
 }
 
@@ -535,6 +604,17 @@ function queueForPromotion(log: (msg: string) => void): void {
       // returning releases the lock to the next tab, and its resume queues this page again.
       if (request.signal.aborted) return;
       if (leadership === 'leader') return;
+      // GRANTED IN THE GAP OF ANOTHER TAB'S PROMOTION RELOAD, BEFORE ITS ANNOUNCEMENT ARRIVED: the
+      // channel delivers on a later task than the unload releases the lock, so the grant can come
+      // first. The durable mark it left says so synchronously: this page does not lead - returning
+      // passes the lock on, free for that tab's reclaim - and queues once the gap ends.
+      if (anotherTabReloadsForPromotion()) {
+        rejoinDeferred = true;
+        log(
+          '[TAB] Lead granted while another tab reloads after its promotion - passed on to it; this tab queues once it holds the lead.'
+        );
+        return;
+      }
       // GRANTED TO A DOCUMENT WHOSE SESSION CANNOT SERVE: its withdrawal raced the grant. It does
       // not lead - returning releases the lock to the next tab - and rejoins at its next login.
       if (!leadEligible) {
@@ -707,7 +787,10 @@ async function initWithWebLocks(log: (msg: string) => void): Promise<boolean> {
           requeueForPromotion = () => queueForPromotion(log);
           // A RECLAIM ENDS THE GAP its reload opened: the tabs that deferred their rejoin for it
           // queue now, behind this hold ({@link endDeferredRejoin}).
-          if (reclaim) tabChannel?.postMessage({ type: 'leader_promoted', tabId: TAB_ID });
+          if (reclaim) {
+            forgetPromotionReloading();
+            tabChannel?.postMessage({ type: 'leader_promoted', tabId: TAB_ID });
+          }
           resolveLeadership(true);
           await holdLeaderLockUntilUnload((letGo) => (hold = letGo));
         }
@@ -799,7 +882,7 @@ export function setTabLeadEligibility(eligible: boolean, why: string): void {
   }
   if (!rejoinOwed || leaving) return;
   rejoinOwed = false;
-  if (promotionReloadAnnounced) {
+  if (anotherTabReloadsForPromotion()) {
     // ANOTHER TAB IS RELOADING AFTER ITS PROMOTION, and its page will reclaim the lock with a steal:
     // taken in the gap, the lock would be stolen from under this login. So this document joins as a
     // follower and queues once that tab says it holds the lead - or once this session goes live
@@ -828,6 +911,7 @@ export function noteTabSessionLive(): void {
 function endDeferredRejoin(why: string): void {
   if (!rejoinDeferred) return;
   rejoinDeferred = false;
+  forgetPromotionReloading();
   const log = electionLog;
   if (!log || leaving || !leadEligible || leadership === 'leader') return;
   log(`[TAB] Deferred rejoin ends (${why}) - queueing for the lead.`);
@@ -1086,6 +1170,7 @@ export function resetTabLeaderStateForTests(): void {
   try {
     localStorage.removeItem(LEADER_KEY);
     localStorage.removeItem(HEARTBEAT_KEY);
+    localStorage.removeItem(PROMOTION_RELOADING_KEY);
   } catch {
     /* ignore */
   }

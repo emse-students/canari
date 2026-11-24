@@ -31,8 +31,18 @@ function logSealFormatOnce(format: string): void {
  */
 const pendingJobs = new Set<(reason: Error) => void>();
 
-/** The worker was terminated under a round trip: the job ends, it never waits for an answer. */
-export class MlsEncryptWorkerTerminatedError extends Error {
+/**
+ * How many times the worker was disposed: a job queued on {@link jobChain} before a disposal is
+ * rejected when its turn comes, never run on the worker created after it.
+ */
+let disposals = 0;
+
+/**
+ * The worker was terminated under a round trip, or before a job queued behind one started: the job
+ * ends, it never waits for an answer. Module-private: no caller branches on it - a checkpoint fails
+ * with it like with any seal failure - it exists so the cause is named in that failure's log.
+ */
+class MlsEncryptWorkerTerminatedError extends Error {
   constructor() {
     super('MLS encrypt worker terminated before it answered');
     this.name = 'MlsEncryptWorkerTerminatedError';
@@ -47,6 +57,7 @@ export class MlsEncryptWorkerTerminatedError extends Error {
 export function disposeMlsEncryptWorker(): void {
   sharedWorker?.terminate();
   sharedWorker = null;
+  disposals += 1;
   jobChain = Promise.resolve();
   const waiting = [...pendingJobs];
   pendingJobs.clear();
@@ -144,7 +155,12 @@ export async function encryptMlsStateOffThread(
   }
 
   const workerFactory = options?.workerFactory ?? (() => new MlsEncryptWorker());
-  const job = jobChain.then(() => runEncryptOnWorker(plain, deviceKeyB64, workerFactory));
+  const queuedAt = disposals;
+  const job = jobChain.then(() => {
+    // Disposed while this job waited for its turn: the session that queued it ended with the worker.
+    if (disposals !== queuedAt) throw new MlsEncryptWorkerTerminatedError();
+    return runEncryptOnWorker(plain, deviceKeyB64, workerFactory);
+  });
   jobChain = job.then(
     () => undefined,
     () => undefined
