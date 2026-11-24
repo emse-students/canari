@@ -19,6 +19,33 @@ import { UnauthorizedException } from '@nestjs/common';
  * @throws UnauthorizedException for every refusal; the message names the check that refused
  */
 export function subjectOfAccessToken(token: string, secret: string, nowSeconds: number): string {
+  return readAccessToken(token, secret, nowSeconds).sub;
+}
+
+/** What an accepted access token says about its holder: who, and when the token was minted. */
+export interface AccessCredential {
+  /** The account id (`sub`). */
+  sub: string;
+  /**
+   * When core minted the token, in ms since the epoch (`iat` x 1000; every token core signs carries
+   * one), or `undefined` when the claim is absent or not a number - read as "minted at an unknown
+   * time", which the erased-owner record treats as old (`erased-owners.ts`).
+   */
+  issuedAt?: number;
+}
+
+/**
+ * The same checks as {@link subjectOfAccessToken}, answering the token's mint time as well: the
+ * fact that tells a credential issued before an account's erasure from one issued to the person
+ * who came back under the same id (`erased-owners.ts`).
+ *
+ * @throws UnauthorizedException for every refusal; the message names the check that refused
+ */
+export function readAccessToken(
+  token: string,
+  secret: string,
+  nowSeconds: number
+): AccessCredential {
   const parts = token.split('.');
   if (parts.length !== 3) throw new UnauthorizedException('Malformed JWT');
 
@@ -47,7 +74,12 @@ export function subjectOfAccessToken(token: string, secret: string, nowSeconds: 
   if (payload === null || typeof payload !== 'object') {
     throw new UnauthorizedException('Malformed JWT');
   }
-  const { exp, type, sub } = payload as { exp?: unknown; type?: unknown; sub?: unknown };
+  const { exp, type, sub, iat } = payload as {
+    exp?: unknown;
+    type?: unknown;
+    sub?: unknown;
+    iat?: unknown;
+  };
 
   if (typeof exp !== 'number' || !Number.isFinite(exp)) {
     throw new UnauthorizedException('JWT without an expiry');
@@ -59,5 +91,5 @@ export function subjectOfAccessToken(token: string, secret: string, nowSeconds: 
   if (typeof sub !== 'string' || sub === '') {
     throw new UnauthorizedException('JWT without a subject');
   }
-  return sub;
+  return typeof iat === 'number' && Number.isFinite(iat) ? { sub, issuedAt: iat * 1000 } : { sub };
 }

@@ -247,10 +247,12 @@ export class UploadSessionService {
       header: unknown;
       encoding?: unknown;
     },
-    maxBytes: number
+    maxBytes: number,
+    issuedAt?: number
   ): Promise<{ uploadId: string; partBytes: number; totalParts: number; expiresAt: number }> {
-    // Nothing staged, nothing reserved for an erased owner: its `complete` would be refused anyway.
-    this.media.assertOwnerNotErased(ownerId, 'upload session init');
+    // Nothing staged, nothing reserved for an erased owner's old credential (`issuedAt`, the token's
+    // mint): its `complete` would be refused anyway. A person who came back opens sessions as anyone.
+    this.media.assertOwnerNotErased(ownerId, issuedAt, 'upload session init');
     await this.ensureLoaded();
     const { totalBytes, partBytes } = input;
     if (!Number.isSafeInteger(totalBytes) || (totalBytes as number) <= 0) {
@@ -512,16 +514,17 @@ export class UploadSessionService {
    * one (409 / 422 otherwise); a repeat returns the same `mediaId`. The reservation is released in
    * the run that registers the entry, or when the session ends some other way - never twice.
    */
-  async complete(ownerId: string, id: string): Promise<{ mediaId: string }> {
+  async complete(ownerId: string, id: string, issuedAt?: number): Promise<{ mediaId: string }> {
     // Admitted in this synchronous run, before anything is awaited: refused at once for an erased
-    // owner, and counted while it runs (`MediaService.admitUploader`).
+    // owner's old credential, and counted while it runs (`MediaService.admitUploader`).
     try {
-      return await this.media.admitUploader(ownerId, 'upload session complete', () =>
-        this.completeAdmitted(ownerId, id)
+      return await this.media.admitUploader(ownerId, issuedAt, 'upload session complete', () =>
+        this.completeAdmitted(ownerId, id, issuedAt)
       );
     } catch (err) {
-      // Refused: nothing is stored (a refusal at the registration deleted what was), and the parts
-      // this session holds go too - nobody can complete it any more.
+      // Refused: the session goes - its parts, sidecar and reservation, and an object it stored under
+      // its `intendedMediaId` without registering it (a crash, a store error after writing): nobody
+      // can complete it any more, and the sidecar is the last pointer to that object.
       if (err instanceof OwnerErasedException) await this.disposeRefused(ownerId, id);
       throw err;
     }
@@ -529,7 +532,8 @@ export class UploadSessionService {
 
   /**
    * Ends the caller's own session after its `complete` was refused for an erased owner: staging,
-   * sidecar and reservation. Absent or another member's: nothing to do (the refusal is the answer).
+   * sidecar, reservation and any object it stored unregistered ({@link dispose}). Absent or another
+   * member's: nothing to do (the refusal is the answer).
    */
   private async disposeRefused(ownerId: string, id: string): Promise<void> {
     if (!UUID_REGEX.test(id)) return;
@@ -542,10 +546,22 @@ export class UploadSessionService {
   }
 
   /** The body of {@link complete}, run as an admitted upload. */
-  private async completeAdmitted(ownerId: string, id: string): Promise<{ mediaId: string }> {
+  private async completeAdmitted(
+    ownerId: string,
+    id: string,
+    issuedAt: number | undefined
+  ): Promise<{ mediaId: string }> {
     await this.ensureLoaded();
     return this.mutex.run(`${id}:complete`, async () => {
       const session = await this.require(ownerId, id);
+      // WHAT THIS UPLOAD DATES FROM: the token's mint AND the session's opening. A session opened
+      // before an erasure stays the erased owner's, whoever's fresh token completes it.
+      this.media.assertOwnerNotErased(
+        ownerId,
+        issuedAt,
+        'upload session complete',
+        session.createdAt
+      );
       if (session.completed) {
         this.logger.log(
           `Upload session ${id} completed again: same media ${session.completed.mediaId}`
@@ -559,7 +575,7 @@ export class UploadSessionService {
       // (409) instead of writing into, or racing the removal of, the file being stored.
       session.completing = true;
       try {
-        return await this.assemble(ownerId, session);
+        return await this.assemble(ownerId, session, issuedAt);
       } finally {
         session.completing = false;
       }
@@ -567,7 +583,11 @@ export class UploadSessionService {
   }
 
   /** The body of `complete`, run under its lock with `completing` set. */
-  private async assemble(ownerId: string, session: Session): Promise<{ mediaId: string }> {
+  private async assemble(
+    ownerId: string,
+    session: Session,
+    issuedAt: number | undefined
+  ): Promise<{ mediaId: string }> {
     const id = session.id;
     {
       const parts = partCount(session.totalBytes, session.partBytes);
@@ -625,7 +645,9 @@ export class UploadSessionService {
         session.retentionClass,
         session.totalBytes,
         session.release,
-        stamp
+        stamp,
+        issuedAt,
+        session.createdAt
       );
       session.release();
       session.completed = { mediaId, at: Date.now() };
@@ -683,7 +705,7 @@ export class UploadSessionService {
       if (session.ownerId !== ownerId) continue;
       await this.mutex.run(`${session.id}:complete`, async () => {
         if (!this.sessions.has(session.id)) return;
-        await this.dispose(session, 'cancelled');
+        await this.dispose(session, 'erased');
         ended += 1;
       });
     }
@@ -862,8 +884,18 @@ export class UploadSessionService {
     return session;
   }
 
-  /** Ends a session: in-flight parts aborted and awaited, reservation released, files removed. */
-  private async dispose(session: Session, why: 'cancelled' | 'expired' | 'refused'): Promise<void> {
+  /**
+   * Ends a session: in-flight parts aborted and awaited, reservation released, files removed.
+   *
+   * For an ERASED owner's session (`erased`, `refused`), the object it may have stored under its
+   * `intendedMediaId` and never registered goes too: the sidecar removed here is the last thing that
+   * names it, and with no index entry neither the erasure nor any sweep would ever find it. A
+   * registered one (an entry exists, live or tombstone) is the index's to end.
+   */
+  private async dispose(
+    session: Session,
+    why: 'cancelled' | 'expired' | 'refused' | 'erased'
+  ): Promise<void> {
     this.sessions.delete(session.id);
     try {
       for (const abort of session.aborts) abort.abort();
@@ -872,9 +904,19 @@ export class UploadSessionService {
       session.release();
       await this.removeFiles(session.id);
     }
+    const stored = session.intendedMediaId;
+    if ((why === 'erased' || why === 'refused') && stored && !this.media.hasIndexEntry(stored)) {
+      await this.media.discardRefusedObject(stored, `upload session ${session.id} ${why}`);
+    }
     this.logger.log(`Upload session ${session.id} ${why}`);
   }
 
+  /**
+   * Removes a session's files. A failure is a WARN naming the errno, not a throw: what is left is
+   * staging no session claims, which the hourly sweep removes ({@link sweep}) - an end by a fact, the
+   * session being gone. No retry loop here: on the Linux hosts an unlink is not refused by an open
+   * handle, so a failure is a real fault (EACCES, EIO) that retrying in-line would not mend.
+   */
   private async removeFiles(id: string): Promise<void> {
     for (const file of [this.dataPath(id), this.metaPath(id), `${this.metaPath(id)}.tmp`]) {
       await fs.remove(file).catch((err) => {

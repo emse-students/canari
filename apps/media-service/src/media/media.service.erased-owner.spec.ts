@@ -3,14 +3,18 @@
 /**
  * AN ERASED OWNER REGISTERS NOTHING (docs/wiki/services/media-service.md#an-erased-owner-registers-nothing-2026-11-24).
  *
- * The account erasure records the owner (a digest) before it reads the index, and every path that
- * registers an object reads that record in the same synchronous run as the entry it would write.
+ * The account erasure records the owner (a keyed pseudonym) and the time of the call before it
+ * reads the index, and every path that registers an object reads that record in the same
+ * synchronous run as the entry it would write, refusing a credential minted before the call.
  * Pinned, each because the opposite is a plausible mistake:
  *  - the closing test of the backlog entry, on the single-request upload: after the erasure an upload
  *    by ALICE is refused, nothing is stored and no entry names her;
  *  - an upload whose bytes are being stored when the erasure lands ends REFUSED (its object deleted),
  *    one registered before ends ERASED - never kept;
  *  - every other registering path (form file, public image, chunked init and complete) refuses too;
+ *  - a person who came back under the same id (a token minted after the call) is NOT refused;
+ *  - a refused object whose delete fails is owed, kept in the index and retried by the sweep;
+ *  - a completed legacy chunk upload's memo naming the owner goes with the erasure;
  *  - the record outlives the erasure by the derived window, and longer while an upload admitted
  *    before it still runs; it survives a restart, and an index entry that is not a digest is dropped.
  */
@@ -19,7 +23,15 @@ import * as path from 'path';
 import { MediaService } from './media.service';
 import { OWNER_ERASED, erasedOwnerKey, erasedOwnerKeptMs } from './erased-owners';
 
-type Entry = { ownerId?: string; purgedAt?: number; publicAsset?: boolean };
+// The record is keyed by an HMAC under this secret (erased-owners.ts).
+process.env.JWT_SECRET ??= 'test-erasure-key';
+
+type Entry = {
+  ownerId?: string;
+  purgedAt?: number;
+  publicAsset?: boolean;
+  deletePending?: true;
+};
 
 type Internals = {
   meta: { items: Record<string, Entry>; erasedOwners?: Record<string, number> };
@@ -28,6 +40,8 @@ type Internals = {
   persistMetadata: () => Promise<void>;
   uploadLocks: Map<string, Promise<void>>;
   forgetLapsedErasedOwners: (now: number) => number;
+  retryPendingDeletes: () => Promise<number>;
+  runSweep: () => Promise<void>;
   loadMetadata: () => void;
   chunkTempPath: (id: string) => string;
 };
@@ -39,6 +53,8 @@ function build() {
   const stored = new Set<string>();
   const warned: string[] = [];
   const gate = { held: undefined as Promise<void> | undefined, reached: () => {} };
+  /** While set, the store refuses every delete (an outage). */
+  const deletes = { failing: false };
   const write = async (id: string) => {
     gate.reached();
     if (gate.held) await gate.held;
@@ -48,7 +64,10 @@ function build() {
   internals.storage = {
     put: (id: string) => write(id),
     putFileStream: (id: string) => write(id),
-    delete: async (id: string) => void stored.delete(id),
+    delete: async (id: string) => {
+      if (deletes.failing) throw new Error('store unreachable');
+      stored.delete(id);
+    },
   };
   internals.logger = {
     log: () => {},
@@ -73,7 +92,7 @@ function build() {
       },
     };
   };
-  return { service, internals, stored, warned, naming, holdStore };
+  return { service, internals, stored, warned, naming, holdStore, deletes };
 }
 
 const refusal = { status: 410, response: { code: OWNER_ERASED } };
@@ -112,6 +131,31 @@ describe('the single-request upload of an erased owner', () => {
     await expect(uploading).rejects.toMatchObject(refusal);
     expect(stored.size).toBe(0);
     expect(naming('alice')).toEqual([]);
+  });
+
+  it('A PERSON WHO CAME BACK: a token minted after the call is accepted, one minted at or before is refused', async () => {
+    const { service, internals, stored, naming } = build();
+    await service.removeAllOwnedBy(ALICE);
+    const erasedAt = internals.meta.erasedOwners?.[erasedOwnerKey(ALICE)] ?? 0;
+    // `iat` is whole seconds: a token of the second before the call is the erased account's.
+    const before = (Math.floor(erasedAt / 1000) - 1) * 1000;
+    const after = (Math.floor(erasedAt / 1000) + 2) * 1000;
+
+    await expect(
+      service.upload(Buffer.alloc(10), ALICE, 'ephemeral', before)
+    ).rejects.toMatchObject(refusal);
+    await expect(
+      service.upload(Buffer.alloc(10), ALICE, 'ephemeral', undefined)
+    ).rejects.toMatchObject(refusal); // a credential that cannot be dated is the old one
+    expect(stored.size).toBe(0);
+
+    const mediaId = await service.upload(Buffer.alloc(10), ALICE, 'ephemeral', after);
+    expect(stored.has(mediaId)).toBe(true);
+    expect(naming(ALICE)).toHaveLength(1);
+    // The same holds on the chunked path the old clients use.
+    await expect(
+      service.initChunkedUpload(ALICE, undefined, undefined, 1e8, after)
+    ).resolves.toBeDefined();
   });
 
   it('INTERLEAVED: an upload registered before the erasure reads the index ends erased', async () => {
@@ -170,13 +214,68 @@ describe('every other path that registers an object refuses an erased owner', ()
     const store = holdStore();
     const completing = service.completeChunkedUpload(id, 1e8, 'alice');
     await store.reached;
-    await service.removeAllOwnedBy('alice');
+    // The record is written in the erasure's first synchronous run; ending the open session then
+    // waits for the session's lock, which the completion holds until its store returns.
+    const erasing = service.removeAllOwnedBy('alice');
     store.release();
 
     await expect(completing).rejects.toMatchObject(refusal);
+    await expect(erasing).resolves.toMatchObject({ failed: 0 });
     expect(stored.size).toBe(0);
     expect(await fs.pathExists(internals.chunkTempPath(id))).toBe(false);
     expect(naming('alice')).toEqual([]);
+  });
+});
+
+describe('what the erasure leaves nobody to end', () => {
+  it('a refused object whose delete fails is OWED: an ownerless tombstone the sweep retries, never trimmed', async () => {
+    const { service, internals, stored, holdStore, deletes } = build();
+    const store = holdStore();
+    const uploading = service.upload(Buffer.alloc(10), 'alice', 'archive');
+    await store.reached;
+    await service.removeAllOwnedBy('alice');
+    deletes.failing = true;
+    store.release();
+    await expect(uploading).rejects.toMatchObject(refusal);
+
+    const [mediaId] = [...stored];
+    expect(mediaId).toBeDefined();
+    const owed = internals.meta.items[mediaId];
+    expect(owed).toMatchObject({ deletePending: true });
+    expect(owed.ownerId).toBeUndefined();
+    expect(owed.purgedAt).toBeDefined();
+
+    // Still failing: retried, still owed.
+    await expect(internals.retryPendingDeletes()).resolves.toBe(0);
+    expect(internals.meta.items[mediaId]?.deletePending).toBe(true);
+    // Not trimmed with the old tombstones while owed, however old.
+    internals.meta.items[mediaId] = { ...owed, purgedAt: 1 };
+    await internals.runSweep();
+    expect(internals.meta.items[mediaId]?.deletePending).toBe(true);
+
+    // The store recovers: the sweep's retry confirms it, and the object is gone.
+    deletes.failing = false;
+    await internals.runSweep();
+    expect(stored.has(mediaId)).toBe(false);
+    expect(internals.meta.items[mediaId]?.deletePending).toBeUndefined();
+  });
+
+  it("a completed chunk upload's memo naming the erased owner goes; another member's stays", async () => {
+    const { service, internals } = build();
+    const complete = async (owner: string) => {
+      const id = await service.initChunkedUpload(owner, undefined, undefined, 1e8);
+      await service.appendChunk(id, Buffer.alloc(16), 1e8, owner);
+      await service.completeChunkedUpload(id, 1e8, owner);
+      return `${internals.chunkTempPath(id)}.done`;
+    };
+    const alicesMemo = await complete('alice');
+    const bobsMemo = await complete('bob');
+    expect(await fs.pathExists(alicesMemo)).toBe(true);
+
+    await expect(service.removeAllOwnedBy('alice')).resolves.toMatchObject({ failed: 0 });
+
+    expect(await fs.pathExists(alicesMemo)).toBe(false);
+    expect(await fs.pathExists(bobsMemo)).toBe(true);
   });
 });
 

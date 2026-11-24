@@ -32,6 +32,8 @@ import { PART_MAX_BYTES } from './upload-session';
 
 process.env.MEDIA_CHAT_REEL_DAILY_BYTES = '100000';
 process.env.MEDIA_UPLOAD_SESSION_MAX_OPEN = '4';
+// The erased-owner record is keyed by an HMAC under this secret (erased-owners.ts).
+process.env.JWT_SECRET ??= 'test-erasure-key';
 
 // Loaded AFTER the env above: the daily budget is read once, at module load.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -75,7 +77,11 @@ interface Rig {
   dir: string;
   stored: Array<{ id: string; bytes: Buffer }>;
   failStore: { value: boolean };
+  /** The store WRITES the object, then answers an error (a timeout after the write). */
+  failAfterWrite: { value: boolean };
   registered: Array<{ id: string; size: number }>;
+  /** Every warning either service logged: a swallowed cleanup failure is visible to a test. */
+  warned: string[];
 }
 
 let dirs: string[] = [];
@@ -87,12 +93,15 @@ function rig(existingDir?: string, sharedMedia?: InstanceType<typeof MediaServic
   const stored: Rig['stored'] = [];
   const registered: Rig['registered'] = [];
   const failStore = { value: false };
+  const failAfterWrite = { value: false };
+  const warned: string[] = [];
+  const recordWarn = (msg: string) => void warned.push(msg);
   const media =
     sharedMedia ?? (Object.create(MediaService.prototype) as InstanceType<typeof MediaService>);
   if (!sharedMedia) {
     const m = media as unknown as Record<string, unknown>;
     m.meta = { items: Object.create(null) };
-    m.logger = { log: () => {}, warn: () => {}, error: () => {}, debug: () => {} };
+    m.logger = { log: () => {}, warn: recordWarn, error: () => {}, debug: () => {} };
     m.persistMetadata = () => Promise.resolve();
     // The object store as the erasure and a refused registration reach it: a delete drops the copy.
     m.storage = {
@@ -107,22 +116,31 @@ function rig(existingDir?: string, sharedMedia?: InstanceType<typeof MediaServic
       await new Promise((resolve) => setImmediate(resolve));
       if (failStore.value) throw new Error('store down');
       stored.push({ id, bytes: await fs.readFile(file) });
+      if (failAfterWrite.value) throw new Error('store timed out after the write');
     },
   };
   const svc = new UploadSessionService(media, storage as never);
   (svc as unknown as { logger: unknown }).logger = {
     log: () => {},
-    warn: () => {},
+    warn: recordWarn,
     error: () => {},
   };
   const meta = (media as unknown as { meta: { items: Record<string, { size?: number }> } }).meta;
   const real = media.registerUpload.bind(media);
-  media.registerUpload = (async (id: string, o: string, c: never, size: number, cb: () => void) => {
+  media.registerUpload = (async (
+    id: string,
+    o: string,
+    c: never,
+    size: number,
+    cb: () => void,
+    ...rest: never[]
+  ) => {
     registered.push({ id, size });
-    await real(id, o, c, size, cb);
+    // Every argument forwarded: the stamp, and the date the erased-owner record compares.
+    await (real as (...a: unknown[]) => Promise<void>)(id, o, c, size, cb, ...rest);
     void meta;
   }) as never;
-  return { svc, media, dir, stored, failStore, registered };
+  return { svc, media, dir, stored, failStore, failAfterWrite, registered, warned };
 }
 
 afterEach(async () => {
@@ -421,6 +439,18 @@ describe('an upload session of an erased owner', () => {
     }
     return s;
   }
+  /** A staging removal that failed is a WARN naming the errno: asserted first, so it is what fails. */
+  const expectNoStagingLeft = async (r: Rig) => {
+    expect(r.warned.filter((w) => w.includes('not removed'))).toEqual([]);
+    expect(await fs.readdir(r.dir)).toEqual([]);
+  };
+  const erasedAtOf = (r: Rig) =>
+    Object.values(
+      (r.media as unknown as { meta: { erasedOwners?: Record<string, number> } }).meta
+        .erasedOwners ?? {}
+    )[0] ?? 0;
+  /** A token minted two whole seconds after the call: the person came back. */
+  const freshAfter = (erasedAt: number) => (Math.floor(erasedAt / 1000) + 2) * 1000;
 
   it('THE CLOSING TEST: after the erasure, a second session of ALICE stores nothing and no entry names her', async () => {
     const r = rig();
@@ -435,7 +465,7 @@ describe('an upload session of an erased owner', () => {
       status: 410,
       response: { code: 'OWNER_ERASED' },
     });
-    expect(await fs.readdir(r.dir)).toEqual([]);
+    await expectNoStagingLeft(r);
     expect(r.stored).toEqual([]);
     expect(naming(r, 'alice')).toEqual([]);
     // Another member is untouched.
@@ -456,7 +486,7 @@ describe('an upload session of an erased owner', () => {
     });
     expect(r.stored).toEqual([]);
     expect(r.registered).toEqual([]);
-    expect(await fs.readdir(r.dir)).toEqual([]);
+    await expectNoStagingLeft(r);
     expect(reserved(r)).toBe(0);
     expect(naming(r, 'alice')).toEqual([]);
     // The second half finds nothing left to end.
@@ -487,7 +517,7 @@ describe('an upload session of an erased owner', () => {
   /** Whatever the order: nothing stored, nothing staged, nothing reserved, no entry naming her. */
   async function expectNothingOfAlice(r: Rig) {
     expect(r.stored).toEqual([]);
-    expect(await fs.readdir(r.dir)).toEqual([]);
+    await expectNoStagingLeft(r);
     expect(reserved(r)).toBe(0);
     expect(naming(r, 'alice')).toEqual([]);
   }
@@ -513,7 +543,65 @@ describe('an upload session of an erased owner', () => {
     await expectNothingOfAlice(r);
   });
 
-  it('records a DIGEST of the owner, never the id', async () => {
+  it('A PERSON WHO CAME BACK opens and completes a session with a token minted after the call', async () => {
+    const r = rig();
+    await erase(r, 'alice');
+    const fresh = freshAfter(erasedAtOf(r));
+    const { blob, hex } = blobFor(3000);
+    const s = await r.svc.init(
+      'alice',
+      { totalBytes: blob.length, partBytes: 1024, header: hex },
+      MAX,
+      fresh
+    );
+    for (const i of Array(s.totalParts).keys()) {
+      await put(r, 'alice', s.uploadId, i, sliceOf(blob, 1024, i));
+    }
+    const { mediaId } = await r.svc.complete('alice', s.uploadId, fresh);
+    expect(r.stored.map((o) => o.id)).toEqual([mediaId]);
+    expect(naming(r, 'alice')).toHaveLength(1);
+  });
+
+  it("a session OPENED before the call stays the erased account's, whoever's fresh token completes it", async () => {
+    const r = rig();
+    const s = await filled(r, 'alice');
+    await r.media.removeAllOwnedBy('alice'); // the sessions are not ended yet
+    await expect(
+      r.svc.complete('alice', s.uploadId, freshAfter(erasedAtOf(r)))
+    ).rejects.toMatchObject({ status: 410, response: { code: 'OWNER_ERASED' } });
+    await expectNothingOfAlice(r);
+  });
+
+  it('AN OBJECT STORED UNDER THE SESSION AND NEVER REGISTERED goes with the erasure', async () => {
+    const r = rig();
+    const s = await filled(r, 'alice');
+    r.failAfterWrite.value = true;
+    await expect(r.svc.complete('alice', s.uploadId)).rejects.toMatchObject({ status: 500 });
+    r.failAfterWrite.value = false;
+    expect(r.stored).toHaveLength(1); // written, no entry names it: only the sidecar points at it
+    expect(naming(r, 'alice')).toEqual([]);
+
+    await erase(r, 'alice');
+
+    expect(r.stored).toEqual([]);
+    await expectNothingOfAlice(r);
+  });
+
+  it('AN OBJECT STORED UNDER THE SESSION AND NEVER REGISTERED goes with a refusal at admission', async () => {
+    const r = rig();
+    const s = await filled(r, 'alice');
+    r.failAfterWrite.value = true;
+    await expect(r.svc.complete('alice', s.uploadId)).rejects.toMatchObject({ status: 500 });
+    r.failAfterWrite.value = false;
+    await r.media.removeAllOwnedBy('alice'); // finds no entry: the object is not indexed
+
+    await expect(r.svc.complete('alice', s.uploadId)).rejects.toMatchObject({ status: 410 });
+
+    expect(r.stored).toEqual([]);
+    await expectNothingOfAlice(r);
+  });
+
+  it('records a keyed PSEUDONYM of the owner, never the id', async () => {
     const r = rig();
     await r.media.removeAllOwnedBy('alice');
     const records = (r.media as unknown as { meta: { erasedOwners?: Record<string, number> } }).meta

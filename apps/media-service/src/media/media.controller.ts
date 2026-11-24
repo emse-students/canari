@@ -95,7 +95,7 @@ import {
   type LiveTrimResult,
 } from './live-segments.service';
 import { assertInternalSecret } from './internal-secret.util';
-import { subjectOfAccessToken } from './access-token';
+import { readAccessToken, type AccessCredential } from './access-token';
 import { fetchLivesMode } from './lives-mode';
 import { handedRetention, mediaRetention, type MediaRetentionDays } from './retention-settings';
 import { requireUploadedFile, uploadedFileBuffer, uploadedFileMime } from './uploaded-file';
@@ -209,6 +209,15 @@ export class MediaController {
   // service has no exception filter, so without this line a 401 leaves nothing on the server. The
   // token itself is never written.
   private verifyToken(req: Request): string {
+    return this.verifyCredential(req).sub;
+  }
+
+  /**
+   * {@link verifyToken}, answering the token's mint time as well: what an upload route hands the
+   * erased-owner record, so a person who came back under an erased id is not refused
+   * (`erased-owners.ts`).
+   */
+  private verifyCredential(req: Request): AccessCredential {
     try {
       const header = req.headers['authorization'] ?? '';
       if (!header.startsWith('Bearer ')) {
@@ -221,7 +230,7 @@ export class MediaController {
         this.logger.error('[AUTH] JWT_SECRET is not configured - refusing the request');
         throw new InternalServerErrorException('JWT_SECRET is not configured');
       }
-      return subjectOfAccessToken(header.slice(7), secret, Math.floor(Date.now() / 1000));
+      return readAccessToken(header.slice(7), secret, Math.floor(Date.now() / 1000));
     } catch (err) {
       if (err instanceof UnauthorizedException) {
         this.logger.warn(`[auth] request refused, 401: ${err.message}`);
@@ -281,7 +290,7 @@ export class MediaController {
     @Body() body: { retentionClass?: unknown },
     @Req() req: Request
   ): Promise<{ mediaId: string }> {
-    const ownerId = this.verifyToken(req);
+    const { sub: ownerId, issuedAt } = this.verifyCredential(req);
 
     let upload: ReturnType<typeof requireUploadedFile>;
     try {
@@ -301,7 +310,12 @@ export class MediaController {
     // the sweep is an allowlist of `ephemeral` - so a missing hint costs storage, never a file.
     const retentionClass = clientRetentionClass(body?.retentionClass);
 
-    const mediaId = await this.mediaService.upload(upload.buffer, ownerId, retentionClass);
+    const mediaId = await this.mediaService.upload(
+      upload.buffer,
+      ownerId,
+      retentionClass,
+      issuedAt
+    );
     this.logger.log(
       `Stored encrypted blob: ${mediaId} (${upload.size} bytes, retention=${retentionClass ?? 'unclassified'})`
     );
@@ -323,7 +337,7 @@ export class MediaController {
     @Req() req: Request,
     @Body() body?: { size?: unknown }
   ): Promise<{ mediaId: string }> {
-    const uploaderId = this.verifyToken(req);
+    const { sub: uploaderId, issuedAt } = this.verifyCredential(req);
     const size = publicImageSize(body?.size);
     const bound = PUBLIC_IMAGE_BOUNDS[size];
 
@@ -358,7 +372,12 @@ export class MediaController {
       throw new UnprocessableEntityException('The image could not be read');
     }
 
-    const mediaId = await this.mediaService.uploadPublicAsset(compressed, 'image/webp', uploaderId);
+    const mediaId = await this.mediaService.uploadPublicAsset(
+      compressed,
+      'image/webp',
+      uploaderId,
+      issuedAt
+    );
     this.logger.log(
       `Stored public asset: ${mediaId} (${upload.size} → ${compressed.length} bytes, webp, size=${size})`
     );
@@ -372,7 +391,7 @@ export class MediaController {
     @Body() body: { retentionClass?: unknown; totalBytes?: unknown } | undefined,
     @Req() req: Request
   ): Promise<{ uploadId: string }> {
-    const ownerId = this.verifyToken(req);
+    const { sub: ownerId, issuedAt } = this.verifyCredential(req);
     // A `chat-reel` declares its class and total HERE so the daily budget is reserved before any
     // byte is staged; every other caller sends no body and is unchanged.
     const retentionClass = clientRetentionClass(body?.retentionClass);
@@ -381,7 +400,8 @@ export class MediaController {
       ownerId,
       retentionClass,
       totalBytes,
-      MAX_BYTES
+      MAX_BYTES,
+      issuedAt
     );
     this.logger.log(
       `Initialized chunked upload: ${uploadId} (retention=${retentionClass ?? 'unclassified'})`
@@ -431,7 +451,7 @@ export class MediaController {
     @Body() body: { retentionClass?: unknown },
     @Req() req: Request
   ): Promise<{ mediaId: string }> {
-    const ownerId = this.verifyToken(req);
+    const { sub: ownerId, issuedAt } = this.verifyCredential(req);
     // Same hint as the single-shot upload: a 50 MB+ video posted to the feed is archive too, and
     // the class has to survive the path the file happened to take.
     const retentionClass = clientRetentionClass(body?.retentionClass);
@@ -439,7 +459,8 @@ export class MediaController {
       id,
       MAX_BYTES,
       ownerId,
-      retentionClass
+      retentionClass,
+      issuedAt
     );
     this.logger.log(
       `Completed chunked upload: ${id} -> ${mediaId} (retention=${retentionClass ?? 'unclassified'})`
@@ -466,7 +487,7 @@ export class MediaController {
       | undefined,
     @Req() req: Request
   ) {
-    const ownerId = this.verifyToken(req);
+    const { sub: ownerId, issuedAt } = this.verifyCredential(req);
     const retentionClass = clientRetentionClass(body?.retentionClass);
     return this.uploadSessions.init(
       ownerId,
@@ -477,7 +498,8 @@ export class MediaController {
         header: body?.header,
         encoding: body?.encoding,
       },
-      MAX_BYTES
+      MAX_BYTES,
+      issuedAt
     );
   }
 
@@ -506,7 +528,8 @@ export class MediaController {
     @Param('id') id: string,
     @Req() req: Request
   ): Promise<{ mediaId: string }> {
-    return this.uploadSessions.complete(this.verifyToken(req), id);
+    const { sub: ownerId, issuedAt } = this.verifyCredential(req);
+    return this.uploadSessions.complete(ownerId, id, issuedAt);
   }
 
   @Delete('upload/session/:id')

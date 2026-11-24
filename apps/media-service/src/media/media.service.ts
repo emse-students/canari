@@ -16,6 +16,8 @@ import { parseByteRange } from './byte-range';
 import {
   ERASED_OWNER_KEY_REGEX,
   OwnerErasedException,
+  datesFromBeforeTheErasure,
+  openedBeforeTheErasure,
   erasedOwnerKey,
   erasedOwnerKeptMs,
 } from './erased-owners';
@@ -656,6 +658,13 @@ interface MediaMetaEntry {
    * uploaded before the setting, which keeps {@link RETENTION_MS}.
    */
   idleRetentionMs?: number;
+  /**
+   * The object's DELETE IS OWED: a refused upload of an erased owner whose bytes the store did not
+   * confirm deleting ({@link MediaService.discardRefusedObject}). The entry is a tombstone naming
+   * nobody; the sweep retries the delete every run until the store confirms it, and the tombstone
+   * is not trimmed while this is set - a fact ends it, never a clock.
+   */
+  deletePending?: true;
 }
 
 /**
@@ -816,10 +825,10 @@ export class MediaService {
    */
   private metadataWrites?: Promise<void>;
   /**
-   * Uploads running now, per {@link erasedOwnerKey} of their owner ({@link admitUploader}). What keeps
-   * an erased owner's record while one of their uploads, admitted before the erasure, is still
-   * running. Memory is the whole truth here: a restart ends every upload it counted. Lazily created,
-   * same reason as above.
+   * Uploads running now, per owner id ({@link admitUploader}). What keeps an erased owner's record
+   * while one of their uploads, admitted before the erasure, is still running. Memory only, so the id
+   * itself is the key (never written anywhere); the sweep keys the few it holds to compare. Memory is
+   * the whole truth here: a restart ends every upload it counted. Lazily created, same reason as above.
    */
   private uploadsInFlight?: Map<string, number>;
   private readonly sweepIntervalMs = Number.parseInt(
@@ -854,11 +863,22 @@ export class MediaService {
    */
   private erasedOwnerRefusal(
     ownerId: string | undefined,
-    where: string
+    issuedAt: number | undefined,
+    where: string,
+    openedAt?: number
   ): OwnerErasedException | null {
     if (!ownerId) return null;
-    const erasedAt = this.meta.erasedOwners?.[erasedOwnerKey(ownerId)];
+    const records = this.meta.erasedOwners;
+    // No record at all (the usual case): nothing to key, nothing to refuse.
+    if (!records || Object.keys(records).length === 0) return null;
+    const erasedAt = records[erasedOwnerKey(ownerId)];
     if (erasedAt === undefined) return null;
+    // A credential minted after the latest erasure call, in a session opened after it, is the
+    // person who came back under the same id: theirs to use.
+    const old =
+      datesFromBeforeTheErasure(issuedAt, erasedAt) ||
+      (openedAt !== undefined && openedBeforeTheErasure(openedAt, erasedAt));
+    if (!old) return null;
     this.logger.warn(
       `[ERASED_OWNER] ${where} refused for ${ownerId.slice(0, 8)}...: the account's erasure was recorded ${Math.round((Date.now() - erasedAt) / 60_000)} min ago, nothing more is stored for it`
     );
@@ -866,11 +886,21 @@ export class MediaService {
   }
 
   /**
-   * Refuses, with {@link OwnerErasedException}, an owner whose erasure is recorded. For the paths
-   * that open something and register nothing yet (an upload session's `init`, a chunked `init`).
+   * Refuses, with {@link OwnerErasedException}, an owner whose erasure is recorded, when what asks
+   * dates from before it. For the paths that open something and register nothing yet (an upload
+   * session's `init`, a chunked `init`).
+   *
+   * @param issuedAt when the asking credential was minted, in ms (the token's `iat`); `undefined`
+   *   cannot be dated and is judged old ({@link datesFromBeforeTheErasure})
+   * @param openedAt when the upload session it completes was opened ({@link openedBeforeTheErasure})
    */
-  assertOwnerNotErased(ownerId: string | undefined, where: string): void {
-    const refusal = this.erasedOwnerRefusal(ownerId, where);
+  assertOwnerNotErased(
+    ownerId: string | undefined,
+    issuedAt: number | undefined,
+    where: string,
+    openedAt?: number
+  ): void {
+    const refusal = this.erasedOwnerRefusal(ownerId, issuedAt, where, openedAt);
     if (refusal) throw refusal;
   }
 
@@ -883,20 +913,20 @@ export class MediaService {
    */
   async admitUploader<T>(
     ownerId: string | undefined,
+    issuedAt: number | undefined,
     where: string,
     run: () => Promise<T>
   ): Promise<T> {
-    this.assertOwnerNotErased(ownerId, where);
+    this.assertOwnerNotErased(ownerId, issuedAt, where);
     if (!ownerId) return run();
-    const key = erasedOwnerKey(ownerId);
     const inFlight = (this.uploadsInFlight ??= new Map<string, number>());
-    inFlight.set(key, (inFlight.get(key) ?? 0) + 1);
+    inFlight.set(ownerId, (inFlight.get(ownerId) ?? 0) + 1);
     try {
       return await run();
     } finally {
-      const left = (inFlight.get(key) ?? 1) - 1;
-      if (left > 0) inFlight.set(key, left);
-      else inFlight.delete(key);
+      const left = (inFlight.get(ownerId) ?? 1) - 1;
+      if (left > 0) inFlight.set(ownerId, left);
+      else inFlight.delete(ownerId);
     }
   }
 
@@ -913,10 +943,12 @@ export class MediaService {
   private async registerUnlessErased(
     mediaId: string,
     ownerId: string | undefined,
+    issuedAt: number | undefined,
     where: string,
-    register: () => void
+    register: () => void,
+    openedAt?: number
   ): Promise<void> {
-    const refusal = this.erasedOwnerRefusal(ownerId, where);
+    const refusal = this.erasedOwnerRefusal(ownerId, issuedAt, where, openedAt);
     if (!refusal) {
       register();
       return;
@@ -926,30 +958,82 @@ export class MediaService {
   }
 
   /**
-   * Deletes the stored bytes of an upload refused at its registration. Public: a session's `complete`
-   * refused BEFORE its registration may already have written the store. A failed delete is not
-   * thrown over the refusal - the answer is still the refusal - but it accuses: the object stays in
-   * the bucket with no index entry, naming nobody, counted under `untracked` by the storage stats.
+   * Whether the index has ANY entry for `mediaId`, live or tombstone: such an object is the index's
+   * to end (the erasure, a sweep). An upload session asks it of the object it may have stored and
+   * never registered.
+   */
+  hasIndexEntry(mediaId: string): boolean {
+    return UUID_REGEX.test(mediaId) && this.meta.items[mediaId] !== undefined;
+  }
+
+  /**
+   * Deletes the stored bytes of an upload refused for an erased owner, or of an object an ended
+   * upload session wrote and never registered. Public for the latter.
+   *
+   * A FAILED DELETE IS OWED, NOT FORGOTTEN: the object would otherwise stay in the bucket with no
+   * entry, and a later `download()` would re-create one for it. A tombstone naming nobody is written
+   * with `deletePending` - every read answers it as gone - and the sweep retries the delete until the
+   * store confirms it ({@link retryPendingDeletes}). The refusal is still the answer, so nothing is
+   * thrown over it.
    */
   async discardRefusedObject(mediaId: string, where: string): Promise<void> {
     try {
       await this.storage.delete(mediaId);
       this.logger.warn(`[ERASED_OWNER] ${where}: the refused object ${mediaId} was deleted`);
+      return;
     } catch (err) {
       this.logger.error(
-        `[ERASED_OWNER] ${where}: the refused object ${mediaId} could not be deleted - it stays stored, untracked, naming nobody: ${
+        `[ERASED_OWNER] ${where}: the refused object ${mediaId} could not be deleted - its delete is owed, the sweep retries it: ${
           err instanceof Error ? err.message : String(err)
         }`
       );
     }
+    this.meta.items[mediaId] = {
+      ...tombstoneOf(undefined, Date.now(), 'manual_delete'),
+      deletePending: true,
+    };
+    await this.persistMetadata();
   }
 
+  /**
+   * Retries every owed delete ({@link MediaMetaEntry.deletePending}); a confirmed one clears its flag.
+   *
+   * @returns how many deletes the store confirmed (the caller writes the index)
+   */
+  private async retryPendingDeletes(): Promise<number> {
+    let confirmed = 0;
+    for (const [mediaId, entry] of Object.entries(this.meta.items)) {
+      if (!entry.deletePending) continue;
+      try {
+        await this.storage.delete(mediaId);
+      } catch (err) {
+        this.logger.error(
+          `[ERASED_OWNER] the owed delete of ${mediaId} failed again, retried at the next sweep: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+        continue;
+      }
+      const settled: MediaMetaEntry = { ...entry };
+      delete settled.deletePending;
+      this.meta.items[mediaId] = settled;
+      confirmed += 1;
+      this.logger.log(`[ERASED_OWNER] the owed delete of ${mediaId} is confirmed`);
+    }
+    return confirmed;
+  }
+
+  /**
+   * @param issuedAt when the uploading credential was minted, in ms (the token's `iat`) - what tells
+   *   an erased owner's old token from the person who came back ({@link datesFromBeforeTheErasure})
+   */
   async upload(
     encryptedBytes: Buffer,
     ownerId?: string,
-    retentionClass?: RetentionClass
+    retentionClass?: RetentionClass,
+    issuedAt?: number
   ): Promise<string> {
-    return this.admitUploader(ownerId, 'upload', async () => {
+    return this.admitUploader(ownerId, issuedAt, 'upload', async () => {
       // Read BEFORE the bytes are stored: an unreadable duration refuses the upload, never a file
       // kept under a window nobody chose.
       const stamp = this.retentionStampFor(retentionClass);
@@ -959,7 +1043,7 @@ export class MediaService {
         await this.storage.put(mediaId, encryptedBytes, encryptedBytes.length);
         // Registered in the same synchronous run that releases the reservation, so the bytes are
         // never invisible to a concurrent check: counted as reserved, then as an entry.
-        await this.registerUnlessErased(mediaId, ownerId, 'upload', () => {
+        await this.registerUnlessErased(mediaId, ownerId, issuedAt, 'upload', () => {
           this.setAccess(
             mediaId,
             Date.now(),
@@ -983,11 +1067,16 @@ export class MediaService {
    * `uploaderId` (the token's subject) is NOT recorded - a public asset outlives its uploader - but an
    * erased account is refused here like everywhere else: such an image would be cited by nothing.
    */
-  async uploadPublicAsset(data: Buffer, contentType: string, uploaderId?: string): Promise<string> {
-    return this.admitUploader(uploaderId, 'public upload', async () => {
+  async uploadPublicAsset(
+    data: Buffer,
+    contentType: string,
+    uploaderId?: string,
+    issuedAt?: number
+  ): Promise<string> {
+    return this.admitUploader(uploaderId, issuedAt, 'public upload', async () => {
       const mediaId = uuidv4();
       await this.storage.put(mediaId, data, data.length);
-      await this.registerUnlessErased(mediaId, uploaderId, 'public upload', () => {
+      await this.registerUnlessErased(mediaId, uploaderId, issuedAt, 'public upload', () => {
         const now = Date.now();
         this.meta.items[mediaId] = {
           createdAt: now,
@@ -1013,7 +1102,10 @@ export class MediaService {
     if (!ownerId) {
       throw new BadRequestException('A form file needs the member who uploads it');
     }
-    return this.admitUploader(ownerId, 'form file', async () => {
+    // NO CREDENTIAL TO DATE: social-service authenticated the member (nginx forwards it only the id),
+    // so an erased owner's form file is refused for the record's whole window - a person who came
+    // back included (docs/wiki/services/media-service.md#an-erased-owner-registers-nothing-2026-11-24).
+    return this.admitUploader(ownerId, undefined, 'form file', async () => {
       if (data.length > FORM_FILE_MAX_BYTES) {
         this.logger.warn(`Form file refused: ${data.length} bytes received for ${ownerId}`);
         throw new PayloadTooLargeException(`A form file is at most ${FORM_FILE_MAX_BYTES} bytes`);
@@ -1021,7 +1113,7 @@ export class MediaService {
       const stored = await stripImageMetadata(data, FORM_FILE_MAX_BYTES);
       const mediaId = uuidv4();
       await this.storage.put(mediaId, stored, stored.length);
-      await this.registerUnlessErased(mediaId, ownerId, 'form file', () =>
+      await this.registerUnlessErased(mediaId, ownerId, undefined, 'form file', () =>
         this.setAccess(mediaId, Date.now(), ownerId, SERVER_READ_ONLY_CLASS)
       );
       await this.persistMetadata();
@@ -2298,14 +2390,24 @@ export class MediaService {
     retentionClass: RetentionClass | undefined,
     size: number,
     onRegistered: () => void,
-    stamp?: RetentionStamp
+    stamp: RetentionStamp | undefined,
+    issuedAt: number | undefined,
+    openedAt?: number
   ): Promise<void> {
-    // An erased owner: the stored object is deleted and OwnerErasedException thrown, `onRegistered`
-    // not run - the session that called gives its reservation back when it is disposed.
-    await this.registerUnlessErased(mediaId, ownerId, 'upload session complete', () => {
-      this.setAccess(mediaId, Date.now(), ownerId, retentionClass, size, stamp);
-      onRegistered();
-    });
+    // An erased owner whose upload dates from before the erasure (the token's mint `issuedAt`, or
+    // the session's opening `openedAt`): the stored object is deleted and OwnerErasedException
+    // thrown, `onRegistered` not run - the session gives its reservation back when it is disposed.
+    await this.registerUnlessErased(
+      mediaId,
+      ownerId,
+      issuedAt,
+      'upload session complete',
+      () => {
+        this.setAccess(mediaId, Date.now(), ownerId, retentionClass, size, stamp);
+        onRegistered();
+      },
+      openedAt
+    );
     await this.persistMetadata();
   }
 
@@ -2475,6 +2577,10 @@ export class MediaService {
       this.erasureIndexDirty = true;
     }
 
+    // The legacy chunk uploads too: an open one's staging, and a completed one's `.done` memo, which
+    // names its opener for a day. A file that could not be removed is a failure: the retry removes it.
+    failed += await this.endChunkUploadsOf(ownerId);
+
     // Whenever an entry changed, here or in an earlier call whose write failed: the blob is gone, and
     // a retry that finds nothing left to delete must still get the index to disk.
     if (this.erasureIndexDirty) {
@@ -2492,6 +2598,67 @@ export class MediaService {
       `Account deletion for ${ownerId.slice(0, 8)}...: ${deleted} media deleted, ${failed} failed`
     );
     return { deleted, failed };
+  }
+
+  /**
+   * Ends the LEGACY chunk uploads of an erased owner: each open session they opened (staging and
+   * reservation, under its own lock) and each completion memo (`<uploadId>.done`) that names them,
+   * with the staging a memo-less completion kept. Part of the erasure, so idempotent: a retry finds
+   * nothing left.
+   *
+   * @returns how many files could not be removed - each one logged, and left for the erasure's retry
+   */
+  private async endChunkUploadsOf(ownerId: string): Promise<number> {
+    let failed = 0;
+    const removeOrCount = async (file: string): Promise<void> => {
+      try {
+        await fs.remove(file);
+      } catch (err) {
+        failed += 1;
+        this.logger.error(
+          `Account deletion could not remove the chunk upload file ${path.basename(file)} - left for the erasure retry: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+      }
+    };
+    const opened = new Set<string>();
+    for (const [uploadId, opener] of this.chunkOwners ?? [])
+      if (opener === ownerId) opened.add(uploadId);
+    for (const [uploadId, session] of this.chunkSessions ?? []) {
+      if (session.ownerId === ownerId) opened.add(uploadId);
+    }
+    for (const uploadId of opened) {
+      await this.withUploadLock(uploadId, async () => {
+        await removeOrCount(this.chunkTempPath(uploadId));
+        this.dropChunkSession(uploadId);
+        this.chunkOwners?.delete(uploadId);
+      });
+    }
+    let names: string[];
+    try {
+      names = await fs.readdir(CHUNK_DIR);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return failed;
+      this.logger.error(`Account deletion could not list the chunk uploads: ${String(err)}`);
+      return failed + 1;
+    }
+    for (const name of names) {
+      if (!name.endsWith('.done')) continue;
+      const uploadId = name.slice(0, -'.done'.length);
+      if (!UUID_REGEX.test(uploadId)) continue;
+      const done = await this.readCompletedChunkUpload(uploadId);
+      if (done?.ownerId !== ownerId) continue;
+      await this.withUploadLock(uploadId, async () => {
+        await removeOrCount(`${this.chunkTempPath(uploadId)}.done`);
+        await removeOrCount(this.chunkTempPath(uploadId));
+        this.chunkOwners?.delete(uploadId);
+      });
+    }
+    if (opened.size > 0) {
+      this.logger.log(`Account deletion ended ${opened.size} open chunk upload(s)`);
+    }
+    return failed;
   }
 
   /**
@@ -2680,10 +2847,11 @@ export class MediaService {
     ownerId?: string,
     retentionClass?: RetentionClass,
     totalBytes?: number,
-    maxBytes?: number
+    maxBytes?: number,
+    issuedAt?: number
   ): Promise<string> {
-    // Nothing staged for an erased owner: its `complete` would be refused anyway.
-    this.assertOwnerNotErased(ownerId, 'chunked upload init');
+    // Nothing staged for an erased owner's old credential: its `complete` would be refused anyway.
+    this.assertOwnerNotErased(ownerId, issuedAt, 'chunked upload init');
     const uploadId = uuidv4();
     if (retentionClass === 'chat-reel') {
       if (!Number.isInteger(totalBytes) || (totalBytes as number) <= 0) {
@@ -2828,7 +2996,8 @@ export class MediaService {
     uploadId: string,
     maxBytes: number,
     ownerId?: string,
-    retentionClass?: RetentionClass
+    retentionClass?: RetentionClass,
+    issuedAt?: number
   ): Promise<string> {
     // Validate uploadId is a UUID to prevent path traversal.
     if (!UUID_REGEX.test(uploadId)) {
@@ -2837,7 +3006,7 @@ export class MediaService {
     const where = 'chunked upload complete';
     // An erased owner: refused before the lock, and the staging of THEIR session goes with the
     // refusal - nothing will ever complete it.
-    const refusal = this.erasedOwnerRefusal(ownerId, where);
+    const refusal = this.erasedOwnerRefusal(ownerId, issuedAt, where);
     if (refusal) {
       await this.withUploadLock(uploadId, async () => {
         const opener =
@@ -2849,8 +3018,8 @@ export class MediaService {
       });
       throw refusal;
     }
-    return this.admitUploader(ownerId, where, () =>
-      this.completeChunkedUploadLocked(uploadId, maxBytes, ownerId, retentionClass)
+    return this.admitUploader(ownerId, issuedAt, where, () =>
+      this.completeChunkedUploadLocked(uploadId, maxBytes, ownerId, retentionClass, issuedAt)
     );
   }
 
@@ -2859,7 +3028,8 @@ export class MediaService {
     uploadId: string,
     maxBytes: number,
     ownerId: string | undefined,
-    retentionClass: RetentionClass | undefined
+    retentionClass: RetentionClass | undefined,
+    issuedAt: number | undefined
   ): Promise<string> {
     return this.withUploadLock(uploadId, async () => {
       // A `complete` asked again for a session that already produced its object answers with the
@@ -2917,8 +3087,12 @@ export class MediaService {
         await this.storage.putFileStream(mediaId, tempFile, stat.size);
 
         try {
-          await this.registerUnlessErased(mediaId, ownerId, 'chunked upload complete', () =>
-            this.setAccess(mediaId, Date.now(), ownerId, retentionClass, stat.size, stamp)
+          await this.registerUnlessErased(
+            mediaId,
+            ownerId,
+            issuedAt,
+            'chunked upload complete',
+            () => this.setAccess(mediaId, Date.now(), ownerId, retentionClass, stat.size, stamp)
           );
         } catch (err) {
           // Erased while the bytes were being stored: the object is already deleted, and the staging
@@ -3381,15 +3555,21 @@ export class MediaService {
     // Prevents the metadata JSON from growing unbounded after many retention cycles.
     let trimmedCount = 0;
     for (const [mediaId, entry] of Object.entries(this.meta.items)) {
-      if (entry.purgedAt && now - entry.purgedAt > META_TOMBSTONE_MAX_AGE_MS) {
+      // A tombstone whose delete is still owed stays: it is the only pointer to the object.
+      if (
+        entry.purgedAt &&
+        !entry.deletePending &&
+        now - entry.purgedAt > META_TOMBSTONE_MAX_AGE_MS
+      ) {
         delete this.meta.items[mediaId];
         trimmedCount += 1;
       }
     }
 
     const forgottenOwners = this.forgetLapsedErasedOwners(now);
+    const deletesConfirmed = await this.retryPendingDeletes();
 
-    if (purgedCount > 0 || trimmedCount > 0 || forgottenOwners > 0) {
+    if (purgedCount > 0 || trimmedCount > 0 || forgottenOwners > 0 || deletesConfirmed > 0) {
       await this.persistMetadata();
       // Both windows are interpolated, never spelled: these two lines said "30 days" and
       // "> 90 days" in prose next to the constants they were meant to report, which is one edit
@@ -3427,14 +3607,18 @@ export class MediaService {
    */
   private forgetLapsedErasedOwners(now: number): number {
     const records = this.meta.erasedOwners;
-    if (!records) return 0;
+    if (!records || Object.keys(records).length === 0) return 0;
+    const running = new Map<string, number>();
+    for (const [ownerId, count] of this.uploadsInFlight ?? []) {
+      running.set(erasedOwnerKey(ownerId), count);
+    }
     let forgotten = 0;
     for (const [key, erasedAt] of Object.entries(records)) {
       if (now - erasedAt < ERASED_OWNER_KEPT_MS) continue;
-      const running = this.uploadsInFlight?.get(key) ?? 0;
-      if (running > 0) {
+      const runningNow = running.get(key) ?? 0;
+      if (runningNow > 0) {
         this.logger.warn(
-          `[ERASED_OWNER] a record past its window is kept: ${running} upload(s) admitted before the erasure still running`
+          `[ERASED_OWNER] a record past its window is kept: ${runningNow} upload(s) admitted before the erasure still running`
         );
         continue;
       }

@@ -209,7 +209,13 @@ export class MediaUploadError extends ApiRefusalError {
      * from the `code` of its JSON body ({@link MEMBER_UPLOAD_OVER_BUDGET}) - a verdict for today
      * too. Its status is a 422, which an app older than the code already fails for good.
      */
-    readonly overDailyLimit = false
+    readonly overDailyLimit = false,
+    /**
+     * media-service's OWN 410 for an account whose erasure is recorded, read from the `code` of its
+     * JSON body ({@link OWNER_ERASED}): the credential predates the erasure, so no retry with it is
+     * ever accepted. Any other 410 has no such code.
+     */
+    readonly ownerErased = false
   ) {
     super(status, null, message);
     this.name = 'MediaUploadError';
@@ -235,7 +241,8 @@ export async function uploadRefusalFrom(
     origin,
     opts.sessionLost === true,
     res.status === 429 && origin === 'gateway' && isOverBudgetBody(text),
-    origin === 'gateway' && refusalCodeOf(text) === MEMBER_UPLOAD_OVER_BUDGET
+    origin === 'gateway' && refusalCodeOf(text) === MEMBER_UPLOAD_OVER_BUDGET,
+    res.status === 410 && origin === 'gateway' && refusalCodeOf(text) === OWNER_ERASED
   );
 }
 
@@ -250,6 +257,12 @@ export const CHAT_REEL_OVER_BUDGET = 'chat-reel-over-budget';
  * server's copy is `MEMBER_UPLOAD_OVER_BUDGET` in `apps/media-service/src/media/media.service.ts`.
  */
 export const MEMBER_UPLOAD_OVER_BUDGET = 'member-upload-over-budget';
+
+/**
+ * The `code` of media-service's 410 for an account whose erasure is recorded. The server's copy is
+ * `OWNER_ERASED` in `apps/media-service/src/media/erased-owners.ts`.
+ */
+export const OWNER_ERASED = 'OWNER_ERASED';
 
 /** The `code` an application JSON body carries, or `null`: a body that is not JSON carries none. */
 function refusalCodeOf(text: string): string | null {
@@ -284,7 +297,8 @@ const REFUSED_BY_THE_APP = [400, 403, 404, 422];
  *   from nginx or Cloudflare during a deploy is the infrastructure being briefly wrong, and stays
  *   retried.
  * - `refused`: the application's own 400, 403, 404 or 422, which a retry cannot mend - except a 404
- *   that says the staged chunk session is gone (`sessionLost`): a new session mends that.
+ *   that says the staged chunk session is gone (`sessionLost`): a new session mends that. And its
+ *   410 carrying {@link OWNER_ERASED}: the account was erased, and the credential asking predates it.
  *
  * - `over-budget`: media-service's own 429 carrying the daily `chat-reel` budget's code (RC-13).
  * - `over-daily-limit`: its 422 carrying the code of the member's daily bound on every upload.
@@ -302,6 +316,7 @@ export function uploadRefusalCause(
   if (err.overDailyLimit) return 'over-daily-limit';
   if (err.origin === 'edge') return status === 403 ? 'blocked' : null;
   if (err.sessionLost) return null;
+  if (err.ownerErased) return 'refused';
   return REFUSED_BY_THE_APP.includes(status) ? 'refused' : null;
 }
 

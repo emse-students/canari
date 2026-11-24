@@ -11,9 +11,13 @@ import {
   CORE_ACCESS_TOKEN_TTL_SECONDS,
   CORE_CREDENTIAL_SKEW_SECONDS,
   ERASED_OWNER_KEY_REGEX,
+  datesFromBeforeTheErasure,
   erasedOwnerKey,
+  openedBeforeTheErasure,
   erasedOwnerKeptMs,
 } from './erased-owners';
+
+process.env.JWT_SECRET ??= 'test-erasure-key';
 
 /** Evaluates `export const NAME = <arithmetic>;` from core's source - digits, spaces and `*` only. */
 function coreConstant(source: string, name: string): number {
@@ -50,10 +54,35 @@ describe('the erased-owner record', () => {
     }
   });
 
-  it('is keyed by a digest the loader accepts, never by the id', () => {
+  it('is keyed by an HMAC under JWT_SECRET the loader accepts, never by the id', () => {
     const key = erasedOwnerKey('alice');
     expect(key).toMatch(ERASED_OWNER_KEY_REGEX);
     expect(key).not.toContain('alice');
     expect(erasedOwnerKey('alice')).toBe(key);
+    // KEYED: another secret, another pseudonym - a plain digest of a guessable id would not differ.
+    const prev = process.env.JWT_SECRET;
+    try {
+      process.env.JWT_SECRET = 'another-secret';
+      expect(erasedOwnerKey('alice')).not.toBe(key);
+      delete process.env.JWT_SECRET;
+      expect(() => erasedOwnerKey('alice')).toThrow(/JWT_SECRET/);
+    } finally {
+      process.env.JWT_SECRET = prev;
+    }
+  });
+
+  it('refuses only what dates from before the latest call, judged at the second of `iat`', () => {
+    const erasedAt = 1_800_000_000_500; // .5 s into a second
+    expect(datesFromBeforeTheErasure(erasedAt - 1_000, erasedAt)).toBe(true); // the second before
+    expect(datesFromBeforeTheErasure(1_800_000_000_000, erasedAt)).toBe(false); // the same second
+    expect(datesFromBeforeTheErasure(erasedAt + 2_000, erasedAt)).toBe(false); // the person came back
+    expect(datesFromBeforeTheErasure(undefined, erasedAt)).toBe(true); // cannot be dated: old
+  });
+
+  it("judges a session's opening to the MILLISECOND: one opened in the call's second, before it, is old", () => {
+    const erasedAt = 1_800_000_000_500;
+    expect(openedBeforeTheErasure(erasedAt - 200, erasedAt)).toBe(true); // same second, before
+    expect(openedBeforeTheErasure(erasedAt, erasedAt)).toBe(false);
+    expect(openedBeforeTheErasure(erasedAt + 1, erasedAt)).toBe(false);
   });
 });
