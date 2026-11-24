@@ -25,6 +25,7 @@
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import { portal } from '$lib/actions/portal';
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
+  import { focusOnMount } from '$lib/actions/focusOnMount';
   import type { CallService, CallParticipant } from '$lib/services/CallService';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import UserName from '$lib/components/shared/UserName.svelte';
@@ -590,16 +591,6 @@
     void callService.acceptCall(callService.currentGroupId ?? '', callService.currentCallId ?? '');
   }
 
-  // The ring is an ALERT: focus lands on Accept, the one thing a keyboard or screen-reader user came
-  // to do (`focusTrap` would pick the chevron, the first control in the tree).
-  let screenEl: HTMLElement | undefined = $state();
-  $effect(() => {
-    if (!screenEl || !isIncoming) return;
-    screenEl
-      .querySelector<HTMLButtonElement>('[data-testid="call-accept"]')
-      ?.focus({ preventScroll: true });
-  });
-
   /** The live line: a change of STATE is announced, never the timer's every second. */
   let announcement = $derived(
     call.kind === 'live'
@@ -636,6 +627,7 @@
             : 'bg-white/15 text-white hover:bg-white/25'}"
       aria-label={label}
       data-testid={testid}
+      use:focusOnMount={tone === 'accept'}
       {onclick}
     >
       {@render icon()}
@@ -657,8 +649,7 @@
   <div
     use:portal
     use:coversScreen
-    use:focusTrap
-    bind:this={screenEl}
+    use:focusTrap={{ initial: isIncoming ? '[data-testid="call-accept"]' : undefined }}
     role={isIncoming ? 'alertdialog' : 'dialog'}
     aria-modal="true"
     aria-label={primary?.displayName || m.call_label()}

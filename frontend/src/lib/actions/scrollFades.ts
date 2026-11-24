@@ -1,4 +1,5 @@
 import { Log } from '$lib/utils/Log';
+import { observeChildren } from '$lib/utils/observeChildren';
 
 /** How close to an edge, in px, counts as AT it - a sub-pixel scroll position is not "more content". */
 const EDGE_SLACK = 2;
@@ -30,12 +31,13 @@ export function scrollFades(node: HTMLElement) {
   const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(read);
   if (!observer) Log.d('scrollFades', 'no ResizeObserver - fades follow scrolling only');
   observer?.observe(node);
-  for (const child of Array.from(node.children)) observer?.observe(child);
+  const stopChildren = observeChildren(node, observer);
   read();
 
   return {
     destroy() {
       node.removeEventListener('scroll', read);
+      stopChildren();
       observer?.disconnect();
     },
   };
