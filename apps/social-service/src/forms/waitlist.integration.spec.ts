@@ -125,7 +125,7 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
       ASSO,
     ]);
     await ds.query(
-      `CREATE TABLE users (id text PRIMARY KEY, "firstName" text, "lastName" text, campus text)`
+      `CREATE TABLE users (id text PRIMARY KEY, "firstName" text, "lastName" text, campus text, posts text[] NOT NULL DEFAULT '{}')`
     );
     await ds.query(
       `INSERT INTO users (id, "firstName", "lastName") VALUES

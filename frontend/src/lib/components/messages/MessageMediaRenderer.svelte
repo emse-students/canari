@@ -112,7 +112,9 @@
      * The reel viewer met the `410`, at `atMs`: the caller records it on the message's local row,
      * once. The tile draws the tombstone at once either way.
      */
-    onReelPurged?: (atMs: number) => void;
+    onReelPurged?: (atMs: number, conversationId: string) => void;
+    /** The conversation this bubble is drawn in: copied when the reel viewer OPENS (`reelOpenedFrom`). */
+    conversationId?: string;
     /**
      * The upload this bubble stands for, while the sender's outbox still holds the bytes. Draws the
      * real progress, a cancel and a retry where the plain skeleton had an endless spinner.
@@ -148,6 +150,7 @@
     authToken = '',
     reelPurgedAt,
     onReelPurged,
+    conversationId,
     upload = null,
     uploadFailed = false,
     uploadFailedLabel = m.upload_failed_label(),
@@ -162,6 +165,11 @@
    */
   const isReel = $derived(isReelMessage(mediaRef));
   let showReelViewer = $state(false);
+  /**
+   * The conversation the viewer was opened from, copied at the tap: props are live, and a 410 that
+   * arrives after the reader moved on must be recorded where the reel was, not where they are.
+   */
+  let reelOpenedFrom = $state<string | null>(null);
   /** The `410` the viewer met in THIS mount, before the caller's record comes back down. */
   let purgedHere = $state<number | null>(null);
   /**
@@ -182,7 +190,13 @@
     const at = Date.now();
     purgedHere = at;
     console.debug(`[chat-reel] ${messageId.slice(0, 8)} answered 410 in the viewer - recorded`);
-    onReelPurged?.(at);
+    if (!reelOpenedFrom) {
+      console.warn(
+        `[chat-reel] ${messageId.slice(0, 8)} answered 410 from a viewer opened with no conversation - not recorded`
+      );
+      return;
+    }
+    onReelPurged?.(at, reelOpenedFrom);
   }
   const reelSenderName = $derived(
     senderId ? getUserDisplayNameSync(senderId, senderId, nicknameScope ?? undefined) : ''
@@ -364,7 +378,10 @@
         senderName={reelSenderName}
         sentAt={sentAt ?? new Date()}
         {bleed}
-        onOpen={() => (showReelViewer = true)}
+        onOpen={() => {
+          reelOpenedFrom = conversationId ?? null;
+          showReelViewer = true;
+        }}
         {upload}
         {uploadFailed}
         {uploadFailedLabel}

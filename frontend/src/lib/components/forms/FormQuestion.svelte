@@ -12,7 +12,8 @@
     FORM_FILE_ACCEPT,
     pickedFileProblem,
   } from '$lib/forms/fileQuestion';
-  import { refusalStatus } from '$lib/utils/apiRefusal';
+  import { refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
+  import { OWNER_ERASED } from '$lib/utils/mediaErrors';
   import { UploadAbortedError, type XhrUploadOptions } from '$lib/utils/uploadXhr';
   import { Log } from '$lib/utils/Log';
   import { associationLogoSrc } from '$lib/associations/api';
@@ -152,13 +153,20 @@
         return;
       }
       const status = refusalStatus(e);
-      Log.d('FormQuestion', `file upload failed for ${item.id}: status ${status ?? 'none'}`);
+      const code = refusalCode(e);
+      Log.d(
+        'FormQuestion',
+        `file upload failed for ${item.id}: status ${status ?? 'none'} code ${code ?? 'none'}`
+      );
+      // A final refusal says so - never "try again": the account this session belongs to was erased.
       fileError =
-        status === 413
-          ? m.form_file_error_size()
-          : status === 429
-            ? (fileTooManyError ?? m.form_file_error_too_many())
-            : m.form_file_error_generic();
+        code === OWNER_ERASED
+          ? m.form_file_error_account_erased()
+          : status === 413
+            ? m.form_file_error_size()
+            : status === 429
+              ? (fileTooManyError ?? m.form_file_error_too_many())
+              : m.form_file_error_generic();
     } finally {
       if (upload?.controller === current.controller) upload = null;
     }

@@ -67,6 +67,7 @@ final class ShareCapture {
         ("push_secret", .mirror, .removed),
         ("display_names", .mirror, .kept),
         ("conversation_nicknames", .mirror, .kept),
+        ("seen_posts", .mirror, .kept),
         ("share_epoch", .mirror, .kept),
         ("app_in_foreground", .mirror, .kept),
         ("channel_keys", .mirror, .kept),

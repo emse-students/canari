@@ -150,36 +150,38 @@
           plateforme selon l'audience choisie. Une institution (l'École, une Maison des Élèves,
           l'association des alumni) choisit pour chacune de ses publications les espaces qu'elle
           vise et son public (étudiants, personnel ou tous) ; les publics « Personnel » et « Tous »
-          atteignent tout le personnel du campus d'un espace coché. Les fichiers joints sont
-          chiffrés avant l'envoi. Une publication en cours d'envoi attend sur votre appareil, avec
-          ses fichiers non chiffrés, jusqu'à ce qu'elle soit publiée ou que vous la supprimiez ; une
-          simple déconnexion la conserve, la suppression de votre compte l'efface. Quand une
-          publication est supprimée, le serveur garde son identifiant et la date de suppression,
-          sans auteur ni contenu, pour qu'un envoi encore en route ne la fasse pas réapparaître ;
-          cet identifiant ne désigne plus personne et il est conservé sans limite de durée, même
-          après la suppression de votre compte. Une association, une liste ou une institution peut
-          vous demander de relayer une de vos publications personnelles : la demande (l'association,
-          la liste ou l'institution, le membre qui l'a faite, la publication, le nombre de personnes
-          qui la verraient pour la première fois et, pour une institution, son public possible) vous
-          est adressée, et rien n'est montré à son public tant que vous n'avez pas accepté. Si vous
-          acceptez la demande d'une institution, votre publication est vue de son public, y compris
-          de ses membres qui font partie du personnel ; si ce public a changé depuis que vous l'avez
-          lu, votre acceptation est refusée et le nouveau public vous est montré. Une fois le relais
-          accepté, ceux qui voient votre publication suivent le public et les membres ACTUELS de
-          l'association, de la liste ou de l'institution (un membre qui part ne la voit plus, un
-          nouveau la voit) ; une entité archivée ne la montre plus à personne, et quelqu'un qui ne
-          la voit que grâce à ce relais ne peut pas la republier à ses propres abonnés. Vous pouvez
-          retirer ce relais à tout moment, c'est le recours si ce public change ; la demande est
-          effacée avec la publication ou avec votre compte. Une notification sur une publication
-          n'est affichée que tant que son destinataire peut encore la voir, mais une notification
-          déjà reçue sur un appareil ne peut pas être rappelée. Une mention, dans une publication ou
-          un commentaire, ne prévient que la personne mentionnée qui peut voir la publication, et
-          seulement une fois celle-ci publiée. Vous pouvez publier ou commenter de façon anonyme, ou
-          au nom d'une association dont vous avez le droit de parler : les autres membres ne voient
-          alors pas votre compte, mais la modération et les administrateurs de la plateforme peuvent
-          l'identifier (pour traiter un signalement, par exemple), et votre compte reste responsable
-          de ce que vous écrivez. Un commentaire écrit au nom d'une association lui appartient : il
-          reste si vous supprimez votre compte, détaché de celui-ci.
+          atteignent tout le personnel du campus d'un espace coché. Fait partie du personnel un
+          compte qui détient le poste EMSE ou ME transmis par MiConnect, qu'il ait ou non aussi un
+          cursus. Les fichiers joints sont chiffrés avant l'envoi. Une publication en cours d'envoi
+          attend sur votre appareil, avec ses fichiers non chiffrés, jusqu'à ce qu'elle soit publiée
+          ou que vous la supprimiez ; une simple déconnexion la conserve, la suppression de votre
+          compte l'efface. Quand une publication est supprimée, le serveur garde son identifiant et
+          la date de suppression, sans auteur ni contenu, pour qu'un envoi encore en route ne la
+          fasse pas réapparaître ; cet identifiant ne désigne plus personne et il est conservé sans
+          limite de durée, même après la suppression de votre compte. Une association, une liste ou
+          une institution peut vous demander de relayer une de vos publications personnelles : la
+          demande (l'association, la liste ou l'institution, le membre qui l'a faite, la
+          publication, le nombre de personnes qui la verraient pour la première fois et, pour une
+          institution, son public possible) vous est adressée, et rien n'est montré à son public
+          tant que vous n'avez pas accepté. Si vous acceptez la demande d'une institution, votre
+          publication est vue de son public, y compris de ses membres qui font partie du personnel ;
+          si ce public a changé depuis que vous l'avez lu, votre acceptation est refusée et le
+          nouveau public vous est montré. Une fois le relais accepté, ceux qui voient votre
+          publication suivent le public et les membres ACTUELS de l'association, de la liste ou de
+          l'institution (un membre qui part ne la voit plus, un nouveau la voit) ; une entité
+          archivée ne la montre plus à personne, et quelqu'un qui ne la voit que grâce à ce relais
+          ne peut pas la republier à ses propres abonnés. Vous pouvez retirer ce relais à tout
+          moment, c'est le recours si ce public change ; la demande est effacée avec la publication
+          ou avec votre compte. Une notification sur une publication n'est affichée que tant que son
+          destinataire peut encore la voir, mais une notification déjà reçue sur un appareil ne peut
+          pas être rappelée. Une mention, dans une publication ou un commentaire, ne prévient que la
+          personne mentionnée qui peut voir la publication, et seulement une fois celle-ci publiée.
+          Vous pouvez publier ou commenter de façon anonyme, ou au nom d'une association dont vous
+          avez le droit de parler : les autres membres ne voient alors pas votre compte, mais la
+          modération et les administrateurs de la plateforme peuvent l'identifier (pour traiter un
+          signalement, par exemple), et votre compte reste responsable de ce que vous écrivez. Un
+          commentaire écrit au nom d'une association lui appartient : il reste si vous supprimez
+          votre compte, détaché de celui-ci.
         </dd>
       </div>
       <div>
@@ -354,7 +356,8 @@
           réglage, le fait qu'un lecteur a déjà été prévenu d'une publication (jusqu'à l'effacement
           de la publication ou de son compte), le nombre de ces notifications reçues chaque jour
           (sept jours) et le nombre de suggestions reçues chaque semaine (quatorze jours après la
-          fin de la semaine).
+          fin de la semaine). Une tendance pour une publication que cet appareil a déjà affichée ne
+          vous est pas notifiée ; cette vérification se fait sur l'appareil (section 7).
         </dd>
       </div>
       <div>
@@ -969,7 +972,10 @@
               octobre 2026, ou par une version de l'application antérieure, sont pour l'instant conservés
               sans limite. Un CanaReel (de conversation, ou envoyé au fil et pas encore publié) supprimé
               à la fin de son délai laisse pendant 90 jours une trace sans contenu qui nomme son auteur,
-              pour lui dire de l'envoyer à nouveau ; elle est effacée avec le compte
+              pour lui dire de l'envoyer à nouveau ; elle est effacée avec le compte. Quand un compte
+              est supprimé, une empreinte de son identifiant calculée avec une clé secrète (HMAC) est
+              gardée un jour avec l'heure de la suppression : c'est une donnée pseudonyme, qui sert à
+              refuser un envoi de fichier commencé avant la suppression et qui se terminerait après
             </td>
           </tr>
           <tr>
@@ -1299,6 +1305,27 @@
             <td
               >Effacés à la déconnexion ; les suggestions de partage aussi à la désactivation du
               réglage, pas les données des notifications de message</td
+            >
+          </tr>
+          <tr>
+            <td>Publications déjà affichées (application et navigateur)</td>
+            <td>
+              Les identifiants des publications que Canari a affichées sur cet appareil, avec leur
+              date de publication, pour ne pas vous suggérer par une notification de tendance une
+              publication que vous avez déjà vue. Y est jointe, pour chaque notification de tendance
+              de votre cloche, la décision prise sur l'appareil (masquée ou non) avec la date de la
+              notification, pour qu'une notification masquée ne réapparaisse pas et qu'une
+              notification déjà vue ne disparaisse pas. Ces listes restent sur l'appareil : rien
+              n'en est envoyé à nos serveurs, et une publication vue sur un autre appareil n'y est
+              pas reconnue
+            </td>
+            <td
+              >Publications : environ 25 heures après leur publication, 500 au plus (la copie de
+              l'application et du navigateur peut les garder jusqu'à la prochaine mise à jour de vos
+              notifications par l'application) ; décisions sur les notifications : tant que
+              celles-ci peuvent figurer dans votre cloche (90 jours). Effacées à la déconnexion, à
+              la suppression du compte, à l'effacement des données de l'application ou à sa
+              désinstallation</td
             >
           </tr>
           <tr>

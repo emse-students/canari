@@ -68,7 +68,7 @@ maybe('the republished-feed clauses against PostgreSQL', () => {
     // What the visibility predicate and migration 071 read, with the production types.
     await client.query(`
       CREATE TABLE users (id varchar(255) PRIMARY KEY, admin boolean NOT NULL DEFAULT false,
-        campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]');
+        campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]', posts text[] NOT NULL DEFAULT '{}');
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL, slug varchar NOT NULL,
         type varchar NOT NULL DEFAULT 'association', archived boolean NOT NULL DEFAULT false,
         "isBDE" boolean NOT NULL DEFAULT false, "logoUrl" varchar);

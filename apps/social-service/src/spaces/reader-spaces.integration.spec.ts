@@ -29,6 +29,8 @@ import {
   eventReachesSpaceMatchingSql,
   eventVisibleToViewerSql,
   isCampusStaffSql,
+  isStaffProfile,
+  isStaffSql,
   postVisibleToUserSql,
   postVisibleToViewerSql,
   readerSpaces,
@@ -75,8 +77,8 @@ const USERS = {
   admin: { campus: null, cursus: [], admin: true },
   // An admin who is also an ICM student: sees what an ICM student sees, no more.
   adminIcm: { campus: 'saint-etienne', cursus: [{ formation: 'ICM', promo: 2022 }], admin: true },
-  // Staff: a post at the School, no cursus - so no space at all. Member of A1.
-  staff: { campus: 'saint-etienne', cursus: [] },
+  // Staff: a post at the School (EMSE), no cursus - so no space at all. Member of A1.
+  staff: { campus: 'saint-etienne', cursus: [], posts: ['EMSE'] },
   // Campus but no cursus, and no membership: the one reader the gate refuses.
   outsider: { campus: 'saint-etienne', cursus: [] },
   // A profile not backfilled yet (WP3): what production users look like before the backfill.
@@ -188,7 +190,7 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
     await client.query(`SET search_path TO ${schema}, public`);
     await client.query(`
       CREATE TABLE users (id varchar(255) PRIMARY KEY, admin boolean NOT NULL DEFAULT false,
-        campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]', promo int, formation varchar);
+        campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]', promo int, formation varchar, posts text[] NOT NULL DEFAULT '{}');
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL,
         type varchar NOT NULL DEFAULT 'association', "isBDE" boolean NOT NULL DEFAULT false,
         archived boolean NOT NULL DEFAULT false);
@@ -225,12 +227,16 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
       [A2]
     );
     for (const [id, u] of Object.entries(USERS)) {
-      await client.query(`INSERT INTO users (id, admin, campus, cursus) VALUES ($1, $2, $3, $4)`, [
-        id,
-        'admin' in u ? u.admin : false,
-        u.campus,
-        JSON.stringify(u.cursus),
-      ]);
+      await client.query(
+        `INSERT INTO users (id, admin, campus, cursus, posts) VALUES ($1, $2, $3, $4, $5)`,
+        [
+          id,
+          'admin' in u ? u.admin : false,
+          u.campus,
+          JSON.stringify(u.cursus),
+          'posts' in u ? u.posts : [],
+        ]
+      );
     }
     await client.query(
       `INSERT INTO association_members ("associationId", "userId") VALUES ($1, 'staff'), ($2, 'notBackfilled')`,
@@ -311,13 +317,116 @@ maybe('reader spaces against PostgreSQL (migration 071 included)', () => {
         `SELECT ${isCampusStaffSql('u')} AS staff FROM users u WHERE u.id = $1`,
         [id]
       );
-      const pure = campusWideReaderCampus({ id, campus: u.campus, cursus: u.cursus }) !== null;
+      const posts = 'posts' in u ? u.posts : [];
+      const pure =
+        campusWideReaderCampus({ id, campus: u.campus, cursus: u.cursus, posts }) !== null;
       expect({ id, staff: rows[0].staff }).toEqual({ id, staff: pure });
     }
-    // A cursus that is not an array is no staff, in both.
-    expect(campusWideReaderCampus({ campus: 'saint-etienne', cursus: { formation: 'ICM' } })).toBe(
-      null
-    );
+  });
+
+  it('STAFF IS A POST EMSE OR ME (owner, 2026-11-24): isStaffSql, isCampusStaffSql and their pure twins agree', async () => {
+    const reviewer = 'staff-twin-reviewer';
+    const PROFILES: {
+      id: string;
+      campus: string | null;
+      cursus: unknown[];
+      posts: string[];
+      staff: boolean;
+      campusStaff: boolean;
+    }[] = [
+      {
+        id: 'tw-emse',
+        campus: 'saint-etienne',
+        cursus: [],
+        posts: ['EMSE'],
+        staff: true,
+        campusStaff: true,
+      },
+      {
+        id: 'tw-me-student',
+        campus: 'gardanne',
+        cursus: [{ formation: 'ICM', promo: 2024 }],
+        posts: ['ME'],
+        staff: true,
+        campusStaff: true,
+      },
+      {
+        id: 'tw-emse-alumni-student',
+        campus: 'saint-etienne',
+        cursus: [{ formation: 'ICM', promo: 2020 }],
+        posts: ['ALUMNI', 'EMSE'],
+        staff: true,
+        campusStaff: true,
+      },
+      {
+        id: 'tw-alumni',
+        campus: 'saint-etienne',
+        cursus: [],
+        posts: ['ALUMNI'],
+        staff: false,
+        campusStaff: false,
+      },
+      {
+        id: 'tw-alumni-student',
+        campus: 'saint-etienne',
+        cursus: [{ formation: 'ICM', promo: 2020 }],
+        posts: ['ALUMNI'],
+        staff: false,
+        campusStaff: false,
+      },
+      {
+        id: 'tw-nothing',
+        campus: 'saint-etienne',
+        cursus: [],
+        posts: [],
+        staff: false,
+        campusStaff: false,
+      },
+      {
+        id: 'tw-no-campus',
+        campus: null,
+        cursus: [],
+        posts: ['EMSE'],
+        staff: true,
+        campusStaff: false,
+      },
+      {
+        id: reviewer,
+        campus: 'saint-etienne',
+        cursus: [],
+        posts: ['EMSE'],
+        staff: false,
+        campusStaff: false,
+      },
+    ];
+    const saved = process.env.SERVICE_ACCOUNT_USER_ID;
+    process.env.SERVICE_ACCOUNT_USER_ID = reviewer;
+    try {
+      for (const p of PROFILES) {
+        await client.query(
+          `INSERT INTO users (id, campus, cursus, posts) VALUES ($1, $2, $3, $4)`,
+          [p.id, p.campus, JSON.stringify(p.cursus), p.posts]
+        );
+        const { rows } = await client.query(
+          `SELECT ${isStaffSql('u')} AS staff, ${isCampusStaffSql('u')} AS "campusStaff" FROM users u WHERE u.id = $1`,
+          [p.id]
+        );
+        expect({ id: p.id, ...rows[0] }).toEqual({
+          id: p.id,
+          staff: p.staff,
+          campusStaff: p.campusStaff,
+        });
+        expect({ id: p.id, staff: isStaffProfile(p) }).toEqual({ id: p.id, staff: p.staff });
+        expect({ id: p.id, campusStaff: campusWideReaderCampus(p) !== null }).toEqual({
+          id: p.id,
+          campusStaff: p.campusStaff,
+        });
+      }
+    } finally {
+      if (saved === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
+      else process.env.SERVICE_ACCOUNT_USER_ID = saved;
+      await client.query(`DELETE FROM users WHERE id = ANY($1)`, [PROFILES.map((p) => p.id)]);
+    }
   });
 
   it('the gate admits an admin, a reader with a space, a member and an accepted follower - and nobody else', async () => {

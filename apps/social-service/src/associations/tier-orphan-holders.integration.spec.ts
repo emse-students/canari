@@ -122,7 +122,7 @@ maybe('a tier deleted while people still hold it (PostgreSQL)', () => {
     await admin.query('RESET lock_timeout');
     // The buyers' display names a closed purchase is answered with (`enrichPurchaseRecords`).
     await admin.query(
-      `CREATE TABLE users (id varchar(255) PRIMARY KEY, "firstName" text, "lastName" text)`
+      `CREATE TABLE users (id varchar(255) PRIMARY KEY, "firstName" text, "lastName" text, posts text[] NOT NULL DEFAULT '{}')`
     );
     // The columns a tier delete reads of a form granting it and of its answers awaiting money.
     await admin.query(

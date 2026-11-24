@@ -62,7 +62,9 @@ maybe('association slug derivation against PostgreSQL', () => {
     });
     await ds.initialize();
     await ds.synchronize();
-    await ds.query(`CREATE TABLE users (id text PRIMARY KEY, campus text, cursus text)`);
+    await ds.query(
+      `CREATE TABLE users (id text PRIMARY KEY, campus text, cursus text, posts text[] NOT NULL DEFAULT '{}')`
+    );
     await ds.query(`INSERT INTO users (id, campus) VALUES ('creator', 'gardanne')`);
     assos = ds.getRepository(Association);
     audiences = ds.getRepository(AssociationAudience);

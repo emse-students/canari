@@ -73,7 +73,7 @@ maybe('minesweeper per-promo ranking against PostgreSQL', () => {
     await q(`CREATE SCHEMA ${schema}`);
     await q(`SET search_path TO ${schema}, public`);
     await q(`CREATE TABLE users (id varchar(255) PRIMARY KEY, "displayName" varchar, promo int,
-      cursus jsonb NOT NULL DEFAULT '[]')`);
+      cursus jsonb NOT NULL DEFAULT '[]', posts text[] NOT NULL DEFAULT '{}')`);
     await q(migration('018_minesweeper_leaderboard.sql'));
     await q(migration('070_minesweeper_bans.sql'));
     for (const [id, promo] of PEOPLE) {

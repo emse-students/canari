@@ -307,12 +307,13 @@ pub(crate) enum AtSignOut {
 /// it after a dot (`mls` covers `mls.bin` and `mls.bin.tmp`, `nse_outcomes` its `.ndjson`,
 /// `.1.ndjson` and `.lock`). Mirrored by the share extension (`ShareCapture.rootStems`); a source
 /// test holds the two equal, every column included.
-pub(crate) const OURS_STEMS: [(&str, Holding, AtSignOut); 16] = [
+pub(crate) const OURS_STEMS: [(&str, Holding, AtSignOut); 17] = [
     ("mls", Holding::Mirror, AtSignOut::Kept),
     ("push_context", Holding::Mirror, AtSignOut::Kept),
     ("push_secret", Holding::Mirror, AtSignOut::Removed),
     ("display_names", Holding::Mirror, AtSignOut::Kept),
     ("conversation_nicknames", Holding::Mirror, AtSignOut::Kept),
+    ("seen_posts", Holding::Mirror, AtSignOut::Kept),
     ("share_epoch", Holding::Mirror, AtSignOut::Kept),
     ("app_in_foreground", Holding::Mirror, AtSignOut::Kept),
     // An older build's plaintext epoch keys: moved in, then deleted by
@@ -1062,6 +1063,7 @@ mod tests {
             "push_context.json",
             "display_names.json",
             "conversation_nicknames.json.tmp",
+            "seen_posts.json.tmp",
             "device_notices",
             "graine_seeds.json",
             "graine_seeds.lock",
@@ -1254,6 +1256,7 @@ mod tests {
             "push_secret.txt",
             "display_names.json",
             "conversation_nicknames.json",
+            "seen_posts.json",
             "share_epoch",
             "app_in_foreground",
             "channel_keys.json",

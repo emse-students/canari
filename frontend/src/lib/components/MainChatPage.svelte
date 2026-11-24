@@ -1857,7 +1857,8 @@
                 )
             : (msgId, text) => void messaging.handleEditMessage(msgId, text, msgCtx())}
           onTogglePin={handleTogglePinMessage}
-          onReelPurged={(msgId, at) => void messaging.recordReelPurged(msgId, at, msgCtx())}
+          onReelPurged={(msgId, at, conversationKey) =>
+            void messaging.recordReelPurged(msgId, at, msgCtx(), conversationKey)}
           onCancelReply={() => messaging.cancelReply(convs.selectedContact ?? '')}
           authToken={session.authToken}
           onFilesSelected={handleFilesSelected}

@@ -4817,7 +4817,7 @@ export function useMessaging() {
     }
     // NOT WITHDRAWN: it is on the wire, or it left the queue since the snapshot. Its settlement says
     // which, then the take's record decides - never a delete for an id that never went.
-    await awaitOutboxSettled(sendId);
+    await awaitOutboxSettled(sendId, conversationId);
     const now = await outboxReelTakeReachOf(sendId);
     const convo = ctx.conversations.get(convoKey);
     if (now?.standing.some((s) => s.id === sendId) && convo) {
@@ -4913,29 +4913,29 @@ export function useMessaging() {
    * its local row, so a reload does too - one `410` per message per device, never one per scroll.
    *
    * A local fact, the first one kept: a row already carrying it is left alone. The conversation is
-   * read from the map NOW (the one on screen first, the viewer was opened from it), and a write that
+   * the one the viewer was opened from (never searched by id: ids travel to peers), and a write that
    * fails is said with its cost - the next tap on that tile asks the server again.
    */
   async function recordReelPurged(
     messageId: string,
     atMs: number,
-    ctx: MessagingContext
+    ctx: MessagingContext,
+    conversationKey: string
   ): Promise<void> {
-    const selected = ctx.selectedNow();
-    const keys = [
-      ...(selected ? [selected] : []),
-      ...[...ctx.conversations.keys()].filter((k) => k !== selected),
-    ];
-    const key = keys.find((k) =>
-      ctx.conversations.get(k)?.messages.some((msg) => msg.id === messageId)
-    );
-    const convo = key ? ctx.conversations.get(key) : undefined;
-    if (!key || !convo) {
+    // THE CONVERSATION THE REEL WAS OPENED FROM, never a search by id across all of them: a message
+    // id travels to peers, so another conversation may hold a row of the same id that comes first
+    // in the map, and the instant would land on the wrong thread.
+    const key = movedKeyOf(conversationKey) ?? conversationKey;
+    const convo = ctx.conversations.get(key);
+    const idx = convo ? convo.messages.findIndex((msg) => msg.id === messageId) : -1;
+    if (!convo || idx === -1) {
+      console.warn(
+        `[REEL] 410 on ${messageId.slice(0, 8)} not recorded in memory: its conversation does not hold the row`
+      );
       ctx.log(
-        `[REEL] 410 on ${messageId.slice(0, 8)} not recorded in memory: no loaded conversation holds it`
+        `[REEL] 410 on ${messageId.slice(0, 8)} not recorded in memory: its conversation does not hold the row`
       );
     } else {
-      const idx = convo.messages.findIndex((msg) => msg.id === messageId);
       if (convo.messages[idx].mediaPurgedAt) return;
       const msgs = [...convo.messages];
       msgs[idx] = { ...msgs[idx], mediaPurgedAt: atMs };
@@ -4951,7 +4951,9 @@ export function useMessaging() {
       // THE FIRST INSTANT IS THE STORED ONE when there is one: memory may not hold the message (or
       // hold it from before a reload of another tab), so "already recorded" is asked of the row
       // itself, and an existing record is never overwritten - memory is aligned to it instead.
-      const stored = await ctx.storage.getMessage(messageId, ctx.deviceKeyB64);
+      const stored = (
+        await ctx.storage.getMessagesByIds(key, [messageId], ctx.deviceKeyB64)
+      ).rows.get(messageId);
       if (!stored) {
         ctx.log(
           `[REEL] 410 on ${messageId.slice(0, 8)} NOT persisted (its row is absent or unreadable) - a reload asks again`
@@ -4959,19 +4961,16 @@ export function useMessaging() {
         return;
       }
       if (stored.mediaPurgedAt) {
-        alignMemoryPurge(messageId, stored.mediaPurgedAt, ctx);
+        alignMemoryPurge(messageId, stored.mediaPurgedAt, ctx, key);
         ctx.log(`[REEL] 410 on ${messageId.slice(0, 8)} already on its row - the first kept`);
         return;
       }
-      await ctx.storage.updateMessage(
-        stored.conversationId,
-        messageId,
-        { mediaPurgedAt: atMs },
-        ctx.deviceKeyB64
-      );
+      await ctx.storage.updateMessage(key, messageId, { mediaPurgedAt: atMs }, ctx.deviceKeyB64);
       // `updateMessage` writes nothing on a row it cannot read, and says nothing: the read back is
       // what tells "on disk" from "asked".
-      const back = await ctx.storage.getMessage(messageId, ctx.deviceKeyB64);
+      const back = (
+        await ctx.storage.getMessagesByIds(key, [messageId], ctx.deviceKeyB64)
+      ).rows.get(messageId);
       ctx.log(
         back?.mediaPurgedAt
           ? `[REEL] 410 on ${messageId.slice(0, 8)} recorded on its row`
@@ -4985,16 +4984,24 @@ export function useMessaging() {
   }
 
   /** Sets memory's copy of a message's recorded 410 to the stored instant, read from the map NOW. */
-  function alignMemoryPurge(messageId: string, atMs: number, ctx: MessagingContext): void {
-    for (const [key, convo] of ctx.conversations) {
-      const idx = convo.messages.findIndex((msg) => msg.id === messageId);
-      if (idx === -1) continue;
-      if (convo.messages[idx].mediaPurgedAt === atMs) return;
-      const msgs = [...convo.messages];
-      msgs[idx] = { ...msgs[idx], mediaPurgedAt: atMs };
-      ctx.conversations.set(key, { ...convo, messages: msgs });
+  function alignMemoryPurge(
+    messageId: string,
+    atMs: number,
+    ctx: MessagingContext,
+    key: string
+  ): void {
+    const convo = ctx.conversations.get(key);
+    const idx = convo ? convo.messages.findIndex((msg) => msg.id === messageId) : -1;
+    if (!convo || idx === -1) {
+      console.warn(
+        `[REEL] ${messageId.slice(0, 8)} not aligned to the stored 410: its conversation does not hold the row`
+      );
       return;
     }
+    if (convo.messages[idx].mediaPurgedAt === atMs) return;
+    const msgs = [...convo.messages];
+    msgs[idx] = { ...msgs[idx], mediaPurgedAt: atMs };
+    ctx.conversations.set(key, { ...convo, messages: msgs });
   }
 
   /** Sends an "edit_message" MLS system message and updates the message content and editedAt in the local conversation state. Only the original sender can edit their own message. */
@@ -5283,7 +5290,7 @@ export function useMessaging() {
     // holds a process for this message waits for the queue to SETTLE it. A salon's text is not in
     // the queue; a notification never offers a reply into a salon, so it is only said pending.
     if (!result.messageId) return { outcome: 'pending' };
-    return { outcome: await awaitOutboxSettled(result.messageId) };
+    return { outcome: await awaitOutboxSettled(result.messageId, convo.id) };
   }
 
   /**

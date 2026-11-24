@@ -70,7 +70,9 @@
      * so its tile reads the tombstone across reloads (RC-6). Omit: the tile still draws it for
      * this mount.
      */
-    onReelPurged?: (messageId: string, atMs: number) => void;
+    onReelPurged?: (messageId: string, atMs: number, conversationId: string) => void;
+    /** The conversation these rows belong to, handed to each bubble so a reel viewer keeps it at open. */
+    conversationId?: string;
     /**
      * Where the viewer stands for pinning (`mayPinMessage`): the action is handed to the bubbles
      * only when the rule lets the viewer pin here. Absent = no ranks (DM, group).
@@ -133,6 +135,7 @@
     onBeginEdit,
     onTogglePin,
     onReelPurged,
+    conversationId,
     pinStanding = { inChannel: false, canModerate: false },
     onJoinChannel,
     onCallBack,
@@ -353,6 +356,7 @@
               restoredUnverified={msg.restoredUnverified}
               reelPurgedAt={msg.mediaPurgedAt}
               {onReelPurged}
+              {conversationId}
               editedAt={msg.editedAt}
               isDeleted={msg.isDeleted}
               status={msg.status}

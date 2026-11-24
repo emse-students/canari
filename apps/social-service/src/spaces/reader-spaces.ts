@@ -43,6 +43,40 @@ export interface ReaderProfile {
   cursus: unknown;
 }
 
+/** A reader's profile with its MiConnect posts, what staff is read from (owner, 2026-11-24). */
+export interface StaffProfile extends ReaderProfile {
+  /** text[] of MiConnect posts (`EMSE`, `ME`, `ALUMNI`); anything that is not an array is none. */
+  posts: unknown;
+}
+
+/**
+ * THE POSTS THAT MAKE AN ACCOUNT STAFF (owner, 2026-11-24): a MiConnect post `EMSE` or `ME`, and
+ * nothing else. `ALUMNI` alone does not, and having no cursus no longer does. Staff and student are
+ * INDEPENDENT: a student is an account with a space (a cursus), staff an account holding one of these
+ * posts, and an account may be both or neither. The ONE list both twins below read.
+ */
+const STAFF_POSTS: readonly string[] = ['EMSE', 'ME'];
+
+/**
+ * `posts` holds a staff post ({@link STAFF_POSTS}); anything that is not an array holds none. The
+ * profile fact alone, which a form's respondent status reads too (owner, 2026-11-24 evening: "align
+ * the forms on EMSE/ME"); an AUDIENCE asks {@link isStaffProfile}, which also leaves review accounts
+ * out.
+ */
+export function holdsStaffPost(posts: unknown): boolean {
+  return Array.isArray(posts) && posts.some((p) => STAFF_POSTS.includes(p as string));
+}
+
+/**
+ * The account is STAFF ({@link holdsStaffPost}), and not a review account (`review-cohort.ts`: the
+ * reviewers' accounts hold a post, and are kept out of every staff audience and count). The pure twin
+ * of {@link isStaffSql}, which `reader-spaces.integration.spec.ts` holds it to.
+ */
+export function isStaffProfile(user: StaffProfile): boolean {
+  if (isInReviewCohort(user.id)) return false;
+  return holdsStaffPost(user.posts);
+}
+
 /**
  * The spaces a reader belongs to, among `spaces` (every pair the `spaces` table holds).
  *
@@ -63,16 +97,14 @@ export function readerSpaces(user: ReaderProfile, spaces: readonly SpacePair[]):
 }
 
 /**
- * The campus whose agenda a reader tied to NO formation may follow whole (user, 2026-10-07: EMSE
- * staff have a campus and an empty cursus, so they have no space, yet the agenda is theirs too).
- * `null` for anyone else: no campus, or a cursus with at least one entry (a student keeps the
- * own-spaces rule, whether or not a space exists for that entry).
+ * The campus whose agenda a STAFF reader ({@link isStaffProfile}) may follow whole (user, 2026-10-07:
+ * EMSE staff have no space, yet the agenda is theirs too; staff is a post since the owner's decision
+ * of 2026-11-24). `null` for anyone else: no campus, not staff, or a review account. The caller asks
+ * it only of a reader with NO space, so a student who is also staff keeps the own-spaces rule.
  */
-export function campusWideReaderCampus(user: ReaderProfile): string | null {
-  if (isInReviewCohort(user.id)) return null;
+export function campusWideReaderCampus(user: StaffProfile): string | null {
   if (!user.campus) return null;
-  if (user.cursus === null || user.cursus === undefined) return user.campus;
-  return Array.isArray(user.cursus) && user.cursus.length === 0 ? user.campus : null;
+  return isStaffProfile(user) ? user.campus : null;
 }
 
 // ── SQL ─────────────────────────────────────────────────────────────────────────────────────────
@@ -492,11 +524,24 @@ export interface FollowerOpts {
 /**
  * User row `user` is a STUDENT in the sense of the "Entre étudiants" switch (owner, 2026-11-04,
  * decision 3): an account with a cursus - a campus and a formation from the identity provider - so
- * at least one SPACE (`isReaderSpaceSql`). Staff (a campus and an empty cursus) have none, and a
- * review account has none (`review-cohort.ts`).
+ * at least one SPACE (`isReaderSpaceSql`). An account with no cursus has none, and a review account
+ * has none (`review-cohort.ts`). Being STAFF is independent of it ({@link isStaffSql}, 2026-11-24).
  */
 export function isStudentSql(user: string): string {
   return `EXISTS (SELECT 1 FROM spaces so_space WHERE ${isReaderSpaceSql('so_space', user)})`;
+}
+
+/**
+ * User row `user` is STAFF (owner, 2026-11-24): its `posts` hold `EMSE` or `ME`
+ * ({@link STAFF_POSTS}), and it is not a review account. Independent of {@link isStudentSql}: an
+ * account with a cursus AND such a post is both, one with only `ALUMNI` (or no post) is neither.
+ * Overlap (`&&`) on the `text[]` column, COALESCEd so a NULL is "not staff", never NULL. The SQL twin
+ * of {@link isStaffProfile}.
+ */
+export function isStaffSql(user: string): string {
+  const posts = STAFF_POSTS.map((p) => `'${p}'`).join(', ');
+  return `(COALESCE(${user}.posts && ARRAY[${posts}]::text[], false)
+    AND NOT ${inReviewCohortSql(`${user}.id`)})`;
 }
 
 /**
@@ -521,19 +566,20 @@ export function studentsOnlyAdmitsUserSql(post: string, user: string): string {
  * events - the same two columns, so `post` may be either row): post row `post` carries no
  * reach (`reachPublic` NULL: not an institution's post, or one written before the reach existed), or
  * its public is 'all', or 'students' and user row `user` is a student ({@link isStudentSql}), or
- * 'staff' and they are not - or they are a member of the institution that PUBLISHED it, who reads
- * every post of their own institution (D21). Like the "Entre étudiants" gate, a conjunct over every
- * door but the author's own: the rule is on WHO READS, wherever the post arrives.
+ * 'staff' and they are staff ({@link isStaffSql}: a post EMSE or ME, owner 2026-11-24 - a UNION with
+ * the students, no longer their complement) - or they are a member of the institution that PUBLISHED
+ * it, who reads every post of their own institution (D21). Like the "Entre étudiants" gate, a
+ * conjunct over every door but the author's own: the rule is on WHO READS, wherever the post arrives.
  *
- * A "staff" reader is an account with no space: staff (a campus and an empty cursus). A staff account
- * has no space for the post's rules to reach, so they reach an institution's post through a door they
- * already had - a membership, a read grant, a republisher, a member repost - or, on a POST since
- * 2026-11-14, the staff-by-campus door of "Tous" and "Personnel" ({@link institutionReachStaffCampusDoorSql}).
+ * A staff account with a cursus reaches a "Personnel" item through its own space like any door; one
+ * without reaches it through a door they already had - a membership, a read grant, a republisher, a
+ * member repost - or, on a POST since 2026-11-14, the staff-by-campus door of "Tous" and "Personnel"
+ * ({@link institutionReachStaffCampusDoorSql}).
  */
 export function institutionReachAdmitsUserSql(post: string, user: string): string {
   return `(${post}."reachPublic" IS NULL OR ${post}."reachPublic" = 'all'
     OR (${post}."reachPublic" = 'students' AND ${isStudentSql(user)})
-    OR (${post}."reachPublic" = 'staff' AND NOT ${isStudentSql(user)})
+    OR (${post}."reachPublic" = 'staff' AND ${isStaffSql(user)})
     OR (${post}."associationId" IS NOT NULL AND ${isMemberSql(`${post}."associationId"`, user)}))`;
 }
 
@@ -573,14 +619,13 @@ export function institutionReachHoldsSpaceSql(item: string, space: string): stri
 }
 
 /**
- * User row `user` is STAFF OF A CAMPUS: a campus and NO cursus entry, and not a review account - the
- * SQL twin of {@link campusWideReaderCampus} (EMSE staff, user 2026-10-07), whose test holds the two
- * together. A cursus that is not an array (malformed) is not staff, as the pure twin answers.
+ * User row `user` is STAFF OF A CAMPUS: a campus and staff ({@link isStaffSql}: a post EMSE or ME, not
+ * a review account; owner 2026-11-24) - the SQL twin of {@link campusWideReaderCampus}, whose test
+ * holds the two together. A cursus no longer matters: a student who holds such a post is staff of
+ * their campus too.
  */
 export function isCampusStaffSql(user: string): string {
-  return `(${user}.campus IS NOT NULL
-    AND (${user}.cursus IS NULL OR ${user}.cursus = '[]'::jsonb OR ${user}.cursus = 'null'::jsonb)
-    AND NOT ${inReviewCohortSql(`${user}.id`)})`;
+  return `(${user}.campus IS NOT NULL AND ${isStaffSql(user)})`;
 }
 
 /**
@@ -588,8 +633,8 @@ export function isCampusStaffSql(user: string): string {
  * institution gave a reach - whose public is "Tous" or "Personnel" opens to user row `user`
  * when they are staff of a campus ({@link isCampusStaffSql}) and one of the spaces the item TICKED is
  * on that campus AND is still reached by the institution's own rules. So the School addresses its
- * staff without naming each one; a staff account of another campus is not reached, a student gains
- * nothing (their door is their space), and the door is never wider than the institution's audience
+ * staff without naming each one; a staff account of another campus is not reached, a student who is
+ * not staff gains nothing (their door is their space), and the door is never wider than the institution's audience
  * and shrinks with it, as the rules door does. An item with no reach (not an institution's, or
  * written before the reach existed) opens nothing here: its readers are what they were.
  *
@@ -1200,7 +1245,7 @@ export const AGENDA_REACHED_SPACES_SQL = `SELECT s.formation, s.campus FROM spac
   ORDER BY s.campus, s.formation`;
 
 /** The profile facts of user `$1`, for `campusWideReaderCampus` (asked for a reader with no space). */
-export const READER_PROFILE_SQL = `SELECT id, campus, cursus FROM users WHERE id = $1`;
+export const READER_PROFILE_SQL = `SELECT id, campus, cursus, posts FROM users WHERE id = $1`;
 
 /**
  * Who is told about post `$1`: everyone who can SEE it, minus its author. The scheduler narrows a

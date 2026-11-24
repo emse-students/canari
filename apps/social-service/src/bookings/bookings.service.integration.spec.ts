@@ -183,7 +183,7 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
     await q(
       `CREATE TABLE users (id varchar PRIMARY KEY, "displayName" varchar, "firstName" varchar, "lastName" varchar,
          admin boolean NOT NULL DEFAULT false, campus varchar DEFAULT 'saint-etienne',
-         cursus jsonb NOT NULL DEFAULT '[{"formation": "ICM"}]')`
+         cursus jsonb NOT NULL DEFAULT '[{"formation": "ICM"}]', posts text[] NOT NULL DEFAULT '{}')`
     );
     await q(`CREATE TABLE spaces (formation varchar NOT NULL, campus varchar NOT NULL)`);
     await q(`INSERT INTO spaces VALUES ('ICM', 'saint-etienne'), ('ISMIN', 'gardanne')`);

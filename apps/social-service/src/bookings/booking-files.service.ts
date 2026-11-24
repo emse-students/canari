@@ -69,7 +69,8 @@ export class BookingFilesService {
     space: Pick<BookingSpace, 'id' | 'items'>,
     itemId: string | undefined,
     file: { buffer: Buffer; size: number; originalname?: string },
-    uploaderId: string
+    uploaderId: string,
+    authorization?: string
   ): Promise<UploadedFormFile> {
     const items = (space.items ?? []) as { id?: string; type?: string }[];
     const item =
@@ -97,7 +98,11 @@ export class BookingFilesService {
     // Read before the bytes travel; the GATE is the same count under a lock, below.
     await this.assertPendingRoom(this.files.manager, space.id, uploaderId);
 
-    const { mediaId: fileId, sizeBytes } = await this.formFiles.storeBlob(file.buffer, uploaderId);
+    const { mediaId: fileId, sizeBytes } = await this.formFiles.storeBlob(
+      file.buffer,
+      uploaderId,
+      authorization
+    );
     const fileName = cleanFileName(file.originalname, contentType, fileId);
     try {
       await this.files.manager.transaction(async (tx) => {

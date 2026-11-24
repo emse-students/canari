@@ -118,7 +118,7 @@ maybe('opening reminders against PostgreSQL (engagement WP-4)', () => {
     // The tables as production has them, from before migrations existed (TypeORM built them).
     await q(`
       CREATE TABLE users (id varchar(255) PRIMARY KEY, "displayName" varchar, campus varchar,
-        cursus jsonb NOT NULL DEFAULT '[]', admin boolean NOT NULL DEFAULT false);
+        cursus jsonb NOT NULL DEFAULT '[]', admin boolean NOT NULL DEFAULT false, posts text[] NOT NULL DEFAULT '{}');
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL, slug varchar NOT NULL,
         type varchar NOT NULL DEFAULT 'association', archived boolean NOT NULL DEFAULT false,
         "isBDE" boolean NOT NULL DEFAULT false, "createdBy" varchar(255), "logoUrl" varchar,

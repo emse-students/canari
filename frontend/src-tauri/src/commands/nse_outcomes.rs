@@ -60,6 +60,7 @@ const OUTCOMES: &[&str] = &[
     "fallback",
     "server-content",
     "call-blank",
+    "seen-trend",
     "expired",
     "killed",
 ];

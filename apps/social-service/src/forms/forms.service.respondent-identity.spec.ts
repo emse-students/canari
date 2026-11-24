@@ -180,6 +180,10 @@ describe('the respondent account fields of a form', () => {
       expect(accountStatuses(ACCOUNT)).toEqual(['student', 'staff']);
       expect(accountStatuses({ ...ACCOUNT, posts: [] })).toEqual(['student']);
       expect(accountStatuses({ ...ACCOUNT, cursusViews: [] })).toEqual(['staff']);
+      // Staff is a post EMSE or ME (owner, 2026-11-24): ALUMNI alone is not staff.
+      expect(accountStatuses({ ...ACCOUNT, posts: ['ME'] })).toEqual(['student', 'staff']);
+      expect(accountStatuses({ ...ACCOUNT, posts: ['ALUMNI'] })).toEqual(['student']);
+      expect(accountStatuses({ ...ACCOUNT, cursusViews: [], posts: ['ALUMNI'] })).toEqual([]);
     });
 
     it('snapshots only the joined fields, every cursus included', () => {
