@@ -6,6 +6,7 @@ import {
   noteKeyboardFrameAwaited,
   noteKeyboardFrameLanded,
   noteKeyboardTransition,
+  noteKeyboardWillShow,
   onKeyboardTransitionEdge,
 } from './keyboardTransition';
 import { Log } from '$lib/utils/Log';
@@ -83,17 +84,29 @@ describe('a rest heard before the keyboard frame landed', () => {
     expect(keyboardTransitionMoving()).toBe(false);
   });
 
-  it('a newer keyboard change drops a held rest: the frame landing does not end the transition', () => {
+  it('a newer will-show drops a held rest: the frame landing does not end the transition', () => {
     noteKeyboardAtRest('test start');
     const warn = vi.spyOn(Log, 'w').mockImplementation(() => {});
-    noteKeyboardTransition('the shell: a keyboard will show');
+    noteKeyboardWillShow('the shell: a keyboard will show');
     noteKeyboardFrameAwaited('a hand-off of 301px');
     noteKeyboardAtRest('the shell: did show, ahead of its frame');
-    // A newer change joins the moving transition: its own rest is the one owed now.
-    noteKeyboardTransition('keyboard open 301px -> open 388px');
+    // A newer show joins the moving transition: its own did-show is the rest owed now, as in the shell.
+    noteKeyboardWillShow('the shell: a keyboard will show again');
     noteKeyboardFrameLanded('keyboard target 301 spent');
     expect(keyboardTransitionMoving()).toBe(true);
-    noteKeyboardAtRest('the shell: the newer change at rest');
+    noteKeyboardAtRest('the shell: the newer show at rest');
+    expect(keyboardTransitionMoving()).toBe(false);
+    warn.mockRestore();
+  });
+
+  it('a note the viewport derives between the hold and the landing keeps the rest: it is the same change', () => {
+    noteKeyboardAtRest('test start');
+    const warn = vi.spyOn(Log, 'w').mockImplementation(() => {});
+    noteKeyboardWillShow('the shell: a keyboard will show');
+    noteKeyboardFrameAwaited('a hand-off of 301px');
+    noteKeyboardAtRest('the shell: did show, ahead of its frame');
+    noteKeyboardTransition('keyboard closed 0px -> open 301px');
+    noteKeyboardFrameLanded('keyboard target 301 spent');
     expect(keyboardTransitionMoving()).toBe(false);
     warn.mockRestore();
   });

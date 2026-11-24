@@ -277,7 +277,7 @@ frame less the keyboard again.
 change. The keyboard is taken off the page once, by the frame. WebKit registers those observers once,
 from `_initializeWithConfiguration:` (`_registerForNotifications`, `addObserver:self`, the same since
 iOS 8), so they stay removed. A WebView that heard a keyboard before the detach would keep that inset
-for its life (its will-hide is gone too): the detach then logs an ERROR with the inset.
+for its life (its will-hide is gone too): the detach then logs an ERROR with the inset It makes the page edge to edge first (`CanariApplyEdgeToEdge`), so the inset it reads is WebKit's alone and never UIKit's 34 pt home-indicator strip.
 
 **WebKit's reveal of the focused field goes with them** (review of #4058). Its
 `RevealFocusedElementDeferrer` waits for a keyboard will-show that only `_keyboardWillShow:` fulfils;
@@ -289,7 +289,10 @@ again when a keyboard-aware overlay settles (`handleTransitionEnd`). Which field
 every field but the chat composer, which sits on the keyboard by layout. Elsewhere `.app-layout` is
 still left to the engine (Chromium reveals the focused editable on its own resize); in the iOS shell
 nothing else would reveal it, so the page does. One authority for the keyboard's room (the frame), one
-for the reveal (the page).
+for the reveal (the page). A witness keeps the main page honest: in the iOS shell a scroll that moves `.page-scroll-wrap` or
+`.app-layout` off its top logs `the main page shifted: <box> scrolled to N`, once until it is back
+(`shiftedPageBox`), the case a reveal through an `overflow: hidden` wrapper once made.
+Only the shell's will-show drops a rest the page holds (`noteKeyboardWillShow`), as the shell drops a rest it owes.
 
 The settled line carries `inset bottom=`, the scroll view's own bottom inset, so a second authority shows
 in the syslog. Verified by compiling only; the reading is in the entry.

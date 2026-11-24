@@ -15,6 +15,7 @@ import {
   revealBehavior,
   scrollFocusedFieldIntoView,
   pageRevealsField,
+  shiftedPageBox,
   type ViewportMeasurement,
 } from './keyboardViewport.svelte';
 import { readFileSync } from 'node:fs';
@@ -392,6 +393,21 @@ describe('the reveal of a focused field (iPhone 12, v1.2.9-alpha.4)', () => {
     expect(pageRevealsField(mainPage, false)).toBe(false);
     expect(pageRevealsField(modal, true)).toBe(true);
     expect(pageRevealsField(modal, false)).toBe(true);
+  });
+
+  it('names a pinned box of the main page a scroll moved off its top, and nothing else', () => {
+    const box = (className: string, top: number) => {
+      const el = document.createElement('div');
+      el.className = className;
+      document.body.appendChild(el);
+      el.scrollTop = top;
+      return el;
+    };
+    expect(shiftedPageBox(box('page-scroll-wrap', 39))).toBe('.page-scroll-wrap');
+    expect(shiftedPageBox(box('app-layout', 12))).toBe('.app-layout');
+    expect(shiftedPageBox(box('app-layout', 0))).toBeNull();
+    expect(shiftedPageBox(box('chat-messages-scroll', 500))).toBeNull();
+    expect(shiftedPageBox(null)).toBeNull();
   });
 
   // WHY A SOURCE TEST (WP-T5: keep). `scroll-margin` is a CSS rule and happy-dom computes no style,

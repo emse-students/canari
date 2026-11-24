@@ -58,22 +58,30 @@ export function keyboardTransitionMoving(): boolean {
  * @param why what started it, for the log (one line per transition).
  */
 export function noteKeyboardTransition(why: string): void {
-  if (keyboardTransitionMoving()) {
-    // A newer keyboard change joins the transition, and its own rest is the one owed now: a rest held
-    // for the change before it must not end this one when the frame lands (the shell drops a rest
-    // owed to an older show the same way, `CanariTellPageKeyboardShows`).
-    if (restHeld !== null) {
-      Log.d(
-        'keyboardTransition',
-        `#${count}: a newer change (${why}) drops the rest held (${restHeld})`
-      );
-      restHeld = null;
-    }
-    return;
-  }
+  if (keyboardTransitionMoving()) return;
   count++;
   Log.d('keyboardTransition', `#${count} starts: ${why}`);
   announceEdge('starts', why);
+}
+
+/**
+ * The iOS shell's word that a keyboard will show (`canariKeyboardShows`): a transition starts, or this
+ * show joins the one moving. A rest held for an OLDER show is dropped, since this show's own did-show
+ * rests it - exactly the shell's cancel of a rest it owes (`CanariTellPageKeyboardShows`). Only this
+ * fact drops it: a note the viewport derives in `update()` is the same keyboard change seen from the
+ * page, and the rest it was held for still belongs to it.
+ *
+ * @param why what said so, for the log.
+ */
+export function noteKeyboardWillShow(why: string): void {
+  if (restHeld !== null && keyboardTransitionMoving()) {
+    Log.d(
+      'keyboardTransition',
+      `#${count}: a newer show (${why}) drops the rest held (${restHeld})`
+    );
+    restHeld = null;
+  }
+  noteKeyboardTransition(why);
 }
 
 /**

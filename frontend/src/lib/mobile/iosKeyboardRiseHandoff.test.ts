@@ -150,12 +150,22 @@ describe('the iOS keyboard hand-off (canari_ios.mm)', () => {
       );
     }
     expect(detach).not.toContain('UIKeyboardDidShowNotification');
+    // Edge to edge BEFORE the inset is read: UIKit's safe-area inset (34 pt at an activation, where
+    // the detach runs before the safe-area publish) is not WebKit's, and must not raise the ERROR.
+    const edge = detach.indexOf('CanariApplyEdgeToEdge(webView);');
+    expect(edge).toBeGreaterThan(-1);
+    expect(edge).toBeLessThan(detach.indexOf('adjustedContentInset.bottom'));
+    expect(native.indexOf('static void CanariApplyEdgeToEdge(WKWebView *webView);')).toBeLessThan(
+      native.indexOf('static void CanariDetachWebKitKeyboardInset(')
+    );
     // A WebView that heard a keyboard before the detach keeps that inset for its life: an ERROR says so.
     const tooLate = detach.indexOf('if (inset > 0.5) {');
     expect(tooLate).toBeGreaterThan(detach.indexOf('adjustedContentInset.bottom'));
     expect(detach.slice(tooLate)).toMatch(
       /NSLog\(@"\[CanariIOS\] ERROR WebKit's own keyboard inset detached too late/
     );
+    // Only the shell's will-show drops a rest the page holds, as the shell drops a rest it owes.
+    expect(viewport).toContain('.canariKeyboardShows = () =>\n    noteKeyboardWillShow(');
     // WebKit's reveal goes with its will-show: the page reveals every field in this shell.
     expect(viewport).toMatch(/return iosShell \|\| el\.closest\('\.app-layout'\) === null;/);
     expect(apply).toContain('CanariDetachWebKitKeyboardInset(webView);');

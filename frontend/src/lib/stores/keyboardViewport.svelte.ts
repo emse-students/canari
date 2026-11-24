@@ -29,6 +29,7 @@ import {
   noteKeyboardFrameAwaited,
   noteKeyboardFrameLanded,
   noteKeyboardTransition,
+  noteKeyboardWillShow,
 } from './keyboardTransition';
 import { isTauriRuntime } from '$lib/utils/tauriRuntime';
 import { cssColorToHex, groundOf } from './imeGround';
@@ -635,6 +636,26 @@ export function revealBehavior(requested: ScrollBehavior, reducedMotion: boolean
 export function pageRevealsField(el: Element, iosShell: boolean): boolean {
   if (el.closest('.chat-composer-footer')) return false;
   return iosShell || el.closest('.app-layout') === null;
+}
+
+/** The boxes of the main page that never scroll: a reveal that moves one shifts the whole page. */
+const PINNED_PAGE_BOXES = ['.page-scroll-wrap', '.app-layout'] as const;
+
+/**
+ * Which pinned box of the main page a `scroll` moved off its top, by selector - or null when the
+ * scroll is any other element's, or leaves the box at 0.
+ *
+ * In the iOS shell the page reveals every field of `.app-layout` itself ({@link pageRevealsField}), and
+ * `scrollIntoView` scrolls every scrollable ancestor - an `overflow: hidden` one too. A wrapper taller
+ * than its box was scrolled that way once and showed a blank band above the page (`mobile.md`, the 39 px
+ * sliver, fixed in CSS on 2026-08-07). Read from the scroll itself, a smooth reveal is caught on its
+ * first step as an instant one is.
+ *
+ * @param target the element a `scroll` event was fired at.
+ */
+export function shiftedPageBox(target: EventTarget | null): string | null {
+  if (!(target instanceof HTMLElement) || target.scrollTop === 0) return null;
+  return PINNED_PAGE_BOXES.find((selector) => target.matches(selector)) ?? null;
 }
 
 /**
@@ -1276,7 +1297,32 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
    * it left with - and merges into the one a resize started otherwise (`keyboardTransition.ts`).
    */
   (window as unknown as { canariKeyboardShows?: () => void }).canariKeyboardShows = () =>
-    noteKeyboardTransition('the shell: a keyboard will show');
+    noteKeyboardWillShow('the shell: a keyboard will show');
+
+  /**
+   * THE WITNESS OF A SHIFTED MAIN PAGE, in the iOS shell where the page reveals the main page's fields
+   * itself ({@link shiftedPageBox}): a WARN naming the box, once until it is back at its top - never per
+   * frame of a smooth scroll. `scroll` does not bubble, so it is heard in the capture phase.
+   */
+  const accusedBoxes = new WeakSet<HTMLElement>();
+  const witnessShiftedPage = (e: Event) => {
+    const box = e.target;
+    if (!(box instanceof HTMLElement)) return;
+    const shifted = shiftedPageBox(box);
+    if (shifted === null) {
+      accusedBoxes.delete(box);
+      return;
+    }
+    if (accusedBoxes.has(box)) return;
+    accusedBoxes.add(box);
+    Log.w(
+      'keyboardViewport',
+      `the main page shifted: ${shifted} scrolled to ${Math.round(box.scrollTop)} ` +
+        `(focus ${document.activeElement?.tagName ?? 'none'}, keyboard ${snapshot.isOpen ? 'open' : 'closed'})`
+    );
+  };
+  const witnessesPage = isTauriRuntime() && detectRuntimeDeviceOs() === 'ios';
+  if (witnessesPage) document.addEventListener('scroll', witnessShiftedPage, true);
 
   // A press during a ride (a picker opening, a tap on a row) ends it: while a piece rides it is the
   // containing block of its fixed descendants (`keyboardRide.ts`).
@@ -1299,6 +1345,7 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
     window.removeEventListener('transitionend', handleTransitionEnd, true);
     window.visualViewport?.removeEventListener('resize', onViewportEvent);
     window.visualViewport?.removeEventListener('scroll', updateOffsetOnly);
+    if (witnessesPage) document.removeEventListener('scroll', witnessShiftedPage, true);
     delete (window as unknown as { canariImeTarget?: unknown }).canariImeTarget;
     delete (window as unknown as { canariKeyboardFall?: unknown }).canariKeyboardFall;
     delete (window as unknown as { canariKeyboardAtRest?: unknown }).canariKeyboardAtRest;

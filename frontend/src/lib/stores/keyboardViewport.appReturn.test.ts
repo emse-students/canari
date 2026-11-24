@@ -6,6 +6,7 @@ import {
   keyboardTransitionMoving,
   noteKeyboardAtRest,
 } from './keyboardTransition';
+import { Log } from '$lib/utils/Log';
 
 /**
  * THE KEYBOARD COMES BACK WITH THE APP (iPhone 12, `1.8.0-alpha.4`, 2026-11-23): the app returns at the
@@ -155,6 +156,30 @@ describe('a keyboard the shell says will show', () => {
       expect(composerReveal).not.toHaveBeenCalled();
     } finally {
       layout.remove();
+    }
+  });
+
+  it('accuses a main page the reveal shifted, once until it is back at its top', () => {
+    const warn = vi.spyOn(Log, 'w').mockImplementation(() => {});
+    const wrap = document.createElement('div');
+    wrap.className = 'page-scroll-wrap';
+    document.body.appendChild(wrap);
+    const shifts = () =>
+      warn.mock.calls.filter(([, line]) => String(line).includes('the main page shifted')).length;
+    try {
+      wrap.scrollTop = 39;
+      wrap.dispatchEvent(new Event('scroll'));
+      wrap.scrollTop = 40;
+      wrap.dispatchEvent(new Event('scroll')); // the same shift, a later frame: no second line
+      expect(shifts()).toBe(1);
+      expect(String(warn.mock.calls[0][1])).toContain('.page-scroll-wrap scrolled to 39');
+      wrap.scrollTop = 0;
+      wrap.dispatchEvent(new Event('scroll'));
+      wrap.scrollTop = 39;
+      wrap.dispatchEvent(new Event('scroll'));
+      expect(shifts()).toBe(2);
+    } finally {
+      wrap.remove();
     }
   });
 
