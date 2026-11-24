@@ -1,6 +1,6 @@
 ## An institution reaches the staff of its campuses beyond posts: shop, partnerships, directory, lives (owner, 2026-11-19)
 
-target: 1.8.0
+target: 1.9.0
 
 **Decided by the owner on 2026-11-19** (*"Oui, par campus, comme les posts"*,
 [decisions](../decisions/owner-decisions-of-2026-11-19.md)). The audience audit of 2026-11-14 found a staff account

@@ -1,6 +1,6 @@
 ## P2 - the web catch-up decrypt session marks frames seen before its state is installed in the live client
 
-target: 1.8.0
+target: 1.9.0
 
 Found while building KILL-2 (#2515, the ledgers carried inside the MLS state), not fixed there. The web
 catch-up walk decrypts in a session of its own and stages "seen" marks for the frames it read BEFORE

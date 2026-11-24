@@ -1,6 +1,6 @@
 ## The server images keep themselves up to date: pinned digests, Dependabot, a server-only release and a weekly scan
 
-target: 1.8.0
+target: 1.9.0
 
 **Owner, 2026-11-19:** the weekly scan of the deployed images TRIGGERS the server-only release by itself for a digest bump (a rebuilt image of the same version, with its health check and automatic rollback); anything larger opens an issue ([decisions](../decisions/owner-decisions-of-2026-11-19.md)).
 

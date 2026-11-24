@@ -1,6 +1,6 @@
 ## P2 - a queued outbox entry does not follow its conversation: a DM re-key strands it, a removal leaves it asking for a re-add for ever
 
-target: 1.8.0
+target: 1.9.0
 
 Found in the review of #3992 ([chat](../frontend/modules/chat.md#adds-to-one-conversation-are-not-serialized-so-an-add-renders-onto-the-row-as-it-is-now-2026-11-23),
 "Known limits"). An outbox entry is keyed by its group id, and two events change what that group
