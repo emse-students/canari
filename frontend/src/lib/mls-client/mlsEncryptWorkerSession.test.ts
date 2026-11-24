@@ -77,6 +77,77 @@ describe('encryptMlsStateOffThread', () => {
     expect(encryptMlsStateOnMainThreadMock).not.toHaveBeenCalled();
   });
 
+  /** A worker that never answers on its own, with every listener it was given kept by type. */
+  function silentWorker() {
+    const listeners = new Map<string, Array<(event: unknown) => void>>();
+    const worker = {
+      postMessage: vi.fn(),
+      addEventListener: vi.fn((type: string, cb: (event: unknown) => void) => {
+        listeners.set(type, [...(listeners.get(type) ?? []), cb]);
+      }),
+      removeEventListener: vi.fn(),
+      terminate: vi.fn(),
+    } as unknown as Worker;
+    const fire = (type: string, event: unknown) =>
+      (listeners.get(type) ?? []).forEach((cb) => cb(event));
+    return { worker, fire };
+  }
+
+  // A checkpoint holds the tab's lead while it seals (`leadHolds.ts`), so its round trip must END
+  // on every way the worker can stop answering - never wait for the 60 s timeout (review of #4053).
+  it('rejects a round trip in flight when the worker is terminated', async () => {
+    const { worker } = silentWorker();
+    const job = encryptMlsStateOffThread(new Uint8Array([1]), 'k', {
+      enabled: true,
+      workerFactory: () => worker,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    disposeMlsEncryptWorker();
+
+    await expect(job).rejects.toMatchObject({ name: 'MlsEncryptWorkerTerminatedError' });
+    expect(worker.terminate).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a job still QUEUED behind the one in flight, instead of running it on a new worker', async () => {
+    const { worker } = silentWorker();
+    const factory = vi.fn(() => worker);
+    const first = encryptMlsStateOffThread(new Uint8Array([1]), 'k', {
+      enabled: true,
+      workerFactory: factory,
+    });
+    const queued = encryptMlsStateOffThread(new Uint8Array([2]), 'k', {
+      enabled: true,
+      workerFactory: factory,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    disposeMlsEncryptWorker();
+
+    await expect(first).rejects.toMatchObject({ name: 'MlsEncryptWorkerTerminatedError' });
+    await expect(queued).rejects.toMatchObject({ name: 'MlsEncryptWorkerTerminatedError' });
+    expect(factory).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['error', { message: 'boom' }, 'boom'],
+    ['messageerror', {}, 'messageerror'],
+  ])('rejects a round trip when the worker raises %s', async (type, event, said) => {
+    const { worker, fire } = silentWorker();
+    const job = encryptMlsStateOffThread(new Uint8Array([1]), 'k', {
+      enabled: true,
+      workerFactory: () => worker,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    fire(type, event);
+
+    await expect(job).rejects.toThrow(said);
+  });
+
   it('posts the payload under the field name the worker reads', async () => {
     // Regression: the v0.11.0 rename updated the worker's destructuring to `deviceKeyB64` but
     // left the sender posting `pin`, so the worker sealed with `undefined` and wasm-bindgen died

@@ -255,10 +255,19 @@ WebSocket frame / fetchPendingMessages
 
 ## Tab leadership
 
-`tabLeader.ts` uses a `BroadcastChannel` + heartbeat to elect a single leader tab:
+`tabLeader.ts` elects a single leader tab with a Web Lock (`canari-tab-leader`), and falls back to
+a `localStorage` heartbeat only where `navigator.locks` is missing (WebKitGTK):
 - Only the leader opens the WebSocket and runs `discoverMissingGroups`.
-- Followers skip `initializeConnection()` entirely.
-- Leadership transfers automatically if the leader tab is closed.
+- Followers skip `initializeConnection()` entirely, and hand their sends and commits to the leader
+  ([chat](modules/chat.md#a-follower-tabs-commits-are-run-by-the-leader-2026-11-08)).
+- The lead goes to a tab that can serve it. It transfers when the leader closes. A hidden leader
+  hands it to a visible tab that needs it, and a frozen one releases it
+  ([chat](modules/chat.md#the-lead-goes-to-a-tab-that-can-serve-a-hidden-leader-hands-it-over-2026-11-10)).
+  A leader whose own session ended (the keypad, a sign-out, an expired session) releases it, and
+  rejoins the election at its next login
+  ([chat](modules/chat.md#a-leader-whose-own-session-ended-gives-the-lead-up-2026-11-24)).
+- **Planned for `1.9.0`:** one browser-wide worker holds the MLS state instead of a leader tab
+  ([design](../backlog.d/a-browser-wide-worker-holds-the-mls-state-instead-of-a-leader-tab.md)).
 
 ## Building
 

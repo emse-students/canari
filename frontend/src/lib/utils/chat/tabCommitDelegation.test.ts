@@ -20,6 +20,7 @@ import type { TabCommitStore } from './tabCommitStore';
 import { frameHandoverExecutors, sealForHandover } from '$lib/mls-client/frameFromAnyTab';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
 import { toBase64 } from '$lib/utils/hex';
+import { leadHoldsInFlight, resetLeadHoldsForTests } from '$lib/mls-client/leadHolds';
 
 /**
  * A FOLLOWER TAB'S COMMIT, DONE BY THE LEADER - two tabs simulated in one realm.
@@ -197,6 +198,8 @@ interface Role {
   wiped?: Set<string>;
   /** Request ids that sort against the order the requests were made in. */
   idsAgainstOrder?: boolean;
+  /** The requester identity this page carried across its promotion reload (`adopts`). */
+  carries?: string;
 }
 
 function makeWorld() {
@@ -224,7 +227,8 @@ function tab(doc: string, world: ReturnType<typeof makeWorld>, role: Role) {
     newId: () => (role.idsAgainstOrder ? `${doc}-req-${9999 - ++n}` : `${doc}-req-${++n}`),
     // A clock that never moves: the order holds by the per-tab counter alone.
     orderKey: createOrderKeys(() => 0),
-    documentId: () => doc,
+    documentId: () => role.carries ?? doc,
+    adopts: (requester) => role.carries !== undefined && requester === role.carries,
     log: (message, level) => void lines.push({ message, level }),
   };
   const client = createDelegationClient(env);
@@ -283,8 +287,8 @@ function recordingExecutors() {
       runs.push(`emit-frame:${groupId}:${delivery}`);
       return { receivedAt: 42 };
     },
-    'seal-salon-message': async ({ channelId }) => {
-      runs.push(`seal-salon-message:${channelId}`);
+    'seal-salon-message': async ({ channelId }, run) => {
+      runs.push(`seal-salon-message:${channelId}${run?.adopted ? ':adopted' : ''}`);
       return { unavailable: 'key-group-not-held' };
     },
     'note-missing-seeds': async ({ seeds }) => {
@@ -450,19 +454,25 @@ describe('a follower is answered by a leader that lives', () => {
   it.each([
     ['at the PIN gate, its state not loaded yet', 'unknown'],
     ['locked again after its session', 'leader'],
-  ] as const)('a leader %s answers leader-unavailable and runs nothing', async (_, loaded) => {
-    const w = makeWorld();
-    const { runs } = servingLeader('L', w, { loaded, readiness: 'unavailable' });
-    const follower = tab('F', w, { leader: false });
+  ] as const)(
+    'a leader %s runs nothing and answers nothing: the tab that takes the lead runs it (review of #4053)',
+    async (_, loaded) => {
+      // Such a leader still leads only while its last MLS work settles (`leadHolds.ts`), then gives
+      // the lead up: answered `leader-unavailable` by it, the gesture would dead-end.
+      const w = makeWorld();
+      const { runs } = servingLeader('L', w, { loaded, readiness: 'unavailable' });
+      const follower = tab('F', w, { leader: false });
 
-    expect(await follower.delegate({ kind: 'create-group', name: 'club' })).toEqual({
-      status: 'refused',
-      reason: 'leader-unavailable',
-    });
-    await settle();
-    expect(runs).toEqual([]);
-    expect(w.databases.ids()).toEqual([]);
-  });
+      const answer = follower.delegate({ kind: 'create-group', name: 'club' });
+      await settle();
+      expect(runs).toEqual([]);
+      expect(w.databases.ids()).toEqual(['F-req-1']);
+
+      const next = servingLeader('N', w);
+      expect(await answer).toEqual({ status: 'done', value: { ok: true, key: 'g-club' } });
+      expect(next.runs).toEqual(['create-group:club']);
+    }
+  );
 
   it('a request no executor in the leader runs is answered not-delegable', async () => {
     const w = makeWorld();
@@ -475,6 +485,38 @@ describe('a follower is answered by a leader that lives', () => {
       status: 'refused',
       reason: 'not-delegable',
     });
+  });
+});
+
+// SECOND REVIEW OF #4053: a delegated salon seal waits on the salon's send gate, which only a
+// session end wakes. Run inside a lead hold, that wait kept an ended session in the lead - and every
+// follower's request with it. The executor takes NO hold: what it changes in the MLS state holds the
+// lead where it changes it (the mutex, a join, a mint), and a wait on the gate changes nothing.
+describe('a delegated gesture parked outside the MLS state holds no lead', () => {
+  it('a salon seal waiting on its send gate leaves the hold count at 0', async () => {
+    resetLeadHoldsForTests();
+    const w = makeWorld();
+    const leader = tab('L', w, { leader: true });
+    leader.server.listen();
+    let parked = false;
+    leader.server.register({
+      'seal-salon-message': () => {
+        parked = true;
+        // The gate's wait: nothing settles it here.
+        return new Promise(() => {});
+      },
+    });
+    const follower = tab('F', w, { leader: false });
+
+    void follower.delegate({
+      kind: 'seal-salon-message',
+      channelId: 'c1',
+      payload: { iv: 'aQ==', cipherText: 'aQ==' },
+    });
+    await settle();
+
+    expect(parked).toBe(true);
+    expect(leadHoldsInFlight()).toBe(0);
   });
 });
 
@@ -569,6 +611,108 @@ describe('a request nobody waits for is never run', () => {
     );
   });
 
+  describe('the asker is the tab the lead goes to (review of #4053)', () => {
+    /** L leads with a session that ended; F asks; the lead goes to F, whose promotion reloads it. */
+    async function askThenPromoteTheAsker(op: Parameters<ReturnType<typeof tab>['delegate']>[0]) {
+      const w = makeWorld();
+      const old = servingLeader('L', w, { readiness: 'unavailable' });
+      const asker = tab('F', w, { leader: false });
+      void asker.delegate(op);
+      await settle();
+      expect(w.databases.ids()).toEqual(['F-req-1']);
+      // L gives the lead up; F is promoted, and its promotion reload ends the page that asked -
+      // freeing its requester lock. The page the reload starts is the same TAB: it carries F.
+      old.leader.role.leader = false;
+      asker.kill();
+      const reloaded = servingLeader('F2', w, { carries: 'F' });
+      await settle();
+      return { w, reloaded };
+    }
+
+    it('the reloaded asker adopts its own gesture and runs it - never removed as a closed tab', async () => {
+      const { w, reloaded } = await askThenPromoteTheAsker({
+        kind: 'start-direct',
+        contact: 'bob',
+      });
+
+      expect(reloaded.runs).toEqual(['start-direct:bob']);
+      // Nobody reads the answer (the asking page is gone): the record is removed once run.
+      expect(w.databases.ids()).toEqual([]);
+      const said = reloaded.leader.lines.map((l) => l.message).join('\n');
+      expect(said).toContain('adopted and run here');
+      expect(reloaded.leader.lines.some((l) => l.level === 'warn')).toBe(false);
+    });
+
+    // Second review of #4053: none of a frame's callers (a forward, an invitation, a notice, an edit)
+    // keeps a durable queue, so a frame dropped here was a gesture lost.
+    it.each(['visible', 'mutation'] as const)(
+      'a %s frame it asked for is sent, and the missing echo of the page that asked is said',
+      async (delivery) => {
+        const { w, reloaded } = await askThenPromoteTheAsker({
+          kind: 'emit-frame',
+          groupId: 'g1',
+          frame: { iv: 'aQ==', cipherText: 'aQ==' },
+          delivery,
+        });
+
+        expect(reloaded.runs).toHaveLength(1);
+        expect(w.databases.ids()).toEqual([]);
+        const warned = reloaded.leader.lines.filter((l) => l.level === 'warn');
+        expect(warned.map((l) => l.message).join(' | ')).toContain(
+          'its own record of the send is not written'
+        );
+      }
+    );
+
+    // Third review of #4053: a salon seal is decided by its CALLER. A reaction, an edit, a poll, a
+    // forward or a notice has no queue to send it again, so it carries its post and is run (sealed
+    // AND posted by the executor); the salon text queue re-sends its own, so that one is dropped.
+    it('a salon seal that carries its post is run as adopted; one a queue re-sends is dropped', async () => {
+      const carried = await askThenPromoteTheAsker({
+        kind: 'seal-salon-message',
+        channelId: 'c1',
+        payload: { iv: 'aQ==', cipherText: 'aQ==' },
+        postIfAdopted: { messageId: 'm1' },
+      });
+      expect(carried.reloaded.runs).toEqual(['seal-salon-message:c1:adopted']);
+      expect(carried.w.databases.ids()).toEqual([]);
+
+      const queued = await askThenPromoteTheAsker({
+        kind: 'seal-salon-message',
+        channelId: 'c1',
+        payload: { iv: 'aQ==', cipherText: 'aQ==' },
+      });
+      expect(queued.reloaded.runs).toEqual([]);
+      expect(queued.w.databases.ids()).toEqual([]);
+    });
+
+    it("a call's transport frame is not sent late: its call ended with the page", async () => {
+      const { w, reloaded } = await askThenPromoteTheAsker({
+        kind: 'emit-frame',
+        groupId: 'g1',
+        frame: { iv: 'aQ==', cipherText: 'aQ==' },
+        delivery: 'transport',
+      });
+
+      expect(reloaded.runs).toEqual([]);
+      expect(w.databases.ids()).toEqual([]);
+    });
+
+    it("another tab's orphan is still removed unrun by a reloaded leader", async () => {
+      const w = makeWorld();
+      const other = tab('X', w, { leader: false });
+      void other.delegate({ kind: 'create-group', name: 'club' });
+      await settle();
+      other.kill();
+
+      const reloaded = servingLeader('F2', w, { carries: 'F' });
+      await settle();
+
+      expect(reloaded.runs).toEqual([]);
+      expect(w.databases.ids()).toEqual([]);
+    });
+  });
+
   it("a signed-out session's request is answered, deleted, and never run for the next one", async () => {
     const w = makeWorld();
     const follower = tab('F', w, { leader: false });
@@ -635,20 +779,49 @@ describe('the refusals that cannot be avoided', () => {
 });
 
 describe('round 2 of the review of #3160', () => {
-  it('a session that ends between the claim and the run runs nothing: leader-unavailable', async () => {
+  it('a session that ends between the claim and the run runs nothing there: handed back, run by the next leader (review of #4053)', async () => {
     const w = makeWorld();
     let reads = 0;
-    // Ready when the record is decided, signed out by the time the claim has committed.
+    // Ready when the record is decided (two reads), signed out by the time the claim has committed -
+    // the lead still held while the session's last MLS work settles (`leadHolds.ts`).
     const { runs } = servingLeader('L', w, {
-      readiness: () => (++reads === 1 ? 'ready' : 'unavailable'),
+      readiness: () => (++reads <= 2 ? 'ready' : 'unavailable'),
     });
     const follower = tab('F', w, { leader: false });
 
-    expect(await follower.delegate({ kind: 'remove', groupId: 'g1', memberId: 'bob' })).toEqual({
-      status: 'refused',
-      reason: 'leader-unavailable',
-    });
+    const answer = follower.delegate({ kind: 'remove', groupId: 'g1', memberId: 'bob' });
+    await settle();
     expect(runs).toEqual([]);
+    expect(w.databases.ids()).toEqual(['F-req-1']);
+
+    const next = servingLeader('N', w);
+    expect(await answer).toEqual({ status: 'done', value: 'committed' });
+    expect(next.runs).toEqual(['remove:g1:bob']);
+  });
+
+  it('a leader that gives the lead up between the claim and the run hands the request back, and the tab that takes the lead runs it (2026-11-24)', async () => {
+    const w = makeWorld();
+    let reads = 0;
+    // Ready when the record is decided; by the time the claim committed, its session ended and it
+    // gave the lead up (`setTabLeadEligibility`), which is what `answers` reads.
+    const { leader, runs } = servingLeader('L', w, {
+      readiness: () => {
+        if (++reads <= 2) return 'ready';
+        leader.role.leader = false;
+        return 'unavailable';
+      },
+    });
+    const follower = tab('F', w, { leader: false });
+
+    const answer = follower.delegate({ kind: 'start-direct', contact: 'bob' });
+    await settle();
+    expect(runs).toEqual([]);
+    // Not answered `leader-unavailable`: the record is pending again, for the next leader.
+    expect(w.databases.ids()).toEqual(['F-req-1']);
+
+    const next = servingLeader('N', w);
+    expect(await answer).toEqual({ status: 'done', value: { ok: true, key: 'dm-bob' } });
+    expect(next.runs).toEqual(['start-direct:bob']);
   });
 
   it("a wiped account's store is dropped and never read again", async () => {
