@@ -388,9 +388,12 @@ maybe('Lydia refunds against PostgreSQL', () => {
     const rows = await refundOf(record.id);
     expect(rows.filter((r) => r.status === 'confirmed')).toHaveLength(1);
 
+    // Seven lose, and the timing decides which refusal each meets (the same three the codes above
+    // allow): one that opens while the first is in flight is refused as in-progress, one that opens
+    // after it settled finds the payment no longer refundable, or its sum over what was paid.
     takeLogged(
       'warn',
-      /^\[LYDIA-REFUND\] refused on payment [0-9a-f-]{36}: refund [0-9a-f-]{36} is not settled \(in-progress\)$/,
+      /^\[LYDIA-REFUND\] refused on payment [0-9a-f-]{36}: (refund [0-9a-f-]{36} is not settled \(in-progress\)|not refundable \([a-z-]+\)|[0-9]+ cents over [0-9]+ already refunded exceeds the [0-9]+ paid)$/,
       7
     );
   });
@@ -406,11 +409,17 @@ maybe('Lydia refunds against PostgreSQL', () => {
     expect(refunded).toBeLessThanOrEqual(1000);
     expect(post.mock.calls.length).toBe(results.filter((r) => r.status === 'fulfilled').length);
 
-    // Six of the eight lose, and the race decides which of the two refusals each one meets.
+    // Every loser logs ONE refusal, and the race decides both how many lose and which of the two
+    // refusals each meets: a refund settling before the next one opens lets a second 400 in (800 of
+    // 1000), while on a loaded run all seven others meet the first one still in flight. So the winners
+    // are one or two, and the count of warnings is derived from the outcome, never assumed.
+    const winners = results.filter((r) => r.status === 'fulfilled').length;
+    expect(winners).toBeGreaterThanOrEqual(1);
+    expect(winners).toBeLessThanOrEqual(2);
     takeLogged(
       'warn',
       /^\[LYDIA-REFUND\] refused on payment [0-9a-f-]{36}: (refund [0-9a-f-]{36} is not settled \(in-progress\)|400 cents over 800 already refunded exceeds the 1000 paid)$/,
-      6
+      results.length - winners
     );
   });
 

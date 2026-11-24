@@ -560,7 +560,9 @@ async function takeSalonTurn(
       send.payload,
       messageId,
       undefined,
-      send.mentionedUserIds
+      send.mentionedUserIds,
+      // This queue sends it again after a reload, under the same id: an adopting leader must not.
+      { resentByQueue: true }
     );
     salonSends.delete(messageId);
     endServerHold(messageId);

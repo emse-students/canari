@@ -119,9 +119,14 @@ maybe('association slug derivation against PostgreSQL', () => {
     expect(a.slug).not.toBe(b.slug);
     expect(await slugsNamed('photo')).toEqual(['photo', 'photo-2']);
 
+    // The stem check refuses ONLY when the other create has already committed when this one reads the
+    // stems. Two transactions that overlap both pass it, and the unique index sends the loser to `-2`
+    // with no refusal logged (documented on `assertCotisationStemFree`): the interleaving decides
+    // between zero and one line, so the bounds are named, never one of them assumed.
     takeLogged(
       'warn',
-      '[COTISATION] stem "photo" refused for assoc=new: its tag names can coincide with another association\'s'
+      '[COTISATION] stem "photo" refused for assoc=new: its tag names can coincide with another association\'s',
+      { min: 0, max: 1 }
     );
   });
 
