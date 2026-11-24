@@ -163,6 +163,8 @@ describe('a keyboard the shell says will show', () => {
     const warn = vi.spyOn(Log, 'w').mockImplementation(() => {});
     const wrap = document.createElement('div');
     wrap.className = 'page-scroll-wrap';
+    // Pinned, as around the chat shell (.page-scroll-wrap:has(.app-layout) in app.css).
+    wrap.style.overflowY = 'hidden';
     document.body.appendChild(wrap);
     const shifts = () =>
       warn.mock.calls.filter(([, line]) => String(line).includes('the main page shifted')).length;

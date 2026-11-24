@@ -638,12 +638,15 @@ export function pageRevealsField(el: Element, iosShell: boolean): boolean {
   return iosShell || el.closest('.app-layout') === null;
 }
 
-/** The boxes of the main page that never scroll: a reveal that moves one shifts the whole page. */
-const PINNED_PAGE_BOXES = ['.page-scroll-wrap', '.app-layout'] as const;
+/** The boxes of the main page a reveal may shift: each is pinned only while its CSS refuses to scroll. */
+const PAGE_BOXES = ['.page-scroll-wrap', '.app-layout'] as const;
+
+/** Overflow values under which the reader can never scroll a box: a scroll of one is the page's doing. */
+const UNSCROLLABLE_OVERFLOW: ReadonlySet<string> = new Set(['hidden', 'clip']);
 
 /**
  * Which pinned box of the main page a `scroll` moved off its top, by selector - or null when the
- * scroll is any other element's, or leaves the box at 0.
+ * scroll is any other element's, leaves the box at 0, or moves a box the reader scrolls.
  *
  * In the iOS shell the page reveals every field of `.app-layout` itself ({@link pageRevealsField}), and
  * `scrollIntoView` scrolls every scrollable ancestor - an `overflow: hidden` one too. A wrapper taller
@@ -651,11 +654,19 @@ const PINNED_PAGE_BOXES = ['.page-scroll-wrap', '.app-layout'] as const;
  * sliver, fixed in CSS on 2026-08-07). Read from the scroll itself, a smooth reveal is caught on its
  * first step as an instant one is.
  *
+ * PINNED IS READ FROM THE BOX'S OWN COMPUTED OVERFLOW, NEVER FROM ITS NAME. `.page-scroll-wrap` is THE
+ * scroller of every ordinary page (the feed, a profile, the settings) and is `overflow: hidden` only
+ * around the chat shell (`.page-scroll-wrap:has(.app-layout)`, `app.css`): naming it pinned accused
+ * every scroll of every page (iPhone 12, `1.8.0-alpha.7`, eight WARNs with the keyboard closed). A box
+ * whose overflow refuses the reader's scroll can only have been moved by the page - that is the shift.
+ *
  * @param target the element a `scroll` event was fired at.
  */
 export function shiftedPageBox(target: EventTarget | null): string | null {
   if (!(target instanceof HTMLElement) || target.scrollTop === 0) return null;
-  return PINNED_PAGE_BOXES.find((selector) => target.matches(selector)) ?? null;
+  const box = PAGE_BOXES.find((selector) => target.matches(selector));
+  if (!box) return null;
+  return UNSCROLLABLE_OVERFLOW.has(getComputedStyle(target).overflowY) ? box : null;
 }
 
 /**
