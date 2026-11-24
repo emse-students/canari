@@ -45,8 +45,12 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-/** The allowed targets, earliest first. A shipped tier is removed from the head; a new one appended. */
-export const TIERS = ['1.8.0', '1.9.0', '1.10.0'];
+/**
+ * The allowed targets, in version order, earliest first. A shipped tier is removed from the head; a
+ * new one is INSERTED where its version falls (1.8.1 between 1.8.0 and 1.9.0), its opening logged in
+ * roadmap.md.
+ */
+export const TIERS = ['1.8.0', '1.8.1', '1.9.0', '1.10.0'];
 
 /** The title prefix that makes an entry a reading - owed a measurement and nothing else. */
 export const READING_PREFIX = 'Reading owed - ';

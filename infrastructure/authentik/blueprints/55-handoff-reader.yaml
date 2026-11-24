@@ -6,7 +6,7 @@
 # Applied by infrastructure/authentik/apply-blueprints.py, never by the worker's own discovery
 # (instantiate: false) - see infrastructure/authentik/README.md.
 #
-# WHY THESE FOUR PERMISSIONS, AND WHY NOT `check_access?for_user`. authentik 2026.8 honours
+# WHY THESE PERMISSIONS, AND WHY NOT `check_access?for_user`. authentik 2026.8 honours
 # `for_user` on `check_access` for a SUPERUSER only and silently answers for the caller otherwise, so
 # Canari reads the INPUTS of that answer instead: the user (`view_user`, global - a person is looked
 # up by uuid), the application (`view_application`, granted on the three handoff applications ONLY,
@@ -18,9 +18,14 @@
 # policies a handoff would otherwise skip: the provider's authentication and authorization flows
 # (`view_flow`) and their stage bindings (`view_flowstagebinding`), both GLOBAL for the same reason -
 # a provider switched to another flow tomorrow must still be readable, and a flow's configuration is
-# no secret. Canari mints only when the user is active, nothing is bound on the application, on
-# either flow or on a stage of them, the authorization flow asks no more than an authenticated user,
-# and the flag is true - and refuses otherwise.
+# no secret. And whether a user holds an Alumni user-source connection (`view_usersourceconnection`,
+# GLOBAL: without it authentik answers a list with the CALLER's own connections - none - instead of a
+# 403, which would read every person as unlinked), which the Alumni link step (D44, 45-consent.yaml)
+# asks. Canari mints only when the user is active, nothing is bound on the application, on either
+# flow or on a stage of them beyond the bindings it recognises by an allowlist (the terms, the Alumni
+# link step, the Alumni gate of MiGallery and Le Cercle - each answered from what this account reads,
+# apps/core-service/src/auth/handoff/), the authorization flow asks no more than an authenticated
+# user, and the flag is true - and refuses otherwise.
 #
 # THE TOKEN KEY IS `!Env`, never written here: the file is public. It is read from the worker's
 # environment (`MICONNECT_READER_TOKEN`, declared with `:?` in compose.yml), and the same value is the
@@ -42,6 +47,7 @@ entries:
         - authentik_rbac.view_system_settings
         - authentik_flows.view_flow
         - authentik_flows.view_flowstagebinding
+        - authentik_core.view_usersourceconnection
   - model: authentik_core.group
     identifiers:
       name: "miconnect-handoff-readers"

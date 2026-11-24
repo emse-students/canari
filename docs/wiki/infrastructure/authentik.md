@@ -452,10 +452,16 @@ CI then USES the token (`test-profile-editor.py`): read by uuid and PATCH work, 
 user and changing a flow answer `403`. The applier compares the token's `key` by digest like the other
 secrets, and ignores `expires` on a non-expiring token, which authentik rewrites at every apply
 ([profiles-and-access](../profiles-and-access.md#the-work-packages-in-order)).
-**Widened 2026-11-23 for the Alumni merge (D48)** with `delete_user` and `view_usersourceconnection`:
-the token deletes an `alumni-` duplicate (its Alumni connection cascades) and reads a user's links;
-it still may not create a user, add, change or delete a connection, nor touch a source or a flow, and
-CI proves each. A connection's `user` is read-only in authentik's API, so a link is never MOVED
+**For the Alumni merge (D48)** the role also holds `view_usersourceconnection`: the token reads a
+user's links and writes the merge MARK on a duplicate (`change_user`); it may not create or delete a
+user, add, change or delete a connection, nor touch a source or a flow, and CI proves each. The merge
+itself is authentik's: `miconnect-alumni-merge-or-refuse` moves the link and deletes the duplicate at
+its next Alumni sign-in (the Alumni section below). **A blueprint role's global permissions are
+EXACTLY its list**: authentik's apply only ADDS a role's permissions (`RoleSerializer.update` calls
+`assign_perms`, read in 2026.8.6), so `apply-blueprints.py` revokes, after the apply and inside the
+same transaction, any global permission a blueprint role holds beyond its `permissions:` list, and
+reports each as `REVOKED`. The upgrade test (`PREVIOUS_REF`) applies the previous `main` first, then
+this tree, then uses the token
 ([the Canari half as built](../profiles-and-access.md#the-work-packages-in-order)).
 
 **`55-handoff-reader.yaml` (F3-bound, 2026-11-11)** builds the READ-ONLY account Canari's handoff
@@ -519,6 +525,8 @@ provider names are read by nothing outside authentik, and those are the ones ren
 
 ## The Alumni SAML source: enabled, not promoted, measured (2026-11-23)
 
+The data each source sends, and what applications receive, are on [identity-sources](identity-sources.md).
+
 MiConnect is the Service Provider, Alumnforce (the alumni portal, run by Mevia) the Identity
 Provider.
 
@@ -540,9 +548,10 @@ Provider.
   instead**: what really arrives is read from the first logins.
 - **What the blueprint sets** (`30-sources.yaml`): that certificate as `miconnect-alumni-idp-signing`
   attached as `verification_kp`; `signed_response` and `signed_assertion` true; `enabled: true`,
-  `promoted: false` (no button on the login page, only the direct entry); `binding_type: REDIRECT`;
-  `name_id_policy: persistent`; the property mapping `miconnect-alumni-identity`, which maps the
-  display name from `firstname` + `lastname`.
+  `promoted: false` at first (no button on the login page, only the direct entry), `true` since
+  `1.8.0`; `binding_type: REDIRECT`; `name_id_policy: persistent`; the property mapping
+  `miconnect-alumni-identity`, which mapped the display name from `firstname` + `lastname` (what it
+  maps since `1.8.0`: [as built](#the-alumni-sso-as-built-for-180-d42-d49-owner-2026-11-23)).
 - **What authentik does with each NameID format** (read in 2026.8.6's `response.py`): a `transient`
   NameID skips every flow - a temporary user `ak-<id>-transient` is created, flagged to be deleted
   at logout and after `temporary_user_delete_after` (`days=1`), so a test leaves no lasting
@@ -554,7 +563,8 @@ Provider.
   (`CryptographyDeprecationWarning: Parsed a serial number which wasn't positive`), announcing an
   exception "in a future release". When authentik ships that release, this certificate stops
   loading: the fix is a certificate from the IdP with a positive serial.
-- **`cotisant` is not used** (owner, 2026-11-23): revisited once the login works.
+- **`cotisant`** was not used at first; since `1.8.0` it is read at every Alumni sign-in and decides
+  MiGallery and Le Cercle after the free window (D43, [as built](#the-alumni-sso-as-built-for-180-d42-d49-owner-2026-11-23)).
 - **Applied to production by hand on 2026-11-23**, with the master session's agreement and nothing
   deploying: the blueprints of the released `v1.7.3` with only this `30-sources.yaml` swapped in, a
   dry-run showing exactly the 7 changes of this source, then `apply`. Until the stable that carries
@@ -571,8 +581,158 @@ formats and names, never values, then was removed:
 | Encryption | none (no `EncryptedAssertion`; the source has no `encryption_kp`) |
 | Signed in through the CAS first | `source_linked`: authentik attached the alumni identity to the account already signed in - the colle of WP8, observed |
 
-**Next**: what an alumnus with NO MiConnect account meets (the `miconnect-enrollment` flow, with the
-`af_id` as username), then `promoted: true` and WP8 ([profiles-and-access](../profiles-and-access.md)).
+### The Alumni SSO as built for 1.8.0 (D42-D49, owner 2026-11-23)
+
+What [D42-D49](../profiles-and-access.md) became in the blueprints. Every row is driven in CI by
+`test-enrollment-flow.py` and `test-consent-flow.py`; what only a real Alumnforce sign-in can show is
+listed at the end.
+
+| Decision | Where | What it does |
+| --- | --- | --- |
+| D45 both ways in | `30-sources.yaml`, `40-authentication.yaml` | `promoted: true`, and the Alumni source is in `miconnect-identification`'s sources beside the CAS |
+| D46 account created through Alumni | mapping `miconnect-alumni-identity` | `username = alumni-<NameID>` (the NameID IS `af_id`, measured), `name` from the two names; the base property `email` is written by the enrolment and sent by no claim. The profile's `firstName`/`lastName` are taken as sent (`miconnect-enrollment-merge-status`), not split by capitals |
+| D43 the membership read | the same mapping, `miconnect-alumni-authentication` | the mapping carries `alumni_read = {cotisant, read_on}` (Paris date) under a key of its own, because the enrolment's cursus page REPLACES the prompt's `attributes`; the enrolment stores it as `attributes.alumni`; the Alumni source's OWN sign-in flow (`miconnect-alumni-authentication`: a user write, then the login) stores it at every later sign-in, its policy `miconnect-alumni-keep-only-the-read` reducing the prompt data to that one key IN PLACE, so a CAS account is never renamed. A `cotisant` other than `"1"`/`"0"` writes nothing and logs at warning: the last read keeps its date and expires with its year |
+| D47 routing page | `20-enrollment.yaml`, order 5-6 | `miconnect-enrollment-alumni-route`, bound on `miconnect-enrollment-from-alumni` (the plan's source is `alumni`): "I have a working School account" -> the redirect stage `miconnect-enrollment-alumni-to-cas` to `/if/flow/miconnect-auth/?next=/source/saml/alumni/` (the CAS sign-in, then back to the source SIGNED IN, which links); "I have none" -> the two usual pages. The CAS never sees it |
+| D44 link step | `45-consent.yaml`, `miconnect-authorization` order 30 and 40 | see below |
+| D42-D43 cotisant gate | `60-applications.yaml` | policy `miconnect-access-window-post-or-cotisant` + group `acces-<app>` on `migallery` and `cercle`, `policy_engine_mode: any` - the shape WP5 describes (D15), for these two apps only; WP5 extends it, it does not replace it |
+| claim `alumni_linked` | `10-mappings.yaml`, Canari's three providers | `miconnect-claim-alumni-linked`, scope `profile`: a boolean, true when the account holds a `UserSourceConnection` to `alumni`. Only Canari receives it (banner); the name is shared with core-service |
+| D49 link confirmation | `30-sources.yaml` | LIVE since the source is `POST_AUTO` (read 2026-11-23): see below |
+| D48 the merge, at sign-in | `30-sources.yaml`, `miconnect-alumni-authentication` order 1 | deny stage `miconnect-alumni-merge-refused` behind policy `miconnect-alumni-merge-or-refuse` (re-evaluated, `failure_result: true`): no mark on the pending user -> skipped; a mark Canari wrote (`attributes.alumni_merge_into`) that holds -> the Alumni connection moves onto the target and the duplicate is deleted in one transaction, the plan's pending user becomes the target, the person lands signed in as it; moved only if the target holds a CAS link, its name is the name Alumnforce asserts at THIS sign-in (folded as core-service's `normalizeName`), and the duplicate still carries the mark the sign-in began with (owner, 2026-11-24, D51), journalled as an Event `custom_alumni_merge`; a mark that does not hold -> nothing changes, `[ALUMNI_MERGE]` at error, an Event `custom_alumni_merge_refused`, the deny page ("contacte un administrateur"); a mark whose target no longer exists -> cleared, an ordinary sign-in. What must hold is in the blueprint's comment; `test-enrollment-flow.py` step M drives the merge, a hyphenated name, eleven refusals, a changed mark (`mark_changed`), the orphan and an orphan whose mark changed (kept) |
+
+**The link step (D44) sits in the authorization flow, and why.** It is the one flow EVERY
+application sign-in passes, and it runs signed in - which the link needs: authentik links an
+Alumni identity to the account of the session that reaches the source (`handle_existing_link`). In
+the CAS source's own sign-in flow the page would come after the login, so a person refusing the
+block would already be signed in and walk past it at the next authorization. Rule: promo P = the
+EARLIEST cursus; reminder from 1 September P+1; blocking from `max(1 February P+2, 2027-02-01)` -
+the `max` IS the grace, so no launch date is written. No cursus, a link, or an impersonated session:
+nothing. "Today" is the Paris date unless the plan carries a `date` under `miconnect_today`, which
+only the tests put there. **The reminder shows once per MiConnect session** (owner, 2026-11-24): the
+policy writes a marker into the session (`miconnect/alumni-link-reminded` = the account's pk, so
+another account signing in from the same browser is reminded) when the stage is due, and an
+authorization of the same session finds it and skips the reminder. It writes the same marker into
+THAT authorization's plan, because the executor re-evaluates a `re_evaluate_policies` binding at
+every request of the stage, "Continuer" included: without it the POST would find the session marker
+and drop the page under the person's click. No clock and no account attribute: a new session (a new
+browser, a sign-out) reminds again. The blocking page has no marker and shows at every
+authorization. `test-consent-flow.py` (step 9) drives the three.
+
+**What the link step cannot do: resume the authorization.** authentik resumes a flow after a source
+only through the Source stage (`SESSION_KEY_OVERRIDE_FLOW_TOKEN` is set by
+`authentik/enterprise/stages/source/stage.py` and nothing else, read in 2026.8.6), and that stage is
+ENTERPRISE: its serializer refuses to create one without a licence, so a blueprint cannot build it on
+MiConnect. Without it, a signed-in person reaching the source is linked at once and sent to their
+settings page ("Successfully linked"); they then sign in to the application again, where the step no
+longer shows. The blocking page also goes on if the link was made in another tab (its validation
+re-reads the link). Written in the step's text.
+
+> **DECISION (lead, 2026-11-23, REVERSIBLE): no Enterprise licence; the person lands on Settings
+> after the link and signs in to the application again.** Accepted as the cost of the free edition.
+> **The upgrade path, if a licence ever appears:** put an Enterprise **Source stage** (pointing at
+> the `alumni` source) in place of the link in the reminder and block pages of
+> `miconnect-authorization`; authentik then runs the source inside the flow and resumes the
+> authorization after it, so the person lands on the application. Nothing else changes: the
+> policies, the allowlist of the handoff gate (it recognises the bindings, not the stage type, but a
+> renamed stage must follow in `CONSENT_FLOW_ALLOWLIST`) and the case table stay.
+
+**The sign-in handoff answers the rule itself (lead, 2026-11-23, extending the terms precedent).**
+core-service's handoff gate refuses `policy_bound` for any enabled binding on the application, its
+provider's flows or their stage bindings - except an ALLOWLIST recognised by names
+(`miconnect-reader.client.ts`): the two terms bindings, the link step's two bindings on
+`miconnect-authorization` (`CONSENT_FLOW_ALLOWLIST`), and the gate on MiGallery and Le Cercle in its
+exact shape (mode `any`, the policy and `acces-<app>`, nothing else). The reminder is skippable, so it
+never stops a mint; the block and the gate are answered by `alumni-access.ts` and refuse
+`alumni_link_required` / `alumni_cotisant_required`, each its own 403 at info, and the app then opens
+the site through its MiConnect sign-in - where MiConnect shows that person the link page or why the
+gate stops them, their primary path. **Two implementations of one rule, kept equal by one table:**
+`libs/contracts/alumni-access.json` holds the constants (window, 1 September P+1, 1 February P+2,
+the 2027-02-01 grace, the posts, Paris) and the cases; core-service's spec runs them and asserts its
+constants, `test-consent-flow.py` runs them through the real flow and policy engine
+(`test-blueprints.sh` hands it the file), and a case sits on each side of every date constant, which
+pins the literals of these blueprints. Why two: `check_access?for_user` answers for a superuser only.
+The reader gained ONE global permission, `view_usersourceconnection` (to read the Alumni link; without
+it authentik silently lists the caller's own connections), proven in `test-handoff-reader.py` by use,
+with its writes refused. See [sessions](../sessions.md#the-sign-in-handoff-to-the-miconnect-sites-2026-11-08).
+
+**The gate is read at an authorization, not at a token refresh (read in authentik 2026.8.6's source,
+2026-11-24).** An application's policies decide at `/application/o/authorize/` (the policy access
+check before the flow is planned). The token endpoint re-runs them only for the `client_credentials`,
+`password` and token-exchange grants (`check_policy_access` in
+`authentik/providers/oauth2/token/base.py`, called from `client_credentials.py` and
+`token_exchange.py`); the `refresh_token` grant (`token/refresh_token.py`,
+`TokenView.create_refresh_response`) checks the token's provider, expiry, revocation, DPoP binding
+and scopes, and mints new tokens WITHOUT evaluating any binding. So a MiGallery or Le Cercle client
+holding a refresh token with `offline_access` keeps its access past the day the D43 gate would close
+it, until that refresh token expires or is revoked. Planned in `1.8.1`:
+[the-cotisant-gate-on-token-refresh](../backlog.d/the-cotisant-gate-on-token-refresh.md).
+
+**The link confirmation (D49) is live.** The owner, signed in through the CAS, reached the Alumni
+entry and was linked with no page. authentik runs a SAML source's pre-authentication flow only for
+the POST bindings (`InitiateView`); with `REDIRECT` it redirects straight to the IdP. So the source is
+`binding_type: POST_AUTO`, and `miconnect-alumni-pre-authentication` - a page naming the signed-in
+account ("Lier ton compte Alumni au compte MiConnect <name> ?") with a box its validation policy
+requires, shown only to a signed-in person - runs before the auto-submitted request. It shows on
+every signed-in way to the source: the Settings > Sources "Connect" button, the direct URL, the link
+step's link and the routing page's return (a marker for "the link step sent them" would be read when
+the flow is planned, where authentik caches a policy result per session and user, so it would
+silence the next direct visit). `test-enrollment-flow.py` drives it through `/source/saml/alumni/`:
+signed in, the page names the account, refuses without the tick and then hands over to the
+auto-submit towards the SSO URL; signed out, the auto-submit comes at once.
+
+**The page's boundary: what it names and what the link attaches to.** The confirmation names the
+account signed in WHEN the page is shown; authentik attaches the Alumni identity to the account the
+session holds when Alumnforce ANSWERS (`handle_existing_link` reads `request.user` at the ACS). Both
+moments sit inside the person's own round trip through Alumnforce, in their own browser session, so
+the page confirms the person's intent for their session; which account that session holds when the
+answer comes back is the person's own doing. The link shows on the account's Settings > Sources,
+where it is removed.
+
+> **READING (lead with the owner, production, 2026-11-23): Alumnforce accepts the POSTed request.**
+> With the source set to `POST_AUTO` in the admin, `/source/saml/alumni/` ran the pre-authentication
+> flow, showed authentik's "Redirecting" page and auto-submitted a POST to the SSO URL; Alumnforce
+> answered 303 to its own login page, which has a second-factor step of its own; the assertion came
+> back to the ACS, was accepted (302) and the person landed signed in on `/if/user/`. Measured on a
+> cold sign-in and on a second one. Production was put back to `REDIRECT` afterwards, matching main
+> then; this pull request makes `POST_AUTO` the blueprint's value, applied by the next stable.
+
+**Owed on production, by the lead (needs a real Alumni account, a person at a browser):**
+
+1. *Enrolment through Alumni* (after the stable): with an Alumni account that has NO MiConnect link,
+   sign in with the Alumni button -> the routing page; choose "I have none" -> the two pages -> an
+   account `alumni-<af_id>` whose e-mail is the Alumni one and whose `attributes.alumni` holds a
+   read dated today. Delete that test account afterwards.
+2. *Routing to the CAS*: same, choose "I have a School account" -> the CAS -> back to the Alumni
+   source -> "Successfully linked" on the CAS account; `alumni_linked` true in Canari's claims.
+3. *The read at sign-in*: sign out, sign in with the Alumni button on a linked account ->
+   `attributes.alumni.read_on` is today, the username and name unchanged.
+4. *D49 after the stable*: signed in through the CAS on an account with no Alumni link, open
+   `/source/saml/alumni/` -> the confirmation page naming the account -> tick -> Alumnforce -> the
+   link completes ("Successfully linked"). The POST itself was read on 2026-11-23 (above).
+
+**Before the first pre-release carrying this, the DEV smoke account and the store review accounts must not meet the link
+step**: `smoke-login.mjs` answers the terms prompt and nothing else, so an account with a cursus
+whose promo has reached September P+1 fails the dev deploy (the reminder is a prompt it does not
+answer), and a reviewer whose cursus has reached 1 February P+2 (never before 2027-02-01) is held on
+the block. The accounts: the dev smoke account (`DEV_SMOKE_USERNAME`, `development` environment) and
+every account of the review cohort (`SERVICE_ACCOUNT_USER_ID` on production: the reviewer and its
+counterpart). Give each NO cursus and a post (`EMSE`): no cursus means no link step ever, and the post
+opens MiGallery and Le Cercle whatever the date, by OIDC and by the handoff alike. A recent cursus
+instead would only defer both to a date nobody watches. A data change on MiConnect, the lead's.
+
+
+**The hot-path policies log nothing of their own, and the one line they cause is authentik's.**
+The merge, the read, the link step and the gate policies run at EVERY sign-in or authorization, so
+none has `execution_logging` (owner, 2026-11-24): it would write an Event per evaluation. Each logs
+its own decisions where they matter (`[ALUMNI_MERGE]` at error or warning, a malformed `cotisant` at
+warning). One line remains that is not ours: authentik's `ReevaluateMarker` logs
+`f(plan_inst): binding failed re-evaluation` AT WARNING each time a `re_evaluate_policies` binding is
+skipped - which is the ordinary path for the merge deny stage (no mark), the reminder (not due, or
+already shown) and the block. It is authentik's level for an expected outcome, and only a patch to
+authentik would lower it; read it as "this stage did not apply", never as a fault. The writes under
+these policies take a row lock and write only their own keys (`select_for_update`,
+`save(update_fields=["attributes"])`): the plan's copy of the account is as old as the sign-in, and
+saving it whole would undo an edit made meanwhile (`test-enrollment-flow.py` step J proves a
+concurrent profile edit survives).
 
 Traps found while writing this, each measured on authentik 2026.8.0:
 
@@ -596,6 +756,10 @@ Traps found while writing this, each measured on authentik 2026.8.0:
 - **A policy bound to a stage binding targets its `pbm_uuid`**, while `!Find` returns `.pk`, the
   child's own key. The target is therefore found on `authentik_policies.policybindingmodel`, through
   `flowstagebinding__...` lookups.
+- **A policy binding may name a GROUP instead of a policy** (the `acces-<app>` groups, 2026-11-23):
+  the applier's change report names such a binding by its group, and a bare binding target by its
+  child (flow, stage binding or application) - checked by exact type, since a child inherits those
+  accessors and an application asked for its `application` answers itself, which recursed.
 - **The brand is identified by `default: true`, not by its domain**: it IS the `authentik-default`
   brand, renamed, and authentik refuses a second default.
 - **`oidc_jwks` is a cache** of the CAS's keys, refreshed from `oidc_jwks_url`, so it is left out.

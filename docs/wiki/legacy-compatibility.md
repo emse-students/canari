@@ -101,11 +101,24 @@ deploy, publishes them without it, and deletes the queue entry right after posti
 `retired`, so the entry is usually gone when the follower looks. The shim in `onTabOutboxEvent`
 (`outbox.ts`) reads the entry when it is still there, else the rows THIS TAB holds: the one
 conversation holding an OWN row of that id is the message's (a peer's row of the same id is never
-picked), then handles the event as usual. Two own rows of one id, or none, warn and patch nothing.
+picked), then handles the event as usual. Two own rows of one id warn; none held is logged; either way nothing is patched.
 **Removal: 2026-12-15.** A
 tab lives one page life and the deploy reloads it, so three weeks past this version's first
 pre-release no tab of the old build is left: delete the shim block and make `conversationId`
 required on the three event types.
+
+### A tolerated degradation: an answerer on `1.7.3` or older answers one ask twice (2026-11-24)
+
+- **What.** An answering device on a build before the one carrying #4061 can still answer the same
+  history ask twice (one probe woke every waiting election; a late digest was answered and stored).
+  The asker refuses the second copy, and logs one ERROR line naming it -
+  `[HISTORY_ADDRESSED] REFUSED an addressed history_bundle ... - answered-already` - per repeated
+  chunk. Nothing is lost: the refused copy repeats an answer already ingested
+  ([history-answer-addressing](protocols/history-answer-addressing.md#the-rules-as-built)). No shim
+  is kept for it; the refusal is the right answer, and the line is the rollout tail, not a defect.
+- **Measured by.** The count of `answered-already` lines in uploaded client logs, which should fall
+  to zero as answerers update.
+- **Ends.** When the floor passes the release carrying #4061; a line after that is a defect.
 
 ### The restore options' `originsDigest`, for builds before `1.8.0` (2026-11-23)
 

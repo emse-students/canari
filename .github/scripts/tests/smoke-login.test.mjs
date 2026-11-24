@@ -42,7 +42,10 @@ const check = (cond, m) => (cond ? ok(m) : bad(m));
 const PASSWORD = 'correct-horse-battery';
 // Read from the blueprint, never typed: a version bump must not leave this test on the old text.
 const VERSION = /get\("cgu_version"\) != "(\d{4}-\d{2}-\d{2})"/.exec(
-  readFileSync(new URL('../../../infrastructure/authentik/blueprints/45-consent.yaml', import.meta.url), 'utf8')
+  readFileSync(
+    new URL('../../../infrastructure/authentik/blueprints/45-consent.yaml', import.meta.url),
+    'utf8'
+  )
 )?.[1];
 if (!VERSION) throw new Error('45-consent.yaml no longer names the version in its policy');
 
@@ -344,10 +347,26 @@ for (const [key, type] of [
   );
 }
 // And the prompt the blueprint builds, every field of it, is still one this script answers: a field
-// asking a new question there would otherwise fail only on the next deploy.
+// asking a new question there would otherwise fail only on the next deploy. The fields are the TERMS
+// stage's (`miconnect-consent-ask`): the same file also builds the Alumni link step's pages, which the
+// smoke account never meets (it holds no cursus - docs/wiki/infrastructure/authentik.md).
+const termsStage = consentBlueprint
+  .split('- model: ')
+  .find(
+    (e) =>
+      e.startsWith('authentik_stages_prompt.promptstage\n') &&
+      e.includes('name: "miconnect-consent-ask"')
+  );
+const termsPromptNames = [
+  ...(termsStage ?? '').matchAll(/!Find \[authentik_stages_prompt\.prompt, \[name, "([^"]+)"\]\]/g),
+].map((m) => m[1]);
 const blueprintFields = consentBlueprint
   .split('- model: ')
-  .filter((e) => e.startsWith('authentik_stages_prompt.prompt\n'))
+  .filter(
+    (e) =>
+      e.startsWith('authentik_stages_prompt.prompt\n') &&
+      termsPromptNames.includes(/name: "([^"]+)"/.exec(e)?.[1])
+  )
   .map((e) => ({
     field_key: /field_key: "([^"]+)"/.exec(e)?.[1],
     type: /\n\s*type: "([^"]+)"/.exec(e)?.[1],

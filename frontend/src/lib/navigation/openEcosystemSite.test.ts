@@ -3,7 +3,8 @@
  * THE ONE OPENER OF THE SIBLING SITES (docs/wiki/sessions.md, "The sign-in handoff"). Pinned: a
  * site whose handoff flag is on mints and opens the URL the server composed; one without the flag
  * opens plainly and mints nothing; a refused or failed mint opens plainly and says so at warn with
- * its class, except the estate's configured "not offered" state, said once at info; on the web the
+ * its class, except the estate's configured "not offered" state, said once at info, and a person
+ * MiConnect must show a page first (terms, Alumni link, Alumni gate), said at info; on the web the
  * tab is opened before the request and cut from its opener; and no registered origin is opened by
  * any other module of the app.
  */
@@ -27,7 +28,7 @@ vi.mock('$lib/utils/apiUrl', () => ({ coreUrl: () => 'https://canari.example' })
 vi.mock('$lib/utils/Log', () => ({ Log: { d: vi.fn(), i: vi.fn() } }));
 vi.mock('$lib/navigation/ecosystemSites', () => ({ ECOSYSTEM_SITES: sites.list }));
 
-const { openEcosystemSite, resetEcosystemSiteForTests, plainSiteUrl } =
+const { openEcosystemSite, resetEcosystemSiteForTests, plainSiteUrl, SETTLED_AT_MICONNECT } =
   await import('./openEcosystemSite');
 const { Log } = await import('$lib/utils/Log');
 
@@ -116,16 +117,34 @@ describe('openEcosystemSite', () => {
       expect(String(warn.mock.calls[0][0])).toContain('class=HandoffUrlMismatchError');
     });
 
-    it('says the unaccepted MiConnect terms at info, never at warn, and opens plainly', async () => {
-      apiFetch.mockImplementation(async () => json(403, { code: 'HANDOFF_TERMS_NOT_ACCEPTED' }));
-      openEcosystemSite('migallery');
-      await vi.waitFor(() => expect(openUrl).toHaveBeenCalledTimes(1));
-      expect(openUrl).toHaveBeenCalledWith('https://gallery.mitv.fr');
-      expect(warn).not.toHaveBeenCalled();
-      const said = vi
-        .mocked(Log.i)
-        .mock.calls.filter(([, line]) => String(line).includes('terms are not accepted'));
-      expect(said).toHaveLength(1);
+    it.each([
+      ['HANDOFF_TERMS_NOT_ACCEPTED', 'terms are not accepted'],
+      ['HANDOFF_ALUMNI_LINK_REQUIRED', 'link the Alumni account'],
+      ['HANDOFF_ALUMNI_COTISANT_REQUIRED', 'Alumni contributors only'],
+    ])(
+      'opens through the MiConnect sign-in on %s, said at info and never at warn',
+      async (code, words) => {
+        apiFetch.mockImplementation(async () => json(403, { code }));
+        openEcosystemSite('migallery');
+        await vi.waitFor(() => expect(openUrl).toHaveBeenCalledTimes(1));
+        expect(openUrl).toHaveBeenCalledWith('https://gallery.mitv.fr');
+        expect(warn).not.toHaveBeenCalled();
+        const said = vi.mocked(Log.i).mock.calls.filter(([, line]) => String(line).includes(words));
+        expect(said).toHaveLength(1);
+      }
+    );
+
+    it('knows every 403 code the contract gives a person MiConnect must see first', () => {
+      const contract = JSON.parse(
+        readFileSync(resolve('..', 'libs', 'contracts', 'ecosystem-sites.json'), 'utf8')
+      ) as { refusals: Record<string, string> };
+      expect(
+        [
+          contract.refusals.termsNotAccepted,
+          contract.refusals.alumniLinkRequired,
+          contract.refusals.alumniCotisantRequired,
+        ].sort()
+      ).toEqual(Object.keys(SETTLED_AT_MICONNECT).sort());
     });
 
     it('says an estate without the handoff once, at info, and never at warn', async () => {

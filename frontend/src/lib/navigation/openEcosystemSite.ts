@@ -10,7 +10,18 @@ const HANDOFF_LANDING_PATH = '/auth/handoff';
 
 /** The 404 code of an estate that holds no signing key: its configured state, not a failure. */
 const HANDOFF_NOT_OFFERED = 'HANDOFF_NOT_OFFERED';
-const HANDOFF_TERMS_NOT_ACCEPTED = 'HANDOFF_TERMS_NOT_ACCEPTED';
+
+/**
+ * The 403 codes of a person MiConnect itself must see first - the current terms, the Alumni link step
+ * (D44), or why the Alumni gate of MiGallery / Le Cercle stops them (D42-D43). For that person the
+ * site's own MiConnect sign-in IS the primary path, since MiConnect shows them that page: said at info
+ * with what MiConnect will ask, never at warn. The codes are libs/contracts/ecosystem-sites.json's.
+ */
+export const SETTLED_AT_MICONNECT: Readonly<Record<string, string>> = {
+  HANDOFF_TERMS_NOT_ACCEPTED: 'the current MiConnect terms are not accepted yet',
+  HANDOFF_ALUMNI_LINK_REQUIRED: 'MiConnect asks to link the Alumni account first',
+  HANDOFF_ALUMNI_COTISANT_REQUIRED: 'MiConnect admits Alumni contributors only past the free years',
+};
 
 /**
  * The mint answered with a URL that is not on the site asked for - which the server never composes.
@@ -57,7 +68,9 @@ async function mintSiteHandoff(site: EcosystemSite, dest: string): Promise<strin
 /**
  * Says why a site opens plainly although its handoff is on. The PRIMARY PATH FAILED, so it is said
  * at `warn` with its class (the refusal's code and status, or the error's name) - except an estate
- * that holds no key, whose plain open is its configured state and is said once at info.
+ * that holds no key, whose plain open is its configured state and is said once at info, and a person
+ * MiConnect must show a page first ({@link SETTLED_AT_MICONNECT}), for whom the site's MiConnect
+ * sign-in is the primary path, said at info.
  */
 function reportPlainOpen(site: EcosystemSite, err: unknown): void {
   if (err instanceof ApiRefusalError && err.status === 404 && err.code === HANDOFF_NOT_OFFERED) {
@@ -67,17 +80,15 @@ function reportPlainOpen(site: EcosystemSite, err: unknown): void {
     }
     return;
   }
-  // The person has not accepted the current MiConnect terms: EXPECTED for everyone after a terms
-  // version ships, until their next MiConnect sign-in. One info line per open, never a warn.
-  if (
-    err instanceof ApiRefusalError &&
-    err.status === 403 &&
-    err.code === HANDOFF_TERMS_NOT_ACCEPTED
-  ) {
-    Log.i(
-      'ecosystemSite',
-      `${site.id} opens plainly: the current MiConnect terms are not accepted yet`
-    );
+  // MiConnect has a page to show this person first (terms, Alumni link, Alumni gate): EXPECTED for
+  // whole cohorts, and opening the site through its sign-in is how they reach that page. One info
+  // line per open, never a warn.
+  const settled =
+    err instanceof ApiRefusalError && err.status === 403 && err.code
+      ? SETTLED_AT_MICONNECT[err.code]
+      : undefined;
+  if (settled) {
+    Log.i('ecosystemSite', `${site.id} opens through its MiConnect sign-in: ${settled}`);
     return;
   }
   const cls =
@@ -112,7 +123,8 @@ function openInSystemBrowser(url: string, site: EcosystemSite): void {
  * A site whose `handoff` flag is on is opened SIGNED IN: a token is minted for this tap
  * ({@link mintSiteHandoff}) and the site redeems it. A site without the flag is opened plainly,
  * which is today's behaviour and not a fallback. A refused or failed mint opens it plainly too, and
- * THAT is a fallback: said at warn with its class ({@link reportPlainOpen}).
+ * THAT is a fallback: said at warn with its class ({@link reportPlainOpen}) - unless MiConnect has a
+ * page to show the person first, which only its own sign-in reaches.
  *
  * Never leaves Canari: the system browser on the native shells; a NEW TAB on the web, opened
  * `about:blank` in the click's own turn - a window opened after an `await` is no longer a user

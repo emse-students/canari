@@ -87,9 +87,25 @@ export const CORE_ERASURE_STATEMENTS: readonly {
     sql: `UPDATE profile_changes SET "actorId" = $2 WHERE "actorId" = $1`,
     replacement: DELETED_ACCOUNT,
   },
-  // The Alumni merges made INTO this account (D48, migration 028): its history, gone with it; where
-  // the erased account was the admin who merged, the row keeps the merge without the admin's id.
-  { label: 'alumni_merges', sql: `DELETE FROM alumni_merges WHERE "targetUserId" = $1` },
+  // The Alumni merges made INTO this account (D48, migrations 028-029): its history, gone with it -
+  // found by its Canari id, or by its MiConnect uuid when it had no Canari account at the merge (read
+  // from the `users` row, which this transaction deletes LAST). A CLOSED merge is deleted. An OPEN one
+  // keeps its row with the target's identifiers blanked: the mark at MiConnect stands, and the row is
+  // what erases the DUPLICATE's Canari account once MiConnect merged (`AlumniMergeService.complete`) -
+  // deleting it would leave that account behind. Where the erased account was the admin who merged,
+  // the row keeps the merge without the admin's id. The table has an entity (`AlumniMerge`), so a
+  // stack built by `synchronize` has it too.
+  {
+    label: 'alumni_merges',
+    sql: `DELETE FROM alumni_merges WHERE "completedAt" IS NOT NULL
+            AND ("targetUserId" = $1 OR "targetUuid" = (SELECT "miconnectUuid" FROM users WHERE id = $1))`,
+  },
+  {
+    label: 'alumni_merges_open',
+    sql: `UPDATE alumni_merges SET "targetUserId" = NULL, "targetUuid" = $2 WHERE "completedAt" IS NULL
+            AND ("targetUserId" = $1 OR "targetUuid" = (SELECT "miconnectUuid" FROM users WHERE id = $1))`,
+    replacement: DELETED_ACCOUNT,
+  },
   {
     label: 'alumni_merges_actor',
     sql: `UPDATE alumni_merges SET "actorId" = $2 WHERE "actorId" = $1`,

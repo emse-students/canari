@@ -42,6 +42,8 @@
     "badDest": "HANDOFF_BAD_DEST",
     "accessRefused": "HANDOFF_ACCESS_REFUSED",
     "termsNotAccepted": "HANDOFF_TERMS_NOT_ACCEPTED",
+    "alumniLinkRequired": "HANDOFF_ALUMNI_LINK_REQUIRED",
+    "alumniCotisantRequired": "HANDOFF_ALUMNI_COTISANT_REQUIRED",
     "miconnectUnavailable": "HANDOFF_MICONNECT_UNAVAILABLE"
   }
 }

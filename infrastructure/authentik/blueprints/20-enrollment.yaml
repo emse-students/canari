@@ -160,16 +160,27 @@ entries:
         posts = [post for key, post in (("post_emse", "EMSE"), ("post_me", "ME"), ("post_alumni", "ALUMNI")) if prompt_data.get(key)]
         campus = prompt_data.get("campus")
         attributes["school_status"] = "Elève" if student else "Personnel de l'école"
-        parts = (prompt_data.get("name") or "").strip().split()
-        last = [part for part in parts if part == part.upper() and len(part) > 1]
-        first = [part for part in parts if not (part == part.upper() and len(part) > 1)]
+        # The membership read of an Alumni enrolment (D43, 30-sources.yaml), kept like every later one.
+        if prompt_data.get("alumni_read"):
+            attributes["alumni"] = prompt_data["alumni_read"]
+        # The Alumni source sends the two names apart (`firstname`, `lastname`); the CAS sends one
+        # display name, split by its capitals.
+        given = (prompt_data.get("firstname") or "").strip()
+        family = (prompt_data.get("lastname") or "").strip()
+        if given or family:
+            first_name, last_name = given, family
+        else:
+            parts = (prompt_data.get("name") or "").strip().split()
+            last = [part for part in parts if part == part.upper() and len(part) > 1]
+            first = [part for part in parts if not (part == part.upper() and len(part) > 1)]
+            first_name, last_name = " ".join(first) or (parts[0] if parts else ""), " ".join(last)
         attributes["profile"] = {
             "version": 1,
             "campus": campus,
             "cursus": cursus,
             "posts": posts,
-            "firstName": " ".join(first) or (parts[0] if parts else ""),
-            "lastName": " ".join(last),
+            "firstName": first_name,
+            "lastName": last_name,
         }
         prompt_data["attributes"] = attributes
         request.context["prompt_data"] = prompt_data
@@ -202,6 +213,48 @@ entries:
       target: !Find [authentik_policies.policybindingmodel, [flow__slug, "miconnect-enrollment"]]
       policy: !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-enrollment-from-a-source"]]
       order: 0
+  # THE ROUTING PAGE (D47, owner 2026-11-23): an Alumni identity with no MiConnect link first says
+  # whether it still has a working School account. "Yes" leaves this enrolment for the CAS sign-in,
+  # which comes back to the Alumni source signed in, so authentik LINKS the identity to the School
+  # account instead of creating a second one; "no" goes on to the two usual pages. The CAS never
+  # sees this page: its binding asks for the Alumni source. Driven by test-enrollment-flow.py.
+  - model: authentik_policies_expression.expressionpolicy
+    identifiers:
+      name: "miconnect-enrollment-from-alumni"
+    attrs:
+      execution_logging: true
+      expression: "return getattr(context.get(\"source\"), \"slug\", None) == \"alumni\""
+  - model: authentik_policies_expression.expressionpolicy
+    identifiers:
+      name: "miconnect-enrollment-alumni-chose-cas"
+    attrs:
+      execution_logging: true
+      expression: "return context.get(\"prompt_data\", {}).get(\"alumni_route\") == \"cas\""
+  - model: authentik_stages_prompt.prompt
+    identifiers:
+      name: "miconnect-enrollment-prompt-alumni-route"
+    attrs:
+      field_key: "alumni_route"
+      label: "Tu te connectes pour la première fois avec ton compte Alumni :"
+      type: "radio-button-group"
+      placeholder: "return [{\"label\": \"J'ai un compte de l'École qui fonctionne : je me connecte d'abord avec le CAS, pour y lier mon compte Alumni\", \"value\": \"cas\"}, {\"label\": \"Je n'ai plus de compte de l'École : je crée mon compte MiConnect\", \"value\": \"create\"}]"
+      placeholder_expression: true
+      order: 1
+      required: true
+  - model: authentik_stages_prompt.promptstage
+    identifiers:
+      name: "miconnect-enrollment-alumni-route"
+    attrs:
+      fields:
+        - !Find [authentik_stages_prompt.prompt, [name, "miconnect-enrollment-prompt-alumni-route"]]
+  # The CAS sign-in of the login flow, sent back to the Alumni source afterwards (`next`): signed in,
+  # the person is linked, not enrolled a second time.
+  - model: authentik_stages_redirect.redirectstage
+    identifiers:
+      name: "miconnect-enrollment-alumni-to-cas"
+    attrs:
+      mode: "static"
+      target_static: "/if/flow/miconnect-auth/?next=%2Fsource%2Fsaml%2Falumni%2F"
   - model: authentik_stages_prompt.promptstage
     identifiers:
       name: "miconnect-enrollment-ask-affiliations"
@@ -231,6 +284,32 @@ entries:
   - model: authentik_stages_user_login.userloginstage
     identifiers:
       name: "miconnect-login"
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "miconnect-enrollment"]]
+      stage: !Find [authentik_stages_prompt.promptstage, [name, "miconnect-enrollment-alumni-route"]]
+      order: 5
+    attrs:
+      evaluate_on_plan: false
+      re_evaluate_policies: true
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_policies.policybindingmodel, [flowstagebinding__target__slug, "miconnect-enrollment"], [flowstagebinding__stage__name, "miconnect-enrollment-alumni-route"], [flowstagebinding__order, 5]]
+      policy: !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-enrollment-from-alumni"]]
+      order: 0
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "miconnect-enrollment"]]
+      stage: !Find [authentik_stages_redirect.redirectstage, [name, "miconnect-enrollment-alumni-to-cas"]]
+      order: 6
+    attrs:
+      evaluate_on_plan: false
+      re_evaluate_policies: true
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_policies.policybindingmodel, [flowstagebinding__target__slug, "miconnect-enrollment"], [flowstagebinding__stage__name, "miconnect-enrollment-alumni-to-cas"], [flowstagebinding__order, 6]]
+      policy: !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-enrollment-alumni-chose-cas"]]
+      order: 0
   - model: authentik_flows.flowstagebinding
     identifiers:
       target: !Find [authentik_flows.flow, [slug, "miconnect-enrollment"]]

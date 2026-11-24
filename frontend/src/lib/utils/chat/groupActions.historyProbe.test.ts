@@ -163,7 +163,9 @@ describe('sendHistoryProbe - a register owed', () => {
     const [body] = sentBodies(mlsService);
     expect(body.register).toBe(true);
     expect(typeof body.answerKey).toBe('string');
-    expect(takeAddressedAsk(GROUP, body.requestId as string, 'peer:p1', true)?.ask).toMatchObject({
+    expect(
+      takeAddressedAsk(GROUP, body.requestId as string, 'peer:p1', true).taken?.ask
+    ).toMatchObject({
       kind: 'digest',
       register: true,
     });
