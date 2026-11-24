@@ -14,6 +14,8 @@ import {
   pinSafeAreaBottom,
   revealBehavior,
   scrollFocusedFieldIntoView,
+  pageRevealsField,
+  shiftedPageBox,
   type ViewportMeasurement,
 } from './keyboardViewport.svelte';
 import { readFileSync } from 'node:fs';
@@ -362,6 +364,50 @@ describe('the reveal of a focused field (iPhone 12, v1.2.9-alpha.4)', () => {
     const scrollIntoView = focusedModalField();
     scrollFocusedFieldIntoView('smooth');
     expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'auto' }));
+  });
+
+  /**
+   * THE PAGE IS THE ONE REVEAL IN THE iOS SHELL (review of #4058): WebKit's reveal waits for a keyboard
+   * will-show the shell detached from the WebView, so a field the page leaves alone is left behind the
+   * keyboard. Outside the iOS shell the main page's fields stay the engine's (Chromium reveals them).
+   */
+  it('reveals every field but the composer in the iOS shell, and leaves the main page to the engine elsewhere', () => {
+    const inside = (...classes: string[]) => {
+      let parent: HTMLElement = document.body;
+      for (const c of classes) {
+        const box = document.createElement('div');
+        box.className = c;
+        parent.appendChild(box);
+        parent = box;
+      }
+      const field = document.createElement('input');
+      parent.appendChild(field);
+      return field;
+    };
+    const composer = inside('app-layout', 'chat-composer-footer');
+    const mainPage = inside('app-layout', 'post-comments');
+    const modal = inside('modal');
+    expect(pageRevealsField(composer, true)).toBe(false);
+    expect(pageRevealsField(composer, false)).toBe(false);
+    expect(pageRevealsField(mainPage, true)).toBe(true);
+    expect(pageRevealsField(mainPage, false)).toBe(false);
+    expect(pageRevealsField(modal, true)).toBe(true);
+    expect(pageRevealsField(modal, false)).toBe(true);
+  });
+
+  it('names a pinned box of the main page a scroll moved off its top, and nothing else', () => {
+    const box = (className: string, top: number) => {
+      const el = document.createElement('div');
+      el.className = className;
+      document.body.appendChild(el);
+      el.scrollTop = top;
+      return el;
+    };
+    expect(shiftedPageBox(box('page-scroll-wrap', 39))).toBe('.page-scroll-wrap');
+    expect(shiftedPageBox(box('app-layout', 12))).toBe('.app-layout');
+    expect(shiftedPageBox(box('app-layout', 0))).toBeNull();
+    expect(shiftedPageBox(box('chat-messages-scroll', 500))).toBeNull();
+    expect(shiftedPageBox(null)).toBeNull();
   });
 
   // WHY A SOURCE TEST (WP-T5: keep). `scroll-margin` is a CSS rule and happy-dom computes no style,

@@ -106,6 +106,11 @@ export function toConversationMeta(
     serverReadWatermarks: convo.serverReadWatermarks,
     historyFloor: convo.historyFloor,
     startedAt: convo.startedAt,
+    // The server's floor under that key, persisted on its own so a reload keeps it a floor whatever
+    // page of the history is loaded - `updatedAt` alone is read back only while no message is.
+    ...(convo.serverLastMessageAt !== undefined
+      ? { serverLastMessageAt: convo.serverLastMessageAt }
+      : {}),
     ...(convo.nameAt !== undefined ? { nameAt: convo.nameAt } : {}),
     ...nameRankFields(convo),
     ...(convo.nameSync !== undefined ? { nameSync: convo.nameSync } : {}),
@@ -553,6 +558,8 @@ export interface ConversationRowSpec {
   /** Explicit `null` means "this conversation has no avatar"; absent means "this site does not know". */
   imageMediaId?: string | null;
   lastMessageAt?: number;
+  /** See {@link Conversation.serverLastMessageAt}; absent keeps `existing`'s. */
+  serverLastMessageAt?: Conversation['serverLastMessageAt'];
   readWatermarks?: Conversation['readWatermarks'];
   serverReadWatermarks?: Conversation['serverReadWatermarks'];
   historyFloor?: Conversation['historyFloor'];
@@ -602,6 +609,7 @@ export function buildConversationRow(spec: ConversationRowSpec): Conversation {
   // avatar, and `null ?? existing` silently restores the one it was replacing.
   const imageMediaId = spec.imageMediaId !== undefined ? spec.imageMediaId : existing?.imageMediaId;
   const lastMessageAt = spec.lastMessageAt ?? existing?.lastMessageAt;
+  const serverLastMessageAt = spec.serverLastMessageAt ?? existing?.serverLastMessageAt;
   const readWatermarks = spec.readWatermarks ?? existing?.readWatermarks;
   const serverReadWatermarks = spec.serverReadWatermarks ?? existing?.serverReadWatermarks;
   const historyFloor = spec.historyFloor ?? existing?.historyFloor;
@@ -640,6 +648,7 @@ export function buildConversationRow(spec: ConversationRowSpec): Conversation {
     ...(directPeerId ? { directPeerId } : {}),
     ...(imageMediaId !== undefined ? { imageMediaId } : {}),
     ...(lastMessageAt !== undefined ? { lastMessageAt } : {}),
+    ...(serverLastMessageAt !== undefined ? { serverLastMessageAt } : {}),
     ...(readWatermarks !== undefined ? { readWatermarks } : {}),
     ...(serverReadWatermarks !== undefined ? { serverReadWatermarks } : {}),
     ...(historyFloor !== undefined ? { historyFloor } : {}),
@@ -1130,6 +1139,7 @@ export function restoredConversationRow(
       serverReadWatermarks: meta.serverReadWatermarks,
       historyFloor: meta.historyFloor,
       startedAt: meta.startedAt,
+      serverLastMessageAt: meta.serverLastMessageAt,
       localReadSeed: meta.localReadSeed,
     });
   }
@@ -1167,6 +1177,7 @@ export function restoredConversationRow(
     serverReadWatermarks: meta.serverReadWatermarks,
     historyFloor: meta.historyFloor,
     startedAt: meta.startedAt,
+    serverLastMessageAt: meta.serverLastMessageAt,
     nameAt: meta.nameAt,
     nameRank: nameRankFields(meta),
     nameSync: meta.nameSync,
@@ -1331,6 +1342,10 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
         const serverReadWatermarks = live.serverReadWatermarks ?? meta.serverReadWatermarks;
         const historyFloor = live.historyFloor ?? meta.historyFloor;
         const startedAt = live.startedAt ?? meta.startedAt;
+        const serverLastMessageAt = Math.max(
+          live.serverLastMessageAt ?? 0,
+          meta.serverLastMessageAt ?? 0
+        );
         ctx.conversations.set(meta.id, {
           ...live,
           ...(lastMessageAt !== undefined ? { lastMessageAt } : {}),
@@ -1338,6 +1353,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
           ...(serverReadWatermarks !== undefined ? { serverReadWatermarks } : {}),
           ...(historyFloor !== undefined ? { historyFloor } : {}),
           ...(startedAt !== undefined ? { startedAt } : {}),
+          ...(serverLastMessageAt > 0 ? { serverLastMessageAt } : {}),
         });
       }
       continue;
@@ -1682,24 +1698,37 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
  * Two devices holding the same messages therefore ordered them differently. `messages` is kept
  * sorted by `compareMessageOrder` (sent time first), so its last element IS the newest.
  *
- * @param convo the conversation row, only its `messages`, `lastMessageAt` and `startedAt` are read
- * @returns the key, 0 for a conversation with no message and no seed
+ * **AND NEVER BELOW WHAT THE SERVER SAYS (2026-11-24).** A device that holds no history yet - a new
+ * one, restoring 153 conversations over two minutes - had only creation times and the oldest pages
+ * of a restore to order by, and a conversation whose history never comes kept its creation for
+ * ever: the owner's "mes discussions ne sont pas dans l'ordre". The server's receive time of the
+ * newest visible frame (`serverLastMessageAt`, read on every connection's sweep) is the same fact
+ * for every device of every member, so it is a floor under the local key until the local history
+ * overtakes it.
+ *
+ * @param convo the conversation row, only its `messages`, `lastMessageAt`, `startedAt` and
+ *   `serverLastMessageAt` are read
+ * @returns the key, 0 for a conversation with no message, no seed and no server fact
  */
-export function conversationRecency(
-  convo: Pick<Conversation, 'messages' | 'lastMessageAt'> & { startedAt?: number }
-): number {
+export function conversationRecency(convo: RecencyFields): number {
+  const server = convo.serverLastMessageAt ?? 0;
   for (let i = convo.messages.length - 1; i >= 0; i--) {
     if (isNoticeRow(convo.messages[i])) continue;
     const at = messageTime(convo.messages[i]);
-    if (Number.isFinite(at)) return at;
+    if (Number.isFinite(at)) return Math.max(at, server);
   }
-  return convo.lastMessageAt ?? convo.startedAt ?? 0;
+  return Math.max(convo.lastMessageAt ?? convo.startedAt ?? 0, server);
 }
+
+/** What {@link conversationRecency} reads off a row. */
+type RecencyFields = Pick<Conversation, 'messages' | 'lastMessageAt' | 'serverLastMessageAt'> & {
+  startedAt?: number;
+};
 
 /** Newest first; equal keys fall back to the id so every device breaks a tie the same way. */
 export function compareConversationRecency(
-  a: Pick<Conversation, 'id' | 'messages' | 'lastMessageAt'> & { startedAt?: number },
-  b: Pick<Conversation, 'id' | 'messages' | 'lastMessageAt'> & { startedAt?: number }
+  a: RecencyFields & Pick<Conversation, 'id'>,
+  b: RecencyFields & Pick<Conversation, 'id'>
 ): number {
   return conversationRecency(b) - conversationRecency(a) || a.id.localeCompare(b.id);
 }

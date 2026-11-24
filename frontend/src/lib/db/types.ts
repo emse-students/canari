@@ -46,6 +46,12 @@ export interface ConversationMeta {
    */
   startedAt?: number;
   /**
+   * The server's receive time of the conversation's newest visible frame
+   * (`Conversation.serverLastMessageAt`), persisted so it stays a floor under the sidebar key after a
+   * reload, whatever page of the history is loaded (`conversationRecency`). Absent: never stated.
+   */
+  serverLastMessageAt?: number;
+  /**
    * The server time of the MLS statement that set `name` (`Conversation.nameAt`, `groupName.ts`).
    * Persisted beside the name so both are written by one save; absent reads as "never stated".
    */

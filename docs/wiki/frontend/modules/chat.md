@@ -6532,6 +6532,39 @@ transition joins it), `iosKeyboardRiseHandoff.test.ts` (the will-show observer, 
 `ChatArea.scrollAnchor.svelte.test.ts` (the reveal put back, the geometry lines read in their frame and
 in order, the assistive fall at INFO), `threadAnchor.test.ts` (the line). **Owed: the iPhone reading of the same gesture, ten cycles.**
 
+### A rest is two facts: the keyboard at rest AND its frame landed (2026-11-24)
+
+**What the iPhone said** (`1.8.0-alpha.6`, iPhone 12, the same gesture): #4023 passed 6 returns of 11.
+Every failing return logged `not a keyboard move of the engine, the flag falls (keyboard transition #N at
+rest)`, the transition at rest 36 to 45 ms before the move
+([the entry](../../backlog.d/p2-a-dm-thread-is-left-above-its-end-by-a-keyboard-reveal-that-lands-after-the-transition-rests.md)).
+
+**Why, from the syslog.** A keyboard that comes back with the app shows with no animation: UIKit's
+did-show follows its will-show at once, while the shell's rise is still waiting for the page's layout
+and its screen-update proof - before the WebView's frame is set. The rest went out from that did-show,
+the frame landed after it, and the move came with or after the frame (return #26: rest .750, the rise's
+proof .768, the move .795). On an ordinary rise the keyboard animates for ~400 ms and the frame lands
+long before the did-show, which is why only returns failed, and only some.
+
+**The fix: the iOS rest needs both facts, at both ends of the bridge.** The shell holds a rest heard
+while a rise has not set its frame and tells it from the settle of that frame, after its proof
+(`CanariTellPageKeyboardAtRest`, `CanariKeyboardLayoutSettled`; a newer will-show supersedes it). The
+page rests a transition only once the shell has said so AND the hand-off target has been spent by the
+resize (`noteKeyboardFrameAwaited` when `canariImeTarget` announces a height, `noteKeyboardFrameLanded`
+when `measureViewport` spends or withdraws it): whichever comes first waits for the other, and a rest
+the page has to hold is a WARN, since the shell now owes it after the frame. And WebKit's own keyboard
+inset, which scrolled the document 301 pt on the failing return #31 before any frame was set, is
+detached from the WebView, and WebKit's reveal with it, so the move the put-back exists for may simply
+never come any more; the two-fact rest keeps whatever still moves the pane classified ([the doubled inset](../keyboard-and-send-motion.md#the-shell-is-the-one-authority-over-the-keyboards-room-2026-11-24)).
+No clock: the rest is the conjunction of two facts, each carried from where it is known.
+
+Tests: `keyboardTransition.test.ts` (a rest before the frame is held, a frame first leaves the rest to
+the shell, a landing with nothing held rests nothing), `keyboardViewport.appReturn.test.ts` (the hand-off
+through `canariImeTarget` and the resize, in both orders), `ChatArea.scrollAnchor.svelte.test.ts` (a move
+after an early rest, frame still awaited, is put back), `iosKeyboardRiseHandoff.test.ts` (the owed rest
+and its settle), `keyboardTransition.test.ts` again (a newer change drops a held rest). **Owed: the iPhone
+reading of the same gesture, eleven returns, eleven at the end.**
+
 ### A short thread sits at the bottom, and asks for its past at entry (2026-11-14)
 
 The owner's Pixel 6a (`1.6.12`, 2026-11-14, the keyboard readings of that day, items 2 and 4): a
@@ -7247,6 +7280,8 @@ transport failure.** Three fixes:
 The sidebar sorts in a `$derived` (`Sidebar.svelte`, `filteredConversationEntries`), so it re-sorts on every `conversations.set`. What was wrong was the KEY. It was `Conversation.lastMessageAt`, a stored seed advanced by `addMessageToChat`, `batchAddMessages` and the FCM merge only - history replay, channel history, `renderStoredPage` and older pages replaced `messages` and left it behind - and written from `Date.now()` by `toConversationMeta` (empty conversation) and the DM name repair, which `Math.max` then made permanent. Two devices with the same messages ordered differently.
 
 Now `conversationRecency(convo)` (`utils/chat/conversations.ts`) is the time (`messageTime`: the server's acceptance, else `sentAt`) of the newest message in `messages` (sorted by `compareMessageOrder`), falling back to the persisted seed only while nothing is loaded, else 0; `compareConversationRecency` breaks ties by id. A message applied by ANY path - live, pending drain, history seed - moves the row, because the key is read from the list rather than remembered. Reactions, edits and read receipts do not touch `messages` order, so they do not move it. Known residue: the local-only "member joined" notice in `ChatBackgroundService` is stamped with the local clock and does count. Test: `conversations.recency.test.ts`.
+
+**The server's newest visible frame is a floor under the key (2026-11-24).** Owner report on a new web device (prod `1.7.3`): _"mes discussions ne sont pas dans l'ordre"_. A new device learns its 153 conversations from `GET /mls/users/:id/groups` at once, and their history over the next two minutes, oldest page first (`history_bundle` chunks of 200), from the members' devices that happen to be online; some never arrive (a group nobody online can answer for). So the list was ordered by group creation (`startedAt`) and then by whatever page had landed - and stayed wrong for every conversation whose history never came. The server already holds the fact every device of every member would agree on: the receive time of the newest frame it accepted into the group. `dm_group_last_message` (migration 057, one row per group) records it for every VISIBLE frame - `silent` false, durable, not addressed, never a Welcome or a Commit - upserted with GREATEST, so it only moves forward. **A table of its own, never a column of `dm_groups`:** an UPDATE of the group row takes FOR NO KEY UPDATE, which conflicts with the FOR SHARE every send into the group takes on that row (`enqueueForLiveGroup`), so the sends of one group would have queued behind each other's note (the first build did exactly that, and its comment claimed the opposite - review of #4064); the insert reads the group row FOR SHARE and only while it is live (`deletedAt IS NULL`), which conflicts with no send and, after a deletion that held the row, inserts nothing - so the post-commit note can never leave a row on a tombstone (`057_dm_group_last_message.integration.spec.ts` holds a FOR SHARE and writes under a 1 s lock timeout, with an UPDATE of the group row as the contrast that does time out). The row goes with its conversation (ON DELETE CASCADE, and `GROUP_OWNED_TABLES` for the soft delete that keeps the tombstone), and the hourly retention sweep deletes it once older than the queued copies it stands for (`MESSAGE_RETENTION_MS`, 90 days). A repeat that finishes an interrupted first send notes it at the first copy's instant (`finishFirstCopy`). The members' list returns it and is ordered by it - **except to a seat still awaiting admission** (someone who followed an invitation link and was never let in), which gets `null` and is sorted by the row's last update; the single-group read (`GET /mls/groups/:groupId`) never carries it. The client reads it on every connection's discovery sweep (`recordGroupStart`, forward only) into `Conversation.serverLastMessageAt`, PERSISTED on its own (`ConversationMeta.serverLastMessageAt`, SQLite column `server_last_message_at` added on every open), and `conversationRecency` is `max(local key, serverLastMessageAt)` - the local history takes over once it reaches the fact, and a reload keeps the floor whatever page is loaded (`updatedAt` alone was read back only while no message was). **Which notices move it:** every group event the members see travels as a visible frame, so the server cannot tell it from a message - a rename, `memberAdded`, `memberRemoved`, `memberLeft`, the photo change and `groupDeleted` all raise the row, where the local key, which skips notices, would not; the same on every device. The row's preview stays the newest LOADED message until the history arrives. **No backfill, and none is possible:** the history stream does not record which frames were silent, so a conversation already quiet when this shipped has no row and keeps the old order (its last update) until its next visible frame. The measurement that says when that residue is gone: `SELECT (l."groupId" IS NULL) AS unknown, count(*) FROM dm_groups g LEFT JOIN dm_group_last_message l ON l."groupId" = g.id WHERE g."deletedAt" IS NULL GROUP BY 1`, run N days after the deploy - the `unknown` share should fall to the conversations silent for N days. No content and no author: it is one more time per conversation of the kind every queued copy already carries, kept no longer than they are (register C3, and the privacy policy). Tests: `conversations.recency.test.ts`, `serverGroupConversation.groupStart.test.ts`, `sqliteConversationColumns.test.ts`, `members.controller.user-groups.spec.ts`, `messaging.durability.spec.ts`, `messaging.send-race.spec.ts`, `group-purge.spec.ts`, `queued-payload.integration.spec.ts`, `057_dm_group_last_message.integration.spec.ts`.
 
 ### A reply belongs to ONE conversation (2026-10-06)
 

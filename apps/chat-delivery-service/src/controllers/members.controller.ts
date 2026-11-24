@@ -22,6 +22,7 @@ import * as crypto from 'crypto';
 import Redis from 'ioredis';
 import { GroupMember } from '../entities/group-member.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
+import { GroupLastMessage } from '../entities/group-last-message.entity';
 import { Group } from '../entities/group.entity';
 import { KeyPackage } from '../entities/key-package.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
@@ -288,7 +289,9 @@ export class MembersController {
   @UseGuards(HeaderAuthGuard)
   @Get('mls/users/:userId/groups')
   /**
-   * Lists all groups a user belongs to, ordered by last update (most recent first).
+   * Lists all groups a user belongs to, most recent first: by the newest visible frame's receive
+   * time (`lastMessageAt`, `dm_group_last_message`) where the caller is admitted, else by the group
+   * row's last update.
    * The client relies on this order to seed the conversation list before local DB is ready.
    *
    * **This is the ONE place a client learns which groups exist**, and therefore the one place a
@@ -326,9 +329,7 @@ export class MembersController {
     // simply gone - two situations needing opposite responses.
     const isDistribution = (g: Group) => !!g.distributionWorkspaceId || !!g.distributionChannelId;
     const distribution = groups.filter(isDistribution);
-    const activeGroups = groups
-      .filter((g) => !isDistribution(g) && !g.deletedAt)
-      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+    const activeGroups = groups.filter((g) => !isDistribution(g) && !g.deletedAt);
     if (distribution.length > 0) {
       // Not expected: the distribution group is joined by external commit and holds no membership
       // rows, so reaching this line means something wrote one. Logged loudly because the exclusion
@@ -410,6 +411,21 @@ export class MembersController {
         );
       }
     }
+    // THE NEWEST VISIBLE FRAME'S RECEIVE TIME (migration 057), SAID TO AN ADMITTED SEAT ONLY. A seat
+    // still awaiting admission is someone who followed an invitation link and was never let in: the
+    // members' activity is not theirs to read, so the field is null there and the row sorts by its
+    // last update, as it did before the table existed.
+    const lastMessages = await this.dataSource.manager.find(GroupLastMessage, {
+      where: { groupId: In(activeGroups.map((g) => g.id)) },
+    });
+    const lastMessageAt = new Map(lastMessages.map((r) => [r.groupId, r.lastMessageAt]));
+    const lastMessageOf = (groupId: string): Date | null =>
+      seatAwaits(groupId) ? null : (lastMessageAt.get(groupId) ?? null);
+    activeGroups.sort(
+      (a, b) =>
+        listRecency(lastMessageOf(b.id), b.updatedAt) -
+        listRecency(lastMessageOf(a.id), a.updatedAt)
+    );
     // THE INSTANT THE GROUP CAME INTO EXISTENCE, because a client cannot derive it and keeps
     // asking other members for a past that never existed.
     //
@@ -438,6 +454,11 @@ export class MembersController {
       imageMediaId: g.imageMediaId ?? null,
       deletedAt: g.deletedAt ?? null,
       createdAt: g.createdAt ?? null,
+      // THE NEWEST VISIBLE FRAME'S RECEIVE TIME (migration 057): what orders the conversation list
+      // of a device that holds no history yet - a new device learns every group here, long before
+      // any history reaches it. Null when unknown (none inside the retention window, or none since
+      // the table exists) and for a seat awaiting admission; an older client ignores the field.
+      lastMessageAt: lastMessageOf(g.id),
       activeEpoch: g.activeEpoch,
       baseEpoch: baseOf.get(g.id) ?? null,
       deviceMembership: deviceMembershipOf.get(g.id) ?? null,
@@ -1511,4 +1532,13 @@ export class MembersController {
     }
     return { exclusions, withheld, addressedAnswers: true };
   }
+}
+
+/**
+ * What `GET /mls/users/:id/groups` orders by: the newest visible frame's receive time when the
+ * server holds one and may say it (migration 057), else the group row's last update - the order it
+ * had before.
+ */
+function listRecency(lastMessageAt: Date | null, updatedAt: Date): number {
+  return (lastMessageAt ?? updatedAt).getTime();
 }

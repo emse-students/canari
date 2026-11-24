@@ -335,4 +335,12 @@ export interface Conversation {
    * can sort correctly even when `messages[]` is still empty (startup stubs).
    */
   lastMessageAt?: number;
+  /**
+   * The server's receive time (Unix ms) of this conversation's newest visible frame, as the server's
+   * conversation list last said (`UserGroupRow.lastMessageAt`, read on every connection's sweep):
+   * a floor under the sidebar key while the local history is behind it (`conversationRecency`).
+   * Moved forward only. Persisted on its own (`ConversationMeta.serverLastMessageAt`), so it stays a
+   * floor after a reload whatever page of the history is loaded.
+   */
+  serverLastMessageAt?: number;
 }

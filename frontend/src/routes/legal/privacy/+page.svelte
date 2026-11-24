@@ -62,7 +62,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="23/11/2026"
+  updated="24/11/2026"
   {sections}
 >
   <!-- 1 -->
@@ -116,10 +116,13 @@
           l'heure et la taille de chaque message. Pour chaque message envoyé, il garde aussi
           l'identifiant aléatoire que lui donne l'application, avec l'appareil qui l'a envoyé, 90
           jours au plus, pour ne pas le remettre deux fois si l'application le renvoie après une
-          réponse perdue. Un pseudo donné à un membre dans une conversation voyage chiffré comme un
-          message et n'est jamais lu par le serveur : il est gardé sur les appareils des membres,
-          avec qui l'a défini et quand, effacé de l'appareil à la déconnexion, et il n'apparaît
-          jamais dans une notification.
+          réponse perdue. Pour chaque conversation, il garde aussi l'heure de réception de son
+          dernier message visible, sans contenu ni auteur, 90 jours au plus, pour qu'un nouvel
+          appareil affiche vos conversations dans l'ordre avant que leur historique n'arrive ; seuls
+          les membres de la conversation la reçoivent. Un pseudo donné à un membre dans une
+          conversation voyage chiffré comme un message et n'est jamais lu par le serveur : il est
+          gardé sur les appareils des membres, avec qui l'a défini et quand, effacé de l'appareil à
+          la déconnexion, et il n'apparaît jamais dans une notification.
         </dd>
       </div>
       <div>
@@ -937,6 +940,10 @@
           <tr>
             <td>Trace d'un message privé envoyé (expéditeur, appareil, identifiant aléatoire)</td>
             <td>90 jours au plus ; avant, avec la conversation ou le compte de l'expéditeur</td>
+          </tr>
+          <tr>
+            <td>Heure du dernier message d'une conversation (sans contenu ni auteur)</td>
+            <td>90 jours au plus ; avant, avec la conversation</td>
           </tr>
           <tr>
             <td>Messages de salon (chiffrés)</td>
