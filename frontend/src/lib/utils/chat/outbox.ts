@@ -1580,9 +1580,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         const held = queued ? [] : ownConversationsHolding(event.messageId);
         const conversationId = queued ?? (held.length === 1 ? held[0] : undefined);
         if (!conversationId) {
-          console.warn(
-            `[OUTBOX] ${event.messageId.slice(0, 8)}… ${event.type} from a tab that names no conversation, and ${held.length > 1 ? 'several conversations hold an own row of it' : 'no queue entry or own row names it'} - nothing is patched`
-          );
+          // NONE HELD is routine in the deploy window (a conversation not loaded here, a control
+          // entry on a peer's message): said, not accused. Only an AMBIGUOUS id is a defect.
+          const line = `[OUTBOX] ${event.messageId.slice(0, 8)}… ${event.type} from a tab that names no conversation, ${held.length > 1 ? 'and several conversations hold an own row of it' : 'and no queue entry or own row is held here'} - nothing is patched`;
+          if (held.length > 1) console.warn(line);
+          else log(line);
           return;
         }
         log(

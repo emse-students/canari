@@ -2001,20 +2001,22 @@ describe('outbox flusher - tab leadership (WP-MULTITAB-1)', () => {
     outbox.dispose();
   });
 
-  it('an older-tab event naming a message only a peer row holds accuses and patches nothing', async () => {
+  it('an older-tab event naming a message only a peer row holds is not held here: logged, not warned, nothing patched', async () => {
     isTabLeaderMock.mockReturnValue(false);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const log = vi.fn();
     const conversations = new SvelteMap<string, Conversation>([
       ['other', peerConvoWith('other', ['t1'], 'pending')],
     ]);
     const outbox = createOutbox(
-      makeDeps({ mlsService: makeMls(), storage: makeStorage([]), conversations })
+      makeDeps({ mlsService: makeMls(), storage: makeStorage([]), conversations, log })
     );
     const handler = tabOutboxMock.subscribeTabOutboxEvents.mock.calls.at(-1)![0];
     handler({ type: 'outbox_entry_sent', messageId: 't1' });
     await vi.waitFor(() =>
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining('no queue entry or own row'))
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('no queue entry or own row'))
     );
+    expect(warn).not.toHaveBeenCalled();
     expect(conversations.get('other')!.messages[0].status).toBe('pending');
     warn.mockRestore();
     outbox.dispose();
