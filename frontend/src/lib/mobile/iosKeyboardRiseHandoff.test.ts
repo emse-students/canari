@@ -150,6 +150,14 @@ describe('the iOS keyboard hand-off (canari_ios.mm)', () => {
       );
     }
     expect(detach).not.toContain('UIKeyboardDidShowNotification');
+    // A WebView that heard a keyboard before the detach keeps that inset for its life: an ERROR says so.
+    const tooLate = detach.indexOf('if (inset > 0.5) {');
+    expect(tooLate).toBeGreaterThan(detach.indexOf('adjustedContentInset.bottom'));
+    expect(detach.slice(tooLate)).toMatch(
+      /NSLog\(@"\[CanariIOS\] ERROR WebKit's own keyboard inset detached too late/
+    );
+    // WebKit's reveal goes with its will-show: the page reveals every field in this shell.
+    expect(viewport).toMatch(/return iosShell \|\| el\.closest\('\.app-layout'\) === null;/);
     expect(apply).toContain('CanariDetachWebKitKeyboardInset(webView);');
     expect(body('static void CanariOnDidBecomeActive(')).toContain(
       'CanariDetachWebKitKeyboardInset(CanariFindWebView());'

@@ -83,6 +83,21 @@ describe('a rest heard before the keyboard frame landed', () => {
     expect(keyboardTransitionMoving()).toBe(false);
   });
 
+  it('a newer keyboard change drops a held rest: the frame landing does not end the transition', () => {
+    noteKeyboardAtRest('test start');
+    const warn = vi.spyOn(Log, 'w').mockImplementation(() => {});
+    noteKeyboardTransition('the shell: a keyboard will show');
+    noteKeyboardFrameAwaited('a hand-off of 301px');
+    noteKeyboardAtRest('the shell: did show, ahead of its frame');
+    // A newer change joins the moving transition: its own rest is the one owed now.
+    noteKeyboardTransition('keyboard open 301px -> open 388px');
+    noteKeyboardFrameLanded('keyboard target 301 spent');
+    expect(keyboardTransitionMoving()).toBe(true);
+    noteKeyboardAtRest('the shell: the newer change at rest');
+    expect(keyboardTransitionMoving()).toBe(false);
+    warn.mockRestore();
+  });
+
   it('a landing with no frame awaited, or no rest held, rests nothing', () => {
     noteKeyboardAtRest('test start');
     noteKeyboardTransition('keyboard opened');

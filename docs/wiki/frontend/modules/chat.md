@@ -6210,14 +6210,16 @@ resize (`noteKeyboardFrameAwaited` when `canariImeTarget` announces a height, `n
 when `measureViewport` spends or withdraws it): whichever comes first waits for the other, and a rest
 the page has to hold is a WARN, since the shell now owes it after the frame. And WebKit's own keyboard
 inset, which scrolled the document 301 pt on the failing return #31 before any frame was set, is
-detached from the WebView ([the doubled inset](../keyboard-and-send-motion.md#the-shell-is-the-one-authority-over-the-keyboards-room-2026-11-24)).
+detached from the WebView, and WebKit's reveal with it, so the move the put-back exists for may simply
+never come any more; the two-fact rest keeps whatever still moves the pane classified ([the doubled inset](../keyboard-and-send-motion.md#the-shell-is-the-one-authority-over-the-keyboards-room-2026-11-24)).
 No clock: the rest is the conjunction of two facts, each carried from where it is known.
 
 Tests: `keyboardTransition.test.ts` (a rest before the frame is held, a frame first leaves the rest to
 the shell, a landing with nothing held rests nothing), `keyboardViewport.appReturn.test.ts` (the hand-off
 through `canariImeTarget` and the resize, in both orders), `ChatArea.scrollAnchor.svelte.test.ts` (a move
 after an early rest, frame still awaited, is put back), `iosKeyboardRiseHandoff.test.ts` (the owed rest
-and its settle). **Owed: the iPhone reading of the same gesture, eleven returns, eleven at the end.**
+and its settle), `keyboardTransition.test.ts` again (a newer change drops a held rest). **Owed: the iPhone
+reading of the same gesture, eleven returns, eleven at the end.**
 
 ### A short thread sits at the bottom, and asks for its past at entry (2026-11-14)
 

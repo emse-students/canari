@@ -620,6 +620,24 @@ export function revealBehavior(requested: ScrollBehavior, reducedMotion: boolean
 }
 
 /**
+ * Whether the PAGE reveals this focused field above the keyboard, or leaves it where it is.
+ *
+ * The chat composer never: it sits on the keyboard by layout. Inside `.app-layout` (the main page),
+ * everywhere but the iOS shell, the engine reveals the field itself - Chromium scrolls the focused
+ * editable into view on its own resize - and the page stays out of its way (05d09031a, 2026-05). In
+ * the iOS shell WebKit's own reveal is GONE since its keyboard observers were detached
+ * (`CanariDetachWebKitKeyboardInset`, `canari_ios.mm`): its reveal waits for a keyboard will-show that
+ * it no longer hears. The page is then the ONLY reveal, so it reveals every field but the composer.
+ *
+ * @param el the focused field.
+ * @param iosShell whether this runs in the iOS app.
+ */
+export function pageRevealsField(el: Element, iosShell: boolean): boolean {
+  if (el.closest('.chat-composer-footer')) return false;
+  return iosShell || el.closest('.app-layout') === null;
+}
+
+/**
  * Scrolls the focused field into the visible viewport (above the virtual keyboard).
  *
  * `nearest`, so a field already in view does not move. The room for the field AFTER it is not
@@ -631,7 +649,7 @@ export function revealBehavior(requested: ScrollBehavior, reducedMotion: boolean
 export function scrollFocusedFieldIntoView(behavior: ScrollBehavior = 'smooth'): void {
   const el = document.activeElement;
   if (!(el instanceof HTMLElement) || !isFocusableField(el)) return;
-  if (el.closest('.chat-composer-footer, .app-layout')) return;
+  if (!pageRevealsField(el, isTauriRuntime() && detectRuntimeDeviceOs() === 'ios')) return;
   const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
   const how = revealBehavior(behavior, reduced);
   Log.d('keyboardViewport', `revealing the focused field (${how})`);

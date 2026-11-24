@@ -58,7 +58,19 @@ export function keyboardTransitionMoving(): boolean {
  * @param why what started it, for the log (one line per transition).
  */
 export function noteKeyboardTransition(why: string): void {
-  if (keyboardTransitionMoving()) return;
+  if (keyboardTransitionMoving()) {
+    // A newer keyboard change joins the transition, and its own rest is the one owed now: a rest held
+    // for the change before it must not end this one when the frame lands (the shell drops a rest
+    // owed to an older show the same way, `CanariTellPageKeyboardShows`).
+    if (restHeld !== null) {
+      Log.d(
+        'keyboardTransition',
+        `#${count}: a newer change (${why}) drops the rest held (${restHeld})`
+      );
+      restHeld = null;
+    }
+    return;
+  }
   count++;
   Log.d('keyboardTransition', `#${count} starts: ${why}`);
   announceEdge('starts', why);

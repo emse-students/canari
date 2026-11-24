@@ -119,6 +119,45 @@ describe('a keyboard the shell says will show', () => {
     expect(keyboardTransitionMoving()).toBe(false);
   });
 
+  /**
+   * A FRESH FOCUS IN THE MAIN PAGE IS REVEALED BY THE PAGE (review of #4058): in the iOS shell WebKit's
+   * reveal is detached with its keyboard observers, so the hand-off's opening must scroll a field of
+   * `.app-layout` into view itself - once on the announced layout, once on the resize that spends it.
+   */
+  it("reveals a focused field of the main page on the keyboard's opening, the composer never", () => {
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+      cb(0);
+      return 0;
+    });
+    const layout = document.createElement('div');
+    layout.className = 'app-layout';
+    const field = document.createElement('input');
+    const reveal = vi.fn();
+    field.scrollIntoView = reveal;
+    const footer = document.createElement('footer');
+    footer.className = 'chat-composer-footer';
+    const composer = document.createElement('textarea');
+    const composerReveal = vi.fn();
+    composer.scrollIntoView = composerReveal;
+    footer.appendChild(composer);
+    layout.append(field, footer);
+    document.body.appendChild(layout);
+    try {
+      field.focus();
+      hooks().canariImeTarget?.(301);
+      resizeTo(543);
+      expect(reveal).toHaveBeenCalledWith(expect.objectContaining({ block: 'nearest' }));
+      resizeTo(844);
+      hooks().canariKeyboardAtRest?.();
+      composer.focus();
+      hooks().canariImeTarget?.(301);
+      resizeTo(543);
+      expect(composerReveal).not.toHaveBeenCalled();
+    } finally {
+      layout.remove();
+    }
+  });
+
   it('the hook is withdrawn at teardown', () => {
     teardown();
     expect(hooks().canariKeyboardShows).toBeUndefined();

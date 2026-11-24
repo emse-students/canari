@@ -274,11 +274,25 @@ frame less the keyboard again.
 
 **The fix: `CanariDetachWebKitKeyboardInset`** removes those four observers from the WebView (public
 `removeObserver:name:object:`), once per WebView, from the first activation and from every keyboard
-change. The keyboard is taken off the page once, by the frame. WebKit's `UIKeyboardDidShow` observer
-stays: its reveal of the focused field now measures a frame already out of the keyboard, and the page
-reveals its own fields (`scrollFocusedFieldIntoView`). The settled line carries `inset bottom=`, the scroll
-view's own bottom inset, so a second authority shows in the syslog. Verified by compiling only; the reading
-is in the entry.
+change. The keyboard is taken off the page once, by the frame. WebKit registers those observers once,
+from `_initializeWithConfiguration:` (`_registerForNotifications`, `addObserver:self`, the same since
+iOS 8), so they stay removed. A WebView that heard a keyboard before the detach would keep that inset
+for its life (its will-hide is gone too): the detach then logs an ERROR with the inset.
+
+**WebKit's reveal of the focused field goes with them** (review of #4058). Its
+`RevealFocusedElementDeferrer` waits for a keyboard will-show that only `_keyboardWillShow:` fulfils;
+did-show is not in its set while first-responder keyboard avoidance is on. So
+`_zoomToRevealFocusedElement` no longer runs, and **the page is the one reveal in the iOS shell**:
+`scrollFocusedFieldIntoView` (`block: 'nearest'`), on every keyboard opening (both updates of the
+hand-off, `keyboardRevealOnUpdate`), on every focus with the keyboard already up (`handleFocusIn`), and
+again when a keyboard-aware overlay settles (`handleTransitionEnd`). Which fields: `pageRevealsField` -
+every field but the chat composer, which sits on the keyboard by layout. Elsewhere `.app-layout` is
+still left to the engine (Chromium reveals the focused editable on its own resize); in the iOS shell
+nothing else would reveal it, so the page does. One authority for the keyboard's room (the frame), one
+for the reveal (the page).
+
+The settled line carries `inset bottom=`, the scroll view's own bottom inset, so a second authority shows
+in the syslog. Verified by compiling only; the reading is in the entry.
 
 Tests: `iosKeyboardRiseHandoff.test.ts` reads the native contract against the page's hooks,
 `iosKeyboardSettledReport.test.ts` the settle's place behind a proof, `keyboardRide.test.ts` the
