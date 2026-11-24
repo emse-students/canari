@@ -1,15 +1,18 @@
 <script lang="ts">
   import { page } from '$app/state';
   import { onDestroy, onMount, untrack } from 'svelte';
-  import { CircleCheck, CircleX, Loader } from '@lucide/svelte';
+  import { Banknote, CircleCheck, CircleX, Loader } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
-  import { confirmGuestReceipt } from '$lib/forms/api';
+  import { confirmGuestReceipt, switchGuestReceiptToCash, type GuestReceipt } from '$lib/forms/api';
+  import { formSubmitRefusalMessage } from '$lib/forms/answerBounds';
+  import { Log } from '$lib/utils/Log';
   import { formatAmount } from '$lib/forms/fillAnswers';
   import { pollPaymentReturn, type PaymentReturnOutcome } from '$lib/forms/paymentReturnPoll';
   import { SocialApiError } from '$lib/associations/api';
   import { isConfirmThrottled } from '$lib/forms/checkoutReturn';
   import { setPageTitle } from '$lib/seo/pageTitle.svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
+  import Button from '$lib/components/ui/Button.svelte';
 
   /**
    * THE GUEST'S RETURN FROM LYDIA (WP-P2 of the paid public forms chantier, decision PP2): a
@@ -37,6 +40,17 @@
   );
   let reference = $state<string | null>(null);
   let amount = $state<string | null>(null);
+  /** The server offers "Payer en direct" for this answer's failed card payment (`cashSwitchOffered`). */
+  let cashOffered = $state(false);
+  let switching = $state(false);
+  /** Why the last switch to cash was refused, worded from its code; empty when none was. */
+  let switchError = $state('');
+  /** The poll's outcomes after which the card payment may be replaced by a payment in person. */
+  const CASH_SWITCH_OUTCOMES: ReadonlySet<typeof status> = new Set([
+    'declined',
+    'ended',
+    'pending',
+  ]);
 
   const TITLE: Record<typeof status, () => string> = {
     loading: () => m.form_success_verifying(),
@@ -45,6 +59,7 @@
     overCapacity: () => m.form_success_over_capacity_heading(),
     declined: () => m.form_success_declined_heading(),
     ended: () => m.form_success_ended_heading(),
+    cash: () => m.form_success_cash_heading(),
     error: () => m.form_success_not_found_heading(),
   };
   const DESCRIPTION: Record<Exclude<typeof status, 'loading'>, () => string> = {
@@ -53,8 +68,50 @@
     overCapacity: () => m.form_guest_receipt_over_capacity_desc(),
     declined: () => m.form_success_declined_desc(),
     ended: () => m.form_success_ended_desc(),
+    cash: () => m.form_guest_receipt_cash_desc(),
     error: () => m.form_guest_receipt_not_found_desc(),
   };
+
+  /** Keeps what the page shows of an answer the server read. */
+  function show(answer: GuestReceipt): void {
+    reference = answer.reference;
+    amount = formatAmount(answer.totalPaid, answer.currency);
+    cashOffered = answer.cashSwitchOffered === true;
+  }
+
+  /**
+   * "PAYER EN DIRECT": the answer this receipt proves now waits for cash - the server cancels its
+   * Lydia request first, so it can never also be paid online. A refusal is worded from its code.
+   */
+  async function switchToCash(): Promise<void> {
+    if (!receipt || switching) return;
+    Log.d('GuestReceipt', 'switch to cash');
+    switching = true;
+    switchError = '';
+    try {
+      const answer = await switchGuestReceiptToCash(receipt);
+      show(answer);
+      cashOffered = false;
+      status = answer.paymentStatus === 'pending_cash' ? 'cash' : 'confirmed';
+      Log.d('GuestReceipt', `switched: ${answer.paymentStatus}`);
+    } catch (err) {
+      Log.d(
+        'GuestReceipt',
+        `switch to cash refused status=${err instanceof SocialApiError ? err.status : 'transport'}`
+      );
+      switchError = formSubmitRefusalMessage(err, m.form_guest_submit_failed());
+      // What the server offers NOW: a refusal may be transient (a request still open at Lydia),
+      // so the offer is read again rather than hidden for good.
+      try {
+        show(await confirmGuestReceipt(receipt));
+      } catch (readErr) {
+        Log.d('GuestReceipt', `re-reading the offer failed: ${String(readErr)}`);
+        cashOffered = false;
+      }
+    } finally {
+      switching = false;
+    }
+  }
   $effect(() => {
     setPageTitle(TITLE[status]());
   });
@@ -67,13 +124,7 @@
     }
     const proof = receipt;
     try {
-      status = await pollPaymentReturn(
-        () => confirmGuestReceipt(proof),
-        (answer) => {
-          reference = answer.reference;
-          amount = formatAmount(answer.totalPaid, answer.currency);
-        }
-      );
+      status = await pollPaymentReturn(() => confirmGuestReceipt(proof), show);
     } catch (err) {
       if (isConfirmThrottled(err)) {
         // The per-receipt limit on asking Lydia (a reload after a full poll): an answer, not a
@@ -137,6 +188,22 @@
           </p>
           {#if amount}<p class="text-text-muted mt-1 text-sm">{amount}</p>{/if}
         </div>
+      {/if}
+
+      {#if cashOffered && CASH_SWITCH_OUTCOMES.has(status)}
+        <!-- The same answer, settled in person instead: the organiser validates it with the reference. -->
+        <Button
+          variant="secondary"
+          disabled={switching}
+          loading={switching}
+          data-guest-cash-switch
+          onclick={() => void switchToCash()}
+        >
+          <Banknote size={16} class="mr-1.5" />{m.form_view_payment_cash_switch_button()}
+        </Button>
+      {/if}
+      {#if switchError}
+        <p class="text-red-err text-sm" role="alert">{switchError}</p>
       {/if}
 
       {#if status === 'declined' || status === 'ended'}

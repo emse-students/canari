@@ -23,7 +23,7 @@ describe('paymentReturnVerdict', () => {
     // A seat released while the payer was still paying: a late payment may still land.
     ['expired', 'wait'],
     ['paid_over_capacity', 'overCapacity'],
-    ['pending_cash', 'failed'],
+    ['pending_cash', 'cash'],
     ['', 'failed'],
   ])('%j is %s', (status, verdict) => {
     expect(paymentReturnVerdict(status)).toBe(verdict);

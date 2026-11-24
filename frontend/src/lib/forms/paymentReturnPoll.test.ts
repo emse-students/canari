@@ -28,6 +28,8 @@ describe('pollPaymentReturn', () => {
     [{ paymentStatus: 'cancelled', requestState: 'declined' as const }, 'declined'],
     [{ paymentStatus: 'cancelled', requestState: 'cancelled-or-expired' as const }, 'ended'],
     [{ paymentStatus: 'cancelled' }, 'error'],
+    // Answered in cash, or a failed card payment switched to cash: recorded, waiting for the organiser.
+    [{ paymentStatus: 'pending_cash' }, 'cash'],
   ])('ends %o on %s', async (answer, outcome) => {
     vi.spyOn(console, 'info').mockImplementation(() => {});
     await expect(pollPaymentReturn(reads(answer), undefined, noSleep)).resolves.toBe(outcome);
