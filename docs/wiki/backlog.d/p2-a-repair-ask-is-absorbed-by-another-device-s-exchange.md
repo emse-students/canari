@@ -1,6 +1,6 @@
 ## P2 - a repair ask is absorbed by another device's exchange, and the walk never reaches the holder (reading of 2026-11-17; built as "the repair walks to the member that holds the messages")
 
-target: 1.8.0
+target: 1.9.0
 
 _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 

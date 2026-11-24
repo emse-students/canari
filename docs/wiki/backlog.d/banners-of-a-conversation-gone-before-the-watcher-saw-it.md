@@ -1,6 +1,6 @@
 ## P3 - A banner of a conversation gone before the app could watch it stays until swiped away
 
-target: 1.8.0
+target: 1.10.0
 
 **Today.** Opening the app clears no banner (owner, 2026-11-21), and a banner goes with its
 conversation through the page's watcher (`endedConversations.ts`), which only sees a conversation

@@ -17,7 +17,7 @@
 # `apk info -e` fails the build if the repository did not hand over a fixed `libpq` or `libxml2`, rather
 # than ship the vulnerable build under a green one. `--no-cache` leaves no index in the image; `USER root` only for the upgrade, and back to the user the
 # base runs as (`adminer`, read from the base's own config) - its ENTRYPOINT and CMD are inherited.
-FROM adminer:6.3.0@sha256:3a07decd833c2375ea749aa8018250c1db4859a78bd55354f797bfb591733233
+FROM adminer:6.3.0@sha256:037125c2bc4836b4917d4fd08a16f817eac2848778c4e9aab87a8340aef08dfd
 
 USER root
 RUN apk upgrade --no-cache libpq libxml2 && apk info -e 'libpq>=18.7-r0' && apk info -e 'libxml2>=2.13.9-r3'
