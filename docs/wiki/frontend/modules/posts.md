@@ -576,7 +576,37 @@ tab's transfer at once, and its Resume finished the post from the recorded sessi
 back; the queue then ABORTS the transfer in flight (it was frozen with the webview and its socket is
 likely dead) and starts the pass again, which resumes from the server's part list. On the web, a
 background tab keeps uploading. A native Android foreground service and an iOS background
-`URLSession`, so the send goes on WHILE the app is away, are a later step (the backlog entry).
+`URLSession`, so the send goes on WHILE the app is away, are a later step (the backlog entry): no
+native upload exists to build on today (`OutboxRetryWorker` drains MLS text messages through the
+Rust context, and the queue's bytes live in the WebView's IndexedDB, which native code cannot read).
+iOS behaves as Android: WKWebView's requests stop with the app.
+
+**The screen stays on while a post is worked on (2026-11-24).** A phone whose screen goes to sleep
+STOPS the app - the page is `hidden`, `[LIFECYCLE] App in background` - and under battery saver a
+stopped app loses the network within seconds: a member who watched a slow CanaReel publish, never
+leaving the app, saw it fail four times ([reels](reels.md#publishing-r3-on-c2-and-c3)). The runner's
+rows decide (`publishHoldsTheScreen`): a post being prepared, sent or created holds the screen
+(`screenAwakeHolder('publish')`: the Screen Wake Lock, the idle timer on iOS), asked again on the
+first row drawn after a return; nothing working - every post waiting, paused, stopped, or none -
+releases it, and a sign-out releases it. One line per change (`[PUBLISH-QUEUE] screen held on` /
+`released`).
+
+**The CanaReels camera publishes through this queue (2026-11-24).** Its take is queued with
+`QueuedMedia.take` - the cap, the removed sound, the trim to the picture, prepared under the encoder
+lease - so a resume prepares it the same way. **A take ALSO sent to conversations** carries the chat
+take's id (`chatTakeId`, reels-in-chat 15.5): before its session opens, the media's class is decided
+once and recorded (`uploadClass`): `reel-pending` when the prepared take is a reel (the only class a
+chat hold can be put on), `archive` otherwise. After the upload and BEFORE the create, the chat take
+ADOPTS the file and its wait ends (`handOverTake`, `takeHandedOver` written so a resumed pass never
+tells it twice); a post that stops, is paused or deleted, or a sign-out, ends the wait instead, and
+the take uploads its own. A withdrawal names only the `archive` media: media-service refuses any
+other class there, and a `reel-pending` file is ended by its 24 h sweep or kept by the chat hold.
+**Bound, stated:** a reel whose create waits more than the `reel-pending` window (24 h) after its
+upload is refused at the claim, and its Retry meets the same refusal - the member deletes and
+publishes again; the session window (24 h) bounds every queued upload the same way. On the web
+with two tabs, a stop decided in the runner tab ends the take's wait only in that tab; the take
+waiting in another tab uploads its own at its next page life (an adoption is forwarded to the
+leader and needs no wait).
 
 **The composer forgets the media it handed over.** `holdPostComposerMedia([])` is called before
 `onPostCreated`: the hold `$effect` would only have run on its next flush, after the parent had

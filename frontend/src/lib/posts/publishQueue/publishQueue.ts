@@ -71,6 +71,8 @@ import type {
   QueuedFile,
   QueuedPost,
   QueuedPostFailure,
+  QueuedTakePreparation,
+  QueuedUploadClass,
 } from './publishQueueStore';
 
 /** The rungs of the wait after a failure with no answer, in ms; the last one repeats. */
@@ -108,6 +110,8 @@ export interface PublishUploadArgs {
   fileName: string;
   dims?: Partial<ImageDimensions>;
   encoding: ResumableBlobEncoding;
+  /** The class the blob is kept under (`QueuedMedia.uploadClass`). */
+  retentionClass: QueuedUploadClass;
   state?: OutboxResumableUpload;
   persist: (state: OutboxResumableUpload) => Promise<void>;
   transport: XhrUploadOptions;
@@ -116,11 +120,15 @@ export interface PublishUploadArgs {
 /** Everything the queue touches outside itself - injected, so a test drives it with fakes. */
 export interface PublishQueueDeps {
   store: Pick<PublishQueueStore, 'list' | 'get' | 'readFile' | 'update' | 'mark' | 'remove'>;
-  /** Prepares one media as the composer used to (`preparePostMedia`). */
+  /**
+   * Prepares one media as the composer used to (`preparePostMedia`), or, with `take`, as the
+   * CanaReels camera's publish step does (its cap, its trim, its sound, the encoder lease).
+   */
   prepare: (
     file: File,
     onProgress: (fraction: number) => void,
-    signal: AbortSignal
+    signal: AbortSignal,
+    take?: QueuedTakePreparation
   ) => Promise<{
     file: File;
     dims?: ImageDimensions;
@@ -137,6 +145,13 @@ export interface PublishQueueDeps {
   /** The blob format of a prepared file (`writesSegmented`: a video, when the writer is on). */
   encodingFor: (mimeType: string) => ResumableBlobEncoding;
   upload: (args: PublishUploadArgs) => Promise<MediaRef>;
+  /**
+   * The chat take of the same press adopts this post's uploaded file (reels-in-chat 15.5) - written
+   * on the take BEFORE the post is created, so the conversations keep it however the post ends.
+   */
+  adoptChatTake: (takeId: string, uploaded: { ref: MediaRef; durationMs: number }) => Promise<void>;
+  /** The chat take stops waiting for this post: adopted, or left to upload its own file. */
+  endChatTakeWait: (takeId: string) => void;
   /** Gives a resumable session back to the server, best effort (a deleted post). */
   release: (uploadId: string) => Promise<unknown>;
   createPost: (payload: CreatePostPayload & { id: string }) => Promise<unknown>;
@@ -584,6 +599,10 @@ export class PublishQueue {
     const abort = new AbortController();
     this.current = { id: post.id, abort };
     let stage: QueuedPostFailure['stage'] = 'moderation';
+    // Asked once per pass: the class of a chat take's upload and the create both read it.
+    let reel: { kind: 'reel'; durationMs: number } | null | undefined;
+    const declare = async () =>
+      reel === undefined ? (reel = await this.reelDeclaration(post)) : reel;
     try {
       await this.checkpoint(abort, post);
       // Before the first byte leaves, as the composer did: the server refuses a muted author's post
@@ -611,7 +630,8 @@ export class PublishQueue {
           } = await this.deps.prepare(
             new File([original.bytes], original.name, { type: original.type }),
             (f) => this.setView(post, { phase: 'preparing', index: i, step: f }),
-            abort.signal
+            abort.signal,
+            media.take
           );
           file = { bytes: await prepared.arrayBuffer(), name: prepared.name, type: prepared.type };
           media.prepared = {
@@ -635,6 +655,17 @@ export class PublishQueue {
         stage = 'mediaUpload';
         await this.checkpoint(abort, post);
         const prepared = media.prepared!;
+        if (!media.uploadClass && post.chatTakeId) {
+          // DECIDED ONCE, BEFORE THE SESSION OPENS, and kept with it: a chat hold can only be put
+          // on a `reel-pending` file, and only a reel is one the conversations adopt (15.5). Not a
+          // reel (outside the rule): an ordinary `archive` post, and the take uploads its own.
+          media.uploadClass = (await declare()) ? 'reel-pending' : 'archive';
+          if (!(await this.deps.store.update(post))) return 'gone';
+          this.deps.log(
+            `[PUBLISH-QUEUE] ${post.id} media ${i + 1}/${post.media.length} uploads as ${media.uploadClass}`
+          );
+          if (media.uploadClass === 'archive') await this.handOverTake(post, 'not a reel');
+        }
         this.setView(post, { phase: 'uploading', index: i, fraction: share(0), step: 0 });
         const uploadedAt = performance.now();
         const ref = await this.deps.upload({
@@ -643,6 +674,7 @@ export class PublishQueue {
           fileName: prepared.name,
           dims: { width: prepared.width, height: prepared.height },
           encoding: this.deps.encodingFor(prepared.type),
+          retentionClass: media.uploadClass ?? 'archive',
           state: media.upload,
           persist: async (state) => {
             media.upload = state;
@@ -675,6 +707,13 @@ export class PublishQueue {
         );
       }
 
+      // THE CHAT TAKE ADOPTS THE FILE BEFORE THE POST EXISTS (15.5): whatever the post's fate, the
+      // conversations of the same take have their file. Also reached by a pass resumed after the
+      // upload, so a take the previous pass did not reach is told now - and only once.
+      if (post.chatTakeId && !post.takeHandedOver) {
+        await this.handOverTake(post, 'its file is uploaded', (await declare())?.durationMs);
+      }
+
       stage = 'createPost';
       this.setView(post, { phase: 'publishing', index: post.media.length, fraction: 1, step: 1 });
       // Re-read: a Pause or a Delete from another tab is in the store, not in this copy.
@@ -690,10 +729,10 @@ export class PublishQueue {
       }
       // EVERY VERTICAL VIDEO OF 90 S OR LESS IS A CANAREEL (owner, 2026-11-09): decided here, on the
       // PREPARED frame and length - what the server is told - for a post whose only content is it.
-      const reel = await this.reelDeclaration(post);
+      const declared = await declare();
       await this.deps.createPost({
         ...post.payload,
-        ...reel,
+        ...declared,
         id: post.id,
         media: post.media.map((m) => m.ref!),
       });
@@ -728,6 +767,11 @@ export class PublishQueue {
           : ((abort.signal.reason as AbortReason | undefined) ??
             (post.withdrawn ? 'deleted' : post.paused ? 'paused' : undefined));
         this.deps.log(`[PUBLISH-QUEUE] ${post.id} stopped at ${stage}: ${reason ?? 'aborted'}`);
+        // A post the member paused or deleted, or a sign-out, will not upload in this page life:
+        // its chat take stops waiting and uploads its own. A resume keeps the wait.
+        if (reason === 'deleted' || reason === 'paused' || reason === 'stopped') {
+          await this.handOverTake(post, `the post was ${reason}`);
+        }
         // Paused and deleted posts are the store's to say: the pass reads them again.
         if (reason === 'resume' || reason === 'deleted' || reason === 'paused') return 'again';
         if (reason === 'stopped') return 'gone';
@@ -756,7 +800,12 @@ export class PublishQueue {
       // ONE request, whether or not the create left: the id is retired, a landed post deleted, and
       // the uploaded media no live row cites deleted by social-service - the one place that can
       // tell a never-cited blob from a published post's (review of #3061).
-      const mediaIds = post.media.flatMap((m) => (m.ref ? [m.ref.mediaId] : []));
+      // Only the `archive` blobs: a `reel-pending` one is never this route's (media-service refuses
+      // it) - its 24 h sweep ends it, or the chat hold of the take that adopted it keeps it.
+      const mediaIds = post.media.flatMap((m) =>
+        m.ref && (m.uploadClass ?? 'archive') === 'archive' ? [m.ref.mediaId] : []
+      );
+      await this.handOverTake(post, 'the post was deleted');
       const landed = (await this.deps.withdrawPost(post.id, mediaIds)).deleted;
       for (const media of post.media) {
         if (!media.ref && media.upload?.uploadId) {
@@ -779,6 +828,41 @@ export class PublishQueue {
     } finally {
       if (this.current?.abort === abort) this.current = null;
     }
+  }
+
+  /**
+   * Tells the chat take of the same press (15.5) how it ends, ONCE (`takeHandedOver`, durable): with
+   * `durationMs` and a `reel-pending` file uploaded, it ADOPTS that file; otherwise it stops waiting
+   * and uploads its own. An adoption that fails is accused and costs a second upload, never the take.
+   */
+  private async handOverTake(post: QueuedPost, why: string, durationMs?: number): Promise<void> {
+    const takeId = post.chatTakeId;
+    if (!takeId || post.takeHandedOver) return;
+    const media = post.media[0];
+    if (durationMs && media?.ref && media.uploadClass === 'reel-pending') {
+      try {
+        await this.deps.adoptChatTake(takeId, { ref: media.ref as MediaRef, durationMs });
+        this.deps.log(
+          `[PUBLISH-QUEUE] ${post.id} its chat take ${takeId.slice(0, 8)} adopts ${media.ref.mediaId} (${why})`
+        );
+      } catch (e) {
+        console.error(
+          `[PUBLISH-QUEUE] ${post.id} its chat take ${takeId.slice(0, 8)} could not adopt ${media.ref.mediaId} - the take uploads its own:`,
+          e
+        );
+      }
+    } else {
+      this.deps.log(
+        `[PUBLISH-QUEUE] ${post.id} its chat take ${takeId.slice(0, 8)} uploads its own file (${why})`
+      );
+    }
+    this.deps.endChatTakeWait(takeId);
+    post.takeHandedOver = true;
+    await this.deps.store
+      .update(post)
+      .catch((e) =>
+        this.deps.log(`[PUBLISH-QUEUE] ${post.id} take hand-over not recorded: ${String(e)}`)
+      );
   }
 
   /** What a step's failure does to the post: wait, halt the pass, or stop it with its sentence. */
@@ -809,6 +893,8 @@ export class PublishQueue {
       }
       // ACCUSED, not debug-logged: this is the one failure a member reports.
       console.error(`[PUBLISH-QUEUE] ${post.id} refused at ${stage}`, error);
+      // Stopped until the member acts: a chat take waiting for its file uploads its own.
+      await this.handOverTake(post, `the post stopped at ${stage}`);
       this.busy = 0;
       post.failure = {
         stage,

@@ -5312,9 +5312,7 @@
   "reels_publish_caption_label": "Légende",
   "reels_publish_caption_placeholder": "Ajouter une légende...",
   "reels_publish_submit": "Publier",
-  "reels_publish_uploading": "Envoi...",
-  "reels_publish_done": "CanaReel publié",
-  "reels_publish_error": "Le CanaReel n'a pas pu être publié. Réessayez.",
+  "reels_publish_queued": "Votre CanaReel s'envoie : vous pouvez quitter l'application, l'envoi reprend où il s'est arrêté.",
   "reels_publish_expiry_note": "Visible {lifetime}, puis supprimé automatiquement. Vous pourrez l'enregistrer dans votre galerie d'ici là.",
   "reels_lifetime_years": [
     {

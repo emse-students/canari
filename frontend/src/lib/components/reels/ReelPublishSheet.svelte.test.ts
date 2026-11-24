@@ -1,14 +1,15 @@
 // @vitest-environment happy-dom
 /**
- * The publish step as the member meets it: "Publier" creates the reel and lands on the feed, a
- * refused publish says why and stays, a cancelled re-encode says nothing, and the back arrow returns
- * to the take. The services are injected (`deps`); nothing reaches a network or an encoder.
+ * The publish step as the member meets it: "Publier" hands the take to the publish queue and lands
+ * on the feed (2026-11-24: the queue sends it, resumably, and the member may leave the app); a take
+ * the device could not keep is said and stays; the back arrow returns to the take. The queue's door
+ * is injected (`deps`); nothing reaches a network, an encoder or IndexedDB.
  */
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import ReelPublishSheet from './ReelPublishSheet.svelte';
 import type { PublishReelDeps } from '$lib/reels/publishReel';
-import { VideoPrepareError } from '$lib/video/prepareVideoForUpload';
+import type { QueuedPost } from '$lib/posts/publishQueue/publishQueueStore';
 import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
 import { m } from '$lib/paraglide/messages';
 import { pushHistoryOverlay } from '$lib/utils/historyOverlayStack';
@@ -45,30 +46,16 @@ vi.mock('$lib/utils/historyOverlayStack', async (orig) => ({
 
 const mounted: Record<string, unknown>[] = [];
 
-function deps(): PublishReelDeps {
+function deps(): PublishReelDeps & { enqueue: ReturnType<typeof vi.fn> } {
   return {
-    assertNotMuted: vi.fn(async () => {}),
-    getToken: vi.fn(async () => 'tok'),
-    uploadLimits: vi.fn(async () => ({ maxPlaintextBytes: 1000 })),
-    prepare: vi.fn(async () => ({
-      file: new File([new Uint8Array(4)], 'reel.mp4', { type: 'video/mp4' }),
-      width: 720,
-      height: 1280,
-      durationSeconds: 3,
-      sourceBytes: 8,
-      outputBytes: 4,
-    })),
-    placeholder: vi.fn(async () => null),
-    upload: vi.fn(async () => ({
-      type: 'video' as const,
-      mediaId: 'm-1',
-      key: 'k',
-      iv: 'i',
-      mimeType: 'video/mp4',
-      size: 4,
-    })),
-    createPost: vi.fn(async () => ({ id: 'p-1' }) as never),
+    userId: () => 'alice',
+    enqueue: vi.fn(async () => {}),
   };
+}
+
+/** The post the step queued (the last one). */
+function queuedPost(d: ReturnType<typeof deps>): QueuedPost {
+  return d.enqueue.mock.calls.at(-1)![1] as QueuedPost;
 }
 
 async function settle() {
@@ -126,7 +113,7 @@ afterEach(() => {
 });
 
 describe('ReelPublishSheet', () => {
-  it('publishes the caption as a reel and lands on the feed', async () => {
+  it('queues the caption and the take, then lands on the feed', async () => {
     const d = deps();
     const { target, submit } = await render(d);
     const caption = target.querySelector<HTMLTextAreaElement>('[data-reel-caption]')!;
@@ -134,81 +121,38 @@ describe('ReelPublishSheet', () => {
     caption.dispatchEvent(new Event('input', { bubbles: true }));
     submit().click();
     await settle();
-    expect(d.createPost).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'reel', markdown: 'first reel', durationMs: 3000 })
-    );
+    expect(d.enqueue).toHaveBeenCalledTimes(1);
+    expect(d.enqueue.mock.calls[0][0]).toBe('alice');
+    const post = queuedPost(d);
+    expect(post.payload).toEqual({ markdown: 'first reel' });
+    expect(post.media[0].take).toEqual({ maxDurationMs: 90_000 });
     expect(goto).toHaveBeenCalledWith('/posts', { replace: true });
   });
 
-  it('says why a publish was refused and stays', async () => {
+  it('a take the device could not keep is said, and the step stays with it', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const d = deps();
-    vi.mocked(d.prepare).mockRejectedValueOnce(new VideoPrepareError('unsupported', 'no'));
+    d.enqueue.mockRejectedValueOnce(new Error('write failed'));
     const { target, submit } = await render(d);
     submit().click();
     await settle();
     expect(target.querySelector('[role="alert"]')?.textContent).toContain(
-      m.video_prepare_unsupported()
+      m.publish_queue_enqueue_error()
     );
     expect(goto).not.toHaveBeenCalled();
+    expect(submit().disabled).toBe(false);
   });
 
-  it('a cancelled re-encode shows nothing', async () => {
+  it('a full disk says so', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
     const d = deps();
-    vi.mocked(d.prepare).mockRejectedValueOnce(new VideoPrepareError('aborted', 'cancel'));
+    d.enqueue.mockRejectedValueOnce(new DOMException('full', 'QuotaExceededError'));
     const { target, submit } = await render(d);
     submit().click();
     await settle();
-    expect(target.querySelector('[role="alert"]')).toBeNull();
-    expect(d.createPost).not.toHaveBeenCalled();
-  });
-
-  it('a back during the re-encode stops it', async () => {
-    const d = deps();
-    let signal: AbortSignal | undefined;
-    vi.mocked(d.prepare).mockImplementationOnce(
-      (_file, options) =>
-        new Promise((_resolve, reject) => {
-          signal = options?.signal;
-          signal?.addEventListener('abort', () => reject(new VideoPrepareError('aborted', 'x')));
-        })
+    expect(target.querySelector('[role="alert"]')?.textContent).toContain(
+      m.publish_queue_enqueue_storage_full()
     );
-    const { target, submit } = await render(d);
-    submit().click();
-    await settle();
-    target.querySelector<HTMLButtonElement>(`[aria-label="${m.reels_publish_back()}"]`)!.click();
-    await settle();
-    expect(signal?.aborted).toBe(true);
-    expect(d.createPost).not.toHaveBeenCalled();
-  });
-
-  it('a dismiss once the upload has begun cancels nothing, and does not say it did', async () => {
-    const debug = vi.spyOn(console, 'debug');
-    const d = deps();
-    let release: () => void = () => {};
-    vi.mocked(d.upload).mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          release = () =>
-            resolve({
-              type: 'video',
-              mediaId: 'm-1',
-              key: 'k',
-              iv: 'i',
-              mimeType: 'video/mp4',
-              size: 4,
-            });
-        })
-    );
-    const { target, submit } = await render(d);
-    submit().click();
-    await settle();
-    target.querySelector<HTMLButtonElement>(`[aria-label="${m.reels_publish_back()}"]`)!.click();
-    await settle();
-    release();
-    await settle();
-    expect(debug.mock.calls.flat().join('\n')).not.toContain('cancelled by the member');
-    expect(d.createPost).toHaveBeenCalled();
   });
 
   it('the back arrow returns to the take', async () => {
@@ -260,15 +204,13 @@ describe('ReelPublishSheet reached from the new-post composer (one camera, one b
     );
   });
 
-  it('publishes a reel and hands the landing to the composer, with no navigation', async () => {
+  it('queues the reel and hands the landing to the composer, with no navigation', async () => {
     const d = deps();
     const c = composer();
     const { submit } = await render(d, vi.fn(), { composer: c });
     submit().click();
     await settle();
-    expect(d.createPost).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'reel', markdown: 'from the composer', durationMs: 3000 })
-    );
+    expect(queuedPost(d).payload).toEqual({ markdown: 'from the composer' });
     expect(c.onpublished).toHaveBeenCalledWith('');
     expect(goto).not.toHaveBeenCalled();
   });
@@ -286,20 +228,19 @@ describe('ReelPublishSheet - review of #2124', () => {
   /** The sheet's own history entry: the last one it pushed. */
   const sheetClose = () => vi.mocked(pushHistoryOverlay).mock.calls.at(-1)![0];
 
-  it('a Back once the upload has begun is refused: the sheet stays, and the take is published ONCE', async () => {
-    let finishUpload: () => void = () => {};
+  it('a Back while the take is written to the device is refused: the sheet stays, and the take is queued ONCE', async () => {
+    let finishWrite: () => void = () => {};
     const d = deps();
-    d.upload = vi.fn(
+    d.enqueue.mockImplementationOnce(
       () =>
-        new Promise<Awaited<ReturnType<PublishReelDeps['upload']>>>((r) => {
-          finishUpload = () =>
-            r({ type: 'video', mediaId: 'm-1', key: 'k', iv: 'i', mimeType: 'video/mp4', size: 4 });
+        new Promise<void>((r) => {
+          finishWrite = r;
         })
     );
     const { target, submit, onclose } = await render(d);
     submit().click();
     await settle();
-    expect(d.upload).toHaveBeenCalledTimes(1);
+    expect(d.enqueue).toHaveBeenCalledTimes(1);
 
     sheetClose()('back');
     await settle();
@@ -311,14 +252,15 @@ describe('ReelPublishSheet - review of #2124', () => {
     // The entry is given back, so the next Back is refused the same way.
     expect(sheetClose()).toBeTypeOf('function');
 
-    finishUpload();
+    finishWrite();
     await settle();
-    expect(d.createPost).toHaveBeenCalledTimes(1);
+    expect(d.enqueue).toHaveBeenCalledTimes(1);
+    expect(goto).toHaveBeenCalledWith('/posts', { replace: true });
   });
 
-  it('leaving the screen during the upload still closes the sheet (nothing is held over the next page)', async () => {
+  it('leaving the screen during the write still closes the sheet (nothing is held over the next page)', async () => {
     const d = deps();
-    d.upload = vi.fn(() => new Promise<never>(() => {}));
+    d.enqueue.mockImplementationOnce(() => new Promise<never>(() => {}));
     const { submit, onclose } = await render(d);
     submit().click();
     await settle();
@@ -391,7 +333,7 @@ describe('ReelPublishSheet - "Entre étudiants" both ways with the composer (rev
     flushSync();
     submit().click();
     await settle();
-    expect(d.createPost).toHaveBeenCalledWith(expect.not.objectContaining({ studentsOnly: true }));
+    expect(queuedPost(d).payload).not.toHaveProperty('studentsOnly');
   });
 });
 
@@ -421,11 +363,47 @@ describe('ReelPublishSheet - the reach of an institution reel (owner, 2026-11-10
     expect(submit().disabled).toBe(false);
     submit().click();
     await settle();
-    expect(d.createPost).toHaveBeenCalledWith(
-      expect.objectContaining({
-        associationId: 'inst-1',
-        reach: { spaces: [{ formation: 'ICM', campus: 'saint-etienne' }], public: 'staff' },
-      })
-    );
+    expect(queuedPost(d).payload).toMatchObject({
+      associationId: 'inst-1',
+      reach: { spaces: [{ formation: 'ICM', campus: 'saint-etienne' }], public: 'staff' },
+    });
+  });
+});
+
+describe('ReelPublishSheet - a take also sent to conversations (15.5)', () => {
+  function chatTake() {
+    return { id: 'take-1', endWait: vi.fn(), onQueued: vi.fn() };
+  }
+
+  it("queued, the take id travels with the post and the wait is the QUEUE's: the step never ends it", async () => {
+    const d = deps();
+    const take = chatTake();
+    const { submit } = await render(d, vi.fn(), { chatTake: take });
+    submit().click();
+    await settle();
+    expect(queuedPost(d).chatTakeId).toBe('take-1');
+    expect(take.onQueued).toHaveBeenCalledTimes(1);
+    while (mounted.length) unmount(mounted.pop()!);
+    expect(take.endWait).not.toHaveBeenCalled();
+  });
+
+  it('left without "Publier", the step ends the wait: the take uploads its own', async () => {
+    const take = chatTake();
+    await render(deps(), vi.fn(), { chatTake: take });
+    while (mounted.length) unmount(mounted.pop()!);
+    expect(take.endWait).toHaveBeenCalledWith('take-1');
+  });
+
+  it('a take the device could not keep leaves the wait to the step, which ends it when left', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const d = deps();
+    d.enqueue.mockRejectedValueOnce(new Error('write failed'));
+    const take = chatTake();
+    const { submit } = await render(d, vi.fn(), { chatTake: take });
+    submit().click();
+    await settle();
+    expect(take.onQueued).not.toHaveBeenCalled();
+    while (mounted.length) unmount(mounted.pop()!);
+    expect(take.endWait).toHaveBeenCalledWith('take-1');
   });
 });

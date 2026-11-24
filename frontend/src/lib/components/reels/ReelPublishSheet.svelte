@@ -2,13 +2,15 @@
   import { resolve } from '$app/paths';
   /**
    * The CanaReels publish step (R3): a caption and the same "who is publishing" choice a post has
-   * (`PostIdentityPicker`), over the take it publishes. "Publier" re-encodes the take on the device
-   * (`prepareVideoForUpload`, with its progress line and its cancel), uploads it under the `reel`
-   * class and creates the reel (`publishReel`), then lands on the feed.
+   * (`PostIdentityPicker`), over the take it publishes. "Publier" HANDS THE TAKE TO THE PUBLISH
+   * QUEUE (`queueReelPublish`, 2026-11-24) and the step is done once it is on the device: the queue
+   * re-encodes, uploads in resumable parts and creates the reel, with its line (progress, waiting
+   * for the network, a refusal and its Retry, Pause, Delete) in the banner. The member may leave
+   * the app: the send resumes where it stopped, and the reel is created once.
    *
    * IT IS A HISTORY ENTRY, so Android's Back (and iOS's edge swipe) returns to the take rather than
-   * leaving the camera; a Back during the re-encode also stops it. Once the upload has begun nothing
-   * is cancelled: the reel is being created, and the feed it lands on is where it appears.
+   * leaving the camera. The only thing that cannot be interrupted is the write to the device, a
+   * moment: a Back then is refused, so a take is never queued twice.
    */
   import { onDestroy, onMount, untrack } from 'svelte';
   import { fade } from 'svelte/transition';
@@ -27,20 +29,15 @@
   } from '$lib/posts/institutionReach';
   import type { ComposerReelState } from '$lib/posts/composerReelState';
   import VideoPoster from '$lib/components/shared/VideoPoster.svelte';
-  import VideoPreparationProgress from '$lib/components/shared/VideoPreparationProgress.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import type { Association } from '$lib/associations/api';
   import type { ReelLimits } from '$lib/posts/api';
   import { listPostAsAssociations } from '$lib/posts/postIdentity';
-  import { publishFailureMessage, type PublishStage } from '$lib/posts/publishFailure';
   import type { ReelClip } from '$lib/reels/reelCapture';
-  import {
-    publishCameraPhoto,
-    publishReel,
-    ReelPublishError,
-    type PublishedReelUpload,
-    type PublishReelDeps,
-  } from '$lib/reels/publishReel';
+  import { queueReelPublish, type PublishReelDeps } from '$lib/reels/publishReel';
+  import { enqueuePost } from '$lib/posts/publishQueue/publishQueue.svelte';
+  import { currentUserId } from '$lib/stores/userState.svelte';
+  import { isQuotaError } from '$lib/db/outboxBlob';
   import {
     longestReelMs,
     reelLifetimeLabel,
@@ -51,8 +48,6 @@
   import { TRANSPARENT_VIDEO_POSTER } from '$lib/utils/videoPoster';
   import { trimComposerText } from '$lib/utils/markdown/composerText';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
-  import { isVideoPrepareError } from '$lib/video/prepareVideoForUpload';
-  import { VideoPreparationState } from '$lib/video/videoPreparationState.svelte';
   import { m } from '$lib/paraglide/messages';
 
   /**
@@ -79,14 +74,15 @@
     /** Set when the take was filmed from the new-post composer; absent on the CanaReels tab. */
     composer?: ReelPublishFromComposer;
     /**
-     * The take is ALSO sent to conversations (RC-12, 15.5): the outbox's take waiting for THIS step's
-     * upload. The upload is handed to it before the post exists, and the wait ends with the step. The
-     * outbox calls arrive as props so this step never imports the messaging engine.
+     * The take is ALSO sent to conversations (RC-12, 15.5): the outbox's take waiting for THIS
+     * publish's upload. Queued, the take's id travels with the post and the QUEUE hands it the file
+     * (or ends its wait); left before "Publier", the step ends the wait itself. `onQueued` tells the
+     * camera the wait is the queue's now, so its own teardown does not end it.
      */
     chatTake?: {
       id: string;
-      adopt: (takeId: string, uploaded: PublishedReelUpload) => Promise<void>;
       endWait: (takeId: string) => void;
+      onQueued: () => void;
     } | null;
     /**
      * The step was opened over a CONVERSATION (its camera's "Ajouter des destinataires" with
@@ -127,54 +123,31 @@
   const sendReach = $derived(
     reachAssociation !== null && isReachComplete(reach) ? plainReach(reach) : undefined
   );
+  /** The take is being written to the device: a moment, and the one thing a Back cannot stop. */
   let publishing = $state(false);
-  let stage = $state<PublishStage | null>(null);
+  /** The take is the queue's: the chat take's wait is the queue's to end, never this step's. */
+  let queued = false;
   let errorMessage = $state('');
   /** The preview's first frame is decoded: Canari's poster gives way to it. */
   let previewReady = $state(false);
   /** Where the focus goes when the step opens: the deletion notice first, else the title. */
   let notice = $state<HTMLElement | null>(null);
   let heading = $state<HTMLElement | null>(null);
-  const preparation = new VideoPreparationState();
-
-  /**
-   * The publish can no longer be stopped, so nothing may close the step under it. A VIDEO is
-   * stoppable until its upload: the re-encode signal is armed when "Publier" is pressed, and an
-   * abort during the mute check or the token makes the re-encode refuse at its first line, so no
-   * post is created. A PHOTO has no signal at any stage (`publishCameraPhoto`), so from the press
-   * on it is past stopping (re-review of #2124: a Back in its first second gave a second post).
-   */
-  const uploading = $derived(
-    publishing &&
-      (clip.blob.type.startsWith('image/') || stage === 'mediaUpload' || stage === 'createPost')
-  );
-
   const overlay = bindHistoryOverlay(
     () => true,
     (reason) => {
       /*
-       * A PUBLISH PAST ITS UPLOAD KEEPS THE SHEET (review of #2124). Closing it used to hand the take
-       * back to its review while the upload went on, and "Suivant" then "Publier" published the same
-       * take a SECOND time. So a Back here is refused and the entry given back: the sheet - whose
-       * `publishing` disables "Publier" - stays up until the publish ends. Nothing else can unmount
-       * it from under a publish except leaving the screen, which takes the take with it.
+       * A TAKE BEING WRITTEN TO THE DEVICE KEEPS THE SHEET (review of #2124: closing it under a
+       * publish handed the take back to its review, and a second "Publier" published it twice). The
+       * write is a moment; once it is done the take is the queue's and the sheet closes by itself.
        */
-      if (uploading && reason === 'back') {
-        console.debug(
-          `[reel-publish] Back refused: the publish can no longer be stopped (${stage})`
-        );
+      if (publishing && reason === 'back') {
+        console.debug('[reel-publish] Back refused: the take is being written to the device');
         overlay.clearRef();
         overlay.syncOpen();
         return;
       }
-      // Only a publish that has not reached the upload has anything to cancel. Cancelling after it
-      // (the landing on the feed closes this sheet too) logged "cancelled by the member" for a reel
-      // that had just been published (REEL-2 on the Mi 9T, 2026-10-02).
-      const cancellable = publishing && !uploading;
-      console.debug(
-        `[reel-publish] the sheet was dismissed${cancellable ? ', publish cancelled' : ''}`
-      );
-      if (cancellable) preparation.cancel();
+      console.debug('[reel-publish] the sheet was dismissed');
       onclose();
     }
   );
@@ -204,22 +177,18 @@
 
   onDestroy(() => {
     if (previous) URL.revokeObjectURL(previous);
-    // Left (Back, navigation) before any publish: the same end of the wait.
-    chatTake?.endWait(chatTake.id);
+    // Left (Back, navigation) without queuing: the take stops waiting and uploads its own. Queued,
+    // the wait is the queue's: ending it here would cost the conversations a second upload.
+    if (!queued) chatTake?.endWait(chatTake.id);
   });
 
+  /** "Publier": the take and its post are written to the device, and the queue sends them. */
   async function publish() {
     console.debug('[reel-publish] publish pressed');
     publishing = true;
     errorMessage = '';
     caption = trimComposerText(caption);
-    const options = preparation.optionsFor(undefined);
     try {
-      const onStage = (next: PublishStage) => {
-        stage = next;
-        // The re-encode is over once the upload starts: its line comes down, its cancel with it.
-        if (next === 'mediaUpload') preparation.finish();
-      };
       if (studentsOnlyAssociation) {
         console.debug(
           `[reel-publish] publishing with "Entre étudiants" ${sendStudentsOnly ? 'ON' : 'off'}`
@@ -230,70 +199,42 @@
           `[reel-publish] publishing with a reach of ${reach.spaces.length} space(s), public ${reach.public}`
         );
       }
-      if (clip.blob.type.startsWith('image/')) {
-        await publishCameraPhoto({
+      await queueReelPublish(
+        {
           clip,
           caption,
           identity,
           studentsOnly: sendStudentsOnly,
           reach: sendReach,
-          onStage,
-        });
-      } else {
-        await publishReel(
-          {
-            clip,
-            caption,
-            identity,
-            studentsOnly: sendStudentsOnly,
-            reach: sendReach,
-            maxDurationMs: rule ? longestReelMs(rule) : limits.maxDurationMs,
-            rule,
-            video: { onProgress: options.onProgress, signal: options.signal },
-            onStage,
-            ...(chatTake
-              ? {
-                  onUploaded: (uploaded: PublishedReelUpload) =>
-                    chatTake.adopt(chatTake.id, uploaded),
-                }
-              : {}),
-          },
-          deps
-        );
-      }
-      showToast(m.reels_publish_done(), 'info');
+          maxDurationMs: rule ? longestReelMs(rule) : limits.maxDurationMs,
+          ...(chatTake ? { chatTakeId: chatTake.id } : {}),
+        },
+        deps ?? { userId: currentUserId, enqueue: enqueuePost }
+      );
+      queued = true;
+      chatTake?.onQueued();
+      showToast(m.reels_publish_queued(), 'info');
       if (composer) {
         // Over the composer on the feed already: the composer closes, no navigation.
         composer.onpublished(identity);
         return;
       }
       if (onpublishedHere) {
-        console.debug('[reel-publish] published from a conversation camera: back to it');
+        console.debug('[reel-publish] queued from a conversation camera: back to it');
         onpublishedHere();
         return;
       }
       await goto(resolve('/posts'), { replace: true });
     } catch (err) {
-      const cause = err instanceof ReelPublishError ? err.cause : err;
-      if (isVideoPrepareError(cause) && cause.fault === 'aborted') {
-        console.debug('[reel-publish] stopped: the re-encode was cancelled');
-        return;
-      }
-      const where = err instanceof ReelPublishError ? err.stage : 'unknown';
-      console.error(`[reel-publish] failed at ${where}`, cause);
-      errorMessage = publishFailureMessage(cause, m.reels_publish_error());
+      // ACCUSED: nothing was queued, and the sheet keeps everything for another press.
+      console.error('[reel-publish] the take could not be written to the device', err);
+      errorMessage = isQuotaError(err)
+        ? m.publish_queue_enqueue_storage_full()
+        : m.publish_queue_enqueue_error();
     } finally {
-      preparation.finish();
       publishing = false;
-      stage = null;
-      // The publish ended, however: the take stops waiting for an upload that will not come.
-      chatTake?.endWait(chatTake.id);
     }
   }
-
-  const busyLabel = $derived(
-    stage === 'mediaUpload' || stage === 'createPost' ? m.reels_publish_uploading() : null
-  );
 </script>
 
 <div
@@ -313,7 +254,7 @@
       class="ui-icon-button"
       aria-label={m.reels_publish_back()}
       title={m.reels_publish_back()}
-      disabled={uploading}
+      disabled={publishing}
       onclick={() => overlay.dismissFromUi()}
     >
       <ChevronLeft size={24} strokeWidth={2.5} />
@@ -424,17 +365,7 @@
       </div>
     {/if}
 
-    {#if preparation.fraction !== null}
-      <VideoPreparationProgress
-        fraction={preparation.fraction}
-        oncancel={() => preparation.cancel()}
-      />
-    {/if}
-
     <div class="flex items-center justify-end gap-3">
-      {#if busyLabel}
-        <span class="text-text-muted text-sm" aria-live="polite">{busyLabel}</span>
-      {/if}
       <Button
         type="button"
         class="shrink-0"

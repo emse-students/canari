@@ -36,8 +36,17 @@ import {
   type PublishNudge,
   type PublishView,
 } from './publishQueue';
-import { PublishQueueStore, type QueuedPost } from './publishQueueStore';
+import {
+  PublishQueueStore,
+  type QueuedPost,
+  type QueuedTakePreparation,
+} from './publishQueueStore';
 import { whenBecomesTrue } from './whenBecomesTrue.svelte';
+import { reelSendHost } from '$lib/reels/reelSendBridge';
+import { EncoderLeaseAbortedError, withEncoderLease } from '$lib/video/encoderLease';
+import { VideoPrepareError, type PrepareVideoOptions } from '$lib/video/prepareVideoForUpload';
+import { screenAwakeHolder, type ScreenAwakeHolder } from '$lib/mobile/screenAwake';
+import { publishHoldsTheScreen } from './publishScreenHold';
 
 class PublishQueueViews {
   /** One line per queued post, oldest first: what the progress line draws. */
@@ -58,6 +67,8 @@ interface Running {
   queue: PublishQueue;
   channel: BroadcastChannel | null;
   unsubscribe: Array<() => void>;
+  /** The screen kept on while THIS tab's pass prepares or sends (`publishHoldsTheScreen`). */
+  screen: ScreenAwakeHolder;
 }
 
 let running: Running | null = null;
@@ -106,6 +117,55 @@ function channelFor(userId: string): BroadcastChannel | null {
 }
 
 /**
+ * Prepares one media for the queue. A CanaReels TAKE (`take`) is prepared as the camera's publish
+ * step always prepared it - capped at the reel's longest length, trimmed to its picture, its sound
+ * removed when the member removed it - and under the encoder lease the outbox's chat take shares
+ * (RC-13, reels-in-chat 15.2): whoever started first encodes, the other waits.
+ */
+async function prepareForQueue(
+  media: MediaService,
+  file: File,
+  onProgress: (fraction: number) => void,
+  signal: AbortSignal,
+  take: QueuedTakePreparation | undefined
+) {
+  const isVideo = file.type.startsWith('video/');
+  const limits = isVideo ? await media.uploadLimits() : null;
+  const video: PrepareVideoOptions = {
+    maxBytes: limits?.maxPlaintextBytes,
+    onProgress,
+    signal,
+    ...(take
+      ? {
+          maxSeconds: take.maxDurationMs / 1000,
+          removeAudio: take.removeAudio === true,
+          // A reel loops: sound outside the picture would be a still frame on every pass.
+          trimToVideo: true,
+        }
+      : {}),
+  };
+  const prepared =
+    take && isVideo
+      ? await withEncoderLease('publish', signal, () => preparePostMedia(file, video)).catch(
+          (e: unknown) => {
+            if (e instanceof EncoderLeaseAbortedError) {
+              throw new VideoPrepareError('aborted', 'stopped while waiting for the encoder', {
+                cause: e,
+              });
+            }
+            throw e;
+          }
+        )
+      : await preparePostMedia(file, video);
+  // THE PICTURE TRAVELS WITH THE MEDIA (owner, 2026-11-10 for a video, 2026-11-11 for a photo: a
+  // CanaReels photo page was black until its file came): a ThumbHash a reader draws before a
+  // byte arrives - the server holds ciphertext and can make none. Made from the PREPARED file,
+  // the one readers get. A picture or video that gets none is said by `preparedMediaPlaceholder`.
+  const placeholder = await preparedMediaPlaceholder(prepared.file);
+  return placeholder ? { ...prepared, placeholder } : prepared;
+}
+
+/**
  * Starts the queue of `userId` and drains what it holds. Called again for the account already
  * running, it only drains: a pass that ended because the session was not yet this account's goes on.
  */
@@ -119,24 +179,12 @@ export function startPublishQueue(userId: string): void {
   const media = new MediaService();
   const channel = channelFor(userId);
   const token = () => tokenOf(userId);
+  const screen = screenAwakeHolder('publish');
+  let screenHeld = false;
   const queue = new PublishQueue({
     store,
-    prepare: async (file, onProgress, signal) => {
-      const isVideo = file.type.startsWith('video/');
-      const limits = isVideo ? await media.uploadLimits() : null;
-      const prepared = await preparePostMedia(file, {
-        maxBytes: limits?.maxPlaintextBytes,
-        onProgress,
-        signal,
-      });
-      // THE PICTURE TRAVELS WITH THE MEDIA (owner, 2026-11-10 for a video, 2026-11-11 for a photo: a
-      // CanaReels photo page was black until its file came): a ThumbHash a reader draws before a
-      // byte arrives - the server holds ciphertext and can make none. Made from the PREPARED file,
-      // the one readers get. Missing, it is said.
-      // A picture or video that gets none is said by `preparedMediaPlaceholder` itself.
-      const placeholder = await preparedMediaPlaceholder(prepared.file);
-      return placeholder ? { ...prepared, placeholder } : prepared;
-    },
+    prepare: (file, onProgress, signal, take) =>
+      prepareForQueue(media, file, onProgress, signal, take),
     reelRule: async () => reelRuleOf(await getReelLimits()),
     encodingFor: (mimeType) =>
       writesSegmented(mimeType) ? SEGMENTED_MEDIA_ENCODING : 'single-block',
@@ -146,10 +194,19 @@ export function startPublishQueue(userId: string): void {
         { mimeType: a.mimeType, fileName: a.fileName },
         token,
         a.dims,
-        'archive',
+        a.retentionClass,
         { state: a.state, persist: a.persist, encoding: a.encoding },
         a.transport
       ),
+    // The chat take's half lives in the messaging layer (`ChatBackgroundService`), reached through
+    // the camera's bridge so this module never imports the outbox. No host (no messaging session):
+    // the adoption is refused and accused by the runner, and the take uploads its own.
+    adoptChatTake: async (takeId, uploaded) => {
+      const host = reelSendHost();
+      if (!host) throw new Error('no messaging layer to hand the chat take its file');
+      await host.adopt(takeId, uploaded);
+    },
+    endChatTakeWait: (takeId) => reelSendHost()?.endWait(takeId),
     release: (uploadId) =>
       media.releaseResumableUpload(uploadId, token, 'post deleted from the publish queue'),
     // The create and the withdrawal go through `apiFetch`, whose own guard refuses a token of
@@ -170,6 +227,23 @@ export function startPublishQueue(userId: string): void {
     sleep,
     onViews: (views, fromRunner) => {
       publishQueueState.views = views;
+      // THE SCREEN STAYS ON WHILE A PUBLISH IS WORKED ON (2026-11-24): a phone whose screen goes to
+      // sleep during a slow send stops the app, and with battery saver the stopped app loses the
+      // network within seconds - the member who watched their publish never left the app.
+      // Only the runner's rows say what THIS tab is sending.
+      if (fromRunner) {
+        const hold = publishHoldsTheScreen(views);
+        // Asked only on screen: a hidden page is refused the lock, and the next row drawn after
+        // the return asks again (the engine dropped the lock with the page).
+        if (hold && document.visibilityState === 'visible') void screen.hold();
+        if (hold !== screenHeld) {
+          screenHeld = hold;
+          if (!hold) screen.release();
+          appendLog(
+            `[PUBLISH-QUEUE] screen ${hold ? 'held on: a publish is being sent' : 'released: nothing is being sent'}`
+          );
+        }
+      }
       // Only the runner's rows go to the other tabs: rows read from the store alone carry no
       // progress, and would overwrite the runner's in every tab that adopted them.
       if (fromRunner) channel?.postMessage({ type: 'views', views } satisfies ChannelMessage);
@@ -207,6 +281,7 @@ export function startPublishQueue(userId: string): void {
     store,
     queue,
     channel,
+    screen,
     unsubscribe: [
       connectivity.onReconnect(() => queue.wake('reconnect')),
       // Only the native shells emit it; on the web a background tab keeps uploading.
@@ -236,9 +311,10 @@ export function startPublishQueue(userId: string): void {
 /** Stops the running queue (sign-out). What it holds stays on the device for the next sign-in. */
 export function stopPublishQueue(): void {
   if (!running) return;
-  const { queue, store, unsubscribe, channel } = running;
+  const { queue, store, unsubscribe, channel, screen } = running;
   running = null;
   queue.stop();
+  screen.release();
   for (const off of unsubscribe) off();
   channel?.close();
   void store.close();

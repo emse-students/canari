@@ -1138,7 +1138,9 @@ from it, designed:
    and the sheet then withheld the chats ("Cette video depasse 60 s ..."). That is this decision, not a
    defect: the tab's take is also a feed reel (90 s), and nothing knows at the shutter which row will be
    ticked. The `chat` destination (a composer's camera) arms its ring at `chatMaxDurationMs`.
-2. **One upload, the publish step's** (`reel-pending`, then claimed by the post). The take adopts it
+2. **One upload, the publish step's** (`reel-pending`, then claimed by the post; since 2026-11-24 the
+   publish QUEUE's, which records the take's id with the post and hands it the file -
+   [posts](posts.md#the-background-publish-queue)). The take adopts it
    (15.2): the publish step writes its `uploadedRef` into the take's row DURABLY, right after the
    upload and BEFORE `POST /api/posts`, then the take puts its chat hold (15.3) and the sends go -
    so a post that fails or is cancelled after the upload still leaves the chats their file. A publish

@@ -77,8 +77,14 @@ import { OUTBOX_COLUMNS, REEL_TAKE_MAX_SENDS } from '$lib/db/sqliteBatch';
 import { acquireEncoderLease, withEncoderLease } from '$lib/video/encoderLease';
 import { SqliteStorage } from '$lib/db/sqlite';
 import { buildChatReelTake } from '$lib/reels/chatReelTake';
-import { publishReel, ReelPublishError } from '$lib/reels/publishReel';
-import type { PreparedVideo } from '$lib/video/prepareVideoForUpload';
+import { PublishQueue } from '$lib/posts/publishQueue/publishQueue';
+import {
+  runnerWrite,
+  markedPost,
+  type QueuedFile,
+  type QueuedPost,
+} from '$lib/posts/publishQueue/publishQueueStore';
+import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { m } from '$lib/paraglide/messages';
 import { attachFakeOutboxSql } from '../../../test/outboxSqlFake';
 import { FakeSessionServer } from '../../../test/fakeUploadSessionServer';
@@ -1109,37 +1115,77 @@ describe('one take, several conversations (RC-13)', () => {
     const w = world();
     const l = life(w);
     await enqueueTake(l, 3, { awaitsPublish: true });
-    const published = publishReel(
-      {
-        clip: { blob: new Blob([RAW.slice().buffer as ArrayBuffer]), source: 'camera' },
-        caption: '',
-        identity: '',
-        maxDurationMs: 90_000,
-        rule: { maxDurationMs: 90_000, maxAspectRatio: 0.8 },
-        video: {},
-        onUploaded: (uploaded) => l.outbox.adoptPublishedUpload(ID, uploaded),
-      },
-      {
-        assertNotMuted: async () => undefined,
-        getToken: async () => 'token',
-        uploadLimits: async () => null,
-        prepare: async () =>
-          ({
-            file: new File([PREPARED.slice().buffer as ArrayBuffer], 'reel.mp4', {
-              type: 'video/mp4',
-            }),
-            width: 720,
-            height: 1280,
-            durationSeconds: 4.2,
-          }) as PreparedVideo,
-        upload: () => publishStepUpload(w),
-        placeholder: async () => null,
-        createPost: async () => {
-          throw new Error('422: the post was refused');
+    // THE PUBLISH QUEUE, as the CanaReels step hands it the take (2026-11-24), wired to THIS outbox.
+    const posts = new Map<string, QueuedPost>();
+    const files = new Map<string, QueuedFile>();
+    posts.set('reel-post', {
+      id: 'reel-post',
+      queuedAt: 1,
+      payload: { markdown: '' },
+      media: [
+        {
+          name: 'canareel.mp4',
+          type: 'video/mp4',
+          size: RAW.length,
+          take: { maxDurationMs: 90_000 },
         },
-      }
-    ).finally(() => l.outbox.endPublishWait(ID));
-    await expect(published).rejects.toBeInstanceOf(ReelPublishError);
+      ],
+      landing: 'all',
+      chatTakeId: ID,
+    });
+    files.set('reel-post/0', {
+      bytes: RAW.slice().buffer as ArrayBuffer,
+      name: 'canareel.mp4',
+      type: 'video/mp4',
+    });
+    const queue = new PublishQueue({
+      store: {
+        list: async () => [...posts.values()].map((p) => structuredClone(p)),
+        get: async (id) => structuredClone(posts.get(id) ?? null),
+        readFile: async (id, i) => files.get(`${id}/${i}`)!,
+        update: async (post, bytes) => {
+          const stored = posts.get(post.id);
+          if (!stored) return false;
+          posts.set(post.id, structuredClone(runnerWrite(stored, post)));
+          if (bytes) files.set(`${post.id}/${bytes.index}`, bytes.file);
+          return true;
+        },
+        mark: async (id, marks) => {
+          const stored = posts.get(id);
+          if (!stored) return null;
+          posts.set(id, markedPost(stored, marks));
+          return structuredClone(posts.get(id)!);
+        },
+        remove: async (id) => void posts.delete(id),
+      },
+      prepare: async () => ({
+        file: new File([PREPARED.slice().buffer as ArrayBuffer], 'reel.mp4', { type: 'video/mp4' }),
+        dims: { width: 720, height: 1280 },
+        durationMs: 4200,
+      }),
+      reelRule: async () => ({ maxDurationMs: 90_000, maxAspectRatio: 0.8 }),
+      encodingFor: () => 'single-block',
+      upload: () => publishStepUpload(w),
+      adoptChatTake: (takeId, uploaded) => l.outbox.adoptPublishedUpload(takeId, uploaded),
+      endChatTakeWait: (takeId) => l.outbox.endPublishWait(takeId),
+      release: async () => undefined,
+      createPost: async () => {
+        throw new ApiRefusalError(422, null, 'the post was refused');
+      },
+      withdrawPost: async () => ({ deleted: false }),
+      serverReady: () => true,
+      assertAccount: async () => undefined,
+      sessionEnded: () => false,
+      assertNotMuted: async () => undefined,
+      failureMessage: () => 'refused',
+      lock: (fn) => fn(),
+      sleep: async () => undefined,
+      onViews: () => undefined,
+      onPublished: () => undefined,
+      log: () => undefined,
+    });
+    await queue.drain();
+    expect(posts.get('reel-post')?.failure?.stage).toBe('createPost');
     await expectDeliveredOnce(w, l, 3);
     expect(w.uploads).toBe(0);
   });
