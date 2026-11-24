@@ -14,6 +14,8 @@ import { PAYMENT_IN_PROGRESS } from '$lib/associations/paymentRefusal';
 const api = vi.hoisted(() => ({
   check: null as unknown as () => Promise<Record<string, unknown>>,
   resume: null as unknown as (id: string, body: unknown) => Promise<Record<string, unknown>>,
+  toCash: null as unknown as (id: string) => Promise<Record<string, unknown>>,
+  confirm: null as unknown as () => Promise<Record<string, unknown>>,
   form: {} as Record<string, unknown>,
 }));
 const opened = vi.hoisted(() => [] as string[]);
@@ -72,7 +74,8 @@ vi.mock('$lib/forms/api', async (orig) => ({
   checkSubmission: () => api.check(),
   getSubmission: () => Promise.resolve(null),
   resumeSubmissionPayment: (id: string, body: unknown) => api.resume(id, body),
-  confirmSubmissionPayment: () => Promise.resolve({ paymentStatus: 'pending', formId: 'f1' }),
+  switchSubmissionToCash: (id: string) => api.toCash(id),
+  confirmSubmissionPayment: () => api.confirm(),
 }));
 
 import Page from './+page.svelte';
@@ -98,6 +101,10 @@ beforeEach(() => {
   api.resume = vi.fn(() =>
     Promise.resolve({ checkoutUrl: 'https://lydia.test/pay/2', submissionId: 'ans' })
   );
+  api.toCash = vi.fn(() =>
+    Promise.resolve({ submissionId: 'ans', cashPayment: true, cashExpiresAt: null })
+  );
+  api.confirm = () => Promise.resolve({ paymentStatus: 'pending', formId: 'f1' });
 });
 afterEach(() => {
   while (mounted.length) mounted.pop()!();
@@ -195,5 +202,99 @@ describe('the form page offers to resume a released payment', () => {
     expect(document.body.textContent).toContain(m.form_payment_resume_price_changed());
     expect(card()).toBeNull();
     expect(opened).toEqual([]);
+  });
+});
+
+// "PAYER EN DIRECT" (owner decision of 2026-11-23): the SAME answer, whose card payment failed, is
+// settled in person instead - offered beside the resume when the server names it.
+describe('the form page offers to settle a failed card payment in person', () => {
+  const both = { ...offered, cashSwitchable: { submissionId: 'ans', amountCents: 1500 } };
+  const cashButton = () =>
+    [...(card()?.querySelectorAll('button') ?? [])].find((b) =>
+      b.textContent?.includes(m.form_view_payment_cash_switch_button())
+    );
+
+  it('shows both actions when the server names the answer both ways', async () => {
+    api.form = { allowCashPayment: true };
+    api.check = () => Promise.resolve({ ...both });
+    await render();
+    expect(resumeButton()).toBeDefined();
+    expect(cashButton()).toBeDefined();
+  });
+
+  it('shows the cash action alone while online payments are paused', async () => {
+    api.form = { allowCashPayment: true, paymentsPaused: true };
+    api.check = () => Promise.resolve({ ...both });
+    await render();
+    expect(resumeButton()).toBeUndefined();
+    expect(cashButton()).toBeDefined();
+  });
+
+  it('shows no cash action from an older server that names none', async () => {
+    api.form = { allowCashPayment: true };
+    await render();
+    expect(cashButton()).toBeUndefined();
+  });
+
+  it('moves the SAME answer to cash, hands nothing to Lydia, and says it waits in person', async () => {
+    api.form = { allowCashPayment: true };
+    api.check = () => Promise.resolve({ ...both });
+    await render();
+    cashButton()!.click();
+    await settle();
+    expect(api.toCash).toHaveBeenCalledWith('ans');
+    expect(api.resume).not.toHaveBeenCalled();
+    expect(opened).toEqual([]);
+    expect(card()).toBeNull();
+    expect(document.body.textContent).toContain(m.form_payment_cash_switched_heading());
+    expect(document.body.textContent).toContain(m.form_payment_cash_switched_desc());
+  });
+
+  it('words a refusal from its code, and reads the offer again', async () => {
+    let checks = 0;
+    api.form = { allowCashPayment: true };
+    api.check = () => Promise.resolve(checks++ === 0 ? { ...both } : { ...fresh, resumable: null });
+    api.toCash = vi.fn(() =>
+      Promise.reject(new SocialApiError('not switchable', 'PAYMENT_NOT_SWITCHABLE', 409))
+    );
+    await render();
+    cashButton()!.click();
+    await settle();
+    expect(document.body.textContent).toContain(m.form_payment_not_switchable());
+    expect(checks).toBe(2);
+    expect(card()).toBeNull();
+  });
+
+  // A card that failed on Lydia's page may leave the request OPEN: the answer reads "pending" with
+  // no way out. The pending block offers the payment in person; the server cancels the request.
+  it('offers it beside a payment still pending on a form taking cash, and switches that answer', async () => {
+    api.form = { allowCashPayment: true };
+    api.check = () =>
+      Promise.resolve({
+        ...fresh,
+        hasSubmitted: true,
+        paymentStatus: 'pending',
+        submissionId: 'live',
+      });
+    await render();
+    const pending = document.querySelector('[data-testid="form-payment-cash-switch-pending"]');
+    expect(pending).not.toBeNull();
+    pending!.querySelector('button')!.click();
+    await settle();
+    expect(api.toCash).toHaveBeenCalledWith('live');
+    expect(document.querySelector('[data-testid="form-payment-cash-switch-pending"]')).toBeNull();
+    expect(document.body.textContent).toContain(m.form_payment_cash_switched_heading());
+  });
+
+  it('offers nothing beside a pending payment on a form taking no cash', async () => {
+    api.check = () =>
+      Promise.resolve({
+        ...fresh,
+        hasSubmitted: true,
+        paymentStatus: 'pending',
+        submissionId: 'live',
+      });
+    await render();
+    expect(document.querySelector('[data-testid="form-payment-cash-switch-pending"]')).toBeNull();
   });
 });

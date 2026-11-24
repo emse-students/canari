@@ -1,6 +1,6 @@
 ## P3 - the identity provider's PostgreSQL pin moves by hand, in its own window
 
-target: 1.8.0
+target: 1.10.0
 
 **What changed (2026-11-13).** Canari's three compose files and CI moved `postgres:18-alpine` from
 `sha256:898c60cb...` (PostgreSQL 18.6, built 2026-10-21) to `sha256:10187334...` (18.7, pushed

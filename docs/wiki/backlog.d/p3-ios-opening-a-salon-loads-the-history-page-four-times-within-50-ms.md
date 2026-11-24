@@ -1,6 +1,6 @@
 ## P3 - perf: iOS opening a salon loads the history page 4 times within 50 ms (S17, 2026-11-20)
 
-target: 1.8.0
+target: 1.9.0
 
 _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 

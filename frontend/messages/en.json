@@ -3430,6 +3430,21 @@
   "form_view_payment_resume_title": "Your payment did not go through",
   "form_view_payment_resume_note": "Your answer is saved: resume its payment ({amount}) to confirm it, without filling everything in again.",
   "form_view_payment_resume_button": "Resume the payment",
+  "form_view_payment_cash_switch_button": "Pay in person",
+  "form_view_payment_failed_choice_note": "Your answer is saved ({amount}): try the online payment again, or pay the organiser in person, without filling everything in again.",
+  "form_view_payment_failed_cash_note": "Your answer is saved ({amount}): pay the organiser in person, without filling everything in again.",
+  "form_view_payment_cash_switch_in_progress_note": "Online payment not going through? Pay the organiser in person: the online payment will be cancelled.",
+  "form_payment_cash_switched_heading": "Paying in person",
+  "form_payment_cash_switched_desc": "Pay the amount to the organiser: your answer counts as soon as they confirm the payment.",
+  "form_payment_cash_switched_desc_deadline": "Pay the amount to the organiser before {date}: your answer counts as soon as they confirm the payment, and your place is kept until then.",
+  "form_payment_not_switchable": "This answer no longer has an online payment to replace with a payment in person.",
+  "form_cash_not_offered": "This form does not accept payment in person.",
+  "form_cash_already_paid_online": "This answer was already paid online: there is nothing to collect. If cash was also handed over, it must be given back.",
+  "form_payment_issue_withdrawn": "Your answer changed while its payment was being prepared: nothing was charged. Reload the form.",
+  "form_cash_switch_lost_after_cancel": "Your card payment was cancelled, but the cash payment could not be kept: the form filled up or closed meanwhile. Nothing was charged.",
+  "form_success_cash_heading": "Payment in person",
+  "form_success_cash_desc": "Your answer is saved and waits for your payment in person: pay the organiser, who will confirm it.",
+  "form_guest_receipt_cash_desc": "Your answer is saved. Pay the amount to the organiser in person and give them your reference: your answer counts as soon as they confirm the payment.",
   "form_payment_resume_in_progress": "A payment of this answer is already in progress: finish it on Lydia, or try again once it has expired, at most 30 minutes after it was started.",
   "form_payment_not_resumable": "This answer has no payment to resume.",
   "form_payment_resume_price_changed": "The price of this answer has changed since: fill in the form again.",
@@ -6826,6 +6841,74 @@
   "webview_outdated_body": "Canari cannot start: the Android System WebView component of this phone is too old. Update it from the Play Store, then reopen Canari.",
   "webview_outdated_button": "Open the Play Store",
   "webview_outdated_version": "Detected version: {version}",
+  "admin_usage_day_gap_tooltip": "{day}: no figure (day not counted)",
+  "admin_usage_partial_month": "{month} (partial)",
+  "admin_usage_label": "Usage",
+  "admin_card_usage_desc": "Who uses Canari, counted without keeping who: people per day, week and month, hours, activity.",
+  "admin_usage_title": "Canari usage",
+  "admin_usage_subtitle": "Anonymous aggregate figures, Paris time",
+  "admin_usage_explainer": "A person counts once per period, whatever their devices, and the server keeps no list of who. No threshold: a figure of 1 is shown as it is.",
+  "admin_usage_error": "The usage figures could not be read.",
+  "admin_usage_empty": "Nothing yet for this period.",
+  "admin_usage_people_heading": "Distinct people",
+  "admin_usage_period_today": "Today",
+  "admin_usage_period_week": "This week",
+  "admin_usage_period_month": "This month",
+  "admin_usage_days_heading": "People per day, last {days} days",
+  "admin_usage_day_tooltip": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{day}: {count} person",
+        "countPlural=other": "{day}: {count} people"
+      }
+    }
+  ],
+  "admin_usage_categories_heading": "By device type",
+  "admin_usage_categories_hint": "A person on two device types counts in each, and once in the total.",
+  "admin_usage_category_column": "Device type",
+  "admin_usage_category_app_android": "Android app",
+  "admin_usage_category_app_ios": "iPhone app",
+  "admin_usage_category_app_desktop": "Desktop app",
+  "admin_usage_category_web_android": "Web on Android",
+  "admin_usage_category_web_ios": "Web on iPhone or iPad",
+  "admin_usage_category_web_desktop": "Web on a computer",
+  "admin_usage_category_other": "Older version (undeclared)",
+  "admin_usage_versions_heading": "Versions this month",
+  "admin_usage_people_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} person",
+        "countPlural=other": "{count} people"
+      }
+    }
+  ],
+  "admin_usage_hours_heading": "Usage hours",
+  "admin_usage_hours_hint": "Mean number of people connected in each hour of the week, from {from} to {to}.",
+  "admin_usage_hour_tooltip": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{day} {hour}:00: {count} person on average",
+        "countPlural=other": "{day} {hour}:00: {count} people on average"
+      }
+    }
+  ],
+  "admin_usage_activity_heading": "Platform activity",
+  "admin_usage_activity_hint": "Daily totals for the whole platform: never per conversation, per person or per hour. Answers to anonymous forms are not counted.",
+  "admin_usage_day_column": "Day",
+  "admin_usage_month_column": "Month",
+  "admin_usage_activity_messages": "Messages",
+  "admin_usage_activity_posts": "Posts",
+  "admin_usage_activity_reels": "CanaReels",
+  "admin_usage_activity_lives": "Lives",
+  "admin_usage_activity_calls": "Calls",
+  "admin_usage_activity_forms": "Forms",
+  "admin_usage_months_heading": "People per month",
   "alumni_link_banner_text": "Link your Alumni account to MiConnect",
   "alumni_link_banner_action": "Link",
   "alumni_link_banner_dismiss": "Later",

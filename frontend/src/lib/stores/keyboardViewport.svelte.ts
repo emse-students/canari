@@ -1244,6 +1244,15 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
   (window as unknown as { canariKeyboardAtRest?: () => void }).canariKeyboardAtRest = () =>
     noteKeyboardAtRest('the shell: the keyboard did show, hide or change height, on screen');
 
+  /**
+   * `window.canariKeyboardShows`: the iOS shell's word that a keyboard is about to show
+   * (`UIKeyboardWillShow`), which UIKit pairs with a did-show or did-hide that rests it. It starts a
+   * transition the viewport may not show - an app returning with the keyboard up comes back at the size
+   * it left with - and merges into the one a resize started otherwise (`keyboardTransition.ts`).
+   */
+  (window as unknown as { canariKeyboardShows?: () => void }).canariKeyboardShows = () =>
+    noteKeyboardTransition('the shell: a keyboard will show');
+
   // A press during a ride (a picker opening, a tap on a row) ends it: while a piece rides it is the
   // containing block of its fixed descendants (`keyboardRide.ts`).
   const handlePointerDown = () => {
@@ -1268,6 +1277,7 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
     delete (window as unknown as { canariImeTarget?: unknown }).canariImeTarget;
     delete (window as unknown as { canariKeyboardFall?: unknown }).canariKeyboardFall;
     delete (window as unknown as { canariKeyboardAtRest?: unknown }).canariKeyboardAtRest;
+    delete (window as unknown as { canariKeyboardShows?: unknown }).canariKeyboardShows;
     if (overlayDeclared) {
       (
         navigator as unknown as { virtualKeyboard: { overlaysContent: boolean } }

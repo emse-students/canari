@@ -620,6 +620,20 @@ export class FormsController {
     return this.service.resumePayment(submissionId, xUserId, dto);
   }
 
+  /**
+   * SETTLES THE CALLER'S OWN FAILED CARD PAYMENT IN PERSON INSTEAD ("Payer en direct",
+   * `FormsService.switchToCash`, owner decision of 2026-11-23): the same answer, its online request
+   * settled at Lydia first, now waits for cash until the form's deadline. Only the submitter: a
+   * manager validates or cancels cash, and another person's answer is a 404. Answers
+   * `{ submissionId, cashPayment, cashExpiresAt }`, or `alreadyPaid` when the request was paid.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Post('submissions/:submissionId/switch-to-cash')
+  @HttpCode(200)
+  switchToCash(@Param('submissionId') submissionId: string, @Headers('x-user-id') xUserId: string) {
+    return this.service.switchToCash({ kind: 'member', submissionId, userId: xUserId });
+  }
+
   /** Cancels a pending submission. Requires the submitter or a form manager. */
   @UseGuards(NginxAuthGuard)
   @Post('submissions/:submissionId/cancel')

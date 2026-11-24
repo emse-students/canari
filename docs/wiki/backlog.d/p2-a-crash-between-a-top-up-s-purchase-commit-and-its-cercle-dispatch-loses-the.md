@@ -1,6 +1,6 @@
 ## P2 - a crash between a top-up's purchase commit and its Cercle dispatch loses the top-up silently (review of #2218, 2026-10-21)
 
-target: 1.8.0
+target: 1.9.0
 
 Three ways lose a top-up WITHOUT a line, and none of them credits twice:
 

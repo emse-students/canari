@@ -1,6 +1,6 @@
 ## P3 - a publisher whose live was cut by a reload or a crash cannot go live again for a minute
 
-target: 1.8.0
+target: 1.9.0
 
 Measured 2026-11-15 on dev (rig W5, the fourth account): the page was reloaded mid-live, and the next
 "Demarrer le live" got `409 LIVE_ALREADY_OPEN` (`[LIVE-BROADCAST] start refused (already-open)`) until the

@@ -492,6 +492,24 @@ describe('FormsManagerList - cash awaiting validation', () => {
     await vi.waitFor(() => expect(target.textContent).not.toContain(m.common_validate_button()));
   });
 
+  // A switched answer paid online meanwhile: no cash to collect, said so, never "done" in silence.
+  it('says an answer was already paid online, and drops it from the cash list', async () => {
+    api.listPendingCashSubmissions.mockResolvedValueOnce([pendingRow({ reference: 'R1' })]);
+    api.validateCashSubmission.mockRejectedValueOnce(
+      new ApiRefusalError(409, 'CASH_ALREADY_PAID_ONLINE', 'paid online')
+    );
+    const target = await render([cashForm()], { scoped: true });
+    await vi.waitFor(() => expect(target.textContent).toContain(m.common_validate_button()));
+    [...target.querySelectorAll('button')]
+      .find((b) => b.textContent?.trim() === m.common_validate_button())!
+      .click();
+    await vi.waitFor(() =>
+      expect(toastStore.toasts.map((t) => t.message)).toContain(m.form_cash_already_paid_online())
+    );
+    await vi.waitFor(() => expect(target.textContent).not.toContain(m.common_validate_button()));
+    toastStore.toasts.forEach((t) => dismissToast(t.id));
+  });
+
   it('on the global list reads no pending cash at all: the accordion holds those actions', async () => {
     await render([cashForm(), form({ id: 'f2', allowCashPayment: true })]);
     expect(api.listPendingCashSubmissions).not.toHaveBeenCalled();
