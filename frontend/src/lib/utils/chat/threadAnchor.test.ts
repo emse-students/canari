@@ -197,7 +197,7 @@ const settledReader: NewMessageState = {
 };
 
 describe('ownMessageAppended', () => {
-  const mine = { id: 'm9', isOwn: true };
+  const mine = { id: 'm9', isOwn: true, status: 'pending' as const };
 
   it('is true when a message of the reader became the newest', () => {
     expect(ownMessageAppended('m8', mine)).toBe(true);
@@ -212,6 +212,33 @@ describe('ownMessageAppended', () => {
     expect(ownMessageAppended('m8', { id: 'm9', isOwn: false })).toBe(false);
     expect(ownMessageAppended('m8', { id: 'm9' })).toBe(false);
     expect(ownMessageAppended('m8', undefined)).toBe(false);
+  });
+
+  /**
+   * A message this account wrote on its OTHER device arrives as a frame with no send state, and a
+   * catch-up flush ending with one is not the reader sending (review of #4054): a reader who scrolled
+   * up stays where they are.
+   */
+  it('is false for an own message that ARRIVED (no send state): written on another device', () => {
+    expect(ownMessageAppended('m8', { id: 'm9', isOwn: true })).toBe(false);
+    expect(ownMessageAppended('m8', { id: 'm9', isOwn: true, status: undefined })).toBe(false);
+  });
+
+  it('is true whatever the send state of a message composed here', () => {
+    for (const status of ['pending', 'sending', 'sent', 'error', 'unconfirmed'] as const) {
+      expect(ownMessageAppended('m8', { id: 'm9', isOwn: true, status })).toBe(true);
+    }
+  });
+
+  it('leaves a reader who scrolled up in place when a flush ends with another-device message', () => {
+    expect(
+      respondToNewMessage({
+        entering: false,
+        catchupActive: false,
+        isNearBottom: false,
+        ownMessageAdded: ownMessageAppended('m8', { id: 'm9', isOwn: true }),
+      })
+    ).toBe('stay');
   });
 });
 

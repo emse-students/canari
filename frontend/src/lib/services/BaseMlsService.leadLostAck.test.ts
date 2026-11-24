@@ -503,4 +503,56 @@ describe('the drain wires it: a commit it applied waits for the persister checkp
     await (svc as unknown as { ackInFlight: Promise<void> | null }).ackInFlight;
     expect(acked).toEqual([['msg', 'commit']]);
   });
+  /**
+   * THE WINDOW CLOSES WHATEVER THE DRAIN'S END THROWS (review of #4054): a synchronous throw from the
+   * owed pull, the refetch or the bench skipped the close, so the UI window stayed open for the
+   * page's life - every later arrival buffered and never shown.
+   */
+  it("closes the drain's bulk-ingest window even when a step before the close throws", async () => {
+    role.now = 'leader';
+    resetStateAuthorityForTests();
+    noteMlsStateLoaded(true);
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const svc = makeService();
+    Object.assign(svc, {
+      userId: 'user-a',
+      messageCallback: vi.fn(async () => true),
+      delivery: { ackMessages: vi.fn(async () => undefined) },
+    });
+    const ui = { onBulkIngestStart: vi.fn(), onBulkIngestEnd: vi.fn(async () => undefined) };
+    svc.addBulkIngestObserver(ui);
+    vi.spyOn(
+      svc as unknown as { issueOwedPull(t: string): void },
+      'issueOwedPull'
+    ).mockImplementation((trigger: string) => {
+      // Only the drain end's call throws: the queue-idle one after it is not under test.
+      if (trigger === 'drain end') throw new Error('owed pull threw');
+    });
+    (
+      svc as unknown as { enqueueMessage(msg: MlsQueuedMessage, channel: DeliveryChannel): void }
+    ).enqueueMessage(
+      {
+        senderId: 'alice',
+        ciphertext: new Uint8Array([1]),
+        groupId: 'group-a',
+        isWelcome: false,
+        isCommit: false,
+        queuedMessageId: 'msg',
+      },
+      'live'
+    );
+    const scheduler = (svc as unknown as { messageScheduler: MlsPerGroupScheduler })
+      .messageScheduler;
+    await scheduler.waitUntilIdle().catch(() => undefined);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    expect(ui.onBulkIngestStart).toHaveBeenCalledTimes(1);
+    expect(ui.onBulkIngestEnd).toHaveBeenCalledTimes(1);
+    expect((svc as unknown as { openBulkIngests: Map<number, unknown> }).openBulkIngests.size).toBe(
+      0
+    );
+  });
 });
