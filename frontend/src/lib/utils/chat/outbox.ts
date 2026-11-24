@@ -806,10 +806,19 @@ export interface OutboxController {
    * The publish step uploaded the file (15.5, D-onefile): written on the take row BEFORE the post is
    * created, so the chats keep that file however the post ends. The chat hold is placed by the take
    * before its first send; until then the raw take is kept, so a refused hold costs an upload, never
-   * the take. A take whose sends are all gone answers nothing - the post keeps its own file.
+   * the take. A take whose sends are all gone, or that holds its own file, DECLINES - the post keeps
+   * its file. A follower tab FORWARDS it to the leader, which writes take rows: the answer then is
+   * the leader's, and only its acknowledgement says it was taken.
    */
-  adoptPublishedUpload: (takeId: string, uploaded: PublishedReelUpload) => Promise<void>;
-  /** The publish step of `takeId` ended (posted, failed or cancelled): the take stops waiting for it. */
+  adoptPublishedUpload: (
+    takeId: string,
+    uploaded: PublishedReelUpload
+  ) => Promise<ReelTakeAdoption>;
+  /**
+   * The publish step of `takeId` ended (posted, failed or cancelled): the take stops waiting for it.
+   * The wait lives in the LEADER tab (only it writes take rows), so a follower forwards the end - after
+   * the leader acknowledged an adoption this tab forwarded, never before it.
+   */
   endPublishWait: (takeId: string) => void;
   /**
    * How far the take naming `messageId` reaches - read from the take row or its SENT-TAKE RECORD
@@ -827,6 +836,9 @@ export interface OutboxController {
    */
   reelSendDeleted: (messageId: string) => Promise<void>;
 }
+
+/** What an adoption of the publish step's upload did (15.5): written, declined, or handed to the leader. */
+export type ReelTakeAdoption = 'adopted' | 'declined' | 'forwarded';
 
 /**
  * Result of attempting to flush a single entry. `uploading`: an attachment whose UPLOAD is running
@@ -1226,6 +1238,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * acknowledged (L2). Read when the publish step ends: still here, the leader never took it.
    */
   const adoptionsForwarded = new Set<string>();
+  /**
+   * Ends of a publish wait this FOLLOWER owes the leader, held until the leader acknowledged the
+   * adoption it forwarded first: forwarded before it, the leader could end the wait while the
+   * adoption is still being written, and the take would upload a second file.
+   */
+  const endWaitsOwed = new Set<string>();
   /** The leader kept its take records in this page life (`maintainTakeRecords`, once). */
   let takeRecordsMaintained = false;
   /** The one writer per take row at a time: its sends settle, are marked sent or deleted, in turn. */
@@ -1498,9 +1516,16 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       void (
         event.type === 'outbox_reel_send_deleted'
           ? reelSendDeletedHere(event.messageId)
-          : adoptPublishedUploadHere(event.takeId, event.uploaded).then(() =>
-              acknowledgeReelTakeAdoption(event.takeId)
-            )
+          : adoptPublishedUploadHere(event.takeId, event.uploaded)
+              .catch((e: unknown) =>
+                // ACKNOWLEDGED ANYWAY: the follower holds the end of the wait behind this ack, and
+                // the take, told its wait ended, uploads its own file - never a wait for ever.
+                console.error(
+                  `[OUTBOX] take ${event.takeId.slice(0, 8)}… a forwarded adoption FAILED - acknowledged, the take uploads its own:`,
+                  e
+                )
+              )
+              .then(() => acknowledgeReelTakeAdoption(event.takeId))
       ).catch((e: unknown) =>
         log(`[OUTBOX] ${event.type} forwarded by a follower tab FAILED: ${String(e)}`)
       );
@@ -1513,6 +1538,15 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           `[OUTBOX] take ${event.takeId.slice(0, 8)}… its forwarded adoption was taken by the leader`
         );
       }
+      // THE END OF THE WAIT HELD BEHIND THAT ADOPTION goes now, in the order the leader needs.
+      if (endWaitsOwed.delete(event.takeId)) forwardEndPublishWait(event.takeId);
+      return;
+    }
+    // A FOLLOWER'S END OF A PUBLISH WAIT: the wait lives here, in the leader.
+    if (event.type === 'outbox_reel_take_end_wait') {
+      if (!getIsTabLeader()) return;
+      log(`[OUTBOX] take ${event.takeId.slice(0, 8)}… its publish wait ended by a follower tab`);
+      endPublishWaitHere(event.takeId);
       return;
     }
     // Not leader-gated, and deliberately ahead of the one that is: the tab that must forget a
@@ -4896,7 +4930,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   async function adoptPublishedUploadHere(
     takeId: string,
     uploaded: PublishedReelUpload
-  ): Promise<void> {
+  ): Promise<ReelTakeAdoption> {
     const short = takeId.slice(0, 8);
     const { ref, durationMs } = uploaded;
     const adopted: OutboxAdoptedUpload = {
@@ -4925,6 +4959,53 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     });
     if (written) log(`[OUTBOX] take ${short}… adopts the published file ${ref.mediaId}`);
     runFlush();
+    return written ? 'adopted' : 'declined';
+  }
+
+  /** The leader's half of {@link OutboxController.endPublishWait}: the take stops waiting. */
+  function endPublishWaitHere(takeId: string): void {
+    if (!publishing.delete(takeId)) return;
+    log(`[OUTBOX] take ${takeId.slice(0, 8)}… its publish step ended`);
+    runFlush();
+  }
+
+  /** {@link OutboxController.endPublishWait}: where the wait lives, in the order the leader needs. */
+  function endPublishWait(takeId: string): void {
+    const side = getTabLeadership();
+    if (side === 'undecided') {
+      // Decided as the adoption is (`writesTakesHere`): the election always terminates.
+      void whenTabLeadershipDecided()
+        .then(() => endPublishWait(takeId))
+        .catch((e: unknown) =>
+          console.error(
+            `[OUTBOX] take ${takeId.slice(0, 8)}… the end of its publish wait was lost with the election:`,
+            e
+          )
+        );
+      return;
+    }
+    if (side === 'leader') {
+      endPublishWaitHere(takeId);
+      return;
+    }
+    // THE WAIT IS THE LEADER'S (L2). An adoption this tab forwarded and the leader has not yet
+    // acknowledged goes FIRST: the end is held until its acknowledgement (an event, never a clock).
+    if (adoptionsForwarded.has(takeId)) {
+      endWaitsOwed.add(takeId);
+      log(
+        `[OUTBOX] take ${takeId.slice(0, 8)}… the end of its publish wait held until the leader takes the forwarded adoption`
+      );
+      return;
+    }
+    forwardEndPublishWait(takeId);
+  }
+
+  /** A follower hands the end of a publish wait to the leader, which holds the wait. */
+  function forwardEndPublishWait(takeId: string): void {
+    log(
+      `[OUTBOX] take ${takeId.slice(0, 8)}… the end of its publish wait forwarded to the leader tab`
+    );
+    forwardReelTakeWrite({ type: 'outbox_reel_take_end_wait', takeId });
   }
 
   /**
@@ -5508,25 +5589,19 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       }
     },
 
-    async adoptPublishedUpload(takeId: string, uploaded: PublishedReelUpload): Promise<void> {
+    async adoptPublishedUpload(
+      takeId: string,
+      uploaded: PublishedReelUpload
+    ): Promise<ReelTakeAdoption> {
       if (await writesTakesHere()) return adoptPublishedUploadHere(takeId, uploaded);
       log(`[OUTBOX] take ${takeId.slice(0, 8)}… its publish upload forwarded to the leader tab`);
       adoptionsForwarded.add(takeId);
       forwardReelTakeWrite({ type: 'outbox_reel_take_adopt', takeId, uploaded });
+      return 'forwarded';
     },
 
     endPublishWait(takeId: string): void {
-      // AN ADOPTION THIS FOLLOWER FORWARDED, NOT TAKEN by the end of its publish step (L2): no leader
-      // received it. Said with its cost - the take uploads its own file, a second upload - and read
-      // at an EVENT (the publish step's end, which RC-12 owes in a `finally`), never a clock.
-      if (adoptionsForwarded.delete(takeId)) {
-        const line = `[OUTBOX] take ${takeId.slice(0, 8)}… its forwarded publish upload was NOT taken by a leader tab before the publish step ended - the take uploads its own file (a second upload)`;
-        console.warn(line);
-        log(line);
-      }
-      if (!publishing.delete(takeId)) return;
-      log(`[OUTBOX] take ${takeId.slice(0, 8)}… its publish step ended`);
-      runFlush();
+      endPublishWait(takeId);
     },
 
     async reelTakeReachOf(messageId: string): Promise<ReelTakeReach | null> {
@@ -5793,7 +5868,7 @@ export function enqueueOutboxTake(
 export function adoptOutboxPublishedUpload(
   takeId: string,
   uploaded: PublishedReelUpload
-): Promise<void> {
+): Promise<ReelTakeAdoption> {
   if (!active) return Promise.reject(new OutboxEnqueueError('no active outbox controller'));
   return active.adoptPublishedUpload(takeId, uploaded);
 }

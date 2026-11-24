@@ -178,13 +178,17 @@ export class PostMediaRetentionService implements OnModuleInit {
   /**
    * Claims a reel's blob for its author, or throws.
    *
-   * @returns normally only if EVERY id was claimed. A refused id is a blob the author did not
-   *   upload (or that no longer exists): the caller answers `400`. Transport failures propagate so
-   *   the caller answers `503` - a reel is never stored on trust.
+   * @returns the refused ids - a blob the author did not upload, or that no longer exists: the
+   *   caller answers `400` - and among them the `expired` ones, the author's own pending upload past
+   *   its window. Transport failures propagate so the caller answers `503` - a reel is never stored
+   *   on trust.
    */
-  async claimReelFor(authorId: string, mediaIds: string[]): Promise<{ refused: string[] }> {
-    const { refused } = await claimReelMedia(this.httpService, mediaIds, authorId);
-    return { refused };
+  async claimReelFor(
+    authorId: string,
+    mediaIds: string[]
+  ): Promise<{ refused: string[]; expired: string[] }> {
+    const { refused, expired } = await claimReelMedia(this.httpService, mediaIds, authorId);
+    return { refused, expired };
   }
 
   /**

@@ -155,6 +155,8 @@ export type TabOutboxEvent =
   /** A follower's write to a chat-reel take (RC-13), done by the leader: see {@link forwardReelTakeWrite}. */
   | { type: 'outbox_reel_send_deleted'; messageId: string }
   | { type: 'outbox_reel_take_adopt'; takeId: string; uploaded: PublishedReelUpload }
+  /** The publish of a take ended in a follower: the leader, which holds the wait, ends it. */
+  | { type: 'outbox_reel_take_end_wait'; takeId: string }
   /** The leader took a forwarded adoption: the follower owes nothing more for it. */
   | { type: 'outbox_reel_take_adopt_ack'; takeId: string };
 
@@ -166,6 +168,7 @@ const OUTBOX_EVENT_TYPES = new Set<string>([
   'outbox_entry_retired',
   'outbox_reel_send_deleted',
   'outbox_reel_take_adopt',
+  'outbox_reel_take_end_wait',
   'outbox_reel_take_adopt_ack',
 ]);
 
@@ -299,7 +302,10 @@ export function requestLeaderOutboxFlush(): void {
  * in the leader, which writes for itself.
  */
 export function forwardReelTakeWrite(
-  event: Extract<TabOutboxEvent, { type: 'outbox_reel_send_deleted' | 'outbox_reel_take_adopt' }>
+  event: Extract<
+    TabOutboxEvent,
+    { type: 'outbox_reel_send_deleted' | 'outbox_reel_take_adopt' | 'outbox_reel_take_end_wait' }
+  >
 ): void {
   if (getIsTabLeader()) return;
   ensureChannel()?.postMessage(event satisfies TabOutboxEvent);

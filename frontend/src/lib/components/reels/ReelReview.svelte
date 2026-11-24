@@ -12,7 +12,7 @@
    * which is safe now that no control of the media lives there.
    *
    * THE SOUND BUTTON REMOVES THE AUDIO TRACK FROM WHAT IS PUBLISHED (`clip.soundRemoved`, read by
-   * `publishReel`), not a listening toggle: while it is on the preview is silent, so what is heard
+   * the publish queue's take preparation), not a listening toggle: while it is on the preview is silent, so what is heard
    * is what is published.
    *
    * TWO ACTIONS WHEN THE TAKE HAS TWO WAYS ON (owner, 2026-11-16, reels-in-chat section 22): a

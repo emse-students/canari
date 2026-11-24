@@ -17,8 +17,7 @@ import { SvelteSet } from 'svelte/reactivity';
 import { m } from '$lib/paraglide/messages';
 import { createPost, getReelLimits, withdrawPost } from '$lib/posts/api';
 import { reelRuleOf } from '$lib/reels/reelRule';
-import { preparedMediaPlaceholder } from '$lib/reels/reelFirstFrame';
-import { MediaService, preparePostMedia } from '$lib/media';
+import { MediaService } from '$lib/media';
 import { SEGMENTED_MEDIA_ENCODING, writesSegmented } from '$lib/mediaSegmented';
 import { assertNotMuted } from '$lib/moderation/muteCheck';
 import { publishFailureMessage } from '$lib/posts/publishFailure';
@@ -38,6 +37,10 @@ import {
 } from './publishQueue';
 import { PublishQueueStore, type QueuedPost } from './publishQueueStore';
 import { whenBecomesTrue } from './whenBecomesTrue.svelte';
+import { reelSendHost } from '$lib/reels/reelSendBridge';
+import { screenAwakeHolder } from '$lib/mobile/screenAwake';
+import { PublishScreenHold } from './publishScreenHold';
+import { prepareForQueue } from './prepareForQueue';
 
 class PublishQueueViews {
   /** One line per queued post, oldest first: what the progress line draws. */
@@ -58,6 +61,8 @@ interface Running {
   queue: PublishQueue;
   channel: BroadcastChannel | null;
   unsubscribe: Array<() => void>;
+  /** The screen kept on while THIS tab's pass prepares or sends (`PublishScreenHold`). */
+  screen: PublishScreenHold;
 }
 
 let running: Running | null = null;
@@ -119,24 +124,18 @@ export function startPublishQueue(userId: string): void {
   const media = new MediaService();
   const channel = channelFor(userId);
   const token = () => tokenOf(userId);
+  // THE SCREEN STAYS ON WHILE A PUBLISH IS WORKED ON (2026-11-24): a phone whose screen goes to
+  // sleep during a slow send stops the app, and with battery saver the stopped app loses the
+  // network within seconds - the member who watched their publish never left the app.
+  const screen = new PublishScreenHold(
+    screenAwakeHolder('publish'),
+    () => document.visibilityState === 'visible',
+    appendLog
+  );
   const queue = new PublishQueue({
     store,
-    prepare: async (file, onProgress, signal) => {
-      const isVideo = file.type.startsWith('video/');
-      const limits = isVideo ? await media.uploadLimits() : null;
-      const prepared = await preparePostMedia(file, {
-        maxBytes: limits?.maxPlaintextBytes,
-        onProgress,
-        signal,
-      });
-      // THE PICTURE TRAVELS WITH THE MEDIA (owner, 2026-11-10 for a video, 2026-11-11 for a photo: a
-      // CanaReels photo page was black until its file came): a ThumbHash a reader draws before a
-      // byte arrives - the server holds ciphertext and can make none. Made from the PREPARED file,
-      // the one readers get. Missing, it is said.
-      // A picture or video that gets none is said by `preparedMediaPlaceholder` itself.
-      const placeholder = await preparedMediaPlaceholder(prepared.file);
-      return placeholder ? { ...prepared, placeholder } : prepared;
-    },
+    prepare: (file, onProgress, signal, take) =>
+      prepareForQueue(media, file, onProgress, signal, take),
     reelRule: async () => reelRuleOf(await getReelLimits()),
     encodingFor: (mimeType) =>
       writesSegmented(mimeType) ? SEGMENTED_MEDIA_ENCODING : 'single-block',
@@ -146,10 +145,19 @@ export function startPublishQueue(userId: string): void {
         { mimeType: a.mimeType, fileName: a.fileName },
         token,
         a.dims,
-        'archive',
+        a.retentionClass,
         { state: a.state, persist: a.persist, encoding: a.encoding },
         a.transport
       ),
+    // The chat take's half lives in the messaging layer (`ChatBackgroundService`), reached through
+    // the camera's bridge so this module never imports the outbox. No host (no messaging session):
+    // the adoption is refused and accused by the runner, and the take uploads its own.
+    adoptChatTake: async (takeId, uploaded) => {
+      const host = reelSendHost();
+      if (!host) throw new Error('no messaging layer to hand the chat take its file');
+      return host.adopt(takeId, uploaded);
+    },
+    endChatTakeWait: (takeId) => reelSendHost()?.endWait(takeId),
     release: (uploadId) =>
       media.releaseResumableUpload(uploadId, token, 'post deleted from the publish queue'),
     // The create and the withdrawal go through `apiFetch`, whose own guard refuses a token of
@@ -170,6 +178,8 @@ export function startPublishQueue(userId: string): void {
     sleep,
     onViews: (views, fromRunner) => {
       publishQueueState.views = views;
+      // Only the runner's rows say what THIS tab is sending.
+      if (fromRunner) screen.rows(views);
       // Only the runner's rows go to the other tabs: rows read from the store alone carry no
       // progress, and would overwrite the runner's in every tab that adopted them.
       if (fromRunner) channel?.postMessage({ type: 'views', views } satisfies ChannelMessage);
@@ -184,11 +194,14 @@ export function startPublishQueue(userId: string): void {
         }
       }
     },
+    passEnded: () => screen.passEnded(),
     log: appendLog,
   });
   const onOnline = () => queue.wake('online');
   const onVisible = () => {
-    if (document.visibilityState === 'visible') queue.wake('page visible');
+    if (document.visibilityState !== 'visible') return;
+    screen.becameVisible();
+    queue.wake('page visible');
   };
   window.addEventListener('online', onOnline);
   document.addEventListener('visibilitychange', onVisible);
@@ -207,6 +220,7 @@ export function startPublishQueue(userId: string): void {
     store,
     queue,
     channel,
+    screen,
     unsubscribe: [
       connectivity.onReconnect(() => queue.wake('reconnect')),
       // Only the native shells emit it; on the web a background tab keeps uploading.
@@ -229,16 +243,21 @@ export function startPublishQueue(userId: string): void {
     )
   );
   appendLog(`[PUBLISH-QUEUE] started`);
-  void queue.refreshViews();
+  queue
+    .refreshViews()
+    .catch((e: unknown) =>
+      console.error('[PUBLISH-QUEUE] the rows could not be drawn at start:', e)
+    );
   void queue.drain();
 }
 
 /** Stops the running queue (sign-out). What it holds stays on the device for the next sign-in. */
 export function stopPublishQueue(): void {
   if (!running) return;
-  const { queue, store, unsubscribe, channel } = running;
+  const { queue, store, unsubscribe, channel, screen } = running;
   running = null;
   queue.stop();
+  screen.release();
   for (const off of unsubscribe) off();
   channel?.close();
   void store.close();
@@ -249,13 +268,20 @@ export function stopPublishQueue(): void {
 /**
  * Queues a post for `userId` and starts sending it. Resolves once the post and its files are ON THE
  * DEVICE - the composer closes only then; rejects (and the composer keeps everything) otherwise.
+ * THE WRITE IS THE SUCCESS POINT: a redraw that fails after it is logged, never a rejection - the
+ * post IS queued, and a composer kept open on it would queue it a second time.
  */
 export async function enqueuePost(userId: string, post: QueuedPost, files: File[]): Promise<void> {
   startPublishQueue(userId);
+  const queue = running!.queue;
   await running!.store.enqueue(post, files);
   appendLog(`[PUBLISH-QUEUE] ${post.id} queued with ${files.length} media`);
-  await running!.queue.refreshViews();
-  void running!.queue.drain();
+  try {
+    await queue.refreshViews();
+  } catch (e) {
+    console.error(`[PUBLISH-QUEUE] ${post.id} queued, but its row could not be drawn:`, e);
+  }
+  void queue.drain();
 }
 
 /** Tells the runner - in whichever tab it is - what the member did to `postId`. */
