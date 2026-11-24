@@ -80,6 +80,7 @@ import {
   CALLBACK_CONFIRMABLE_PAYMENT_STATUSES,
   LYDIA_REQUEST_UUID_RE,
   SETTLED_REFUSED_REQUEST_STATES,
+  livePaymentDueWhere,
   livePendingAtClockWhere,
   livePendingWhere,
   lockFormSeats,
@@ -111,6 +112,24 @@ import {
   type CashSwitchOutcome,
 } from './payment-cash-switch';
 import { CASH_REMINDER_LEAD_MS, cashReminderDueAt, type DueCashReminder } from './cash-reminder';
+import {
+  PAYMENT_DUE,
+  WAITING,
+  capacityFreed,
+  nextWaitlistOrder,
+  promoteFromWaitlist,
+  onlineCollectsThrough,
+  planPromotion,
+  promotionPayable,
+  promoteWaitingRow,
+  waitingLast,
+  waitlistApplies,
+  waitlistRank,
+  type PromotedAnswer,
+  type OnlineCollects,
+  type WaitlistTrigger,
+} from './waitlist';
+import { FormWaitlistNoticeService } from './waitlist-notice.service';
 import { computeFormResults, type FormResults, type ResultsItem } from './form-results';
 import { Submission } from './entities/submission.entity';
 import {
@@ -582,7 +601,40 @@ export interface SubmitOutcome {
   alreadyPaid?: boolean;
   cashPayment?: boolean;
   reference?: string;
+  /**
+   * The answer was put on the form's waiting list (`waitlist.ts`): nothing is charged and no seat is
+   * held; `waitlistRank` is its place in line, 1 for the first.
+   */
+  waiting?: true;
+  waitlistRank?: number;
 }
+
+/** What freed a seat in `moveLockedSubmission`, as the waiting list names it in its logs. */
+function freeingTrigger(
+  from: string,
+  cancelledBy: PaymentCancelOrigin | undefined
+): WaitlistTrigger {
+  if (from === 'pending_cash') return 'cash-cancel';
+  if (cancelledBy === 'member') return 'member-cancel';
+  if (cancelledBy === 'provider') return 'provider-release';
+  if (cancelledBy === 'unissued') return 'unissued-release';
+  return 'manager-cancel';
+}
+
+/**
+ * The `code` of the 409 leaving the waiting list, or promoting from it by hand, gets when the answer
+ * no longer waits: promoted meanwhile, removed, or never on the list. The client words it.
+ */
+export const WAITLIST_ANSWER_NOT_WAITING = 'WAITLIST_ANSWER_NOT_WAITING';
+
+/**
+ * The `code` of the 409 a promotion by hand gets when the answer would owe a payment the form
+ * cannot take now (`promotionPayable`, `waitlist.ts`): online switched off, or an association that
+ * cannot collect online, for an online answer; cash switched off for a cash one - the registration
+ * could not be paid. The manager makes the mode payable again, or removes the answer. The client
+ * words it.
+ */
+export const WAITLIST_NO_PAYMENT_PATH = 'WAITLIST_NO_PAYMENT_PATH';
 
 /**
  * Forms `summaries` reads at once. One form costs about seven queries (`get` plus `hasSubmission`), so
@@ -594,6 +646,9 @@ export const FORM_SUMMARIES_CONCURRENCY = 6;
 @Injectable()
 export class FormsService {
   private readonly logger = new Logger(FormsService.name);
+
+  /** Whether a form's association can collect online now, for the waiting list (`promotionPayable`). */
+  private readonly onlineCollects: OnlineCollects;
 
   constructor(
     @InjectRepository(Form) private readonly formRepo: Repository<Form>,
@@ -608,8 +663,16 @@ export class FormsService {
     private readonly formFiles: FormFilesService,
     private readonly organiserAlert: FormOrganiserAlertService,
     private readonly formItemImages: FormItemImagesService,
-    private readonly usage?: UsageActivity
-  ) {}
+    private readonly usage?: UsageActivity,
+    // The waiting list's one notice (`waitlist-notice.service.ts`). Always injected by Nest; a unit
+    // spec that never promotes anyone may leave it out, and a promotion told without it is an ERROR.
+    private readonly waitlistNotice?: FormWaitlistNoticeService
+  ) {
+    this.onlineCollects = onlineCollectsThrough(associationsService);
+    // What a converted promotion buys runs after the commit of WHICHEVER promoter converted it - a
+    // refund or an association collecting again included (`FormWaitlistNoticeService.afterCommit`).
+    waitlistNotice?.registerConversionFulfiller((ids) => this.fulfilConvertedPromotions(ids));
+  }
 
   /**
    * A form may be given a price only by an entity that may collect now (`mayCollect`, owner
@@ -1457,6 +1520,23 @@ export class FormsService {
   }
 
   /**
+   * Whether a newcomer finds the form full, as its page is told: its free places are no more than
+   * the answers waiting. A place free while people wait is THEIRS (the next capacity event promotes
+   * them, `waitlist.ts`), never a newcomer's; with nobody waiting it is the plain seat count.
+   */
+  private async isFormFull(
+    form: Pick<Form, 'id' | 'anonymous' | 'maxSubmissions'>
+  ): Promise<boolean> {
+    if (!form.maxSubmissions) return false;
+    const free = form.maxSubmissions - (await this.countActiveSubmissions(form));
+    if (free <= 0) return true;
+    const waiting = await this.submissionRepo.count({
+      where: { formId: form.id, paymentStatus: WAITING },
+    });
+    return free <= waiting;
+  }
+
+  /**
    * Inside an answer's transaction (a submit, an answer edit), BEFORE the form's own lock - the
    * order `AssociationsService.remove` takes, association first - reads the form's association
    * `FOR SHARE` and refuses (404, what `respondentFormWhere` answered before the lock) one ARCHIVED
@@ -1490,8 +1570,7 @@ export class FormsService {
       this.logger.debug(`[FORMS] public read refused, not a public form id=${id.slice(0, 8)}`);
       throw new NotFoundException('Form not found');
     }
-    const formFull =
-      !!form.maxSubmissions && (await this.countActiveSubmissions(form)) >= form.maxSubmissions;
+    const formFull = await this.isFormFull(form);
     // The guest's slice of the grid, exactly as a member's is built (`hasSubmission`), from facts
     // that know nobody: every criterion on promo, formation or cotisation resolves to its "everyone
     // else" tier, and what is left is the answer criteria. The page totals from it; `submit`
@@ -1863,6 +1942,7 @@ export class FormsService {
     );
     const citedBefore = questionImageIds(form.items);
     const opensBefore = form.opensAt ? new Date(form.opensAt).getTime() : null;
+    const capacityBefore = form.maxSubmissions;
     if (input.guestFields !== undefined && input.respondentFields === undefined) {
       this.logger.log(
         `[LEGACY] edit of ${formId.slice(0, 8)} sends guestFields without respondentFields: a client ` +
@@ -1954,17 +2034,39 @@ export class FormsService {
       if (moves) await this.followFormOpeningMove(inTransaction, form);
       return withStatus(saved);
     }
-    if (citedBefore.length === 0 && citedAfter.length === 0 && !moves) {
+    // ANY SAVE OF A PUBLISHED FORM PROMOTES while someone waits: the first in line takes every
+    // free place IN THE SAVE'S TRANSACTION, under the form's seat lock taken first (`waitlist.ts`),
+    // and is told after the commit. Not only a capacity raised or cleared: a payment mode turned
+    // back on is what lifts a FROZEN list (`promotionPayable`), and an edit that frees nothing
+    // finds no free place and promotes nobody. A capacity freed promotes even when the read below
+    // saw nobody waiting: an answer joining the line concurrently does so under the seat lock this
+    // save then waits for. A draft holds no answer to promote.
+    const promotes =
+      status === FORM_PUBLISHED &&
+      (capacityFreed(capacityBefore, form.maxSubmissions) ||
+        (await this.submissionRepo.count({ where: { formId, paymentStatus: WAITING } })) > 0);
+    if (citedBefore.length === 0 && citedAfter.length === 0 && !moves && !promotes) {
       return withStatus(await this.formRepo.save(written as Form));
     }
+    let promoted: PromotedAnswer[] = [];
     const saved = await this.formRepo.manager.transaction(async (m) => {
+      if (promotes) await lockFormSeats(m, formId);
       if (citedBefore.length > 0 || citedAfter.length > 0) {
         await this.formItemImages.claimForSave(m, form.items, formId, userId);
       }
       const stored = await m.save(Form, written as Form);
       if (moves) await this.followFormOpeningMove(m, form);
+      if (promotes)
+        promoted = await promoteFromWaitlist(
+          m,
+          formId,
+          'form-edit',
+          this.logger,
+          this.onlineCollects
+        );
       return stored;
     });
+    await this.tellPromoted(promoted);
     // Replaced or removed: released once no question of any form cites it (a duplicated question
     // still does). After the commit, so the release re-reads the citations this save wrote.
     const dropped = citedBefore.filter((id) => !citedAfter.includes(id));
@@ -2111,7 +2213,14 @@ export class FormsService {
           .execute();
       }
       const next = current.document ? await closeFormDraft(m, formId) : current.revision;
-      return { refused: null, revision: next, items: saved.items as unknown, wasDraft };
+      // EVERY PUBLISHED REVISION PROMOTES, as every save of a published form does (`update`): a
+      // capacity raised or cleared frees places, and a payment mode turned back on lifts a frozen
+      // list. In this transaction, the form's row already held (`waitlist.ts`), told after the
+      // commit; nobody waiting or no place free promotes nobody. A draft holds no answer to promote.
+      const promoted = !wasDraft
+        ? await promoteFromWaitlist(m, formId, 'form-edit', this.logger, this.onlineCollects)
+        : [];
+      return { refused: null, revision: next, items: saved.items as unknown, wasDraft, promoted };
     });
     if (outcome.refused === 'gone') throw new NotFoundException('Form not found');
     if (outcome.refused === 'conflict') return this.throwDraftConflict(formId, revision, 'publish');
@@ -2137,6 +2246,7 @@ export class FormsService {
     this.logger.log(
       `[FORM_DRAFT] ${formId.slice(0, 8)} revision ${revision} published${outcome.wasDraft ? ', and the form with it' : ''}${overwrite ? ' (overwrite confirmed)' : ''}`
     );
+    await this.tellPromoted(outcome.promoted);
     // Replaced or removed by the published revision: released once nothing cites it, after the commit.
     const citedAfter = questionImageIds(outcome.items);
     const dropped = citedBefore.filter((id) => !citedAfter.includes(id));
@@ -2561,7 +2671,7 @@ export class FormsService {
       }
     }
     if (submission.paymentStatus === 'paid_over_capacity') {
-      await this.alertOrganisersOnce(submission.id, form);
+      await this.alertOrganisersOnce(submission, form);
     }
   }
 
@@ -2625,9 +2735,10 @@ export class FormsService {
    * (`FORM_ORGANISER_ALERT_ENABLED`), so a row settled then is not marked as told.
    */
   private async alertOrganisersOnce(
-    submissionId: string,
+    submission: Pick<Submission, 'id' | 'formId' | 'userId'>,
     form: Pick<Form, 'id' | 'title' | 'ownerId' | 'associationId'>
   ): Promise<void> {
+    const submissionId = submission.id;
     if (!this.organiserAlert.enabled()) {
       this.logger.debug(
         `[Forms] submission ${submissionId} over capacity: organiser alert switched off - not told`
@@ -2636,7 +2747,11 @@ export class FormsService {
     }
     if (!(await this.claimFulfilment(submissionId, 'organiserNotifiedAt'))) return;
     try {
-      await this.organiserAlert.tell(form);
+      // A payer in line keeps their place, so the managers are told a refund is owed only if they
+      // are never promoted - not that one is owed now.
+      await this.organiserAlert.tell(form, {
+        payerInLine: await this.payerWaitsInLine(submission),
+      });
     } catch (e) {
       this.logger.error(
         `[Forms] organiser alert for submission ${submissionId} (form ${form.id}) not written - ` +
@@ -2645,6 +2760,22 @@ export class FormsService {
       );
       await this.releaseFulfilment(submissionId, 'organiserNotifiedAt');
     }
+  }
+
+  /**
+   * Whether the person who paid this answer is on its form's waiting list: a late payment landed
+   * `paid_over_capacity` keeps their place, and their turn converts this answer to `paid`
+   * (`planPromotion`, `waitlist.ts`) - so the refund is owed only if they are never promoted.
+   */
+  private async payerWaitsInLine(
+    submission: Pick<Submission, 'formId' | 'userId'>
+  ): Promise<boolean> {
+    if (!submission.userId) return false;
+    return (
+      (await this.submissionRepo.count({
+        where: { formId: submission.formId, userId: submission.userId, paymentStatus: WAITING },
+      })) > 0
+    );
   }
 
   /** Takes a fulfilment flag if nobody has: true for exactly one caller, ever (until released). */
@@ -2712,6 +2843,12 @@ export class FormsService {
      */
     resumable: ResumableAnswer | null;
     /**
+     * THE WAITING LIST (`waitlist.ts`), absent from a server older than it: `open` when an answer
+     * given now while the form is full would wait in line (the page then offers to join it), and the
+     * caller's own `rank` - 1 for the first - while their answer waits, else null.
+     */
+    waitlist?: { open: boolean; rank: number | null };
+    /**
      * The caller's answer whose online payment ended without money and may be settled IN PERSON
      * instead ("Payer en direct", `payment-cash-switch.ts`), or null. The same answer `resumable`
      * names when both are offered; offered only when the form takes cash, whatever online's state
@@ -2746,10 +2883,7 @@ export class FormsService {
       };
 
     // Check global capacity independently of per-user state
-    let formFull = false;
-    if (form.maxSubmissions) {
-      formFull = (await this.countActiveSubmissions(form)) >= form.maxSubmissions;
-    }
+    const formFull = await this.isFormFull(form);
 
     const facts = await this.factsFor(form, userId);
     // Every distinct cursus slice goes to the page, which totals each live (D32, `form-quote.ts`);
@@ -2833,12 +2967,28 @@ export class FormsService {
     const submission = pickShownAnswer(ownRows);
     // A released answer is offered back - paid online again, or settled in person - only where a
     // fresh answer could be given: nothing else answers for the person, the form open and not full.
+    // A PROMOTED answer owing its payment (`waitlist.ts`) is offered its online payment whatever its
+    // window or its fullness (the seat is its own); it is never switched to cash
+    // (`cashSwitchRowRefusal` refuses `payment_due`).
     const offers = { resume: acceptsOnline(form), cash: acceptsCash(form) };
+    const due = submission?.paymentStatus === PAYMENT_DUE;
     const released =
-      !submission && maySubmit && !formFull && isFormOpen(form) && (offers.resume || offers.cash)
+      (due && offers.resume) ||
+      (!submission && maySubmit && !formFull && isFormOpen(form) && (offers.resume || offers.cash))
         ? await this.releasedAnswerOf(form, userId, offers)
         : { resumable: null, cashSwitchable: null };
+    const waitlist = {
+      open: waitlistApplies(form),
+      rank:
+        submission?.paymentStatus === WAITING
+          ? await waitlistRank(this.submissionRepo.manager, submission)
+          : null,
+    };
+    if (waitlist.rank !== null) {
+      this.logger.debug(`[WAITLIST] check ${formTag(form)}: caller waits at rank ${waitlist.rank}`);
+    }
     return {
+      waitlist,
       hasSubmitted: !!submission,
       paymentStatus: submission?.paymentStatus,
       // The caller's OWN row: a `pending` one is what the page asks `confirm-payment` about, so a
@@ -3196,213 +3346,310 @@ export class FormsService {
     // and is not counted again. AN ANONYMOUS ANSWER IS NOT COUNTED: it keeps only its week (owner,
     // 2026-11-22, migration 181), and a daily total would date it to the day again.
     let answered = false;
-    await this.submissionRepo.manager.transaction('READ COMMITTED', async (manager) => {
-      // The association BEFORE the form: the lock order its delete takes (association first).
-      await this.assertAssociationLiveUnderLock(manager, form, 'submit');
-      await lockFormSeats(manager, id);
-
-      // Looked up BEFORE the capacity check: the row already holds this person's seat, so a retry
-      // on a form it filled is a retry, not a new answer - it used to be refused as "Form is full".
-      let existingPending: Submission | null = null;
-      if (previous) {
-        // The row whose request was settled above, re-read under its lock. It must still name that
-        // request (anything else is a concurrent submit issuing its own). It may have LEFT
-        // `pending` meanwhile: Lydia calls `cancel_url` for the request this retry cancelled, and
-        // that report names the row's request, so it cancels the row - a cancel this retry caused
-        // and now takes back. A row that left `pending` holds no seat, so the capacity check runs.
-        existingPending = await manager.findOne(Submission, {
-          where: { id: previous.id },
-          lock: { mode: 'pessimistic_write' },
-        });
-        if (
-          !existingPending ||
-          !['pending', 'cancelled', 'expired'].includes(existingPending.paymentStatus) ||
-          existingPending.paymentRequestId !== previous.paymentRequestId ||
-          existingPending.stripeSessionId !== previous.stripeSessionId ||
-          // A switch to cash claims it (`claimCashSwitch`): that switch decides the row.
-          !!existingPending.cashSwitchClaimId
-        ) {
-          throw this.previousPaymentOpen(
-            previous.id,
-            'the row changed while its request was being settled'
+    // THE WAITING LIST (`waitlist.ts`): a member whose page asked to join it, on a form where it
+    // applies, waits in line instead of being refused when every place is taken.
+    const mayWait =
+      waitlistApplies(form) && !guest && !!input.userId && input.joinWaitlist === true;
+    let joinsWaitlist = false;
+    // Promoted under THIS transaction's lock, told after its commit.
+    let promotedHere: PromotedAnswer[] = [];
+    try {
+      await this.submissionRepo.manager.transaction('READ COMMITTED', async (manager) => {
+        // The association BEFORE the form: the lock order its delete takes (association first).
+        await this.assertAssociationLiveUnderLock(manager, form, 'submit');
+        await lockFormSeats(manager, id);
+        // A NEW ANSWER NEVER TAKES A FREED PLACE AHEAD OF THE QUEUE: the first in line is promoted into
+        // every free place BEFORE this answer's seat is counted, under the same lock (a hold that
+        // lapsed before the expiry job said so is such a place).
+        if (form.maxSubmissions && !form.anonymous) {
+          promotedHere = await promoteFromWaitlist(
+            manager,
+            id,
+            'submit',
+            this.logger,
+            this.onlineCollects
           );
         }
-      } else if (reuses) {
-        const concurrent = await manager.findOne(Submission, {
-          ...liveRow(),
-          lock: { mode: 'pessimistic_write' },
-        });
-        if (concurrent) {
-          throw this.previousPaymentOpen(
-            concurrent.id,
-            'a concurrent submit is issuing its request'
-          );
-        }
-      }
-      // The AUTHORITATIVE one-answer check, under the form lock (the one before the settle above
-      // only spares a provider call): the row this retry reuses is excluded by id.
-      if (oneAnswer)
-        await this.assertNoOtherAnswer(manager, id, input.userId!, existingPending?.id);
 
-      const holdsSeat =
-        !!existingPending &&
-        (await manager.count(Submission, {
-          where: livePendingWhere(id, { id: existingPending.id }),
-        })) > 0;
+        // Looked up BEFORE the capacity check: the row already holds this person's seat, so a retry
+        // on a form it filled is a retry, not a new answer - it used to be refused as "Form is full".
+        let existingPending: Submission | null = null;
+        if (previous) {
+          // The row whose request was settled above, re-read under its lock. It must still name that
+          // request (anything else is a concurrent submit issuing its own). It may have LEFT
+          // `pending` meanwhile: Lydia calls `cancel_url` for the request this retry cancelled, and
+          // that report names the row's request, so it cancels the row - a cancel this retry caused
+          // and now takes back. A row that left `pending` holds no seat, so the capacity check runs.
+          existingPending = await manager.findOne(Submission, {
+            where: { id: previous.id },
+            lock: { mode: 'pessimistic_write' },
+          });
+          if (
+            !existingPending ||
+            !['pending', 'cancelled', 'expired'].includes(existingPending.paymentStatus) ||
+            existingPending.paymentRequestId !== previous.paymentRequestId ||
+            existingPending.stripeSessionId !== previous.stripeSessionId ||
+            // A switch to cash claims it (`claimCashSwitch`): that switch decides the row.
+            !!existingPending.cashSwitchClaimId
+          ) {
+            throw this.previousPaymentOpen(
+              previous.id,
+              'the row changed while its request was being settled'
+            );
+          }
+        } else if (reuses) {
+          const concurrent = await manager.findOne(Submission, {
+            ...liveRow(),
+            lock: { mode: 'pessimistic_write' },
+          });
+          if (concurrent) {
+            throw this.previousPaymentOpen(
+              concurrent.id,
+              'a concurrent submit is issuing its request'
+            );
+          }
+        }
+        // The AUTHORITATIVE one-answer check, under the form lock (the one before the settle above
+        // only spares a provider call): the row this retry reuses is excluded by id.
+        if (oneAnswer)
+          await this.assertNoOtherAnswer(manager, id, input.userId!, existingPending?.id);
 
-      if (form.maxSubmissions && !holdsSeat) {
-        // An anonymous answer waiting for its batch holds its place like a stored one.
-        const count =
-          (await manager.count(Submission, { where: seatHoldingWhere(id) })) +
-          (form.anonymous ? await heldAnswerCount(manager, id) : 0);
-        if (count >= form.maxSubmissions) throw formRefusal(FORM_FULL, 'Form is full');
-      }
-      // PP5, under the form lock like the capacity count: two submits from one visitor queue here,
-      // so the fourth sees the three before it. Counted from the rows that still WAIT - an online
-      // answer within its hold, a cash one not yet validated - so a paid, cancelled or expired one
-      // frees its place in the ceiling with no job having run.
-      if (visitorKey) {
-        const waiting = await manager.count(Submission, {
-          where: [
-            livePendingWhere(id, { guestVisitorKey: visitorKey }),
-            { formId: id, guestVisitorKey: visitorKey, paymentStatus: 'pending_cash' },
-          ],
-        });
-        if (waiting >= GUEST_PENDING_CEILING) {
-          this.logger.warn(
-            `[Forms] guest answer refused on ${formTag(form)}: this visitor already has ` +
-              `${waiting} answers waiting for payment (ceiling ${GUEST_PENDING_CEILING})`
-          );
-          throw new HttpException(
-            {
-              code: GUEST_PENDING_LIMIT,
-              message: `This visitor already has ${GUEST_PENDING_CEILING} answers waiting for payment on this form. Pay or let one expire first.`,
-            },
-            HttpStatus.TOO_MANY_REQUESTS
-          );
-        }
-      }
+        const holdsSeat =
+          !!existingPending &&
+          (await manager.count(Submission, {
+            where: livePendingWhere(id, { id: existingPending.id }),
+          })) > 0;
 
-      // A guest's FREE answer, and every anonymous answer. A guest who owes money takes the paid
-      // path below with no account (`userId` null), like a member's: the payer is the e-mail they
-      // typed for Lydia, never stored (decision PP2).
-      if (form.anonymous || (guest && totalCents === 0)) {
-        if (!guest && !input.userId) {
-          throw formRefusal(FORM_SIGN_IN_REQUIRED, 'Sign in to answer this form.');
+        if (form.maxSubmissions && !holdsSeat) {
+          // An anonymous answer waiting for its batch holds its place like a stored one.
+          const count =
+            (await manager.count(Submission, { where: seatHoldingWhere(id) })) +
+            (form.anonymous ? await heldAnswerCount(manager, id) : 0);
+          if (count >= form.maxSubmissions) {
+            if (!mayWait) throw formRefusal(FORM_FULL, 'Form is full');
+            joinsWaitlist = true;
+            this.logger.log(
+              `[WAITLIST] submit on ${formTag(form)}: full (${count}/${form.maxSubmissions}) - the answer joins the waiting list`
+            );
+          }
         }
-        // An option supplement could still charge on an anonymous form saved free; a charge would
-        // need the payer, which is the one thing an anonymous answer promised not to keep.
-        if (totalCents > 0) {
-          throw new BadRequestException('An anonymous form cannot charge for an option.');
+        // PP5, under the form lock like the capacity count: two submits from one visitor queue here,
+        // so the fourth sees the three before it. Counted from the rows that still WAIT - an online
+        // answer within its hold, a cash one not yet validated - so a paid, cancelled or expired one
+        // frees its place in the ceiling with no job having run.
+        if (visitorKey) {
+          const waiting = await manager.count(Submission, {
+            where: [
+              livePendingWhere(id, { guestVisitorKey: visitorKey }),
+              { formId: id, guestVisitorKey: visitorKey, paymentStatus: 'pending_cash' },
+            ],
+          });
+          if (waiting >= GUEST_PENDING_CEILING) {
+            this.logger.warn(
+              `[Forms] guest answer refused on ${formTag(form)}: this visitor already has ` +
+                `${waiting} answers waiting for payment (ceiling ${GUEST_PENDING_CEILING})`
+            );
+            throw new HttpException(
+              {
+                code: GUEST_PENDING_LIMIT,
+                message: `This visitor already has ${GUEST_PENDING_CEILING} answers waiting for payment on this form. Pay or let one expire first.`,
+              },
+              HttpStatus.TOO_MANY_REQUESTS
+            );
+          }
         }
-        // The registry insert refuses a second answer from the same account, in this transaction.
-        // The answer itself is not written beside it: it waits for its batch (below). A guest is
-        // never in the registry: a public form takes several answers, and there is no account.
-        if (!guest && !form.allowMultipleSubmissions) {
-          const inserted: unknown[] = await manager.query(
-            `INSERT INTO form_respondents ("formId", "userId") VALUES ($1, $2)
+
+        // A guest's FREE answer, and every anonymous answer. A guest who owes money takes the paid
+        // path below with no account (`userId` null), like a member's: the payer is the e-mail they
+        // typed for Lydia, never stored (decision PP2).
+        if (form.anonymous || (guest && totalCents === 0)) {
+          if (!guest && !input.userId) {
+            throw formRefusal(FORM_SIGN_IN_REQUIRED, 'Sign in to answer this form.');
+          }
+          // An option supplement could still charge on an anonymous form saved free; a charge would
+          // need the payer, which is the one thing an anonymous answer promised not to keep.
+          if (totalCents > 0) {
+            throw new BadRequestException('An anonymous form cannot charge for an option.');
+          }
+          // The registry insert refuses a second answer from the same account, in this transaction.
+          // The answer itself is not written beside it: it waits for its batch (below). A guest is
+          // never in the registry: a public form takes several answers, and there is no account.
+          if (!guest && !form.allowMultipleSubmissions) {
+            const inserted: unknown[] = await manager.query(
+              `INSERT INTO form_respondents ("formId", "userId") VALUES ($1, $2)
              ON CONFLICT DO NOTHING RETURNING "formId"`,
-            [id, input.userId]
-          );
-          if (inserted.length === 0) {
-            throw new ConflictException({
-              code: ALREADY_ANSWERED,
-              message: 'You have already answered this form.',
+              [id, input.userId]
+            );
+            if (inserted.length === 0) {
+              throw new ConflictException({
+                code: ALREADY_ANSWERED,
+                message: 'You have already answered this form.',
+              });
+            }
+          }
+          if (form.anonymous) {
+            // An anonymous form never asks a name or an e-mail (`FORM_ANONYMOUS_GUEST_IDENTITY`), so
+            // there is none to drop here; one reaching this line is a broken save rule, not an answer.
+            if (
+              Object.values(guestIdentity).some((value) => value !== null && value !== undefined)
+            ) {
+              throw new Error(
+                `guest identity reached the anonymous answer path on ${formTag(form)}`
+              );
+            }
+            // The answer waits for its batch and moves into `submissions` with the others of this
+            // form, in one write of its own (`anonymous-answer-batches.ts`): nothing stored pairs it
+            // with the registry row above. Released after this transaction, below.
+            await holdAnonymousAnswer(manager, {
+              formId: id,
+              answers: storedAnswers,
+              lines,
+              priceLockedItemIds,
+              respondentIdentity,
             });
+            heldAnswer = true;
+            return;
           }
+          // A guest on a form that is NOT anonymous keeps its real time: the manager was promised no
+          // forgetting, and the answer carries no account for a clock to re-join.
+          savedSubmission = await manager.save(
+            manager.create(Submission, {
+              formId: id,
+              userId: null,
+              email: undefined,
+              ...guestIdentity,
+              respondentIdentity,
+              answers: storedAnswers,
+              lines,
+              priceLockedItemIds,
+              totalPaid: 0,
+              paymentStatus: 'free',
+              paymentMethod: null,
+              cashExpiresAt: null,
+            })
+          );
+          answered = true;
+          return;
         }
-        if (form.anonymous) {
-          // An anonymous form never asks a name or an e-mail (`FORM_ANONYMOUS_GUEST_IDENTITY`), so
-          // there is none to drop here; one reaching this line is a broken save rule, not an answer.
-          if (Object.values(guestIdentity).some((value) => value !== null && value !== undefined)) {
-            throw new Error(`guest identity reached the anonymous answer path on ${formTag(form)}`);
-          }
-          // The answer waits for its batch and moves into `submissions` with the others of this
-          // form, in one write of its own (`anonymous-answer-batches.ts`): nothing stored pairs it
-          // with the registry row above. Released after this transaction, below.
-          await holdAnonymousAnswer(manager, {
-            formId: id,
+
+        if (joinsWaitlist) {
+          // IN LINE: no seat, no payment asked now - the method the member chose is kept for the
+          // promotion (cash, or online), and the arrival order is taken under this lock. A row this
+          // retry reuses (its request settled above, its hold over) joins the line itself.
+          const order = await nextWaitlistOrder(manager, id);
+          const waiting = {
             answers: storedAnswers,
             lines,
             priceLockedItemIds,
             respondentIdentity,
+            totalPaid: totalCents,
+            email: input.email,
+            paymentStatus: WAITING,
+            paymentMethod:
+              totalCents > 0 && form.allowCashPayment && input.paymentMethod === 'cash'
+                ? 'cash'
+                : null,
+            paymentRequestId: null,
+            stripeSessionId: null,
+            paymentCancelOrigin: null,
+            waitlistOrder: order,
+          };
+          // A new row is a new answer (counted like any other); a reused one was counted already.
+          answered = !existingPending;
+          savedSubmission = existingPending
+            ? await manager.save(Object.assign(existingPending, waiting))
+            : await manager.save(
+                manager.create(Submission, {
+                  formId: id,
+                  userId: input.userId ?? null,
+                  ...guestIdentity,
+                  cashExpiresAt: null,
+                  ...waiting,
+                })
+              );
+          this.logger.log(
+            `[WAITLIST] ${savedSubmission.id.slice(0, 8)} waits on ${formTag(form)} (order ${order})`
+          );
+        } else if (existingPending) {
+          existingPending.answers = storedAnswers;
+          // The retry's lines replace the old ones with its answer: the row says what THIS request charges.
+          existingPending.lines = lines;
+          existingPending.priceLockedItemIds = priceLockedItemIds;
+          // The retry is a new submit: what it carries of the respondent is read again with it.
+          existingPending.respondentIdentity = respondentIdentity;
+          existingPending.totalPaid = totalCents;
+          existingPending.email = input.email;
+          // Its old request is settled (above), so the row stops naming it: a late report about it
+          // changes nothing (`cancelPendingSubmission`). The new request's ids are written once the
+          // provider answers; until then the row names NO request, which is what makes a concurrent
+          // retry refuse instead of issuing a third one (`settleOpenRequest`).
+          existingPending.paymentRequestId = null;
+          existingPending.stripeSessionId = null;
+          existingPending.paymentStatus = 'pending';
+          existingPending.paymentCancelOrigin = null;
+          savedSubmission = await manager.save(existingPending);
+          // A new payment request is about to be issued for this row, so its hold restarts with it,
+          // on the database clock like every other read of it (`seat-hold.ts`).
+          await manager.update(Submission, existingPending.id, {
+            paymentRequestedAt: () => 'now()',
           });
-          heldAnswer = true;
-          return;
-        }
-        // A guest on a form that is NOT anonymous keeps its real time: the manager was promised no
-        // forgetting, and the answer carries no account for a clock to re-join.
-        savedSubmission = await manager.save(
-          manager.create(Submission, {
+          this.logger.debug(
+            `[Forms] submit reuses pending submission ${existingPending.id}: its hold restarts`
+          );
+        } else {
+          const submission = manager.create(Submission, {
             formId: id,
-            userId: null,
-            email: undefined,
+            userId: input.userId ?? null,
+            email: input.email,
             ...guestIdentity,
             respondentIdentity,
             answers: storedAnswers,
             lines,
             priceLockedItemIds,
-            totalPaid: 0,
-            paymentStatus: 'free',
+            totalPaid: totalCents,
+            paymentStatus: totalCents > 0 ? 'pending' : 'free',
             paymentMethod: null,
             cashExpiresAt: null,
-          })
+            guestReceiptHash: receipt?.hash ?? null,
+            guestVisitorKey: visitorKey,
+          });
+          savedSubmission = await manager.save(submission);
+          answered = true;
+        }
+        if (storedFileAnswers.length > 0) {
+          await this.formFiles.attach(
+            manager,
+            savedSubmission,
+            id,
+            input.userId!,
+            storedFileAnswers
+          );
+        }
+      });
+    } catch (e: unknown) {
+      // A refusal after the promotion above rolled it back with the answer: the places it filled are
+      // free again with people waiting, so they are promoted now, in a transaction of their own.
+      if (promotedHere.length > 0) {
+        this.logger.log(
+          `[WAITLIST] submit on ${formTag(form)} refused after promoting ${promotedHere.length} - promoted again on its own`
         );
-        answered = true;
-        return;
+        // NOT A SILENT SWALLOW: `promoteWaitlist` logs every failure at ERROR before it throws, so
+        // this catch only keeps the refusal `e` as what this caller is answered; the place then
+        // waits for the form's next capacity event.
+        await this.promoteWaitlist(id, 'submit').catch(() => undefined);
       }
-
-      if (existingPending) {
-        existingPending.answers = storedAnswers;
-        // The retry's lines replace the old ones with its answer: the row says what THIS request charges.
-        existingPending.lines = lines;
-        existingPending.priceLockedItemIds = priceLockedItemIds;
-        // The retry is a new submit: what it carries of the respondent is read again with it.
-        existingPending.respondentIdentity = respondentIdentity;
-        existingPending.totalPaid = totalCents;
-        existingPending.email = input.email;
-        // Its old request is settled (above), so the row stops naming it: a late report about it
-        // changes nothing (`cancelPendingSubmission`). The new request's ids are written once the
-        // provider answers; until then the row names NO request, which is what makes a concurrent
-        // retry refuse instead of issuing a third one (`settleOpenRequest`).
-        existingPending.paymentRequestId = null;
-        existingPending.stripeSessionId = null;
-        existingPending.paymentStatus = 'pending';
-        existingPending.paymentCancelOrigin = null;
-        savedSubmission = await manager.save(existingPending);
-        // A new payment request is about to be issued for this row, so its hold restarts with it,
-        // on the database clock like every other read of it (`seat-hold.ts`).
-        await manager.update(Submission, existingPending.id, {
-          paymentRequestedAt: () => 'now()',
-        });
-        this.logger.debug(
-          `[Forms] submit reuses pending submission ${existingPending.id}: its hold restarts`
-        );
-      } else {
-        const submission = manager.create(Submission, {
-          formId: id,
-          userId: input.userId ?? null,
-          email: input.email,
-          ...guestIdentity,
-          respondentIdentity,
-          answers: storedAnswers,
-          lines,
-          priceLockedItemIds,
-          totalPaid: totalCents,
-          paymentStatus: totalCents > 0 ? 'pending' : 'free',
-          paymentMethod: null,
-          cashExpiresAt: null,
-          guestReceiptHash: receipt?.hash ?? null,
-          guestVisitorKey: visitorKey,
-        });
-        savedSubmission = await manager.save(submission);
-        answered = true;
-      }
-      if (storedFileAnswers.length > 0) {
-        await this.formFiles.attach(manager, savedSubmission, id, input.userId!, storedFileAnswers);
-      }
-    });
+      throw e;
+    }
     if (answered) void this.usage?.count('forms');
+    await this.tellPromoted(promotedHere);
+
+    if (joinsWaitlist) {
+      const rank = await waitlistRank(this.submissionRepo.manager, savedSubmission);
+      this.logger.log(
+        `[WAITLIST] ${savedSubmission.id.slice(0, 8)} on ${formTag(form)}: rank ${rank} at submit`
+      );
+      return { submissionId: savedSubmission.id, waiting: true, waitlistRank: rank };
+    }
 
     if (heldAnswer) {
       // The batch this answer completes is released in a transaction of its OWN, never the one that
@@ -3521,7 +3768,9 @@ export class FormsService {
     const form = await this.formRepo.findOne({ where: respondentFormWhere(row.formId) });
     if (!form) throw new NotFoundException('Form not found');
     await this.assertRespondentReach(form, callerId);
-    assertFormOpen(form);
+    // A promoted answer owing its payment is a REGISTRATION already (`waitlist.ts`): like a payment
+    // in progress when the form closes, it is paid whatever the window says now.
+    if (row.paymentStatus !== PAYMENT_DUE) assertFormOpen(form);
 
     // Whether a `pending` row still holds its seat: the one clock, the database's, read from the row.
     const holdLive = livePendingWhere(form.id, { id: submissionId });
@@ -3571,58 +3820,86 @@ export class FormsService {
     // After the settle, as in `submit`: a payment found made is answered `alreadyPaid`, never refused.
     await this.assertGrantedTierIsARise(form, callerId);
 
-    await this.submissionRepo.manager.transaction('READ COMMITTED', async (manager) => {
-      await this.assertAssociationLiveUnderLock(manager, form, 'submit');
-      await lockFormSeats(manager, form.id);
-      const locked = await manager.findOne(Submission, {
-        where: { id: submissionId },
-        lock: { mode: 'pessimistic_write' },
-      });
-      if (!locked) throw new NotFoundException('Submission not found');
-      // The row the settle was about, unchanged: another resume (or a callback) moved it otherwise.
-      // ...or a switch to cash claims it (`claimCashSwitch`): that switch is the payment in progress.
-      const changed =
-        locked.paymentRequestId !== row.paymentRequestId ||
-        locked.stripeSessionId !== row.stripeSessionId ||
-        !!locked.cashSwitchClaimId;
-      // The ids are checked unchanged just below, so the request's Business read above still holds.
-      const lockedRefusal = resumeRowRefusal(
-        locked,
-        (await manager.count(Submission, { where: holdLive })) > 0,
-        settleable
-      );
-      if (lockedRefusal || changed) {
-        throw this.resumeRefused(
-          submissionId,
-          locked.paymentStatus,
-          lockedRefusal ?? PAYMENT_IN_PROGRESS
-        );
-      }
-      await this.assertNoOtherAnswer(manager, form.id, callerId, submissionId);
-      // The capacity, as a fresh submit counts it: this row holds no seat, so it needs one free.
-      if (form.maxSubmissions) {
-        const count = await manager.count(Submission, { where: seatHoldingWhere(form.id) });
-        if (count >= form.maxSubmissions) {
-          this.logger.log(
-            `[Forms] resumePayment ${submissionId} refused: ${formTag(form)} is full (${count}/${form.maxSubmissions})`
+    let promotedHere: PromotedAnswer[] = [];
+    try {
+      await this.submissionRepo.manager.transaction('READ COMMITTED', async (manager) => {
+        await this.assertAssociationLiveUnderLock(manager, form, 'submit');
+        await lockFormSeats(manager, form.id);
+        // A promoted answer still within its hold holds its OWN seat: it needs no free one.
+        const ownSeat =
+          (await manager.count(Submission, {
+            where: livePaymentDueWhere(form.id, { id: submissionId }),
+          })) > 0;
+        // As in `submit`: the first in line takes every free place BEFORE this answer counts one.
+        if (form.maxSubmissions && !ownSeat) {
+          promotedHere = await promoteFromWaitlist(
+            manager,
+            form.id,
+            'resume',
+            this.logger,
+            this.onlineCollects
           );
-          throw formRefusal(FORM_FULL, 'Form is full');
         }
-      }
-      // Pending, naming NO request until Lydia answers (what a concurrent caller refuses on), and
-      // its hold restarted on the database clock. Named columns, never a whole-entity save.
-      await manager.update(Submission, submissionId, {
-        paymentStatus: 'pending',
-        paymentRequestId: null,
-        stripeSessionId: null,
-        paymentSettledBy: null,
-        paymentCancelOrigin: null,
-        paymentRequestedAt: () => 'now()',
+        const locked = await manager.findOne(Submission, {
+          where: { id: submissionId },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!locked) throw new NotFoundException('Submission not found');
+        // The row the settle was about, unchanged: another resume (or a callback) moved it otherwise.
+        // ...or a switch to cash claims it (`claimCashSwitch`): that switch is the payment in progress.
+        const changed =
+          locked.paymentRequestId !== row.paymentRequestId ||
+          locked.stripeSessionId !== row.stripeSessionId ||
+          !!locked.cashSwitchClaimId;
+        // The ids are checked unchanged just below, so the request's Business read above still holds.
+        const lockedRefusal = resumeRowRefusal(
+          locked,
+          (await manager.count(Submission, { where: holdLive })) > 0,
+          settleable
+        );
+        if (lockedRefusal || changed) {
+          throw this.resumeRefused(
+            submissionId,
+            locked.paymentStatus,
+            lockedRefusal ?? PAYMENT_IN_PROGRESS
+          );
+        }
+        await this.assertNoOtherAnswer(manager, form.id, callerId, submissionId);
+        // The capacity, as a fresh submit counts it: this row holds no seat, so it needs one free -
+        // unless it is a promoted answer within its hold, whose seat is its own.
+        if (form.maxSubmissions && !ownSeat) {
+          const count = await manager.count(Submission, { where: seatHoldingWhere(form.id) });
+          if (count >= form.maxSubmissions) {
+            this.logger.log(
+              `[Forms] resumePayment ${submissionId} refused: ${formTag(form)} is full (${count}/${form.maxSubmissions})`
+            );
+            throw formRefusal(FORM_FULL, 'Form is full');
+          }
+        }
+        // Pending, naming NO request until Lydia answers (what a concurrent caller refuses on), and
+        // its hold restarted on the database clock. Named columns, never a whole-entity save.
+        await manager.update(Submission, submissionId, {
+          paymentStatus: 'pending',
+          paymentRequestId: null,
+          stripeSessionId: null,
+          paymentSettledBy: null,
+          paymentCancelOrigin: null,
+          paymentRequestedAt: () => 'now()',
+        });
+        this.logger.log(
+          `[Forms] resumePayment ${submissionId}: ${locked.paymentStatus} -> pending, a new request is issued`
+        );
       });
-      this.logger.log(
-        `[Forms] resumePayment ${submissionId}: ${locked.paymentStatus} -> pending, a new request is issued`
-      );
-    });
+    } catch (e: unknown) {
+      // A refusal after the promotion rolled it back: the places are promoted again on their own.
+      // NOT A SILENT SWALLOW: `promoteWaitlist` logs every failure at ERROR before it throws, so
+      // this catch only keeps the refusal `e` as what this caller is answered.
+      if (promotedHere.length > 0) {
+        await this.promoteWaitlist(form.id, 'resume').catch(() => undefined);
+      }
+      throw e;
+    }
+    await this.tellPromoted(promotedHere);
 
     return this.issueOnlineRequest(form, submissionId, row.totalPaid, {
       issuedFor: 'resume',
@@ -3911,6 +4188,13 @@ export class FormsService {
    * release away, and every count already includes it), else re-taken with the capacity check a
    * fresh submit makes (`FORM_FULL`) - and the guest ceiling counted as a direct guest cash answer
    * is, under the form lock (a row whose visitor key was forgotten is written the presser's).
+   *
+   * THE WAITING LIST GOES FIRST (`waitlist.ts`), as in `submit` and `resumePayment`: a row re-taking
+   * a seat promotes the first in line into every free place BEFORE it counts one, so a released
+   * answer switched to cash never overtakes the people waiting. On a form that is then full, the
+   * switch answers `FORM_FULL` - with a list, the person joins it by the ordinary submit path
+   * (reversible default, `docs/wiki/forms.md`). A refusal rolls the promotion back with it, so the
+   * places are promoted again on their own; those promoted are told after the commit.
    */
   private async finishCashSwitch(
     row: Submission,
@@ -3919,50 +4203,72 @@ export class FormsService {
     who: { oneAnswer: boolean; userId: string | undefined; visitorKey: string | null }
   ): Promise<CashSwitchOutcome> {
     const submissionId = row.id;
-    return this.submissionRepo.manager.transaction('READ COMMITTED', async (manager) => {
-      await this.assertAssociationLiveUnderLock(manager, form, 'cash switch');
-      await lockFormSeats(manager, form.id);
-      const locked = await manager.findOne(Submission, {
-        where: { id: submissionId },
-        lock: { mode: 'pessimistic_write' },
-      });
-      if (!locked) throw new NotFoundException('Submission not found');
-      const replay = this.switchReplayOrRefusal(row, locked, settleable);
-      if (replay) return replay;
-      if (who.oneAnswer) {
-        await this.assertNoOtherAnswer(manager, form.id, who.userId!, submissionId);
-      }
-      // The hold judged at THIS instant: the transaction began after a call of unknown length.
-      const holdsSeat =
-        (await manager.count(Submission, {
-          where: livePendingAtClockWhere(form.id, { id: submissionId }),
-        })) > 0;
-      if (!holdsSeat && form.maxSubmissions) {
-        // The capacity, as a fresh submit counts it: this row holds no seat, so it needs one free.
-        const count = await manager.count(Submission, { where: seatHoldingWhere(form.id) });
-        if (count >= form.maxSubmissions) {
-          this.logger.log(
-            `[Forms] switchToCash ${submissionId} refused: ${formTag(form)} is full (${count}/${form.maxSubmissions})`
-          );
-          throw formRefusal(FORM_FULL, 'Form is full');
+    let promotedHere: PromotedAnswer[] = [];
+    let outcome: CashSwitchOutcome;
+    try {
+      outcome = await this.submissionRepo.manager.transaction('READ COMMITTED', async (manager) => {
+        await this.assertAssociationLiveUnderLock(manager, form, 'cash switch');
+        await lockFormSeats(manager, form.id);
+        const locked = await manager.findOne(Submission, {
+          where: { id: submissionId },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!locked) throw new NotFoundException('Submission not found');
+        const replay = this.switchReplayOrRefusal(row, locked, settleable);
+        if (replay) return replay;
+        if (who.oneAnswer) {
+          await this.assertNoOtherAnswer(manager, form.id, who.userId!, submissionId);
         }
-      }
-      if (who.visitorKey) {
-        await this.assertGuestCeiling(
+        // The hold judged at THIS instant: the transaction began after a call of unknown length.
+        const holdsSeat =
+          (await manager.count(Submission, {
+            where: livePendingAtClockWhere(form.id, { id: submissionId }),
+          })) > 0;
+        if (!holdsSeat && form.maxSubmissions) {
+          // The first in line takes every free place BEFORE this answer counts one.
+          promotedHere = await promoteFromWaitlist(
+            manager,
+            form.id,
+            'cash-switch',
+            this.logger,
+            this.onlineCollects
+          );
+          // The capacity, as a fresh submit counts it: this row holds no seat, so it needs one free.
+          const count = await manager.count(Submission, { where: seatHoldingWhere(form.id) });
+          if (count >= form.maxSubmissions) {
+            this.logger.log(
+              `[Forms] switchToCash ${submissionId} refused: ${formTag(form)} is full (${count}/${form.maxSubmissions})`
+            );
+            throw formRefusal(FORM_FULL, 'Form is full');
+          }
+        }
+        if (who.visitorKey) {
+          await this.assertGuestCeiling(
+            manager,
+            form,
+            submissionId,
+            locked.guestVisitorKey ?? who.visitorKey
+          );
+        }
+        return this.writeCashSwitch(
           manager,
+          locked,
           form,
-          submissionId,
-          locked.guestVisitorKey ?? who.visitorKey
+          who.visitorKey,
+          holdsSeat ? 'seat kept' : 'seat re-taken'
         );
+      });
+    } catch (e: unknown) {
+      // A refusal after the promotion rolled it back: the places are promoted again on their own.
+      // NOT A SILENT SWALLOW: `promoteWaitlist` logs every failure at ERROR before it throws, so
+      // this catch only keeps the refusal `e` as what this caller is answered.
+      if (promotedHere.length > 0) {
+        await this.promoteWaitlist(form.id, 'cash-switch').catch(() => undefined);
       }
-      return this.writeCashSwitch(
-        manager,
-        locked,
-        form,
-        who.visitorKey,
-        holdsSeat ? 'seat kept' : 'seat re-taken'
-      );
-    });
+      throw e;
+    }
+    await this.tellPromoted(promotedHere);
+    return outcome;
   }
 
   /**
@@ -4961,32 +5267,74 @@ export class FormsService {
   }
 
   /**
-   * Cancels a `pending` row whose payment request was never issued (the provider refused, the call
-   * failed, payments are off): nothing is payable, so it must not hold a seat for 30 minutes, and a
-   * row naming no request would otherwise read as "being issued" to the next retry. A row that DOES
-   * name a request is left alone.
+   * What a `pending` row whose payment request could not be issued becomes - decided by what is
+   * KNOWN of the request, and never at the expense of a place the failure was not the person's:
+   *
+   * - `unissued` (refused before Lydia created anything): nothing is payable, so the row must not
+   *   hold a seat it cannot be paid for, and a row naming no request would otherwise read as "being
+   *   issued" to the next retry. It is `cancelled` (resumable) - EXCEPT a PROMOTED answer
+   *   (`promotedAt`, `waitlist.ts`), which goes back to `payment_due`: its place was given by the
+   *   waiting list, and Canari failing to ask for the payment is no reason to give it to the next
+   *   in line (owner decision of 2026-11-23 frees a place on a refused or expired payment only). Its
+   *   hold is counted from its PROMOTION again, never from the resume that tried, so it ends at a
+   *   fixed time however often the person retries.
+   * - `issue-unknown` (the call was sent and failed, so a request may exist at Lydia that the row
+   *   does not name): the row STAYS `pending`, holding its seat until its hold lapses (the expiry
+   *   job then frees it and promotes the next in line), and is marked `issue-unknown` so no resume
+   *   is offered (`resumeRowRefusal`): freeing the seat at once would promote the next in line into
+   *   a place that payable request may still claim.
+   *
+   * A row that DOES name a request, or is no longer `pending`, is left alone.
    */
   private async releaseUnissuedRow(
     submissionId: string,
     origin: 'unissued' | 'issue-unknown' = 'unissued'
   ): Promise<void> {
-    const outcome = await this.moveLockedSubmission(submissionId, 'pending', 'cancelled', {
-      named: (s) => !s.paymentRequestId && !s.stripeSessionId,
-      cancelledBy: origin,
-    });
-    if (typeof outcome === 'object') {
-      if (origin === 'issue-unknown') {
-        // Not an answer from Lydia: the call was sent and failed, so a request may exist that this
-        // row does not name. The answer is released (it holds no seat) and NOT offered for a resume.
+    const namesNone = (s: Submission) => !s.paymentRequestId && !s.stripeSessionId;
+    if (origin === 'issue-unknown') {
+      const kept = await this.submissionRepo
+        .createQueryBuilder()
+        .update()
+        .set({ paymentCancelOrigin: 'issue-unknown' })
+        .where('id = :id', { id: submissionId })
+        .andWhere('"paymentStatus" = :pending', { pending: 'pending' })
+        .andWhere('"paymentRequestId" IS NULL AND "stripeSessionId" IS NULL')
+        .execute();
+      if (kept.affected) {
         this.logger.warn(
-          `[Forms] submission ${submissionId} released: the issuing call failed after it was sent - ` +
-            `its outcome at Lydia is unknown, no resume is offered`
+          `[Forms] submission ${submissionId} kept pending: the issuing call failed after it was sent - ` +
+            `its outcome at Lydia is unknown, the seat is held until the hold lapses, no resume is offered`
         );
       } else {
         this.logger.log(
-          `[Forms] submission ${submissionId} released: no payment request was issued`
+          `[Forms] submission ${submissionId} left as is after an unknown issue: no longer pending, or it names a request`
         );
       }
+      return;
+    }
+    const head = await this.submissionRepo.findOne({
+      where: { id: submissionId },
+      select: { id: true, promotedAt: true },
+    });
+    if (head?.promotedAt) {
+      const restored = await this.moveLockedSubmission(submissionId, 'pending', PAYMENT_DUE, {
+        named: namesNone,
+        holdFromPromotion: true,
+      });
+      if (typeof restored === 'object') {
+        this.logger.log(
+          `[WAITLIST] ${submissionId.slice(0, 8)} back to ${PAYMENT_DUE}: its payment request could ` +
+            'not be issued, and a promoted answer keeps its place'
+        );
+      }
+      return;
+    }
+    const outcome = await this.moveLockedSubmission(submissionId, 'pending', 'cancelled', {
+      named: namesNone,
+      cancelledBy: origin,
+    });
+    if (typeof outcome === 'object') {
+      this.logger.log(`[Forms] submission ${submissionId} released: no payment request was issued`);
     }
   }
 
@@ -5037,12 +5385,34 @@ export class FormsService {
       // Settles the request at Lydia and moves the row to `cancelled`, or marks it paid.
       await this.cancelSubmission(submissionId, callerId, isGlobalAdmin);
     }
-    // A DELETE answers `[rows, rowCount]` through TypeORM's postgres driver, never the rows alone:
-    // read as the rows, the result always had length 2, and a refused delete read as a deletion.
-    const [deleted] = (await this.submissionRepo.query(
-      `DELETE FROM submissions WHERE id = $1 AND "paymentStatus" <> ALL($2::text[]) RETURNING id`,
-      [submissionId, [...PAID_SUBMISSION_STATUSES, 'pending']]
-    )) as [unknown[], number];
+    // Under the form's seat lock, and the first in line promoted into the seat it frees IN THE SAME
+    // TRANSACTION: a failed promotion keeps the answer (a deleted WAITING answer frees no seat, and
+    // promotes nobody). A DELETE answers `[rows, rowCount]` through TypeORM's postgres driver, never
+    // the rows alone: read as the rows, the result always had length 2, and a refused delete read as
+    // a deletion.
+    const { deleted, promoted } = await this.submissionRepo.manager.transaction(
+      'READ COMMITTED',
+      async (m) => {
+        await lockFormSeats(m, sub.formId);
+        const [rows] = (await m.query(
+          `DELETE FROM submissions WHERE id = $1 AND "paymentStatus" <> ALL($2::text[]) RETURNING id`,
+          [submissionId, [...PAID_SUBMISSION_STATUSES, 'pending']]
+        )) as [unknown[], number];
+        return {
+          deleted: rows,
+          promoted:
+            rows.length > 0
+              ? await promoteFromWaitlist(
+                  m,
+                  sub.formId,
+                  'manager-delete',
+                  this.logger,
+                  this.onlineCollects
+                )
+              : [],
+        };
+      }
+    );
     if (deleted.length === 0) {
       const now = await this.submissionRepo.findOne({
         where: { id: submissionId },
@@ -5065,6 +5435,7 @@ export class FormsService {
       });
     }
     this.logger.log(`[Forms] Submission ${submissionId} deleted by ${callerId}`);
+    await this.tellPromoted(promoted);
   }
 
   /**
@@ -5082,7 +5453,19 @@ export class FormsService {
   private async submitterAnswer(submission: Submission) {
     const form = await this.formRepo.findOne({ where: { id: submission.formId } });
     const { id, formId, totalPaid, paymentStatus } = toSubmitterView(submission);
-    return { id, formId, totalPaid, currency: form?.currency ?? 'eur', paymentStatus };
+    // A payment over capacity by a member on the form's waiting list keeps their place, and their
+    // turn converts this answer with nothing more charged (`payerWaitsInLine`): the page says so
+    // instead of "ask for a refund". A guest never waits, and its receipt view drops the field.
+    const waitlisted =
+      paymentStatus === 'paid_over_capacity' && (await this.payerWaitsInLine(submission));
+    return {
+      id,
+      formId,
+      totalPaid,
+      currency: form?.currency ?? 'eur',
+      paymentStatus,
+      ...(waitlisted ? { waitlisted: true as const } : {}),
+    };
   }
 
   /**
@@ -5208,6 +5591,26 @@ export class FormsService {
         // request (`request_uuid`) and is no longer overwritten with whichever id arrived first.
         submission.paymentSettledBy = sessionId ?? null;
         await manager.save(submission);
+        // NO ONE IS BOTH REGISTERED AND IN LINE (`waitlist.ts`): a late payment that GAVE a seat
+        // (`paid`) on an old answer of a person who has since joined the form's waiting list takes
+        // that person off it, under the seat lock held, so they are never promoted into a second
+        // registration they would pay for twice. One that landed `paid_over_capacity` gave no seat,
+        // so the person KEEPS their place in line (decision of 2026-11-23, forms.md): when their
+        // turn comes, the promotion converts this paid answer to `paid` instead of opening a second
+        // one (`planPromotion`), and the refund is owed only if they are never promoted.
+        if (submission.userId && status === 'paid') {
+          const [left] = (await manager.query(
+            `DELETE FROM submissions WHERE "formId" = $1 AND "userId" = $2 AND "paymentStatus" = $3
+                AND id <> $4 RETURNING id`,
+            [submission.formId, submission.userId, WAITING, submissionId]
+          )) as [Array<{ id: string }>, number];
+          if (left.length > 0) {
+            this.logger.warn(
+              `[WAITLIST] late payment on ${submissionId.slice(0, 8)} (${status}): the same person's ` +
+                `waiting answer ${left.map((r) => r.id.slice(0, 8)).join(', ')} leaves the line`
+            );
+          }
+        }
         return { submission, status, replay: false };
       }
     );
@@ -5241,10 +5644,14 @@ export class FormsService {
     } else if (outcome.status === 'paid_over_capacity') {
       // The money is the payer's until the organiser refunds it: no cotisation is granted for a
       // seat that was not given. The purchase record below is still written - it is the payer's
-      // trace that they paid.
+      // trace that they paid. A payer in line keeps their place: their turn converts this answer.
+      const inLine = await this.payerWaitsInLine(submission);
       this.logger.warn(
         `[Forms] Payment on submission ${submissionId} landed OVER CAPACITY ` +
-          `(form ${submission.formId}, ${submission.totalPaid} cents): the organiser owes a refund`
+          `(form ${submission.formId}, ${submission.totalPaid} cents): ` +
+          (inLine
+            ? 'the payer is on the waiting list - their place is kept, and a refund is owed only if they are never promoted'
+            : 'the organiser owes a refund')
       );
     }
 
@@ -5268,6 +5675,20 @@ export class FormsService {
     if (!submission) throw new NotFoundException('Submission not found');
     if (submission.userId !== callerId) {
       await this.assertFormManager(submission.formId, callerId, isGlobalAdmin);
+    }
+    // A promoted answer owing its first payment (`waitlist.ts`) names no request: nothing to settle
+    // at Lydia. Withdrawn by its member (resumable later, like their own cancel) or cancelled by a
+    // manager; either frees the seat, and the next in line is promoted (`moveLockedSubmission`).
+    if (submission.paymentStatus === PAYMENT_DUE) {
+      const origin: PaymentCancelOrigin = submission.userId === callerId ? 'member' : 'manager';
+      const outcome = await this.moveLockedSubmission(submissionId, PAYMENT_DUE, 'cancelled', {
+        cancelledBy: origin,
+      });
+      if (outcome === 'missing') throw new NotFoundException('Submission not found');
+      if (typeof outcome === 'object') {
+        this.logger.log(`[Forms] Submission ${submissionId} (payment due) cancelled by ${origin}`);
+      }
+      return { ok: true };
     }
     // An online answer's request is settled first, by the same rules as a retry (D2): cancelling
     // the row while its request stays payable is how a payment lands on a cancelled answer.
@@ -5741,9 +6162,13 @@ export class FormsService {
    * The read and the write used to be two statements with nothing between them: a cancel or expiry
    * callback that read `pending` could then overwrite a `paid` that `markPaid` committed in between,
    * and a cash validation could be applied twice. The lock makes the check and the move one step.
-   * Takes no form lock: none of these moves changes how many seats are held in a way a count could
-   * race (a cancel only frees one, a cash validation keeps the one it has). `named`, when given, is
-   * read under the same lock: a row whose current request is not the one reported is left as is.
+   * `named`, when given, is read under the same lock: a row whose current request is not the one
+   * reported is left as is.
+   *
+   * THE FORM'S SEAT LOCK FIRST, then the row (the order `submit`, `markPaid` and an answer edit take):
+   * a move to `cancelled` FREES the seat the row held, and the first in line is promoted into it IN
+   * THIS TRANSACTION (`promoteFromWaitlist`) - a failed promotion rolls the cancel back with it, so a
+   * place is never left free with someone waiting. Those promoted are told after the commit.
    */
   private async moveLockedSubmission(
     submissionId: string,
@@ -5753,45 +6178,296 @@ export class FormsService {
       formId,
       named,
       cancelledBy,
+      holdFromPromotion,
     }: {
       formId?: string;
       named?: (submission: Submission) => boolean;
       /** Who or what cancels, recorded with a move to `cancelled` (`PaymentCancelOrigin`). */
       cancelledBy?: PaymentCancelOrigin;
+      /**
+       * A move back to `payment_due`: the hold is counted from the PROMOTION again
+       * (`paymentRequestedAt = promotedAt`), not from the resume that failed, so it ends at the
+       * time it always would have - re-clicking "pay" never keeps a seat longer.
+       */
+      holdFromPromotion?: boolean;
     } = {}
   ): Promise<{ moved: Submission } | 'missing' | 'not-in-state' | 'other-request' | 'claimed'> {
-    return this.submissionRepo.manager.transaction('READ COMMITTED', async (manager) => {
-      const submission = await manager.findOne(Submission, {
-        where: formId ? { id: submissionId, formId } : { id: submissionId },
+    // The form the row belongs to, read to take its lock first: a row never changes form.
+    const head = await this.submissionRepo.findOne({
+      where: formId ? { id: submissionId, formId } : { id: submissionId },
+      select: { id: true, formId: true },
+    });
+    if (!head) return 'missing';
+    let promoted: PromotedAnswer[] = [];
+    const outcome = await this.submissionRepo.manager.transaction(
+      'READ COMMITTED',
+      async (manager) => {
+        await lockFormSeats(manager, head.formId);
+        const submission = await manager.findOne(Submission, {
+          where: { id: submissionId },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!submission) return 'missing';
+        if (submission.paymentStatus !== from) {
+          this.logger.debug(
+            `[Forms] submission ${submissionId} is ${submission.paymentStatus}, not ${from} - left as is`
+          );
+          return 'not-in-state';
+        }
+        if (from === 'pending' && submission.cashSwitchClaimId) {
+          // A switch to cash is moving this row (`claimCashSwitch`): its seat is not released under
+          // it - the cancel it made at Lydia is what this report is about. The switch decides the
+          // row, so this returns BEFORE anything is freed or promoted.
+          this.logger.log(
+            `[Forms] submission ${submissionId} left ${from}: a switch to cash claims it`
+          );
+          return 'claimed';
+        }
+        if (named && !named(submission)) {
+          // Expected after every reuse: the old request was cancelled on purpose, and Lydia reports it.
+          this.logger.log(
+            `[Forms] submission ${submissionId} left ${from}: the reported request is not its current one (${submission.paymentRequestId ?? 'none'})`
+          );
+          return 'other-request';
+        }
+        submission.paymentStatus = to;
+        if (holdFromPromotion && !submission.promotedAt) {
+          throw new Error(`submission ${submissionId} moved to ${to} carries no promotedAt`);
+        }
+        // A row kept `pending` after an issue whose outcome is unknown keeps that origin through its
+        // cancel: a request may still be payable at Lydia, so it must never become resumable.
+        if (cancelledBy && submission.paymentCancelOrigin !== 'issue-unknown') {
+          submission.paymentCancelOrigin = cancelledBy;
+        } else if (cancelledBy) {
+          this.logger.log(
+            `[Forms] submission ${submissionId} cancelled by ${cancelledBy}, kept issue-unknown: never resumable`
+          );
+        }
+        await manager.save(submission);
+        if (holdFromPromotion) {
+          // In SQL, on the database's own clock: `paymentRequestedAt` is a `timestamp` and
+          // `promotedAt` a `timestamptz`, so a value carried through the service would be shifted
+          // by the process's time zone - the cast here is the one `now()` takes on both.
+          await manager.query(
+            `UPDATE submissions SET "paymentRequestedAt" = "promotedAt" WHERE id = $1`,
+            [submissionId]
+          );
+        }
+        if (to === 'cancelled') {
+          promoted = await promoteFromWaitlist(
+            manager,
+            head.formId,
+            freeingTrigger(from, cancelledBy),
+            this.logger,
+            this.onlineCollects
+          );
+        }
+        return { moved: submission } as const;
+      }
+    );
+    await this.tellPromoted(promoted);
+    return outcome;
+  }
+
+  /**
+   * PROMOTES THE FIRST IN LINE INTO EVERY PLACE THE FORM HAS FREE (`waitlist.ts`), in a transaction
+   * of its own under the form's seat lock, then tells each person promoted, once. For the events
+   * that free places with no submission write to share a transaction with: a capacity raised or
+   * cleared by an edit (`update`, `publishChanges`, after their save), and a submit or a resume whose
+   * own transaction promoted and then rolled back on a refusal. Every freeing that writes a row
+   * promotes inside that write's transaction instead.
+   *
+   * THROWS on a failure, after logging it at ERROR: nothing retries a promotion on a timer, so the
+   * caller's request fails visibly rather than leaving a free place with someone waiting unsaid.
+   */
+  async promoteWaitlist(formId: string, trigger: WaitlistTrigger): Promise<PromotedAnswer[]> {
+    let promoted: PromotedAnswer[];
+    try {
+      promoted = await this.submissionRepo.manager.transaction(
+        'READ COMMITTED',
+        async (manager) => {
+          await lockFormSeats(manager, formId);
+          return promoteFromWaitlist(manager, formId, trigger, this.logger, this.onlineCollects);
+        }
+      );
+    } catch (e: unknown) {
+      this.logger.error(
+        `[WAITLIST] ${trigger}: promotion on form ${formId.slice(0, 8)} FAILED - the place stays ` +
+          'free and the answers waiting until the next capacity event of this form',
+        e
+      );
+      throw e;
+    }
+    await this.tellPromoted(promoted);
+    return promoted;
+  }
+
+  /**
+   * WHAT A PAYMENT BUYS, RUN FOR A PROMOTION THAT CONVERTED A `paid_over_capacity` ANSWER TO `paid`
+   * (`planPromotion`, `waitlist.ts`): the seat is given now, so the cotisation the payment could not
+   * grant over capacity is granted (`fulfilPayment`, claimed on the row's own flag, so it runs once
+   * however many callers reach it). The purchase record was written when the money landed.
+   *
+   * With `submissionIds`, the answers a promotion just committed - whichever promoter, through
+   * `FormWaitlistNoticeService.afterCommit` (registered there by this service's constructor), so a
+   * refund's conversion is run right after the refund's own commit. Without, THE DURABLE RETRY, never
+   * an ordinary path: every promoted `paid` answer whose cotisation flag is still free - a process
+   * stopped between a commit and its `afterCommit`, or a grant that failed and gave its claim back.
+   * Run by the five-minute form job; finding any is logged at WARN. A try per answer: one failure
+   * never costs the others theirs.
+   */
+  async fulfilConvertedPromotions(submissionIds?: readonly string[]): Promise<number> {
+    const ids =
+      submissionIds ??
+      (
+        (await this.submissionRepo.query(
+          `SELECT id FROM submissions
+            WHERE "paymentStatus" = 'paid' AND "promotedAt" IS NOT NULL
+              AND "cotisationGrantedAt" IS NULL`
+        )) as Array<{ id: string }>
+      ).map((row) => row.id);
+    if (ids.length === 0) return 0;
+    if (!submissionIds) {
+      this.logger.warn(
+        `[WAITLIST] ${ids.length} converted promotion(s) still owe what their payment buys - running it now`
+      );
+    }
+    for (const id of ids) {
+      try {
+        const row = await this.submissionRepo.findOne({
+          where: { id, paymentStatus: 'paid' },
+          select: {
+            id: true,
+            formId: true,
+            userId: true,
+            totalPaid: true,
+            paymentStatus: true,
+            paymentMethod: true,
+          },
+        });
+        if (!row) {
+          this.logger.log(
+            `[WAITLIST] converted promotion ${id.slice(0, 8)} is no longer paid - nothing run`
+          );
+          continue;
+        }
+        // The row's OWN method: a cash promotee validated by hand is retried here too, and its
+        // grant must say cash, as its validation did.
+        await this.fulfilPayment(row, true, {
+          grantedBy: 'system',
+          paymentMethod: row.paymentMethod === 'cash' ? 'cash' : 'online',
+          metadata: { submissionId: id, promotedFromWaitlist: true },
+        });
+      } catch (e: unknown) {
+        this.logger.error(
+          `[WAITLIST] what converted promotion ${id.slice(0, 8)} buys could not be run - retried by the next run`,
+          e
+        );
+      }
+    }
+    return ids.length;
+  }
+
+  /**
+   * Tells the people a committed promotion registered (`FormWaitlistNoticeService`, once each). A
+   * notice that cannot be written leaves its claim free in the row, retried by the five-minute
+   * `tellPending` - the only thing that job does for the waiting list.
+   */
+  private async tellPromoted(promoted: readonly PromotedAnswer[]): Promise<void> {
+    if (promoted.length === 0) return;
+    if (!this.waitlistNotice) {
+      this.logger.error(
+        `[WAITLIST] ${promoted.length} promotion(s) committed with no notifier wired - their notices are owed`
+      );
+      return;
+    }
+    await this.waitlistNotice.afterCommit(promoted);
+  }
+
+  /**
+   * THE MEMBER LEAVES THE WAITING LIST (owner, 2026-11-23): their waiting answer is DELETED - it holds
+   * no seat and carries no payment, so nothing of it is worth keeping (principle 1, "nous gardons le
+   * moins de données possible"), and everyone behind moves up with no write. Only the answer's own
+   * person, and only while it still waits: promoted meanwhile, it is a registration, withdrawn like
+   * any other - a typed 409 `WAITLIST_ANSWER_NOT_WAITING`.
+   */
+  async leaveWaitlist(submissionId: string, callerId: string): Promise<{ ok: true }> {
+    const [gone] = (await this.submissionRepo.query(
+      `DELETE FROM submissions WHERE id = $1 AND "userId" = $2 AND "paymentStatus" = $3 RETURNING id`,
+      [submissionId, callerId, WAITING]
+    )) as [unknown[], number];
+    if (gone.length === 0) {
+      const row = await this.submissionRepo.findOne({
+        where: { id: submissionId },
+        select: { id: true, userId: true, paymentStatus: true },
+      });
+      // Another person's answer is not told apart from a missing one.
+      if (!row || row.userId !== callerId) throw new NotFoundException('Submission not found');
+      this.logger.log(
+        `[WAITLIST] ${submissionId.slice(0, 8)} not left: it is ${row.paymentStatus}, no longer waiting`
+      );
+      throw new ConflictException({
+        code: WAITLIST_ANSWER_NOT_WAITING,
+        message: 'This answer is no longer on the waiting list.',
+      });
+    }
+    this.logger.log(`[WAITLIST] ${submissionId.slice(0, 8)} left the waiting list by its member`);
+    return { ok: true };
+  }
+
+  /**
+   * A MANAGER PROMOTES ONE WAITING ANSWER BY HAND (owner, 2026-11-23): it becomes a registration NOW,
+   * exactly as an automatic promotion makes it (`promoteWaitingRow`), whoever is before it and
+   * whether or not a place is free - the automatic promotion already fills every free place, so a
+   * promotion by hand is the manager's decision to take this person, above the capacity if the form
+   * is full (logged with the count). Under the form's seat lock like every capacity decision; the
+   * order of the others is untouched. Told once, like any promotion.
+   */
+  async promoteByHand(
+    formId: string,
+    submissionId: string,
+    callerId: string,
+    isGlobalAdmin: boolean
+  ): Promise<{ ok: true; status: PromotedAnswer['status'] }> {
+    const form = await this.assertFormManager(formId, callerId, isGlobalAdmin);
+    const promoted = await this.submissionRepo.manager.transaction('READ COMMITTED', async (m) => {
+      await lockFormSeats(m, formId);
+      const row = await m.findOne(Submission, {
+        where: { id: submissionId, formId, paymentStatus: WAITING },
         lock: { mode: 'pessimistic_write' },
       });
-      if (!submission) return 'missing';
-      if (submission.paymentStatus !== from) {
-        this.logger.debug(
-          `[Forms] submission ${submissionId} is ${submission.paymentStatus}, not ${from} - left as is`
-        );
-        return 'not-in-state';
-      }
-      if (from === 'pending' && submission.cashSwitchClaimId) {
-        // A switch to cash is moving this row (`claimCashSwitch`): its seat is not released under
-        // it - the cancel it made at Lydia is what this report is about. The switch decides the row.
+      if (!row) {
         this.logger.log(
-          `[Forms] submission ${submissionId} left ${from}: a switch to cash claims it`
+          `[WAITLIST] by-hand promotion of ${submissionId.slice(0, 8)} refused: not waiting on form ${formId.slice(0, 8)}`
         );
-        return 'claimed';
+        throw new ConflictException({
+          code: WAITLIST_ANSWER_NOT_WAITING,
+          message: 'This answer is no longer on the waiting list.',
+        });
       }
-      if (named && !named(submission)) {
-        // Expected after every reuse: the old request was cancelled on purpose, and Lydia reports it.
-        this.logger.log(
-          `[Forms] submission ${submissionId} left ${from}: the reported request is not its current one (${submission.paymentRequestId ?? 'none'})`
+      const plan = await planPromotion(m, row);
+      const status = plan.status;
+      if (!(await promotionPayable(status, form, this.onlineCollects, m))) {
+        this.logger.warn(
+          `[WAITLIST] by-hand promotion of ${submissionId.slice(0, 8)} refused: it would be ${status}, ` +
+            `and form ${formId.slice(0, 8)} can take no such payment now`
         );
-        return 'other-request';
+        throw new ConflictException({
+          code: WAITLIST_NO_PAYMENT_PATH,
+          message: 'This answer would owe a payment the form cannot take now.',
+        });
       }
-      submission.paymentStatus = to;
-      if (cancelledBy) submission.paymentCancelOrigin = cancelledBy;
-      await manager.save(submission);
-      return { moved: submission };
+      const held = await m.count(Submission, { where: seatHoldingWhere(formId) });
+      const answer = await promoteWaitingRow(m, row, form, plan);
+      this.logger.log(
+        `[WAITLIST] by-hand: ${submissionId.slice(0, 8)} -> ${answer.status} on form ${formId.slice(0, 8)} ` +
+          `by ${callerId.slice(0, 8)} (${held}/${form.maxSubmissions ?? 'unlimited'} seats held before` +
+          `${form.maxSubmissions && held >= form.maxSubmissions ? ', above capacity' : ''})`
+      );
+      return answer;
     });
+    await this.tellPromoted([promoted]);
+    return { ok: true, status: promoted.status };
   }
 
   /** Lists submissions waiting for cash validation on a given form. Requires form manager rights. */
@@ -5925,19 +6601,74 @@ export class FormsService {
 
   /** Called by the hourly cron - expires cash submissions past their deadline. */
   async expireStalecashPayments(): Promise<number> {
-    const result = await this.submissionRepo
-      .createQueryBuilder()
-      .update()
-      .set({ paymentStatus: 'expired' })
-      .where('paymentStatus = :status', { status: 'pending_cash' })
-      .andWhere('cashExpiresAt IS NOT NULL')
-      .andWhere('cashExpiresAt < NOW()')
-      .execute();
-    const count = result.affected ?? 0;
+    const count = await this.expirePerForm(
+      'cash-expiry',
+      `"paymentStatus" = 'pending_cash' AND "cashExpiresAt" IS NOT NULL AND "cashExpiresAt" < now()`,
+      []
+    );
     if (count > 0) {
       this.logger.log(`[Forms] Expired ${count} stale cash payment(s)`);
     }
     return count;
+  }
+
+  /**
+   * Moves to `expired` every row matching `due` (SQL over `submissions`, its parameters `params` as
+   * `$1`...), ONE FORM AT A TIME: each form's expiry takes its seat lock first and promotes the first
+   * in line into the places it freed IN THE SAME TRANSACTION (`promoteFromWaitlist`), so an expiry
+   * and its promotion commit together or not at all. A try per form: one form's failure (logged at
+   * ERROR) leaves its rows as they are for the next run and costs the other forms nothing. Answers
+   * how many rows were expired. Idempotent from the rows: `due` names the only states it moves out of.
+   */
+  private async expirePerForm(
+    trigger: Extract<WaitlistTrigger, 'cash-expiry' | 'online-expiry'>,
+    due: string,
+    params: unknown[]
+  ): Promise<number> {
+    const forms = (await this.submissionRepo.query(
+      `SELECT DISTINCT "formId" FROM submissions WHERE ${due}`,
+      params
+    )) as Array<{ formId: string }>;
+    const formParam = `$${params.length + 1}`;
+    let expired = 0;
+    for (const { formId } of forms) {
+      try {
+        const { moved, promoted } = await this.submissionRepo.manager.transaction(
+          'READ COMMITTED',
+          async (manager) => {
+            await lockFormSeats(manager, formId);
+            const [rows] = (await manager.query(
+              `UPDATE submissions SET "paymentStatus" = 'expired'${
+                trigger === 'online-expiry' ? ', "cashSwitchClaimId" = NULL' : ''
+              }
+                WHERE "formId" = ${formParam} AND ${due} RETURNING id`,
+              [...params, formId]
+            )) as [unknown[], number];
+            return {
+              moved: rows.length,
+              promoted:
+                rows.length > 0
+                  ? await promoteFromWaitlist(
+                      manager,
+                      formId,
+                      trigger,
+                      this.logger,
+                      this.onlineCollects
+                    )
+                  : [],
+            };
+          }
+        );
+        expired += moved;
+        await this.tellPromoted(promoted);
+      } catch (e: unknown) {
+        this.logger.error(
+          `[Forms] ${trigger} on form ${formId.slice(0, 8)} FAILED - its rows stay as they are for the next run`,
+          e
+        );
+      }
+    }
+    return expired;
   }
 
   /**
@@ -5966,19 +6697,17 @@ export class FormsService {
    * neither read nor expired this tick, but both next tick - never expired unread.
    */
   async expireStalePendingPayments(cutoff: Date): Promise<number> {
-    const result = await this.submissionRepo
-      .createQueryBuilder()
-      .update()
-      // A switch-to-cash claim ends with the hold it protected (`claimCashSwitch`): one a crash left
-      // is cleared here, so a dead claim never outlives the row's own hold. A switch still running
-      // finds the row `expired` and re-takes a seat like any released answer.
-      .set({ paymentStatus: 'expired', cashSwitchClaimId: null })
-      .where('"paymentStatus" = :status', { status: 'pending' })
-      // An INSTANT, compared as `PENDING_HOLD_CUTOFF_SQL` was: the column is a `timestamp` with no
-      // zone, and an uncast parameter would be read as one, dropping the offset the driver sends.
-      .andWhere('"paymentRequestedAt" <= CAST(:cutoff AS timestamptz)', { cutoff })
-      .execute();
-    const count = result.affected ?? 0;
+    // A promoted answer owing its payment (`payment_due`) has the same hold, from its promotion. The
+    // cutoff is an INSTANT, compared as `PENDING_HOLD_CUTOFF_SQL` was: the column is a `timestamp`
+    // with no zone, and an uncast parameter would be read as one, dropping the offset the driver sends.
+    // A switch-to-cash claim ends with the hold it protected (`claimCashSwitch`): one a crash left is
+    // cleared by the same write (`expirePerForm`), so a dead claim never outlives the row's own hold.
+    // A switch still running finds the row `expired` and re-takes a seat like any released answer.
+    const count = await this.expirePerForm(
+      'online-expiry',
+      `"paymentStatus" IN ('pending', '${PAYMENT_DUE}') AND "paymentRequestedAt" <= CAST($1 AS timestamptz)`,
+      [cutoff]
+    );
     if (count > 0) {
       this.logger.log(`[Forms] Expired ${count} online payment(s) left pending past the hold`);
     }
@@ -6230,11 +6959,14 @@ export class FormsService {
     if (form?.anonymous) await this.releaseOrAccuse(formId, 'read');
     // An anonymous form lists in the order of a random id, never of arrival: the order of insertion
     // is a clock the week-precision `createdAt` was cut to hide.
-    const subs = overCapacityFirst(
-      await this.submissionRepo.find({
-        where: { formId },
-        order: form?.anonymous ? { id: 'ASC' } : { createdAt: 'DESC' },
-      })
+    // The waiting list apart, after every registration, in arrival order (`waitlist.ts`).
+    const subs = waitingLast(
+      overCapacityFirst(
+        await this.submissionRepo.find({
+          where: { formId },
+          order: form?.anonymous ? { id: 'ASC' } : { createdAt: 'DESC' },
+        })
+      )
     );
     // WHICH ANSWERS HOLD A SEAT, from the SAME predicate the capacity checks count (`seatHoldingWhere`,
     // the hold's clock included): the client never re-implements the 30-minute rule, it reads this.
@@ -6326,11 +7058,14 @@ export class FormsService {
     if (form.anonymous) await this.releaseOrAccuse(formId, 'export');
 
     // Same order as the responses list, a payment over capacity first.
-    const submissions = overCapacityFirst(
-      await this.submissionRepo.find({
-        where: { formId },
-        order: form.anonymous ? { id: 'ASC' } : { createdAt: 'DESC' },
-      })
+    // The waiting list apart, after every registration, in arrival order (`waitlist.ts`).
+    const submissions = waitingLast(
+      overCapacityFirst(
+        await this.submissionRepo.find({
+          where: { formId },
+          order: form.anonymous ? { id: 'ASC' } : { createdAt: 'DESC' },
+        })
+      )
     );
 
     // Each answer's name: its snapshot, the guest's typed one, or - for an answer given before the

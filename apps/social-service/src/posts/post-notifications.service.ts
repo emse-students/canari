@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, type EntityManager } from 'typeorm';
 import { PostNotification } from './entities/post-notification.entity';
 import { Post } from './entities/post.entity';
 import { PushService } from '../push/push.service';
@@ -858,19 +858,37 @@ export class PostNotificationsService {
     commentId?: string;
     skipPush?: boolean;
     pushData?: Record<string, string>;
+    /**
+     * The caller's transaction: the gate is read and the row written ON it, so the row commits or
+     * rolls back with the caller's own writes (the waiting list's claim, `FormWaitlistNoticeService`).
+     * Requires `skipPush`: a push sent from inside a transaction would announce a row that may
+     * still roll back, so the caller pushes after its commit.
+     */
+    manager?: EntityManager;
   }) {
     if (data.recipientId === data.actorId) return;
     refuseOnePerPostPush(data.type, data.skipPush);
+    if (data.manager && !data.skipPush) {
+      throw new Error(
+        `type=${data.type}: a row written in the caller's transaction pushes after its commit`
+      );
+    }
+    const em = data.manager ?? this.notifRepo.manager;
     // Suggestion and engagement content whose category the reader switched off writes no row
     // (`BELL_ROW_GATE`), and so no push either - chat-delivery would drop it. Every other notice is
     // written; its push still follows its category in chat-delivery.
-    const [stillOn] = await recipientsWithCategoryOn(this.notifRepo.manager, data.type, [
-      data.recipientId,
-    ]);
+    const [stillOn] = await recipientsWithCategoryOn(em, data.type, [data.recipientId]);
     if (!stillOn) return;
-    const { skipPush, pushData, associationLogoMediaId, ...notifData } = data;
+    const { skipPush, pushData, associationLogoMediaId, manager: _manager, ...notifData } = data;
     const actorName = data.actorName ?? (await this.resolveActorName(data.actorId));
-    await this.notifRepo.save(this.notifRepo.create({ ...notifData, actorName }));
+    if (data.manager) {
+      await data.manager.save(
+        PostNotification,
+        data.manager.create(PostNotification, { ...notifData, actorName })
+      );
+    } else {
+      await this.notifRepo.save(this.notifRepo.create({ ...notifData, actorName }));
+    }
 
     if (skipPush) return;
     // THE DAILY CAP (engagement WP-8): a counted type beyond the reader's budget keeps its row only.

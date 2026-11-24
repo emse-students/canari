@@ -103,6 +103,12 @@ describe('VersionService', () => {
     expect(out.formAnswerEdit).toBe(true);
   });
 
+  it('says its estate keeps waiting lists, so a form editor draws the switch only then', async () => {
+    const out = await service.getVersion();
+
+    expect(out.formWaitlist).toBe(true);
+  });
+
   it("says its estate stores each priced grid's own switch, so a form client draws it only then", async () => {
     const out = await service.getVersion();
 

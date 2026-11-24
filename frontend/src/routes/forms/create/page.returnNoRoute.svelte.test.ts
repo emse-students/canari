@@ -99,6 +99,7 @@ vi.mock('$lib/forms/draftCopies', () => ({
 vi.mock('$lib/stores/appVersionCheck.svelte', async (orig) => ({
   ...(await orig<typeof import('$lib/stores/appVersionCheck.svelte')>()),
   serverFormDrafts: () => caps.formDrafts,
+  serverFormWaitlist: () => true,
 }));
 
 import Page from './+page.svelte';

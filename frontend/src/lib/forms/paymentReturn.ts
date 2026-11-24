@@ -1,3 +1,5 @@
+import { m } from '$lib/paraglide/messages';
+
 /** What a form submission's payment status means for the page the payer lands on after Lydia. */
 export type PaymentReturnVerdict =
   | 'confirmed'
@@ -68,4 +70,17 @@ export function paymentCancelView(paymentStatus: string): 'cancelled' | 'paid' |
   if (verdict === 'confirmed') return 'paid';
   if (verdict === 'overCapacity') return 'overCapacity';
   return 'cancelled';
+}
+
+/**
+ * The sentence under "payment over capacity" on the member's pages (`/forms/success`,
+ * `/forms/cancel`, the form page). A payer on the form's WAITING LIST keeps their place, and their
+ * turn makes this paid answer the registration with nothing more charged (`waitlisted`, from the
+ * server); anyone else is told to ask the organiser for a refund. A guest never waits: its receipt
+ * keeps its own sentence (`form_guest_receipt_over_capacity_desc`).
+ */
+export function overCapacityDescription(waitlisted: boolean | undefined): string {
+  return waitlisted
+    ? m.form_success_over_capacity_waitlisted_desc()
+    : m.form_success_over_capacity_desc();
 }

@@ -124,7 +124,12 @@
   } from '$lib/forms/draftCopies';
   import { tellCopyDropped } from '$lib/forms/draftResend';
   import { FORM_CHANGED_SINCE_REVISION, openingNotifiesMessage } from '$lib/forms/publish';
-  import { serverFormAnswerEdit, serverFormDrafts } from '$lib/stores/appVersionCheck.svelte';
+  import {
+    serverFormAnswerEdit,
+    serverFormDrafts,
+    serverFormWaitlist,
+  } from '$lib/stores/appVersionCheck.svelte';
+  import { waitlistPayload } from '$lib/forms/waitlist';
   import { answerEditPayload } from '$lib/forms/answerEditGate';
   import { gridRequiredSwitchOn } from '$lib/forms/gridRequiredGate';
   import { currentUserId } from '$lib/stores/user';
@@ -156,6 +161,10 @@
   let allowAnswerEdit = $state(false);
   /** Whether this estate serves it (`formAnswerEdit`): an older server drops the switch. */
   const answerEditAvailable = serverFormAnswerEdit() === true;
+  /** The waiting list past the capacity (migration 183), off by default. */
+  let waitlistEnabled = $state(false);
+  /** Whether this estate keeps it (`formWaitlist`): an older server drops the switch. */
+  const waitlistAvailable = serverFormWaitlist() === true;
   let anonymous = $state(false);
   let isPublic = $state(false);
   /** What a public form asks a guest (`guestIdentity.ts`); none by default. */
@@ -439,6 +448,7 @@
     allowOnlinePayment = f.allowOnlinePayment ?? true;
     allowMultipleSubmissions = f.allowMultipleSubmissions ?? false;
     allowAnswerEdit = f.allowAnswerEdit ?? false;
+    waitlistEnabled = f.waitlistEnabled ?? false;
     anonymous = f.anonymous ?? false;
     isPublic = f.isPublic ?? false;
     identityChoices = editorChoicesOf(f);
@@ -707,6 +717,11 @@
       maxSubmissions,
       allowMultipleSubmissions,
       ...answerEditPayload(answerEditAvailable, allowAnswerEdit),
+      ...waitlistPayload(waitlistAvailable, waitlistEnabled, {
+        maxSubmissions,
+        anonymous,
+        allowMultipleSubmissions,
+      }),
       isPublic,
       // Asked of a guest only on a public form that keeps names; otherwise nothing is asked.
       ...respondentSettingsPayload(identityChoices, { isPublic, anonymous }),
@@ -1054,6 +1069,8 @@
       }
       bind:allowAnswerEdit
       {answerEditAvailable}
+      bind:waitlistEnabled
+      {waitlistAvailable}
       bind:anonymous
       anonymousFixed={!isDraft}
       bind:isPublic

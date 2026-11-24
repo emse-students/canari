@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { isRetryableVerdict, paymentCancelView, paymentReturnVerdict } from './paymentReturn';
+import { m } from '$lib/paraglide/messages';
+import {
+  isRetryableVerdict,
+  overCapacityDescription,
+  paymentCancelView,
+  paymentReturnVerdict,
+} from './paymentReturn';
 
 describe('paymentCancelView', () => {
   it.each([
@@ -54,5 +60,16 @@ describe('paymentReturnVerdict', () => {
     expect(isRetryableVerdict('ended')).toBe(true);
     expect(isRetryableVerdict('wait')).toBe(false);
     expect(isRetryableVerdict('failed')).toBe(false);
+  });
+});
+
+describe('overCapacityDescription', () => {
+  it('tells a payer on the waiting list their place is kept and nothing more is charged', () => {
+    expect(overCapacityDescription(true)).toBe(m.form_success_over_capacity_waitlisted_desc());
+  });
+
+  it('tells anyone else to ask the organiser for a refund', () => {
+    expect(overCapacityDescription(false)).toBe(m.form_success_over_capacity_desc());
+    expect(overCapacityDescription(undefined)).toBe(m.form_success_over_capacity_desc());
   });
 });

@@ -10,8 +10,10 @@ import { PENDING_HOLD_CUTOFF_SQL } from './seat-hold';
  * whatever the number of answers, so a form of a thousand answers costs the client a few kilobytes.
  *
  * WHICH ANSWERS COUNT (`COUNTED_ANSWER_SQL`): the ones that are a person's answer now - paid, free,
- * waiting for cash, paid over capacity, and an online payment still within its hold. A refunded,
- * cancelled or expired answer says the person is not in, so their vote is not either - the rule the
+ * waiting for cash, paid over capacity, and an online payment still within its hold (a promoted
+ * answer owing its payment, `payment_due`, included: its hold is the same). A refunded, cancelled
+ * or expired answer, or one still on the waiting list, says the person is not in, so their vote is
+ * not either - the rule the
  * browser-side tab already applied, now written once in SQL beside the seat-hold rule it mirrors.
  *
  * THE DENOMINATOR IS ALWAYS STATED: every question carries `answered` - the counted answers that
@@ -32,7 +34,8 @@ export const ANONYMOUS_MIN_ANSWERS = 5;
 /** Answers that are a person's answer now, as SQL on a `submissions s` row. See the header. */
 export const COUNTED_ANSWER_SQL = `(
   s."paymentStatus" IN ('paid', 'free', 'pending_cash', 'paid_over_capacity')
-  OR (s."paymentStatus" = 'pending' AND s."paymentRequestedAt" > ${PENDING_HOLD_CUTOFF_SQL})
+  OR (s."paymentStatus" IN ('pending', 'payment_due')
+      AND s."paymentRequestedAt" > ${PENDING_HOLD_CUTOFF_SQL})
 )`;
 
 /** Runs one parameterised statement: the repository's `query`, or a test double. */
