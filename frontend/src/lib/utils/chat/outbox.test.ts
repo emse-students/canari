@@ -1835,7 +1835,8 @@ describe('outbox flusher - tab leadership (WP-MULTITAB-1)', () => {
     expect(tabOutboxMock.publishOutboxEntrySent).toHaveBeenCalledWith(
       'm1',
       undefined,
-      1_700_000_000_000
+      1_700_000_000_000,
+      'g1'
     );
   });
 
@@ -1887,12 +1888,93 @@ describe('outbox flusher - tab leadership (WP-MULTITAB-1)', () => {
       makeDeps({ mlsService: makeMls(), storage: makeStorage([]), conversations })
     );
     const handler = tabOutboxMock.subscribeTabOutboxEvents.mock.calls.at(-1)![0];
-    handler({ type: 'outbox_entry_sent', messageId: 't1', receivedAt: 4_000 });
+    handler({
+      type: 'outbox_entry_sent',
+      messageId: 't1',
+      conversationId: 'g1',
+      receivedAt: 4_000,
+    });
     expect(conversations.get('g1')!.messages.map((m) => m.id)).toEqual(['t1', 'later']);
     expect(conversations.get('g1')!.messages[0]).toMatchObject({
       status: 'sent',
       serverTimestamp: 4_000,
     });
+    outbox.dispose();
+  });
+
+  /** A conversation whose rows are a PEER's, holding an id that collides with ours. */
+  function peerConvoWith(
+    id: string,
+    messageIds: string[],
+    status: 'sent' | 'pending' = 'sent'
+  ): Conversation {
+    const convo = convoWith(id, messageIds);
+    return {
+      ...convo,
+      messages: convo.messages.map((m) => ({ ...m, isOwn: false, status })),
+    };
+  }
+
+  it('a follower patches the row in ITS conversation, not a peer row of the same id that comes first', () => {
+    isTabLeaderMock.mockReturnValue(false);
+    // 'other' is first in the map and holds a peer's message with our id.
+    const conversations = new SvelteMap<string, Conversation>([
+      ['other', peerConvoWith('other', ['t1'])],
+      ['g1', convoWith('g1', ['t1'])],
+    ]);
+    const outbox = createOutbox(
+      makeDeps({ mlsService: makeMls(), storage: makeStorage([]), conversations })
+    );
+    const handler = tabOutboxMock.subscribeTabOutboxEvents.mock.calls.at(-1)![0];
+    handler({
+      type: 'outbox_entry_sent',
+      messageId: 't1',
+      conversationId: 'g1',
+      receivedAt: 4_000,
+      content: 'mine',
+    });
+    expect(conversations.get('g1')!.messages[0]).toMatchObject({
+      status: 'sent',
+      serverTimestamp: 4_000,
+      content: 'mine',
+    });
+    const theirs = conversations.get('other')!.messages[0];
+    expect(theirs.content).toBe('x');
+    expect(theirs.serverTimestamp).toBeUndefined();
+    outbox.dispose();
+  });
+
+  it('an event with no conversation patches nothing and accuses (no search across conversations)', () => {
+    isTabLeaderMock.mockReturnValue(false);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['t1'])]]);
+    const outbox = createOutbox(
+      makeDeps({ mlsService: makeMls(), storage: makeStorage([]), conversations })
+    );
+    const handler = tabOutboxMock.subscribeTabOutboxEvents.mock.calls.at(-1)![0];
+    handler({ type: 'outbox_entry_sent', messageId: 't1' });
+    expect(conversations.get('g1')!.messages[0].status).toBe('pending');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('no conversation key'));
+    warn.mockRestore();
+    outbox.dispose();
+  });
+
+  it('a send marks ITS row sent when a peer row of the same id sits first in another conversation', async () => {
+    const conversations = new SvelteMap<string, Conversation>([
+      ['other', peerConvoWith('other', ['m1'], 'pending')],
+      ['g1', convoWith('g1', ['m1'])],
+    ]);
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService: makeMls(),
+        storage: makeStorage([textEntry('m1', 'g1', 100)]),
+        conversations,
+      })
+    );
+    await outbox.flush();
+    expect(conversations.get('g1')!.messages[0].status).toBe('sent');
+    expect(conversations.get('other')!.messages[0].status).toBe('pending');
+    expect(conversations.get('other')!.messages[0].serverTimestamp).toBeUndefined();
     outbox.dispose();
   });
 });
@@ -5399,7 +5481,7 @@ describe('5xx terminal state - review of #2076 (follower Retry, the hold, the de
     );
     await failFiveTimes(leader, storage, 't1');
     expect(leaderConvos.get('g1')!.messages[0].status).toBe('error');
-    expect(tabOutboxMock.publishOutboxEntryFailed).toHaveBeenCalledWith('t1', 5);
+    expect(tabOutboxMock.publishOutboxEntryFailed).toHaveBeenCalledWith('t1', 5, 'g1');
 
     // A follower tab, opened on the same durable queue, shows it failed and its member retries.
     isTabLeaderMock.mockReturnValue(false);
@@ -5432,11 +5514,16 @@ describe('5xx terminal state - review of #2076 (follower Retry, the hold, the de
       makeDeps({ mlsService: makeMls(), storage: makeStorage([]), conversations })
     );
     const handler = tabOutboxMock.subscribeTabOutboxEvents.mock.calls.at(-1)![0];
-    handler({ type: 'outbox_entry_failed', messageId: 't1', serverErrors: 5 });
+    handler({
+      type: 'outbox_entry_failed',
+      messageId: 't1',
+      conversationId: 'g1',
+      serverErrors: 5,
+    });
     expect(conversations.get('g1')!.messages[0].status).toBe('error');
     expect(uploadViewOf('t1')?.phase).toBe('failed');
     // Sent later (retried elsewhere): the failed view goes with it.
-    handler({ type: 'outbox_entry_sent', messageId: 't1' });
+    handler({ type: 'outbox_entry_sent', messageId: 't1', conversationId: 'g1' });
     expect(conversations.get('g1')!.messages[0].status).toBe('sent');
     expect(uploadViewOf('t1')).toBeUndefined();
     outbox.dispose();
@@ -5932,7 +6019,7 @@ describe('awaitSettled answers how the queue LEFT a message, never merely that i
   it('sent: the attempt delivered it', async () => {
     const { outbox } = setUp();
     await outbox.enqueue(textEntry('m1', 'g1', 100));
-    await expect(outbox.awaitSettled('m1')).resolves.toBe('sent');
+    await expect(outbox.awaitSettled('m1', 'g1')).resolves.toBe('sent');
   });
 
   it('sent is not answered before the frame is on the server', async () => {
@@ -5940,7 +6027,7 @@ describe('awaitSettled answers how the queue LEFT a message, never merely that i
     const { outbox } = setUp(() => new Promise<void>((r) => (deliver = r)));
     await outbox.enqueue(textEntry('m1', 'g1', 100));
     let answer: string | null = null;
-    void outbox.awaitSettled('m1').then((s) => (answer = s));
+    void outbox.awaitSettled('m1', 'g1').then((s) => (answer = s));
     await outboxIdle();
     expect(answer).toBeNull();
     deliver();
@@ -5953,7 +6040,7 @@ describe('awaitSettled answers how the queue LEFT a message, never merely that i
       throw new TransportFailureError(new TypeError('Failed to fetch'));
     });
     await outbox.enqueue(textEntry('m1', 'g1', 100));
-    await expect(outbox.awaitSettled('m1')).resolves.toBe('pending');
+    await expect(outbox.awaitSettled('m1', 'g1')).resolves.toBe('pending');
     expect(storage._map.has('m1')).toBe(true);
   });
 
@@ -5962,7 +6049,7 @@ describe('awaitSettled answers how the queue LEFT a message, never merely that i
     try {
       const { outbox } = setUp();
       await outbox.enqueue(textEntry('m1', 'g1', 100));
-      await expect(outbox.awaitSettled('m1')).resolves.toBe('pending');
+      await expect(outbox.awaitSettled('m1', 'g1')).resolves.toBe('pending');
     } finally {
       isTabLeaderMock.mockReturnValue(true);
     }
@@ -5972,14 +6059,14 @@ describe('awaitSettled answers how the queue LEFT a message, never merely that i
     const { outbox } = setUp(() => new Promise<void>(() => {}));
     await outbox.enqueue(textEntry('m1', 'g1', 100));
     let answer: string | null = null;
-    void outbox.awaitSettled('m1').then((s) => (answer = s));
+    void outbox.awaitSettled('m1', 'g1').then((s) => (answer = s));
     await outboxIdle();
     expect(answer).toBeNull();
     outbox.dispose();
     await outboxIdle();
     expect(answer).toBe('pending');
     // And a waiter arriving after the dispose is answered at once.
-    await expect(outbox.awaitSettled('m1')).resolves.toBe('pending');
+    await expect(outbox.awaitSettled('m1', 'g1')).resolves.toBe('pending');
   });
 
   it('ENDS when the only thing running is an exit drain: its lane answers on release', async () => {
@@ -5996,7 +6083,7 @@ describe('awaitSettled answers how the queue LEFT a message, never merely that i
     expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
     // Registered while ONLY the exit's lane runs: no flush, no other lane.
     let answer: string | null = null;
-    void outbox.awaitSettled('m2').then((s) => (answer = s));
+    void outbox.awaitSettled('m2', 'g2').then((s) => (answer = s));
     await outboxIdle();
     expect(answer).toBeNull();
     deliver();
@@ -6009,14 +6096,14 @@ describe('awaitSettled answers how the queue LEFT a message, never merely that i
     const { outbox, conversations } = setUp();
     await outbox.enqueue(textEntry('m1', 'g1', 100));
     await outboxIdle();
-    await expect(outbox.awaitSettled('m1')).resolves.toBe('sent');
+    await expect(outbox.awaitSettled('m1', 'g1')).resolves.toBe('sent');
     // Out of the queue unsent, its row failed: the page shows a failed message with its retry.
     const convo = conversations.get('g1')!;
     conversations.set('g1', {
       ...convo,
       messages: convo.messages.map((m) => ({ ...m, status: 'error' as const })),
     });
-    await expect(outbox.awaitSettled('m1')).resolves.toBe('failed');
+    await expect(outbox.awaitSettled('m1', 'g1')).resolves.toBe('failed');
   });
 });
 
@@ -6203,7 +6290,11 @@ describe('outbox - a file queued at the tap', () => {
 
     expect(storage._messages.get('p1')!.unsentReason).toBe('not-a-member');
     expect(order).toEqual(['row', 'entry']);
-    expect(tabOutboxMock.publishOutboxEntryRetired).toHaveBeenCalledWith('p1', 'not-a-member');
+    expect(tabOutboxMock.publishOutboxEntryRetired).toHaveBeenCalledWith(
+      'p1',
+      'not-a-member',
+      'g1'
+    );
     // What the bubble reads after a reload: the in-memory reason is gone, the row still says it.
     clearAllUploads();
     expect(unsentReasonOf('p1')).toBeUndefined();
@@ -6217,11 +6308,21 @@ describe('outbox - a file queued at the tap', () => {
       makeDeps({ mlsService: makeMls(), storage: makeStorage([]), conversations })
     );
     const handler = tabOutboxMock.subscribeTabOutboxEvents.mock.calls.at(-1)![0];
-    handler({ type: 'outbox_entry_retired', messageId: 'f9', reason: 'group-deleted' });
+    handler({
+      type: 'outbox_entry_retired',
+      messageId: 'f9',
+      conversationId: 'g1',
+      reason: 'group-deleted',
+    });
     expect(conversations.get('g1')!.messages[0].status).toBe('error');
     expect(unsentReasonOf('f9')).toBe('group-deleted');
     // A message this tab does not hold leaves no reason behind: nothing here would ever draw it.
-    handler({ type: 'outbox_entry_retired', messageId: 'not-here', reason: 'not-a-member' });
+    handler({
+      type: 'outbox_entry_retired',
+      messageId: 'not-here',
+      conversationId: 'g1',
+      reason: 'not-a-member',
+    });
     expect(unsentReasonOf('not-here')).toBeUndefined();
     outbox.dispose();
     isTabLeaderMock.mockReturnValue(true);
