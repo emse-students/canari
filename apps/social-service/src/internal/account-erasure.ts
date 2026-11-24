@@ -758,6 +758,24 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
     label: 'webhook_deliveries',
     sql: `UPDATE webhook_deliveries SET "userId" = $2 WHERE "userId" = $1`,
   },
+  // A place on a form's WAITING LIST is the person's alone and carries no payment: it is deleted, as
+  // leaving the list deletes it (`FormsService.leaveWaitlist`, principle 1) - anonymised instead, it
+  // would be promoted later into a registration nobody holds, keeping a seat for ever. The forms are
+  // locked FIRST (their seat lock, `lockFormSeats`, in id order), so a promotion never counts a free
+  // place and then finds its first in line gone: it runs wholly before this delete, and the row is
+  // then a registration, anonymised below like any other, or wholly after. No cycle with an
+  // association delete: it takes its association, then its forms, and this erasure writes nothing
+  // of an association it did not lock first (`ERASURE_ASSOCIATION_LOCK_SQL`) after these forms.
+  {
+    label: 'submissions_waiting_forms_locked',
+    sql: `SELECT f.id FROM forms f
+           WHERE f.id IN (SELECT "formId" FROM submissions WHERE "userId" = $1 AND "paymentStatus" = 'waiting')
+           ORDER BY f.id FOR UPDATE OF f`,
+  },
+  {
+    label: 'submissions_waiting',
+    sql: `DELETE FROM submissions WHERE "userId" = $1 AND "paymentStatus" = 'waiting'`,
+  },
   // The answers go, the row stays: it is a seat the form counted and, when paid, a payment record.
   {
     label: 'submissions',

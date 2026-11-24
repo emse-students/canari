@@ -120,11 +120,17 @@ enum ShareSuggestions {
     }
   }
 
-  /// Deletes every interaction the notification extension donated for its COMMUNICATION
-  /// notifications (owner, 2026-11-21) - the sender's name and face, the conversation's id and
-  /// name - at sign-out, behind `clear_conversation_shortcuts`, the iOS twin of Android's
-  /// `chat_<group>` shortcuts. Answers 0: the platform deletes a group without counting it, and the
-  /// extension, another process, keeps no count. On [queue], after any publish or clear in flight.
+  /// Erases everything the system holds of this app's donations for the account that leaves, at
+  /// sign-out behind `clear_conversation_shortcuts` (the iOS twin of Android's `chat_<group>`
+  /// shortcuts): the notification extension's donations (a sender's name and face, the
+  /// conversation's id and name) AND whatever the share sheet's people row reads.
+  ///
+  /// TWO DELETES, in this order, each awaited: the extension's group, then `deleteAll`. The group
+  /// delete alone was not enough on the iPhone 12 (`1.8.0-alpha.6`): the share sheet still offered
+  /// the previous account's sender 3 min after a sign-out. The app is signed out, so `deleteAll`
+  /// takes only what the account that left could have produced; it is NOT used by [clear]
+  /// (suggestions turned off), which must leave the rest of what the system learned. Answers 0: the
+  /// platform counts nothing. On [queue], after any publish or clear in flight.
   static func clearMessageNotifications(done: @escaping (Result<Int, Failure>) -> Void) {
     queue.async {
       if let code = deleteGroup(messageNotificationsGroup) {
@@ -133,9 +139,31 @@ enum ShareSuggestions {
         done(.failure(.deleteFailed(code)))
         return
       }
-      GalleryLog.log.notice("[ShareSuggestions] clearMessageNotifications: the donation group is deleted")
+      if let code = deleteEverything() {
+        GalleryLog.log.error(
+          "[ShareSuggestions] clearMessageNotifications: deleteAll failed (code \(code, privacy: .public))")
+        done(.failure(.deleteFailed(code)))
+        return
+      }
+      UserDefaults.standard.set(0, forKey: countKey)
+      GalleryLog.log.notice(
+        "[ShareSuggestions] clearMessageNotifications: the donation group and every other donation are deleted")
       done(.success(0))
     }
+  }
+
+  /// `INInteraction.deleteAll`, waiting for the platform's answer. Returns the error code, or nil.
+  private static func deleteEverything() -> Int? {
+    let finished = DispatchSemaphore(value: 0)
+    var failure: Int?
+    INInteraction.deleteAll { error in
+      if let error = error {
+        failure = (error as NSError).code
+      }
+      finished.signal()
+    }
+    finished.wait()
+    return failure
   }
 
   /// Deletes the donation group, waiting for the platform's answer (this runs on [queue], never

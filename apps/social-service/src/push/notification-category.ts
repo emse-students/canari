@@ -118,6 +118,9 @@ export const NOTIFICATION_TYPE_CATEGORY: Readonly<Record<NotificationType, strin
   form_paid_over_capacity: 'forms',
   // No push at all (`cash-reminder.ts`): nothing chat-delivery files, so no category governs it.
   form_cash_expiring: null,
+  // The one push of the waiting list (a promotion): a form matter, under the EXISTING id.
+  form_waitlist_promoted: 'forms',
+  form_waitlist_promoted_payment_due: 'forms',
   lydia_payments_active: 'forms',
   lydia_payments_paused: 'forms',
   lydia_refund_issued: 'forms',
@@ -193,6 +196,8 @@ export const BELL_ROW_GATE: Readonly<Record<NotificationType, string | null>> = 
   live_reinstated: null,
   form_paid_over_capacity: null,
   form_cash_expiring: null,
+  form_waitlist_promoted: null,
+  form_waitlist_promoted_payment_due: null,
   lydia_payments_active: null,
   lydia_payments_paused: null,
   lydia_refund_issued: null,

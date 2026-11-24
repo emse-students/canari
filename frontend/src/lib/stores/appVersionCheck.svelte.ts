@@ -260,6 +260,18 @@ export function serverEventReach(): boolean | null {
   return loadCachedServerInfo()?.eventReach ?? null;
 }
 
+/**
+ * Whether this estate keeps a limited form's waiting list (`formWaitlist`), as the last
+ * `/api/version` answer said - or `null` when no server has ever answered. The form editors draw the
+ * switch only when it is `true`: an older server strips it from a save (docs/wiki/
+ * legacy-compatibility.md, "a form editor newer than its server's waiting list"). The cached answer
+ * counts, for the reason {@link serverPresencePost} gives.
+ */
+export function serverFormWaitlist(): boolean | null {
+  if (lastCheck && lastCheck.serverVersion !== null) return lastCheck.formWaitlist;
+  return loadCachedServerInfo()?.formWaitlist ?? null;
+}
+
 /** True when the client is below the server-enforced minimum version. */
 export function isBelowMinClientVersion(): boolean {
   return lastCheck?.belowMinVersion === true;

@@ -70,6 +70,7 @@ const caps = vi.hoisted(() => ({ formDrafts: true as boolean | null }));
 vi.mock('$lib/stores/appVersionCheck.svelte', async (orig) => ({
   ...(await orig<typeof import('$lib/stores/appVersionCheck.svelte')>()),
   serverFormDrafts: () => caps.formDrafts,
+  serverFormWaitlist: () => true,
 }));
 vi.mock('$lib/stores/user', async (orig) => ({
   ...(await orig<typeof import('$lib/stores/user')>()),

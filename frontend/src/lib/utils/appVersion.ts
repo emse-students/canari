@@ -156,6 +156,8 @@ export type ServerVersionInfo = {
   formAnswerEdit: boolean;
   /** Whether this estate stores an institution event's reach - see {@link AppVersionCheckResult}. */
   eventReach: boolean;
+  /** Whether this estate keeps a form's waiting list - see {@link AppVersionCheckResult}. */
+  formWaitlist: boolean;
   /** The retention durations in force (`retention`), `null` from a server older than the field. */
   retention: RetentionDays | null;
 };
@@ -243,6 +245,13 @@ export type AppVersionCheckResult = {
    * reaches phones before production deploys. `false` for every server older than the field.
    */
   eventReach: boolean;
+  /**
+   * Whether this estate's social-service keeps a limited form's waiting list (`formWaitlist`,
+   * migration 183). An older one strips the form's switch from a save - and a store build reaches
+   * phones before production deploys, so the switch is drawn only when this is true. `false` for
+   * every server older than the field.
+   */
+  formWaitlist: boolean;
   /**
    * The retention durations the server applies to new content (`retention`, core migration 025),
    * which the privacy policy and the live texts render; `null` until a server has said so, and for
@@ -341,6 +350,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     rankedFeeds?: unknown;
     formAnswerEdit?: unknown;
     eventReach?: unknown;
+    formWaitlist?: unknown;
     retention?: unknown;
   };
   const version = typeof obj.version === 'string' ? obj.version.trim() : '';
@@ -364,6 +374,7 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     rankedFeeds: obj.rankedFeeds === true,
     formAnswerEdit: obj.formAnswerEdit === true,
     eventReach: obj.eventReach === true,
+    formWaitlist: obj.formWaitlist === true,
     retention: parseRetention(obj.retention),
   };
 }
@@ -390,6 +401,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
   rankedFeeds: boolean;
   formAnswerEdit: boolean;
   eventReach: boolean;
+  formWaitlist: boolean;
   retention?: RetentionDays;
 } {
   return {
@@ -408,6 +420,7 @@ export function serverVersionInfoToWire(info: ServerVersionInfo): {
     rankedFeeds: info.rankedFeeds,
     formAnswerEdit: info.formAnswerEdit,
     eventReach: info.eventReach,
+    formWaitlist: info.formWaitlist,
     ...(info.retention ? { retention: info.retention } : {}),
   };
 }
@@ -601,6 +614,7 @@ export function buildAppVersionCheckResult(
     rankedFeeds: serverInfo?.rankedFeeds ?? false,
     formAnswerEdit: serverInfo?.formAnswerEdit ?? false,
     eventReach: serverInfo?.eventReach ?? false,
+    formWaitlist: serverInfo?.formWaitlist ?? false,
     retention: serverInfo?.retention ?? null,
   };
 }

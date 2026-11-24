@@ -32,6 +32,15 @@ describe('payment status labels', () => {
     expect(statusClass('refunded')).not.toBe(statusClass('paid_over_capacity'));
   });
 
+  // The waiting list (migration 183): the line and a promoted answer owing its payment.
+  it('names a waiting answer and a payment due, the second coloured as owed', () => {
+    expect(statusLabel('waiting')).toBe(m.form_status_waiting());
+    expect(statusLabel('payment_due')).toBe(m.form_status_payment_due());
+    expect(statusLabels().waiting).toBe(m.form_status_waiting());
+    expect(statusClass('payment_due')).toBe(statusClass('pending'));
+    expect(statusClass('waiting')).not.toBe(statusClass('paid'));
+  });
+
   it('returns an unknown status as itself', () => {
     expect(statusLabel('chargeback')).toBe('chargeback');
   });

@@ -130,9 +130,9 @@ export interface AddMessageToChatOptions {
   /**
    * This call is the ONLY writer the row will ever get on this device - the acting device's own
    * visible notice (`sendVisibleNotice`), which MLS never echoes back. Such a row takes the live
-   * path even during a bulk drain, exactly as an own message does: the drain buffer is discarded
-   * without flushing by a second drain start and by `resetMessageCatchupState`, and nothing else
-   * would ever write the row again.
+   * path even during a bulk drain, exactly as a message this device composed does
+   * (`bulkWindowHolds`): its row is written by this call and by nothing else, so it is written now
+   * rather than held for a flush.
    */
   soleWriter?: boolean;
   /**

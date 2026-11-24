@@ -198,9 +198,10 @@ describe('computeFormResults', () => {
     expect(db.calls).toEqual([COUNT_SQL]);
   });
 
-  it("counts what is a person's answer now: never a refunded, cancelled or expired one", () => {
+  it("counts what is a person's answer now: never a refunded, cancelled, expired or waiting one", () => {
     expect(COUNTED_ANSWER_SQL).toContain("'paid', 'free', 'pending_cash', 'paid_over_capacity'");
-    expect(COUNTED_ANSWER_SQL).not.toMatch(/refunded|cancelled|expired/);
-    expect(COUNTED_ANSWER_SQL).toContain('s."paymentStatus" = \'pending\' AND');
+    expect(COUNTED_ANSWER_SQL).not.toMatch(/refunded|cancelled|expired|waiting/);
+    // A live promoted answer owing its payment counts like a live pending one: the same hold.
+    expect(COUNTED_ANSWER_SQL).toContain(`s."paymentStatus" IN ('pending', 'payment_due')`);
   });
 });

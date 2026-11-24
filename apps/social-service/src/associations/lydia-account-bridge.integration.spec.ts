@@ -32,6 +32,7 @@ import { AssociationAudience } from '../spaces/association-audience.entity';
 import { Space } from '../spaces/space.entity';
 import { PurchaseRecord } from '../users/entities/purchase-record.entity';
 import { Submission } from '../forms/entities/submission.entity';
+import { Form } from '../forms/entities/form.entity';
 import { PurchaseRecordClosing } from '../users/entities/purchase-record-closing.entity';
 import { UserTag } from '../users/entities/user-tag.entity';
 import { PurchaseRecordService } from '../users/purchase-record.service';
@@ -136,6 +137,8 @@ maybe(
       const entities = [
         PurchaseRecord,
         Submission,
+        // A holder collecting again promotes its forms' frozen waiting lists (`waitlist.ts`).
+        Form,
         AssociationProduct,
         UserTag,
         Association,
