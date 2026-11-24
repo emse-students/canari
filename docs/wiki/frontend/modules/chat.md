@@ -6532,6 +6532,39 @@ transition joins it), `iosKeyboardRiseHandoff.test.ts` (the will-show observer, 
 `ChatArea.scrollAnchor.svelte.test.ts` (the reveal put back, the geometry lines read in their frame and
 in order, the assistive fall at INFO), `threadAnchor.test.ts` (the line). **Owed: the iPhone reading of the same gesture, ten cycles.**
 
+### A rest is two facts: the keyboard at rest AND its frame landed (2026-11-24)
+
+**What the iPhone said** (`1.8.0-alpha.6`, iPhone 12, the same gesture): #4023 passed 6 returns of 11.
+Every failing return logged `not a keyboard move of the engine, the flag falls (keyboard transition #N at
+rest)`, the transition at rest 36 to 45 ms before the move
+([the entry](../../backlog.d/p2-a-dm-thread-is-left-above-its-end-by-a-keyboard-reveal-that-lands-after-the-transition-rests.md)).
+
+**Why, from the syslog.** A keyboard that comes back with the app shows with no animation: UIKit's
+did-show follows its will-show at once, while the shell's rise is still waiting for the page's layout
+and its screen-update proof - before the WebView's frame is set. The rest went out from that did-show,
+the frame landed after it, and the move came with or after the frame (return #26: rest .750, the rise's
+proof .768, the move .795). On an ordinary rise the keyboard animates for ~400 ms and the frame lands
+long before the did-show, which is why only returns failed, and only some.
+
+**The fix: the iOS rest needs both facts, at both ends of the bridge.** The shell holds a rest heard
+while a rise has not set its frame and tells it from the settle of that frame, after its proof
+(`CanariTellPageKeyboardAtRest`, `CanariKeyboardLayoutSettled`; a newer will-show supersedes it). The
+page rests a transition only once the shell has said so AND the hand-off target has been spent by the
+resize (`noteKeyboardFrameAwaited` when `canariImeTarget` announces a height, `noteKeyboardFrameLanded`
+when `measureViewport` spends or withdraws it): whichever comes first waits for the other, and a rest
+the page has to hold is a WARN, since the shell now owes it after the frame. And WebKit's own keyboard
+inset, which scrolled the document 301 pt on the failing return #31 before any frame was set, is
+detached from the WebView, and WebKit's reveal with it, so the move the put-back exists for may simply
+never come any more; the two-fact rest keeps whatever still moves the pane classified ([the doubled inset](../keyboard-and-send-motion.md#the-shell-is-the-one-authority-over-the-keyboards-room-2026-11-24)).
+No clock: the rest is the conjunction of two facts, each carried from where it is known.
+
+Tests: `keyboardTransition.test.ts` (a rest before the frame is held, a frame first leaves the rest to
+the shell, a landing with nothing held rests nothing), `keyboardViewport.appReturn.test.ts` (the hand-off
+through `canariImeTarget` and the resize, in both orders), `ChatArea.scrollAnchor.svelte.test.ts` (a move
+after an early rest, frame still awaited, is put back), `iosKeyboardRiseHandoff.test.ts` (the owed rest
+and its settle), `keyboardTransition.test.ts` again (a newer change drops a held rest). **Owed: the iPhone
+reading of the same gesture, eleven returns, eleven at the end.**
+
 ### A short thread sits at the bottom, and asks for its past at entry (2026-11-14)
 
 The owner's Pixel 6a (`1.6.12`, 2026-11-14, the keyboard readings of that day, items 2 and 4): a

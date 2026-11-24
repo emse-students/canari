@@ -6,6 +6,7 @@ import {
   keyboardTransitionMoving,
   noteKeyboardAtRest,
 } from './keyboardTransition';
+import { Log } from '$lib/utils/Log';
 
 /**
  * THE KEYBOARD COMES BACK WITH THE APP (iPhone 12, `1.8.0-alpha.4`, 2026-11-23): the app returns at the
@@ -21,6 +22,7 @@ vi.mock('$lib/mls-client/mlsPlatform', async (importOriginal) => ({
 type Hooks = {
   canariKeyboardAtRest?: () => void;
   canariKeyboardShows?: () => void;
+  canariImeTarget?: (v: unknown) => boolean;
   __TAURI_INTERNALS__?: unknown;
 };
 const hooks = () => window as unknown as Hooks;
@@ -93,6 +95,92 @@ describe('a keyboard the shell says will show', () => {
     expect(keyboardTransitionCount()).toBe(moving);
     hooks().canariKeyboardAtRest?.();
     expect(keyboardTransitionMoving()).toBe(false);
+  });
+
+  /**
+   * THE KEYBOARD COMES BACK WITH NO ANIMATION (iPhone 12, `1.8.0-alpha.6`, 5 returns of 11): its rest can
+   * reach the page before the WebView's frame is set, so the transition rests on BOTH - the shell's word
+   * and the hand-off spent by the resize - in whichever order they come.
+   */
+  it('a rest before the hand-off is spent waits for the resize', () => {
+    hooks().canariKeyboardShows?.();
+    expect(hooks().canariImeTarget?.(301)).toBe(true);
+    hooks().canariKeyboardAtRest?.(); // the did-show, ahead of the frame
+    expect(keyboardTransitionMoving()).toBe(true);
+    resizeTo(543); // the frame lands: the target is spent
+    expect(keyboardTransitionMoving()).toBe(false);
+  });
+
+  it('a hand-off spent before the rest leaves the rest to the shell', () => {
+    hooks().canariKeyboardShows?.();
+    hooks().canariImeTarget?.(301);
+    resizeTo(543);
+    expect(keyboardTransitionMoving()).toBe(true);
+    hooks().canariKeyboardAtRest?.();
+    expect(keyboardTransitionMoving()).toBe(false);
+  });
+
+  /**
+   * A FRESH FOCUS IN THE MAIN PAGE IS REVEALED BY THE PAGE (review of #4058): in the iOS shell WebKit's
+   * reveal is detached with its keyboard observers, so the hand-off's opening must scroll a field of
+   * `.app-layout` into view itself - once on the announced layout, once on the resize that spends it.
+   */
+  it("reveals a focused field of the main page on the keyboard's opening, the composer never", () => {
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+      cb(0);
+      return 0;
+    });
+    const layout = document.createElement('div');
+    layout.className = 'app-layout';
+    const field = document.createElement('input');
+    const reveal = vi.fn();
+    field.scrollIntoView = reveal;
+    const footer = document.createElement('footer');
+    footer.className = 'chat-composer-footer';
+    const composer = document.createElement('textarea');
+    const composerReveal = vi.fn();
+    composer.scrollIntoView = composerReveal;
+    footer.appendChild(composer);
+    layout.append(field, footer);
+    document.body.appendChild(layout);
+    try {
+      field.focus();
+      hooks().canariImeTarget?.(301);
+      resizeTo(543);
+      expect(reveal).toHaveBeenCalledWith(expect.objectContaining({ block: 'nearest' }));
+      resizeTo(844);
+      hooks().canariKeyboardAtRest?.();
+      composer.focus();
+      hooks().canariImeTarget?.(301);
+      resizeTo(543);
+      expect(composerReveal).not.toHaveBeenCalled();
+    } finally {
+      layout.remove();
+    }
+  });
+
+  it('accuses a main page the reveal shifted, once until it is back at its top', () => {
+    const warn = vi.spyOn(Log, 'w').mockImplementation(() => {});
+    const wrap = document.createElement('div');
+    wrap.className = 'page-scroll-wrap';
+    document.body.appendChild(wrap);
+    const shifts = () =>
+      warn.mock.calls.filter(([, line]) => String(line).includes('the main page shifted')).length;
+    try {
+      wrap.scrollTop = 39;
+      wrap.dispatchEvent(new Event('scroll'));
+      wrap.scrollTop = 40;
+      wrap.dispatchEvent(new Event('scroll')); // the same shift, a later frame: no second line
+      expect(shifts()).toBe(1);
+      expect(String(warn.mock.calls[0][1])).toContain('.page-scroll-wrap scrolled to 39');
+      wrap.scrollTop = 0;
+      wrap.dispatchEvent(new Event('scroll'));
+      wrap.scrollTop = 39;
+      wrap.dispatchEvent(new Event('scroll'));
+      expect(shifts()).toBe(2);
+    } finally {
+      wrap.remove();
+    }
   });
 
   it('the hook is withdrawn at teardown', () => {
