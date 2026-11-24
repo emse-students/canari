@@ -16,6 +16,8 @@ import {
   setTabLeaderPromotedHandler,
   markPromotionReload,
   setTabLeaderDemotedHandler,
+  setTabLeadEligibility,
+  noteTabSessionLive,
   getIsTabLeader,
 } from '$lib/utils/chat/connection';
 import { CallService } from '$lib/services/CallService';
@@ -60,11 +62,18 @@ import {
 } from './session/sessionConnection';
 import { exportBackupImpl, importBackupImpl, restoreAfterImport } from './session/sessionBackup';
 import { createMlsHolder } from './session/mlsHolder';
+import {
+  describeLeadHolds,
+  leadHoldsInFlight,
+  onLeadHoldsReleased,
+} from '$lib/mls-client/leadHolds';
+import { createLeadPublisher } from '$lib/mls-client/leadPublisher';
 import { endNativeMlsSession } from '$lib/utils/nativeMlsSession';
 import { setMlsReady } from './session/mlsReadiness';
 import {
   sessionDelegationReadiness,
   setDelegationReadiness,
+  carryTabCommitRequesterAcrossReload,
 } from '$lib/utils/chat/tabCommitDelegation';
 import { processDeviceInvitationsLocally } from './session/sessionAuth';
 import {
@@ -312,6 +321,9 @@ export function useChatSession() {
     // The reload releases the lock this tab was just granted; the mark is what lets the page it
     // starts take it back rather than queue behind the tab it took over from.
     markPromotionReload();
+    // A gesture this tab handed over as a follower is adopted by the page the reload starts, the
+    // leader now, rather than removed as a closed tab's (`tabCommitDelegation.ts`).
+    carryTabCommitRequesterAcrossReload();
     rememberSelectionForReload(log);
     setTimeout(() => window.location.reload(), 50);
     return true;
@@ -322,8 +334,18 @@ export function useChatSession() {
    * from the two flags this composable is the one writer of - so the readiness follows every login
    * start and every end (success, early return, failure, sign-out), whoever flips the flag.
    */
+  /** The session's state, published as the tab's lead and its answer to followers (`leadPublisher.ts`). */
+  const leadPublisher = createLeadPublisher({
+    setTabLeadEligibility,
+    setDelegationReadiness,
+    noteTabSessionLive,
+    leadHoldsInFlight,
+    describeLeadHolds,
+    onLeadHoldsReleased,
+    warn: (message) => console.warn(message),
+  });
   function publishDelegationReadiness(): void {
-    setDelegationReadiness(sessionDelegationReadiness(isLoggedIn, isLoginInProgress));
+    leadPublisher.publish(sessionDelegationReadiness(isLoggedIn, isLoginInProgress));
   }
 
   // This tab has just been handed leadership: the previous leader advanced the MLS ratchet on disk
@@ -350,9 +372,13 @@ export function useChatSession() {
   // This tab just yielded leadership to another tab: reload to cleanly close the
   // WebSocket and restart in follower mode (MLS ratchet must never advance in two
   // tabs simultaneously).
-  setTabLeaderDemotedHandler(() => {
+  setTabLeaderDemotedHandler((cause) => {
     leadershipChanged();
     isTabLeaderState = false;
+    // A LEAD GIVEN UP BECAUSE THIS SESSION CANNOT SERVE (the keypad, a sign-out, a failed login): no
+    // live session, so no socket to close and no copy to drop - and no reload, which would throw the
+    // member out of the keypad or the recovery screen. It rejoins the election at its next login.
+    if (cause === 'session-cannot-serve') return;
     tabLeaderSessionCb?.log('[TAB] Leadership released - reloading as follower.');
     if (tabLeaderSessionCb) rememberSelectionForReload(tabLeaderSessionCb.log);
     // THE SOCKET GOES NOW, not with the reload: a lock released by a FREEZE (`tabLeader.ts`) reloads

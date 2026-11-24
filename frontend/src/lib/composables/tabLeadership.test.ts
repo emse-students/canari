@@ -15,9 +15,9 @@ const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.met
 const useChatSession = read('./useChatSession.svelte.ts');
 const outbox = read('../utils/chat/outbox.ts');
 
-/** The body of a `setTabLeader*Handler(() => { … })` registration. */
+/** The body of a `setTabLeader*Handler((…) => { … })` registration. */
 function handlerBody(name: string): string {
-  const start = useChatSession.indexOf(`${name}(() => {`);
+  const start = useChatSession.search(new RegExp(`${name}\\(\\(\\w*\\) => \\{`));
   expect(start).toBeGreaterThan(-1);
   const rest = useChatSession.slice(start);
   return rest.slice(0, rest.indexOf('\n  });') + 6);
@@ -39,6 +39,15 @@ describe('a change of tab leadership never leaves a stale ratchet sending', () =
 
   it('still reloads on demotion, so a released leader restarts read-only', () => {
     expect(handlerBody('setTabLeaderDemotedHandler')).toContain('window.location.reload()');
+  });
+
+  it('does not reload a tab that gave the lead up because its own session cannot serve (2026-11-24)', () => {
+    // The keypad or a recovery screen is on that page: a reload would throw the member out of it,
+    // and there is no live session to tear down. The early return precedes the reload.
+    const body = handlerBody('setTabLeaderDemotedHandler');
+    const early = body.indexOf("if (cause === 'session-cannot-serve') return;");
+    expect(early).toBeGreaterThan(-1);
+    expect(early).toBeLessThan(body.indexOf('window.location.reload()'));
   });
 
   it('reloads on demotion only behind the ingest windows open then (review of #3321)', () => {

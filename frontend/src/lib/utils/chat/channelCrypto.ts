@@ -1,8 +1,4 @@
-import {
-  ChannelService,
-  type ChannelMessageRow,
-  type ChannelPollInput,
-} from '$lib/services/ChannelService';
+import type { ChannelMessageRow, ChannelPollInput } from '$lib/services/ChannelService';
 import { encodeAppMessage, decodeAppMessage, mkEdit, mkPoll, mkReaction } from '$lib/proto/codec';
 import type { DecodedChannelEdit } from '$lib/utils/chat/channelEdit';
 import { appMsgToEnvelope } from '$lib/utils/chat/messageUtils';
@@ -25,8 +21,7 @@ import { rawChannelId } from '$lib/utils/graine/runtime';
 import { noteMissingSeed } from '$lib/utils/graine/repair';
 import { SvelteDate } from 'svelte/reactivity';
 import { channelReactionOf } from './messageReactions';
-
-const channelService = new ChannelService();
+import { postSealedChannelMessage, type SalonPost } from './channelPost';
 
 /** A channel message row decrypted and decoded into the fields the chat UI renders. */
 export interface DecodedChannelMessage {
@@ -451,23 +446,33 @@ export async function sendEncryptedChannelMessage(
   messageId?: string,
   poll?: ChannelPollInput,
   mentionedUserIds?: string[],
-  options?: { silent?: boolean }
+  options?: {
+    silent?: boolean;
+    /**
+     * The caller keeps a DURABLE QUEUE that sends this again after a reload, under the same client
+     * id (the salon text queue, `messaging.ts`). Every other caller - a reaction, an edit, a poll, a
+     * forward, a notice - has none, so a seal it hands to the leader carries its post, and a leader
+     * that adopts it from a reloaded page posts it itself (`tabCommitDelegation.onAdoption`).
+     */
+    resentByQueue?: boolean;
+  }
 ): Promise<ChannelRowAck | null> {
   const channel = rawChannelId(channelId);
-  const sealed = await sealChannelMessage(channel, payloadBytes);
-  const row = await channelService.sendMessage(channel, {
-    ciphertext: sealed.ciphertext,
-    nonce: sealed.nonce,
-    senderSessionId: sealed.senderSessionId,
-    messageIndex: sealed.messageIndex,
-    signature: sealed.signature,
+  const post: SalonPost = {
     ...(messageId ? { messageId } : {}),
     ...(poll ? { poll } : {}),
     ...(mentionedUserIds && mentionedUserIds.length ? { mentionedUserIds } : {}),
-    ...(options?.silent
-      ? { silent: true }
-      : { seedFrame: sealed.seedFrame, seedGroupId: sealed.seedGroupId }),
-  });
+    ...(options?.silent ? { silent: true } : {}),
+  };
+  const sealed = await sealChannelMessage(
+    channel,
+    payloadBytes,
+    options?.resentByQueue ? {} : { postIfAdopted: post }
+  );
+  const row = (await postSealedChannelMessage(channel, sealed, post)) as
+    | ChannelMessageRow
+    | null
+    | undefined;
   // EVERY SERVER SINCE MIGRATION 090 (`v1.3.0`) ECHOES THE CLIENT ID, and the salon queue repeats a
   // send on that fact (`messaging.ts`): an answer without it means a server that would post a
   // repeat twice, which no estate should run any more - said where it is seen.

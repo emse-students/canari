@@ -209,6 +209,12 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
     if (bulkIngestDepth > 0) return;
     if (immediateFlushQueued) return;
     immediateFlushQueued = true;
+    // NO LEAD HOLD OF ITS OWN (second review of #4053). What asks for it here is inbound - a Welcome
+    // or a commit applied by the drain, whose acknowledgement is withheld until a checkpoint lands
+    // (`DrainAckHold`), so a write refused after the lead left is redelivered to the next leader.
+    // What the server cannot replay - this device's own commit, an external join - AWAITS its
+    // checkpoint inside its own hold (the MLS mutex's, the join's). The checkpoint holds the lead
+    // from its export to its put (`BaseMlsService.persistCheckpoint`).
     queueMicrotask(() => {
       immediateFlushQueued = false;
       // Already logged by `startFlight`; nobody awaits this one, so its rejection stops here.
