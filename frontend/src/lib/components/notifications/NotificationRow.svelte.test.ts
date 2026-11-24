@@ -583,6 +583,13 @@ describe('NotificationRow for a payment over capacity', () => {
     expect(target.textContent).not.toContain(m.notif_comment_text());
     expect(target.querySelector('button')!.disabled).toBe(false);
   });
+
+  it('says the place is kept, and the refund owed only if never promoted, when the payer is in line', () => {
+    const target = renderRow({ ...row, meta: { payerInLine: true } });
+    expect(target.textContent).toContain(m.notif_form_paid_over_capacity_waitlisted_text());
+    expect(target.textContent).not.toContain(m.notif_form_paid_over_capacity_text());
+    expect(target.textContent).toContain('Gala de printemps');
+  });
 });
 
 describe('NotificationRow for the question put to a form left open', () => {

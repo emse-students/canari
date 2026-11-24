@@ -125,6 +125,8 @@
 "notif.form.open.body_named" = "« %@ » est disponible - dépêchez-vous, les places sont limitées !";
 "notif.form.paid_over_capacity.title" = "Paiement sur un formulaire complet";
 "notif.form.paid_over_capacity.body" = "« %1$@ » : un paiement est arrivé alors que le formulaire était complet. Remboursement à faire.";
+"notif.form.paid_over_capacity_waitlisted.title" = "Paiement sur un formulaire complet";
+"notif.form.paid_over_capacity_waitlisted.body" = "« %1$@ » : un paiement est arrivé alors que le formulaire était complet. La personne garde sa place sur la liste d'attente ; remboursement à faire seulement si elle n'est jamais inscrite.";
 "notif.form.waitlist_promoted.title" = "Une place s'est libérée";
 "notif.form.waitlist_promoted.body" = "Vous êtes inscrit au formulaire. Ouvrez-le pour voir votre inscription.";
 "notif.form.waitlist_promoted.title_named" = "%@ : une place s'est libérée";

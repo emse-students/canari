@@ -657,8 +657,12 @@
         <span class="italic"><EmojiText text={bodyText} /></span>
       {:else if notif.type === 'form_paid_over_capacity'}
         <!-- A payment landed on a full form: the sentence is built here, in the reader's locale,
-             from the type and the form's title - the only data the server stores on the row. -->
-        {m.notif_form_paid_over_capacity_text()}
+             from the type and the form's title - the only data the server stores on the row. A payer
+             on the form's waiting list keeps their place (`meta.payerInLine`): the refund is owed
+             only if they are never registered. -->
+        {notif.meta?.payerInLine === true
+          ? m.notif_form_paid_over_capacity_waitlisted_text()
+          : m.notif_form_paid_over_capacity_text()}
         <span class="italic"><EmojiText text={bodyText} /></span>
       {:else if notif.type === 'form_cash_expiring'}
         <!-- The member's cash answer is about to expire: the sentence is this build's, the form's

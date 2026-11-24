@@ -945,8 +945,10 @@ describe('FormsService - the seat a pending payment holds', () => {
       });
       await service.markPaid('late', 'req-1');
       expect(organiserAlert.tell).toHaveBeenCalledTimes(1);
+      // The payer is not on the waiting list: the refund is owed now.
       expect(organiserAlert.tell).toHaveBeenCalledWith(
-        expect.objectContaining({ id: 'f1', title: 'Gala' })
+        expect.objectContaining({ id: 'f1', title: 'Gala' }),
+        { payerInLine: false }
       );
       expect(rows[0].organiserNotifiedAt).toBeTruthy();
     });

@@ -4318,6 +4318,7 @@
   "notif_form_waitlist_promoted_text": "vous a inscrit : une place s'est libérée sur",
   "notif_form_waitlist_promoted_payment_due_text": "vous garde une place jusqu'à son règlement, sur",
   "notif_form_paid_over_capacity_text": "signale un paiement reçu alors que le formulaire était complet (remboursement à faire) :",
+  "notif_form_paid_over_capacity_waitlisted_text": "signale un paiement reçu alors que le formulaire était complet ; la personne garde sa place sur la liste d'attente (remboursement à faire seulement si elle n'est jamais inscrite) :",
   "notif_form_cash_expiring_text": "rappelle que votre réponse attend votre paiement en espèces et expire bientôt :",
   "notif_reaction_text": "a réagi à votre publication",
   "notif_reaction_message_body": "a réagi {emoji} à votre message",

@@ -112,6 +112,8 @@
 "notif.form.open.body_named" = "\"%@\" is available - hurry, spots are limited!";
 "notif.form.paid_over_capacity.title" = "Payment on a full form";
 "notif.form.paid_over_capacity.body" = "“%1$@”: a payment arrived after the form was full. A refund is owed.";
+"notif.form.paid_over_capacity_waitlisted.title" = "Payment on a full form";
+"notif.form.paid_over_capacity_waitlisted.body" = "“%1$@”: a payment arrived after the form was full. The payer keeps their place on the waiting list; a refund is owed only if they are never registered.";
 "notif.form.waitlist_promoted.title" = "A spot opened up";
 "notif.form.waitlist_promoted.body" = "You are registered for the form. Open it to see your registration.";
 "notif.form.waitlist_promoted.title_named" = "%@: a spot opened up";

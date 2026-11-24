@@ -946,6 +946,14 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
         [NSString stringWithFormat:CanariLocalized(@"notif.form.paid_over_capacity.body"), arg];
     return;
   }
+  // The same, paid by a person on the form's waiting list: their place is kept, and the refund is
+  // owed only if they are never registered. `arg` is the form's title only.
+  if ([key isEqualToString:@"form_paid_over_capacity_waitlisted"]) {
+    *title = CanariLocalized(@"notif.form.paid_over_capacity_waitlisted.title");
+    *body = [NSString
+        stringWithFormat:CanariLocalized(@"notif.form.paid_over_capacity_waitlisted.body"), arg];
+    return;
+  }
   // An association's Lydia payments became active / were paused, to its payout managers: `arg` is
   // the association's name only.
   if ([key isEqualToString:@"lydia_payments_active"]) {

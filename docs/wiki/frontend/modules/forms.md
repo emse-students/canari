@@ -3298,7 +3298,11 @@ nobody can pay (`payment_due` is paid through the resume, which a cash-only form
 that cannot collect online, refuses; `pending_cash` is a manager taking cash). So `promotionPayable`
 (`waitlist.ts`) is checked for each answer in turn: an online answer needs online accepted AND the
 association able to collect now (`collectsNow`, through `onlineCollectsThrough`; a personal form
-always can), a cash one needs cash accepted. The FIRST that cannot pay STOPS the promotion there:
+always can), a cash one needs cash accepted. That readiness is read ON THE PROMOTING TRANSACTION'S
+OWN CONNECTION (`collectsNow(associationId, manager)`): the promotion holds the form's seat lock (a
+refund also its purchase-record lock), so a read taking a second pooled connection would, with the
+pool exhausted, make every promoter wait on itself (`lydia-readiness.integration.spec.ts`, "a pool of
+one"). The FIRST that cannot pay STOPS the promotion there:
 nobody behind it is promoted past it, since the line is never reordered (item 18). Without the
 association's readiness in that rule, a paused Lydia account would hand the place on one person per
 hold - promoted, unable to pay, expired - until the line was empty. Logged at WARN with the form and
@@ -3375,7 +3379,12 @@ collecting again included: every promoter hands what it promoted to
 notice's - claimed on the row's own `cotisationGrantedAt`) and then the notices. The five-minute form job
 runs the same step with no ids only as the durable retry of a process stopped between a commit and its
 `afterCommit`, or a grant that gave its claim back (WARN), like `tellPending`. The refund stays owed
-only if they are never promoted. Confirmed by the owner on 2026-11-24. Before, the late payment
+only if they are never promoted, and that is what is SAID: the WARN of `markPaid` and the managers'
+alert (`FormOrganiserAlertService.tell(form, { payerInLine })`: the bell row carries
+`meta.payerInLine` and reads `notif_form_paid_over_capacity_waitlisted_text`, the push its own key
+`form_paid_over_capacity_waitlisted`, native strings shipped with the list) say the place is kept and a
+refund is due only if they are never promoted. The retry runs the grant with the row's OWN payment
+method (a cash promotee validated by hand says cash). Confirmed by the owner on 2026-11-24. Before, the late payment
 deleted the waiting answer: the person who had paid lost their place AND was owed a refund.
 
 **A promotee never loses its place to Canari's failure.** A `payment_due` answer resumed and whose

@@ -2671,7 +2671,7 @@ export class FormsService {
       }
     }
     if (submission.paymentStatus === 'paid_over_capacity') {
-      await this.alertOrganisersOnce(submission.id, form);
+      await this.alertOrganisersOnce(submission, form);
     }
   }
 
@@ -2735,9 +2735,10 @@ export class FormsService {
    * (`FORM_ORGANISER_ALERT_ENABLED`), so a row settled then is not marked as told.
    */
   private async alertOrganisersOnce(
-    submissionId: string,
+    submission: Pick<Submission, 'id' | 'formId' | 'userId'>,
     form: Pick<Form, 'id' | 'title' | 'ownerId' | 'associationId'>
   ): Promise<void> {
+    const submissionId = submission.id;
     if (!this.organiserAlert.enabled()) {
       this.logger.debug(
         `[Forms] submission ${submissionId} over capacity: organiser alert switched off - not told`
@@ -2746,7 +2747,11 @@ export class FormsService {
     }
     if (!(await this.claimFulfilment(submissionId, 'organiserNotifiedAt'))) return;
     try {
-      await this.organiserAlert.tell(form);
+      // A payer in line keeps their place, so the managers are told a refund is owed only if they
+      // are never promoted - not that one is owed now.
+      await this.organiserAlert.tell(form, {
+        payerInLine: await this.payerWaitsInLine(submission),
+      });
     } catch (e) {
       this.logger.error(
         `[Forms] organiser alert for submission ${submissionId} (form ${form.id}) not written - ` +
@@ -2755,6 +2760,22 @@ export class FormsService {
       );
       await this.releaseFulfilment(submissionId, 'organiserNotifiedAt');
     }
+  }
+
+  /**
+   * Whether the person who paid this answer is on its form's waiting list: a late payment landed
+   * `paid_over_capacity` keeps their place, and their turn converts this answer to `paid`
+   * (`planPromotion`, `waitlist.ts`) - so the refund is owed only if they are never promoted.
+   */
+  private async payerWaitsInLine(
+    submission: Pick<Submission, 'formId' | 'userId'>
+  ): Promise<boolean> {
+    if (!submission.userId) return false;
+    return (
+      (await this.submissionRepo.count({
+        where: { formId: submission.formId, userId: submission.userId, paymentStatus: WAITING },
+      })) > 0
+    );
   }
 
   /** Takes a fulfilment flag if nobody has: true for exactly one caller, ever (until released). */
@@ -5611,10 +5632,14 @@ export class FormsService {
     } else if (outcome.status === 'paid_over_capacity') {
       // The money is the payer's until the organiser refunds it: no cotisation is granted for a
       // seat that was not given. The purchase record below is still written - it is the payer's
-      // trace that they paid.
+      // trace that they paid. A payer in line keeps their place: their turn converts this answer.
+      const inLine = await this.payerWaitsInLine(submission);
       this.logger.warn(
         `[Forms] Payment on submission ${submissionId} landed OVER CAPACITY ` +
-          `(form ${submission.formId}, ${submission.totalPaid} cents): the organiser owes a refund`
+          `(form ${submission.formId}, ${submission.totalPaid} cents): ` +
+          (inLine
+            ? 'the payer is on the waiting list - their place is kept, and a refund is owed only if they are never promoted'
+            : 'the organiser owes a refund')
       );
     }
 
@@ -6299,7 +6324,14 @@ export class FormsService {
       try {
         const row = await this.submissionRepo.findOne({
           where: { id, paymentStatus: 'paid' },
-          select: { id: true, formId: true, userId: true, totalPaid: true, paymentStatus: true },
+          select: {
+            id: true,
+            formId: true,
+            userId: true,
+            totalPaid: true,
+            paymentStatus: true,
+            paymentMethod: true,
+          },
         });
         if (!row) {
           this.logger.log(
@@ -6307,9 +6339,11 @@ export class FormsService {
           );
           continue;
         }
+        // The row's OWN method: a cash promotee validated by hand is retried here too, and its
+        // grant must say cash, as its validation did.
         await this.fulfilPayment(row, true, {
           grantedBy: 'system',
-          paymentMethod: 'online',
+          paymentMethod: row.paymentMethod === 'cash' ? 'cash' : 'online',
           metadata: { submissionId: id, promotedFromWaitlist: true },
         });
       } catch (e: unknown) {
@@ -6401,7 +6435,7 @@ export class FormsService {
       }
       const plan = await planPromotion(m, row);
       const status = plan.status;
-      if (!(await promotionPayable(status, form, this.onlineCollects))) {
+      if (!(await promotionPayable(status, form, this.onlineCollects, m))) {
         this.logger.warn(
           `[WAITLIST] by-hand promotion of ${submissionId.slice(0, 8)} refused: it would be ${status}, ` +
             `and form ${formId.slice(0, 8)} can take no such payment now`

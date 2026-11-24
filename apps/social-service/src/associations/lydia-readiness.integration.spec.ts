@@ -407,6 +407,84 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
     expect(afterCommit).not.toHaveBeenCalled();
     await ds.query(`DELETE FROM submissions`);
     await ds.query(`DELETE FROM forms`);
+
+    takeLogged(
+      'error',
+      /^\[LYDIA-READINESS\] holder [0-9a-f-]{36} reverted: request\/do answered error 2701 \(shop\); before: .+; 3 on-sale product\(s\) withheld; 1 global admin\(s\) told; managers told next$/
+    );
+    // The FROZEN list, once per form, while the association could not collect.
+    takeLogged(
+      'warn',
+      /^\[WAITLIST\] cash-expiry: form [0-9a-f]{8} list FROZEN at [0-9a-f]{8}: it would be payment_due, and the form can take no online payment now - .+$/,
+      2
+    );
+  });
+
+  it("a promotion reads the association's readiness on ITS OWN connection: it completes on a pool of one", async () => {
+    await products.markLydiaReady(VENDOR, 'admin', { path: 'admin' });
+    expect((await stateOf(HOLDER)).ready).toBe(true);
+    // A paid online form of the DELEGATE (its readiness reads the holder too), its place free and
+    // an online answer first in line.
+    const form = await ds.getRepository(Form).save(
+      ds.getRepository(Form).create({
+        ownerId: 'it',
+        title: 'Gala pool',
+        associationId: CLUB,
+        status: 'published',
+        maxSubmissions: 1,
+        requiresPayment: true,
+        basePrice: 1500,
+        currency: 'eur',
+        allowOnlinePayment: true,
+        waitlistEnabled: true,
+        items: [],
+      } as Partial<Form>)
+    );
+    const waiting = await ds.getRepository(Submission).save(
+      ds.getRepository(Submission).create({
+        formId: form.id,
+        userId: 'member-1',
+        answers: {},
+        totalPaid: 1500,
+        paymentMethod: null,
+        paymentStatus: 'waiting',
+        waitlistOrder: '1',
+      } as Partial<Submission>)
+    );
+    const narrow = new DataSource({
+      ...ds.options,
+      extra: {
+        options: `-c search_path=${schema},public`,
+        max: 1,
+        connectionTimeoutMillis: 2_000,
+      },
+    } as typeof ds.options);
+    await narrow.initialize();
+    try {
+      const single = Object.assign(Object.create(AssociationsService.prototype) as object, {
+        assoRepo: narrow.getRepository(Association),
+        logger: new Logger('AssociationsService'),
+      }) as unknown as AssociationsService;
+      // The promotion holds the form's seat lock on the only connection: a readiness read asking
+      // for a second one would wait for it, and time out.
+      const promoted = await narrow.transaction('READ COMMITTED', async (m) => {
+        await lockFormSeats(m, form.id);
+        return promoteFromWaitlist(
+          m,
+          form.id,
+          'cash-expiry',
+          new Logger('it'),
+          onlineCollectsThrough(single)
+        );
+      });
+      expect(promoted).toEqual([
+        expect.objectContaining({ submissionId: waiting.id, status: 'payment_due' }),
+      ]);
+    } finally {
+      await narrow.destroy();
+      await ds.query(`DELETE FROM submissions`);
+      await ds.query(`DELETE FROM forms`);
+    }
   });
 
   it('a revert committed while the purchase is prepared: the typed 409 under the lock, and NO request/do', async () => {

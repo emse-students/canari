@@ -60,6 +60,7 @@ export type PushContentKey =
   | 'form_opening_soon'
   | 'form_open'
   | 'form_paid_over_capacity'
+  | 'form_paid_over_capacity_waitlisted'
   | 'form_waitlist_promoted'
   | 'form_waitlist_promoted_payment_due'
   | 'lydia_payments_active'
@@ -154,7 +155,8 @@ export type PushContent = {
    * - the two form reminder keys: nothing, always empty
    * - the two admin queue keys (`social_admin_profile_correction`, `social_admin_report`): nothing,
    *   always empty - the content-free rule
-   * - `form_paid_over_capacity`: the form's own title - never the payer's name, never the amount
+   * - `form_paid_over_capacity` and `form_paid_over_capacity_waitlisted`: the form's own title -
+   *   never the payer's name, never the amount
    * - `form_waitlist_promoted` and `form_waitlist_promoted_payment_due`: the form's own title
    *   (`actorName` is its association, or empty)
    * - the two `lydia_payments_*` keys: the association's name, nothing else
@@ -520,6 +522,21 @@ export function formPaidOverCapacityContent(formTitle: string): PushContent {
     arg: formTitle,
     legacyTitle: 'Paiement sur un formulaire complet',
     legacyBody: `« ${formTitle} » : un paiement est arrivé alors que le formulaire était complet. Remboursement à faire.`,
+  };
+}
+
+/**
+ * The same payment over capacity, paid by a person ON THE FORM'S WAITING LIST: their place is kept,
+ * and their turn converts the paid answer to a registration (`planPromotion`, `waitlist.ts`) - so
+ * the refund is owed only if they are never promoted. The form's title is the only data.
+ */
+export function formPaidOverCapacityWaitlistedContent(formTitle: string): PushContent {
+  return {
+    key: 'form_paid_over_capacity_waitlisted',
+    actorName: '',
+    arg: formTitle,
+    legacyTitle: 'Paiement sur un formulaire complet',
+    legacyBody: `« ${formTitle} » : un paiement est arrivé alors que le formulaire était complet. La personne garde sa place sur la liste d'attente ; remboursement à faire seulement si elle n'est jamais inscrite.`,
   };
 }
 

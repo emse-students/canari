@@ -192,6 +192,7 @@ const CATEGORY_BY_CONTENT_KEY: Readonly<Record<string, NotificationCategory>> = 
   // A payment landed on a full form, told to its managers: a form matter, filed under the EXISTING
   // id on purpose - a new id would be a category older clients cannot draw a switch for.
   form_paid_over_capacity: 'forms',
+  form_paid_over_capacity_waitlisted: 'forms',
   // A waiting answer promoted to a registration (owner, 2026-11-23): its one push, same EXISTING id.
   form_waitlist_promoted: 'forms',
   form_waitlist_promoted_payment_due: 'forms',

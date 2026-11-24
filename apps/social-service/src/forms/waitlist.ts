@@ -211,15 +211,23 @@ export type WaitlistPaymentModes = Pick<Form, 'allowOnlinePayment' | 'allowCashP
  * Whether the form's association can collect an ONLINE payment now (`collectsNow`: its own or its
  * approved delegate's Lydia account ready, the entity allowed to collect), asked lazily and only
  * for an online promotee. A personal form collects through the platform: always true there.
+ *
+ * Read through `manager`, THE PROMOTING TRANSACTION'S OWN CONNECTION: a promotion runs under the
+ * form's seat lock (and a refund's, under its purchase-record lock), so a read on a second pooled
+ * connection would wait for a free one while holding them - with the pool exhausted, every
+ * promoter would wait on itself.
  */
-export type OnlineCollects = (associationId: string | null) => Promise<boolean>;
+export type OnlineCollects = (
+  associationId: string | null,
+  manager: EntityManager
+) => Promise<boolean>;
 
 /** The one `OnlineCollects` every promoting service passes: `collectsNow`, true for a personal form. */
 export function onlineCollectsThrough(associations: {
-  collectsNow(associationId: string): Promise<boolean>;
+  collectsNow(associationId: string, manager?: EntityManager): Promise<boolean>;
 }): OnlineCollects {
-  return (associationId) =>
-    associationId ? associations.collectsNow(associationId) : Promise.resolve(true);
+  return (associationId, manager) =>
+    associationId ? associations.collectsNow(associationId, manager) : Promise.resolve(true);
 }
 
 /**
@@ -234,10 +242,11 @@ export function onlineCollectsThrough(associations: {
 export async function promotionPayable(
   status: PromotedAnswer['status'],
   form: WaitlistPaymentModes & Pick<Form, 'associationId'>,
-  onlineCollects: OnlineCollects
+  onlineCollects: OnlineCollects,
+  manager: EntityManager
 ): Promise<boolean> {
   if (status === PAYMENT_DUE) {
-    return acceptsOnline(form) && (await onlineCollects(form.associationId ?? null));
+    return acceptsOnline(form) && (await onlineCollects(form.associationId ?? null, manager));
   }
   if (status === 'pending_cash') return acceptsCash(form);
   return true;
@@ -314,7 +323,7 @@ export async function promoteFromWaitlist(
   for (const row of first) {
     const plan = await planPromotion(manager, row);
     const status = plan.status;
-    if (!(await promotionPayable(status, form, onlineCollects))) {
+    if (!(await promotionPayable(status, form, onlineCollects, manager))) {
       logger.warn(
         `[WAITLIST] ${trigger}: form ${formId.slice(0, 8)} list FROZEN at ${row.id.slice(0, 8)}: ` +
           `it would be ${status}, and the form can take no ${status === PAYMENT_DUE ? 'online' : 'cash'} ` +

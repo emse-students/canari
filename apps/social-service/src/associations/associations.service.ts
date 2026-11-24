@@ -7480,8 +7480,11 @@ ${rejectionReason}`
    * pauses the moment a delegation is revoked or a receiver loses its Lydia account, and resumes
    * the moment a new delegation is accepted, with no state of its own to drift.
    */
-  async collectsNow(associationId: string): Promise<boolean> {
-    const asso = await this.assoRepo.findOne({ where: { id: associationId } });
+  async collectsNow(associationId: string, manager?: EntityManager): Promise<boolean> {
+    // A caller inside a transaction (a waiting-list promotion, under its seat lock) reads on ITS
+    // connection: a second pooled one, taken while holding the lock, can wait on itself.
+    const repo = manager ? manager.getRepository(Association) : this.assoRepo;
+    const asso = await repo.findOne({ where: { id: associationId } });
     if (!asso) return false;
     if (!mayCollect(asso)) {
       this.logger.debug(
@@ -7489,7 +7492,7 @@ ${rejectionReason}`
       );
       return false;
     }
-    const [row] = await this.withPaymentsReady([asso]);
+    const [row] = await this.withPaymentsReady([asso], manager);
     return row.paymentsReady;
   }
 
@@ -7503,13 +7506,14 @@ ${rejectionReason}`
    * delegating association or list was told "payments not configured" while the server accepted).
    */
   async withPaymentsReady<T extends Association>(
-    rows: T[]
+    rows: T[],
+    manager?: EntityManager
   ): Promise<Array<T & { paymentsReady: boolean }>> {
     const parentIds = [
       ...new Set(rows.filter((r) => isDelegating(r)).map((r) => r.paymentParentAssociationId)),
     ];
     const parents = parentIds.length
-      ? await this.assoRepo.find({
+      ? await (manager ? manager.getRepository(Association) : this.assoRepo).find({
           where: { id: In(parentIds) },
           select: {
             id: true,

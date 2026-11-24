@@ -50,6 +50,7 @@ import { lockFormSeats, PENDING_PAYMENT_HOLD_SECONDS } from './seat-hold';
 import { promoteFromWaitlist } from './waitlist';
 import { FORM_FINGERPRINT_SQL } from './form-draft-revision';
 import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -579,6 +580,58 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
     expect(await send(formId, ALICE)).toMatchObject({ waiting: true, waitlistRank: 2 });
   });
 
+  it('a switch refused after it promoted: the promotion is committed once, in its own transaction, and told once', async () => {
+    const formId = await paidOnlineForm({
+      allowCashPayment: true,
+      cashPaymentExpiryDays: 3,
+    } as Partial<Form>);
+    const alice: any = await send(formId, ALICE, { payerEmail: 'a@example.org' });
+    await pastHold(alice.submissionId);
+    await service.expireStalePendingPayments(await service.pendingHoldCutoff());
+    expect((await status(alice.submissionId)).paymentStatus).toBe('expired');
+    // The place is free AND someone waits: the state a freeing whose promotion is still owed leaves
+    // (written directly - every path that frees a place promotes in its own transaction).
+    const bob = await ds.getRepository(Submission).save(
+      ds.getRepository(Submission).create({
+        formId,
+        userId: BOB,
+        answers: ANSWERS,
+        totalPaid: 1500,
+        paymentMethod: null,
+        paymentStatus: 'waiting',
+        waitlistOrder: '1',
+      } as Partial<Submission>)
+    );
+    // Alice's switch re-takes a seat: the list goes first, Bob takes the place, and the switch is
+    // refused FORM_FULL - which rolls its own promotion back, so it is promoted again on its own.
+    const again = jest.spyOn(service, 'promoteWaitlist');
+    (axios.post as jest.Mock).mockImplementationOnce(async () => ({
+      data: { outcome: 'cancelled' },
+    }));
+    try {
+      expect(
+        await refusal(
+          service.switchToCash({ kind: 'member', submissionId: alice.submissionId, userId: ALICE })
+        )
+      ).toEqual({ status: 400, code: 'FORM_FULL' });
+      expect(again).toHaveBeenCalledTimes(1);
+      expect(again).toHaveBeenCalledWith(formId, 'cash-switch');
+    } finally {
+      again.mockRestore();
+    }
+    await noticesLand();
+    const promoted = await status(bob.id);
+    expect(promoted.paymentStatus).toBe('payment_due');
+    expect(promoted.promotionNotifiedAt).not.toBeNull();
+    expect((await status(alice.submissionId)).paymentStatus).toBe('expired');
+    // Told ONCE: the rolled-back promotion said nothing, the committed one said it.
+    expect(await bellRows()).toEqual([
+      expect.objectContaining({ recipientId: BOB, type: FORM_WAITLIST_PROMOTED_PAYMENT_DUE_TYPE }),
+    ]);
+    expect(pushes).toEqual([{ userId: BOB, key: 'form_waitlist_promoted_payment_due' }]);
+    expect(await notice.tellPending()).toBe(0);
+  });
+
   it('a failed promotion rolls back the freeing it follows: a delete, a cancel, an expiry', async () => {
     const formId = await paidOnlineForm({ maxSubmissions: 2 } as Partial<Form>);
     const alice: any = await send(formId, ALICE, { payerEmail: 'a@example.org' });
@@ -643,6 +696,11 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
     expect((await status(bob.submissionId)).promotionNotifiedAt).not.toBeNull();
     expect((await bellRows()).map((r) => r.recipientId)).toEqual([BOB]);
     expect(pushes).toEqual([{ userId: BOB, key: 'form_waitlist_promoted' }]);
+    // The durable retry found the owed notice, and says so.
+    takeLogged(
+      'warn',
+      /^\[WAITLIST\] 1 promotion notice\(s\) owed after their promotion committed - telling now$/
+    );
   });
 
   it('a promoted answer whose payment request is refused before it exists keeps its place', async () => {
@@ -696,6 +754,10 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
     expect((await status(bob.submissionId)).paymentStatus).toBe('expired');
     expect((await status(carol.submissionId)).paymentStatus).toBe('payment_due');
     expect((await service.hasSubmission(formId, BOB)).resumable).toBeNull();
+    takeLogged(
+      'warn',
+      /^\[Forms\] submission [0-9a-f-]{36} kept pending: the issuing call failed after it was sent - its outcome at Lydia is unknown, the seat is held until the hold lapses, no resume is offered$/
+    );
   });
 
   it('a late payment over capacity keeps its payer in line, and their turn converts it to paid', async () => {
@@ -736,6 +798,50 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
     expect(await service.fulfilConvertedPromotions()).toBe(0);
     // One registration, the form full: the next answer waits.
     expect(await send(formId, CAROL)).toMatchObject({ waiting: true, waitlistRank: 1 });
+    // The late payment is said as what it is for a payer in line: a refund owed only if never promoted.
+    takeLogged(
+      'warn',
+      /^\[Forms\] Payment on submission [0-9a-f-]{36} landed OVER CAPACITY \(form [0-9a-f-]{36}, 1500 cents\): the payer is on the waiting list - their place is kept, and a refund is owed only if they are never promoted$/
+    );
+  });
+
+  it("the durable retry runs what a converted promotion buys with the answer's OWN payment method", async () => {
+    const formId = await makeForm({
+      requiresPayment: true,
+      basePrice: 1500,
+      allowCashPayment: true,
+      allowOnlinePayment: false,
+      cashPaymentExpiryDays: 3,
+    } as Partial<Form>);
+    // A cash promotee a manager validated by hand, whose grant a stopped process left owed.
+    const row = await ds.getRepository(Submission).save(
+      ds.getRepository(Submission).create({
+        formId,
+        userId: DAVE,
+        answers: ANSWERS,
+        totalPaid: 1500,
+        paymentMethod: 'cash',
+        paymentStatus: 'paid',
+      } as Partial<Submission>)
+    );
+    await ds.query(`UPDATE submissions SET "promotedAt" = now() WHERE id = $1`, [row.id]);
+    const fulfil = jest.spyOn(service as any, 'fulfilPayment');
+    try {
+      expect(await service.fulfilConvertedPromotions()).toBe(1);
+      expect(fulfil).toHaveBeenCalledWith(
+        expect.objectContaining({ id: row.id }),
+        true,
+        expect.objectContaining({ paymentMethod: 'cash' })
+      );
+    } finally {
+      fulfil.mockRestore();
+      // Not left for the later retries of this file: the row was written by hand, told by nobody.
+      await ds.query(`DELETE FROM submissions WHERE id = $1`, [row.id]);
+    }
+    takeLogged(
+      'warn',
+      /^\[WAITLIST\] 1 converted promotion\(s\) still owe what their payment buys - running it now$/
+    );
   });
 
   it('a conversion committed by another promoter (a refund) is fulfilled by its after-commit step, never by the retry', async () => {
@@ -797,6 +903,14 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
     await ds.getRepository(Form).update(formId, { allowOnlinePayment: true });
     expect((await service.promoteWaitlist(formId, 'form-edit')).length).toBe(1);
     expect((await status(bob.submissionId)).paymentStatus).toBe('payment_due');
+    takeLogged(
+      'warn',
+      /^\[WAITLIST\] form-edit: form [0-9a-f]{8} list FROZEN at [0-9a-f]{8}: it would be payment_due, and the form can take no online payment now - nobody behind it is promoted past it until that payment mode is payable again or a manager removes it$/
+    );
+    takeLogged(
+      'warn',
+      /^\[WAITLIST\] by-hand promotion of [0-9a-f]{8} refused: it would be payment_due, and form [0-9a-f]{8} can take no such payment now$/
+    );
   });
 
   it('a save of the form that reopens the payment mode lifts a frozen list, in its own transaction', async () => {
@@ -836,6 +950,10 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
     await noticesLand();
     expect((await status(bob.submissionId)).paymentStatus).toBe('payment_due');
     expect(pushes).toEqual([{ userId: BOB, key: 'form_waitlist_promoted_payment_due' }]);
+    takeLogged(
+      'warn',
+      /^\[WAITLIST\] form-edit: form [0-9a-f]{8} list FROZEN at [0-9a-f]{8}: it would be payment_due, and the form can take no online payment now - nobody behind it is promoted past it until that payment mode is payable again or a manager removes it$/
+    );
   });
 
   it('an association that cannot collect online freezes the list instead of handing the place on', async () => {
@@ -875,6 +993,14 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
     );
     expect((await status(bob.submissionId)).paymentStatus).toBe('payment_due');
     expect((await status(carol.submissionId)).paymentStatus).toBe('waiting');
+    takeLogged(
+      'warn',
+      /^\[WAITLIST\] online-expiry: form [0-9a-f]{8} list FROZEN at [0-9a-f]{8}: it would be payment_due, and the form can take no online payment now - nobody behind it is promoted past it until that payment mode is payable again or a manager removes it$/
+    );
+    takeLogged(
+      'warn',
+      /^\[WAITLIST\] by-hand promotion of [0-9a-f]{8} refused: it would be payment_due, and form [0-9a-f]{8} can take no such payment now$/
+    );
   });
 
   it("the account erasure deletes the account's waiting answer, so nobody is promoted into it", async () => {

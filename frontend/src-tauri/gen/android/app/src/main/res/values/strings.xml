@@ -184,6 +184,8 @@
     <string name="notif_form_open_body_named">« %1$s » est disponible - dépêchez-vous, les places sont limitées !</string>
     <string name="notif_form_paid_over_capacity_title">Paiement sur un formulaire complet</string>
     <string name="notif_form_paid_over_capacity_body">« %1$s » : un paiement est arrivé alors que le formulaire était complet. Remboursement à faire.</string>
+    <string name="notif_form_paid_over_capacity_waitlisted_title">Paiement sur un formulaire complet</string>
+    <string name="notif_form_paid_over_capacity_waitlisted_body">« %1$s » : un paiement est arrivé alors que le formulaire était complet. La personne garde sa place sur la liste d\'attente ; remboursement à faire seulement si elle n\'est jamais inscrite.</string>
     <string name="notif_form_waitlist_promoted_title">Une place s\'est libérée</string>
     <string name="notif_form_waitlist_promoted_body">Vous êtes inscrit au formulaire. Ouvrez-le pour voir votre inscription.</string>
     <string name="notif_form_waitlist_promoted_title_named">%1$s : une place s\'est libérée</string>

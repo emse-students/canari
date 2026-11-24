@@ -7438,6 +7438,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_form_paid_over_capacity_title),
                 res.getString(R.string.notif_form_paid_over_capacity_body, arg)
             )
+            // The same, paid by a person on the form's waiting list: their place is kept, and the
+            // refund is owed only if they are never registered. `arg` is the form's title only.
+            "form_paid_over_capacity_waitlisted" -> Pair(
+                res.getString(R.string.notif_form_paid_over_capacity_waitlisted_title),
+                res.getString(R.string.notif_form_paid_over_capacity_waitlisted_body, arg)
+            )
             // An association's Lydia payments became active / were paused, to its payout managers:
             // `arg` is the association's name, the only data the server sends.
             "lydia_payments_active" -> Pair(

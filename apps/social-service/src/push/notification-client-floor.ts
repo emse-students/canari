@@ -189,6 +189,8 @@ export const PUSH_KEY_MIN_CLIENT: Readonly<Record<PushContentKey, string | null>
   social_live_withdrawn: '1.4.0',
   social_live_reinstated: '1.7.0',
   form_paid_over_capacity: '1.4.0',
+  // The waiting list's variant of the organiser alert: its native strings ship with the list.
+  form_paid_over_capacity_waitlisted: FORM_WAITLIST_MIN_CLIENT_VERSION,
   form_waitlist_promoted: FORM_WAITLIST_MIN_CLIENT_VERSION,
   form_waitlist_promoted_payment_due: FORM_WAITLIST_MIN_CLIENT_VERSION,
   social_follow_request: '1.5.1',
