@@ -8,8 +8,8 @@
  * wrote a live entry carrying the erased id, and nothing erased it again. The record is what every
  * registering path reads, in the same synchronous run as the entry it would write.
  *
- * What is kept is a PSEUDONYM of the account id - an HMAC keyed by this service's `JWT_SECRET` - with
- * the time of the latest erasure call: the record only has to answer "was this owner erased, and
+ * What is kept is a PSEUDONYM of the account id - an HMAC under a key derived from this service's
+ * `JWT_SECRET` under its own label ({@link erasedOwnerKey}) - with the time of the latest erasure call: the record only has to answer "was this owner erased, and
  * when", which the keyed digest answers without the id.
  *
  * IT REFUSES ONLY WHAT DATES FROM BEFORE THAT CALL. `users.id` is the OIDC subject, and core lets
@@ -42,13 +42,22 @@ export class OwnerErasedException extends HttpException {
   }
 }
 
+/** The label the record's key is derived under: no other use of `JWT_SECRET` computes this MAC. */
+export const ERASED_OWNER_KEY_LABEL = 'canari/media/erased-owner/v1';
+
+/** The derived key, computed once per secret value (a test may change the secret). */
+let derived: { secret: string; key: Buffer } | undefined;
+
 /**
- * The key the record is held under: HMAC-SHA256 of the account id under `JWT_SECRET`, a pseudonym.
+ * The key the record is held under: HMAC-SHA256 of the account id under a key DERIVED from
+ * `JWT_SECRET` under {@link ERASED_OWNER_KEY_LABEL} - a pseudonym. Never the secret itself: a key
+ * signs one kind of thing only (domain separation, as core's `deriveRestoreChallengeKey`), and
+ * the raw secret already signs the access tokens.
  *
- * Why THAT secret: the record exists to refuse credentials minted before an erasure, and every one of
- * them is signed with it. Rotating it voids every such credential at once, so the records it makes
- * unreadable have nothing left to refuse - the two lifetimes cannot disagree. A plain digest of an id
- * guessable from the school's directory would be an identifier.
+ * Why derived from THAT secret: the record exists to refuse credentials minted before an erasure,
+ * and every one of them is signed with it. Rotating it voids every such credential at once, so the
+ * records it makes unreadable have nothing left to refuse - the two lifetimes cannot disagree. A
+ * plain digest of an id guessable from the school's directory would be an identifier.
  *
  * @throws Error when `JWT_SECRET` is unset - this service's misconfiguration, which also refuses
  *   every user request (`MediaController.verifyToken`)
@@ -56,7 +65,13 @@ export class OwnerErasedException extends HttpException {
 export function erasedOwnerKey(ownerId: string): string {
   const secret = process.env.JWT_SECRET;
   if (!secret) throw new Error('JWT_SECRET is not configured: no erased-owner record can be keyed');
-  return createHmac('sha256', secret).update(ownerId, 'utf8').digest('hex');
+  if (derived?.secret !== secret) {
+    derived = {
+      secret,
+      key: createHmac('sha256', secret).update(ERASED_OWNER_KEY_LABEL, 'utf8').digest(),
+    };
+  }
+  return createHmac('sha256', derived.key).update(ownerId, 'utf8').digest('hex');
 }
 
 /**

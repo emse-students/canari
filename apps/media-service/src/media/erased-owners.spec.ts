@@ -5,11 +5,13 @@
  * alone: core-service's access-token lifetime (and its skew), and the upload session's window. The
  * first is mirrored here, so this spec reads core's own file and fails the day it moves.
  */
+import { createHmac } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import {
   CORE_ACCESS_TOKEN_TTL_SECONDS,
   CORE_CREDENTIAL_SKEW_SECONDS,
+  ERASED_OWNER_KEY_LABEL,
   ERASED_OWNER_KEY_REGEX,
   datesFromBeforeTheErasure,
   erasedOwnerKey,
@@ -59,6 +61,12 @@ describe('the erased-owner record', () => {
     expect(key).toMatch(ERASED_OWNER_KEY_REGEX);
     expect(key).not.toContain('alice');
     expect(erasedOwnerKey('alice')).toBe(key);
+    // DERIVED, never the raw secret: the raw secret signs the access tokens, and a key signs one kind
+    // of thing only. Pinned against the construction it must not be, and the one it is.
+    const secret = process.env.JWT_SECRET as string;
+    expect(key).not.toBe(createHmac('sha256', secret).update('alice').digest('hex'));
+    const labelled = createHmac('sha256', secret).update(ERASED_OWNER_KEY_LABEL).digest();
+    expect(key).toBe(createHmac('sha256', labelled).update('alice').digest('hex'));
     // KEYED: another secret, another pseudonym - a plain digest of a guessable id would not differ.
     const prev = process.env.JWT_SECRET;
     try {

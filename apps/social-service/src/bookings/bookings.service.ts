@@ -1718,12 +1718,13 @@ export class BookingsService {
     spaceId: string,
     itemId: string | undefined,
     file: { buffer: Buffer; size: number; originalname?: string },
-    actor: Actor
+    actor: Actor,
+    authorization?: string
   ) {
     this.logger.debug(`[BOOKINGS] uploadFile space=${spaceId} item=${itemId}`);
     const space = await this.loadSpace(spaceId);
     await this.assertMayUse(space, actor, await this.mayManage(space, actor), 'write');
-    return this.bookingFiles.upload(space, itemId, file, actor.userId);
+    return this.bookingFiles.upload(space, itemId, file, actor.userId, authorization);
   }
 
   /**

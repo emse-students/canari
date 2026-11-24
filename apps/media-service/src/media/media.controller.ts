@@ -96,6 +96,7 @@ import {
 } from './live-segments.service';
 import { assertInternalSecret } from './internal-secret.util';
 import { readAccessToken, type AccessCredential } from './access-token';
+import { assertMintableUserId } from './user-id';
 import { fetchLivesMode } from './lives-mode';
 import { handedRetention, mediaRetention, type MediaRetentionDays } from './retention-settings';
 import { requireUploadedFile, uploadedFileBuffer, uploadedFileMime } from './uploaded-file';
@@ -237,6 +238,42 @@ export class MediaController {
       }
       throw err;
     }
+  }
+
+  /**
+   * The mint time of the member's own access token that social-service forwards on a form-file
+   * store, VERIFIED here (signature, expiry, and that it names `ownerId`) - never a date another
+   * service states. `undefined` when there is none, or it does not verify: the upload is then judged
+   * old by the erased-owner record, which refuses it only for an erased owner.
+   */
+  private formFileIssuedAt(authorization: string | undefined, ownerId: string): number | undefined {
+    if (!authorization?.startsWith('Bearer ')) {
+      this.logger.debug('[FORM_FILE] no member token forwarded: the upload is undated');
+      return undefined;
+    }
+    const secret = process.env.JWT_SECRET;
+    if (!secret) {
+      this.logger.error('[AUTH] JWT_SECRET is not configured - refusing the request');
+      throw new InternalServerErrorException('JWT_SECRET is not configured');
+    }
+    let credential: AccessCredential;
+    try {
+      credential = readAccessToken(authorization.slice(7), secret, Math.floor(Date.now() / 1000));
+    } catch (err) {
+      this.logger.warn(
+        `[FORM_FILE] the forwarded member token does not verify - the upload is undated: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+      return undefined;
+    }
+    if (credential.sub !== ownerId) {
+      this.logger.error(
+        '[FORM_FILE] the forwarded member token names another account than the uploader - the upload is undated'
+      );
+      return undefined;
+    }
+    return credential.issuedAt;
   }
 
   // ---------------------------------------------------------------------------
@@ -975,7 +1012,8 @@ export class MediaController {
   async uploadFormFile(
     @UploadedFile() file: unknown,
     @Body() body: { ownerId?: unknown },
-    @Headers('x-internal-secret') internalSecret: string | undefined
+    @Headers('x-internal-secret') internalSecret: string | undefined,
+    @Headers('authorization') authorization: string | undefined
   ): Promise<{ mediaId: string; sizeBytes: number }> {
     assertInternalSecret(internalSecret);
     if (typeof body?.ownerId !== 'string' || body.ownerId.length === 0) {
@@ -984,8 +1022,12 @@ export class MediaController {
     const upload = requireUploadedFile(file);
     // An image is re-encoded without its metadata (EXIF, GPS) before it is stored; `sizeBytes` is
     // what was STORED, never over FORM_FILE_MAX_BYTES. An image that does not decode, exceeds the
-    // pixel bound or cannot fit the cap is a 422.
-    return this.mediaService.uploadFormFile(upload.buffer, body.ownerId);
+    // pixel bound or cannot fit the cap is a 422. An erased owner's old token is a 410 OWNER_ERASED.
+    return this.mediaService.uploadFormFile(
+      upload.buffer,
+      body.ownerId,
+      this.formFileIssuedAt(authorization, body.ownerId)
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -1336,6 +1378,8 @@ export class MediaController {
     @Headers('x-internal-secret') internalSecret?: string
   ): Promise<{ ok: boolean; deleted: number; failed: number }> {
     assertInternalSecret(internalSecret);
+    // An id no account could carry is refused before anything is recorded under it.
+    assertMintableUserId(userId, this.logger, 'account-erasure');
     // The objects FIRST: this call records the erasure before it reads the index, so from its first
     // synchronous run no session of the owner can register anything, nor a new one open. Ending the
     // sessions before it left a window in which one could open after the cancel and survive it.

@@ -240,6 +240,12 @@ export const DECLARED_GROUPS = [
     ],
   },
   {
+    what: 'the rule an account id is minted under, read again where media-service is handed one (`userIdRuleBroken`)',
+    compare: 'exact',
+    why: 'core-service mints every account id under it; media-service refuses an id no account could carry at its account erasure route, before recording anything under it. Two NestJS packages with no shared library, like `drain-on-sigterm.ts`.',
+    files: ['apps/core-service/src/users/user-id.ts', 'apps/media-service/src/media/user-id.ts'],
+  },
+  {
     what: 'the counter that says a recurring log line once, then at each power of ten (`RepeatCounter`)',
     compare: 'exact',
     why: 'chat-gateway and call-service are two crates with no shared library; each counts its refused upgrades with it. A shared crate is the entry docs/wiki/backlog.d/p3-the-two-rust-services-share-no-crate.md.',

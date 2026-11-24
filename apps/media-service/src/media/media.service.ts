@@ -825,12 +825,14 @@ export class MediaService {
    */
   private metadataWrites?: Promise<void>;
   /**
-   * Uploads running now, per owner id ({@link admitUploader}). What keeps an erased owner's record
-   * while one of their uploads, admitted before the erasure, is still running. Memory only, so the id
-   * itself is the key (never written anywhere); the sweep keys the few it holds to compare. Memory is
-   * the whole truth here: a restart ends every upload it counted. Lazily created, same reason as above.
+   * Uploads running now, per owner id: the mint time of the credential each was admitted with
+   * (`undefined`: undated), one element per upload ({@link admitUploader}). What keeps an erased
+   * owner's record while an upload the record would still refuse - dated before the erasure, or not
+   * dated - is running; one by a person who came back holds nothing. Memory only, so the id itself
+   * is the key (never written anywhere); the sweep keys the few it holds to compare. Memory is the
+   * whole truth here: a restart ends every upload it counted. Lazily created, same reason as above.
    */
-  private uploadsInFlight?: Map<string, number>;
+  private uploadsInFlight?: Map<string, Array<number | undefined>>;
   private readonly sweepIntervalMs = Number.parseInt(
     process.env.MEDIA_RETENTION_SWEEP_MS ?? `${DEFAULT_SWEEP_MS}`,
     10
@@ -919,14 +921,15 @@ export class MediaService {
   ): Promise<T> {
     this.assertOwnerNotErased(ownerId, issuedAt, where);
     if (!ownerId) return run();
-    const inFlight = (this.uploadsInFlight ??= new Map<string, number>());
-    inFlight.set(ownerId, (inFlight.get(ownerId) ?? 0) + 1);
+    const inFlight = (this.uploadsInFlight ??= new Map<string, Array<number | undefined>>());
+    const running = inFlight.get(ownerId) ?? [];
+    running.push(issuedAt);
+    inFlight.set(ownerId, running);
     try {
       return await run();
     } finally {
-      const left = (inFlight.get(ownerId) ?? 1) - 1;
-      if (left > 0) inFlight.set(ownerId, left);
-      else inFlight.delete(ownerId);
+      running.splice(running.indexOf(issuedAt), 1);
+      if (running.length === 0) inFlight.delete(ownerId);
     }
   }
 
@@ -992,7 +995,17 @@ export class MediaService {
       ...tombstoneOf(undefined, Date.now(), 'manual_delete'),
       deletePending: true,
     };
-    await this.persistMetadata();
+    try {
+      await this.persistMetadata();
+    } catch (err) {
+      // The owed delete is in memory, and the next write of the index carries it; the refusal stays
+      // the caller's answer, never a 500 over it.
+      this.logger.error(
+        `[ERASED_OWNER] ${where}: the owed delete of ${mediaId} could not be written to the index yet - the next index write carries it: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
   }
 
   /**
@@ -1097,15 +1110,15 @@ export class MediaService {
    */
   async uploadFormFile(
     data: Buffer,
-    ownerId: string
+    ownerId: string,
+    issuedAt?: number
   ): Promise<{ mediaId: string; sizeBytes: number }> {
     if (!ownerId) {
       throw new BadRequestException('A form file needs the member who uploads it');
     }
-    // NO CREDENTIAL TO DATE: social-service authenticated the member (nginx forwards it only the id),
-    // so an erased owner's form file is refused for the record's whole window - a person who came
-    // back included (docs/wiki/services/media-service.md#an-erased-owner-registers-nothing-2026-11-24).
-    return this.admitUploader(ownerId, undefined, 'form file', async () => {
+    // `issuedAt`: the mint time of the member's own token, which social-service forwards and the
+    // controller verified here - never a number another service states. Absent: judged old.
+    return this.admitUploader(ownerId, issuedAt, 'form file', async () => {
       if (data.length > FORM_FILE_MAX_BYTES) {
         this.logger.warn(`Form file refused: ${data.length} bytes received for ${ownerId}`);
         throw new PayloadTooLargeException(`A form file is at most ${FORM_FILE_MAX_BYTES} bytes`);
@@ -1113,7 +1126,7 @@ export class MediaService {
       const stored = await stripImageMetadata(data, FORM_FILE_MAX_BYTES);
       const mediaId = uuidv4();
       await this.storage.put(mediaId, stored, stored.length);
-      await this.registerUnlessErased(mediaId, ownerId, undefined, 'form file', () =>
+      await this.registerUnlessErased(mediaId, ownerId, issuedAt, 'form file', () =>
         this.setAccess(mediaId, Date.now(), ownerId, SERVER_READ_ONLY_CLASS)
       );
       await this.persistMetadata();
@@ -3608,14 +3621,18 @@ export class MediaService {
   private forgetLapsedErasedOwners(now: number): number {
     const records = this.meta.erasedOwners;
     if (!records || Object.keys(records).length === 0) return 0;
-    const running = new Map<string, number>();
-    for (const [ownerId, count] of this.uploadsInFlight ?? []) {
-      running.set(erasedOwnerKey(ownerId), count);
+    const running = new Map<string, Array<number | undefined>>();
+    for (const [ownerId, dates] of this.uploadsInFlight ?? []) {
+      running.set(erasedOwnerKey(ownerId), dates);
     }
     let forgotten = 0;
     for (const [key, erasedAt] of Object.entries(records)) {
       if (now - erasedAt < ERASED_OWNER_KEPT_MS) continue;
-      const runningNow = running.get(key) ?? 0;
+      // Only an upload this record would still refuse holds it: one dated after the call (a person
+      // who came back) is not "admitted before the erasure", and the WARN below says that it is.
+      const runningNow = (running.get(key) ?? []).filter((at) =>
+        datesFromBeforeTheErasure(at, erasedAt)
+      ).length;
       if (runningNow > 0) {
         this.logger.warn(
           `[ERASED_OWNER] a record past its window is kept: ${runningNow} upload(s) admitted before the erasure still running`

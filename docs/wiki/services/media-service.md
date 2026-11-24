@@ -903,12 +903,17 @@ calls the route again.
 
 **The record.** `removeAllOwnedBy` writes, in its FIRST synchronous run and before it reads the index,
 `erasedOwners[key] = now` in the media index (`media_metadata.json`, written atomically with the
-entries). `key` is `HMAC-SHA256(JWT_SECRET, ownerId)`: a PSEUDONYM, not the id, and not a plain digest
-either - an id guessable from the school's directory would be re-identified by hashing the list. The
-secret is the one that signs the access tokens on purpose: rotating it voids every credential the
-record exists to refuse, so a record that no longer matches has nothing left to guard. Every later
-call rewrites the time, so `erasedAt` is the LATEST call. The route answers 2xx only once that write
-is on disk.
+entries). `key` is `HMAC-SHA256(K, ownerId)` with `K = HMAC-SHA256(JWT_SECRET,
+"canari/media/erased-owner/v1")`: a PSEUDONYM, not the id, and not a plain digest either - an id
+guessable from the school's directory would be re-identified by hashing the list. The record key is
+derived under its own label, never the raw secret, which already signs the access tokens: one key
+signs one kind of thing (the rule of core's `adminer-access.service.ts` and
+`deriveRestoreChallengeKey`; `erased-owners.spec.ts` pins both constructions). It is derived from
+THAT secret on purpose: rotating it voids every credential the record exists to refuse, so a record
+that no longer matches has nothing left to guard. Every later call rewrites the time, so `erasedAt`
+is the LATEST call. The route answers 2xx only once that write is on disk, and refuses with `400
+USER_ID_INVALID` an id no account could carry (`user-id.ts`: core's file, kept byte-identical by
+the declared-duplicates gate), before anything is recorded.
 
 **What it refuses: what dates from before the call, never the person.** `users.id` IS the OIDC
 subject, and core lets the person sign in again under the same id once every erasure job, final pass
@@ -937,7 +942,7 @@ discriminator, not a ban (`datesFromBeforeTheErasure`, `openedBeforeTheErasure`)
 | `POST upload/chunk/:id/complete` | before the lock; the caller's staging is removed | object deleted, staging removed |
 | `POST upload/session` (init) | before staging or reserving | - |
 | `POST upload/session/:id/complete` | admission; the session is disposed (staging, sidecar, reservation) | object deleted, session disposed |
-| `POST internal/form-file` | admission, before the store | object deleted |
+| `POST internal/form-file` | admission, before the store (dated by the member's forwarded token, below) | object deleted |
 
 Not a registration, so not gated: a part `PUT` (staging only; its `complete` is refused), a
 claim, a hold or a class change (they act on an entry the owner already has, which the erasure
@@ -965,6 +970,13 @@ so its outbox does not retry an upload no retry can mend.
 - *The legacy chunk route*: the erasure ends the owner's open chunk uploads (staging, under each
   upload's lock - it waits for a completion in flight, which the registration then refuses) and
   removes every `<uploadId>.done` completion memo naming them, with its kept staging.
+- *A legacy chunk upload open across a restart*: who opened it lives in memory only
+  (`chunkOwners`), and its staging (`chunks_temp/<uploadId>`) is ciphertext named by a random id,
+  carrying no owner name. The erasure cannot attribute it after a restart, and it does not need to:
+  its completion registers under the completer's own credential, which the record judges like any
+  other, and the 24 h orphan purge (`purgeOrphanedChunks`) removes the staging.
+- *A refusal whose owed delete cannot be written to the index yet* stays a `410`: the tombstone is
+  in memory, the next index write carries it, and the failed write is an ERROR.
 - *A session's staging whose removal fails* is a WARN naming the errno, and staging no session claims
   is what the hourly orphan sweep removes - the end is a fact (the session is gone), so no in-line
   retry loop: on the Linux hosts an open handle does not refuse an unlink, and a real fault (EACCES,
@@ -987,24 +999,32 @@ valid past it - and the upload session window (`MEDIA_UPLOAD_SESSION_TTL_MS`, 24
 load-bearing because a session is judged by its opening and lives that long. Today: **24 h after the
 latest call**. What a clock cannot bound - an upload admitted before the call and still running - is
 counted in memory (`uploadsInFlight`, keyed by the raw id and never written; exact because a restart
-ends what it counted): the hourly sweep drops a record only past its window AND with no upload of
-that owner running, and says when it keeps one.
+ends what it counted), with the date it was admitted under: the hourly sweep drops a record only past
+its window AND with no upload running that the record would still refuse (dated before the call, or
+undated), and says when it keeps one. An upload of a person who came back holds nothing.
 
-**The one path that cannot be dated: `internal/form-file`.** social-service calls it with the
-member's id (`X-User-Id`, set by nginx from the token) and no credential, so nothing tells an old
-token from a new one: an erased owner is refused there for the whole window, a person who came back
-included (a form answer with a file, within 24 h of their erasure). The gate that would lift it:
-nginx forwarding the token's `iat` beside `X-User-Id`, and social-service passing it on.
+**The form file is dated by the member's own token.** social-service's `storeBlob` forwards the
+member's bearer header - the one nginx passed through on `/api/forms` and `/api/bookings`, whose
+header lists never clear `Authorization` - on `internal/form-file`, beside `X-Internal-Secret`.
+media-service verifies it itself (signature, expiry, and that its subject is the `ownerId` named) and
+reads its `iat`; no date another service states is believed. No token, or one that does not verify
+or names another account: the upload is undated, judged old, and refused only for an erased owner.
+The `410 OWNER_ERASED` travels typed end to end: social answers it as its own `410` with the same code
+(`OwnerErasedRefusal`, a WARN, never a 502), and the app's form question shows that the account was
+deleted instead of "try again" (`FormQuestion.svelte`).
 
 **Not a migration, but a storage change.** The index gains an optional top-level `erasedOwners` and
 an optional per-entry `deletePending`; a build that predates them reads the entries and drops both at
 its next write. **A rollback reopens the gap for the owners erased within the last window** (their
 records are forgotten, and an owed delete becomes an ordinary tombstone whose object stays untracked);
 it stays bounded by core's final pass, which still erases what registered before it. Pinned by
-`erased-owners.spec.ts` (the drift, the window, the keyed pseudonym, both date rules),
+`erased-owners.spec.ts` (the drift, the window, the derived key, both date rules),
+`user-id.spec.ts`, `media.controller.account-erasure.spec.ts` (a malformed id is a 400),
+`media.controller.form-file-dating.spec.ts` (only a verified token of the uploader dates a form file),
 `media.service.erased-owner.spec.ts` (the single-upload closing test, a person who came back, the
-race both ways, form file, public image, chunked init and complete, the owed delete, the chunk memo,
-the window and the in-flight hold, the restart) and `upload-session.service.spec.ts` (the session
+race both ways, form file dated and undated, public image, chunked init and complete, the owed
+delete and its unwritable index, the chunk memo, the window and the in-flight hold - none for a
+returning person's upload - the restart) and `upload-session.service.spec.ts` (the session
 closing test, a `complete` between the two halves of the erasure, the race both ways, a person who
 came back, a session opened before, an object stored and never registered - ended by the erasure and
 by a refusal - with no staging-removal WARN allowed).

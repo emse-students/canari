@@ -52,6 +52,7 @@ function build() {
   const internals = service as unknown as Internals;
   const stored = new Set<string>();
   const warned: string[] = [];
+  const errored: string[] = [];
   const gate = { held: undefined as Promise<void> | undefined, reached: () => {} };
   /** While set, the store refuses every delete (an outage). */
   const deletes = { failing: false };
@@ -73,7 +74,7 @@ function build() {
     log: () => {},
     debug: () => {},
     warn: (msg) => void warned.push(msg),
-    error: () => {},
+    error: (msg) => void errored.push(msg),
   };
   internals.uploadLocks = new Map();
   internals.persistMetadata = () => Promise.resolve();
@@ -92,7 +93,7 @@ function build() {
       },
     };
   };
-  return { service, internals, stored, warned, naming, holdStore, deletes };
+  return { service, internals, stored, warned, errored, naming, holdStore, deletes };
 }
 
 const refusal = { status: 410, response: { code: OWNER_ERASED } };
@@ -169,14 +170,24 @@ describe('the single-request upload of an erased owner', () => {
 });
 
 describe('every other path that registers an object refuses an erased owner', () => {
-  it('a form file', async () => {
-    const { service, stored, naming } = build();
+  it('a form file: dated by the forwarded token, undated is old', async () => {
+    const { service, internals, stored, naming } = build();
     await service.removeAllOwnedBy('alice');
+    const erasedAt = internals.meta.erasedOwners?.[erasedOwnerKey('alice')] ?? 0;
     await expect(service.uploadFormFile(Buffer.from('%PDF-1.4'), 'alice')).rejects.toMatchObject(
       refusal
     );
+    await expect(
+      service.uploadFormFile(Buffer.from('%PDF-1.4'), 'alice', erasedAt - 1000)
+    ).rejects.toMatchObject(refusal);
     expect(stored.size).toBe(0);
     expect(naming('alice')).toEqual([]);
+    // A person who came back answers a form with a file like anyone.
+    const back = (Math.floor(erasedAt / 1000) + 2) * 1000;
+    await expect(
+      service.uploadFormFile(Buffer.from('%PDF-1.4'), 'alice', back)
+    ).resolves.toMatchObject({ sizeBytes: 8 });
+    expect(naming('alice')).toHaveLength(1);
   });
 
   it('a public image: it records no owner, but would be cited by nothing', async () => {
@@ -260,6 +271,22 @@ describe('what the erasure leaves nobody to end', () => {
     expect(internals.meta.items[mediaId]?.deletePending).toBeUndefined();
   });
 
+  it('a refusal stays a 410 when the owed delete cannot be written to the index yet', async () => {
+    const { service, internals, stored, holdStore, deletes, errored } = build();
+    const store = holdStore();
+    const uploading = service.upload(Buffer.alloc(10), 'alice', 'archive');
+    await store.reached;
+    await service.removeAllOwnedBy('alice');
+    deletes.failing = true;
+    internals.persistMetadata = () => Promise.reject(new Error('disk full'));
+    store.release();
+
+    await expect(uploading).rejects.toMatchObject(refusal);
+    const [mediaId] = [...stored];
+    expect(internals.meta.items[mediaId]).toMatchObject({ deletePending: true });
+    expect(errored.some((e) => e.includes('could not be written to the index yet'))).toBe(true);
+  });
+
   it("a completed chunk upload's memo naming the erased owner goes; another member's stays", async () => {
     const { service, internals } = build();
     const complete = async (owner: string) => {
@@ -297,6 +324,21 @@ describe('the record', () => {
     await expect(uploading).rejects.toMatchObject(refusal);
     expect(internals.forgetLapsedErasedOwners(lapsed)).toBe(1);
     expect(internals.meta.erasedOwners?.[key]).toBeUndefined();
+  });
+
+  it('is NOT held past its window by an upload of a person who came back', async () => {
+    const { service, internals, holdStore } = build();
+    await service.removeAllOwnedBy('alice');
+    const key = erasedOwnerKey('alice');
+    const erasedAt = internals.meta.erasedOwners?.[key] ?? 0;
+    const store = holdStore();
+    const back = (Math.floor(erasedAt / 1000) + 2) * 1000;
+    const uploading = service.upload(Buffer.alloc(10), 'alice', 'ephemeral', back);
+    await store.reached;
+    // The record would not refuse this upload, so it does not keep the record either.
+    expect(internals.forgetLapsedErasedOwners(erasedAt + erasedOwnerKeptMs())).toBe(1);
+    store.release();
+    await expect(uploading).resolves.toBeDefined();
   });
 
   it('runs from the LATEST erasure call: the final pass extends it', async () => {
