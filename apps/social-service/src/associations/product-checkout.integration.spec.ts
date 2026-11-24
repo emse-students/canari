@@ -21,6 +21,7 @@ import { PurchaseRecord } from '../users/entities/purchase-record.entity';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { ProductsService } from './products.service';
 import { isUniqueViolation } from '../common/pg-errors';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -121,6 +122,11 @@ maybe('product checkout attempts against PostgreSQL', () => {
       [row.id]
     );
     expect(after).toEqual({ status: 'paid', purchaseRecordId: records[0].id });
+
+    takeLogged(
+      'error',
+      /^\[SHOP\] checkout [0-9a-f]{6,8}: product [0-9a-f]{6,8} no longer exists - payment recorded paid_not_granted, nothing delivered; a refund is owed$/
+    );
   });
 
   it('completes an attempt paid before its request id was known ONCE, however many callbacks race', async () => {
@@ -149,6 +155,11 @@ maybe('product checkout attempts against PostgreSQL', () => {
       log.mock.calls.filter(([m]) => String(m).includes('purchase record completed'))
     ).toHaveLength(1);
     log.mockRestore();
+
+    takeLogged(
+      'error',
+      /^\[SHOP\] checkout [0-9a-f]{6,8}: product [0-9a-f]{6,8} no longer exists - payment recorded paid_not_granted, nothing delivered; a refund is owed$/
+    );
   });
 
   it('completes the record when the return settled it while the callback held an open snapshot', async () => {
@@ -185,6 +196,11 @@ maybe('product checkout attempts against PostgreSQL', () => {
       [row.id]
     );
     expect(after).toEqual({ requestId: '1001', status: 'paid' });
+
+    takeLogged(
+      'error',
+      /^\[SHOP\] checkout [0-9a-f]{6,8}: product [0-9a-f]{6,8} no longer exists - payment recorded paid_not_granted, nothing delivered; a refund is owed$/
+    );
   });
 
   it('refuses a second OPEN attempt of one product and buyer, and allows one once the first is closed', async () => {

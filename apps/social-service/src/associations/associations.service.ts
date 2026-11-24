@@ -299,7 +299,7 @@ import {
   type ReopenedEvent,
 } from './event-reopen';
 import { UserTagService } from '../users/user-tag.service';
-import { sanitizeLog } from '../common/log.utils';
+import { sanitizeLog, describeError } from '../common/log.utils';
 import { announceOpeningToFollowers } from '../openings/opening-reminders';
 import { type PublicMember, publicMemberAvatarUrl } from '../public/public-member';
 import type { NotificationType } from '../push/notification-client-floor';
@@ -796,7 +796,9 @@ export class AssociationsService {
       await invalidatePostListCache(this.redis);
     } catch (e: unknown) {
       // Non-fatal, and logged: a sweep that failed leaves pages stale for up to their TTL.
-      this.logger.warn('[CACHE] feed cache sweep failed - pages stay stale until their TTL', e);
+      this.logger.warn(
+        `[CACHE] feed cache sweep failed - pages stay stale until their TTL: ${describeError(e)}`
+      );
     }
   }
 

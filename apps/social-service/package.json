@@ -1,6 +1,6 @@
 {
   "name": "social-service",
-  "version": "1.8.0-alpha.5",
+  "version": "1.8.0-alpha.6",
   "private": true,
   "scripts": {
     "start": "ts-node src/main.ts",
@@ -82,7 +82,8 @@
     "testEnvironment": "node",
     "globalSetup": "<rootDir>/../jest-global-setup.cjs",
     "setupFilesAfterEnv": [
-      "<rootDir>/../jest-integration-budget.cjs"
+      "<rootDir>/../jest-integration-budget.cjs",
+      "<rootDir>/common/testing/integration-log-guard.it-fixture.ts"
     ]
   }
 }

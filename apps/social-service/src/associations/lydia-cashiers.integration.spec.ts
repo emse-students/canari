@@ -49,6 +49,7 @@ import {
   LYDIA_CASHIER_NUMBER_CHANGED,
   LYDIA_CASHIER_PHONE_IN_USE,
 } from './lydia-cashier-claim';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -291,6 +292,16 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
     ).toEqual([{ n: 0 }]);
     await expect(cashiers.release(ASSO, second.claimToken)).resolves.toBe(true);
     expect(await claimHeld()).toBe(false);
+
+    takeLogged(
+      'warn',
+      /^\[LYDIA-CASHIER\] release on association [0-9a-f-]{36} ignored: the claim no longer carries that token$/,
+      2
+    );
+    takeLogged(
+      'error',
+      /^\[LYDIA-CASHIER\] record refused on [0-9a-f-]{36}: the claim no longer carries its token - Lydia's answer is not recorded$/
+    );
   });
 
   it('a role change clears the removal flag; one recorded against a number the row no longer holds writes nothing', async () => {
@@ -327,6 +338,15 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
     );
     expect(row.role).toBe('tresorier');
     expect(await claimHeld()).toBe(false);
+
+    takeLogged(
+      'error',
+      /^\[AUDIT\] Lydia cashier removal on association [0-9a-f-]{36}: row [0-9a-f]{6,8} \(current number\), by treasure - NOT confirmed by Lydia: the row stays live, flagged; Lydia may still list that number$/
+    );
+    takeLogged(
+      'error',
+      /^\[LYDIA-CASHIER\] role change on [0-9a-f-]{36} NOT recorded: the row no longer holds the number Lydia was asked about$/
+    );
   });
 
   it('a removal Lydia confirmed closes the row and clears every number; an unconfirmed one keeps it live, flagged', async () => {
@@ -346,6 +366,11 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
     );
     expect(closed.removedAt).not.toBeNull();
     expect(closed).toMatchObject({ phoneSealed: null, phoneEnd: null, revokeUnconfirmedAt: null });
+
+    takeLogged(
+      'error',
+      /^\[AUDIT\] Lydia cashier removal on association [0-9a-f-]{36}: row [0-9a-f]{6,8} \(current number\), by treasure - NOT confirmed by Lydia: the row stays live, flagged; Lydia may still list that number$/
+    );
   });
 
   it('a Responsable number change keeps BOTH numbers until the old one is confirmed removed; halfway nothing is lost', async () => {
@@ -369,6 +394,11 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
       previousPhoneEnd: null,
       state: 'confirmed',
     });
+
+    takeLogged(
+      'error',
+      /^\[AUDIT\] Lydia cashier removal on association [0-9a-f-]{36}: row [0-9a-f]{6,8} \(previous number\), by treasure - NOT confirmed by Lydia: the row stays live, flagged; Lydia may still list that number$/
+    );
   });
 
   it('a new Responsable number Lydia did NOT confirm: the old number stays the live one, the removal step acts only on the new one', async () => {
@@ -383,6 +413,11 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
     const target = await revoke(numbers.id, 'previous', true);
     expect(target).toMatchObject({ cashierPhone: '+33611111111', contextPhone: HOLDER_PHONE });
     expect(await responsableNumbers()).toMatchObject({ current: HOLDER_PHONE, other: null });
+
+    takeLogged(
+      'error',
+      /^\[AUDIT\] Lydia Responsable recorded on association [0-9a-f-]{36}: user holder, phone ending 11, by treasure - live: the number ending 32 \(the one ending 11 unconfirmed\) - UNCONFIRMED: added at Lydia, rights not read back$/
+    );
   });
 
   it('going BACK to the old number while it is tracked: re-confirmed, then the new one is the one to remove', async () => {
@@ -430,6 +465,16 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
       associations.claimLydiaResponsable(ASSO, 'member-3', HOLDER_PHONE, { mode: 'add' })
     ).rejects.toMatchObject({ response: { code: LYDIA_CASHIER_PHONE_IN_USE } });
     expect(await claimHeld()).toBe(false);
+
+    takeLogged(
+      'warn',
+      /^\[LYDIA\] Responsable claim refused on [0-9a-f-]{36}: the number is another cashier's$/,
+      2
+    );
+    takeLogged(
+      'error',
+      /^\[LYDIA-CASHIER\] role change refused on [0-9a-f-]{36}: the row's number is the Responsable's$/
+    );
   });
 
   describe('a membership that ended owes its Lydia rights (the real SQL)', () => {
@@ -602,6 +647,11 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
           phone: '+33633334444',
         })
       ).resolves.toMatchObject({ retry: false });
+
+      takeLogged(
+        'warn',
+        /^\[LYDIA-CASHIER\] hand-over refused on [0-9a-f-]{36}: LYDIA_RESPONSABLE_PHONE_LOCKED$/
+      );
     });
 
     it('Lydia did not confirm: the old Responsable stays, the asked number is tracked; the retry hands over', async () => {
@@ -626,6 +676,15 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
         current: HEIR,
         other: HOLDER_PHONE,
       });
+
+      takeLogged(
+        'error',
+        /^\[AUDIT\] Lydia Responsable hand-over on association [0-9a-f-]{36}: to user member-2, phone ending 22, by holder - unconfirmed: Lydia did not confirm the rights - the Responsable is unchanged unless none was left; the number is tracked for a retry or a removal$/
+      );
+      takeLogged(
+        'warn',
+        /^\[LYDIA-CASHIER\] hand-over refused on [0-9a-f-]{36}: LYDIA_RESPONSABLE_PHONE_LOCKED$/
+      );
     });
 
     it('the heir left while Lydia was asked: nothing handed over, their number tracked and removable', async () => {
@@ -641,6 +700,11 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
       expect(out.cashierId).toBe(numbers.id);
       await revoke(out.cashierId, 'previous', true);
       expect((await responsableNumbers()).other).toBeNull();
+
+      takeLogged(
+        'warn',
+        /^\[AUDIT\] Lydia Responsable hand-over on association [0-9a-f-]{36}: to user member-2, phone ending 22, by holder - target-left: the new holder left meanwhile - not recorded as the Responsable; their number is tracked and removed next$/
+      );
     });
 
     it('the heir left AND Lydia did not confirm: target-left wins - the number removed next, never tracked with nobody to end it', async () => {
@@ -654,6 +718,11 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
       await revoke(out.cashierId, 'previous', true);
       expect((await responsableNumbers()).other).toBeNull();
       expect((await liveRows()).map((r) => r.userId)).toEqual(['holder']);
+
+      takeLogged(
+        'warn',
+        /^\[AUDIT\] Lydia Responsable hand-over on association [0-9a-f-]{36}: to user member-2, phone ending 22, by holder - target-left: the new holder left meanwhile - not recorded as the Responsable; their number is tracked and removed next$/
+      );
     });
 
     it('the heir lost MANAGE_PAYOUT_ACCOUNT between claim and record: never recorded, their number tracked and removed', async () => {
@@ -669,6 +738,11 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
       expect(await responsableNumbers()).toMatchObject({ current: HOLDER_PHONE, other: HEIR });
       await revoke(out.cashierId, 'previous', true);
       expect((await responsableNumbers()).other).toBeNull();
+
+      takeLogged(
+        'warn',
+        /^\[AUDIT\] Lydia Responsable hand-over on association [0-9a-f-]{36}: to user member-2, phone ending 22, by holder - heir-ineligible: the new holder no longer manages the payout account - not recorded as the Responsable; their number is tracked and removed next$/
+      );
     });
 
     it('crash between the add and the record: the claim stays, every next attempt is IN_FLIGHT until a global admin clears it', async () => {
@@ -680,6 +754,11 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
       });
       await associations.releaseLydiaEnrolment(ASSO, 'admin');
       await expect(claim()).resolves.toMatchObject({ retry: false });
+
+      takeLogged(
+        'warn',
+        /^\[LYDIA-CASHIER\] Responsable hand-over refused on [0-9a-f-]{36}: another cashier operation is in flight$/
+      );
     });
 
     it('a record REFUSED after Lydia added (CLAIM_LOST) writes nothing; the same hand-over again, same number, completes it', async () => {
@@ -697,6 +776,15 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
       expect(again.retry).toBe(false);
       expect(await recordAfter(again, true)).toMatchObject({ outcome: 'handed-over' });
       expect(await responsableNumbers()).toMatchObject({ current: HEIR, other: HOLDER_PHONE });
+
+      takeLogged(
+        'error',
+        /^\[LYDIA-CASHIER\] hand-over record refused on [0-9a-f-]{36}: the claim no longer carries its token - Lydia's answer is not recorded$/
+      );
+      takeLogged(
+        'warn',
+        /^\[LYDIA-CASHIER\] release on association [0-9a-f-]{36} ignored: the claim no longer carries that token$/
+      );
     });
 
     it('switched off: social refuses the claim itself (defence in depth), nothing claimed', async () => {
@@ -707,6 +795,11 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
         response: { code: LYDIA_RESPONSABLE_HANDOVER_DISABLED },
       });
       expect(await claimHeld()).toBe(false);
+
+      takeLogged(
+        'warn',
+        /^\[LYDIA-CASHIER\] hand-over claim refused on [0-9a-f-]{36}: switched off$/
+      );
     });
 
     it('an heir without MANAGE_PAYOUT_ACCOUNT is refused, nothing claimed (owner, 2026-11-20)', async () => {
@@ -720,6 +813,11 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
         response: { code: LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER },
       });
       expect(await claimHeld()).toBe(false);
+
+      takeLogged(
+        'warn',
+        /^\[LYDIA-CASHIER\] hand-over refused on [0-9a-f-]{36}: LYDIA_RESPONSABLE_HANDOVER_HEIR_NOT_PAYOUT_MANAGER$/
+      );
     });
 
     it('a cashier is PROMOTED in one step: their own row closed and the Responsable row theirs, in ONE transaction', async () => {
@@ -744,6 +842,11 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
         response: { code: LYDIA_RESPONSABLE_HANDOVER_CASHIER_NUMBER },
       });
       expect(await claimHeld()).toBe(false);
+
+      takeLogged(
+        'warn',
+        /^\[LYDIA-CASHIER\] hand-over refused on [0-9a-f-]{36}: LYDIA_RESPONSABLE_HANDOVER_CASHIER_NUMBER$/
+      );
     });
 
     it('a promotion Lydia did not confirm: the Responsable unchanged, the cashier row marked unconfirmed, nothing tracked', async () => {
@@ -758,6 +861,11 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
       ]);
       expect(await responsableNumbers()).toMatchObject({ other: null });
       expect(await claimHeld()).toBe(false);
+
+      takeLogged(
+        'error',
+        /^\[AUDIT\] Lydia Responsable hand-over on association [0-9a-f-]{36}: to user member-2, phone ending 22, by holder - unconfirmed: Lydia did not confirm the rights - the Responsable is unchanged unless none was left; the number is tracked for a retry or a removal$/
+      );
     });
 
     it('a promoted cashier who left meanwhile: their own number is the one removed next', async () => {
@@ -774,6 +882,11 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
       });
       await revoke(vendeur.id, 'current', true);
       expect((await liveRows()).map((r) => r.userId)).toEqual(['holder']);
+
+      takeLogged(
+        'warn',
+        /^\[AUDIT\] Lydia Responsable hand-over on association [0-9a-f-]{36}: to user member-2, phone ending 22, by holder - target-left: the new holder left meanwhile - not recorded as the Responsable; their number is tracked and removed next$/
+      );
     });
 
     it('no old Responsable left AND the heir left (M4): target-left, the number tracked as a departed Responsable', async () => {
@@ -788,6 +901,15 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
         { id: out.cashierId, userId: 'member-2', role: 'responsable', confirmed: true },
       ]);
       expect(tellResponsable).not.toHaveBeenCalled();
+
+      takeLogged(
+        'error',
+        /^\[LYDIA-CASHIER\] hand-over on [0-9a-f-]{36}: the old Responsable row was gone - the new one was recorded alone \(target-left\): a platform admin hands the role over$/
+      );
+      takeLogged(
+        'warn',
+        /^\[AUDIT\] Lydia Responsable hand-over on association [0-9a-f-]{36}: to user member-2, phone ending 22, by holder - target-left: the new holder left meanwhile - recorded as a DEPARTED Responsable \(no old Responsable was left to keep\): a platform admin hands the role over, which removes the number$/
+      );
     });
 
     it('no old Responsable left AND the heir lost MANAGE_PAYOUT_ACCOUNT: recorded and answered as the Responsable', async () => {
@@ -802,6 +924,11 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
         { id: out.cashierId, userId: 'member-2', role: 'responsable', confirmed: true },
       ]);
       expect(await claimHeld()).toBe(false);
+
+      takeLogged(
+        'error',
+        /^\[LYDIA-CASHIER\] hand-over on [0-9a-f-]{36}: the old Responsable row was gone - the new one was recorded alone \(handed-over\) WITHOUT MANAGE_PAYOUT_ACCOUNT: a manager grants it, or a platform admin hands the role over$/
+      );
     });
 
     describe('the departure rule, on the real SQL', () => {
@@ -826,6 +953,11 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
         await expect(guard('holder')).rejects.toMatchObject({
           response: { code: LYDIA_RESPONSABLE_MUST_HAND_OVER },
         });
+
+        takeLogged(
+          'warn',
+          /^removeMember refused on association [0-9a-f-]{36}: the leaver is the Lydia Responsable - the role is handed over first$/
+        );
       });
 
       it('an UNCONFIRMED Responsable leaves freely: the hand-over could not take the role from them', async () => {
@@ -845,6 +977,11 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
         await expect(
           guard('holder', { leaving: false, adminAcknowledged: true })
         ).resolves.toBeUndefined();
+
+        takeLogged(
+          'error',
+          /^removeMember on association [0-9a-f-]{36}: a platform admin removed the Lydia Responsable without a hand-over \(confirmed by typing\) - their number keeps every right at Lydia until it is removed$/
+        );
       });
     });
 
@@ -855,6 +992,11 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
         response: { code: LYDIA_RESPONSABLE_HANDOVER_FORBIDDEN },
       });
       expect(await claimHeld()).toBe(false);
+
+      takeLogged(
+        'warn',
+        /^\[LYDIA-CASHIER\] hand-over refused on [0-9a-f-]{36}: LYDIA_RESPONSABLE_HANDOVER_FORBIDDEN$/
+      );
     });
 
     it('two hand-overs at once: ONE claim, ONE typed IN_FLIGHT', async () => {
@@ -866,6 +1008,11 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
       expect((lost.reason as HttpException).getResponse()).toMatchObject({
         code: LYDIA_CASHIER_IN_FLIGHT,
       });
+
+      takeLogged(
+        'warn',
+        /^\[LYDIA-CASHIER\] Responsable hand-over refused on [0-9a-f-]{36}: another cashier operation is in flight$/
+      );
     });
   });
 
@@ -881,6 +1028,11 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
       expect((lost.reason as HttpException).getResponse()).toMatchObject({
         code: LYDIA_CASHIER_IN_FLIGHT,
       });
+
+      takeLogged(
+        'warn',
+        /^\[LYDIA-CASHIER\] add refused on [0-9a-f-]{36}: another cashier operation is in flight$/
+      );
     });
 
     it('two RECORDS under one claim: ONE row, the other the typed CLAIM_LOST', async () => {
@@ -904,6 +1056,15 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
           `SELECT count(*)::int AS n FROM lydia_cashiers WHERE "userId" = 'member-3' AND "removedAt" IS NULL`
         )
       ).toEqual([{ n: 1 }]);
+
+      takeLogged(
+        'error',
+        /^\[LYDIA-CASHIER\] record refused on [0-9a-f-]{36}: the claim no longer carries its token - Lydia's answer is not recorded$/
+      );
+      takeLogged(
+        'warn',
+        /^\[LYDIA-CASHIER\] release on association [0-9a-f-]{36} ignored: the claim no longer carries that token$/
+      );
     });
 
     it('an add racing a removal: ONE wins the claim, the other is the typed IN_FLIGHT', async () => {
@@ -918,6 +1079,11 @@ maybe('Lydia cashiers: rows, numbers and one claim (PostgreSQL)', () => {
       expect((lost.reason as HttpException).getResponse()).toMatchObject({
         code: LYDIA_CASHIER_IN_FLIGHT,
       });
+      // Which contender loses is the race's to decide: the add or the revoke, but exactly one of them.
+      takeLogged(
+        'warn',
+        /^\[LYDIA-CASHIER\] (?:add|revoke \(current\)) refused on [0-9a-f-]{36}: another cashier operation is in flight$/
+      );
     });
   });
 });

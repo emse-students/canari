@@ -112,6 +112,8 @@ maybe('comment writes against PostgreSQL: none is lost to another', () => {
       withinPushBudget: jest.fn((_type: string, ids: string[]) => Promise.resolve(ids)),
       // The author's door, proven in `entity-author-door.integration.spec.ts`: open here.
       postAuthorIsTold: jest.fn(() => Promise.resolve(true)),
+      // The author's activity row: its own spec proves it, a no-op here.
+      notifyPostActivity: jest.fn(() => Promise.resolve()),
     };
     interactions = new PostInteractionsService(
       ds.getRepository(Post),

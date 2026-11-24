@@ -35,6 +35,7 @@ import { ChannelMessage } from './entities/channel-message.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import type { RedisService } from '../common/redis';
 import type { ReelPurgeOutcome } from '../internal/reel-media';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -228,6 +229,11 @@ maybe('a salon reel purge against PostgreSQL (migration 122)', () => {
     expect(files.has(BOBS_REEL)).toBe(true);
     // The message itself is gone: refusing the file never keeps a moderated message.
     expect((await q(`SELECT 1 FROM channel_messages WHERE id = $1`, [lying.id])).length).toBe(0);
+
+    takeLogged(
+      'warn',
+      /^\[CHANNEL_REEL_PURGE\] channel=[0-9a-f-]{36} message=[0-9a-f-]{36} reel=[0-9a-f]{6,8} author=alice: refused - not the author's held reel, left alone$/
+    );
   });
 
   it("the author's own delete purges nothing: the sender releases their hold themselves", async () => {

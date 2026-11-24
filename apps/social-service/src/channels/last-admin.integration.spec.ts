@@ -43,6 +43,7 @@ import {
   untilWaiting,
   type LockWaitResult,
 } from '../common/lock-wait.it-fixture';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -352,6 +353,11 @@ maybe('the last admin against PostgreSQL', () => {
     expect(ran()).toBe(true);
     expect(outcome).toBe(NO_ADMIN);
     expect(await adminsOf(ws, roles.admin)).toEqual(['a1']);
+
+    takeLogged(
+      'warn',
+      /^\[WORKSPACE\] REFUSED under the removal lock - the exit would leave no admin exit=demoted workspace=[0-9a-f-]{36} target=a1 members=3 - the admin set changed after the early check$/
+    );
   });
 
   it('a leave that passed the early check, racing a demotion: the leave is refused', async () => {
@@ -363,6 +369,19 @@ maybe('the last admin against PostgreSQL', () => {
     expect(ran()).toBe(true);
     expect(outcome).toBe(NO_ADMIN);
     expect(await adminsOf(ws, roles.admin)).toEqual(['a1']);
+
+    takeLogged(
+      'warn',
+      /^\[KEY_DISTRIBUTION\] no distribution group to cut scope=workspace:[0-9a-f-]{36} user=a1 reason=left - pre-Graine community, or its group is gone$/
+    );
+    takeLogged(
+      'warn',
+      /^\[WORKSPACE\] REFUSED under the removal lock - the exit would leave no admin exit=left workspace=[0-9a-f-]{36} target=a1 members=3 - the admin set changed after the early check$/
+    );
+    takeLogged(
+      'warn',
+      '[KEY_DISTRIBUTION] departure ABANDONED reason=left begun=0: The community would be left with no administrator. - settling what it began'
+    );
   });
 
   it('a demotion that passed the early check, racing a kick: the demotion is refused', async () => {
@@ -372,6 +391,15 @@ maybe('the last admin against PostgreSQL', () => {
     expect(ran()).toBe(true);
     expect(outcome).toBe(NO_ADMIN);
     expect(await adminsOf(ws, roles.admin)).toEqual(['a2']);
+
+    takeLogged(
+      'warn',
+      /^\[KEY_DISTRIBUTION\] no distribution group to cut scope=workspace:[0-9a-f-]{36} user=a1 reason=kicked - pre-Graine community, or its group is gone$/
+    );
+    takeLogged(
+      'warn',
+      /^\[WORKSPACE\] REFUSED under the removal lock - the exit would leave no admin exit=demoted workspace=[0-9a-f-]{36} target=a2 members=2 - the admin set changed after the early check$/
+    );
   });
 
   it('a kick that passed the early check, racing a demotion: the kick is refused', async () => {
@@ -384,6 +412,19 @@ maybe('the last admin against PostgreSQL', () => {
     expect(ran()).toBe(true);
     expect(outcome).toBe(NO_ADMIN);
     expect(await adminsOf(ws, roles.admin)).toEqual(['a1']);
+
+    takeLogged(
+      'warn',
+      /^\[KEY_DISTRIBUTION\] no distribution group to cut scope=workspace:[0-9a-f-]{36} user=a1 reason=kicked - pre-Graine community, or its group is gone$/
+    );
+    takeLogged(
+      'warn',
+      /^\[WORKSPACE\] REFUSED under the removal lock - the exit would leave no admin exit=kicked workspace=[0-9a-f-]{36} target=a1 members=3 - the admin set changed after the early check$/
+    );
+    takeLogged(
+      'warn',
+      '[KEY_DISTRIBUTION] departure ABANDONED reason=kicked begun=0: The community would be left with no administrator. - settling what it began'
+    );
   });
 
   it('a role change whose new role lost workspace.manage meanwhile is decided as the demotion it now is', async () => {
@@ -399,6 +440,11 @@ maybe('the last admin against PostgreSQL', () => {
     expect(ran()).toBe(true);
     expect(outcome).toBe(NO_ADMIN);
     expect(await governorsOf(ws)).toEqual(['a1']);
+
+    takeLogged(
+      'warn',
+      /^\[WORKSPACE\] REFUSED under the removal lock - the exit would leave no admin exit=demoted workspace=[0-9a-f-]{36} target=a1 members=3 - the admin set changed after the early check$/
+    );
   });
 
   it('a role change whose actor lost the right to make it meanwhile is refused', async () => {
@@ -417,6 +463,11 @@ maybe('the last admin against PostgreSQL', () => {
     expect(ran()).toBe(true);
     expect(outcome).toBeInstanceOf(ForbiddenException);
     expect(await governorsOf(ws)).toEqual(['m1']);
+
+    takeLogged(
+      'warn',
+      /^\[KEY_DISTRIBUTION\] no distribution group to cut scope=workspace:[0-9a-f-]{36} user=a2 reason=left - pre-Graine community, or its group is gone$/
+    );
   });
 
   it('a revoke of workspace.manage that would leave no admin is refused, and the role keeps it', async () => {
@@ -429,6 +480,11 @@ maybe('the last admin against PostgreSQL', () => {
     const [role] = await q(`SELECT permissions FROM channel_roles WHERE id = $1`, [roles.admin]);
     expect(String((role as { permissions: string }).permissions)).toContain('workspace.manage');
     expect(await adminsOf(ws, roles.admin)).toEqual(['a1', 'a2']);
+
+    takeLogged(
+      'warn',
+      /^\[ROLE\] REFUSED revoke of workspace\.manage on role=[0-9a-f-]{36} - the community would have no admin workspace=[0-9a-f-]{36} members=3 by=a1$/
+    );
   });
 
   it('a revoke of workspace.manage while another role still grants it is allowed', async () => {
@@ -458,6 +514,19 @@ maybe('the last admin against PostgreSQL', () => {
     }
     expect(ran()).toBe(true);
     expect(await adminsOf(ws, roles.admin)).toEqual(['m1']);
+
+    takeLogged(
+      'warn',
+      /^\[KEY_DISTRIBUTION\] no distribution group to cut scope=workspace:[0-9a-f-]{36} user=a2 reason=left - pre-Graine community, or its group is gone$/
+    );
+    takeLogged(
+      'warn',
+      /^\[KEY_DISTRIBUTION\] no distribution group to cut scope=workspace:[0-9a-f-]{36} user=x-[0-9a-f]{6,8} reason=account_deleted - pre-Graine community, or its group is gone$/
+    );
+    takeLogged(
+      'warn',
+      /^\[WORKSPACE\] promoted a successor admin workspace=[0-9a-f-]{36} user=m1 role=[0-9a-f-]{36} members=1 reason=account_deletion$/
+    );
   });
 
   it('an erasure whose community empties meanwhile deletes it, and a failed deletion is found again by the retry', async () => {
@@ -495,6 +564,23 @@ maybe('the last admin against PostgreSQL', () => {
 
     expect(await service.removeAccountFromWorkspaces(erased)).toBe(1);
     expect(await leftOf(ws)).toEqual({ workspaces: 0, members: 0, salons: 0 });
+
+    takeLogged(
+      'warn',
+      /^\[KEY_DISTRIBUTION\] no distribution group to cut scope=workspace:[0-9a-f-]{36} user=m1 reason=left - pre-Graine community, or its group is gone$/
+    );
+    takeLogged(
+      'warn',
+      /^\[KEY_DISTRIBUTION\] no distribution group to cut scope=workspace:[0-9a-f-]{36} user=x-[0-9a-f]{6,8} reason=account_deleted - pre-Graine community, or its group is gone$/
+    );
+    takeLogged(
+      'warn',
+      /^\[KEY_DISTRIBUTION\] departure ABANDONED reason=account_deleted begun=0: erased account is the last member of workspace [0-9a-f-]{36} - settling what it began$/
+    );
+    takeLogged(
+      'warn',
+      /^\[WORKSPACE\] erasure departure refused - everyone else left meanwhile workspace=[0-9a-f-]{36} user=x-[0-9a-f]{6,8} attempt=1\/3 - taken again$/
+    );
   });
 
   it('an erasure deleting a community it was the last member of admits nobody meanwhile', async () => {
@@ -564,6 +650,11 @@ maybe('the last admin against PostgreSQL', () => {
     expect(started?.waited).toMatchObject({ outcome: 'waiting' });
     expect(await started!.outcome).toBe('allowed');
     expect(await leftOf(ws)).toEqual({ workspaces: 0, members: 0, salons: 0 });
+
+    takeLogged(
+      'warn',
+      /^\[KEY_DISTRIBUTION\] no distribution group to cut scope=workspace:[0-9a-f-]{36} user=m1 reason=kicked - pre-Graine community, or its group is gone$/
+    );
   });
 
   it('a deletion whose deleter is demoted inside its first call to chat-delivery completes', async () => {
@@ -621,6 +712,15 @@ maybe('the last admin against PostgreSQL', () => {
       allowedUsers: string;
     }[];
     expect(row.allowedUsers.split(',')).toEqual(['m1']);
+
+    takeLogged(
+      'warn',
+      /^\[KEY_DISTRIBUTION\] no distribution group to cut scope=workspace:[0-9a-f-]{36} user=x-[0-9a-f]{6,8} reason=account_deleted - pre-Graine community, or its group is gone$/
+    );
+    takeLogged(
+      'warn',
+      /^\[WORKSPACE\] promoted a successor admin workspace=[0-9a-f-]{36} user=m1 role=[0-9a-f-]{36} members=1 reason=account_deletion$/
+    );
   });
 
   it('an invite accepted while the last member leaves is refused', async () => {
@@ -668,6 +768,15 @@ maybe('the last admin against PostgreSQL', () => {
       spy.mockRestore();
     }
     expect(await q(`SELECT 1 FROM channel_workspaces WHERE id = $1`, [ws])).toHaveLength(0);
+
+    takeLogged(
+      'warn',
+      /^\[KEY_DISTRIBUTION\] no distribution group to cut scope=workspace:[0-9a-f-]{36} user=a1 reason=left - pre-Graine community, or its group is gone$/
+    );
+    takeLogged(
+      'warn',
+      /^\[INVITE\] REFUSED under the removal lock - workspace=[0-9a-f-]{36} has no members left door=invite_link$/
+    );
   });
 
   it('a role edit whose actor lost the right to make it meanwhile is refused, and the role is unchanged', async () => {
@@ -728,6 +837,11 @@ maybe('the last admin against PostgreSQL', () => {
     );
     expect(await service.removeAccountFromWorkspaces(erased)).toBe(1);
     expect(await leftOf(ws)).toEqual({ workspaces: 0, members: 0, salons: 0 });
+
+    takeLogged(
+      'warn',
+      /^\[INVITE\] REFUSED under the removal lock - the actor may no longer invite workspace=[0-9a-f-]{36} by=x-[0-9a-f]{6,8}$/
+    );
   });
 
   it('an erasure whose deletion premise is broken refuses before anything outside the service is deleted', async () => {

@@ -342,6 +342,7 @@ maybe('personal posts and lives open to accepted followers (WP-F5) against Postg
         {} as never,
         viaClient as never,
         {
+          incr: () => Promise.resolve(1),
           deleteByPattern: () => Promise.resolve(0),
         } as never
       );
