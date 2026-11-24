@@ -39,6 +39,8 @@
     toggledReactions,
   } from '$lib/posts/postReaction';
   import { doubleTapLike } from '$lib/actions/doubleTapLike';
+  import { shownPost } from '$lib/actions/shownPost';
+  import { seenPostsStore } from '$lib/posts/seenPosts.svelte';
   import type { Point } from '$lib/utils/viewerGestures';
   import DoubleTapHeart from './DoubleTapHeart.svelte';
   import { applyPostPollVote, nextPollSelection, pollDeadlinePassed } from '$lib/posts/pollVote';
@@ -137,6 +139,17 @@
    * deep link to one (its author opening it) is drawn and gated like the strip (owner, 2026-11-19).
    */
   const scheduled = $derived(scheduledProp || isStillScheduled(localPost, Date.now()));
+
+  /**
+   * THE CARD WAS DISPLAYED (most of it on screen, or opened on its own page): this device records it,
+   * so a campus trend for this post later shows no banner and no bell row (owner, 2026-11-24, "Verif
+   * sur l'appareil"; `seenPosts.ts`). Nothing leaves the device. A scheduled post is for its editors
+   * and can never be announced as a trend, so it is not recorded.
+   */
+  function noteDisplayed(): void {
+    if (scheduled) return;
+    seenPostsStore.note(localPost.id, localPost.publishedAt);
+  }
 
   /**
    * This card's writes, and the rule deciding what a new served row may replace.
@@ -732,6 +745,7 @@
       class={scheduled ? 'rounded-3xl opacity-80' : ''}
       style={scheduled ? pendingRingStyle('var(--color-accent)') : undefined}
       data-scheduled-post={scheduled ? 'true' : undefined}
+      use:shownPost={{ onshown: noteDisplayed }}
     >
       <Card
         class="group/card bg-cn-card border border-black/5 p-0! shadow-md shadow-black/8 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl dark:border-transparent dark:shadow-none"

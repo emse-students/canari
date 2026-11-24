@@ -359,7 +359,7 @@ describe('iOS: every App Group resolver answers the store, never the container r
       backupExclusionRs,
       /pub\(crate\) const OURS_PREFIXES: \[\(&str, Holding, AtSignOut\); \d+\] =\s*\[([^\]]+)\]/
     );
-    expect(rustStems.length).toBe(16);
+    expect(rustStems.length).toBe(17);
     expect(rustStems).toContain('channel_keys=mirror=kept');
     expect(rustStems).toContain('graine_seeds=solecopy=kept');
     expect(rustStems).toContain('push_secret=mirror=removed');

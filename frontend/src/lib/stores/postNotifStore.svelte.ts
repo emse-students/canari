@@ -23,6 +23,7 @@ import {
 import type { FeedStoreAccess } from '$lib/posts/feedStore';
 import { getSavedUserId } from '$lib/stores/user';
 import { onPeerNamesEnded } from '$lib/utils/users/peerNameDirectory';
+import { seenPostsStore } from '$lib/posts/seenPosts.svelte';
 
 /** The newest notifications kept on the device: the bell page asks for 50, the dropdown for 30. */
 export const MAX_STORED_NOTIFICATIONS = 50;
@@ -43,6 +44,30 @@ let answered = false;
 
 function isStoredNotification(value: unknown): value is PostNotification {
   return !!value && typeof value === 'object' && typeof (value as { id?: unknown }).id === 'string';
+}
+
+/**
+ * THE ROWS THE READER SEES: the list without the campus trends for a post this device already
+ * displayed (owner, 2026-11-24, "Verif sur l'appareil" - the server records no "seen", the device
+ * does; `seenPosts.ts`). Classified on the row's `type`, never its text. The server still holds the
+ * row, so a reader on another device sees it - the accepted limit.
+ *
+ * NEVER SILENT: each withheld row is said ONCE, by its row id (the 60 s poll answers the same rows
+ * again), and never with the post's id.
+ */
+// eslint-disable-next-line svelte/prefer-svelte-reactivity -- a log-once registry, never read by a screen
+const withheldLogged = new Set<string>();
+function shownRows(): PostNotification[] {
+  return notifications.filter((n) => {
+    if (!seenPostsStore.isSeenTrend({ type: n.type }, n.postId)) return true;
+    if (!withheldLogged.has(n.id)) {
+      withheldLogged.add(n.id);
+      console.log(
+        '[SEEN_TREND] bell: a campus trend row withheld - its post was already displayed on this device'
+      );
+    }
+    return false;
+  });
 }
 
 /** What was last handed to the sealed store, so an unchanged list is not sealed again. */
@@ -68,6 +93,7 @@ onPeerNamesEnded(() => {
   listOwner = null;
   answered = false;
   lastSealed = null;
+  withheldLogged.clear();
 });
 
 /**
@@ -104,7 +130,7 @@ onLocalCopiesOpen((access) => void openFor(access));
 
 export const postNotifStore = {
   get notifications(): PostNotification[] {
-    return notifications;
+    return shownRows();
   },
   /**
    * Number of unread notifications: the server's, plus the new-device alerts this device raised
@@ -112,7 +138,7 @@ export const postNotifStore = {
    * them (owner decision 2026-10-30). Counted here so every badge reads one number.
    */
   get unread(): number {
-    return notifications.filter((n) => !n.read).length + unreadDeviceNoticeCount();
+    return shownRows().filter((n) => !n.read).length + unreadDeviceNoticeCount();
   },
   get loading(): boolean {
     return loading;

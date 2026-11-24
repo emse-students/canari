@@ -182,6 +182,17 @@ class NotificationService: UNNotificationServiceExtension {
       // frame as `content-available: 1` / `apns-push-type: background`. A background push goes to
       // the app (canari_push.mm `CanariHandleFcmData`, which clears the channel's notification);
       // it never reaches this process. Listing it here read as "handled" and was a dead branch.
+      // A CAMPUS TREND FOR A POST THIS DEVICE ALREADY DISPLAYED SHOWS NOTHING (owner, 2026-11-24,
+      // "Verif sur l'appareil"): classified on the `contentKey`, never the wording. An extension
+      // cannot withhold an alert push (no filtering entitlement - see `LevelDecision`), so the
+      // nearest form is a blank, passive content: no banner, no sound, no wake. Never silent: the
+      // outcome says it, and the log line keeps no post id.
+      if Self.withholdsSeenTrend(userInfo: userInfo) {
+        applySeenTrendWithheld(content: content)
+        trace?.outcome = "seen-trend"
+        finish()
+        return
+      }
       applyServerContent(userInfo: userInfo, content: content)
       applyQuietUpdate(userInfo: userInfo, content: content)
       trace?.mark("attach")
@@ -764,7 +775,7 @@ class NotificationService: UNNotificationServiceExtension {
   /// own log (`take_nse_outcomes`, `commands/nse_outcomes.rs` - the contract is written there).
   ///
   /// One line per notification: `decrypted`, `fallback` with its `cause`, `server-content`,
-  /// `call-blank`, or `expired` (iOS asked the run to stop) - plus `killed`, which no run can write
+  /// `call-blank`, `seen-trend` (a campus trend for a post the app already displayed, delivered blank), or `expired` (iOS asked the run to stop) - plus `killed`, which no run can write
   /// about itself: each run leaves an in-flight marker naming its pid and its last stage, and the
   /// app turns the marker of a process proven gone into that line. Every stage also samples the
   /// physical footprint, the number jetsam holds an extension to, so a kill for memory shows the
@@ -1510,6 +1521,86 @@ class NotificationService: UNNotificationServiceExtension {
         NseLog.log.notice("[CanariNSE] cleared \(ringIds.count, privacy: .public) ring banner(s) for call \(callId, privacy: .public)")
       }
       self.finish()
+    }
+  }
+
+  // MARK: - A campus trend for a post this device already displayed (owner, 2026-11-24)
+
+  /// The `contentKey`s of a campus trend - the field a push is classified by, never its wording.
+  /// Twins: Android `SeenTrends.TREND_KEYS`, ObjC `CanariIsTrendKey`.
+  static let trendContentKeys: Set<String> = [
+    "social_campus_trend", "social_campus_trend_photo", "social_campus_trend_video",
+  ]
+
+  /// One account's `seen_posts.json`, parsed: the posts the app displayed, written by the WebView
+  /// (`seenPosts.svelte.ts`, Rust `store_seen_posts`). The owner is checked by `seenTrendWithheld`.
+  struct SeenPostsBook {
+    let owner: String
+    let posts: Set<String>
+  }
+
+  /// Reads `seen_posts.json` in the App Group, or nil (absent, unreadable - said under `label`).
+  static func readSeenPosts(label: String) -> SeenPostsBook? {
+    guard let dir = appGroupDir() else {
+      NseLog.log.notice("[CanariNSE] \(label, privacy: .public) WARN no App Group - no trend is withheld")
+      return nil
+    }
+    let url = dir.appendingPathComponent("seen_posts.json")
+    // Absent is a state (nothing displayed yet); present and unreadable is a fault.
+    guard FileManager.default.fileExists(atPath: url.path) else {
+      NseLog.log.notice("[CanariNSE] \(label, privacy: .public) no seen_posts.json - no trend is withheld")
+      return nil
+    }
+    guard let data = try? Data(contentsOf: url),
+      let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else {
+      NseLog.log.notice("[CanariNSE] \(label, privacy: .public) WARN seen_posts.json unreadable")
+      return nil
+    }
+    let posts = Set(((root["posts"] as? [String: Any]) ?? [:]).keys.map { $0.lowercased() })
+    return SeenPostsBook(owner: ((root["userId"] as? String) ?? "").lowercased(), posts: posts)
+  }
+
+  /// WHETHER A PUSH IS WITHHELD ON THIS DEVICE - the rule of
+  /// `libs/contracts/notification-seen-trend.cases.json` (`SeenTrendContractTests`). Another account's
+  /// record never withholds. Twins: Android `SeenTrends.withholds`, ObjC `CanariSeenTrendWithheld`.
+  static func seenTrendWithheld(
+    book: SeenPostsBook?, me: String?, contentKey: String?, postId: String?
+  ) -> Bool {
+    guard let book = book, let me = me?.trimmingCharacters(in: .whitespaces).lowercased(),
+      !me.isEmpty, book.owner == me, let key = contentKey, trendContentKeys.contains(key),
+      let id = postId?.trimmingCharacters(in: .whitespaces).lowercased(), !id.isEmpty
+    else { return false }
+    return book.posts.contains(id)
+  }
+
+  /// Whether this push is a campus trend for a post the app already displayed. The file is read only
+  /// for a trend, so every other push pays nothing; a withheld trend is logged WITHOUT the post id.
+  static func withholdsSeenTrend(userInfo: [AnyHashable: Any]) -> Bool {
+    guard let key = nonEmpty(string(userInfo["contentKey"])), trendContentKeys.contains(key) else {
+      return false
+    }
+    let withheld = seenTrendWithheld(
+      book: readSeenPosts(label: "[SEEN_TREND]"), me: signedInUserId(), contentKey: key,
+      postId: string(userInfo["postId"]))
+    if withheld {
+      NseLog.log.notice(
+        "[CanariNSE] [SEEN_TREND] a campus trend withheld - its post was already displayed on this device")
+    }
+    return withheld
+  }
+
+  /// The blank, passive content a withheld trend is delivered as: no text, no face, no sound. An
+  /// extension cannot suppress an alert push, so this is the nearest it comes to dropping one
+  /// (`applyCallControlContent` and `blankSignedOutContent` do the same).
+  private func applySeenTrendWithheld(content: UNMutableNotificationContent) {
+    content.title = ""
+    content.subtitle = ""
+    content.body = ""
+    content.sound = nil
+    content.attachments = []
+    if #available(iOS 15.0, *) {
+      content.interruptionLevel = .passive
     }
   }
 

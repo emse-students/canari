@@ -3455,6 +3455,67 @@ static NSDictionary *_Nullable CanariReadDisplayNames(NSString *_Nullable me,
   return names;
 }
 
+// A CAMPUS TREND FOR A POST THIS DEVICE ALREADY DISPLAYED SHOWS NOTHING (owner, 2026-11-24, "Verif
+// sur l'appareil"). The rule is `libs/contracts/notification-seen-trend.cases.json`; twins: Android
+// `SeenTrends.withholds`, Swift `NotificationService.seenTrendWithheld`. A push is a trend by its
+// `contentKey` - the FIELD, never the wording - and names its post in `postId`. The record is
+// `seen_posts.json`, written by the WebView (`seenPosts.svelte.ts`, Rust `store_seen_posts`); it names
+// its owner, and another account's record never withholds. Read only for a trend, so every other push
+// pays nothing. Nothing is sent to the server.
+static BOOL CanariIsTrendKey(NSString *_Nullable key) {
+  return [key isEqualToString:@"social_campus_trend"] ||
+         [key isEqualToString:@"social_campus_trend_photo"] ||
+         [key isEqualToString:@"social_campus_trend_video"];
+}
+
+static BOOL CanariSeenTrendWithheld(NSDictionary *_Nullable root, NSString *_Nullable me,
+                                    NSString *_Nullable contentKey, NSString *_Nullable postId) {
+  NSString *who = [[me stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]]
+      lowercaseString];
+  NSString *wanted = [[postId stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]]
+      lowercaseString];
+  if (![root isKindOfClass:[NSDictionary class]] || who.length == 0 || wanted.length == 0 ||
+      !CanariIsTrendKey(contentKey)) {
+    return NO;
+  }
+  id owner = root[@"userId"];
+  if (![owner isKindOfClass:[NSString class]] || ![[owner lowercaseString] isEqualToString:who]) {
+    return NO;
+  }
+  id posts = root[@"posts"];
+  if (![posts isKindOfClass:[NSDictionary class]]) return NO;
+  for (NSString *known in (NSDictionary *)posts) {
+    if ([[known lowercaseString] isEqualToString:wanted]) return YES;
+  }
+  return NO;
+}
+
+// Whether this push is withheld on this device; a withheld trend is logged WITHOUT the post id.
+static BOOL CanariWithholdsSeenTrend(NSDictionary *data) {
+  NSString *key = [data[@"contentKey"] isKindOfClass:[NSString class]] ? data[@"contentKey"] : nil;
+  if (!CanariIsTrendKey(key)) return NO;
+  NSString *postId = [data[@"postId"] isKindOfClass:[NSString class]] ? data[@"postId"] : nil;
+  NSString *dir = CanariTauriDataDir();
+  NSData *file = dir == nil ? nil
+                            : [NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:
+                                                                      @"seen_posts.json"]];
+  if (file == nil) {
+    NSLog(@"[CanariPush] [SEEN_TREND] no seen_posts.json - no trend is withheld");
+    return NO;
+  }
+  id root = [NSJSONSerialization JSONObjectWithData:file options:0 error:nil];
+  if (![root isKindOfClass:[NSDictionary class]]) {
+    NSLog(@"[CanariPush] [SEEN_TREND] WARN seen_posts.json unreadable");
+    return NO;
+  }
+  CanariPushContext *ctx = CanariLoadPushContext();
+  BOOL withheld = CanariSeenTrendWithheld(root, ctx.userId, key, postId);
+  if (withheld) {
+    NSLog(@"[CanariPush] [SEEN_TREND] a campus trend withheld - its post was already displayed on this device");
+  }
+  return withheld;
+}
+
 // Why a read of `display_names.json` names nobody, under `[MENTION_NAME]` - the mention renderers'
 // line. Nothing when the file names.
 static void CanariLogMentionNamesUnusable(NSString *_Nullable unusable) {
@@ -5022,6 +5083,8 @@ static void CanariHandleFcmData(NSDictionary *data) {
   }
 
   if ([msgType isEqualToString:@"social"] || [msgType isEqualToString:@"form_reminder"]) {
+    // A campus trend for a post this device already displayed shows nothing (owner, 2026-11-24).
+    if (CanariWithholdsSeenTrend(data)) return;
     NSString *title = [data[@"title"] isKindOfClass:[NSString class]] ? data[@"title"] : @"Canari";
     NSString *body = [data[@"body"] isKindOfClass:[NSString class]] ? data[@"body"] : @"";
     // Since 2026-08-19 the sentence is written HERE, in the language chosen inside Canari; the
