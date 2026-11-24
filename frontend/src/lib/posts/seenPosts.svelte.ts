@@ -5,10 +5,13 @@ import {
   parseSeenLedger,
   pruneSeen,
   serializeSeen,
+  withinTrendWindow,
+  BELL_ROW_RETENTION_MS,
   type SeenPosts,
 } from '$lib/posts/seenPosts';
 import {
   SEEN_POSTS_SLOT,
+  localCopiesAccess,
   onLocalCopiesOpen,
   readLocalCopy,
   writeLocalCopy,
@@ -43,13 +46,16 @@ import { onPeerNamesEnded } from '$lib/utils/users/peerNameDirectory';
  * the record is dirty ({@link flushSeenPosts}). NATIVE FIRST, then the sealed copy: the native file is
  * the one a push reads. The lifecycle flush stays as the last chance. The bell reads memory.
  *
- * THE BELL'S OWN DURABLE FACT. The record is pruned by the post's age (25 h) but a bell row lives 90
- * days, and a withheld "Suggestion" row must not come back, unread, in the list and the badge when its
- * post ages out. So the ids of the ROWS this device withheld are kept (`withholdsRow`), in the same
- * sealed copy, for as long as the rows are in the stored list (`retainWithheld`). A row is withheld
- * only if the post was displayed BEFORE the row was created - the case where its push was withheld
- * too: a trend the member already saw in the bell, or tapped from a shown push, is displayed AFTER
- * its row and never vanishes.
+ * THE BELL DECIDES ONCE, FROM STATE THAT OUTLIVES THE RECORD'S AGE. The record is by the post's age
+ * (25 h) but a bell row lives 90 days, and a withheld "Suggestion" row must not come back, unread, when
+ * its post ages out - nor must a trend the member already saw in the bell (or tapped from a shown push)
+ * vanish afterwards. So the FIRST time a trend row appears in this device's list ({@link
+ * seenPostsStore.decideRows}) its post is either in the record (the row is WITHHELD for good) or not (the
+ * row is KEPT for good): one fact, no comparison of two clocks. Both sets live in the sealed copy, each id
+ * with the row's own `createdAt`, and are dropped when the row is older than its 90 days.
+ * THE RECORD ITSELF IS NOT AGED OUT in memory until a bell answer that listed EVERY row was taken after
+ * the entry's horizon (`fullAnswerAt`): an app closed through the window still withholds, at its reopening,
+ * the row whose push was withheld meanwhile. The native file keeps pruning by age: it is read by pushes only.
  */
 
 // A plain Map on purpose: readers re-run on `revision`, which every change bumps.
@@ -57,15 +63,30 @@ import { onPeerNamesEnded } from '$lib/utils/users/peerNameDirectory';
 const emptyRecord = (): SeenPosts => new Map();
 // eslint-disable-next-line svelte/prefer-svelte-reactivity -- reactivity is `revision`, not the Map
 const emptyInstants = (): Map<string, number> => new Map();
-// eslint-disable-next-line svelte/prefer-svelte-reactivity -- reactivity is `revision`, not the Set
-const emptyRowIds = (): Set<string> => new Set();
+
+/** The bell row type of a campus trend (`PostNotification.type`). */
+const TREND_ROW_TYPE = 'campus_trend';
+
+/** The fields of a bell row the decision reads. */
+export interface BellRow {
+  id: string;
+  type: string;
+  postId: string;
+  createdAt?: string;
+}
 let seen: SeenPosts = emptyRecord();
 /** The account the in-memory record belongs to; never drawn or written under another. */
 let owner: string | null = null;
-/** post id -> epoch ms this device FIRST displayed it (the bell's rule; never sent to the readers). */
-let seenAt = emptyInstants();
-/** Ids of the bell rows this device withheld, kept while the row is in the stored list. */
-let withheldRows = emptyRowIds();
+/** Trend rows whose post had ALREADY been displayed when they first appeared: row id -> createdAt ms. */
+let withheldRows = emptyInstants();
+/** Trend rows whose post had NOT been displayed when they first appeared: kept for good. */
+let keptRows = emptyInstants();
+/** The device instant of the last bell answer that listed every row (0: none); ages the record. */
+let fullAnswerAt = 0;
+/** The account whose sealed copy is merged into memory: decisions wait for it, withholding does not. */
+let mergedFor: string | null = null;
+/** The last bell answer, decided again once the sealed copy is merged. */
+let lastAnswer: { rows: BellRow[]; complete: boolean } | null = null;
 /** A write is queued on the microtask queue. */
 let scheduled = false;
 /** Something was noted since the last write. */
@@ -79,8 +100,11 @@ let inFlight: Promise<void> | null = null;
 function reset(why: string): void {
   if (seen.size > 0) console.log(`[SEEN_TREND] record left memory (${why}): ${seen.size} post(s)`);
   seen = emptyRecord();
-  seenAt = emptyInstants();
-  withheldRows = emptyRowIds();
+  withheldRows = emptyInstants();
+  keptRows = emptyInstants();
+  fullAnswerAt = 0;
+  mergedFor = null;
+  lastAnswer = null;
   owner = null;
   dirty = false;
   revision++;
@@ -119,8 +143,9 @@ function scheduleWrite(): void {
 }
 
 /**
- * The sealed copy opened for an account: its record is merged into what memory holds (a post noted
- * before the key arrived is kept) and pruned.
+ * The sealed copy opened for an account: its record and the bell's decisions are merged into what
+ * memory holds (a post noted before the key arrived is kept), then the last bell answer is decided
+ * again - it may have come before the copy was read.
  */
 onLocalCopiesOpen((access) => {
   void (async () => {
@@ -128,31 +153,47 @@ onLocalCopiesOpen((access) => {
       const posts = parseSeen(body);
       return posts ? { posts, ledger: parseSeenLedger(body) } : null;
     });
-    if (!copy || getSavedUserId() !== access.userId) return;
-    const { posts: stored, ledger } = copy;
+    if (getSavedUserId() !== access.userId) return;
     if (owner !== null && owner !== access.userId) reset('another account');
     owner = access.userId;
-    let added = 0;
-    for (const [id, at] of stored) if (noteSeen(seen, id, at)) added++;
-    for (const [id, at] of ledger?.seenAt ?? []) {
-      const known = seenAt.get(id);
-      if (known === undefined || at < known) seenAt.set(id, at);
+    if (copy) {
+      const { posts: stored, ledger } = copy;
+      let added = 0;
+      for (const [id, at] of stored) if (noteSeen(seen, id, at)) added++;
+      for (const [id, at] of ledger.withheld) if (!withheldRows.has(id)) withheldRows.set(id, at);
+      for (const [id, at] of ledger.kept) if (!keptRows.has(id)) keptRows.set(id, at);
+      fullAnswerAt = Math.max(fullAnswerAt, ledger.fullAnswerAt);
+      const aged = ageRecord();
+      if (added > 0 || aged > 0) revision++;
+      // What the device copy held may be missing from the native file (a reinstall, a lost file, a
+      // move of the data): the native readers are handed the merged record again.
+      if (added > 0) {
+        dirty = true;
+        scheduleWrite();
+      }
+      console.log(
+        `[SEEN_TREND] ${added} post(s) drawn from the device copy, ${aged} aged out, ${withheldRows.size} withheld and ${keptRows.size} kept row(s)`
+      );
     }
-    for (const id of ledger?.withheld ?? []) withheldRows.add(id);
-    const pruned = pruneSeen(seen, Date.now());
-    pruneSeenAt();
-    if (added > 0 || pruned.aged > 0) revision++;
-    // What the device copy held may be missing from the native file (a reinstall, a lost file, a
-    // move of the data): the native readers are handed the merged record again.
-    if (added > 0) {
-      dirty = true;
-      scheduleWrite();
-    }
-    console.log(
-      `[SEEN_TREND] ${added} post(s) drawn from the device copy, ${pruned.aged} aged out, ${pruned.capped} over the cap`
-    );
+    mergedFor = access.userId;
+    revision++;
+    if (lastAnswer) seenPostsStore.decideRows(lastAnswer.rows, lastAnswer.complete);
   })();
 });
+
+/** Whether this account's sealed copy is open but not yet merged into memory. */
+function awaitingCopy(who: string): boolean {
+  return localCopiesAccess()?.userId === who && mergedFor !== who;
+}
+
+/**
+ * Ages the in-memory record: by the post's age, but only up to the last bell answer that listed every
+ * row (`fullAnswerAt`) - and the cap. Returns how many entries went.
+ */
+function ageRecord(): number {
+  const pruned = pruneSeen(seen, fullAnswerAt > 0 ? fullAnswerAt : 0);
+  return pruned.aged + pruned.capped;
+}
 
 export const seenPostsStore = {
   /**
@@ -164,45 +205,74 @@ export const seenPostsStore = {
     if (!who || !publishedAt) return;
     const at = Date.parse(publishedAt);
     if (!noteSeen(seen, postId, at)) return;
-    seenAt.set(postId.trim().toLowerCase(), Date.now());
     dirty = true;
     revision++;
     scheduleWrite();
   },
   /**
-   * Whether the bell must withhold `row`. A row withheld before stays withheld (the ledger, which
-   * outlives the record's pruning). A new trend row is withheld only if its post was displayed
-   * BEFORE the row was created: the push for it was withheld too. A post displayed after - the row
-   * already shown in the bell, or the push tapped - leaves the row where it is.
+   * Whether the bell withholds `row`: it was decided so, once, when it first appeared. Pure - it
+   * decides nothing (`decideRows` does).
    */
-  withholdsRow(row: { id: string; type: string; postId: string; createdAt?: string }): boolean {
+  withholdsRow(row: BellRow): boolean {
     void revision;
     if (!owner || owner !== getSavedUserId()) return false;
     if (withheldRows.has(row.id)) return true;
-    if (!isSeenTrend(seen, { type: row.type }, row.postId)) return false;
-    const displayed = seenAt.get(row.postId.trim().toLowerCase()) ?? 0;
-    const created = Date.parse(row.createdAt ?? '');
-    if (Number.isFinite(created) && displayed > created) return false;
-    withheldRows.add(row.id);
-    dirty = true;
-    scheduleWrite();
-    return true;
+    // A trend row met before this account's record is read is not shown: it is decided at the merge,
+    // never shown and then withdrawn.
+    return row.type === TREND_ROW_TYPE && !keptRows.has(row.id) && awaitingCopy(owner);
   },
   /**
-   * A full server answer: the ledger keeps only the rows the stored list still holds, so it is
-   * bounded by that list and a withheld row that is gone is forgotten with it.
+   * A bell answer: every trend row not yet decided is decided NOW, once - WITHHELD if its post is in
+   * the record, KEPT if it is not - and the decision is kept as long as the row can exist. Before this
+   * account's sealed copy is merged only the withholding is decided (a post in memory is positive
+   * evidence); the rest waits for the merge, so a record not yet read never keeps a row it would have
+   * withheld. `complete` says the answer listed EVERY row (it was shorter than the page asked for): only
+   * then does the record start ageing out, since no row can still appear whose post it holds.
    */
-  retainWithheld(rowIdList: readonly string[]): void {
-    const rowIds = emptyRowIds();
-    for (const id of rowIdList) rowIds.add(id);
-    let dropped = 0;
-    for (const id of withheldRows) {
-      if (!rowIds.has(id)) {
-        withheldRows.delete(id);
-        dropped++;
+  decideRows(rows: readonly BellRow[], complete: boolean): void {
+    const who = currentOwner();
+    if (!who) return;
+    if (awaitingCopy(who)) {
+      lastAnswer = { rows: [...rows], complete };
+      return;
+    }
+    let withheldNow = 0;
+    let keptNow = 0;
+    for (const row of rows) {
+      if (row.type !== TREND_ROW_TYPE || withheldRows.has(row.id) || keptRows.has(row.id)) continue;
+      const created = Date.parse(row.createdAt ?? '');
+      const at = Number.isFinite(created) ? created : Date.now();
+      if (isSeenTrend(seen, { type: row.type }, row.postId)) {
+        withheldRows.set(row.id, at);
+        withheldNow++;
+      } else {
+        keptRows.set(row.id, at);
+        keptNow++;
       }
     }
-    if (dropped === 0) return;
+    let changed = withheldNow + keptNow > 0;
+    const horizon = Date.now() - BELL_ROW_RETENTION_MS;
+    for (const map of [withheldRows, keptRows]) {
+      for (const [id, at] of map) {
+        if (at < horizon) {
+          map.delete(id);
+          changed = true;
+        }
+      }
+    }
+    if (complete) {
+      fullAnswerAt = Date.now();
+      changed = true;
+      if (ageRecord() > 0) revision++;
+    }
+    if (withheldNow > 0) {
+      revision++;
+      // NEVER SILENT, and never with the post's id: one line per decision, which is once per row.
+      console.log(
+        `[SEEN_TREND] bell: ${withheldNow} campus trend row(s) withheld - the post was already displayed on this device`
+      );
+    }
+    if (!changed) return;
     dirty = true;
     scheduleWrite();
   },
@@ -218,28 +288,28 @@ export const seenPostsStore = {
   },
 };
 
-/** Drops the first-display instants of posts the record no longer holds. */
-function pruneSeenAt(): void {
-  for (const id of seenAt.keys()) if (!seen.has(id)) seenAt.delete(id);
-}
-
 /** One write: the native readers' file first (mobile), then the sealed copy; each failure said. */
 async function writeRecord(): Promise<void> {
   const who = owner;
   if (!who || !dirty || getSavedUserId() !== who) return;
-  const pruned = pruneSeen(seen, Date.now());
-  pruneSeenAt();
   dirty = false;
-  if (pruned.aged > 0 || pruned.capped > 0) revision++;
   if (isMobileTauriRuntime()) await mirrorToNative(who);
-  await writeLocalCopy(SEEN_POSTS_SLOT, serializeSeen(seen, { seenAt, withheld: withheldRows }));
+  await writeLocalCopy(
+    SEEN_POSTS_SLOT,
+    serializeSeen(seen, { withheld: withheldRows, kept: keptRows, fullAnswerAt })
+  );
 }
 
 /** Hands the record to the native readers; a failure keeps the record dirty for the next write. */
 async function mirrorToNative(who: string): Promise<void> {
   try {
     const { invoke } = await import('@tauri-apps/api/core');
-    const posts = [...seen].map(([postId, publishedAt]) => ({ postId, publishedAt }));
+    // The native file prunes by AGE, always: a push reads it, and a post past the trend window can
+    // never be announced again. (The in-memory record waits for a full bell answer: `ageRecord`.)
+    const now = Date.now();
+    const posts = [...seen]
+      .filter(([, publishedAt]) => withinTrendWindow(publishedAt, now))
+      .map(([postId, publishedAt]) => ({ postId, publishedAt }));
     const held = await invoke<number>('store_seen_posts', { userId: who, posts });
     console.log(
       `[SEEN_TREND] mirrored ${posts.length} post(s) for the native readers, ${held} held`
@@ -289,8 +359,11 @@ export async function forgetSeenPosts(userId: string): Promise<void> {
 /** Test seam: forgets everything held in memory without touching a device. */
 export function resetSeenPostsForTest(): void {
   seen = emptyRecord();
-  seenAt = emptyInstants();
-  withheldRows = emptyRowIds();
+  withheldRows = emptyInstants();
+  keptRows = emptyInstants();
+  fullAnswerAt = 0;
+  mergedFor = null;
+  lastAnswer = null;
   owner = null;
   dirty = false;
   inFlight = null;

@@ -85,46 +85,67 @@ export function pruneSeen(seen: SeenPosts, nowMs: number): { aged: number; cappe
   return { aged, capped };
 }
 
-/** What the bell keeps beside the record: see `seenPosts.svelte.ts`. */
+/** How long a bell row lives on the server (days), plus a day of slack: a decision is kept that long. */
+export const BELL_ROW_RETENTION_MS = 91 * 24 * 3_600_000;
+
+/**
+ * What the bell keeps beside the record (see `seenPosts.svelte.ts`): its DECISION about each trend row,
+ * taken ONCE, the first time the row appears in this device's list, from one fact - is its post in the
+ * record at that moment. Each id maps to the row's `createdAt` (ms), only so the decision can be dropped
+ * when the row itself is gone (a bell row lives {@link BELL_ROW_RETENTION_MS}).
+ */
 export interface SeenLedger {
-  /** post id -> epoch ms this device first displayed it. */
-  seenAt: Map<string, number>;
-  /** Ids of the bell rows this device withheld. */
-  withheld: Set<string>;
+  /** Rows whose post was already displayed when they first appeared: withheld for good. */
+  withheld: Map<string, number>;
+  /** Rows whose post was not: kept for good, however the post is displayed afterwards. */
+  kept: Map<string, number>;
+  /** The device instant of the last bell answer that listed EVERY row; 0 when there was none. */
+  fullAnswerAt: number;
+}
+
+/** Whether `publishedAtMs` is still inside the window a trend can name (the native readers prune by this). */
+export function withinTrendWindow(publishedAtMs: number, nowMs: number): boolean {
+  return publishedAtMs >= nowMs - TREND_WINDOW_HOURS * 3_600_000 - TREND_PRUNE_GRACE_MS;
 }
 
 /** The record (and, for the sealed copy, the bell's ledger) as a sealable body. */
 export function serializeSeen(
   seen: SeenPosts,
   ledger?: SeenLedger
-): { posts: Record<string, number>; seenAt?: Record<string, number>; withheld?: string[] } {
-  const body: {
-    posts: Record<string, number>;
-    seenAt?: Record<string, number>;
-    withheld?: string[];
-  } = { posts: Object.fromEntries(seen) };
+): {
+  posts: Record<string, number>;
+  withheld?: Record<string, number>;
+  kept?: Record<string, number>;
+  fullAnswerAt?: number;
+} {
+  const body: ReturnType<typeof serializeSeen> = { posts: Object.fromEntries(seen) };
   if (ledger) {
-    body.seenAt = Object.fromEntries(ledger.seenAt);
-    body.withheld = [...ledger.withheld];
+    body.withheld = Object.fromEntries(ledger.withheld);
+    body.kept = Object.fromEntries(ledger.kept);
+    body.fullAnswerAt = ledger.fullAnswerAt;
   }
   return body;
 }
 
-/** The bell's ledger from a stored body; empty when the body carries none (tolerant, never refusing). */
-export function parseSeenLedger(body: unknown): SeenLedger {
-  const raw = body as { seenAt?: unknown; withheld?: unknown } | null;
-  const seenAt = new Map<string, number>();
-  if (raw?.seenAt && typeof raw.seenAt === 'object' && !Array.isArray(raw.seenAt)) {
-    for (const [id, at] of Object.entries(raw.seenAt)) {
-      if (typeof at === 'number' && Number.isFinite(at)) seenAt.set(normalisePostId(id), at);
+function parseInstants(raw: unknown): Map<string, number> {
+  const out = new Map<string, number>();
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    for (const [id, at] of Object.entries(raw)) {
+      if (typeof at === 'number' && Number.isFinite(at)) out.set(id, at);
     }
   }
-  const withheld = new Set<string>(
-    Array.isArray(raw?.withheld)
-      ? raw.withheld.filter((id): id is string => typeof id === 'string')
-      : []
-  );
-  return { seenAt, withheld };
+  return out;
+}
+
+/** The bell's ledger from a stored body; empty when the body carries none (tolerant, never refusing). */
+export function parseSeenLedger(body: unknown): SeenLedger {
+  const raw = body as { withheld?: unknown; kept?: unknown; fullAnswerAt?: unknown } | null;
+  const at = raw?.fullAnswerAt;
+  return {
+    withheld: parseInstants(raw?.withheld),
+    kept: parseInstants(raw?.kept),
+    fullAnswerAt: typeof at === 'number' && Number.isFinite(at) ? at : 0,
+  };
 }
 
 /** The record from a stored body, or `null` when it does not have the shape this build writes. */

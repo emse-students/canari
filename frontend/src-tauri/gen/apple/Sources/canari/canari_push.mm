@@ -5315,6 +5315,8 @@ static void CanariHandleBackgroundFrame(NSDictionary *data, void (^done)(UIBackg
   NSString *msgType = [data[@"type"] isKindOfClass:[NSString class]] ? data[@"type"] : @"";
   NSString *groupId = [data[@"groupId"] isKindOfClass:[NSString class]] ? data[@"groupId"] : @"";
   NSLog(@"[CanariPush] onMessage background frame type=%@ groupId=%@", msgType, groupId);
+  // The process runs for a silent frame: the blank rows the extension left for withheld trends go now.
+  CanariRemoveWithheldTrendNotifications();
 
   if ([msgType isEqualToString:@"wake"]) {
     CanariHandleWakeBackgroundFrame(data, done);

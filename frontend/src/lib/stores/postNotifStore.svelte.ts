@@ -52,22 +52,11 @@ function isStoredNotification(value: unknown): value is PostNotification {
  * does; `seenPosts.ts`). Classified on the row's `type`, never its text. The server still holds the
  * row, so a reader on another device sees it - the accepted limit.
  *
- * NEVER SILENT: each withheld row is said ONCE, by its row id (the 60 s poll answers the same rows
- * again), and never with the post's id.
+ * The decision is taken once per row, when it first appears (`seenPostsStore.decideRows`, which says
+ * it - never with the post's id); this only reads it.
  */
-// eslint-disable-next-line svelte/prefer-svelte-reactivity -- a log-once registry, never read by a screen
-const withheldLogged = new Set<string>();
 function shownRows(): PostNotification[] {
-  return notifications.filter((n) => {
-    if (!seenPostsStore.withholdsRow(n)) return true;
-    if (!withheldLogged.has(n.id)) {
-      withheldLogged.add(n.id);
-      console.log(
-        '[SEEN_TREND] bell: a campus trend row withheld - its post was already displayed on this device'
-      );
-    }
-    return false;
-  });
+  return notifications.filter((n) => !seenPostsStore.withholdsRow(n));
 }
 
 /** What was last handed to the sealed store, so an unchanged list is not sealed again. */
@@ -93,7 +82,6 @@ onPeerNamesEnded(() => {
   listOwner = null;
   answered = false;
   lastSealed = null;
-  withheldLogged.clear();
 });
 
 /**
@@ -166,12 +154,12 @@ export const postNotifStore = {
       answered = true;
       fromCopy = false;
       listOwner = owner;
+      // EVERY trend row is decided HERE, the first time it appears (withheld if its post was already
+      // displayed on this device, kept for good if not); an answer shorter than the page asked for
+      // listed every row, which is what lets the record of displayed posts start ageing out.
+      seenPostsStore.decideRows(answer, answer.length < limit);
       // Only the full page seals: the dropdown's shorter one must not shrink the sealed list.
-      if (limit >= MAX_STORED_NOTIFICATIONS) {
-        // The ledger of withheld rows is bounded by the stored list: a row no longer in it is forgotten.
-        seenPostsStore.retainWithheld(answer.map((n) => n.id));
-        persist();
-      }
+      if (limit >= MAX_STORED_NOTIFICATIONS) persist();
     } catch (e) {
       // Stale data is better than an error screen. A load that got NO ANSWER is the link, which the
       // session already reports: said once per spell, not on every minute's poll while offline. Any

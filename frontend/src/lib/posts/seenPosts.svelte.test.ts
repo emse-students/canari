@@ -36,6 +36,7 @@ const settle = async () => {
   await new Promise((r) => setTimeout(r, 0));
 };
 const NOW = Date.now();
+const HOUR = 3_600_000;
 const fresh = new Date(NOW - 3_600_000).toISOString();
 const ancient = new Date(NOW - 5 * 24 * 3_600_000).toISOString();
 
@@ -76,13 +77,14 @@ describe('the record of the posts this device displayed', () => {
     expect(seenPostsStore.isSeenTrend({ type: 'campus_trend' }, 'p1')).toBe(false);
   });
 
-  it('flushes the pruned record to the sealed copy and to the native readers, once', async () => {
+  it('seals the record and hands the native readers only what is inside the window, once', async () => {
     bindLocalCopies({ userId: 'me', deviceKeyB64: 'K' });
     seenPostsStore.note('keep', fresh);
     seenPostsStore.note('old', ancient);
     await flushSeenPosts();
     const body = (sealed.rows.get(`me/${SEEN_POSTS_SLOT}`) as { body: { posts: object } }).body;
-    expect(Object.keys(body.posts)).toEqual(['keep']);
+    // No bell answer listed every row yet: the in-memory record is not aged out (B2).
+    expect(Object.keys(body.posts).sort()).toEqual(['keep', 'old']);
     expect(tauri.invoke).toHaveBeenCalledTimes(1);
     const [cmd, args] = tauri.invoke.mock.calls[0] as [
       string,
@@ -90,6 +92,7 @@ describe('the record of the posts this device displayed', () => {
     ];
     expect(cmd).toBe('store_seen_posts');
     expect(args.userId).toBe('me');
+    // The native file prunes by age, always: a push reads it.
     expect(args.posts).toEqual([{ postId: 'keep', publishedAt: Date.parse(fresh) }]);
     // Nothing new: nothing written.
     await flushSeenPosts();
@@ -141,6 +144,70 @@ describe('the record of the posts this device displayed', () => {
     bindLocalCopies({ userId: 'me', deviceKeyB64: 'K' });
     await settle();
     expect(seenPostsStore.isSeenTrend({ type: 'campus_trend' }, 'keep')).toBe(true);
+  });
+
+  it('still withholds a row met after the app stayed closed through the whole window (B2)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      bindLocalCopies({ userId: 'me', deviceKeyB64: 'K' });
+      seenPostsStore.note('keep', new Date(Date.now() - HOUR).toISOString());
+      await flushSeenPosts();
+      // The app closes; 30 hours later it reopens - the trend row only appears now.
+      bindLocalCopies(null);
+      resetSeenPostsForTest();
+      vi.setSystemTime(Date.now() + 30 * HOUR);
+      bindLocalCopies({ userId: 'me', deviceKeyB64: 'K' });
+      await settle();
+      expect(seenPostsStore.size).toBe(1);
+      const trend = { id: 'r1', type: 'campus_trend', postId: 'keep' };
+      seenPostsStore.decideRows([trend], true);
+      expect(seenPostsStore.withholdsRow(trend)).toBe(true);
+      // A bell answer listing every row has now been taken: the record may age out, the row stays.
+      expect(seenPostsStore.size).toBe(0);
+      expect(seenPostsStore.withholdsRow(trend)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('decides a trend row ONCE, when it first appears: withheld if its post is in the record, kept if not', () => {
+    seenPostsStore.note('seen-first', fresh);
+    const a = { id: 'a', type: 'campus_trend', postId: 'seen-first' };
+    const b = { id: 'b', type: 'campus_trend', postId: 'later' };
+    seenPostsStore.decideRows([a, b], false);
+    expect(seenPostsStore.withholdsRow(a)).toBe(true);
+    expect(seenPostsStore.withholdsRow(b)).toBe(false);
+    // Displayed afterwards: the kept row stays (L1); the withheld one stays withheld.
+    seenPostsStore.note('later', fresh);
+    seenPostsStore.decideRows([a, b], true);
+    expect(seenPostsStore.withholdsRow(b)).toBe(false);
+    expect(seenPostsStore.withholdsRow(a)).toBe(true);
+  });
+
+  it('keeps both decisions in the sealed copy and drops them with their row (90 days)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      bindLocalCopies({ userId: 'me', deviceKeyB64: 'K' });
+      seenPostsStore.note('p', fresh);
+      const created = new Date().toISOString();
+      const a = { id: 'a', type: 'campus_trend', postId: 'p', createdAt: created };
+      const b = { id: 'b', type: 'campus_trend', postId: 'q', createdAt: created };
+      seenPostsStore.decideRows([a, b], false);
+      await flushSeenPosts();
+      type Sealed = { body: { withheld: object; kept: object } };
+      const stored = (sealed.rows.get(`me/${SEEN_POSTS_SLOT}`) as Sealed).body;
+      expect(Object.keys(stored.withheld)).toEqual(['a']);
+      expect(Object.keys(stored.kept)).toEqual(['b']);
+      // The rows are gone from the server after their 90 days: so are the decisions.
+      vi.setSystemTime(Date.now() + 100 * 24 * HOUR);
+      seenPostsStore.decideRows([], false);
+      await flushSeenPosts();
+      const later = (sealed.rows.get(`me/${SEEN_POSTS_SLOT}`) as Sealed).body;
+      expect(Object.keys(later.withheld)).toEqual([]);
+      expect(Object.keys(later.kept)).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('is erased at sign-out: memory now, and the native copy of the account', async () => {

@@ -22,11 +22,15 @@ describe('the blank notification of a withheld trend is cleaned up by the app', 
     expect(push).toContain('isEqualToString:@"seen-trend"');
   });
 
-  it('runs at every foreground and when the process runs for a push', () => {
+  it('runs at every foreground and when the process runs for a push or a silent frame', () => {
     const calls = push.match(/CanariRemoveWithheldTrendNotifications\(\);/g) ?? [];
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(3);
     const activation = push.indexOf('CanariCheckNotificationDelegate(@"activation");');
     expect(push.slice(activation, activation + 200)).toContain(
+      'CanariRemoveWithheldTrendNotifications();'
+    );
+    const background = push.indexOf('static void CanariHandleBackgroundFrame(');
+    expect(push.slice(background, background + 900)).toContain(
       'CanariRemoveWithheldTrendNotifications();'
     );
     const handler = push.indexOf('static void CanariHandleFcmData(NSDictionary *data) {');

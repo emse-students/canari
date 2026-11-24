@@ -1179,14 +1179,28 @@ server.** The accepted limit: a post seen on another device is not recognised th
   never stops the data-directory copy; each failure is logged and the record stays dirty). The
   background flush stays as the last chance. A sealed copy merged into memory marks it dirty, so a
   native file that was lost is written again.
-- **The bell's own durable fact** (B2/L1 of the review): the record is pruned at 25 h but a bell row
-  lives 90 days, so a withheld "Suggestion" row would come back, unread, when its post aged out. The
-  device therefore also keeps, in the same sealed copy (never sent anywhere), the ids of the ROWS it
-  withheld, for as long as the stored list holds them (pruned on each full server answer), and the
-  instant it FIRST displayed each post. **A row is withheld only if its post was displayed BEFORE the
-  row was created** - the case where its push was withheld too - so a trend the member already saw in
-  the bell, or tapped from a shown push, is displayed after its row and never vanishes. A wrong device
-  clock costs a repeated or a kept row, never a lost message.
+- **The bell decides ONCE, from state that outlives the record's age** (B2/L1 and re-review of
+  #4065): the record is by the post's age (25 h) but a bell row lives 90 days. The FIRST time a trend
+  row appears in this device's list (`seenPostsStore.decideRows`, called by every bell answer) its post is
+  either in the record - the row is WITHHELD for good - or not - the row is KEPT for good: one fact, no
+  comparison of two clocks (no `createdAt` against a device instant). So a withheld row never comes back
+  when its post ages out, and a trend the member already saw in the bell, or tapped from a shown push,
+  never vanishes afterwards. Both sets are in the sealed copy, each id with the row's own `createdAt`,
+  dropped when the row is older than its 90 days (`BELL_ROW_RETENTION_MS`) - bounded by age, not by the
+  page the server returns, so a row older than the newest 50 keeps its decision. Before the account's
+  sealed copy is merged an undecided trend row is not shown (decided at the merge): never shown and then
+  withdrawn.
+- **The record ages out in memory only after a bell answer that listed EVERY row** (an answer shorter
+  than the page asked for, `fullAnswerAt` in the sealed copy). An app closed through the whole window
+  therefore still withholds, at its reopening, the row whose push was withheld meanwhile: its entry was
+  not pruned before the bell asked. The NATIVE file keeps pruning by age (a push reads it, and a post past
+  the window can never be announced again). **Known residual**: a reader whose bell never returns a short
+  page keeps the record until the cap of 500 (oldest publication first) evicts it; a row older than
+  that many displayed posts can then be decided "kept". Bounded, and it costs a repeated row, never a
+  lost message.
+- **One write per scroll frame, not per card**: `shownPost` shares ONE `IntersectionObserver` per scroll
+  root, so the cards crossing in one frame arrive in one callback, are noted in one tick and share one
+  microtask write. Never a timer.
 - **Erased with the other per-account stores**: the sign-out (`clearUserLocally` ->
   `forgetSeenPosts`, which also removes the native copy if it is this account's), the account deletion
   (`eraseAccountRecordsLocally`, and Rust's `remove_account_push_and_name_files` in the data directory and
@@ -1207,7 +1221,7 @@ server.** The accepted limit: a post seen on another device is not recognised th
     `blankSignedOutContent`); outcome `seen-trend`. **The blank row is removed by the app**: the
     extension stamps `userInfo["canariWithheld"] = "seen-trend"` on it, and `canari_push.mm`
     (`CanariRemoveWithheldTrendNotifications`) removes every delivered notification carrying the stamp at
-    each foreground and whenever its process runs for a push (`CanariHandleFcmData`) - the precedent is
+    each foreground and whenever its process runs for a push or a silent frame (`CanariHandleFcmData`, `CanariHandleBackgroundFrame`) - the precedent is
     the `removeDeliveredNotificationsWithIdentifiers` of
     [social-service](services/social-service.md). **Dropping the push outright needs the filtering
     entitlement** (`com.apple.developer.usernotifications.filtering`, which lets the extension return no

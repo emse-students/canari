@@ -26,21 +26,73 @@ export interface ShownPostOptions {
   threshold?: number;
 }
 
+/** One shared observer: every card of one scroll root and one threshold. */
+interface Group {
+  observer: IntersectionObserver;
+  watched: Map<Element, () => void>;
+}
+// eslint-disable-next-line svelte/prefer-svelte-reactivity -- a registry of observers, never read by a screen
+const groups = new Map<HTMLElement | null, Map<number, Group>>();
+
+function leave(root: HTMLElement | null, need: number, node: Element): void {
+  const group = groups.get(root)?.get(need);
+  if (!group) return;
+  group.observer.unobserve(node);
+  group.watched.delete(node);
+  if (group.watched.size > 0) return;
+  group.observer.disconnect();
+  const byNeed = groups.get(root);
+  byNeed?.delete(need);
+  if (byNeed?.size === 0) groups.delete(root);
+}
+
+/**
+ * The group of `root` and `need`, created on first use. ONE observer per scroll root: the cards that
+ * cross the threshold in the same frame arrive in ONE callback, so they are noted in one tick and
+ * share one write of the record (`seenPosts.svelte.ts`) - a write per card would be one per scroll
+ * step. Never a timer.
+ */
+function groupFor(root: HTMLElement | null, need: number): Group {
+  let byNeed = groups.get(root);
+  if (!byNeed) {
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a registry, never read by a screen
+    byNeed = new Map();
+    groups.set(root, byNeed);
+  }
+  let group = byNeed.get(need);
+  if (group) return group;
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a registry, never read by a screen
+  const watched = new Map<Element, () => void>();
+  const observer = new IntersectionObserver(
+    (entries) => {
+      // The LAST entry of a card is its current state; several arrive when it crosses back and forth.
+      // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local, never read by a screen
+      const latest = new Map<Element, IntersectionObserverEntry>();
+      for (const entry of entries) latest.set(entry.target, entry);
+      for (const [target, entry] of latest) {
+        if (!entry.isIntersecting) continue;
+        const box = entry.rootBounds?.height ?? window.innerHeight;
+        if (
+          entry.intersectionRatio >= need ||
+          (box > 0 && entry.intersectionRect.height >= box * need)
+        ) {
+          watched.get(target)?.();
+        }
+      }
+    },
+    { root, threshold: [need, 0.99] }
+  );
+  group = { observer, watched };
+  byNeed.set(need, group);
+  return group;
+}
+
 export function shownPost(node: HTMLElement, options: ShownPostOptions) {
   let opts = options;
-  let observer: IntersectionObserver | null = null;
   let fired = false;
 
-  function fire() {
-    if (fired) return;
-    fired = true;
-    observer?.disconnect();
-    observer = null;
-    opts.onshown();
-  }
-
   if (typeof IntersectionObserver === 'undefined') {
-    fire();
+    opts.onshown();
     return {
       update(next: ShownPostOptions) {
         opts = next;
@@ -50,29 +102,22 @@ export function shownPost(node: HTMLElement, options: ShownPostOptions) {
   }
 
   const need = opts.threshold ?? 0.5;
-  observer = new IntersectionObserver(
-    (entries) => {
-      const last = entries[entries.length - 1];
-      if (!last?.isIntersecting) return;
-      const box = last.rootBounds?.height ?? window.innerHeight;
-      if (
-        last.intersectionRatio >= need ||
-        (box > 0 && last.intersectionRect.height >= box * need)
-      ) {
-        fire();
-      }
-    },
-    { root: scrollRoot(node), threshold: [need, 0.99] }
-  );
-  observer.observe(node);
+  const root = scrollRoot(node);
+  const group = groupFor(root, need);
+  group.watched.set(node, () => {
+    if (fired) return;
+    fired = true;
+    leave(root, need, node);
+    opts.onshown();
+  });
+  group.observer.observe(node);
 
   return {
     update(next: ShownPostOptions) {
       opts = next;
     },
     destroy() {
-      observer?.disconnect();
-      observer = null;
+      leave(root, need, node);
     },
   };
 }

@@ -1295,16 +1295,19 @@
             <td>
               Les identifiants des publications que Canari a affichées sur cet appareil, avec leur
               date de publication, pour ne pas vous suggérer par une notification de tendance une
-              publication que vous avez déjà vue. Y est jointe la liste des notifications de
-              tendance que cet appareil a ainsi masquées, pour qu'elles ne réapparaissent pas dans
-              votre cloche. Ces listes restent sur l'appareil : rien n'en est envoyé à nos serveurs,
-              et une publication vue sur un autre appareil n'y est pas reconnue
+              publication que vous avez déjà vue. Y est jointe, pour chaque notification de tendance
+              de votre cloche, la décision prise sur l'appareil (masquée ou non) avec la date de la
+              notification, pour qu'une notification masquée ne réapparaisse pas et qu'une
+              notification déjà vue ne disparaisse pas. Ces listes restent sur l'appareil : rien
+              n'en est envoyé à nos serveurs, et une publication vue sur un autre appareil n'y est
+              pas reconnue
             </td>
             <td
-              >Publications : jusqu'à 25 heures après leur publication, 500 au plus ; notifications
-              masquées : tant qu'elles figurent dans votre cloche. Effacées à la déconnexion, à la
-              suppression du compte, à l'effacement des données de l'application ou à sa
-              désinstallation</td
+              >Publications : environ 25 heures après leur publication, 500 au plus (la copie de
+              l'application et du navigateur peut les garder jusqu'à votre prochaine consultation de
+              la cloche) ; décisions sur les notifications : tant que celles-ci peuvent figurer dans
+              votre cloche (90 jours). Effacées à la déconnexion, à la suppression du compte, à
+              l'effacement des données de l'application ou à sa désinstallation</td
             >
           </tr>
           <tr>
