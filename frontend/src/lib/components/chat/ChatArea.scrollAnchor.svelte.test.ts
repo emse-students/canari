@@ -366,13 +366,31 @@ describe('ChatArea follows the bottom for a message the reader just sent, and fo
     const area = await readerAboveTheirOwnLastMessage();
     const sent = conversationOf(THREAD + 1);
     sent.messages[THREAD - 1] = { ...sent.messages[THREAD - 1], isOwn: true };
-    sent.messages[THREAD] = { ...sent.messages[THREAD], isOwn: true };
+    // Composed here: drawn with its send state (`ownMessageAppended`).
+    sent.messages[THREAD] = { ...sent.messages[THREAD], isOwn: true, status: 'pending' };
 
     area.props.conversation = sent;
     flushSync();
     await settleEntry();
 
     expect(newestRowTop(area.target)).toBeLessThan(PANE_PX);
+  });
+
+  /**
+   * A catch-up ending with a message this account wrote on its OTHER device (no send state) is an
+   * arrival, not a send (review of #4054): the reader reading above stays where they are.
+   */
+  it('a message of this account that ARRIVED from its other device leaves the reader above', async () => {
+    const area = await readerAboveTheirOwnLastMessage();
+    const arrived = conversationOf(THREAD + 1);
+    arrived.messages[THREAD - 1] = { ...arrived.messages[THREAD - 1], isOwn: true };
+    arrived.messages[THREAD] = { ...arrived.messages[THREAD], isOwn: true };
+
+    area.props.conversation = arrived;
+    flushSync();
+    await settleEntry();
+
+    expect(newestRowTop(area.target)).toBeGreaterThan(PANE_PX);
   });
 });
 
