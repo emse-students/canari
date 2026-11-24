@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { focusOnMount } from '$lib/actions/focusOnMount';
   import Input from '$lib/components/ui/Input.svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
   import Toggle from '$lib/components/ui/Toggle.svelte';
@@ -162,24 +163,27 @@
   let cardMenuAnchor = $state<HTMLButtonElement | null>(null);
   /** "Plus d'options": the conditions, folded unless one is set (a live setting is never hidden). */
   let moreOpen = $state(false);
-  let titleEl = $state<HTMLInputElement | null>(null);
-  let rowButtonEl = $state<HTMLButtonElement | null>(null);
   /** Set when the card collapses from the keyboard, so focus lands on its row and not on the page. */
   let restoreRowFocus = false;
   let wasExpanded = false;
 
-  // Opening a card moves focus to its title; closing it from the keyboard returns focus to its row.
+  // Opening a card moves focus to its title (`focusOnMount` on the input) and closing it from the
+  // keyboard returns focus to its row (`focusRow`): both targets are rendered by the SAME state change
+  // that triggers them, so an `$effect` would run before they exist (Svelte 5.59).
   $effect(() => {
     if (expanded && !wasExpanded) {
       moreOpen = item.showIf != null || !!item.dependsOn;
-      titleEl?.focus();
-      if (selectTitleOnOpen) titleEl?.select();
-    } else if (!expanded && wasExpanded && restoreRowFocus) {
-      rowButtonEl?.focus();
+      restoreRowFocus = false;
     }
-    restoreRowFocus = false;
     wasExpanded = expanded;
   });
+
+  /** Action on the row button: takes the focus once, when a keyboard collapse put the card back on its row. */
+  function focusRow(node: HTMLButtonElement) {
+    if (!restoreRowFocus) return;
+    restoreRowFocus = false;
+    node.focus();
+  }
 
   /** Ctrl/Cmd+D duplicates (the browser's bookmark shortcut is cancelled); Escape collapses. */
   function onCardKeydown(e: KeyboardEvent) {
@@ -396,7 +400,7 @@
         <GripVertical size={16} aria-hidden="true" />
       </span>
       <button
-        bind:this={rowButtonEl}
+        use:focusRow
         data-row-button
         type="button"
         onclick={onExpand}
@@ -460,10 +464,11 @@
           >{questionIndex}</span
         >
       {/if}
+      <!-- `focusOnMount` is written AFTER `bind:value`: the selection must be taken once the value is set. -->
       <input
-        bind:this={titleEl}
         type="text"
         bind:value={item.label}
+        use:focusOnMount={{ select: selectTitleOnOpen }}
         aria-label={blockTitleLabel ?? m.form_builder_question_label()}
         placeholder={blockTitleLabel ?? m.form_builder_title_placeholder()}
         class="border-cn-border text-text-main placeholder:text-text-muted/50 focus:border-accent-icon min-w-0 flex-1 border-b-2 bg-transparent px-1 py-1.5 text-base font-semibold outline-none sm:text-lg"

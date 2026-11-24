@@ -754,6 +754,7 @@ after its deploy - build the run that DISCRIMINATES, and assert the build id, ne
 
 ## UI and i18n -> [frontend/architecture](frontend/architecture.md), [auth](frontend/modules/auth.md) (native prompts)
 
+- **NEVER READ CHILDREN AT ACTION START, NOR LOOK AN ELEMENT UP IN AN `$effect` THAT ITS OWN STATE CHANGE RENDERS INTO** (Svelte 5.59 runs actions and effects before the sibling `{#each}`/`{#if}` renders; #4028). Put the move on the target's own action (`focusOnMount`), or follow the DOM (`observeChildren`, `dndzoneRendered`); never a timer. [Why and the four cases](frontend/architecture.md#svelte-559-runs-actions-and-effects-before-the-sibling-blocks-render-2026-11-24).
 - **A BUTTON, A SELECT AND A TEXT FIELD ARE THE THREE COMPONENTS, AND NO SCREEN DRAWS ONE** (owner, 2026-11-07). `ui/Button`, `ui/Select` (`Picker`) and `ui/Input` share one 40 px box (`.ui-control`, `--control-*` tokens): primary is the only yellow, secondary is the field edge on a neutral fill, `compact` (32 px) is for dense toolbars only. `controlsGuard.test.ts` fails a file outside `ui/` that gains a raw `<button>`, `<select>` or text `<input>`; its ratchet list only shrinks and a new file is never added. [controls](frontend/controls.md)
 
 `arch` = [frontend/architecture](frontend/architecture.md), `posts` = [posts](frontend/modules/posts.md),

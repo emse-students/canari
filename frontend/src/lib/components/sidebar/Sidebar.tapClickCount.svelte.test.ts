@@ -26,7 +26,7 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', async () => ({
   globalNotifs: {},
 }));
 
-import { flushSync, mount, unmount } from 'svelte';
+import { flushSync, mount, tick, unmount } from 'svelte';
 import { SvelteMap } from 'svelte/reactivity';
 import type { Conversation } from '$lib/types';
 import Sidebar from './Sidebar.svelte';
@@ -138,8 +138,10 @@ describe('one tap on a community of the rail', () => {
   // touch only when its target has a `value` (the button itself), so on the avatar it prevents the
   // `touchstart`, the browser sends no click, and the library's click is the ONLY one - the path the
   // patch must keep.
-  it('selects the community exactly once when the finger lands on its avatar', () => {
+  it('selects the community exactly once when the finger lands on its avatar', async () => {
     const { onSelectCommunity } = mountList(true);
+    // The zone is configured again once its rows exist (`dndzoneRendered`, a MutationObserver).
+    await tick();
     const avatar = document.querySelector('button[title="Bureau"]')!.firstElementChild!;
     expect(avatar).not.toBeNull();
     const start = touch(avatar, 'touchstart');
