@@ -275,6 +275,58 @@ type PurgeReason =
   | 'reel_deleted'
   | 'reel_moderated';
 
+/** The reasons that say TIME took the object (its window ran out), not a person or a moderator. */
+const PURGED_BY_TIME: ReadonlySet<PurgeReason> = new Set<PurgeReason>([
+  'retention_expired',
+  'reel_expired',
+]);
+
+/**
+ * THE ONE TOMBSTONE BUILDER: the entry every purge leaves behind (sweep, reel purge, form-file purge,
+ * manual delete, account erasure).
+ *
+ * A tombstone a purge BY TIME leaves on a pending REEL upload (`reel-pending`, `chat-reel`) keeps its
+ * `ownerId` and `retentionClass` - data minimisation: no other class does (review of #4055, register
+ * C6): the reel claim reads
+ * them to tell its uploader that their own pending upload EXPIRED - curable by uploading it again -
+ * from an id that was never theirs (review of #4055: dropped, the "already swept" answer could never
+ * be given, and a create delayed past the sweep got a refusal no Retry could cure). Every other
+ * reason (a delete, a moderation, an erasure) keeps neither: nothing reads them, and an erased
+ * account's id stays off its tombstones. The account erasure also strips the owner from the
+ * time-purge tombstones it finds ({@link MediaService.removeAllOwnedBy}).
+ */
+function tombstoneOf(
+  entry:
+    | Pick<MediaMetaEntry, 'createdAt' | 'lastAccessAt' | 'ownerId' | 'retentionClass'>
+    | undefined,
+  now: number,
+  purgeReason: PurgeReason
+): MediaMetaEntry {
+  // DATA MINIMISATION (review of #4055): only an expired pending REEL upload names its uploader -
+  // the one tombstone a reader (the claim) needs it on. A swept chat attachment, form file or poster
+  // keeps no personal data, as every tombstone kept none before.
+  const ownerId = entry?.ownerId;
+  const retentionClass = entry?.retentionClass;
+  const keeps =
+    PURGED_BY_TIME.has(purgeReason) &&
+    !!ownerId &&
+    EXPIRABLE_REEL_UPLOAD_CLASSES.has(retentionClass ?? '');
+  return {
+    createdAt: entry?.createdAt ?? now,
+    lastAccessAt: entry?.lastAccessAt ?? now,
+    purgedAt: now,
+    purgeReason,
+    ...(keeps ? { ownerId, retentionClass } : {}),
+  };
+}
+
+/**
+ * The classes whose time-purged tombstone is an EXPIRED pending reel upload of its owner (the reel
+ * claim's `expired`): a `reel-pending` upload the sweep took at its window, or a `chat-reel` whose
+ * chat hold ran out. Never a claimed `reel`, a post's image, or anything moderated or deleted.
+ */
+const EXPIRABLE_REEL_UPLOAD_CLASSES: ReadonlySet<string> = new Set(['reel-pending', 'chat-reel']);
+
 /** The tombstones a download answers `410` to. `manual_delete` keeps its older `404`. */
 function isGoneTombstone(entry: { purgedAt?: number; purgeReason?: PurgeReason } | undefined) {
   return (
@@ -1185,13 +1237,7 @@ export class MediaService {
         continue;
       }
       await this.storage.delete(mediaId);
-      const now = Date.now();
-      this.meta.items[mediaId] = {
-        createdAt: entry.createdAt ?? now,
-        lastAccessAt: entry.lastAccessAt ?? now,
-        purgedAt: now,
-        purgeReason: 'manual_delete',
-      };
+      this.meta.items[mediaId] = tombstoneOf(entry, Date.now(), 'manual_delete');
       deleted.push(mediaId);
     }
     if (deleted.length > 0) await this.persistMetadata();
@@ -1251,19 +1297,40 @@ export class MediaService {
    * file lives as long as the longer of the two. One whose chat hold has already lapsed is refused,
    * as an overdue `reel-pending` is.
    *
-   * @returns the ids claimed (including ones already classified `reel`) and the ids refused.
+   * THE REFUSALS ARE TOLD APART, because the publisher's remedy differs: an `expired` id is the
+   * member's OWN pending upload whose window ran out (refused here, or already taken by the sweep) -
+   * the file was theirs and only time took it, so uploading it again is the answer; every other
+   * refusal (unknown, public, not theirs) is not curable by an upload.
+   *
+   * @returns the ids claimed (including ones already classified `reel`), the ids refused, and the
+   *   subset of `refused` that is the owner's own expired pending upload.
    */
   async claimReels(
     mediaIds: string[],
     ownerId: string
-  ): Promise<{ claimed: string[]; refused: string[] }> {
+  ): Promise<{ claimed: string[]; refused: string[]; expired: string[] }> {
     const claimed: string[] = [];
     const refused: string[] = [];
-    let pastWindow = 0;
+    const expired: string[] = [];
     let changed = false;
 
     for (const mediaId of new Set(mediaIds)) {
       const entry = UUID_REGEX.test(mediaId) ? this.meta.items[mediaId] : undefined;
+      if (
+        entry?.purgedAt &&
+        entry.ownerId === ownerId &&
+        PURGED_BY_TIME.has(entry.purgeReason ?? 'manual_delete') &&
+        EXPIRABLE_REEL_UPLOAD_CLASSES.has(entry.retentionClass ?? '')
+      ) {
+        // The member's own pending upload, already taken BY TIME at its window's end (a moderated
+        // or deleted one keeps no owner, so it is never here: never uploaded again).
+        this.logger.warn(
+          `Reel claim by ${ownerId}: ${mediaId} is a pending upload the sweep already took - refused as expired`
+        );
+        refused.push(mediaId);
+        expired.push(mediaId);
+        continue;
+      }
       if (
         !entry ||
         entry.purgedAt ||
@@ -1284,7 +1351,7 @@ export class MediaService {
           `Reel claim by ${ownerId}: ${mediaId} is a ${entry.retentionClass ?? 'unclassified'} object past its window - refused, not promoted`
         );
         refused.push(mediaId);
-        pastWindow += 1;
+        expired.push(mediaId);
         continue;
       }
       if (holds?.chat) {
@@ -1307,10 +1374,10 @@ export class MediaService {
     if (changed) await this.persistMetadata();
     if (refused.length > 0) {
       this.logger.warn(
-        `Reel claim by ${ownerId}: ${refused.length} object(s) refused (${pastWindow} past their pending window, ${refused.length - pastWindow} unknown, purged, public or not theirs)`
+        `Reel claim by ${ownerId}: ${refused.length} object(s) refused (${expired.length} past their pending window, ${refused.length - expired.length} unknown, purged, public or not theirs)`
       );
     }
-    return { claimed, refused };
+    return { claimed, refused, expired };
   }
 
   /**
@@ -1528,12 +1595,16 @@ export class MediaService {
         continue;
       }
       // A file conversations held reads `410` everywhere, so their tiles draw the tombstone (15.4);
-      // one no conversation ever held keeps the reel purge's old `manual_delete`.
+      // one no conversation ever held keeps the reel purge's old `manual_delete`. Each end is named
+      // for what ended it: a moderator, its AUTHOR (a post the member deleted, never "expired" -
+      // review of #4055), or time.
       const purgeReason: PurgeReason = !chat
         ? 'manual_delete'
         : reason === 'moderation'
           ? 'reel_moderated'
-          : 'reel_expired';
+          : reason === 'author'
+            ? 'reel_deleted'
+            : 'reel_expired';
       if (
         !(await this.tombstoneThenDelete(mediaId, entry, now, purgeReason, `Reel purge (${label})`))
       ) {
@@ -1660,12 +1731,7 @@ export class MediaService {
         );
         continue;
       }
-      this.meta.items[mediaId] = {
-        createdAt: entry.createdAt,
-        lastAccessAt: entry.lastAccessAt,
-        purgedAt: Date.now(),
-        purgeReason: 'retention_expired',
-      };
+      this.meta.items[mediaId] = tombstoneOf(entry, Date.now(), 'retention_expired');
       changed = true;
       results.set(mediaId, 'deleted');
       this.logger.log(`Form-file purge deleted ${mediaId} (uploaded by ${ownerId})`);
@@ -1760,12 +1826,7 @@ export class MediaService {
     purgeReason: PurgeReason,
     label: string
   ): Promise<boolean> {
-    const tombstone: MediaMetaEntry = {
-      createdAt: entry.createdAt,
-      lastAccessAt: entry.lastAccessAt,
-      purgedAt: now,
-      purgeReason,
-    };
+    const tombstone = tombstoneOf(entry, now, purgeReason);
     this.meta.items[mediaId] = tombstone;
     try {
       await this.storage.delete(mediaId);
@@ -1993,7 +2054,8 @@ export class MediaService {
     let used = reservations.get(ownerId) ?? 0;
     let uploads = 0;
     for (const entry of Object.values(this.meta.items)) {
-      if (entry.ownerId !== ownerId || entry.createdAt < since) continue;
+      // A tombstone is no upload of the day (a time-purge one keeps its owner: `tombstoneOf`).
+      if (entry.purgedAt || entry.ownerId !== ownerId || entry.createdAt < since) continue;
       uploads += 1;
       used += entry.size ?? 0;
     }
@@ -2163,12 +2225,7 @@ export class MediaService {
       );
       return;
     }
-    this.meta.items[mediaId] = {
-      createdAt: current?.createdAt ?? now,
-      lastAccessAt: current?.lastAccessAt ?? now,
-      purgedAt: now,
-      purgeReason: 'manual_delete',
-    };
+    this.meta.items[mediaId] = tombstoneOf(current, now, 'manual_delete');
     await this.persistMetadata();
   }
 
@@ -2197,7 +2254,16 @@ export class MediaService {
 
     for (const [mediaId, entry] of Object.entries(this.meta.items)) {
       if (entry.ownerId !== ownerId) continue;
-      if (entry.purgedAt) continue;
+      if (entry.purgedAt) {
+        // A time-purge tombstone keeps its uploader for the reel claim (`tombstoneOf`): the erased
+        // account's id goes from it too.
+        const anonymous: MediaMetaEntry = { ...entry };
+        delete anonymous.ownerId;
+        delete anonymous.retentionClass;
+        this.meta.items[mediaId] = anonymous;
+        this.erasureIndexDirty = true;
+        continue;
+      }
       // `survivesAccountDeletion`, NOT "is not sweepable": a logo or a vault document outlives
       // the member who uploaded it, but an archived post photo is still that member's and must go
       // with the account. Exemption from the idle sweep is not exemption from erasure, and
@@ -2225,12 +2291,7 @@ export class MediaService {
         continue;
       }
 
-      this.meta.items[mediaId] = {
-        createdAt: entry.createdAt,
-        lastAccessAt: entry.lastAccessAt,
-        purgedAt: Date.now(),
-        purgeReason: 'manual_delete',
-      };
+      this.meta.items[mediaId] = tombstoneOf(entry, Date.now(), 'manual_delete');
       this.erasureIndexDirty = true;
     }
 
@@ -3039,12 +3100,11 @@ export class MediaService {
     now: number
   ): Promise<void> {
     const retentionClass = entry.retentionClass ?? 'none';
-    this.meta.items[mediaId] = {
-      createdAt: entry.createdAt,
-      lastAccessAt: entry.lastAccessAt,
-      purgedAt: now,
-      purgeReason: entry.retentionClass === 'chat-reel' ? 'reel_expired' : 'retention_expired',
-    };
+    this.meta.items[mediaId] = tombstoneOf(
+      entry,
+      now,
+      entry.retentionClass === 'chat-reel' ? 'reel_expired' : 'retention_expired'
+    );
     this.logger.log(
       `Retention delete ${mediaId}: class ${retentionClass}, uploaded ${Math.round((now - entry.createdAt) / 3_600_000)} h ago, last read ${Math.round((now - entry.lastAccessAt) / 3_600_000)} h ago`
     );

@@ -4,7 +4,11 @@
   import { CircleCheck, CircleX, Loader } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { cancelPendingSubmission, getSubmissionPayment } from '$lib/forms/api';
-  import { paymentCancelView, type PaymentCancelView } from '$lib/forms/paymentReturn';
+  import {
+    overCapacityDescription,
+    paymentCancelView,
+    type PaymentCancelView,
+  } from '$lib/forms/paymentReturn';
   import { SocialApiError } from '$lib/associations/api';
   import { PREVIOUS_PAYMENT_OPEN } from '$lib/associations/paymentRefusal';
 
@@ -13,6 +17,8 @@
   let formId = $state<string | null>(null);
   /** `loading` until the row is read: "cancelled" must not flash over an answer that is paid. */
   let view = $state<PaymentCancelView | 'loading'>('loading');
+  /** The over-capacity payer is on the form's waiting list: their place is kept (`waitlisted`). */
+  let waitlisted = $state(false);
 
   onMount(async () => {
     if (!submissionId) {
@@ -27,6 +33,7 @@
       // paid, and not cancelled.
       const known = paymentCancelView(before.paymentStatus);
       if (known !== 'cancelled') {
+        waitlisted = before.waitlisted === true;
         view = known;
         return;
       }
@@ -34,6 +41,7 @@
       if (result.alreadyPaid) {
         // The cancel found the request PAID at Lydia and recorded it; the row says which seat.
         const after = await getSubmissionPayment(submissionId);
+        waitlisted = after.waitlisted === true;
         view = paymentCancelView(after.paymentStatus);
         return;
       }
@@ -78,7 +86,7 @@
         <h1 class="text-text-main text-2xl font-bold">
           {m.form_success_over_capacity_heading()}
         </h1>
-        <p class="text-text-muted mt-2">{m.form_success_over_capacity_desc()}</p>
+        <p class="text-text-muted mt-2">{overCapacityDescription(waitlisted)}</p>
       </div>
     {:else}
       <div class="flex justify-center">

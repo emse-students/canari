@@ -1342,11 +1342,11 @@ static void CanariObserveCallProximity(void) {
   NSLog(@"[CanariIOS] listening for the call proximity");
 }
 
-/// THE SCREEN STAYS ON DURING A VIDEO CALL AND A LIVE. WKWebView refuses the Screen Wake Lock API
-/// (`NotAllowedError`), so the page posts through `webkit.messageHandlers.canariIdleTimer`
-/// (`screenAwake.ts`) `{owner, hold}` - `owner` is `call` or `live` - when a holder takes or lets go
-/// of the screen, and `{reset: true}` once at every page boot, so a reload or a WebContent kill
-/// mid-call never leaves the screen on.
+/// THE SCREEN STAYS ON DURING A VIDEO CALL, A LIVE AND A PUBLISH BEING SENT. WKWebView refuses the
+/// Screen Wake Lock API (`NotAllowedError`), so the page posts through
+/// `webkit.messageHandlers.canariIdleTimer` (`screenAwake.ts`) `{owner, hold}` - `owner` is `call`,
+/// `live` or `publish` - when a holder takes or lets go of the screen, and `{reset: true}` once at
+/// every page boot, so a reload or a WebContent kill mid-call never leaves the screen on.
 ///
 /// A SET OF OWNERS, NOT A BOOLEAN: a call and a live can overlap, and the release of one must not
 /// drop the other's hold. `idleTimerDisabled` is YES exactly while the set is not empty. Adding an

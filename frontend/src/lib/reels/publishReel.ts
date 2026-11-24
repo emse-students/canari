@@ -1,104 +1,48 @@
 /**
- * PUBLISHING A REEL - the CanaReels publish step's work, in the order the server's contract asks
- * for it ([reels (server)](docs/wiki/services/reels.md)): the mute check, the media token, the
- * on-device re-encode to ONE fragmented MP4 (`prepareVideoForUpload`, C3), the upload under the
- * `reel-pending` retention class ({@link FEED_REEL_UPLOAD_CLASS}), then `POST /api/posts` with
- * `kind: 'reel'` and the declared duration - whose claim promotes the blob to `reel`.
+ * PUBLISHING FROM THE CANAREELS CAMERA - the publish step HANDS THE TAKE TO THE PUBLISH QUEUE
+ * (2026-11-24) and is done the moment it is on the device: the queue prepares it, uploads it in
+ * resumable parts and creates the post under an id minted here
+ * ([posts](docs/wiki/frontend/modules/posts.md#the-background-publish-queue)).
  *
- * Every dependency is a parameter so the order and the payload are pinned by a test with no network
- * and no encoder (`publishReel.test.ts`); the screen passes {@link defaultPublishReelDeps}.
+ * WHY NOT ON THE SPOT ANY MORE. The step used to run the whole publish in memory - re-encode, one
+ * upload, `POST /api/posts` - and a failure anywhere lost it: an Android 1.7.3 log (2026-11-24)
+ * shows four attempts of one reel on a slow link, each dying ~5 s after the app was stopped (the
+ * screen asleep under battery saver), the member having to start again each time. In the queue
+ * the take is DURABLE (IndexedDB, before the sheet closes), the upload RESUMES from the server's
+ * list of parts, and the create is IDEMPOTENT by its client id: leaving the app, a cut or a kill
+ * costs at most one part, never the reel, and never a second post.
  *
- * A failure is thrown as a {@link ReelPublishError} carrying the STAGE it reached and the original
- * error as its cause - typed at the throw, so the screen names where it stopped without reading a
- * message (`publishFailureMessage` reads the cause).
+ * What stays the camera's own is recorded with the take (`QueuedTakePreparation`): its cap, its
+ * removed sound, its trim, the encoder lease. The rule that makes it a reel is the queue's
+ * (`reelDeclarationFor` on the PREPARED frame and length, as here before). A take also sent to
+ * conversations (reels-in-chat 15.5) carries the take's id: the queue's upload is the one the
+ * chats adopt, before the post exists.
  */
 import type { InstitutionReach } from '$lib/posts/institutionReach';
-import {
-  MediaService,
-  preparePostMedia,
-  type ImageDimensions,
-  type MediaRef,
-  type MediaRetentionClass,
-} from '$lib/media';
-import { createPost, type CreatePostPayload, type PostEntity } from '$lib/posts/api';
-import { assertNotMuted } from '$lib/moderation/muteCheck';
-import type { PublishStage } from '$lib/posts/publishFailure';
-import { postIdentityFields } from '$lib/posts/postIdentity';
-import { getToken } from '$lib/stores/auth';
-import {
-  prepareVideoForUpload,
-  VideoPrepareError,
-  type PrepareVideoOptions,
-  type PreparedVideo,
-} from '$lib/video/prepareVideoForUpload';
+import type { MediaRef, MediaRetentionClass } from '$lib/media';
+import { isAssociationIdentity, postIdentityFields } from '$lib/posts/postIdentity';
+import { landingFeedFor } from '$lib/posts/landingFeed';
+import type { CreatePostPayload } from '$lib/posts/api';
+import type { QueuedPost } from '$lib/posts/publishQueue/publishQueueStore';
 import type { ReelClip } from './reelCapture';
-import { firstFramePlaceholder } from './reelFirstFrame';
-import { EncoderLeaseAbortedError, withEncoderLease } from '$lib/video/encoderLease';
-import { isReelFrame, reelCapForFrame, reelDeclaredDurationMs, type ReelRule } from './reelRule';
-
-/** What the publish step needs from the outside world. */
-export interface PublishReelDeps {
-  assertNotMuted: () => Promise<void>;
-  getToken: () => Promise<string>;
-  uploadLimits: () => Promise<{ maxPlaintextBytes: number } | null>;
-  prepare: (source: Blob, options: PrepareVideoOptions) => Promise<PreparedVideo>;
-  /** Uploads under `retentionClass`: {@link FEED_REEL_UPLOAD_CLASS} for a reel, `archive` for a post. */
-  upload: (
-    file: File,
-    token: string,
-    dims: ImageDimensions,
-    retentionClass: MediaRetentionClass
-  ) => Promise<MediaRef>;
-  /**
-   * The ThumbHash of the prepared file's FIRST FRAME (`MediaRef.placeholder`), or `null`: every
-   * reader paints it while the reel loads, since the server makes no thumbnail. Never throws.
-   */
-  placeholder: (file: File) => Promise<string | null>;
-  createPost: (payload: CreatePostPayload) => Promise<PostEntity>;
-}
 
 /**
- * The class a feed reel is UPLOADED under. Not `reel`: an upload whose post is never created (a
- * failed `createPost`, a kill or a cancel between the two calls) would then be kept for ever. A
- * `reel-pending` object is swept a day after upload unless the post's claim promotes it to `reel`
- * (reels audit, 2026-10-11; [media-service](docs/wiki/services/media-service.md)).
+ * The class a feed reel whose file conversations adopt is UPLOADED under. Not `reel`: an upload
+ * whose post is never created would then be kept for ever. A `reel-pending` object is swept a day
+ * after upload unless the post's claim promotes it to `reel`, or a chat hold keeps it (reels audit,
+ * 2026-10-11; [media-service](docs/wiki/services/media-service.md)).
  */
 export const FEED_REEL_UPLOAD_CLASS: MediaRetentionClass = 'reel-pending';
 
-/** The production dependencies: the real services, the {@link FEED_REEL_UPLOAD_CLASS} upload class. */
-export function defaultPublishReelDeps(): PublishReelDeps {
-  const media = new MediaService();
-  return {
-    assertNotMuted,
-    getToken,
-    uploadLimits: () => media.uploadLimits(),
-    prepare: prepareVideoForUpload,
-    upload: (file, token, dims, retentionClass) =>
-      media.encryptAndUpload(file, token, dims, retentionClass),
-    placeholder: firstFramePlaceholder,
-    createPost,
-  };
+/** What the publish step needs from the outside world: the account, and the queue's door. */
+export interface PublishReelDeps {
+  /** The signed-in account, or `null` when there is none (nothing can be queued then). */
+  userId: () => string | null;
+  /** Writes the post and its file on the device (`enqueuePost`); rejects when it could not. */
+  enqueue: (userId: string, post: QueuedPost, files: File[]) => Promise<void>;
 }
 
-/** Dependencies for publishing a camera photo as a normal archive post. */
-export interface PublishPhotoDeps {
-  assertNotMuted: () => Promise<void>;
-  getToken: () => Promise<string>;
-  upload: (file: File, token: string, dims: ImageDimensions) => Promise<MediaRef>;
-  createPost: (payload: CreatePostPayload) => Promise<PostEntity>;
-}
-
-/** The production services for a camera photo, whose media is retained with ordinary posts. */
-export function defaultPublishPhotoDeps(): PublishPhotoDeps {
-  const media = new MediaService();
-  return {
-    assertNotMuted,
-    getToken,
-    upload: (file, token, dims) => media.encryptAndUpload(file, token, dims, 'archive'),
-    createPost,
-  };
-}
-
+/** What the publish step hands over. */
 export interface PublishReelInput {
   clip: ReelClip;
   /** The caption, already trimmed; may be empty (a reel's caption is optional on the server). */
@@ -109,212 +53,84 @@ export interface PublishReelInput {
   studentsOnly?: boolean;
   /** The reach of an institution's post (owner, 2026-11-10): set by the step only where offered. */
   reach?: InstitutionReach;
-  /** The cap the take is PREPARED under: `longestReelMs` of the rule, or the served cap without one. */
+  /** The cap a VIDEO take is prepared under: `longestReelMs` of the rule, or the served cap. */
   maxDurationMs: number;
-  /**
-   * The served vertical rule (`reelRuleOf`), or `null` from an estate older than it - whose door
-   * refuses no landscape reel, so the take publishes as a reel as it did there.
-   */
-  rule: ReelRule | null;
-  /** Progress and cancel for the re-encode (`VideoPreparationState.optionsFor`). */
-  video: Pick<PrepareVideoOptions, 'onProgress' | 'signal'>;
-  /** Told each step as it starts, so the screen can name it. */
-  onStage?: (stage: PublishStage) => void;
-  /**
-   * The take is ALSO sent to conversations (reels-in-chat 15.5, D-onefile): called with the upload
-   * right after it lands and BEFORE `POST /api/posts`, so the chats adopt THIS file (the outbox's
-   * `adoptPublishedUpload`) and a post refused or cancelled afterwards still leaves them their file.
-   * Its failure never fails the publish: the take then uploads its own, and that is logged.
-   */
-  onUploaded?: (uploaded: PublishedReelUpload) => Promise<void>;
+  /** The chat take of the same press (15.5), which adopts the queue's upload. */
+  chatTakeId?: string;
 }
 
-/** What the publish step uploaded, as the chat sends of the same take adopt it (15.5). */
+/** What a published take uploaded, as the chat sends of the same take adopt it (15.5). */
 export interface PublishedReelUpload {
   ref: MediaRef;
   /** The declared duration of the published reel (whole ms). */
   durationMs: number;
 }
 
-/** Input for publishing a camera photo without pretending it is a time-based reel. */
-export interface PublishPhotoInput {
-  clip: ReelClip;
-  caption: string;
-  identity: string;
-  /** "Entre étudiants", as on a reel. */
-  studentsOnly?: boolean;
-  /** The reach of an institution's post, as on a reel. */
-  reach?: InstitutionReach;
-  onStage?: (stage: PublishStage) => void;
-}
-
-/** A publish that stopped, and where. The cause is whatever the step threw. */
-export class ReelPublishError extends Error {
-  constructor(
-    readonly stage: PublishStage,
-    options: { cause: unknown }
-  ) {
-    super(`reel publish failed at ${stage}`, options);
-    this.name = 'ReelPublishError';
+/** The account is unknown: nothing was queued. Typed, so the sheet says it without a message. */
+export class ReelPublishNoAccountError extends Error {
+  constructor() {
+    super('no signed-in account to queue the publish for');
+    this.name = 'ReelPublishNoAccountError';
   }
 }
 
-/** Publishes one reel; resolves with the created post. @throws {ReelPublishError} */
-export async function publishReel(
+/** The file name the take is queued under, by its type. */
+function takeFileName(blob: Blob): string {
+  if (blob.type.startsWith('image/')) return 'camera-photo.jpg';
+  return blob.type.includes('webm') ? 'canareel.webm' : 'canareel.mp4';
+}
+
+/**
+ * Queues the take - a video as a CanaReel to be, a photo as an ordinary post - and resolves once it
+ * and its post are ON THE DEVICE. @returns the queued post's id.
+ * @throws whatever the queue's write threw (a full disk), or {@link ReelPublishNoAccountError}.
+ */
+export async function queueReelPublish(
   input: PublishReelInput,
-  deps: PublishReelDeps = defaultPublishReelDeps()
-): Promise<PostEntity> {
-  const { clip, caption, identity, maxDurationMs, video, onStage } = input;
+  deps: PublishReelDeps
+): Promise<string> {
+  const { clip, caption, identity } = input;
+  const isPhoto = clip.blob.type.startsWith('image/');
+  const userId = deps.userId();
+  if (!userId) throw new ReelPublishNoAccountError();
+  const file = new File([clip.blob], takeFileName(clip.blob), {
+    type: clip.blob.type || (isPhoto ? 'image/jpeg' : 'video/mp4'),
+  });
+  const payload: Omit<CreatePostPayload, 'media' | 'images'> = {
+    markdown: caption,
+    ...postIdentityFields(identity),
+    ...(input.studentsOnly ? { studentsOnly: true } : {}),
+    ...(input.reach ? { reach: input.reach } : {}),
+  };
+  const post: QueuedPost = {
+    // The server stores the post under this id: a create whose answer was lost is the same post.
+    id: crypto.randomUUID(),
+    queuedAt: Date.now(),
+    payload,
+    media: [
+      {
+        name: file.name,
+        type: file.type,
+        size: file.size,
+        ...(isPhoto
+          ? {}
+          : {
+              take: {
+                maxDurationMs: input.maxDurationMs,
+                ...(clip.soundRemoved ? { removeAudio: true as const } : {}),
+              },
+            }),
+      },
+    ],
+    landing: landingFeedFor({ asAssociation: isAssociationIdentity(identity), scheduled: false }),
+    ...(input.chatTakeId && !isPhoto ? { chatTakeId: input.chatTakeId } : {}),
+  };
   console.debug(
-    `[reel-publish] start: ${clip.source}, ${clip.blob.type || 'typeless'}, ${clip.blob.size} bytes` +
-      (clip.soundRemoved ? ', sound removed' : '')
+    `[reel-publish] queuing ${post.id}: ${clip.source}, ${file.type}, ${file.size} bytes` +
+      (clip.soundRemoved ? ', sound removed' : '') +
+      (post.chatTakeId ? `, chat take ${post.chatTakeId.slice(0, 8)}` : '')
   );
-  let stage: PublishStage = 'moderation';
-  const enter = (next: PublishStage) => {
-    stage = next;
-    onStage?.(next);
-  };
-  try {
-    enter('moderation');
-    await deps.assertNotMuted();
-
-    enter('mediaToken');
-    const token = await deps.getToken();
-    const limits = await deps.uploadLimits();
-
-    enter('mediaPrepare');
-    // THE ENCODER LEASE IS SHARED WITH THE OUTBOX'S TAKE PREPARATION (RC-13, reels-in-chat 15.2):
-    // whoever started first encodes, the other waits. A cancel while waiting is the member's cancel.
-    const prepared = await withEncoderLease('publish', video.signal, () =>
-      deps.prepare(clip.blob, {
-        maxSeconds: maxDurationMs / 1000,
-        maxBytes: limits?.maxPlaintextBytes,
-        // The member's "remove the sound": the published file carries no audio track at all.
-        removeAudio: clip.soundRemoved === true,
-        // A reel loops: sound outside the picture would be a still frame on every pass.
-        trimToVideo: true,
-        ...video,
-      })
-    ).catch((e: unknown) => {
-      if (e instanceof EncoderLeaseAbortedError) {
-        throw new VideoPrepareError('aborted', 'cancelled while waiting for the encoder', {
-          cause: e,
-        });
-      }
-      throw e;
-    });
-
-    // THE RULE ON THE PREPARED FILE (owner, 2026-11-14: vertical OR short): this frame - rotation
-    // baked in - and this length are the ones the server is told. The pick was checked on what the
-    // engine DISPLAYED; reaching here outside the rule means that check could not read it, or read
-    // it otherwise, so the take becomes what the rule says it is - an ordinary post video - and the
-    // line accuses the miss. The length is decided, grace included, by the one function the
-    // composer's queue uses too (`reelDeclaredDurationMs`).
-    const frameCapMs = input.rule
-      ? reelCapForFrame(input.rule, isReelFrame(prepared.width, prepared.height, input.rule))
-      : maxDurationMs;
-    const durationMs = reelDeclaredDurationMs(prepared.durationSeconds * 1000, frameCapMs);
-    if (durationMs === null) {
-      console.warn(
-        `[reel-publish] the prepared take is ${prepared.width}x${prepared.height}, ${prepared.durationSeconds} s: outside the rule (cap ${String(frameCapMs)} ms), published as a post, not a reel` +
-          (input.onUploaded ? ' (its chat sends upload their own file)' : '')
-      );
-      enter('mediaUpload');
-      const ref = await deps.upload(
-        prepared.file,
-        token,
-        { width: prepared.width, height: prepared.height },
-        'archive'
-      );
-      enter('createPost');
-      const post = await deps.createPost({
-        markdown: caption,
-        media: [prepared.loudness ? { ...ref, loudness: prepared.loudness } : ref],
-        ...postIdentityFields(identity),
-        ...(input.studentsOnly ? { studentsOnly: true } : {}),
-        ...(input.reach ? { reach: input.reach } : {}),
-      });
-      console.debug(`[reel-publish] published ${post.id} as a post`);
-      return post;
-    }
-
-    // Decoded from the very file uploaded, so the blur is of the frame every reader will see first.
-    const placeholder = await deps.placeholder(prepared.file);
-    if (!placeholder) console.warn('[reel-publish] published without a first-frame placeholder');
-
-    enter('mediaUpload');
-    const uploaded = await deps.upload(
-      prepared.file,
-      token,
-      { width: prepared.width, height: prepared.height },
-      FEED_REEL_UPLOAD_CLASS
-    );
-    // The measured sound rides on the ref, so the post's media AND the chats adopting it carry it.
-    const ref: MediaRef = {
-      ...uploaded,
-      ...(placeholder ? { placeholder } : {}),
-      ...(prepared.loudness ? { loudness: prepared.loudness } : {}),
-    };
-    // THE CHATS ADOPT THIS FILE BEFORE THE POST EXISTS (15.5): written durably now, so whatever the
-    // post's fate, the conversations of the same take have their file.
-    if (input.onUploaded) {
-      await input.onUploaded({ ref, durationMs }).catch((e: unknown) => {
-        console.error(
-          `[reel-publish] the chat sends could not adopt upload ${ref.mediaId} - the take uploads its own:`,
-          e
-        );
-      });
-    }
-
-    enter('createPost');
-    const post = await deps.createPost({
-      kind: 'reel',
-      durationMs,
-      markdown: caption,
-      media: [ref],
-      ...postIdentityFields(identity),
-      ...(input.studentsOnly ? { studentsOnly: true } : {}),
-      ...(input.reach ? { reach: input.reach } : {}),
-    });
-    console.debug(`[reel-publish] published ${post.id}`);
-    return post;
-  } catch (err) {
-    throw new ReelPublishError(stage, { cause: err });
-  }
-}
-
-/** Publishes an edited camera photo as a normal archive post. @throws {ReelPublishError} */
-export async function publishCameraPhoto(
-  input: PublishPhotoInput,
-  deps: PublishPhotoDeps = defaultPublishPhotoDeps()
-): Promise<PostEntity> {
-  const { clip, caption, identity, onStage } = input;
-  let stage: PublishStage = 'moderation';
-  const enter = (next: PublishStage) => {
-    stage = next;
-    onStage?.(next);
-  };
-  try {
-    enter('moderation');
-    await deps.assertNotMuted();
-    enter('mediaToken');
-    const token = await deps.getToken();
-    enter('mediaPrepare');
-    const prepared = await preparePostMedia(
-      new File([clip.blob], 'camera-photo.jpg', { type: clip.blob.type || 'image/jpeg' })
-    );
-    if (!prepared.dims) throw new Error('camera photo has no dimensions');
-    enter('mediaUpload');
-    const ref = await deps.upload(prepared.file, token, prepared.dims);
-    enter('createPost');
-    return await deps.createPost({
-      markdown: caption,
-      media: [ref],
-      ...postIdentityFields(identity),
-      ...(input.studentsOnly ? { studentsOnly: true } : {}),
-      ...(input.reach ? { reach: input.reach } : {}),
-    });
-  } catch (err) {
-    throw new ReelPublishError(stage, { cause: err });
-  }
+  await deps.enqueue(userId, post, [file]);
+  console.debug(`[reel-publish] ${post.id} is on the device: the publish queue sends it`);
+  return post.id;
 }

@@ -20,6 +20,7 @@ import {
 import type { CommentIdentityService } from './comment-identity';
 import type { Repository } from 'typeorm';
 import { PostsService } from './posts.service';
+import { REEL_MEDIA_EXPIRED } from '../internal/reel-media';
 import { PostInteractionsService } from './post-interactions.service';
 import type { Post } from './entities/post.entity';
 import type { RedisService } from '../common/redis/redis.service';
@@ -48,7 +49,7 @@ const reelBody = (extra: Record<string, unknown> = {}) => ({
 
 function makeService(opts: {
   existing?: Partial<Post>;
-  claim?: () => Promise<{ refused: string[] }>;
+  claim?: () => Promise<{ refused: string[]; expired: string[] }>;
   purge?: () => Promise<Record<string, string>>;
   saveFails?: boolean;
   /** The `platform_config` row the reel's lifetime is read from; absent = no row (the defaults). */
@@ -83,7 +84,7 @@ function makeService(opts: {
   const retention = {
     assertOwnMedia: jest.fn(() => Promise.resolve()),
     release: jest.fn(() => Promise.resolve()),
-    claimReelFor: jest.fn(opts.claim ?? (() => Promise.resolve({ refused: [] }))),
+    claimReelFor: jest.fn(opts.claim ?? (() => Promise.resolve({ refused: [], expired: [] }))),
     purgeReelBlobs: jest.fn(opts.purge ?? (() => Promise.resolve({}))),
   };
   /** The usage dashboard's daily count (`usage/usage-activity.ts`): the metrics it was told of. */
@@ -169,10 +170,28 @@ describe('createPost - a reel', () => {
 
   it("refuses with 400 a blob that is not the author's - and stores nothing", async () => {
     const { service, postRepo } = makeService({
-      claim: () => Promise.resolve({ refused: [BLOB] }),
+      claim: () => Promise.resolve({ refused: [BLOB], expired: [] }),
     });
 
-    await expect(service.createPost(reelBody(), false)).rejects.toBeInstanceOf(BadRequestException);
+    const refusal = await service.createPost(reelBody(), false).catch((e: unknown) => e);
+    expect(refusal).toBeInstanceOf(BadRequestException);
+    // Not curable by an upload: NOT the typed expiry the publisher would re-upload on.
+    expect((refusal as BadRequestException).getResponse()).not.toMatchObject({
+      code: REEL_MEDIA_EXPIRED,
+    });
+    expect(postRepo.save).not.toHaveBeenCalled();
+  });
+
+  it("refuses with a TYPED 400 a blob that is the author's own pending upload past its window - and stores nothing", async () => {
+    const { service, postRepo } = makeService({
+      claim: () => Promise.resolve({ refused: [BLOB], expired: [BLOB] }),
+    });
+
+    const refusal = await service.createPost(reelBody(), false).catch((e: unknown) => e);
+    expect(refusal).toBeInstanceOf(BadRequestException);
+    expect((refusal as BadRequestException).getResponse()).toMatchObject({
+      code: REEL_MEDIA_EXPIRED,
+    });
     expect(postRepo.save).not.toHaveBeenCalled();
   });
 
