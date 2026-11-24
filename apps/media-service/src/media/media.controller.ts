@@ -323,7 +323,7 @@ export class MediaController {
     @Req() req: Request,
     @Body() body?: { size?: unknown }
   ): Promise<{ mediaId: string }> {
-    this.verifyToken(req);
+    const uploaderId = this.verifyToken(req);
     const size = publicImageSize(body?.size);
     const bound = PUBLIC_IMAGE_BOUNDS[size];
 
@@ -358,7 +358,7 @@ export class MediaController {
       throw new UnprocessableEntityException('The image could not be read');
     }
 
-    const mediaId = await this.mediaService.uploadPublicAsset(compressed, 'image/webp');
+    const mediaId = await this.mediaService.uploadPublicAsset(compressed, 'image/webp', uploaderId);
     this.logger.log(
       `Stored public asset: ${mediaId} (${upload.size} → ${compressed.length} bytes, webp, size=${size})`
     );
@@ -1313,9 +1313,13 @@ export class MediaController {
     @Headers('x-internal-secret') internalSecret?: string
   ): Promise<{ ok: boolean; deleted: number; failed: number }> {
     assertInternalSecret(internalSecret);
-    // The open upload sessions first: no device of an erased account can release them any more.
-    await this.uploadSessions.cancelAllOwnedBy(userId);
+    // The objects FIRST: this call records the erasure before it reads the index, so from its first
+    // synchronous run no session of the owner can register anything, nor a new one open. Ending the
+    // sessions before it left a window in which one could open after the cancel and survive it.
     const { deleted, failed } = await this.mediaService.removeAllOwnedBy(userId);
+    // Then the sessions, the open ones and the completed ones' memos alike: no device of an erased
+    // account can release them, and each sidecar names the owner.
+    await this.uploadSessions.cancelAllOwnedBy(userId);
     if (failed > 0) {
       // A 2xx would tell the erasure queue this half is done. It is not: the objects that failed
       // are still stored, and only a retry of this call removes them.

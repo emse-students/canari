@@ -51,9 +51,17 @@ describe('DELETE media/internal/users/:userId', () => {
     ).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 
-  it('ends the open upload sessions of the erased owner first: no device of that account can any more', async () => {
+  it('erases the objects FIRST - that call records the erasure, so no session can register or open after it - then ends the sessions', async () => {
     const order: string[] = [];
     await build({ deleted: 0, failed: 0 }, order).removeAllOwnedBy('u1', SECRET);
-    expect(order).toEqual(['sessions:u1', 'media']);
+    expect(order).toEqual(['media', 'sessions:u1']);
+  });
+
+  it('ends the sessions even when an object failed, and still answers 503', async () => {
+    const order: string[] = [];
+    await expect(
+      build({ deleted: 0, failed: 1 }, order).removeAllOwnedBy('u1', SECRET)
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(order).toEqual(['media', 'sessions:u1']);
   });
 });

@@ -49,7 +49,9 @@ import {
   declaredBlobShape,
   expectedPartLength,
   partCount,
+  uploadSessionTtlMs,
 } from './upload-session';
+import { OwnerErasedException } from './erased-owners';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const HOUR_MS = 60 * 60 * 1000;
@@ -197,7 +199,7 @@ export class UploadSessionService {
   private readonly dir = process.env.MEDIA_UPLOAD_SESSION_DIR
     ? path.resolve(process.env.MEDIA_UPLOAD_SESSION_DIR)
     : path.join(process.cwd(), 'upload_sessions');
-  private readonly ttlMs = positiveIntEnv('MEDIA_UPLOAD_SESSION_TTL_MS', 24 * HOUR_MS);
+  private readonly ttlMs = uploadSessionTtlMs();
   private readonly maxOpenPerOwner = positiveIntEnv('MEDIA_UPLOAD_SESSION_MAX_OPEN', 4);
   /** Disk the staging files may hold in total; a sparse file still reserves its declared size here. */
   private readonly maxStagedBytes = positiveIntEnv(
@@ -247,6 +249,8 @@ export class UploadSessionService {
     },
     maxBytes: number
   ): Promise<{ uploadId: string; partBytes: number; totalParts: number; expiresAt: number }> {
+    // Nothing staged, nothing reserved for an erased owner: its `complete` would be refused anyway.
+    this.media.assertOwnerNotErased(ownerId, 'upload session init');
     await this.ensureLoaded();
     const { totalBytes, partBytes } = input;
     if (!Number.isSafeInteger(totalBytes) || (totalBytes as number) <= 0) {
@@ -509,6 +513,36 @@ export class UploadSessionService {
    * the run that registers the entry, or when the session ends some other way - never twice.
    */
   async complete(ownerId: string, id: string): Promise<{ mediaId: string }> {
+    // Admitted in this synchronous run, before anything is awaited: refused at once for an erased
+    // owner, and counted while it runs (`MediaService.admitUploader`).
+    try {
+      return await this.media.admitUploader(ownerId, 'upload session complete', () =>
+        this.completeAdmitted(ownerId, id)
+      );
+    } catch (err) {
+      // Refused: nothing is stored (a refusal at the registration deleted what was), and the parts
+      // this session holds go too - nobody can complete it any more.
+      if (err instanceof OwnerErasedException) await this.disposeRefused(ownerId, id);
+      throw err;
+    }
+  }
+
+  /**
+   * Ends the caller's own session after its `complete` was refused for an erased owner: staging,
+   * sidecar and reservation. Absent or another member's: nothing to do (the refusal is the answer).
+   */
+  private async disposeRefused(ownerId: string, id: string): Promise<void> {
+    if (!UUID_REGEX.test(id)) return;
+    await this.ensureLoaded();
+    await this.mutex.run(`${id}:complete`, async () => {
+      const session = this.sessions.get(id);
+      if (!session || session.ownerId !== ownerId) return;
+      await this.dispose(session, 'refused');
+    });
+  }
+
+  /** The body of {@link complete}, run as an admitted upload. */
+  private async completeAdmitted(ownerId: string, id: string): Promise<{ mediaId: string }> {
     await this.ensureLoaded();
     return this.mutex.run(`${id}:complete`, async () => {
       const session = await this.require(ownerId, id);
@@ -583,6 +617,8 @@ export class UploadSessionService {
         this.logger.error(`Upload session ${id}: the store refused ${mediaId}: ${String(err)}`);
         throw new InternalServerErrorException('Could not store the upload');
       }
+      // Erased while the bytes were being stored: `registerUpload` deletes the object and throws
+      // OwnerErasedException, and `complete` ends the session.
       await this.media.registerUpload(
         mediaId,
         ownerId,
@@ -630,12 +666,13 @@ export class UploadSessionService {
   }
 
   /**
-   * THE ACCOUNT ERASURE ENDS THE OWNER'S OPEN SESSIONS (core-service's fan-out, `DELETE
-   * /media/internal/users/:id`). A deleted member's device wipes its outbox and keeps no token, so no
-   * client can ever release what it had open: without this the staging, the slot and the reservation
-   * of each session would wait for the 24 h sweep. Each is ended under the same lock as `cancel`; a
-   * session that completed meanwhile is left (its blob is the media erasure's). Idempotent: a retry
-   * of the fan-out finds nothing left to end.
+   * THE ACCOUNT ERASURE ENDS THE OWNER'S SESSIONS (core-service's fan-out, `DELETE
+   * /media/internal/users/:id`, after `MediaService.removeAllOwnedBy` recorded the erasure). A deleted
+   * member's device wipes its outbox and keeps no token, so no client can ever release what it had
+   * open: without this the staging, the slot and the reservation of each session would wait for the
+   * 24 h sweep. A COMPLETED session goes too: its memo answers a lost-answer retry nobody can make any
+   * more, and its sidecar names the owner for a day (its blob is the media erasure's). Each is ended
+   * under the same lock as `cancel`. Idempotent: a retry of the fan-out finds nothing left to end.
    *
    * @returns How many sessions were ended.
    */
@@ -645,7 +682,7 @@ export class UploadSessionService {
     for (const session of this.sessions.values()) {
       if (session.ownerId !== ownerId) continue;
       await this.mutex.run(`${session.id}:complete`, async () => {
-        if (session.completed || !this.sessions.has(session.id)) return;
+        if (!this.sessions.has(session.id)) return;
         await this.dispose(session, 'cancelled');
         ended += 1;
       });
@@ -826,7 +863,7 @@ export class UploadSessionService {
   }
 
   /** Ends a session: in-flight parts aborted and awaited, reservation released, files removed. */
-  private async dispose(session: Session, why: 'cancelled' | 'expired'): Promise<void> {
+  private async dispose(session: Session, why: 'cancelled' | 'expired' | 'refused'): Promise<void> {
     this.sessions.delete(session.id);
     try {
       for (const abort of session.aborts) abort.abort();

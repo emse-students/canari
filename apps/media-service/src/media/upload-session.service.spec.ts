@@ -94,6 +94,13 @@ function rig(existingDir?: string, sharedMedia?: InstanceType<typeof MediaServic
     m.meta = { items: Object.create(null) };
     m.logger = { log: () => {}, warn: () => {}, error: () => {}, debug: () => {} };
     m.persistMetadata = () => Promise.resolve();
+    // The object store as the erasure and a refused registration reach it: a delete drops the copy.
+    m.storage = {
+      delete: async (id: string) => {
+        const at = stored.findIndex((s) => s.id === id);
+        if (at >= 0) stored.splice(at, 1);
+      },
+    };
   }
   const storage = {
     putFileStream: async (id: string, file: string) => {
@@ -381,14 +388,138 @@ describe('the account erasure', () => {
     expect(await r.svc.cancelAllOwnedBy('alice')).toBe(0);
   });
 
-  it('leaves a session that completed: its blob is the media erasure one', async () => {
+  it('ends a session that completed too: its memo serves nobody now, and its sidecar names the owner', async () => {
     const r = rig();
     const s = await open(r, 'alice', 3000);
     for (const i of Array(s.totalParts).keys()) {
       await put(r, 'alice', s.uploadId, i, sliceOf(s.blob, 1024, i));
     }
     await r.svc.complete('alice', s.uploadId);
+    expect(await r.svc.cancelAllOwnedBy('alice')).toBe(1);
+    expect(await fs.readdir(r.dir)).toEqual([]);
+  });
+});
+
+/**
+ * AN ERASED OWNER REGISTERS NOTHING (docs/wiki/services/media-service.md#an-erased-owner-registers-nothing-2026-11-24).
+ * The erasure here is the route's: the objects first (which records it), then the sessions.
+ */
+describe('an upload session of an erased owner', () => {
+  async function erase(r: Rig, owner: string): Promise<void> {
+    await r.media.removeAllOwnedBy(owner);
+    await r.svc.cancelAllOwnedBy(owner);
+  }
+  const live = (r: Rig) =>
+    Object.values(
+      (r.media as unknown as { meta: { items: Record<string, { ownerId?: string }> } }).meta.items
+    );
+  const naming = (r: Rig, owner: string) => live(r).filter((e) => e.ownerId === owner);
+  async function filled(r: Rig, owner: string, cls?: 'chat-reel') {
+    const s = await open(r, owner, 3000, 1024, cls);
+    for (const i of Array(s.totalParts).keys()) {
+      await put(r, owner, s.uploadId, i, sliceOf(s.blob, 1024, i));
+    }
+    return s;
+  }
+
+  it('THE CLOSING TEST: after the erasure, a second session of ALICE stores nothing and no entry names her', async () => {
+    const r = rig();
+    const first = await filled(r, 'alice');
+    await r.svc.complete('alice', first.uploadId);
+    expect(naming(r, 'alice')).toHaveLength(1);
+
+    await erase(r, 'alice');
+
+    // The same token's identity opens a second session: refused before anything is staged.
+    await expect(open(r, 'alice', 3000)).rejects.toMatchObject({
+      status: 410,
+      response: { code: 'OWNER_ERASED' },
+    });
+    expect(await fs.readdir(r.dir)).toEqual([]);
+    expect(r.stored).toEqual([]);
+    expect(naming(r, 'alice')).toEqual([]);
+    // Another member is untouched.
+    const bob = await filled(r, 'bob');
+    await expect(r.svc.complete('bob', bob.uploadId)).resolves.toBeDefined();
+  });
+
+  it('a complete arriving between the two halves of the erasure is refused, stores nothing and cleans its parts', async () => {
+    const r = rig();
+    const s = await filled(r, 'alice', 'chat-reel');
+    expect(reserved(r)).toBe(s.blob.length);
+
+    await r.media.removeAllOwnedBy('alice'); // the record is written; the sessions are not ended yet
+
+    await expect(r.svc.complete('alice', s.uploadId)).rejects.toMatchObject({
+      status: 410,
+      response: { code: 'OWNER_ERASED' },
+    });
+    expect(r.stored).toEqual([]);
+    expect(r.registered).toEqual([]);
+    expect(await fs.readdir(r.dir)).toEqual([]);
+    expect(reserved(r)).toBe(0);
+    expect(naming(r, 'alice')).toEqual([]);
+    // The second half finds nothing left to end.
     expect(await r.svc.cancelAllOwnedBy('alice')).toBe(0);
+  });
+
+  /** A filled session whose `complete` is started and held at the store write. */
+  async function completeHeldAtTheStore(r: Rig) {
+    const s = await filled(r, 'alice', 'chat-reel');
+    const storage = (
+      r.svc as unknown as { storage: { putFileStream: (...a: never[]) => Promise<void> } }
+    ).storage;
+    const realPut = storage.putFileStream;
+    let reached!: () => void;
+    const storeReached = new Promise<void>((resolve) => (reached = resolve));
+    let finishStore!: () => void;
+    const storeHeld = new Promise<void>((resolve) => (finishStore = resolve));
+    storage.putFileStream = (async (...args: never[]) => {
+      reached();
+      await storeHeld;
+      await realPut(...args);
+    }) as never;
+    const completing = r.svc.complete('alice', s.uploadId);
+    await storeReached;
+    return { completing, finishStore };
+  }
+
+  /** Whatever the order: nothing stored, nothing staged, nothing reserved, no entry naming her. */
+  async function expectNothingOfAlice(r: Rig) {
+    expect(r.stored).toEqual([]);
+    expect(await fs.readdir(r.dir)).toEqual([]);
+    expect(reserved(r)).toBe(0);
+    expect(naming(r, 'alice')).toEqual([]);
+  }
+
+  it('INTERLEAVED: an erasure landing while the bytes are stored ends REFUSED', async () => {
+    const r = rig();
+    const { completing, finishStore } = await completeHeldAtTheStore(r);
+    // The erasure runs while the store is in flight: its record is written in its first run.
+    const erasing = erase(r, 'alice');
+    finishStore();
+    await expect(completing).rejects.toMatchObject({ status: 410 });
+    await erasing;
+    await expectNothingOfAlice(r);
+  });
+
+  it('INTERLEAVED: an erasure landing after the registration ends ERASED', async () => {
+    const r = rig();
+    const { completing, finishStore } = await completeHeldAtTheStore(r);
+    finishStore();
+    await completing;
+    expect(naming(r, 'alice')).toHaveLength(1);
+    await erase(r, 'alice');
+    await expectNothingOfAlice(r);
+  });
+
+  it('records a DIGEST of the owner, never the id', async () => {
+    const r = rig();
+    await r.media.removeAllOwnedBy('alice');
+    const records = (r.media as unknown as { meta: { erasedOwners?: Record<string, number> } }).meta
+      .erasedOwners;
+    expect(Object.keys(records ?? {})).toHaveLength(1);
+    expect(JSON.stringify(records)).not.toContain('alice');
   });
 });
 
