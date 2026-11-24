@@ -24,8 +24,8 @@ a member of any age, and that push is filtered for its own reader like every oth
 
 1. **Every history answer is addressed** - the diff, the scrollback AND the push.
    `sendBundleChunks` sends with `recipientDevices = [to]` (`addressedHistoryAnswer`), `to` being the
-   asking device's `userId:deviceId`. _Changed from the review, which kept the push a broadcast -
-   see above, for consistency._ **An ask that carries no `requestId` is refused where it is parsed**
+   asking device's `userId:deviceId`. *Changed from the review, which kept the push a broadcast -
+   see above, for consistency.* **An ask that carries no `requestId` is refused where it is parsed**
    (`historyAskId`, `systemMessageHandler.ts`, D211, 2026-11-12): every build since step A mints one
    and the floor is past it, so such an ask is malformed. Nothing is stored and nothing is answered -
    the asker could not accept the answer (rule 5), and the generation it would cost is skipped by
@@ -58,20 +58,20 @@ a member of any age, and that push is filtered for its own reader like every oth
    - the frame is TRANSPORT (`durable: false`). Every history answer is, so it reaches only devices
      online now and never enters the history stream;
    - **every addressed member device declared, on its live socket, that it applies rule 5** (rule 6).
-     Otherwise `400 { error: 'addressed_unsupported', devices }`. Key groups are unchanged.
-     The refusal's log line names the cause PER DEVICE (2026-11-13): `offline` (no presence key - the
-     usual one, a newcomer's phone when its Welcome is delivered, backlog (entry deleted 2026-11-18, every half read))
-     or `did-not-declare` (online, a live session without the capability). The Lua check returns `2` for
-     the first and `0` for the second (`addressabilityOf`), so nothing reads Redis a second time to
-     classify it; the behaviour is the same for both.
-     **The inviter's join push does not learn that refusal by failing (2026-11-15).** The one addressed
-     send nobody asked for is the join push that follows every delivered Welcome (`joinPush.ts`); every
-     other addressed answer replies to an ask, whose asker was online to make it. On dev, one group
-     creation cost nine `400 addressed_unsupported` (measured below). **Decided: the Welcome's answer carries the
-     verdict** - `POST /api/mls/welcome` answers `{ status: 'queued', addressability }`, read by the SAME
-     script in check-only mode (`MessagingService.welcomeAnswer`), and the join push sends nothing to a
-     device answered `offline` or `undeclared` (still counted at warn, `[JOIN_PUSH] NOT DELIVERED`). Why
-     this and not the two alternatives:
+   Otherwise `400 { error: 'addressed_unsupported', devices }`. Key groups are unchanged.
+   The refusal's log line names the cause PER DEVICE (2026-11-13): `offline` (no presence key - the
+   usual one, a newcomer's phone when its Welcome is delivered, backlog (entry deleted 2026-11-18, every half read))
+   or `did-not-declare` (online, a live session without the capability). The Lua check returns `2` for
+   the first and `0` for the second (`addressabilityOf`), so nothing reads Redis a second time to
+   classify it; the behaviour is the same for both.
+   **The inviter's join push does not learn that refusal by failing (2026-11-15).** The one addressed
+   send nobody asked for is the join push that follows every delivered Welcome (`joinPush.ts`); every
+   other addressed answer replies to an ask, whose asker was online to make it. On dev, one group
+   creation cost nine `400 addressed_unsupported` (measured below). **Decided: the Welcome's answer carries the
+   verdict** - `POST /api/mls/welcome` answers `{ status: 'queued', addressability }`, read by the SAME
+   script in check-only mode (`MessagingService.welcomeAnswer`), and the join push sends nothing to a
+   device answered `offline` or `undeclared` (still counted at warn, `[JOIN_PUSH] NOT DELIVERED`). Why
+   this and not the two alternatives:
    - **The client holds no per-device presence or capability.** `presenceStore` polls per USER, every
      10 s, and nothing hands a client the capabilities another device declared; teaching it would be a
      second copy of a fact only chat-delivery reads (`addressing:sessions:*`), with its own staleness.
@@ -116,10 +116,10 @@ a member of any age, and that push is filtered for its own reader like every oth
      enrolled), the device lifecycle; this fix only stops pushing to them.
 
    The same cause gave GRP-3's seven `400`s ([findings](../cross-client-harness-findings.md)).
-
 4. **The server marks an addressed row.** `queued_message.addressed` (migration `035`, which sets a
    `lock_timeout` so it fails rather than queue every send behind a long transaction), set when the
-   send was addressed ON A CONVERSATION - the flag is what rule 5 and the gateway's edge filter (rule 6) act on, and a key-group seed answer is held to neither. The live frame carries it
+   send was addressed ON A CONVERSATION - the flag is what rule 5 and the gateway's edge filter (rule
+   6) act on, and a key-group seed answer is held to neither. The live frame carries it
    (`chat:messages`, and the gateway forwards it), and so does the pull. It never enters the shared
    history stream (already the rule).
 5. **The receiver accepts an addressed frame only as the answer to its own question**
@@ -136,9 +136,9 @@ a member of any age, and that push is filtered for its own reader like every oth
      elects one responder, and a re-election over a stored probe can hand the same ask to one more,
      whose answer is held to the same bound and only adds - so it is taken, not refused. Each closes
      the ask for itself with its chunk marked `last`; once both have, the ask is gone, and a third
-     device is refused at error, because nothing honest produces one. _Changed twice by the #2270
+     device is refused at error, because nothing honest produces one. *Changed twice by the #2270
      reviews: the first build consumed the ask on the FIRST answerer and dropped the second one's
-     content at error; the second let any number of answerers in._ **One device answers one ask
+     content at error; the second let any number of answerers in.* **One device answers one ask
      once (2026-11-24):** the answerer's rendezvous (`historyDigestRendezvous.ts`, `noteProbeReceived`)
      hands a probe to ONE waiting election, the oldest; it used to wake every election waiting for the
      same asker, so a device elected twice answered the same `requestId` twice, and the asker took
@@ -161,10 +161,10 @@ a member of any age, and that push is filtered for its own reader like every oth
      authenticated user. When a last chunk was entirely withheld, no frame
      carries `last` and the ask stays open until newer asks push it out. A page
      reloaded between its ask and the answer refuses the answer, and the comparison runs again on
-     the next connection. _Changed from the review, which
+     the next connection. *Changed from the review, which
      dropped open asks "at the next connection": a Welcome processed in the drain of a connection
      races that edge. The open asks are instead a bounded FIFO, 32 per conversation - state, never a
-     clock, and a restarted page has asked nothing._
+     clock, and a restarted page has asked nothing.*
    - **It is BOUNDED by the ask.** A pull's answer may carry only the ids it named, or ids inside
      the slices it named; a range answer only messages inside `[since, before)`; a digest answer
      only messages from `since` on; and every message no later than the ask plus the one-hour skew
@@ -174,18 +174,18 @@ a member of any age, and that push is filtered for its own reader like every oth
      watermarks, history floor and pins are not merged. The one exception is the `join` push: a
      device that was just admitted holds none of that state, and the push is how it gets the floor,
      the watermarks and the pins. A newly added message keeps the state it arrived with.
-     On a key group the existing Graine rule is unchanged.
-6. **The server refuses to address a device that does not apply rule 5.** _Changed from the review,
+   On a key group the existing Graine rule is unchanged.
+6. **The server refuses to address a device that does not apply rule 5.** *Changed from the review,
    which compared `key_package.deviceAppVersion` against a release and had a leader tab report its
-   build._ The evidence is a CAPABILITY declared by the code that decrypts: the client opens its
+   build.* The evidence is a CAPABILITY declared by the code that decrypts: the client opens its
    socket with `caps=addressed-history-1` (`gatewaySocketUrl`, the one builder both socket openers
    use). Since rule 3 makes an addressed conversation frame transport-only, its addressee is online
    by construction, and the live sessions are exactly the code that will read it.
 
-   **The declaration is a CROSS-PROCESS fact** (`apps/chat-gateway/src/addressing.rs`). _Changed
+   **The declaration is a CROSS-PROCESS fact** (`apps/chat-gateway/src/addressing.rs`). *Changed
    from the #2270 review: the first build aggregated the sessions inside one gateway process, so in a
    deploy overlap an old-build tab on one gateway and a new tab on another wrote competing presence
-   values, and the device looked addressable._ Every write is one Lua script, validated before its
+   values, and the device looked addressable.* Every write is one Lua script, validated before its
    first write so a failing one leaves nothing, and tested against the production Redis in CI
    (`redis_it`):
    - **one field per session** in the hash `addressing:sessions:{userId}:{deviceId}` (outside `user:*`,
@@ -214,14 +214,14 @@ a member of any age, and that push is filtered for its own reader like every oth
    **The check and the PUBLISH are one script** (`ADDRESSABLE_PUBLISH_LUA`, `addressing.ts`). The
    sender's check runs before the rows are written; the publish re-asks the same question in the
    same atomic step, so no session registered in between receives the frame. Refused there, the row
-   stays queued and the refusal is logged at **error** (`ADDRESSED row NOT published`). _Added from
-   the #2270 re-review._
+   stays queued and the refusal is logged at **error** (`ADDRESSED row NOT published`). *Added from
+   the #2270 re-review.*
 
    **The PULL withholds it too.** The pending fetch carries the same `caps` the socket does, and a
    fetch that does not declare the capability is served no addressed row - filtered in the query,
    so the page and its cursor are untouched and the row waits for a session that can read it
-   (`WITHHELD ... addressed row(s)`, info, once per change of that device's count). _Added from the #2270
-   re-review: the queue pull is filtered like the realtime path._
+   (`WITHHELD ... addressed row(s)`, info, once per change of that device's count). *Added from the #2270
+   re-review: the queue pull is filtered like the realtime path.*
 
    **The gateway also filters at its EDGE** (`addressed_recipients`): the pub/sub loop hands an
    addressed frame only to the local sessions that declared the capability, and logs every one it
@@ -373,17 +373,16 @@ material. No new primitive and no new dependency.
 
 ### Mixed versions
 
-| Asker              | Answerer          | What happens                                                                                     |
-| ------------------ | ----------------- | ------------------------------------------------------------------------------------------------ |
-| seals (this build) | seals             | sealed, opened                                                                                   |
-| seals              | anything unsealed | **refused** at error (`REFUSED an unsealed history_bundle`), nothing of it ingested              |
-| no key             | seals             | the ask is malformed and answered nothing, like an ask with no `requestId` (D211), said at error |
+| Asker | Answerer | What happens |
+| --- | --- | --- |
+| seals (this build) | seals | sealed, opened |
+| seals | anything unsealed | **refused** at error (`REFUSED an unsealed history_bundle`), nothing of it ingested |
+| no key | seals | the ask is malformed and answered nothing, like an ask with no `requestId` (D211), said at error |
 
 Every build at the floor (`1.7.0`) seals, so the two `[LEGACY]` halves that accepted an older build
-
 - an unsealed answer to a keyed ask, and an ask with no key answered in clear - are gone
-  ([legacy-compatibility](../legacy-compatibility.md#entries-170-retires-the-floor-raise-of-both-estates-once-both-stores-serve-170)). The answerer seals or sends nothing: a server that would
-  broadcast the answer is answered with nothing (`[HISTORY_SEAL]`).
+([legacy-compatibility](../legacy-compatibility.md#entries-170-retires-the-floor-raise-of-both-estates-once-both-stores-serve-170)). The answerer seals or sends nothing: a server that would
+broadcast the answer is answered with nothing (`[HISTORY_SEAL]`).
 
 ### What is NOT sealed: the inviter's join push - so it carries no message (2026-11-17)
 
@@ -453,7 +452,6 @@ ASKS, on facts it holds durably:
    **Late on a warm resume, never lost.** The ledger is taken at a cold start only: a background
    join made while the app's process stayed alive in the background is owed its register at the
    next cold start, not at the resume.
-
 3. **Asked by the reconciliation it already runs.** While the entry still asks, `sendHistoryProbe`
    sends the DIGEST (never the state key, whose match is answered by silence) with `register: true`,
    and the ask this device keeps says `register` too (`noteHistoryAsk`). Like every ask, it carries
