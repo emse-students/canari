@@ -187,6 +187,8 @@ import { FORM_DRAFT, FORM_IS_DRAFT, FORM_PUBLISHED } from '../forms/form-status'
 import { retireForms } from '../forms/retire-forms';
 import { assertFormOfAssociation } from '../forms/form-ownership';
 import { formsWithUnpublishedChanges } from '../forms/form-draft-revision';
+import { promoteWaitlistsOfCollectors, type PromotedAnswer } from '../forms/waitlist';
+import { FormWaitlistNoticeService } from '../forms/waitlist-notice.service';
 import {
   AddMemberDto,
   CreateAssociationDto,
@@ -699,8 +701,25 @@ export class AssociationsService {
         is how the agenda's push stayed English; go through this. */
     private readonly notifications: PostNotificationsService,
     private readonly userTagService: UserTagService,
-    private readonly lydiaNotifier: LydiaPaymentsNotifier
+    private readonly lydiaNotifier: LydiaPaymentsNotifier,
+    // The waiting list's after-commit step: an association that can collect online again promotes
+    // the lists of its forms frozen on an online payment (`promoteWaitlistsOfCollectors`). Always
+    // injected by Nest; a spec that never makes an association ready may leave it out, and a
+    // promotion committed without it is an ERROR.
+    private readonly waitlist?: FormWaitlistNoticeService
   ) {}
+
+  /** Hands what a readiness transaction promoted to the waiting list's after-commit step. */
+  private async afterWaitlistPromotions(promoted: readonly PromotedAnswer[]): Promise<void> {
+    if (promoted.length === 0) return;
+    if (!this.waitlist) {
+      this.logger.error(
+        `[WAITLIST] ${promoted.length} promotion(s) committed with no notifier wired - their notices are owed`
+      );
+      return;
+    }
+    await this.waitlist.afterCommit(promoted);
+  }
 
   /** Co-organisation (D39), registered at boot by `CoorganisationModule` - see `co-organisers.port`. */
   private coOrganisers: CoOrganiserPort | null = null;
@@ -5951,6 +5970,8 @@ ${rejectionReason}`
           delegatesReleased: Map<string, number>;
           /** Set when this transaction switched a bridge in: whether the historical was ready. */
           switched: { historicalWasReady: boolean; switchCount: number } | null;
+          /** Waiting answers promoted because these associations collect again (`waitlist.ts`). */
+          promoted: PromotedAnswer[];
         };
     const step: Step = await this.assoRepo.manager.transaction(async (manager): Promise<Step> => {
       const selectHolders = (): Promise<Holder[]> =>
@@ -6042,6 +6063,7 @@ ${rejectionReason}`
       let admins = 0;
       let delegatesWithheld = new Map<string, number>();
       let delegatesReleased = new Map<string, number>();
+      let promoted: PromotedAnswer[] = [];
       const delegateIds = await approvedDelegateIds(manager, holder.id);
       if (transitioned && !ready) {
         const byId = await withholdOnSaleProductsOf(manager, [holder.id, ...delegateIds]);
@@ -6054,10 +6076,11 @@ ${rejectionReason}`
         // never leaves a product withheld. The holder's own products only when it collects on its
         // own account (it does not itself delegate); every approved delegate's, which route here.
         const selfRouted = holdsOwnAccount(holder.type) && !isDelegating(holder);
-        const byId = await releaseWithheldProductsOf(manager, [
-          ...(selfRouted ? [holder.id] : []),
-          ...delegateIds,
-        ]);
+        const collecting = [...(selfRouted ? [holder.id] : []), ...delegateIds];
+        const byId = await releaseWithheldProductsOf(manager, collecting);
+        // The same transaction promotes every list of those entities' forms frozen on an online
+        // payment (`promoteWaitlistsOfCollectors`): readiness is the event that unfreezes them.
+        promoted = await promoteWaitlistsOfCollectors(manager, collecting, this.logger);
         delegatesReleased = new Map([...byId].filter(([id]) => id !== holder.id));
         const released = [...byId.values()].reduce((sum, n) => sum + n, 0);
         if (released > 0) {
@@ -6078,8 +6101,10 @@ ${rejectionReason}`
         delegatesWithheld,
         delegatesReleased,
         switched,
+        promoted,
       };
     });
+    if (step.kind === 'done') await this.afterWaitlistPromotions(step.promoted);
     if (step.kind === 'none') {
       return { kind: step.inFlight ? 'no-holder-enrolment-in-flight' : 'no-holder' };
     }
@@ -7455,8 +7480,11 @@ ${rejectionReason}`
    * pauses the moment a delegation is revoked or a receiver loses its Lydia account, and resumes
    * the moment a new delegation is accepted, with no state of its own to drift.
    */
-  async collectsNow(associationId: string): Promise<boolean> {
-    const asso = await this.assoRepo.findOne({ where: { id: associationId } });
+  async collectsNow(associationId: string, manager?: EntityManager): Promise<boolean> {
+    // A caller inside a transaction (a waiting-list promotion, under its seat lock) reads on ITS
+    // connection: a second pooled one, taken while holding the lock, can wait on itself.
+    const repo = manager ? manager.getRepository(Association) : this.assoRepo;
+    const asso = await repo.findOne({ where: { id: associationId } });
     if (!asso) return false;
     if (!mayCollect(asso)) {
       this.logger.debug(
@@ -7464,7 +7492,7 @@ ${rejectionReason}`
       );
       return false;
     }
-    const [row] = await this.withPaymentsReady([asso]);
+    const [row] = await this.withPaymentsReady([asso], manager);
     return row.paymentsReady;
   }
 
@@ -7478,13 +7506,14 @@ ${rejectionReason}`
    * delegating association or list was told "payments not configured" while the server accepted).
    */
   async withPaymentsReady<T extends Association>(
-    rows: T[]
+    rows: T[],
+    manager?: EntityManager
   ): Promise<Array<T & { paymentsReady: boolean }>> {
     const parentIds = [
       ...new Set(rows.filter((r) => isDelegating(r)).map((r) => r.paymentParentAssociationId)),
     ];
     const parents = parentIds.length
-      ? await this.assoRepo.find({
+      ? await (manager ? manager.getRepository(Association) : this.assoRepo).find({
           where: { id: In(parentIds) },
           select: {
             id: true,
@@ -7770,57 +7799,63 @@ ${rejectionReason}`
           `${parentAssociationId.slice(0, 8)} who ALSO governs it as a BDE super-admin - recorded`
       );
     }
-    const { released, resumed } = await this.assoRepo.manager.transaction(async (manager) => {
-      const parent = await manager.findOne(Association, {
-        where: { id: parentAssociationId },
-        lock: { mode: 'pessimistic_read' },
-      });
-      if (!parent) throw new NotFoundException('Parent association not found');
-      const child = await this.lockAssociation(manager, childId);
-      assertMayHoldOwnAccount(
-        this.logger,
-        parentAssociationId,
-        parent.type,
-        'payment delegation approval (receiver)'
-      );
-      assertMayRequestDelegation(this.logger, childId, child.type);
-      if (
-        child.paymentParentAssociationId !== parentAssociationId ||
-        child.paymentDelegationStatus !== 'pending'
-      ) {
-        this.logger.debug(
-          `[DELEGATION] approval refused: no pending request from ${childId.slice(0, 8)} to ` +
-            `${parentAssociationId.slice(0, 8)} (status=${child.paymentDelegationStatus ?? 'none'})`
+    const { released, resumed, promoted } = await this.assoRepo.manager.transaction(
+      async (manager) => {
+        const parent = await manager.findOne(Association, {
+          where: { id: parentAssociationId },
+          lock: { mode: 'pessimistic_read' },
+        });
+        if (!parent) throw new NotFoundException('Parent association not found');
+        const child = await this.lockAssociation(manager, childId);
+        assertMayHoldOwnAccount(
+          this.logger,
+          parentAssociationId,
+          parent.type,
+          'payment delegation approval (receiver)'
         );
-        throw new BadRequestException('No pending delegation request from this association');
-      }
-      await this.assertNoDelegationChain(manager, parent, childId);
-      if (!parent.lydiaOnboardingComplete || !parent.lydiaAccountId) {
-        this.logger.debug(
-          `[DELEGATION] approval refused: receiver ${parentAssociationId.slice(0, 8)} is not ready`
-        );
-        throw new BadRequestException(
-          'Complete your payment account onboarding before accepting delegated payments'
-        );
-      }
-      // A pending child collects only on an account of its own (never a list); approved, it
-      // collects through the receiver, proven ready above.
-      const collectedBefore = collectsThrough(child, null);
-      await manager.update(Association, childId, { paymentDelegationStatus: 'approved' });
-      await manager.query(
-        `INSERT INTO payment_delegation_acceptances
+        assertMayRequestDelegation(this.logger, childId, child.type);
+        if (
+          child.paymentParentAssociationId !== parentAssociationId ||
+          child.paymentDelegationStatus !== 'pending'
+        ) {
+          this.logger.debug(
+            `[DELEGATION] approval refused: no pending request from ${childId.slice(0, 8)} to ` +
+              `${parentAssociationId.slice(0, 8)} (status=${child.paymentDelegationStatus ?? 'none'})`
+          );
+          throw new BadRequestException('No pending delegation request from this association');
+        }
+        await this.assertNoDelegationChain(manager, parent, childId);
+        if (!parent.lydiaOnboardingComplete || !parent.lydiaAccountId) {
+          this.logger.debug(
+            `[DELEGATION] approval refused: receiver ${parentAssociationId.slice(0, 8)} is not ready`
+          );
+          throw new BadRequestException(
+            'Complete your payment account onboarding before accepting delegated payments'
+          );
+        }
+        // A pending child collects only on an account of its own (never a list); approved, it
+        // collects through the receiver, proven ready above.
+        const collectedBefore = collectsThrough(child, null);
+        await manager.update(Association, childId, { paymentDelegationStatus: 'approved' });
+        await manager.query(
+          `INSERT INTO payment_delegation_acceptances
            ("childAssociationId", "parentAssociationId", "acceptedByUserId", "acceptedAs",
             "accepterGoverningSuperAdmin")
          VALUES ($1, $2, $3, $4, $5)`,
-        [childId, parentAssociationId, actor.userId, acceptedAs, governing]
-      );
-      return {
-        released: (await releaseWithheldProductsOf(manager, [childId])).get(childId) ?? 0,
-        resumed:
-          !collectedBefore &&
-          collectsThrough({ ...child, paymentDelegationStatus: 'approved' }, parent),
-      };
-    });
+          [childId, parentAssociationId, actor.userId, acceptedAs, governing]
+        );
+        return {
+          released: (await releaseWithheldProductsOf(manager, [childId])).get(childId) ?? 0,
+          resumed:
+            !collectedBefore &&
+            collectsThrough({ ...child, paymentDelegationStatus: 'approved' }, parent),
+          // Approved onto a receiver proven ready above, the child collects online now: its forms'
+          // lists frozen on an online payment are promoted in this transaction (`waitlist.ts`).
+          promoted: await promoteWaitlistsOfCollectors(manager, [childId], this.logger),
+        };
+      }
+    );
+    await this.afterWaitlistPromotions(promoted);
     await this.invalidatePostListCaches();
     this.logger.log(
       `[AUDIT] payment delegation ACCEPTED: receiver=${parentAssociationId.slice(0, 8)} ` +

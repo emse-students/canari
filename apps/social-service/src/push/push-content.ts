@@ -60,6 +60,9 @@ export type PushContentKey =
   | 'form_opening_soon'
   | 'form_open'
   | 'form_paid_over_capacity'
+  | 'form_paid_over_capacity_waitlisted'
+  | 'form_waitlist_promoted'
+  | 'form_waitlist_promoted_payment_due'
   | 'lydia_payments_active'
   | 'lydia_payments_paused'
   | 'lydia_refund_issued'
@@ -152,7 +155,10 @@ export type PushContent = {
    * - the two form reminder keys: nothing, always empty
    * - the two admin queue keys (`social_admin_profile_correction`, `social_admin_report`): nothing,
    *   always empty - the content-free rule
-   * - `form_paid_over_capacity`: the form's own title - never the payer's name, never the amount
+   * - `form_paid_over_capacity` and `form_paid_over_capacity_waitlisted`: the form's own title -
+   *   never the payer's name, never the amount
+   * - `form_waitlist_promoted` and `form_waitlist_promoted_payment_due`: the form's own title
+   *   (`actorName` is its association, or empty)
    * - the two `lydia_payments_*` keys: the association's name, nothing else
    * - the five event keys: the event's own title, which is not translatable either
    * - the four booking keys (WP-N): the PLACE of the booking (its space, and its column when it has
@@ -449,6 +455,59 @@ export function formOpenContent(subject: FormReminderSubject = {}): PushContent 
 }
 
 /**
+ * A PLACE WAS FREED AND THE READER, FIRST ON THE FORM'S WAITING LIST, IS NOW REGISTERED (owner,
+ * 2026-11-23, `waitlist.ts`). The one push of the waiting list: moving up in rank sends none
+ * (principle 3, "Votre attention n'est pas à vendre"). Names the association that runs the form
+ * (the actor, and its logo the picture) and the form's title, like the form reminders; the sentence
+ * sends the reader to the form, where a payment still owed is shown - never an amount on a lock
+ * screen.
+ */
+export function formWaitlistPromotedContent(subject: FormReminderSubject = {}): PushContent {
+  const title = subject.formTitle?.trim() ?? '';
+  const association = subject.associationName?.trim() ?? '';
+  return {
+    key: 'form_waitlist_promoted',
+    ...(subject.icon ? { icon: subject.icon } : {}),
+    actorName: association,
+    arg: title,
+    legacyTitle: association
+      ? `${association} : une place s'est libérée`
+      : "Une place s'est libérée",
+    legacyBody: title
+      ? `Vous êtes inscrit à ${quoted(title)}. Ouvrez le formulaire pour voir votre inscription.`
+      : 'Vous êtes inscrit au formulaire. Ouvrez-le pour voir votre inscription.',
+  };
+}
+
+/**
+ * A PLACE WAS FREED FOR THE READER, FIRST ON A PAID FORM'S WAITING LIST, AND IS HELD FOR THEIR
+ * PAYMENT (`payment_due`, `waitlist.ts`): the place is theirs for the online hold
+ * (`PENDING_PAYMENT_HOLD_SECONDS`) counted from the promotion, and goes to the next in line if it is
+ * not paid by then - so the sentence says so, where the plain promotion's says "registered". NO
+ * DURATION IN THE TEXT: a push may arrive late (a phone offline, a notice retried by
+ * `tellPending`), and "within 30 minutes" would then promise time the hold no longer has; the form
+ * page shows the hold as it stands. Never an amount on a lock screen: the form shows it.
+ */
+export function formWaitlistPromotedPaymentDueContent(
+  subject: FormReminderSubject = {}
+): PushContent {
+  const title = subject.formTitle?.trim() ?? '';
+  const association = subject.associationName?.trim() ?? '';
+  return {
+    key: 'form_waitlist_promoted_payment_due',
+    ...(subject.icon ? { icon: subject.icon } : {}),
+    actorName: association,
+    arg: title,
+    legacyTitle: association
+      ? `${association} : une place vous est gardée`
+      : 'Une place vous est gardée',
+    legacyBody: title
+      ? `Une place s'est libérée sur ${quoted(title)} : réglez-la pour la garder, elle passe sinon au suivant sur la liste.`
+      : "Une place s'est libérée : réglez-la pour la garder, elle passe sinon au suivant sur la liste.",
+  };
+}
+
+/**
  * A PAYMENT LANDED ON A FORM THAT WAS ALREADY FULL, and its managers owe a refund
  * (`paid_over_capacity`, forms.md). Told to the form's owner and its `MANAGE_FORMS` holders.
  *
@@ -463,6 +522,21 @@ export function formPaidOverCapacityContent(formTitle: string): PushContent {
     arg: formTitle,
     legacyTitle: 'Paiement sur un formulaire complet',
     legacyBody: `« ${formTitle} » : un paiement est arrivé alors que le formulaire était complet. Remboursement à faire.`,
+  };
+}
+
+/**
+ * The same payment over capacity, paid by a person ON THE FORM'S WAITING LIST: their place is kept,
+ * and their turn converts the paid answer to a registration (`planPromotion`, `waitlist.ts`) - so
+ * the refund is owed only if they are never promoted. The form's title is the only data.
+ */
+export function formPaidOverCapacityWaitlistedContent(formTitle: string): PushContent {
+  return {
+    key: 'form_paid_over_capacity_waitlisted',
+    actorName: '',
+    arg: formTitle,
+    legacyTitle: 'Paiement sur un formulaire complet',
+    legacyBody: `« ${formTitle} » : un paiement est arrivé alors que le formulaire était complet. La personne garde sa place sur la liste d'attente ; remboursement à faire seulement si elle n'est jamais inscrite.`,
   };
 }
 

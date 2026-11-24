@@ -8,6 +8,7 @@
     FormCotisationSettings,
   } from '$lib/forms/cotisationSettings';
   import Input from '$lib/components/ui/Input.svelte';
+  import { waitlistSettable } from '$lib/forms/waitlist';
   import Toggle from '$lib/components/ui/Toggle.svelte';
   import DateTimeField from '$lib/components/ui/DateTimeField.svelte';
   import { CONTROL_HINT_CLASS, CONTROL_LABEL_CLASS } from '$lib/components/ui/controlClasses';
@@ -39,6 +40,13 @@
     maxSubmissions: number | undefined;
     /** Whether one person may answer more than once. */
     allowMultipleSubmissions: boolean;
+    /**
+     * The waiting list past the capacity (migration 183, owner decision of 2026-11-23), off by
+     * default. Drawn only on an estate that keeps it (`waitlistAvailable`).
+     */
+    waitlistEnabled?: boolean;
+    /** Whether this estate keeps a waiting list (`formWaitlist` in `/api/version`). */
+    waitlistAvailable?: boolean;
     /**
      * Whether a respondent with an account may change their own answer while the form is open, the
      * price-affecting questions locked (migration 166). Shut on an anonymous form.
@@ -94,6 +102,8 @@
   let {
     maxSubmissions = $bindable(),
     allowMultipleSubmissions = $bindable(),
+    waitlistEnabled = $bindable(false),
+    waitlistAvailable = false,
     allowAnswerEdit = $bindable(),
     answerEditAvailable = false,
     anonymous = $bindable(),
@@ -113,6 +123,11 @@
     fileRetentionDays = $bindable(),
   }: Props = $props();
 
+  /** Whether the waiting list can apply as the form is set now (`waitlistSettable`). */
+  const waitlistSettableNow = $derived(
+    waitlistSettable({ maxSubmissions, anonymous, allowMultipleSubmissions })
+  );
+
   /** An end that is not after the opening: said under the field, and the save refuses it too. */
   const windowInvalid = $derived(formWindowInvalid(opensAt, closedAt));
 
@@ -120,6 +135,7 @@
   const activeCount = $derived(
     (maxSubmissions != null && maxSubmissions > 0 ? 1 : 0) +
       (allowMultipleSubmissions ? 1 : 0) +
+      (waitlistEnabled && waitlistSettableNow ? 1 : 0) +
       (allowAnswerEdit ? 1 : 0) +
       (anonymous ? 1 : 0) +
       (isPublic ? 1 : 0) +
@@ -177,6 +193,16 @@
       label={m.form_allow_multiple_label()}
       hint={isPublic ? m.form_allow_multiple_hint_public() : m.form_allow_multiple_hint()}
     />
+
+    <!-- The waiting list past the capacity: only where a line makes sense, the reason said when not. -->
+    {#if waitlistAvailable}
+      <Toggle
+        bind:checked={waitlistEnabled}
+        disabled={!waitlistSettableNow}
+        label={m.form_waitlist_label()}
+        hint={waitlistSettableNow ? m.form_waitlist_hint() : m.form_waitlist_hint_unavailable()}
+      />
+    {/if}
 
     <!-- An anonymous answer names nobody who could reopen it: the switch is shut beside anonymity,
          with the reason as its hint (the shared option rule, `FORM_ANONYMOUS_ANSWER_EDIT`). -->

@@ -23,6 +23,7 @@
     editFormAnswer,
     getMyEditableAnswers,
     resumeSubmissionPayment,
+    leaveWaitlist,
     switchSubmissionToCash,
     type CashSwitchReply,
     type EditableAnswer,
@@ -30,7 +31,16 @@
     type ResumableAnswer,
   } from '$lib/forms/api';
   import { failedPaymentOffer } from '$lib/forms/paymentResume';
+  import { overCapacityDescription } from '$lib/forms/paymentReturn';
   import { intlLocale } from '$lib/utils/intlLocale';
+  import {
+    PAYMENT_DUE_STATUS,
+    WAITING_STATUS,
+    offersWaitlistJoin,
+    waitlistRankText,
+    type WaitlistView,
+  } from '$lib/forms/waitlist';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
   import {
     cursusSlicesOf,
     fillPriceState,
@@ -103,6 +113,7 @@
     QrCode,
     Pencil,
     Eye,
+    ListOrdered,
   } from '@lucide/svelte';
   import { ownAnswersOf, shownOwnAnswer, type OwnAnswer } from '$lib/forms/ownAnswers';
   import { statusClass, statusLabel } from '$lib/forms/paymentStatus';
@@ -119,6 +130,7 @@
   import { FORM_COTISATION_HELD } from '$lib/associations/paymentRefusal';
   import {
     FORM_RESPONDENT_FIELDS_CHANGED,
+    formCodeMessage,
     formSubmitRefusalMessage,
   } from '$lib/forms/answerBounds';
   import { offersAnswerEdit } from '$lib/forms/answerEditGate';
@@ -171,11 +183,22 @@
   const updatesOnReturn = isMobileTauri();
   /** The payment landed after the form filled up: final, and the organiser owes a refund. */
   let paidOverCapacity = $state(false);
+  /** That payer is on the form's waiting list: their place is kept, nothing more is charged. */
+  let paidOverCapacityInLine = $state(false);
   /**
    * The caller's answer whose payment ended without money and may be paid again, as the server
    * named it (`GET forms/:id/check`), or null. "Reprendre le paiement" pays THAT answer, not a new one.
    */
   let resumable = $state<ResumableAnswer | null>(null);
+  /**
+   * The form's waiting list as the server named it (`check.waitlist`): whether a full form takes an
+   * answer in line, and the caller's rank while theirs waits. Null from a server older than it.
+   */
+  let waitlist = $state<WaitlistView | null>(null);
+  /** The status of the caller's own answer on a one-answer form (`waiting`, `payment_due`...), or null. */
+  let ownStatus = $state<string | null>(null);
+  /** The id of the caller's own answer, which "Quitter la liste" deletes. */
+  let ownSubmissionId = $state<string | null>(null);
   /**
    * The caller's answer whose card payment failed and may be settled IN PERSON instead, as the
    * server named it (`cashSwitchable`), or null. "Payer en direct" moves THAT answer to cash.
@@ -414,7 +437,11 @@
     paymentRetry = null;
     pendingCheckout = null;
     paidOverCapacity = false;
+    paidOverCapacityInLine = false;
     resumable = null;
+    waitlist = null;
+    ownStatus = null;
+    ownSubmissionId = null;
     cashSwitchable = null;
     payerPromptFor = 'submit';
     formFull = false;
@@ -547,6 +574,7 @@
       submitted = hasSubmitted;
       formFull = full;
       resumable = submission.resumable ?? null;
+      adoptWaitlist(submission);
       cashSwitchable = submission.cashSwitchable ?? null;
       slices = cursusSlicesOf(submission);
       hiddenItemIds = hidden ?? [];
@@ -670,7 +698,12 @@
     pendingCheckout = {
       submissionId,
       checkoutUrl,
-      reader: createPaymentReader(() => confirmSubmissionPayment(submissionId)),
+      reader: createPaymentReader(() =>
+        confirmSubmissionPayment(submissionId).then((answer) => {
+          paidOverCapacityInLine = answer.waitlisted === true;
+          return answer;
+        })
+      ),
     };
   }
 
@@ -958,8 +991,19 @@
         announcedFields: joinedAccountFields(form.respondentFields),
         ...formCheckoutCallbacks(),
         ...(total > 0 && form.allowCashPayment ? { paymentMethod: paymentMethodChoice } : {}),
+        // The form is full and its list open: the answer waits in line if no place freed meanwhile.
+        ...(joinOffered ? { joinWaitlist: true } : {}),
       });
-      if (res.checkoutUrl) {
+      if (res.waiting) {
+        // In line, nothing charged: the page stays, with the rank and the way out of the list.
+        Log.d('FormView', `answer put on the waiting list at rank ${res.waitlistRank}`);
+        submitted = true;
+        ownStatus = WAITING_STATUS;
+        ownSubmissionId = res.submissionId ?? null;
+        waitlist = { open: waitlist?.open ?? true, rank: res.waitlistRank ?? null };
+        successMessage = m.form_waitlist_joined();
+        successDetail = '';
+      } else if (res.checkoutUrl) {
         // On a native app the page stays behind the browser: it says the payment is in progress,
         // keeps Lydia's page to reopen, and reads the answer when the payer comes back. On the web
         // the window has already left for Lydia, and the return page takes over. The watch starts
@@ -998,11 +1042,86 @@
     }
   }
 
+  /** What the server said of the waiting list and of the caller's own answer (`checkSubmission`). */
+  function adoptWaitlist(check: {
+    hasSubmitted: boolean;
+    paymentStatus?: string;
+    submissionId?: string;
+    waitlist?: WaitlistView;
+  }): void {
+    waitlist = check.waitlist ?? null;
+    ownStatus = check.hasSubmitted ? (check.paymentStatus ?? null) : null;
+    ownSubmissionId = check.hasSubmitted ? (check.submissionId ?? null) : null;
+    if (ownStatus === WAITING_STATUS) {
+      Log.d('FormView', `the caller waits in line at rank ${waitlist?.rank ?? 'unknown'}`);
+    }
+  }
+
+  /** Whether the send joins the waiting list rather than reading "Complet" (`offersWaitlistJoin`). */
+  const joinOffered = $derived(
+    offersWaitlistJoin({
+      waitlist,
+      formFull,
+      submitted,
+      editing: !!editing,
+      closed: isClosed,
+      notOpenYet: isNotOpenYet,
+      maySubmit,
+      preview,
+    })
+  );
+
+  /** The caller's answer is a promoted one whose payment is owed: paid through the resume. */
+  const paymentDue = $derived(ownStatus === PAYMENT_DUE_STATUS);
+
+  /**
+   * THE CALLER LEAVES THE WAITING LIST: their waiting answer is deleted, and the page reads the
+   * server's state again. Promoted meanwhile, the refusal is typed and said, and the page shows the
+   * registration instead.
+   */
+  async function leaveList(): Promise<void> {
+    const target = ownSubmissionId;
+    if (!form || !target || submitting) return;
+    if (!(await showConfirm(m.form_waitlist_leave_confirm(), { danger: true }))) return;
+    const formShown = form.id;
+    submitting = true;
+    try {
+      await leaveWaitlist(target);
+      Log.d('FormView', `left the waiting list (${target.slice(0, 8)})`);
+      showToast(m.form_waitlist_left(), 'info');
+      shownAnswer = null;
+    } catch (e: unknown) {
+      const code = refusalCode(e);
+      Log.w(
+        'FormView',
+        `leaving the waiting list refused status=${refusalStatus(e) ?? 'transport'} code=${code}`
+      );
+      showToast(formCodeMessage(code) ?? m.form_waitlist_leave_failed());
+    } finally {
+      submitting = false;
+    }
+    try {
+      const check = await checkSubmission(formShown);
+      if (form?.id !== formShown) return;
+      submitted = check.hasSubmitted;
+      formFull = check.formFull;
+      resumable = check.resumable ?? null;
+      cashSwitchable = check.cashSwitchable ?? null;
+      adoptWaitlist(check);
+    } catch (err) {
+      console.warn(
+        `[FormView] re-reading the answer after leaving the list failed status=${refusalStatus(err) ?? 'transport'}`,
+        err
+      );
+    }
+  }
+
   /** What is offered now for a failed card payment (`failedPaymentOffer`), or null. */
   const failedOffer = $derived(
     failedPaymentOffer({
       resumable,
       cashSwitchable,
+      paymentDue,
       submitted,
       paymentPending,
       editing: !!editing,
@@ -1043,6 +1162,7 @@
         paymentRetry = null;
         submitted = true;
         paymentPending = true;
+        ownStatus = null;
         watchCheckout(res.submissionId, res.checkoutUrl);
         const { navigateExternal } = await import('$lib/utils/openExternal');
         await navigateExternal(res.checkoutUrl);
@@ -1066,6 +1186,7 @@
         cashSwitchable = check.cashSwitchable ?? null;
         formFull = check.formFull;
         submitted = check.hasSubmitted;
+        adoptWaitlist(check);
         paymentPending = check.hasSubmitted && check.paymentStatus === 'pending';
       } catch (err) {
         console.warn(
@@ -1128,6 +1249,8 @@
         resumable = check.resumable ?? null;
         cashSwitchable = check.cashSwitchable ?? null;
         formFull = check.formFull;
+        // A form full with a list open: the person joins it by the ordinary send (`joinOffered`).
+        adoptWaitlist(check);
         submitted = check.hasSubmitted;
         paymentPending = check.hasSubmitted && check.paymentStatus === 'pending';
         if (!paymentPending) pendingCheckout = null;
@@ -1264,7 +1387,11 @@
       isNotOpenYet ||
       isClosed ||
       (!editing &&
-        (submitted || formFull || !maySubmit || priceUnavailable || onlinePaymentPaused))}
+        (submitted ||
+          (formFull && !joinOffered) ||
+          !maySubmit ||
+          priceUnavailable ||
+          onlinePaymentPaused))}
     loading={submitting}
     onclick={() => void handleSubmit()}
   >
@@ -1280,6 +1407,8 @@
       {cotisationHeld ? m.form_view_cotisation_held_title() : m.form_view_not_open_to_you_title()}
     {:else if priceUnavailable}
       {m.form_view_combination_closed_title()}
+    {:else if joinOffered}
+      <ListOrdered size={16} class="mr-1.5" />{m.form_waitlist_join_button()}
     {:else if formFull}
       {m.form_view_full()}
     {:else if calculateTotal() > 0}
@@ -1599,6 +1728,28 @@
       </div>
     {/if}
 
+    <!-- ── In line: the rank, and the way out of the list ── -->
+    {#if ownStatus === WAITING_STATUS && waitlist?.rank}
+      <div
+        class="border-cn-border mb-4 flex flex-col gap-3 rounded-2xl border bg-(--cn-surface) px-5 py-4 sm:flex-row sm:items-center"
+        role="status"
+        data-testid="form-waitlist-rank"
+      >
+        <div class="min-w-0 flex-1">
+          <p class="text-text-main font-semibold">{waitlistRankText(waitlist.rank)}</p>
+          <p class="text-text-muted mt-0.5 text-sm">{m.form_waitlist_waiting_note()}</p>
+        </div>
+        <Button
+          variant="secondary"
+          class="shrink-0"
+          disabled={submitting}
+          onclick={() => void leaveList()}
+        >
+          {m.form_waitlist_leave_button()}
+        </Button>
+      </div>
+    {/if}
+
     <!-- ── A failed card payment: the SAME answer, paid again online or in person, nothing to re-fill ── -->
     {#if failedOffer}
       <div
@@ -1607,9 +1758,15 @@
         data-testid="form-payment-resume"
       >
         <div class="min-w-0 flex-1">
-          <p class="text-amber-warn-text font-semibold">{m.form_view_payment_resume_title()}</p>
+          <p class="text-amber-warn-text font-semibold">
+            {paymentDue ? m.form_waitlist_payment_due_title() : m.form_view_payment_resume_title()}
+          </p>
           <p class="text-text-muted mt-0.5 text-sm">
-            {#if failedOffer.resume && failedOffer.cash}
+            {#if paymentDue}
+              {m.form_waitlist_payment_due_note({
+                amount: formatCurrency(failedOffer.answer.amountCents, form.currency),
+              })}
+            {:else if failedOffer.resume && failedOffer.cash}
               {m.form_view_payment_failed_choice_note({
                 amount: formatCurrency(failedOffer.answer.amountCents, form.currency),
               })}
@@ -1863,13 +2020,17 @@
       {@render cashWhilePending()}
     {:else if paidOverCapacity}
       <p class="text-amber-warn-text mt-2 text-center text-sm font-medium" role="status">
-        {m.form_success_over_capacity_heading()} - {m.form_success_over_capacity_desc()}
+        {m.form_success_over_capacity_heading()} - {overCapacityDescription(paidOverCapacityInLine)}
       </p>
     {:else if paymentRetry && !submitted}
       <p class="text-amber-warn-text mt-2 text-center text-sm font-medium" role="status">
         {paymentRetry === 'declined'
           ? m.form_view_payment_declined_note()
           : m.form_view_payment_ended_note()}
+      </p>
+    {:else if joinOffered}
+      <p class="text-text-muted mt-2 text-center text-sm font-medium">
+        {m.form_waitlist_join_note()}
       </p>
     {:else if formFull && !submitted && !editing}
       <p class="text-text-muted mt-2 text-center text-sm font-medium">

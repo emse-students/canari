@@ -22,6 +22,9 @@ export const PAYMENT_STATUSES = [
   'paid_over_capacity',
   // Written by a refund from Canari (`refunds.service.ts`): the money went back, the seat is free.
   'refunded',
+  // The waiting list (migration 183): an answer in line, and a promoted one whose payment is owed.
+  'waiting',
+  'payment_due',
 ] as const;
 
 export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
@@ -41,6 +44,8 @@ export function statusLabel(status: string): string {
   if (status === 'expired') return m.form_status_expired();
   if (status === 'paid_over_capacity') return m.form_status_paid_over_capacity();
   if (status === 'refunded') return m.form_status_refunded();
+  if (status === 'waiting') return m.form_status_waiting();
+  if (status === 'payment_due') return m.form_status_payment_due();
   return status;
 }
 
@@ -54,8 +59,10 @@ export function statusClass(status: string): string {
   if (status === 'paid')
     return 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300';
   if (status === 'free') return 'bg-cn-border/40 text-text-muted';
-  if (status === 'pending' || status === 'pending_cash')
+  if (status === 'pending' || status === 'pending_cash' || status === 'payment_due')
     return 'bg-amber-warn/15 text-amber-warn-text';
+  // In line: no seat, nothing owed yet - neither settled nor refused.
+  if (status === 'waiting') return 'bg-cn-border/40 text-text-main';
   // Settled the other way: nothing to do, and not an error - its own colour, the mockup's blue.
   if (status === 'refunded')
     return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300';

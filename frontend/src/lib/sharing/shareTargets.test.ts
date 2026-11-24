@@ -436,6 +436,37 @@ describe('the notifications erase is owed on disk until done (review of #3938)',
     error.mockRestore();
   });
 
+  it('a performed erase forgets what was published: the same list is donated again', async () => {
+    platform = 'ios';
+    const list = [group('a', 'A', 2)];
+    syncShareTargets(input(list), 'test');
+    await settle();
+    expect(calls(PUBLISH)).toHaveLength(1);
+    // A late erase (the previous account's owed one) wipes the suggestions along with the rest.
+    owing(4);
+    await honourOwedNotificationErase('late');
+    expect(calls(CLEAR_CONVERSATIONS)).toHaveLength(1);
+    invoke.mockImplementation(async (cmd: string) => (cmd === PUBLISH ? CLEAN : 0));
+    syncShareTargets(input(list), 'test');
+    await settle();
+    expect(calls(PUBLISH)).toHaveLength(2);
+  });
+
+  it('a failed erase keeps the publish state: nothing was wiped, nothing is re-donated', async () => {
+    platform = 'ios';
+    const list = [group('a', 'A', 2)];
+    syncShareTargets(input(list), 'test');
+    await settle();
+    owing(4, true);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await honourOwedNotificationErase('late');
+    error.mockRestore();
+    invoke.mockImplementation(async (cmd: string) => (cmd === PUBLISH ? CLEAN : 0));
+    syncShareTargets(input(list), 'test');
+    await settle();
+    expect(calls(PUBLISH)).toHaveLength(1);
+  });
+
   it('at launch, an erase still owed is completed and settled', async () => {
     platform = 'ios';
     owing(2);
@@ -530,5 +561,26 @@ describe('the suggestion a share arrives with', () => {
     expect(suggestionIfHeld('b', held)).toBe('b');
     expect(suggestionIfHeld('from-another-account', held)).toBeNull();
     expect(suggestionIfHeld(null, held)).toBeNull();
+  });
+});
+
+describe('the erase says its outcome at a level the exported log keeps (iPhone 12, 1.8.0-alpha.6)', () => {
+  it('a performed erase is INFO, never DEBUG, and a skipped one is INFO too', async () => {
+    const { Log } = await import('$lib/utils/Log');
+    const info = vi.spyOn(Log, 'i').mockImplementation(() => {});
+    const debug = vi.spyOn(Log, 'd').mockImplementation(() => {});
+    platform = 'ios';
+    invoke.mockImplementation(async (cmd: string) => (cmd === OWED ? null : 0));
+    await eraseAccountShortcuts('signed out');
+    const said = info.mock.calls.map(([, m]) => String(m));
+    expect(said.some((m) => m.includes('conversation shortcuts erased'))).toBe(true);
+    expect(debug.mock.calls.some(([, m]) => String(m).includes('shortcuts erased'))).toBe(false);
+    info.mockClear();
+    await honourOwedNotificationErase('launch');
+    expect(
+      info.mock.calls.some(([, m]) => String(m).includes('no conversation shortcuts erase owed'))
+    ).toBe(true);
+    info.mockRestore();
+    debug.mockRestore();
   });
 });
