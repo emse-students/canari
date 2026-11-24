@@ -100,7 +100,7 @@ type OpenAsk = {
  * What {@link takeAddressedAsk} hands the receiver: the ask, and whether it carried a key (its answer
  * must then have come sealed). The secret itself is read before the take ({@link answerSecretOf}).
  */
-export type TakenAsk = { ask: HistoryAsk; keyed: boolean };
+type TakenAsk = { ask: HistoryAsk; keyed: boolean };
 
 /**
  * Why {@link takeAddressedAsk} refused an answer, classified where it is decided so the receiver
@@ -113,12 +113,10 @@ export type TakenAsk = { ask: HistoryAsk; keyed: boolean };
  * - `answerers-full`: a device beyond the first {@link MAX_ANSWERERS_PER_ASK}, which nothing honest
  *   produces.
  */
-export type AskRefusal = 'no-open-ask' | 'answered-already' | 'not-the-inviter' | 'answerers-full';
+type AskRefusal = 'no-open-ask' | 'answered-already' | 'not-the-inviter' | 'answerers-full';
 
 /** What {@link takeAddressedAsk} decided: the ask taken, or the named reason it was refused. */
-export type TakeAskResult =
-  | { taken: TakenAsk; refused?: never }
-  | { taken?: never; refused: AskRefusal };
+type TakeAskResult = { taken: TakenAsk; refused?: never } | { taken?: never; refused: AskRefusal };
 
 /** Overwrites a secret this module is letting go of - JS frees nothing on demand, so it is wiped. */
 function wipe(open: OpenAsk | undefined): void {

@@ -136,7 +136,7 @@ function takeStored(k: string, notBefore: number): SolicitedProbe | undefined {
  * digest of an exchange WE opened and the caller answers it now (`solicitation`), or nobody claimed
  * it and it is kept for an election still to come (`stored`).
  */
-export type ProbeDestination = 'waiter' | 'solicitation' | 'stored';
+type ProbeDestination = 'waiter' | 'solicitation' | 'stored';
 
 /**
  * Records a probe that arrived over MLS, waking a request already waiting for one.
