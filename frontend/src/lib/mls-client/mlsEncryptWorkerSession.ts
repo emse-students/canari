@@ -24,11 +24,44 @@ function logSealFormatOnce(format: string): void {
   console.log(`[MLS] web checkpoint seal format: ${format}`);
 }
 
-/** Terminates the shared encrypt worker (tests / teardown). */
+/**
+ * The round trips waiting on the shared worker, each with its rejection. A terminated worker
+ * dispatches no event at all, so without this a job in flight when the worker is disposed would wait
+ * for its timeout - and a checkpoint holding the lead (`leadHolds.ts`) would hold it as long.
+ */
+const pendingJobs = new Set<(reason: Error) => void>();
+
+/**
+ * How many times the worker was disposed: a job queued on {@link jobChain} before a disposal is
+ * rejected when its turn comes, never run on the worker created after it.
+ */
+let disposals = 0;
+
+/**
+ * The worker was terminated under a round trip, or before a job queued behind one started: the job
+ * ends, it never waits for an answer. Module-private: no caller branches on it - a checkpoint fails
+ * with it like with any seal failure - it exists so the cause is named in that failure's log.
+ */
+class MlsEncryptWorkerTerminatedError extends Error {
+  constructor() {
+    super('MLS encrypt worker terminated before it answered');
+    this.name = 'MlsEncryptWorkerTerminatedError';
+  }
+}
+
+/**
+ * Terminates the shared encrypt worker (tests / teardown). Every round trip still waiting on it is
+ * REJECTED here ({@link MlsEncryptWorkerTerminatedError}): termination is this document's own act,
+ * so it is the proof that no answer will come.
+ */
 export function disposeMlsEncryptWorker(): void {
   sharedWorker?.terminate();
   sharedWorker = null;
+  disposals += 1;
   jobChain = Promise.resolve();
+  const waiting = [...pendingJobs];
+  pendingJobs.clear();
+  for (const reject of waiting) reject(new MlsEncryptWorkerTerminatedError());
 }
 
 function getSharedWorker(workerFactory: () => Worker): Worker {
@@ -68,14 +101,29 @@ function runEncryptOnWorker(
       reject(event.error ?? new Error(event.message || 'MLS encrypt worker error'));
     };
 
-    const cleanup = () => {
-      clearTimeout(timer);
-      worker.removeEventListener('message', onMessage);
-      worker.removeEventListener('error', onError);
+    // A reply the structured clone could not deserialise never reaches `message`: it ends here.
+    const onMessageError = () => {
+      cleanup();
+      reject(new Error('MLS encrypt worker reply could not be deserialised (messageerror)'));
     };
 
+    const onTerminated = (reason: Error) => {
+      cleanup();
+      reject(reason);
+    };
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      pendingJobs.delete(onTerminated);
+      worker.removeEventListener('message', onMessage);
+      worker.removeEventListener('error', onError);
+      worker.removeEventListener('messageerror', onMessageError);
+    };
+
+    pendingJobs.add(onTerminated);
     worker.addEventListener('message', onMessage);
     worker.addEventListener('error', onError);
+    worker.addEventListener('messageerror', onMessageError);
     // Typed through the shared contract: the worker reads `payload.deviceKeyB64`, and a rename
     // on either side must not be able to reach production as a silent `undefined`.
     const request: MlsEncryptRequest = {
@@ -107,7 +155,12 @@ export async function encryptMlsStateOffThread(
   }
 
   const workerFactory = options?.workerFactory ?? (() => new MlsEncryptWorker());
-  const job = jobChain.then(() => runEncryptOnWorker(plain, deviceKeyB64, workerFactory));
+  const queuedAt = disposals;
+  const job = jobChain.then(() => {
+    // Disposed while this job waited for its turn: the session that queued it ended with the worker.
+    if (disposals !== queuedAt) throw new MlsEncryptWorkerTerminatedError();
+    return runEncryptOnWorker(plain, deviceKeyB64, workerFactory);
+  });
   jobChain = job.then(
     () => undefined,
     () => undefined

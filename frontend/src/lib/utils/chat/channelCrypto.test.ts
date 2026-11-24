@@ -71,7 +71,9 @@ describe('sendEncryptedChannelMessage', () => {
   it('addresses the RAW channel id and carries the session and the index', async () => {
     await sendEncryptedChannelMessage(CHANNEL, PAYLOAD);
 
-    expect(sealChannelMessage).toHaveBeenCalledWith(RAW, PAYLOAD);
+    // No durable queue re-sends this caller's message: its seal carries the post, for a leader that
+    // adopts it from a reloaded page (third review of #4053).
+    expect(sealChannelMessage).toHaveBeenCalledWith(RAW, PAYLOAD, { postIfAdopted: {} });
     // Both fields, or the message is one nobody can open: the key is HKDF(seed, session, index).
     // ...and the seed frame, so a phone opens the seed from this message's own push (section 19).
     // ...and the session's signature, without which a v2 reader refuses the row (section 21).
@@ -84,6 +86,20 @@ describe('sendEncryptedChannelMessage', () => {
       seedFrame: 'ZnJhbWU=',
       seedGroupId: 'dist-group',
     });
+  });
+
+  it('carries what it posts with into the seal, unless the caller keeps a queue that re-sends it', async () => {
+    await sendEncryptedChannelMessage(CHANNEL, PAYLOAD, 'm-1', undefined, ['bob'], {
+      silent: true,
+    });
+    expect(sealChannelMessage).toHaveBeenLastCalledWith(RAW, PAYLOAD, {
+      postIfAdopted: { messageId: 'm-1', mentionedUserIds: ['bob'], silent: true },
+    });
+
+    await sendEncryptedChannelMessage(CHANNEL, PAYLOAD, 'm-2', undefined, undefined, {
+      resentByQueue: true,
+    });
+    expect(sealChannelMessage).toHaveBeenLastCalledWith(RAW, PAYLOAD, {});
   });
 
   it('sends index 0 as a number, never dropped as falsy', async () => {

@@ -1,5 +1,6 @@
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 import type { DeliveryChannel } from '$lib/mls-client/incomingDelivery';
+import { takeLeadHold } from '$lib/mls-client/leadHolds';
 
 /**
  * THE DRAIN'S ONE SUMMARY LINE, INFO, so it reaches the exported log (owner's Android `1.7.3`,
@@ -581,6 +582,19 @@ export class MlsPerGroupScheduler {
   private grantMain(waiter: MlsLockWaiter): void {
     this.lockHeld = true;
     this.committingGroup = waiter.commitGroup;
+    // THE ONE CHOKEPOINT OF EVERY MLS STATE CHANGE HOLDS THE TAB'S LEAD (`leadHolds.ts`, second
+    // review of #4053): a frame, a Welcome, a catch-up, a rejoin, a commit - whatever runs under the
+    // mutex holds the lead from its GRANT to its release, so a session ending meanwhile gives the
+    // lead up only once that change and the checkpoints it awaits inside have settled. Taken at the
+    // grant, never at the request: a wait for the mutex holds nothing. A borrower of a commit's loan
+    // runs inside that commit's hold.
+    const releaseLead = takeLeadHold(
+      waiter.commitGroup !== null
+        ? `commit in ${waiter.commitGroup.slice(0, 8)}`
+        : waiter.frameKey !== null
+          ? `frame of ${waiter.frameKey.slice(0, 8)}`
+          : 'MLS mutex'
+    );
     if (this.committingGroup !== null) {
       // THE FRAMES PICKED BEFORE THIS COMMIT WAS GRANTED and queued behind it: the ones it holds back
       // would hold the drain for the whole commit, so they go back to their buckets now.
@@ -606,6 +620,9 @@ export class MlsPerGroupScheduler {
       this.lockHeld = false;
       const next = this.lockWaiters.shift();
       if (next) this.grantMain(next);
+      // After the next grant: a queued holder takes its own hold first, so the count never touches
+      // zero between two holders of the mutex.
+      releaseLead();
     });
   }
 

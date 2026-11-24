@@ -92,9 +92,9 @@ describe('every sign-out ends the live session on the device', () => {
     );
     expect(teardown).toContain('forgetRefusedRotationReloads();');
     // Unconditional: not inside the logout-only branch.
-    expect(teardown.indexOf('forgetRefusedRotationReloads(')).toBeLessThan(
-      teardown.indexOf("if (reason === 'logout')")
-    );
+    expect(
+      teardown.slice(0, teardown.indexOf('forgetRefusedRotationReloads(')).includes('if (reason')
+    ).toBe(false);
   });
 
   const CLOSE = String.fromCharCode(10) + '}' + String.fromCharCode(10);
