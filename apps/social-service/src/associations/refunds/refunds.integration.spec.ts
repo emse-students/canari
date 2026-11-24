@@ -33,6 +33,7 @@ import {
   LYDIA_REFUND_NOT_PENDING,
   LYDIA_REFUND_NOT_REFUNDABLE,
 } from './refund-codes';
+import { takeLogged } from '../../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -329,6 +330,15 @@ maybe('Lydia refunds against PostgreSQL', () => {
       state: 'refunded',
     });
     expect(post).toHaveBeenCalledTimes(1);
+
+    takeLogged(
+      'error',
+      /^\[LYDIA-REFUND\] [0-9a-f-]{36}: no usable answer \(no response\) - Lydia MAY have refunded; kept pending until a manager checks Lydia$/
+    );
+    takeLogged(
+      'warn',
+      /^\[LYDIA-REFUND\] refused on payment [0-9a-f-]{36}: refund [0-9a-f-]{36} is not settled \(unconfirmed\)$/
+    );
   });
 
   it('a resent click (the same key) answers the same refund and sends nothing', async () => {
@@ -363,6 +373,12 @@ maybe('Lydia refunds against PostgreSQL', () => {
     }
     const rows = await refundOf(record.id);
     expect(rows.filter((r) => r.status === 'confirmed')).toHaveLength(1);
+
+    takeLogged(
+      'warn',
+      /^\[LYDIA-REFUND\] refused on payment [0-9a-f-]{36}: refund [0-9a-f-]{36} is not settled \(in-progress\)$/,
+      7
+    );
   });
 
   it('refunds ONCE when eight partial refunds race: the sum never passes the amount paid', async () => {
@@ -375,6 +391,13 @@ maybe('Lydia refunds against PostgreSQL', () => {
       .reduce((s, r) => s + r.amountCents, 0);
     expect(refunded).toBeLessThanOrEqual(1000);
     expect(post.mock.calls.length).toBe(results.filter((r) => r.status === 'fulfilled').length);
+
+    // Six of the eight lose, and the race decides which of the two refusals each one meets.
+    takeLogged(
+      'warn',
+      /^\[LYDIA-REFUND\] refused on payment [0-9a-f-]{36}: (refund [0-9a-f-]{36} is not settled \(in-progress\)|400 cents over 800 already refunded exceeds the 1000 paid)$/,
+      6
+    );
   });
 
   it('caps the sum of refunds at the amount paid', async () => {
@@ -390,6 +413,15 @@ maybe('Lydia refunds against PostgreSQL', () => {
       state: 'refunded',
     });
     expect(post).toHaveBeenCalledTimes(2);
+
+    takeLogged(
+      'warn',
+      /^\[LYDIA-REFUND\] refused on payment [0-9a-f-]{36}: 500 cents over 600 already refunded exceeds the 1000 paid$/
+    );
+    takeLogged(
+      'warn',
+      /^\[LYDIA-REFUND\] refused on payment [0-9a-f-]{36}: 1000 cents over 600 already refunded exceeds the 1000 paid$/
+    );
   });
 
   it('a PARTIAL refund withdraws nothing', async () => {
@@ -476,6 +508,11 @@ maybe('Lydia refunds against PostgreSQL', () => {
     await service.refund(ASSO, record.id, MANAGER, total());
     expect((await refundOf(record.id))[0].sideEffect).toBe('topup-balance-unchanged');
     expect(await tagsOf(buyer)).toEqual(before);
+
+    takeLogged(
+      'warn',
+      /^\[LYDIA-REFUND\] [0-9a-f-]{36}: a Cercle top-up refunded - the balance at the Cercle is NOT debited$/
+    );
   });
 
   it('a TOTAL refund of a product deleted since touches no tier, and the payment is still refunded', async () => {
@@ -485,6 +522,11 @@ maybe('Lydia refunds against PostgreSQL', () => {
     expect((await refundOf(record.id))[0].sideEffect).toBe('not-applied-unidentified');
     expect(await statusOf(record.id)).toBe('refunded');
     expect(await tagsOf(buyer)).toHaveLength(1);
+
+    takeLogged(
+      'error',
+      /^\[LYDIA-REFUND\] [0-9a-f-]{36}: product of payment [0-9a-f-]{36} is gone - what it bought cannot be told \(a Cercle top-up or not\), so no tier or seat is touched; the payment is refunded$/
+    );
   });
 
   it('a refusal Lydia answered records the typed code and refunds nothing', async () => {
@@ -503,6 +545,11 @@ maybe('Lydia refunds against PostgreSQL', () => {
       sideEffect: null,
     });
     expect(await statusOf(record.id)).toBe('paid');
+
+    takeLogged(
+      'warn',
+      /^\[LYDIA-REFUND\] [0-9a-f-]{36}: refused \(LYDIA_REFUND_TRANSACTION_NOT_REFUNDABLE\) - nothing refunded$/
+    );
   });
 
   it('refuses a payment its association no longer holds the Business of, and one Canari cannot trace', async () => {
@@ -520,6 +567,15 @@ maybe('Lydia refunds against PostgreSQL', () => {
       response: { code: LYDIA_REFUND_NOT_REFUNDABLE, reason: 'untraceable' },
     });
     expect(post).not.toHaveBeenCalled();
+
+    takeLogged(
+      'warn',
+      /^\[LYDIA-REFUND\] refused on payment [0-9a-f-]{36}: not refundable \(other-business\)$/
+    );
+    takeLogged(
+      'warn',
+      /^\[LYDIA-REFUND\] refused on payment [0-9a-f-]{36}: not refundable \(untraceable\)$/
+    );
   });
 
   it('after a bridge switch, a payment the historical account took is refunded with ITS vendor token', async () => {
@@ -550,6 +606,11 @@ maybe('Lydia refunds against PostgreSQL', () => {
       await ds.query(`DELETE FROM lydia_account_bridges WHERE "associationId" = $1`, [ASSO]);
       await ds.query(`UPDATE associations SET "lydiaAccountId" = $2 WHERE id = $1`, [ASSO, VENDOR]);
     }
+
+    takeLogged(
+      'warn',
+      /^\[LYDIA-REFUND\] refused on payment [0-9a-f-]{36}: not refundable \(other-business\)$/
+    );
   });
 
   it('describes each payment: refundable or why not, and what a total refund withdraws', async () => {
@@ -619,6 +680,11 @@ maybe('Lydia refunds against PostgreSQL', () => {
     await expect(check).resolves.toMatchObject({ response: { code: LYDIA_REFUND_IN_FLIGHT } });
     // Released once the outcome is written.
     expect(await callLockFree((await refundOf(record.id))[0].id)).toBe(true);
+
+    takeLogged(
+      'warn',
+      /^\[LYDIA-REFUND\] [0-9a-f-]{36}: settle refused, Lydia is still being asked$/
+    );
   });
 
   it('a call abandoned by a dead process (no outcome, lock free) is swept to no-answer, ERROR logged, and checkable', async () => {
@@ -645,6 +711,11 @@ maybe('Lydia refunds against PostgreSQL', () => {
     await expect(service.resolve(ASSO, row.id, MANAGER, false)).resolves.toMatchObject({
       state: 'refused',
     });
+
+    takeLogged(
+      'error',
+      /^\[LYDIA-REFUND\] [0-9a-f-]{36}: its call was abandoned \(no process holds it\) - marked no-answer, Lydia MAY have refunded; a manager checks Lydia$/
+    );
   });
 
   it('a row whose call lock another process holds is NOT swept: a call on another replica is in flight', async () => {
@@ -664,6 +735,11 @@ maybe('Lydia refunds against PostgreSQL', () => {
     }
     await service.sweepAbandoned();
     expect((await refundOf(record.id))[0].outcome).toBe('no-answer');
+
+    takeLogged(
+      'error',
+      /^\[LYDIA-REFUND\] [0-9a-f-]{36}: its call was abandoned \(no process holds it\) - marked no-answer, Lydia MAY have refunded; a manager checks Lydia$/
+    );
   });
 
   it('a late Lydia answer on a refund already settled is kept beside it and logged ERROR', async () => {
@@ -696,6 +772,15 @@ maybe('Lydia refunds against PostgreSQL', () => {
     );
     // A late answer AGREEING with the settlement is no contradiction.
     expect(await service.countContradicted()).toBe(before - 1);
+
+    takeLogged(
+      'error',
+      /^\[LYDIA-REFUND\] [0-9a-f-]{36}: no usable answer \(no response\) - Lydia MAY have refunded; kept pending until a manager checks Lydia$/
+    );
+    takeLogged(
+      'error',
+      /^\[LYDIA-REFUND\] [0-9a-f-]{36}: Lydia answered refunded AFTER the refund was settled as refused \(declared-not-refunded\) - kept as its late outcome$/
+    );
   });
 
   it('Lydia refunded and the recording failed: unrecorded, blocking, then recorded by a manager', async () => {
@@ -728,6 +813,19 @@ maybe('Lydia refunds against PostgreSQL', () => {
       resolvedByUserId: MANAGER,
     });
     expect(post).toHaveBeenCalledTimes(1);
+
+    takeLogged(
+      'error',
+      /^\[LYDIA-REFUND\] [0-9a-f-]{36}: Lydia refunded, recording failed: deadlock detected - marked refunded-unrecorded, every new refund of payment [0-9a-f-]{36} is blocked$/
+    );
+    takeLogged(
+      'warn',
+      /^\[LYDIA-REFUND\] refused on payment [0-9a-f-]{36}: refund [0-9a-f-]{36} is not settled \(unrecorded\)$/
+    );
+    takeLogged(
+      'warn',
+      /^\[LYDIA-REFUND\] [0-9a-f-]{36}: settle refused, Lydia confirmed it - it can only be recorded$/
+    );
   });
 
   it("refunds its own payments and the ones its Business TOOK, and the refund sits on the payer's association statement", async () => {
@@ -759,6 +857,11 @@ maybe('Lydia refunds against PostgreSQL', () => {
       item: 'Product other',
       amountCents: -200,
     });
+
+    takeLogged(
+      'warn',
+      /^\[LYDIA-REFUND\] refused: payment [0-9a-f-]{36} is neither [0-9a-f-]{36}'s nor taken by its Business$/
+    );
   });
 
   // G8 + owner review of #2967 (2026-11-03): a LIST collects only through its receiver, and the
@@ -806,6 +909,12 @@ maybe('Lydia refunds against PostgreSQL', () => {
     await expect(service.refund(ASSO, answer.id, MANAGER, total())).resolves.toMatchObject({
       state: 'refunded',
     });
+
+    takeLogged(
+      'warn',
+      /^\[LYDIA-REFUND\] refused: payment [0-9a-f-]{36} is neither [0-9a-f-]{36}'s nor taken by its Business$/,
+      2
+    );
   });
 
   it('a replay of a refused refund answers 200 with its state, never a refund', async () => {
@@ -821,6 +930,11 @@ maybe('Lydia refunds against PostgreSQL', () => {
       service.refund(ASSO, record.id, MANAGER, partial(100, key))
     ).resolves.toMatchObject({ state: 'refused', refusal: 'LYDIA_REFUND_REJECTED' });
     expect(post).toHaveBeenCalledTimes(1);
+
+    takeLogged(
+      'warn',
+      /^\[LYDIA-REFUND\] [0-9a-f-]{36}: refused \(LYDIA_REFUND_REJECTED\) - nothing refunded$/
+    );
   });
 
   it('ONE refund holds ONE connection: it completes on a pool of one', async () => {
@@ -898,6 +1012,11 @@ maybe('Lydia refunds against PostgreSQL', () => {
     );
     await service.sweepAbandoned();
     expect((await refundOf(record.id))[0].outcome).toBe('no-answer');
+
+    takeLogged(
+      'error',
+      /^\[LYDIA-REFUND\] [0-9a-f-]{36}: its call was abandoned \(no process holds it\) - marked no-answer, Lydia MAY have refunded; a manager checks Lydia$/
+    );
   });
 
   it('the call start is stamped on the database before core is asked', async () => {
@@ -938,5 +1057,10 @@ maybe('Lydia refunds against PostgreSQL', () => {
     expect(after.requestedByUserId).not.toBe(MANAGER);
     expect(after.resolvedByUserId).not.toBe(MANAGER);
     expect(after).toMatchObject({ amountCents: 100, status: 'confirmed' });
+
+    takeLogged(
+      'error',
+      /^\[LYDIA-REFUND\] [0-9a-f-]{36}: no usable answer \(no response\) - Lydia MAY have refunded; kept pending until a manager checks Lydia$/
+    );
   });
 });

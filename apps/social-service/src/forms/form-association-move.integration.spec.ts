@@ -33,6 +33,7 @@ import { FORM_DRAFT, FORM_PUBLISHED, type FormStatus } from './form-status';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { readFormDraft } from './form-draft-revision';
 import type { CreateFormDto } from './dto/form.dto';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -254,6 +255,11 @@ maybe('the association of a form, against PostgreSQL', () => {
       /manage this association members/i
     );
     expect(await stored(id)).toEqual({ associationId: ASSO_A, status: FORM_DRAFT });
+
+    takeLogged(
+      'warn',
+      /^\[UserTag\] refused a cotisation-granting form: user=u-owner lacks MANAGE_MEMBERS on assoc=[0-9a-f]{6,8}$/
+    );
   });
 
   it('refuses, typed, a move to an id that is no UUID or names no association, and writes nothing', async () => {

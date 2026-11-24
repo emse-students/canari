@@ -37,6 +37,7 @@ import { ChannelMessage } from './entities/channel-message.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import type { RedisService } from '../common/redis';
 import { ACTIVITY_DUMP_SQL, untilWaiting } from '../common/lock-wait.it-fixture';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -282,6 +283,15 @@ maybe('a removal against PostgreSQL', () => {
       await change.client.query('ROLLBACK').catch(() => undefined);
       await change.client.end();
     }
+
+    takeLogged(
+      'warn',
+      /^\[WORKSPACE\] refused removal - target holds more than the actor workspace=[0-9a-f-]{36} target=promoted by=salons locked=true$/
+    );
+    takeLogged(
+      'warn',
+      '[KEY_DISTRIBUTION] departure ABANDONED reason=access_updated begun=0: This member holds permissions you do not have. - settling what it began'
+    );
   });
 
   it('judges a role whose permissions grew while the check waits on it, and refuses', async () => {
@@ -311,6 +321,15 @@ maybe('a removal against PostgreSQL', () => {
       await change.client.query('ROLLBACK').catch(() => undefined);
       await change.client.end();
     }
+
+    takeLogged(
+      'warn',
+      /^\[WORKSPACE\] refused removal - target holds more than the actor workspace=[0-9a-f-]{36} target=helper by=salons locked=true$/
+    );
+    takeLogged(
+      'warn',
+      '[KEY_DISTRIBUTION] departure ABANDONED reason=access_updated begun=0: This member holds permissions you do not have. - settling what it began'
+    );
   });
 
   it('a kick and a salon removal wait for the community removal lock', async () => {
@@ -338,6 +357,11 @@ maybe('a removal against PostgreSQL', () => {
       await other.client.query('ROLLBACK').catch(() => undefined);
       await other.client.end();
     }
+
+    takeLogged(
+      'warn',
+      /^\[KEY_DISTRIBUTION\] no distribution group to cut scope=workspace:[0-9a-f-]{36} user=leaver reason=kicked - pre-Graine community, or its group is gone$/
+    );
   });
   it('calls chat-delivery for a kick with no advisory lock held', async () => {
     // The first eviction runs before the removal lock is taken, the second after its commit.
@@ -346,6 +370,11 @@ maybe('a removal against PostgreSQL', () => {
     expect(await started(service.kickFromWorkspace(WS, 'cut', 'kicker')).outcome).toBe('allowed');
     expect(locksAtCall.length).toBeGreaterThan(0);
     expect(locksAtCall.every((n) => n === 0)).toBe(true);
+
+    takeLogged(
+      'warn',
+      /^\[KEY_DISTRIBUTION\] no distribution group to cut scope=workspace:[0-9a-f-]{36} user=cut reason=kicked - pre-Graine community, or its group is gone$/
+    );
   });
 
   it('refuses a rewrite whose salon changed after it was read, and saves nothing', async () => {
@@ -374,6 +403,15 @@ maybe('a removal against PostgreSQL', () => {
       await other.client.query('ROLLBACK').catch(() => undefined);
       await other.client.end();
     }
+
+    takeLogged(
+      'warn',
+      /^\[CHANNEL_ACCESS\] refused - the salon changed since it was read channel=[0-9a-f-]{36} by=salons base=0 current=1$/
+    );
+    takeLogged(
+      'warn',
+      '[KEY_DISTRIBUTION] departure ABANDONED reason=access_updated begun=0: The salon access changed meanwhile, retry. - settling what it began'
+    );
   });
 
   it('refuses a flip computed from a public row another admin made private meanwhile', async () => {
@@ -403,6 +441,19 @@ maybe('a removal against PostgreSQL', () => {
     expect(row.isPrivate).toBe(true);
     expect(row.allowedUsers).toEqual(['owner', 'bob']);
     expect(row.distributionGroupId).toBe(group);
+
+    takeLogged(
+      'warn',
+      /^\[CHANNEL_ACCESS\] refused - the salon changed since it was read channel=[0-9a-f-]{36} by=owner2 base=0 current=1$/
+    );
+    takeLogged(
+      'warn',
+      '[KEY_DISTRIBUTION] departure ABANDONED reason=access_updated begun=0: The salon access changed meanwhile, retry. - settling what it began'
+    );
+    takeLogged(
+      'warn',
+      /^\[CHANNEL_GRAINE\] privacy refused, minted group kept channel=[0-9a-f-]{36} group=[0-9a-f-]{36} by=owner2$/
+    );
   });
 
   it('sends nothing for an invitation into a private salon deleted before its grant', async () => {
@@ -428,6 +479,15 @@ maybe('a removal against PostgreSQL', () => {
       [WS]
     );
     expect(rows).toHaveLength(0);
+
+    takeLogged(
+      'warn',
+      /^\[CHANNEL\] grant refused channel=[0-9a-f-]{36} user=invitee- outcome=gone$/
+    );
+    takeLogged(
+      'warn',
+      /^\[KEY_DISTRIBUTION\] no distribution group to cut scope=workspace:[0-9a-f-]{36} user=invitee- reason=invite_withdrawn - pre-Graine community, or its group is gone$/
+    );
   });
 
   it('refuses an admin join when the admin was demoted while it was in flight', async () => {
@@ -451,6 +511,11 @@ maybe('a removal against PostgreSQL', () => {
       await demotion.client.query('ROLLBACK').catch(() => undefined);
       await demotion.client.end();
     }
+
+    takeLogged(
+      'warn',
+      /^\[CHANNEL\] grant refused channel=[0-9a-f-]{36} user=admin-x outcome=not_allowed$/
+    );
   });
 
   it('retries a kick whose target was granted a private salon since its read, and completes', async () => {
@@ -475,6 +540,24 @@ maybe('a removal against PostgreSQL', () => {
     );
     expect(rows).toHaveLength(0);
     expect(await allowedOn(id)).toEqual(['owner']);
+
+    takeLogged(
+      'warn',
+      /^\[KEY_DISTRIBUTION\] no distribution group to cut scope=workspace:[0-9a-f-]{36} user=granted- reason=kicked - pre-Graine community, or its group is gone$/,
+      2
+    );
+    takeLogged(
+      'warn',
+      /^\[KEY_DISTRIBUTION\] departure SUPERSEDED - granted a private salon since its read workspace=[0-9a-f-]{36} user=granted- reason=kicked salons=1$/
+    );
+    takeLogged(
+      'warn',
+      '[KEY_DISTRIBUTION] departure ABANDONED reason=kicked begun=0: The departure could not be completed, retry. - settling what it began'
+    );
+    takeLogged(
+      'warn',
+      /^\[KEY_DISTRIBUTION\] departure superseded, retrying workspace=[0-9a-f-]{36} user=granted- reason=kicked attempt=1\/3$/
+    );
   });
 
   /**
@@ -522,6 +605,15 @@ maybe('a removal against PostgreSQL', () => {
       await kick.client.query('ROLLBACK').catch(() => undefined);
       await kick.client.end();
     }
+
+    takeLogged(
+      'warn',
+      /^\[CHANNEL_ACCESS\] refused - the rewrite grants 1 non-member\(s\) channel=[0-9a-f-]{36} by=salons first=kicked-m revision=0 locked=true$/
+    );
+    takeLogged(
+      'warn',
+      '[KEY_DISTRIBUTION] departure ABANDONED reason=access_updated begun=0: Someone this list grants is not a member of the community. - settling what it began'
+    );
   });
 
   it('the same grant committed BEFORE the kick is taken back by the kick', async () => {
@@ -541,6 +633,11 @@ maybe('a removal against PostgreSQL', () => {
       await started(service.kickFromWorkspace(WS, 'granted-then-kicked', 'kicker')).outcome
     ).toBe('allowed');
     expect(await allowedOn(id)).toEqual(['salons', 'owner']);
+
+    takeLogged(
+      'warn',
+      /^\[KEY_DISTRIBUTION\] no distribution group to cut scope=workspace:[0-9a-f-]{36} user=granted- reason=kicked - pre-Graine community, or its group is gone$/
+    );
   });
 
   it('keeps an entry that outlived its membership when a save does not add it', async () => {
@@ -588,6 +685,11 @@ maybe('a removal against PostgreSQL', () => {
     expect(outcome).toBe(CHANNEL_GRANTEE_NOT_MEMBER);
     expect((global.fetch as unknown as jest.Mock).mock.calls).toHaveLength(0);
     expect(await channels.findOneByOrFail({ id })).toMatchObject({ isPrivate: false });
+
+    takeLogged(
+      'warn',
+      /^\[CHANNEL_ACCESS\] refused - the rewrite grants 1 non-member\(s\) channel=[0-9a-f-]{36} by=owner first=never-a- revision=0 locked=false$/
+    );
   });
 
   it("answers a flip whose actor was kicked while it waited with the actor's 403", async () => {
@@ -621,6 +723,15 @@ maybe('a removal against PostgreSQL', () => {
       await kick.client.query('ROLLBACK').catch(() => undefined);
       await kick.client.end();
     }
+
+    takeLogged(
+      'warn',
+      '[KEY_DISTRIBUTION] departure ABANDONED reason=access_updated begun=0: Not a member of this workspace - settling what it began'
+    );
+    takeLogged(
+      'warn',
+      /^\[CHANNEL_GRAINE\] privacy refused, minted group kept channel=[0-9a-f-]{36} group=[0-9a-f-]{36} by=flip-adm$/
+    );
   });
 
   it('refuses a private creation that leaves off someone who holds more than its creator', async () => {
@@ -635,6 +746,11 @@ maybe('a removal against PostgreSQL', () => {
     expect(await named('cache')).toBe(0);
     expect(await create('bureau', 'owner')).toBe('allowed');
     expect(await named('bureau')).toBe(1);
+
+    takeLogged(
+      'warn',
+      /^\[WORKSPACE\] refused removal - target holds more than the actor workspace=[0-9a-f-]{36} target=helper by=salons locked=true$/
+    );
   });
 
   /**
@@ -713,6 +829,11 @@ maybe('a removal against PostgreSQL', () => {
       expect(evictionsOf('w4')).toHaveLength(0);
       expect(await departuresOf('w4')).toBe(0);
       expect(await revisionOf(id)).toBe(panelB.accessRevision + 1);
+
+      takeLogged(
+        'warn',
+        /^\[CHANNEL_ACCESS\] refused - the salon changed since it was read channel=[0-9a-f-]{36} by=salons base=0 current=1$/
+      );
     });
 
     it('the same sequence from a client that sends no base: W5 is granted, W4 is kept', async () => {
@@ -730,6 +851,11 @@ maybe('a removal against PostgreSQL', () => {
       );
       expect(evictionsOf('w4-old')).toHaveLength(0);
       expect(await departuresOf('w4-old')).toBe(0);
+
+      takeLogged(
+        'warn',
+        /^\[CHANNEL_ACCESS\] baseless rewrite \(client older than the access revision\) - 1 name\(s\) of its list ignored, granted=1 channel=[0-9a-f-]{36} by=salons revision=1$/
+      );
     });
 
     /**
@@ -747,6 +873,11 @@ maybe('a removal against PostgreSQL', () => {
       expect(outcome).toBe(CHANNEL_ACCESS_CHANGED);
       const row = await ds.getRepository(Channel).findOneByOrFail({ id });
       expect(row).toMatchObject({ isPrivate: false, allowedUsers: [], writePolicy: 'everyone' });
+
+      takeLogged(
+        'warn',
+        /^\[CHANNEL_ACCESS\] refused - the salon changed since it was read channel=[0-9a-f-]{36} by=owner base=none current=1$/
+      );
     });
 
     /** The mirror (review ADV2): an old panel that read public would make B's private salon public. */
@@ -766,6 +897,11 @@ maybe('a removal against PostgreSQL', () => {
         allowedUsers: ['owner2'],
         writePolicy: 'everyone',
       });
+
+      takeLogged(
+        'warn',
+        /^\[CHANNEL_ACCESS\] refused - the salon changed since it was read channel=[0-9a-f-]{36} by=owner base=none current=1$/
+      );
     });
 
     /**
@@ -781,6 +917,11 @@ maybe('a removal against PostgreSQL', () => {
       await service.removeMemberFromChannel(id, 'revoked-y', 'owner');
       await service.updateChannelAccess(id, 'owner', true, [...stale.allowedUsers, 'picked-z']);
       expect(await allowedOn(id)).toEqual(['owner2', 'owner', 'picked-z']);
+
+      takeLogged(
+        'warn',
+        /^\[CHANNEL_ACCESS\] baseless rewrite \(client older than the access revision\) - 1 name\(s\) of its list ignored, granted=1 channel=[0-9a-f-]{36} by=owner revision=1$/
+      );
     });
 
     /**
@@ -849,6 +990,11 @@ maybe('a removal against PostgreSQL', () => {
       );
       expect(await allowedOn(id)).toEqual(['salons', 'owner', 'admin-b']);
       expect(await revisionOf(id)).toBe(1);
+
+      takeLogged(
+        'warn',
+        /^\[CHANNEL_ACCESS\] refused - the salon changed since it was read channel=[0-9a-f-]{36} by=salons base=0 current=1$/
+      );
     });
 
     it('saves a rewrite at the current revision, and raises it once', async () => {
@@ -879,6 +1025,11 @@ maybe('a removal against PostgreSQL', () => {
         new Set(['salons', 'owner', 'old-grant', 'old-new'])
       );
       expect(await revisionOf(id)).toBe(1);
+
+      takeLogged(
+        'warn',
+        /^\[CHANNEL_ACCESS\] baseless rewrite \(client older than the access revision\) - 1 name\(s\) of its list ignored, granted=1 channel=[0-9a-f-]{36} by=salons revision=0$/
+      );
     });
 
     it('removes one member through the per-member route, and raises the revision', async () => {
@@ -905,6 +1056,15 @@ maybe('a removal against PostgreSQL', () => {
       const winner = outcomes[0] === 'allowed' ? 'race-a' : 'race-b';
       expect(await allowedOn(id)).toEqual(['salons', winner]);
       expect(await revisionOf(id)).toBe(1);
+
+      takeLogged(
+        'warn',
+        /^\[CHANNEL_ACCESS\] refused - the salon changed since it was read channel=[0-9a-f-]{36} by=salons base=0 current=1$/
+      );
+      takeLogged(
+        'warn',
+        '[KEY_DISTRIBUTION] departure ABANDONED reason=access_updated begun=0: The salon access changed meanwhile, retry. - settling what it began'
+      );
     });
   });
 });

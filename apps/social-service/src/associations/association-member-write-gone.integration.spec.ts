@@ -21,6 +21,7 @@ import { DataSource, Repository } from 'typeorm';
 import { AssociationsService } from './associations.service';
 import { AssociationMember } from './entities/association-member.entity';
 import { MEMBER_CHANGED_MEANWHILE } from '../channels/permissions';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 /** The platform admin writes here: the grant ceiling has its own spec (`member-flag-ceiling.spec.ts`). */
@@ -61,7 +62,8 @@ maybe('an association member write against PostgreSQL', () => {
     await ds.query(`CREATE TABLE associations (id uuid PRIMARY KEY)`);
     members = ds.getRepository(AssociationMember);
     // Only the membership repository is read or written by the two calls under test; the feed-cache
-    // sweep a removal makes is best-effort and logs its own failure against this empty Redis.
+    // sweep a removal makes is best-effort, and lands on this double of the two calls it makes.
+    const redis = { incr: async () => 1, deleteByPattern: async () => 0 } as never;
     const unused = {} as never;
     // `updateMemberRole` also reads the association's KIND (a list takes no shop right).
     const assoRepo = { findOne: async () => ({ id: 'a', type: 'association' }) } as never;
@@ -75,7 +77,7 @@ maybe('an association member write against PostgreSQL', () => {
       unused,
       unused,
       unused,
-      {} as never,
+      redis,
       unused,
       unused,
       unused,
@@ -128,6 +130,11 @@ maybe('an association member write against PostgreSQL', () => {
     expect(ran()).toBe(true);
     expect(codeOf(outcome)).toBe(MEMBER_CHANGED_MEANWHILE);
     expect(await rowOf(asso, 'target')).toBeNull();
+
+    takeLogged(
+      'warn',
+      /^updateMemberRole: membership changed or gone since its read association=[0-9a-f-]{36} target=target affected=0$/
+    );
   });
 
   it('a role change judged against permissions changed since its read writes nothing', async () => {
@@ -148,6 +155,11 @@ maybe('an association member write against PostgreSQL', () => {
     expect(ran()).toBe(true);
     expect(codeOf(outcome)).toBe(MEMBER_CHANGED_MEANWHILE);
     expect(await rowOf(asso, 'target')).toMatchObject({ permissions: 4 });
+
+    takeLogged(
+      'warn',
+      /^updateMemberRole: membership changed or gone since its read association=[0-9a-f-]{36} target=target affected=0$/
+    );
   });
 
   it('a role change with no removal writes only what it names', async () => {

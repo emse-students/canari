@@ -25,6 +25,7 @@ import { PurchaseRecord } from '../users/entities/purchase-record.entity';
 import { ProductCheckout } from './entities/product-checkout.entity';
 import { Submission } from '../forms/entities/submission.entity';
 import { measureLydiaFlux, recordEnrolledBusiness } from './lydia-contract-flux';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -201,6 +202,11 @@ maybe('the platform Lydia flux (PostgreSQL)', () => {
   it('excludes a payment on a historical account no bridge names yet', async () => {
     await form(900, T_UNBRIDGED_HIST, '2031-06-01T10:00:00Z');
     expect(await measure()).toMatchObject({ paidCents: 0, excludedCents: 900, excludedCount: 1 });
+
+    takeLogged(
+      'warn',
+      '[LYDIA-FLUX] [2031-03-05, 2032-03-05): 1 payment record(s) carry no Business of their own - read through the row that issued them'
+    );
   });
 
   it('counts payments on enrolled Businesses and excludes the historical accounts, switched or not', async () => {
@@ -216,6 +222,11 @@ maybe('the platform Lydia flux (PostgreSQL)', () => {
       excludedCount: 2,
       untraceableCount: 0,
     });
+
+    takeLogged(
+      'warn',
+      '[LYDIA-FLUX] [2031-03-05, 2032-03-05): 4 payment record(s) carry no Business of their own - read through the row that issued them'
+    );
   });
 
   it('a payment refunded in full since still counts as paid, and its refund on its own date', async () => {
@@ -227,6 +238,11 @@ maybe('the platform Lydia flux (PostgreSQL)', () => {
       refundCount: 1,
       fluxCents: 0,
     });
+
+    takeLogged(
+      'warn',
+      '[LYDIA-FLUX] [2031-03-05, 2032-03-05): 1 payment record(s) carry no Business of their own - read through the row that issued them'
+    );
   });
 
   it('counts a refund in the year Lydia executed it, not the payment year', async () => {
@@ -241,6 +257,11 @@ maybe('the platform Lydia flux (PostgreSQL)', () => {
       refundedCents: 1_000,
       fluxCents: 6_000,
     });
+
+    takeLogged(
+      'warn',
+      '[LYDIA-FLUX] [2031-03-05, 2032-03-05): 1 payment record(s) carry no Business of their own - read through the row that issued them'
+    );
   });
 
   it('counts only refunds Lydia executed, on an enrolled Business', async () => {
@@ -251,6 +272,11 @@ maybe('the platform Lydia flux (PostgreSQL)', () => {
     const hist = await boutique(9_000, T_WAITING_HIST, '2031-06-01T10:00:00Z');
     await refund(hist, T_WAITING_HIST, 400, '2031-06-02T10:00:00Z');
     expect(await measure()).toMatchObject({ refundedCents: 200, refundCount: 1 });
+
+    takeLogged(
+      'warn',
+      '[LYDIA-FLUX] [2031-03-05, 2032-03-05): 2 payment record(s) carry no Business of their own - read through the row that issued them'
+    );
   });
 
   it('bounds the year at Paris midnights', async () => {
@@ -262,11 +288,21 @@ maybe('the platform Lydia flux (PostgreSQL)', () => {
     // 23:30 UTC on 4 March 2032 is 00:30 on 5 March in Paris: the next year.
     await boutique(1_000, T_PLAIN, '2032-03-04T23:30:00Z');
     expect(await measure()).toMatchObject({ paidCents: 101 });
+
+    takeLogged(
+      'warn',
+      '[LYDIA-FLUX] [2031-03-05, 2032-03-05): 2 payment record(s) carry no Business of their own - read through the row that issued them'
+    );
   });
 
   it('reports a payment no row ties to a Business, counted nowhere', async () => {
     await form(500, null, '2031-06-01T10:00:00Z');
     expect(await measure()).toMatchObject({ paidCents: 0, excludedCents: 0, untraceableCount: 1 });
+
+    takeLogged(
+      'error',
+      '[LYDIA-FLUX] [2031-03-05, 2032-03-05): 1 Lydia payment(s) name no Business and are counted nowhere'
+    );
   });
 
   it('migration 169 copies each payment trace onto its record, which then survives the answer', async () => {
@@ -338,6 +374,11 @@ maybe('the platform Lydia flux (PostgreSQL)', () => {
       expect(m.byAssociation.reduce((n, s) => n + s[k], 0)).toBe(m[k]);
     }
     expect(m).toMatchObject({ fluxCents: 8_000, excludedCents: 4_000 });
+
+    takeLogged(
+      'warn',
+      '[LYDIA-FLUX] [2031-03-05, 2032-03-05): 3 payment record(s) carry no Business of their own - read through the row that issued them'
+    );
   });
 
   it('a bridge historical account never counts, even if a ledger row names it by mistake', async () => {
@@ -350,6 +391,15 @@ maybe('the platform Lydia flux (PostgreSQL)', () => {
         T_WAITING_HIST,
       ]);
     }
+
+    takeLogged(
+      'error',
+      "[LYDIA-FLUX] [2031-03-05, 2032-03-05): 1 payment(s) on a Business recorded as enrolled AND held as a bridge's historical account - excluded"
+    );
+    takeLogged(
+      'warn',
+      '[LYDIA-FLUX] [2031-03-05, 2032-03-05): 1 payment record(s) carry no Business of their own - read through the row that issued them'
+    );
   });
 
   it('the link records a Business linked after the migration', async () => {
@@ -362,5 +412,10 @@ maybe('the platform Lydia flux (PostgreSQL)', () => {
       [T_LATE]
     )) as Array<{ source: string; associationId: string }>;
     expect(row).toEqual({ source: 'enrolment', associationId: LATE });
+
+    takeLogged(
+      'warn',
+      '[LYDIA-FLUX] [2031-03-05, 2032-03-05): 1 payment record(s) carry no Business of their own - read through the row that issued them'
+    );
   });
 });
