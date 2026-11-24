@@ -1,4 +1,5 @@
 import {
+  drainCompleteLine,
   MLS_QUEUE_ORPHAN_KEY,
   MlsPerGroupScheduler,
   type MlsQueuedMessage,
@@ -19,6 +20,30 @@ function msg(
     ...overrides,
   };
 }
+
+describe('the drain summary line', () => {
+  it('names the frames and the total time, and keeps the prefix the rig counts', () => {
+    expect(drainCompleteLine(148, 9927.4)).toBe('[QUEUE] Drain complete: 148 frame(s) in 9927 ms');
+  });
+
+  it('is written ONCE per drain, at INFO, counting every frame handed to the handler', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const scheduler = new MlsPerGroupScheduler('web');
+    scheduler.enqueue(msg('group-a', 'a1'));
+    scheduler.enqueue(msg('group-b', 'b1'));
+    scheduler.enqueue(msg('group-a', 'w', { isWelcome: true }));
+
+    await scheduler.drain(async () => {});
+
+    const lines = info.mock.calls
+      .map((c) => String(c[0]))
+      .filter((l) => l.includes('Drain complete'));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/^\[QUEUE\] Drain complete: 3 frame\(s\) in \d+ ms$/);
+    vi.restoreAllMocks();
+  });
+});
 
 describe('MlsPerGroupScheduler', () => {
   it('round-robins application messages across groups (web mode)', async () => {

@@ -1,6 +1,18 @@
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 import type { DeliveryChannel } from '$lib/mls-client/incomingDelivery';
 
+/**
+ * THE DRAIN'S ONE SUMMARY LINE, INFO, so it reaches the exported log (owner's Android `1.7.3`,
+ * 2026-11-24: a resume's 148-frame catch-up could only be timed by subtracting `Drain start` from
+ * `Drain complete` and counting `Processing` lines by hand). The frames the loop handed to the
+ * handler and the time from the start to the window's close (`onDrainEnd` included, which is when
+ * the open conversation receives the drain's rows) - once per drain, never per frame. The prefix
+ * `[QUEUE] Drain complete` is what the cross-client rig counts.
+ */
+export function drainCompleteLine(frames: number, elapsedMs: number): string {
+  return `[QUEUE] Drain complete: ${frames} frame(s) in ${Math.round(elapsedMs)} ms`;
+}
+
 /** Sentinel bucket key for messages without a `groupId`. */
 export const MLS_QUEUE_ORPHAN_KEY = '__no_group__';
 
@@ -734,6 +746,9 @@ export class MlsPerGroupScheduler {
     if (pendingAtStart === 0) return;
 
     this.isDraining = true;
+    // For the drain's one summary line only (`drainCompleteLine`): nothing is decided on it.
+    const drainStartedAt = performance.now();
+    let framesHandled = 0;
     const stats = this.getStats();
     console.log(
       `[QUEUE] Drain start (mode=${this.mode}) groups=${stats.groups} control=${stats.control} welcome=${stats.welcome} messages=${stats.messages}`
@@ -760,6 +775,7 @@ export class MlsPerGroupScheduler {
         // Both branches go through `guarded`, and so does everything else awaited in this method:
         // an unguarded await here is the freeze this class has already shipped twice.
         if (msg.isWelcome) {
+          framesHandled++;
           await this.guarded(`processMessage (Welcome, ${where})`, () => processMessage(msg));
         } else {
           // The ACQUISITION is guarded separately from the work, and the two must not nest:
@@ -785,6 +801,7 @@ export class MlsPerGroupScheduler {
             continue;
           }
           try {
+            framesHandled++;
             await this.guarded(`processMessage (${where})`, () => processMessage(msg));
           } finally {
             release();
@@ -818,7 +835,7 @@ export class MlsPerGroupScheduler {
       this.currentGroupKey = null;
       this.notifyIdle();
       this.notifyGroupIdle();
-      console.log('[QUEUE] Drain complete');
+      console.info(drainCompleteLine(framesHandled, performance.now() - drainStartedAt));
     }
   }
 

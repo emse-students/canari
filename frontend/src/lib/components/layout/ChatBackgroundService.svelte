@@ -205,6 +205,7 @@
   import { onLeaderTabChanged } from '$lib/mls-client/tabLeader';
   import { flushActiveMlsStateEncrypted } from '$lib/mls-client/mlsStatePersisterRegistry';
   import { insertMessageOrdered } from '$lib/utils/chat/messageOrder';
+  import { mergeRelayedBatch } from '$lib/utils/chat/messageMerge';
   import { mergeAnnouncedMessage } from '$lib/utils/chat/salonEcho';
   import { forgetDeliveredSalonSend } from '$lib/utils/chat/messaging';
   import { ACCOUNT_KEY, keystoreAlias } from '$lib/utils/accountLocalKeys';
@@ -1883,13 +1884,9 @@
       return;
     }
 
-    const existingIds = new Set(convo.messages.map((m) => m.id));
-    const toAdd = event.messages.filter((m) => !existingIds.has(m.id));
-    if (toAdd.length === 0) return;
-    let merged = convo.messages;
-    for (const msg of toAdd) {
-      merged = insertMessageOrdered(merged, msg);
-    }
+    // New rows inserted, shown previews upgraded by the relayed body (`mergeRelayedBatch`).
+    const merged = mergeRelayedBatch(convo.messages, event.messages);
+    if (!merged) return;
     globalConvs.conversations.set(event.conversationId, {
       ...convo,
       messages: merged,
