@@ -6826,6 +6826,74 @@
   "webview_outdated_body": "Canari cannot start: the Android System WebView component of this phone is too old. Update it from the Play Store, then reopen Canari.",
   "webview_outdated_button": "Open the Play Store",
   "webview_outdated_version": "Detected version: {version}",
+  "admin_usage_day_gap_tooltip": "{day}: no figure (day not counted)",
+  "admin_usage_partial_month": "{month} (partial)",
+  "admin_usage_label": "Usage",
+  "admin_card_usage_desc": "Who uses Canari, counted without keeping who: people per day, week and month, hours, activity.",
+  "admin_usage_title": "Canari usage",
+  "admin_usage_subtitle": "Anonymous aggregate figures, Paris time",
+  "admin_usage_explainer": "A person counts once per period, whatever their devices, and the server keeps no list of who. No threshold: a figure of 1 is shown as it is.",
+  "admin_usage_error": "The usage figures could not be read.",
+  "admin_usage_empty": "Nothing yet for this period.",
+  "admin_usage_people_heading": "Distinct people",
+  "admin_usage_period_today": "Today",
+  "admin_usage_period_week": "This week",
+  "admin_usage_period_month": "This month",
+  "admin_usage_days_heading": "People per day, last {days} days",
+  "admin_usage_day_tooltip": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{day}: {count} person",
+        "countPlural=other": "{day}: {count} people"
+      }
+    }
+  ],
+  "admin_usage_categories_heading": "By device type",
+  "admin_usage_categories_hint": "A person on two device types counts in each, and once in the total.",
+  "admin_usage_category_column": "Device type",
+  "admin_usage_category_app_android": "Android app",
+  "admin_usage_category_app_ios": "iPhone app",
+  "admin_usage_category_app_desktop": "Desktop app",
+  "admin_usage_category_web_android": "Web on Android",
+  "admin_usage_category_web_ios": "Web on iPhone or iPad",
+  "admin_usage_category_web_desktop": "Web on a computer",
+  "admin_usage_category_other": "Older version (undeclared)",
+  "admin_usage_versions_heading": "Versions this month",
+  "admin_usage_people_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} person",
+        "countPlural=other": "{count} people"
+      }
+    }
+  ],
+  "admin_usage_hours_heading": "Usage hours",
+  "admin_usage_hours_hint": "Mean number of people connected in each hour of the week, from {from} to {to}.",
+  "admin_usage_hour_tooltip": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{day} {hour}:00: {count} person on average",
+        "countPlural=other": "{day} {hour}:00: {count} people on average"
+      }
+    }
+  ],
+  "admin_usage_activity_heading": "Platform activity",
+  "admin_usage_activity_hint": "Daily totals for the whole platform: never per conversation, per person or per hour. Answers to anonymous forms are not counted.",
+  "admin_usage_day_column": "Day",
+  "admin_usage_month_column": "Month",
+  "admin_usage_activity_messages": "Messages",
+  "admin_usage_activity_posts": "Posts",
+  "admin_usage_activity_reels": "CanaReels",
+  "admin_usage_activity_lives": "Lives",
+  "admin_usage_activity_calls": "Calls",
+  "admin_usage_activity_forms": "Forms",
+  "admin_usage_months_heading": "People per month",
   "alumni_link_banner_text": "Link your Alumni account to MiConnect",
   "alumni_link_banner_action": "Link",
   "alumni_link_banner_dismiss": "Later",

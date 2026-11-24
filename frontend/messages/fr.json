@@ -6835,6 +6835,74 @@
   "webview_outdated_body": "Canari ne peut pas démarrer : le composant Android System WebView de ce téléphone est trop ancien. Mettez-le à jour depuis le Play Store, puis rouvrez Canari.",
   "webview_outdated_button": "Ouvrir le Play Store",
   "webview_outdated_version": "Version détectée : {version}",
+  "admin_usage_day_gap_tooltip": "{day} : aucun chiffre (jour non compté)",
+  "admin_usage_partial_month": "{month} (partiel)",
+  "admin_usage_label": "Utilisation",
+  "admin_card_usage_desc": "Qui utilise Canari, compté sans garder qui : personnes par jour, semaine et mois, heures, activité.",
+  "admin_usage_title": "Utilisation de Canari",
+  "admin_usage_subtitle": "Chiffres d'ensemble et anonymes, heure de Paris",
+  "admin_usage_explainer": "Une personne est comptée une fois par période, quels que soient ses appareils, sans que le serveur garde la liste de qui. Aucun seuil : un chiffre de 1 s'affiche tel quel.",
+  "admin_usage_error": "Les chiffres d'utilisation n'ont pas pu être lus.",
+  "admin_usage_empty": "Rien encore sur cette période.",
+  "admin_usage_people_heading": "Personnes différentes",
+  "admin_usage_period_today": "Aujourd'hui",
+  "admin_usage_period_week": "Cette semaine",
+  "admin_usage_period_month": "Ce mois",
+  "admin_usage_days_heading": "Personnes par jour, {days} derniers jours",
+  "admin_usage_day_tooltip": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{day} : {count} personne",
+        "countPlural=other": "{day} : {count} personnes"
+      }
+    }
+  ],
+  "admin_usage_categories_heading": "Par type d'appareil",
+  "admin_usage_categories_hint": "Une personne sur deux types d'appareils compte dans chacun, une seule fois au total.",
+  "admin_usage_category_column": "Type d'appareil",
+  "admin_usage_category_app_android": "Appli Android",
+  "admin_usage_category_app_ios": "Appli iPhone",
+  "admin_usage_category_app_desktop": "Appli ordinateur",
+  "admin_usage_category_web_android": "Web sur Android",
+  "admin_usage_category_web_ios": "Web sur iPhone ou iPad",
+  "admin_usage_category_web_desktop": "Web sur ordinateur",
+  "admin_usage_category_other": "Ancienne version (non déclarée)",
+  "admin_usage_versions_heading": "Versions ce mois-ci",
+  "admin_usage_people_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} personne",
+        "countPlural=other": "{count} personnes"
+      }
+    }
+  ],
+  "admin_usage_hours_heading": "Heures d'utilisation",
+  "admin_usage_hours_hint": "Personnes connectées en moyenne à chaque heure de la semaine, du {from} au {to}.",
+  "admin_usage_hour_tooltip": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{day} {hour} h : {count} personne en moyenne",
+        "countPlural=other": "{day} {hour} h : {count} personnes en moyenne"
+      }
+    }
+  ],
+  "admin_usage_activity_heading": "Activité de la plateforme",
+  "admin_usage_activity_hint": "Totaux par jour pour toute la plateforme : jamais par conversation, par personne ni par heure. Les réponses aux formulaires anonymes ne sont pas comptées.",
+  "admin_usage_day_column": "Jour",
+  "admin_usage_month_column": "Mois",
+  "admin_usage_activity_messages": "Messages",
+  "admin_usage_activity_posts": "Publications",
+  "admin_usage_activity_reels": "CanaReels",
+  "admin_usage_activity_lives": "Lives",
+  "admin_usage_activity_calls": "Appels",
+  "admin_usage_activity_forms": "Formulaires",
+  "admin_usage_months_heading": "Personnes par mois",
   "alumni_link_banner_text": "Liez votre compte Alumni à MiConnect",
   "alumni_link_banner_action": "Lier",
   "alumni_link_banner_dismiss": "Plus tard",
