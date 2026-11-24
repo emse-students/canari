@@ -3,7 +3,8 @@
  * 078, 121, 123, 127, 132, 133 and 162 applied, 162 on a `posts` table that does not have the columns.
  *
  * The rule: an institution chooses, at every post, the SPACES of its own audience the post targets
- * and the PUBLIC in them - everyone, the students (an account with a cursus), the staff (none). The
+ * and the PUBLIC in them - everyone, the students (an account with a space), the staff (a post EMSE or
+ * ME, owner 2026-11-24: independent of the cursus, so an account may be both or neither). The
  * spaces narrow the institution's own door (its rules and a read grant), never a membership nor a
  * republisher's door (G4); the public narrows every door but the author's. ONE predicate,
  * `postVisibleToUserSql`, so every consumer is asked here through its own shipped code, each with
@@ -23,8 +24,10 @@
  *   ad  - a platform admin of Saint-Etienne, no cursus         - by id; staff by campus
  *
  * THE STAFF-BY-CAMPUS DOOR (owner, 2026-11-14): a "Tous" or "Personnel" post opens to every staff
- * account (a campus, no cursus) of a ticked space's campus - `os` and `ad` here - and to no staff of
- * another campus (`og`); a student gains nothing, and a post with no reach opens nothing new.
+ * account (a campus and a post EMSE or ME) of a ticked space's campus - `os` and `ad` here - and to no
+ * staff of another campus (`og`); a student who is not staff gains nothing, and a post with no reach
+ * opens nothing new. Every account of the cast with no cursus holds the post EMSE; the accounts of
+ * "STAFF IS A POST" below, outside the cast, carry the other combinations.
  *
  * GATED ON `SOCIAL_IT_DATABASE_URL`, like every integration spec here. Locally:
  *
@@ -33,7 +36,7 @@
  * Everything happens in a throwaway schema, dropped at the end.
  */
 // FIRST: the review cohort the import-time fragments of reader-spaces are built with.
-import '../spaces/review-cohort.it-fixture';
+import { REVIEW_A } from '../spaces/review-cohort.it-fixture';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { BadRequestException } from '@nestjs/common';
@@ -74,22 +77,31 @@ const migration = (file: string) => readFileSync(join(__dirname, '..', 'migratio
 
 const SE = 'saint-etienne';
 const GA = 'gardanne';
-const USERS: Record<string, { campus: string | null; formation: string | null; admin?: boolean }> =
-  {
-    si: { campus: SE, formation: 'ICM' },
-    ss: { campus: SE, formation: 'ISMIN' },
-    sg: { campus: GA, formation: 'ISMIN' },
-    mb: { campus: SE, formation: null },
-    off: { campus: SE, formation: null },
-    nr: { campus: null, formation: null },
-    nf: { campus: null, formation: null },
-    sf: { campus: GA, formation: null },
-    os: { campus: SE, formation: null },
-    og: { campus: GA, formation: null },
-    ad: { campus: SE, formation: null, admin: true },
-    // Only for the "never wider than the audience" case: a student of a space I does not reach.
-    gi: { campus: GA, formation: 'ICM' },
-  };
+const USERS: Record<
+  string,
+  { campus: string | null; formation: string | null; admin?: boolean; posts?: string[] }
+> = {
+  si: { campus: SE, formation: 'ICM' },
+  ss: { campus: SE, formation: 'ISMIN' },
+  sg: { campus: GA, formation: 'ISMIN' },
+  mb: { campus: SE, formation: null },
+  off: { campus: SE, formation: null },
+  nr: { campus: null, formation: null },
+  nf: { campus: null, formation: null },
+  sf: { campus: GA, formation: null },
+  os: { campus: SE, formation: null },
+  og: { campus: GA, formation: null },
+  ad: { campus: SE, formation: null, admin: true },
+  // Only for the "never wider than the audience" case: a student of a space I does not reach.
+  gi: { campus: GA, formation: 'ICM' },
+  // Only for "STAFF IS A POST" (owner, 2026-11-24): staff and student are independent.
+  se: { campus: SE, formation: 'ICM', posts: ['ALUMNI', 'EMSE'] }, // a student AND staff
+  sm: { campus: SE, formation: 'ISMIN', posts: ['ME'] }, // a student AND staff
+  sa: { campus: SE, formation: 'ICM', posts: ['ALUMNI'] }, // a student, not staff
+  al: { campus: SE, formation: null, posts: ['ALUMNI'] }, // neither
+  np: { campus: SE, formation: null, posts: [] }, // neither
+  [REVIEW_A]: { campus: SE, formation: null, posts: ['EMSE'] }, // a review account: never staff
+};
 const READERS = ['si', 'ss', 'sg', 'mb', 'off', 'nr', 'nf', 'sf', 'os', 'og', 'ad'] as const;
 type Reader = (typeof READERS)[number];
 
@@ -167,7 +179,7 @@ maybe("an institution's reach against PostgreSQL (migration 162)", () => {
     )[0].v === true;
 
   /** THE SHIPPED FEED ARM (`listPostRows`, private: its decoration reads tables not built here). */
-  async function feedHas(feed: ListPostsFeed, reader: Reader, postId: string): Promise<boolean> {
+  async function feedHas(feed: ListPostsFeed, reader: string, postId: string): Promise<boolean> {
     const params: ListPostsParams = { feed, viewerUserId: reader, limit: 100, offset: 0 };
     const rows: { id: string }[] = await (
       service as unknown as { listPostRows(p: ListPostsParams): Promise<{ id: string }[]> }
@@ -232,7 +244,7 @@ maybe("an institution's reach against PostgreSQL (migration 162)", () => {
     await q(`
       CREATE TABLE users (id varchar(255) PRIMARY KEY, admin boolean NOT NULL DEFAULT false,
         campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]', promo int, "displayName" varchar,
-        "firstName" varchar, "lastName" varchar);
+        "firstName" varchar, "lastName" varchar, posts text[] NOT NULL DEFAULT '{}');
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL, slug varchar NOT NULL,
         type varchar NOT NULL DEFAULT 'association', archived boolean NOT NULL DEFAULT false,
         "logoUrl" varchar, "logoMediaId" varchar, "isBDE" boolean NOT NULL DEFAULT false,
@@ -292,13 +304,15 @@ maybe("an institution's reach against PostgreSQL (migration 162)", () => {
     }
     for (const [id, u] of Object.entries(USERS)) {
       await q(
-        `INSERT INTO users (id, admin, campus, cursus, "firstName", "lastName")
-           VALUES ($1, $2, $3, $4, $1, 'X')`,
+        `INSERT INTO users (id, admin, campus, cursus, "firstName", "lastName", posts)
+           VALUES ($1, $2, $3, $4, $1, 'X', $5)`,
         [
           id,
           u.admin === true,
           u.campus,
           JSON.stringify(u.formation ? [{ formation: u.formation, promo: 2024 }] : []),
+          // The cast's accounts with no cursus are staff (EMSE), as they were by the old rule.
+          u.posts ?? (u.formation ? [] : ['EMSE']),
         ]
       );
     }
@@ -441,7 +455,7 @@ maybe("an institution's reach against PostgreSQL (migration 162)", () => {
         (r) => r.id
       );
       expect(all.includes('gi')).toBe(reach?.public !== 'staff');
-      const announced = all.filter((id) => id !== 'gi').sort();
+      const announced = all.filter((id) => (READERS as readonly string[]).includes(id)).sort();
       expect(announced).toEqual(
         readers.filter((r) => r !== 'off' && r !== 'nr' && r !== 'nf').sort()
       );
@@ -455,11 +469,12 @@ maybe("an institution's reach against PostgreSQL (migration 162)", () => {
       ((await q(NEWLY_REACHED_BY_REPUBLICATION_SQL, [P, A])) as { id: string }[])
         .map((r) => r.id)
         .sort();
-    // A's readers are si (a student, refused by 'staff') and nobody else: none newly reached.
+    // A's readers are si and sa (students, refused by 'staff') and se (a student AND staff, who
+    // already reads P as staff of its campus): none newly reached.
     expect(await newly()).toEqual([]);
     await setReach(P, { spaces: [ISMIN_SE], public: 'students' });
-    // si does not read P (ICM not ticked) and A would carry it to them: newly reached.
-    expect(await newly()).toEqual(['si']);
+    // A's ICM students do not read P (ICM not ticked) and A would carry it to them: newly reached.
+    expect(await newly()).toEqual(['sa', 'se', 'si']);
   });
 
   it('a space: the pins and trends read the ticked spaces only (`postReachesSpaceSql`)', async () => {
@@ -549,6 +564,63 @@ maybe("an institution's reach against PostgreSQL (migration 162)", () => {
         ((await q(IN_FEED_AUDIENCE_SQL, [id])) as { inAudience: boolean }[])[0].inAudience;
       expect(await inAudience('os')).toBe(true);
       expect(await inAudience('og')).toBe(false);
+    });
+  });
+
+  describe('STAFF IS A POST EMSE OR ME, A UNION WITH THE STUDENTS (owner, 2026-11-24)', () => {
+    const BOTH = [ICM_SE, ISMIN_SE];
+    const inAudience = async (id: string) =>
+      ((await q(IN_FEED_AUDIENCE_SQL, [id])) as { inAudience: boolean }[])[0].inAudience;
+
+    it('a student who holds EMSE or ME reads a students post AND a staff post', async () => {
+      await setReach(Q, { spaces: BOTH, public: 'students' });
+      expect(await visible('se', Q)).toBe(true);
+      expect(await visible('sm', Q)).toBe(true);
+      await setReach(Q, { spaces: BOTH, public: 'staff' });
+      expect(await visible('se', Q)).toBe(true);
+      expect(await visible('sm', Q)).toBe(true);
+      expect(await feedHas('associations', 'se', Q)).toBe(true);
+      const announced = ((await q(announceRecipientsSql(false), [Q])) as { id: string }[]).map(
+        (r) => r.id
+      );
+      expect(announced).toEqual(expect.arrayContaining(['se', 'sm']));
+      expect(announced).not.toContain('sa');
+    });
+
+    it('a student who holds a staff post is staff of their campus: the door by campus opens', async () => {
+      // sm's space (ISMIN) is not ticked; its campus is - as staff it comes in by campus.
+      await setReach(Q, { spaces: [ICM_SE], public: 'staff' });
+      expect(await visible('sm', Q)).toBe(true);
+      // A student who is not staff gains nothing from the campus.
+      await setReach(Q, { spaces: [ISMIN_SE], public: 'all' });
+      expect(await visible('sa', Q)).toBe(false);
+    });
+
+    it('ALUMNI alone is not staff: a student with it reads students posts, never staff posts', async () => {
+      await setReach(Q, { spaces: BOTH, public: 'students' });
+      expect(await visible('sa', Q)).toBe(true);
+      await setReach(Q, { spaces: BOTH, public: 'staff' });
+      expect(await visible('sa', Q)).toBe(false);
+    });
+
+    it('no cursus with ALUMNI alone, or with no post, is neither student nor staff', async () => {
+      for (const reader of ['al', 'np']) {
+        for (const pub of ['all', 'students', 'staff'] as const) {
+          await setReach(Q, { spaces: BOTH, public: pub });
+          expect(await visible(reader, Q)).toBe(false);
+        }
+        expect(await inAudience(reader)).toBe(false);
+      }
+      // No cursus and a staff post is staff of its campus, as before.
+      await setReach(Q, { spaces: BOTH, public: 'staff' });
+      expect(await visible('os', Q)).toBe(true);
+    });
+
+    it('a review account holding EMSE is never staff: no door by campus', async () => {
+      for (const pub of ['all', 'staff'] as const) {
+        await setReach(Q, { spaces: BOTH, public: pub });
+        expect(await visible(REVIEW_A, Q)).toBe(false);
+      }
     });
   });
 

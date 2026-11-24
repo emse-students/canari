@@ -114,7 +114,7 @@ describe('the Alumni access rule', () => {
     );
     expect(grace).toEqual(new Set(['on:required', 'before:reminder']));
     // Each post admits on its own.
-    for (const post of k.staffPosts) {
+    for (const post of k.gateOpeningPosts) {
       expect(contract.cases.some((c) => c.posts.includes(post) && c.gate)).toBe(true);
     }
   });

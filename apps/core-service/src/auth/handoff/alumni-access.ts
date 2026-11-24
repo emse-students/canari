@@ -33,8 +33,9 @@ export const ALUMNI_ACCESS = {
   blockingFrom: '02-01',
   /** ...and never before this launch grace (D44). */
   graceUntil: '2027-02-01',
-  /** A post that opens the gated sites whatever the cursus: staff are not alumni. */
-  staffPosts: ['EMSE', 'ME', 'ALUMNI'],
+  /** A post that opens the gated sites whatever the cursus (ALUMNI included) - NOT the "Personnel"
+   * audience of a post, which is EMSE or ME only (social-service `isStaffSql`, owner 2026-11-24). */
+  gateOpeningPosts: ['EMSE', 'ME', 'ALUMNI'],
 } as const;
 
 /** What the rule reads about a person - each field is a MiConnect user attribute or relation. */
@@ -92,8 +93,8 @@ export function alumniLinkStep(facts: AlumniFacts, today: string): AlumniLinkSte
  * plainly, and MiConnect itself lets them in - the safe direction.
  */
 export function alumniGateAdmits(facts: AlumniFacts, application: string, today: string): boolean {
-  const staff: readonly string[] = ALUMNI_ACCESS.staffPosts;
-  if (facts.posts.some((post) => staff.includes(post))) return true;
+  const opening: readonly string[] = ALUMNI_ACCESS.gateOpeningPosts;
+  if (facts.posts.some((post) => opening.includes(post))) return true;
   const windowOpen = facts.promos.some(
     (promo) => today <= `${promo + ALUMNI_ACCESS.windowYears}-${ALUMNI_ACCESS.windowLastDay}`
   );

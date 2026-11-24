@@ -58,7 +58,7 @@ describe('options - ONLY the reader own spaces (user, 2026-10-06)', () => {
   });
 
   it('offers staff their own campus and "any formation" only, starting on the campus whole', () => {
-    const staff = { campus: 'saint-etienne' as const, cursus: [] };
+    const staff = { campus: 'saint-etienne' as const, cursus: [], posts: ['EMSE' as const] };
     expect(campusSelectOptions(staff).map((o) => o.value)).toEqual(['saint-etienne']);
     expect(formationSelectOptions(staff).map((o) => o.value)).toEqual(['']);
     expect(defaultAgendaSelection(staff)).toEqual({ campus: 'saint-etienne', formation: '' });
@@ -66,6 +66,21 @@ describe('options - ONLY the reader own spaces (user, 2026-10-06)', () => {
     expect(isCampusWideReader(staff)).toBe(true);
     expect(
       isCampusWideReader({ campus: 'gardanne', cursus: [{ formation: 'ICM', promo: 1 }] })
+    ).toBe(false);
+  });
+
+  it('makes staff a post EMSE or ME, never ALUMNI alone nor the lack of a cursus (2026-11-24)', () => {
+    expect(isCampusWideReader({ campus: 'gardanne', cursus: [], posts: ['ME'] })).toBe(true);
+    expect(isCampusWideReader({ campus: 'gardanne', cursus: [], posts: ['ALUMNI'] })).toBe(false);
+    expect(isCampusWideReader({ campus: 'gardanne', cursus: [], posts: [] })).toBe(false);
+    expect(isCampusWideReader({ campus: 'gardanne', cursus: [] })).toBe(false);
+    // A student who is also staff keeps their own space.
+    expect(
+      isCampusWideReader({
+        campus: 'gardanne',
+        cursus: [{ formation: 'ICM', promo: 1 }],
+        posts: ['EMSE'],
+      })
     ).toBe(false);
   });
 
@@ -79,7 +94,8 @@ describe('options - ONLY the reader own spaces (user, 2026-10-06)', () => {
 
   it('says whether the reader has a space at all: both a campus and a known formation', () => {
     expect(hasAgendaSpace({ ...reader, cursus: [...reader.cursus] })).toBe(true);
-    expect(hasAgendaSpace({ campus: 'gardanne', cursus: [] })).toBe(true); // staff: campus whole
+    expect(hasAgendaSpace({ campus: 'gardanne', cursus: [], posts: ['EMSE'] })).toBe(true); // staff: campus whole
+    expect(hasAgendaSpace({ campus: 'gardanne', cursus: [] })).toBe(false); // no space, no staff post
     expect(
       hasAgendaSpace({ campus: 'gardanne', cursus: [{ formation: 'X' as never, promo: 1 }] })
     ).toBe(false);

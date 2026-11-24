@@ -1513,8 +1513,11 @@ the new submit; a respondent's own edit of their answer (`editAnswer`) keeps it.
 
 - **Promo et formation** is EVERY cursus (D32's `cursusViewsOf`, the one reconciliation pricing
   reads), so a person in two cursus shows both ("2024; 2022" / "ICM; Autre" in the export).
-- **Statut** is derived, not a claim: a cursus makes a student, a post (EMSE, ME, Alumni) makes staff,
-  both at once possible (D1). **Canari reads no `school_status` claim, and needs none**: the
+- **Statut** is derived, not a claim: a cursus makes a student, a post EMSE or ME makes staff, both
+  at once possible (D1). An `ALUMNI` post alone is neither since the owner's decision of 2026-11-24
+  (`holdsStaffPost`, the ONE staff definition the audiences read too,
+  [staff is a post](../../profiles-and-access.md#staff-is-a-post-emse-or-me-owner-2026-11-24)); a
+  form snapshot taken before keeps the status it was answered with. **Canari reads no `school_status` claim, and needs none**: the
   "Personnel de l'école" choice became an EMSE post in the MiConnect profile (D27), which the sign-in
   stores in `users.posts` and replaces wholesale at every sign-in, so a post that disappears at the
   provider clears here too ([profiles-and-access](../../profiles-and-access.md)).

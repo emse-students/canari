@@ -95,7 +95,7 @@ export class Post {
 
   /**
    * THE REACH AN INSTITUTION CHOSE FOR THIS POST (owner, 2026-11-10; migration 162): the public in
-   * the ticked spaces - 'all', 'students' (an account with a cursus) or 'staff' (no cursus). NULL on
+   * the ticked spaces - 'all', 'students' (an account with a cursus) or 'staff' (a post EMSE or ME). NULL on
    * every post that is not an institution's, and on an institution post written before the reach
    * existed (read as its whole audience, everyone). Set with {@link reachSpaces}, never alone (a
    * CHECK says so); read by `institutionReachAdmitsUserSql`, a conjunct of `postVisibleToUserSql`.

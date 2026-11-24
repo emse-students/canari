@@ -30,7 +30,7 @@
     "blockingYears": 2,
     "blockingFrom": "02-01",
     "graceUntil": "2027-02-01",
-    "staffPosts": ["EMSE", "ME", "ALUMNI"]
+    "gateOpeningPosts": ["EMSE", "ME", "ALUMNI"]
   },
   "cases": [
     { "name": "first year: nothing", "today": "2025-08-31", "promos": [2024], "posts": [], "alumni": null, "accessGroup": false, "linked": false, "link": "none", "gate": true },

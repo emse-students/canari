@@ -105,7 +105,7 @@ maybe('the shop and the partnerships follow the campus (PostgreSQL)', () => {
     // The tables of other owners the predicate reads, with only the columns it reads.
     await admin.query(
       `CREATE TABLE users (id varchar(255) PRIMARY KEY, admin boolean NOT NULL DEFAULT false,
-         campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]')`
+         campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]', posts text[] NOT NULL DEFAULT '{}')`
     );
     await admin.query(
       `CREATE TABLE association_members (id serial PRIMARY KEY, "associationId" uuid NOT NULL,

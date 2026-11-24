@@ -3,9 +3,11 @@ import {
   FORMATIONS,
   campusLabel,
   formationLabel,
+  holdsStaffPost,
   type Campus,
   type CursusEntry,
   type Formation,
+  type Post,
 } from '$lib/profile/miconnectProfile';
 import { m } from '$lib/paraglide/messages';
 import type { PickerOption } from '$lib/components/ui/picker';
@@ -28,6 +30,7 @@ export const EMPTY_AGENDA_SELECTION: AgendaSelection = { campus: '', formation: 
 export interface AgendaReader {
   campus?: Campus | null;
   cursus?: CursusEntry[] | null;
+  posts?: Post[] | null;
 }
 
 /**
@@ -71,12 +74,17 @@ export function formationSelectOptions(reader: AgendaReader | null | undefined):
 }
 
 /**
- * A reader with a campus and NO cursus entry - EMSE staff - is tied to no formation: they may
+ * A STAFF reader (a post EMSE or ME, owner 2026-11-24) with a campus and no space of their own may
  * follow their OWN campus whole ("all formations"), the one thing the server signs for them (D40,
- * user 2026-10-07). A cursus with entries, even unknown ones, is a student and keeps own-spaces.
+ * user 2026-10-07; `campusWideReaderCampus`). A reader with an own space keeps own-spaces, staff or
+ * not; one with neither a space nor a staff post has nothing to follow.
  */
 export function isCampusWideReader(reader: AgendaReader | null | undefined): boolean {
-  return CAMPUSES.some((c) => c === reader?.campus) && (reader?.cursus?.length ?? 0) === 0;
+  return (
+    CAMPUSES.some((c) => c === reader?.campus) &&
+    holdsStaffPost(reader?.posts) &&
+    defaultAgendaSelection(reader).formation === ''
+  );
 }
 
 /**
