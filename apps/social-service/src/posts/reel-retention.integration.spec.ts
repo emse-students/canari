@@ -22,6 +22,7 @@ import { Client } from 'pg';
 import { Logger } from '@nestjs/common';
 import { ReelRetentionScheduler } from './reel-retention.scheduler';
 import type { ReelPurgeOutcome } from '../internal/reel-media';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -76,7 +77,7 @@ maybe('reel worker against PostgreSQL (migration 069 included)', () => {
     new ReelRetentionScheduler(
       { manager: adapter() } as never,
       retention as never,
-      { deleteByPattern: () => Promise.resolve(0) } as never
+      { incr: () => Promise.resolve(1), deleteByPattern: () => Promise.resolve(0) } as never
     );
 
   const insertReel = async (
@@ -205,6 +206,8 @@ maybe('reel worker against PostgreSQL (migration 069 included)', () => {
     failing.clear();
     const second = await scheduler().purgeOnce();
     expect(second).toMatchObject({ due: 1, deleted: 1, failed: 0 });
+
+    takeLogged('warn', /^\[REEL_GC\] reel=[0-9a-f-]{36} kept: 1 blob\(s\) not deleted \(blob-1\)$/);
   });
 
   it('rolls the notifications back with the row when the transaction cannot finish', async () => {
@@ -230,7 +233,7 @@ maybe('reel worker against PostgreSQL (migration 069 included)', () => {
     const s = new ReelRetentionScheduler(
       { manager: failingManager } as never,
       retention as never,
-      { deleteByPattern: () => Promise.resolve(0) } as never
+      { incr: () => Promise.resolve(1), deleteByPattern: () => Promise.resolve(0) } as never
     );
 
     const report = await s.purgeOnce();
@@ -250,5 +253,7 @@ maybe('reel worker against PostgreSQL (migration 069 included)', () => {
     ).toBe(1);
     // And the next run, with the database healthy, completes it from the row alone.
     expect(await scheduler().purgeOnce()).toMatchObject({ due: 1, deleted: 1 });
+
+    takeLogged('warn', /^\[REEL_GC\] reel=[0-9a-f-]{36} kept for the next tick: lock timeout$/);
   });
 });

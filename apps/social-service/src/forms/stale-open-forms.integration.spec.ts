@@ -30,6 +30,7 @@ import {
   formsAskedStillOpen,
   keepFormOpen,
 } from './stale-open-forms';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -272,6 +273,11 @@ maybe('the question put to a form left open against PostgreSQL (migration 180)',
       await member('owner', 0);
       expect(await scheduler.sweep(NOW)).toEqual({ asked: 1, told: 0, failed: 0 });
       expect(await told()).toEqual([]);
+
+      takeLogged(
+        'warn',
+        /^\[STALE-OPEN\] form [0-9a-f]{6,8}: claimed but told 0 manager\(s\) \(no MANAGE_FORMS holder left\)$/
+      );
     });
 
     it('is idempotent: a second sweep, a later day and a re-run ask nothing, whatever the clock', async () => {
@@ -353,6 +359,11 @@ maybe('the question put to a form left open against PostgreSQL (migration 180)',
         [id(1), 'owner'],
         [id(2), 'owner'],
       ]);
+
+      takeLogged(
+        'error',
+        /^\[STALE-OPEN\] form [0-9a-f]{6,8} not asked \(nothing claimed, retried at the next sweep\): QueryFailedError: rows not written$/
+      );
     });
   });
 

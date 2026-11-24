@@ -31,6 +31,7 @@ import { AssociationRoleHistory } from '../associations/entities/association-rol
 import { UserProfileService } from '../associations/user-profile.service';
 import type { AssociationMember } from '../associations/entities/association-member.entity';
 import type { Association } from '../associations/entities/association.entity';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -173,6 +174,11 @@ maybe('a tag, moderation, report or role history write against PostgreSQL', () =
     expect(ran()).toBe(true);
     expect(outcome).toBeInstanceOf(NotFoundException);
     expect(await mutes.findOne({ where: { userId } })).toBeNull();
+
+    takeLogged(
+      'warn',
+      /^\[MUTE\] unmute refused: no moderation record user=[0-9a-f]{6,8} affected=0$/
+    );
   });
 
   it('a mute and an unmute with nobody racing them write their columns', async () => {
@@ -251,6 +257,8 @@ maybe('a tag, moderation, report or role history write against PostgreSQL', () =
     expect(ran()).toBe(true);
     expect(outcome).toBeInstanceOf(NotFoundException);
     expect(await reports.findOne({ where: { id: filed.id } })).toBeNull();
+
+    takeLogged('warn', /^\[REPORT\] review refused: report=[0-9a-f]{6,8} gone affected=0$/);
   });
 
   const entry = (userId: string): Promise<AssociationRoleHistory> =>
@@ -277,6 +285,11 @@ maybe('a tag, moderation, report or role history write against PostgreSQL', () =
     expect(ran()).toBe(true);
     expect(outcome).toBeInstanceOf(NotFoundException);
     expect(await history.findOne({ where: { id: row.id } })).toBeNull();
+
+    takeLogged(
+      'warn',
+      /^\[UserProfile\] role history update refused: id=[0-9a-f]{6,8} gone since its read$/
+    );
   });
 
   it('a role history edit judged against years changed since is refused and keeps them', async () => {
@@ -297,6 +310,11 @@ maybe('a tag, moderation, report or role history write against PostgreSQL', () =
       startYear: 2024,
       endYear: 2025,
     });
+
+    takeLogged(
+      'warn',
+      /^\[UserProfile\] role history update refused: id=[0-9a-f]{6,8} judged year changed since its read$/
+    );
   });
 
   it('a title-only edit across years moved since writes its title and keeps the years', async () => {

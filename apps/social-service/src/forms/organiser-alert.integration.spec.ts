@@ -32,6 +32,7 @@ import { Submission } from './entities/submission.entity';
 import { FormsService } from './forms.service';
 import { FormOrganiserAlertService } from './organiser-alert.service';
 import { createNotificationPreferenceTable } from '../posts/post-notifications.it-schema';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -197,6 +198,15 @@ maybe('the organiser alert against PostgreSQL (migration 102)', () => {
     expect(late.paymentStatus).toBe('paid_over_capacity');
     expect(await rowsFor('form_paid_over_capacity')).toEqual([]);
     expect(await notifiedAt(LATE)).toBeNull();
+
+    takeLogged(
+      'warn',
+      /^\[Forms\] Payment on submission [0-9a-f-]{36} landed OVER CAPACITY \(form [0-9a-f-]{36}, 1500 cents\): the organiser owes a refund$/
+    );
+    takeLogged(
+      'error',
+      /^\[PurchaseRecord\] submission [0-9a-f-]{36}: online payment recorded with NO Business \(lydiaVendorToken\) - counted nowhere by the Lydia flux$/
+    );
   });
 
   it('tells the owner and the MANAGE_FORMS holders once - not the payer, not another officer', async () => {
@@ -216,12 +226,26 @@ maybe('the organiser alert against PostgreSQL (migration 102)', () => {
         data: { type: 'social', target: 'form-responses', formId: FORM },
       });
     }
+
+    takeLogged(
+      'warn',
+      /^\[Forms\] Payment on submission [0-9a-f-]{36} landed OVER CAPACITY \(form [0-9a-f-]{36}, 1500 cents\): the organiser owes a refund$/
+    );
+    takeLogged(
+      'error',
+      /^\[PurchaseRecord\] submission [0-9a-f-]{36}: online payment recorded with NO Business \(lydiaVendorToken\) - counted nowhere by the Lydia flux$/
+    );
   });
 
   it("tells a personal form's owner alone", async () => {
     await fullFormWithLatePayer(PERSONAL_FORM);
     await forms.markPaid(LATE, 'req-1');
     expect((await rowsFor('form_paid_over_capacity')).map((r) => r.recipientId)).toEqual(['owner']);
+
+    takeLogged(
+      'warn',
+      /^\[Forms\] Payment on submission [0-9a-f-]{36} landed OVER CAPACITY \(form [0-9a-f-]{36}, 1500 cents\): the organiser owes a refund$/
+    );
   });
 
   it('writes nothing twice on replays, sequential or concurrent', async () => {
@@ -230,12 +254,30 @@ maybe('the organiser alert against PostgreSQL (migration 102)', () => {
     await forms.markPaid(LATE, 'req-1');
     await Promise.all([forms.markPaid(LATE, 'req-1'), forms.markPaid(LATE, 'req-1')]);
     expect(await rowsFor('form_paid_over_capacity')).toHaveLength(2);
+
+    takeLogged(
+      'warn',
+      /^\[Forms\] Payment on submission [0-9a-f-]{36} landed OVER CAPACITY \(form [0-9a-f-]{36}, 1500 cents\): the organiser owes a refund$/
+    );
+    takeLogged(
+      'error',
+      /^\[PurchaseRecord\] submission [0-9a-f-]{36}: online payment recorded with NO Business \(lydiaVendorToken\) - counted nowhere by the Lydia flux$/
+    );
   });
 
   it('writes once when two confirmations settle the row at the same moment', async () => {
     await fullFormWithLatePayer();
     await Promise.all([forms.markPaid(LATE, 'req-1'), forms.markPaid(LATE, 'req-1')]);
     expect(await rowsFor('form_paid_over_capacity')).toHaveLength(2);
+
+    takeLogged(
+      'warn',
+      /^\[Forms\] Payment on submission [0-9a-f-]{36} landed OVER CAPACITY \(form [0-9a-f-]{36}, 1500 cents\): the organiser owes a refund$/
+    );
+    takeLogged(
+      'error',
+      /^\[PurchaseRecord\] submission [0-9a-f-]{36}: online payment recorded with NO Business \(lydiaVendorToken\) - counted nowhere by the Lydia flux$/
+    );
   });
 
   it('releases the claim when the rows could not be written, and the next replay writes them', async () => {
@@ -248,6 +290,19 @@ maybe('the organiser alert against PostgreSQL (migration 102)', () => {
     expect(tell).toHaveBeenCalledTimes(2);
     expect(await notifiedAt(LATE)).not.toBeNull();
     expect(await rowsFor('form_paid_over_capacity')).toHaveLength(2);
+
+    takeLogged(
+      'warn',
+      /^\[Forms\] Payment on submission [0-9a-f-]{36} landed OVER CAPACITY \(form [0-9a-f-]{36}, 1500 cents\): the organiser owes a refund$/
+    );
+    takeLogged(
+      'error',
+      /^\[PurchaseRecord\] submission [0-9a-f-]{36}: online payment recorded with NO Business \(lydiaVendorToken\) - counted nowhere by the Lydia flux$/
+    );
+    takeLogged(
+      'error',
+      /^\[Forms\] organiser alert for submission [0-9a-f-]{36} \(form [0-9a-f-]{36}\) not written - released for the next replay Error: insert failed$/
+    );
   });
 
   it('tells nobody about a payment that took a free seat', async () => {
@@ -258,5 +313,10 @@ maybe('the organiser alert against PostgreSQL (migration 102)', () => {
     expect(late.paymentStatus).toBe('paid');
     expect(await rowsFor('form_paid_over_capacity')).toEqual([]);
     expect(await notifiedAt(LATE)).toBeNull();
+
+    takeLogged(
+      'error',
+      /^\[PurchaseRecord\] submission [0-9a-f-]{36}: online payment recorded with NO Business \(lydiaVendorToken\) - counted nowhere by the Lydia flux$/
+    );
   });
 });

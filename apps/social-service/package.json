@@ -82,7 +82,8 @@
     "testEnvironment": "node",
     "globalSetup": "<rootDir>/../jest-global-setup.cjs",
     "setupFilesAfterEnv": [
-      "<rootDir>/../jest-integration-budget.cjs"
+      "<rootDir>/../jest-integration-budget.cjs",
+      "<rootDir>/common/testing/integration-log-guard.it-fixture.ts"
     ]
   }
 }

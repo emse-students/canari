@@ -31,6 +31,7 @@ import { ChannelMember } from './entities/channel-member.entity';
 import { ChannelMessage } from './entities/channel-message.entity';
 import { WorkspaceInvite } from './entities/workspace-invite.entity';
 import type { RedisService } from '../common/redis';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -185,6 +186,15 @@ maybe('a member write against PostgreSQL', () => {
     expect(ran()).toBe(true);
     expect(outcome).toBeInstanceOf(ForbiddenException);
     expect(await rowOf(ws, 'target')).toBeNull();
+
+    takeLogged(
+      'warn',
+      /^\[KEY_DISTRIBUTION\] no distribution group to cut scope=workspace:[0-9a-f-]{36} user=target reason=kicked - pre-Graine community, or its group is gone$/
+    );
+    takeLogged(
+      'warn',
+      /^\[CHANNEL_PUSH\] level NOT set, membership gone since its read channel=[0-9a-f-]{36} user=target affected=0$/
+    );
   });
 
   it('two devices setting two salons keep both levels', async () => {
@@ -224,6 +234,15 @@ maybe('a member write against PostgreSQL', () => {
     expect(ran()).toBe(true);
     expect(codeOf(outcome)).toBe(MEMBER_CHANGED_MEANWHILE);
     expect(await rowOf(ws, 'target')).toBeNull();
+
+    takeLogged(
+      'warn',
+      /^\[KEY_DISTRIBUTION\] no distribution group to cut scope=workspace:[0-9a-f-]{36} user=target reason=kicked - pre-Graine community, or its group is gone$/
+    );
+    takeLogged(
+      'warn',
+      /^\[WORKSPACE\] role NOT set, membership changed or gone since its read workspace=[0-9a-f-]{36} target=target by=owner$/
+    );
   });
 
   it('a role change judged against roles changed since its read writes nothing', async () => {
@@ -246,6 +265,11 @@ maybe('a member write against PostgreSQL', () => {
     expect(ran()).toBe(true);
     expect(codeOf(outcome)).toBe(MEMBER_CHANGED_MEANWHILE);
     expect((await rowOf(ws, 'target'))?.roleIds).toEqual([roles.mod]);
+
+    takeLogged(
+      'warn',
+      /^\[WORKSPACE\] role NOT set, membership changed or gone since its read workspace=[0-9a-f-]{36} target=target by=mgr$/
+    );
   });
 
   it('a community image set across a history change keeps the history change', async () => {
@@ -279,6 +303,11 @@ maybe('a member write against PostgreSQL', () => {
     expect(ran()).toBe(true);
     expect(outcome).toBeInstanceOf(NotFoundException);
     expect(await workspaces.findOneBy({ id: ws })).toBeNull();
+
+    takeLogged(
+      'warn',
+      /^\[WORKSPACE\] historyVisibility NOT set, community gone since its read workspace=[0-9a-f-]{36} affected=0$/
+    );
   });
 
   it('a role change with no removal still writes the role', async () => {
@@ -309,5 +338,18 @@ maybe('a member write against PostgreSQL', () => {
     expect(await rowOf(ws, 'a-heir')).toBeNull();
     expect((await rowOf(ws, 'b-next'))?.roleIds).toEqual([roles.admin]);
     expect(await rowOf(ws, 'boss')).toBeNull();
+
+    takeLogged(
+      'warn',
+      /^\[KEY_DISTRIBUTION\] no distribution group to cut scope=workspace:[0-9a-f-]{36} user=a-heir reason=kicked - pre-Graine community, or its group is gone$/
+    );
+    takeLogged(
+      'warn',
+      /^\[KEY_DISTRIBUTION\] no distribution group to cut scope=workspace:[0-9a-f-]{36} user=boss reason=account_deleted - pre-Graine community, or its group is gone$/
+    );
+    takeLogged(
+      'warn',
+      /^\[WORKSPACE\] promoted a successor admin workspace=[0-9a-f-]{36} user=b-next role=[0-9a-f-]{36} members=1 reason=account_deletion$/
+    );
   });
 });

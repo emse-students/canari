@@ -55,6 +55,7 @@ import {
 } from '../internal/account-erasure';
 import type { BookingExportLabels } from './booking-export';
 import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -454,6 +455,16 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
       });
       // Refused before the bytes travel: nothing reached the store.
       expect(media.size).toBe(before);
+
+      takeLogged(
+        'warn',
+        /^\[BOOKING_FILES\] upload refused: user=[0-9a-f]{6,8} holds 10 unsent files on space=[0-9a-f]{6,8}$/,
+        3
+      );
+      takeLogged(
+        'warn',
+        /^\[BOOKING_FILES\] upload refused: user=[0-9a-f]{6,8} holds 30 unsent files across spaces$/
+      );
     });
 
     it('refuses an upload to someone the audience does not admit', async () => {
@@ -487,6 +498,12 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
       expect(
         await refusal(bookWith(space.id, resourceId, { cv: mine.fileId }, '11:00', '11:30'))
       ).toEqual({ code: 'file-not-yours', itemId: 'cv' });
+
+      takeLogged(
+        'warn',
+        /^\[BOOKING_FILES\] booking refused: file [0-9a-f-]{36} is not user=[0-9a-f]{6,8}'s upload for item=cv of space=[0-9a-f]{6,8}, or has expired$/,
+        2
+      );
     });
 
     it('the organiser booking on behalf attaches the file THEY uploaded', async () => {
@@ -573,6 +590,11 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
       });
       const page = await service.spaceBookings(space.id, as(ORGA));
       expect([page.items[0].fileNames, page.items[0].deletedFileIds]).toEqual([{}, [up.fileId]]);
+
+      takeLogged(
+        'warn',
+        /^\[BOOKING_FILES\] file [0-9a-f-]{36} of booking [0-9a-f]{6,8} is gone from the media service \(404\) - marked purged$/
+      );
     });
   });
 
@@ -621,6 +643,11 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
       ).toBe(null);
       media.set(up.fileId, { owner: ALICE, bytes: PDF });
       expect((await retention.purgeOnce(at)).files.gone).toBe(1);
+
+      takeLogged(
+        'error',
+        /^\[BOOKING_RETENTION\] file=[0-9a-f-]{36} refused by the media service \(not a form file of aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\) - left alone$/
+      );
     });
 
     it('an upload never sent goes after its day, blob and row', async () => {
@@ -698,6 +725,11 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
       }
       expect(media.has(fileId)).toBe(false);
       expect(await ds.getRepository(BookingFile).findOneBy({ id: fileId })).toBeNull();
+
+      takeLogged(
+        'warn',
+        /^\[BOOKING_FILES\] booking refused: file [0-9a-f-]{36} is not user=[0-9a-f]{6,8}'s upload for item=cv of space=[0-9a-f]{6,8}, or has expired$/
+      );
     });
 
     it("a deleted space's files become orphans and go at the purge (D27)", async () => {
@@ -843,6 +875,12 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
       ).resolves.toBe('poster-not-yours');
       expect(await posterOfRow(space.id)).toBeNull();
       expect(images.get(bobs.mediaId)!.cls).toBe('poster-pending');
+
+      takeLogged(
+        'warn',
+        /^\[BOOKINGS\] poster refused: media=[0-9a-f]{6,8} is not user=[0-9a-f]{6,8}'s fresh poster upload for space=[0-9a-f]{6,8}$/,
+        2
+      );
     });
 
     it("refuses the member's OWN post image or document, and a stale upload - only a poster upload qualifies", async () => {
@@ -864,6 +902,12 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
         'association',
         'poster-pending',
       ]);
+
+      takeLogged(
+        'warn',
+        /^\[BOOKINGS\] poster refused: media=[0-9a-f]{6,8} is not user=[0-9a-f]{6,8}'s fresh poster upload for space=[0-9a-f]{6,8}$/,
+        3
+      );
     });
 
     it('one poster, one space: a second space of the same member is refused it', async () => {
@@ -874,6 +918,11 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
       );
       expect(images.get(mine.mediaId)).toEqual(
         expect.objectContaining({ cls: 'poster', space: a.id })
+      );
+
+      takeLogged(
+        'warn',
+        /^\[BOOKINGS\] poster refused: media=[0-9a-f]{6,8} is not user=[0-9a-f]{6,8}'s fresh poster upload for space=[0-9a-f]{6,8}$/
       );
     });
 
@@ -893,6 +942,8 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
         `claim:poster-association:${mine.mediaId}`,
         `release:${mine.mediaId}`,
       ]);
+
+      takeLogged('warn', /^\[BOOKINGS\] create refused: association [0-9a-f-]{36} does not exist$/);
     });
 
     it('a release waits for a claim in flight, then finds the poster cited (review of #2045)', async () => {
@@ -959,6 +1010,11 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
       expect(posterCalls).toContain(`release:${orphan}`);
       expect(posterCalls).not.toContain(`release:${cited.mediaId}`);
       expect(await posterMedia.reconcileOnce()).toBe(0);
+
+      takeLogged(
+        'warn',
+        '[BOOKINGS] 1 claimed poster(s) cited by no space (a save that died between its claim and its commit, or a release that failed) - released'
+      );
     });
   });
 
