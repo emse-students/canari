@@ -6,7 +6,8 @@
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { flipShown } from '$lib/utils/flipShown';
   import { SvelteMap } from 'svelte/reactivity';
-  import { dndzone, TRIGGERS, type DndEvent } from 'svelte-dnd-action';
+  import { TRIGGERS, type DndEvent } from 'svelte-dnd-action';
+  import { dndzoneRendered } from '$lib/actions/dndzoneRendered';
   import { keepRowActivationKeys } from '$lib/utils/dndActivationKeys';
   import { longPress } from '$lib/actions/longPress';
   import CommunityRailMenu from './CommunityRailMenu.svelte';
@@ -595,7 +596,7 @@
     >
       <div
         class="flex flex-col items-center gap-3"
-        use:dndzone={{
+        use:dndzoneRendered={{
           items: orderedWorkspaces,
           flipDurationMs: 150,
           type: 'community',
@@ -844,7 +845,7 @@
                  may reorder them. Reordering by keyboard is Alt + arrows, never the library's. -->
             <div
               use:keepRowActivationKeys
-              use:dndzone={{
+              use:dndzoneRendered={{
                 items: draggedChannels ?? currentWorkspace.channels,
                 flipDurationMs: 150,
                 type: `channels-${currentWorkspace.id}`,

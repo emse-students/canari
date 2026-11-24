@@ -1,0 +1,16 @@
+## P2 - a DM thread is left above its end when the keyboard comes back with the app: #4023 fixed 6 of 11 returns, the reveal lands after the transition has rested (2026-11-24)
+
+target: 1.8.0
+
+**Seen on the iPhone 12 on `1.8.0-alpha.6`, which carries #4023** ([sitting](../device-verification.md#the-readings-of-2026-11-24-180-alpha6-iphone-12-the-dm-thread-again-the-composer-the-ios-27-sdk-build-the-broadcasters-column-the-voice-note-the-sign-out-row)). The reading entry that this one continues is [a DM thread keeps its end after a return to the app with the keyboard up](reading-owed-a-dm-thread-keeps-its-end-after-a-return-with-the-keyboard-up.md); it keeps the history, this entry carries the defect. Not fixed here.
+
+**The gesture.** The DM of `gamma` with `delta` (60 rows, three photos and a voice note above its end), the keyboard up at the end of the thread, Home button, 3 to 10 s away, relaunch. Eleven counted returns: **the arrow "Scroll to bottom" showed, with the last photo 65 to 87 pt under the composer, at 8, 4, 7, 4 and 5 s; the thread was at its end at 4, 3, 10, 5, 3 and 6 s** (`alpha.4`, without the fix: 4 of 10). The time away does not separate them.
+
+**What the in-app log now says (the INFO lines #4023 added).** The geometry is always the same: the web view is 390 x 543 pt, `clientHeight 496` with `keyboard open 301px`, and the engine's move sends the pane from `scrollTop 6394` to `5482`, 912 px from the end.
+
+- A passing return: the shell's will-show starts a transition (`keyboard transition #T starts`), WebKit's reveal moves the pane while that transition is MOVING, and the page logs `left the bottom with no finger on the pane ... the engine's keyboard move, put back at the end (put-back N of this pane, keyboard transition #T)`, then `at rest` with `fromEnd 0 pinned=true`.
+- A failing return, five times, transitions #14, #18, #26, #31 and #36: the transition starts and is `at rest` within 36 to 45 ms, and ONLY THEN the pane moves: `left the bottom with no finger on the pane: scrollTop 5482 (last placed 6394), 912 px from the end - not a keyboard move of the engine, the flag falls (keyboard transition #N at rest)`. Example, #26: `starts` 08:57:47.714, `at rest` 08:57:47.750 (`scrollTop 6394 fromEnd 0 pinned=true`), the fall 08:57:47.795. The put-back rule spends one transition per move, and here there is none moving to spend, so the move is read as the reader leaving.
+
+**Hypothesis.** The will-show / did-show pair of the shell rests the transition on the did-show (or on a 36 to 45 ms frame), but on some returns WebKit's did-show reveal scrolls the pane a few tens of milliseconds AFTER that rest, so the "engine move during a transition" rule of #4023 never sees it. The reveal is unconditional on the OS side; what varies is how long after the did-show it lands. The `alpha.6` line says the cause is the ordering, not the geometry.
+
+**To close it.** Either hold the transition open until the pane has had a frame to settle after the did-show (a measured number of frames, not a timer) or treat a move whose size equals the keyboard-reveal size (912 px against a 301 px keyboard in a 797 px view, the same value every time) landing within one frame of a rest as the engine's; then the ten-return reading above passes eleven of eleven and the reading entry is deleted.
