@@ -34,6 +34,18 @@ describe('the iOS keyboard hand-off (canari_ios.mm)', () => {
    * WebView exists, synchronously (`queue:nil`), so they are delivered after WebKit's own; the page is
    * told only after the screen-update proof and the superseded check.
    */
+  it('tells the page at once that a keyboard will show, from the same once-registered observers', () => {
+    expect(viewport).toContain('.canariKeyboardShows = () =>');
+    const observers = body('static void CanariObserveKeyboardRest(');
+    expect(observers).toMatch(
+      /addObserverForName:UIKeyboardWillShowNotification\s+object:nil\s+queue:nil[\s\S]{0,120}CanariTellPageKeyboardShows\(\);/
+    );
+    // No proof before it: it must reach the page before the did-show reveal's scroll.
+    const shows = body('static void CanariTellPageKeyboardShows(');
+    expect(shows).toContain('window.canariKeyboardShows?.()');
+    expect(shows).not.toContain('CanariAfterScreenUpdates');
+  });
+
   it('tells the page the keyboard is at rest on did-show / did-hide, after the proof', () => {
     expect(viewport).toContain('.canariKeyboardAtRest = () =>');
     const observers = body('static void CanariObserveKeyboardRest(');
@@ -72,6 +84,31 @@ describe('the iOS keyboard hand-off (canari_ios.mm)', () => {
     expect(told).toBeGreaterThan(superseded);
     // A superseded rest is silent: a quick double change would log one line per change.
     expect(rest.slice(superseded, rest.indexOf('return;', superseded))).not.toContain('NSLog');
+  });
+
+  /**
+   * A STALE REST NEVER ENDS A NEWER TRANSITION (review of #4023): a rest waiting for its proof when a
+   * will-show arrives with no frame change (the app returning with the keyboard up) belongs to the
+   * transition before; the will-show bumps its own counter, the rest captured it before the proof and
+   * drops itself after it. Not `g_keyboardChangeSeq`, which a rise's own proof also reads.
+   */
+  it('a will-show supersedes a rest still waiting for its proof, without touching the rise counter', () => {
+    const shows = body('static void CanariTellPageKeyboardShows(');
+    expect(shows).toContain('g_keyboardShowSeq++;');
+    expect(shows.indexOf('g_keyboardShowSeq++;')).toBeLessThan(
+      shows.indexOf('window.canariKeyboardShows?.()')
+    );
+    expect(shows).not.toContain('g_keyboardChangeSeq');
+
+    const rest = body('static void CanariTellPageKeyboardAtRest(');
+    const captured = rest.indexOf('NSUInteger shows = g_keyboardShowSeq;');
+    const proved = rest.indexOf('CanariAfterScreenUpdates(webView, ^');
+    const dropped = rest.indexOf('shows != g_keyboardShowSeq', proved);
+    const told = rest.indexOf('window.canariKeyboardAtRest?.()', dropped);
+    expect(captured).toBeGreaterThan(-1);
+    expect(captured).toBeLessThan(proved);
+    expect(dropped).toBeGreaterThan(proved);
+    expect(told).toBeGreaterThan(dropped);
   });
 
   it('the proof is the public screen-update snapshot, never the private presentation hook', () => {

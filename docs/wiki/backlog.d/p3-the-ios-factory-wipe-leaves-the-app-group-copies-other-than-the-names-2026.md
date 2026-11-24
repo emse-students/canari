@@ -1,6 +1,6 @@
 ## P3 - the iOS factory wipe leaves the App Group copies other than the names, the share and the seeds (2026-10-19)
 
-target: 1.8.0
+target: 1.10.0
 
 **Re-read 2026-11-11: still true, and the list is longer.** On iOS, `wipe_native_app_data`
 (`storage.rs`) removes three things from the App Group (`wipe_app_group`): the names copy, the Share

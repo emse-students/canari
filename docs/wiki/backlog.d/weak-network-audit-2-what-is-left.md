@@ -1,6 +1,6 @@
 ## P2 - the app is slow everywhere on a weak link (owner, 2026-11-10): five serial chains cut, the rest designed
 
-target: 1.8.0
+target: 1.9.0
 
 _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 

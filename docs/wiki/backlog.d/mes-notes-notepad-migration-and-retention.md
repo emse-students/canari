@@ -1,6 +1,6 @@
 ## P2 - "Mes notes": move the old notepads in, state the retention, offer a delete
 
-target: 1.8.0
+target: 1.9.0
 
 The conversation itself is built: the server kind `self` (chat-delivery migration 056), the pinned
 row, the header, the refusals, the capability that keeps it from older builds, and the single-device

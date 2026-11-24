@@ -1,6 +1,6 @@
 ## P3 - the iOS share suggestions carry no photo (2026-11-20)
 
-target: 1.8.0
+target: 1.9.0
 
 The Android shortcuts now carry each conversation's picture ([sharing](../frontend/sharing.md)). The
 iOS donation (`ShareSuggestions.swift`, one `INSendMessageIntent` per conversation with a

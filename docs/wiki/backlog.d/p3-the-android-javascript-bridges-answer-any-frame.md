@@ -1,6 +1,6 @@
 ## P3 - the Android JavaScript bridges answer any frame the WebView loads (review of WP-C-BG-A, 2026-10-19; re-read 2026-11-11)
 
-target: 1.8.0
+target: 1.10.0
 
 `MainActivity` registers six bridges with `addJavascriptInterface`: `canariTheme`, `canariGestures`,
 `canariBack`, `canariAudio`, `canariOrientation` and `canariCall`. Any frame the WebView loads can

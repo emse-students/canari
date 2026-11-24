@@ -21,7 +21,15 @@
    * reads at the navigation, is already "Paiement introuvable".
    */
   let status = $state<
-    'loading' | 'confirmed' | 'pending' | 'overCapacity' | 'declined' | 'ended' | 'error' | 'handed'
+    | 'loading'
+    | 'confirmed'
+    | 'pending'
+    | 'overCapacity'
+    | 'declined'
+    | 'ended'
+    | 'cash'
+    | 'error'
+    | 'handed'
   >(untrack(() => submissionId) ? 'loading' : 'error');
   let formId = $state<string | null>(null);
 
@@ -37,6 +45,8 @@
     overCapacity: () => m.form_success_over_capacity_heading(),
     declined: () => m.form_success_declined_heading(),
     ended: () => m.form_success_ended_heading(),
+    // The answer waits for a payment in person (its card payment was switched to cash).
+    cash: () => m.form_success_cash_heading(),
     error: () => m.form_success_not_found_heading(),
     handed: () => m.form_payment_handed_heading(),
   };
@@ -126,14 +136,16 @@
                   ? m.form_success_declined_desc()
                   : status === 'ended'
                     ? m.form_success_ended_desc()
-                    : status === 'handed'
-                      ? m.form_payment_handed_desc()
-                      : m.form_success_not_found_desc()}
+                    : status === 'cash'
+                      ? m.form_success_cash_desc()
+                      : status === 'handed'
+                        ? m.form_payment_handed_desc()
+                        : m.form_success_not_found_desc()}
         </p>
       {/if}
     </div>
 
-    {#if status === 'pending' || status === 'confirmed'}
+    {#if status === 'pending' || status === 'confirmed' || status === 'cash'}
       <a
         href={formId ? `/forms/${formId}` : '/forms'}
         class="bg-accent text-on-accent hover:bg-accent-hover inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold shadow-sm transition-all"
