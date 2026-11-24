@@ -207,25 +207,29 @@ describe('HandoffService', () => {
       expect(lines.some((l) => l.startsWith('[HANDOFF] minted'))).toBe(false);
     });
 
-    it('answers terms_not_accepted with its OWN 403 code, at info and never at warn (an expected, population-wide state)', async () => {
-      const warn = jest.spyOn(Logger.prototype, 'warn');
-      const info = jest.spyOn(Logger.prototype, 'log');
-      let thrown: unknown;
-      try {
-        await refusing(HandoffAccessClass.termsNotAccepted).mint('user-a', 'migallery', '/');
-      } catch (e) {
-        thrown = e;
+    it.each([
+      [HandoffAccessClass.termsNotAccepted, 'HANDOFF_TERMS_NOT_ACCEPTED'],
+      [HandoffAccessClass.alumniLinkRequired, 'HANDOFF_ALUMNI_LINK_REQUIRED'],
+      [HandoffAccessClass.alumniCotisantRequired, 'HANDOFF_ALUMNI_COTISANT_REQUIRED'],
+    ])(
+      'answers %s with its OWN 403 code %s, at info and never at warn (MiConnect shows the person the page)',
+      async (c, code) => {
+        const warn = jest.spyOn(Logger.prototype, 'warn');
+        const info = jest.spyOn(Logger.prototype, 'log');
+        let thrown: unknown;
+        try {
+          await refusing(c).mint('user-a', 'migallery', '/');
+        } catch (e) {
+          thrown = e;
+        }
+        expect(thrown).toBeInstanceOf(ForbiddenException);
+        expect((thrown as ForbiddenException).getResponse()).toMatchObject({ code });
+        expect(warn).not.toHaveBeenCalled();
+        expect(info).toHaveBeenCalledWith(
+          expect.stringContaining(`[HANDOFF] refused class=${c} aud=migallery`)
+        );
       }
-      expect(thrown).toBeInstanceOf(ForbiddenException);
-      expect((thrown as ForbiddenException).getResponse()).toMatchObject({
-        code: HandoffRefusal.termsNotAccepted,
-      });
-      expect(HandoffRefusal.termsNotAccepted).toBe('HANDOFF_TERMS_NOT_ACCEPTED');
-      expect(warn).not.toHaveBeenCalled();
-      expect(info).toHaveBeenCalledWith(
-        expect.stringContaining('[HANDOFF] refused class=terms_not_accepted aud=migallery')
-      );
-    });
+    );
 
     it.each([
       HandoffAccessClass.notConfigured,

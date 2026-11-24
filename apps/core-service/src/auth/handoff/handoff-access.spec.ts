@@ -21,9 +21,21 @@ const TOKEN = 'reader-token-under-test';
 const UUID = '0b6c1c52-3d7c-4a3e-9d8a-2f1e7c9a0b11';
 
 interface World {
-  users: { pk: number; is_active: boolean; uid?: string; attributes?: Record<string, unknown> }[];
-  /** Enabled bindings on the application itself. */
+  users: {
+    pk: number;
+    is_active: boolean;
+    uid?: string;
+    attributes?: Record<string, unknown>;
+    groups_obj?: { name: string }[] | null;
+  }[];
+  /** Enabled bindings on the application itself, as anonymous policies. */
   bindings: number;
+  /** Bindings spelled out (policy or group, by name) per application slug, listed after `bindings`. */
+  appBindings?: Record<string, { policy?: string; group?: string; negate?: boolean }[]>;
+  /** The application's `policy_engine_mode` (authentik's default, `any`, when unset). */
+  engineMode?: string;
+  /** An Alumni user-source connection exists for the user. */
+  linked?: boolean;
   /** Enabled bindings per binding target other than the application (a flow's or a stage's pbm). */
   flowBindings?: Record<string, number>;
   /** The authorization flow's `authentication` requirement. */
@@ -42,7 +54,9 @@ interface World {
     stages: { pbm: string; stage: string }[];
     bindings: { target: string; policy: string; negate?: boolean }[];
   };
-  status?: Partial<Record<'users' | 'app' | 'bindings' | 'settings' | 'flows' | 'stages', number>>;
+  status?: Partial<
+    Record<'users' | 'app' | 'bindings' | 'settings' | 'flows' | 'stages' | 'connections', number>
+  >;
   down?: boolean;
 }
 
@@ -66,13 +80,14 @@ function fakeFetch(world: World) {
     const query = new URL(url).searchParams;
     if (path === '/api/v3/core/users/') {
       return reply(pick('users') ?? 200, {
-        results: world.users.map((u) => ({ uid: 'user-a', ...u })),
+        results: world.users.map((u) => ({ uid: 'user-a', groups_obj: [], ...u })),
       });
     }
     if (path.startsWith('/api/v3/core/applications/')) {
       return reply(pick('app') ?? 200, {
-        pk: 'app-pbm-uuid',
+        pk: `app-pbm-${path.split('/')[5]}`,
         slug: path.split('/')[5],
+        policy_engine_mode: world.engineMode ?? 'any',
         provider_obj: world.providerFlows ?? {
           authentication_flow: AUTHN,
           authorization_flow: AUTHZ,
@@ -116,22 +131,38 @@ function fakeFetch(world: World) {
       const consent = (world.consentFlow?.bindings ?? []).filter(
         (b) => wanted.includes(b.target) && !(world.disagreeing && wanted.length > 1)
       );
-      const count =
-        wanted.reduce(
-          (n, t) => n + (t === 'app-pbm-uuid' ? world.bindings : (world.flowBindings?.[t] ?? 0)),
-          0
-        ) + consent.length;
+      const anonymous = (n: number) =>
+        Array.from({ length: n }, () => ({ negate: false, policy_obj: { name: 'some-policy' } }));
+      const listed = wanted.flatMap((t) =>
+        t.startsWith('app-pbm-')
+          ? [
+              ...anonymous(world.bindings),
+              ...(world.appBindings?.[t.slice('app-pbm-'.length)] ?? []).map((b) => ({
+                negate: b.negate ?? false,
+                policy_obj: b.policy ? { name: b.policy } : null,
+                group_obj: b.group ? { name: b.group } : null,
+                user_obj: null,
+              })),
+            ]
+          : anonymous(world.flowBindings?.[t] ?? 0)
+      );
       return reply(pick('bindings') ?? 200, {
-        pagination: { count },
+        pagination: { count: listed.length + consent.length },
         // NOT the string the `target_in` filter takes: a real authentik's binding `target` never
         // equalled a stage binding's `policybindingmodel_ptr_id` (CI 2026-11-20), so a client comparing
         // the two matches nothing. The mock must not hand the same string back in both fields.
-        results: consent.map((b) => ({
-          target: { pk: `${b.target}-object-pk`, model_name: 'flowstagebinding' },
-          negate: b.negate ?? false,
-          policy_obj: { name: b.policy },
-        })),
+        results: [
+          ...listed,
+          ...consent.map((b) => ({
+            target: { pk: `${b.target}-object-pk`, model_name: 'flowstagebinding' },
+            negate: b.negate ?? false,
+            policy_obj: { name: b.policy },
+          })),
+        ],
       });
+    }
+    if (path === '/api/v3/sources/user_connections/all/') {
+      return reply(pick('connections') ?? 200, { pagination: { count: world.linked ? 1 : 0 } });
     }
     if (path === '/api/v3/admin/settings/') {
       return reply(pick('settings') ?? 200, { flags: world.flags });
@@ -220,7 +251,7 @@ describe('MiconnectHandoffAccess (F3-bound)', () => {
     // Every binding target an OIDC sign-in walks through is counted: the application, both flows
     // and their stage bindings.
     expect(targets.flatMap((q) => q.getAll('target_in')).sort()).toEqual(
-      ['app-pbm-uuid', flowPbm(AUTHN), flowPbm(AUTHZ), stagePbm(AUTHN), stagePbm(AUTHZ)].sort()
+      ['app-pbm-migallery', flowPbm(AUTHN), flowPbm(AUTHZ), stagePbm(AUTHN), stagePbm(AUTHZ)].sort()
     );
   });
 
@@ -252,7 +283,8 @@ describe('MiconnectHandoffAccess (F3-bound)', () => {
       const list = calls.filter(
         (c) => c.url.includes('/policies/bindings/') && c.url.includes('page_size')
       );
-      expect(list).toHaveLength(3);
+      // The application's own list, the flow's, and one per terms stage binding.
+      expect(list).toHaveLength(4);
     });
 
     it.each<[string, string | null]>([
@@ -319,8 +351,213 @@ describe('MiconnectHandoffAccess (F3-bound)', () => {
       const e = await refusal(access.assertMayEnter('user-a', 'migallery'));
       expect(e.accessClass).toBe(HandoffAccessClass.policyBound);
       expect(
-        calls.filter((c) => c.url.includes('page_size') && c.url.includes('policies'))
+        calls.filter(
+          (c) =>
+            c.url.includes('page_size') && c.url.includes('policies') && !c.url.includes('app-pbm-')
+        )
       ).toHaveLength(0);
+    });
+  });
+
+  describe("the Alumni rule's bindings are recognised, and answered from the profile (D42-D44)", () => {
+    const GATE = 'miconnect-access-window-post-or-cotisant';
+    const linkFlow = (
+      extra: { target: string; policy: string; negate?: boolean }[] = []
+    ): NonNullable<World['consentFlow']> => ({
+      stages: [
+        { pbm: 'pbm-ask', stage: 'miconnect-consent-ask' },
+        { pbm: 'pbm-write', stage: 'miconnect-consent-write' },
+        { pbm: 'pbm-remind', stage: 'miconnect-alumni-link-remind' },
+        { pbm: 'pbm-require', stage: 'miconnect-alumni-link-require' },
+      ],
+      bindings: [
+        { target: 'pbm-ask', policy: 'miconnect-consent-needed' },
+        { target: 'pbm-write', policy: 'miconnect-consent-needed' },
+        { target: 'pbm-remind', policy: 'miconnect-alumni-link-reminder' },
+        { target: 'pbm-require', policy: 'miconnect-alumni-link-required' },
+        ...extra,
+      ],
+    });
+    const gate = (app: string) => [{ policy: GATE }, { group: `acces-${app}` }];
+    const person = (
+      promos: number[],
+      { posts = [] as string[], groups = [] as string[], alumni = null as unknown } = {}
+    ): World['users'] => [
+      {
+        pk: 7,
+        is_active: true,
+        attributes: {
+          cgu_version: CONSENT_VERSION,
+          profile: { cursus: promos.map((promo) => ({ formation: 'ICM', promo })), posts },
+          ...(alumni ? { alumni } : {}),
+        },
+        groups_obj: groups.map((name) => ({ name })),
+      },
+    ];
+    /** A gate built for `world`, its "today" set to noon UTC of `day` (the same date in Paris). */
+    const on = (world: World, day: string) => {
+      const built = build(world);
+      built.access.now = () => new Date(`${day}T12:00:00Z`);
+      return built;
+    };
+    const connectionReads = (calls: { url: string }[]) =>
+      calls.filter((c) => c.url.includes('/sources/user_connections/all/'));
+
+    it('lets a person in their reminder period through: the reminder is skippable', async () => {
+      const { access, calls } = on(
+        { ...OPEN_WORLD, consentFlow: linkFlow(), users: person([2024]) },
+        '2026-01-15'
+      );
+      await expect(access.assertMayEnter('user-a', 'sky')).resolves.toBeUndefined();
+      expect(connectionReads(calls)).toHaveLength(0);
+    });
+
+    it('refuses an unlinked person past the block alumni_link_required, a 403 class, reading the link', async () => {
+      const { access, calls } = on(
+        { ...OPEN_WORLD, consentFlow: linkFlow(), users: person([2020]) },
+        '2027-02-01'
+      );
+      const e = await refusal(access.assertMayEnter('user-a', 'sky'));
+      expect(e.accessClass).toBe(HandoffAccessClass.alumniLinkRequired);
+      expect(e.unavailable).toBe(false);
+      const read = new URL(connectionReads(calls)[0].url).searchParams;
+      expect([read.get('user'), read.get('source__slug')]).toEqual(['7', 'alumni']);
+    });
+
+    it('lets the same person through once the Alumni connection exists', async () => {
+      const { access } = on(
+        { ...OPEN_WORLD, consentFlow: linkFlow(), users: person([2020]), linked: true },
+        '2027-02-01'
+      );
+      await expect(access.assertMayEnter('user-a', 'sky')).resolves.toBeUndefined();
+    });
+
+    it('refuses miconnect_refused when the connection read is refused - never a pass', async () => {
+      const { access } = on(
+        {
+          ...OPEN_WORLD,
+          consentFlow: linkFlow(),
+          users: person([2020]),
+          status: { connections: 403 },
+        },
+        '2027-02-01'
+      );
+      const e = await refusal(access.assertMayEnter('user-a', 'sky'));
+      expect(e.accessClass).toBe(HandoffAccessClass.refused);
+    });
+
+    it.each<[string, Parameters<typeof person>[1], string, boolean]>([
+      ['inside the window', {}, '2025-08-31', true],
+      ['past the window', {}, '2025-09-01', false],
+      ['with a post', { posts: ['ME'] }, '2030-01-01', true],
+      [
+        'cotisant this year',
+        { alumni: { cotisant: true, read_on: '2030-01-01' } },
+        '2030-06-01',
+        true,
+      ],
+      [
+        'cotisant last year',
+        { alumni: { cotisant: true, read_on: '2029-12-31' } },
+        '2030-06-01',
+        false,
+      ],
+      ['in acces-migallery', { groups: ['acces-migallery'] }, '2030-01-01', true],
+      ['in acces-cercle only', { groups: ['acces-cercle'] }, '2030-01-01', false],
+    ])('on MiGallery, promo 2020 %s: %s', async (_label, profile, day, admitted) => {
+      const { access } = on(
+        {
+          ...OPEN_WORLD,
+          appBindings: { migallery: gate('migallery') },
+          users: person([2020], profile),
+        },
+        day
+      );
+      const verdict = await access.assertMayEnter('user-a', 'migallery').then(
+        () => 'admitted',
+        (e: unknown) => (e instanceof HandoffAccessRefused ? e.accessClass : String(e))
+      );
+      expect(verdict).toBe(admitted ? 'admitted' : HandoffAccessClass.alumniCotisantRequired);
+    });
+
+    it.each<[string, Partial<World>, string]>([
+      [
+        'engine mode all',
+        { engineMode: 'all', appBindings: { migallery: gate('migallery') } },
+        'migallery',
+      ],
+      [
+        'the group negated',
+        {
+          appBindings: {
+            migallery: [{ policy: GATE }, { group: 'acces-migallery', negate: true }],
+          },
+        },
+        'migallery',
+      ],
+      [
+        'another site group',
+        { appBindings: { migallery: [{ policy: GATE }, { group: 'acces-cercle' }] } },
+        'migallery',
+      ],
+      [
+        'a third binding beside the gate',
+        { appBindings: { migallery: [...gate('migallery'), { policy: 'a-new-policy' }] } },
+        'migallery',
+      ],
+      ['the policy alone', { appBindings: { migallery: [{ policy: GATE }] } }, 'migallery'],
+      ['the gate on a site that is not gated', { appBindings: { sky: gate('sky') } }, 'sky'],
+      [
+        'another policy on a link stage',
+        { consentFlow: linkFlow([{ target: 'pbm-remind', policy: 'a-new-policy' }]) },
+        'sky',
+      ],
+      [
+        'the reminder policy negated',
+        {
+          consentFlow: {
+            ...linkFlow(),
+            bindings: [
+              { target: 'pbm-remind', policy: 'miconnect-alumni-link-reminder', negate: true },
+            ],
+          },
+        },
+        'sky',
+      ],
+    ])('still refuses %s: policy_bound', async (_label, world, app) => {
+      const { access } = on(
+        { ...OPEN_WORLD, users: person([], { posts: ['EMSE'] }), ...world },
+        '2030-01-01'
+      );
+      const e = await refusal(access.assertMayEnter('user-a', app));
+      expect(e.accessClass).toBe(HandoffAccessClass.policyBound);
+    });
+
+    it('refuses a user answer without groups: the gate cannot be read', async () => {
+      const users = person([2024]);
+      users[0].groups_obj = null;
+      const { access } = on({ ...OPEN_WORLD, users }, '2026-01-01');
+      const e = await refusal(access.assertMayEnter('user-a', 'sky'));
+      expect(e.accessClass).toBe(HandoffAccessClass.refused);
+    });
+
+    it('says the allowlisted bindings at boot at log, never at warn', async () => {
+      const { access } = on(
+        {
+          ...OPEN_WORLD,
+          consentFlow: linkFlow(),
+          appBindings: { migallery: gate('migallery'), cercle: gate('cercle') },
+        },
+        '2030-01-01'
+      );
+      const warn = jest.spyOn(Logger.prototype, 'warn');
+      await access.reportBindings();
+      expect(warn).not.toHaveBeenCalled();
+      const migallery = lines.find((l) => l.includes('site=migallery'));
+      expect(migallery).toContain('gate_bindings=2');
+      expect(migallery).toContain('link_bindings=1+1');
+      expect(migallery).toContain('passes the Alumni gate');
+      expect(lines.find((l) => l.includes('site=sky'))).toContain('gate_bindings=0');
     });
   });
 
@@ -465,7 +702,7 @@ describe('MiconnectHandoffAccess (F3-bound)', () => {
       expect(
         lines.filter((l) =>
           l.includes(
-            'bindings=0 flow_bindings=0 consent_bindings=0 flow_auth=require_authenticated default_access=unset'
+            'bindings=0 gate_bindings=0 flow_bindings=0 consent_bindings=0 link_bindings=0+0 flow_auth=require_authenticated default_access=unset'
           )
         )
       ).toHaveLength(3);

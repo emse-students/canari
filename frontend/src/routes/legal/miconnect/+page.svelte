@@ -20,7 +20,7 @@
 <LegalDocument
   title={m.legal_miconnect_title()}
   subtitle={m.legal_miconnect_subtitle()}
-  updated="20/11/2026"
+  updated="24/11/2026"
   {sections}
 >
   <section id="objet">
@@ -58,6 +58,16 @@
       </li>
       <li>la version de ces conditions que tu as acceptée, et la date ;</li>
       <li>
+        si ton compte est lié à ton compte <strong>Alumni</strong>, et, à chaque connexion avec ce
+        compte, si tu es <strong>cotisant</strong> de l'association des Alumni, avec la date de cette
+        lecture ;
+      </li>
+      <li>
+        si ton compte MiConnect a été créé par les Alumni : ton <strong>adresse e-mail</strong>
+        enregistrée chez les Alumni, et un identifiant de la forme <code>alumni-</code> suivi de ton numéro
+        d'ancien ;
+      </li>
+      <li>
         des journaux techniques de connexion (adresse IP, date, service demandé), conservés pour la
         sécurité pendant une durée limitée (90 jours visés).
       </li>
@@ -65,6 +75,22 @@
     <p>
       MiConnect ne reçoit ni ne stocke jamais ton mot de passe : il reste chez le CAS ou les Alumni.
       Les services reçoivent une adresse e-mail technique, pas ton adresse personnelle.
+    </p>
+    <p>
+      Ta qualité de cotisant et ton adresse e-mail ne sont transmises à aucun service, à une
+      exception près : si ton compte a été créé par les Alumni et que son nom et sa promo
+      correspondent à un seul compte existant, les administrateurs de Canari voient l'adresse e-mail
+      et la dernière connexion à MiConnect des deux comptes, lues chez MiConnect sans être
+      conservées, pour décider de les rattacher. Ce rattachement ne se fait qu'à ta connexion Alumni
+      suivante, et seulement si le compte existant est lié au CAS et porte le nom que les Alumni
+      transmettent ; chaque rattachement, ou son refus, est journalisé avec l'adresse IP de la
+      connexion. MiConnect se sert de ta qualité de cotisant : après tes cinq premières années à
+      l'École (jusqu'au 31 août de ton année d'entrée plus cinq), MiGallery et Le Cercle sont
+      réservés aux cotisants de l'année en cours, aux personnels et aux personnes que les
+      administrateurs y autorisent. Canari reçoit le fait que ton compte Alumni est lié, pour te
+      rappeler de le lier ; et quand tu ouvres MiGallery ou Le Cercle depuis Canari, son serveur lit
+      cette même règle chez MiConnect, sans la conserver, pour ne t'y ouvrir déjà connecté que si
+      MiConnect t'y laisserait entrer.
     </p>
   </section>
 

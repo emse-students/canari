@@ -16,19 +16,26 @@ Two traps met writing it, both about the TEST and not the flow:
   * a completed POST is answered with a redirect to the next challenge, which must be followed.
 """
 import json
+from datetime import date
+from urllib.parse import urlencode, urlparse
 
 from django.conf import settings
 from django.contrib.auth.models import AnonymousUser
 from django.test import Client, RequestFactory
 
-from authentik.core.models import User
-from authentik.core.sources.stage import PLAN_CONTEXT_SOURCES_CONNECTION
-from authentik.flows.models import Flow
+from authentik.core.models import Group, User
+from authentik.events.models import Event
+from authentik.flows.planner import PLAN_CONTEXT_PENDING_USER
+from authentik.lib.merge import MERGE_LIST_UNIQUE
+from authentik.policies.utils import delete_none_values
+from authentik.core.sources.stage import PLAN_CONTEXT_SOURCES_CONNECTION, PostSourceStage
+from authentik.flows.models import Flow, in_memory_stage
 from authentik.flows.planner import PLAN_CONTEXT_SOURCE, PLAN_CONTEXT_SSO, FlowPlanner
 from authentik.flows.views.executor import SESSION_KEY_PLAN
 from authentik.root.middleware import SessionMiddleware
 from authentik.sources.oauth.models import OAuthSource, UserOAuthSourceConnection
-from authentik.sources.saml.models import SAMLSource
+from authentik.sources.saml.models import SAMLSource, UserSAMLSourceConnection
+from authentik.stages.identification.models import IdentificationStage
 from authentik.stages.password import BACKEND_INBUILT
 from authentik.stages.password.stage import PLAN_CONTEXT_AUTHENTICATION_BACKEND
 from authentik.stages.prompt.stage import PLAN_CONTEXT_PROMPT
@@ -41,24 +48,17 @@ PAGE_TWO = ["attributes.promo", "attributes.formation"]
 BOXES_OFF = {"post_emse": False, "post_me": False, "post_alumni": False}
 
 
-def start(username, name):
-    flow = Flow.objects.get(slug=SLUG)
-    source = OAuthSource.objects.get(slug="cas-emse")
+def seed(slug, context, append=()):
+    """A client whose session holds the plan of flow `slug`, seeded the way a source seeds it (with the
+    stages the source appends, `append`)."""
+    flow = Flow.objects.get(slug=slug)
     client = Client(HTTP_HOST="localhost")
     request = RequestFactory().get("/")
     request.user = AnonymousUser()
     request.session = client.session
-    plan = FlowPlanner(flow).plan(
-        request,
-        {
-            PLAN_CONTEXT_PROMPT: {"username": username, "name": name},
-            PLAN_CONTEXT_USER_PATH: "users",
-            PLAN_CONTEXT_AUTHENTICATION_BACKEND: BACKEND_INBUILT,
-            PLAN_CONTEXT_SSO: True,
-            PLAN_CONTEXT_SOURCE: source,
-            PLAN_CONTEXT_SOURCES_CONNECTION: UserOAuthSourceConnection(source=source, identifier=username),
-        },
-    )
+    plan = FlowPlanner(flow).plan(request, {PLAN_CONTEXT_USER_PATH: "users", PLAN_CONTEXT_AUTHENTICATION_BACKEND: BACKEND_INBUILT, PLAN_CONTEXT_SSO: True, **context})
+    for stage in append:
+        plan.append_stage(stage)
     session = client.session
     session[SESSION_KEY_PLAN] = plan
     session.save()
@@ -66,8 +66,129 @@ def start(username, name):
     return client
 
 
-def step(client, payload=None):
-    url = f"/api/v3/flows/executor/{SLUG}/?query="
+def start(username, name):
+    source = OAuthSource.objects.get(slug="cas-emse")
+    return seed(SLUG, {
+        PLAN_CONTEXT_PROMPT: {"username": username, "name": name},
+        PLAN_CONTEXT_SOURCE: source,
+        PLAN_CONTEXT_SOURCES_CONNECTION: UserOAuthSourceConnection(source=source, identifier=username),
+    })
+
+
+def alumni_properties(af_id, cotisant="1", firstname="Claire", lastname="de la Fontaine"):
+    """What an Alumni sign-in carries: the base properties SAMLSource builds from the attributes measured
+    on 2026-11-23 (the persistent NameID is the `username`), passed through the source's REAL mappings
+    and merged the way SourceMapper merges them."""
+    source = SAMLSource.objects.get(slug="alumni")
+    properties = {"af_id": af_id, "firstname": firstname, "lastname": lastname, "email": f"claire.{af_id}@example.org", "username": af_id, "path": "users", "attributes": {}}
+    if cotisant is not None:
+        properties["cotisant"] = cotisant
+    for mapping in source.user_property_mappings.all().select_subclasses():
+        value = mapping.evaluate(user=None, request=None, source=source, properties=properties)
+        if isinstance(value, dict):
+            MERGE_LIST_UNIQUE.merge(properties, value)
+    return delete_none_values(properties)
+
+
+def start_alumni(af_id, cotisant="1"):
+    source = SAMLSource.objects.get(slug="alumni")
+    return seed(SLUG, {
+        PLAN_CONTEXT_PROMPT: alumni_properties(af_id, cotisant),
+        PLAN_CONTEXT_SOURCE: source,
+        PLAN_CONTEXT_SOURCES_CONNECTION: UserSAMLSourceConnection(source=source, identifier=af_id),
+    })
+
+
+def sign_in_alumni(user, connection, cotisant, meanwhile=None):
+    """Runs the Alumni source's own sign-in flow for `user`, as SourceFlowManager.handle_auth seeds it;
+    `meanwhile` runs between the plan and its execution, as an edit made elsewhere during a sign-in."""
+    source = connection.source
+    client = seed(source.authentication_flow.slug, {
+        PLAN_CONTEXT_PENDING_USER: user,
+        PLAN_CONTEXT_PROMPT: alumni_properties(connection.identifier, cotisant),
+        PLAN_CONTEXT_SOURCE: source,
+        PLAN_CONTEXT_SOURCES_CONNECTION: connection,
+    })
+    if meanwhile:
+        meanwhile()
+    step(client, slug=source.authentication_flow.slug)
+    user.refresh_from_db()
+
+
+def sign_in_to_the_end(user, connection, asserted=("Claire", "de la Fontaine")):
+    """The Alumni source's sign-in flow for `user`, seeded EXACTLY as SourceFlowManager.handle_auth seeds
+    it (PostSourceStage appended), Alumnforce asserting the `asserted` first and last names, and driven
+    to its end; returns the last challenge and the username the session is signed in as (None when
+    nobody is)."""
+    source = connection.source
+    slug = source.authentication_flow.slug
+    client = seed(slug, {
+        PLAN_CONTEXT_PENDING_USER: user,
+        PLAN_CONTEXT_PROMPT: alumni_properties(connection.identifier, "1", *asserted),
+        PLAN_CONTEXT_SOURCE: source,
+        PLAN_CONTEXT_SOURCES_CONNECTION: connection,
+    }, append=[in_memory_stage(PostSourceStage)])
+    response = client.get(f"/api/v3/flows/executor/{slug}/?query=")
+    for _ in range(10):
+        if response.status_code not in (301, 302):
+            break
+        response = client.get(response["Location"])
+    me = client.get("/api/v3/core/users/me/")
+    return response.json(), (me.json()["user"]["username"] if me.status_code == 200 else None)
+
+
+def signed_in(user, password):
+    """A client signed in as `user` through `password-login`, a REAL login: the session carries what a
+    person signed in through the CAS carries when they reach the Alumni source."""
+    user.set_password(password)
+    user.save()
+    client = Client(HTTP_HOST="localhost")
+    url = "/api/v3/flows/executor/password-login/?query="
+
+    def run(payload=None):
+        response = client.get(url) if payload is None else client.post(url, data=json.dumps(payload), content_type="application/json")
+        # Every stage that completes answers a redirect to the executor: followed to the next challenge.
+        for _ in range(10):
+            if response.status_code not in (301, 302):
+                break
+            response = client.get(response["Location"])
+        return response.json()
+
+    first = run()
+    assert first.get("component") == "ak-stage-identification", first
+    second = run({"component": "ak-stage-identification", "uid_field": user.username})
+    if second.get("component") == "ak-stage-password":
+        second = run({"component": "ak-stage-password", "password": password})
+    assert second.get("component") not in ("ak-stage-identification", "ak-stage-password"), ("the sign-in was refused", second)
+    return client
+
+
+def enter_alumni_source(client):
+    """GETs the Alumni source's entry as a browser does; returns the pre-authentication flow's executor
+    URL (the POST binding plans it - InitiateView) and its first challenge."""
+    response = client.get("/source/saml/alumni/")
+    assert response.status_code == 302, ("the entry did not hand over to a flow", response.status_code)
+    location = urlparse(response["Location"])
+    assert location.path == "/if/flow/miconnect-alumni-pre-authentication/", ("the entry went elsewhere", response["Location"])
+    url = f"/api/v3/flows/executor/miconnect-alumni-pre-authentication/?{urlencode({'query': location.query})}"
+    return url, client.get(url).json()
+
+
+def post_prompt(client, url, payload):
+    response = client.post(url, data=json.dumps({"component": "ak-stage-prompt", **payload}), content_type="application/json")
+    if response.status_code in (301, 302):
+        response = client.get(response["Location"])
+    return response.json()
+
+
+def check(condition, message):
+    if not condition:
+        raise AssertionError(message)
+    print(f"  ok   {message}", flush=True)
+
+
+def step(client, payload=None, slug=SLUG):
+    url = f"/api/v3/flows/executor/{slug}/?query="
     if payload is None:
         response = client.get(url)
     else:
@@ -154,6 +275,195 @@ with Tenant.objects.get(ready=True):
         # F - an impossible entry year is refused WITH a message, not silently.
         said = refused("e2e-f", "Tom ROBERT", {"campus": "saint-etienne", "is_student": True, **BOXES_OFF}, {"attributes.formation": "ICM", "attributes.promo": 1800})
         assert any("1816" in text for text in said), said
+
+        # G - an Alumni identity with no link meets the routing page FIRST (D47); the CAS never does (A-F
+        # above opened on page one).
+        client = start_alumni("90001")
+        route = step(client)
+        check(route.get("component") == "ak-stage-prompt" and field_keys(route) == ["alumni_route"], f"an Alumni identity is asked whether it has a School account first ({field_keys(route)})")
+        # ...and "I have one" leaves for the CAS sign-in, which returns to the Alumni source signed in.
+        left = step(client, {"alumni_route": "cas"})
+        check(left.get("component") == "xak-flow-redirect" and left.get("to") == "/if/flow/miconnect-auth/?next=%2Fsource%2Fsaml%2Falumni%2F", f"'I have a School account' sends to the CAS, then back to the Alumni source ({left})")
+        check(not User.objects.filter(username="alumni-90001").exists(), "and creates no account")
+
+        # H - "I have none" creates the account (D46): `alumni-<af_id>`, the Alumni e-mail, the two names
+        # as sent, and the membership read with its date.
+        client = start_alumni("90002")
+        step(client)
+        first = step(client, {"alumni_route": "create"})
+        check(field_keys(first) == PAGE_ONE, f"'I have none' goes on to page one ({field_keys(first)})")
+        step(client, {"campus": "saint-etienne", "is_student": True, **BOXES_OFF})
+        step(client, {"attributes.formation": "ICM", "attributes.promo": 2012})
+        user = User.objects.filter(username="alumni-90002").first()
+        check(user is not None, "an account created through Alumni is named alumni-<af_id>")
+        check(user.email == "claire.90002@example.org", f"it keeps the Alumni e-mail ({user.email})")
+        check(profile(user)["firstName"] == "Claire" and profile(user)["lastName"] == "de la Fontaine", f"the two names are taken as sent, not split by capitals ({profile(user)})")
+        check(profile(user)["cursus"] == [{"formation": "ICM", "promo": 2012}], f"the profile is the one declared ({profile(user)})")
+        alumni = user.attributes.get("alumni") or {}
+        check(alumni.get("cotisant") is True and date.fromisoformat(alumni.get("read_on", "")).isoformat() == alumni.get("read_on"), f"the membership read and its date are written at enrolment ({alumni})")
+        check(not {"af_id", "cotisant", "firstname", "lastname", "alumni_route", "alumni_read"} & set(user.attributes), f"no raw source attribute lands on the account ({sorted(user.attributes)})")
+
+        # I - a cotisant value that is neither "1" nor "0", or none, carries no read at all.
+        for odd in ("oui", None):
+            carried = alumni_properties("90003", odd).get("alumni_read")
+            check(carried is None, f"cotisant={odd!r} carries no membership read ({carried})")
+        check(alumni_properties("90003", "0")["alumni_read"]["cotisant"] is False, "cotisant '0' is read as false")
+
+        # J - EVERY Alumni sign-in into an existing account writes the read, and ONLY the read (D43): a
+        # CAS account keeps its username, name and e-mail.
+        source = SAMLSource.objects.get(slug="alumni")
+        cas = User.objects.create(username="e2e-cas-linked", name="Jean DUPONT", email="", attributes={"profile": {"version": 1, "cursus": [{"formation": "ICM", "promo": 2015}], "posts": []}, "alumni": {"cotisant": False, "read_on": "2020-01-01"}})
+        connection = UserSAMLSourceConnection.objects.create(source=source, user=cas, identifier="90004")
+        sign_in_alumni(cas, connection, "1")
+        check((cas.username, cas.name, cas.email) == ("e2e-cas-linked", "Jean DUPONT", ""), f"the sign-in renames nothing ({cas.username}, {cas.name}, {cas.email!r})")
+        check(cas.attributes["alumni"]["cotisant"] is True and cas.attributes["alumni"]["read_on"] != "2020-01-01", f"the new read replaces the old one ({cas.attributes['alumni']})")
+        check(cas.attributes["profile"]["cursus"] == [{"formation": "ICM", "promo": 2015}], "the profile is untouched")
+        # ...and a sign-in without a read writes nothing: the last read keeps its date and expires on its own.
+        before = dict(cas.attributes["alumni"])
+        sign_in_alumni(cas, connection, None)
+        check(cas.attributes["alumni"] == before and cas.username == "e2e-cas-linked", f"a sign-in with no read leaves the last one ({cas.attributes['alumni']})")
+        # ...and the write touches the read alone, on the account as it is NOW: an edit made elsewhere
+        # while the sign-in ran (the profile editor) survives it - the plan's copy of the account is stale.
+        def edit_elsewhere():
+            fresh = User.objects.get(pk=cas.pk)
+            fresh.attributes["profile"]["cursus"] = [{"formation": "ICM", "promo": 2016}]
+            fresh.save()
+        sign_in_alumni(cas, connection, "1", meanwhile=edit_elsewhere)
+        check(cas.attributes["profile"]["cursus"] == [{"formation": "ICM", "promo": 2016}] and cas.attributes["alumni"]["cotisant"] is True, f"an edit made during the sign-in survives it ({cas.attributes})")
+
+        # K - both ways in are on the login page (D45), and the Alumni source signs in through its own flow.
+        check(source.promoted and source.authentication_flow.slug == "miconnect-alumni-authentication", "the Alumni source is promoted and signs in through miconnect-alumni-authentication")
+        listed = {s.slug for s in IdentificationStage.objects.get(name="miconnect-identification").sources.all()}
+        check(listed == {"cas-emse", "alumni"}, f"the login page lists the CAS and the Alumni SSO ({sorted(listed)})")
+        check(source.binding_type == "POST_AUTO" and source.pre_authentication_flow.slug == "miconnect-alumni-pre-authentication", "the Alumni source is POST_AUTO, so its pre-authentication flow runs (read on production 2026-11-23)")
+
+        # L - THE LINK CONFIRMATION (D49), DRIVEN THROUGH THE SOURCE'S OWN ENTRY. A signed-in person who
+        # reaches `/source/saml/alumni/` is shown the page naming their account; it refuses without the
+        # tick, then hands over to the auto-submitted request towards Alumnforce. A signed-out person
+        # meets no page: the request goes at once.
+        User.objects.filter(username="e2e-d49").delete()
+        cas_person = User.objects.create(username="e2e-d49", name="Marie Curie", attributes={"profile": {"version": 1, "campus": "saint-etienne", "cursus": [], "posts": ["EMSE"]}})
+        client = signed_in(cas_person, "d49-test-Password-0123456789")
+        url, page = enter_alumni_source(client)
+        shown = {field["field_key"]: field for field in page.get("fields", [])}
+        check(page.get("component") == "ak-stage-prompt" and set(shown) == {"alumni_link_notice", "alumni_link_confirm"}, f"a signed-in person meets the link confirmation ({page.get('component')}, {sorted(shown)})")
+        check("Marie Curie" in shown["alumni_link_notice"]["initial_value"], "the page names the signed-in account")
+        unticked = post_prompt(client, url, {"alumni_link_confirm": False})
+        check(unticked.get("component") == "ak-stage-prompt" and messages(unticked), f"without the tick it does not go on ({messages(unticked)})")
+        ticked = post_prompt(client, url, {"alumni_link_confirm": True})
+        check(ticked.get("component") == "ak-stage-autosubmit" and ticked.get("url") == source.sso_url and "SAMLRequest" in (ticked.get("attrs") or {}), f"with the tick, the request is POSTed to Alumnforce ({ticked.get('component')}, {ticked.get('url')})")
+        check(not UserSAMLSourceConnection.objects.filter(user=cas_person).exists(), "nothing is linked before Alumnforce answers")
+        _, anonymous = enter_alumni_source(Client(HTTP_HOST="localhost"))
+        check(anonymous.get("component") == "ak-stage-autosubmit" and anonymous.get("url") == source.sso_url, f"a signed-out person meets no page: the request goes at once ({anonymous.get('component')})")
+
+        # M - THE MERGE AT SIGN-IN (D48). Canari MARKS the duplicate; its next Alumni sign-in moves the
+        # link onto the marked account, deletes the duplicate and signs the TARGET in - only when the target
+        # holds a CAS link and carries the name Alumnforce asserts at THIS sign-in - and journals an Event.
+        # Every refusal changes nothing, keeps the mark, journals an Event and shows the deny stage. A
+        # mark whose target no longer exists is an orphan: cleared, and the sign-in is an ordinary one.
+        cas_source = OAuthSource.objects.get(slug="cas-emse")
+        admins = Group.objects.create(name="e2e-merge-superusers", is_superuser=True)
+
+        asserted = ("Jean Marie", "Dupont")
+
+        def merge_case(af_id, target_kwargs=None, duplicate_name="Jean Marie Dupont", duplicate_username=None, into=None, extra=None, cas=True):
+            """A CAS target, an `alumni-<af_id>` duplicate holding the Alumni link, the mark; `extra`
+            bends one fact to make a refusal."""
+            target = User.objects.create(**{"username": f"e2e-merge-{af_id}", "name": "Jean-Marie DUPONT", **(target_kwargs or {})})
+            if cas:
+                UserOAuthSourceConnection.objects.create(user=target, source=cas_source, identifier=f"merge.{af_id}")
+            duplicate = User.objects.create(username=duplicate_username or f"alumni-{af_id}", name=duplicate_name)
+            link = UserSAMLSourceConnection.objects.create(user=duplicate, source=source, identifier=af_id)
+            if extra:
+                extra(target, duplicate)
+            duplicate.attributes = {"alumni_merge_into": into or str(target.uuid), "alumni_merge_marked_by": "e2e-admin", "alumni_merge_marked_at": "2026-11-23T12:00:00Z"}
+            duplicate.save()
+            return target, duplicate, link
+
+        # The target's "Jean-Marie DUPONT" is the asserted "Jean Marie" "Dupont", folded.
+        target, duplicate, link = merge_case("90020")
+        duplicate_pk = duplicate.pk
+        last, signed_in_as = sign_in_to_the_end(duplicate, link, asserted)
+        link.refresh_from_db()
+        check(signed_in_as == target.username, f"a marked duplicate's sign-in signs the TARGET in ({signed_in_as}, {last.get('component')})")
+        check(link.user_id == target.pk, "the Alumni link moved onto the target")
+        check(not User.objects.filter(pk=duplicate_pk).exists(), "the duplicate is deleted")
+        check(not User.objects.filter(attributes__alumni_merge_into=str(target.uuid)).exists(), "no account carries the mark any more")
+        merged = Event.objects.filter(action="custom_alumni_merge", context__target_pk=target.pk, context__duplicate_pk=duplicate_pk).first()
+        check(merged is not None and merged.context.get("marked_by") == "e2e-admin" and merged.context.get("af_id") == "90020", f"the merge is journalled as an Event naming both accounts, who marked it and the af_id ({merged and merged.context})")
+        target.refresh_from_db()
+        check((target.attributes.get("alumni") or {}).get("cotisant") is True, f"the membership read is written on the target ({target.attributes.get('alumni')})")
+        _, again = sign_in_to_the_end(target, link, asserted)
+        check(again == target.username, "the next Alumni sign-in is an ordinary one into the target")
+
+        unrelated = User.objects.create(username="e2e-merge-unrelated", name="Someone Else")
+        refusals = [
+            ("90021", "the target already holds an Alumni link", dict(extra=lambda t, d: UserSAMLSourceConnection.objects.create(user=t, source=source, identifier="90121"))),
+            ("90022", "the target is a superuser", dict(extra=lambda t, d: admins.users.add(t))),
+            ("90023", "the target is inactive", dict(target_kwargs={"is_active": False})),
+            ("90024", "the name asserted at this sign-in differs, though the duplicate's stored name matches", dict(asserted=("Jeanne", "Dupont"))),
+            ("90025", "the duplicate holds a CAS link too", dict(extra=lambda t, d: UserOAuthSourceConnection.objects.create(user=d, source=cas_source, identifier="merge.dup.90025"))),
+            ("90026", "the target was created by an Alumni sign-in", dict(target_kwargs={"username": "alumni-e2e-90026"})),
+            ("90028", "the mark is not a uuid", dict(into="not-a-uuid")),
+            ("90029", "the marked account was not created by an Alumni sign-in", dict(duplicate_username="e2e-merge-notdup-90029")),
+            ("90030", "the target is a service account", dict(target_kwargs={"type": "service_account"})),
+            ("90031", "the mark names another person", dict(into=str(unrelated.uuid))),
+            ("90032", "the target holds no CAS link", dict(cas=False)),
+        ]
+        for af_id, why, bend in refusals:
+            said = bend.pop("asserted", asserted)
+            target, duplicate, link = merge_case(af_id, **bend)
+            last, signed_in_as = sign_in_to_the_end(duplicate, link, said)
+            link.refresh_from_db()
+            duplicate.refresh_from_db()
+            check(
+                last.get("component") == "ak-stage-access-denied"
+                and "contacte un administrateur" in (last.get("error_message") or "")
+                and signed_in_as is None
+                and link.user_id == duplicate.pk
+                and duplicate.attributes.get("alumni_merge_into")
+                and User.objects.filter(pk=target.pk).exists(),
+                f"refused when {why}: the deny page, nobody signed in, the link, the duplicate and the mark kept ({last.get('component')}, {signed_in_as})",
+            )
+            refusal = Event.objects.filter(action="custom_alumni_merge_refused", context__af_id=af_id).first()
+            check(refusal is not None and refusal.client_ip, f"the refusal when {why} is journalled as an Event with the client's address ({refusal and refusal.client_ip})")
+        check("name_mismatch" in Event.objects.get(action="custom_alumni_merge_refused", context__af_id="90024").context["reasons"], "an asserted name that differs is refused as name_mismatch")
+
+        # A hyphenated, particled name: "Marie-Claire DE LA TOUR" is the asserted "Marie Claire" "de la Tour".
+        target, duplicate, link = merge_case("90036", target_kwargs={"name": "Marie-Claire DE LA TOUR"}, duplicate_name="Marie Claire de la Tour")
+        _, signed_in_as = sign_in_to_the_end(duplicate, link, ("Marie Claire", "de la Tour"))
+        link.refresh_from_db()
+        check(signed_in_as == target.username and link.user_id == target.pk, f"a hyphenated name matches the asserted one, folded ({signed_in_as})")
+
+        # The mark changed between the start of the sign-in and the merge: refused, the new mark kept.
+        target, duplicate, link = merge_case("90035")
+        other = User.objects.create(username="e2e-merge-90035-other", name="Jean-Marie DUPONT")
+        User.objects.filter(pk=duplicate.pk).update(attributes={**duplicate.attributes, "alumni_merge_into": str(other.uuid)})
+        last, signed_in_as = sign_in_to_the_end(duplicate, link, asserted)
+        link.refresh_from_db()
+        changed = Event.objects.filter(action="custom_alumni_merge_refused", context__af_id="90035").first()
+        check(last.get("component") == "ak-stage-access-denied" and link.user_id == duplicate.pk and changed is not None and "mark_changed" in changed.context["reasons"], f"a mark changed during the sign-in is refused as mark_changed ({last.get('component')}, {changed and changed.context.get('reasons')})")
+        check(User.objects.get(pk=duplicate.pk).attributes.get("alumni_merge_into") == str(other.uuid), "the new mark is kept")
+
+        # The ORPHAN: the marked target was deleted since the mark - the mark is cleared, nothing is
+        # refused, and the sign-in is an ordinary one into the duplicate.
+        target, duplicate, link = merge_case("90027")
+        target.delete()
+        last, signed_in_as = sign_in_to_the_end(duplicate, link, asserted)
+        duplicate.refresh_from_db()
+        check(signed_in_as == duplicate.username and not duplicate.attributes.get("alumni_merge_into") and not duplicate.attributes.get("alumni_merge_marked_by"), f"an orphaned mark is cleared and the duplicate signs in ({signed_in_as}, {duplicate.attributes})")
+
+        # An orphan whose mark CHANGED meanwhile (an admin re-marked it into another account): the
+        # clear re-reads the mark under the lock and keeps the new one.
+        target, duplicate, link = merge_case("90037")
+        target.delete()
+        other = User.objects.create(username="e2e-merge-90037-other", name="Jean-Marie DUPONT")
+        User.objects.filter(pk=duplicate.pk).update(attributes={**duplicate.attributes, "alumni_merge_into": str(other.uuid)})
+        _, signed_in_as = sign_in_to_the_end(duplicate, link, asserted)
+        check(User.objects.get(pk=duplicate.pk).attributes.get("alumni_merge_into") == str(other.uuid), f"an orphan clear keeps a mark that changed under it ({signed_in_as})")
     finally:
         User.objects.filter(username__startswith="e2e-").delete()
+        User.objects.filter(username__startswith="alumni-900").delete()
+        User.objects.filter(username__startswith="alumni-e2e-").delete()
+        Group.objects.filter(name="e2e-merge-superusers").delete()
     print("ENROLLMENT-OK")

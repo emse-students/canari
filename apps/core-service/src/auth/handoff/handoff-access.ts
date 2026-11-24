@@ -2,6 +2,7 @@ import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import type { Repository } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
+import { alumniGateAdmits, alumniLinkStep, parisToday } from './alumni-access';
 import { ECOSYSTEM_SITES } from './handoff-sites';
 import {
   CONSENT_VERSION,
@@ -40,6 +41,17 @@ export const HandoffAccessClass = {
    * the terms page, so a handoff must not skip it.
    */
   termsNotAccepted: 'terms_not_accepted',
+  /**
+   * The authorization flow's Alumni link step (D44) would BLOCK this person: their earliest cursus
+   * is past 1 February P+2 (and the 2027-02-01 grace) and no Alumni connection exists. An OIDC
+   * sign-in shows them the link page, so a handoff must not skip it (alumni-access.ts).
+   */
+  alumniLinkRequired: 'alumni_link_required',
+  /**
+   * MiGallery or Le Cercle's Alumni gate (D42-D43) would refuse this person: past their free
+   * window, with no post, no cotisant read this year and no `acces-<app>` group (alumni-access.ts).
+   */
+  alumniCotisantRequired: 'alumni_cotisant_required',
   /** The authorization flow asks more than a signed-in user (e.g. `require_superuser`). */
   flowRestricted: 'flow_restricted',
   /** The tenant's `core_default_app_access` is false: an unbound application lets nobody in. */
@@ -91,12 +103,18 @@ export interface HandoffAccess {
  * the INPUTS of its answer with a read-only account and answers exactly when they settle it: the
  * account is active, the application has no enabled policy binding, and `core_default_app_access`
  * is true (or unset - its default is true, `authentik/core/apps.py`). A bound application is
- * REFUSED (`policy_bound`), never evaluated here - EXCEPT the terms-of-use flow's own two bindings,
- * recognised by an allowlist (policy `miconnect-consent-needed` on the two stage bindings of
- * `miconnect-authorization`) and answered from the person's `cgu_version` (`terms_not_accepted`
- * when it is not the current text); copying any OTHER policy's logic is copying MiConnect's policy logic into Canari is
- * what F2 was rejected for. Every MiConnect failure refuses too - a transport failure is not an
- * answer, and the mint never falls back to minting.
+ * REFUSED (`policy_bound`), never evaluated here - EXCEPT bindings recognised by an ALLOWLIST, by
+ * the names of their policy, stage, group and application (miconnect-reader.client.ts):
+ *   - the terms-of-use flow's two bindings, answered from the person's `cgu_version`
+ *     (`terms_not_accepted` when it is not the current text);
+ *   - the Alumni link step on the same flow (D44): its reminder is skippable and never stops a
+ *     mint; its block is answered by alumni-access.ts (`alumni_link_required`);
+ *   - the Alumni gate of MiGallery and Le Cercle (D42-D43), answered by alumni-access.ts
+ *     (`alumni_cotisant_required`).
+ * Each of those re-derives a rule MiConnect also applies, from ONE contract both run
+ * (libs/contracts/alumni-access.json, and the consent version's five places). Copying any OTHER
+ * policy's logic into Canari is what F2 was rejected for. Every MiConnect failure refuses too - a
+ * transport failure is not an answer, and the mint never falls back to minting.
  *
  * At boot it also says, once per handoff application, whether a binding has appeared - the one
  * change that silently turns a site's handoff off ({@link onApplicationBootstrap}).
@@ -104,6 +122,9 @@ export interface HandoffAccess {
 @Injectable()
 export class MiconnectHandoffAccess implements HandoffAccess, OnApplicationBootstrap {
   private readonly logger = new Logger('HandoffAccess');
+
+  /** The instant "today" is read from, in Paris - replaced by a spec, never asserted against. */
+  now: () => Date = () => new Date();
 
   constructor(
     @InjectRepository(User) private readonly users: Repository<User>,
@@ -145,12 +166,33 @@ export class MiconnectHandoffAccess implements HandoffAccess, OnApplicationBoots
       if (closed) {
         throw new HandoffAccessRefused(closed, `app=${application} ${describe(access)}`);
       }
-      // The consent flow's bindings (an ALLOWLIST) ask the person, not a policy Canari cannot
-      // evaluate: the mint passes only when they accepted the current text.
+      const today = parisToday(this.now());
+      // The allowlisted bindings, in the order an OIDC sign-in meets them: the application's gate
+      // (checked before the authorization flow starts), then the terms, then the link step.
+      if (
+        access.gateBindings > 0 &&
+        !alumniGateAdmits({ ...account.facts, linked: false }, application, today)
+      ) {
+        throw new HandoffAccessRefused(
+          HandoffAccessClass.alumniCotisantRequired,
+          `app=${application} pk ${account.pk} on ${today}`
+        );
+      }
       if (access.consentBindings > 0 && account.cguVersion !== CONSENT_VERSION) {
         throw new HandoffAccessRefused(
           HandoffAccessClass.termsNotAccepted,
           `app=${application} pk ${account.pk} accepted ${account.cguVersion ?? 'nothing'}, the text is ${CONSENT_VERSION}`
+        );
+      }
+      // The link is read only when it can change the answer: the block would hold without one.
+      if (
+        access.linkRequiredBindings > 0 &&
+        alumniLinkStep({ ...account.facts, linked: false }, today) === 'required' &&
+        !(await this.reader.alumniLinked(account.pk))
+      ) {
+        throw new HandoffAccessRefused(
+          HandoffAccessClass.alumniLinkRequired,
+          `app=${application} pk ${account.pk} on ${today}`
         );
       }
     } catch (e) {
@@ -198,11 +240,9 @@ export class MiconnectHandoffAccess implements HandoffAccess, OnApplicationBoots
         } else {
           this.logger.log(
             `[HANDOFF_ACCESS] site=${site.id} app=${site.miconnectApplication} ${describe(access)} ` +
-              (access.consentBindings > 0
-                ? `- an active account that accepted the MiConnect terms ${CONSENT_VERSION} may be handed off ` +
-                  '(the consent bindings are recognised by the NAMES of their policy and stages, not by the policy content, which this account cannot read) '
-                : '- an active account may be handed off ') +
-              '(not read: what a stage itself decides from a user, e.g. a group check inside an expression stage)'
+              `- an active account may be handed off${allowlistedConditions(access)} ` +
+              '(allowlisted bindings are recognised by the NAMES of their policy, stage and group, not by the policy content, which this account cannot read; ' +
+              'not read: what a stage itself decides from a user, e.g. a group check inside an expression stage)'
           );
         }
       } catch (e) {
@@ -224,10 +264,21 @@ function closedBy(access: MiconnectApplicationAccess): HandoffAccessClassCode | 
   return null;
 }
 
+/** What the allowlisted bindings ask of a person, as the boot line says it (empty when none). */
+function allowlistedConditions(access: MiconnectApplicationAccess): string {
+  const asks: string[] = [];
+  if (access.gateBindings > 0)
+    asks.push('passes the Alumni gate (window, post, cotisant or group)');
+  if (access.consentBindings > 0) asks.push(`accepted the MiConnect terms ${CONSENT_VERSION}`);
+  if (access.linkRequiredBindings > 0) asks.push('is not held by the Alumni link step');
+  return asks.length > 0 ? ` when it ${asks.join(', ')}` : '';
+}
+
 /** The inputs, as a log line names them. */
 function describe(access: MiconnectApplicationAccess): string {
   return (
-    `bindings=${access.enabledBindings} flow_bindings=${access.flowBindings} consent_bindings=${access.consentBindings} ` +
+    `bindings=${access.enabledBindings} gate_bindings=${access.gateBindings} flow_bindings=${access.flowBindings} ` +
+    `consent_bindings=${access.consentBindings} link_bindings=${access.linkReminderBindings}+${access.linkRequiredBindings} ` +
     `flow_auth=${access.authorizationFlowAuthentication} default_access=${access.defaultAccessFlag ?? 'unset'}`
   );
 }

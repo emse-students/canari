@@ -62,7 +62,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="23/11/2026"
+  updated="24/11/2026"
   {sections}
 >
   <!-- 1 -->
@@ -102,9 +102,14 @@
         <dd>
           Prénom, nom, identifiant de connexion, promotion, formation, campus, parcours et
           appartenances (élève, personnel, Maison des Élèves), transmis par MiConnect à chaque
-          connexion ; la biographie que vous écrivez. Canari ne reçoit pas votre adresse e-mail
+          connexion, ainsi que le fait que votre compte MiConnect est lié ou non à votre compte
+          Alumni (pour vous rappeler de le lier) ; la biographie que vous écrivez. Quand vous ouvrez
+          MiGallery ou Le Cercle depuis Canari, le serveur de Canari lit aussi chez MiConnect, sans
+          le conserver, ce qui décide de votre accès à ces sites (parcours, appartenances, qualité
+          de cotisant Alumni de l'année et lien Alumni), pour vous y ouvrir déjà connecté seulement
+          si MiConnect vous y laisserait entrer. Canari ne reçoit pas votre adresse e-mail
           personnelle et ne connaît pas votre mot de passe. Votre photo de profil est servie par
-          MiGallery.
+          MiGallery. {m.legal_privacy_alumni_duplicate_review()}
         </dd>
       </div>
       <div>
