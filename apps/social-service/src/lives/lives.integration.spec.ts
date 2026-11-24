@@ -1037,6 +1037,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       expect(await verdict(long.id)).toEqual([{ keepsReplay: true }]);
       expect(await verdict(short.id)).toEqual([{ keepsReplay: false }]);
 
+      // The announcement runs in the background (WP-L7): its warning exists only once it has settled.
+      await lives.announcementsSettled();
       takeLogged(
         'warn',
         /^\[LIVE_ANNOUNCE\] [0-9a-f-]{36} NOT announced: broadcaster [0-9a-f]{6,8} has no display name$/
@@ -1176,6 +1178,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       await expect(lives.enforceReplayCap(1)).resolves.toHaveLength(1);
       expect(feedGenerations).toBe(before + 1);
 
+      // The announcement runs in the background (WP-L7): its warning exists only once it has settled.
+      await lives.announcementsSettled();
       takeLogged(
         'warn',
         /^\[LIVE_ANNOUNCE\] [0-9a-f-]{36} NOT announced: broadcaster [0-9a-f]{6,8} has no display name$/
@@ -1355,6 +1359,9 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       await lives.trimsSettled();
       expect(await rows(kept.id)).toBe(total + 1 - 2);
 
+      // The announcement runs in the background (WP-L7): its warning exists only once it has settled
+      // (BOB has no display name; ALICE's is not logged here).
+      await lives.announcementsSettled();
       takeLogged(
         'warn',
         /^\[LIVE_ANNOUNCE\] [0-9a-f-]{36} NOT announced: broadcaster [0-9a-f]{6,8} has no display name$/
@@ -1391,6 +1398,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       await q(`UPDATE live_replay_cap_evictions SET "evictedAt" = now() - interval '31 days'`);
       expect(await lives.pruneReplayEvictions()).toBe(1);
 
+      // The announcement runs in the background (WP-L7): its warning exists only once it has settled.
+      await lives.announcementsSettled();
       takeLogged(
         'warn',
         /^\[LIVE_ANNOUNCE\] [0-9a-f-]{36} NOT announced: broadcaster [0-9a-f]{6,8} has no display name$/
@@ -3185,10 +3194,13 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         'warn',
         /^\[LIVE\] segment 0 of [0-9a-f-]{36} refused: 4 ingests already storing$/
       );
+      // The announcement runs in the background (WP-L7): its warning exists only once it has settled.
+      await lives.announcementsSettled();
       takeLogged(
         'warn',
         /^\[LIVE_ANNOUNCE\] [0-9a-f-]{36} NOT announced: broadcaster [0-9a-f]{6,8} has no display name$/,
-        4
+        // FIVE lives, one first segment each: the refused fifth is retried and announced like the rest.
+        LIVE_INGEST_MAX_CONCURRENT + 1
       );
     });
   });
@@ -3221,10 +3233,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
         { endedAt: null },
       ]);
 
-      takeLogged(
-        'warn',
-        /^\[LIVE_ANNOUNCE\] [0-9a-f-]{36} NOT announced: broadcaster [0-9a-f]{6,8} has no display name$/
-      );
+      // No announcement of its own is logged here; settled so that none lands in the next test.
+      await lives.announcementsSettled();
     });
 
     it('a viewer at the window edge still gets every segment its manifest names, and one fetched just before a trim', async () => {
@@ -3416,6 +3426,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       await expect(lives.get(CAROL, talking.id)).resolves.toBeDefined();
       expect(store.countFor(talking.id)).toBe(1);
 
+      // The announcement runs in the background (WP-L7): its warning exists only once it has settled.
+      await lives.announcementsSettled();
       takeLogged(
         'warn',
         /^\[LIVE_ANNOUNCE\] [0-9a-f-]{36} NOT announced: broadcaster [0-9a-f]{6,8} has no display name$/

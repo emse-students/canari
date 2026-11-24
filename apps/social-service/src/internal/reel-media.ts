@@ -31,6 +31,14 @@ const OUTCOME_RANK: Record<ReelPurgeOutcome, number> = {
 };
 
 /**
+ * The code of a `400` refusing a reel whose every refused blob is the author's OWN pending upload
+ * past its window: the file was theirs and only time took it, so the publisher uploads it again and
+ * re-sends (the client's publish queue does, keyed on this code, never on the message). Mirrored in
+ * the frontend's `$lib/reels/reelMediaExpired.ts`.
+ */
+export const REEL_MEDIA_EXPIRED = 'reel_media_expired';
+
+/**
  * Asks the media service to classify `mediaIds` as `reel` FOR `ownerId`, which it does only for
  * objects that member uploaded. The answer is the proof the caller needs that a reel cites the
  * author's own blob.
@@ -43,13 +51,14 @@ export async function claimReelMedia(
   http: HttpService,
   mediaIds: string[],
   ownerId: string
-): Promise<{ claimed: string[]; refused: string[] }> {
+): Promise<{ claimed: string[]; refused: string[]; expired: string[] }> {
   const claimed: string[] = [];
   const refused: string[] = [];
+  const expired: string[] = [];
   const unique = [...new Set(mediaIds)];
   for (let i = 0; i < unique.length; i += BATCH_SIZE) {
     const res = await firstValueFrom(
-      http.post<{ claimed: string[]; refused: string[] }>(
+      http.post<{ claimed: string[]; refused: string[]; expired?: string[] }>(
         mediaUrl('media/internal/reel-claim'),
         { mediaIds: unique.slice(i, i + BATCH_SIZE), ownerId },
         { headers: internalHeaders() }
@@ -57,8 +66,10 @@ export async function claimReelMedia(
     );
     claimed.push(...(res.data?.claimed ?? []));
     refused.push(...(res.data?.refused ?? []));
+    // Absent from a media service older than the field: no refusal is then told apart as expired.
+    expired.push(...(res.data?.expired ?? []));
   }
-  return { claimed, refused };
+  return { claimed, refused, expired };
 }
 
 /**

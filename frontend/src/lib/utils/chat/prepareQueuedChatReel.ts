@@ -67,7 +67,7 @@ export async function prepareQueuedChatReel(
     type: media.mimeType,
   });
   try {
-    // THE ENCODER LEASE IS SHARED WITH `publishReel` (RC-13, 15.2): a publish step encoding the same
+    // THE ENCODER LEASE IS SHARED WITH THE PUBLISH QUEUE'S TAKE (RC-13, 15.2): a publish step encoding the same
     // take, or another, finishes first - two encodes at once are unmeasured on either phone.
     const prepared = await withEncoderLease('chat reel take', opts.signal, () =>
       deps.prepare(source, {

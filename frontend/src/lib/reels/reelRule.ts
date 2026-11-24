@@ -117,7 +117,7 @@ export type ReelPickRefusal =
  * Whether the CanaReels camera takes a video picked from the gallery, read on what the engine
  * DISPLAYED (`readVideoMetadata`; a `null` is a value it could not read). A length or a frame that
  * could not be read never refuses alone: the publish reads the PREPARED file, the one the server is
- * told, and decides there (`publishReel`).
+ * told, and decides there (the publish queue, `reelDeclarationFor`).
  *
  * `capMs` is the destination's cap (`captureCapMs`): the chat cap for a take sent in a conversation,
  * which keeps the 2026-11-09 rule (vertical AND within the cap), and the feed's `maxDurationMs`
@@ -204,7 +204,7 @@ export interface ReelVideoShape {
 
 /**
  * THE ONE DECISION ON A LENGTH, for every path that makes a reel - the CanaReels camera's publish
- * (`publishReel`) and the composer's queue (`reelDeclarationFor`) - so a take of one length is a reel
+ * (queued since 2026-11-24) and the composer's, both through `reelDeclarationFor` - so a take of one length is a reel
  * on both or on neither (review of #3528, 2026-11-14): the length the reel DECLARES, in whole ms
  * within `[1, capMs]`, or `null` when it is not a reel (no length, none above zero, no cap for its
  * frame, or past the cap's grace).

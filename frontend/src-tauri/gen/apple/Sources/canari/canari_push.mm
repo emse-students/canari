@@ -921,8 +921,16 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
   // A watched form (owner, 2026-11-17): the association that runs it names the title and the
   // form's own title the body, the same facts as the bell row; the fixed sentence stands for a form
   // that has neither.
-  if ([key isEqualToString:@"form_opening_soon"] || [key isEqualToString:@"form_open"]) {
-    NSString *stem = [key isEqualToString:@"form_open"] ? @"notif.form.open" : @"notif.form.opening_soon";
+  // A waiting answer became a registration (owner, 2026-11-23) reads like the form reminders, and
+  // so does one whose place is held for its payment (`form_waitlist_promoted_payment_due`).
+  if ([key isEqualToString:@"form_opening_soon"] || [key isEqualToString:@"form_open"] ||
+      [key isEqualToString:@"form_waitlist_promoted"] ||
+      [key isEqualToString:@"form_waitlist_promoted_payment_due"]) {
+    NSString *stem = [key isEqualToString:@"form_open"]                ? @"notif.form.open"
+                     : [key isEqualToString:@"form_waitlist_promoted"] ? @"notif.form.waitlist_promoted"
+                     : [key isEqualToString:@"form_waitlist_promoted_payment_due"]
+                         ? @"notif.form.waitlist_promoted_payment_due"
+                         : @"notif.form.opening_soon";
     *title = actor.length > 0
                  ? [NSString stringWithFormat:CanariLocalized([stem stringByAppendingString:@".title_named"]), actor]
                  : CanariLocalized([stem stringByAppendingString:@".title"]);
@@ -936,6 +944,14 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     *title = CanariLocalized(@"notif.form.paid_over_capacity.title");
     *body =
         [NSString stringWithFormat:CanariLocalized(@"notif.form.paid_over_capacity.body"), arg];
+    return;
+  }
+  // The same, paid by a person on the form's waiting list: their place is kept, and the refund is
+  // owed only if they are never registered. `arg` is the form's title only.
+  if ([key isEqualToString:@"form_paid_over_capacity_waitlisted"]) {
+    *title = CanariLocalized(@"notif.form.paid_over_capacity_waitlisted.title");
+    *body = [NSString
+        stringWithFormat:CanariLocalized(@"notif.form.paid_over_capacity_waitlisted.body"), arg];
     return;
   }
   // An association's Lydia payments became active / were paused, to its payout managers: `arg` is

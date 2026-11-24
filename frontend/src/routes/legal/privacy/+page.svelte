@@ -956,7 +956,9 @@
               {durationLabel(retention.days.idleFileDays)} sans consultation ; CanaReels de conversation
               : {durationLabel(retention.days.chatReelDays)} après l'envoi. Les fichiers envoyés avant
               octobre 2026, ou par une version de l'application antérieure, sont pour l'instant conservés
-              sans limite
+              sans limite. Un CanaReel (de conversation, ou envoyé au fil et pas encore publié) supprimé
+              à la fin de son délai laisse pendant 90 jours une trace sans contenu qui nomme son auteur,
+              pour lui dire de l'envoyer à nouveau ; elle est effacée avec le compte
             </td>
           </tr>
           <tr>

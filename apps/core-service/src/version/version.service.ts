@@ -163,6 +163,15 @@ export type AppVersionResponse = {
    * server").
    */
   eventReach: true;
+  /**
+   * A CAPABILITY OF THIS ESTATE'S SOCIAL-SERVICE, published here for the same reason: a limited
+   * form may keep a waiting list (`forms.waitlistEnabled`, social migration 183, owner decision of
+   * 2026-11-23). An older social-service strips the switch from a form's save (its validation
+   * whitelists the body), and a store build reaches phones before production deploys: the form
+   * editors draw the switch only on an estate that says so. Always `true` from this release on
+   * (docs/wiki/legacy-compatibility.md, "a form editor newer than its server's waiting list").
+   */
+  formWaitlist: true;
 };
 
 /** Resolves deployed app version and platform gates from core-service. */
@@ -199,6 +208,7 @@ export class VersionService {
       rankedFeeds: true,
       formAnswerEdit: true,
       eventReach: true,
+      formWaitlist: true,
     };
   }
 }

@@ -428,8 +428,17 @@ class NotificationService: UNNotificationServiceExtension {
     // A watched form (owner, 2026-11-17): the association that runs it names the title and the
     // form's own title the body, the same facts as the bell row; each falls back to the fixed
     // sentence when the server sends none.
-    case "form_opening_soon", "form_open":
-      let stem = key == "form_open" ? "form.open" : "form.opening_soon"
+    // A waiting answer became a registration (owner, 2026-11-23) reads the same way, and so does
+    // one whose place is held for its payment (`form_waitlist_promoted_payment_due`).
+    case "form_opening_soon", "form_open", "form_waitlist_promoted",
+      "form_waitlist_promoted_payment_due":
+      let stem =
+        key == "form_open"
+        ? "form.open"
+        : key == "form_waitlist_promoted"
+          ? "form.waitlist_promoted"
+          : key == "form_waitlist_promoted_payment_due"
+            ? "form.waitlist_promoted_payment_due" : "form.opening_soon"
       composed = (
         actor.isEmpty
           ? Self.localized("notif.\(stem).title", locale: locale)
@@ -443,6 +452,13 @@ class NotificationService: UNNotificationServiceExtension {
       composed = (
         Self.localized("notif.form.paid_over_capacity.title", locale: locale),
         Self.localizedFormat("notif.form.paid_over_capacity.body", arg, locale: locale)
+      )
+    // The same, paid by a person on the form's waiting list: their place is kept, and the refund is
+    // owed only if they are never registered. `arg` is the form's title only.
+    case "form_paid_over_capacity_waitlisted":
+      composed = (
+        Self.localized("notif.form.paid_over_capacity_waitlisted.title", locale: locale),
+        Self.localizedFormat("notif.form.paid_over_capacity_waitlisted.body", arg, locale: locale)
       )
     // An association's Lydia payments became active / were paused, to its payout managers: `arg`
     // is the association's name only.

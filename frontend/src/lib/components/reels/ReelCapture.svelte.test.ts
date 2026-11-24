@@ -1071,30 +1071,9 @@ describe('ReelCapture as a composer destination (D-camera, 2026-10-11)', () => {
 });
 
 describe('one camera, one behaviour (user, 2026-10-19): a video filmed from the new-post composer is a CanaReel', () => {
+  /** The publish queue's door: what the step queued is what the queue will send. */
   function publishDeps(): PublishReelDeps {
-    return {
-      assertNotMuted: vi.fn(async () => {}),
-      getToken: vi.fn(async () => 'tok'),
-      uploadLimits: vi.fn(async () => ({ maxPlaintextBytes: 1000 })),
-      prepare: vi.fn(async () => ({
-        file: new File([new Uint8Array(4)], 'reel.mp4', { type: 'video/mp4' }),
-        width: 720,
-        height: 1280,
-        durationSeconds: 3,
-        sourceBytes: 8,
-        outputBytes: 4,
-      })),
-      placeholder: vi.fn(async () => null),
-      upload: vi.fn(async () => ({
-        type: 'video' as const,
-        mediaId: 'm-1',
-        key: 'k',
-        iv: 'i',
-        mimeType: 'video/mp4',
-        size: 4,
-      })),
-      createPost: vi.fn(async () => ({ id: 'p-1' }) as never),
-    };
+    return { userId: () => 'alice', enqueue: vi.fn(async () => {}) };
   }
 
   /** Films one take, presses the review's Next, then the publish step's "Publier". */
@@ -1111,10 +1090,10 @@ describe('one camera, one behaviour (user, 2026-10-19): a video filmed from the 
   }
 
   it.each(['feed', 'post'] as const)(
-    'a Back during the upload cannot lead to a SECOND publish of the same take (%s)',
+    'a Back while the take is written to the device cannot lead to a SECOND publish of it (%s)',
     async (destination) => {
       const deps = publishDeps();
-      deps.upload = vi.fn(() => new Promise<never>(() => {}));
+      deps.enqueue = vi.fn(() => new Promise<never>(() => {}));
       const { target, hold } = await render({
         publishDeps: deps,
         destination,
@@ -1136,7 +1115,7 @@ describe('one camera, one behaviour (user, 2026-10-19): a video filmed from the 
       expect(target.querySelector<HTMLButtonElement>('[data-reel-publish-submit]')!.disabled).toBe(
         true
       );
-      expect(deps.upload).toHaveBeenCalledTimes(1);
+      expect(deps.enqueue).toHaveBeenCalledTimes(1);
     }
   );
 
@@ -1161,13 +1140,11 @@ describe('one camera, one behaviour (user, 2026-10-19): a video filmed from the 
 
     expect(tab.sheet).not.toBeNull();
     expect(composer.sheet).not.toBeNull();
-    const created = (d: PublishReelDeps) => vi.mocked(d.createPost).mock.calls[0][0];
-    expect(created(tab.deps)).toMatchObject({ kind: 'reel', durationMs: 3000 });
-    expect(created(composer.deps)).toMatchObject({
-      kind: 'reel',
-      durationMs: 3000,
-      markdown: 'hello',
-    });
+    // The SAME queued take from both: the queue decides reel or post on the prepared file, once.
+    const queued = (d: PublishReelDeps) => vi.mocked(d.enqueue).mock.calls[0][1];
+    expect(queued(tab.deps).media).toEqual(queued(composer.deps).media);
+    expect(queued(tab.deps).media[0].take).toBeDefined();
+    expect(queued(composer.deps).payload).toMatchObject({ markdown: 'hello' });
     // The tab lands on the feed; the composer closes behind its reel, never handed a file.
     expect(goto).toHaveBeenCalledTimes(1);
     expect(onpublished).toHaveBeenCalledWith('');

@@ -1106,7 +1106,12 @@
         {limits}
         deps={publishDeps}
         chatTake={chatTake
-          ? { id: chatTake.id, adopt: chatTake.host.adopt, endWait: chatTake.host.endWait }
+          ? {
+              id: chatTake.id,
+              endWait: chatTake.host.endWait,
+              // Queued: the publish queue owns the take's wait now (15.5), not this screen's teardown.
+              onQueued: () => (chatTake = null),
+            }
           : null}
         onclose={closePublish}
         composer={rules.fromComposer

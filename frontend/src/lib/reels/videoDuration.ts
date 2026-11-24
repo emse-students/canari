@@ -6,7 +6,7 @@
  * Each field is `null` when the engine cannot say: a file it cannot decode, or a container with no
  * duration in its header (a recorder's WebM reports `Infinity`). That is not a refusal - the
  * preparation reads the container itself and refuses a long one with its own `too-long` fault, and the
- * publish reads the PREPARED frame (`publishReel`), which is the one the server is told.
+ * publish queue reads the PREPARED frame (`reelDeclarationFor`), which is the one the server is told.
  *
  * `width`/`height` are the element's `videoWidth`/`videoHeight`: the frame as DISPLAYED, the
  * container's rotation applied by the engine (Chromium and WebKit both do), which is what "vertical"

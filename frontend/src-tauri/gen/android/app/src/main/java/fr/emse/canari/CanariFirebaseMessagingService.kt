@@ -7462,11 +7462,32 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 if (arg.isEmpty()) res.getString(R.string.notif_form_open_body)
                 else res.getString(R.string.notif_form_open_body_named, arg)
             )
+            // A waiting answer became a registration (owner, 2026-11-23): `actor` is the association
+            // that runs the form and `arg` its title, as for the form reminders; each is used when
+            // the server sends it, and the fixed sentence stands for a form that has neither.
+            "form_waitlist_promoted" -> Pair(
+                if (actor.isEmpty()) res.getString(R.string.notif_form_waitlist_promoted_title)
+                else res.getString(R.string.notif_form_waitlist_promoted_title_named, actor),
+                if (arg.isEmpty()) res.getString(R.string.notif_form_waitlist_promoted_body)
+                else res.getString(R.string.notif_form_waitlist_promoted_body_named, arg)
+            )
+            "form_waitlist_promoted_payment_due" -> Pair(
+                if (actor.isEmpty()) res.getString(R.string.notif_form_waitlist_promoted_payment_due_title)
+                else res.getString(R.string.notif_form_waitlist_promoted_payment_due_title_named, actor),
+                if (arg.isEmpty()) res.getString(R.string.notif_form_waitlist_promoted_payment_due_body)
+                else res.getString(R.string.notif_form_waitlist_promoted_payment_due_body_named, arg)
+            )
             // A payment landed on a full form, to the form's managers: `arg` is the form's title,
             // the only data the server sends (no payer, no amount on a lock screen).
             "form_paid_over_capacity" -> Pair(
                 res.getString(R.string.notif_form_paid_over_capacity_title),
                 res.getString(R.string.notif_form_paid_over_capacity_body, arg)
+            )
+            // The same, paid by a person on the form's waiting list: their place is kept, and the
+            // refund is owed only if they are never registered. `arg` is the form's title only.
+            "form_paid_over_capacity_waitlisted" -> Pair(
+                res.getString(R.string.notif_form_paid_over_capacity_waitlisted_title),
+                res.getString(R.string.notif_form_paid_over_capacity_waitlisted_body, arg)
             )
             // An association's Lydia payments became active / were paused, to its payout managers:
             // `arg` is the association's name, the only data the server sends.
