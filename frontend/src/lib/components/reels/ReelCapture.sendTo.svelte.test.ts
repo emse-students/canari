@@ -130,35 +130,14 @@ const host = {
   sendImage: vi.fn(
     async (_f: File, keys: readonly string[]): Promise<number | null> => keys.length
   ),
-  adopt: vi.fn(async () => {}),
+  adopt: vi.fn(async () => 'adopted' as const),
   endWait: vi.fn(),
   groupMembers: vi.fn(async () => new Map<string, string[]>()),
 } satisfies ReelSendHost;
 
+/** The publish queue's door: the step's whole publish is this write (2026-11-24). */
 function publishDeps(): PublishReelDeps {
-  return {
-    assertNotMuted: vi.fn(async () => {}),
-    getToken: vi.fn(async () => 'tok'),
-    uploadLimits: vi.fn(async () => ({ maxPlaintextBytes: 1000 })),
-    prepare: vi.fn(async () => ({
-      file: new File([new Uint8Array(4)], 'reel.mp4', { type: 'video/mp4' }),
-      width: 720,
-      height: 1280,
-      durationSeconds: 3,
-      sourceBytes: 8,
-      outputBytes: 4,
-    })),
-    placeholder: vi.fn(async () => null),
-    upload: vi.fn(async () => ({
-      type: 'video' as const,
-      mediaId: 'm-1',
-      key: 'k',
-      iv: 'i',
-      mimeType: 'video/mp4',
-      size: 4,
-    })),
-    createPost: vi.fn(async () => ({ id: 'p-1' }) as never),
-  };
+  return { userId: () => 'alice', enqueue: vi.fn(async () => {}) };
 }
 
 let unstubCameras = () => {};
@@ -407,16 +386,8 @@ describe('"Envoyer a..." on the camera tab (RC-12)', () => {
     expect(target.querySelector('[data-reel-send]')).not.toBeNull();
   });
 
-  it('CanaReels AND conversations: the take is written first, waiting for the publish step, whose upload it adopts BEFORE the post exists', async () => {
+  it('CanaReels AND conversations: the take is written first, waiting for the publish, and the queued post names it - the QUEUE hands it the upload (15.5)', async () => {
     const deps = publishDeps();
-    const order: string[] = [];
-    host.adopt.mockImplementation(async () => {
-      order.push('adopt');
-    });
-    deps.createPost = vi.fn(async () => {
-      order.push('createPost');
-      return { id: 'p-1' } as never;
-    });
     const { target, hold } = await render({ publishDeps: deps });
     await hold();
     await click(target, '[data-reel-next]');
@@ -428,14 +399,11 @@ describe('"Envoyer a..." on the camera tab (RC-12)', () => {
     expect(target.querySelector('[data-reel-publish]')).not.toBeNull();
 
     await click(target, '[data-reel-publish-submit]');
-    expect(host.adopt).toHaveBeenCalledTimes(1);
-    expect(host.adopt.mock.calls[0]).toEqual([
-      't-1',
-      expect.objectContaining({ durationMs: 3000 }),
-    ]);
-    expect(order).toEqual(['adopt', 'createPost']);
-    // The publish ended: the take stops waiting for it.
-    expect(host.endWait).toHaveBeenCalledWith('t-1');
+    expect(vi.mocked(deps.enqueue).mock.calls[0][1].chatTakeId).toBe('t-1');
+    // The wait is the queue's now: neither the step nor the camera ends it on the way out.
+    expect(host.endWait).not.toHaveBeenCalled();
+    unmount(mounted.pop()!);
+    expect(host.endWait).not.toHaveBeenCalled();
   });
 
   it('Back from the publish step AFTER the sends were queued ends the take: the sends are never withdrawn, nothing can be sent twice', async () => {
@@ -451,7 +419,7 @@ describe('"Envoyer a..." on the camera tab (RC-12)', () => {
     expect(target.querySelector('[data-reel-publish]')).toBeNull();
     expect(target.querySelector('[data-reel-review]')).toBeNull();
     expect(host.endWait).toHaveBeenCalledWith('t-1');
-    expect(deps.upload).not.toHaveBeenCalled();
+    expect(deps.enqueue).not.toHaveBeenCalled();
     expect(host.send).toHaveBeenCalledTimes(1);
   });
 
@@ -531,12 +499,10 @@ describe('"Envoyer a..." on the camera tab (RC-12)', () => {
     );
   });
 
-  it('a publish that fails AFTER the adoption and is retried adopts the new upload and ends the wait each time', async () => {
+  it('a take the device could not queue is said, keeps the step, and a second press queues it ONCE', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
     const deps = publishDeps();
-    deps.createPost = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('post refused'))
-      .mockResolvedValueOnce({ id: 'p-1' } as never);
+    vi.mocked(deps.enqueue).mockRejectedValueOnce(new Error('write failed'));
     const { target, hold } = await render({ publishDeps: deps });
     await hold();
     await click(target, '[data-reel-next]');
@@ -544,14 +510,12 @@ describe('"Envoyer a..." on the camera tab (RC-12)', () => {
     await click(target, '[data-reel-send-row="g-1"]');
     await click(target, '[data-reel-send-submit]');
     await click(target, '[data-reel-publish-submit]');
-    expect(host.adopt).toHaveBeenCalledTimes(1);
-    expect(host.endWait).toHaveBeenCalledTimes(1);
     expect(target.querySelector('[role="alert"]')).not.toBeNull();
+    expect(host.endWait).not.toHaveBeenCalled();
     await click(target, '[data-reel-publish-submit]');
-    expect(host.adopt).toHaveBeenCalledTimes(2);
-    expect((host.adopt.mock.calls as unknown[][])[1][0]).toBe('t-1');
-    expect(deps.createPost).toHaveBeenCalledTimes(2);
-    expect(host.endWait).toHaveBeenCalledTimes(2);
+    expect(deps.enqueue).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(deps.enqueue).mock.calls[1][1].chatTakeId).toBe('t-1');
+    expect(host.endWait).not.toHaveBeenCalled();
   });
 });
 
