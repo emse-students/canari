@@ -103,12 +103,31 @@ describe('historyDigestRendezvous', () => {
     await expect(pending).resolves.toBeNull();
   });
 
-  it('gives a late digest to every request still waiting for that peer', async () => {
+  it('gives one probe to ONE waiter, the oldest - one ask is answered once', async () => {
+    // Reproduces 2026-11-24: an answerer elected twice for one asker held two waiters, and the one
+    // probe woke both - so it answered the same requestId twice, and the asker refused the second
+    // answer at error. The second election's own probe is what wakes the second waiter.
+    const first = awaitProbe(GROUP, PEER, 5000);
+    const second = awaitProbe(GROUP, PEER, 5000);
+    let secondSettled = false;
+    void second.then(() => (secondSettled = true));
+    expect(noteProbeReceived(GROUP, PEER, solicited(digest))).toBe(true);
+    await expect(first).resolves.toEqual(solicited(digest));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(secondSettled).toBe(false);
+
+    const again = { ...solicited(other), requestId: 'ask-00000002' };
+    expect(noteProbeReceived(GROUP, PEER, again)).toBe(true);
+    await expect(second).resolves.toEqual(again);
+  });
+
+  it('ends a waiter whose probe never comes on its deadline, after another took the one probe', async () => {
     const first = awaitProbe(GROUP, PEER, 5000);
     const second = awaitProbe(GROUP, PEER, 5000);
     noteDigestReceived(GROUP, PEER, digest);
     await expect(first).resolves.toEqual(solicited(digest));
-    await expect(second).resolves.toEqual(solicited(digest));
+    await vi.advanceTimersByTimeAsync(5000);
+    await expect(second).resolves.toBeNull();
   });
 
   it('lets a second waiter survive the first one timing out', async () => {
@@ -213,12 +232,13 @@ describe('historyDigestRendezvous', () => {
       await expect(awaitProbe(GROUP, PEER, 2000)).resolves.toEqual(solicited(digest, 0));
     });
 
-    it('gives every waiter the SAME window, not just the first', async () => {
+    it('gives each waiter the window of the probe it took', async () => {
       const first = awaitProbe(GROUP, PEER, 5000);
       const second = awaitProbe(GROUP, PEER, 5000);
       noteDigestReceived(GROUP, PEER, digest, 42_000);
+      noteDigestReceived(GROUP, PEER, digest, 43_000);
       await expect(first).resolves.toEqual(solicited(digest, 42_000));
-      await expect(second).resolves.toEqual(solicited(digest, 42_000));
+      await expect(second).resolves.toEqual(solicited(digest, 43_000));
     });
   });
 

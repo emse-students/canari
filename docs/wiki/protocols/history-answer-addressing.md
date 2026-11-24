@@ -138,7 +138,12 @@ a member of any age, and that push is filtered for its own reader like every oth
      the ask for itself with its chunk marked `last`; once both have, the ask is gone, and a third
      device is refused at error, because nothing honest produces one. *Changed twice by the #2270
      reviews: the first build consumed the ask on the FIRST answerer and dropped the second one's
-     content at error; the second let any number of answerers in.* **The answerer is the device MLS
+     content at error; the second let any number of answerers in.* **One device answers one ask
+     once (2026-11-24):** the answerer's rendezvous (`historyDigestRendezvous.ts`, `noteProbeReceived`)
+     hands a probe to ONE waiting election, the oldest; it used to wake every election waiting for the
+     same asker, so a device elected twice answered the same `requestId` twice, and the asker took
+     the first copy and refused the second here (four conversations of a new web device on prod
+     `1.7.3`, every refused frame the same size as the answer just ingested - nothing was lost). **The answerer is the device MLS
      verified**: the decrypt compares the envelope's sending device with the credential and refuses
      a disagreement (`verifiedSender`), which it can do only when the envelope names one - so an
      addressed answer naming none is refused. chat-delivery has no device in its auth context (the

@@ -113,6 +113,15 @@ function purgeExpired(now: number): void {
  * The waiter is resolved and dropped rather than left to poll: the request half is on a deadline,
  * and a probe that lands one millisecond inside it must be used, not missed.
  *
+ * **ONE PROBE WAKES ONE WAITER - the oldest - and the others keep waiting.** A probe is one ask, and
+ * since answers are addressed (history-answer-addressing.md) it carries one `requestId` that the
+ * asker closes per answering device on that device's `last` chunk. Handing it to every waiter made a
+ * device elected twice for the same asker answer the SAME ask twice, chunk for chunk; the asker
+ * ingested the first copy and refused the second at error (`[HISTORY_ADDRESSED] REFUSED ... its
+ * answerers are all taken`), measured on a new web device on 2026-11-24 in four conversations. A
+ * second election comes with its own probe, which wakes the next waiter; a waiter whose probe never
+ * comes ends as before, on its deadline.
+ *
  * **Returns whether a live waiter took it**, which is the caller's only way to tell a probe that
  * answered a wait from one that arrived after the wait ended. The second is not a lost cause - see
  * `takeDigestSolicitation` - but it is a different road, and nothing else here distinguishes them.
@@ -128,8 +137,10 @@ export function noteProbeReceived(
 
   const pending = waiters.get(k);
   if (pending && pending.length > 0) {
-    waiters.delete(k);
-    for (const resolve of pending) resolve(probe);
+    const [oldest, ...rest] = pending;
+    if (rest.length > 0) waiters.set(k, rest);
+    else waiters.delete(k);
+    oldest(probe);
     return true;
   }
   probes.set(k, { probe, at: now });
