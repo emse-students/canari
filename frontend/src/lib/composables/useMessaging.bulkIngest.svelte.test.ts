@@ -469,8 +469,8 @@ describe('addMessageToChat during a bulk-ingest window', () => {
    * that key "vanished" and dropped them: the ledger emptied, the frames were acknowledged, the photo
    * stayed a caption for good. They are written where the thread lives now.
    */
-  for (const how of ['the move recorded', 'only the shown preview to find it by'] as const) {
-    it(`stores a framed upgrade and a framed sibling under the new key after a re-key mid-window (${how})`, async () => {
+  {
+    it('stores a framed upgrade and a framed sibling under the new key after a re-key mid-window', async () => {
       forgetConversationMoves();
       const messaging = useMessaging();
       const { ctx, conversations } = makeContext();
@@ -504,7 +504,7 @@ describe('addMessageToChat during a bulk-ingest window', () => {
       const moved = conversations.get(CONVO) as Conversation;
       conversations.delete(CONVO);
       conversations.set('g2', { ...moved, id: 'g2', name: 'g2' });
-      if (how === 'the move recorded') recordConversationMove(CONVO, 'g2');
+      recordConversationMove(CONVO, 'g2');
       expect([...ledger.framesLeftUnstored()].sort()).toEqual(['f-sibling', 'f-upgrade']);
 
       await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
@@ -517,6 +517,57 @@ describe('addMessageToChat during a bulk-ingest window', () => {
       forgetConversationMoves();
     });
   }
+
+  /**
+   * NEVER ROUTED BY A MESSAGE ID (third review of #4054, principle 1). A message id is chosen by its
+   * SENDER: a member of X and Y sends into X an id Y shows, X is removed mid-window, and the close
+   * used to find "the conversation showing one of these ids" - Y - and write every row X held into
+   * it, a third member's included: shown, stored, acknowledged, passed on in Y's history. Held rows
+   * follow only a recorded move; with none, X's rows are dropped as removed, their frames named.
+   */
+  it("writes nothing of a removed conversation's buffer into another that shows one of its ids", async () => {
+    forgetConversationMoves();
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    conversations.set('y', {
+      id: 'y',
+      name: 'y',
+      messages: [
+        {
+          id: 'y-1',
+          senderId: 'both-member',
+          content: 'in y',
+          timestamp: new Date(1_700_000_000_000),
+          isOwn: false,
+        },
+      ],
+      unreadCount: 0,
+      lastMessageAt: 0,
+    } as never);
+    const ledger = messaging.bulkIngestObserver(() => ctx);
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.addMessageToChat('both-member', 'collides', CONVO, ctx, {
+      messageId: 'y-1',
+      frameId: 'f-collide',
+    });
+    await messaging.addMessageToChat('x-only-member', 'secret to x', CONVO, ctx, {
+      messageId: 'x-secret',
+      frameId: 'f-secret',
+    });
+    conversations.delete(CONVO);
+
+    await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
+
+    expect((conversations.get('y')?.messages ?? []).map((m) => m.id)).toEqual(['y-1']);
+    expect(conversations.get('y')?.messages[0].content).toBe('in y');
+    expect(saveMessage).not.toHaveBeenCalled();
+    const dropLine = warn.mock.calls.map((c) => String(c[0])).find((l) => l.includes('dropped'));
+    expect(dropLine).toContain('f-collide');
+    expect(dropLine).toContain('f-secret');
+    expect(ledger.framesLeftUnstored().size).toBe(0);
+  });
 
   /**
    * A REAL REMOVAL during the window is the one case its framed rows are dropped - said with their

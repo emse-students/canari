@@ -61,6 +61,7 @@ type MessagingContext = import('./useMessaging.svelte').MessagingContext;
 import type { Conversation } from '$lib/types';
 import type { PendingMutation } from '$lib/db/types';
 import { envelopeBodyText, mkTextEnvelope, serializeEnvelope } from '$lib/envelope';
+import { recordConversationMove } from '../utils/chat/conversationMoves';
 
 const ME = 'me-user-id';
 const PEER = 'peer-user-id';
@@ -1035,6 +1036,8 @@ describe('a checkpoint during a bulk-ingest window (rows before ratchet)', () =>
     const thread = conversations.get(CONVO)!;
     conversations.delete(CONVO);
     conversations.set('joined-group', { ...thread, id: 'joined-group' });
+    // ...and records the move as a FACT, which is all a held row is routed by (review of #4054).
+    recordConversationMove(CONVO, 'joined-group');
 
     (await messaging.holdRowsForCheckpoint(ctx))();
     const row = saveMessage.mock.calls.map(([r]) => r as { id: string; conversationId: string });
@@ -1087,6 +1090,8 @@ describe('a checkpoint during a bulk-ingest window (rows before ratchet)', () =>
     const thread = conversations.get(CONVO)!;
     conversations.delete(CONVO);
     conversations.set('joined-group', { ...thread, id: 'joined-group' });
+    // ...and records the move as a FACT, which is all a held row is routed by (review of #4054).
+    recordConversationMove(CONVO, 'joined-group');
 
     (await messaging.holdRowsForCheckpoint(ctx))();
     const rows = saveMessage.mock.calls.map(([r]) => r as { id: string; conversationId: string });
@@ -1604,9 +1609,9 @@ describe('the orphan buffer (rows before ratchet)', () => {
       frameId: 'q-throw',
     });
     admit(conversations);
-    // The settle's batch, its anchor read, and the same hold's rerun all throw.
+    // The settle's batch and the same hold's rerun both throw (a kept batch reads no anchor any more).
     const realGet = conversations.get.bind(conversations);
-    let throws = 3;
+    let throws = 2;
     vi.spyOn(conversations, 'get').mockImplementation((key: string) => {
       if (key === ORPHAN_KEY && throws > 0) {
         throws -= 1;

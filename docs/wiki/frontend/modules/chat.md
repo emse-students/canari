@@ -3583,14 +3583,21 @@ INFO).
   carried to the next one with one WARN (`noteBufferedRowsCarried`), and **every buffered frame is in
   `framesLeftUnstored`**, so its ack is withheld until a store takes it. The store takes each
   conversation's rows at its own turn (a throw between two leaves the rest in the buffer), a close
-  ends only ITS window (`openBufferingWindows`, a count: windows overlap), and a sign-out
+  ends only ITS window (`openBufferingWindows`, a count: windows overlap), the drain's end closes
+  its window in a `finally` (a synchronous throw before it left the window open for the page's
+  life, `BaseMlsService`), and a sign-out
   (`forgetAccount`) forgets the leaving account's buffer, kept batches and kept writes, said in one line;
 - **a row is written where its thread lives NOW.** A Welcome folding a duplicate DM onto the group it
   joined re-keys the thread mid-window, and the close found the old key "vanished" and dropped the
   rows - then acknowledged their frames: an upgrade stayed a caption for good. The re-key is now a
-  FACT (`recordConversationMove`, `utils/chat/conversationMoves.ts`), and ONE resolver
-  (`homeOfRows`) answers for the buffer, the framed orphans, the kept batches and the kept writes:
-  the key itself, else where it moved, else the conversation showing one of its rows, else nowhere.
+  FACT (`recordConversationMove`, `utils/chat/conversationMoves.ts`), written by both writers that
+  re-key a thread (the Welcome's fold and the boot merge), and ONE resolver (`homeOfRows`) answers
+  for the buffer, the framed orphans, the kept batches and the kept writes: the key itself, else
+  where it moved, else nowhere. **Never by a message id** (third review, principle 1): the resolver
+  also took "the conversation that shows one of these ids", and an id is chosen by its SENDER - a
+  member of two conversations sending into one an id the other shows, with the first removed
+  mid-window, sent every row it held, a third member's included, into the other: shown, stored,
+  acknowledged and passed on in its history. The kept batches' "anchors" went with it.
   With no home, the rows are held as framed orphans (`orphanHeldMessages`, also where
   `batchAddMessages` sends a batch whose conversation is gone), dropped - said with their frames -
   only on a real removal (`ORPHAN_REMOVERS`);

@@ -216,8 +216,6 @@ import type { MediaLoudness } from '$lib/video/loudnessMeter';
 interface KeptBatch {
   contactName: string;
   messages: Array<{ senderId: string; content: string } & AddMessageToChatOptions>;
-  /** Ids its thread showed when it was kept: how a re-keyed thread is found again. */
-  anchors: string[];
   /**
    * Kept by a live add that threw (`addMessageToChat`), possibly AFTER its render: its rerun asks
    * the STORE whether each row stands, never memory - a message on screen proves nothing about
@@ -757,50 +755,26 @@ export function useMessaging() {
   /**
    * WHERE ROWS HELD UNDER `key` LIVE NOW - the ONE answer for every store that holds rows under a
    * key: the bulk buffer, the framed orphans, the kept batches and the kept writes. Its own key
-   * while it is in the map; else the key its thread MOVED to, a fact the Welcome's re-key writes
-   * ({@link movedKeyOf}); else the conversation that shows one of `shownIds` (a move made before
-   * that fact was written, the boot merge); else nowhere - deleted or purged ({@link ORPHAN_REMOVERS}).
+   * while it is in the map; else the key its thread MOVED to, a fact written by the two writers that
+   * re-key a thread (the Welcome's fold and the boot merge, {@link movedKeyOf}); else nowhere -
+   * deleted or purged ({@link ORPHAN_REMOVERS}).
+   *
+   * **NEVER BY A MESSAGE ID** (third review of #4054, principle 1). It also answered "the
+   * conversation that shows one of these ids", and a message id is chosen by its SENDER: a member
+   * of X and Y sending into X an id Y shows, with X removed mid-window, sent every row X held - a
+   * third member's included - into Y, shown, stored, acked, and passed on in Y's history. A row's
+   * conversation is decided by a fact this device wrote, never by what the row says of itself.
    */
-  function homeOfRows(
-    ctx: MessagingContext,
-    key: string,
-    shownIds: Iterable<string | undefined>
-  ): string | null {
+  function homeOfRows(ctx: MessagingContext, key: string): string | null {
+    if (ctx.conversations.has(key)) return key;
     const normalized = key.toLowerCase();
     if (ctx.conversations.has(normalized)) return normalized;
     const moved = movedKeyOf(normalized);
     if (moved !== null && ctx.conversations.has(moved)) return moved;
-    const ids = new SvelteSet<string>();
-    for (const id of shownIds) if (id) ids.add(id);
-    if (ids.size === 0) return null;
-    for (const [home, convo] of ctx.conversations) {
-      if (convo.messages.some((m) => ids.has(m.id))) return home;
-    }
     return null;
   }
 
-  /** Where a kept batch's thread lives NOW, found by what it showed when kept (`anchors`). */
-  function homeOfBatch(ctx: MessagingContext, kept: KeptBatch): string | null {
-    return homeOfRows(ctx, kept.contactName, kept.anchors);
-  }
-
-  /**
-   * Where messages held for `key` (buffered, or orphaned) live NOW. An upgrade's own id is a row its
-   * thread shows, so it finds a moved thread too; a new row's id is shown nowhere and costs nothing.
-   */
-  function homeOfHeld(
-    ctx: MessagingContext,
-    key: string,
-    messages: ReadonlyArray<Pick<AddMessageToChatOptions, 'messageId'>>
-  ): string | null {
-    return homeOfRows(
-      ctx,
-      key,
-      messages.map((message) => normalizeMessageId(message.messageId))
-    );
-  }
-
-  /** Keeps a batch that threw, anchored to what its thread shows now, and says it ONCE per batch. */
+  /** Keeps a batch that threw, and says it ONCE per batch. */
   function keepThrownBatch(
     ctx: MessagingContext,
     contactName: string,
@@ -813,15 +787,6 @@ export function useMessaging() {
       unstoredBatches.push({ ...already, contactName });
       return;
     }
-    let anchors: string[] = [];
-    try {
-      anchors = (ctx.conversations.get(contactName)?.messages ?? []).slice(-3).map((m) => m.id);
-    } catch (readError) {
-      console.error(
-        `[ADD_MSG] the thread of "${contactName}" could not be read to anchor a kept batch:`,
-        readError
-      );
-    }
     console.error(
       `[ADD_MSG] storing ${messages.length} buffered message(s) of "${contactName}" threw (${origin}) - kept, and run again by the next store (said once for this batch):`,
       e
@@ -829,7 +794,6 @@ export function useMessaging() {
     unstoredBatches.push({
       contactName,
       messages,
-      anchors,
       ...(origin === 'dispatch' ? { storeDecides: true as const } : {}),
     });
   }
@@ -918,11 +882,7 @@ export function useMessaging() {
       if (framed.length === 0) continue;
       // Read BEFORE the buffer changes: a throw here leaves every entry where it was. A thread that
       // MOVED (the Welcome's re-key) is followed to its new key, never dropped as removed.
-      const home = homeOfHeld(
-        ctx,
-        key,
-        framed.map((entry) => entry.options)
-      );
+      const home = homeOfRows(ctx, key);
       const unframed = entries.filter((entry) => !entry.options.frameId);
       if (unframed.length > 0) orphanBuffer.set(key, unframed);
       else orphanBuffer.delete(key);
@@ -1049,25 +1009,11 @@ export function useMessaging() {
   }
 
   /**
-   * Where a kept write's rows live NOW: its own conversation while it is in the map; else the one
-   * that SHOWS them - a 1:1 re-keyed onto the group it joined carries its rows under the new key
-   * (`setupMessageHandler`, the Welcome's re-key); else nowhere - deleted or purged since.
-   */
-  function homeOfWrite(ctx: MessagingContext, write: BatchRowWrite): string | null {
-    if (ctx.conversations.has(write.conversationId)) return write.conversationId;
-    return homeOfRows(
-      ctx,
-      write.conversationId,
-      [...write.upgradeRows, ...write.newRows].map((row) => row.id)
-    );
-  }
-
-  /**
    * Retries every write {@link unstoredRowWrites} holds; returns how many rows still stand unstored.
    *
-   * A WRITE WHOSE ROWS NO CONVERSATION SHOWS ANY MORE IS DROPPED, not retried: the conversation was
-   * deleted or purged since, and writing its rows back would resurrect what the reader removed. One
-   * that MOVED (a re-key) is written under the key that shows it.
+   * A WRITE WHOSE CONVERSATION IS GONE IS DROPPED, not retried: the conversation was deleted or
+   * purged since, and writing its rows back would resurrect what the reader removed. One that MOVED
+   * (a re-key, recorded as a fact) is written under its new key ({@link homeOfRows}).
    *
    * A WRITE THAT LANDS SETTLES WHAT ARRIVED MEANWHILE: an edit, a deletion or a reaction that met
    * the row shown and not stored was kept "for its write" (`settlePendingFor`), and this IS its
@@ -1090,7 +1036,7 @@ export function useMessaging() {
     for (const [index, kept] of pending.entries()) {
       let write = kept;
       try {
-        const home = homeOfWrite(ctx, kept);
+        const home = homeOfRows(ctx, kept.conversationId);
         if (home === null) {
           dropped += 1;
           continue;
@@ -1182,7 +1128,7 @@ export function useMessaging() {
         for (const [index, batch] of kept.entries()) {
           let home: string | null = null;
           try {
-            home = homeOfBatch(ctx, batch);
+            home = homeOfRows(ctx, batch.contactName);
             if (home === null) {
               dropped += batch.messages.length;
               continue;
@@ -1229,7 +1175,7 @@ export function useMessaging() {
               try {
                 // WHERE ITS THREAD IS NOW: a Welcome's re-key during the window moved it under the
                 // joined group's key (review of #4054).
-                home = homeOfHeld(ctx, contactName, messages);
+                home = homeOfRows(ctx, contactName);
                 if (home === null) {
                   // No conversation holds it any more: held as orphans, settled below - stored if
                   // it comes back, dropped and said if it was removed. Never dropped HERE.
