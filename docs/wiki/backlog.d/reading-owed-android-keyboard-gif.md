@@ -17,3 +17,5 @@ disponibles ici", logcat must show `KeyboardMedia: input connection wrapped` the
 other account as an animated media message. Then the same in a post's comment box and in the post
 composer, and once in a field that refuses (a message being edited): the toast "Les GIF ne peuvent
 pas etre ajoutes ici" and a `KeyboardMedia` line naming `chat-edit`.
+
+**2026-11-24, [`1.8.0-alpha.5`](../device-verification.md#the-readings-of-2026-11-24-180-alpha5-mi-9t-sign-out-and-sign-in-the-comment-push-the-hidden-tab-the-notification-state-the-keyboard-gif-the-voice-note-under-a-banner) (Mi 9T, Gboard): the DM half PASS.** No "GIF non disponibles ici"; `KeyboardMedia: input connection wrapped`, `keyboard committed 1 item(s)`, `dispatching keyboard media: 102446 bytes`; the web peer received an animated `tenor_gif....gif`. **Left:** the post comment box, the post composer, and the refusing field (a message being edited: toast and the `chat-edit` line).
