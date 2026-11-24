@@ -436,6 +436,37 @@ describe('the notifications erase is owed on disk until done (review of #3938)',
     error.mockRestore();
   });
 
+  it('a performed erase forgets what was published: the same list is donated again', async () => {
+    platform = 'ios';
+    const list = [group('a', 'A', 2)];
+    syncShareTargets(input(list), 'test');
+    await settle();
+    expect(calls(PUBLISH)).toHaveLength(1);
+    // A late erase (the previous account's owed one) wipes the suggestions along with the rest.
+    owing(4);
+    await honourOwedNotificationErase('late');
+    expect(calls(CLEAR_CONVERSATIONS)).toHaveLength(1);
+    invoke.mockImplementation(async (cmd: string) => (cmd === PUBLISH ? CLEAN : 0));
+    syncShareTargets(input(list), 'test');
+    await settle();
+    expect(calls(PUBLISH)).toHaveLength(2);
+  });
+
+  it('a failed erase keeps the publish state: nothing was wiped, nothing is re-donated', async () => {
+    platform = 'ios';
+    const list = [group('a', 'A', 2)];
+    syncShareTargets(input(list), 'test');
+    await settle();
+    owing(4, true);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await honourOwedNotificationErase('late');
+    error.mockRestore();
+    invoke.mockImplementation(async (cmd: string) => (cmd === PUBLISH ? CLEAN : 0));
+    syncShareTargets(input(list), 'test');
+    await settle();
+    expect(calls(PUBLISH)).toHaveLength(1);
+  });
+
   it('at launch, an erase still owed is completed and settled', async () => {
     platform = 'ios';
     owing(2);

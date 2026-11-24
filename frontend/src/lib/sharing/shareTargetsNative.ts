@@ -301,6 +301,15 @@ function eraseNotificationShortcuts(
       const removed = await invoke<number>(galleryCommand('clearConversationShortcuts'));
       // iOS deletes a donation group without counting it, so it always answers 0.
       Log.i('ShareTargets', `conversation shortcuts erased, ${removed} counted (${reason})`);
+      // The erase took the share suggestions too (iOS deletes every donation, the suggestions'
+      // group included), so what the native side holds is no longer what `lastPublished` says.
+      // Forget it and the next publish donates again by fact. Same queue as publish: ordered.
+      lastPublished = null;
+      lastTargets = null;
+      Log.d(
+        'ShareTargets',
+        `publish state reset after the conversation shortcuts erase (${reason})`
+      );
     } catch (err) {
       console.error(
         `[share-targets] the conversation shortcuts were not erased - still owed (${reason})`,
