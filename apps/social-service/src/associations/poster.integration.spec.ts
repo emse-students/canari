@@ -27,6 +27,7 @@ import { PosterProject } from './entities/poster-project.entity';
 import { PosterZone } from './entities/poster-zone.entity';
 import { PosterEntry } from './entities/poster-entry.entity';
 import { AssociationPermissionFlag } from './entities/association-member.entity';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -534,6 +535,20 @@ maybe('PosterService on the migrated schema (scope, publication, legacy read)', 
       [ID.live]
     );
     expect(rows[0]).toEqual({ name: 'Carte live', live: true });
+
+    takeLogged(
+      'warn',
+      /^\[CARTE\] fsss-man asked for map [0-9a-f-]{36} of a space it does not manage - answered 404$/,
+      7
+    );
+    takeLogged(
+      'warn',
+      /^\[CARTE\] bde-mana asked for map [0-9a-f-]{36} of a space it does not manage - answered 404$/
+    );
+    takeLogged(
+      'warn',
+      /^\[CARTE\] fsss-man tried to create a map in space [0-9a-f-]{36}, which it does not manage - answered 404$/
+    );
   });
 
   it('offers a new association of the space with no switch, and keeps it off the live map until switched on', async () => {
@@ -551,6 +566,15 @@ maybe('PosterService on the migrated schema (scope, publication, legacy read)', 
     await expect(
       refusal(service.publish(ID.live, { carte: carte([ID.a1, ID.a4]), fingerprint: FP }, BDE))
     ).resolves.toBe('written');
+
+    takeLogged(
+      'warn',
+      /^\[CARTE\] publish of map [0-9a-f-]{36} refused: CARTE_UNIT_OUTSIDE_MAP \(1 of 2 units and 0 of 0 directory lines off or outside the space\)$/
+    );
+    takeLogged(
+      'warn',
+      /^\[CARTE\] switches of map [0-9a-f-]{36} refused: 1 association\(s\) not of space [0-9a-f-]{36}$/
+    );
   });
 
   it("publishing replaces only the same space's live map", async () => {
@@ -600,6 +624,15 @@ maybe('PosterService on the migrated schema (scope, publication, legacy read)', 
     await expect(service.getSoleLegacyPublished()).resolves.toBeNull();
     await service.unpublish(ID.fsssMap, FSSS);
     await expect(service.getSoleLegacyPublished()).resolves.toMatchObject({ name: 'Carte 2027' });
+
+    takeLogged(
+      'warn',
+      '[LEGACY] GET public/carte with no space while several maps are live - refused'
+    );
+    takeLogged(
+      'warn',
+      /^\[LEGACY\] GET public\/carte with no space - served the only live map [0-9a-f-]{36}; the showcase should send \?space=$/
+    );
   });
 
   it('attaches an unattached map once, seeding ON what its layout placed, and never moves it again', async () => {
@@ -613,6 +646,8 @@ maybe('PosterService on the migrated schema (scope, publication, legacy read)', 
     await expect(refusal(service.update(ID.bdeDraft, { spaceId: ID.icm }, ADMIN))).resolves.toBe(
       'CARTE_ALREADY_ATTACHED'
     );
+
+    takeLogged('warn', /^\[CARTE\] map [0-9a-f-]{36} asked to move from [0-9a-f-]{36} - refused$/);
   });
 
   // The platform admin's roster shows the review accounts; no public roster may carry one, and the
@@ -656,5 +691,10 @@ maybe('PosterService on the migrated schema (scope, publication, legacy read)', 
       if (before === undefined) delete process.env.SERVICE_ACCOUNT_USER_ID;
       else process.env.SERVICE_ACCOUNT_USER_ID = before;
     }
+
+    takeLogged(
+      'warn',
+      /^\[CARTE\] publish of map [0-9a-f-]{36} dropped 1 card\(s\) and 1 roster member\(s\) of accounts no public roster carries \(non-members, review accounts\) - a stale editor$/
+    );
   });
 });

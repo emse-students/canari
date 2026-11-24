@@ -59,6 +59,7 @@ import { BookingNotificationsService } from './booking-notifications.service';
 import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
 import { BookingReminderScheduler } from './booking-reminder.scheduler';
 import type { PostNotificationsService } from '../posts/post-notifications.service';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -559,6 +560,8 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       expect(outcome.status).toBe('rejected');
       const reason = (outcome as PromiseRejectedResult).reason as HttpException;
       expect(reason.getResponse()).toEqual({ code: 'try-again' });
+
+      takeLogged('error', /^\[BOOKINGS\] deadlock while booking resource=[0-9a-f]{6,8}$/);
     }, 30_000);
   });
 
@@ -1053,6 +1056,8 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       } finally {
         spy.mockRestore();
       }
+
+      takeLogged('warn', '[BOOKINGS] spaceSlots: booking vanished between reads, unit skipped');
     });
   });
 
@@ -1746,6 +1751,11 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       } finally {
         profileDown = false;
       }
+
+      takeLogged(
+        'error',
+        '[BOOKINGS] listedSpaces: profile unavailable, the spaces whose audience needs it are left out of this answer: core-service is down'
+      );
     });
 
     // D32: a space open to either of a person's cursus is open to them - listed and usable - and
@@ -1922,6 +1932,8 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       expect(await refusal(fetchIcs(id, path))).toEqual({
         code: 'booking-cancelled',
       });
+
+      takeLogged('warn', '[BOOKINGS] calendarIcs: a signature was refused', 7);
     });
 
     it('stops a link when its recipient stops being of the booking, or is erased', async () => {
@@ -2353,6 +2365,13 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
           )
         )
       ).toEqual({ code: 'association-not-found' });
+
+      takeLogged(
+        'warn',
+        '[BOOKINGS] question q keeps a stored image - a booking question has none since 2026-11-06; kept, not refused',
+        3
+      );
+      takeLogged('warn', /^\[BOOKINGS\] create refused: association [0-9a-f-]{36} does not exist$/);
     });
 
     it('caps personal spaces per account and resources per space', async () => {

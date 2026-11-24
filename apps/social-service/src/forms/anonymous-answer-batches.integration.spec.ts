@@ -40,6 +40,7 @@ import {
 import { lockFormSeats } from './seat-hold';
 import { AnonymousAnswerReleaseScheduler } from './anonymous-answer-release.scheduler';
 import { retireForms } from './retire-forms';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -434,6 +435,11 @@ maybe('anonymous answers stored in batches, against PostgreSQL (migration 178)',
       response: { code: 'FORM_ANSWER_PAID' },
     });
     expect(await n(`SELECT count(*) AS n FROM submissions WHERE id = $1`, [id])).toBe(1);
+
+    takeLogged(
+      'warn',
+      /^\[Forms\] Submission [0-9a-f-]{36} NOT deleted by oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo: its payment was received \(paid\) - refund or cancel it instead$/
+    );
   });
 
   it('refuses to release outside a transaction, where the form lock would not hold', async () => {

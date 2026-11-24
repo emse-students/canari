@@ -42,6 +42,7 @@ import {
   createNotificationPreferenceTable,
   turnSuggestionsOffInApp,
 } from './post-notifications.it-schema';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -485,6 +486,15 @@ maybe('Pour toi against PostgreSQL (feed=foryou)', () => {
     fake.state.failReads = true;
     expect(await refusal(rows('foryou', after(first, 3)))).toEqual([503, RANKING_UNAVAILABLE]);
     await cleanUp();
+
+    takeLogged(
+      'error',
+      /^\[RANKED\] foryou:-: the ranking of \d{4}-\d{2}-\d{2}T[0-9:.]+Z could not be kept - 503: fake redis: write refused$/
+    );
+    takeLogged(
+      'error',
+      /^\[RANKED\] foryou:-: the ranking of \d{4}-\d{2}-\d{2}T[0-9:.]+Z could not be read - 503: fake redis: read refused$/
+    );
   });
 
   it('a page that mixes two shapes of the list is a 400', async () => {
@@ -505,6 +515,13 @@ maybe('Pour toi against PostgreSQL (feed=foryou)', () => {
       400,
       RANKING_PAGE_INVALID,
     ]);
+
+    takeLogged(
+      'warn',
+      '[RANKED] foryou:-: a page at offset 3 without the asOf of its ranking - refused'
+    );
+    takeLogged('warn', '[RANKED] foryou:-: offset 3 with a tail cursor, window of 7 - refused');
+    takeLogged('warn', '[RANKED] foryou:-: offset 50 without a tail cursor, window of 7 - refused');
   });
 
   it('two readers with the same asOf each page their own ranking', async () => {

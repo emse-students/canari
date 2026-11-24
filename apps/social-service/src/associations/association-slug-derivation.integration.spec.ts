@@ -23,6 +23,7 @@ import { Association } from './entities/association.entity';
 import { AssociationProduct } from './entities/association-product.entity';
 import { AssociationAudience } from '../spaces/association-audience.entity';
 import { Space } from '../spaces/space.entity';
+import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -100,6 +101,16 @@ maybe('association slug derivation against PostgreSQL', () => {
     expect(third.slug).toBe('club-3');
     expect(await slugsNamed('club')).toEqual(['club', 'club-2', 'club-3']);
     expect(await audiences.count({ where: { associationId: third.id } })).toBe(1);
+
+    takeLogged(
+      'warn',
+      '[COTISATION] stem "club" refused for assoc=new: its tag names can coincide with another association\'s',
+      2
+    );
+    takeLogged(
+      'warn',
+      '[COTISATION] stem "club-2" refused for assoc=new: its tag names can coincide with another association\'s'
+    );
   });
 
   it('two concurrent creates of one name both succeed with distinct slugs', async () => {
@@ -107,6 +118,11 @@ maybe('association slug derivation against PostgreSQL', () => {
 
     expect(a.slug).not.toBe(b.slug);
     expect(await slugsNamed('photo')).toEqual(['photo', 'photo-2']);
+
+    takeLogged(
+      'warn',
+      '[COTISATION] stem "photo" refused for assoc=new: its tag names can coincide with another association\'s'
+    );
   });
 
   it('a failure that is not a unique violation leaves no row', async () => {
@@ -125,6 +141,11 @@ maybe('association slug derivation against PostgreSQL', () => {
       constraint: 'other_unique',
     });
     expect(await slugsNamed('solo')).toEqual(['solo']);
+
+    takeLogged(
+      'warn',
+      '[COTISATION] stem "solo" refused for assoc=new: its tag names can coincide with another association\'s'
+    );
   });
 
   it('a derived slug whose cotisation tags would coincide with another association walks on', async () => {
@@ -133,6 +154,11 @@ maybe('association slug derivation against PostgreSQL', () => {
 
     // `cotis-2026-2027` beside `cotis` would make a lifetime tag of one a dated tag of the other.
     expect(dated.slug).toBe('cotis-2026-2027-2');
+
+    takeLogged(
+      'warn',
+      '[COTISATION] stem "cotis-2026-2027" refused for assoc=new: its tag names can coincide with another association\'s'
+    );
   });
 
   it('a slug constraint under ANOTHER name still walks (production is not built by synchronize)', async () => {
@@ -154,6 +180,11 @@ maybe('association slug derivation against PostgreSQL', () => {
         `ALTER TABLE associations RENAME CONSTRAINT hand_named_live_key TO "${conname}"`
       );
     }
+
+    takeLogged(
+      'warn',
+      '[COTISATION] stem "renamed" refused for assoc=new: its tag names can coincide with another association\'s'
+    );
   });
 
   it('an explicit slug is still refused when taken, and a reserved one is refused', async () => {

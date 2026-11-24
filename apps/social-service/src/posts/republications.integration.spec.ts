@@ -217,7 +217,10 @@ maybe('republication and proposals against PostgreSQL (migrations 071-073)', () 
         return Promise.resolve(recipientIds.length);
       },
     } as unknown as PostNotificationsService;
-    const redis = { deleteByPattern: () => Promise.resolve(0) } as unknown as RedisService;
+    const redis = {
+      incr: () => Promise.resolve(1),
+      deleteByPattern: () => Promise.resolve(0),
+    } as unknown as RedisService;
     proposals = new ProposalsService(ds.getRepository(Proposal), associations);
     republications = new RepublicationsService(
       ds.getRepository(PostRepublication),
