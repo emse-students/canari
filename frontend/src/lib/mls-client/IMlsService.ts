@@ -454,6 +454,59 @@ export class GroupDrainAbandonedError extends Error {
 }
 
 /**
+ * What a pending drain wait - {@link IMlsService.whenGroupDrained}, {@link IMlsService.whenInitialDrainSettled},
+ * and so {@link IMlsService.whenDistributionEpochSettled} - rejects with when a pull ENDED without
+ * emptying the mailbox, whatever ended it: a refused page (`PendingPullIncompleteError`), a page of
+ * one row that never arrived (`PendingPageNeverArrivedError`), a deadline, a transport failure, any
+ * other throw. Only a revoked device's pull settles nothing (its service is wiped next).
+ *
+ * THE FAILED PULL IS THE PROOF that settles the wait, the way a destroy is
+ * ({@link GroupDrainAbandonedError}): the mailbox state is UNKNOWN, and a waiter left pending would
+ * wait for whatever next pull happens to come - on a quiet account whose history service answers
+ * 502 while the gateway stays up, none may come for hours. Each caller decides what an unknown
+ * mailbox means for it, explicitly: decode now, or defer to the next COMPLETE pull by waiting again
+ * ({@link untilListedWhole}). A wait registered after the rejection is settled by the NEXT pull's
+ * end, whichever way it ends - an event, never a clock.
+ *
+ * `groupId` is null for the initial drain, which is about the whole mailbox.
+ */
+export class MailboxListingIncompleteError extends Error {
+  constructor(
+    readonly groupId: string | null,
+    /** What ended the pull, as it said it. For a log line only - never branched on. */
+    readonly endedBy: Error
+  ) {
+    super(
+      `the mailbox was not listed whole${groupId ? ` for key group ${groupId.slice(0, 8)}` : ''}: ${endedBy.message}`
+    );
+    this.name = 'MailboxListingIncompleteError';
+  }
+}
+
+/**
+ * Waits on a drain proof (`wait`), and DEFERS to the next complete pull for as long as pulls end
+ * incomplete: each {@link MailboxListingIncompleteError} is said, once, and the wait registered
+ * again - for the caller that must not act on a mailbox state it does not know (an epoch verdict,
+ * a commit rebuilt on the epoch the queue reached, a request sealed at the group's epoch).
+ *
+ * Terminates on events only: each round consumes one pull that ended, and a complete one resolves
+ * it. Every other rejection ({@link GroupDrainAbandonedError} above all) is the caller's, thrown as
+ * itself.
+ *
+ * @param what Who waits, for the deferral line.
+ */
+export async function untilListedWhole<T>(wait: () => Promise<T>, what: string): Promise<T> {
+  for (;;) {
+    try {
+      return await wait();
+    } catch (e) {
+      if (!(e instanceof MailboxListingIncompleteError)) throw e;
+      console.info(`[QUEUE] ${what} deferred to the next complete pull - ${e.message}`);
+    }
+  }
+}
+
+/**
  * Thrown by {@link IMlsService.init} when the saved local state did not open under the key in hand
  * and nothing proves it broken: a reason an OLD PIN may still cure (`rotated`, `undecryptable`)
  * under `noFreshStart`, and - WHATEVER the caller passed - a cause that proves nothing about the
@@ -1541,9 +1594,13 @@ export interface IMlsService {
    * Resolves once the FIRST pull of this session has emptied the mailbox and the scheduler has
    * applied it - never on a pull that failed half-way, whose rows are still on the server.
    *
-   * One-shot, and never resolved by a clock: an offline start-up simply keeps it pending until the
-   * reconnect's pull lands. It is the fact a verdict about a group's epoch needs - before it, "behind"
-   * may only mean "its commits are still queued".
+   * Never resolved by a clock: an offline start-up's failed pull rejects it (below), and a wait made
+   * after that is settled by the reconnect's pull. It is the fact a verdict about a group's epoch needs - before it, "behind" may only mean
+   * "its commits are still queued".
+   *
+   * @throws {MailboxListingIncompleteError} (as a rejection) when a pull ended without listing the
+   *   whole mailbox before any had: the promise asked for is settled by that event, and a call made
+   *   after it returns the next one, settled by the next pull's end.
    */
   whenInitialDrainSettled(): Promise<void>;
   /**
@@ -1565,6 +1622,9 @@ export interface IMlsService {
    * Resolves once nothing about `groupId`'s epoch is still being established: the initial drain has
    * settled and any {@link verifyDistributionEpoch} in flight for it has answered. What a request
    * about to be sealed on that group waits for, so it is never sealed at an epoch the group leaves.
+   *
+   * @throws {MailboxListingIncompleteError} (as a rejection) when the initial drain's pull ended
+   *   incomplete ({@link whenInitialDrainSettled}); an epoch check in flight defers by itself.
    */
   whenDistributionEpochSettled(groupId: string): Promise<void>;
   /** Wires who is told each {@link DistributionGapVerdict}. Set once, at startup; `null` at logout. */
@@ -1670,6 +1730,8 @@ export interface IMlsService {
    *
    * @throws {GroupDrainAbandonedError} (as a rejection) when the service is destroyed first, or
    *   already was when asked.
+   * @throws {MailboxListingIncompleteError} (as a rejection) when a pull ends without listing the
+   *   whole mailbox while it waits: the state is unknown, and the caller says what that means for it.
    */
   whenGroupDrained(groupId: string): Promise<void>;
   /**

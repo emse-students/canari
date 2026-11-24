@@ -7,7 +7,7 @@ import {
   type DelegatedCommitExecutors,
   type DelegatedCommitOp,
 } from '$lib/utils/chat/tabCommitDelegation';
-import { GroupDrainAbandonedError } from '$lib/mls-client/IMlsService';
+import { GroupDrainAbandonedError, untilListedWhole } from '$lib/mls-client/IMlsService';
 import { getTabLeadership } from '$lib/mls-client/tabLeader';
 import {
   type DistributionScope,
@@ -443,12 +443,17 @@ type AskGate = 'ask' | 'follower' | 'closed';
  * `closed`: the MLS service was destroyed, or the runtime is gone, before the wait ended - nobody is
  * left to send anything. Said, never thrown: the flush is a fire-and-forget promise, and a rejection
  * out of it would be unhandled.
+ *
+ * **A PULL THAT ENDED INCOMPLETE ASKS NOTHING YET** (`MailboxListingIncompleteError`): the seed may
+ * still be in the part of the mailbox nobody listed, so the flush DEFERS to the next complete pull
+ * (`untilListedWhole`, one line per deferral) - the asks stay outstanding, never dropped.
  */
 async function whenAskable(groupId: string, channelId: string): Promise<AskGate> {
   try {
     const { mlsService } = requireGraineRuntime('cannot ask for a missing seed');
-    await mlsService.whenDistributionEpochSettled(groupId);
-    await mlsService.whenGroupDrained(groupId);
+    const what = `the seed ask(s) of channel ${channelId.slice(0, 8)} on key group ${groupId.slice(0, 8)}...`;
+    await untilListedWhole(() => mlsService.whenDistributionEpochSettled(groupId), what);
+    await untilListedWhole(() => mlsService.whenGroupDrained(groupId), what);
   } catch (e) {
     if (e instanceof GroupDrainAbandonedError) {
       console.info(
@@ -1364,8 +1369,12 @@ async function askCommunityHistory(
   const groupId = mlsService.distributionGroupFor(scope);
   if (!groupId) throw new GraineDistributionUnavailableError(scope, 'key-group-unregistered');
 
-  // The same rule as a seed request, for the same reason: see {@link askedOn}.
-  await mlsService.whenDistributionEpochSettled(groupId);
+  // The same rule as a seed request, for the same reason: see {@link askedOn}. A pull that ends
+  // incomplete defers the ask to the next complete one - never sealed on an epoch still unknown.
+  await untilListedWhole(
+    () => mlsService.whenDistributionEpochSettled(groupId),
+    `the history ask of community ${workspaceId.slice(0, 8)}`
+  );
   if (isInEpochGap(groupId)) {
     const waiting = historyHeldForKeyGroup.get(groupId) ?? new Set<string>();
     waiting.add(workspaceId);

@@ -237,6 +237,20 @@ describe('the pending pull answered 401', () => {
     expect(limits(f).slice(0, 2)).toEqual(['500', '500']);
   });
 
+  it('a RESEND that stalls is asked again smaller, like the first ask', async () => {
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(answer(401))
+      .mockRejectedValueOnce(new Error('aborted'))
+      .mockResolvedValueOnce(page([{ createdAt: 'a' }]))
+      .mockResolvedValueOnce(page([]));
+    const refresh = vi.fn().mockResolvedValue('fresh');
+    const rows = await api(f, refresh).pullPendingMessagesJson();
+    expect(rows).toHaveLength(1);
+    expect(limits(f)).toEqual(['500', '500', '250', '250']);
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
   it('a renewal slower than the stall timer does not halve the page', async () => {
     vi.useFakeTimers();
     try {

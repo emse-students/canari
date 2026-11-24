@@ -135,6 +135,22 @@ function deferRows(ivs: Set<string>) {
   };
 }
 
+/**
+ * THE COLD PATHS, PAID ONCE BEFORE THE CASES. Every case is a few ms (measured 2026-11-23: 2 to 80 ms
+ * alone, the whole file in 4 s of which 70 % is module transform and import), so the 5 s timeout of a
+ * loaded full run never belonged to an assertion: it belonged to whichever case ran first and paid the
+ * first seal, the first IndexedDB open and the first page read on a starved worker. That cost is setup,
+ * so it gets a budget of its own here and the cases keep the default one. The SQLite twin is in its
+ * own describe, where its engine is built.
+ */
+beforeAll(async () => {
+  const warm = new IndexedDbStorage(`warm-${Date.now()}-${n++}`);
+  await warm.init();
+  await warm.saveMessages([message('warm', 'warm', T0)], KEY);
+  await warm.getMessagesPage('warm', KEY, 1);
+  await warm.close();
+}, 60_000);
+
 /** A fresh, initialised store under a name no other case uses. */
 async function openStore(): Promise<IndexedDbStorage> {
   const storage = new IndexedDbStorage(`page-${Date.now()}-${n++}`);
@@ -374,6 +390,13 @@ describe('SqliteStorage.getMessagesPage', () => {
     await storage.init();
     return { storage, engine, selects, positional };
   }
+
+  // The SQLite engine's cold path (the mocked plugin's import, the migrations): paid here, see the
+  // `beforeAll` at the top of the file.
+  beforeAll(async () => {
+    const { storage } = await initialisedSqlite();
+    await storage.getMessagesPage('warm', KEY, 1);
+  }, 60_000);
 
   afterEach(() => {
     vi.doUnmock('@tauri-apps/plugin-sql');

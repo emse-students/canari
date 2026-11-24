@@ -1,4 +1,8 @@
-import type { DistributionFrame } from '$lib/mls-client/IMlsService';
+import {
+  MailboxListingIncompleteError,
+  type DistributionFrame,
+  type IMlsService,
+} from '$lib/mls-client/IMlsService';
 import type { canari } from '$lib/proto/canari';
 import {
   isGraineReady,
@@ -87,10 +91,27 @@ export function parkAsk(
   );
   if (armed.get(keyGroupId) === session) return;
   armed.set(keyGroupId, session);
+  armDrainWake(mlsService, keyGroupId, session);
+}
+
+/**
+ * Waits for `keyGroupId` to drain, then answers its parked asks again. A pull that ends INCOMPLETE
+ * (`MailboxListingIncompleteError`) proves nothing about the vouchers the gate needs observed, so
+ * answering then would only meet `unobserved` and park again: the asks STAY parked and the wait is
+ * registered again, for the next pull - never an ask lost. Any other rejection
+ * (`GroupDrainAbandonedError`, sign-out) ends the wait: sign-out already forgot these asks.
+ */
+function armDrainWake(mlsService: IMlsService, keyGroupId: string, session: GraineRuntime): void {
   void mlsService.whenGroupDrained(keyGroupId).then(
     () => releaseParked((wait) => wait.kind === 'drain' && wait.keyGroupId === keyGroupId, session),
     (e: unknown) => {
-      // The service ended (`GroupDrainAbandonedError`): sign-out already forgot these asks.
+      if (e instanceof MailboxListingIncompleteError && armed.get(keyGroupId) === session) {
+        console.info(
+          `[GRAINE] the parked ask(s) on key group ${keyGroupId.slice(0, 8)} stay parked - deferred to the next complete pull: ${e.message}`
+        );
+        armDrainWake(mlsService, keyGroupId, session);
+        return;
+      }
       if (armed.get(keyGroupId) === session) armed.delete(keyGroupId);
       console.info(
         `[GRAINE] stopped waiting for key group ${keyGroupId.slice(0, 8)} to drain: ${String(e)}`

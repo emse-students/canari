@@ -2,7 +2,7 @@
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
-  import { goto } from '$app/navigation';
+  import { goto, afterNavigate } from '$app/navigation';
   import type { PostEntity } from '$lib/posts/api';
   import PostCard from '$lib/components/posts/PostCard.svelte';
   import { getToken } from '$lib/stores/auth';
@@ -12,12 +12,22 @@
   import { m } from '$lib/paraglide/messages';
   import { postNotifStore } from '$lib/stores/postNotifStore.svelte';
   import { page } from '$app/state';
-  import { POST_COMMENT_PARAM } from '$lib/posts/notificationTarget';
+  import { POST_COMMENT_PARAM, isRepeatNavigationToSamePage } from '$lib/posts/notificationTarget';
 
   let { data }: { data: { post: Promise<PostEntity | null> } } = $props();
 
   /** The comment a comment, reply or mention notification opened this post at, if any. */
   const focusCommentId = $derived(page.url.searchParams.get(POST_COMMENT_PARAM) ?? undefined);
+
+  /** Every navigation to this route while it is mounted, the same URL again included: a repeated push is an event. */
+  let navigations = $state(0);
+  afterNavigate((nav) => {
+    // Only a navigation to the page ALREADY mounted counts: the one that mounted it runs this
+    // callback too, after the card took its starting value.
+    if (!isRepeatNavigationToSamePage(nav)) return;
+    navigations += 1;
+    Log.d('postPage', `repeat navigation #${navigations} to ${nav.to?.url.pathname}`);
+  });
 
   /**
    * The post once it has arrived: `undefined` while it is on its way, `null` when it is absent or
@@ -114,6 +124,7 @@
       {authToken}
       commentsOpen={focusCommentId !== undefined}
       {focusCommentId}
+      focusNonce={navigations}
       onDelete={() => goto('/posts')}
     />
   {:else}

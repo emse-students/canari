@@ -18,6 +18,14 @@ const EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:', 'tel:', 'webca
  */
 export const ECOSYSTEM_SITE_ATTRIBUTE = 'data-ecosystem-site';
 
+/**
+ * Marks an anchor whose own `onclick` decides where the tap goes (the shared-reel card opens the
+ * reels viewer, not the post page its `href` names). {@link handleAppLinkClick} leaves it alone:
+ * this capture-phase listener would otherwise navigate first and the card's `preventDefault` would
+ * come too late, two owners deciding one click.
+ */
+export const OWNS_CLICK_ATTRIBUTE = 'data-owns-click';
+
 /** True when the href should leave the WebView and open in the OS browser / default app. */
 export function shouldOpenExternalHref(
   href: string,
@@ -56,7 +64,9 @@ export function handleAppLinkClick(event: MouseEvent): boolean {
 
   const anchor = target.closest('a[href]');
   if (!(anchor instanceof HTMLAnchorElement)) return false;
-  if (anchor.hasAttribute(ECOSYSTEM_SITE_ATTRIBUTE)) return false;
+  if (anchor.hasAttribute(ECOSYSTEM_SITE_ATTRIBUTE) || anchor.hasAttribute(OWNS_CLICK_ATTRIBUTE)) {
+    return false;
+  }
 
   const rawHref = anchor.getAttribute('href') ?? '';
   const href =

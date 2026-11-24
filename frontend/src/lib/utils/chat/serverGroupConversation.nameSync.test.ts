@@ -12,7 +12,7 @@
  * recovery path neither settles nor relabels a row that owes something.
  */
 import type { Conversation } from '$lib/types';
-import type { IMlsService } from '$lib/mls-client/IMlsService';
+import { MailboxListingIncompleteError, type IMlsService } from '$lib/mls-client/IMlsService';
 import { applyNameStatement, type NameStatementOutcome, type PendingRename } from './groupName';
 import { restoredConversationRow, toConversationMeta } from './conversations';
 import { answerOutrankedStatement } from './nameStatementAnswer';
@@ -471,8 +471,8 @@ describe('the one-time name statement of an undated group', () => {
     opts: {
       state?: NameStatementOutcome;
       drained?: boolean | (() => boolean);
-      /** The first-drained waiter, when the test drives it. */
-      whenDrained?: Promise<void>;
+      /** The first-drained waiter, when the test drives it - one promise, or one per call. */
+      whenDrained?: Promise<void> | (() => Promise<void>);
       serverNow?: number;
       resend?: NameSyncSettler['resend'];
       /** What an owed answer's send comes to. */
@@ -497,7 +497,10 @@ describe('the one-time name statement of an undated group', () => {
         getGroupServerStatus: vi.fn().mockResolvedValue(meta),
         isGroupDrained: () =>
           typeof opts.drained === 'function' ? opts.drained() : (opts.drained ?? true),
-        whenGroupDrained: () => opts.whenDrained ?? Promise.resolve(),
+        whenGroupDrained: () =>
+          typeof opts.whenDrained === 'function'
+            ? opts.whenDrained()
+            : (opts.whenDrained ?? Promise.resolve()),
       } as unknown as IMlsService,
       userId: 'u1',
       conversations,
@@ -667,6 +670,31 @@ describe('the one-time name statement of an undated group', () => {
     await vi.waitFor(() => expect(phone.get(GROUP_ID)!.nameFromStatement).toBe(true));
     expect(first.state).toHaveBeenCalledTimes(1);
     expect(second.state).not.toHaveBeenCalled();
+  });
+
+  it('a pull that ends incomplete DEFERS the chained statement to the next complete one, never drops it', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const storage = await sqliteStore();
+    const phone = new Map([[GROUP_ID, row({ name: 'Les ROOTz' })]]);
+    let drainedNow = false;
+    let drain!: () => void;
+    const waits = [
+      Promise.reject(new MailboxListingIncompleteError(GROUP_ID, new Error('a 502'))),
+      new Promise<void>((resolve) => (drain = resolve)),
+    ];
+    waits[0].catch(() => {});
+    let calls = 0;
+    const first = await connect(phone, storage, 'Les ROOTz', {
+      drained: () => drainedNow,
+      whenDrained: () => waits[calls++],
+    });
+    await vi.waitFor(() => expect(calls).toBe(2));
+    expect(first.state).not.toHaveBeenCalled();
+    expect(info.mock.calls.flat().join(' ')).toContain('deferred to the next complete pull');
+    drainedNow = true;
+    drain();
+    await vi.waitFor(() => expect(phone.get(GROUP_ID)!.nameFromStatement).toBe(true));
+    expect(first.state).toHaveBeenCalledTimes(1);
   });
 
   it("never states a name the server's list does not hold: a raw id never becomes the members' word", async () => {

@@ -10,7 +10,13 @@ vi.mock('$lib/utils/checkLinkSafety', () => ({
 }));
 vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: (...args: unknown[]) => openUrl(...args) }));
 
-import { ECOSYSTEM_SITE_ATTRIBUTE, handleAppLinkClick, openExternal } from './openExternal';
+import {
+  ECOSYSTEM_SITE_ATTRIBUTE,
+  OWNS_CLICK_ATTRIBUTE,
+  handleAppLinkClick,
+  installAppLinkClickHandler,
+  openExternal,
+} from './openExternal';
 import { navigateInAppFromHref } from '$lib/utils/appLinkNavigation';
 import { flushMacrotask } from '../../test/flush';
 
@@ -34,6 +40,21 @@ describe('handleAppLinkClick', () => {
       expect(openUrl).not.toHaveBeenCalled();
     } finally {
       delete (window as TauriWindow).__TAURI_INTERNALS__;
+    }
+  });
+
+  it('leaves an anchor that owns its click to its own onclick, through the document listener', () => {
+    document.body.innerHTML = `<a id="reel" href="/posts/p1" ${OWNS_CLICK_ATTRIBUTE}>Reel</a>`;
+    const anchor = document.getElementById('reel') as HTMLAnchorElement;
+    const own = vi.fn((e: Event) => e.preventDefault());
+    anchor.addEventListener('click', own);
+    installAppLinkClickHandler();
+    try {
+      anchor.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      expect(own).toHaveBeenCalledTimes(1);
+      expect(navigateInAppFromHref).not.toHaveBeenCalled();
+    } finally {
+      document.removeEventListener('click', handleAppLinkClick, true);
     }
   });
 

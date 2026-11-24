@@ -7,6 +7,7 @@
   import { nearViewport } from '$lib/actions/nearViewport';
   import { getToken } from '$lib/stores/auth';
   import { navigateInAppFromHref } from '$lib/utils/appLinkNavigation';
+  import { OWNS_CLICK_ATTRIBUTE } from '$lib/utils/openExternal';
   import { inAppPathFromHref } from '$lib/utils/publicAppUrl';
   import { parseCanariLinkTarget } from '$lib/utils/canariLinkPreviewFormat';
   import { placeholderDataUrl } from '$lib/utils/mediaPlaceholder';
@@ -188,6 +189,7 @@
     use:nearViewport={{ onnear: () => (isNear = true) }}
     onclick={handleClick}
     {href}
+    {...ready?.reelPost ? { [OWNS_CLICK_ATTRIBUTE]: '' } : {}}
     aria-label={openLabel}
     aria-busy={ready || failed ? undefined : 'true'}
     data-shared-post={ready ? (ready.isReel ? 'reel' : 'post') : failed ? 'failed' : 'loading'}

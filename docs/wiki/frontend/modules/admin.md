@@ -460,7 +460,7 @@ endpoint behind them accepts:
 | Tab | Reads | Acts |
 | --- | --- | --- |
 | Reports | `GET /api/moderation/reports` | review/dismiss, hide the post, delete it, delete a reported comment, mute the author |
-| Hidden posts | `GET /api/posts/hidden` | unhide, delete, mute |
+| Hidden posts | `GET /api/posts/hidden` | unhide, delete, mute; the row names the publishing association first (`associationId`, `associationName`, `associationLogoUrl`, all from the `associations` table via a LEFT JOIN, never rebuilt from a slug) and the author second |
 | Muted users | `GET /api/moderation/muted` | unmute |
 
 **There is ONE report store.** `content_reports`, written by `POST /api/moderation/reports` and read

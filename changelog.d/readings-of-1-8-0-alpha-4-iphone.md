@@ -1,0 +1,3 @@
+### Changed - the `1.8.0-alpha.4` readings on the iPhone 12: the bell and the banner rows pass, the DM thread fails 4 of 10
+
+The bell reads "Publications et lives" at once after a re-follow, the DM and mention banners and both Focus rows pass, the voice note is recorded mono with a clean capture line, and a DM thread left above its end after a home-button return with the keyboard up is reproduced 4 times in 10 and becomes a defect ([readings of 2026-11-23](docs/wiki/device-verification.md#the-readings-of-2026-11-23-180-alpha4-iphone-12-the-bell-after-a-re-follow-the-dm-thread-the-communication-banners-the-focus-rows-the-voice-note-the-composer)).

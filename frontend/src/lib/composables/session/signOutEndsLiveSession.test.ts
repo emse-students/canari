@@ -97,6 +97,15 @@ describe('every sign-out ends the live session on the device', () => {
     );
   });
 
+  const CLOSE = String.fromCharCode(10) + '}' + String.fromCharCode(10);
+  it("the session's end forgets what a salon's pages said about unreadable rows", () => {
+    const teardown = sessionAuth.slice(
+      sessionAuth.indexOf('export function tearDownLiveSession('),
+      sessionAuth.indexOf(CLOSE, sessionAuth.indexOf('export function tearDownLiveSession('))
+    );
+    expect(teardown).toContain('resetUnreadableRowLatch();');
+  });
+
   it('a login opens no state before a signed-out session has finished its final checkpoint', () => {
     // `mlsHolder.ts` hands the next sign-in a fresh client at once; what keeps that client from
     // reading a state still being written is this wait, ahead of every MLS and state access.

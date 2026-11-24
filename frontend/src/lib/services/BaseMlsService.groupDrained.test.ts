@@ -5,7 +5,10 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { BaseMlsService } from '$lib/services/BaseMlsService';
-import { GroupDrainAbandonedError } from '$lib/mls-client/IMlsService';
+import {
+  GroupDrainAbandonedError,
+  MailboxListingIncompleteError,
+} from '$lib/mls-client/IMlsService';
 import type { MlsPerGroupScheduler, MlsQueuedMessage } from '$lib/mls-client/mlsPerGroupScheduler';
 import { flushMacrotask } from '../../test/flush';
 
@@ -160,7 +163,7 @@ describe('whenGroupDrained', () => {
     expect(order).toEqual(['frame', 'frame returned', 'drained']);
   });
 
-  it('stays pending while the pull that would prove the mailbox empty fails', async () => {
+  it('is settled as INCOMPLETE, never as drained, by the pull that would prove the mailbox empty failing', async () => {
     const svc = liveService();
     Object.assign(svc, {
       delivery: {
@@ -169,20 +172,14 @@ describe('whenGroupDrained', () => {
       },
     });
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
-    let drained = false;
-    void svc.whenGroupDrained('g-1').then(() => {
-      drained = true;
-    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const wait = svc.whenGroupDrained('g-1');
 
     await inner(svc).fetchPendingMessages();
-    await Promise.resolve();
 
-    expect(drained).toBe(false);
-    // The wait is visible: the failed pull says what it holds up.
-    expect(info.mock.calls.flat().join(' ')).toContain(
-      '1 drain waiter(s) (parked seed asks, admission observations) wait for a pull that completes'
-    );
+    // The failed pull IS the event the wait was owed: settled typed, and said.
+    await expect(wait).rejects.toBeInstanceOf(MailboxListingIncompleteError);
+    expect(warn.mock.calls.flat().join(' ')).toContain('1 drain waiter(s)');
   });
 
   it('a pull begun on the previous link does not mark the NEW link listed (socket flap mid-pull)', async () => {
