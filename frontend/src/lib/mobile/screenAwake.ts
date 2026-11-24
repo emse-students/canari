@@ -3,7 +3,8 @@ import { isIosTauriRuntime } from '$lib/utils/appVersion';
 import { ScreenWakeLock } from '$lib/live/liveDevice';
 
 /**
- * THE SCREEN STAYS ON DURING A VIDEO CALL AND A LIVE, on every platform - the iPhone included.
+ * THE SCREEN STAYS ON DURING A VIDEO CALL, A LIVE AND A PUBLISH BEING SENT, on every platform - the
+ * iPhone included (the publish since 2026-11-24, `publishScreenHold.ts`).
  *
  * WKWebView refuses the Screen Wake Lock API (`NotAllowedError: Permission was denied`, read on the
  * iPhone 12 on `1.6.7-alpha.3`, every video call), so the iOS app keeps the screen on natively:
@@ -23,7 +24,7 @@ import { ScreenWakeLock } from '$lib/live/liveDevice';
  */
 
 /** Who holds the screen; also the log tag of its lines (`CALL-WAKE`, `LIVE-WAKE`). */
-export type ScreenAwakeOwner = 'call' | 'live';
+export type ScreenAwakeOwner = 'call' | 'live' | 'publish';
 
 /** What a call or a live holds to keep the screen on: the engine's wake lock, or the iOS idle timer. */
 export interface ScreenAwakeHolder {
@@ -33,7 +34,11 @@ export interface ScreenAwakeHolder {
   release(): void;
 }
 
-const TAGS: Record<ScreenAwakeOwner, string> = { call: 'CALL-WAKE', live: 'LIVE-WAKE' };
+const TAGS: Record<ScreenAwakeOwner, string> = {
+  call: 'CALL-WAKE',
+  live: 'LIVE-WAKE',
+  publish: 'PUBLISH-WAKE',
+};
 
 /** The message `canari_ios.mm` reads: one owner's change, or the page boot's reset. */
 type IdleTimerMessage = { owner: ScreenAwakeOwner; hold: boolean } | { reset: true };

@@ -565,14 +565,40 @@ choice extracted into one component, with `posts/postIdentity.ts` as the one rea
 associations a member may speak for, and the payload fields a choice adds). A poll, a form, a
 linked event or a schedule are refused on a reel by the server, so they are not offered.
 
-"Publier" runs `reels/publishReel.ts`, in the order the server's contract asks
-([reels (server)](../../services/reels.md)): the mute check, the media token, the re-encode on the
-device to ONE fragmented H.264/AAC MP4 (`prepareVideoForUpload`, bounded by the server's cap and the
-upload ceiling, with the shared progress line and its cancel), the upload under the `reel` retention
-class, then `POST /api/posts` with `kind: 'reel'` and the declared `durationMs`. A failure is a
-`ReelPublishError` naming its stage, and the sentence is `publishFailureMessage`'s, the composer's
-own; a cancelled re-encode says nothing. Success lands on the feed, REPLACING the camera in the
-history so Back from the feed does not reopen it.
+**"Publier" hands the take to the background publish queue (2026-11-24)** and the step is done once
+the take is ON THE DEVICE: `reels/publishReel.ts` (`queueReelPublish`) writes the post and the
+take in one IndexedDB transaction through `enqueuePost`, the toast says the member may leave the
+app, and the step lands on the feed, REPLACING the camera in the history so Back from the feed does
+not reopen it. The queue then does what the step used to do in memory - the mute check, the
+re-encode to ONE fragmented H.264/AAC MP4 (`prepareVideoForUpload` with the take's cap, its trim to
+the picture and its removed sound, under the encoder lease the chat take shares), the upload in
+RESUMABLE parts, `POST /api/posts` under the id minted at the press - with its line in the banner:
+progress, "En attente du reseau", a refusal with its sentence and Retry, Pause and Delete
+([posts](posts.md#the-background-publish-queue)). Whether the take is a reel is decided there, on
+the PREPARED frame and length (`reelDeclarationFor`), as here before. A write the device refuses
+(a full disk) keeps the step and says so; nothing else can fail in it.
+
+**Why (an Android 1.7.3 log, 2026-11-24).** One reel on a slow link (admin queue answers at 12-14
+s, battery saver on), four presses of "Publier", four failures: three `failed at mediaUpload
+TransportFailureError ... Failed to fetch`, one `failed at createPost ... error sending request`,
+each about 5 s after `[LIFECYCLE] App in background - connection paused`. The member never left
+the app: that line is `document.visibilityState === 'hidden'`
+(`ChatBackgroundService.handleVisibilityChange`), which Android raises when the activity is
+STOPPED, and the screen going to sleep stops it. Read in the log: the first return to the
+foreground is followed by the next stop exactly 30.00 s later with nothing logged between - a
+screen timeout; the one-second stops are a screen woken as it went dark; no page, picker or native
+activity of the reel flow logs anything before any of them (the camera had been released some forty
+seconds before the first). Under battery saver a stopped app loses the network within seconds, so the in-flight
+request died, and `publishReel` - one call held in memory - had nothing to resume from. **Two fixes,
+one per cause:** the queue makes the publish durable, resumable and idempotent (a stop, a kill or a
+cut costs at most one part, never the reel and never a second post), and the SCREEN STAYS ON while
+the queue prepares, sends or creates (`publishScreenHold.ts`, owner `publish` of `screenAwake.ts`,
+as a call and a live hold it): a member watching a slow publish no longer has their app stopped
+under it. A post WAITING for the network, paused or stopped holds nothing. Leaving the app for
+real still pauses the send until the return; a native sender is the backlog's
+([uploads in the background](../../backlog.d/p2-uploads-of-several-photos-are-slow-on-a-bad-network-and-stop-in-the-background.md)).
+
+**A camera PHOTO goes the same way**, as an ordinary post (no take preparation, no chat take).
 
 **No reel video ever shows the engine's own placeholder** (user, 2026-10-02: Android's grey play glyph
 appeared right after a recording). Every `<video>` of the flow carries `TRANSPARENT_VIDEO_POSTER` and
@@ -586,7 +612,8 @@ feed cards and the viewer.
 accepts a source up to half a second past the cap (`VIDEO_DURATION_GRACE_SECONDS`), because a
 recorder stopped at 90 s writes a container ending a few hundredths later; that take IS a 90-second
 reel, and the server refuses a declaration over the cap, so it declares the cap
-(`declaredReelDurationMs`, pinned by `publishReel.test.ts`).
+(`reelDeclaredDurationMs`, through the queue's `reelDeclarationFor`, pinned by `reelRule.test.ts`
+and `publishQueue.test.ts`).
 
 ## Watching: the feed card and the full-screen viewer (C7)
 

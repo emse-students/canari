@@ -11,6 +11,7 @@
  */
 import type { Conversation } from '$lib/types';
 import type { PublishedReelUpload } from '$lib/reels/publishReel';
+import type { ReelTakeAdoption } from '$lib/utils/chat/outbox';
 import { parseDeviceIdentity } from '$lib/mls-client/commitAdmits';
 
 /** What queuing a take answers: the take and how many sends were written. */
@@ -42,8 +43,8 @@ export interface ReelSendHost {
    * handed to, `null` when none.
    */
   sendImage: (file: File, targetKeys: readonly string[]) => Promise<number | null>;
-  /** The publish step's upload, adopted by the take waiting for it (15.5). */
-  adopt: (takeId: string, uploaded: PublishedReelUpload) => Promise<void>;
+  /** The publish step's upload, adopted by the take waiting for it (15.5): what it did. */
+  adopt: (takeId: string, uploaded: PublishedReelUpload) => Promise<ReelTakeAdoption>;
   /** The publish step ended: the take stops waiting for it. */
   endWait: (takeId: string) => void;
   /**

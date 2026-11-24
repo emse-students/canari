@@ -1138,7 +1138,9 @@ from it, designed:
    and the sheet then withheld the chats ("Cette video depasse 60 s ..."). That is this decision, not a
    defect: the tab's take is also a feed reel (90 s), and nothing knows at the shutter which row will be
    ticked. The `chat` destination (a composer's camera) arms its ring at `chatMaxDurationMs`.
-2. **One upload, the publish step's** (`reel-pending`, then claimed by the post). The take adopts it
+2. **One upload, the publish step's** (`reel-pending`, then claimed by the post; since 2026-11-24 the
+   publish QUEUE's, which records the take's id with the post and hands it the file -
+   [posts](posts.md#the-background-publish-queue)). The take adopts it
    (15.2): the publish step writes its `uploadedRef` into the take's row DURABLY, right after the
    upload and BEFORE `POST /api/posts`, then the take puts its chat hold (15.3) and the sends go -
    so a post that fails or is cancelled after the upload still leaves the chats their file. A publish
@@ -1385,9 +1387,11 @@ single conversation (RC-5) is now a take with ONE send, and `handleSendChat` no 
 - **A forwarded write no leader takes is never silent.** A DELETION is durable without the event: the
   tombstone is on the shared message row, and the next leader re-derives it (`maintainTakeRecords`
   above; a promotion reloads the page, so a new leader always starts with it) - lost, it only waits.
-  An ADOPTION is acknowledged (`outbox_reel_take_adopt_ack`); one still unacknowledged when the
-  follower's publish step ends (`endPublishWait`, an event, never a clock) is said at warn with its
-  cost - the take uploads its own file, a second upload.
+  An ADOPTION is acknowledged (`outbox_reel_take_adopt_ack`, sent even when the leader's write of it
+  failed). The END of the publish wait is the leader's too, since the wait lives where the take was
+  composed: a follower that runs the publish queue forwards it (`outbox_reel_take_end_wait`, review
+  of #4055), and one following a forwarded adoption is HELD until that adoption's acknowledgement -
+  an event, never a clock - so the leader never ends the wait before writing the file it was handed.
 - **Failures.** The take's upload failure takes an attachment's dispositions; a refusal for good
   (`too-large`, `refused`, `unpreparable`, `over-budget`) fails EACH queued send for good, its sentence
   in each thread (`failTakeSends`). **`over-budget` is media-service's own 429 for the daily
