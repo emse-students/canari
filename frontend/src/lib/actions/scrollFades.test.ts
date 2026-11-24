@@ -44,3 +44,35 @@ describe('scrollFades - a row that scrolls says so', () => {
     expect(node.hasAttribute('data-fade-end')).toBe(false);
   });
 });
+
+describe('scrollFades - children rendered after the action started', () => {
+  it('observes a chip added later, and stops on destroy', async () => {
+    const watched = new Set<Element>();
+    const stub = class {
+      observe(el: Element) {
+        watched.add(el);
+      }
+      unobserve(el: Element) {
+        watched.delete(el);
+      }
+      disconnect() {}
+    };
+    const prior = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = stub as unknown as typeof ResizeObserver;
+    try {
+      const node = row(300, 300);
+      const action = scrollFades(node);
+      const chip = document.createElement('button');
+      node.append(chip);
+      await Promise.resolve();
+      expect(watched.has(chip)).toBe(true);
+      action.destroy();
+      const later = document.createElement('button');
+      node.append(later);
+      await Promise.resolve();
+      expect(watched.has(later)).toBe(false);
+    } finally {
+      globalThis.ResizeObserver = prior;
+    }
+  });
+});

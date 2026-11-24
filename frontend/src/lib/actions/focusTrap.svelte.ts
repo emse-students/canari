@@ -40,7 +40,7 @@ const FOCUSABLE_SELECTORS = [
  * holds whatever order the two effects run in, where a reordering would be an implicit dependency on
  * how one version of Svelte emits actions.
  */
-export function focusTrap(node: HTMLElement) {
+export function focusTrap(node: HTMLElement, options: { initial?: string } = {}) {
   const previouslyFocused = document.activeElement as HTMLElement | null;
 
   function getFocusable(): HTMLElement[] {
@@ -77,8 +77,14 @@ export function focusTrap(node: HTMLElement) {
   // Auto-focus first interactive element; fall back to the container itself.
   // `preventScroll` on BOTH - see the header. Neither has anything to reveal, and both are capable
   // of throwing the page behind the overlay back to the top.
+  // `options.initial` names the control that takes the focus when it exists: an alert's own default
+  // answer (the ring's Accept), chosen HERE so the result never depends on which of two effects
+  // (this action, a component's `$effect`) Svelte runs last - the order changed in 5.59.
+  const preferred = options.initial ? node.querySelector<HTMLElement>(options.initial) : null;
   const focusable = getFocusable();
-  if (focusable.length > 0) {
+  if (preferred) {
+    preferred.focus({ preventScroll: true });
+  } else if (focusable.length > 0) {
     focusable[0].focus({ preventScroll: true });
   } else {
     node.focus({ preventScroll: true });

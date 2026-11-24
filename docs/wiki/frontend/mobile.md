@@ -4295,10 +4295,12 @@ shut in the same instant - the queue row gone, the generation spent, and the arc
 skipping the fingerprint for ever because the drain had marked it consumed
 (the seen marks are durable - inside the MLS state since KILL-2). The bubble reads `📷 Photo` for good, on a device that
 never missed anything. The live path below it had always asked `shouldUpgradeMessage`; the bulk
-path now asks too, and an upgrade **falls through to that live path** rather than being buffered -
-buffering exists to stop a drain re-rendering the list once per message, and an upgrade adds no
-row, it replaces the content of one already on screen. There is no jank to avoid, and there is a
-write to do that only the live path performs before the ack.
+path now asks too. An upgrade first **fell through to that live path** rather than being buffered,
+because the ack then ran when the handler returned. **Since 2026-11-24 it is buffered like any other
+arrival**: the ack now waits for the window's close to store the row (rows before ratchet), and
+`batchAddMessages` upgrades a shown preview by the same compare-and-set - while the live path cost a
+render and two store round trips PER PREVIEW, 34 of them under the open pane in the owner's 1.7.3
+catch-up ([chat](modules/chat.md#a-catch-up-lands-in-one-render-2026-11-24)).
 
 **Reproduced on hardware before it was fixed**, because three of the four ordinary lifecycles do
 not produce it: `archive/photoprev.mjs` sends one uncaptioned image and reads the pane across a
@@ -4313,7 +4315,7 @@ anywhere is a peer's, so it would take a history bundle from a member who still 
 from it (Mi 9T, 2026-09-23).** `restored` now logs
 `[ADD_MSG] Preview upgrade during a bulk ingest - taking the live path` and `Message upgraded`
 BEFORE `messageCallback -> true`, where it logged `Duplicate ignored` and acked in the same
-millisecond. Each mode's second read is taken after a kill and a cold relaunch, so the picture it
+millisecond (since 2026-11-24 the upgrade is in the close's `Batch into ... N upgraded` line instead). Each mode's second read is taken after a kill and a cold relaunch, so the picture it
 counts was read back from disk: the decoded count rises by exactly one per mode across the ladder
 and the caption count never rises. The two captions the PRE-fix runs stranded on that phone are
 still there after all seven passes, which is the paragraph above, measured.
