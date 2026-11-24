@@ -85,7 +85,12 @@ export type SolicitedProbe =
 
 type StoredProbe = { probe: SolicitedProbe; at: number };
 
-const probes = new Map<string, StoredProbe>();
+/**
+ * Probes nobody was waiting for, per group and asker, OLDEST FIRST - a queue, the same FIFO as the
+ * waiters: two probes that land before any election registers are two asks, and one slot per key
+ * dropped the first of them.
+ */
+const probes = new Map<string, StoredProbe[]>();
 const waiters = new Map<string, Array<(probe: SolicitedProbe) => void>>();
 
 /**
@@ -102,10 +107,33 @@ function key(groupId: string, identity: string): string {
 
 /** Drops probes that have aged out, so a stale one can never be handed to a waiting request. */
 function purgeExpired(now: number): void {
-  for (const [k, entry] of probes) {
-    if (now - entry.at >= DIGEST_TTL_MS) probes.delete(k);
+  for (const [k, queue] of probes) {
+    const fresh = queue.filter((entry) => now - entry.at < DIGEST_TTL_MS);
+    if (fresh.length === 0) probes.delete(k);
+    else if (fresh.length !== queue.length) probes.set(k, fresh);
   }
 }
+
+/**
+ * Removes and returns the oldest stored probe of `k` that arrived at or after `notBefore`, or
+ * `undefined` when none did.
+ */
+function takeStored(k: string, notBefore: number): SolicitedProbe | undefined {
+  const queue = probes.get(k);
+  if (!queue) return undefined;
+  const at = queue.findIndex((entry) => entry.at >= notBefore);
+  if (at === -1) return undefined;
+  const [taken] = queue.splice(at, 1);
+  if (queue.length === 0) probes.delete(k);
+  return taken.probe;
+}
+
+/**
+ * Where {@link noteProbeReceived} put a probe: a waiting election took it (`waiter`), it is the late
+ * digest of an exchange WE opened and the caller answers it now (`solicitation`), or nobody claimed
+ * it and it is kept for an election still to come (`stored`).
+ */
+export type ProbeDestination = 'waiter' | 'solicitation' | 'stored';
 
 /**
  * Records a probe that arrived over MLS, waking a request already waiting for one.
@@ -122,16 +150,20 @@ function purgeExpired(now: number): void {
  * second election comes with its own probe, which wakes the next waiter; a waiter whose probe never
  * comes ends as before, on its deadline.
  *
- * **Returns whether a live waiter took it**, which is the caller's only way to tell a probe that
- * answered a wait from one that arrived after the wait ended. The second is not a lost cause - see
- * `takeDigestSolicitation` - but it is a different road, and nothing else here distinguishes them.
+ * **Returns where it went ({@link ProbeDestination})**, the caller's only way to tell a probe that
+ * answered a wait from one that arrived after the wait ended. A digest nobody waits for is the late
+ * half of an exchange we opened when a solicitation is outstanding (`takeDigestSolicitation`): it is
+ * then CLAIMED HERE, in the same step, and never stored. Stored, a re-election of this device for
+ * the same asker (a reconcile after the coalescing window, a scrollback) consumed it again from
+ * `awaitProbe` and answered the same `requestId` a second time - the sibling of the double answer
+ * above, and the asker refuses that copy the same way.
  */
 export function noteProbeReceived(
   groupId: string,
   fromIdentity: string,
   probe: SolicitedProbe,
   now: number = Date.now()
-): boolean {
+): ProbeDestination {
   const k = key(groupId, fromIdentity);
   purgeExpired(now);
 
@@ -141,10 +173,13 @@ export function noteProbeReceived(
     if (rest.length > 0) waiters.set(k, rest);
     else waiters.delete(k);
     oldest(probe);
-    return true;
+    return 'waiter';
   }
-  probes.set(k, { probe, at: now });
-  return false;
+  if (probe.kind === 'digest' && takeDigestSolicitation(groupId, fromIdentity, now)) {
+    return 'solicitation';
+  }
+  probes.set(k, [...(probes.get(k) ?? []), { probe, at: now }]);
+  return 'stored';
 }
 
 /**
@@ -161,10 +196,13 @@ export function noteProbeReceived(
  * `PROBE_COALESCE_MS` (30 s). So a member elected for the SECOND ask could be holding the FIRST
  * ask's probe and answer with it, comparing against a state key up to a minute old.
  *
- * **It is a PREFERENCE, not a rejection**, and the difference is the whole safety of it. A probe
- * older than `notBefore` is set aside rather than consumed, and the caller waits for the one that
- * should be on its way; if none arrives before the deadline, the older one is used after all. So the
- * good case gets a fresh comparison and the bad case degrades to exactly the previous behaviour.
+ * **It is written as a PREFERENCE, and in production it acts as a rejection.** A probe older than
+ * `notBefore` is set aside rather than consumed, and the caller waits for the one that should be on
+ * its way; at the deadline the set-aside probe is used only if it has not expired. The one
+ * production caller (`handleHistoryRequest`) waits `HISTORY_PROBE_WAIT_MS`, which IS `DIGEST_TTL_MS`,
+ * and a probe set aside was stored before the wait began - so by the deadline it has always expired,
+ * and the fallback never fires there: a stale probe is never answered, and an election whose own
+ * probe never comes answers nothing. A shorter wait (the tests) does reach the fallback.
  *
  * That matters because the ordering this rests on - the asker sends its election before its probe,
  * and the server publishes the election before answering - is a property of two independent
@@ -181,11 +219,8 @@ export function awaitProbe(
   const k = key(groupId, fromIdentity);
   purgeExpired(now);
 
-  const stored = probes.get(k);
-  if (stored && stored.at >= notBefore) {
-    probes.delete(k);
-    return Promise.resolve(stored.probe);
-  }
+  const stored = takeStored(k, notBefore);
+  if (stored) return Promise.resolve(stored);
 
   return new Promise<SolicitedProbe | null>((resolve) => {
     let settled = false;
@@ -212,10 +247,9 @@ export function awaitProbe(
       // Purged first: the wait itself can outlive the probe's TTL, and falling back to one that has
       // expired would be the very staleness `notBefore` exists to bound.
       purgeExpired(Date.now());
-      const setAside = probes.get(k);
+      const setAside = takeStored(k, 0);
       if (setAside) {
-        probes.delete(k);
-        finish(setAside.probe);
+        finish(setAside);
         return;
       }
       finish(null);

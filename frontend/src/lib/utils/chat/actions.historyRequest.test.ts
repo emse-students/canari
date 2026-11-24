@@ -339,6 +339,32 @@ describe('handleHistoryRequest - with a digest', () => {
     );
   });
 
+  it('answers one requestId ONCE across two elections of this device for the same asker', async () => {
+    // 2026-11-24: an answerer elected twice for one asker answered the same ask twice, and the asker
+    // refused the second copy at error. Whatever order the probe and the two elections land in, one
+    // probe is one answer.
+    const rows = [{ id: 'only-ours', timestamp: at('2026-01-02T00:00:00Z') }];
+    const digest = await buildHistoryDigest([]);
+    const first = handleHistoryRequest(baseParams({ storage: storageWith(rows), probeWaitMs: 50 }));
+    const second = handleHistoryRequest(
+      baseParams({ storage: storageWith(rows), probeWaitMs: 50 })
+    );
+    // Both elections are past their drain and WAITING when the one probe lands - the case that woke
+    // both of them.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    noteProbeReceived(GROUP, REQUESTER, {
+      kind: 'digest',
+      requestId: 'ask-00000001',
+      answerKey: ANSWER_KEY,
+      digest,
+      since: 0,
+    });
+    await Promise.all([first, second]);
+
+    const answered = sendHistoryBundleForIds.mock.calls.map((call) => call[3]?.requestId);
+    expect(answered).toEqual(['ask-00000001']);
+  });
+
   it('sends an empty selection for identical stores, which sends nothing at all', async () => {
     // `sendHistoryBundleForIds` drops an empty selection on the floor, so this is a call with an
     // empty id list rather than a frame. There is no marker on the other side to discharge.
