@@ -3341,6 +3341,13 @@ pub(crate) fn remove_account_push_and_name_files(
             );
             names_error.get_or_insert(e);
         }
+        // The record of the posts this device displayed carries its owner too, and goes on its proof.
+        if let Err(e) = crate::commands::seen_posts::remove_seen_posts_of(dir, user_id) {
+            log::error!(
+                "[DEL-LOCAL] seen-posts copy not removed, the other push files still are: {e}"
+            );
+            names_error.get_or_insert(e);
+        }
     }
     let removed = remove_user_push_files(data_dir, group, user_id)?;
     match names_error {
@@ -4572,10 +4579,22 @@ mod delete_user_push_files_tests {
         }];
         merge_conversation_nicknames(&dir, "a", &nick, &[], &[]).unwrap();
         merge_conversation_nicknames(&group, "a", &nick, &[], &[]).unwrap();
+        let seen = [crate::commands::seen_posts::SeenPost {
+            post_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa".into(),
+            published_at: 1.0,
+        }];
+        crate::commands::seen_posts::replace_seen_posts(&dir, "a", &seen).unwrap();
+        crate::commands::seen_posts::replace_seen_posts(&group, "a", &seen).unwrap();
         assert_eq!(
             super::remove_account_push_and_name_files(&dir, Some(&group), "a").unwrap(),
             6
         );
+        assert!(!dir
+            .join(crate::commands::seen_posts::SEEN_POSTS_FILE)
+            .exists());
+        assert!(!group
+            .join(crate::commands::seen_posts::SEEN_POSTS_FILE)
+            .exists());
         assert!(!dir.join(DISPLAY_NAMES_FILE).exists());
         assert!(!group.join(DISPLAY_NAMES_FILE).exists());
         assert!(!dir.join(CONVERSATION_NICKNAMES_FILE).exists());

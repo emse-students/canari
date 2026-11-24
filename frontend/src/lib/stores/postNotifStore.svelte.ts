@@ -23,6 +23,7 @@ import {
 import type { FeedStoreAccess } from '$lib/posts/feedStore';
 import { getSavedUserId } from '$lib/stores/user';
 import { onPeerNamesEnded } from '$lib/utils/users/peerNameDirectory';
+import { seenPostsStore } from '$lib/posts/seenPosts.svelte';
 
 /** The newest notifications kept on the device: the bell page asks for 50, the dropdown for 30. */
 export const MAX_STORED_NOTIFICATIONS = 50;
@@ -43,6 +44,19 @@ let answered = false;
 
 function isStoredNotification(value: unknown): value is PostNotification {
   return !!value && typeof value === 'object' && typeof (value as { id?: unknown }).id === 'string';
+}
+
+/**
+ * THE ROWS THE READER SEES: the list without the campus trends for a post this device already
+ * displayed (owner, 2026-11-24, "Verif sur l'appareil" - the server records no "seen", the device
+ * does; `seenPosts.ts`). Classified on the row's `type`, never its text. The server still holds the
+ * row, so a reader on another device sees it - the accepted limit.
+ *
+ * The decision is taken once per row, when it first appears (`seenPostsStore.decideRows`, which says
+ * it - never with the post's id); this only reads it.
+ */
+function shownRows(): PostNotification[] {
+  return notifications.filter((n) => !seenPostsStore.withholdsRow(n));
 }
 
 /** What was last handed to the sealed store, so an unchanged list is not sealed again. */
@@ -104,7 +118,7 @@ onLocalCopiesOpen((access) => void openFor(access));
 
 export const postNotifStore = {
   get notifications(): PostNotification[] {
-    return notifications;
+    return shownRows();
   },
   /**
    * Number of unread notifications: the server's, plus the new-device alerts this device raised
@@ -112,7 +126,7 @@ export const postNotifStore = {
    * them (owner decision 2026-10-30). Counted here so every badge reads one number.
    */
   get unread(): number {
-    return notifications.filter((n) => !n.read).length + unreadDeviceNoticeCount();
+    return shownRows().filter((n) => !n.read).length + unreadDeviceNoticeCount();
   },
   get loading(): boolean {
     return loading;
@@ -122,7 +136,7 @@ export const postNotifStore = {
     return fromCopy;
   },
   /** Fetches the latest notifications from the backend and updates the store. */
-  async load(limit = 30): Promise<void> {
+  async load(limit = MAX_STORED_NOTIFICATIONS): Promise<void> {
     if (loading) return;
     loading = true;
     // THE ACCOUNT IS TAKEN BEFORE THE REQUEST, never when the answer lands (review of #3347, as
@@ -140,6 +154,15 @@ export const postNotifStore = {
       answered = true;
       fromCopy = false;
       listOwner = owner;
+      // EVERY trend row is decided HERE, the first time it appears (withheld if its post was already
+      // displayed on this device, kept for good if not); an answer shorter than the page asked for
+      // listed every row, which is what lets the record of displayed posts start ageing out.
+      // `coversAll`: the answer listed every row (a short page) or filled the bell's whole page, past
+      // which no row is ever shown. The automatic poll asks for that whole page.
+      seenPostsStore.decideRows(
+        answer,
+        answer.length < limit || answer.length >= MAX_STORED_NOTIFICATIONS
+      );
       // Only the full page seals: the dropdown's shorter one must not shrink the sealed list.
       if (limit >= MAX_STORED_NOTIFICATIONS) persist();
     } catch (e) {

@@ -94,6 +94,7 @@ use crate::commands::push_registration::{
     complete_owed_push_token_deletion, end_push_registration, notification_shortcuts_erase_owed,
     settle_notification_shortcuts_erase,
 };
+use crate::commands::seen_posts::{forget_seen_posts, store_seen_posts};
 use crate::commands::storage::{
     clear_app_data, delete_user_database, get_installer_package, get_local_storage_usage,
     get_native_flags, load_mls_state, mls_foreground_heartbeat, mls_state_absent, mls_state_owner,
@@ -1968,6 +1969,8 @@ pub fn run() {
             store_display_names,
             store_conversation_nicknames,
             forget_conversation_nicknames,
+            store_seen_posts,
+            forget_seen_posts,
             // A BENCH build only - see `commands::bench`. Absent, not refusing, everywhere else.
             #[cfg(feature = "bench-observables")]
             bench_native_store
