@@ -1,7 +1,7 @@
 import type { ChatMessage } from '$lib/types';
 import type { StoredMessage } from '$lib/db/types';
 import { mergeStoredMessage } from '$lib/db/messagePayload';
-import { compareMessageOrder } from './messageOrder';
+import { compareMessageOrder, insertMessageOrdered } from './messageOrder';
 import { mergeReactions } from './messageReactions';
 import { applyEditToBody, envelopeBodyText } from '$lib/envelope';
 import { canonicalUserId } from '$lib/mls-client/leafIdentity';
@@ -259,4 +259,30 @@ export function mergeMessagePage(current: ChatMessage[], page: ChatMessage[]): C
   }
   merged.push(...inPage.values());
   return merged.sort(compareMessageOrder);
+}
+
+/**
+ * A follower tab's thread after the leader's `messages_batch` relay (`ChatBackgroundService`): a row
+ * it does not hold is inserted in order, and a row it shows as a push PREVIEW takes the relayed body
+ * ({@link shouldUpgradeMessage}, {@link mergeMessageUpgrade}) - the leader upgrades previews in the
+ * batch since its window holds them (#4054), so a relay of the NEW rows alone left the follower on the
+ * caption. Any other row it already holds is left as it is. `null` when nothing changed.
+ */
+export function mergeRelayedBatch(
+  shown: ChatMessage[],
+  relayed: readonly ChatMessage[]
+): ChatMessage[] | null {
+  let merged = shown;
+  let changed = false;
+  for (const msg of relayed) {
+    const index = merged.findIndex((m) => m.id === msg.id);
+    if (index === -1) {
+      merged = insertMessageOrdered(merged, msg);
+      changed = true;
+    } else if (shouldUpgradeMessage(merged[index], msg.content)) {
+      merged = merged.map((m, i) => (i === index ? mergeMessageUpgrade(m, msg) : m));
+      changed = true;
+    }
+  }
+  return changed ? merged : null;
 }

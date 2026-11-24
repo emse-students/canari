@@ -89,6 +89,7 @@ import { channelScope, workspaceScope } from '../distributionScope';
 import { workspaceForChannel } from '$lib/utils/graine/runtime';
 import { noteServerTime } from '$lib/utils/chat/serverClock';
 import { recordRekey } from '$lib/utils/chat/endedConversations';
+import { recordConversationMove } from '$lib/utils/chat/conversationMoves';
 export type { MessageHandlerDeps } from './deps';
 
 /**
@@ -2067,6 +2068,9 @@ async function upsertConversation(
       const oldId = existing.id;
       // The old id vanishes but the thread continues: say so, so its banners are not ended.
       recordRekey(oldId);
+      // And the rows still held under the old KEY (a catch-up's buffer, a framed orphan, a kept
+      // batch) are routed to the new one by this fact, never dropped as removed (review of #4054).
+      recordConversationMove(newConvoKey, joinedGroupId);
       conversations.delete(newConvoKey);
       newConvoKey = joinedGroupId;
       conversations.set(newConvoKey, updated);
