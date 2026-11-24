@@ -231,6 +231,43 @@ describe('BaseMlsService.externalJoin', () => {
     expect(order).toEqual(['merge', 'checkpoint']);
   });
 
+  // SECOND REVIEW OF #4053: the owner's own case. A leader wakes, its watchdog starts a rejoin, the
+  // refresh answers "session expired" while the commit is on the wire. The lead was given up the
+  // moment no other hold remained, the server took the commit, and the checkpoint below was refused
+  // as a follower's - the next leader joined again from the new base: the fork above.
+  it('holds the tab lead from the build until the checkpoint settled, whatever ends meanwhile', async () => {
+    const { leadHoldsInFlight, resetLeadHoldsForTests } = await import('$lib/mls-client/leadHolds');
+    resetLeadHoldsForTests();
+    const ctx = makeCtx();
+    const seen: Record<string, number> = {};
+    ctx.delivery.fetchGroupInfo.mockResolvedValue({
+      groupInfo: 'AA==',
+      baseEpoch: 5,
+      activeEpoch: 5,
+    });
+    let answer!: (v: unknown) => void;
+    ctx.delivery.submitCommit.mockImplementation(() => {
+      // The commit is on the wire: no MLS lock is held here, the join's own hold is.
+      seen.onTheWire = leadHoldsInFlight();
+      return new Promise((r) => (answer = r));
+    });
+    let land!: (v: boolean) => void;
+    vi.mocked(persistMlsStructuralCheckpoint).mockImplementation(() => {
+      seen.atTheCheckpoint = leadHoldsInFlight();
+      return new Promise<boolean>((r) => (land = r));
+    });
+
+    const join = externalJoin(ctx, 'g');
+    await vi.waitFor(() => expect(seen.onTheWire).toBe(1));
+    answer({ accepted: true, newEpoch: 6 });
+    await vi.waitFor(() => expect(seen.atTheCheckpoint).toBe(1));
+    expect(leadHoldsInFlight()).toBe(1);
+
+    land(true);
+    expect(await join).toEqual({ joined: true });
+    expect(leadHoldsInFlight()).toBe(0);
+  });
+
   it('still reports the join when the checkpoint fails, because the group can already see it', async () => {
     const ctx = makeCtx();
     vi.mocked(persistMlsStructuralCheckpoint).mockRejectedValue(new Error('quota exceeded'));

@@ -32,6 +32,7 @@ import {
 } from '$lib/mls-client/messagePipeline/unackedFrames';
 import { flushMacrotask } from '../../test/flush';
 import { TransportFailureError } from '$lib/utils/transportFailure';
+import { leadHoldsInFlight, resetLeadHoldsForTests } from '$lib/mls-client/leadHolds';
 
 /**
  * A Graine key-distribution group on the client (WP-22) - a community's, or a private salon's.
@@ -327,12 +328,52 @@ describe('joining on first use', () => {
 
   it('creates the group and publishes the base when this device is the first one in', async () => {
     const ctx = makeCtx();
+    const flushEncrypted = vi.fn(async () => {});
+    registerMlsStatePersister({
+      markStructural: () => {},
+      scheduleDeferred: () => {},
+      flushEncrypted,
+    } as any);
 
-    expect(await ensure(ctx, WS, REF_FRESH)).toEqual({ joined: true });
+    try {
+      expect(await ensure(ctx, WS, REF_FRESH)).toEqual({ joined: true });
+    } finally {
+      unregisterMlsStatePersister();
+    }
+    // Its creator's keys are checkpointed before the base counts as joined.
+    expect(flushEncrypted).toHaveBeenCalledTimes(1);
     expect(ctx.createGroup).toHaveBeenCalledWith('g-1');
     expect(ctx.distributionGroupInfo.publish).toHaveBeenCalledWith(WS, expect.any(String), 0, 'd');
     expect(ctx.externalJoin).not.toHaveBeenCalled();
     expect(ctx.forgetGroup).not.toHaveBeenCalled();
+  });
+
+  // Third review of #4053: the base was published outside the MLS mutex, with no lead hold, so a
+  // session ending between the publish and a checkpoint left a published base whose creator's keys
+  // were in memory only. The lead is held from the creation until the checkpoint covers it.
+  it('holds the lead from the creation until a checkpoint covers the published base', async () => {
+    resetLeadHoldsForTests();
+    const ctx = makeCtx();
+    const seen: Record<string, number> = {};
+    ctx.distributionGroupInfo.publish.mockImplementation(async () => {
+      seen.publish = leadHoldsInFlight();
+      return { stored: true };
+    });
+    registerMlsStatePersister({
+      markStructural: () => {},
+      scheduleDeferred: () => {},
+      flushEncrypted: async () => {
+        seen.checkpoint = leadHoldsInFlight();
+      },
+    } as any);
+
+    try {
+      expect(await ensure(ctx, WS, REF_FRESH)).toEqual({ joined: true });
+    } finally {
+      unregisterMlsStatePersister();
+    }
+    expect(seen).toEqual({ publish: 1, checkpoint: 1 });
+    expect(leadHoldsInFlight()).toBe(0);
   });
 
   it('throws its own group away and joins the winner when it loses the first publish', async () => {
