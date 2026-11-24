@@ -14,6 +14,10 @@ import { Logger } from '@nestjs/common';
  * Three entry points are recorded: an instance (`new Logger(X).warn`), the STATIC one
  * (`Logger.error`, Nest's staticInstanceRef) and the console a service may write to directly.
  *
+ * WHAT IT DOES NOT SEE: module load, `beforeAll` (unless wrapped in {@link whileRecording}),
+ * `afterAll`, the gaps between tests, and async work that outlives its test (a line logged after
+ * `afterEach` ran is recorded by nobody). Those paths keep printing to the real logger.
+ *
  * Wired through `setupFilesAfterEnv` and selected by file name, like the time budget
  * (`jest-integration-budget.cjs`): the integration specs and `lives/live-seats.spec.ts`, the same
  * set CI's `test-social-integration` job runs.
@@ -27,6 +31,8 @@ interface Line {
 
 const LEVELS: readonly Level[] = ['warn', 'error'];
 let lines: Line[] = [];
+/** True between {@link startRecording} and {@link stopRecording}. */
+let recording = false;
 
 /** True for the specs the guard watches (the file names CI's integration job selects). */
 function guarded(testPath: string): boolean {
@@ -105,6 +111,10 @@ for (const level of LEVELS) {
 
 /** Starts recording: lines are kept, and handed on ONLY to a spec's own spy, never to the real logger. */
 function startRecording(): void {
+  // A nested start would save the RECORDER as `before`, and the real logger would never come back.
+  if (recording)
+    throw new Error('integration-log-guard: already recording (a nested whileRecording?)');
+  recording = true;
   lines = [];
   for (const target of targets) {
     const before = target.owner[target.level] as Writer;
@@ -120,6 +130,7 @@ function startRecording(): void {
 
 /** Stops recording, and FAILS on every line nobody took: it is printed, never silenced. */
 function stopRecording(): void {
+  recording = false;
   for (const target of targets) target.owner[target.level] = target.before;
   const left = lines.filter((line) => !line.taken);
   lines = [];

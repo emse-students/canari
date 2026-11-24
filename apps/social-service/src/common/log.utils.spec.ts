@@ -1,4 +1,4 @@
-import { describeError } from './log.utils';
+import { describeError, errorNameOf } from './log.utils';
 
 describe('describeError', () => {
   it('names an error and its message, on ONE line', () => {
@@ -58,5 +58,34 @@ describe('describeError, in a catch', () => {
       'Error: outer <- Error: inner second line'
     );
     expect(describeError(withCause('outer', 'plain'))).toBe('Error: outer <- plain');
+  });
+
+  it('never throws on a getter that throws, or on a Proxy whose traps throw', () => {
+    const boom = () => {
+      throw new Error('getter exploded');
+    };
+    for (const key of ['message', 'errors', 'cause', 'code']) {
+      const hostile = { name: 'Error', message: 'm' };
+      Object.defineProperty(hostile, key, { get: boom, enumerable: true });
+      expect(() => describeError(hostile)).not.toThrow();
+      expect(describeError(hostile)).toBe('[object Object]');
+    }
+    const proxy = new Proxy({}, { get: boom, getPrototypeOf: boom, has: boom });
+    expect(() => describeError(proxy)).not.toThrow();
+  });
+});
+
+describe('errorNameOf', () => {
+  it('reads the name of an error-shaped value, and nothing else', () => {
+    expect(errorNameOf(new DOMException('x', 'TimeoutError'))).toBe('TimeoutError');
+    expect(errorNameOf('TimeoutError: text')).toBeNull();
+    expect(errorNameOf(null)).toBeNull();
+    expect(
+      errorNameOf({
+        get name(): string {
+          throw new Error('no');
+        },
+      })
+    ).toBeNull();
   });
 });

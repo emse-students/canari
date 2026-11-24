@@ -13,7 +13,12 @@ const safeText = (value: unknown): string => {
   try {
     return String(value);
   } catch {
-    return Object.prototype.toString.call(value);
+    try {
+      return Object.prototype.toString.call(value);
+    } catch {
+      // A Proxy whose traps throw has no text at all.
+      return '[unprintable value]';
+    }
   }
 };
 
@@ -24,6 +29,18 @@ const errorShape = (e: unknown): string | null => {
   if (typeof name !== 'string' || typeof message !== 'string') return null;
   const coded = typeof code === 'string' || typeof code === 'number' ? ` [${code}]` : '';
   return `${name}: ${message}${coded}`;
+};
+
+/** The description itself; {@link describeError} guards it, because a getter or a Proxy may throw. */
+const describeErrorUnsafe = (e: unknown): string => {
+  const own = errorShape(e) ?? safeText(e);
+  if (typeof e !== 'object' || e === null) return sanitizeLog(own);
+  const { errors, cause } = e as { errors?: unknown; cause?: unknown };
+  const inner = Array.isArray(errors)
+    ? ` (${errors.map((one) => errorShape(one) ?? safeText(one)).join('; ')})`
+    : '';
+  const because = cause === undefined ? '' : ` <- ${errorShape(cause) ?? safeText(cause)}`;
+  return sanitizeLog(`${own}${inner}${because}`);
 };
 
 /**
@@ -37,12 +54,22 @@ const errorShape = (e: unknown): string | null => {
  * hide the first. Sanitised like any value interpolated into a log line.
  */
 export const describeError = (e: unknown): string => {
-  const own = errorShape(e) ?? safeText(e);
-  if (typeof e !== 'object' || e === null) return sanitizeLog(own);
-  const { errors, cause } = e as { errors?: unknown; cause?: unknown };
-  const inner = Array.isArray(errors)
-    ? ` (${errors.map((one) => errorShape(one) ?? safeText(one)).join('; ')})`
-    : '';
-  const because = cause === undefined ? '' : ` <- ${errorShape(cause) ?? safeText(cause)}`;
-  return sanitizeLog(`${own}${inner}${because}`);
+  try {
+    return describeErrorUnsafe(e);
+  } catch {
+    return sanitizeLog(safeText(e));
+  }
+};
+
+/**
+ * The `name` of a caught error, the way to CLASSIFY one (never its message): duck-typed like
+ * {@link describeError}, and null for anything nameless or whose getter throws.
+ */
+export const errorNameOf = (e: unknown): string | null => {
+  try {
+    const name = typeof e === 'object' && e !== null ? (e as { name?: unknown }).name : undefined;
+    return typeof name === 'string' ? name : null;
+  } catch {
+    return null;
+  }
 };
