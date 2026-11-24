@@ -246,84 +246,37 @@ describe('tabLeader - a tab whose session cannot serve gives the lead up', () =>
     window.dispatchEvent(new Event('beforeunload'));
   }
 
-  it('a queued tab GRANTED the lock before it heard of the promotion reload passes it on (second review of #4053)', async () => {
+  // THIRD REVIEW OF #4053: a durable mark of the reload, honoured by a live tab, outlived a tab
+  // closed during its reload and left every tab without a leader. Nothing marks it any more.
+  it('a tab closed during its promotion reload leaves nothing behind: a later visible tab still leads', async () => {
     const { a, b } = await promotedReloadAheadOfAQueuedTab();
-
-    // A marks its reload and unloads IN THE SAME TASK: the lock is granted to B before the
-    // broadcast reaches it - the ordering the real channel allows.
+    // A reloads for its promotion and is closed in the middle of it: no page reclaims.
     reloadForPromotion(a);
-    await settle();
-    expect(b.mod.getTabLeadership()).toBe('follower');
-    expect(b.promoted).toBe(0);
-    expect(manager.isHeld()).toBe(false);
-    expect(b.logs.some((l) => l.includes('Lead granted while another tab reloads'))).toBe(true);
-
-    // A's new page reclaims and says so: B queues behind it. Not one extra reload on either side.
-    const reloaded = await openDocument();
-    await deliverBroadcasts();
-    expect(reloaded.mod.getTabLeadership()).toBe('leader');
-    expect(manager.queued()).toBe(1);
-    expect(b.promoted).toBe(0);
-    expect(b.demoted).toBe(0);
-    expect(reloaded.demoted).toBe(0);
-  });
-
-  it('a queued tab that HEARS of the promotion reload first withdraws its request, and queues once the lead is announced', async () => {
-    const { a, b } = await promotedReloadAheadOfAQueuedTab();
-
-    a.mod.markPromotionReload();
-    await deliverBroadcasts();
-    // Withdrawn while A still holds the lock: nothing of B's waits to be granted in the gap.
-    expect(manager.queued()).toBe(0);
-    expect(b.logs.some((l) => l.includes('withdraws its request for the lead'))).toBe(true);
-
-    unload(a);
-    await settle();
-    expect(manager.isHeld()).toBe(false);
-
-    const reloaded = await openDocument();
-    await deliverBroadcasts();
-    expect(reloaded.mod.getTabLeadership()).toBe('leader');
-    expect(manager.queued()).toBe(1);
-    expect(b.promoted).toBe(0);
-  });
-
-  it('when the reloading tab was closed instead, the member coming to a waiting tab gives it the lead', async () => {
-    const { a, b } = await promotedReloadAheadOfAQueuedTab();
-    reloadForPromotion(a);
-    await deliverBroadcasts();
-    // No page reclaims: nothing will announce the lead, and B's session is already live.
     sessionStorage.clear();
-    expect(manager.isHeld()).toBe(false);
-
-    b.fire('visibilitychange');
     await deliverBroadcasts();
-
+    // B, queued and live, took the lock the reload left free.
     expect(b.mod.getTabLeadership()).toBe('leader');
-    expect(b.promoted).toBe(1);
+
+    // Later: B closes while F, the tab the member is in, waits in the queue - F leads.
+    const f = await openDocument();
+    expect(manager.queued()).toBe(1);
+    unload(b);
+    await deliverBroadcasts();
+    expect(f.mod.getTabLeadership()).toBe('leader');
+    expect(f.promoted).toBe(1);
   });
 
-  it("the reloading tab's own earlier promotion announcement, arriving late, does not end the deferral", async () => {
-    const x = await openDocument();
-    const a = await openDocument();
-    const b = await openDocument();
-    x.mod.setTabLeadEligibility(false, 'session unavailable');
-    await settle();
-    expect(a.mod.getTabLeadership()).toBe('leader');
-    // A's `leader_promoted` is still in flight when it reloads and B is granted the gap.
+  it('a live tab granted the lock in a promotion reload gap leads, and the reclaim demotes it once', async () => {
+    const { a, b } = await promotedReloadAheadOfAQueuedTab();
     reloadForPromotion(a);
-    await settle();
-    expect(b.mod.getTabLeadership()).toBe('follower');
-
     await deliverBroadcasts();
-    // Heard: A's promotion, then its reload - neither gives B the lock A's next page reclaims.
-    expect(manager.isHeld()).toBe(false);
-    expect(b.promoted).toBe(0);
+    expect(b.mod.getTabLeadership()).toBe('leader');
 
+    // A's new page reclaims with a steal: B hands over, and that demotion is its one extra reload.
     const reloaded = await openDocument();
     await deliverBroadcasts();
     expect(reloaded.mod.getTabLeadership()).toBe('leader');
-    expect(manager.queued()).toBe(1);
-    expect(b.promoted).toBe(0);
+    expect(b.mod.getTabLeadership()).toBe('follower');
+    expect(b.demotions).toEqual(['lead-moved']);
   });
 });

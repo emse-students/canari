@@ -2009,6 +2009,10 @@ and no clock is used:
     expired during a wake-up rejoin gave the lead up, the server took the commit, the checkpoint was
     refused, and the next leader joined again from the new base - a fork;
   - **a key-package mint, and the identity rotation a revocation starts in it**;
+  - **a distribution group this device creates, from its creation until a checkpoint covers its
+    published base** (`ensureDistributionGroup`): the base is published outside the MLS mutex, so a
+    session ending between the publish and a checkpoint left a base on the server whose creator's
+    keys were in memory only;
   - **a checkpoint, from its export until its put settled** - not across the row waits before the
     export, which end when the row writes they wait for settle; a checkpoint that must not be
     refused (a commit's, a join's) runs inside one of the holds above, which covers them. A
@@ -2052,23 +2056,29 @@ and no clock is used:
     callers keeps a durable queue, so dropping the frame lost the gesture (charter principle 2). It
     is sent; what the asking page would have done with the answer (a forward's own echo, the time
     the server took it) died with that page, and that is said at warn;
-  - not run: a call's transport frame (the call ended with the page that held it), and a salon
-    message's seal (the salon send queue sends it again under the same client id).
-- **no tab takes the lock in another tab's promotion reload gap.** A promoted tab marks its reload
-  durably and shares it (`localStorage`, written before the unload releases the lock), announces it
-  (`leader_promotion_reloading`), and its new page reclaims the lock with a steal and says so
-  (`leader_promoted`, from a new document id). In that gap:
-  - a tab whose session comes back (a quick PIN retry) does not take the free lock: it joins as a
-    follower;
-  - a tab with a request QUEUED withdraws it when it hears the announcement;
-  - a tab GRANTED the lock before the announcement reached it (the channel delivers on a later task
-    than the unload releases the lock) reads the durable mark at the grant and passes the lock on,
-    never deciding `leader`.
-
-  Each of them queues once the gap ends, on the first of three facts: a tab announcing the lead (the
-  reloading page's OWN earlier `leader_promoted`, arriving late, does not count), its own session
-  going live (`noteTabSessionLive`), or the member coming to the tab (`visibilitychange`) - the one
-  fact left when the reloading tab was closed instead, since nothing else would ever say so.
+  - a salon message's seal, decided by its CALLER, not by its kind (third review of #4053): only the
+    salon text queue (`messaging.ts`) sends a seal again after a reload, under the same client id,
+    and it says so (`resentByQueue`), so its seal is dropped. Every other caller - an edit, a
+    reaction, a poll, a media forward, a member-added notice - has no queue: its seal carries what
+    it is posted with (`postIfAdopted`, a `SalonPost`), and the adopting leader seals AND posts it
+    (`postSealedChannelMessage`, `channelPost.ts`, the one place a salon row is built);
+  - not run: a call's transport frame (the call ended with the page that held it).
+- **a promotion reload leaves NOTHING behind that a live tab waits on** (third review of #4053). A
+  promoted tab announces its reload (`leader_promotion_reloading`) and its new page reclaims the lock
+  with a steal and says so (`leader_promoted`). In the gap between its two pages, no page of that
+  tab exists: it holds no lock, answers nothing, and is indistinguishable from a tab CLOSED during
+  its reload - so no liveness proof exists to wait on (a `navigator.locks.query` sees no holder in
+  both cases). An earlier fix marked the reload durably (`localStorage`) and made a live tab granted
+  the lock in the gap pass it on: a tab closed mid-reload left that mark behind, and a later tab
+  granted the lock read it and handed the lock to nobody - every tab without a leader (charter
+  principle 2). So:
+  - a live tab QUEUED for the lead takes the lock when it is granted in the gap, and leads. If the
+    reloading page comes back, its reclaim steals the lock and demotes that tab: at most one extra
+    reload, never a tab without a leader;
+  - only a tab whose session COMES BACK in the gap (a quick PIN retry) is held back: the announcement
+    is kept IN MEMORY, and that login joins as a follower, queueing once a tab announces the lead
+    or once its own session goes live (`noteTabSessionLive`), whichever comes first. Both end on
+    their own; neither needs the reloading tab to exist.
 - the grant callbacks (a queued promotion, the hand-over's steal, the first election) read
   eligibility too. A lock granted to a document whose withdrawal raced the grant is passed on
   rather than held, and a follower that cannot serve asks no hidden leader for the lead.
@@ -2122,10 +2132,10 @@ worker in `1.9.0` ([design](../../backlog.d/a-browser-wide-worker-holds-the-mls-
   - a follower that cannot serve asks for no hand-over;
   - a tab whose session returns during another tab's promotion reload leaves the lock free and
     queues behind the reclaim once it is announced; its own live session ends the deferral otherwise;
-  - in that gap, a queued tab that hears of the reload withdraws, one granted the lock BEFORE it
-    heard passes it on, the reloading page's own late `leader_promoted` ends nothing, and the member
-    coming to a waiting tab ends the gap of a tab closed during its reload. The channel there
-    delivers on a later task, as the real one does (`FakeBroadcastChannel`).
+  - a tab closed during its promotion reload leaves nothing behind: the queued tab leads, and when it
+    closes, a later visible tab leads in turn;
+  - a live tab granted the lock in a reload gap leads, and the reclaim demotes it once. The channel
+    there delivers on a later task, as the real one does (`FakeBroadcastChannel`).
 - `mlsPerGroupScheduler.leadHold.test.ts`: the mutex holds the lead from grant to release, a waiter
   holds nothing, the hand-over never touches zero, a throw releases.
 - `BaseMlsService.externalJoin.test.ts`: the lead is held while the join's commit is on the wire and
@@ -2133,9 +2143,16 @@ worker in `1.9.0` ([design](../../backlog.d/a-browser-wide-worker-holds-the-mls-
 - `tabCommitDelegation.test.ts`: a leader that gives the lead up between the claim and the run
   hands the record back, and the next leader runs it; an `unavailable` leader leaves the request
   `pending` for the next one; a promoted asker adopts and runs its own gesture and its visible or
-  mutation frame (said at warn), drops a call's frame, and still removes another tab's orphan.
+  mutation frame (said at warn), drops a call's frame, runs as adopted a salon seal that carries its
+  post and drops one a queue re-sends, and still removes another tab's orphan.
   A delegated salon seal parked on its send gate holds no lead.
   `tabCommitDelegation.carry.test.ts`: the carried id is adopted on a reload only.
+- `channelSeal.followerTab.test.ts`: an adopted seal that carries its post is sealed AND posted with
+  it, and nothing is posted when the lead left during the seal. `channelCrypto.test.ts`: every caller
+  carries its post into the seal except one that says a queue re-sends it;
+  `messagingChannelRefusal.test.ts`: the salon text queue says so.
+- `BaseMlsService.distributionGroup.test.ts`: a created distribution group holds the lead through
+  its publish and until its checkpoint.
 - `BaseMlsService.rowsBeforeRatchet.test.ts`: a checkpoint holds the lead from its export to its
   put, and none while it waits on the row writes before it.
 - `leadPublisher.test.ts`: eligibility before readiness; the lead kept while a hold is in flight and

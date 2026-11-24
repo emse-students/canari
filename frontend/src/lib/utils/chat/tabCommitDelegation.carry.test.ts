@@ -14,6 +14,11 @@ async function loadWith(navigationType: string | null) {
 }
 
 describe('the requester id carried across a promotion reload', () => {
+  // The first import transforms the whole module graph: done here, outside every test's timeout,
+  // so a cold run in a parallel suite does not charge it to the first test (third review of #4053).
+  beforeAll(async () => {
+    await import('./tabCommitDelegation');
+  });
   beforeEach(() => sessionStorage.clear());
   afterEach(() => vi.restoreAllMocks());
 

@@ -69,6 +69,8 @@ describe('a refused channel send is described from its status, never from its bo
 
     // Without this the whole suite would pass vacuously on a mock that never ran.
     expect(sendEncryptedChannelMessage).toHaveBeenCalledTimes(1);
+    // The salon text queue re-sends its own after a reload: its seal carries no post to adopt.
+    expect(sendEncryptedChannelMessage.mock.calls[0][5]).toEqual({ resentByQueue: true });
     expect(result.success).toBe(false);
     expect(result.error).toBeTruthy();
     expect(result.error).not.toContain(SERVER_WORDS);

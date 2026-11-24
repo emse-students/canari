@@ -13,7 +13,8 @@
  * below - never from a clock. The holds are taken WHERE THE STATE CHANGES, so no path can forget one
  * (second review of #4053): the MLS mutex from its grant to its release (`MlsPerGroupScheduler`,
  * every frame, Welcome, commit, catch-up and rejoin), an external join from its build to its
- * structural checkpoint (its commit is on the wire between two lock sections), a key-package mint
+ * structural checkpoint (its commit is on the wire between two lock sections), a distribution group
+ * created here from its creation to the checkpoint covering its published base, a key-package mint
  * and the identity rotation in it, a checkpoint from its export to its put, an ended session's
  * final checkpoint. A wait that changes no state - for the mutex itself, for a salon's send gate -
  * holds nothing. What a hold can wait on ends on its own: a request in an answer or a transport

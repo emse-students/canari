@@ -8838,6 +8838,12 @@ export abstract class BaseMlsService implements IMlsService {
     // settled. Cleared in the `finally`, on every branch: a mark outliving its window would strand
     // the scope refusing to send for the rest of the session.
     this.unsettledDistributionGroups.add(groupId);
+    // THE LEAD IS HELD FROM THE CREATION UNTIL A CHECKPOINT COVERS IT (`leadHolds.ts`, third review
+    // of #4053): the base is published outside the MLS mutex, and a session ending between the
+    // publish and a checkpoint left a base on the server whose creator's keys were in memory only -
+    // a ghost leaf every later joiner inherits. So the published group is checkpointed here, as an
+    // external join's is, before the hold ends.
+    const releaseLead = takeLeadHold(`distribution group ${groupId.slice(0, 8)}`);
     try {
       await this.runUnderMlsLock(() => this.createGroup(groupId));
 
@@ -8860,7 +8866,26 @@ export abstract class BaseMlsService implements IMlsService {
         return { joined: false, reason: 'unreachable' };
       }
 
-      if (published.stored) return { joined: true };
+      if (published.stored) {
+        let checkpointed: boolean;
+        try {
+          checkpointed = await persistMlsStructuralCheckpoint();
+        } catch (e) {
+          checkpointed = false;
+          console.error(
+            `[GRAINE] the published distribution group ${groupId.slice(0, 8)}... FAILED to checkpoint:`,
+            String(e).slice(0, 120)
+          );
+        }
+        if (!checkpointed) {
+          // Accused, as an external join's is: the base is public, and this device's half of it
+          // does not survive a reload.
+          console.error(
+            `[GRAINE] the distribution group ${groupId.slice(0, 8)}... was published but not checkpointed - its creator's keys do not survive a reload`
+          );
+        }
+        return { joined: true };
+      }
 
       // Lost the race: another device published first and its base is what everyone else will join
       // from. Ours would fork the community in two.
@@ -8875,6 +8900,7 @@ export abstract class BaseMlsService implements IMlsService {
       );
       return this.externalJoin(groupId, { welcomeOwed: 'ask' });
     } finally {
+      releaseLead();
       this.unsettledDistributionGroups.delete(groupId);
     }
   }

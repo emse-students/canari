@@ -55,6 +55,7 @@
  */
 import type { MemberRemovalOutcome } from '$lib/utils/chat/groupActions';
 import type { SealedChannelMessage } from '$lib/utils/graine/channelSeal';
+import type { SalonPost } from '$lib/utils/chat/channelPost';
 import type { GraineSealUnavailableReason } from '$lib/utils/graine/sealUnavailable';
 import type { SalonGateRefusal } from '$lib/utils/graine/salonSendGate';
 import type { AskReason } from '$lib/utils/graine/repair';
@@ -106,7 +107,17 @@ export type DelegatedCommitOp =
    * leader reserves an outbound index, mints or distributes a seed, and writes the Graine store. The
    * payload rests sealed under the device key, like a frame's.
    */
-  | { kind: 'seal-salon-message'; channelId: string; payload: HandedOverBytes }
+  | {
+      kind: 'seal-salon-message';
+      channelId: string;
+      payload: HandedOverBytes;
+      /**
+       * What the asking page posts the sealed message with - carried only when no durable queue of
+       * that page sends it again after a reload (`sendEncryptedChannelMessage`'s `resentByQueue`).
+       * A leader that ADOPTS the request from a reloaded page posts it itself ({@link onAdoption}).
+       */
+      postIfAdopted?: SalonPost;
+    }
   /**
    * The Graine seeds of one channel a follower could not open rows for, asked for by the leader
    * (`repair.ts`): one record per channel for every seed named while the previous one was in flight.
@@ -197,7 +208,9 @@ export type DelegatedOutcome<K extends DelegatedCommitKind> =
 /** Runs one gesture on the leader. It answers by VALUE; a throw is a defect, settled `failed`. */
 export type DelegatedCommitExecutors = {
   [K in DelegatedCommitKind]: (
-    op: Extract<DelegatedCommitOp, { kind: K }>
+    op: Extract<DelegatedCommitOp, { kind: K }>,
+    /** `adopted`: the page that asked was reloaded - nobody reads the answer, the effect is all. */
+    run?: { adopted: boolean }
   ) => Promise<DelegatedCommitResults[K]>;
 };
 
@@ -278,14 +291,19 @@ export interface DelegationEnv {
  * What a tab does with a request it made before its promotion reload (second review of #4053):
  * - `run`: a gesture whose effect IS its outcome - a conversation, a membership, a key group, a frame
  *   the member sent (a forward, an invitation, a notice, an edit or a reaction): none of their callers
- *   keeps a durable queue, so dropped, the gesture was lost (charter principle 2). What the asking
- *   page would have done with the answer - a forward's own echo, a `receivedAt` - is said not done;
- * - `drop`: a call's transport frame, whose call ended with the page that held it, and a salon
- *   message's seal, whose sender queue (`useMessaging`'s salon queue) sends it again under the same
- *   client id once this page is live.
+ *   keeps a durable queue, so dropped, the gesture was lost (charter principle 2). The same for a
+ *   salon message whose caller keeps no queue - a reaction, an edit, a poll, a forward, a notice:
+ *   its seal carries its post (`postIfAdopted`), and the executor seals AND posts it. What the
+ *   asking page would have done with the answer - its own echo, a `receivedAt` - is said not done;
+ * - `drop`: a call's transport frame, whose call ended with the page that held it, and the seal of
+ *   a salon TEXT, whose sender queue (`messaging.ts`) sends it again under the same client id once
+ *   this page is live - posting it here too would only race that repeat.
  */
 function onAdoption(op: DelegatedCommitOp): 'run' | 'drop' {
   if (op.kind === 'emit-frame') return op.delivery === 'transport' ? 'drop' : 'run';
+  // Decided by the CALLER, not the kind (third review of #4053): only the salon text queue sends a
+  // seal again; a reaction, an edit, a poll, a forward or a notice carries its post instead.
+  if (op.kind === 'seal-salon-message') return op.postIfAdopted ? 'run' : 'drop';
   return ADOPTABLE_KINDS.has(op.kind) ? 'run' : 'drop';
 }
 
@@ -547,17 +565,21 @@ export function createDelegationServer(env: DelegationEnv) {
   }
 
   async function runExecutor(
-    op: DelegatedCommitOp
+    op: DelegatedCommitOp,
+    adopted: boolean
   ): Promise<DelegatedOutcome<DelegatedCommitKind>> {
     const execute = executors[op.kind] as
-      | ((o: DelegatedCommitOp) => Promise<DelegatedCommitResults[DelegatedCommitKind]>)
+      | ((
+          o: DelegatedCommitOp,
+          run: { adopted: boolean }
+        ) => Promise<DelegatedCommitResults[DelegatedCommitKind]>)
       | undefined;
     if (!execute) return { status: 'refused', reason: 'not-delegable' };
     try {
       // NO LEAD HOLD AROUND THE EXECUTOR (second review of #4053): what it changes in the MLS state
       // holds the lead where it changes it - the MLS mutex, an external join, a mint - so a wait of
       // the gesture outside those (a salon's send gate) never keeps an ended session in the lead.
-      return { status: 'done', value: await execute(op) };
+      return { status: 'done', value: await execute(op, { adopted }) };
     } catch (e) {
       // AN EXECUTOR ANSWERS BY VALUE: a throw reaching here is a gesture whose own classification
       // missed a case - said once, at error, and the follower is told it failed.
@@ -698,11 +720,11 @@ export function createDelegationServer(env: DelegationEnv) {
         return 'answered';
       }
       env.log(`${tag} run for a follower tab`);
-      await settle(store, claimed, 'running', await runExecutor(claimed.op));
+      await settle(store, claimed, 'running', await runExecutor(claimed.op, adopted));
       if (adopted) {
         // Nobody reads this answer (the page that asked was reloaded): its effect is the answer.
         await store.update(id, (r) => (r?.state === 'done' ? 'delete' : null));
-        if (claimed.op.kind === 'emit-frame') {
+        if (claimed.op.kind === 'emit-frame' || claimed.op.kind === 'seal-salon-message') {
           // SAID, because it is a real gap: the frame reached its group, but what the asking page
           // did with the answer (a forward's own echo, the time the server took it) died with it.
           env.log(

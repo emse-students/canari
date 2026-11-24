@@ -287,8 +287,8 @@ function recordingExecutors() {
       runs.push(`emit-frame:${groupId}:${delivery}`);
       return { receivedAt: 42 };
     },
-    'seal-salon-message': async ({ channelId }) => {
-      runs.push(`seal-salon-message:${channelId}`);
+    'seal-salon-message': async ({ channelId }, run) => {
+      runs.push(`seal-salon-message:${channelId}${run?.adopted ? ':adopted' : ''}`);
       return { unavailable: 'key-group-not-held' };
     },
     'note-missing-seeds': async ({ seeds }) => {
@@ -663,6 +663,28 @@ describe('a request nobody waits for is never run', () => {
         );
       }
     );
+
+    // Third review of #4053: a salon seal is decided by its CALLER. A reaction, an edit, a poll, a
+    // forward or a notice has no queue to send it again, so it carries its post and is run (sealed
+    // AND posted by the executor); the salon text queue re-sends its own, so that one is dropped.
+    it('a salon seal that carries its post is run as adopted; one a queue re-sends is dropped', async () => {
+      const carried = await askThenPromoteTheAsker({
+        kind: 'seal-salon-message',
+        channelId: 'c1',
+        payload: { iv: 'aQ==', cipherText: 'aQ==' },
+        postIfAdopted: { messageId: 'm1' },
+      });
+      expect(carried.reloaded.runs).toEqual(['seal-salon-message:c1:adopted']);
+      expect(carried.w.databases.ids()).toEqual([]);
+
+      const queued = await askThenPromoteTheAsker({
+        kind: 'seal-salon-message',
+        channelId: 'c1',
+        payload: { iv: 'aQ==', cipherText: 'aQ==' },
+      });
+      expect(queued.reloaded.runs).toEqual([]);
+      expect(queued.w.databases.ids()).toEqual([]);
+    });
 
     it("a call's transport frame is not sent late: its call ended with the page", async () => {
       const { w, reloaded } = await askThenPromoteTheAsker({
