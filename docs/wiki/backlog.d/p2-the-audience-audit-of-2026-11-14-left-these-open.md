@@ -1,6 +1,6 @@
 ## P2 - the audience audit of 2026-11-14: what the campus x formation model still leaves open
 
-target: 1.8.0
+target: 1.9.0
 
 A read-only audit of every surface that serves content against the one statement of who sees what (`apps/social-service/src/spaces/reader-spaces.ts`, [profiles-and-access](../profiles-and-access.md), [reform](../spaces-and-audiences-reform.md)). The sound surfaces and the owner's closed answers are in [the record](../decisions/audience-audit-2026-11-14.md); what remains:
 

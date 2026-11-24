@@ -1,6 +1,6 @@
 ## CanaQuiz - a live quiz anyone can run, with points and a ranking (owner, 2026-11-19)
 
-target: 1.8.0
+target: 1.10.0
 
 Designed with the owner on 2026-11-19 ([decisions](../decisions/owner-decisions-of-2026-11-19.md)). Nothing is built yet.
 It is a live quiz built the Canari way: a host runs it, the players answer from their phones, they

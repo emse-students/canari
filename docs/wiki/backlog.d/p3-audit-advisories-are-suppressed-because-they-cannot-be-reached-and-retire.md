@@ -1,6 +1,6 @@
 ## P3 - audit advisories are suppressed because they cannot be reached, and retire themselves
 
-target: 1.8.0
+target: 1.10.0
 
 Five advisories (`GHSA-vcc3-ghjq-m6fr`, `GHSA-qr28-fpjm-wq7f`, `GHSA-528h-pc64-c93x`, `GHSA-hqr4-qq8f-hg3x`,
 `GHSA-mjw6-4jj6-33hc`) are ignored on the `minio > ...` edge of media-service; minio 8.0.7 is still the
