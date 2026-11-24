@@ -939,3 +939,14 @@ Reported by the owner: in the form editor, dragging across the question title to
 - **The mechanism**: the action `actions/draggableCard.ts` sets `draggable` true, flips it to false at `pointerdown` on an excluded target and back on `pointerup`/`pointercancel`/`dragend`. Deciding at pointerdown is the only moment that works in every engine, and it also leaves the touch long-press text selection alone. Keyboard reordering (the move up/down buttons) is not a drag and is untouched.
 - **Surfaces using native HTML5 drag** (both fixed): `FormQuestionsSection` question cards, `EditMembersTab` member rows. The salon list in `Sidebar` uses `svelte-dnd-action` on rows that are buttons with no field inside; it is unchanged. Any new native-draggable card uses `use:draggableCard`, never a bare `draggable`.
 - Tests: `dragExclusion.test.ts`, `FormQuestionsSection.drag.svelte.test.ts`.
+
+## Svelte 5.59 runs actions and effects before the sibling blocks render (2026-11-24)
+
+**Never read an element's children at action start, nor look an element up in an `$effect` that its own state change renders into.** Since Svelte 5.59 (the custom renderer rewrite) an action can start BEFORE the `{#each}` or `{#if}` beside it has rendered, and an `$effect` runs BEFORE the block the same state change creates. Found by the `development-dependencies` bump (#4028), where the old order had hidden four classes of bug:
+
+- **A library that wires the zone's children** (`svelte-dnd-action`) configured an empty rail zone and never again, since its options never change: `dndzoneRendered` configures again when the child LIST changes (`MutationObserver`, element by element, never a clock, never while a drag's shadow element is present).
+- **A `ResizeObserver` enrolled on `node.children` once** (`scrollFades`, the tab rows) watched nothing: `observeChildren` re-enrols on every `childList` change.
+- **An `$effect` that focused a ref or a selector** (the ring's Accept, the form card's title and row button) found null: `focusOnMount` (and the card's `focusRow`) is an action on the target itself, which runs only once it exists. Its argument is read once; a `select` request must come AFTER `bind:value` in the tag, so the selection is taken once the value is set.
+- **`focusTrap`** reads its first focusable at start: `Modal.focusTrap.svelte.test.ts` asserts the panel's controls exist by then.
+
+Decide where a move or a measure lives by asking WHICH element it needs: put it on that element's own action, or drive it from the DOM that changes.

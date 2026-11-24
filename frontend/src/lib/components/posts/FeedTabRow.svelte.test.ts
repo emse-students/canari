@@ -17,6 +17,8 @@ import FeedTabRow from './FeedTabRow.svelte';
 const layout: { content: number; compact: number | null } = { content: 300, compact: null };
 let fontsReady: () => void = () => {};
 const resized: (() => void)[] = [];
+/** Every element a `ResizeObserver` was asked to watch, whichever observer. */
+const watched = new Set<Element>();
 let mounted: Record<string, unknown> | null = null;
 
 beforeEach(() => {
@@ -53,7 +55,12 @@ beforeEach(() => {
       constructor(callback: () => void) {
         resized.push(callback);
       }
-      observe() {}
+      observe(el: Element) {
+        watched.add(el);
+      }
+      unobserve(el: Element) {
+        watched.delete(el);
+      }
       disconnect() {}
     }
   );
@@ -63,6 +70,7 @@ afterEach(() => {
   if (mounted) void unmount(mounted);
   mounted = null;
   resized.length = 0;
+  watched.clear();
   document.body.innerHTML = '';
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -239,4 +247,12 @@ it('logs a compact change once, not on every observer callback', () => {
   resized.forEach((callback) => callback());
   resized.forEach((callback) => callback());
   expect(crowded()).toBe(1);
+});
+
+it('observes every tab, whatever order the row and its tabs render in (Svelte 5.59)', async () => {
+  const row = render();
+  await Promise.resolve();
+  const tabs = [...row.querySelectorAll('[data-feed-tab]')];
+  expect(tabs.length).toBeGreaterThan(1);
+  for (const tab of tabs) expect(watched.has(tab)).toBe(true);
 });

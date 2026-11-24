@@ -30,6 +30,7 @@
    */
   import { untrack } from 'svelte';
   import { scrollFades } from '$lib/actions/scrollFades';
+  import { observeChildren } from '$lib/utils/observeChildren';
   import { guideAnchor } from '$lib/guidance/guideAnchors.svelte';
   import ReelsEntryButton from './ReelsEntryButton.svelte';
   import type { PostFeed } from '$lib/posts/api';
@@ -114,13 +115,14 @@
     if (!observer)
       console.debug('[feed-tabs] no ResizeObserver - compact decided on mount and font load only');
     observer?.observe(row);
-    // The tabs are observed once, at effect time: FEED_TABS is static, so none is added later.
-    row.querySelectorAll('[data-feed-tab]').forEach((tab) => observer?.observe(tab));
+    // The tabs, whenever they render: this effect can run before the `{#each}` has (Svelte 5.59).
+    const stopTabs = observeChildren(row, observer, '[data-feed-tab]');
     void document.fonts?.ready.then(() => {
       if (live) decideCompact(row);
     });
     return () => {
       live = false;
+      stopTabs();
       observer?.disconnect();
     };
   });
@@ -162,8 +164,11 @@
           });
     observer?.observe(row);
     // Each tab too: a font swap resizes a button without resizing the row.
-    row.querySelectorAll('[data-feed-tab]').forEach((tab) => observer?.observe(tab));
-    return () => observer?.disconnect();
+    const stopTabs = observeChildren(row, observer, '[data-feed-tab]');
+    return () => {
+      stopTabs();
+      observer?.disconnect();
+    };
   });
 
   // THE SELECTED TAB IS IN VIEW, on arrival, on every selection, and whenever the row's layout
