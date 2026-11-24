@@ -162,6 +162,43 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
     expect(warn).not.toHaveBeenCalled();
   });
 
+  /**
+   * A NEW DEVICE ORDERS ITS LIST FROM THIS ANSWER before any history reaches it (2026-11-24: 153
+   * conversations restored over two minutes, and the rows whose history never came sorted by their
+   * creation). So the answer carries the newest visible frame's receive time, and is ordered by it.
+   */
+  it('orders by the newest visible frame and carries its time, the row update otherwise', async () => {
+    const quietButEdited = {
+      ...ORDINARY,
+      id: 'g-quiet',
+      updatedAt: new Date(9_000),
+      lastMessageAt: new Date(3_000),
+    };
+    const busy = {
+      ...ORDINARY,
+      id: 'g-busy',
+      updatedAt: new Date(1_000),
+      lastMessageAt: new Date(8_000),
+    };
+    const unknown = {
+      ...ORDINARY,
+      id: 'g-unknown',
+      updatedAt: new Date(5_000),
+      lastMessageAt: null,
+    };
+    groupMemberRepo.find.mockResolvedValue([
+      { groupId: 'g-quiet', userId: 'u1' },
+      { groupId: 'g-busy', userId: 'u1' },
+      { groupId: 'g-unknown', userId: 'u1' },
+    ]);
+    groupRepo.find.mockResolvedValue([quietButEdited, busy, unknown]);
+
+    const got = await controller.getUserGroups('u1', 'u1');
+
+    expect(got.map((g) => g.groupId)).toEqual(['g-busy', 'g-unknown', 'g-quiet']);
+    expect(got.map((g) => g.lastMessageAt)).toEqual([new Date(8_000), null, new Date(3_000)]);
+  });
+
   it('still hides a deleted ordinary group, which is a different exclusion', async () => {
     groupMemberRepo.find.mockResolvedValue([{ groupId: 'g-ordinary', userId: 'u1' }]);
     groupRepo.find.mockResolvedValue([{ ...ORDINARY, deletedAt: new Date() }]);

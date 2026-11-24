@@ -179,6 +179,8 @@ describe('MessagingService - visibility vs durability', () => {
     ...emptyRepo(),
     // The seat lock's transaction, which re-reads the roster before a route is written.
     manager: {
+      // The newest visible frame's time (`noteLastMessage`, migration 057).
+      query: jest.fn().mockResolvedValue([[], 1]),
       transaction: jest.fn(async (cb: (m: unknown) => Promise<unknown>) =>
         cb({ query: async () => [], getRepository: () => deviceGroupRepo })
       ),
@@ -275,6 +277,43 @@ describe('MessagingService - visibility vs durability', () => {
         'requesterUserId does not match the authenticated caller'
       );
       expect(usageCounted).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("the group's newest visible frame (migration 057)", () => {
+    /** The `lastMessageAt` writes this test's sends made, as `[groupId, receivedAt]`. */
+    const lastMessageWrites = () =>
+      groupRepo.manager.query.mock.calls.filter(([sql]) => String(sql).includes('"lastMessageAt"'));
+
+    it('moves it forward, never back, to the receive time of a visible message', async () => {
+      const before = Date.now();
+      await service.sendMessage(send({ silent: false, durable: true }));
+
+      const writes = lastMessageWrites();
+      expect(writes).toHaveLength(1);
+      expect(String(writes[0][0])).toContain('"lastMessageAt" < $2');
+      const [groupId, at] = writes[0][1] as [string, Date];
+      expect(groupId).toBe('g1');
+      expect(at.getTime()).toBeGreaterThanOrEqual(before);
+    });
+
+    it('is not moved by a silent mutation, a transport frame or a handshake', async () => {
+      await service.sendMessage(send({ silent: true, durable: true }));
+      await service.sendMessage(send({ silent: true, durable: false }));
+      await service.sendMessage(send({ silent: false, durable: true, isWelcome: true }));
+      await service.sendMessage(send({ silent: false, durable: true, isCommit: true }));
+      expect(lastMessageWrites()).toHaveLength(0);
+    });
+
+    it('a failed write is said and the frame is still accepted', async () => {
+      groupRepo.manager.query.mockRejectedValueOnce(new Error('lock timeout'));
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+      await expect(
+        service.sendMessage(send({ silent: false, durable: true }))
+      ).resolves.toBeDefined();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('LAST_MESSAGE_NOT_NOTED group=g1'));
+      warn.mockRestore();
     });
   });
 

@@ -85,6 +85,15 @@ describe('GroupsController.getGroup - the two epochs travel with the row', () =>
     expect(got).toMatchObject({ groupId: 'g-1', name: 'Amis' });
   });
 
+  it("never returns the newest message's time, which is the members' to read on their own list", async () => {
+    groupRepo.findOne.mockResolvedValue({ ...ROW, lastMessageAt: new Date(5_000) });
+    groupInfoRepo.findOne.mockResolvedValue(null);
+
+    const got = await controller.getGroup('g-1');
+
+    expect(got).not.toHaveProperty('lastMessageAt');
+  });
+
   it('answers null - not zero - when no base has ever been published', async () => {
     // AND THE DIFFERENCE IS THE WHOLE POINT. `0` would read as "a base exists and is 284 epochs
     // behind", which is a stale base and asks for a republish; nothing has been lost here, and the

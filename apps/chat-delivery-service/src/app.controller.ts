@@ -549,6 +549,17 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         `[CRON] cleanupExpiredQueuedMessages: deleted ${receipts} sent-frame receipt(s)`
       );
     }
+    // A group's newest visible frame time (migration 057) is kept no longer than the queued copies
+    // it stands for: past this window it says nothing a device could still be given.
+    const [, lastMessagesCleared] = (await this.queuedMessageRepo.manager.query(
+      `UPDATE dm_groups SET "lastMessageAt" = NULL WHERE "lastMessageAt" < $1`,
+      [expiry]
+    )) as [unknown[], number];
+    if (lastMessagesCleared > 0) {
+      this.logger.log(
+        `[CRON] cleanupExpiredQueuedMessages: cleared ${lastMessagesCleared} group last-message time(s) past the window`
+      );
+    }
     const payloads = await collectUnreferencedPayloads(this.queuedMessageRepo.manager);
     if (payloads > 0) {
       this.logger.log(

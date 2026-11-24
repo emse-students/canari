@@ -132,6 +132,20 @@ export class Group {
   @Column({ type: 'timestamp', nullable: true, default: null })
   deletedAt?: Date | null;
 
+  /**
+   * The server's receive time of the newest VISIBLE frame sent into this group (a message or a group
+   * event the members see: `silent` false, durable, not addressed, never a Welcome or a Commit) -
+   * the instant every recipient's copy already carries (migration 057).
+   *
+   * IT ORDERS THE CONVERSATION LIST OF A DEVICE THAT HOLDS NO HISTORY YET: a new device learns
+   * which groups exist from `GET /mls/users/:id/groups` long before any history reaches it, and some
+   * history never does. No content, no author. Cleared by the retention sweep once older than the
+   * queued copies it stands for (`MESSAGE_RETENTION_MS`); null for a group with no visible frame
+   * inside that window, and for every group before the column existed.
+   */
+  @Column({ type: 'timestamptz', nullable: true, default: null })
+  lastMessageAt?: Date | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

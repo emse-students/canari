@@ -530,6 +530,25 @@ maybe('a key-group frame stored once, against PostgreSQL', () => {
     expect(await count('queued_message')).toBe(5);
   });
 
+  it("a conversation's newest visible frame time is noted at the send and cleared past the window (057)", async () => {
+    await send(DM_GROUP);
+    const [noted] = await ds.query(`SELECT "lastMessageAt" FROM dm_groups WHERE id = $1`, [
+      DM_GROUP,
+    ]);
+    expect(noted.lastMessageAt).not.toBeNull();
+
+    const past = new Date(Date.now() - RETENTION_WINDOW_MS - 60_000);
+    await ds.query(`UPDATE dm_groups SET "lastMessageAt" = $1 WHERE id = $2`, [past, DM_GROUP]);
+    await (
+      app as unknown as { cleanupExpiredQueuedMessages(): Promise<void> }
+    ).cleanupExpiredQueuedMessages();
+
+    const [cleared] = await ds.query(`SELECT "lastMessageAt" FROM dm_groups WHERE id = $1`, [
+      DM_GROUP,
+    ]);
+    expect(cleared.lastMessageAt).toBeNull();
+  });
+
   it('serves a pre-034 inline row on a key group unchanged, beside the shared ones', async () => {
     await repo(QueuedMessage).save({
       ...SEATS[0],

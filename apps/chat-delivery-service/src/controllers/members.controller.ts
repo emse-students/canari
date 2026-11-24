@@ -288,7 +288,8 @@ export class MembersController {
   @UseGuards(HeaderAuthGuard)
   @Get('mls/users/:userId/groups')
   /**
-   * Lists all groups a user belongs to, ordered by last update (most recent first).
+   * Lists all groups a user belongs to, most recent first: by the newest visible frame's receive
+   * time (`lastMessageAt`), else by the group row's last update.
    * The client relies on this order to seed the conversation list before local DB is ready.
    *
    * **This is the ONE place a client learns which groups exist**, and therefore the one place a
@@ -328,7 +329,7 @@ export class MembersController {
     const distribution = groups.filter(isDistribution);
     const activeGroups = groups
       .filter((g) => !isDistribution(g) && !g.deletedAt)
-      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+      .sort((a, b) => listRecency(b) - listRecency(a));
     if (distribution.length > 0) {
       // Not expected: the distribution group is joined by external commit and holds no membership
       // rows, so reaching this line means something wrote one. Logged loudly because the exclusion
@@ -438,6 +439,11 @@ export class MembersController {
       imageMediaId: g.imageMediaId ?? null,
       deletedAt: g.deletedAt ?? null,
       createdAt: g.createdAt ?? null,
+      // THE NEWEST VISIBLE FRAME'S RECEIVE TIME (migration 057): what orders the conversation list
+      // of a device that holds no history yet - a new device learns every group here, long before
+      // any history reaches it. Null when unknown (none inside the retention window, or a group
+      // older than the column); an older client ignores the field.
+      lastMessageAt: g.lastMessageAt ?? null,
       activeEpoch: g.activeEpoch,
       baseEpoch: baseOf.get(g.id) ?? null,
       deviceMembership: deviceMembershipOf.get(g.id) ?? null,
@@ -1511,4 +1517,12 @@ export class MembersController {
     }
     return { exclusions, withheld, addressedAnswers: true };
   }
+}
+
+/**
+ * What `GET /mls/users/:id/groups` orders by: the newest visible frame's receive time when the
+ * server holds one (migration 057), else the group row's last update - the order it had before.
+ */
+function listRecency(g: Pick<Group, 'lastMessageAt' | 'updatedAt'>): number {
+  return (g.lastMessageAt ?? g.updatedAt).getTime();
 }

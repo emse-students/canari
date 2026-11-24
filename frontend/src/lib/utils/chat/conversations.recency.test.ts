@@ -141,3 +141,33 @@ describe('compareConversationRecency', () => {
     expect(order([b, c, a])).toEqual(['c', 'a', 'b']);
   });
 });
+
+describe("the server's newest visible frame (2026-11-24)", () => {
+  // A new device restoring its history: the server already knows when each conversation last spoke,
+  // and that fact must order the list until the restored history reaches it.
+  const withServer = (c: Conversation, serverLastMessageAt: number): Conversation => ({
+    ...c,
+    serverLastMessageAt,
+  });
+
+  it('is a floor while the loaded history is behind it - the oldest page of a restore', () => {
+    expect(conversationRecency(withServer(convo('c', [msg('1', 100)]), 900))).toBe(900);
+  });
+
+  it('gives way once the local history overtakes it', () => {
+    expect(conversationRecency(withServer(convo('c', [msg('1', 1_000)]), 900))).toBe(1_000);
+  });
+
+  it('orders a conversation whose history never came, rather than its creation', () => {
+    const neverRestored = withServer({ ...convo('quiet', []), startedAt: 10 }, 800);
+    const created = { ...convo('new', []), startedAt: 500 };
+    expect(conversationRecency(neverRestored)).toBe(800);
+    const order = [created, neverRestored].sort(compareConversationRecency).map((x) => x.id);
+    expect(order).toEqual(['quiet', 'new']);
+  });
+
+  it('carries into the persisted key, so a reload keeps the order before the next sweep', () => {
+    const meta = toConversationMeta('c', withServer(convo('c', [msg('1', 100)]), 900), 'u1');
+    expect(meta.updatedAt).toBe(900);
+  });
+});

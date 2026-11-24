@@ -78,6 +78,8 @@ export type ServerGroupRow = {
   imageMediaId?: string | null;
   /** ISO-8601 instant the group was created server-side - see {@link UserGroupRow.createdAt}. */
   createdAt?: string | null;
+  /** The newest visible frame's receive time - see {@link UserGroupRow.lastMessageAt}. */
+  lastMessageAt?: string | null;
 };
 
 /**
@@ -90,6 +92,19 @@ export type ServerGroupRow = {
 export function groupStartInstant(group: Pick<ServerGroupRow, 'createdAt'>): number | undefined {
   if (!group.createdAt) return undefined;
   const at = Date.parse(group.createdAt);
+  return Number.isFinite(at) && at > 0 ? at : undefined;
+}
+
+/**
+ * Reads the server's newest visible frame time out of a server row, or `undefined` when it states
+ * none usable - null (nothing inside the retention window), absent (an older server) or malformed.
+ * `undefined` moves nothing: the row keeps whatever it already knew.
+ */
+export function groupLastMessageInstant(
+  group: Pick<ServerGroupRow, 'lastMessageAt'>
+): number | undefined {
+  if (!group.lastMessageAt) return undefined;
+  const at = Date.parse(group.lastMessageAt);
   return Number.isFinite(at) && at > 0 ? at : undefined;
 }
 
@@ -252,7 +267,8 @@ async function repairGroupLabel(
 }
 
 /**
- * Writes the group's creation instant onto a row that does not carry one yet.
+ * Writes the group's creation instant onto a row that does not carry one yet, and moves the row's
+ * `serverLastMessageAt` forward to what the server's list says now (2026-11-24, see below).
  *
  * WHY IT IS A REPAIR AND NOT ONLY A FIELD ON CREATION. Every conversation that existed before this
  * shipped was stored without it, and a device does not re-create rows it already has - so writing
@@ -277,10 +293,20 @@ async function recordGroupStart(
   saveConversation: ((key: string) => Promise<void>) | undefined
 ): Promise<void> {
   const convo = conversations.get(key);
-  if (!convo || convo.startedAt !== undefined) return;
-  const startedAt = groupStartInstant(group);
-  if (startedAt === undefined) return;
-  conversations.set(key, { ...convo, startedAt });
+  if (!convo) return;
+  const startedAt = convo.startedAt === undefined ? groupStartInstant(group) : undefined;
+  // THE SERVER'S NEWEST VISIBLE FRAME, carried on the same pass for the same reason: it is the one
+  // pass that reaches every conversation on every connection. Forward only - a value the server no
+  // longer states (past its retention window) was true and stays a floor (`conversationRecency`).
+  const last = groupLastMessageInstant(group);
+  const serverLastMessageAt =
+    last !== undefined && last > (convo.serverLastMessageAt ?? 0) ? last : undefined;
+  if (startedAt === undefined && serverLastMessageAt === undefined) return;
+  conversations.set(key, {
+    ...convo,
+    ...(startedAt !== undefined ? { startedAt } : {}),
+    ...(serverLastMessageAt !== undefined ? { serverLastMessageAt } : {}),
+  });
   await saveConversation?.(key).catch(() => {});
 }
 
@@ -984,6 +1010,7 @@ export async function ensureConversationForServerGroup(
         identity: selfConversationIdentity(),
         imageMediaId: null,
         startedAt: groupStartInstant(group),
+        serverLastMessageAt: groupLastMessageInstant(group),
       })
     );
     if (saveConversation) {
@@ -1048,6 +1075,7 @@ export async function ensureConversationForServerGroup(
       },
       imageMediaId: group.imageMediaId ?? null,
       startedAt: groupStartInstant(group),
+      serverLastMessageAt: groupLastMessageInstant(group),
     })
   );
   if (saveConversation) {

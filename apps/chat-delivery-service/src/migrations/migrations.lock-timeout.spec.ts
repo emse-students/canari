@@ -90,6 +90,8 @@ describe.each([
   // `dm_groups` again: the self kind's column, check and unique partial index.
   ['056_dm_groups_self_kind.sql', /^\s*ALTER\s+TABLE\s+"?dm_groups"?/im],
   ['056_dm_groups_self_kind.sql', /^\s*ALTER\s+TABLE\s+"?key_package"?/im],
+  // `dm_groups` again: the newest visible frame's receive time.
+  ['057_dm_groups_last_message_at.sql', /^\s*ALTER\s+TABLE\s+"?dm_groups"?/im],
 ])('a migration that locks another hot table: %s', (file, alters) => {
   it('sets a lock_timeout before it alters the table', () => {
     const sql = read(file);

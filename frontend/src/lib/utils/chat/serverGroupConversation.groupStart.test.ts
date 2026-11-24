@@ -160,3 +160,24 @@ describe('the unreadable-name warning of a label repair', () => {
     warn.mockRestore();
   });
 });
+
+describe("the server's newest visible frame reaches every row on the sweep (2026-11-24)", () => {
+  const LAST_ISO = '2026-11-19T18:21:03.348Z';
+  const LAST_MS = Date.parse(LAST_ISO);
+
+  it('writes it onto a row that exists, and persists it', async () => {
+    const conversations = held({ startedAt: CREATED_MS });
+    const { saveConversation } = await sweep(conversations, serverRow({ lastMessageAt: LAST_ISO }));
+    expect(conversations.get(GROUP_ID)?.serverLastMessageAt).toBe(LAST_MS);
+    expect(saveConversation).toHaveBeenCalledTimes(1);
+  });
+
+  it('moves it forward only: an older or absent value leaves the row and writes nothing', async () => {
+    for (const lastMessageAt of ['2026-11-01T00:00:00.000Z', null, undefined, 'not-a-date']) {
+      const conversations = held({ startedAt: CREATED_MS, serverLastMessageAt: LAST_MS });
+      const { saveConversation } = await sweep(conversations, serverRow({ lastMessageAt }));
+      expect(conversations.get(GROUP_ID)?.serverLastMessageAt).toBe(LAST_MS);
+      expect(saveConversation).not.toHaveBeenCalled();
+    }
+  });
+});

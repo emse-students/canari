@@ -2513,6 +2513,12 @@ export class MessagingService {
         receivedAt,
         traceId
       );
+      // 1c. The group's newest VISIBLE frame, so a device holding no history yet can order its
+      // conversation list (migration 057). A mutation (reaction, edit, read mark) is silent and
+      // moves nothing, as it moves nothing on a device that holds the messages.
+      if (!body.silent) {
+        await this.noteLastMessage(body.groupId as string, receivedAt, traceId);
+      }
     }
 
     // 2. Best-effort real-time delivery for online recipients, through the one delivery.
@@ -7480,6 +7486,27 @@ export class MessagingService {
       this.logger.log(`[HISTORY][${traceId}] XADD group=${groupId}`);
     } catch (e) {
       this.logger.warn(`[HISTORY][${traceId}] XADD failed group=${groupId}: ${String(e)}`);
+    }
+  }
+
+  /**
+   * Moves `dm_groups."lastMessageAt"` forward to `receivedAt` (migration 057), never back.
+   *
+   * After the frame is queued and appended, so it records only what was accepted. Its own statement
+   * outside the enqueue transaction, so a send never waits on the group row a commit may hold; and
+   * a failure is said and swallowed - the frame is delivered either way, and the next visible frame
+   * of the group writes the fact again.
+   */
+  private async noteLastMessage(groupId: string, receivedAt: Date, traceId: string): Promise<void> {
+    try {
+      await this.groupRepo.manager.query(
+        `UPDATE dm_groups SET "lastMessageAt" = $2 WHERE id = $1 AND ("lastMessageAt" IS NULL OR "lastMessageAt" < $2)`,
+        [groupId, receivedAt]
+      );
+    } catch (e) {
+      this.logger.warn(
+        `[SEND][${traceId}] LAST_MESSAGE_NOT_NOTED group=${groupId} - the conversation list of a device with no history orders it by its previous visible frame until the next one: ${String(e)}`
+      );
     }
   }
 
