@@ -1983,19 +1983,60 @@ describe('outbox flusher - tab leadership (WP-MULTITAB-1)', () => {
     outbox.dispose();
   });
 
-  it('an older-tab event no queue entry names accuses and patches nothing', async () => {
+  it('an older-tab event with NO queue entry left (the old leader deleted it) reaches the own row held here, never a peer row of the same id', async () => {
+    isTabLeaderMock.mockReturnValue(false);
+    const conversations = new SvelteMap<string, Conversation>([
+      ['other', peerConvoWith('other', ['t1'], 'pending')],
+      ['g1', convoWith('g1', ['t1'])],
+    ]);
+    const outbox = createOutbox(
+      makeDeps({ mlsService: makeMls(), storage: makeStorage([]), conversations })
+    );
+    const handler = tabOutboxMock.subscribeTabOutboxEvents.mock.calls.at(-1)![0];
+    handler({ type: 'outbox_entry_sent', messageId: 't1', receivedAt: 4_000 });
+    await vi.waitFor(() => expect(conversations.get('g1')!.messages[0].status).toBe('sent'));
+    expect(conversations.get('g1')!.messages[0].serverTimestamp).toBe(4_000);
+    expect(conversations.get('other')!.messages[0].status).toBe('pending');
+    expect(conversations.get('other')!.messages[0].serverTimestamp).toBeUndefined();
+    outbox.dispose();
+  });
+
+  it('an older-tab event naming a message only a peer row holds accuses and patches nothing', async () => {
     isTabLeaderMock.mockReturnValue(false);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['t1'])]]);
+    const conversations = new SvelteMap<string, Conversation>([
+      ['other', peerConvoWith('other', ['t1'], 'pending')],
+    ]);
     const outbox = createOutbox(
       makeDeps({ mlsService: makeMls(), storage: makeStorage([]), conversations })
     );
     const handler = tabOutboxMock.subscribeTabOutboxEvents.mock.calls.at(-1)![0];
     handler({ type: 'outbox_entry_sent', messageId: 't1' });
     await vi.waitFor(() =>
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining('no queue entry'))
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('no queue entry or own row'))
+    );
+    expect(conversations.get('other')!.messages[0].status).toBe('pending');
+    warn.mockRestore();
+    outbox.dispose();
+  });
+
+  it('an older-tab event with own rows of the same id in two conversations is ambiguous: accused, nothing patched', async () => {
+    isTabLeaderMock.mockReturnValue(false);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const conversations = new SvelteMap<string, Conversation>([
+      ['g1', convoWith('g1', ['t1'])],
+      ['g2', convoWith('g2', ['t1'])],
+    ]);
+    const outbox = createOutbox(
+      makeDeps({ mlsService: makeMls(), storage: makeStorage([]), conversations })
+    );
+    const handler = tabOutboxMock.subscribeTabOutboxEvents.mock.calls.at(-1)![0];
+    handler({ type: 'outbox_entry_retired', messageId: 't1', reason: 'group-deleted' });
+    await vi.waitFor(() =>
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('several conversations'))
     );
     expect(conversations.get('g1')!.messages[0].status).toBe('pending');
+    expect(conversations.get('g2')!.messages[0].status).toBe('pending');
     warn.mockRestore();
     outbox.dispose();
   });

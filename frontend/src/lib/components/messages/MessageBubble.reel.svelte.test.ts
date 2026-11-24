@@ -87,20 +87,19 @@ function video(extra: Partial<MediaRef> = {}): MediaRef {
 function render(ref: MediaRef, onForward = vi.fn(), extra: Record<string, unknown> = {}) {
   const target = document.createElement('div');
   document.body.appendChild(target);
-  const app = mount(MessageBubble, {
-    target,
-    props: {
-      messageId: 'm1',
-      senderId: 'u-other',
-      currentUserId: 'u-me',
-      authToken: 'tok',
-      content: serializeEnvelope(mkMediaEnvelope(ref)),
-      timestamp: new Date('2026-10-05T10:00:00Z'),
-      isOwn: false,
-      onForward,
-      ...extra,
-    },
-  });
+  const props: Record<string, unknown> = {
+    messageId: 'm1',
+    senderId: 'u-other',
+    currentUserId: 'u-me',
+    authToken: 'tok',
+    content: serializeEnvelope(mkMediaEnvelope(ref)),
+    timestamp: new Date('2026-10-05T10:00:00Z'),
+    isOwn: false,
+    onForward,
+  };
+  // Getters survive (a spread would read them once): a test may move a prop under a mounted bubble.
+  Object.defineProperties(props, Object.getOwnPropertyDescriptors(extra));
+  const app = mount(MessageBubble, { target, props: props as never });
   mounted.push(() => void unmount(app));
   flushSync();
 }
@@ -130,6 +129,7 @@ describe('MessageBubble - a reel message', () => {
     const onReelPurged = vi.fn();
     render(video({ intent: 'reel-message', expiresAtMs: Date.now() + 86_400_000 }), vi.fn(), {
       onReelPurged,
+      conversationId: 'c1',
     });
     document.querySelector<HTMLButtonElement>('[data-reel-tile]')!.click();
     for (let i = 0; i < 4; i++) {
@@ -142,9 +142,32 @@ describe('MessageBubble - a reel message', () => {
     expect(onReelPurged).toHaveBeenCalledTimes(1);
     expect(onReelPurged.mock.calls[0][0]).toBe('m1');
     expect(typeof onReelPurged.mock.calls[0][1]).toBe('number');
+    expect(onReelPurged.mock.calls[0][2]).toBe('c1');
     expect(
       document.querySelector<HTMLElement>('[data-reel-tombstone]')!.dataset.reelTombstone
     ).toBe('deleted');
+  });
+
+  it('records the 410 under the conversation the viewer was OPENED from, though the prop moved since', async () => {
+    const onReelPurged = vi.fn();
+    const shown = $state({ id: 'c1' });
+    render(video({ intent: 'reel-message', expiresAtMs: Date.now() + 86_400_000 }), vi.fn(), {
+      onReelPurged,
+      get conversationId() {
+        return shown.id;
+      },
+    });
+    document.querySelector<HTMLButtonElement>('[data-reel-tile]')!.click();
+    for (let i = 0; i < 4; i++) {
+      await Promise.resolve();
+      await tick();
+    }
+    flushSync();
+    shown.id = 'c2';
+    flushSync();
+    document.querySelector<HTMLButtonElement>('[data-reel-viewer-stub-gone]')!.click();
+    flushSync();
+    expect(onReelPurged.mock.calls[0][2]).toBe('c1');
   });
 
   it('draws a recorded 410 (reelPurgedAt) as the tombstone with no tap', () => {

@@ -1564,9 +1564,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     }
     if (getIsTabLeader()) return;
     // LEGACY SHIM (docs/wiki/legacy-compatibility.md): a leader tab of the previous build, during a
-    // rolling deploy, publishes these three without `conversationId`. The follower reads the
-    // conversation from the durable queue entry (this account's own, so scoped and own-only), and
-    // accuses only when even that fails - the row would otherwise keep spinning, unexplained.
+    // rolling deploy, publishes these three without `conversationId`. THE QUEUE ENTRY IS USUALLY
+    // GONE by the time this tab looks (the old leader deletes it right after posting `sent` or
+    // `retired`), so the entry is read first and the rows THIS TAB HOLDS second: the one conversation
+    // holding an OWN row of that id is the message's. A peer's row of the same id is never picked,
+    // and two own rows of one id are ambiguous - accused, nothing patched.
     if (
       (event.type === 'outbox_entry_sent' ||
         event.type === 'outbox_entry_failed' ||
@@ -1574,15 +1576,17 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       !event.conversationId
     ) {
       void readQueue('legacy tab event').then((queue) => {
-        const conversationId = queue.find((e) => e.id === event.messageId)?.conversationId;
+        const queued = queue.find((e) => e.id === event.messageId)?.conversationId;
+        const held = queued ? [] : ownConversationsHolding(event.messageId);
+        const conversationId = queued ?? (held.length === 1 ? held[0] : undefined);
         if (!conversationId) {
           console.warn(
-            `[OUTBOX] ${event.messageId.slice(0, 8)}… ${event.type} from a tab that names no conversation, and no queue entry names it either - nothing is patched`
+            `[OUTBOX] ${event.messageId.slice(0, 8)}… ${event.type} from a tab that names no conversation, and ${held.length > 1 ? 'several conversations hold an own row of it' : 'no queue entry or own row names it'} - nothing is patched`
           );
           return;
         }
         log(
-          `[OUTBOX] ${event.messageId.slice(0, 8)}… ${event.type} carried no conversation (older leader tab) - read from its queue entry`
+          `[OUTBOX] ${event.messageId.slice(0, 8)}… ${event.type} carried no conversation (older leader tab) - read from ${queued ? 'its queue entry' : 'the own row held here'}`
         );
         onTabOutboxEvent({ ...event, conversationId });
       });
@@ -1621,6 +1625,13 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     if (event.content) updateMessageContent(event.messageId, event.content, event.conversationId);
   };
   const unsubscribeTabOutbox = subscribeTabOutboxEvents(onTabOutboxEvent);
+
+  /** The map keys of the conversations holding an OWN row of `messageId` (the legacy shim's lookup). */
+  function ownConversationsHolding(messageId: string): string[] {
+    return [...conversations]
+      .filter(([, convo]) => convo.messages.some((m) => m.id === messageId && m.isOwn))
+      .map(([key]) => key);
+  }
 
   /**
    * Locates a message in ITS OWN conversation: the one it was queued for, followed through a re-key

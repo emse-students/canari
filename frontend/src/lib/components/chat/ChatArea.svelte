@@ -171,7 +171,7 @@
      * so its tile reads the tombstone across reloads (RC-6). Omit: the tile still draws it for
      * this mount.
      */
-    /** `conversationId`: the thread whose tile met the 410, bound when the tile is drawn - never read from the selection when the callback fires. */
+    /** `conversationId`: the thread the reel viewer was OPENED from, kept by the tile at the tap - never read from the selection or from this component's live props when the 410 arrives. */
     onReelPurged?: (messageId: string, atMs: number, conversationId: string) => void;
     /** Callback to invite one or more members by user ID. */
     onInviteMembers: (ids: string[]) => void;
@@ -2439,9 +2439,8 @@
             {nicknameScope}
             onBeginEdit={onEdit ? editSession.begin : undefined}
             {onTogglePin}
-            onReelPurged={onReelPurged && conversation
-              ? (messageId, atMs) => onReelPurged(messageId, atMs, conversation.id)
-              : undefined}
+            {onReelPurged}
+            conversationId={conversation?.id}
             {pinStanding}
             {pinnedIds}
             {switchTime}

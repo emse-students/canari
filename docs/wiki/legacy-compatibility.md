@@ -97,9 +97,12 @@ A follower tab patches a row from the leader tab's `outbox_entry_sent`, `outbox_
 `outbox_entry_retired` events, and since this change those carry `conversationId`, because a message
 id travels to peers and a lookup by id alone can reach a peer's row of the same id
 ([chat](frontend/modules/chat.md)). A leader tab of the previous build, alive during a rolling
-deploy, publishes them without it. The shim in `onTabOutboxEvent` (`outbox.ts`) reads the
-conversation from the durable queue entry of that id (this account's own), then handles the event
-as usual; only when no entry names it does it warn, and patch nothing. **Removal: 2026-12-15.** A
+deploy, publishes them without it, and deletes the queue entry right after posting `sent` or
+`retired`, so the entry is usually gone when the follower looks. The shim in `onTabOutboxEvent`
+(`outbox.ts`) reads the entry when it is still there, else the rows THIS TAB holds: the one
+conversation holding an OWN row of that id is the message's (a peer's row of the same id is never
+picked), then handles the event as usual. Two own rows of one id, or none, warn and patch nothing.
+**Removal: 2026-12-15.** A
 tab lives one page life and the deploy reloads it, so three weeks past this version's first
 pre-release no tab of the old build is left: delete the shim block and make `conversationId`
 required on the three event types.

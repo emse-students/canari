@@ -175,15 +175,15 @@ describe('recordReelPurged', () => {
     expect(storage.rowOf(DM, 'dup')!.mediaPurgedAt).toBeUndefined();
   });
 
-  it('with no conversation key, accuses and touches neither memory nor disk', async () => {
+  it('a key whose conversation does not hold the row accuses and touches neither memory nor disk', async () => {
     const { useMessaging } = await import('./useMessaging.svelte');
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const storage = fakeStorage([row('dup', DM)]);
-    const ctx = ctxFor({ [DM]: [msg('dup')] }, storage);
-    await useMessaging().recordReelPurged('dup', 7, ctx, null);
+    const ctx = ctxFor({ [DM]: [msg('dup')], [OTHER]: [] }, storage);
+    await useMessaging().recordReelPurged('dup', 7, ctx, OTHER);
     expect(ctx.conversations.get(DM)!.messages[0].mediaPurgedAt).toBeUndefined();
     expect(storage.updateMessage).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('no conversation key'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('does not hold the row'));
     warn.mockRestore();
   });
 });

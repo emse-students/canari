@@ -4920,20 +4920,20 @@ export function useMessaging() {
     messageId: string,
     atMs: number,
     ctx: MessagingContext,
-    conversationKey: string | null | undefined
+    conversationKey: string
   ): Promise<void> {
     // THE CONVERSATION THE REEL WAS OPENED FROM, never a search by id across all of them: a message
     // id travels to peers, so another conversation may hold a row of the same id that comes first
     // in the map, and the instant would land on the wrong thread.
-    const key = conversationKey ? (movedKeyOf(conversationKey) ?? conversationKey) : undefined;
-    const convo = key ? ctx.conversations.get(key) : undefined;
+    const key = movedKeyOf(conversationKey) ?? conversationKey;
+    const convo = ctx.conversations.get(key);
     const idx = convo ? convo.messages.findIndex((msg) => msg.id === messageId) : -1;
-    if (!key || !convo || idx === -1) {
+    if (!convo || idx === -1) {
       console.warn(
-        `[REEL] 410 on ${messageId.slice(0, 8)} not recorded in memory: ${key ? 'its conversation does not hold it' : 'no conversation key was given'}`
+        `[REEL] 410 on ${messageId.slice(0, 8)} not recorded in memory: its conversation does not hold the row`
       );
       ctx.log(
-        `[REEL] 410 on ${messageId.slice(0, 8)} not recorded in memory: ${key ? 'its conversation does not hold the row' : 'no conversation key was given'}`
+        `[REEL] 410 on ${messageId.slice(0, 8)} not recorded in memory: its conversation does not hold the row`
       );
     } else {
       if (convo.messages[idx].mediaPurgedAt) return;
@@ -4944,14 +4944,6 @@ export function useMessaging() {
     if (!ctx.storage) {
       ctx.log(
         `[REEL] 410 on ${messageId.slice(0, 8)} not persisted: no storage - a reload asks again`
-      );
-      return;
-    }
-    if (!key) {
-      // The disk is scoped too: a read or a write by id alone could reach a same-id row of another
-      // conversation, and expire a message that is not the one whose tile answered 410.
-      ctx.log(
-        `[REEL] 410 on ${messageId.slice(0, 8)} NOT persisted: no conversation key to scope the row - a reload asks again`
       );
       return;
     }
@@ -4996,14 +4988,13 @@ export function useMessaging() {
     messageId: string,
     atMs: number,
     ctx: MessagingContext,
-    conversationKey: string | null | undefined
+    key: string
   ): void {
-    const key = conversationKey ? (movedKeyOf(conversationKey) ?? conversationKey) : undefined;
-    const convo = key ? ctx.conversations.get(key) : undefined;
+    const convo = ctx.conversations.get(key);
     const idx = convo ? convo.messages.findIndex((msg) => msg.id === messageId) : -1;
-    if (!key || !convo || idx === -1) {
+    if (!convo || idx === -1) {
       console.warn(
-        `[REEL] ${messageId.slice(0, 8)} not aligned to the stored 410: ${key ? 'its conversation does not hold it' : 'no conversation key was given'}`
+        `[REEL] ${messageId.slice(0, 8)} not aligned to the stored 410: its conversation does not hold the row`
       );
       return;
     }
