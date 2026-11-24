@@ -19,6 +19,9 @@ import { apiFetch } from '$lib/utils/apiFetch';
 import { m } from '$lib/paraglide/messages';
 import { flushMacrotask } from '../../../test/flush';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
+import { useLoadBounds, waitForEvent } from '../../../test/loadBound';
+
+useLoadBounds();
 
 afterAll(adoptTransitionAnimations());
 
@@ -177,9 +180,16 @@ describe('older comments, read page by page (through the real ledger)', () => {
     flushSync();
   }
 
-  async function settlePage() {
-    for (let i = 0; i < 4; i++) await flushMacrotask();
-    flushSync();
+  /**
+   * Waits for the page to LAND - the sheet drawing `expected` rows - never for a guessed number of
+   * macrotask turns: how many hops the answer needs depends on the machine's load, and a count of
+   * turns that was enough alone left the page unread (30 rows for 31) under oversubscription.
+   */
+  async function settlePage(expected: number) {
+    await waitForEvent(() => {
+      flushSync();
+      expect(rows()).toBe(expected);
+    });
   }
 
   /** A feed row of 25 threads, of the 30 the server holds. */
@@ -199,7 +209,7 @@ describe('older comments, read page by page (through the real ledger)', () => {
 
     await loadOlder();
     answer(older());
-    await settlePage();
+    await settlePage(31);
 
     expect(rows()).toBe(31);
     expect(shownCount(target)).toContain('31');
@@ -214,7 +224,7 @@ describe('older comments, read page by page (through the real ledger)', () => {
     flushSync();
     // The page was read before the deletion answered, so it still carries c3.
     answer(older([comment(3)]));
-    await settlePage();
+    await settlePage(29);
 
     expect(document.body.querySelector('#comment-c3')).toBeNull();
     expect(rows()).toBe(29);
@@ -229,7 +239,7 @@ describe('older comments, read page by page (through the real ledger)', () => {
     publishPostComments('p1', { kind: 'upsert', comment: comment(40) }, elsewhere);
     flushSync();
     answer(older());
-    await settlePage();
+    await settlePage(31);
 
     expect(rows()).toBe(31);
     expect(shownCount(target)).toContain('31');
@@ -240,7 +250,7 @@ describe('older comments, read page by page (through the real ledger)', () => {
     mountWithOlder();
     await loadOlder();
     answer(older());
-    await settlePage();
+    await settlePage(30);
 
     const stillThere = [...document.body.querySelectorAll('button')].some(
       (b) => b.textContent?.trim() === m.post_comment_load_older_label()

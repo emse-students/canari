@@ -1,6 +1,6 @@
 ## "Créer un groupe" from a form's respondents (owner, 2026-11-19)
 
-target: 1.8.0
+target: 1.8.1
 
 **Asked by the owner on 2026-11-19, from a user's request** ([decisions](../decisions/owner-decisions-of-2026-11-19.md)):
 a button that creates a group conversation with every person who answered a form - the same effect

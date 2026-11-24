@@ -1,6 +1,6 @@
 ## P2 - a repeated send republishes the queued rows its first copy is still delivering
 
-target: 1.8.0
+target: 1.8.1
 
 **Seen 2026-11-24** (a new web device, prod `1.7.3`): one Welcome row arrived live twice, 160 ms
 apart, same queued id, same size - `[QUEUE] delivery ... arrived twice - THE SERVER PUBLISHED THE SAME

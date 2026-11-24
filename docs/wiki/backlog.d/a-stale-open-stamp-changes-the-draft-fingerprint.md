@@ -1,6 +1,6 @@
 ## P2 - The stale-open stamps change a form's draft fingerprint, so an open draft reads as changed
 
-target: 1.8.0
+target: 1.8.1
 
 **Found 2026-11-23** while adding `forms.waitlistEnabled` (migration 183). The draft fingerprint
 (`FORM_FINGERPRINT_SQL`, `apps/social-service/src/forms/form-draft-revision.ts`) covers every column of

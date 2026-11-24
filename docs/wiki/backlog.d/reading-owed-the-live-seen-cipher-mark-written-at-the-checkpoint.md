@@ -1,6 +1,6 @@
 ## P2 - a frame read before a browser kill is called "never read here" on the next cold start
 
-target: 1.8.0
+target: 1.8.1
 
 _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
