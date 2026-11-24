@@ -1,6 +1,6 @@
 ## P2 - no row on the board can tell a healthy conversation from an epoch-forked one (2026-08-29)
 
-target: 1.8.0
+target: 1.9.0
 
 The predicate is built end to end (2026-10-04). Owed: the ROW - a MULTI-shaped row asking `readEpochForks`
 of a conversation it is not using, run once on a build carrying `window.__canariMlsEpochs()` ([detail](../cross-client-harness-findings.md#no-row-can-tell-a-healthy-conversation-from-an-epoch-forked-one-2026-08-29)).

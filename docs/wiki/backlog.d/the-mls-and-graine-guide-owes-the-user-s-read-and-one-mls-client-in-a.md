@@ -1,6 +1,6 @@
 ## The MLS and Graine guide owes the user's read, and one MLS client in a SharedWorker is decided
 
-target: 1.8.0
+target: 1.9.0
 
 **Read by the owner, 2026-11-19** ([decisions](../decisions/owner-decisions-of-2026-11-19.md)): the frank line on what the server sees (*"qui parle à qui,
 quand, et combien"*) stays as written; no paragraph on sealed conversations (*"trop technique"*); the guide

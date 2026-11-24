@@ -1,6 +1,6 @@
 ## P3 - what the keyboard readings of 2026-11-14 left open: the composer steps 12 CSS px down one frame before every close
 
-target: 1.8.0
+target: 1.10.0
 
 _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
