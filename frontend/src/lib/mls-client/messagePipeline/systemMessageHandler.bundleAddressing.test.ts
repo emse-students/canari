@@ -376,7 +376,12 @@ describe('history_bundle - an addressed answer is the answer to OUR ask or nothi
     );
 
     expect(ctx.batchAddMessages).not.toHaveBeenCalled();
-    expect(refusedLines(error)).toHaveLength(3);
+    // Each cause by its NAME, classified where it is decided.
+    const reasons = refusedLines(error).map(([l]) => String(l));
+    expect(reasons).toHaveLength(3);
+    expect(reasons[0]).toContain(' - names-no-ask ');
+    expect(reasons[1]).toContain(' - no-open-ask ');
+    expect(reasons[2]).toContain(' - not-addressed-to-us ');
     error.mockRestore();
   });
 
@@ -395,7 +400,10 @@ describe('history_bundle - an addressed answer is the answer to OUR ask or nothi
     await handleSystemEvent('history_bundle', frame, ctx as any);
 
     expect(ctx.batchAddMessages).toHaveBeenCalledTimes(1);
-    expect(refusedLines(error)).toHaveLength(1);
+    // While the ask is open for its other answerer slot: the same device's second copy, by name.
+    expect(refusedLines(error).map(([l]) => String(l))).toEqual([
+      expect.stringContaining(' - answered-already '),
+    ]);
     error.mockRestore();
   });
 
@@ -439,7 +447,9 @@ describe('history_bundle - an addressed answer is the answer to OUR ask or nothi
     );
 
     expect(ctx.batchAddMessages).not.toHaveBeenCalled();
-    expect(refusedLines(error)).toHaveLength(1);
+    expect(refusedLines(error).map(([l]) => String(l))).toEqual([
+      expect.stringContaining(' - no-sending-device '),
+    ]);
     error.mockRestore();
   });
 
@@ -818,7 +828,7 @@ describe('history_bundle - an answer sealed to our ask', () => {
     );
 
     expect(lines(error, 'REFUSED an unsealed history_bundle')).toHaveLength(2);
-    expect(lines(error, 'answerers are all taken')).toHaveLength(0);
+    expect(lines(error, 'REFUSED an addressed')).toHaveLength(0);
     const added = (ctx.batchAddMessages.mock.calls[0][0] as Array<{ messageId: string }>).map(
       (m) => m.messageId
     );
