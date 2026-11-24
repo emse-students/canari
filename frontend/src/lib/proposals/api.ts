@@ -121,7 +121,7 @@ export interface InstitutionAudience {
   everyone: boolean;
   /** Its rules; a null side means "every campus" or "every formation". */
   spaces: { campus: string | null; formation: string | null }[];
-  /** At least one of its members is on the staff side (a campus, no cursus). */
+  /** At least one of its members is on the staff side (a campus and a post EMSE or ME). */
   staffMembers: boolean;
 }
 

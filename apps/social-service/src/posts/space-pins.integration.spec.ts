@@ -129,7 +129,7 @@ maybe('pins per space against PostgreSQL', () => {
     await q(`CREATE SCHEMA ${schema}`);
     await q(`
       CREATE TABLE users (id varchar(255) PRIMARY KEY, admin boolean NOT NULL DEFAULT false,
-        campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]');
+        campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]', posts text[] NOT NULL DEFAULT '{}');
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL,
         type varchar NOT NULL DEFAULT 'association', "isBDE" boolean NOT NULL DEFAULT false,
         archived boolean NOT NULL DEFAULT false);

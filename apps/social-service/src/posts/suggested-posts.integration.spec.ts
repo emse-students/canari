@@ -95,7 +95,7 @@ maybe('suggested posts against PostgreSQL (engagement WP-7)', () => {
     await q(`SET search_path TO ${schema}, public`);
     await q(`
       CREATE TABLE users (id varchar(255) PRIMARY KEY, admin boolean NOT NULL DEFAULT false,
-        campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]', promo int);
+        campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]', promo int, posts text[] NOT NULL DEFAULT '{}');
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL,
         type varchar NOT NULL DEFAULT 'association', "isBDE" boolean NOT NULL DEFAULT false,
         archived boolean NOT NULL DEFAULT false);

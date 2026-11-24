@@ -18,6 +18,10 @@
  *   nr - a named reader (grant: ICM x Saint-Etienne), staff - the grant
  *   os - staff of Saint-Etienne, no door at all              - nothing
  *
+ * Every account of the cast with no cursus holds the post EMSE, so it is staff (owner, 2026-11-24:
+ * staff is a post EMSE or ME, independent of the cursus); `se` and `sa`, outside the cast, are
+ * students with and without such a post.
+ *
  * GATED ON `SOCIAL_IT_DATABASE_URL`, like every integration spec here. Locally:
  *
  *   SOCIAL_IT_DATABASE_URL=postgres://user:pass@localhost:5432/scratch bun run test -- institution-event-reach.integration
@@ -69,15 +73,19 @@ const migration = (file: string) => readFileSync(join(__dirname, '..', 'migratio
 
 const SE = 'saint-etienne';
 const GA = 'gardanne';
-const USERS: Record<string, { campus: string | null; formation: string | null }> = {
-  si: { campus: SE, formation: 'ICM' },
-  ss: { campus: SE, formation: 'ISMIN' },
-  sg: { campus: GA, formation: 'ISMIN' },
-  mb: { campus: SE, formation: null },
-  cm: { campus: GA, formation: null },
-  nr: { campus: null, formation: null },
-  os: { campus: SE, formation: null },
-};
+const USERS: Record<string, { campus: string | null; formation: string | null; posts?: string[] }> =
+  {
+    si: { campus: SE, formation: 'ICM' },
+    ss: { campus: SE, formation: 'ISMIN' },
+    sg: { campus: GA, formation: 'ISMIN' },
+    mb: { campus: SE, formation: null },
+    cm: { campus: GA, formation: null },
+    nr: { campus: null, formation: null },
+    os: { campus: SE, formation: null },
+    // Outside the cast (owner, 2026-11-24): a student AND staff, and a student holding ALUMNI only.
+    se: { campus: SE, formation: 'ICM', posts: ['EMSE'] },
+    sa: { campus: SE, formation: 'ICM', posts: ['ALUMNI'] },
+  };
 const READERS = ['si', 'ss', 'sg', 'mb', 'cm', 'nr', 'os'] as const;
 type Reader = (typeof READERS)[number];
 
@@ -156,7 +164,7 @@ maybe("an institution's event reach against PostgreSQL (migration 165)", () => {
     // The events table WITHOUT the reach columns: migration 165 adds them, as on every estate.
     await q(`
       CREATE TABLE users (id varchar(255) PRIMARY KEY, admin boolean NOT NULL DEFAULT false,
-        campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]');
+        campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]', posts text[] NOT NULL DEFAULT '{}');
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL, slug varchar NOT NULL,
         type varchar NOT NULL DEFAULT 'association', archived boolean NOT NULL DEFAULT false,
         "isBDE" boolean NOT NULL DEFAULT false, "createdBy" varchar(255));
@@ -195,10 +203,11 @@ maybe("an institution's event reach against PostgreSQL (migration 165)", () => {
       );
     }
     for (const [id, u] of Object.entries(USERS)) {
-      await q(`INSERT INTO users (id, campus, cursus) VALUES ($1, $2, $3)`, [
+      await q(`INSERT INTO users (id, campus, cursus, posts) VALUES ($1, $2, $3, $4)`, [
         id,
         u.campus,
         JSON.stringify(u.formation ? [{ formation: u.formation, promo: 2024 }] : []),
+        u.posts ?? (u.formation ? [] : ['EMSE']),
       ]);
     }
     await q(
@@ -255,6 +264,16 @@ maybe("an institution's event reach against PostgreSQL (migration 165)", () => {
       expect(await readersOf(sees)).toEqual(c.readers);
     });
   }
+
+  it('staff is a post EMSE or ME, a union with the students (owner, 2026-11-24)', async () => {
+    await setReach({ spaces: [ICM_SE, ISMIN_SE], public: 'students' });
+    expect(await sees('se')).toBe(true);
+    expect(await sees('sa')).toBe(true);
+    // A student who holds EMSE reads a staff event of their space; ALUMNI alone does not.
+    await setReach({ spaces: [ICM_SE, ISMIN_SE], public: 'staff' });
+    expect(await sees('se')).toBe(true);
+    expect(await sees('sa')).toBe(false);
+  });
 
   it('an edit narrows the event at once, and widening gives it back', async () => {
     expect(await sees('ss')).toBe(true);

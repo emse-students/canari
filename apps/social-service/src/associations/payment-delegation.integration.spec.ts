@@ -95,7 +95,7 @@ maybe('a list collects through an accepted payment delegation (PostgreSQL)', () 
     await admin.query('RESET lock_timeout');
     // A readiness revert reports to the platform admins, read from core's `users` (a stand-in here).
     await admin.query(
-      `CREATE TABLE users (id varchar(255) PRIMARY KEY, admin boolean NOT NULL DEFAULT false)`
+      `CREATE TABLE users (id varchar(255) PRIMARY KEY, admin boolean NOT NULL DEFAULT false, posts text[] NOT NULL DEFAULT '{}')`
     );
     await admin.query(`INSERT INTO users (id, admin) VALUES ('global-admin', true)`);
 

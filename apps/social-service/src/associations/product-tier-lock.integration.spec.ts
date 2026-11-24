@@ -159,7 +159,7 @@ maybe("a buyer's cotisation tiers are ranked and written under one lock (Postgre
     await admin.query('RESET lock_timeout');
     // The buyers' display names a purchases row is answered with (`enrichPurchaseRecords`).
     await admin.query(
-      `CREATE TABLE users (id varchar(255) PRIMARY KEY, "firstName" text, "lastName" text)`
+      `CREATE TABLE users (id varchar(255) PRIMARY KEY, "firstName" text, "lastName" text, posts text[] NOT NULL DEFAULT '{}')`
     );
     // The columns a closing reads of a form answer a held tag names (`isOwnFormAnswer`).
     await admin.query(

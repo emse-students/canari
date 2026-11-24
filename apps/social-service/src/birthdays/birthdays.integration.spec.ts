@@ -109,7 +109,7 @@ maybe('birthdays against PostgreSQL (migration 148)', () => {
     await q(`
       CREATE TABLE users (id varchar(255) PRIMARY KEY, "displayName" varchar, "firstName" varchar,
         "lastName" varchar, admin boolean NOT NULL DEFAULT false, campus varchar(32),
-        cursus jsonb NOT NULL DEFAULT '[]');
+        cursus jsonb NOT NULL DEFAULT '[]', posts text[] NOT NULL DEFAULT '{}');
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL, slug varchar NOT NULL,
         type varchar NOT NULL DEFAULT 'association', archived boolean NOT NULL DEFAULT false,
         "isBDE" boolean NOT NULL DEFAULT false, "createdBy" varchar(255));

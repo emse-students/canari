@@ -281,8 +281,8 @@ export function subscriptionNarrowing(row: {
  * no condition of its own - membership does not matter (user, 2026-10-06) and its page is public;
  * the caller checks that it exists.
  *
- * `campusWide` is the campus of a reader tied to no formation (`campusWideReaderCampus`, EMSE staff,
- * user 2026-10-07): they have no space, and may follow their OWN campus whole - `campus=<own>` with
+ * `campusWide` is the campus of a STAFF reader with no space (`campusWideReaderCampus`: a post EMSE or ME,
+ * owner 2026-11-24; EMSE staff, user 2026-10-07): they may follow their OWN campus whole - `campus=<own>` with
  * no formation, every formation of it. A formation, or any other campus, stays refused.
  */
 export function selectionWithinSpaces(

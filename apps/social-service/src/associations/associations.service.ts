@@ -4010,7 +4010,7 @@ export class AssociationsService {
   /**
    * THE BOUND ON WHAT A SUBSCRIPTION SELECTOR MAY NAME (D40 amended 2026-10-06, tightened 2026-10-07):
    * a pair that is one of the reader's OWN spaces (`READER_SPACES_SQL`, the twin of `readerSpaces`),
-   * or - for a reader with a campus and NO cursus (EMSE staff) - their own campus alone; an
+   * or - for a STAFF reader with a campus and no space (`campusWideReaderCampus`) - their own campus alone; an
    * association needs no membership, only to exist (404 otherwise). 403 `AGENDA_SELECTION_FORBIDDEN`
    * outside it. It bounds the SELECTOR only: what a link serves is decided at every read.
    */
@@ -4021,7 +4021,7 @@ export class AssociationsService {
   ): Promise<void> {
     if (associationId) await this.findById(associationId);
     const spaces = (await this.assoRepo.manager.query(READER_SPACES_SQL, [userId])) as SpacePair[];
-    // A reader tied to no formation (EMSE staff) has no space: they may follow their own campus
+    // A staff reader with no space (a post EMSE or ME, 2026-11-24) may follow their own campus
     // whole (user, 2026-10-07). Only asked when there is no space, so a student never reaches it.
     let campusWide: string | null = null;
     if (spaces.length === 0) {
@@ -4029,6 +4029,7 @@ export class AssociationsService {
         id: string;
         campus: string | null;
         cursus: unknown;
+        posts: unknown;
       }>;
       campusWide = rows[0] ? campusWideReaderCampus(rows[0]) : null;
     }

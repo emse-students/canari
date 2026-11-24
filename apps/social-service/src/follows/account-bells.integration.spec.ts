@@ -111,7 +111,7 @@ maybe('the bell against PostgreSQL (engagement WP-3)', () => {
     // The tables as production has them, from before migrations existed (TypeORM built them).
     await q(`
       CREATE TABLE users (id varchar(255) PRIMARY KEY, "displayName" varchar, "firstName" varchar,
-        "lastName" varchar);
+        "lastName" varchar, posts text[] NOT NULL DEFAULT '{}');
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL, slug varchar NOT NULL,
         type varchar NOT NULL DEFAULT 'association', archived boolean NOT NULL DEFAULT false,
         "isBDE" boolean NOT NULL DEFAULT false, "createdBy" varchar(255));
