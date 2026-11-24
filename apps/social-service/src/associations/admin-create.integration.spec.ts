@@ -93,7 +93,9 @@ maybe('platform admin create and catalogue against PostgreSQL', () => {
     await ds.query(
       readFileSync(join(__dirname, '..', 'migrations', '129_dependencies_schema.sql'), 'utf8')
     );
-    await ds.query(`CREATE TABLE users (id text PRIMARY KEY, campus text, cursus text)`);
+    await ds.query(
+      `CREATE TABLE users (id text PRIMARY KEY, campus text, cursus text, posts text[] NOT NULL DEFAULT '{}')`
+    );
     await ds.query(
       `INSERT INTO users (id, campus) VALUES ('platform-admin', NULL), ('officer', 'gardanne'), ('bde-star', 'gardanne')`
     );

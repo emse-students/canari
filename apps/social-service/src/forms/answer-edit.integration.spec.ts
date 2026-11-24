@@ -142,7 +142,7 @@ maybe('a respondent changes their own answer, against PostgreSQL (migration 166)
     // The `users` table social-service shares with core-service (same database): a member's
     // submit reads the names and campus its form joins there (`sharedAccountFields`, migration 174).
     await ds.query(
-      `CREATE TABLE users (id text PRIMARY KEY, "firstName" text, "lastName" text, campus text)`
+      `CREATE TABLE users (id text PRIMARY KEY, "firstName" text, "lastName" text, campus text, posts text[] NOT NULL DEFAULT '{}')`
     );
     await ds.query(
       `INSERT INTO users (id, "firstName", "lastName", campus) VALUES

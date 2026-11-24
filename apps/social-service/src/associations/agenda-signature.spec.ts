@@ -102,7 +102,7 @@ describe('AssociationsService.signAgendaFeedSelection', () => {
 
   function makeService(
     spaces: Array<{ campus: string; formation: string }>,
-    profile: { campus: string | null; cursus: unknown } | null = null
+    profile: { campus: string | null; cursus: unknown; posts?: unknown } | null = null
   ) {
     const svc = Object.create(AssociationsService.prototype) as AssociationsService;
     Object.assign(svc, {
@@ -148,7 +148,7 @@ describe('AssociationsService.signAgendaFeedSelection', () => {
       [{ campus: null, formation: 'ICM' }, null],
       [{ campus: null, formation: null }, id],
     ] as const) {
-      const svc = makeService([], { campus: 'saint-etienne', cursus: [] });
+      const svc = makeService([], { campus: 'saint-etienne', cursus: [], posts: ['EMSE'] });
       await expect(
         svc.signAgendaFeedSelection('staff-1', selection, associationId)
       ).rejects.toMatchObject({ response: { code: 'AGENDA_SELECTION_FORBIDDEN' } });
@@ -255,7 +255,7 @@ describe('AssociationsService.subscribeAgenda (2026-11-14)', () => {
 
   function makeService(
     spaces: Array<{ campus: string; formation: string }>,
-    profile: { campus: string | null; cursus: unknown } | null = null,
+    profile: { campus: string | null; cursus: unknown; posts?: unknown } | null = null,
     insert: () => Promise<unknown> = () => Promise.resolve([{ id: ID }])
   ) {
     const query = jest.fn((sql: string) => {
@@ -311,8 +311,21 @@ describe('AssociationsService.subscribeAgenda (2026-11-14)', () => {
     ).toEqual({ campus: 'gardanne', formation: null });
   });
 
+  it('refuses the whole campus to an account with no space and no staff post (owner, 2026-11-24)', async () => {
+    for (const posts of [[], ['ALUMNI']]) {
+      const { svc } = makeService([], { campus: 'saint-etienne', cursus: [], posts });
+      await expect(
+        svc.subscribeAgenda('nobody-1', { campus: 'saint-etienne', formation: null }, null)
+      ).rejects.toMatchObject({ response: { code: 'AGENDA_SELECTION_FORBIDDEN' } });
+    }
+  });
+
   it('lets staff subscribe to their whole campus (the bound the legacy signature had)', async () => {
-    const { svc, query } = makeService([], { campus: 'saint-etienne', cursus: [] });
+    const { svc, query } = makeService([], {
+      campus: 'saint-etienne',
+      cursus: [],
+      posts: ['EMSE'],
+    });
     await svc.subscribeAgenda('staff-1', { campus: 'saint-etienne', formation: null }, null);
     expect(inserts(query)).toHaveLength(1);
   });

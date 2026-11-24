@@ -192,7 +192,7 @@ maybe('Pour toi against PostgreSQL (feed=foryou)', () => {
     await q(`
       CREATE TABLE users (id varchar(255) PRIMARY KEY, admin boolean NOT NULL DEFAULT false,
         campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]', promo int, "displayName" varchar,
-        "firstName" varchar, "lastName" varchar);
+        "firstName" varchar, "lastName" varchar, posts text[] NOT NULL DEFAULT '{}');
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL, slug varchar NOT NULL,
         type varchar NOT NULL DEFAULT 'association', archived boolean NOT NULL DEFAULT false,
         "logoUrl" varchar, "logoMediaId" varchar, "isBDE" boolean NOT NULL DEFAULT false,

@@ -82,7 +82,10 @@ const migration = (file: string) => readFileSync(join(__dirname, '..', 'migratio
 const POST_AS = AssociationPermissionFlag.POST_AS_ASSO;
 
 /** The cast. Readable ids: a failure names a person. */
-const USERS: Record<string, { campus: string | null; formation: string | null; name: string }> = {
+const USERS: Record<
+  string,
+  { campus: string | null; formation: string | null; name: string; posts?: string[] }
+> = {
   // The AUTHOR of the personal posts (ICM Saint-Etienne).
   au: { campus: 'saint-etienne', formation: 'ICM', name: 'Alice Author' },
   // The PROPOSER: an ICM Saint-Etienne student (sees au's posts) who publishes for AG and AG2.
@@ -105,10 +108,11 @@ const USERS: Record<string, { campus: string | null; formation: string | null; n
   er: { campus: 'saint-etienne', formation: 'ICM', name: 'Eve Erased' },
   // A STUDENT author whose post an institution and a list ask to carry (owner, 2026-11-02).
   sa: { campus: 'saint-etienne', formation: 'ICM', name: 'Sara Student' },
-  // STAFF: a campus and no cursus, so no space (D34-D36). st is a plain member of INST; gt holds a
-  // nominative read grant on ICM x saint-etienne and belongs to nothing.
-  st: { campus: 'saint-etienne', formation: null, name: 'Stan Staff' },
-  gt: { campus: 'saint-etienne', formation: null, name: 'Gwen Granted' },
+  // STAFF: a campus, a post EMSE (owner, 2026-11-24) and no cursus, so no space (D34-D36). st is a
+  // plain member of INST; gt holds a nominative read grant on ICM x saint-etienne and belongs to
+  // nothing.
+  st: { campus: 'saint-etienne', formation: null, name: 'Stan Staff', posts: ['EMSE'] },
+  gt: { campus: 'saint-etienne', formation: null, name: 'Gwen Granted', posts: ['EMSE'] },
 };
 
 const A = (n: number) => `00000000-0000-4000-8000-0000000b${String(n).padStart(4, '0')}`;
@@ -273,7 +277,7 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
     await q(`
       CREATE TABLE users (id varchar(255) PRIMARY KEY, admin boolean NOT NULL DEFAULT false,
         campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]', "displayName" varchar,
-        "firstName" varchar, "lastName" varchar);
+        "firstName" varchar, "lastName" varchar, posts text[] NOT NULL DEFAULT '{}');
       CREATE TABLE associations (id uuid PRIMARY KEY, name varchar NOT NULL, slug varchar NOT NULL,
         type varchar NOT NULL DEFAULT 'association', archived boolean NOT NULL DEFAULT false,
         "logoUrl" varchar, "logoMediaId" varchar, "isBDE" boolean NOT NULL DEFAULT false,
@@ -343,13 +347,15 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
     for (const [id, u] of Object.entries(USERS)) {
       const [firstName, lastName] = u.name.split(' ');
       await q(
-        `INSERT INTO users (id, campus, cursus, "firstName", "lastName") VALUES ($1, $2, $3, $4, $5)`,
+        `INSERT INTO users (id, campus, cursus, "firstName", "lastName", posts)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
         [
           id,
           u.campus,
           JSON.stringify(u.formation ? [{ formation: u.formation, promo: 2024 }] : []),
           firstName,
           lastName,
+          u.posts ?? [],
         ]
       );
     }
@@ -1198,7 +1204,23 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
           INST,
         ]);
         expect(await audienceOf()).toMatchObject({ everyone: true, staffMembers: false });
+        // Staff is a post EMSE or ME (owner, 2026-11-24): a member holding ALUMNI alone is not on
+        // the staff side, a STUDENT member holding ME is.
+        await q(
+          `INSERT INTO association_members ("associationId", "userId", permissions) VALUES ($1, 'st', 0)`,
+          [INST]
+        );
+        await q(`UPDATE users SET posts = '{ALUMNI}' WHERE id = 'st'`);
+        expect(await audienceOf()).toMatchObject({ staffMembers: false });
+        await q(
+          `UPDATE users SET posts = '{ME}', cursus = '[{"formation":"ICM","promo":2024}]' WHERE id = 'st'`
+        );
+        expect(await audienceOf()).toMatchObject({ staffMembers: true });
       } finally {
+        await q(`UPDATE users SET posts = '{EMSE}', cursus = '[]' WHERE id = 'st'`);
+        await q(`DELETE FROM association_members WHERE "associationId" = $1 AND "userId" = 'st'`, [
+          INST,
+        ]);
         await q(
           `INSERT INTO association_members ("associationId", "userId", permissions) VALUES ($1, 'st', 0)`,
           [INST]

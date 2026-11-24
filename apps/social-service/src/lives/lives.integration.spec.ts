@@ -466,7 +466,7 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
     // ISMIN and shares no space with any of them.
     await q(
       `CREATE TABLE users (id varchar(255) PRIMARY KEY, admin boolean NOT NULL DEFAULT false,
-         campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]', "displayName" varchar)`
+         campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]', "displayName" varchar, posts text[] NOT NULL DEFAULT '{}')`
     );
     // The report store, in the columns `ModerationService` writes and the cut marks reviewed.
     await q(

@@ -158,7 +158,7 @@ maybe('the agenda subscription link against PostgreSQL (migration 173)', () => {
     await ds.synchronize();
     await q(`
       CREATE TABLE users (id varchar(255) PRIMARY KEY, admin boolean NOT NULL DEFAULT false,
-        campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]', promo int);
+        campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]', promo int, posts text[] NOT NULL DEFAULT '{}');
       CREATE TABLE posts (id uuid PRIMARY KEY);
       ALTER TABLE associations ADD COLUMN "isBDE" boolean NOT NULL DEFAULT false;
     `);
@@ -350,7 +350,9 @@ maybe('the agenda subscription link against PostgreSQL (migration 173)', () => {
   });
 
   it('(f) a staff holder is served EXACTLY its in-app agenda: its grants and memberships, and nothing of its campus otherwise', async () => {
-    await q(`INSERT INTO users (id, campus, cursus) VALUES ('st', $1, '[]')`, [SE]);
+    await q(`INSERT INTO users (id, campus, cursus, posts) VALUES ('st', $1, '[]', '{EMSE}')`, [
+      SE,
+    ]);
     const inApp = async () =>
       (
         (await service.listAggregatedCalendarFeed(undefined, undefined, undefined, {

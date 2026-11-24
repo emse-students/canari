@@ -167,7 +167,7 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
     await q(`DROP INDEX IF EXISTS "UQ_calendar_event_co_owner"`);
     await q(`
       CREATE TABLE users (id varchar(255) PRIMARY KEY, admin boolean NOT NULL DEFAULT false,
-        campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]', promo int);
+        campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]', promo int, posts text[] NOT NULL DEFAULT '{}');
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL, "associationId" uuid, "studentsOnly" boolean NOT NULL DEFAULT false, "reachPublic" varchar(16), "reachSpaces" jsonb);
       ALTER TABLE associations ADD COLUMN "isBDE" boolean NOT NULL DEFAULT false;
     `);

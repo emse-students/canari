@@ -72,7 +72,7 @@ maybe('the association of a form, against PostgreSQL', () => {
     );
     await ds.query(
       `CREATE TABLE users (id varchar PRIMARY KEY, admin boolean NOT NULL DEFAULT false,
-         campus varchar, cursus jsonb NOT NULL DEFAULT '[]')`
+         campus varchar, cursus jsonb NOT NULL DEFAULT '[]', posts text[] NOT NULL DEFAULT '{}')`
     );
     await ds.query(`CREATE TABLE spaces (formation varchar NOT NULL, campus varchar NOT NULL)`);
     await ds.query(

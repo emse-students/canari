@@ -166,7 +166,7 @@ maybe(
       await admin.query('RESET lock_timeout');
       await admin.query(
         `CREATE TABLE users (id varchar(255) PRIMARY KEY, "firstName" text, "lastName" text,
-         "displayName" text, admin boolean NOT NULL DEFAULT false)`
+         "displayName" text, admin boolean NOT NULL DEFAULT false, posts text[] NOT NULL DEFAULT '{}')`
       );
       await admin.query(
         `INSERT INTO users (id, "firstName", admin) VALUES ('global-admin', 'Admin', true)`

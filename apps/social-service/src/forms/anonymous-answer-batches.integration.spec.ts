@@ -83,7 +83,7 @@ maybe('anonymous answers stored in batches, against PostgreSQL (migration 178)',
       `CREATE TABLE associations (id uuid PRIMARY KEY, archived boolean NOT NULL DEFAULT false)`
     );
     await ds.query(
-      `CREATE TABLE users (id text PRIMARY KEY, "firstName" text, "lastName" text, campus text)`
+      `CREATE TABLE users (id text PRIMARY KEY, "firstName" text, "lastName" text, campus text, posts text[] NOT NULL DEFAULT '{}')`
     );
 
     service = new FormsService(

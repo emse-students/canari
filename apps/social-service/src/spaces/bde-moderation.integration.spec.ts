@@ -226,7 +226,7 @@ maybe('BDE moderation scope against PostgreSQL', () => {
       CREATE TABLE association_members (id serial PRIMARY KEY, "associationId" uuid NOT NULL,
         "userId" varchar(255) NOT NULL, permissions integer NOT NULL DEFAULT 0);
       CREATE TABLE association_calendar_events (id serial PRIMARY KEY, "associationId" uuid NOT NULL);
-      CREATE TABLE users (id varchar(255) PRIMARY KEY, campus varchar, cursus jsonb);
+      CREATE TABLE users (id varchar(255) PRIMARY KEY, campus varchar, cursus jsonb, posts text[] NOT NULL DEFAULT '{}');
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255), "associationId" uuid, "studentsOnly" boolean NOT NULL DEFAULT false, "reachPublic" varchar(16), "reachSpaces" jsonb,
         comments jsonb, "scheduledAt" timestamptz);
       CREATE TABLE lives (id uuid PRIMARY KEY, "broadcasterId" varchar(255) NOT NULL,

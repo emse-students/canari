@@ -1170,7 +1170,7 @@ box no longer defines anything.
 | Item | Decision |
 | --- | --- |
 | Republished card | "Republished by X, Y" line, reactions and comments on the original, notification only for those who newly see the post |
-| Personnel | declared; spaces add up with a cursus; publishing as an institution needs membership of its instance |
+| Personnel | declared; spaces add up with a cursus; publishing as an institution needs membership of its instance; since 2026-11-24 "staff" for an audience is a post EMSE or ME, independent of the cursus ([staff is a post](#staff-is-a-post-emse-or-me-owner-2026-11-24)) |
 
 ### D36 and D37 as built (2026-10-04)
 
@@ -1823,8 +1823,9 @@ was the only revocation, and anyone holding a link read what its selection reach
 
 - **The bound on the SELECTOR is unchanged** (`assertAgendaSelectionAllowed`, `AssociationsService`):
   a pair that is one of the reader's spaces (`READER_SPACES_SQL`, the twin of `readerSpaces`); a
-  reader with a campus and an empty cursus (EMSE staff, 11 prod accounts on 2026-10-07; user decision
-  the same day) their own campus alone (`campusWideReaderCampus`); an association needs only to exist.
+  STAFF reader with a campus and no space (a post EMSE or ME since 2026-11-24 - before, a campus and
+  an empty cursus: EMSE staff, 11 prod accounts on 2026-10-07; user decision the same day) their own
+  campus alone (`campusWideReaderCampus`); an association needs only to exist.
   Anything else is a 403 `AGENDA_SELECTION_FORBIDDEN`, an empty body a 400 `AGENDA_SELECTION_REQUIRED`.
   It bounds what may be ASKED; what a link SERVES is the holder's agenda
   ([re-decided](#d40-re-decided-2026-11-14---the-link-is-its-holders)).
@@ -1849,8 +1850,8 @@ was the only revocation, and anyone holding a link read what its selection reach
   for a leaked key ([MIGRATION](../../infrastructure/MIGRATION.md)).
 - **Frontend:** `AgendaSelectionFields` offers "any" plus the reader's OWN campus and cursus formations
   (`campusSelectOptions(reader)`, `formationSelectOptions(reader)`) in the subscribe modal and the PDF
-  export (which reads the signed-in JSON feed, no link). A staff reader (campus, empty cursus:
-  `isCampusWideReader`) sees their campus and "all formations"; the "complete your profile" text stays
+  export (which reads the signed-in JSON feed, no link). A staff reader with no space (a campus and a post
+  EMSE or ME: `isCampusWideReader`, `holdsStaffPost`) sees their campus and "all formations"; the "complete your profile" text stays
   for a reader with neither a campus nor a cursus.
 - **Known cost:** an anonymous visitor on an association's PUBLIC page cannot obtain a subscription
   link - it needs a session. A calendar subscription needs an account.
@@ -1951,8 +1952,8 @@ reaches the personnel side"), the latter **for this consented path only**.
   author may withdraw at any time, and the caps, blocks and anonymity refusals are unchanged.
 - **What an accepted institution reaches**: the republication disjunct of `postVisibleToUserSql`
   was never typed, so the institution's audience reads the post - its members (a staff member
-  among them) and the spaces its rules reach. A staff member holds no space (a campus, no cursus),
-  so membership is how the staff side reads it.
+  among them) and the spaces its rules reach. A staff member without a cursus holds no space, so
+  membership is how that staff side reads it.
 - **Member reposts (WP-F6)**: `MEMBER_REPOSTABLE_ASSOCIATION_TYPES` (`spaces/reader-spaces.ts`)
   admits a LIST's post under the same conditions as an association's: at least one audience rule.
   A members-only entity's post stays refused, whatever its kind.
@@ -1962,8 +1963,8 @@ reaches the personnel side"), the latter **for this consented path only**.
   never named after the School:
   - `everyone`: a `(NULL, NULL)` rule;
   - `spaces`: the rules;
-  - `staffMembers`: a member with a campus and no cursus, the D34-D36 personnel; a review account
-    never counts.
+  - `staffMembers`: a member who is staff of a campus (`isCampusStaffSql`: a campus and a post EMSE
+    or ME, since 2026-11-24; before, a campus and no cursus); a review account never counts.
 
   `/notifications/requests` draws it (`institutionAudienceWarning`, `posts/republication.ts`):
   - "tout le monde" said plainly;
@@ -3159,7 +3160,8 @@ revisit them:**
    shortcuts "a whole campus" and "a whole formation" - never wider than the audience the admin
    gave the institution; the server refuses anything else (typed, at the throw).
 2. **Public**, a second choice: **Tous / Étudiants / Personnel** - everyone in the ticked spaces,
-   only students (an account with a cursus), or only staff (no cursus).
+   only students (an account with a space, so a cursus), or only staff (a post EMSE or ME - with or
+   without a cursus, since the owner's decision of 2026-11-24; before, "no cursus").
 3. **No default.** Nothing is pre-selected; "Publier" stays disabled until both are chosen.
 4. **Editable after publishing, both ways.** Narrowing withdraws the post from the excluded readers
    at once, widening gives it back; an edit sends no new notification.
@@ -3204,23 +3206,28 @@ decision, an additive schema, and the owner wants it in `1.6.10`.
   on their "after" side, and (as `postPublicAdmitsViewerSql`) what a repost proposal's text is
   withheld by. **`students` closes the read-grant door and the browsing admin's by-id door exactly as
   the switch does** (S1, S2 of the review of #3010): the guard is "not students-only AND public is
-  not `students`". **"Staff" is exactly `NOT isStudentSql`: any account with no space** - staff (a
-  campus and an empty cursus), a student whose campus and formation make no opened space, an account
-  with no campus, and a review account - the SQL and every sentence here mean that set, nothing
-  narrower; the picker's "Personnel" hint names who it reaches in those terms.
+  not `students`". **"Staff" is a post EMSE or ME (`isStaffSql`), and nothing else** (owner,
+  2026-11-24, [staff is a post](#staff-is-a-post-emse-or-me-owner-2026-11-24)): staff and student
+  are INDEPENDENT - an account with a cursus and such a post reads both a "Étudiants" and a
+  "Personnel" item, one with only `ALUMNI` or no post reads neither "Personnel" nor, without a space,
+  "Étudiants"; a review account is never staff. Before 2026-11-24 it was `NOT isStudentSql` (any
+  account with no space), so an EMSE employee who is also an alumnus never saw a "Personnel" post.
 - **Staff by campus, a door of its own (owner, 2026-11-14, "Oui, par campus")**:
   `institutionReachStaffCampusDoorSql` opens a "Tous" or "Personnel" post to every STAFF ACCOUNT OF
-  A CAMPUS (`isCampusStaffSql`: a campus, no cursus entry, not a review account - the SQL twin of
-  `campusWideReaderCampus`, held to it by `reader-spaces.integration.spec.ts`) whose campus is the
+  A CAMPUS (`isCampusStaffSql`: a campus and `isStaffSql` - a post EMSE or ME, not a review account,
+  since 2026-11-24 - the SQL twin of `campusWideReaderCampus`, held to it by
+  `reader-spaces.integration.spec.ts`) whose campus is the
   campus of a space the post ticked AND that the institution's rules still reach. So the School
   addresses its staff without naming each one. It sits beside the rules door in
   `postVisibleToUserSql`, so every consumer below
   gets it - the bell and the announcement included: such staff are TOLD of the post. Under the
   public gate like every door: "Étudiants" closes it. Not opened: a post with no reach (legacy, or
-  not an institution's), staff of another campus, a ticked space outside the audience; a student
-  gains nothing (a student of an unticked space of the same campus still does not read it); nor an
-  account whose cursus names a formation with no opened space (it passes the "Personnel" public but
-  is not staff of a campus). `postReachesSpaceSql` is unchanged (a space's readers are students).
+  not an institution's), staff of another campus, a ticked space outside the audience; a student who
+  is not staff gains nothing (a student of an unticked space of the same campus still does not read
+  it), while a student who IS staff (a post EMSE or ME, 2026-11-24) is staff of their campus and gets
+  the door like any staff account. `postReachesSpaceSql` is unchanged (a space as a space - its pin,
+  trend, suggestion - is still not offered a "Personnel" post: reversible, see
+  [staff is a post](#staff-is-a-post-emse-or-me-owner-2026-11-24)).
   **The feed gate** (`IN_FEED_AUDIENCE_SQL`) admits such staff when an INSTITUTION's rules reach a
   space of their campus, or a staff account told of a post would be refused the feed that holds it
   (the follow precedent, F3 of WP-F5).
@@ -3287,6 +3294,42 @@ drawn, ACCUSED by a `console.warn` and, when nothing is left, told to the author
 (`post_reach_unknown_campus`); **the four codes are FINAL in the durable publish queue**
 (`retryCannotCure`, `QueuedPostFailure.final`): the queue re-sends the payload it stored, so a Retry
 would be refused word for word - the banner offers Delete alone.
+
+#### Staff is a post EMSE or ME (owner, 2026-11-24)
+
+The owner: *"il faudrait faire union plutôt que intersection"*, then the definition, which replaces
+"no cursus": **an account is STAFF when its MiConnect `posts` hold `EMSE` or `ME`, and nothing else.**
+Student (a space, so a cursus) and staff are independent: an account may be both - it then reads
+"Étudiants" AND "Personnel" items - or neither (`ALUMNI` alone, or no post and no cursus). A review
+account is never staff, whatever its posts (`review-cohort.ts`). Ships in `1.8.1`. Charter principle
+2, *the essential is never lost* ([principes](../principes.md)): what the School addresses to its
+staff reaches all of its staff, an employee who also studied there included.
+
+- **ONE definition per layer.** Server: `STAFF_POSTS`, `isStaffSql` and its pure twin
+  `isStaffProfile` (`spaces/reader-spaces.ts`); `isCampusStaffSql` is a campus AND `isStaffSql`, and
+  `campusWideReaderCampus` a campus AND `isStaffProfile`. `users.posts` is the shared `text[]` column
+  core-service's migration 008 created and the OIDC callback rewrites at every sign-in, read in place
+  - no migration, no copy. Client: `STAFF_POSTS` / `holdsStaffPost` (`profile/miconnectProfile.ts`),
+  read by `isCampusWideReader` only to shape what the agenda selector offers.
+- **Consumers it changes:** the "Personnel" public gate (`institutionReachAdmitsUserSql`, so every
+  door of `postVisibleToUserSql` and `eventVisibleToUserSql`: feed, Reels, search, post by id, bell,
+  announcement, mentions, newly-reached readers, agenda); the staff-by-campus door
+  (`institutionReachStaffCampusDoorSql`) and the feed gate's staff term (`IN_FEED_AUDIENCE_SQL`),
+  both through `isCampusStaffSql`; the agenda selector's campus-wide bound
+  (`assertAgendaSelectionAllowed`, still asked only of a reader with NO space, so a student who is
+  staff keeps the own-spaces rule); an institution's `staffMembers` warning (`institutionAudiencesOf`,
+  which hand-rolled "no cursus" and now asks `isCampusStaffSql`; its fingerprint therefore changes for
+  an institution whose staff side changed, and a pending request is shown the new audience); the
+  composer's "Personnel" hints and the privacy policy's sentence.
+- **Not changed (reversible, lead's choice):** `postReachesSpaceSql` and the anonymous agenda's
+  `eventReachesSpaceMatchingSql` still offer a "Personnel" item to no space as a space (pin, trend,
+  suggestion, anonymous feed); the forms' respondent status (`accountStatuses`, D2 of the forms: any
+  post, `ALUMNI` included) is a pricing fact of its own and keeps its rule.
+- **Measured on production, 2026-11-24 (read-only, counts only):** 594 accounts. 19 had no cursus
+  (staff under the old rule, all with a campus) and all 19 hold `EMSE` or `ME`, so **nobody stops
+  being staff**; no account has no cursus and no staff post (no legacy no-post account, no
+  `ALUMNI`-only one); **1 account has a cursus AND a staff post and becomes staff** - the case the
+  owner raised. The one review account holds no staff post.
 
 #### Decisions taken in the build, reversible
 

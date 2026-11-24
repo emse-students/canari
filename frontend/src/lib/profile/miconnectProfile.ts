@@ -8,6 +8,18 @@ export const POSTS = ['EMSE', 'ME', 'ALUMNI'] as const;
 export type Campus = (typeof CAMPUSES)[number];
 export type Post = (typeof POSTS)[number];
 
+/**
+ * The posts that make a person STAFF (owner, 2026-11-24): `EMSE` or `ME`, never `ALUMNI` alone, and
+ * independent of a cursus - a person may be a student and staff at once. Mirrors social-service
+ * `STAFF_POSTS`, which decides every audience; this copy only shapes what the client offers.
+ */
+export const STAFF_POSTS: readonly Post[] = ['EMSE', 'ME'];
+
+/** Whether `posts` holds a staff post ({@link STAFF_POSTS}). Absent or empty is not staff. */
+export function holdsStaffPost(posts: readonly Post[] | null | undefined): boolean {
+  return (posts ?? []).some((p) => STAFF_POSTS.includes(p));
+}
+
 /** One line of a person's schooling: a formation and the year they entered it. */
 export interface CursusEntry {
   formation: string;

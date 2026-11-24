@@ -23,8 +23,8 @@ import {
 } from '../proposals/proposals.service';
 import { previewOf } from '../push/push-content';
 import { REPUBLICATION_REQUESTS_TARGET } from '../push/push-target';
-import { inReviewCohortSql } from '../review-cohort';
 import {
+  isCampusStaffSql,
   newlyReachedByPersonalRepublicationSql,
   postVisibleToViewerSql,
 } from '../spaces/reader-spaces';
@@ -359,10 +359,10 @@ export class PersonalRepublicationsService implements OnModuleInit, UserProposal
    *
    * - `everyone`: one of its rules addresses every campus and every formation;
    * - `spaces`: its rules, as (campus, formation) with null meaning "every" - what it reaches;
-   * - `staffMembers`: at least one of its MEMBERS is on the staff side - a campus and no cursus, the
-   *   D34-D36 personnel `campusWideReaderCampus` recognises (a review account never counts). A rule
-   *   reaches spaces, and staff hold none, so membership is how the staff side reads what an
-   *   institution carries; a nominative read grant never opens a personal post (WP7).
+   * - `staffMembers`: at least one of its MEMBERS is staff of a campus (`isCampusStaffSql`: a campus
+   *   and a post EMSE or ME, owner 2026-11-24; a review account never counts). A rule reaches
+   *   spaces, and staff without a cursus hold none, so membership is how the staff side reads what
+   *   an institution carries; a nominative read grant never opens a personal post (WP7).
    *
    * Any other kind answers nothing: the owner asked the warning for institutions, whose audience is
    * the one an author may not guess. ONE query for the whole inbox. Each answer carries its
@@ -386,9 +386,7 @@ export class PersonalRepublicationsService implements OnModuleInit, UserProposal
                                 ORDER BY r.campus NULLS FIRST, r.formation NULLS FIRST)
                           FROM association_audiences r WHERE r."associationId" = a.id), '[]'::json) AS rules,
               EXISTS (SELECT 1 FROM association_members am JOIN users u ON u.id = am."userId"
-                       WHERE am."associationId" = a.id AND u.campus IS NOT NULL
-                         AND (u.cursus IS NULL OR u.cursus = '[]'::jsonb)
-                         AND NOT ${inReviewCohortSql('u.id')}) AS "staffMembers"
+                       WHERE am."associationId" = a.id AND ${isCampusStaffSql('u')}) AS "staffMembers"
          FROM associations a
         WHERE a.id = ANY($1::uuid[]) AND a.type = 'institution'`,
       [ids]
@@ -604,7 +602,7 @@ export interface InstitutionAudience {
   everyone: boolean;
   /** Its rules: a null side means "every campus" or "every formation". */
   spaces: { campus: string | null; formation: string | null }[];
-  /** At least one of its members is on the staff side (a campus, no cursus). */
+  /** At least one of its members is on the staff side (a campus and a post EMSE or ME, `isCampusStaffSql`). */
   staffMembers: boolean;
   /**
    * A digest of the three fields above (`audienceFingerprint`): what the author was shown. The

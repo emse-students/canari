@@ -160,7 +160,7 @@ maybe('follow requests against PostgreSQL (WP-F2)', () => {
       CREATE TABLE user_blocks ("blockerId" varchar(255) NOT NULL, "blockedId" varchar(255) NOT NULL);
       CREATE TABLE users (id varchar(255) PRIMARY KEY, "displayName" varchar, "firstName" varchar,
         "lastName" varchar, admin boolean NOT NULL DEFAULT false, campus varchar(32),
-        cursus jsonb NOT NULL DEFAULT '[]');
+        cursus jsonb NOT NULL DEFAULT '[]', posts text[] NOT NULL DEFAULT '{}');
       -- What the block severing (migration 121's member reposts) and the bell's member-repost gate
       -- (the post predicate) read since WP-F6: the visibility schema, through its migrations below.
       CREATE TABLE posts (id uuid PRIMARY KEY, "authorId" varchar(255) NOT NULL, "associationId" uuid, "studentsOnly" boolean NOT NULL DEFAULT false, "reachPublic" varchar(16), "reachSpaces" jsonb,

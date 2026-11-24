@@ -93,7 +93,7 @@ maybe('the priced grid against PostgreSQL (migration 137)', () => {
     // The `users` table social-service shares with core-service (same database): a member's
     // submit reads the names its form joins there (`sharedAccountFields`, migration 174).
     await ds.query(
-      `CREATE TABLE users (id text PRIMARY KEY, "firstName" text, "lastName" text, campus text)`
+      `CREATE TABLE users (id text PRIMARY KEY, "firstName" text, "lastName" text, campus text, posts text[] NOT NULL DEFAULT '{}')`
     );
     await ds.query(
       `INSERT INTO users (id, "firstName", "lastName") VALUES ($1, 'Cleo', 'COTISANT'), ($2, 'Max', 'MEMBER')`,
