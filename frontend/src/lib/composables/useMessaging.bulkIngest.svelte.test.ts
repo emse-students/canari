@@ -3,9 +3,13 @@
  *
  * MLS gives no echo of your own message, so the optimistic `addMessageToChat` call is the ONLY
  * writer the sender's copy will ever get. The UI buffer sat IN FRONT of that write - it returned
- * early, so `saveMessage` never ran - and the buffer is discarded without flushing by a second
- * drain and by `resetMessageCatchupState`. A message composed during any inbound drain therefore
- * died before it was persisted: the receiver had it, the sender lost it at the next load.
+ * early, so `saveMessage` never ran - and the buffer was discarded without flushing by a second
+ * drain and by `resetMessageCatchupState` (neither discards it since #4054). A message composed
+ * during any inbound drain therefore died before it was persisted: the receiver had it, the sender
+ * lost it at the next load.
+ *
+ * Since #4054 the buffer itself loses nothing either: a row leaves it only for a store, written
+ * where its thread lives at the close - a Welcome's re-key included - or held as an orphan.
  *
  * The end-to-end reproduction is a RACE - `{ bufferUi: true, showOverlay: pendingCount > 1 }` means
  * a single-message live drain buffers for the few hundred milliseconds it takes to ingest, with the
@@ -57,6 +61,7 @@ import type { Conversation } from '$lib/types';
 import { createMlsServiceStub } from '../mls-client/test/fixtures/mlsServiceStub';
 import { decodeAppMessage } from '../proto/codec';
 import { sendVisibleNotice } from '../utils/chat/visibleNotices';
+import { forgetConversationMoves, recordConversationMove } from '../utils/chat/conversationMoves';
 
 const ME = 'me-user-id';
 const PEER = 'peer-user-id';
@@ -141,30 +146,134 @@ describe('addMessageToChat during a bulk-ingest window', () => {
   });
 
   /**
+   * AN OWN MESSAGE FROM A FRAME IS NOT AN OWN SEND (2026-11-24). Written on this account's other
+   * device, it reaches this one as a frame like a peer's message - the frame stays on the server until
+   * the close stored its row - so it waits for the flush with the rest of the drain instead of paying
+   * a render and a store write of its own (23 of them at ~90 ms in the owner's 1.7.3 catch-up).
+   */
+  it("buffers an own message decrypted from a frame (this account's other device)", async () => {
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.addMessageToChat(ME, 'from my laptop', CONVO, ctx, {
+      messageId: 'sibling-1',
+      frameId: 'frame-1',
+    });
+
+    expect(idsIn(conversations)).toEqual([]);
+    expect(saveMessage).not.toHaveBeenCalled();
+
+    await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
+    expect(idsIn(conversations)).toEqual(['sibling-1']);
+    expect(conversations.get(CONVO)?.messages[0].isOwn).toBe(true);
+    expect(saveMessage).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * THE OPEN CONVERSATION RECEIVES A DRAIN IN ONE RENDER. A catch-up mixing a peer's new messages,
+   * upgrades of the previews their notifications left and messages from this account's other device
+   * changes the conversation's row ONCE, at the window's close, and writes the store once: the pane
+   * sees one change of its list, so one anchor decision, instead of one per row.
+   */
+  it('commits a mixed catch-up to the conversation in ONE change at the close', async () => {
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+    conversations.set(CONVO, {
+      ...(conversations.get(CONVO) as Conversation),
+      messages: [
+        {
+          id: 'preview-1',
+          senderId: PEER,
+          content: '\u{1F4F7} Photo',
+          timestamp: new Date(1_700_000_000_000),
+          isOwn: false,
+          isFcmPreview: true,
+        },
+      ] as never,
+    });
+    const sets = vi.spyOn(conversations, 'set');
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    const envelope = JSON.stringify({ kind: 'media', mediaId: 'm-1', mimeType: 'image/jpeg' });
+    await messaging.addMessageToChat(PEER, envelope, CONVO, ctx, {
+      messageId: 'preview-1',
+      frameId: 'f-1',
+      serverTimestamp: 1_700_000_000_000,
+    });
+    await messaging.addMessageToChat(ME, 'mine, from my laptop', CONVO, ctx, {
+      messageId: 'sibling-1',
+      frameId: 'f-2',
+      serverTimestamp: 1_700_000_001_000,
+    });
+    await messaging.addMessageToChat(PEER, 'a new one', CONVO, ctx, {
+      messageId: 'theirs-1',
+      frameId: 'f-3',
+      serverTimestamp: 1_700_000_002_000,
+    });
+    expect(sets).not.toHaveBeenCalled();
+
+    await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
+
+    expect(sets.mock.calls.filter(([key]) => key === CONVO)).toHaveLength(1);
+    expect(idsIn(conversations)).toEqual(['preview-1', 'sibling-1', 'theirs-1']);
+    expect(conversations.get(CONVO)?.messages[0].content).toBe(envelope);
+    // One batch write: the upgraded row and the two new ones, each once.
+    expect(saveMessage.mock.calls.map((c) => (c[0] as { id: string }).id).sort()).toEqual([
+      'preview-1',
+      'sibling-1',
+      'theirs-1',
+    ]);
+    expect(ctx.saveConversation).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * THE BANNER SAYS A CATCH-UP THE DRAIN'S START COULD NOT SEE (2026-11-24). A resume's drain
+   * starts on the first frame of the pull's page, so its phase carries no overlay; the buffer's
+   * count raises the banner anyway, and the window's close - the drain's own completion - lowers it.
+   */
+  it('raises the banner from the buffer of a window opened without an overlay, and lowers it at the close', async () => {
+    const messaging = useMessaging();
+    const { ctx } = makeContext();
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    for (let i = 0; i < 4; i++) {
+      await messaging.addMessageToChat(PEER, `m${i}`, CONVO, ctx, { messageId: `m-${i}` });
+    }
+    expect(messaging.isCatchupOverlayVisible).toBe(false);
+    await messaging.addMessageToChat(PEER, 'm4', CONVO, ctx, { messageId: 'm-4' });
+    expect(messaging.isCatchupOverlayVisible).toBe(true);
+    // Raising the banner is not the drain-wide catch-up state the concurrency guards read.
+    expect(messaging.isMessageCatchupActive).toBe(false);
+
+    await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
+    expect(messaging.isCatchupOverlayVisible).toBe(false);
+  });
+
+  /**
    * THE TWO SILENT RETURNS ON THE INBOUND PATH, and they are only findable because they now speak.
    *
    * COMM-4 watched an invitation card be written - the handler logged the conversation it went into
    * - and never appear on screen or survive a reload. Between the buffer and the flush there were
    * exactly two places a message could be absorbed without leaving anything behind, and neither of
    * them said so, which made a delivered message and a lost one look identical from every log there
-   * is. Discarding may well be right; being silent about it never is.
+   * is. Since #4054 the first one no longer discards: a buffered message whose conversation went away
+   * is held as an orphan - stored if its thread comes back or moved, dropped only on a real removal.
    */
-  it('says so when it drops a buffered message because the conversation went away', async () => {
+  it('says so when it holds a buffered message as an orphan because the conversation went away', async () => {
     const messaging = useMessaging();
     const { ctx, conversations, saveMessage } = makeContext();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     messaging.beginBulkMessageIngest(LIVE_DRAIN);
     await messaging.addMessageToChat(PEER, 'their message', CONVO, ctx, { messageId: 'theirs-1' });
-    // The conversation was in the map when the message arrived, and is not any more - which is why
-    // this is not the orphan buffer: nothing will ever come back for it.
+    // The conversation was in the map when the message arrived, and is not any more: nothing writes
+    // it into a conversation that is gone, and nothing drops it silently either.
     conversations.delete(CONVO);
     await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
 
     expect(saveMessage).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining('vanished between buffering and flush')
-    );
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('held as orphans'));
   });
 
   it('says so when it ignores a buffered message it already holds', async () => {
@@ -184,11 +293,11 @@ describe('addMessageToChat during a bulk-ingest window', () => {
   });
 
   /**
-   * The loss itself, and the reason a flush-based test would not catch it: a second drain starting
-   * before the first ended clears the buffer WITHOUT flushing (`beginBulkMessageIngest` clears
-   * unconditionally), so anything in it is gone for good. The own message must not be in there.
+   * The loss itself, as it was: a second drain starting before the first ended cleared the buffer
+   * WITHOUT flushing. The own message was never in there, and since #4054 the peer's is not lost
+   * either - the next window keeps it and stores it at its close.
    */
-  it('keeps the own message when a second drain discards the buffer unflushed', async () => {
+  it("keeps the own message, and the peer's, when a second window opens before the first closed", async () => {
     const messaging = useMessaging();
     const { ctx, conversations, saveMessage } = makeContext();
 
@@ -196,21 +305,21 @@ describe('addMessageToChat during a bulk-ingest window', () => {
     await messaging.addMessageToChat(PEER, 'their message', CONVO, ctx, { messageId: 'theirs-1' });
     await messaging.addMessageToChat(ME, 'my own message', CONVO, ctx, { messageId: 'own-1' });
 
-    messaging.beginBulkMessageIngest(LIVE_DRAIN); // discards the buffer, unflushed
+    messaging.beginBulkMessageIngest(LIVE_DRAIN); // used to discard the buffer, unflushed
     await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
 
-    expect(idsIn(conversations)).toEqual(['own-1']);
-    expect(saveMessage).toHaveBeenCalledTimes(1);
+    expect(idsIn(conversations).sort()).toEqual(['own-1', 'theirs-1']);
+    expect(saveMessage).toHaveBeenCalledTimes(2);
   });
 
   /**
    * THE ACTING DEVICE'S OWN NOTICE IS THE SAME CASE UNDER A `system` SENDER (review of #2412): MLS
    * never echoes it, so `sendVisibleNotice`'s write is the only one it gets. Written through the
    * real `sendVisibleNotice` into the real `addMessageToChat`, inside a drain, then the drain is
-   * discarded both ways the buffer can be.
+   * interrupted both ways that used to discard the buffer.
    */
-  for (const discard of ['a second drain start', 'resetMessageCatchupState'] as const) {
-    it(`keeps the acting device's own visible notice across ${discard}`, async () => {
+  for (const interruption of ['a second drain start', 'resetMessageCatchupState'] as const) {
+    it(`keeps the acting device's own visible notice across ${interruption}`, async () => {
       const messaging = useMessaging();
       const { ctx, conversations, saveMessage } = makeContext();
       const mls = createMlsServiceStub();
@@ -228,7 +337,7 @@ describe('addMessageToChat during a bulk-ingest window', () => {
             messaging.addMessageToChat(senderId, content, key, ctx, options),
         }
       );
-      if (discard === 'a second drain start') {
+      if (interruption === 'a second drain start') {
         messaging.beginBulkMessageIngest(LIVE_DRAIN);
         await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
       } else {
@@ -241,7 +350,7 @@ describe('addMessageToChat during a bulk-ingest window', () => {
     });
   }
 
-  it('keeps the own message across resetMessageCatchupState, which also discards unflushed', async () => {
+  it('keeps the own message across resetMessageCatchupState, which leaves the buffer to its close', async () => {
     const messaging = useMessaging();
     const { ctx, conversations, saveMessage } = makeContext();
 
@@ -252,6 +361,276 @@ describe('addMessageToChat during a bulk-ingest window', () => {
 
     expect(idsIn(conversations)).toEqual(['own-1']);
     expect(saveMessage).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * NO PATH DROPS A FRAMED BUFFERED ROW (review of #4054). `resetMessageCatchupState` - called by
+   * group creation while a drain may hold its window - cleared the buffer, so the close stored
+   * nothing and the frames, in no ledger, were acknowledged: the messages were lost. Now the reset
+   * touches the UI flags only, the buffered frames are in the unstored ledger until a store takes
+   * them, and the window's close stores them.
+   */
+  it('stores a framed upgrade, a framed sibling message and a peer text across a reset mid-window', async () => {
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+    conversations.set(CONVO, {
+      ...(conversations.get(CONVO) as Conversation),
+      messages: [
+        {
+          id: 'preview-1',
+          senderId: PEER,
+          content: '\u{1F4F7} Photo',
+          timestamp: new Date(1_700_000_000_000),
+          isOwn: false,
+          isFcmPreview: true,
+        },
+      ] as never,
+    });
+    const ledger = messaging.bulkIngestObserver(() => ctx);
+    const envelope = JSON.stringify({ kind: 'media', mediaId: 'm-1', mimeType: 'image/jpeg' });
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.addMessageToChat(PEER, envelope, CONVO, ctx, {
+      messageId: 'preview-1',
+      frameId: 'f-upgrade',
+    });
+    await messaging.addMessageToChat(ME, 'from my laptop', CONVO, ctx, {
+      messageId: 'sibling-1',
+      frameId: 'f-sibling',
+    });
+    await messaging.addMessageToChat(PEER, 'theirs', CONVO, ctx, {
+      messageId: 'theirs-1',
+      frameId: 'f-peer',
+    });
+    messaging.resetMessageCatchupState();
+
+    // Unstored, and the ledger says so: none of the three frames may be acknowledged yet.
+    expect([...ledger.framesLeftUnstored()].sort()).toEqual(['f-peer', 'f-sibling', 'f-upgrade']);
+
+    await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
+
+    expect(saveMessage.mock.calls.map((c) => (c[0] as { id: string }).id).sort()).toEqual([
+      'preview-1',
+      'sibling-1',
+      'theirs-1',
+    ]);
+    expect(conversations.get(CONVO)?.messages.find((m) => m.id === 'preview-1')?.content).toBe(
+      envelope
+    );
+    expect(ledger.framesLeftUnstored().size).toBe(0);
+  });
+
+  it('keeps what a window holds when the next window opens, and stores it at that close', async () => {
+    const messaging = useMessaging();
+    const { ctx, conversations } = makeContext();
+    const ledger = messaging.bulkIngestObserver(() => ctx);
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.addMessageToChat(PEER, 'first', CONVO, ctx, { messageId: 'a', frameId: 'f-a' });
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    expect([...ledger.framesLeftUnstored()]).toEqual(['f-a']);
+    await messaging.addMessageToChat(PEER, 'second', CONVO, ctx, {
+      messageId: 'b',
+      frameId: 'f-b',
+    });
+    await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
+
+    expect(idsIn(conversations)).toEqual(['a', 'b']);
+    expect(ledger.framesLeftUnstored().size).toBe(0);
+  });
+
+  /**
+   * A FRAMED ROW THAT IS ALSO AN OWN SEND is a send: its outbox entry makes this call the pair's only
+   * writer, so it is shown and stored at once, never held.
+   */
+  it('takes the live path for an own message carrying both a frame and an outbox entry', async () => {
+    const messaging = useMessaging();
+    const { ctx, conversations } = makeContext();
+    const saveMessageWithOutboxEntry = vi.fn().mockResolvedValue(undefined);
+    (ctx.storage as unknown as Record<string, unknown>).saveMessageWithOutboxEntry =
+      saveMessageWithOutboxEntry;
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.addMessageToChat(ME, 'sent from here', CONVO, ctx, {
+      messageId: 'own-1',
+      frameId: 'f-own',
+      status: 'pending',
+      outboxEntry: { id: 'own-1' } as never,
+    });
+
+    expect(idsIn(conversations)).toEqual(['own-1']);
+    expect(saveMessageWithOutboxEntry).toHaveBeenCalledTimes(1);
+    expect(saveMessageWithOutboxEntry.mock.calls[0][0]).toMatchObject({ id: 'own-1' });
+  });
+  /**
+   * A WELCOME'S RE-KEY DURING THE WINDOW (second review of #4054). The joined group takes the DM
+   * thread of the old key - same peer - and only the thread's shown messages move with it. The
+   * window still held a framed upgrade and a framed sibling under the old key, and its close found
+   * that key "vanished" and dropped them: the ledger emptied, the frames were acknowledged, the photo
+   * stayed a caption for good. They are written where the thread lives now.
+   */
+  {
+    it('stores a framed upgrade and a framed sibling under the new key after a re-key mid-window', async () => {
+      forgetConversationMoves();
+      const messaging = useMessaging();
+      const { ctx, conversations } = makeContext();
+      conversations.set(CONVO, {
+        ...(conversations.get(CONVO) as Conversation),
+        messages: [
+          {
+            id: 'preview-1',
+            senderId: PEER,
+            content: '\u{1F4F7} Photo',
+            timestamp: new Date(1_700_000_000_000),
+            isOwn: false,
+            isFcmPreview: true,
+          },
+        ] as never,
+      });
+      const ledger = messaging.bulkIngestObserver(() => ctx);
+      const envelope = JSON.stringify({ kind: 'media', mediaId: 'm-1', mimeType: 'image/jpeg' });
+
+      messaging.beginBulkMessageIngest(LIVE_DRAIN);
+      await messaging.addMessageToChat(PEER, envelope, CONVO, ctx, {
+        messageId: 'preview-1',
+        frameId: 'f-upgrade',
+      });
+      await messaging.addMessageToChat(ME, 'from my laptop', CONVO, ctx, {
+        messageId: 'sibling-1',
+        frameId: 'f-sibling',
+      });
+
+      // The Welcome's re-key, as `setupMessageHandler` does it: the thread moves to the new key.
+      const moved = conversations.get(CONVO) as Conversation;
+      conversations.delete(CONVO);
+      conversations.set('g2', { ...moved, id: 'g2', name: 'g2' });
+      recordConversationMove(CONVO, 'g2');
+      expect([...ledger.framesLeftUnstored()].sort()).toEqual(['f-sibling', 'f-upgrade']);
+
+      await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
+
+      const thread = conversations.get('g2')?.messages ?? [];
+      expect(thread.map((m) => m.id).sort()).toEqual(['preview-1', 'sibling-1']);
+      expect(thread.find((m) => m.id === 'preview-1')?.content).toBe(envelope);
+      expect(ledger.framesLeftUnstored().size).toBe(0);
+      expect(conversations.has(CONVO)).toBe(false);
+      forgetConversationMoves();
+    });
+  }
+
+  /**
+   * NEVER ROUTED BY A MESSAGE ID (third review of #4054, principle 1). A message id is chosen by its
+   * SENDER: a member of X and Y sends into X an id Y shows, X is removed mid-window, and the close
+   * used to find "the conversation showing one of these ids" - Y - and write every row X held into
+   * it, a third member's included: shown, stored, acknowledged, passed on in Y's history. Held rows
+   * follow only a recorded move; with none, X's rows are dropped as removed, their frames named.
+   */
+  it("writes nothing of a removed conversation's buffer into another that shows one of its ids", async () => {
+    forgetConversationMoves();
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    conversations.set('y', {
+      id: 'y',
+      name: 'y',
+      messages: [
+        {
+          id: 'y-1',
+          senderId: 'both-member',
+          content: 'in y',
+          timestamp: new Date(1_700_000_000_000),
+          isOwn: false,
+        },
+      ],
+      unreadCount: 0,
+      lastMessageAt: 0,
+    } as never);
+    const ledger = messaging.bulkIngestObserver(() => ctx);
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.addMessageToChat('both-member', 'collides', CONVO, ctx, {
+      messageId: 'y-1',
+      frameId: 'f-collide',
+    });
+    await messaging.addMessageToChat('x-only-member', 'secret to x', CONVO, ctx, {
+      messageId: 'x-secret',
+      frameId: 'f-secret',
+    });
+    conversations.delete(CONVO);
+
+    await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
+
+    expect((conversations.get('y')?.messages ?? []).map((m) => m.id)).toEqual(['y-1']);
+    expect(conversations.get('y')?.messages[0].content).toBe('in y');
+    expect(saveMessage).not.toHaveBeenCalled();
+    const dropLine = warn.mock.calls.map((c) => String(c[0])).find((l) => l.includes('dropped'));
+    expect(dropLine).toContain('f-collide');
+    expect(dropLine).toContain('f-secret');
+    expect(ledger.framesLeftUnstored().size).toBe(0);
+  });
+
+  /**
+   * A REAL REMOVAL during the window is the one case its framed rows are dropped - said with their
+   * frames - and even then never before the store that decides it: until the close the ledger holds
+   * them, so no ack runs ahead of the decision.
+   */
+  it('drops a framed buffered row only when its conversation was really removed, and says so', async () => {
+    forgetConversationMoves();
+    const messaging = useMessaging();
+    const { ctx, conversations, saveMessage } = makeContext();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const ledger = messaging.bulkIngestObserver(() => ctx);
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.addMessageToChat(PEER, 'theirs', CONVO, ctx, {
+      messageId: 'theirs-1',
+      frameId: 'f-peer',
+    });
+    conversations.delete(CONVO);
+    expect([...ledger.framesLeftUnstored()]).toEqual(['f-peer']);
+
+    await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
+
+    expect(saveMessage).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('frame(s) f-peer'));
+    expect(ledger.framesLeftUnstored().size).toBe(0);
+  });
+
+  /**
+   * A CLOSE ENDS ITS OWN WINDOW (second review of #4054): windows overlap - each open paired with
+   * one close - and the first close lowered a single flag, so the window still open stopped
+   * buffering under its own drain.
+   */
+  it('keeps buffering for a window still open when an earlier one closes', async () => {
+    const messaging = useMessaging();
+    const { ctx, conversations } = makeContext();
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
+    await messaging.addMessageToChat(PEER, 'theirs', CONVO, ctx, { messageId: 'theirs-1' });
+    expect(idsIn(conversations)).toEqual([]);
+
+    await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
+    expect(idsIn(conversations)).toEqual(['theirs-1']);
+  });
+
+  it("forgets the leaving account's buffered rows at sign-out, and says so", async () => {
+    const messaging = useMessaging();
+    const { ctx } = makeContext();
+    const ledger = messaging.bulkIngestObserver(() => ctx);
+    const log = vi.fn();
+
+    messaging.beginBulkMessageIngest(LIVE_DRAIN);
+    await messaging.addMessageToChat(PEER, 'theirs', CONVO, ctx, {
+      messageId: 'theirs-1',
+      frameId: 'f-peer',
+    });
+    messaging.forgetAccount(log);
+
+    expect(ledger.framesLeftUnstored().size).toBe(0);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('buffered rows of 1 conversation(s)'));
+    await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
   });
 });
 
@@ -297,14 +676,25 @@ describe('an FCM preview upgraded during a bulk-ingest window', () => {
     return made;
   }
 
-  it('replaces the caption with the envelope and persists it, without waiting for the flush', async () => {
+  /**
+   * THE UPGRADE WAITS FOR THE FLUSH (2026-11-24). It used to be done at once on the live path,
+   * because the frame was acknowledged the moment the handler returned; the ack now waits for the
+   * window's close to store the row (rows before ratchet), so the upgrade is held with the drain's
+   * other rows and lands in the same render and the same write - one per conversation, not one per
+   * preview (`bulkWindowHolds`).
+   */
+  it('holds the upgrade for the window, then replaces the caption and persists it at the close', async () => {
     const messaging = useMessaging();
     const { ctx, conversations, saveMessage } = withPreview();
 
     messaging.beginBulkMessageIngest(LIVE_DRAIN);
     await messaging.addMessageToChat(PEER, ENVELOPE, CONVO, ctx, { messageId: 'photo-1' });
 
-    // The frame is acked the moment this returns, so the repair may not be owed to the flush.
+    expect(conversations.get(CONVO)?.messages[0].content).toBe(PREVIEW);
+    expect(saveMessage).not.toHaveBeenCalled();
+
+    await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
+
     const held = conversations.get(CONVO)?.messages ?? [];
     expect(held.map((m) => m.id)).toEqual(['photo-1']);
     expect(held[0].content).toBe(ENVELOPE);
@@ -377,10 +767,10 @@ describe('an FCM preview upgraded during a bulk-ingest window', () => {
 
     messaging.beginBulkMessageIngest(LIVE_DRAIN);
     await messaging.addMessageToChat(PEER, ENVELOPE, CONVO, ctx, { messageId: 'photo-1' });
-    saveMessage.mockClear();
     await messaging.addMessageToChat(PEER, ENVELOPE, CONVO, ctx, { messageId: 'photo-1' });
+    await messaging.endBulkMessageIngest(ctx, LIVE_DRAIN);
 
-    expect(saveMessage).not.toHaveBeenCalled();
+    expect(saveMessage).toHaveBeenCalledTimes(1);
     expect((conversations.get(CONVO)?.messages ?? []).length).toBe(1);
     expect(logged).toHaveBeenCalledWith(
       expect.stringContaining('Duplicate ignored during a bulk ingest')

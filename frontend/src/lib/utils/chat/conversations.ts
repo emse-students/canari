@@ -7,6 +7,7 @@ import { clearConversationControlRefusals } from './controlRefusals.svelte';
 import { SvelteMap } from 'svelte/reactivity';
 import { m } from '$lib/paraglide/messages';
 import { confirmEnding, recordRekey } from './endedConversations';
+import { recordConversationMove } from './conversationMoves';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import type { IStorage, ConversationMeta } from '$lib/db';
 import {
@@ -1025,6 +1026,8 @@ export async function mergeDirectConversationDuplicates(
         }
         await storage.deleteConversation(loser.id);
         recordRekey(loser.id);
+        // And rows held under the loser's key this page are routed by this FACT (review of #4054).
+        recordConversationMove(loser.id, survivor.id);
         mergedAway.add(loser.id);
         log(`[DM_MERGE] ${pair} merged, ${moved.length} row(s) moved, ${serverAnswer}`);
       } catch (error) {

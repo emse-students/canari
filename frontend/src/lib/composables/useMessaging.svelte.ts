@@ -11,6 +11,7 @@ import { isAppActive, isAppInForeground, isAppInFront } from '$lib/utils/appFore
 import { isSalonMuted } from '$lib/utils/chat/salonUnread';
 import type { AnnouncedMessage } from '$lib/utils/chat/announcedMessages';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
+import { movedKeyOf, forgetConversationMoves } from '$lib/utils/chat/conversationMoves';
 import { SvelteMap, SvelteDate, SvelteSet } from 'svelte/reactivity';
 import { getToken, signOutGeneration } from '$lib/stores/auth';
 import { systemNotificationsBlockedAnnounceOnce } from '$lib/utils/systemNotificationsBlocked';
@@ -64,6 +65,7 @@ import {
   tabSeed,
 } from '$lib/utils/chat/messageOrder';
 import { isOwnMessage } from '$lib/utils/chat/messageUtils';
+import { bulkWindowHolds } from '$lib/utils/chat/bulkIngestAdmission';
 import { countingReadPoint, isUnreadForUser } from '$lib/utils/chat/readState';
 import {
   arrivalVerdictNow,
@@ -214,8 +216,6 @@ import type { MediaLoudness } from '$lib/video/loudnessMeter';
 interface KeptBatch {
   contactName: string;
   messages: Array<{ senderId: string; content: string } & AddMessageToChatOptions>;
-  /** Ids its thread showed when it was kept: how a re-keyed thread is found again. */
-  anchors: string[];
   /**
    * Kept by a live add that threw (`addMessageToChat`), possibly AFTER its render: its rerun asks
    * the STORE whether each row stands, never memory - a message on screen proves nothing about
@@ -470,6 +470,19 @@ export function useMessaging() {
     orphanBuffer.clear();
     if (orphans > 0)
       log(`[COMPOSER] signed out: orphan messages of ${orphans} conversation(s) forgotten`);
+    // And every row held for a store - the catch-up buffer, the kept batches and writes - with the
+    // re-keys that route them (review of #4054): the leaving account's, never written under the next.
+    const buffered = bulkIngestBuffer.size;
+    const batches = unstoredBatches.length;
+    const writes = unstoredRowWrites.length;
+    bulkIngestBuffer.clear();
+    unstoredBatches.length = 0;
+    unstoredRowWrites.length = 0;
+    const moves = forgetConversationMoves();
+    if (buffered + batches + writes + moves > 0)
+      log(
+        `[COMPOSER] signed out: buffered rows of ${buffered} conversation(s), ${batches} kept batch(es), ${writes} kept write(s) and ${moves} re-key(s) forgotten`
+      );
   }
 
   /**
@@ -542,10 +555,24 @@ export function useMessaging() {
    * announced a synchronisation of exactly zero messages - for four seconds, every time the app came
    * back to the foreground. It is raised from the BUFFER instead, which holds decrypted messages and
    * therefore knows what it has.
+   *
+   * **AND FROM ANY OPEN UI WINDOW, NOT ONLY ONE THAT STARTED WITH SEVERAL FRAMES** (2026-11-24). The
+   * overlay depth is still decided at drain start from `pendingCount`, and a resume's drain starts on
+   * the FIRST frame of the pull's page (`Drain start ... messages=1`) while the other 147 are queued
+   * behind it: the depth stayed 0 and a ten-second catch-up said nothing. The buffer's own count is
+   * the honest measure whatever the start saw, and the window's close lowers what it raised
+   * ({@link endBulkMessageIngest}) - the drain's own completion, never a clock.
    */
   let isCatchupOverlayVisible = $state(false);
-  /** When true, incoming messages are buffered and flushed in one UI update (MLS queue catch-up). */
-  let bulkIngestActive = false;
+  /**
+   * How many buffering windows are open: while any is, incoming messages are buffered and flushed in
+   * one UI update (MLS queue catch-up). A COUNT, so a close ends ITS window only (review of #4054):
+   * windows nest and overlap, each open paired with exactly one close (`BulkIngestObserver`), and a
+   * flag lowered by the first close let a window still open stop buffering under its drain.
+   */
+  let openBufferingWindows = 0;
+  /** Whether an inbound message is buffered now rather than shown (see {@link openBufferingWindows}). */
+  const bulkIngestActive = () => openBufferingWindows > 0;
   /** Global MLS catch-up sequence (reset when bulk buffer starts). */
   let bulkIngestSeq = 0;
   const bulkIngestBuffer = new SvelteMap<
@@ -595,25 +622,34 @@ export function useMessaging() {
       isMessageCatchupActive = true;
     }
     if (bufferUi) {
-      bulkIngestActive = true;
-      bulkIngestSeq = 0;
-      warnIfDiscardingBuffered('beginBulkMessageIngest');
-      bulkIngestBuffer.clear();
+      openBufferingWindows += 1;
+      // WHAT AN EARLIER WINDOW LEFT IS KEPT, never cleared: it is stored by THIS window's close (or
+      // by a checkpoint's hold before it), and its frames' acks wait for it (`framesLeftUnstored`).
+      // Said only when no other window is open: an open one's rows are its own close's to store.
+      if (bulkIngestBuffer.size === 0) bulkIngestSeq = 0;
+      else if (openBufferingWindows === 1) noteBufferedRowsCarried('a new window opened');
     }
   }
 
   /**
-   * Both clear sites below discard whatever is still buffered, and a drain restarting before the
-   * previous one ended is exactly that shape. Discarding is the deliberate behaviour - a flush here
-   * would re-enter the ingest path from inside its own reset - but it must never be SILENT, because
-   * a dropped buffer is indistinguishable from a message that never arrived. This is the only trace
-   * it leaves.
+   * **A BUFFERED MESSAGE LEAVES THE BUFFER ONLY FOR A STORE** (reviews of #4054). A buffered row was
+   * decrypted from a frame whose generation is spent: dropped unstored, and acknowledged, it was lost
+   * for good. Three sites used to `clear()` the buffer - a window opening, a window's close after its
+   * store, and `resetMessageCatchupState` (run from group creation while a drain's window was open,
+   * so its close found nothing to store) - and a conversation re-keyed by a Welcome during the window
+   * made its close drop the rows as "vanished". Now only a store takes rows out
+   * (`storeBufferedRows`), each conversation's at its own turn, and writes them where the thread
+   * lives NOW ({@link homeOfRows}); with no home they become framed orphans, dropped - said, with
+   * their frames - only when the conversation was really removed ({@link ORPHAN_REMOVERS}). The
+   * buffer's frames are in the unstored ledger until then. The one other exit is a sign-out
+   * (`forgetAccount`), which forgets the leaving account's rows. What a window leaves behind is
+   * carried to the next store - said here, at WARN, because it means a store did not take
+   * everything it should have.
    */
-  function warnIfDiscardingBuffered(where: string) {
-    if (bulkIngestBuffer.size === 0) return;
+  function noteBufferedRowsCarried(where: string) {
     const count = [...bulkIngestBuffer.values()].reduce((sum, msgs) => sum + msgs.length, 0);
     console.warn(
-      `[ADD_MSG] ${where}: discarding ${count} buffered message(s) across ${bulkIngestBuffer.size} conversation(s) - they were never rendered nor persisted`
+      `[ADD_MSG] ${where} with ${count} buffered message(s) across ${bulkIngestBuffer.size} conversation(s) still unstored - kept for the next store, their frames' acks withheld until it`
     );
   }
 
@@ -624,7 +660,7 @@ export function useMessaging() {
    * banner is up, and the scan itself is over CONVERSATIONS rather than messages.
    */
   function raiseOverlayIfWorthAnnouncing() {
-    if (isCatchupOverlayVisible || messageCatchupDepth === 0) return;
+    if (isCatchupOverlayVisible || (messageCatchupDepth === 0 && !bulkIngestActive())) return;
     let buffered = 0;
     for (const msgs of bulkIngestBuffer.values()) {
       buffered += msgs.length;
@@ -635,14 +671,15 @@ export function useMessaging() {
     }
   }
 
-  /** Clears catch-up UI state (safety net if begin/end ever desync). */
+  /**
+   * Clears the catch-up UI flags (safety net if the overlay's begin/end ever desync). THE FLAGS ONLY:
+   * the buffering window and the rows it holds belong to the drain that opened it, whose close stores
+   * them (review of #4054 - group creation called this mid-drain and the close found nothing to store).
+   */
   function resetMessageCatchupState() {
     messageCatchupDepth = 0;
     isMessageCatchupActive = false;
     isCatchupOverlayVisible = false;
-    bulkIngestActive = false;
-    warnIfDiscardingBuffered('resetMessageCatchupState');
-    bulkIngestBuffer.clear();
   }
 
   /**
@@ -671,8 +708,9 @@ export function useMessaging() {
    * The batches that THREW before they changed anything (`batchAddMessages` reads, then renders, then
    * writes, and nothing after the render may throw - its announcement and its settle are guarded):
    * neither shown nor stored. Kept whatever the path that took them - a hold or a window's close,
-   * whose `finally` clears the buffer - and run again, each ON ITS OWN, by the next store of either
-   * kind: a later message of the same conversation is never folded into a batch that keeps failing.
+   * each conversation of the buffer taken at its own turn - and run again, each ON ITS OWN, by the
+   * next store of either kind: a later message of the same conversation is never folded into a
+   * batch that keeps failing.
    */
   const unstoredBatches: KeptBatch[] = [];
 
@@ -715,21 +753,28 @@ export function useMessaging() {
   }
 
   /**
-   * Where a kept batch's thread lives NOW: its own key while it is in the map; else the conversation
-   * that shows one of the messages its thread showed when it was kept (`anchors`) - a 1:1 re-keyed
-   * onto the group it joined carries them under the new key; else nowhere (deleted or purged).
+   * WHERE ROWS HELD UNDER `key` LIVE NOW - the ONE answer for every store that holds rows under a
+   * key: the bulk buffer, the framed orphans, the kept batches and the kept writes. Its own key
+   * while it is in the map; else the key its thread MOVED to, a fact written by the two writers that
+   * re-key a thread (the Welcome's fold and the boot merge, {@link movedKeyOf}); else nowhere -
+   * deleted or purged ({@link ORPHAN_REMOVERS}).
+   *
+   * **NEVER BY A MESSAGE ID** (third review of #4054, principle 1). It also answered "the
+   * conversation that shows one of these ids", and a message id is chosen by its SENDER: a member
+   * of X and Y sending into X an id Y shows, with X removed mid-window, sent every row X held - a
+   * third member's included - into Y, shown, stored, acked, and passed on in Y's history. A row's
+   * conversation is decided by a fact this device wrote, never by what the row says of itself.
    */
-  function homeOfBatch(ctx: MessagingContext, kept: KeptBatch): string | null {
-    if (ctx.conversations.has(kept.contactName)) return kept.contactName;
-    if (kept.anchors.length === 0) return null;
-    const anchors = new SvelteSet(kept.anchors);
-    for (const [key, convo] of ctx.conversations) {
-      if (convo.messages.some((m) => anchors.has(m.id))) return key;
-    }
+  function homeOfRows(ctx: MessagingContext, key: string): string | null {
+    if (ctx.conversations.has(key)) return key;
+    const normalized = key.toLowerCase();
+    if (ctx.conversations.has(normalized)) return normalized;
+    const moved = movedKeyOf(normalized);
+    if (moved !== null && ctx.conversations.has(moved)) return moved;
     return null;
   }
 
-  /** Keeps a batch that threw, anchored to what its thread shows now, and says it ONCE per batch. */
+  /** Keeps a batch that threw, and says it ONCE per batch. */
   function keepThrownBatch(
     ctx: MessagingContext,
     contactName: string,
@@ -742,15 +787,6 @@ export function useMessaging() {
       unstoredBatches.push({ ...already, contactName });
       return;
     }
-    let anchors: string[] = [];
-    try {
-      anchors = (ctx.conversations.get(contactName)?.messages ?? []).slice(-3).map((m) => m.id);
-    } catch (readError) {
-      console.error(
-        `[ADD_MSG] the thread of "${contactName}" could not be read to anchor a kept batch:`,
-        readError
-      );
-    }
     console.error(
       `[ADD_MSG] storing ${messages.length} buffered message(s) of "${contactName}" threw (${origin}) - kept, and run again by the next store (said once for this batch):`,
       e
@@ -758,7 +794,6 @@ export function useMessaging() {
     unstoredBatches.push({
       contactName,
       messages,
-      anchors,
       ...(origin === 'dispatch' ? { storeDecides: true as const } : {}),
     });
   }
@@ -793,6 +828,10 @@ export function useMessaging() {
       for (const entry of entries) if (entry.options.frameId) frames.add(entry.options.frameId);
     }
     for (const id of framesBeingStored.keys()) frames.add(id);
+    // A buffered row is shown nowhere and stored nowhere until a store takes it.
+    for (const entries of bulkIngestBuffer.values()) {
+      for (const entry of entries) if (entry.frameId) frames.add(entry.frameId);
+    }
     return frames;
   }
 
@@ -841,12 +880,13 @@ export function useMessaging() {
     for (const [key, entries] of Array.from(orphanBuffer.entries())) {
       const framed = entries.filter((entry) => entry.options.frameId);
       if (framed.length === 0) continue;
-      // Read BEFORE the buffer changes: a throw here leaves every entry where it was.
-      const home = ctx.conversations.has(key);
+      // Read BEFORE the buffer changes: a throw here leaves every entry where it was. A thread that
+      // MOVED (the Welcome's re-key) is followed to its new key, never dropped as removed.
+      const home = homeOfRows(ctx, key);
       const unframed = entries.filter((entry) => !entry.options.frameId);
       if (unframed.length > 0) orphanBuffer.set(key, unframed);
       else orphanBuffer.delete(key);
-      if (!home) {
+      if (home === null) {
         dropped += framed.length;
         for (const entry of framed) droppedFrames.push(entry.options.frameId as string);
         continue;
@@ -857,13 +897,13 @@ export function useMessaging() {
         ...entry.options,
       }));
       console.log(
-        `[ORPHAN] storing ${messages.length} decrypted orphan message(s) of "${key}" (${origin}): their conversation is in the map again`
+        `[ORPHAN] storing ${messages.length} decrypted orphan message(s) of "${key}"${home === key ? '' : ` under "${home}", where its thread moved`} (${origin}): their conversation is in the map again`
       );
       const release = storingFrames(messages.map((message) => message.frameId));
       try {
-        await batchAddMessages(messages, key, ctx, 'arrival');
+        await batchAddMessages(messages, home, ctx, 'arrival');
       } catch (e) {
-        keepThrownBatch(ctx, key, messages, origin, e);
+        keepThrownBatch(ctx, home, messages, origin, e);
       } finally {
         release();
       }
@@ -969,25 +1009,11 @@ export function useMessaging() {
   }
 
   /**
-   * Where a kept write's rows live NOW: its own conversation while it is in the map; else the one
-   * that SHOWS them - a 1:1 re-keyed onto the group it joined carries its rows under the new key
-   * (`setupMessageHandler`, the Welcome's re-key); else nowhere - deleted or purged since.
-   */
-  function homeOfWrite(ctx: MessagingContext, write: BatchRowWrite): string | null {
-    if (ctx.conversations.has(write.conversationId)) return write.conversationId;
-    const ids = new SvelteSet([...write.upgradeRows, ...write.newRows].map((row) => row.id));
-    for (const [key, convo] of ctx.conversations) {
-      if (convo.messages.some((m) => ids.has(m.id))) return key;
-    }
-    return null;
-  }
-
-  /**
    * Retries every write {@link unstoredRowWrites} holds; returns how many rows still stand unstored.
    *
-   * A WRITE WHOSE ROWS NO CONVERSATION SHOWS ANY MORE IS DROPPED, not retried: the conversation was
-   * deleted or purged since, and writing its rows back would resurrect what the reader removed. One
-   * that MOVED (a re-key) is written under the key that shows it.
+   * A WRITE WHOSE CONVERSATION IS GONE IS DROPPED, not retried: the conversation was deleted or
+   * purged since, and writing its rows back would resurrect what the reader removed. One that MOVED
+   * (a re-key, recorded as a fact) is written under its new key ({@link homeOfRows}).
    *
    * A WRITE THAT LANDS SETTLES WHAT ARRIVED MEANWHILE: an edit, a deletion or a reaction that met
    * the row shown and not stored was kept "for its write" (`settlePendingFor`), and this IS its
@@ -1010,7 +1036,7 @@ export function useMessaging() {
     for (const [index, kept] of pending.entries()) {
       let write = kept;
       try {
-        const home = homeOfWrite(ctx, kept);
+        const home = homeOfRows(ctx, kept.conversationId);
         if (home === null) {
           dropped += 1;
           continue;
@@ -1102,7 +1128,7 @@ export function useMessaging() {
         for (const [index, batch] of kept.entries()) {
           let home: string | null = null;
           try {
-            home = homeOfBatch(ctx, batch);
+            home = homeOfRows(ctx, batch.contactName);
             if (home === null) {
               dropped += batch.messages.length;
               continue;
@@ -1122,39 +1148,60 @@ export function useMessaging() {
           );
         }
         if (bulkIngestBuffer.size > 0) {
-          const entries = [...bulkIngestBuffer.entries()].sort(([, a], [, b]) => {
-            const seqA = a[0]?.ingestSequence ?? Number.MAX_SAFE_INTEGER;
-            const seqB = b[0]?.ingestSequence ?? Number.MAX_SAFE_INTEGER;
-            return seqA - seqB;
-          });
-          bulkIngestBuffer.clear();
-          // Counted as being stored from the clear to each conversation's outcome: a re-ack does
-          // not wait for this store (review of #3887).
-          const releases = entries.map(([, msgs]) => storingFrames(msgs.map((m) => m.frameId)));
-          const benchMessageCount = entries.reduce((sum, [, msgs]) => sum + msgs.length, 0);
-          beginBulkUiFlushBench(entries.length, benchMessageCount);
+          // THE ORDER is read once; each conversation's rows stay IN THE BUFFER until their turn
+          // (review of #4054), so its frames are in the unstored ledger until then, and a step that
+          // throws between two conversations leaves the ones it had not reached for the next store.
+          const order = [...bulkIngestBuffer.entries()]
+            .sort(([, a], [, b]) => {
+              const seqA = a[0]?.ingestSequence ?? Number.MAX_SAFE_INTEGER;
+              const seqB = b[0]?.ingestSequence ?? Number.MAX_SAFE_INTEGER;
+              return seqA - seqB;
+            })
+            .map(([key]) => key);
+          const benchMessageCount = [...bulkIngestBuffer.values()].reduce(
+            (sum, msgs) => sum + msgs.length,
+            0
+          );
+          beginBulkUiFlushBench(order.length, benchMessageCount);
           try {
-            for (const [index, [contactName, messages]] of entries.entries()) {
+            for (const contactName of order) {
+              const messages = bulkIngestBuffer.get(contactName) ?? [];
               if (messages.length === 0) continue;
+              // Out of the buffer and counted as being stored IN THE SAME TURN, until this
+              // conversation's outcome: a re-ack does not wait for this store (review of #3887).
+              bulkIngestBuffer.delete(contactName);
+              const release = storingFrames(messages.map((m) => m.frameId));
+              let home: string | null = null;
               try {
+                // WHERE ITS THREAD IS NOW: a Welcome's re-key during the window moved it under the
+                // joined group's key (review of #4054).
+                home = homeOfRows(ctx, contactName);
+                if (home === null) {
+                  // No conversation holds it any more: held as orphans, settled below - stored if
+                  // it comes back, dropped and said if it was removed. Never dropped HERE.
+                  orphanHeldMessages(
+                    contactName,
+                    contactName,
+                    messages,
+                    'left the map during the window'
+                  );
+                  continue;
+                }
                 // ARRIVALS. The bulk buffer holds messages that came over the wire while a drain was
                 // running - they are new to the reader, and until 2026-09-05 this path told nobody
                 // (TAB-1). The restore case is the OTHER caller, in `systemMessageHandler`.
                 // A failed write is kept in `unstoredRowWrites`, answered by the retry below.
-                await batchAddMessages(messages, contactName, ctx, 'arrival');
+                await batchAddMessages(messages, home, ctx, 'arrival');
               } catch (e) {
-                keepThrownBatch(ctx, contactName, messages, origin, e);
+                keepThrownBatch(ctx, home ?? contactName, messages, origin, e);
               } finally {
-                releases[index]();
+                release();
               }
               await yieldToMainThread().catch((e: unknown) => {
                 console.error('[ADD_MSG] yielding between buffered batches failed:', e);
               });
             }
           } finally {
-            // A step that threw between two batches gives back what it had not reached: those
-            // rows are gone with the buffer, and the throw is said by the step's own catch.
-            for (const release of releases) release();
             finishBulkUiFlushBench();
           }
         }
@@ -1288,13 +1335,20 @@ export function useMessaging() {
     const { bufferUi, showOverlay } = phase;
     if (!bufferUi && !showOverlay) return;
 
+    // THIS window ends, and only it: counted down BEFORE the await, so a message arriving during the
+    // flush takes the live path once no window is open (e.g. a channel event calling
+    // addMessageToChat outside the drain queue) - and is still buffered while another one is.
+    let ended = false;
+    if (bufferUi) {
+      if (openBufferingWindows > 0) {
+        openBufferingWindows -= 1;
+        ended = true;
+      } else {
+        console.warn('[CATCHUP] a buffering window closed that was not open - ignored');
+      }
+    }
     try {
-      if (bufferUi && bulkIngestActive) {
-        // Disable buffering BEFORE the await: any message that arrives during the flush (e.g. a
-        // channel event calling addMessageToChat outside the drain queue) then takes the live path
-        // and renders immediately, instead of landing in a buffer the finally block is about to
-        // discard - which would silently drop it.
-        bulkIngestActive = false;
+      if (ended) {
         await storeBufferedRows(ctx, 'close');
         // AND THE DRAIN DOES NOT MOVE IT EITHER. This ended with the same blind jump, at the
         // worst possible moment: a catch-up finishing is exactly when a bad connection has just
@@ -1304,10 +1358,13 @@ export function useMessaging() {
     } catch (e) {
       console.error('[CATCHUP] endBulkMessageIngest failed:', e);
     } finally {
-      if (bufferUi) {
-        bulkIngestActive = false;
-        warnIfDiscardingBuffered('endBulkMessageIngest');
-        bulkIngestBuffer.clear();
+      if (ended && openBufferingWindows === 0) {
+        // Never cleared here: a store that did not take everything leaves it for the next one.
+        // (While another window is open, what it buffers is its own close's to store.)
+        if (bulkIngestBuffer.size > 0) noteBufferedRowsCarried('the last window closed');
+        // A banner this window raised with no overlay depth behind it ends with the window: its
+        // rows are on screen now (see `isCatchupOverlayVisible`).
+        if (messageCatchupDepth === 0) isCatchupOverlayVisible = false;
       }
       if (showOverlay) {
         messageCatchupDepth = Math.max(0, messageCatchupDepth - 1);
@@ -2018,6 +2075,27 @@ export function useMessaging() {
   }
 
   /**
+   * Holds `messages` meant for `normalized`, whose conversation is in no map any more, as orphans
+   * ({@link bufferOrphan}) - the ONE place a held batch goes when its home is gone. The framed ones
+   * are settled by the next store ({@link settleFramedOrphans}): stored where the thread is if it
+   * moved or came back, dropped and said only on a real removal ({@link ORPHAN_REMOVERS}). Their
+   * frames stay in the unstored ledger until then.
+   */
+  function orphanHeldMessages(
+    normalized: string,
+    contactName: string,
+    messages: ReadonlyArray<{ senderId: string; content: string } & AddMessageToChatOptions>,
+    why: string
+  ): void {
+    console.warn(
+      `[ADD_MSG] conversation "${normalized}" ${why} - ${messages.length} message(s) held as orphans, not stored yet`
+    );
+    for (const { senderId, content, ...options } of messages) {
+      bufferOrphan(normalized, senderId, content, contactName, options);
+    }
+  }
+
+  /**
    * Shows and stores one message ({@link addMessageToChatOnce}), and KEEPS an inbound message whose
    * add THREW (rows before ratchet, second review of #3851): its frame decrypted, so its generation is
    * spent and the next checkpoint would make that durable - after which the frame the server still
@@ -2060,13 +2138,15 @@ export function useMessaging() {
   ) {
     const normalized = contactName.toLowerCase();
 
-    // An OWN message is never deferred, and that is a difference in kind rather than a tuning
-    // choice. The bulk buffer exists to stop a large inbound drain re-rendering the list message by
-    // message - but MLS gives no echo of your own message, so THIS call is the only writer the
-    // sender's copy will ever get, and the buffer is discarded without flushing by a second drain
-    // (`beginBulkMessageIngest` clears unconditionally) and by `resetMessageCatchupState`. The
-    // outbox cannot repair it either: `persistSent` looks the message up in `conversations`, which a
-    // buffered message never reached, and returns without writing. So a send composed during any
+    // An OWN message THIS DEVICE COMPOSED is never deferred, and that is a difference in kind rather
+    // than a tuning choice (`bulkWindowHolds` says which arrivals wait for the flush - an own message
+    // decrypted from a frame, written on this account's other device, is one of them). The bulk
+    // buffer exists to stop a large inbound drain re-rendering the list message by message - but MLS
+    // gives no echo of your own message, so THIS call is the only writer the sender's copy will ever
+    // get, and the buffer used to be discarded without flushing (by a second drain and by
+    // `resetMessageCatchupState`, both closed since #4054). The outbox cannot repair it either:
+    // `persistSent` looks the message up in `conversations`, which a buffered message never
+    // reached, and returns without writing. So a send composed during any
     // drain window died before it was persisted - the receiver had it and the sender lost it at the
     // next load (WP-ECHO-1). It also explains why the OFFLINE path was always correct: offline there
     // is no inbound drain, so the echo took the live path. One extra item costs nothing to render.
@@ -2076,10 +2156,13 @@ export function useMessaging() {
     // (`holdRowsForCheckpoint`): this message's ratchet advance may be in the state it exports, so
     // its row is stored now, by the live path below.
     if (
-      bulkIngestActive &&
+      bulkIngestActive() &&
       checkpointsHoldingRows === 0 &&
-      !isOwnMessage(senderId, ctx.userId) &&
-      options.soleWriter !== true
+      bulkWindowHolds({
+        own: isOwnMessage(senderId, ctx.userId),
+        framed: options.frameId !== undefined && !options.outboxEntry,
+        soleWriter: options.soleWriter === true,
+      })
     ) {
       const convo = ctx.conversations.get(normalized);
       if (!convo) {
@@ -2108,13 +2191,17 @@ export function useMessaging() {
        * 04:51:44, `messageCallback → true` in the same millisecond. It is the user's 2026-09-22
        * report, reproduced.
        *
-       * The upgrade FALLS THROUGH to the live path rather than being buffered, and that is not a
-       * shortcut: buffering exists to stop a bulk arrival re-rendering the list once per message,
-       * and an upgrade adds no row - it replaces the content of one already on screen. There is no
-       * jank to avoid, and there IS a write to do that only the live path performs.
+       * **AND THE UPGRADE WAITS FOR THE FLUSH LIKE ANY OTHER ARRIVAL** (2026-11-24). It used to fall
+       * through to the live path ("an upgrade adds no row"), which cost a store read, a store write
+       * and a render PER PREVIEW: a catch-up of a conversation whose messages had all been notified
+       * upgraded them one by one under the open pane (34 of them at ~80 ms on the owner's Android).
+       * `batchAddMessages` upgrades a shown preview and writes it by compare-and-set as the live
+       * path does, and the frame's ack waits for the close's store (rows before ratchet), so the
+       * repair above no longer depends on doing it now. A second copy of the same id in the buffer
+       * is still a duplicate.
        */
       const upgrades = held !== undefined && shouldUpgradeMessage(held, content);
-      if (!upgrades && (existing.some((m) => m.messageId === id) || held !== undefined)) {
+      if (existing.some((m) => m.messageId === id) || (held !== undefined && !upgrades)) {
         // A duplicate is ordinary and this is not an accusation - but it is the FIRST of two silent
         // returns on the only path an inbound message can take, and between them they can absorb a
         // message without leaving anything behind. A card that never appeared has to be explainable
@@ -2122,19 +2209,16 @@ export function useMessaging() {
         console.log(`[ADD_MSG] Duplicate ignored during a bulk ingest id=${id}`);
         return;
       }
-      if (!upgrades) {
-        existing.push({
-          senderId,
-          content,
-          ...options,
-          messageId: id,
-          ingestSequence: options.ingestSequence ?? bulkIngestSeq++,
-        });
-        bulkIngestBuffer.set(normalized, existing);
-        raiseOverlayIfWorthAnnouncing();
-        return;
-      }
-      console.log(`[ADD_MSG] Preview upgrade during a bulk ingest id=${id} - taking the live path`);
+      existing.push({
+        senderId,
+        content,
+        ...options,
+        messageId: id,
+        ingestSequence: options.ingestSequence ?? bulkIngestSeq++,
+      });
+      bulkIngestBuffer.set(normalized, existing);
+      raiseOverlayIfWorthAnnouncing();
+      return;
     }
 
     const convo = ctx.conversations.get(normalized);
@@ -2874,14 +2958,10 @@ export function useMessaging() {
     const normalized = contactName.toLowerCase();
     const convo = ctx.conversations.get(normalized);
     if (!convo) {
-      // THE SECOND SILENT RETURN, and the more dangerous one: these messages were ACCEPTED into the
-      // bulk buffer, which means the conversation was in the map when they arrived and is not any
-      // more. They are dropped here without being rendered or persisted, and nothing else in the
-      // system would ever mention them again. Same rule as `warnIfDiscardingBuffered`: discarding
-      // may be right, being silent about it never is.
-      console.warn(
-        `[ADD_MSG] conversation "${normalized}" vanished between buffering and flush - dropping ${messages.length} message(s), never rendered nor persisted`
-      );
+      // NOT DROPPED (review of #4054): a framed row's generation is spent, and dropped it was lost
+      // with its frame then acknowledged. Held as orphans, like a batch whose conversation leaves
+      // during its loop (below): stored if it comes back, dropped and said only on a real removal.
+      orphanHeldMessages(normalized, contactName, messages, 'is not in the map at the batch');
       return;
     }
 
@@ -3119,12 +3199,7 @@ export function useMessaging() {
         const id = normalizeMessageId(pm.messageId);
         return id !== undefined && pending.has(id);
       });
-      console.warn(
-        `[ADD_MSG] conversation "${normalized}" vanished during the batch - ${orphans.length} message(s) buffered as orphans, not stored`
-      );
-      for (const { senderId, content, ...options } of orphans) {
-        bufferOrphan(normalized, senderId, content, contactName, options);
-      }
+      orphanHeldMessages(normalized, contactName, orphans, 'vanished during the batch');
       return;
     }
     const base = current;
@@ -3299,7 +3374,12 @@ export function useMessaging() {
       publishTabMessageUpdate({
         type: 'messages_batch',
         conversationId: normalized,
-        messages: toAdd,
+        // AND THE PREVIEWS IT UPGRADED, as shown: a follower holding the caption takes the body
+        // (`mergeRelayedBatch`) - the window holds upgrades since #4054, so this is their only relay.
+        messages:
+          upgradedById.size > 0
+            ? [...toAdd, ...merged.filter((m) => upgradedById.has(m.id))]
+            : toAdd,
         ...tabSeed(advanceLastMessageAt(base.lastMessageAt, toAdd)),
         unreadCount: nextUnreadCount,
       });
@@ -5131,7 +5211,8 @@ export function useMessaging() {
         // From whichever tab forwards: a follower hands the frame to the leader (`frameFromAnyTab`).
         await sendFrameFromThisTab(mlsService, convo.id, protoBytes, { messageId });
         const payload = serializeEnvelope(mkMediaEnvelope({ ...media }, env.caption));
-        await addMessageToChat(ctx.userId, payload, targetName, ctx, { messageId });
+        // Sent already (the frame left above): its state says it was composed here (`ownMessageAppended`).
+        await addMessageToChat(ctx.userId, payload, targetName, ctx, { messageId, status: 'sent' });
         return { success: true };
       }
 

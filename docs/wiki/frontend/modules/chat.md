@@ -3457,8 +3457,8 @@ message. Three facts turn that optimisation into a loss:
 
 - `bulkIngestActive` is raised by *every* inbound drain, not only a long one, so the window is
   ordinary rather than exceptional;
-- `beginBulkMessageIngest` and `resetMessageCatchupState` both `clear()` the buffer without
-  flushing, so a second drain starting mid-window discards whatever the first was holding;
+- `beginBulkMessageIngest` and `resetMessageCatchupState` both `clear()`ed the buffer without
+  flushing (until #4054), so a second drain starting mid-window discarded what the first held;
 - the outbox cannot repair it, because `persistSent` resolves the message through `findMessage`,
   which only scans `conversations` - a buffered message was never there, so it returns silently.
 
@@ -3466,10 +3466,11 @@ Result: a message composed during any drain window was rendered by the peer and 
 sender at its next load, with nothing logged. It also explains why the offline path was always
 correct - offline there is no inbound drain, so the echo took the live path (MSG-10).
 
-Fixed 2026-08-07: `if (bulkIngestActive && !isOwnMessage(senderId, ctx.userId))`. An own message is
-never deferred; one extra rendered item is not what the buffer exists to prevent. Both clear sites
-now call `warnIfDiscardingBuffered`, because a dropped buffer and a message that never arrived are
-otherwise the same observation. **The general rule: a UI buffer in front of a persistence call is a
+Fixed 2026-08-07: `if (bulkIngestActive && !isOwnMessage(senderId, ctx.userId))`. An own message was
+never deferred; one extra rendered item is not what the buffer exists to prevent. **Narrowed
+2026-11-24** to an own message THIS DEVICE COMPOSED: one decrypted from a frame (this account's other
+device) is held like a peer's, and a buffered row leaves the buffer only for a store (or a sign-out)
+([a catch-up lands in one render](#a-catch-up-lands-in-one-render-2026-11-24)). **The general rule: a UI buffer in front of a persistence call is a
 persistence bug.** Buffer after the durable write, or the early return skips the writer.
 
 The at-rest projection of a message is shared by both storage backends
@@ -3520,6 +3521,116 @@ The run also surfaced a harness artifact worth keeping in mind for any marker co
 failed to submit and left its text in the box, the next `Input.insertText` appended to it, and the
 app faithfully delivered ONE message carrying TWO markers - twelve markers on screen for eleven
 sends. The app was right and the count was wrong; the harness now clears the composer before arming.
+
+#### A catch-up lands in one render (2026-11-24)
+
+**What the owner's log showed** (Android `1.7.3`, production, 2026-11-24; counts and timings only):
+a resume with one DM open, the socket back in 0.2 s, a pull of 148 frames, and the drain ran from
+`Drain start ... messages=1` to `Drain complete` in **~10 s**. Per-frame time read from `Processing`
+to `messageCallback`, by what the frame was:
+
+| frames | what | path | per frame | total |
+| --- | --- | --- | --- | --- |
+| 34 | the peer's texts, all of them already shown as push previews | live (`Preview upgrade during a bulk ingest - taking the live path`) | ~80 ms | 2.7 s |
+| 23 | texts written on the owner's OTHER device | live (own message, WP-ECHO-1's exemption) | ~90 ms | 2.1 s |
+| 34 | reactions (`applyReactionFrame`, one store write each) | - | ~75 ms | 2.5 s |
+| 51 | read marks (the peer's: one `saveConversation` each, ~65 ms; this account's: ~2 ms) | - | ~34 ms | 1.7 s |
+| 6 | commits, Welcome, other notices | - | - | 0.5 s |
+
+The decrypt itself is 2-8 ms per frame (`Processing` to `Message decrypted`): **the time is the
+store**, a read and a write per message on the live path, a write per reaction or read mark. And not
+ONE text of the drain went through the bulk buffer: the two exemptions covered all 57, so the open
+pane took them one row at a time, and the stick-to-bottom flag fell three times in three seconds
+(`left the bottom with no finger on the pane`, 133 to 236 px from the end), **each 70-80 ms after an
+own message from the other device was added by the live path** - inserted in the MIDDLE of the
+thread, above the previews of the peer's later messages. No fall followed an upgrade alone, and none
+happened in the rest of the drain.
+
+**What changed.** `bulkWindowHolds` (`bulkIngestAdmission.ts`) is the one rule for what a window
+holds, and two arrivals that used to bypass it now wait for its flush:
+
+- **an own message DECRYPTED FROM A FRAME** (`frameId`, no `outboxEntry`). WP-ECHO-1's exemption is
+  for a message THIS device composed, whose only writer is the call itself; one written on this
+  account's other device reaches this one as a frame like a peer's, and its ack waits for the close's
+  store like a peer's ([rows before ratchet, the ack](#rows-before-ratchet-the-decrypt-half-and-the-ack-2026-11-19)).
+  An own send and a `soleWriter` notice still take the live path;
+- **an upgrade of a shown push preview.** It first fell through to the live path because the ack
+  ran when the handler returned ([mobile](../mobile.md)); the ack now waits for the close, and
+  `batchAddMessages` upgrades a shown preview by the same compare-and-set (`mergeShownUpgrades`).
+
+So a drain changes the open conversation's row ONCE, at the window's close - one store read and
+one write per conversation, one change of the pane's list and so one anchor decision - instead of a
+render and two round trips per message. Pinned by `useMessaging.bulkIngest.svelte.test.ts` (a mixed
+catch-up of an upgrade, a sibling message and a new one: one `conversations.set`, one batch write,
+one `saveConversation`; an own message from a frame buffered; the upgrade held and written at the
+close) and `bulkIngestAdmission.test.ts`.
+
+**What is NOT claimed.** The exact layout step that moved the pane 133-236 px up with its reach
+unchanged was not isolated: the scroller already turns the engine's scroll anchoring off
+(`observeThreadGrowth`), and a headless Chromium of an append, a trim of the window's top and the
+pin in one task keeps the end. The change removes the per-row path every fall followed; the reading
+below says whether a fall survives one render per drain, from the exported log (the fall line is
+INFO).
+
+**What holding more made load-bearing (reviews of #4054).** Five facts had to change with it:
+
+- **a buffered row leaves the buffer only for a store.** `resetMessageCatchupState` (called from group creation, possibly
+  mid-drain) cleared the buffer and lowered the window, so the close stored nothing and the dropped
+  frames - in no ledger - were acknowledged and deleted by the server; a window opening and a window
+  closing also `clear()`ed. True of a peer's text since the buffer existed, and this change would
+  have extended it to upgrades and other-device messages. Now the reset touches the UI flags only,
+  only a store takes rows out of the buffer (`storeBufferedRows`), what a store did not take is
+  carried to the next one with one WARN (`noteBufferedRowsCarried`), and **every buffered frame is in
+  `framesLeftUnstored`**, so its ack is withheld until a store takes it. The store takes each
+  conversation's rows at its own turn (a throw between two leaves the rest in the buffer), a close
+  ends only ITS window (`openBufferingWindows`, a count: windows overlap), the drain's end closes
+  its window in a `finally` (a synchronous throw before it left the window open for the page's
+  life, `BaseMlsService`), and a sign-out
+  (`forgetAccount`) forgets the leaving account's buffer, kept batches and kept writes, said in one line;
+- **a row is written where its thread lives NOW.** A Welcome folding a duplicate DM onto the group it
+  joined re-keys the thread mid-window, and the close found the old key "vanished" and dropped the
+  rows - then acknowledged their frames: an upgrade stayed a caption for good. The re-key is now a
+  FACT (`recordConversationMove`, `utils/chat/conversationMoves.ts`), written by both writers that
+  re-key a thread (the Welcome's fold and the boot merge), and ONE resolver (`homeOfRows`) answers
+  for the buffer, the framed orphans, the kept batches and the kept writes: the key itself, else
+  where it moved, else nowhere. **Never by a message id** (third review, principle 1): the resolver
+  also took "the conversation that shows one of these ids", and an id is chosen by its SENDER - a
+  member of two conversations sending into one an id the other shows, with the first removed
+  mid-window, sent every row it held, a third member's included, into the other: shown, stored,
+  acknowledged and passed on in its history. The kept batches' "anchors" went with it.
+  With no home, the rows are held as framed orphans (`orphanHeldMessages`, also where
+  `batchAddMessages` sends a batch whose conversation is gone), dropped - said with their frames -
+  only on a real removal (`ORPHAN_REMOVERS`);
+- **a follower tab takes the upgrades.** The flush relayed only the NEW rows (`messages_batch`), so a
+  tab showing the caption kept it: the relay now carries the upgraded rows as shown, and the follower
+  merges them with `mergeRelayedBatch` (insert what it lacks, upgrade a shown preview, leave the rest);
+- **"my message was just added" means composed HERE** (`ownMessageAppended`): a flush ending with a
+  message from this account's other device used to read as "I just sent" and pull a reader who had
+  scrolled up to the bottom. A composed message carries its send state (`status`) from the moment it
+  is drawn; an arrival carries none - the forwarded medium now says `sent` too;
+- an upgrade held in the window still meets the reaction and the edit that follow it in the same
+  drain (both settle onto the row by id after the flush's write - pinned).
+
+**The banner says the catch-up.** "Réception des messages en attente..." was raised only for a
+window whose drain STARTED with several frames (`showOverlay: pendingCount > 1`), and a resume's drain
+starts on the first frame of the pull (`messages=1`) while the rest are queued behind it: ten
+seconds, no banner. The buffer's own count (`OVERLAY_MIN_MESSAGES`, decrypted messages, never
+ciphertexts) now raises it from ANY open UI window, and the window's close - the drain's own
+completion, no clock - lowers what it raised. `isMessageCatchupActive`, which the concurrency guards
+read, is unchanged.
+
+**One summary line per drain**, INFO: `[QUEUE] Drain complete: N frame(s) in T ms` - the frames
+handed to the handler (counted as they are handed, so one whose handler threw is counted too; a
+frame put back behind a commit is not) and the time from the start to the window's close, `onDrainEnd` included
+(`drainCompleteLine`, `mlsPerGroupScheduler.test.ts`). The rig's `[QUEUE] Drain complete` count reads
+the same prefix.
+
+**Expected gain**: the 57 texts' ~4.8 s become one batch (a store read and a write for the
+conversation, ~0.1-0.3 s by the per-operation cost above), so this catch-up goes from ~10 s to
+~5 s. **What remains is per frame and not batched here**: a reaction stores itself and a peer's read
+mark saves the conversation row before its handler returns (~4.2 s of this drain); batching them is
+the next step ([backlog](../../backlog.d/per-frame-store-writes-of-a-catch-up-batched.md)); the
+reading on the Mi 9T is [owed](../../backlog.d/reading-owed-a-catch-up-lands-in-one-render.md).
 
 #### Rows before ratchet: a checkpoint stores the buffered rows first (2026-11-17)
 
