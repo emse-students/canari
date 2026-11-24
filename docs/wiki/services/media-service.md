@@ -1006,8 +1006,11 @@ undated), and says when it keeps one. An upload of a person who came back holds 
 **The form file is dated by the member's own token.** social-service's `storeBlob` forwards the
 member's bearer header - the one nginx passed through on `/api/forms` and `/api/bookings`, whose
 header lists never clear `Authorization` - on `internal/form-file`, beside `X-Internal-Secret`.
-media-service verifies it itself (signature, expiry, and that its subject is the `ownerId` named) and
-reads its `iat`; no date another service states is believed. No token, or one that does not verify
+media-service verifies it itself (signature, type `access`, and that its subject is the `ownerId`
+named) and reads its `iat`; no date another service states is believed. Not its expiry
+(`datingAccessToken`): nginx and core authenticated the request when it arrived, and a large file on
+a slow link can outlast the token on the way - an expiry met there would leave a returning person's
+upload undated, and refused. No token, or one that does not verify
 or names another account: the upload is undated, judged old, and refused only for an erased owner.
 The `410 OWNER_ERASED` travels typed end to end: social answers it as its own `410` with the same code
 (`OwnerErasedRefusal`, a WARN, never a 502), and the app's form question shows that the account was

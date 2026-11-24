@@ -18,10 +18,16 @@ const INTERNAL = 'internal-secret';
 const IAT = 1_900_000_000;
 
 /** `iat: null` mints a token without one. */
-function token(sub: string, secret = JWT, iat: number | null = IAT): string {
+function token(
+  sub: string,
+  secret = JWT,
+  iat: number | null = IAT,
+  extra: Record<string, unknown> = {}
+): string {
   const b64 = (o: object) => Buffer.from(JSON.stringify(o)).toString('base64url');
   const head = b64({ alg: 'HS256', typ: 'JWT' });
-  const body = b64(iat === null ? { sub, exp: 4_000_000_000 } : { sub, iat, exp: 4_000_000_000 });
+  const claims = { sub, exp: 4_000_000_000, ...extra };
+  const body = b64(iat === null ? claims : { ...claims, iat });
   const sig = crypto.createHmac('sha256', secret).update(`${head}.${body}`).digest('base64url');
   return `${head}.${body}.${sig}`;
 }
@@ -62,6 +68,12 @@ describe('POST media/internal/form-file - the upload is dated by the verified me
     expect(dated).toEqual([IAT * 1000]);
   });
 
+  it('dates it from a token that EXPIRED on the way: the request was authenticated when it arrived', async () => {
+    const { dated, store } = build();
+    await store(`Bearer ${token('alice', JWT, IAT, { exp: IAT + 60 })}`);
+    expect(dated).toEqual([IAT * 1000]);
+  });
+
   it('leaves it undated - judged old - when no token is forwarded', async () => {
     const { dated, store } = build();
     await store(undefined);
@@ -73,6 +85,7 @@ describe('POST media/internal/form-file - the upload is dated by the verified me
     await store(`Bearer ${token('alice', 'another-secret')}`);
     await store(`Bearer ${token('bob')}`);
     await store(`Bearer ${token('alice', JWT, null)}`);
-    expect(dated).toEqual([undefined, undefined, undefined]);
+    await store(`Bearer ${token('alice', JWT, IAT, { type: 'refresh' })}`);
+    expect(dated).toEqual([undefined, undefined, undefined, undefined]);
   });
 });

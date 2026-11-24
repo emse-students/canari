@@ -95,7 +95,7 @@ import {
   type LiveTrimResult,
 } from './live-segments.service';
 import { assertInternalSecret } from './internal-secret.util';
-import { readAccessToken, type AccessCredential } from './access-token';
+import { datingAccessToken, readAccessToken, type AccessCredential } from './access-token';
 import { assertMintableUserId } from './user-id';
 import { fetchLivesMode } from './lives-mode';
 import { handedRetention, mediaRetention, type MediaRetentionDays } from './retention-settings';
@@ -242,8 +242,9 @@ export class MediaController {
 
   /**
    * The mint time of the member's own access token that social-service forwards on a form-file
-   * store, VERIFIED here (signature, expiry, and that it names `ownerId`) - never a date another
-   * service states. `undefined` when there is none, or it does not verify: the upload is then judged
+   * store, VERIFIED here (signature, type, and that it names `ownerId`) - never a date another
+   * service states. Not its expiry: nginx and core authenticated the request when it arrived, and a
+   * large file can outlast the token on the way ({@link datingAccessToken}). `undefined` when there is none, or it does not verify: the upload is then judged
    * old by the erased-owner record, which refuses it only for an erased owner.
    */
   private formFileIssuedAt(authorization: string | undefined, ownerId: string): number | undefined {
@@ -258,7 +259,7 @@ export class MediaController {
     }
     let credential: AccessCredential;
     try {
-      credential = readAccessToken(authorization.slice(7), secret, Math.floor(Date.now() / 1000));
+      credential = datingAccessToken(authorization.slice(7), secret);
     } catch (err) {
       this.logger.warn(
         `[FORM_FILE] the forwarded member token does not verify - the upload is undated: ${

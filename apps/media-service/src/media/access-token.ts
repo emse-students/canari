@@ -46,6 +46,41 @@ export function readAccessToken(
   secret: string,
   nowSeconds: number
 ): AccessCredential {
+  const claims = verifiedClaims(token, secret);
+  if (typeof claims.exp !== 'number' || !Number.isFinite(claims.exp)) {
+    throw new UnauthorizedException('JWT without an expiry');
+  }
+  if (claims.exp < nowSeconds) throw new UnauthorizedException('JWT expired');
+  return credentialOf(claims);
+}
+
+/**
+ * DATES a request another service already authenticated: the signature, the type (`access`) and the
+ * subject, WITHOUT the expiry. For `internal/form-file` only, where nginx and core accepted the
+ * member's token when the request arrived, and social-service forwards it for its `iat` alone: a
+ * large file on a slow link can outlast the token, and an expiry met on the way would leave the
+ * upload undated - refused, for a person who came back. The caller checks that `sub` is the
+ * uploader it was told of.
+ *
+ * @throws UnauthorizedException when the signature, the type or the subject is refused
+ */
+export function datingAccessToken(token: string, secret: string): AccessCredential {
+  return credentialOf(verifiedClaims(token, secret));
+}
+
+/** The claims a verified token carries; `type` and `sub` already checked. */
+interface VerifiedClaims {
+  exp?: unknown;
+  sub: string;
+  iat?: unknown;
+}
+
+function credentialOf({ sub, iat }: VerifiedClaims): AccessCredential {
+  return typeof iat === 'number' && Number.isFinite(iat) ? { sub, issuedAt: iat * 1000 } : { sub };
+}
+
+/** The signature in constant time, the payload's shape, the type and the subject - not the expiry. */
+function verifiedClaims(token: string, secret: string): VerifiedClaims {
   const parts = token.split('.');
   if (parts.length !== 3) throw new UnauthorizedException('Malformed JWT');
 
@@ -81,15 +116,11 @@ export function readAccessToken(
     iat?: unknown;
   };
 
-  if (typeof exp !== 'number' || !Number.isFinite(exp)) {
-    throw new UnauthorizedException('JWT without an expiry');
-  }
-  if (exp < nowSeconds) throw new UnauthorizedException('JWT expired');
   if (type !== undefined && type !== 'access') {
     throw new UnauthorizedException('Not an access token');
   }
   if (typeof sub !== 'string' || sub === '') {
     throw new UnauthorizedException('JWT without a subject');
   }
-  return typeof iat === 'number' && Number.isFinite(iat) ? { sub, issuedAt: iat * 1000 } : { sub };
+  return { exp, sub, iat };
 }
