@@ -8,8 +8,8 @@ import type { MessageMove, StoredMessage } from './types';
  *
  * A row is keyed by `(conversationId, id)`, so a move can meet a row the destination already holds
  * under that id: a history bundle or a replayed copy of the joined group landed beside the old
- * group's row during a 1:1 re-key, or a re-keyed send's echo was stored under the live conversation
- * first. The two are the SAME message seen twice, and each may hold what the other lacks - this
+ * group's row during a 1:1 re-key, or the boot merge folds a thread whose row the survivor already
+ * holds. The two are the SAME message seen twice, and each may hold what the other lacks - this
  * device's own proofs, a tombstone or an edit, reactions, the recorded 410 of a reel, the reason a
  * send never went. So the source is UNITED onto the destination ({@link uniteMovedRow}, convergent)
  * through the compare-and-set, and only then deleted, and only while it is still the row that was

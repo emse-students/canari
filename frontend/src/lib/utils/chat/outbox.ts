@@ -65,6 +65,7 @@ import { logMlsMetric } from '$lib/mls-client/mlsRecoveryMetrics';
 import { classifyOutgoingSendError } from '$lib/mls-client/mlsSendError';
 import { recordEviction } from '$lib/utils/chat/eviction';
 import { findConversationKeyByGroupId } from '$lib/utils/chat/conversations';
+import { movedKeyOf } from '$lib/utils/chat/conversationMoves';
 import {
   adoptOrphanedMirrorEntries,
   MirrorAdoptionError,
@@ -130,6 +131,7 @@ import {
   publishOutboxEntryFailed,
   publishOutboxEntryRetired,
   subscribeTabOutboxEvents,
+  type TabOutboxEvent,
   forwardReelTakeWrite,
   acknowledgeReelTakeAdoption,
 } from '$lib/mls-client/tabMessageSync';
@@ -139,7 +141,6 @@ import { insertMessageOrdered, replaceMessageOrdered } from './messageOrder';
 import { mapStoredMessagesToChatMessages } from './messageUtils';
 import { noteServerTime } from './serverClock';
 import { beginConversationRowWrite } from './conversationRowWrites';
-import type { ReactionsByConversation } from './reactionsByConversation';
 
 /** How the queue left one message for now - see {@link OutboxController.awaitSettled}. */
 export type OutboxSettlement = 'sent' | 'failed' | 'pending';
@@ -564,8 +565,6 @@ export interface OutboxDeps {
   userId: string;
   deviceKey: () => string;
   conversations: SvelteMap<string, Conversation>;
-  /** What the screen draws reactions from, keyed like the stored row: a re-keyed send carries its own. */
-  messageReactions: ReactionsByConversation;
   log: (msg: string) => void;
   /** Emit a non-destructive welcome_request for a group missing from the WASM. */
   requestReAdd: (groupId: string) => Promise<void>;
@@ -751,7 +750,7 @@ export interface OutboxController {
    * key package round under `raceDeadline`, whose expiry is a `DeliveryDeadlineError`. No lane awaits
    * a promise only a later flush would resolve.
    */
-  awaitSettled: (messageId: string) => Promise<OutboxSettlement>;
+  awaitSettled: (messageId: string, conversationId: string) => Promise<OutboxSettlement>;
   /** Drain the outbox. Gated on tab leadership here, not by the caller. Coalesces concurrent calls. */
   flush: () => Promise<void>;
   /**
@@ -1201,6 +1200,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    */
   const sendsOfTake = new Map<string, Set<string>>();
   const takeOfSend = new Map<string, string>();
+  /** A take's send -> the conversation it was queued for, so its status lands on that thread's row only. */
+  const sendConversation = new Map<string, string>();
   /**
    * Takes whose failure the member was told of in this page life: a take's own verdict ends each of
    * its sends, and is said ONCE (`tellReelSendFailed`). A toast lives as long as the page, and so
@@ -1325,7 +1326,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         for (const entry of claimed) {
           if (isServerFailureTerminal(entry)) continue;
           clearUpload(entry.id);
-          patchStatus(entry.id, 'pending');
+          patchStatus(entry.id, 'pending', entry.conversationId);
         }
         runFlush();
       }
@@ -1494,7 +1495,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
 
   // Cross-tab half of the leader gate: the leader drains on a follower's behalf, and the follower
   // settles the echo it is still showing as `pending` once the leader reports the send.
-  const unsubscribeTabOutbox = subscribeTabOutboxEvents((event) => {
+  const onTabOutboxEvent = (event: TabOutboxEvent): void => {
     if (event.type === 'outbox_flush_request') {
       if (!getIsTabLeader()) return;
       log('[OUTBOX] Flush requested by a follower tab.');
@@ -1555,10 +1556,41 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       return;
     }
     if (getIsTabLeader()) return;
+    // LEGACY SHIM (docs/wiki/legacy-compatibility.md): a leader tab of the previous build, during a
+    // rolling deploy, publishes these three without `conversationId`. THE QUEUE ENTRY IS USUALLY
+    // GONE by the time this tab looks (the old leader deletes it right after posting `sent` or
+    // `retired`), so the entry is read first and the rows THIS TAB HOLDS second: the one conversation
+    // holding an OWN row of that id is the message's. A peer's row of the same id is never picked,
+    // and two own rows of one id are ambiguous - accused, nothing patched.
+    if (
+      (event.type === 'outbox_entry_sent' ||
+        event.type === 'outbox_entry_failed' ||
+        event.type === 'outbox_entry_retired') &&
+      !event.conversationId
+    ) {
+      void readQueue('legacy tab event').then((queue) => {
+        const queued = queue.find((e) => e.id === event.messageId)?.conversationId;
+        const held = queued ? [] : ownConversationsHolding(event.messageId);
+        const conversationId = queued ?? (held.length === 1 ? held[0] : undefined);
+        if (!conversationId) {
+          // NONE HELD is routine in the deploy window (a conversation not loaded here, a control
+          // entry on a peer's message): said, not accused. Only an AMBIGUOUS id is a defect.
+          const line = `[OUTBOX] ${event.messageId.slice(0, 8)}… ${event.type} from a tab that names no conversation, ${held.length > 1 ? 'and several conversations hold an own row of it' : 'and no queue entry or own row is held here'} - nothing is patched`;
+          if (held.length > 1) console.warn(line);
+          else log(line);
+          return;
+        }
+        log(
+          `[OUTBOX] ${event.messageId.slice(0, 8)}… ${event.type} carried no conversation (older leader tab) - read from ${queued ? 'its queue entry' : 'the own row held here'}`
+        );
+        onTabOutboxEvent({ ...event, conversationId });
+      });
+      return;
+    }
     if (event.type === 'outbox_entry_retired') {
       // ONLY A MESSAGE THIS TAB HOLDS: a reason for any other would sit in the map for the session,
       // and the row, when it loads, reads its own reason from the store anyway.
-      if (!findMessage(event.messageId)) {
+      if (!findMessage(event.messageId, event.conversationId)) {
         log(
           `[OUTBOX] ${event.messageId.slice(0, 8)}… retired unsent in the leader tab (${event.reason}) - not held here, nothing to draw`
         );
@@ -1568,35 +1600,63 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         `[OUTBOX] ${event.messageId.slice(0, 8)}… retired unsent in the leader tab (${event.reason}) - shown failed here`
       );
       setUnsentReason(event.messageId, event.reason);
-      patchStatus(event.messageId, 'error');
+      patchStatus(event.messageId, 'error', event.conversationId);
       return;
     }
     if (event.type === 'outbox_entry_failed') {
       log(
         `[OUTBOX] ${event.messageId.slice(0, 8)}… failed on 5xx in the leader tab - shown failed here`
       );
-      showServerFailure(event.messageId, event.serverErrors);
+      showServerFailure(event.messageId, event.serverErrors, event.conversationId);
       return;
     }
     // The server time FIRST, then the status: a row that left the "awaiting its server time" tier
     // with no time would be placed at its `sentAt` for the length of one render.
     if (typeof event.receivedAt === 'number')
-      patchServerTimestamp(event.messageId, event.receivedAt);
-    patchStatus(event.messageId, 'sent');
+      patchServerTimestamp(event.messageId, event.receivedAt, event.conversationId);
+    patchStatus(event.messageId, 'sent', event.conversationId);
     // A text this tab showed failed (and then retried elsewhere) keeps no `failed` view once sent.
     clearUpload(event.messageId);
-    if (event.content) updateMessageContent(event.messageId, event.content);
-  });
+    if (event.content) updateMessageContent(event.messageId, event.content, event.conversationId);
+  };
+  const unsubscribeTabOutbox = subscribeTabOutboxEvents(onTabOutboxEvent);
 
-  /** Locate a message by id across all conversations (it may have been re-keyed to a duplicate). */
+  /** The map keys of the conversations holding an OWN row of `messageId` (the legacy shim's lookup). */
+  function ownConversationsHolding(messageId: string): string[] {
+    return [...conversations]
+      .filter(([, convo]) => convo.messages.some((m) => m.id === messageId && m.isOwn))
+      .map(([key]) => key);
+  }
+
+  /**
+   * Locates a message in ITS OWN conversation: the one it was queued for, followed through a re-key
+   * ({@link movedKeyOf}) - never by id across all of them. A message id travels to peers, so a peer
+   * can post the same id in another conversation that comes first in the map, and a status, a
+   * server time or a content written there would land on THEIR row while ours stayed pending.
+   *
+   * `requireOwn` (default): only a row this account authored is ours to patch; the quote preview
+   * passes `false`, a quoted message being anyone's. With no conversation the lookup answers `null`
+   * and says so at the level that accuses: the caller failed to carry the key, and a global search
+   * would hide that.
+   */
   function findMessage(
-    messageId: string
+    messageId: string,
+    conversationId: string | undefined,
+    requireOwn = true
   ): { key: string; convo: Conversation; idx: number } | null {
-    for (const [key, convo] of conversations) {
-      const idx = convo.messages.findIndex((m) => m.id === messageId);
-      if (idx !== -1) return { key, convo, idx };
+    if (!conversationId) {
+      console.warn(
+        `[OUTBOX] ${messageId.slice(0, 8)}… looked up with no conversation key - nothing is patched (no search across conversations)`
+      );
+      return null;
     }
-    return null;
+    // THE MAP KEY IS THE ROW'S `id` (chat.md, "One key per conversation"): the key the thread was
+    // queued under, or the one a re-key moved it to - no other form of it exists to try.
+    const key = movedKeyOf(conversationId) ?? conversationId;
+    const convo = conversations.get(key);
+    if (!convo) return null;
+    const idx = convo.messages.findIndex((m) => m.id === messageId && (!requireOwn || m.isOwn));
+    return idx === -1 ? null : { key, convo, idx };
   }
 
   /**
@@ -1605,14 +1665,18 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * MOVED, NOT ONLY PATCHED: an own row without a server time is ordered BELOW every dated row while
    * it is unsent (`awaitsServerTime`), so a status change can change its place (`messageOrder.ts`).
    */
-  function patchStatus(messageId: string, status: ChatMessage['status']): void {
+  function patchStatus(
+    messageId: string,
+    status: ChatMessage['status'],
+    conversationId: string | undefined
+  ): void {
     // A take (RC-13) is no message: its status is its live sends'.
     const sends = sendsOfTake.get(messageId);
     if (sends) {
-      for (const send of sends) patchStatus(send, status);
+      for (const send of sends) patchStatus(send, status, sendConversation.get(send));
       return;
     }
-    const found = findMessage(messageId);
+    const found = findMessage(messageId, conversationId);
     if (!found) return;
     if (found.convo.messages[found.idx].status === status) return;
     const messages = replaceMessageOrdered(found.convo.messages, found.idx, {
@@ -1711,8 +1775,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   }
 
   /** What a message out of the queue became, read from its row: sent, else failed. */
-  function settlementOfRow(messageId: string): OutboxSettlement {
-    const found = findMessage(messageId);
+  function settlementOfRow(messageId: string, conversationId: string): OutboxSettlement {
+    const found = findMessage(messageId, conversationId);
     const status = found ? found.convo.messages[found.idx].status : undefined;
     return status === 'pending' || status === 'sending'
       ? 'pending'
@@ -1728,9 +1792,13 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * by this time on every device - above a peer's message the server accepted after it, below one it
    * accepted before (`messageOrder.ts`, owner 2026-10-31).
    */
-  function patchServerTimestamp(messageId: string, serverTimestamp: number): void {
+  function patchServerTimestamp(
+    messageId: string,
+    serverTimestamp: number,
+    conversationId: string | undefined
+  ): void {
     noteServerTime(deps.userId, serverTimestamp);
-    const found = findMessage(messageId);
+    const found = findMessage(messageId, conversationId);
     if (!found) return;
     const messages = replaceMessageOrdered(found.convo.messages, found.idx, {
       ...found.convo.messages[found.idx],
@@ -1743,20 +1811,18 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * Persist the sent message to the encrypted messages store under the live conversation key, with
    * THIS DEVICE'S OWN SIGNATURE on what it just sent (`own`): the message's proof for a message, the
    * edit's or the deletion's for a control frame, the reaction's on the reaction it set - so a
-   * history bundle this device writes later proves its own words too.
-   *
-   * `writtenUnder` is the conversation the row was written under at the tap (`entry.conversationId`):
-   * when the group was re-keyed mid-send, the row is MOVED from it onto `liveConvId`
-   * (`moveMessages`) before the send is folded in.
+   * history bundle this device writes later proves its own words too. The send is addressed to the
+   * conversation its entry names (`terminalId` is `entry.conversationId`), which is where its row
+   * was written at the tap: a thread re-keyed since is the Welcome's and the boot merge's move
+   * (`moveMessages`), never this one's.
    */
   async function persistSent(
     liveConvId: string,
-    writtenUnder: string,
     messageId: string,
     own?: { body: Uint8Array; proof: Uint8Array; control: boolean }
   ): Promise<void> {
     if (!storage) return;
-    const found = findMessage(messageId);
+    const found = findMessage(messageId, liveConvId);
     if (!found) return;
     const m = found.convo.messages[found.idx];
     // What THIS send adds to the row: this device's own signature, in the field the frame proves.
@@ -1807,24 +1873,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         deviceKey()
       );
     try {
-      // RE-KEYED MID-SEND: the row stands under the conversation it was written with. It is MOVED
-      // onto the live one first - every field it holds (proofs, reactions, a tombstone) goes with
-      // it, UNITED with the echo already stored there if there is one (`messageMove.ts`) - and the
-      // send is then folded onto it like any other. The reactions the screen draws move with it.
-      if (writtenUnder !== liveConvId) {
-        const move = await storage.moveMessages(writtenUnder, liveConvId, [messageId], deviceKey());
-        const carried = deps.messageReactions.move(writtenUnder, liveConvId, [messageId]);
-        log(
-          `[OUTBOX] ${messageId.slice(0, 8)}… was re-keyed mid-send from ${writtenUnder.slice(0, 8)}… to ${liveConvId.slice(0, 8)}…: ${move.moved.length} row moved, ${move.alreadyThere.length} united with the row already there, ${move.kept.length} left (does not open), ${carried} reaction set(s) carried`
-        );
-      }
       if ((await foldSend()).has(messageId)) return;
     } catch (e) {
       log(`[OUTBOX] Persist sent ${messageId.slice(0, 8)}… failed: ${String(e)}`);
       return;
     }
-    // NO ROW UNDER `liveConvId`, NOR UNDER THE KEY IT WAS WRITTEN WITH: the one whole-row write left
-    // here, built from the copy on screen and this send's own signature - all the sending device
+    // NO ROW UNDER `liveConvId`: the one whole-row write left here, built from the copy on screen and this send's own signature - all the sending device
     // holds of its own message; said, because it is rare.
     log(
       `[OUTBOX] ${messageId.slice(0, 8)}… has no stored row under ${liveConvId.slice(0, 8)}… - written there whole`
@@ -1876,8 +1930,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * made in another tab. The peers are not concerned: the edit's control frame names this message, so it waits behind it in the queue
    * (`dependsOnAny`) and reaches them after it.
    */
-  function updateMessageContent(messageId: string, content: string): void {
-    const found = findMessage(messageId);
+  function updateMessageContent(
+    messageId: string,
+    content: string,
+    conversationId: string | undefined
+  ): void {
+    const found = findMessage(messageId, conversationId);
     if (!found) return;
     const held = found.convo.messages[found.idx];
     // A tombstone is final: the attachment it replaced must not come back under it.
@@ -1903,7 +1961,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     conversationId: string,
     messageId: string
   ): Promise<PlaceableMessage | null> {
-    const found = findMessage(messageId);
+    const found = findMessage(messageId, conversationId, false);
     if (found) return found.convo.messages[found.idx];
     if (!storage) return null;
     return storage.getMessage(conversationId, messageId, deviceKey()).catch((e: unknown) => {
@@ -1971,7 +2029,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           )
         );
     }
-    const found = findMessage(entry.id);
+    const found = findMessage(entry.id, entry.conversationId);
     if (found) {
       const echo = found.convo.messages[found.idx];
       const env = parseEnvelope(echo.content);
@@ -2456,7 +2514,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       `[OUTBOX] ${entry.id.slice(0, 8)}… ${entry.kind} entry in ${terminalId.slice(0, 8)}…, ${cause} - permanent failure` +
         (entry.kind === 'control' ? ' (control: nothing the user wrote is lost)' : '')
     );
-    patchStatus(entry.id, 'error');
+    patchStatus(entry.id, 'error', entry.conversationId);
     clearUpload(entry.id);
     // AN ATTACHMENT RETIRED FOR THE GROUP'S SAKE SAYS SO IN ITS BUBBLE, not "refused by the server"
     // (review of #2874, M4): its bytes go with the row below, and the bubble is all that is left.
@@ -2474,7 +2532,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     if (unsentReason) {
       setUnsentReason(entry.id, unsentReason);
       await persistUnsentReason(entry.conversationId, entry.id, unsentReason);
-      publishOutboxEntryRetired(entry.id, unsentReason);
+      publishOutboxEntryRetired(entry.id, unsentReason, entry.conversationId);
     }
     // AN UPLOADED FILE RETIRED UNSENT IS AN OBJECT NOBODY WILL CITE. There is no client route that
     // deletes an ordinary chat upload (`DELETE /media/:id` is server-to-server), so it is said here,
@@ -2629,7 +2687,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     else repairHeld.delete(entry.id);
     // The count is of CONSECUTIVE local failures: any other kind of hold breaks the run.
     if (!opts.local) unexpected.delete(entry.id);
-    patchStatus(entry.id, 'pending');
+    patchStatus(entry.id, 'pending', entry.conversationId);
     // An attachment still to upload shows that its next attempt is queued. Its bytes so far are kept
     // in the view: a file over one request body resumes at the parts the server holds.
     // `quiet` when the payload was not read, so whether the upload already happened is not known.
@@ -2713,7 +2771,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     transportHeld.delete(entry.id);
     repairHeld.delete(entry.id);
     unexpected.delete(entry.id);
-    patchStatus(entry.id, 'pending');
+    patchStatus(entry.id, 'pending', entry.conversationId);
     patchUpload(entry.id, { phase: 'error' });
     return 'parked';
   }
@@ -2740,9 +2798,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     serverFailed.add(entry.id);
     transportHeld.delete(entry.id);
     repairHeld.delete(entry.id);
-    showServerFailure(entry.id, entry.serverErrors ?? 0);
+    showServerFailure(entry.id, entry.serverErrors ?? 0, entry.conversationId);
     // A follower tab draws the same bubble: it never flushes, so it would not know until a reload.
-    if (first) publishOutboxEntryFailed(entry.id, entry.serverErrors ?? 0);
+    if (first) publishOutboxEntryFailed(entry.id, entry.serverErrors ?? 0, entry.conversationId);
     return 'parked';
   }
 
@@ -2822,7 +2880,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       stored = rebuilt;
     }
     // Read again after the await: a page or a live echo may have put the row there meanwhile.
-    if (findMessage(entry.id)) return;
+    if (findMessage(entry.id, entry.conversationId)) return;
     const [key] = holder;
     const convo = conversations.get(key);
     if (!convo) return;
@@ -2834,8 +2892,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     log(`[OUTBOX] ${entry.id.slice(0, 8)}… queued, older than the page held - put back on screen`);
   }
 
-  function showServerFailure(messageId: string, serverErrors: number): void {
-    patchStatus(messageId, 'error');
+  function showServerFailure(
+    messageId: string,
+    serverErrors: number,
+    conversationId: string | undefined
+  ): void {
+    patchStatus(messageId, 'error', conversationId);
     patchUpload(messageId, { phase: 'failed', attempt: serverErrors });
   }
 
@@ -2852,7 +2914,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       `[OUTBOX] ${messageId.slice(0, 8)}… failed text: retry asked, the 5xx count (${stored.serverErrors}) is reset`
     );
     clearUpload(messageId);
-    patchStatus(messageId, 'pending');
+    patchStatus(messageId, 'pending', stored.conversationId);
     await storage
       .updateOutboxEntry(
         messageId,
@@ -3199,7 +3261,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       return failPermanently(entry, terminalId, 'evicted');
     }
 
-    patchStatus(entry.id, 'sending');
+    patchStatus(entry.id, 'sending', entry.conversationId);
     logMlsMetric({ kind: 'outbox_flush_attempt', conversationId: terminalId });
 
     // An attachment that still owes its upload: what fails before the transfer starts is an upload
@@ -3238,7 +3300,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         // The upload has completed, so the blob is readable before MLS acknowledges the message.
         // Replace the optimistic empty ref now; waiting for sendMessage leaves media at `''` during
         // the whole network race and a renderer that observed that state stays on its skeleton.
-        updateMessageContent(entry.id, mediaContent);
+        updateMessageContent(entry.id, mediaContent, entry.conversationId);
       } else {
         const decided = await decideQuote(entry);
         commitQuote = decided.commit;
@@ -3282,16 +3344,17 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         // re-add, user 2026-10-14). A control frame is not a message: its entry id names the
         // message it mutates, whose own time must not move.
         if (entry.kind !== 'control') {
-          if (sent.receivedAt !== null) patchServerTimestamp(entry.id, sent.receivedAt);
+          if (sent.receivedAt !== null)
+            patchServerTimestamp(entry.id, sent.receivedAt, entry.conversationId);
           else log(`[OUTBOX] ${entry.id.slice(0, 8)}… sent, the server answered no receive time`);
         }
         // The media envelope was installed immediately after upload, before the MLS send.
-        await persistSent(terminalId, entry.conversationId, entry.id, {
+        await persistSent(terminalId, entry.id, {
           body: proto,
           proof: sent.authorProof,
           control: entry.kind === 'control',
         });
-        patchStatus(entry.id, 'sent');
+        patchStatus(entry.id, 'sent', entry.conversationId);
         clearUpload(entry.id);
         transportHeld.delete(entry.id);
         repairHeld.delete(entry.id);
@@ -3302,7 +3365,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         publishOutboxEntrySent(
           entry.id,
           mediaContent,
-          entry.kind !== 'control' ? sent.receivedAt : null
+          entry.kind !== 'control' ? sent.receivedAt : null,
+          entry.conversationId
         );
         // A SEND OF A TAKE (RC-13) is marked on its take BEFORE its row goes, so the take knows it
         // went even when this row was its last trace.
@@ -3473,7 +3537,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       );
       console.error(`[OUTBOX] upload blocked by the gateway: ${String(e).slice(0, 120)}`);
       parked.add(entry.id);
-      patchStatus(entry.id, 'pending');
+      patchStatus(entry.id, 'pending', entry.conversationId);
       patchUpload(entry.id, { phase: 'blocked' });
       return 'parked';
     }
@@ -3491,7 +3555,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // behind a bubble still saying `failed`.
       transportHeld.delete(entry.id);
       repairHeld.delete(entry.id);
-      patchStatus(entry.id, 'pending');
+      patchStatus(entry.id, 'pending', entry.conversationId);
       patchUpload(entry.id, { phase: 'failed' });
       return 'parked';
     }
@@ -3544,7 +3608,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       const line = `[OUTBOX] ${entry.id.slice(0, 8)}… REFUSED with 403 in ${terminalId.slice(0, 8)}… - the caller is not allowed to send this; parked, no retry until the next sign-in`;
       console.error(line);
       log(line);
-      patchStatus(entry.id, 'pending');
+      patchStatus(entry.id, 'pending', entry.conversationId);
       // A view an earlier hold drew ("waiting for the server" after a 502) is not what this entry
       // waits for now: it waits for a sign-in, which no label here claims.
       clearUpload(entry.id);
@@ -4063,11 +4127,15 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     const live = new Set(liveSendsOf(take, present).map((s) => s.id));
     sendsOfTake.set(take.id, live);
     for (const id of live) takeOfSend.set(id, take.id);
+    for (const s of liveSendsOf(take, present)) sendConversation.set(s.id, s.conversationId);
   }
 
   /** Forgets every in-memory view of a take that settled (a record, or withdrawn). */
   function forgetTake(takeId: string): void {
-    for (const id of sendsOfTake.get(takeId) ?? []) takeOfSend.delete(id);
+    for (const id of sendsOfTake.get(takeId) ?? []) {
+      takeOfSend.delete(id);
+      sendConversation.delete(id);
+    }
     sendsOfTake.delete(takeId);
     takeUploads.delete(takeId);
     publishing.delete(takeId);
@@ -4161,6 +4229,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         ?.id;
     if (!takeId) return;
     takeOfSend.delete(entry.id);
+    sendConversation.delete(entry.id);
     sendsOfTake.get(takeId)?.delete(entry.id);
     if (!(await writesTakesHere())) {
       // A FOLLOWER (a withdrawal pressed here) never settles a take: the leader's take drive does,
@@ -4538,7 +4607,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       log(line);
       parked.add(id);
       transportHeld.delete(id);
-      patchStatus(id, 'pending');
+      patchStatus(id, 'pending', take.conversationId);
       patchUpload(id, { phase: refusal === 'blocked' ? 'blocked' : 'failed' });
       return;
     }
@@ -4729,6 +4798,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     const takeId = media.takeId!;
     if (!takeWithdrawn.has(takeId)) {
       takeOfSend.set(entry.id, takeId);
+      sendConversation.set(entry.id, entry.conversationId);
       if (!sendsOfTake.has(takeId)) sendsOfTake.set(takeId, new Set());
       sendsOfTake.get(takeId)!.add(entry.id);
     }
@@ -4833,8 +4903,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         }
         for (const send of record.take?.sends ?? []) {
           if (!send.sent || send.deleted) continue;
-          // THE ROW WHERE IT STANDS NOW, not where the press queued it: a send re-keyed mid-flight
-          // (`persistSent`) or a thread merged since moved its row to another conversation. It is
+          // THE ROW WHERE IT STANDS NOW, not where the press queued it: a 1:1 re-key (the Welcome)
+          // or a thread merged since (the boot merge) moved its row to another conversation. It is
           // this account's own message under an id this device minted (`ownStoredMessage`).
           const message = await ownStoredMessage(storage, send.id, deps.userId, deviceKey());
           if (!message?.isDeleted) continue;
@@ -5253,7 +5323,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       }
     },
 
-    async awaitSettled(messageId: string): Promise<OutboxSettlement> {
+    async awaitSettled(messageId: string, conversationId: string): Promise<OutboxSettlement> {
       if (disposed) return 'pending';
       const settled = new Promise<OutboxSettlement>((resolve) => {
         settleWaiters.set(messageId, [...(settleWaiters.get(messageId) ?? []), resolve]);
@@ -5261,7 +5331,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // REGISTERED FIRST, THEN THE FACTS: an attempt that ends from here on settles the waiter, and
       // one that ended before left its trace in the queue and the row, read now.
       const queued = await hasEntry(messageId);
-      if (queued === false) settle(messageId, settlementOfRow(messageId));
+      if (queued === false) settle(messageId, settlementOfRow(messageId, conversationId));
       else releaseUnsettled('no flush is running');
       return settled;
     },
@@ -5413,18 +5483,18 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           if (!entry.take?.state) noteTake(entry, present);
           continue;
         }
-        if (!findMessage(entry.id)) await restoreQueuedRow(entry);
-        const found = findMessage(entry.id);
+        if (!findMessage(entry.id, entry.conversationId)) await restoreQueuedRow(entry);
+        const found = findMessage(entry.id, entry.conversationId);
         // A text failed on 5xx stays FAILED across a reload: its durable count says so. One NOT
         // CLAIMED from the native mirror is failed too - never sent from here until a claim lands,
         // so never drawn as if it were on its way; its Retry claims again.
         if (found && (isServerFailureTerminal(entry) || unclaimed.has(entry.id))) {
-          showServerFailure(entry.id, entry.serverErrors ?? 0);
+          showServerFailure(entry.id, entry.serverErrors ?? 0, entry.conversationId);
           continue;
         }
         // Only (re)apply 'pending'; do not clobber a live 'sending' transition.
         if (found && found.convo.messages[found.idx].status !== 'sending') {
-          patchStatus(entry.id, 'pending');
+          patchStatus(entry.id, 'pending', entry.conversationId);
         }
       }
     },
@@ -5711,8 +5781,11 @@ export function enqueueOutboxMessage(entry: OutboxEntry, opts?: EnqueueOptions):
  * {@link OutboxController.awaitSettled} on the active controller; `pending` with none - the row,
  * if written, waits for the next session's queue.
  */
-export function awaitOutboxSettled(messageId: string): Promise<OutboxSettlement> {
-  return active ? active.awaitSettled(messageId) : Promise.resolve('pending');
+export function awaitOutboxSettled(
+  messageId: string,
+  conversationId: string
+): Promise<OutboxSettlement> {
+  return active ? active.awaitSettled(messageId, conversationId) : Promise.resolve('pending');
 }
 
 /**

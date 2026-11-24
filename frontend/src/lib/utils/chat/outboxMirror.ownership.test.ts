@@ -777,7 +777,7 @@ describe('OutboxController.adoptNativeEntries - the return to the front', () => 
     await Promise.all([outbox.adoptNativeEntries(), outbox.adoptNativeEntries()]);
 
     // 3. The controller's own settle, then one more flush: nothing left to send.
-    await outbox.awaitSettled('shade');
+    await outbox.awaitSettled('shade', 'g1');
     await outbox.flush();
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(saves).toBe(1);

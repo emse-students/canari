@@ -1388,7 +1388,7 @@ single conversation (RC-5) is now a take with ONE send, and `handleSendChat` no 
   tombstone is on the shared message row, and the next leader re-derives it (`maintainTakeRecords`
   above; a promotion reloads the page, so a new leader always starts with it) - lost, it only waits.
   The row is read WHERE IT STANDS NOW (`ownStoredMessage`), not under the conversation the press
-  queued it for: a send re-keyed mid-flight or a merged thread moved it since.
+  queued it for: a 1:1 re-key or a merged thread moved it since.
   An ADOPTION is acknowledged (`outbox_reel_take_adopt_ack`, sent even when the leader's write of it
   failed). The END of the publish wait is the leader's too, since the wait lives where the take was
   composed: a follower that runs the publish queue forwards it (`outbox_reel_take_end_wait`, review

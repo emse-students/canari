@@ -61,6 +61,7 @@ Four consequences:
 - **`lastAccessAt` is refreshed on every download**, so anything still being viewed never expires (window measures idleness, not age).
 - **Public assets are exempt** and permanent.
 - **Account deletion reaches a user's uploads**, but message deletion deliberately does not (forwarding copies the `MediaRef`, so blobs can be cited from conversations the deleter cannot see).
+- **An erased owner registers nothing afterwards**: the erasure records a keyed pseudonym of the id (HMAC under a key derived from `JWT_SECRET` under its own label) and the time first, and every upload path refuses a credential or session dating from before it with `410 OWNER_ERASED` (kept 24 h after the latest pass; a person who signs in again is not refused) ([wiki](../../docs/wiki/services/media-service.md#an-erased-owner-registers-nothing-2026-11-24)).
 - **New device or reinstall gets no media older than 30 days** - when the server responds `410` with `purgeReason = retention_expired`, the client renders an expired state.
 
 ## Startup

@@ -116,6 +116,8 @@ class PushShowOutcomeTest {
         assertEquals(Outcome.WITHDRAW_KEPT_PENDING_REPLY, PushShowOutcome.of(ReadElsewhereMarks.Withdrawal.KEPT_PENDING_REPLY))
         assertEquals(Outcome.DELIVERY_KEPT_UNTIL_READ, PushShowOutcome.of(ReadElsewhereMarks.Delivery.KEPT_UNTIL_READ))
         assertEquals("suppressed-read-elsewhere", Outcome.SUPPRESSED_READ_ELSEWHERE.token)
+        assertEquals("suppressed-seen-trend", Outcome.SUPPRESSED_SEEN_TREND.token)
+        assertTrue(Outcome.SUPPRESSED_SEEN_TREND.recorded && !Outcome.SUPPRESSED_SEEN_TREND.posts)
     }
 
     @Test

@@ -1892,10 +1892,10 @@ carries it, so two conversations may each hold a row under the same id, and each
 every read, write and delete names the conversation (`getMessage`, `getMessageStanding`,
 `getMessagesByIds`, `mergeMessages`, `updateMessage`, `deleteMessage`, the order-key fill, the
 device-key re-seal), the upsert (`saveMessages`) conflicts on the pair and never moves a row, and
-the one way a row changes conversation is `moveMessages` (the DM merge, a send re-keyed mid-flight):
+the one way a row changes conversation is `moveMessages` (the Welcome's 1:1 re-key, the boot merge):
 its old key deleted and its new one written in one atomic step. A row the destination already holds
 under the same id is the same message seen twice (a bundle or a replayed copy stored first during a
-1:1 re-key, a re-keyed send's echo): the source is UNITED onto it through the compare-and-set
+1:1 re-key): the source is UNITED onto it through the compare-and-set
 (`messageMove.ts`, `uniteMovedRow` - a tombstone wins and purges, the later edit wins, every
 reaction of both, the proofs of the kept bytes, the first recorded 410, an unsent reason) and only
 then deleted, while it is still the row that was read; a pair one side of which does not open is

@@ -27,4 +27,5 @@ pub mod nse_outcomes;
 pub mod picked_files;
 pub mod push;
 pub mod push_registration;
+pub mod seen_posts;
 pub mod storage;

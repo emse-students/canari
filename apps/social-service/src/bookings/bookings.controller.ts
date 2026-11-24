@@ -261,10 +261,12 @@ export class BookingsController {
     @UploadedFile() file: Express.Multer.File | undefined,
     @Body('itemId') itemId: string | undefined,
     @Headers('x-user-id') userId: string,
-    @Headers('x-global-admin') ga?: string
+    @Headers('x-global-admin') ga?: string,
+    @Headers('authorization') authorization?: string
   ): Promise<UploadedFormFile> {
     if (!file) throw new BadRequestException({ code: 'file-empty' });
-    return this.service.uploadFile(spaceId, itemId, file, actorOf(userId, ga));
+    // The member's own token travels on to the media service, which dates the upload from it.
+    return this.service.uploadFile(spaceId, itemId, file, actorOf(userId, ga), authorization);
   }
 
   /**

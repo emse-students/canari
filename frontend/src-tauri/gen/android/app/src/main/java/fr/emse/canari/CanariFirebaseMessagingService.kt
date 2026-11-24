@@ -46,6 +46,7 @@ import fr.emse.canari.push.CallSoundHold
 import fr.emse.canari.push.ChannelBannerAttribution
 import fr.emse.canari.push.ChannelBannerAuthor
 import fr.emse.canari.push.ConversationNicknames
+import fr.emse.canari.push.SeenTrends
 import fr.emse.canari.push.ConversationRef
 import fr.emse.canari.push.ChannelReadMark
 import fr.emse.canari.push.ConversationShape
@@ -1953,6 +1954,46 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             } catch (e: Exception) {
                 DisplayNamesRead(null, "unreadable", e.javaClass.simpleName)
             }
+        }
+
+        /**
+         * Parses `seen_posts.json` - the posts this device displayed, written by the WebView
+         * (`seenPosts.svelte.ts`, Rust `store_seen_posts`) - or null when there is none (absent,
+         * unreadable: said under [label]). The owner check is the pure rule's ([SeenTrends.withholds]).
+         */
+        internal fun readSeenPosts(context: Context, label: String): SeenTrends.Book? {
+            val file = File(MlsContextLoader.tauriDataDir(context), "seen_posts.json")
+            if (!file.exists()) {
+                Log.d(TAG, "$label no seen_posts.json yet - no trend is withheld")
+                return null
+            }
+            return try {
+                val root = JSONObject(file.readText())
+                val ids = HashSet<String>()
+                root.optJSONObject("posts")?.let { all -> for (id in all.keys()) ids.add(id.lowercase()) }
+                SeenTrends.Book(root.optString("userId").lowercase(), ids)
+            } catch (e: Exception) {
+                // A WARN is a recorded line (FcmLog.w hands it to the in-app log): the trend that follows
+                // is shown for a post that may have been displayed, and the export must say why.
+                Log.w(TAG, "$label seen_posts.json unreadable, no trend is withheld: ${e.javaClass.simpleName}")
+                null
+            }
+        }
+
+        /**
+         * Whether this push is a campus trend for a post the device already displayed, and so shows
+         * nothing (owner, 2026-11-24, "Verif sur l'appareil"). The file is read only for a trend, so
+         * every other push pays nothing. A withheld trend is a RECORDED info line (kept by the exported
+         * log) with no post id; a trend that is shown is logged by nobody - it is the ordinary case.
+         */
+        internal fun isSeenTrend(context: Context, data: Map<String, String>): Boolean {
+            val key = data["contentKey"]
+            if (key == null || key !in SeenTrends.TREND_KEYS) return false
+            val me = MlsContextLoader.loadPushContext(context)?.userId
+            val withheld = SeenTrends.withholds(readSeenPosts(context, "[SEEN_TREND]"), me, key, data["postId"])
+            // A RECORDED outcome like every other end of a push ([PushShowOutcome]): no post id, no text.
+            if (withheld) context.recordShowOutcome(PushShowOutcome.Outcome.SUPPRESSED_SEEN_TREND, null, null, detail = "seen-trend")
+            return withheld
         }
 
         /**
@@ -4940,6 +4981,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
         // Social notifications and form reminders: no MLS decryption
         if (msgType == "social" || msgType == "form_reminder") {
+            // A CAMPUS TREND FOR A POST THIS DEVICE ALREADY DISPLAYED SHOWS NOTHING (owner,
+            // 2026-11-24): classified on the `contentKey`, never the wording. NEVER SILENT: the
+            // withholding is a RECORDED info line (the exported log keeps it), with no post id.
+            if (isSeenTrend(this, data)) return
             val composed = composeServerNotification(data)
             val title    = composed?.first  ?: data["title"] ?: getString(R.string.app_name)
             val body     = composed?.second ?: data["body"]  ?: ""

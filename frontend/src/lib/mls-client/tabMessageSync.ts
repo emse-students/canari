@@ -128,10 +128,30 @@ const MESSAGE_EVENT_TYPES = new Set<string>([
  */
 export type TabOutboxEvent =
   | { type: 'outbox_flush_request' }
-  | { type: 'outbox_entry_sent'; messageId: string; content?: string; receivedAt?: number }
+  /**
+   * `conversationId` (here and on the two events below): the conversation the message was queued
+   * for. A message id travels to peers, so a receiver finds the row in THAT conversation only.
+   */
+  | {
+      type: 'outbox_entry_sent';
+      messageId: string;
+      conversationId?: string;
+      content?: string;
+      receivedAt?: number;
+    }
   | { type: 'outbox_entry_cancelled'; messageId: string }
-  | { type: 'outbox_entry_failed'; messageId: string; serverErrors: number }
-  | { type: 'outbox_entry_retired'; messageId: string; reason: UnsentReason }
+  | {
+      type: 'outbox_entry_failed';
+      messageId: string;
+      conversationId?: string;
+      serverErrors: number;
+    }
+  | {
+      type: 'outbox_entry_retired';
+      messageId: string;
+      conversationId?: string;
+      reason: UnsentReason;
+    }
   /** A follower's write to a chat-reel take (RC-13), done by the leader: see {@link forwardReelTakeWrite}. */
   | { type: 'outbox_reel_send_deleted'; messageId: string }
   | { type: 'outbox_reel_take_adopt'; takeId: string; uploaded: PublishedReelUpload }
@@ -317,12 +337,15 @@ export function publishOutboxEntrySent(
    * leader's copy (`messageOrder.ts`): without it the echo would leave the "awaiting its server
    * time" tier at its `sentAt`, a place no other device draws it.
    */
-  receivedAt?: number | null
+  receivedAt?: number | null,
+  /** The conversation the message was queued for: the follower patches its row there only. */
+  conversationId?: string
 ): void {
   if (!getIsTabLeader()) return;
   ensureChannel()?.postMessage({
     type: 'outbox_entry_sent',
     messageId,
+    ...(conversationId ? { conversationId } : {}),
     ...(content ? { content } : {}),
     ...(typeof receivedAt === 'number' ? { receivedAt } : {}),
   } satisfies TabOutboxEvent);
@@ -333,11 +356,16 @@ export function publishOutboxEntrySent(
  * failed bubble and its Retry from it, as it settles a sent one from `outbox_entry_sent`: it never
  * flushes, so nothing else would tell it before its next reload.
  */
-export function publishOutboxEntryFailed(messageId: string, serverErrors: number): void {
+export function publishOutboxEntryFailed(
+  messageId: string,
+  serverErrors: number,
+  conversationId?: string
+): void {
   if (!getIsTabLeader()) return;
   ensureChannel()?.postMessage({
     type: 'outbox_entry_failed',
     messageId,
+    ...(conversationId ? { conversationId } : {}),
     serverErrors,
   } satisfies TabOutboxEvent);
 }
@@ -347,11 +375,16 @@ export function publishOutboxEntryFailed(messageId: string, serverErrors: number
  * device no longer a member). A follower draws the failed bubble with that reason; it never flushes,
  * so it would otherwise keep the queued spinner until its next reload.
  */
-export function publishOutboxEntryRetired(messageId: string, reason: UnsentReason): void {
+export function publishOutboxEntryRetired(
+  messageId: string,
+  reason: UnsentReason,
+  conversationId?: string
+): void {
   if (!getIsTabLeader()) return;
   ensureChannel()?.postMessage({
     type: 'outbox_entry_retired',
     messageId,
+    ...(conversationId ? { conversationId } : {}),
     reason,
   } satisfies TabOutboxEvent);
 }

@@ -673,6 +673,7 @@ I CanariFCM: [PUSH_SHOW] outcome=<token> conv=<g:8 | ch:8 | ?> channel=<id | ?> 
 | The member's level withholds it (`NotificationLevelGate`) - the message IS cached | `withheld-level`, `why: cached=<bool> <the gate's reason>` |
 | Refused for good while the real banner is already up | `refused-covered` |
 | Already read on another device ([read-elsewhere](../services/social-service.md)): before the build, or at the post itself under `READ_ELSEWHERE`'s lock | `suppressed-read-elsewhere`, `why: early` or `why: at-post` |
+| A campus trend for a post this device already displayed ([engagement](../engagement.md#a-campus-trend-for-a-post-this-device-already-displayed-shows-nothing-2026-11-24)): nothing shown, no post id in the line | `suppressed-seen-trend`, `why: seen-trend` |
 
 **The read-elsewhere decisions record the same line (2026-11-21)**, so a banner that went - or
 stayed - is explained as well as one that never came. Each is one outcome of `ReadElsewhereMarks`,
@@ -1767,7 +1768,7 @@ tethered Mac's Console.app sees and nothing else. Three changes, one pull reques
 
 - **The outcome log.** `NseOutcomeLog` (in `NotificationService.swift`) appends ONE line per
   notification to `nse_outcomes.ndjson` in the App Group: `outcome` (`decrypted`, `fallback`,
-  `server-content`, `call-blank`, `expired`), the first `cause` found (`no-push-context`,
+  `server-content`, `call-blank`, `seen-trend`, `expired`), the first `cause` found (`no-push-context`,
   `no-device-key`, `no-proto`, `proto-fetch-failed`, `state-absent`, `refused-for-good`,
   `locality-unknown;direct=<token>`, `catchup-failed;direct=<token>`, `group-absent;direct=<token>`,
   `no-seed`, `no-ciphertext`, `not-opened`, where `<token>` is Rust's refusal reason of the direct
@@ -3925,12 +3926,12 @@ change. Everything below was IN the backup except the two native caches:
 
 | Where | What | In the backup before 1.7.2 | After |
 | --- | --- | --- | --- |
-| `Library/Application Support/fr.emse.canari/` (Tauri's `app_data_dir`, and `app_config_dir`, where `tauri-plugin-sql` opens `canari_<user>.db`) | the SQLite stores (`canari_<user>.db`, `mls_pending.db`), `mls.bin` (3.5 MB), `mls_accounts/`, the `at_rest_keys/` markers, the session and push credentials, `push_context.json`, `display_names.json`, `conversation_nicknames.json`, `logs/` | yes (only `graine_seeds.json` excluded, per file) | excluded: the flag is on `Library/Application Support` |
+| `Library/Application Support/fr.emse.canari/` (Tauri's `app_data_dir`, and `app_config_dir`, where `tauri-plugin-sql` opens `canari_<user>.db`) | the SQLite stores (`canari_<user>.db`, `mls_pending.db`), `mls.bin` (3.5 MB), `mls_accounts/`, the `at_rest_keys/` markers, the session and push credentials, `push_context.json`, `display_names.json`, `conversation_nicknames.json`, `seen_posts.json`, `logs/` | yes (only `graine_seeds.json` excluded, per file) | excluded: the flag is on `Library/Application Support` |
 | `Library/Application Support/Google/`, `google-heartbeat-storage/` | Firebase Messaging's store | yes | excluded (same directory) |
 | `Library/WebKit/WebsiteData/` (the default persistent `WKWebsiteDataStore`) | `Default/<salt>/<salt>/IndexedDB`, `LocalStorage`, `CacheStorage` (254 MB in 159 files), `ResourceLoadStatistics`, `DeviceIdHashSalts`, `MediaKeys` | yes | excluded: the flag is on `Library/WebKit` |
 | `Library/Preferences/` | `fr.emse.canari.plist`, `canari_notif_ids.plist` (conversation ids to notification ids), Firebase's plist | yes | excluded |
 | `Library/Cookies/`, `Library/HTTPStorages/` | absent on that phone | - | excluded (the pass creates them) |
-| App Group `group.fr.emse.canari`, its root | `mls.bin`, `push_context.json`, `push_secret.txt` (the extension's copy of the push credential), `display_names.json`, `conversation_nicknames.json`, avatars and logos, `device_notices/`, the lock files - 35 files | yes (only `graine_seeds.json` and the push cache excluded, per file) | moved into `store/`, which is excluded; the ROOT refuses the flag (`1.7.2-alpha.1`), so nothing of ours stays there ([below](#the-app-group-a-store-directory-never-the-root-172)) |
+| App Group `group.fr.emse.canari`, its root | `mls.bin`, `push_context.json`, `push_secret.txt` (the extension's copy of the push credential), `display_names.json`, `conversation_nicknames.json`, `seen_posts.json` (the posts the app displayed, [engagement](../engagement.md#a-campus-trend-for-a-post-this-device-already-displayed-shows-nothing-2026-11-24)), avatars and logos, `device_notices/`, the lock files - 35 files | yes (only `graine_seeds.json` and the push cache excluded, per file) | moved into `store/`, which is excluded; the ROOT refuses the flag (`1.7.2-alpha.1`), so nothing of ours stays there ([below](#the-app-group-a-store-directory-never-the-root-172)) |
 | `Documents/` | log exports and an agenda image the member saved there himself | yes | **kept**: the member's own files, which Apple says never to exclude |
 | `Library/Caches/`, `tmp/` | the HTTP cache, the picker's copies | never (Apple: purged, so not backed up) | unchanged |
 | the NSE's and the Share Extension's own containers | nothing in the manifest | - | unchanged |
