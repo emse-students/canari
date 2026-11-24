@@ -133,7 +133,13 @@ describe('the SQLite upgrade to v20 writes every seed, per row, inside the migra
   async function upgradedFrom19(ids: string[], msgs: StoredMessage[], pendingIds: string[] = []) {
     const { storage, engine } = await sqlite();
     for (const id of ids) await storage.saveConversation(row(id));
-    await storage.saveMessagesIfAbsent(msgs, KEY);
+    // One conversation per insert-only write: it answers in ids.
+    for (const id of new Set(msgs.map((m) => m.conversationId))) {
+      await storage.saveMessagesIfAbsent(
+        msgs.filter((m) => m.conversationId === id),
+        KEY
+      );
+    }
     for (const id of pendingIds) {
       engine.prepare('UPDATE messages SET order_pending = 1 WHERE id = ?').run(id);
     }
@@ -142,7 +148,7 @@ describe('the SQLite upgrade to v20 writes every seed, per row, inside the migra
     // The same engine, opened again by this build (the plugin mock is still the one over it).
     const upgraded = new SqliteStorage(`seed-${n++}`);
     await upgraded.init();
-    expect(engine.prepare('PRAGMA user_version').get()).toEqual({ user_version: 22 });
+    expect(engine.prepare('PRAGMA user_version').get()).toEqual({ user_version: 23 });
     return { storage: upgraded, engine };
   }
 

@@ -62,9 +62,9 @@ interface Rig {
   pendingAtRest(): Promise<string>;
   /** Overwrites every pending-mutation row's sealed bytes with bytes that do not open. */
   corruptPending(): Promise<void>;
-  /** The revision a message row stands at. */
+  /** The revision a message row of `conv` stands at. */
   revisionOf(id: string): Promise<number>;
-  /** Stores `value` as a message row's timestamp, as an older build or a phone backup did. */
+  /** Stores `value` as a message row's timestamp (in `conv`), as an older build or a phone backup did. */
   setTimestamp(id: string, value: unknown): Promise<void>;
   /** Every pending-mutation row exactly as stored. */
   pendingRows(): Promise<any[]>;
@@ -84,10 +84,16 @@ async function sqliteRig(): Promise<Rig> {
     },
     revisionOf: async (id) =>
       Number(
-        (engine.prepare('SELECT rev FROM messages WHERE id = ?').get(id) as { rev: number }).rev
+        (
+          engine
+            .prepare("SELECT rev FROM messages WHERE conversation_id = 'conv' AND id = ?")
+            .get(id) as { rev: number }
+        ).rev
       ),
     setTimestamp: async (id, value) => {
-      engine.prepare('UPDATE messages SET timestamp = ? WHERE id = ?').run(value as never, id);
+      engine
+        .prepare("UPDATE messages SET timestamp = ? WHERE conversation_id = 'conv' AND id = ?")
+        .run(value as never, id);
     },
     pendingRows: async () => engine.prepare('SELECT * FROM pending_mutations').all(),
     restorePending: async (rows) => {
@@ -138,9 +144,12 @@ async function idbRig(): Promise<Rig> {
         ...row,
         cipherText: new TextEncoder().encode('not a sealed payload!!'),
       })),
-    revisionOf: async (id) => Number((await all('messages')).find((r) => r.id === id)?.rev),
+    revisionOf: async (id) =>
+      Number((await all('messages')).find((r) => r.id === id && r.conversationId === 'conv')?.rev),
     setTimestamp: (id, value) =>
-      rewrite('messages', (row) => (row.id === id ? { ...row, timestamp: value } : null)),
+      rewrite('messages', (row) =>
+        row.id === id && row.conversationId === 'conv' ? { ...row, timestamp: value } : null
+      ),
     pendingRows: () => all('pendingMutations'),
     restorePending: (rows) =>
       new Promise<void>((resolve, reject) => {
@@ -471,7 +480,7 @@ describe.each(backends)('%s - pending mutations', (_name, rig) => {
 });
 
 describe.each(backends)('%s - getMessageStanding', (_name, rig) => {
-  it('tells an absent row, one that does not open and one that does, in any conversation, silently', async () => {
+  it('tells an absent row, one that does not open and one that does, under its key, silently', async () => {
     const { storage } = await rig();
     await storage.saveConversation({ id: 'conv', name: 'c', lifecycle: 'active', updatedAt: 1 });
     await storage.saveConversation({ id: 'conv-b', name: 'b', lifecycle: 'active', updatedAt: 1 });
@@ -479,14 +488,12 @@ describe.each(backends)('%s - getMessageStanding', (_name, rig) => {
     await storage.saveMessage(body('sealed'), OTHER_KEY);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    expect(await storage.getMessageStanding('none', KEY)).toEqual({ kind: 'absent' });
-    expect(await storage.getMessageStanding('mine', KEY)).toEqual({
-      kind: 'readable',
-      conversationId: 'conv-b',
-    });
-    expect(await storage.getMessageStanding('sealed', KEY)).toEqual({
+    expect(await storage.getMessageStanding('conv', 'none', KEY)).toEqual({ kind: 'absent' });
+    expect(await storage.getMessageStanding('conv-b', 'mine', KEY)).toEqual({ kind: 'readable' });
+    // The same id under another conversation is another key: nothing stands there.
+    expect(await storage.getMessageStanding('conv', 'mine', KEY)).toEqual({ kind: 'absent' });
+    expect(await storage.getMessageStanding('conv', 'sealed', KEY)).toEqual({
       kind: 'unreadable',
-      conversationId: 'conv',
     });
     expect(warn).not.toHaveBeenCalled();
   });
@@ -501,8 +508,8 @@ describe.each(backends)('%s - saveMessagesIfAbsent', (_name, rig) => {
     const written = await storage.saveMessagesIfAbsent([body('m1'), body('m2')], KEY);
 
     expect([...written]).toEqual(['m2']);
-    expect(await storage.getMessage('m1', KEY)).toMatchObject({ isDeleted: true });
-    expect(await storage.getMessage('m2', KEY)).toMatchObject({ content: 'the body' });
+    expect(await storage.getMessage('conv', 'm1', KEY)).toMatchObject({ isDeleted: true });
+    expect(await storage.getMessage('conv', 'm2', KEY)).toMatchObject({ content: 'the body' });
   });
 
   it('never writes over a row this device cannot open', async () => {
@@ -511,7 +518,7 @@ describe.each(backends)('%s - saveMessagesIfAbsent', (_name, rig) => {
     await storage.saveMessage(body('m1', 'sealed elsewhere'), OTHER_KEY);
 
     expect((await storage.saveMessagesIfAbsent([body('m1')], KEY)).size).toBe(0);
-    expect(await storage.getMessage('m1', OTHER_KEY)).toMatchObject({
+    expect(await storage.getMessage('conv', 'm1', OTHER_KEY)).toMatchObject({
       content: 'sealed elsewhere',
     });
   });
@@ -524,7 +531,7 @@ describe.each(backends)('%s - message rows: scope and compare-and-set', (_name, 
     await storage.saveMessages([body('m1'), body('b1', 'in B', 'conv-b')], KEY);
   }
 
-  it('reads a row of another conversation as ABSENT, and says so', async () => {
+  it('never reads a row of another conversation - its key is another key', async () => {
     const { storage } = await rig();
     await twoConversations(storage);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -533,7 +540,7 @@ describe.each(backends)('%s - message rows: scope and compare-and-set', (_name, 
 
     expect([...found.rows.keys()]).toEqual(['m1']);
     expect(found.unreadable.size).toBe(0);
-    expect(warn.mock.calls.flat().join(' ')).toContain('another conversation');
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it('never rewrites a row of another conversation', async () => {
@@ -549,25 +556,7 @@ describe.each(backends)('%s - message rows: scope and compare-and-set', (_name, 
     );
 
     expect(written.size).toBe(0);
-    expect(await storage.getMessage('b1', KEY)).toMatchObject({ content: 'in B' });
-  });
-
-  it('leaves a row of another conversation alone SILENTLY when the caller expects one', async () => {
-    const { storage } = await rig();
-    await twoConversations(storage);
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
-    const written = await storage.mergeMessages(
-      'conv',
-      ['b1'],
-      (row) => ({ ...row, content: 'rewritten through A' }),
-      KEY,
-      { foreignExpected: true }
-    );
-
-    expect(written.size).toBe(0);
-    expect(warn).not.toHaveBeenCalled();
-    expect(await storage.getMessage('b1', KEY)).toMatchObject({ content: 'in B' });
+    expect(await storage.getMessage('conv-b', 'b1', KEY)).toMatchObject({ content: 'in B' });
   });
 
   it('raises the revision on every write', async () => {
@@ -606,7 +595,7 @@ describe.each(backends)('%s - message rows: scope and compare-and-set', (_name, 
 
     expect(merge).toHaveBeenCalledTimes(2);
     expect(merge.mock.calls[1][0]).toMatchObject({ isDeleted: true });
-    expect(await storage.getMessage('m1', KEY)).toMatchObject({ isDeleted: true });
+    expect(await storage.getMessage('conv', 'm1', KEY)).toMatchObject({ isDeleted: true });
     expect(log.mock.calls.flat().join(' ')).toContain('merged again');
   });
 
@@ -640,7 +629,7 @@ describe.each(backends)('%s - message rows: scope and compare-and-set', (_name, 
       KEY
     );
 
-    const row = await storage.getMessage('m1', KEY);
+    const row = await storage.getMessage('conv', 'm1', KEY);
     expect(row).toMatchObject({ content: 'live v2', editedAt: 2_000 });
     expect(row?.reactions?.map((r) => (r as { userId: string }).userId).sort()).toEqual([
       'bob',
@@ -671,7 +660,7 @@ describe.each(backends)('%s - message rows: scope and compare-and-set', (_name, 
 
     expect(merge).toHaveBeenCalledTimes(2);
     expect(merge.mock.calls[1][0]).toMatchObject({ content: 'second life' });
-    expect(await storage.getMessage('m1', KEY)).toMatchObject({
+    expect(await storage.getMessage('conv', 'm1', KEY)).toMatchObject({
       content: 'second life',
       isEdited: true,
     });
@@ -689,7 +678,7 @@ describe.each(backends)('%s - message rows: scope and compare-and-set', (_name, 
       storage.updateMessage('conv', 'm1', { mediaPurgedAt: 7 }, KEY),
     ]);
 
-    expect(await storage.getMessage('m1', KEY)).toMatchObject({
+    expect(await storage.getMessage('conv', 'm1', KEY)).toMatchObject({
       serverTimestamp: 42,
       isEdited: true,
       editedAt: 9,
@@ -776,11 +765,11 @@ describe('the upgrade of a database the previous build left', () => {
     const storage = new IndexedDbStorage(userId);
     await storage.init();
 
-    expect(await storage.getMessage('m1', KEY)).toMatchObject({ content: 'the body' });
+    expect(await storage.getMessage('conv', 'm1', KEY)).toMatchObject({ content: 'the body' });
     expect((await storage.putPendingMutation(entry(), ROOMY, KEY)).written).toBe(true);
     // A row from before revisions reads at 0, and the compare-and-set takes it from there.
     await storage.updateMessage('conv', 'm1', { isEdited: true }, KEY);
-    expect(await storage.getMessage('m1', KEY)).toMatchObject({ isEdited: true });
+    expect(await storage.getMessage('conv', 'm1', KEY)).toMatchObject({ isEdited: true });
   });
 
   it('SQLite v17 -> v18 creates the table, adds `rev`, stamps 18 and keeps every message', async () => {
@@ -795,10 +784,10 @@ describe('the upgrade of a database the previous build left', () => {
 
     const upgraded = await sqliteOver(db);
 
-    expect(SCHEMA_VERSION).toBe(22);
-    expect(engine.prepare('PRAGMA user_version').get()).toEqual({ user_version: 22 });
+    expect(SCHEMA_VERSION).toBe(23);
+    expect(engine.prepare('PRAGMA user_version').get()).toEqual({ user_version: 23 });
     expect(engine.prepare("SELECT rev FROM messages WHERE id = 'm1'").get()).toEqual({ rev: 0 });
-    expect(await upgraded.getMessage('m1', KEY)).toMatchObject({ content: 'the body' });
+    expect(await upgraded.getMessage('conv', 'm1', KEY)).toMatchObject({ content: 'the body' });
     expect((await upgraded.putPendingMutation(entry(), ROOMY, KEY)).written).toBe(true);
     await upgraded.updateMessage('conv', 'm1', { isEdited: true }, KEY);
     expect(engine.prepare("SELECT rev FROM messages WHERE id = 'm1'").get()).toEqual({ rev: 1 });
@@ -897,6 +886,6 @@ describe.each(backends)('%s - a replay never drops what it cannot settle', (_nam
     ]);
 
     expect(await pendingRows()).toHaveLength(1);
-    expect((await storage.getMessage('sealed', OTHER_KEY))?.isDeleted).toBeFalsy();
+    expect((await storage.getMessage('conv', 'sealed', OTHER_KEY))?.isDeleted).toBeFalsy();
   });
 });

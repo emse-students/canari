@@ -176,7 +176,11 @@ function makeStorage(seed: OutboxEntry[] = []) {
     saveMessage: storageSink,
     // The stored message rows - only what a test seeds; the flusher reads them to keep their proofs.
     _messages: rows,
-    getMessage: vi.fn(async (id: string) => rows.get(id) ?? null),
+    getMessage: vi.fn(async (_conversationId: string, id: string) => rows.get(id) ?? null),
+    findMessageConversations: vi.fn(async (id: string) => {
+      const row = rows.get(id);
+      return row ? [row.conversationId] : [];
+    }),
     // A compare-and-set over the seeded rows (a seed with no conversation stands in any): the
     // merged row lands in `saveMessage`, the one sink the assertions read; an absent row is not
     // written, as in the real stores.

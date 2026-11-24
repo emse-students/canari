@@ -89,7 +89,7 @@ describe('an edit whose message is stored but not shown', () => {
 
     await editFrame(d, PEER, 'm1', 'rewritten', 4_000);
 
-    const row = await d.storage.getMessage('m1', KEY);
+    const row = await d.storage.getMessage(CONVO, 'm1', KEY);
     expect(envelopeBodyText(row!.content)).toBe('rewritten');
     expect(row).toMatchObject({ isEdited: true, editedAt: 4_000 });
   });
@@ -102,8 +102,8 @@ describe('an edit whose message is stored but not shown', () => {
     await editFrame(d, OTHER, 'm1', 'forged', 4_000);
     await editFrame(d, PEER, 'm2', 'back from the dead', 4_000);
 
-    expect((await d.storage.getMessage('m1', KEY))?.content).toBe(BODY);
-    expect((await d.storage.getMessage('m2', KEY))?.content).toBe('deleted');
+    expect((await d.storage.getMessage(CONVO, 'm1', KEY))?.content).toBe(BODY);
+    expect((await d.storage.getMessage(CONVO, 'm2', KEY))?.content).toBe('deleted');
   });
 });
 
@@ -121,7 +121,7 @@ describe('an edit delivered in the same drain as its message', () => {
 
     expect(envelopeBodyText(d.shown()[0].content)).toBe('rewritten');
     expect(d.shown()[0].isEdited).toBe(true);
-    const row = await d.storage.getMessage('m1', KEY);
+    const row = await d.storage.getMessage(CONVO, 'm1', KEY);
     expect(envelopeBodyText(row!.content)).toBe('rewritten');
     expect(row).toMatchObject({ isEdited: true, editedAt: 4_000 });
   });
@@ -135,7 +135,7 @@ describe('an edit delivered in the same drain as its message', () => {
     await d.messaging.endBulkMessageIngest(d.ctx, DRAIN);
 
     expect(envelopeBodyText(d.shown()[0].content)).toBe('original');
-    expect((await d.storage.getMessage('m1', KEY))?.isEdited).toBeFalsy();
+    expect((await d.storage.getMessage(CONVO, 'm1', KEY))?.isEdited).toBeFalsy();
     expect((await d.storage.getPendingMutations(CONVO, ['m1'], KEY)).entries).toEqual([]);
   });
 });
@@ -147,7 +147,7 @@ describe('a reaction whose message is not shown', () => {
 
     await reactionFrame(d, OTHER, 'm1', '👍', 5_000);
 
-    expect((await d.storage.getMessage('m1', KEY))?.reactions).toEqual([
+    expect((await d.storage.getMessage(CONVO, 'm1', KEY))?.reactions).toEqual([
       expect.objectContaining({ userId: OTHER, emoji: '👍' }),
     ]);
   });
@@ -162,7 +162,7 @@ describe('a reaction whose message is not shown', () => {
 
     const expected = [expect.objectContaining({ userId: OTHER, emoji: '👍' })];
     expect(d.shown()[0].reactions).toEqual(expected);
-    expect((await d.storage.getMessage('m1', KEY))?.reactions).toEqual(expected);
+    expect((await d.storage.getMessage(CONVO, 'm1', KEY))?.reactions).toEqual(expected);
   });
 });
 
@@ -184,9 +184,9 @@ describe('a body re-delivered for a stored row memory does not show', () => {
     );
     await d.messaging.addMessageToChat(PEER, BODY, CONVO, d.ctx, { messageId: 'm2' });
 
-    const m1 = await d.storage.getMessage('m1', KEY);
+    const m1 = await d.storage.getMessage(CONVO, 'm1', KEY);
     expect(m1).toMatchObject({ isDeleted: true, content: m.chat_system_message_deleted() });
-    expect(await d.storage.getMessage('m2', KEY)).toMatchObject({
+    expect(await d.storage.getMessage(CONVO, 'm2', KEY)).toMatchObject({
       isDeleted: true,
       content: 'deleted',
     });
@@ -212,11 +212,11 @@ describe('a body re-delivered for a stored row memory does not show', () => {
       'restore'
     );
 
-    expect(await d.storage.getMessage('m1', KEY)).toMatchObject({
+    expect(await d.storage.getMessage(CONVO, 'm1', KEY)).toMatchObject({
       isEdited: true,
       reactions: reacted,
     });
-    expect(await d.storage.getMessage('m3', OTHER_KEY)).toMatchObject({
+    expect(await d.storage.getMessage(CONVO, 'm3', OTHER_KEY)).toMatchObject({
       content: 'sealed elsewhere',
     });
     expect(rewrite).not.toHaveBeenCalled();
@@ -224,9 +224,9 @@ describe('a body re-delivered for a stored row memory does not show', () => {
 });
 
 describe('a frame of one conversation naming a message of ANOTHER (review of #2936, P1)', () => {
-  // A message id is global in the store. A member of A who is (or was) also in B must not reach a
-  // row of B through a frame sent in A - deleting, editing or reacting to it there, or a relayed
-  // bundle rewriting it. A row of another conversation reads as ABSENT to every one of them.
+  // A stored message is keyed by (conversation, id): a frame sent in A never reaches a row of B -
+  // deleting, editing or reacting to it there, or a relayed bundle rewriting it - and a message sent
+  // in A under an id B holds is simply A's own row.
   const IN_B = 'conversation-b';
   const rowOfB = () => storedBody({ id: 'b1', conversationId: IN_B, content: BODY });
 
@@ -241,6 +241,45 @@ describe('a frame of one conversation naming a message of ANOTHER (review of #29
     return (await d0!.storage.getMessagesByIds(IN_B, ['b1'], KEY)).rows.get('b1');
   }
   let d0: Awaited<ReturnType<typeof deviceWithRowOfB>> | null = null;
+
+  it('a message sent in A under the id B holds is stored in A, and both survive a restart', async () => {
+    const { storage, name } = await openStore();
+    const d = await makeDevice(useMessaging, storage);
+    await d.storage.saveConversation({ id: IN_B, name: 'b', lifecycle: 'active', updatedAt: 1 });
+    await d.storage.saveMessage(rowOfB(), KEY);
+    const inA = serializeEnvelope(mkTextEnvelope('the message of A'));
+
+    await d.messaging.addMessageToChat(PEER, inA, CONVO, d.ctx, { messageId: 'b1' });
+    await d.storage.close();
+
+    const { storage: again } = await openStore(name);
+    expect(await again.getMessage(CONVO, 'b1', KEY)).toMatchObject({ content: inA });
+    expect(await again.getMessage(IN_B, 'b1', KEY)).toMatchObject({ content: BODY });
+  });
+
+  it('a reaction sent in A lands on the row of A under that id, never on the row of B', async () => {
+    d0 = await deviceWithRowOfB();
+    await d0.storage.saveMessage(storedBody({ id: 'b1', content: 'the row of A' }), KEY);
+
+    await reactionFrame(d0, OTHER, 'b1', '👍', 5_000);
+
+    expect((await d0.storage.getMessage(CONVO, 'b1', KEY))?.reactions?.map((r) => r.emoji)).toEqual(
+      ['👍']
+    );
+    expect((await rowOfBAfter())?.reactions ?? []).toEqual([]);
+  });
+
+  it('an edit sent in A rewrites the row of A under that id, never the row of B', async () => {
+    d0 = await deviceWithRowOfB();
+    await d0.storage.saveMessage(storedBody({ id: 'b1', content: BODY }), KEY);
+
+    await editFrame(d0, PEER, 'b1', 'edited in A', 4_000);
+
+    const a = await d0.storage.getMessage(CONVO, 'b1', KEY);
+    expect(envelopeBodyText(a!.content)).toBe('edited in A');
+    expect(await rowOfBAfter()).toMatchObject({ content: BODY });
+    expect((await rowOfBAfter())?.isEdited).toBeFalsy();
+  });
 
   it('a deletion sent in A never tombstones it', async () => {
     d0 = await deviceWithRowOfB();

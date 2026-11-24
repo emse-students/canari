@@ -183,21 +183,23 @@ export interface PageKey {
   provisional: boolean;
 }
 
-/** What {@link IStorage.mergeMessages} is told about its call. */
-export interface MergeMessagesOptions {
-  /** The caller handles a row of another conversation itself: left alone, and not said at warn. */
-  foreignExpected?: boolean;
-}
+/**
+ * Where ONE message row of one conversation stands - the answer of
+ * {@link IStorage.getMessageStanding}. `unreadable` is a row this device's key does not open (sealed
+ * under another key), which `getMessage` reports as `null` like an absent one.
+ */
+export type MessageRowStanding = { kind: 'absent' } | { kind: 'unreadable' } | { kind: 'readable' };
 
 /**
- * Where ONE message row stands, whatever its conversation - the answer of
- * {@link IStorage.getMessageStanding}. `unreadable` is a row this device's key does not open (sealed
- * under another key, or damaged): it stands, and nothing this device does can ever be written onto it.
+ * The answer of {@link IStorage.moveMessages}: the ids whose row now stands under the destination,
+ * moved there (`moved`), and those whose destination already held a row under the same id, where the
+ * source's copy was removed and the destination's row stands (`alreadyThere`). An id the source did
+ * not hold is in neither.
  */
-export type MessageRowStanding =
-  | { kind: 'absent' }
-  | { kind: 'unreadable'; conversationId: string }
-  | { kind: 'readable'; conversationId: string };
+export interface MessageMove {
+  moved: string[];
+  alreadyThere: string[];
+}
 
 /** The answer of {@link IStorage.getMessagesByIds}. */
 export interface StoredRowsById {
@@ -753,8 +755,10 @@ export type SealedStore = 'messages' | 'graine' | 'outbox';
 
 /** One row of a {@link SealedStore}: its primary key and its sealed payload, as on disk. */
 export interface SealedPayload {
-  /** The row's primary key (`sessionId` for a Graine row). */
+  /** The row's id (`sessionId` for a Graine row). */
   id: string;
+  /** A message row's conversation, the other half of its key; absent for the other stores. */
+  conversationId?: string;
   iv: Uint8Array;
   cipherText: Uint8Array;
 }
@@ -762,6 +766,8 @@ export interface SealedPayload {
 /** A compare-and-swap of one row's sealed payload - see {@link IStorage.swapSealedPayloads}. */
 export interface SealedPayloadSwap {
   id: string;
+  /** A message row's conversation, as {@link SealedPayload} gave it; absent for the other stores. */
+  conversationId?: string;
   /** The ciphertext the row must still hold for the swap to apply. */
   expected: Uint8Array;
   iv: Uint8Array;
@@ -854,7 +860,9 @@ export interface IStorage {
   /** Encrypt and persist a single message to the local store. */
   saveMessage(msg: StoredMessage, deviceKeyB64: string): Promise<void>;
   /**
-   * Persist each of `msgs` ONLY where no row is stored under its id - an insert, never a replace.
+   * Persist each of `msgs` ONLY where no row is stored under its key `(conversationId, id)` - an
+   * insert, never a replace. ONE conversation per call (it answers in ids, and the same id may stand
+   * in two conversations); a batch of several throws.
    *
    * For an ARRIVING message, which must never overwrite a row another writer put there between the
    * caller's read and this write (the archive replay writes outside the inbound drain). The absence
@@ -864,7 +872,10 @@ export interface IStorage {
    * @returns the ids this call wrote - the others were already there
    */
   saveMessagesIfAbsent(msgs: StoredMessage[], deviceKeyB64: string): Promise<Set<string>>;
-  /** Encrypt and persist a batch of messages in a single atomic write. */
+  /**
+   * Encrypt and persist a batch of messages in a single atomic write, each under its key
+   * `(conversationId, id)`. Never moves a row between conversations: that is {@link moveMessages}.
+   */
   saveMessages(msgs: StoredMessage[], deviceKeyB64: string): Promise<void>;
   /**
    * Persist a message AND the outbox entry that will send it, in ONE transaction.
@@ -888,8 +899,8 @@ export interface IStorage {
    *
    * A COMPARE-AND-SET on the row's revision ({@link mergeMessages}), never a read, an await and a
    * blind write: a patch merged onto a row another writer changed in between is merged again onto
-   * what that writer left. SCOPED like every lookup by id: a row of another conversation than
-   * `conversationId` is left alone.
+   * what that writer left. Keyed like every lookup: a row another conversation holds under the same
+   * id is never read nor written.
    */
   updateMessage(
     conversationId: string,
@@ -903,20 +914,28 @@ export interface IStorage {
    * revision is still the one read - on IndexedDB a get-compare-put in ONE readwrite transaction
    * (every payload sealed before it opens), on SQLite `UPDATE ... WHERE rev = ?`. A row that moved
    * in between is read again and merged again; each retry means another writer COMMITTED, so the
-   * loop ends. A row absent, unreadable or of another conversation is left alone. Resolves with the
-   * ids written.
-   *
-   * A row of another conversation is said at warn, unless `opts.foreignExpected`: a caller that
-   * handles that case itself (a row still moving onto the conversation it shows) is not told at warn
-   * what it is about to look at.
+   * loop ends. A row absent or unreadable is left alone. Resolves with the ids written.
    */
   mergeMessages(
     conversationId: string,
     ids: readonly string[],
     merge: StoredMessageMerge,
-    deviceKeyB64: string,
-    opts?: MergeMessagesOptions
+    deviceKeyB64: string
   ): Promise<Set<string>>;
+  /**
+   * MOVES the rows of `fromConversationId` stored under `ids` onto `toConversationId`: each row keeps
+   * every field and its ciphertext, under its new key - the old key deleted and the new one written
+   * in ONE atomic step (one IndexedDB transaction; one SQLite statement). The one way a row changes
+   * conversation: a write never does (`saveMessages` writes under the key it is given).
+   *
+   * A row `toConversationId` already holds under the same id STANDS: the source's copy is removed.
+   * Idempotent - a second call finds nothing left to move.
+   */
+  moveMessages(
+    fromConversationId: string,
+    toConversationId: string,
+    ids: readonly string[]
+  ): Promise<MessageMove>;
   /**
    * Remove one message row outright. No-op when the row is absent.
    *
@@ -930,7 +949,8 @@ export interface IStorage {
    */
   deleteMessage(id: string, conversationId: string): Promise<void>;
   /**
-   * Decrypt and return ONE message by its id, or `null` when the row is absent or undecryptable.
+   * Decrypt and return ONE message by its key `(conversationId, id)`, or `null` when the row is
+   * absent or undecryptable.
    *
    * A keyed lookup, so it costs the same in a conversation of ten messages and one of ten thousand.
    * It exists because a write sometimes has to know what it would be replacing - the FCM cache
@@ -940,23 +960,37 @@ export interface IStorage {
    * awaiting WebCrypto. So the read is a separate step here, exactly as in `updateMessage`, and a
    * caller that needs the pair to be indivisible must run where nothing else writes.
    */
-  getMessage(id: string, deviceKeyB64: string): Promise<StoredMessage | null>;
+  getMessage(
+    conversationId: string,
+    id: string,
+    deviceKeyB64: string
+  ): Promise<StoredMessage | null>;
   /**
-   * Where the row of `id` stands, in ANY conversation, and whether this device opens it - the one
-   * read that tells an absent row from one this key cannot open, which `getMessage` (null for both)
-   * and the scoped reads (a row of another conversation read as absent, said at warn) cannot. Says
-   * nothing itself: the caller knows what the answer means.
+   * Where the row `(conversationId, id)` stands, and whether this device opens it - the one read that
+   * tells an absent row from one this key cannot open, which `getMessage` (null for both) cannot.
+   * Says nothing itself: the caller knows what the answer means.
    */
-  getMessageStanding(id: string, deviceKeyB64: string): Promise<MessageRowStanding>;
+  getMessageStanding(
+    conversationId: string,
+    id: string,
+    deviceKeyB64: string
+  ): Promise<MessageRowStanding>;
+  /**
+   * The conversations holding a row under the message id `id`, decrypting nothing - on an index of
+   * the id, never a walk of the store. SEVERAL is an ordinary answer: a message id is chosen by the
+   * frame that carries it, so two conversations may each hold one. For a caller that knows only an id
+   * it minted itself (a quick reply's, an own message's bubble): it reads each row by its key and
+   * keeps the one it can tell is its own, never the first one found.
+   */
+  findMessageConversations(id: string): Promise<string[]>;
   /**
    * The rows of `conversationId` stored under `ids`, read by primary key in one pass - what a seam
    * that is handed a batch of messages asks before it writes, so a row stored but not on screen is
    * never written over. Its cost is the batch's, never the conversation's.
    *
-   * SCOPED TO THE CONVERSATION: a message id is global in the store, and a frame of one
-   * conversation naming a row of another must not reach it (a member removed from B deleting her
-   * old B message through a frame sent in A). A row of another conversation reads as absent, and is
-   * said at warn.
+   * KEYED BY THE CONVERSATION: a stored message is `(conversationId, id)` (SQLite v23, IndexedDB
+   * v15), so a frame of one conversation naming an id never reaches a row of another - the other
+   * conversation's row under the same id is simply another row.
    *
    * `unreadable` names the ids a row stands under that this device key cannot open: `getMessage`
    * reports those as `null` like an absent row, and only an absent one may be written.
@@ -1093,7 +1127,7 @@ export interface IStorage {
 
   /**
    * Non-destructive insert: write the encrypted message row only if no row
-   * with this id already exists.  This ensures messages received after the
+   * stands under its key `(conversationId, id)`.  This ensures messages received after the
    * backup was taken are preserved on the target device.
    */
   importEncryptedRow(row: EncryptedMessageRow): Promise<void>;

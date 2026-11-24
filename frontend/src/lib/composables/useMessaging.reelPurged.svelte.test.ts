@@ -39,7 +39,9 @@ function fakeStorage(rows: StoredMessage[]) {
       const row = byId.get(id);
       if (row) byId.set(id, mergeStoredMessage(row, patch));
     }),
-    getMessage: vi.fn(async (id: string) => byId.get(id) ?? null),
+    getMessage: vi.fn(async (c: string, id: string) =>
+      byId.get(id)?.conversationId === c ? byId.get(id)! : null
+    ),
   };
 }
 
@@ -108,13 +110,16 @@ describe('recordReelPurged', () => {
     expect(later.log).toHaveBeenCalledWith(expect.stringContaining('the first kept'));
   });
 
-  it('with the message in no loaded conversation, still records it on the row, once', async () => {
+  it('with the message in no loaded conversation, writes no row (its key needs the conversation) and says so', async () => {
     const { useMessaging } = await import('./useMessaging.svelte');
     const storage = fakeStorage([row('r5', DM, { mediaPurgedAt: 3 })]);
     const ctx = ctxFor({ [DM]: [] }, storage);
     await useMessaging().recordReelPurged('r5', 8, ctx);
     expect(storage.rows.get('r5')!.mediaPurgedAt).toBe(3);
     expect(storage.updateMessage).not.toHaveBeenCalled();
+    expect(ctx.log).toHaveBeenCalledWith(
+      expect.stringContaining('no loaded conversation holds it')
+    );
   });
 
   it('says, with its cost, a row it could not write (absent or unreadable)', async () => {

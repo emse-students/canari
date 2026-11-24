@@ -97,7 +97,7 @@ describe('a message and its mutations delivered in one drain', () => {
     // The bulk flush shows no server time (it never did); the stored row carries it.
     expect(rows[0]).toMatchObject({ id: 'm1', isDeleted: true });
     expect(rows[0].content).toBe(m.chat_system_message_deleted());
-    const row = await d.storage.getMessage('m1', KEY);
+    const row = await d.storage.getMessage(CONVO, 'm1', KEY);
     expect(row).toMatchObject({ isDeleted: true, serverTimestamp: 2_000 });
     expect(row?.content).toBe(m.chat_system_message_deleted());
     // The deleted text never reached the store, not even transiently.
@@ -133,7 +133,7 @@ describe('a message and its mutations delivered in one drain', () => {
     expect(d.shown()).toHaveLength(1);
     expect(d.shown()[0]).toMatchObject({ id: 'm1', content: 'a message', senderId: PEER });
     expect(d.shown()[0].isDeleted).toBeFalsy();
-    expect(await d.storage.getMessage('m1', KEY)).toMatchObject({ content: 'a message' });
+    expect(await d.storage.getMessage(CONVO, 'm1', KEY)).toMatchObject({ content: 'a message' });
     expect((await pending(d.storage)).entries).toEqual([]);
     expect(warn.mock.calls.flat().join(' ')).toContain('Discarded a delete');
   });
@@ -146,7 +146,9 @@ describe('a message and its mutations delivered in one drain', () => {
     await bodyFrame(d, PEER, 'm1', 'the deleted text');
 
     expect(d.shown()[0]).toMatchObject({ id: 'm1', isDeleted: true });
-    expect((await d.storage.getMessage('m1', KEY))?.content).toBe(m.chat_system_message_deleted());
+    expect((await d.storage.getMessage(CONVO, 'm1', KEY))?.content).toBe(
+      m.chat_system_message_deleted()
+    );
     expect((await pending(d.storage)).entries).toEqual([]);
   });
 
@@ -159,7 +161,7 @@ describe('a message and its mutations delivered in one drain', () => {
 
     expect(d.shown()[0].content).toContain('the real edit');
     expect(d.shown()[0].isEdited).toBe(true);
-    expect((await d.storage.getMessage('m1', KEY))?.content).toContain('the real edit');
+    expect((await d.storage.getMessage(CONVO, 'm1', KEY))?.content).toContain('the real edit');
     expect((await pending(d.storage)).entries).toEqual([]);
   });
 
@@ -183,7 +185,9 @@ describe('a message and its mutations delivered in one drain', () => {
 
     expect(d.shown()).toHaveLength(1);
     expect(d.shown()[0]).toMatchObject({ id: 'm1', isDeleted: true, serverTimestamp: 2_000 });
-    expect((await d.storage.getMessage('m1', KEY))?.content).toBe(m.chat_system_message_deleted());
+    expect((await d.storage.getMessage(CONVO, 'm1', KEY))?.content).toBe(
+      m.chat_system_message_deleted()
+    );
   });
 
   it('never upgrades a DELETED notification preview back into its body', async () => {
@@ -210,7 +214,9 @@ describe('a message and its mutations delivered in one drain', () => {
 
     expect(d.shown()[0]).toMatchObject({ id: 'm1', isDeleted: true });
     expect(d.shown()[0].content).toBe(m.chat_system_message_deleted());
-    expect((await d.storage.getMessage('m1', KEY))?.content).toBe(m.chat_system_message_deleted());
+    expect((await d.storage.getMessage(CONVO, 'm1', KEY))?.content).toBe(
+      m.chat_system_message_deleted()
+    );
   });
 
   it('an edit of a notification PREVIEW waits for the body, and the body arrives edited', async () => {
@@ -246,7 +252,7 @@ describe('a message and its mutations delivered in one drain', () => {
     expect(d.shown()[0]).toMatchObject({ id: 'm1', isEdited: true });
     expect(d.shown()[0].content).toContain('the edited text');
     expect(d.shown()[0].isFcmPreview).toBeFalsy();
-    const row = await d.storage.getMessage('m1', KEY);
+    const row = await d.storage.getMessage(CONVO, 'm1', KEY);
     expect(row).toMatchObject({ isEdited: true, editedAt: 5_000 });
     expect(row?.content).toContain('the edited text');
     expect((await pending(d.storage)).entries).toEqual([]);
@@ -290,7 +296,7 @@ describe('a message and its mutations delivered in one drain', () => {
     await d.messaging.endBulkMessageIngest(d.ctx, DRAIN);
 
     expect(d.shown()[0].content).toContain('the edited text');
-    const row = await d.storage.getMessage('m1', KEY);
+    const row = await d.storage.getMessage(CONVO, 'm1', KEY);
     expect(row?.content).toContain('the edited text');
     expect(row).toMatchObject({ isEdited: true, editedAt: 5_000 });
     expect(row?.isFcmPreview).toBeFalsy();
@@ -304,11 +310,11 @@ describe('a message and its mutations delivered in one drain', () => {
     );
 
     await editFrame(d, PEER, 'm1', 'the edited text', 5_000);
-    expect((await d.storage.getMessage('m1', KEY))?.isEdited).toBeFalsy();
+    expect((await d.storage.getMessage(CONVO, 'm1', KEY))?.isEdited).toBeFalsy();
     expect((await pending(d.storage)).entries).toMatchObject([{ kind: 'edit' }]);
     await bodyFrame(d, PEER, 'm1', '{"kind":"text","text":"the original text"}');
 
-    expect((await d.storage.getMessage('m1', KEY))?.content).toContain('the edited text');
+    expect((await d.storage.getMessage(CONVO, 'm1', KEY))?.content).toContain('the edited text');
     expect((await pending(d.storage)).entries).toEqual([]);
   });
 
@@ -321,7 +327,9 @@ describe('a message and its mutations delivered in one drain', () => {
     await bodyFrame(again, PEER, 'm1', 'original');
 
     expect(again.shown()[0].content).toContain('edited before arrival');
-    expect((await storage.getMessage('m1', KEY))?.content).toContain('edited before arrival');
+    expect((await storage.getMessage(CONVO, 'm1', KEY))?.content).toContain(
+      'edited before arrival'
+    );
   });
 
   it('keeps a legacy remove_reaction whose message is not here yet, through the one reaction path', async () => {
@@ -338,7 +346,7 @@ describe('a message and its mutations delivered in one drain', () => {
     expect(d.messaging.messageReactions.get('m1')).toEqual([
       expect.objectContaining({ emoji: '👍', userId: OTHER, removed: true }),
     ]);
-    expect((await d.storage.getMessage('m1', KEY))?.reactions).toEqual([
+    expect((await d.storage.getMessage(CONVO, 'm1', KEY))?.reactions).toEqual([
       expect.objectContaining({ emoji: '👍', userId: OTHER, removed: true }),
     ]);
   });
@@ -356,7 +364,7 @@ describe('a message and its mutations delivered in one drain', () => {
     await bodyFrame(d, PEER, 'm1', 'a message');
     await d.messaging.endBulkMessageIngest(d.ctx, DRAIN);
 
-    expect((await d.storage.getMessage('m1', KEY))?.reactions).toEqual([
+    expect((await d.storage.getMessage(CONVO, 'm1', KEY))?.reactions).toEqual([
       expect.objectContaining({ emoji: '🎉', userId: OTHER }),
     ]);
     expect((await pending(d.storage)).entries).toEqual([]);
@@ -384,7 +392,7 @@ describe('the two races between a mutation handler and a message writer (finding
 
     await deleteFrame(d, PEER, 'm1');
 
-    expect(await d.storage.getMessage('m1', KEY)).toMatchObject({ isDeleted: true });
+    expect(await d.storage.getMessage(CONVO, 'm1', KEY)).toMatchObject({ isDeleted: true });
     expect((await pending(d.storage)).entries).toEqual([]);
   });
 
@@ -410,7 +418,7 @@ describe('the two races between a mutation handler and a message writer (finding
     await bodyFrame(d, PEER, 'm1', 'the deleted text');
     await d.messaging.endBulkMessageIngest(d.ctx, DRAIN);
 
-    expect(await d.storage.getMessage('m1', KEY)).toMatchObject({ isDeleted: true });
+    expect(await d.storage.getMessage(CONVO, 'm1', KEY)).toMatchObject({ isDeleted: true });
     expect(d.shown()[0]).toMatchObject({ id: 'm1', isDeleted: true });
   });
 
@@ -426,7 +434,7 @@ describe('the two races between a mutation handler and a message writer (finding
     await bodyFrame(d, PEER, 'm1', 'the deleted text');
     await d.messaging.endBulkMessageIngest(d.ctx, DRAIN);
 
-    expect(await d.storage.getMessage('m1', KEY)).toMatchObject({ isDeleted: true });
+    expect(await d.storage.getMessage(CONVO, 'm1', KEY)).toMatchObject({ isDeleted: true });
     expect(d.shown()[0]).toMatchObject({ id: 'm1', isDeleted: true });
     expect((await pending(d.storage)).entries).toEqual([]);
   });
@@ -454,7 +462,7 @@ describe('a mutation kept before its message, met by a relayed copy (findings 6 
 
     await bundle(d, PEER, PEER);
 
-    expect(await d.storage.getMessage('m1', KEY)).toMatchObject({
+    expect(await d.storage.getMessage(CONVO, 'm1', KEY)).toMatchObject({
       isDeleted: true,
       content: m.chat_system_message_deleted(),
     });
@@ -469,7 +477,7 @@ describe('a mutation kept before its message, met by a relayed copy (findings 6 
     // Relayed unsigned by somebody who is not its author: kept as unverified, never suppressed.
     await bundle(d, 'carol', PEER);
 
-    const row = await d.storage.getMessage('m1', KEY);
+    const row = await d.storage.getMessage(CONVO, 'm1', KEY);
     expect(row).toMatchObject({ senderId: PEER, content: 'hello' });
     expect(row?.isDeleted).toBeFalsy();
     // RETAINED, not discarded: the copy's author is a claim nobody proved, so a deletion by

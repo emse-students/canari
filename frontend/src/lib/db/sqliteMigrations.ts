@@ -16,7 +16,7 @@
  */
 
 /** Current schema version. A freshly created database is stamped with this and skips all migrations. */
-export const SCHEMA_VERSION = 22;
+export const SCHEMA_VERSION = 23;
 
 /** Columns the v1 -> v2 purge inspects, when they exist. Historical: `salt` is gone since 2c3ec6fe. */
 const BLOB_LEGACY_COLUMNS = ['iv', 'salt', 'cipher_text'] as const;
@@ -338,3 +338,142 @@ export function messageRevisionStatement(columns: readonly string[]): string | n
     ? null
     : 'ALTER TABLE messages ADD COLUMN rev INTEGER NOT NULL DEFAULT 0';
 }
+
+/**
+ * THE `messages` TABLE, KEYED BY ITS CONVERSATION (v23): a stored message is the pair
+ * `(conversation_id, id)`. A message id is chosen by the frame that carries it, so the same id may
+ * name a row in two conversations, and each conversation keeps its own. The one definition, used by
+ * the fresh schema and by the v23 rebuild ({@link messageRekeySteps}).
+ *
+ * `id` carries no `NOT NULL`, exactly as the old single-column key did not (SQLite lets a non-integer
+ * primary key hold NULL): the rebuild copies with `INSERT OR IGNORE`, which would SKIP a row a
+ * constraint the old table never had refuses - and the rebuild keeps every row.
+ *
+ * NO FOREIGN KEY onto `conversations` any more. It cascaded nothing (`deleteConversation` deletes
+ * the rows itself), and a file may hold a row whose conversation row is gone - written while the
+ * constraint was not enforced on that connection. The rebuild's copy would then FAIL on it, and a
+ * store that cannot finish its migration cannot open: the constraint is dropped rather than the row.
+ */
+export function messagesTableStatement(name: string): string {
+  return `
+            CREATE TABLE IF NOT EXISTS ${name} (
+                id              TEXT,
+                conversation_id TEXT NOT NULL,
+                timestamp       INTEGER,
+                iv              TEXT,
+                cipher_text     TEXT,
+                order_at        INTEGER,
+                order_pending   INTEGER,
+                rev             INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (conversation_id, id)
+            )
+        `;
+}
+
+/** The staging table of the v23 rebuild; its presence is the durable mark of a rebuild under way. */
+export const MESSAGES_REKEY_STAGING = 'messages_rekey';
+
+/** Every column the v23 rebuild carries, in the order of {@link messagesTableStatement}. */
+const MESSAGE_REKEY_COLUMNS = [
+  'id',
+  'conversation_id',
+  'timestamp',
+  'iv',
+  'cipher_text',
+  'order_at',
+  'order_pending',
+  'rev',
+] as const;
+
+/** One row of `PRAGMA table_info(messages)`, as far as the key decision reads it. */
+export interface TableInfoRow {
+  name: string;
+  pk: number;
+}
+
+/**
+ * Whether `messages` is keyed by `(conversation_id, id)`, read from `PRAGMA table_info(messages)`:
+ * `pk` is a column's 1-based place in the primary key, 0 outside it.
+ */
+export function messagesKeyedByConversation(info: readonly TableInfoRow[]): boolean {
+  const key = info
+    .filter((c) => Number(c.pk) > 0)
+    .sort((a, b) => Number(a.pk) - Number(b.pk))
+    .map((c) => String(c.name));
+  return key.length === 2 && key[0] === 'conversation_id' && key[1] === 'id';
+}
+
+/**
+ * The rows of `messages` the staging table does not hold yet - the proof the rebuild owes before it
+ * drops anything. `IS` and not `=` on the id, so a NULL id (see {@link messagesTableStatement}) is
+ * matched rather than reported missing.
+ */
+export const MESSAGES_REKEY_MISSING_COUNT =
+  `SELECT COUNT(*) AS n FROM messages m WHERE NOT EXISTS (SELECT 1 FROM ${MESSAGES_REKEY_STAGING} s ` +
+  'WHERE s.conversation_id = m.conversation_id AND s.id IS m.id)';
+
+/** What the v23 rebuild owes, as {@link messageRekeySteps} reads it from the file. */
+export interface MessageRekeyState {
+  /** `messages` is already keyed by `(conversation_id, id)` ({@link messagesKeyedByConversation}). */
+  keyed: boolean;
+  /** {@link MESSAGES_REKEY_STAGING} exists: a rebuild began and did not finish. */
+  staging: boolean;
+  /** The columns `messages` has now, from `PRAGMA table_info(messages)`. */
+  columns: readonly string[];
+}
+
+/**
+ * THE v22 -> v23 REBUILD, AS STATEMENTS DECIDED FROM DURABLE STATE - NEVER FROM A CLOCK OR A FLAG
+ * THE APP KEEPS. SQLite cannot change a primary key in place, so `messages` is rebuilt: a staging
+ * table with the composite key, every row copied into it, the old table dropped, the staging table
+ * renamed, the indexes made again.
+ *
+ * NOT ONE `BEGIN`/`COMMIT`, BECAUSE THE PLUGIN CANNOT GIVE ONE: it pools its connections, and a
+ * `BEGIN` and its `COMMIT` may reach two of them (`sqliteBatch.ts`, measured on device). So each step
+ * is ONE statement - atomic on its own - and the whole is RESUMABLE: the file always says which step
+ * is owed.
+ *
+ * - `keyed` and no staging: done, nothing owed (a fresh file, or a rebuild that finished).
+ * - no staging: the rebuild has not begun - the staging table is created, then everything below.
+ * - staging: a rebuild began. Whatever `messages` is now - the old table (killed before or after the
+ *   copy), or the empty keyed table `init`'s own `CREATE TABLE IF NOT EXISTS` made after a kill
+ *   between the drop and the rename - its rows are copied in AGAIN with `INSERT OR IGNORE`, which
+ *   finds the rows already copied under their key and adds the others. So a second run converges.
+ *
+ * The caller runs the copy, PROVES with {@link MESSAGES_REKEY_MISSING_COUNT} that the staging table
+ * holds every row of `messages`, and only then runs `drop` (the drop, the rename, the indexes): the
+ * destructive step is gated on knowing nothing would be lost.
+ */
+export function messageRekeySteps(state: MessageRekeyState): {
+  copy: string[];
+  drop: string[];
+} {
+  if (state.keyed && !state.staging) return { copy: [], drop: [] };
+  const carried = MESSAGE_REKEY_COLUMNS.filter((c) => state.columns.includes(c)).join(', ');
+  return {
+    copy: [
+      ...(state.staging ? [] : [messagesTableStatement(MESSAGES_REKEY_STAGING)]),
+      `INSERT OR IGNORE INTO ${MESSAGES_REKEY_STAGING} (${carried}) SELECT ${carried} FROM messages`,
+    ],
+    drop: [
+      'DROP TABLE messages',
+      `ALTER TABLE ${MESSAGES_REKEY_STAGING} RENAME TO messages`,
+      MESSAGE_CONVERSATION_INDEX_STATEMENT,
+      MESSAGE_ID_INDEX_STATEMENT,
+      MESSAGE_ORDER_INDEX_STATEMENT,
+      MESSAGE_ORDER_PENDING_INDEX_STATEMENT,
+      MESSAGE_ORDER_MISSING_INDEX_STATEMENT,
+    ],
+  };
+}
+
+/** The `conversation_id` index every read of one conversation's rows walks. */
+export const MESSAGE_CONVERSATION_INDEX_STATEMENT =
+  'CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id)';
+
+/**
+ * The index on the message id ALONE (v23), which the key `(conversation_id, id)` cannot serve: what
+ * `findMessageConversations` reads, for a caller that knows only an id it minted.
+ */
+export const MESSAGE_ID_INDEX_STATEMENT =
+  'CREATE INDEX IF NOT EXISTS idx_messages_id ON messages(id)';

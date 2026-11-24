@@ -826,11 +826,11 @@ export function useConversations() {
       ...(m.editedAt ? { editedAt: m.editedAt.getTime() } : {}),
       ...(m.isDeleted ? { isDeleted: true } : {}),
     }));
-    // THE PARENT ROW FIRST: `messages.conversation_id` is a foreign key onto `conversations`, and the
-    // salon listing builds a salon's conversation in MEMORY only (`useChannelWorkspaces`), so the row
-    // of a salon this device meets for the first time is not on disk yet when its first page lands
-    // (measured on the iPhone 12, 2026-10-30: `FOREIGN KEY constraint failed` right after a new
-    // device's placeholder).
+    // THE PARENT ROW FIRST: the salon listing builds a salon's conversation in MEMORY only
+    // (`useChannelWorkspaces`), so the row of a salon this device meets for the first time is not on
+    // disk yet when its first page lands. Up to SQLite v22 `messages.conversation_id` was a foreign
+    // key onto `conversations` (measured on the iPhone 12, 2026-10-30: `FOREIGN KEY constraint
+    // failed` right after a new device's placeholder); v23 dropped it, and the row still goes first.
     try {
       await saveConversation(channelConversationId, ctx);
       await ctx.storage.deleteMessagesForConversation(channelConversationId);

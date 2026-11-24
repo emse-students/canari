@@ -790,11 +790,12 @@ export function resolveConversationListPresentation(
  * already merged away - every scoped read of the joined group then met them as rows of another
  * conversation, until the next boot's merge (2026-11-12, dev web).
  *
- * A MOVE, AND THE ONE WHOLE-ROW WRITE IT MAKES. A message id is the store's primary key, so a row of
- * `fromId` cannot also stand under `toId`: `toId`'s rows are never read nor rewritten. A move changes
- * a row's conversation, which the scoped compare-and-set (`mergeMessages`) refuses by design, so each
- * moved row is the STORED row just read - every field, proofs and reactions included - under its new
- * conversation. A row this device cannot open is not moved and is counted in `left`.
+ * AN EXPLICIT MOVE (`moveMessages`): a stored message is keyed by `(conversation, id)`, so moving a
+ * row is deleting its old key and writing its new one - in ONE atomic step, the ciphertext and every
+ * field (proofs, reactions, a tombstone) carried as stored. A write never moves a row, and the scoped
+ * compare-and-set (`mergeMessages`) never changes one's conversation. A row `toId` already holds
+ * under the same id stands, and `fromId`'s copy is removed. A row this device cannot open is not
+ * moved and is counted in `left`.
  *
  * THE MUTATIONS WAITING UNDER `fromId` GO WITH ITS ROWS. A deletion, edit or reaction kept under
  * `fromId` (`pendingMutations`, its message not there yet) waits for a message that will now arrive
@@ -807,8 +808,9 @@ export function resolveConversationListPresentation(
  * watermarks stay with it. Both callers run it while `fromId` is out of the reactive map, so no shown
  * path writes to it.
  *
- * @returns the ids of the rows moved, how many rows stayed under `fromId` because they did not open,
- *   and the message ids of the waiting mutations carried to `toId`
+ * @returns the ids of the rows now under `toId` (moved, or already held there), how many rows stayed
+ *   under `fromId` because they did not open, and the message ids of the waiting mutations carried
+ *   to `toId`
  */
 export async function moveDirectConversationRows(
   fromId: string,
@@ -816,12 +818,16 @@ export async function moveDirectConversationRows(
   storage: IStorage,
   deviceKeyB64: string
 ): Promise<{ moved: string[]; left: number; carried: string[] }> {
+  // Only the rows this device opens move: one it cannot open stays, counted in `left`.
   const source = await storage.getMessages(fromId, deviceKeyB64);
-  const moved = source.map((m) => ({ ...m, conversationId: toId }));
-  if (moved.length > 0) await storage.saveMessages(moved, deviceKeyB64);
+  const move = await storage.moveMessages(
+    fromId,
+    toId,
+    source.map((m) => m.id)
+  );
   const left = await storage.countMessages(fromId);
   const carried = await carryPendingMutations(fromId, toId, storage, deviceKeyB64);
-  return { moved: moved.map((m) => m.id), left, carried };
+  return { moved: [...move.moved, ...move.alreadyThere], left, carried };
 }
 
 /**

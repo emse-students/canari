@@ -615,7 +615,7 @@ describe('performPinChange - the one path of the change AND the recovery', () =>
     await Promise.all([inFlight, change]);
 
     await everyRowUnder(s.raw, NEW);
-    expect(await s.raw.getMessage('m9', NEW)).not.toBeNull();
+    expect(await s.raw.getMessage('conv-1', 'm9', NEW)).not.toBeNull();
   });
 
   it('a recovery whose MLS opens succeeds even with a row under an older key (no lockout)', async () => {
@@ -711,8 +711,10 @@ describe('performPinChange - the one path of the change AND the recovery', () =>
     await Promise.all(live);
 
     await everyRowUnder(s.raw, NEW);
-    expect((await s.raw.getMessage('m1', NEW))?.content).toBe(message('m1', 'edited').content);
-    expect(await s.raw.getMessage('m3', NEW)).not.toBeNull();
+    expect((await s.raw.getMessage('conv-1', 'm1', NEW))?.content).toBe(
+      message('m1', 'edited').content
+    );
+    expect(await s.raw.getMessage('conv-1', 'm3', NEW)).not.toBeNull();
     expect(await s.raw.getGraineSession('s3', NEW)).toEqual(session('s3'));
     expect((await s.raw.getOutboxEntry('o2', NEW))?.text).toBe('queued o2');
   });

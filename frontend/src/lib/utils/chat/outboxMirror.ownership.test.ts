@@ -167,7 +167,7 @@ function makeStorage(seed: OutboxEntry[] = []) {
       }
       return written;
     }),
-    getMessage: vi.fn(async (id: string) => rows.get(id) ?? null),
+    getMessage: vi.fn(async (_conversationId: string, id: string) => rows.get(id) ?? null),
     saveMessage: vi.fn(async () => {}),
     updateMessage: vi.fn(async (_c: string, id: string, patch: Partial<StoredMessage>) => {
       const row = rows.get(id);

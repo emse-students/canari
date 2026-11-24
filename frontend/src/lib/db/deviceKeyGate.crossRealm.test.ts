@@ -293,7 +293,7 @@ describe('deviceKeyGate across two tabs of one account', () => {
       sleeper.StaleDeviceKeyError
     );
     expect(ended).toEqual(['The device key changed while this tab was away']);
-    expect(await rawB.getMessage('m9', OLD)).toBeNull();
+    expect(await rawB.getMessage('conv-1', 'm9', OLD)).toBeNull();
   });
 
   it('a page suspended with a call INSIDE keeps the lock until that call has written', async () => {

@@ -215,7 +215,7 @@ function life(w: World, opts: LifeOptions = {}) {
   const s = w.storage;
   const storage = {
     saveMessage: vi.fn(async () => undefined),
-    getMessage: vi.fn(async (id: string) =>
+    getMessage: vi.fn(async (_conversationId: string, id: string) =>
       opts.tombstones?.includes(id) ? { id, isDeleted: true } : null
     ),
     saveOutboxEntry: (e: OutboxEntry, k: string) => live(() => s.saveOutboxEntry(e, k)),

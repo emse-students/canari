@@ -143,6 +143,7 @@ import {
   settlementHeld,
   type OutboxSettlement,
 } from '$lib/utils/chat/outbox';
+import { ownStoredMessage } from '$lib/utils/chat/ownStoredMessage';
 import {
   ConversationGoneError,
   MessagePairWriteError,
@@ -2844,8 +2845,11 @@ export function useMessaging() {
    * truth, so memory shows it instead of the copy built here.
    */
   async function showStoredInstead(ctx: MessagingContext, normalized: string, ids: string[]) {
-    console.log(
-      `[ADD_MSG] ${ids.length} arriving message(s) of "${normalized}" found a row written meanwhile - the stored row stands`
+    // The store's key is `(conversation, id)`: a row standing here is one of THIS conversation,
+    // written between the read and the write. A row another conversation holds under the same id
+    // never reaches this path - the arriving body is stored in its own conversation.
+    console.debug(
+      `[ADD_MSG] ${ids.length} arriving message(s) of "${normalized}" met a row of the same conversation written meanwhile - the stored row stands`
     );
     const stored = await storedRowsFor(ctx, normalized, ids);
     const c = ctx.conversations.get(normalized);
@@ -4434,11 +4438,11 @@ export function useMessaging() {
    * under another case waited for a look that never came.
    *
    * WRITE FIRST, LOOK SECOND - the protocol of `pendingMutationStore.ts`. The compare-and-set is
-   * tried first (the common case costs that one write); only when it wrote nothing does one unscoped
-   * look (`getMessageStanding`) say why, and EVERY outcome but a written row keeps the act: a row still
-   * moving here, none yet, or one the merge left because it already carried the shown state - kept,
-   * then settled at once by the keep's own look. A row that left between the write and the look is
-   * therefore kept, never lost.
+   * tried first (the common case costs that one write); only when it wrote nothing does one look at
+   * the row's key (`getMessageStanding`) say why, and EVERY outcome but a written row keeps the act: a
+   * row still moving here, none yet, or one the merge left because it already carried the shown state
+   * - kept, then settled at once by the keep's own look. A row that left between the write and the
+   * look is therefore kept, never lost.
    *
    * A ROW THAT STANDS AND DOES NOT OPEN (sealed under another key, or left under the old group by a
    * move) keeps the act too, as a peer's act is kept for such a row: a key change in flight (a PIN
@@ -4460,19 +4464,22 @@ export function useMessaging() {
         sender: canonicalUserId(ctx.userId),
         ...act,
       };
-      const standing = await ctx.storage.getMessageStanding(msg.id, ctx.deviceKeyB64);
+      const standing = await ctx.storage.getMessageStanding(
+        conversationId,
+        msg.id,
+        ctx.deviceKeyB64
+      );
       if (standing.kind === 'unreadable') {
         await keepPendingMutationForUnreadable(pendingDeps(ctx), entry, Date.now());
         return;
       }
-      const here = standing.kind === 'readable' && standing.conversationId === conversationId;
       await keepPendingMutation(
         pendingDeps(ctx),
         entry,
         Date.now(),
-        here
+        standing.kind === 'readable'
           ? 'was not written onto its row (unchanged, or it arrived after the write)'
-          : `found no row under ${conversationId.slice(0, 8)}... yet (its row is ${standing.kind === 'absent' ? 'not stored' : 'still under another conversation'})`
+          : `found no row under ${conversationId.slice(0, 8)}... yet (not stored, or still moving here)`
       );
     } catch (e) {
       ctx.log(`[DB] Failed to persist local mutation on ${msg.id}: ${String(e)}`);
@@ -4481,8 +4488,8 @@ export function useMessaging() {
 
   /**
    * The in-place half of {@link persistLocalMutation}: the shown state merged onto the stored row of
-   * `conversationId`; whether it was written. A row of another conversation is expected here (one
-   * still moving onto the shown one) and handled by the caller, so the store does not say it at warn.
+   * `conversationId`; whether it was written. No row there (one still moving onto the shown
+   * conversation, or none yet) is handled by the caller.
    */
   async function writeLocalMutation(
     conversationId: string,
@@ -4503,8 +4510,7 @@ export function useMessaging() {
       conversationId,
       [msg.id],
       (current) => mergeStoredMessage(current, patch),
-      ctx.deviceKeyB64,
-      { foreignExpected: true }
+      ctx.deviceKeyB64
     );
     return written.has(msg.id);
   }
@@ -4931,16 +4937,18 @@ export function useMessaging() {
     );
     const convo = key ? ctx.conversations.get(key) : undefined;
     if (!key || !convo) {
+      // A stored row is keyed by its conversation, and none is known here: nothing is written.
       ctx.log(
-        `[REEL] 410 on ${messageId.slice(0, 8)} not recorded in memory: no loaded conversation holds it`
+        `[REEL] 410 on ${messageId.slice(0, 8)} not recorded: no loaded conversation holds it - a reload asks again`
       );
-    } else {
-      const idx = convo.messages.findIndex((msg) => msg.id === messageId);
-      if (convo.messages[idx].mediaPurgedAt) return;
-      const msgs = [...convo.messages];
-      msgs[idx] = { ...msgs[idx], mediaPurgedAt: atMs };
-      ctx.conversations.set(key, { ...convo, messages: msgs });
+      return;
     }
+    const idx = convo.messages.findIndex((msg) => msg.id === messageId);
+    if (convo.messages[idx].mediaPurgedAt) return;
+    const msgs = [...convo.messages];
+    msgs[idx] = { ...msgs[idx], mediaPurgedAt: atMs };
+    ctx.conversations.set(key, { ...convo, messages: msgs });
+    const conversationId = convo.id;
     if (!ctx.storage) {
       ctx.log(
         `[REEL] 410 on ${messageId.slice(0, 8)} not persisted: no storage - a reload asks again`
@@ -4951,7 +4959,7 @@ export function useMessaging() {
       // THE FIRST INSTANT IS THE STORED ONE when there is one: memory may not hold the message (or
       // hold it from before a reload of another tab), so "already recorded" is asked of the row
       // itself, and an existing record is never overwritten - memory is aligned to it instead.
-      const stored = await ctx.storage.getMessage(messageId, ctx.deviceKeyB64);
+      const stored = await ctx.storage.getMessage(conversationId, messageId, ctx.deviceKeyB64);
       if (!stored) {
         ctx.log(
           `[REEL] 410 on ${messageId.slice(0, 8)} NOT persisted (its row is absent or unreadable) - a reload asks again`
@@ -4964,14 +4972,14 @@ export function useMessaging() {
         return;
       }
       await ctx.storage.updateMessage(
-        stored.conversationId,
+        conversationId,
         messageId,
         { mediaPurgedAt: atMs },
         ctx.deviceKeyB64
       );
       // `updateMessage` writes nothing on a row it cannot read, and says nothing: the read back is
       // what tells "on disk" from "asked".
-      const back = await ctx.storage.getMessage(messageId, ctx.deviceKeyB64);
+      const back = await ctx.storage.getMessage(conversationId, messageId, ctx.deviceKeyB64);
       ctx.log(
         back?.mediaPurgedAt
           ? `[REEL] 410 on ${messageId.slice(0, 8)} recorded on its row`
@@ -5298,7 +5306,10 @@ export function useMessaging() {
     const storage = ctx.storage;
     if (!storage) throw new Error('no store to read the message from');
     const entry = await storage.getOutboxEntry(messageId, ctx.deviceKeyB64, { withFile: false });
-    const row = entry ? null : await storage.getMessage(messageId, ctx.deviceKeyB64);
+    // The reply's id is all the drain knows: the row is the one THIS ACCOUNT authored under it.
+    const row = entry
+      ? null
+      : await ownStoredMessage(storage, messageId, ctx.userId, ctx.deviceKeyB64);
     return settlementHeld(entry, row);
   }
 

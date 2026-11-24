@@ -10,7 +10,7 @@ import {
 import { parseLocalReadSeed, parseReadWatermarks } from '$lib/utils/chat/readState';
 import { OutboxEntryWrittenAloneError } from '$lib/utils/chat/messageWrittenError';
 import type {
-  MergeMessagesOptions,
+  MessageMove,
   MessageRowStanding,
   ConversationMeta,
   EncryptedGraineRow,
@@ -91,6 +91,14 @@ import {
   CONVERSATION_LOCAL_READ_SEED_FILL,
   isFreshDatabase,
   legacyBlobPurgeStatement,
+  MESSAGE_CONVERSATION_INDEX_STATEMENT,
+  MESSAGE_ID_INDEX_STATEMENT,
+  MESSAGES_REKEY_MISSING_COUNT,
+  MESSAGES_REKEY_STAGING,
+  messageRekeySteps,
+  messagesKeyedByConversation,
+  messagesTableStatement,
+  type TableInfoRow,
   LEGACY_MESSAGE_TIME_INDEX_DROP,
   MESSAGE_ORDER_INDEX_STATEMENT,
   MESSAGE_ORDER_MISSING_INDEX_STATEMENT,
@@ -106,6 +114,7 @@ import {
   compareStoredOrder,
   fromMessagePayload,
   mergeStoredMessage,
+  singleConversationOf,
   storedOrderAt,
   toMessagePayload,
 } from './messagePayload';
@@ -291,23 +300,11 @@ export class SqliteStorage implements IStorage {
     // serialise Uint8Array values as JSON text "[1,2,3]" → unreadable after restart.
     // No salt column — the deviceKeyB64 is imported directly as an AES-256-GCM key
     // (no PBKDF2 derivation needed per message).
-    await this.db.execute(`
-            CREATE TABLE IF NOT EXISTS messages (
-                id              TEXT PRIMARY KEY,
-                conversation_id TEXT NOT NULL,
-                timestamp       INTEGER,
-                iv              TEXT,
-                cipher_text     TEXT,
-                order_at        INTEGER,
-                order_pending   INTEGER,
-                rev             INTEGER NOT NULL DEFAULT 0,
-                FOREIGN KEY (conversation_id) REFERENCES conversations(id)
-            )
-        `);
+    // Keyed by `(conversation_id, id)` since v23 (`messagesTableStatement`): an older file keeps
+    // its single-column key until the v23 rebuild below.
+    await this.db.execute(messagesTableStatement('messages'));
 
-    await this.db.execute(
-      'CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id)'
-    );
+    await this.db.execute(MESSAGE_CONVERSATION_INDEX_STATEMENT);
     // The page read's index (`idx_messages_conv_order`, on `order_at`) and the pending rows' index are
     // NOT created here: an older file has neither column until the v16 step below adds them. The
     // fresh branch and that step create them (`MESSAGE_ORDER_INDEX_STATEMENT`,
@@ -401,6 +398,7 @@ export class SqliteStorage implements IStorage {
     // current version and skip every branch below: they are written against schemas this file
     // never had, and running them is how "no such column: salt" broke every fresh install.
     if (fresh) {
+      await this.db.execute(MESSAGE_ID_INDEX_STATEMENT);
       await this.db.execute(MESSAGE_ORDER_INDEX_STATEMENT);
       await this.db.execute(MESSAGE_ORDER_PENDING_INDEX_STATEMENT);
       await this.db.execute(MESSAGE_ORDER_MISSING_INDEX_STATEMENT);
@@ -671,6 +669,16 @@ export class SqliteStorage implements IStorage {
       await this.db.execute('PRAGMA user_version = 22');
     }
 
+    // v22->v23: a stored message is keyed by its CONVERSATION and its id (`messagesTableStatement`).
+    // Run on EVERY OPEN of a file that is not fresh, not only under v23: the rebuild reads what it
+    // owes from the file itself (`messageRekeySteps`), so a rebuild a kill interrupted is resumed
+    // here, whatever the version says, and a finished one costs two reads of the schema.
+    await this.rekeyMessagesByConversation();
+    if (currentVersion < 23) {
+      // Stamped at 23, NOT at SCHEMA_VERSION, for the reason spelled out in the v6 branch.
+      await this.db.execute('PRAGMA user_version = 23');
+    }
+
     // EVERY OPEN, not only under v22: the rank columns are guarded by name, so this is a no-op once
     // they are there. A store an earlier head of #3888 already stamped 22 with fewer of them skipped
     // the branch above and failed every `saveConversation`, which names all three. Additive and NULL
@@ -694,6 +702,45 @@ export class SqliteStorage implements IStorage {
     // write would otherwise keep paying for an index nothing reads.
     await this.db.execute(MESSAGE_PROVISIONAL_ORDER_FILL);
     await this.db.execute(LEGACY_MESSAGE_TIME_INDEX_DROP);
+  }
+
+  /**
+   * The v23 rebuild of `messages` onto the key `(conversation_id, id)` - see `messageRekeySteps`,
+   * which decides from the file what is still owed. Every row is copied, and the old table is dropped
+   * only once a count proves the staging table holds each of them; a count that does not prove it
+   * throws, leaving both tables for the next open.
+   */
+  private async rekeyMessagesByConversation(): Promise<void> {
+    const info: TableInfoRow[] = await this.db.select('PRAGMA table_info(messages)');
+    const staged: any[] = await this.db.select(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = $1",
+      [MESSAGES_REKEY_STAGING]
+    );
+    const state = {
+      keyed: messagesKeyedByConversation(info),
+      staging: staged.length > 0,
+      columns: info.map((c) => String(c.name)),
+    };
+    const steps = messageRekeySteps(state);
+    if (steps.copy.length === 0) return;
+    const before: any[] = await this.db.select('SELECT COUNT(*) AS n FROM messages');
+    console.info(
+      `[SQLite] Migration v22->v23: keying ${Number(before[0]?.n ?? 0)} message row(s) by their conversation${state.staging ? ' (resuming a rebuild a kill interrupted)' : ''}`
+    );
+    for (const statement of steps.copy) await this.db.execute(statement);
+    const missing: any[] = await this.db.select(MESSAGES_REKEY_MISSING_COUNT);
+    const unproven = Number(missing[0]?.n ?? 0);
+    if (unproven !== 0) {
+      console.error(
+        `[SQLite] Migration v22->v23: ${unproven} message row(s) are not in the staging table after the copy - the old table is KEPT`
+      );
+      throw new Error(`messages rekey: ${unproven} row(s) not copied - old table kept`);
+    }
+    for (const statement of steps.drop) await this.db.execute(statement);
+    const after: any[] = await this.db.select('SELECT COUNT(*) AS n FROM messages');
+    console.info(
+      `[SQLite] Migration v22->v23: ${Number(after[0]?.n ?? 0)} message row(s) now keyed by (conversation, id)`
+    );
   }
 
   // -- Conversations -------------------------------------------------------
@@ -806,10 +853,13 @@ export class SqliteStorage implements IStorage {
 
   // -- Messages ------------------------------------------------------------
 
-  /** Remove one message row by primary key; a missing row deletes nothing and is not an error. */
+  /** Remove one message row by its key `(conversationId, id)`; a missing row is not an error. */
   async deleteMessage(id: string, conversationId: string): Promise<void> {
     invalidateHistoryStateKey(conversationId);
-    await this.db.execute('DELETE FROM messages WHERE id = $1', [id]);
+    await this.db.execute('DELETE FROM messages WHERE conversation_id = $1 AND id = $2', [
+      conversationId,
+      id,
+    ]);
   }
 
   /** Encrypt and persist a single message; delegates to saveMessages. */
@@ -817,10 +867,11 @@ export class SqliteStorage implements IStorage {
     return this.saveMessages([msg], deviceKeyB64);
   }
 
-  /** See {@link IStorage.saveMessagesIfAbsent}: `INSERT OR IGNORE`, which a held id turns into nothing. */
+  /** See {@link IStorage.saveMessagesIfAbsent}: `INSERT OR IGNORE`, which a held key turns into nothing. */
   async saveMessagesIfAbsent(msgs: StoredMessage[], deviceKeyB64: string): Promise<Set<string>> {
     const written = new Set<string>();
     if (msgs.length === 0) return written;
+    const conversationId = singleConversationOf(msgs);
     const sealed = await Promise.all(
       msgs.map(async (msg) => ({
         msg,
@@ -845,12 +896,12 @@ export class SqliteStorage implements IStorage {
       const ours = new Map(batch.map((item) => [item.msg.id, uint8ToBase64(item.encrypted.iv)]));
       const placeholders = batch.map((_, i) => `$${i + 1}`).join(', ');
       const rows: Array<{ id: string; iv: string }> = await this.db.select(
-        `SELECT id, iv FROM messages WHERE id IN (${placeholders})`,
-        batch.map((item) => item.msg.id)
+        `SELECT id, iv FROM messages WHERE conversation_id = $${batch.length + 1} AND id IN (${placeholders})`,
+        [...batch.map((item) => item.msg.id), conversationId]
       );
       for (const row of rows) if (ours.get(row.id) === row.iv) written.add(row.id);
     }
-    for (const msg of msgs) if (written.has(msg.id)) invalidateHistoryStateKey(msg.conversationId);
+    if (written.size > 0) invalidateHistoryStateKey(conversationId);
     return written;
   }
 
@@ -922,34 +973,71 @@ export class SqliteStorage implements IStorage {
     conversationId: string,
     ids: readonly string[],
     merge: StoredMessageMerge,
-    deviceKeyB64: string,
-    opts: MergeMessagesOptions = {}
+    deviceKeyB64: string
   ): Promise<Set<string>> {
-    return casMergeMessages(
-      this.revisedRows(),
-      conversationId,
-      ids,
-      merge,
-      deviceKeyB64,
-      opts.foreignExpected === true
+    return casMergeMessages(this.revisedRows(), conversationId, ids, merge, deviceKeyB64);
+  }
+
+  /**
+   * See {@link IStorage.moveMessages}: ONE `UPDATE OR IGNORE` re-keys every named row of
+   * `fromConversationId` that `toConversationId` does not hold yet - one statement, atomic, the
+   * largest unit the plugin gives (`sqliteBatch.ts`) - then ONE `DELETE` removes from
+   * `fromConversationId` the rows `toConversationId` already held under the same id. Both are
+   * idempotent: a kill between them leaves a copy, which the next move removes.
+   */
+  async moveMessages(
+    fromConversationId: string,
+    toConversationId: string,
+    ids: readonly string[]
+  ): Promise<MessageMove> {
+    const out: MessageMove = { moved: [], alreadyThere: [] };
+    const unique = [...new Set(ids)];
+    if (unique.length === 0 || fromConversationId === toConversationId) return out;
+    invalidateHistoryStateKey(fromConversationId);
+    invalidateHistoryStateKey(toConversationId);
+    for (const batch of chunk(unique, MAX_BOUND_PARAMETERS - 2)) {
+      const placeholders = batch.map((_, i) => `$${i + 3}`).join(', ');
+      const params = [fromConversationId, toConversationId, ...batch];
+      const rows: Array<{ id: string; conversation_id: string }> = await this.db.select(
+        `SELECT id, conversation_id FROM messages WHERE conversation_id IN ($1, $2) AND id IN (${placeholders})`,
+        params
+      );
+      const there = new Set(
+        rows.filter((r) => r.conversation_id === toConversationId).map((r) => String(r.id))
+      );
+      const here = new Set(
+        rows.filter((r) => r.conversation_id === fromConversationId).map((r) => String(r.id))
+      );
+      await this.db.execute(
+        `UPDATE OR IGNORE messages SET conversation_id = $2, rev = rev + 1 WHERE conversation_id = $1 AND id IN (${placeholders})`,
+        params
+      );
+      await this.db.execute(
+        `DELETE FROM messages WHERE conversation_id = $1 AND id IN (${placeholders}) AND id IN (SELECT id FROM messages WHERE conversation_id = $2)`,
+        params
+      );
+      for (const id of batch) {
+        if (!here.has(id)) continue;
+        (there.has(id) ? out.alreadyThere : out.moved).push(id);
+      }
+    }
+    console.debug(
+      `[DB] moved ${out.moved.length} message row(s) from ${fromConversationId.slice(0, 8)}... to ${toConversationId.slice(0, 8)}... (${out.alreadyThere.length} already held there, the copy removed)`
     );
+    return out;
   }
 
   /**
    * The two halves of the compare-and-set: rows read with their revision, and one
-   * `UPDATE ... WHERE id = ? AND rev = ?` per row - a single statement each, so nothing lands between
+   * `UPDATE ... WHERE conversation_id = ? AND id = ? AND rev = ?` per row - a single statement each, so nothing lands between
    * the compare and the write, whichever pooled connection runs it.
    */
   private revisedRows() {
     return {
-      read: (
-        conversationId: string | null,
-        ids: readonly string[],
-        deviceKeyB64: string,
-        foreignExpected: boolean
-      ) => this.readRows(conversationId, ids, deviceKeyB64, foreignExpected),
+      read: (conversationId: string, ids: readonly string[], deviceKeyB64: string) =>
+        this.readRows(conversationId, ids, deviceKeyB64),
       writeIfUnchanged: async (
-        conversationId: string | null,
+        conversationId: string,
         writes: ReadonlyArray<RevisedWrite>,
         deviceKeyB64: string
       ): Promise<Set<string>> => {
@@ -959,7 +1047,7 @@ export class SqliteStorage implements IStorage {
           const result = await this.db.execute(
             `UPDATE messages SET timestamp = $1, iv = $2, cipher_text = $3, order_at = $4,
                order_pending = NULL, rev = rev + 1
-             WHERE id = $5 AND rev = $6 AND iv = $8 AND ($7 IS NULL OR conversation_id = $7)`,
+             WHERE conversation_id = $7 AND id = $5 AND rev = $6 AND iv = $8`,
             [
               msg.timestamp,
               uint8ToBase64(sealed.iv),
@@ -982,32 +1070,23 @@ export class SqliteStorage implements IStorage {
   }
 
   /**
-   * The rows under `ids` with their revision, opened - scoped to `conversationId` when one is given:
-   * a row of another conversation is never opened, and is said at warn unless the caller handles it
-   * (`foreignExpected`).
+   * The rows of `conversationId` under `ids` with their revision, opened: primary-key lookups on
+   * `(conversation_id, id)`, so a row another conversation holds under the same id is never read.
    */
   private async readRows(
-    conversationId: string | null,
+    conversationId: string,
     ids: readonly string[],
-    deviceKeyB64: string,
-    foreignExpected = false
+    deviceKeyB64: string
   ): Promise<{ rows: Map<string, RevisedRow>; unreadable: Set<string> }> {
     const out = { rows: new Map<string, RevisedRow>(), unreadable: new Set<string>() };
     const unique = [...new Set(ids)];
-    for (const batch of chunk(unique, MAX_BOUND_PARAMETERS)) {
-      const placeholders = batch.map((_, i) => `$${i + 1}`).join(', ');
+    for (const batch of chunk(unique, MAX_BOUND_PARAMETERS - 1)) {
+      const placeholders = batch.map((_, i) => `$${i + 2}`).join(', ');
       const rows: any[] = await this.db.select(
-        `SELECT * FROM messages WHERE id IN (${placeholders})`,
-        batch
+        `SELECT * FROM messages WHERE conversation_id = $1 AND id IN (${placeholders})`,
+        [conversationId, ...batch]
       );
       for (const row of rows) {
-        if (conversationId !== null && row.conversation_id !== conversationId) {
-          if (foreignExpected) continue;
-          console.warn(
-            `[DB] ${String(row.id).slice(0, 8)} is a message of another conversation than ${conversationId.slice(0, 8)}... - read as absent there`
-          );
-          continue;
-        }
         try {
           const payload = (await decryptData(
             base64ToUint8(row.cipher_text),
@@ -1036,27 +1115,45 @@ export class SqliteStorage implements IStorage {
   }
 
   /** See {@link IStorage.getMessageStanding}: one row by primary key, one open, nothing said. */
-  async getMessageStanding(id: string, deviceKeyB64: string): Promise<MessageRowStanding> {
+  async getMessageStanding(
+    conversationId: string,
+    id: string,
+    deviceKeyB64: string
+  ): Promise<MessageRowStanding> {
     const rows: any[] = await this.db.select(
-      'SELECT conversation_id, iv, cipher_text FROM messages WHERE id = $1',
-      [id]
+      'SELECT iv, cipher_text FROM messages WHERE conversation_id = $1 AND id = $2',
+      [conversationId, id]
     );
     if (rows.length === 0) return { kind: 'absent' };
     const row = rows[0];
     try {
       await decryptData(base64ToUint8(row.cipher_text), base64ToUint8(row.iv), deviceKeyB64);
     } catch (e) {
-      if (e instanceof PayloadUnreadableError) {
-        return { kind: 'unreadable', conversationId: row.conversation_id };
-      }
+      if (e instanceof PayloadUnreadableError) return { kind: 'unreadable' };
       throw e;
     }
-    return { kind: 'readable', conversationId: row.conversation_id };
+    return { kind: 'readable' };
   }
 
-  /** Decrypt and return one message by id; `null` when the row is absent or undecryptable. */
-  async getMessage(id: string, deviceKeyB64: string): Promise<StoredMessage | null> {
-    const rows: any[] = await this.db.select('SELECT * FROM messages WHERE id = $1', [id]);
+  /** See {@link IStorage.findMessageConversations}: one read of `idx_messages_id`, nothing opened. */
+  async findMessageConversations(id: string): Promise<string[]> {
+    const rows: Array<{ conversation_id: string }> = await this.db.select(
+      'SELECT conversation_id FROM messages WHERE id = $1',
+      [id]
+    );
+    return rows.map((r) => String(r.conversation_id));
+  }
+
+  /** Decrypt and return one message by its key; `null` when the row is absent or undecryptable. */
+  async getMessage(
+    conversationId: string,
+    id: string,
+    deviceKeyB64: string
+  ): Promise<StoredMessage | null> {
+    const rows: any[] = await this.db.select(
+      'SELECT * FROM messages WHERE conversation_id = $1 AND id = $2',
+      [conversationId, id]
+    );
     if (rows.length === 0) return null;
     const row = rows[0];
     try {
@@ -1552,7 +1649,7 @@ export class SqliteStorage implements IStorage {
       writeChunk: async (keyed) => {
         invalidateHistoryStateKey(conversationId);
         for (const batch of chunk([...keyed], ORDER_AT_FILL_ROWS_PER_STATEMENT)) {
-          const { sql, params } = orderAtFillStatement(batch);
+          const { sql, params } = orderAtFillStatement(conversationId, batch);
           await this.db.execute(sql, params);
         }
       },
@@ -2234,12 +2331,16 @@ export class SqliteStorage implements IStorage {
 
   // -- Device key change ---------------------------------------------------
 
-  /** See {@link IStorage.getSealedPayloads}. */
+  /** See {@link IStorage.getSealedPayloads}. A message row carries its conversation, half its key. */
   async getSealedPayloads(store: SealedStore): Promise<SealedPayload[]> {
     const { table, key } = sealedStoreTable(store);
-    const rows: any[] = await this.db.select(`SELECT ${key} AS id, iv, cipher_text FROM ${table}`);
+    const scope = store === 'messages' ? ', conversation_id' : '';
+    const rows: any[] = await this.db.select(
+      `SELECT ${key} AS id, iv, cipher_text${scope} FROM ${table}`
+    );
     return rows.map((row) => ({
       id: row.id,
+      ...(store === 'messages' ? { conversationId: String(row.conversation_id) } : {}),
       iv: base64ToUint8(row.iv),
       cipherText: base64ToUint8(row.cipher_text),
     }));
@@ -2264,6 +2365,7 @@ export class SqliteStorage implements IStorage {
         store,
         batch.map((s) => ({
           id: s.id,
+          ...(s.conversationId !== undefined ? { conversationId: s.conversationId } : {}),
           expected: uint8ToBase64(s.expected),
           iv: uint8ToBase64(s.iv),
           cipherText: uint8ToBase64(s.cipherText),
