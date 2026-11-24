@@ -1797,11 +1797,17 @@ taken from that tab.
      network to load the app from.
    - A leader that is itself HIDDEN answers. It first decides `follower`, then posts
      `leader_handover_granted` naming the asker, then hands over: its socket is paused (handlers
-     detached, so the old copy reads and acknowledges nothing) and its reload is scheduled.
+     detached, so the old copy reads and acknowledges nothing) and its reload is scheduled. **Never
+     while a lead hold is in flight** (fourth review of #4053, M1): deciding `follower` makes the
+     latch refuse the checkpoint an external join or a group's first publish owes. The ask then
+     waits for the holds to settle (`onLeadHoldsReleased`) and is answered if the tab still leads
+     and is still hidden.
    - A VISIBLE leader ignores the ask: it is serving.
    - The asker, and only it, then STEALS the lock (`steal: true`). Releasing the lock into the queue
-     would grant it to whichever tab queued first, possibly another background one. The asker's
-     promotion reloads it onto the state the old leader left, and that reload reclaims the lock.
+     would grant it to whichever tab queued first, possibly another background one. It steals only
+     while holding the serving lock (`canari-tab-serving`, `ifAvailable`, below): no tab serves
+     while the steal runs, so it can never take the lock from a leader loaded as such. The asker's
+     promotion reloads it onto the state the old leader left, and that reload waits for the lead.
    - **The freeze (Chromium).** At `freeze`, or at `pagehide` into the back/forward cache, a leader
      decides `follower` and releases the lock to the queue. A frozen leader cannot answer an ask,
      and this hook needs none.
@@ -1909,7 +1915,8 @@ switch reloads nothing unless the queue holds a due entry and the leader is hidd
   the grant would narrow it but not close it (a send between that export and the decision);
 - **the steal does not know whom it takes the lock from**: if the old leader released a hand-over
   at a freeze before the asker stole it, the lock may already be another queued tab's, which the
-  steal then demotes (one extra reload). Web Locks name no holder, so this is not cheap to check.
+  steal then demotes (one extra reload). Since 2026-11-24 that tab is never one that SERVES: the
+  steal runs under the serving lock ([below](#a-leader-whose-own-session-ended-gives-the-lead-up-2026-11-24)).
 
 No clock is added for either: a timeout would be a guess about a live document.
 
@@ -2063,22 +2070,47 @@ and no clock is used:
     it is posted with (`postIfAdopted`, a `SalonPost`), and the adopting leader seals AND posts it
     (`postSealedChannelMessage`, `channelPost.ts`, the one place a salon row is built);
   - not run: a call's transport frame (the call ended with the page that held it).
-- **a promotion reload leaves NOTHING behind that a live tab waits on** (third review of #4053). A
-  promoted tab announces its reload (`leader_promotion_reloading`) and its new page reclaims the lock
-  with a steal and says so (`leader_promoted`). In the gap between its two pages, no page of that
-  tab exists: it holds no lock, answers nothing, and is indistinguishable from a tab CLOSED during
-  its reload - so no liveness proof exists to wait on (a `navigator.locks.query` sees no holder in
-  both cases). An earlier fix marked the reload durably (`localStorage`) and made a live tab granted
-  the lock in the gap pass it on: a tab closed mid-reload left that mark behind, and a later tab
-  granted the lock read it and handed the lock to nobody - every tab without a leader (charter
-  principle 2). So:
-  - a live tab QUEUED for the lead takes the lock when it is granted in the gap, and leads. If the
-    reloading page comes back, its reclaim steals the lock and demotes that tab: at most one extra
-    reload, never a tab without a leader;
-  - only a tab whose session COMES BACK in the gap (a quick PIN retry) is held back: the announcement
-    is kept IN MEMORY, and that login joins as a follower, queueing once a tab announces the lead
-    or once its own session goes live (`noteTabSessionLive`), whichever comes first. Both end on
-    their own; neither needs the reloading tab to exist.
+- **a promotion reload leaves NOTHING behind that a live tab waits on** (third review of #4053). In
+  the gap between a promoted tab's two pages, no page of that tab exists: it holds no lock, answers
+  nothing, and is indistinguishable from a tab CLOSED during its reload. An earlier fix marked the
+  reload durably (`localStorage`) and made a live tab granted the lock in the gap pass it on: a tab
+  closed mid-reload left that mark behind, and a later tab granted the lock read it and handed the
+  lock to nobody - every tab without a leader (charter principle 2). Nothing marks it any more.
+- **no loaded leader is ever stolen from: a promotion reload WAITS for the lead** (fourth review of
+  #4053, M1). The reloaded page used to reclaim the lock with a steal. Two tabs promoted in place
+  reload one after the other, so the second page's steal took the lock from the first, already
+  loaded as the leader and possibly mid-way through an external join or a group's first publish -
+  whose checkpoint the latch then refused: a fork or a ghost leaf. A plain queue is not enough
+  either: the tab granted in the gap was promoted IN PLACE, on a copy loaded as a follower, so it
+  reloads too, and two reloaded pages queued after their loads would trade the lock forever. What
+  separates the two kinds of leader is a fact the leader lock cannot carry, so a second lock
+  carries it:
+  - **`canari-tab-serving`** is held by a document exactly while it leads on a copy it loads, or
+    loaded, as the leader: taken BEFORE the lead is decided by an election grant whose login loads
+    after it (the first election, a waiting reloaded page) or when a later login is handed the lead
+    (`serveIfLeading`), announced (`leader_serving`), and dropped by `decide('follower')` before the
+    leader lock moves on every path. A tab promoted in place never takes it;
+  - **the reloaded page reads it** (`navigator.locks.query()`, after its channel listens). A tab
+    serves: this page follows it, with an ordinary queued request. None serves: it queues and its
+    login WAITS (`waitForTheLead`) - granted, it leads and loads as the leader; a tab that starts
+    serving first (`leader_serving`) ends the wait, and the page follows with its request kept.
+    A `leader_serving` heard WHILE the query is still unanswered (the browser answers it on a later
+    task) counts as a tab serving: the page remembers it (`servingHeard`) and follows, rather than
+    queue behind that tab with its login waiting for good (fifth review, B1);
+    Both ends are facts, never a clock: each tab promoted in place reloads once, in queue order,
+    and the first reloaded page granted serves and ends every other wait;
+  - **a login whose session comes back in a gap** (a quick PIN retry) runs its election as any
+    other: nothing steals the lock any more, so if it wins, it serves and the reloaded page follows
+    it. The in-memory deferral of the third review, and `noteTabSessionLive`, are gone with the
+    steal they guarded against;
+  - **the one steal left is the hand-over's**, taken under the serving lock (`ifAvailable`): an
+    election grant takes that lock before deciding to lead, so while the asker holds it no tab
+    serves, and a lock that moved to a serving page before the steal is not taken - the asker says
+    so and stays a follower. A FREEZE releases rather than steals, but **work in flight is still
+    LOST on a freeze**: the release decides `follower` whatever the lead holds, and a page about
+    to freeze runs nothing more, so an external join or a first publish in flight there has its
+    checkpoint refused. Only the hand-over waits for the holds; the freeze cannot
+    ([above](#the-lead-goes-to-a-tab-that-can-serve-a-hidden-leader-hands-it-over-2026-11-10)).
 - the grant callbacks (a queued promotion, the hand-over's steal, the first election) read
   eligibility too. A lock granted to a document whose withdrawal raced the grant is passed on
   rather than held, and a follower that cannot serve asks no hidden leader for the lead.
@@ -2104,8 +2136,12 @@ first place (`not-delegable`).
   lock is released so a tab that can serve takes the lead.`;
 - the tab that serves: `[TAB] Promoted to leader (Web Locks).` and its reload;
 - the old leader at its next login: `[TAB] This tab's session can serve again (session starting) -
-  it rejoins the election.`, or, during another tab's promotion reload, `... it joins as a follower
-  and queues once that tab holds the lead.` then `[TAB] Deferred rejoin ends (...)`;
+  it rejoins the election.`;
+- a page reloaded after its promotion: `waiting in the queue for the lead, which no tab serves` then
+  `Leadership acquired after the promotion reload`, or `another tab serves the lead - this page
+  follows it`, or `Stops waiting for the lead (another tab serves the lead)`;
+- a hidden leader asked during MLS work: `... while MLS work needs it - answered once that work
+  settles.`;
 - a session ending with work in flight: `session unavailable, N MLS operation(s) still in flight`,
   then the release when the last one settles;
 - the new leader adopting its own earlier request: `asked by this tab before its promotion reload -
@@ -2114,7 +2150,9 @@ first place (`not-delegable`).
 **Still not covered, unchanged:**
 - a leader whose main thread is wedged;
 - an engine that suspends a page without dispatching `freeze`
-  ([above](#the-lead-goes-to-a-tab-that-can-serve-a-hidden-leader-hands-it-over-2026-11-10)).
+  ([above](#the-lead-goes-to-a-tab-that-can-serve-a-hidden-leader-hands-it-over-2026-11-10));
+- MLS work in flight in a leader that FREEZES: the release decides `follower` whatever its lead
+  holds, so that work's checkpoint is refused.
 
 A tab asleep in Firefox or Safari keeps the lead while it lives and is answered for by the
 hand-over. The owner's decision of the same day is to replace the leader tab with one browser-wide
@@ -2130,12 +2168,15 @@ worker in `1.9.0` ([design](../../backlog.d/a-browser-wide-worker-holds-the-mls-
   - a lone tab leaves the lock free and takes it back without queueing behind itself;
   - repeating a state is a no-op;
   - a follower that cannot serve asks for no hand-over;
-  - a tab whose session returns during another tab's promotion reload leaves the lock free and
-    queues behind the reclaim once it is announced; its own live session ends the deferral otherwise;
-  - a tab closed during its promotion reload leaves nothing behind: the queued tab leads, and when it
-    closes, a later visible tab leads in turn;
-  - a live tab granted the lock in a reload gap leads, and the reclaim demotes it once. The channel
-    there delivers on a later task, as the real one does (`FakeBroadcastChannel`).
+  - the channel there delivers on a later task, as the real one does (`FakeBroadcastChannel`).
+- `tabLeader.reclaim.test.ts`: two tabs promoted in place reload in turn - the first reloaded page
+  granted leads and serves, the second follows it, nothing is stolen; a waiting page stops waiting
+  when another waiting page is granted and serves; a lone reloaded page takes the free lock; a hidden
+  leader asked for the lead while a lead hold is held answers only once it settles; a reloaded page
+  whose query answers after another tab was heard serving follows that tab (the fake lock manager
+  answers `query()` on a later task, as the browser does); the serving tab DIES (the fake's `kill`:
+  everything it held released, everything it queued dropped, none of its code run) and a waiting
+  page is granted, serves, and ends the other waits.
 - `mlsPerGroupScheduler.leadHold.test.ts`: the mutex holds the lead from grant to release, a waiter
   holds nothing, the hand-over never touches zero, a throw releases.
 - `BaseMlsService.externalJoin.test.ts`: the lead is held while the join's commit is on the wire and
@@ -2310,8 +2351,8 @@ heartbeat path whose followers already could not commit.
 
 **"Prendre la main" is gone with the banner** (`requestLeadershipTakeover`, `requestTabTakeover`,
 `releaseLeadership` and the `request_takeover` listeners): nothing needs the lead taken by hand any
-more. A demotion still happens when a tab reloading after its promotion steals the lock
-(`onLeaderLockRejected`, unchanged).
+more. A demotion still happens when a hand-over's asker steals the lock (`onLeaderLockRejected`);
+since 2026-11-24 a promotion reload no longer steals ([why](#a-leader-whose-own-session-ended-gives-the-lead-up-2026-11-24)).
 
 Guarded by `tabCommitDelegation.test.ts`, which models what the guarantees live in rather than
 stubbing it - per-account databases whose writes become visible to another document only once
@@ -7280,6 +7321,8 @@ transport failure.** Three fixes:
 The sidebar sorts in a `$derived` (`Sidebar.svelte`, `filteredConversationEntries`), so it re-sorts on every `conversations.set`. What was wrong was the KEY. It was `Conversation.lastMessageAt`, a stored seed advanced by `addMessageToChat`, `batchAddMessages` and the FCM merge only - history replay, channel history, `renderStoredPage` and older pages replaced `messages` and left it behind - and written from `Date.now()` by `toConversationMeta` (empty conversation) and the DM name repair, which `Math.max` then made permanent. Two devices with the same messages ordered differently.
 
 Now `conversationRecency(convo)` (`utils/chat/conversations.ts`) is the time (`messageTime`: the server's acceptance, else `sentAt`) of the newest message in `messages` (sorted by `compareMessageOrder`), falling back to the persisted seed only while nothing is loaded, else 0; `compareConversationRecency` breaks ties by id. A message applied by ANY path - live, pending drain, history seed - moves the row, because the key is read from the list rather than remembered. Reactions, edits and read receipts do not touch `messages` order, so they do not move it. Known residue: the local-only "member joined" notice in `ChatBackgroundService` is stamped with the local clock and does count. Test: `conversations.recency.test.ts`.
+
+**The server's newest visible frame is a floor under the key (2026-11-24).** Owner report on a new web device (prod `1.7.3`): _"mes discussions ne sont pas dans l'ordre"_. A new device learns its 153 conversations from `GET /mls/users/:id/groups` at once, and their history over the next two minutes, oldest page first (`history_bundle` chunks of 200), from the members' devices that happen to be online; some never arrive (a group nobody online can answer for). So the list was ordered by group creation (`startedAt`) and then by whatever page had landed - and stayed wrong for every conversation whose history never came. The server already holds the fact every device of every member would agree on: the receive time of the newest frame it accepted into the group. `dm_group_last_message` (migration 057, one row per group) records it for every VISIBLE frame - `silent` false, durable, not addressed, never a Welcome or a Commit - upserted with GREATEST, so it only moves forward. **A table of its own, never a column of `dm_groups`:** an UPDATE of the group row takes FOR NO KEY UPDATE, which conflicts with the FOR SHARE every send into the group takes on that row (`enqueueForLiveGroup`), so the sends of one group would have queued behind each other's note (the first build did exactly that, and its comment claimed the opposite - review of #4064); the insert reads the group row FOR SHARE and only while it is live (`deletedAt IS NULL`), which conflicts with no send and, after a deletion that held the row, inserts nothing - so the post-commit note can never leave a row on a tombstone (`057_dm_group_last_message.integration.spec.ts` holds a FOR SHARE and writes under a 1 s lock timeout, with an UPDATE of the group row as the contrast that does time out). The row goes with its conversation (ON DELETE CASCADE, and `GROUP_OWNED_TABLES` for the soft delete that keeps the tombstone), and the hourly retention sweep deletes it once older than the queued copies it stands for (`MESSAGE_RETENTION_MS`, 90 days). A repeat that finishes an interrupted first send notes it at the first copy's instant (`finishFirstCopy`). The members' list returns it and is ordered by it - **except to a seat still awaiting admission** (someone who followed an invitation link and was never let in), which gets `null` and is sorted by the row's last update; the single-group read (`GET /mls/groups/:groupId`) never carries it. The client reads it on every connection's discovery sweep (`recordGroupStart`, forward only) into `Conversation.serverLastMessageAt`, PERSISTED on its own (`ConversationMeta.serverLastMessageAt`, SQLite column `server_last_message_at` added on every open), and `conversationRecency` is `max(local key, serverLastMessageAt)` - the local history takes over once it reaches the fact, and a reload keeps the floor whatever page is loaded (`updatedAt` alone was read back only while no message was). **Which notices move it:** every group event the members see travels as a visible frame, so the server cannot tell it from a message - a rename, `memberAdded`, `memberRemoved`, `memberLeft`, the photo change and `groupDeleted` all raise the row, where the local key, which skips notices, would not; the same on every device. The row's preview stays the newest LOADED message until the history arrives. **No backfill, and none is possible:** the history stream does not record which frames were silent, so a conversation already quiet when this shipped has no row and keeps the old order (its last update) until its next visible frame. The measurement that says when that residue is gone: `SELECT (l."groupId" IS NULL) AS unknown, count(*) FROM dm_groups g LEFT JOIN dm_group_last_message l ON l."groupId" = g.id WHERE g."deletedAt" IS NULL GROUP BY 1`, run N days after the deploy - the `unknown` share should fall to the conversations silent for N days. No content and no author: it is one more time per conversation of the kind every queued copy already carries, kept no longer than they are (register C3, and the privacy policy). Tests: `conversations.recency.test.ts`, `serverGroupConversation.groupStart.test.ts`, `sqliteConversationColumns.test.ts`, `members.controller.user-groups.spec.ts`, `messaging.durability.spec.ts`, `messaging.send-race.spec.ts`, `group-purge.spec.ts`, `queued-payload.integration.spec.ts`, `057_dm_group_last_message.integration.spec.ts`.
 
 ### A reply belongs to ONE conversation (2026-10-06)
 

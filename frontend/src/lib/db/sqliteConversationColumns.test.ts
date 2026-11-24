@@ -172,3 +172,22 @@ describe('SqliteStorage - the kind of "Mes notes"', () => {
     expect(await storage.getConversation('g1')).not.toHaveProperty('kind');
   });
 });
+
+describe("SqliteStorage - the server's newest visible frame time", () => {
+  afterEach(() => {
+    vi.doUnmock('@tauri-apps/plugin-sql');
+    vi.restoreAllMocks();
+  });
+
+  it('round-trips through a save and a merge; a row that never stated one has none', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    const storage = await initialisedSqlite();
+    await storage.saveConversation({ ...conversation('g1'), serverLastMessageAt: 900 });
+    await storage.mergeConversation({ ...conversation('g2'), serverLastMessageAt: 800 });
+    await storage.saveConversation(conversation('g3'));
+
+    expect((await storage.getConversation('g1'))?.serverLastMessageAt).toBe(900);
+    expect((await storage.getConversation('g2'))?.serverLastMessageAt).toBe(800);
+    expect(await storage.getConversation('g3')).not.toHaveProperty('serverLastMessageAt');
+  });
+});

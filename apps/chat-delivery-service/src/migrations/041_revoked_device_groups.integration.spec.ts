@@ -39,6 +39,7 @@ import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
 import { SentFrameReceipt } from '../entities/sent-frame-receipt.entity';
 import { UninvitedEntry } from '../entities/uninvited-entry.entity';
+import { GroupLastMessage } from '../entities/group-last-message.entity';
 import { deleteGroupOwnedRows } from '../utils/group-purge';
 
 const URL = process.env.CHAT_DELIVERY_IT_DATABASE_URL;
@@ -66,6 +67,8 @@ const BEFORE_041 = [
   // Later tables (migrations 048, 053), here only because the group purge this spec runs sweeps them.
   SentFrameReceipt,
   UninvitedEntry,
+  // Migration 057, the newest visible frame's time: also swept with the group.
+  GroupLastMessage,
   UserDismissedGroup,
 ];
 

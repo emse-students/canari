@@ -20,6 +20,7 @@ import { JoinAskPush } from './entities/join-ask-push.entity';
 import { RevokedDeviceGroup } from './entities/revoked-device-group.entity';
 import { SentFrameReceipt } from './entities/sent-frame-receipt.entity';
 import { UninvitedEntry } from './entities/uninvited-entry.entity';
+import { GroupLastMessage } from './entities/group-last-message.entity';
 import { UserDismissedGroup } from './entities/user-dismissed-group.entity';
 import { KeyPackage } from './entities/key-package.entity';
 import { OneTimeKeyPackage } from './entities/one-time-key-package.entity';
@@ -65,6 +66,7 @@ const SWEPT = [
   RevokedDeviceGroup,
   SentFrameReceipt,
   UninvitedEntry,
+  GroupLastMessage,
   UserDismissedGroup,
 ];
 
@@ -88,6 +90,7 @@ const FAKE_TABLE = new Map<unknown, string>([
   [RevokedDeviceGroup, 'table_of_revoked_device_group'],
   [SentFrameReceipt, 'table_of_sent_frame_receipt'],
   [UninvitedEntry, 'table_of_uninvited_entry'],
+  [GroupLastMessage, 'table_of_last_message'],
   [UserDismissedGroup, 'table_of_dismissal'],
 ]);
 

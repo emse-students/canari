@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { authentikRequest, type AuthentikAnswer } from '../../platform/authentik-api';
+import { alumniProfileFacts, type AlumniFacts } from './alumni-access';
 
 /**
  * Why a MiConnect read produced no usable answer - a TYPE, so the mint classifies at the throw:
@@ -37,6 +38,13 @@ export interface MiconnectAccount {
    * stage, infrastructure/authentik/blueprints/45-consent.yaml), `null` when they never accepted.
    */
   cguVersion: string | null;
+  /**
+   * What the Alumni rule reads (alumni-access.ts): the profile's cursus entry years and posts,
+   * `attributes.alumni`, and the names of the groups the user is directly in. Whether an Alumni
+   * connection exists is a separate read ({@link MiconnectReaderClient.alumniLinked}), made only
+   * when it can change the answer.
+   */
+  facts: Omit<AlumniFacts, 'linked'>;
 }
 
 /**
@@ -44,17 +52,58 @@ export interface MiconnectAccount {
  * handoff mint passes a person through the consent flow's bindings only when they accepted THIS
  * text, which is what the flow itself would have asked of them.
  */
-export const CONSENT_VERSION = '2026-11-20';
+export const CONSENT_VERSION = '2026-11-24';
 
-/** The consent flow's slug, and the only bindings the handoff gate vouches for on it. */
+/** The consent flow's slug: the only flow on which bindings are recognised by an allowlist. */
 export const CONSENT_FLOW_SLUG = 'miconnect-authorization';
-/** The policy bound on the consent flow's two stage bindings (true = the page is shown). */
+/** The policy bound on the consent flow's two terms stage bindings (true = the page is shown). */
 export const CONSENT_POLICY_NAME = 'miconnect-consent-needed';
-/** The consent flow's two stage bindings that carry that policy: the prompt and the user write. */
-export const CONSENT_STAGE_NAMES: ReadonlySet<string> = new Set([
-  'miconnect-consent-ask',
-  'miconnect-consent-write',
+
+/** Which question of the person an allowlisted binding asks - each is answered in handoff-access.ts. */
+export type AllowlistedAnswer = 'consent' | 'linkReminder' | 'linkRequired';
+
+/**
+ * THE ALLOWLIST OF THE CONSENT FLOW: stage name -> the ONE policy recognised on its stage binding
+ * (bound, not negated), and the answer that settles it. The terms prompt and write (the person's
+ * `cgu_version`), and the Alumni link step of D44 (45-consent.yaml): its reminder, which a person
+ * skips and which therefore never stops a mint, and its block, answered by alumni-access.ts. Any
+ * other binding on the flow, or another policy on these stages, is counted in `flowBindings` and
+ * refuses `policy_bound`.
+ */
+export const CONSENT_FLOW_ALLOWLIST: ReadonlyMap<
+  string,
+  { policy: string; answer: AllowlistedAnswer }
+> = new Map([
+  ['miconnect-consent-ask', { policy: CONSENT_POLICY_NAME, answer: 'consent' }],
+  ['miconnect-consent-write', { policy: CONSENT_POLICY_NAME, answer: 'consent' }],
+  [
+    'miconnect-alumni-link-remind',
+    { policy: 'miconnect-alumni-link-reminder', answer: 'linkReminder' },
+  ],
+  [
+    'miconnect-alumni-link-require',
+    { policy: 'miconnect-alumni-link-required', answer: 'linkRequired' },
+  ],
 ]);
+
+/**
+ * THE ALUMNI GATE (D42-D43, 60-applications.yaml), recognised on these applications only, and only
+ * in its exact shape: engine mode `any`, the policy {@link ALUMNI_GATE_POLICY} and the group
+ * `acces-<application>`, both not negated, and nothing else bound. Answered by alumni-access.ts.
+ */
+export const ALUMNI_GATED_APPLICATIONS: ReadonlySet<string> = new Set(['migallery', 'cercle']);
+export const ALUMNI_GATE_POLICY = 'miconnect-access-window-post-or-cotisant';
+
+/** The slug of the Alumni SAML source, whose user connection the link step asks about. */
+export const ALUMNI_SOURCE_SLUG = 'alumni';
+
+/** A policy binding as the reader lists it. */
+interface ListedBinding {
+  negate?: boolean;
+  policy_obj?: { name?: string } | null;
+  group_obj?: { name?: string } | null;
+  user_obj?: unknown;
+}
 
 /** The authorization-flow `authentication` modes that ask nothing beyond a signed-in user. */
 export const OPEN_FLOW_AUTHENTICATION: ReadonlySet<string> = new Set([
@@ -67,20 +116,32 @@ export const OPEN_FLOW_AUTHENTICATION: ReadonlySet<string> = new Set([
  * bindings, and the tenant flag `core_default_app_access`.
  */
 export interface MiconnectApplicationAccess {
+  /**
+   * Enabled bindings on the application itself, EXCEPT the Alumni gate when it is bound in its
+   * exact allowlisted shape ({@link gateBindings}).
+   */
   enabledBindings: number;
+  /**
+   * The Alumni gate's two bindings (policy {@link ALUMNI_GATE_POLICY} and group `acces-<app>`, mode
+   * `any`) on an application of {@link ALUMNI_GATED_APPLICATIONS}; 0 otherwise.
+   */
+  gateBindings: number;
   /**
    * Enabled bindings on the flows an OIDC sign-in to the site walks through - the provider's
    * authentication and authorization flows - and on their stage bindings: a policy a handoff would
-   * skip if it minted past it.
+   * skip if it minted past it. Excludes the allowlisted ones below.
    */
   flowBindings: number;
   /**
    * Enabled bindings those flows carry that are EXACTLY the consent bindings (policy
-   * {@link CONSENT_POLICY_NAME}, not negated, on a stage binding of {@link CONSENT_FLOW_SLUG} whose
-   * stage is one of {@link CONSENT_STAGE_NAMES}). They are NOT in `flowBindings`: the person's own
-   * `cguVersion` answers them, so a mint through such a flow needs it to be current.
+   * {@link CONSENT_POLICY_NAME}, not negated, on a terms stage binding of {@link CONSENT_FLOW_SLUG}).
+   * The person's own `cguVersion` answers them, so a mint through such a flow needs it to be current.
    */
   consentBindings: number;
+  /** The D44 reminder's binding: a page the person skips, so it never stops a mint. */
+  linkReminderBindings: number;
+  /** The D44 block's binding: answered from the profile, the date and the Alumni connection. */
+  linkRequiredBindings: number;
   /** The authorization flow's `authentication` requirement (`require_authenticated`, ...). */
   authorizationFlowAuthentication: string;
   /** The flag, `null` when the tenant never set it (authentik then applies its default, true). */
@@ -91,7 +152,7 @@ export interface MiconnectApplicationAccess {
  * READS MICONNECT through the read-only service account `miconnect-canari-handoff-reader`
  * (infrastructure/authentik/blueprints/55-handoff-reader.yaml): `view_user`, `view_application` on
  * the three handoff applications only, `view_policybinding`, `view_system_settings`, `view_flow`,
- * `view_flowstagebinding` - nothing that writes. Proven against a real authentik by `infrastructure/authentik/test-handoff-reader.py`.
+ * `view_flowstagebinding`, `view_usersourceconnection` - nothing that writes. Proven against a real authentik by `infrastructure/authentik/test-handoff-reader.py`.
  *
  * Production only (lead, 2026-11-11): the token reads every MiConnect user, and dev mints nothing,
  * so dev holds none and its mint refuses `miconnect_not_configured`.
@@ -113,6 +174,7 @@ export class MiconnectReaderClient {
         is_active: boolean;
         uid: string;
         attributes?: Record<string, unknown>;
+        groups_obj?: { name?: unknown }[] | null;
       }[];
     }>(`/api/v3/core/users/?uuid=${encodeURIComponent(uuid)}`);
     const results = body.results ?? [];
@@ -123,13 +185,41 @@ export class MiconnectReaderClient {
     if (typeof results[0].uid !== 'string' || !results[0].uid) {
       throw new MiconnectReadError('refused', 'the user answer carries no uid');
     }
-    const accepted = (results[0].attributes ?? {}).cgu_version;
+    // The groups are part of the answer the gate reads: an answer without them is not one.
+    const groups = results[0].groups_obj;
+    if (!Array.isArray(groups)) {
+      throw new MiconnectReadError('refused', 'the user answer carries no groups');
+    }
+    const attributes = results[0].attributes ?? {};
+    const accepted = attributes.cgu_version;
     return {
       pk: results[0].pk,
       isActive: results[0].is_active === true,
       uid: results[0].uid,
       cguVersion: typeof accepted === 'string' ? accepted : null,
+      facts: {
+        ...alumniProfileFacts(attributes),
+        groups: groups.map((g) => g.name).filter((n): n is string => typeof n === 'string'),
+      },
     };
+  }
+
+  /**
+   * Whether the user `pk` holds an Alumni user-source connection - what the D44 policies ask
+   * (`UserSourceConnection` with source slug `alumni`, of any source type). Needs the GLOBAL
+   * `view_usersourceconnection`: without it authentik answers with the caller's OWN connections
+   * (none) rather than a 403, which would read as "not linked" - and a person refused
+   * `alumni_link_required` wrongly is still only sent to MiConnect, which decides.
+   */
+  async alumniLinked(pk: number): Promise<boolean> {
+    const answer = await this.get<{ pagination?: { count?: number } }>(
+      `/api/v3/sources/user_connections/all/?user=${pk}&source__slug=${ALUMNI_SOURCE_SLUG}`
+    );
+    const count = answer.pagination?.count;
+    if (typeof count !== 'number') {
+      throw new MiconnectReadError('refused', 'the source connections answer carries no count');
+    }
+    return count > 0;
   }
 
   /** The inputs of `application`'s access decision (its slug at MiConnect). */
@@ -137,6 +227,7 @@ export class MiconnectReaderClient {
     const [app, settings] = await Promise.all([
       this.get<{
         pk: string;
+        policy_engine_mode?: string;
         provider_obj?: { authentication_flow?: string | null; authorization_flow?: string | null };
       }>(`/api/v3/core/applications/${encodeURIComponent(application)}/`),
       this.get<{ flags?: Record<string, unknown> }>('/api/v3/admin/settings/'),
@@ -152,15 +243,21 @@ export class MiconnectReaderClient {
       );
     }
     const [appBindings, authz, authn] = await Promise.all([
-      this.countBindings([app.pk]),
+      this.listBindings([app.pk]),
       this.flowGate(authorization),
       this.flowGate(authentication),
     ]);
+    const gate = isAlumniGate(application, app.policy_engine_mode, appBindings)
+      ? appBindings.length
+      : 0;
     const flag = settings.flags?.core_default_app_access;
     return {
-      enabledBindings: appBindings,
+      enabledBindings: appBindings.length - gate,
+      gateBindings: gate,
       flowBindings: authz.bindings + authn.bindings,
       consentBindings: authz.consent + authn.consent,
+      linkReminderBindings: authz.linkReminder + authn.linkReminder,
+      linkRequiredBindings: authz.linkRequired + authn.linkRequired,
       authorizationFlowAuthentication: authz.authentication,
       defaultAccessFlag: typeof flag === 'boolean' ? flag : null,
     };
@@ -168,12 +265,12 @@ export class MiconnectReaderClient {
 
   /**
    * A flow's own enabled bindings plus those on each of its stage bindings, and its requirement.
-   * `bindings` EXCLUDES the consent bindings ({@link MiconnectApplicationAccess.consentBindings}),
-   * which are recognised, by an ALLOWLIST, on the consent flow alone.
+   * `bindings` EXCLUDES the allowlisted ones ({@link CONSENT_FLOW_ALLOWLIST}), which are recognised
+   * on the consent flow alone and counted per answer.
    */
   private async flowGate(
     flowUuid: string
-  ): Promise<{ bindings: number; consent: number; authentication: string }> {
+  ): Promise<{ bindings: number; authentication: string } & Record<AllowlistedAnswer, number>> {
     const id = encodeURIComponent(flowUuid);
     const [flows, stages] = await Promise.all([
       this.get<{
@@ -200,49 +297,53 @@ export class MiconnectReaderClient {
         `flow ${flowUuid.slice(0, 8)}: its stage bindings were not all read`
       );
     }
+    const counted: Record<AllowlistedAnswer, number> = {
+      consent: 0,
+      linkReminder: 0,
+      linkRequired: 0,
+    };
     if (flow[0].slug !== CONSENT_FLOW_SLUG) {
       return {
         bindings: await this.countBindings([own, ...stageTargets]),
-        consent: 0,
+        ...counted,
         authentication: requirement,
       };
     }
     // The consent flow: ONE listed page of every enabled binding on it gives the total, and the
-    // allowlisted ones are found PER CONSENT STAGE BINDING, through the `target_in` filter. A binding's
-    // own `target` field is NOT compared with a stage binding's id: on a real authentik it never
-    // equalled `policybindingmodel_ptr_id` (CI, 2026-11-20), so that comparison matched nothing.
+    // allowlisted ones are found PER ALLOWLISTED STAGE BINDING, through the `target_in` filter. A
+    // binding's own `target` field is NOT compared with a stage binding's id: on a real authentik it
+    // never equalled `policybindingmodel_ptr_id` (CI, 2026-11-20), so that comparison matched nothing.
     const listed = await this.listBindings([own, ...stageTargets]);
-    let consent = 0;
     for (const stage of stages.results ?? []) {
-      if (!CONSENT_STAGE_NAMES.has(stage.stage_obj?.name ?? '')) continue;
+      const allowed = CONSENT_FLOW_ALLOWLIST.get(stage.stage_obj?.name ?? '');
+      if (!allowed) continue;
       const onStage = await this.listBindings([stage.policybindingmodel_ptr_id ?? '']);
-      consent += onStage.filter(
-        (b) => b.policy_obj?.name === CONSENT_POLICY_NAME && b.negate === false
+      counted[allowed.answer] += onStage.filter(
+        (b) => b.policy_obj?.name === allowed.policy && b.negate === false
       ).length;
     }
+    const recognised = counted.consent + counted.linkReminder + counted.linkRequired;
     // More allowlisted bindings than bindings on the flow cannot be: the two reads disagree, and an
     // answer that disagrees with itself is not one the mint may open on.
-    if (listed.length - consent < 0) {
+    if (listed.length - recognised < 0) {
       throw new MiconnectReadError(
         'refused',
-        `flow ${flowUuid.slice(0, 8)}: ${consent} consent bindings among ${listed.length}`
+        `flow ${flowUuid.slice(0, 8)}: ${recognised} allowlisted bindings among ${listed.length}`
       );
     }
-    return { bindings: listed.length - consent, consent, authentication: requirement };
+    return { bindings: listed.length - recognised, ...counted, authentication: requirement };
   }
 
-  /** The enabled bindings on these targets, with their policy's name - every one, or a refusal. */
-  private async listBindings(
-    targets: string[]
-  ): Promise<{ negate?: boolean; policy_obj?: { name?: string } }[]> {
+  /** The enabled bindings on these targets, with what they bind - every one, or a refusal. */
+  private async listBindings(targets: string[]): Promise<ListedBinding[]> {
     const query = targets.map((t) => `target_in=${encodeURIComponent(t)}`).join('&');
     const answer = await this.get<{
       pagination?: { count?: number };
-      results?: { negate?: boolean; policy_obj?: { name?: string } }[];
+      results?: ListedBinding[];
     }>(`/api/v3/policies/bindings/?${query}&enabled=true&page_size=${STAGE_PAGE}`);
     const results = answer.results ?? [];
     if (answer.pagination?.count !== results.length) {
-      throw new MiconnectReadError('refused', 'the consent flow bindings were not all read');
+      throw new MiconnectReadError('refused', 'the bindings were not all read');
     }
     return results;
   }
@@ -282,4 +383,24 @@ export class MiconnectReaderClient {
     }
     return answer.body;
   }
+}
+
+/**
+ * Whether `bindings` on `application` are EXACTLY the Alumni gate: an application of
+ * {@link ALUMNI_GATED_APPLICATIONS}, engine mode `any`, and two bindings - the policy
+ * {@link ALUMNI_GATE_POLICY} and the group `acces-<application>`, neither negated. Any other shape
+ * (a third binding, mode `all`, a negation, a user binding) is not recognised and refuses.
+ */
+function isAlumniGate(
+  application: string,
+  mode: string | undefined,
+  bindings: ListedBinding[]
+): boolean {
+  if (!ALUMNI_GATED_APPLICATIONS.has(application) || mode !== 'any' || bindings.length !== 2) {
+    return false;
+  }
+  const plain = bindings.filter((b) => b.negate === false && !b.user_obj);
+  const policy = plain.filter((b) => b.policy_obj?.name === ALUMNI_GATE_POLICY && !b.group_obj);
+  const group = plain.filter((b) => b.group_obj?.name === `acces-${application}` && !b.policy_obj);
+  return policy.length === 1 && group.length === 1;
 }

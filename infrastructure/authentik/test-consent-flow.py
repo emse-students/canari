@@ -26,21 +26,41 @@ What it proves, in order:
   6. every provider authorizing through this flow ends on a code once the terms are accepted;
   7. PRODUCTION: exactly the providers in BOUND name this flow (50-providers.yaml declares it, all
      eight since the hold was lifted on 2026-11-20), and production's provider shows the page to a
-     person who never accepted, writing nothing until the tick.
+     person who never accepted, writing nothing until the tick;
+  8. THE ALUMNI RULE (D42-D44), every case of libs/contracts/alumni-access.json - the table
+     core-service's handoff gate runs too (apps/core-service/src/auth/handoff/alumni-access.spec.ts),
+     so the two implementations cannot drift: the link page each person meets through the REAL
+     authorization flow on that day ("today" is put in the plan as `miconnect_today`, never read
+     from the wall clock), and MiGallery's and Le Cercle's answer through authentik's own policy
+     engine; Sky stays unbound;
+  9. the reminder links to the source, is skippable and shows once per session (a new session meets
+     it again); the blocking page shows at every authorization, cannot be submitted until the link
+     exists, and goes on once it does.
+
+THE TABLE IS HANDED IN by test-blueprints.sh, which prepends `ALUMNI_ACCESS_B64 = "<base64 of the
+JSON>"` to this program (it runs on stdin inside the container, where the repository is not).
 """
+import base64
 import copy
 import json
-from datetime import datetime
+from datetime import date, datetime
+from importlib import import_module
 from urllib.parse import parse_qs, urlencode, urlparse
 
+from django.conf import settings
 from django.test import Client
 
 from authentik.core.models import Application, Group, User
+from authentik.policies.models import PolicyBinding
+from authentik.flows.views.executor import SESSION_KEY_PLAN
+from authentik.policies.engine import PolicyEngine
 from authentik.providers.oauth2.models import OAuth2Provider, RedirectURIType
+from authentik.root.middleware import SessionMiddleware
+from authentik.sources.saml.models import SAMLSource, UserSAMLSourceConnection
 from authentik.tenants.models import Tenant
 
 SLUG = "miconnect-authorization"
-VERSION = "2026-11-20"
+VERSION = "2026-11-24"
 TERMS_URL = "https://canari.emse.fr/legal/miconnect"
 PASSWORD = "consent-test-Password-0123456789"
 PREFIX = "consent-e2e-"
@@ -49,8 +69,12 @@ PREFIX = "consent-e2e-"
 BOUND = {"miconnect-archives", "miconnect-canari", "miconnect-canari-dev", "miconnect-canari-local", "miconnect-cercle", "miconnect-migallery", "miconnect-mino-wiki", "miconnect-sky"}
 PRODUCTION = "miconnect-canari"
 # What enrolment leaves on an account; the consent write must keep every key of it unchanged.
-PROFILE = {"profile": {"version": 1, "campus": "saint-etienne", "cursus": [], "posts": []}, "school_status": "Elève", "promo": 2024, "formation": "ICM"}
+# A post, so the cotisant gate of MiGallery and Le Cercle (60-applications.yaml) admits them in step 6; no
+# cursus, so the Alumni link step never shows.
+PROFILE = {"profile": {"version": 1, "campus": "saint-etienne", "cursus": [], "posts": ["EMSE"]}, "school_status": "Elève", "promo": 2024, "formation": "ICM"}
 PROMPT_KEYS =["cgu_notice", "cgu_accept", "attributes.cgu_version", "attributes.cgu_accepted_at"]
+# libs/contracts/alumni-access.json, handed in by test-blueprints.sh (see the docstring).
+ALUMNI_ACCESS = json.loads(base64.b64decode(ALUMNI_ACCESS_B64))  # noqa: F821
 
 
 def check(condition, message):
@@ -97,6 +121,11 @@ def signed_in(username, attributes=None):
     user = User.objects.create(username=username, name="Consent Test", attributes=attributes or {})
     user.set_password(PASSWORD)
     user.save()
+    return user, new_session(username)
+
+
+def new_session(username):
+    """A NEW MiConnect session for an existing user (made by `signed_in`): a new browser, a REAL login."""
     client = Client(HTTP_HOST="localhost")
     first = executor(client, "password-login")
     assert first.get("component") == "ak-stage-identification", first
@@ -104,7 +133,7 @@ def signed_in(username, attributes=None):
     if second.get("component") == "ak-stage-password":
         second = executor(client, "password-login", {"component": "ak-stage-password", "password": PASSWORD})
     assert second.get("component") != "ak-stage-password", ("the password was refused", second)
-    return user, client
+    return client
 
 
 def authorize(client, provider):
@@ -112,6 +141,29 @@ def authorize(client, provider):
     redirect = next(uri.url for uri in provider.redirect_uris if uri.redirect_uri_type == RedirectURIType.AUTHORIZATION)
     query = urlencode({"client_id": provider.client_id, "redirect_uri": redirect, "response_type": "code", "scope": "openid profile", "state": "consent-e2e"})
     return redirect, follow(client, client.get(f"/application/o/authorize/?{query}")), query
+
+
+def authorize_on(client, provider, today):
+    """An authorization whose plan carries `miconnect_today` = `today` before its first stage is evaluated:
+    the authorize view plans the flow into the session and redirects; the date goes into that plan."""
+    redirect = next(uri.url for uri in provider.redirect_uris if uri.redirect_uri_type == RedirectURIType.AUTHORIZATION)
+    query = urlencode({"client_id": provider.client_id, "redirect_uri": redirect, "response_type": "code", "scope": "openid profile", "state": "consent-e2e"})
+    first = client.get(f"/application/o/authorize/?{query}")
+    store = import_module(settings.SESSION_ENGINE).SessionStore(SessionMiddleware.decode_session_key(client.cookies[settings.SESSION_COOKIE_NAME].value))
+    plan = store[SESSION_KEY_PLAN]
+    plan.context["miconnect_today"] = today
+    store[SESSION_KEY_PLAN] = plan
+    store.save()
+    return redirect, follow(client, first), query
+
+
+def admitted(slug, user, today):
+    """authentik's own answer for `user` on application `slug`, with `today` in the request context."""
+    engine = PolicyEngine(Application.objects.get(slug=slug), user)
+    engine.use_cache = False
+    engine.request.context["miconnect_today"] = today
+    engine.build()
+    return engine.result
 
 
 def ended_on_code(result, redirect):
@@ -227,6 +279,80 @@ with Tenant.objects.get(ready=True):
         check(shown_page.get("component") == "ak-stage-prompt", f"{PRODUCTION} stops a person who never accepted on the prompt ({shown_page.get('component') or shown_page})")
         fresh.refresh_from_db()
         check("cgu_version" not in fresh.attributes, f"and writes nothing before the tick ({sorted(fresh.attributes)})")
+
+        # 8 - the Alumni rule (D42-D44): every case of the table core-service runs too.
+        alumni = SAMLSource.objects.get(slug="alumni")
+        student, student_client = signed_in(PREFIX + "e", {"cgu_version": VERSION, "cgu_accepted_at": "2026-11-23T00:00:00+00:00"})
+        local = OAuth2Provider.objects.get(name="miconnect-canari-local")
+        pages = {"code": "none", "alumni_link_reminder": "reminder", "alumni_link_required": "required"}
+
+        def become(case):
+            """Gives the student exactly the case's profile, Alumni read, group and connection."""
+            attributes = {key: value for key, value in student.attributes.items() if key in ("cgu_version", "cgu_accepted_at")}
+            attributes["profile"] = {"version": 1, "campus": "saint-etienne", "cursus": case["cursus"] if "cursus" in case else [{"formation": "ICM", "promo": promo} for promo in case["promos"]], "posts": case["posts"]}
+            if case["alumni"] is not None:
+                attributes["alumni"] = case["alumni"]
+            student.attributes = attributes
+            student.save()
+            student.groups.clear()
+            UserSAMLSourceConnection.objects.filter(user=student).delete()
+            if case["linked"]:
+                UserSAMLSourceConnection.objects.create(source=alumni, user=student, identifier="99001")
+
+        def met(today, client=None):
+            """The component the student meets first on `today` through the authorization flow, or 'code'."""
+            target, page, query = authorize_on(client or student_client, local, today)
+            if ended_on_code(page, target):
+                return "code", page, query
+            keys = list(fields(page))
+            return (keys[0] if keys else page.get("component")), page, query
+
+        for slug in ("migallery", "cercle"):
+            check(Application.objects.get(slug=slug).policy_engine_mode == "any", f"{slug} admits on ANY binding")
+        for case in ALUMNI_ACCESS["cases"]:
+            today = date.fromisoformat(case["today"])
+            become(case)
+            # A new session per case: the reminder shows once per session (D44), so a case met in a
+            # session an earlier case was reminded in would read "none".
+            shown, _, _ = met(today, new_session(student.username))
+            check(pages.get(shown) == case["link"], f"{case['name']}: the link step is {case['link']} ({shown})")
+            for slug in ("migallery", "cercle"):
+                student.groups.clear()
+                if case["accessGroup"]:
+                    student.groups.add(Group.objects.get(name=f"acces-{slug}"))
+                verdict = admitted(slug, student, today)
+                check(verdict.passing == case["gate"], f"{case['name']}: {slug} {'admits' if case['gate'] else 'refuses'}")
+                if not case["gate"]:
+                    check(any("cotisants" in str(text) for text in verdict.messages), f"{case['name']}: {slug} says why ({verdict.messages})")
+        check(not PolicyBinding.objects.filter(target=Application.objects.get(slug="sky")).exists(), "Sky is not gated")
+
+        # 9 - the pages themselves. The reminder carries the link to the source and lets the person go on.
+        become({"promos": [2024], "posts": [], "alumni": None, "linked": False})
+        shown, page, query = met(date(2026, 1, 15))
+        check(shown == "alumni_link_reminder", f"promo 2024 on 2026-01-15 meets the reminder ({shown})")
+        check('href="/source/saml/alumni/"' in fields(page)["alumni_link_reminder"]["initial_value"], "the reminder links to the Alumni source")
+        done = executor(student_client, SLUG, {"component": "ak-stage-prompt"}, query)
+        check("external" in done, f"the reminder is skippable: 'continue' ends the authorization ({done.get('component')})")
+        # ONCE PER SESSION (owner, 2026-11-24): the next authorization of that session ends on a code,
+        # and a new session is reminded again.
+        again, page, _ = met(date(2026, 1, 15))
+        check(again == "code", f"the reminder does not show twice in one session ({again})")
+        again, _, _ = met(date(2026, 1, 15), new_session(student.username))
+        check(again == "alumni_link_reminder", f"a new session is reminded again ({again})")
+
+        # The blocking page refuses to go on while no link exists, and goes on once it does.
+        become({"promos": [2020], "posts": [], "alumni": None, "linked": False})
+        shown, page, query = met(date(2027, 3, 1))
+        check(shown == "alumni_link_required", f"an unlinked promo 2020 is blocked after the grace ({shown})")
+        again, _, _ = met(date(2027, 3, 1))
+        check(again == "alumni_link_required", f"the blocking page shows again in the same session ({again})")
+        shown, page, query = met(date(2027, 3, 1))
+        refused_page = executor(student_client, SLUG, {"component": "ak-stage-prompt"}, query)
+        said = [error.get("string", "") for errors in (refused_page.get("response_errors") or {}).values() for error in errors]
+        check(refused_page.get("component") == "ak-stage-prompt" and any("Lie d'abord" in text for text in said), f"the blocking page cannot be submitted unlinked ({said})")
+        UserSAMLSourceConnection.objects.create(source=alumni, user=student, identifier="99001")
+        done = executor(student_client, SLUG, {"component": "ak-stage-prompt"}, query)
+        check("external" in done, f"once linked (another tab), the blocking page goes on ({done.get('component')})")
     finally:
         User.objects.filter(username__startswith=PREFIX).delete()
     print("CONSENT-OK")
