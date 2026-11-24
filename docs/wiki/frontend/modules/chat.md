@@ -2094,6 +2094,9 @@ and no clock is used:
     serves: this page follows it, with an ordinary queued request. None serves: it queues and its
     login WAITS (`waitForTheLead`) - granted, it leads and loads as the leader; a tab that starts
     serving first (`leader_serving`) ends the wait, and the page follows with its request kept.
+    A `leader_serving` heard WHILE the query is still unanswered (the browser answers it on a later
+    task) counts as a tab serving: the page remembers it (`servingHeard`) and follows, rather than
+    queue behind that tab with its login waiting for good (fifth review, B1);
     Both ends are facts, never a clock: each tab promoted in place reloads once, in queue order,
     and the first reloaded page granted serves and ends every other wait;
   - **a login whose session comes back in a gap** (a quick PIN retry) runs its election as any
@@ -2103,8 +2106,10 @@ and no clock is used:
   - **the one steal left is the hand-over's**, taken under the serving lock (`ifAvailable`): an
     election grant takes that lock before deciding to lead, so while the asker holds it no tab
     serves, and a lock that moved to a serving page before the steal is not taken - the asker says
-    so and stays a follower. A FREEZE releases rather than steals, and a page about to freeze
-    runs nothing more: lead holds in flight there are the freeze's known limit
+    so and stays a follower. A FREEZE releases rather than steals, but **work in flight is still
+    LOST on a freeze**: the release decides `follower` whatever the lead holds, and a page about
+    to freeze runs nothing more, so an external join or a first publish in flight there has its
+    checkpoint refused. Only the hand-over waits for the holds; the freeze cannot
     ([above](#the-lead-goes-to-a-tab-that-can-serve-a-hidden-leader-hands-it-over-2026-11-10)).
 - the grant callbacks (a queued promotion, the hand-over's steal, the first election) read
   eligibility too. A lock granted to a document whose withdrawal raced the grant is passed on
@@ -2145,7 +2150,9 @@ first place (`not-delegable`).
 **Still not covered, unchanged:**
 - a leader whose main thread is wedged;
 - an engine that suspends a page without dispatching `freeze`
-  ([above](#the-lead-goes-to-a-tab-that-can-serve-a-hidden-leader-hands-it-over-2026-11-10)).
+  ([above](#the-lead-goes-to-a-tab-that-can-serve-a-hidden-leader-hands-it-over-2026-11-10));
+- MLS work in flight in a leader that FREEZES: the release decides `follower` whatever its lead
+  holds, so that work's checkpoint is refused.
 
 A tab asleep in Firefox or Safari keeps the lead while it lives and is answered for by the
 hand-over. The owner's decision of the same day is to replace the leader tab with one browser-wide
@@ -2165,7 +2172,11 @@ worker in `1.9.0` ([design](../../backlog.d/a-browser-wide-worker-holds-the-mls-
 - `tabLeader.reclaim.test.ts`: two tabs promoted in place reload in turn - the first reloaded page
   granted leads and serves, the second follows it, nothing is stolen; a waiting page stops waiting
   when another waiting page is granted and serves; a lone reloaded page takes the free lock; a hidden
-  leader asked for the lead while a lead hold is held answers only once it settles.
+  leader asked for the lead while a lead hold is held answers only once it settles; a reloaded page
+  whose query answers after another tab was heard serving follows that tab (the fake lock manager
+  answers `query()` on a later task, as the browser does); the serving tab DIES (the fake's `kill`:
+  everything it held released, everything it queued dropped, none of its code run) and a waiting
+  page is granted, serves, and ends the other waits.
 - `mlsPerGroupScheduler.leadHold.test.ts`: the mutex holds the lead from grant to release, a waiter
   holds nothing, the hand-over never touches zero, a throw releases.
 - `BaseMlsService.externalJoin.test.ts`: the lead is held while the join's commit is on the wire and

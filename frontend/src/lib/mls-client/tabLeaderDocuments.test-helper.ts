@@ -14,12 +14,33 @@ type Listener = (event: unknown) => void;
 type LockCallback = (lock: { mode: string } | null) => unknown;
 
 /**
+ * WHICH DOCUMENT IS RUNNING. Every document shares one `navigator.locks` and one channel class, so a
+ * request or a channel cannot name its document; this context does, carried through every promise and
+ * timer a document's code starts (`openDocument`, `fire`, a lock's grant, a channel's delivery). It is
+ * what lets the browser kill ONE document ({@link fakeLockManager}'s `kill`). Reached through
+ * `process.getBuiltinModule`, as `node:sqlite` is elsewhere: the environment is a browser one.
+ */
+const { AsyncLocalStorage } = process.getBuiltinModule('node:async_hooks');
+const acting = new AsyncLocalStorage<number>();
+let nextDocumentId = 1;
+/** The document whose code is running, `0` for the test itself. */
+const actingDocument = (): number => acting.getStore() ?? 0;
+
+/**
  * The browser's lock manager: per lock NAME one holder, a FIFO queue, `ifAvailable`, `signal`, and
- * `steal` (the holder's request rejects with `AbortError` and the stealer holds at once), and `query`
- * (the names held). `queued`, `isHeld` and `grants` read the leader lock, `canari-tab-leader`.
+ * `steal` (the holder's request rejects with `AbortError` and the stealer holds at once); `query`
+ * (the names held and queued, read when it is called and answered on a LATER TASK, as the browser
+ * answers it - or only at `releaseQueries` while `holdQueries` holds them); and `kill`, a document
+ * that DIES: everything it holds is released and everything it queued is dropped, with none of its
+ * code run. `queued`, `isHeld` and `grants` read the leader lock, `canari-tab-leader`.
  */
 export function fakeLockManager(onGrant?: () => void) {
-  type Entry = { cb: LockCallback; resolve: (v: unknown) => void; reject: (e: unknown) => void };
+  type Entry = {
+    cb: LockCallback;
+    resolve: (v: unknown) => void;
+    reject: (e: unknown) => void;
+    owner: number;
+  };
   type Lock = { holder: Entry | null; queue: Entry[]; grants: number };
   const locks = new Map<string, Lock>();
   const lockOf = (name: string): Lock => {
@@ -37,16 +58,23 @@ export function fakeLockManager(onGrant?: () => void) {
     lock.grants += 1;
     // The instant the browser hands the leader lock on, before the new holder's callback runs.
     if (name === LEADER_LOCK) onGrant?.();
-    void Promise.resolve()
-      .then(() => entry.cb({ mode: 'exclusive' }))
-      .then(entry.resolve, entry.reject)
-      .finally(() => {
-        // A holder whose lock was stolen releases nothing when its callback ends.
-        if (lock.holder !== entry) return;
-        lock.holder = null;
-        const following = lock.queue.shift();
-        if (following) run(name, following);
-      });
+    // The callback runs as its OWN document, whoever released the lock to it.
+    acting.run(entry.owner, () => {
+      void Promise.resolve()
+        .then(() => entry.cb({ mode: 'exclusive' }))
+        .then(entry.resolve, entry.reject)
+        .finally(() => release(name, entry));
+    });
+  }
+
+  /** The holder lets go (its callback settled, or its document died): the next one is granted. */
+  function release(name: string, entry: Entry): void {
+    const lock = lockOf(name);
+    // A holder whose lock was stolen releases nothing when its callback ends.
+    if (lock.holder !== entry) return;
+    lock.holder = null;
+    const following = lock.queue.shift();
+    if (following) run(name, following);
   }
 
   const request = (
@@ -56,7 +84,7 @@ export function fakeLockManager(onGrant?: () => void) {
   ): Promise<unknown> =>
     new Promise((resolve, reject) => {
       const lock = lockOf(name);
-      const entry: Entry = { cb, resolve, reject };
+      const entry: Entry = { cb, resolve, reject, owner: actingDocument() };
       if (opts.steal) {
         const robbed = lock.holder;
         lock.holder = null;
@@ -85,13 +113,38 @@ export function fakeLockManager(onGrant?: () => void) {
       });
     });
 
-  const query = async () => ({
-    held: [...locks].filter(([, lock]) => lock.holder !== null).map(([name]) => ({ name })),
-    pending: [...locks].flatMap(([name, lock]) => lock.queue.map(() => ({ name }))),
-  });
+  let heldQueries: Array<() => void> | null = null;
+  const query = () => {
+    const state = {
+      held: [...locks].filter(([, lock]) => lock.holder !== null).map(([name]) => ({ name })),
+      pending: [...locks].flatMap(([name, lock]) => lock.queue.map(() => ({ name }))),
+    };
+    return new Promise<typeof state>((resolve) => {
+      const answer = () => setTimeout(() => resolve(state), 0);
+      if (heldQueries) heldQueries.push(answer);
+      else answer();
+    });
+  };
 
   return {
     locks: { request, query },
+    /** Queries asked from now on are answered only at {@link releaseQueries}. */
+    holdQueries: () => {
+      heldQueries = [];
+    },
+    releaseQueries: () => {
+      const held = heldQueries ?? [];
+      heldQueries = null;
+      held.forEach((answer) => answer());
+    },
+    /** The document dies: it releases what it holds and drops what it queued, running nothing. */
+    kill: (doc: Doc) => {
+      for (const [name, lock] of locks) {
+        lock.queue = lock.queue.filter((entry) => entry.owner !== doc.id);
+        if (lock.holder?.owner === doc.id) release(name, lock.holder);
+      }
+      FakeBroadcastChannel.closeOwnedBy(doc.id);
+    },
     queued: () => lockOf(LEADER_LOCK).queue.length,
     isHeld: () => lockOf(LEADER_LOCK).holder !== null,
     grants: () => lockOf(LEADER_LOCK).grants,
@@ -108,6 +161,8 @@ export async function settle(): Promise<void> {
 }
 
 export interface Doc {
+  /** Which document this is, for the browser ({@link fakeLockManager}'s `kill`). */
+  id: number;
   mod: typeof import('./tabLeader');
   /** This document's own `stateAuthority` - the fact #3371 reads before every MLS state write. */
   auth: typeof import('./stateAuthority');
@@ -139,6 +194,14 @@ export async function openDocument(
     pending?: boolean;
   } = {}
 ): Promise<Doc> {
+  const id = nextDocumentId++;
+  return acting.run(id, () => loadDocument(id, opts));
+}
+
+async function loadDocument(
+  id: number,
+  opts: { reloadsOnDemotion?: boolean; pending?: boolean }
+): Promise<Doc> {
   vi.resetModules();
   const mod = await import('./tabLeader');
   // Imported in the same module generation, so it reads THIS document's election.
@@ -154,11 +217,12 @@ export async function openDocument(
     .mockImplementation(((type: string, fn: Listener) =>
       listeners.push({ type, fn })) as typeof window.addEventListener);
   const doc: Doc = {
+    id,
     mod,
     auth,
     holds,
     fire: (type, event = {}) =>
-      listeners.filter((l) => l.type === type).forEach((l) => l.fn(event)),
+      acting.run(id, () => listeners.filter((l) => l.type === type).forEach((l) => l.fn(event))),
     logs: [],
     promoted: 0,
     demoted: 0,
@@ -204,6 +268,8 @@ export async function openDocument(
 export class FakeBroadcastChannel {
   private static readonly open = new Map<string, Set<FakeBroadcastChannel>>();
   private readonly listeners = new Set<(event: MessageEvent) => void>();
+  /** The document that opened it: its deliveries run as that document. */
+  private readonly owner = actingDocument();
   constructor(readonly name: string) {
     const peers = FakeBroadcastChannel.open.get(name) ?? new Set();
     peers.add(this);
@@ -214,7 +280,7 @@ export class FakeBroadcastChannel {
       if (peer === this) continue;
       setTimeout(() => {
         if (!FakeBroadcastChannel.open.get(this.name)?.has(peer)) return;
-        peer.listeners.forEach((l) => l({ data } as MessageEvent));
+        acting.run(peer.owner, () => peer.listeners.forEach((l) => l({ data } as MessageEvent)));
       }, 0);
     }
   }
@@ -226,6 +292,12 @@ export class FakeBroadcastChannel {
   }
   close(): void {
     FakeBroadcastChannel.open.get(this.name)?.delete(this);
+  }
+  /** A dead document's channels hear nothing more. */
+  static closeOwnedBy(owner: number): void {
+    for (const peers of FakeBroadcastChannel.open.values()) {
+      for (const peer of peers) if (peer.owner === owner) peers.delete(peer);
+    }
   }
   /** Forgets every channel, between tests. */
   static reset(): void {

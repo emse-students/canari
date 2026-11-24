@@ -113,8 +113,12 @@ function hearLeaderAnnouncements(channel: BroadcastChannel): void {
     if (type === 'leader_promoted' || type === 'leader_closing' || type === 'leader_serving') {
       notifyLeaderTabChanged(`another tab sent ${type}`);
     }
-    // A page waiting for the lead after its promotion reload follows a tab that serves it.
-    if (type === 'leader_serving') stopWaitingForTheLead?.('another tab serves the lead');
+    // A page waiting for the lead after its promotion reload follows a tab that serves it - and a
+    // page still READING whether one serves remembers it heard one ({@link servingHeard}).
+    if (type === 'leader_serving') {
+      servingHeard = true;
+      stopWaitingForTheLead?.('another tab serves the lead');
+    }
   });
 }
 
@@ -514,6 +518,14 @@ const SERVING_LOCK = 'canari-tab-serving';
 let releaseServing: (() => void) | null = null;
 /** Ends the wait of a page reloaded after its promotion ({@link waitForTheLead}); `null` otherwise. */
 let stopWaitingForTheLead: ((why: string) => void) | null = null;
+/**
+ * A `leader_serving` was heard since the reloaded page started reading whether a tab serves
+ * ({@link aTabServes}). The read is asynchronous and the waiter is armed only after it, so an
+ * announcement delivered in between found no waiter: the page then queued behind a tab that serves
+ * and its login waited for good (fourth review of #4053, B1). Set by the channel handler, armed
+ * before the read, and read right after it - with no task in between, so nothing is lost.
+ */
+let servingHeard = false;
 
 /**
  * Takes the serving lock (granted at once unless the leader it follows is still dropping it, which
@@ -906,8 +918,11 @@ async function initWithWebLocks(log: (msg: string) => void): Promise<boolean> {
 
   if (consumePromotionReload()) {
     // Read AFTER the channel listens, so a tab that starts serving later is heard
-    // (`leader_serving`), and one that serves already is in the browser's record.
-    if (!(await aTabServes())) {
+    // (`leader_serving`), and one that serves already is in the browser's record. A tab heard
+    // serving WHILE the read runs counts too: the waiter below is not armed yet to hear it.
+    servingHeard = false;
+    const serves = await aTabServes();
+    if (!serves && !servingHeard) {
       log(
         '[TAB] Reloaded after a promotion - waiting in the queue for the lead, which no tab serves.'
       );
@@ -1283,6 +1298,7 @@ export function resetTabLeaderStateForTests(): void {
   rejoinOwed = false;
   dropServingLock();
   stopWaitingForTheLead = null;
+  servingHeard = false;
   handoverOwedTo = null;
   stopAwaitingHolds?.();
   stopAwaitingHolds = null;
