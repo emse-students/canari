@@ -36,6 +36,7 @@ import { JoinAskPush } from '../entities/join-ask-push.entity';
 import { RevokedDeviceGroup } from '../entities/revoked-device-group.entity';
 import { SentFrameReceipt } from '../entities/sent-frame-receipt.entity';
 import { UninvitedEntry } from '../entities/uninvited-entry.entity';
+import { GroupLastMessage } from '../entities/group-last-message.entity';
 import { MessagingService } from '../services/messaging.service';
 import { AppController } from '../app.controller';
 import { tombstoneGroups } from './group-purge';
@@ -112,6 +113,7 @@ const ENTITIES = [
   RevokedDeviceGroup,
   SentFrameReceipt,
   UninvitedEntry,
+  GroupLastMessage,
 ];
 
 /** A throwaway schema on the test database, dropped afterwards. */
@@ -530,23 +532,32 @@ maybe('a key-group frame stored once, against PostgreSQL', () => {
     expect(await count('queued_message')).toBe(5);
   });
 
-  it("a conversation's newest visible frame time is noted at the send and cleared past the window (057)", async () => {
+  it("a conversation's newest visible frame time is noted at the send, deleted past the window, and goes with the conversation (057)", async () => {
+    const noted = async (groupId: string) =>
+      (
+        await ds.query(`SELECT "lastMessageAt" FROM dm_group_last_message WHERE "groupId" = $1`, [
+          groupId,
+        ])
+      )[0]?.lastMessageAt ?? null;
     await send(DM_GROUP);
-    const [noted] = await ds.query(`SELECT "lastMessageAt" FROM dm_groups WHERE id = $1`, [
-      DM_GROUP,
-    ]);
-    expect(noted.lastMessageAt).not.toBeNull();
+    expect(await noted(DM_GROUP)).not.toBeNull();
 
     const past = new Date(Date.now() - RETENTION_WINDOW_MS - 60_000);
-    await ds.query(`UPDATE dm_groups SET "lastMessageAt" = $1 WHERE id = $2`, [past, DM_GROUP]);
+    await ds.query(`UPDATE dm_group_last_message SET "lastMessageAt" = $1 WHERE "groupId" = $2`, [
+      past,
+      DM_GROUP,
+    ]);
     await (
       app as unknown as { cleanupExpiredQueuedMessages(): Promise<void> }
     ).cleanupExpiredQueuedMessages();
+    expect(await noted(DM_GROUP)).toBeNull();
 
-    const [cleared] = await ds.query(`SELECT "lastMessageAt" FROM dm_groups WHERE id = $1`, [
-      DM_GROUP,
-    ]);
-    expect(cleared.lastMessageAt).toBeNull();
+    // A deleted conversation keeps its tombstone, and nothing of its activity.
+    await send(DM_GROUP);
+    expect(await noted(DM_GROUP)).not.toBeNull();
+    const counts = await tombstoneGroups(ds.manager, redis as never, [DM_GROUP]);
+    expect(counts.lastMessages).toBe(1);
+    expect(await noted(DM_GROUP)).toBeNull();
   });
 
   it('serves a pre-034 inline row on a key group unchanged, beside the shared ones', async () => {

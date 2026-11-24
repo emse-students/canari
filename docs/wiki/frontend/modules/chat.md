@@ -20,20 +20,20 @@
 
 The chat module is split across three composables:
 
-| Composable | Responsibility |
-|---|---|
-| `useChatSession` | Session lifecycle: login, WebSocket, reconnect, MLS init, device sync |
-| `useConversations` | Conversation state: create, list, select, paginate, history replay |
-| `useMessaging` | Message operations: send, receive, react, edit, delete, media upload |
+| Composable         | Responsibility                                                        |
+| ------------------ | --------------------------------------------------------------------- |
+| `useChatSession`   | Session lifecycle: login, WebSocket, reconnect, MLS init, device sync |
+| `useConversations` | Conversation state: create, list, select, paginate, history replay    |
+| `useMessaging`     | Message operations: send, receive, react, edit, delete, media upload  |
 
 Conversation state lives in a `SvelteMap<string, Conversation>` local to the composables (not a global Svelte store). Both `MainChatPage.svelte` and `ChatBackgroundService.svelte` instantiate their own instance.
 
 ## The conversation's chrome in the phone apps - glass floating over the thread (2026-09-30)
 
-**The user's rule:** *"only static ui element, that are apart from content, should be liquid glass"*,
-and for the conversation: *"replace the bar on top of messages with just a back and menu button
-that then grows ... to show the other options ... and do the same for the composer"* - then, the
-same day, *"only apply it on phone finally, the design is good on web"*.
+**The user's rule:** _"only static ui element, that are apart from content, should be liquid glass"_,
+and for the conversation: _"replace the bar on top of messages with just a back and menu button
+that then grows ... to show the other options ... and do the same for the composer"_ - then, the
+same day, _"only apply it on phone finally, the design is good on web"_.
 
 **Decisions (user, 2026-09-30).**
 
@@ -68,10 +68,11 @@ every width**, a phone's browser included. ONE predicate decides it, `usesGlassC
   ("Plus d'actions") growing into the SAME actions as the classic row, under the same conditions -
   calls when their handlers are given, a channel's members first, media, search, settings.
   `ChatHeader.phoneMenu.svelte.test.ts` holds that parity, and that the website draws none of it.
+
 ### A person in a conversation opens their profile (2026-11-01)
 
-Owner: *"it would be nice to reach the profile page of someone you click on in a conversation, in the
-participants list, or in the header if it's a 1:1"*. Three entry points, all real `<a>` (or a labelled
+Owner: _"it would be nice to reach the profile page of someone you click on in a conversation, in the
+participants list, or in the header if it's a 1:1"_. Three entry points, all real `<a>` (or a labelled
 button for the glass pill), all built by `profileHref` (`utils/users/profileHref.ts`) and drawn through
 `shared/ProfileLink.svelte` for avatars:
 
@@ -186,18 +187,18 @@ apps themselves (no WebView here), a real account, and the keyboard on a phone.
 
 ## Key components
 
-| Component | Role |
-|---|---|
-| `MainChatPage.svelte` | Root chat page, orchestrates sidebar + chat area |
-| `ChatArea.svelte` | Header + message list + composer |
-| `MessageTextBody.svelte` | A message's text, its links, and the link card under it. **The card is capped at `max-w-sm` in a conversation** (2026-09-25): the bubble is `w-fit` with no width of its own, so a long title stretched the card across the thread - one line of title over a band of blurred poster. The title wraps to three lines (a post's is cut at 100 characters upstream). The feed's `PostContent` mounts the card uncapped, at the post's width. |
-| `ChatComposer.svelte` | Message input, media picker, reply preview. **One drop rule for every composer** (2026-11-08): `handleComposerDrop` (`utils/composerDrop.ts`) reads a drop as real files, then a withheld local address (toast), then a WEB IMAGE with no file (`webImageUrlsFromTransfer`). **Only an origin the enforced `connect-src` allows is fetched** (2026-11-20): `connectAllowlist.ts` reads the list the runtime is held to - the web page's from `security/cspDirectives.js`, the app's from `tauri.conf.json`, never restated - and that is Canari's own hosts (plus `static.klipy.com` on the web). Every other origin, which is to say almost every picture dragged out of another site, is refused BEFORE any request with the toast `composer_drop_web_image_refused` and no console line: fetching it would only have handed the browser a request its policy is certain to refuse. An allowed address is fetched by `fetchWebImageFile` with no credentials through `webViewFetch` (`utils/fetchRouting.ts`), never the HTTP plugin the Tauri router gives third-party hosts; one that fails gives the same toast and a `[COMPOSER]` warn naming the host and the typed cause. A dragged picture that carries its FILE is attached by rule 1 and never reaches this step; a server relay that would fetch any host for the client is not built; then text. The post sheet (`CreatePostForm`) is one zone through the `composerDropZone` action, and `dropEffectFor` follows the source's `effectAllowed` (forcing `copy` on a move-only web image made the browser refuse the drop). **The drop badge ends at the WINDOW, not the panel** (2026-09-25): a drop on the editor stops propagating (the file is attached once), and a cancelled drag's closing `dragleave` fires wherever the pointer was - so `drop` (capture), `dragleave` with no `relatedTarget` and `dragend` are read on `window`; `ChatComposer.dragBadge.svelte.test.ts`. **A drop carrying only a local file's ADDRESS is refused, not inserted** (2026-09-25): Firefox given a file by Nemo receives its `file:///` URI and path but no `File`, and the editor pasted the name. `localFileAddressesFromTransfer` (`composerTransfer.ts`) recognises it; the editor and the panel insert nothing and toast `composer_drop_file_unreadable` - a page cannot read a local file from its address, so the attachment button is the way. **On a phone the paperclip opens a menu** (2026-09-28, user: *"comme sur messenger"*) - since 2026-10-02 THE one menu, each entry going straight to its picker, and none on an iOS browser where WebKit's sheet is the menu ([below](#one-attachment-menu-and-a-gif-panel-in-the-keyboards-place-2026-10-02)). A picker is chosen by what the input ACCEPTS - one input taking images, videos, audio, PDFs and archives is a document request, which Android answers with the file browser - so the photos entry is a second input accepting `image/*,video/*` only: the system photo picker where the phone has one, the photo library on iOS, and no gallery permission (Google Play grants that only to apps built around photos, so an in-app Messenger-style grid was declined). A desktop keeps its single dialog. `ChatComposer.attachMenu.svelte.test.ts`; **which Android versions show the photo grid through the WebView's chooser is NOT measured - owed on a phone.** |
-| `ChatMessageGroups.svelte` | Groups messages by date, sticky date indicator |
-| `MessageBubble.svelte` | Renders a single message with reply, reactions, status |
-| `ConversationMediaPanel.svelte` | Side panel showing shared media for a conversation |
-| `MessageEmojiPicker.svelte` | Emoji reaction picker (locale-aware FR/EN i18n) |
-| `ComposerEmojiPicker.svelte` | Emoji picker for the text input itself, desktop only |
-| `Sidebar.svelte` | Conversation list, community/workspace switcher. The community rail supports drag-and-drop reordering (`svelte-dnd-action`); order is optimistic locally then persisted via `ChannelService.reorderWorkspaces` |
+| Component                       | Role                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MainChatPage.svelte`           | Root chat page, orchestrates sidebar + chat area                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `ChatArea.svelte`               | Header + message list + composer                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `MessageTextBody.svelte`        | A message's text, its links, and the link card under it. **The card is capped at `max-w-sm` in a conversation** (2026-09-25): the bubble is `w-fit` with no width of its own, so a long title stretched the card across the thread - one line of title over a band of blurred poster. The title wraps to three lines (a post's is cut at 100 characters upstream). The feed's `PostContent` mounts the card uncapped, at the post's width.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `ChatComposer.svelte`           | Message input, media picker, reply preview. **One drop rule for every composer** (2026-11-08): `handleComposerDrop` (`utils/composerDrop.ts`) reads a drop as real files, then a withheld local address (toast), then a WEB IMAGE with no file (`webImageUrlsFromTransfer`). **Only an origin the enforced `connect-src` allows is fetched** (2026-11-20): `connectAllowlist.ts` reads the list the runtime is held to - the web page's from `security/cspDirectives.js`, the app's from `tauri.conf.json`, never restated - and that is Canari's own hosts (plus `static.klipy.com` on the web). Every other origin, which is to say almost every picture dragged out of another site, is refused BEFORE any request with the toast `composer_drop_web_image_refused` and no console line: fetching it would only have handed the browser a request its policy is certain to refuse. An allowed address is fetched by `fetchWebImageFile` with no credentials through `webViewFetch` (`utils/fetchRouting.ts`), never the HTTP plugin the Tauri router gives third-party hosts; one that fails gives the same toast and a `[COMPOSER]` warn naming the host and the typed cause. A dragged picture that carries its FILE is attached by rule 1 and never reaches this step; a server relay that would fetch any host for the client is not built; then text. The post sheet (`CreatePostForm`) is one zone through the `composerDropZone` action, and `dropEffectFor` follows the source's `effectAllowed` (forcing `copy` on a move-only web image made the browser refuse the drop). **The drop badge ends at the WINDOW, not the panel** (2026-09-25): a drop on the editor stops propagating (the file is attached once), and a cancelled drag's closing `dragleave` fires wherever the pointer was - so `drop` (capture), `dragleave` with no `relatedTarget` and `dragend` are read on `window`; `ChatComposer.dragBadge.svelte.test.ts`. **A drop carrying only a local file's ADDRESS is refused, not inserted** (2026-09-25): Firefox given a file by Nemo receives its `file:///` URI and path but no `File`, and the editor pasted the name. `localFileAddressesFromTransfer` (`composerTransfer.ts`) recognises it; the editor and the panel insert nothing and toast `composer_drop_file_unreadable` - a page cannot read a local file from its address, so the attachment button is the way. **On a phone the paperclip opens a menu** (2026-09-28, user: _"comme sur messenger"_) - since 2026-10-02 THE one menu, each entry going straight to its picker, and none on an iOS browser where WebKit's sheet is the menu ([below](#one-attachment-menu-and-a-gif-panel-in-the-keyboards-place-2026-10-02)). A picker is chosen by what the input ACCEPTS - one input taking images, videos, audio, PDFs and archives is a document request, which Android answers with the file browser - so the photos entry is a second input accepting `image/*,video/*` only: the system photo picker where the phone has one, the photo library on iOS, and no gallery permission (Google Play grants that only to apps built around photos, so an in-app Messenger-style grid was declined). A desktop keeps its single dialog. `ChatComposer.attachMenu.svelte.test.ts`; **which Android versions show the photo grid through the WebView's chooser is NOT measured - owed on a phone.** |
+| `ChatMessageGroups.svelte`      | Groups messages by date, sticky date indicator                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `MessageBubble.svelte`          | Renders a single message with reply, reactions, status                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `ConversationMediaPanel.svelte` | Side panel showing shared media for a conversation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `MessageEmojiPicker.svelte`     | Emoji reaction picker (locale-aware FR/EN i18n)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `ComposerEmojiPicker.svelte`    | Emoji picker for the text input itself, desktop only                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `Sidebar.svelte`                | Conversation list, community/workspace switcher. The community rail supports drag-and-drop reordering (`svelte-dnd-action`); order is optimistic locally then persisted via `ChannelService.reorderWorkspaces`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
 ### A community in the rail carries a dot when any of its salons has unread messages (2026-10-05)
 
@@ -219,19 +220,19 @@ local and receipts are only what OTHERS see. `Sidebar.communityUnreadDot.svelte.
 **The chantier these three sections belong to is CLOSED (2026-10-14)**: every path that can move a
 salon's read mark, with its evidence, is on [read-receipt-privacy](../../read-receipt-privacy.md).
 
-**Reported by the user** (*"messages marked read though I never opened the community's salon"*), and
+**Reported by the user** (_"messages marked read though I never opened the community's salon"_), and
 **measured before anything was fixed**, with `tools/cross-client-harness/unread-communities.mjs` on the
 local estate: ten communities, 2-5 salons each (public, private and not joined), a reader (W2) and an
 owner (W1) posting 2 messages into every salon. Every step is read on three ends - the screen, the
 server's `channel_members."readMarks"` and nginx's access log of the read endpoints.
 
-| Step | Screen | Server mark of the reader | Read endpoints POSTed by the reader |
-|---|---|---|---|
-| 38 salons posted into while the reader sat on `/chat` | tab title `(20)`: **only the 10 `general` salons counted**, the other 28 raised nothing | 0 everywhere | none |
-| reader walks all ten communities, opens no salon | `general` badge 2 each; salon-a/b/c rows absent from the sidebar (see below) | unchanged | none |
-| **reader reloads** | **every badge gone, every rail dot gone** | unchanged (every salon still newer than the mark) | none |
-| reader opens ONE salon | that salon only | that salon only, nothing else | exactly one `read-mark` |
-| reader walks the communities again | nothing else changes | unchanged | none |
+| Step                                                  | Screen                                                                                  | Server mark of the reader                         | Read endpoints POSTed by the reader |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------- | ----------------------------------- |
+| 38 salons posted into while the reader sat on `/chat` | tab title `(20)`: **only the 10 `general` salons counted**, the other 28 raised nothing | 0 everywhere                                      | none                                |
+| reader walks all ten communities, opens no salon      | `general` badge 2 each; salon-a/b/c rows absent from the sidebar (see below)            | unchanged                                         | none                                |
+| **reader reloads**                                    | **every badge gone, every rail dot gone**                                               | unchanged (every salon still newer than the mark) | none                                |
+| reader opens ONE salon                                | that salon only                                                                         | that salon only, nothing else                     | exactly one `read-mark`             |
+| reader walks the communities again                    | nothing else changes                                                                    | unchanged                                         | none                                |
 
 **The reading that was believed is therefore refuted for marking and confirmed for disappearing.** Nothing
 in the app marks a salon read that was not opened: the server mark moves only on the receipt effect of
@@ -256,46 +257,47 @@ right after it was read. **Not always earlier**: an author whose clock leads the
 the history load included ([social-service](../../services/social-service.md#read-receipts-in-a-salon)).
 
 **Refuted, not to be re-opened** (each read in the code AND measured):
-- *`onSelectChannelConversation` marks on load/visibility.* It runs on a click only; `claimChannelReadSignal`
+
+- _`onSelectChannelConversation` marks on load/visibility._ It runs on a click only; `claimChannelReadSignal`
   only suppresses repeats.
-- *`selectedChannelConversationId` survives a community switch.* `onSelectCommunity` clears it and
+- _`selectedChannelConversationId` survives a community switch._ `onSelectCommunity` clears it and
   `selectedContact`; on the phone layout Back clears `selectedContact` (the sidebar highlight alone may
   outlive it, and marks nothing - the receipt effect keys on `selectedContact`).
-- *Opening a community opens its first salon.* Only creating a community (`ensureWorkspaceByName`) and
+- _Opening a community opens its first salon._ Only creating a community (`ensureWorkspaceByName`) and
   accepting an invitation (`openInvitedChannel`) select a salon, both user gestures.
-- *`channel.read` of the own mark empties other devices wrongly.* It does so only for a mark the user
+- _`channel.read` of the own mark empties other devices wrongly._ It does so only for a mark the user
   made on another device.
-- *The server marks anything.* `readMarks` is written in one place, `advanceChannelReadMark`, on request.
+- _The server marks anything._ `readMarks` is written in one place, `advanceChannelReadMark`, on request.
 
 ### A selection is not a screen (2026-10-10)
 
 The 2026-10-08 section above refuted "the app marks a salon read it never opened" for the SERVER's
-mark and found none. The user's decision of 2026-10-08 (*"communities may mark messages read without
-the salon being opened - measure on a ten-community bench, then fix what is proven"*) was re-run on
+mark and found none. The user's decision of 2026-10-08 (_"communities may mark messages read without
+the salon being opened - measure on a ten-community bench, then fix what is proven"_) was re-run on
 the local estate (build of 2026-10-08, ten communities `C99 a`..`j`, owner W1, reader W2) with the
 selection placed where the first run never put it: **on a page that does not draw a conversation.**
 
 **What marks what, from the code, before the bench.**
 
-| Action | Local count | Server read mark | `POST /read` (banner signal) |
-|---|---|---|---|
-| click a salon (`onSelectChannelConversation`) | cleared | at once, then one trailing mark per 2 s window, only if focused + visible + foreground | once, if the newest foreign message is new |
-| message arrives, salon selected | stays 0 | via the receipt effect, same guard | at arrival, once per message |
-| message arrives, salon NOT selected | +1 | none | none |
-| open via a notification tap (read in the code, not re-measured) | the tap selects it, which is a real open | only on a select | only on a select |
-| community overview, a notification preview | select nothing (read in the code) | none | none |
+| Action                                                          | Local count                              | Server read mark                                                                       | `POST /read` (banner signal)               |
+| --------------------------------------------------------------- | ---------------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------ |
+| click a salon (`onSelectChannelConversation`)                   | cleared                                  | at once, then one trailing mark per 2 s window, only if focused + visible + foreground | once, if the newest foreign message is new |
+| message arrives, salon selected                                 | stays 0                                  | via the receipt effect, same guard                                                     | at arrival, once per message               |
+| message arrives, salon NOT selected                             | +1                                       | none                                                                                   | none                                       |
+| open via a notification tap (read in the code, not re-measured) | the tap selects it, which is a real open | only on a select                                                                       | only on a select                           |
+| community overview, a notification preview                      | select nothing (read in the code)        | none                                                                                   | none                                       |
 
 **Measured** (reader selects `C99 a` / general, walks to `/posts` by the nav rail; owner posts one
 message in each of the ten communities):
 
-| Situation | Badge | `POST /read` | `read-mark` |
-|---|---|---|---|
-| salon selected, on `/communities`, window in front (control) | cleared | 1 | 1 |
-| **salon still selected, reader on `/posts`** | **title unchanged**; ten bench: `(40)` -> `(49)`, nine counted of ten | **1, for the salon nobody saw** | none |
-| back on `/communities` | the message counted `1 message non lu` | - | - |
-| **salon selected, tab hidden (visibility + blur simulated)** | **title unchanged** - the one signal a hidden tab has | **1** | held until the tab is visible again (correct) |
-| other salon selected (control) | `+1` on the salon row | none | none |
-| ten bench, reload on `/communities` | `(50)`: the server's count restored the missing one | 2 `unread-counts`, 33 and 29 ms | - |
+| Situation                                                    | Badge                                                                 | `POST /read`                    | `read-mark`                                   |
+| ------------------------------------------------------------ | --------------------------------------------------------------------- | ------------------------------- | --------------------------------------------- |
+| salon selected, on `/communities`, window in front (control) | cleared                                                               | 1                               | 1                                             |
+| **salon still selected, reader on `/posts`**                 | **title unchanged**; ten bench: `(40)` -> `(49)`, nine counted of ten | **1, for the salon nobody saw** | none                                          |
+| back on `/communities`                                       | the message counted `1 message non lu`                                | -                               | -                                             |
+| **salon selected, tab hidden (visibility + blur simulated)** | **title unchanged** - the one signal a hidden tab has                 | **1**                           | held until the tab is visible again (correct) |
+| other salon selected (control)                               | `+1` on the salon row                                                 | none                            | none                                          |
+| ten bench, reload on `/communities`                          | `(50)`: the server's count restored the missing one                   | 2 `unread-counts`, 33 and 29 ms | -                                             |
 
 **Cause.** `selectedContact` lives in a global singleton and `beforeNavigate` clears it only between
 `/chat` and `/communities`, so a salon stays "selected" across every other page. The unread count and the
@@ -346,12 +348,12 @@ receipt, because that IS reading. (The shade's "Marquer comme lu" keeps moving t
 reader saw the message in the banner. Not changed here - and since 2026-10-14 not offered at all on a
 BLIND banner, where the reader saw nothing: [read-receipt-privacy](../../read-receipt-privacy.md).)
 
-| Piece | Where |
-|---|---|
-| The gesture | `actions/longPress.ts` - the hold primitive extracted from `reactorsTrigger` (which now composes it): 450 ms, slop, the click that ends a hold swallowed in capture, the native menu refused; a `contextmenu` that is not a touch hold goes to `onContextMenu` |
-| The rail | `Sidebar.svelte`: touch/pen hold and right click open `CommunityRailMenu.svelte`; the mouse's main button is left to the drag |
-| One request | `POST /api/channels/workspaces/:workspaceId/unread/clear { upTo }` -> `clearWorkspaceUnread`: one `UPDATE` for every salon the caller may read (`canAccessChannel`) |
-| Other devices | `channel.unread.cleared` to the caller alone; each device re-reads `unread-counts` (one request), plus one silent `channel_read` push per salon that moved, which dismisses its banners |
+| Piece         | Where                                                                                                                                                                                                                                                          |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The gesture   | `actions/longPress.ts` - the hold primitive extracted from `reactorsTrigger` (which now composes it): 450 ms, slop, the click that ends a hold swallowed in capture, the native menu refused; a `contextmenu` that is not a touch hold goes to `onContextMenu` |
+| The rail      | `Sidebar.svelte`: touch/pen hold and right click open `CommunityRailMenu.svelte`; the mouse's main button is left to the drag                                                                                                                                  |
+| One request   | `POST /api/channels/workspaces/:workspaceId/unread/clear { upTo }` -> `clearWorkspaceUnread`: one `UPDATE` for every salon the caller may read (`canAccessChannel`)                                                                                            |
+| Other devices | `channel.unread.cleared` to the caller alone; each device re-reads `unread-counts` (one request), plus one silent `channel_read` push per salon that moved, which dismisses its banners                                                                        |
 
 **The bound.** `upTo` is `communityUnreadUpTo`: the later of the last server count's `asOf` and the
 newest message held in those salons - both on the SERVER's clock (a salon row's timestamp is its
@@ -457,8 +459,8 @@ opening ([device-verification](../../device-verification.md#the-mi-9t-readings-o
 
 ### A salon's badge starts at the grant (owner, 2026-11-16)
 
-**The decision, under principle 3 of [the charter](../../../principes.md)** (*your attention is not for
-sale*): a private salon handed to a member counts as unread only what is posted AFTER access was
+**The decision, under principle 3 of [the charter](../../../principes.md)** (_your attention is not for
+sale_): a private salon handed to a member counts as unread only what is posted AFTER access was
 granted. Its past stays readable (principle 2 is untouched); only the count changes. Before, a member
 granted a salon long after joining the community saw a badge of every non-own row since their
 community join (or the 2026-10-08 tracking floor), because nothing recorded when access was given.
@@ -572,9 +574,9 @@ drawn: the control is dead until then, and beta's control removes beta),
 
 ### One attachment menu, and a GIF panel in the keyboard's place (2026-10-02)
 
-Two reports from the user on the iPhone 12, with a screen recording. *"Deux menus similaires, n'en
-faire qu'un"*, and the menu that *"ne se ferme pas"*; and for GIFs, *"un panneau de la taille du
-clavier qui s'ouvre a sa place"* - Messenger's, Discord's, WhatsApp's.
+Two reports from the user on the iPhone 12, with a screen recording. _"Deux menus similaires, n'en
+faire qu'un"_, and the menu that _"ne se ferme pas"_; and for GIFs, _"un panneau de la taille du
+clavier qui s'ouvre a sa place"_ - Messenger's, Discord's, WhatsApp's.
 
 **WHY THERE WERE TWO MENUS - READ OFF THE RECORDING, THEN OFF WEBKIT.** The "+" opened Canari's menu
 (the native UIMenu of WP-G2 on iOS); its "Photos et videos" clicked an
@@ -587,12 +589,12 @@ up for fifteen seconds, anchored to an input that was `display: none`.
 
 **THE ONE MENU** (`utils/chat/attachSources.ts`, the table and the reason; `attachSources.test.ts`):
 
-| runtime | Photothèque | camera | Tous les fichiers |
-| --- | --- | --- | --- |
-| iOS app | **native** `PHPickerViewController` (`tauri-plugin-dialog`, `pickerMode: 'media'`) | **in-app camera overlay** (photos only in a chat) | **native** document picker |
-| Android app, Android browser | input `image/*,video/*` | **in-app camera overlay** (photos only in a chat) | input, `accept="*/*"` (a type LIST greys out the rest in Android's picker: a saved `.txt` log was unselectable, 2026-11-07) |
-| iOS browser | **no Canari menu**: the paperclip is a `<label>` around one input, and WebKit's sheet is the only menu | - | - |
-| desktop | no menu: the paperclip opens the file dialog | - | - |
+| runtime                      | Photothèque                                                                                            | camera                                            | Tous les fichiers                                                                                                           |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| iOS app                      | **native** `PHPickerViewController` (`tauri-plugin-dialog`, `pickerMode: 'media'`)                     | **in-app camera overlay** (photos only in a chat) | **native** document picker                                                                                                  |
+| Android app, Android browser | input `image/*,video/*`                                                                                | **in-app camera overlay** (photos only in a chat) | input, `accept="*/*"` (a type LIST greys out the rest in Android's picker: a saved `.txt` log was unselectable, 2026-11-07) |
+| iOS browser                  | **no Canari menu**: the paperclip is a `<label>` around one input, and WebKit's sheet is the only menu | -                                                 | -                                                                                                                           |
+| desktop                      | no menu: the paperclip opens the file dialog                                                           | -                                                 | -                                                                                                                           |
 
 **BUILT (user, 2026-10-11, D-camera): no native camera.** No `<input capture>`, no capture intent, no `queries` entry: the camera column is ONE "Ouvrir la camera" entry opening the in-app CanaReel camera as an OVERLAY (`components/reels/CameraOverlay.svelte` over `ReelCapture` with `destination="chat"`), in the chat and in the new-post composer alike; the library and files entries stay. **In a chat the camera takes PHOTOS ONLY for now**, and the review button is "Ajouter": the photo is STAGED in the composer through `onFilesSelected`, exactly like a library pick, and the member presses send (an ORDINARY image message, no new wire format). The chat camera opens WITHOUT the microphone (`openPhotoCamera`), so a refused or absent one never blocks a photo; a video filmed in a chat is the reel message ([reels-in-chat](reels-in-chat.md), RC-3..RC-5, not built), whose take will be `chat-reel` (30 days). A post take is a post (post class, [posts](posts.md)). **An iOS phone BROWSER still shows the system sheet of WebKit, "Prendre une photo" included**: a web page cannot remove an entry of that sheet for a file input, and Canari draws no menu there.
 
@@ -832,12 +834,12 @@ User report: the picker shifted its content, was slow to fill, and GIFs struggle
 with a CDP harness (headless Chrome, a modelled relay that answers 503 `busy` past 16 distinct
 downloads, a shared pipe slowing each download as more run together):
 
-| | before | after |
-| --- | --- | --- |
-| relay refusals (blank tiles) | 7 phone / 5 desktop | 0 / 0 |
-| downloads in flight at once | 16 | 6 |
-| tiles that moved (desktop) | 13 (the scrollbar appearing narrowed the grid) | 0 |
-| layout shift (desktop) | 0.0044 | 0 |
+|                              | before                                         | after |
+| ---------------------------- | ---------------------------------------------- | ----- |
+| relay refusals (blank tiles) | 7 phone / 5 desktop                            | 0 / 0 |
+| downloads in flight at once  | 16                                             | 6     |
+| tiles that moved (desktop)   | 13 (the scrollbar appearing narrowed the grid) | 0     |
+| layout shift (desktop)       | 0.0044                                         | 0     |
 
 - **Weight.** The server adds the provider's smallest rendition as an optional `tiny` when it is
   strictly narrower than `preview` (`klipy.ts`). `pickGridRendition(gif, tileWidth)` draws the
@@ -907,16 +909,16 @@ Native: `PushText::render` (`mobile/push_text.rs`), chosen from the proto by `ex
 and fails `cargo test` if a word, an emoji or a punctuation mark differs on either side.
 `chat_preview_media` is deleted.
 
-| What the message is | fr | en |
-| --- | --- | --- |
-| image | `📷 Photo` | `📷 Photo` |
-| image, mime `image/gif` (any case; the proto carries it, field 5) | `🌀 GIF` | `🌀 GIF` |
-| video | `🎥 Vidéo` | `🎥 Video` |
-| a video declaring `intent: reel-message` | `🎬 CanaReel` | `🎬 CanaReel` |
-| audio declared a voice note | `🎤 Message vocal` | `🎤 Voice message` |
-| audio, undeclared (an import, or before 2026-09-17) | `🎵 Fichier audio` | `🎵 Audio file` |
-| file, named | `📎 Fichier : <nom>` | `📎 File: <name>` |
-| file, nameless | `📎 Pièce jointe` | `📎 Attachment` |
+| What the message is                                               | fr                   | en                 |
+| ----------------------------------------------------------------- | -------------------- | ------------------ |
+| image                                                             | `📷 Photo`           | `📷 Photo`         |
+| image, mime `image/gif` (any case; the proto carries it, field 5) | `🌀 GIF`             | `🌀 GIF`           |
+| video                                                             | `🎥 Vidéo`           | `🎥 Video`         |
+| a video declaring `intent: reel-message`                          | `🎬 CanaReel`        | `🎬 CanaReel`      |
+| audio declared a voice note                                       | `🎤 Message vocal`   | `🎤 Voice message` |
+| audio, undeclared (an import, or before 2026-09-17)               | `🎵 Fichier audio`   | `🎵 Audio file`    |
+| file, named                                                       | `📎 Fichier : <nom>` | `📎 File: <name>`  |
+| file, nameless                                                    | `📎 Pièce jointe`    | `📎 Attachment`    |
 
 **A caption FOLLOWS the kind everywhere** (`📷 Photo : coucou`; `{label} : {caption}` in fr,
 `{label}: {caption}` in en) - in the list, in the quote a reply stores (the caption raw there, mentions
@@ -934,9 +936,9 @@ and is not rebuilt. Tests: `envelope.mediaPreview.test.ts`, and `push_text.rs` /
 
 ### A photo or video with text fills its bubble, and a video keeps its shape (2026-10-02)
 
-**Two reports from the user.** *"message avec texte + image -> l'image est au dessus de la bulle,
-comme si elle etait envoyee seule avant le texte, pas dans la bulle"*, and *"video -> conserver le
-format (actuellement les videos sont crop dans le chat, il faut cliquer dessus pour tout afficher)"*.
+**Two reports from the user.** _"message avec texte + image -> l'image est au dessus de la bulle,
+comme si elle etait envoyee seule avant le texte, pas dans la bulle"_, and _"video -> conserver le
+format (actuellement les videos sont crop dans le chat, il faut cliquer dessus pour tout afficher)"_.
 
 - **Bleed.** A photo or video that carries a caption (and no quoted reply, which stacks its own
   bubble above) now fills the TOP of its bubble edge to edge, with the caption under it in the same
@@ -961,8 +963,8 @@ pins the ratio, `object-contain`, the bleed and the rounded frame kept when ther
 
 #1229 made a FEED video play inline (`InlineVideo`), and its edit to `MessageMediaRenderer` replaced
 the IMAGE branch rather than a video one. Every decrypted chat photo was handed to a `<video>` with
-`#t=0.1`, which no engine decodes as an image - Firefox said it outright: *"HTTP Content-Type of
-image/jpeg is not supported"*, then `playWhileVisible: play() refused NotSupportedError`. The image
+`#t=0.1`, which no engine decodes as an image - Firefox said it outright: _"HTTP Content-Type of
+image/jpeg is not supported"_, then `playWhileVisible: play() refused NotSupportedError`. The image
 branch is back as it was (an `<img>` in a button opening the viewer, the download button over it);
 the video branch is unchanged. **No test had ever mounted that branch**: the caption test passes
 `blobUrl: null` and stops at the skeleton. `MessageMediaRenderer.image.svelte.test.ts` mounts it with
@@ -970,7 +972,7 @@ the bytes decrypted, and was red on the defect.
 
 ### Editing a message happens in the composer, not in the bubble (2026-10-02)
 
-*"modification des messages -> pas dans la bulle, dans le composer de message classique"* (user,
+_"modification des messages -> pas dans la bulle, dans le composer de message classique"_ (user,
 2026-10-02). The bubble used to turn into a textarea with Save and Cancel buttons (`MessageEditForm`,
 deleted); it now only ANNOUNCES the edit.
 
@@ -997,7 +999,7 @@ deleted); it now only ANNOUNCES the edit.
   paperclip, poll, GIF and microphone step aside (`actionsHidden`). `submit()` is the one send path
   for Enter and the button; **an edit does NOT clear the field**, because the parent hands the draft
   back and a clear would reach it after and wipe it.
-- **Salons CAN edit since 2026-10-05** (user: *why can I not edit my own message in a community?*). It was never refused on purpose: `MainChatPage` passed no `onEdit` for a channel because nothing had been built, so the bubble was never handed `onBeginEdit`. The mechanism is [below](#editing-your-own-message-in-a-salon-2026-10-05).
+- **Salons CAN edit since 2026-10-05** (user: _why can I not edit my own message in a community?_). It was never refused on purpose: `MainChatPage` passed no `onEdit` for a channel because nothing had been built, so the bubble was never handed `onBeginEdit`. The mechanism is [below](#editing-your-own-message-in-a-salon-2026-10-05).
 
 Verified in Chromium on the composer in edit mode at 390 and 1000 px. Tests:
 `ChatComposer.edit.svelte.test.ts` (banner, Save rule, Enter and button, no clear, Escape and X, the
@@ -1026,12 +1028,12 @@ bought nothing and made older readers fall back on `newContent` anyway.
 
 **What each reader sees:**
 
-| Reader | Caption edited | Caption emptied |
-| --- | --- | --- |
-| this build, DM or group | new caption, media kept, "modifié" | photo bare, "modifié" |
-| older build (>= `1.6.6`), DM or group | same | **either result, depending on the path the edit took**. Live and replay: **old caption kept, no mark** (the `data.newContent` truthiness check drops `''`). A history bundle carrying the author's signed edit: **photo bare, marked** (`vetRestoredEdit` takes any string and stores `caption: ''`, which the bubble draws bare). So one old build can show either, and two old builds can disagree |
-| this build, salon | new caption, media kept, "modifié" | photo bare, "modifié" |
-| older build, salon | **old caption kept, no mark**: `applyChannelEdit` refused every non-text target (`not plain text`, logged) | same |
+| Reader                                | Caption edited                                                                                             | Caption emptied                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| this build, DM or group               | new caption, media kept, "modifié"                                                                         | photo bare, "modifié"                                                                                                                                                                                                                                                                                                                                                                                |
+| older build (>= `1.6.6`), DM or group | same                                                                                                       | **either result, depending on the path the edit took**. Live and replay: **old caption kept, no mark** (the `data.newContent` truthiness check drops `''`). A history bundle carrying the author's signed edit: **photo bare, marked** (`vetRestoredEdit` takes any string and stores `caption: ''`, which the bubble draws bare). So one old build can show either, and two old builds can disagree |
+| this build, salon                     | new caption, media kept, "modifié"                                                                         | photo bare, "modifié"                                                                                                                                                                                                                                                                                                                                                                                |
+| older build, salon                    | **old caption kept, no mark**: `applyChannelEdit` refused every non-text target (`not plain text`, logged) | same                                                                                                                                                                                                                                                                                                                                                                                                 |
 
 Every row keeps the media. The degraded cells are a stale caption, never a loss, and they end
 with the floor passing this release.
@@ -1051,6 +1053,7 @@ message, so `dependsOnAny` holds it behind the file: the peers receive the file,
 author's own row was the trap: the real envelope swapped in once the upload ends is built from the
 QUEUE ENTRY, which holds the caption typed at the tap, so `updateMessageContent` (`outbox.ts`) wrote
 the old caption back over the edit - and `persistSent` stored it. Two places fix it, one per half:
+
 - **At rest, the stored row decides** (`sentRowContent`, inside `persistSent`'s compare-and-set). If
   the stored row holds a later edit than the copy on screen (`editSupersedes`), its text goes onto
   the sent body through `applyEditToBody`, so the attachment reference is the send's and the caption
@@ -1102,7 +1105,7 @@ segment verbatim. So a photo captioned `Dans le retro @[7283faf1...]` displayed 
 characters, and a `#hashtag` in a caption rendered as plain text.
 
 **IT LOOKED LIKE A COLD CACHE AND WAS NOT ONE.** The user reported it as a name that never arrives -
-*"le refresh ou le relancement de l'app ne fait rien"* (2026-09-23) - which is the one observation
+_"le refresh ou le relancement de l'app ne fait rien"_ (2026-09-23) - which is the one observation
 that rules the cache out. `MessageMentionChip` resolves for itself and re-renders when the name
 lands, precisely so a cold cache heals within a frame; a token that survives a full relaunch was
 never handed to a resolver. Nothing on the caption path ever called `splitTextWithMentions`.
@@ -1126,12 +1129,12 @@ Typing `@` used to list the signed-in reader among the suggestions. Picking your
 chip, put your own id in `mentionedUserIds`, and then **reached nothing at all** - which is the
 whole argument, because it makes the question a fact rather than a preference:
 
-| Consumer | What it does with a self-mention |
-| --- | --- |
+| Consumer                                   | What it does with a self-mention                                                                                          |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
 | `notifyChannelRecipients` (social-service) | skips `member.userId === input.senderId` BEFORE it looks at any notification level, so no channel notification can result |
-| a post comment's notify block | seeds `alreadyNotified` with `data.userId`, so the mention loop skips the author |
-| `mentionsMe` in `useMessaging.svelte.ts` | runs only on an INBOUND frame, and your own message is never one - MLS gives no echo of it |
-| a mentions inbox | **there is none** - no `hasMention`, no mention filter, nothing in this app that lists mentions of you |
+| a post comment's notify block              | seeds `alreadyNotified` with `data.userId`, so the mention loop skips the author                                          |
+| `mentionsMe` in `useMessaging.svelte.ts`   | runs only on an INBOUND frame, and your own message is never one - MLS gives no echo of it                                |
+| a mentions inbox                           | **there is none** - no `hasMention`, no mention filter, nothing in this app that lists mentions of you                    |
 
 The last row is what closes the only argument for keeping it: some chat apps treat a self-mention as
 a way to bookmark your own message, and that needs a surface to find it again from. This app has
@@ -1281,6 +1284,7 @@ cause is a different stale number on each phone.
   until the inset catches up.
 
 **Fixed 2026-10-09 in `keyboardViewport.svelte.ts`, both halves proven in unit tests only.**
+
 - **Android**: `computeSnapshot` reads a double-reported visual viewport as the layout viewport's
   own height. **Since 2026-10-13 the report is recognised by its SHAPE, not by a height**
   (`isDoubleReport`): the visual viewport stands below the layout viewport by exactly what the
@@ -1343,7 +1347,7 @@ the two shapes to expect:
    loudly and released the drain.
 
    The fix **races** the frame against a `MessageChannel` round trip rather than choosing between
-   them: branching on `document.visibilityState` would still hang whenever a tab is hidden *after*
+   them: branching on `document.visibilityState` would still hang whenever a tab is hidden _after_
    the callback is queued, which is exactly what a user does. The fallback is a port message and not
    `setTimeout`, because background tabs clamp timers to about 1 Hz - which would turn a
    hundred-message catch-up into minutes of stalling. `yieldToMainThread` is awaited on six paths,
@@ -1423,11 +1427,11 @@ but it often does: the gateway forwards the queue row's id when it persisted one
 measured on 2026-08-25 (`[WS RCV] JSON frame` and `[PENDING] Fetched 1 pending messages` handing back
 the same `qId`). Read the field; never infer it from the arrival path.
 
-| Path | What it did | Why it is ordinary, not exotic |
-| --- | --- | --- |
-| A SECOND Welcome for the same group | `set(groupId, [])` - dropped what the first was holding | a re-add, or a server re-delivery |
-| A FAILED Welcome | deleted the buffer, assuming the server would re-deliver | true only of a frame carrying a `queuedMessageId` |
-| A throwing NON-Welcome of that group | released a window its Welcome had not opened | reachable whenever a frame already picked throws while a later Welcome opens one - the frames were then applied AHEAD of the Welcome, against an epoch the client does not have |
+| Path                                 | What it did                                              | Why it is ordinary, not exotic                                                                                                                                                  |
+| ------------------------------------ | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A SECOND Welcome for the same group  | `set(groupId, [])` - dropped what the first was holding  | a re-add, or a server re-delivery                                                                                                                                               |
+| A FAILED Welcome                     | deleted the buffer, assuming the server would re-deliver | true only of a frame carrying a `queuedMessageId`                                                                                                                               |
+| A throwing NON-Welcome of that group | released a window its Welcome had not opened             | reachable whenever a frame already picked throws while a later Welcome opens one - the frames were then applied AHEAD of the Welcome, against an epoch the client does not have |
 
 What replaced them is **one exit with one behaviour**: `releaseWelcomeBuffer(groupId, reason)` always
 re-queues, for both outcomes, and names the reason in the log. Re-queuing costs nothing when the
@@ -1481,12 +1485,12 @@ so if the failure ever arrives by a route this does not cover, it is still a def
 
 Four properties, each of which would be a defect if dropped:
 
-| Property | Why |
-| --- | --- |
-| A frame with **no** id is always admitted | the server holds no row for it, so nothing can be a repeat of it |
-| `queued` and `done` are kept apart | different answers to a repeat: the other route is mid-flight, versus it is settled and should be ACKed again (the peer channel is still asking) |
-| A delivery the drain left **unacknowledged** is FORGOTTEN | a Welcome that could not be processed yet must come back, or `refetchFramesLeftBehind` becomes a lie |
-| The memory is bounded (512 ids, oldest evicted) | a per-tab Map that only grows is a leak on a long-lived session |
+| Property                                                  | Why                                                                                                                                             |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| A frame with **no** id is always admitted                 | the server holds no row for it, so nothing can be a repeat of it                                                                                |
+| `queued` and `done` are kept apart                        | different answers to a repeat: the other route is mid-flight, versus it is settled and should be ACKed again (the peer channel is still asking) |
+| A delivery the drain left **unacknowledged** is FORGOTTEN | a Welcome that could not be processed yet must come back, or `refetchFramesLeftBehind` becomes a lie                                            |
+| The memory is bounded (512 ids, oldest evicted)           | a per-tab Map that only grows is a leak on a long-lived session                                                                                 |
 
 `BaseMlsService.deliveryIdentity.test.ts` pins all four plus the base case, driving the real drain
 through `enqueueMessage` rather than asserting on the Map.
@@ -1525,11 +1529,11 @@ in, listed by a pull whose flush left before that row's ack. Every ack request c
 (`announceAck`), each delivery remembers the channel that admitted it and the serial of the ack naming
 it, and a pull records the serial of its flush (`listedAfterAck` on `DeliveryArrival`):
 
-| The repeat | Shape | Line |
-| --- | --- | --- |
+| The repeat                                                                | Shape                   | Line                                                     |
+| ------------------------------------------------------------------------- | ----------------------- | -------------------------------------------------------- |
 | pull lists a row the socket took in, ack not sent before the pull's flush | `pull:crossed-live-ack` | `log`, once; not acknowledged again - that ack covers it |
-| pull lists a `done` row whose ack failed | `pull:done` | `log`: the `[ACK]` failure above |
-| pull lists a `done` row a PULL took in, ack landed before | `pull:done` | `warn`: nothing routine explains it |
+| pull lists a `done` row whose ack failed                                  | `pull:done`             | `log`: the `[ACK]` failure above                         |
+| pull lists a `done` row a PULL took in, ack landed before                 | `pull:done`             | `warn`: nothing routine explains it                      |
 
 `BaseMlsService.singleFlightPull.test.ts` drives both through the real pull, scheduler and drain:
 two asks during a drain give exactly one second pull, after the drain's ack, and no repeat.
@@ -1587,18 +1591,18 @@ the landing preview touch only the map.)
 
 **Every row writer keyed by a conversation, and why it cannot land after a purge (review of #3992):**
 
-| Writer | Ordering |
-| --- | --- |
-| `writeBatchRows` (live batch, stored-preview upgrade, kept write retried by a hold) | asks the map and registers in one step |
-| the own-send pair `saveMessageWithOutboxEntry` (`addMessageToChatOnce`) | asks the map and registers in one step; out of the map, refused as a `ConversationGoneError` at WARN - neither row nor entry is written, and both send paths STOP on that type (no `enqueueOutboxMessage`) and tell the member (`chat_send_conversation_gone`, `chat_media_conversation_gone`). Never a `MessagePairWriteError`, whose callers hand the entry to the queue to write its own row |
-| the outbox's write-back of a queued text's missing row (`outbox.ts`) | re-asks the map after its store read and registers in one step |
-| the outbox's whole-row write of a SENT message whose compare-and-set found no row (`persistSent`, re-keyed mid-send) | an insert: after its awaits it asks the map for the group's conversation and registers in one step; none holds it, the row is not written (one WARN) |
-| edits, deletions, pins, reactions, pending-mutation settlement, `updateMessage` (`persistLocalMutation`, `reactionFrame`, `systemMessageHandler`, `pendingMutationStore`, `history`, `outbox` marks) | `mergeMessages` / `updateMessage` are compare-and-set onto a row that STANDS: after the clear there is none, and nothing is inserted |
-| `saveConversation` (`useConversations`) | reads the map and writes nothing for a key not in it |
-| the push-preview cache (`fcmCache.ts`) | not a stale writer: it writes the conversation's own placeholder row with the preview - an ARRIVAL re-creating a conversation, by design |
-| the native outbox mirror adoption (`outboxMirror.ts`) | adopts only for a conversation the STORE holds, read just before; a removal in that gap is not ordered (it is keyed by group id, not the map key) - see the limits below |
-| a salon's page (`useConversations` `channel` page write) | salons are removed by the community paths (`useChannelWorkspaces`, `ChatBackgroundService`), not by these two purges - see the limits below |
-| the DM merge (`conversations.ts`), the legacy migration (`migration.ts`) | move or seed rows at boot, before any purge can run |
+| Writer                                                                                                                                                                                               | Ordering                                                                                                                                                                                                                                                                                                                                                                                        |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `writeBatchRows` (live batch, stored-preview upgrade, kept write retried by a hold)                                                                                                                  | asks the map and registers in one step                                                                                                                                                                                                                                                                                                                                                          |
+| the own-send pair `saveMessageWithOutboxEntry` (`addMessageToChatOnce`)                                                                                                                              | asks the map and registers in one step; out of the map, refused as a `ConversationGoneError` at WARN - neither row nor entry is written, and both send paths STOP on that type (no `enqueueOutboxMessage`) and tell the member (`chat_send_conversation_gone`, `chat_media_conversation_gone`). Never a `MessagePairWriteError`, whose callers hand the entry to the queue to write its own row |
+| the outbox's write-back of a queued text's missing row (`outbox.ts`)                                                                                                                                 | re-asks the map after its store read and registers in one step                                                                                                                                                                                                                                                                                                                                  |
+| the outbox's whole-row write of a SENT message whose compare-and-set found no row (`persistSent`, re-keyed mid-send)                                                                                 | an insert: after its awaits it asks the map for the group's conversation and registers in one step; none holds it, the row is not written (one WARN)                                                                                                                                                                                                                                            |
+| edits, deletions, pins, reactions, pending-mutation settlement, `updateMessage` (`persistLocalMutation`, `reactionFrame`, `systemMessageHandler`, `pendingMutationStore`, `history`, `outbox` marks) | `mergeMessages` / `updateMessage` are compare-and-set onto a row that STANDS: after the clear there is none, and nothing is inserted                                                                                                                                                                                                                                                            |
+| `saveConversation` (`useConversations`)                                                                                                                                                              | reads the map and writes nothing for a key not in it                                                                                                                                                                                                                                                                                                                                            |
+| the push-preview cache (`fcmCache.ts`)                                                                                                                                                               | not a stale writer: it writes the conversation's own placeholder row with the preview - an ARRIVAL re-creating a conversation, by design                                                                                                                                                                                                                                                        |
+| the native outbox mirror adoption (`outboxMirror.ts`)                                                                                                                                                | adopts only for a conversation the STORE holds, read just before; a removal in that gap is not ordered (it is keyed by group id, not the map key) - see the limits below                                                                                                                                                                                                                        |
+| a salon's page (`useConversations` `channel` page write)                                                                                                                                             | salons are removed by the community paths (`useChannelWorkspaces`, `ChatBackgroundService`), not by these two purges - see the limits below                                                                                                                                                                                                                                                     |
+| the DM merge (`conversations.ts`), the legacy migration (`migration.ts`)                                                                                                                             | move or seed rows at boot, before any purge can run                                                                                                                                                                                                                                                                                                                                             |
 
 On SQLite (the phone apps) a message row also carries a FOREIGN KEY onto its conversation row, so an
 insert after `deleteConversation` fails at the store; IndexedDB has no such key, which is why the
@@ -1658,12 +1662,12 @@ during an edit's send. Each fails on the entry-copy code.
 
 `utils/chat/outbox.ts` owns every outbound message. A send is persisted first and transmitted
 second, so the queue - not the network call - is what guarantees delivery. The flusher re-encodes
-the proto against the *current* epoch at send time (epoch changes are transparent), is idempotent
+the proto against the _current_ epoch at send time (epoch changes are transparent), is idempotent
 on the stable `messageId` (a re-send after a crash is deduplicated by the receiver), and never
 sends into a group that is not healthy.
 
 **The barrier before every flush is a correctness device, not an optimisation.**
-`waitForMessageQueueIdle()` lets the *incoming* queue drain first: `fetchPendingMessages` (on
+`waitForMessageQueueIdle()` lets the _incoming_ queue drain first: `fetchPendingMessages` (on
 reconnect or resume) only enqueues the missed frames, and applying them - the commits that advance
 the epoch - is asynchronous. A flush triggered by `online` or `visibilitychange` that skips the
 barrier can send at a stale epoch, which up-to-date peers cannot decrypt. That is a silent loss:
@@ -1702,12 +1706,12 @@ showed the message - the leader's IN-MEMORY list was simply never told. The thre
 that channel could not close it either: `outbox_entry_sent` is a STATUS echo, and settling a row
 needs `findMessage` to succeed, so it repairs only a row the receiver already shows.
 
-| | who may publish | why |
-| --- | --- | --- |
-| `message_added`, `messages_batch` | the **leader** only | it alone receives inbound frames, and it alone can speak for `unreadCount` |
-| `own_message_composed` | a **follower** only | whichever tab composed the message is the only one that knows; the leader's own copy already travels as `message_added` from the same call site |
-| `conversation_read` | **either role** | reading happens in whichever tab is showing the conversation - see below |
-| `read_state`, `unread_counts` | the **leader** only | one moved read mark, or salon counts with the leader's own mark, that it RECEIVED (socket, server answer), which no follower can - [the census](#read-state-between-devices---the-census-2026-11-02) |
+|                                   | who may publish     | why                                                                                                                                                                                                  |
+| --------------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `message_added`, `messages_batch` | the **leader** only | it alone receives inbound frames, and it alone can speak for `unreadCount`                                                                                                                           |
+| `own_message_composed`            | a **follower** only | whichever tab composed the message is the only one that knows; the leader's own copy already travels as `message_added` from the same call site                                                      |
+| `conversation_read`               | **either role**     | reading happens in whichever tab is showing the conversation - see below                                                                                                                             |
+| `read_state`, `unread_counts`     | the **leader** only | one moved read mark, or salon counts with the leader's own mark, that it RECEIVED (socket, server answer), which no follower can - [the census](#read-state-between-devices---the-census-2026-11-02) |
 
 The new event carries **no `unreadCount`**, and the receiver leaves that field alone: a follower
 cannot speak for what the leader has read, and has nothing to say about it either, since an own
@@ -1761,6 +1765,7 @@ changed here; every waiter always resumed. What twenty lines cost is the reader.
 stayed a blurred ThumbHash with the image icon and one check mark, in every tab and across reloads.
 It went out the instant the owner brought the main (leader) tab, hidden for hours, back to the front.
 **The owner's log export:**
+
 - The visible tab was a follower after each of four reloads (`[TAB] Another tab is active - read-only
   mode (Web Locks)`).
 - The photo was `Queued 7b577fbb… (media)`, and the follower asked the leader about twenty times.
@@ -1825,6 +1830,7 @@ taken from that tab.
 **The single writer holds across a hand-over.** Every path decides `follower` synchronously, before
 the lock moves. A send that began while the document led and resumes after it stopped leading is
 refused at its last synchronous step before the ratchet moves:
+
 - `BaseMlsService.sealPastOwedBurns` reads `refusesCommitsHere()` right before `encryptForSend`
   (`FollowerTabSendError` with refusal `lead-lost`, an expected refusal logged at warn, nothing
   sealed);
@@ -1850,6 +1856,7 @@ IndexedDB finishes before the new leader's later read of the same store starts. 
 writes nothing until its reload reads the disk (`promotedSinceLoad`). So the two documents' writes
 never interleave: nothing reconciles them afterwards, the overlap does not exist. The old leader
 also keeps RUNNING after a hand-over (unlike an unload), and its tails had to be closed:
+
 - **an ack never runs ahead of the disk where the disk is the only copy** (`DrainAckHold`,
   review of #3321). An ack deletes the row from the server, and a drain used to acknowledge a COMMIT
   or a WELCOME at its end while the checkpoint holding it was still sealing: a kill there - and, with
@@ -1862,16 +1869,16 @@ also keeps RUNNING after a hand-over (unlike an unload), and its tails had to be
   second copy, read by the replay), but it is acknowledged only once the drain's window closed and
   its row is STORED ([rows before ratchet, the ack](#rows-before-ratchet-the-decrypt-half-and-the-ack-2026-11-19))
   - and held like a commit when this document no longer owns the state by then. A held id whose checkpoint is refused or fails
-  stays on the server (`[ACK] N id(s) not acknowledged: no landed checkpoint holds what they
-  changed`) and the tab that writes the state reads it; an id a LANDED checkpoint holds is
-  acknowledged whatever the lead, so the new leader never meets a frame its disk has spent
-  (`SecretReuseError`, a false `LOST frame` and a history-diff repair). This is why neither the
-  hand-over nor the freeze waits for a checkpoint before the lead moves: nothing the old leader did
-  is lost, only what it did not make durable is done again by the new one. The cost: a pull issued
-  behind a drain that applied a commit waits for that drain's checkpoint (`ackInFlight`). A withheld
-  id is remembered on its delivery (`heldForDisk`): the next pull lists the row again, and the
-  re-ack of that repeat waits for a checkpoint covering it too (`reAckHold`, second review) - it
-  used to delete the row at once, reopening the window the hold had just refused;
+    stays on the server (`[ACK] N id(s) not acknowledged: no landed checkpoint holds what they
+    changed`) and the tab that writes the state reads it; an id a LANDED checkpoint holds is
+    acknowledged whatever the lead, so the new leader never meets a frame its disk has spent
+    (`SecretReuseError`, a false `LOST frame` and a history-diff repair). This is why neither the
+    hand-over nor the freeze waits for a checkpoint before the lead moves: nothing the old leader did
+    is lost, only what it did not make durable is done again by the new one. The cost: a pull issued
+    behind a drain that applied a commit waits for that drain's checkpoint (`ackInFlight`). A withheld
+    id is remembered on its delivery (`heldForDisk`): the next pull lists the row again, and the
+    re-ack of that repeat waits for a checkpoint covering it too (`reAckHold`, second review) - it
+    used to delete the row at once, reopening the window the hold had just refused;
 - **the old leader reloads only once its ingest windows have closed** (`whenBulkIngestsClosed`,
   second review): a drain stores its rows when its window closes, while a checkpoint that landed
   before the lead left may already hold those frames' ratchet advance and seen marks. A reload in
@@ -1892,6 +1899,7 @@ also keeps RUNNING after a hand-over (unlike an unload), and its tails had to be
 switch reloads nothing unless the queue holds a due entry and the leader is hidden.
 
 **What the log shows now:**
+
 - in the hidden leader: `[TAB] Hidden leader asked for the lead by a visible tab (<id>) - handing it
   over.`, then `Leadership released - reloading as follower`;
 - in the asker: `[TAB] Visible follower with a message waiting on the leader - ...`, then `[TAB] Lead
@@ -1899,6 +1907,7 @@ switch reloads nothing unless the queue holds a due entry and the leader is hidd
 - on Chromium after a freeze: `[TAB] Page suspended by the browser (freeze) while leading ...`.
 
 **Still not covered:**
+
 - a leader whose main thread is wedged, which runs no handler and answers nothing;
 - a leader in an engine that suspends it without dispatching `freeze`, which also cannot answer;
 - **the send ledger across the move**: a frame the old leader encrypted and sent after its last
@@ -1918,6 +1927,7 @@ guard refused the leader's (`MLS state write REFUSED as stale`) - closed by #337
 [mls-protocol](../../protocols/mls-protocol.md#a-follower-tab-wrote-its-copy-of-the-mls-state-over-the-leaders---fixed-2026-11-11).
 
 **Pinned by:**
+
 - `tabLeader.freeze.test.ts`. Two documents (two instances of the module) share one lock manager
   with its queue, its abort, its steal and its release, and talk over the real channel. The cases:
   - the hidden leader hands the lead to the ASKER, not to the tab first in the queue, and is a
@@ -1969,14 +1979,14 @@ election is decided, in either order: a follower asks, a leader republishes its 
 query the leader could not answer still hears it). A promotion reloads the page, which runs it again.
 Pinned in `tabLeaderLink.svelte.test.ts` by the boot order (no account, then the account).
 
-| Gesture in a follower tab | Handed over as | Run by the leader as |
-| --- | --- | --- |
-| create a group | `create-group` | `createNewGroup`, saved to the store before answering |
-| start a direct conversation | `start-direct` | `startNewConversation` (silent), saved before answering |
-| invite into a group | `invite` | `inviteMembersToGroup` - the follower reports the `BulkAdditionOutcome` as its own |
-| remove a member | `remove` | `removeMemberAndBroadcast`, its thrown type turned into data (`recorded-not-committed`, `not-removed`) |
-| create a community, join a salon | `enter-community-key-group` | `ensureCommunityDistributionGroup` |
-| create or join a salon | `enter-salon-group` | `enterPrivateSalonGroup`, with access |
+| Gesture in a follower tab        | Handed over as              | Run by the leader as                                                                                   |
+| -------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------ |
+| create a group                   | `create-group`              | `createNewGroup`, saved to the store before answering                                                  |
+| start a direct conversation      | `start-direct`              | `startNewConversation` (silent), saved before answering                                                |
+| invite into a group              | `invite`                    | `inviteMembersToGroup` - the follower reports the `BulkAdditionOutcome` as its own                     |
+| remove a member                  | `remove`                    | `removeMemberAndBroadcast`, its thrown type turned into data (`recorded-not-committed`, `not-removed`) |
+| create a community, join a salon | `enter-community-key-group` | `ensureCommunityDistributionGroup`                                                                     |
+| create or join a salon           | `enter-salon-group`         | `enterPrivateSalonGroup`, with access                                                                  |
 
 **The role is read BEFORE anything is asked** (`getTabLeadership() === 'follower'` at the gesture),
 never learnt from a commit the service refuses - the refusal is still handled, for a tab demoted
@@ -2098,7 +2108,7 @@ fact, `followerTabKeyGroup.test.ts` for the key-group gestures.
 
 ### The flusher resolves its token, and does not run while offline
 
-Two rules about *when* the queue is allowed to try, both learned from the offline-unlock work
+Two rules about _when_ the queue is allowed to try, both learned from the offline-unlock work
 ([auth](auth.md#what-happens-on-reconnect)):
 
 - **An access token is time-bound, so a COPY of it passed down a component tree is a bug waiting for
@@ -2127,22 +2137,22 @@ second flusher. **FIVE sites are internal wake-ups**, each bound to the one cond
 for - `connectivity.onReconnect`, `visibilitychange`, a follower tab's `outbox_flush_request`, the
 backoff timer, and `enqueue`. **FOUR are external moments nothing inside the module can observe:**
 
-| Site | The moment, and why the outbox cannot see it |
-|---|---|
-| `promoteOfflineSession` step 4 | a session unlocked offline now has a token AND a socket |
-| `sessionAuth`'s `onGroupReady` (`announceGroupReady` -> `resumeOutboxGroup`) | one GROUP became sendable; the network never changed |
-| `sessionAuth` after `initializeConnection` | login finished, which is not a reconnection |
-| `MainChatPage`'s off-screen handler, under `holdWhileLeaving` (2026-11-02) | the iOS background task must last until the owed read marks' send SETTLES; the enqueue raises a flush but hands nobody its end, and `flush()` coalesces with it, so it adds no send |
+| Site                                                                         | The moment, and why the outbox cannot see it                                                                                                                                        |
+| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `promoteOfflineSession` step 4                                               | a session unlocked offline now has a token AND a socket                                                                                                                             |
+| `sessionAuth`'s `onGroupReady` (`announceGroupReady` -> `resumeOutboxGroup`) | one GROUP became sendable; the network never changed                                                                                                                                |
+| `sessionAuth` after `initializeConnection`                                   | login finished, which is not a reconnection                                                                                                                                         |
+| `MainChatPage`'s off-screen handler, under `holdWhileLeaving` (2026-11-02)   | the iOS background task must last until the owed read marks' send SETTLES; the enqueue raises a flush but hands nobody its end, and `flush()` coalesces with it, so it adds no send |
 
 **The fusion that looks obvious is a REGRESSION.** `connectivity.onReconnect` binds a flush to
 `isOffline` clearing, so binding one to `canFlush` opening reads as the same move. It would fire at
 `promoteOfflineSession`'s step 1, where the token is set, three steps before `initializeConnection`
 gives it a socket - every entry burning an attempt and a longer backoff on a send that never had a
-chance, which is the exact defect `canFlush` was added to prevent. A gate answers *may I send*; a
-trigger answers *now*; only the promotion knows the second.
+chance, which is the exact defect `canFlush` was added to prevent. A gate answers _may I send_; a
+trigger answers _now_; only the promotion knows the second.
 
 Two comments asserted otherwise until this was checked, and both are corrected in place. The login
-flush claimed to *cover reconnection, which re-runs `initializeConnection`*: it does not -
+flush claimed to _cover reconnection, which re-runs `initializeConnection`_: it does not -
 `initializeConnection` has exactly two call sites, each running once per session, and a reconnect
 goes through `attemptReconnectImpl`, which never calls it. Believing that comment makes the login
 flush look redundant and the reconnect path look uncovered, which are wrong in opposite directions.
@@ -2202,6 +2212,7 @@ Four defects of one seam, found by a read-only review and fixed together:
   answer instead of retiring locally - offline included, where it stays `pending` until a connection
   answers. Nothing local separates a real eviction from the first half of this device's own
   re-admission once `reAddIsInFlight` is gone, and retiring the second is the defect this fixes.
+
 - **The boot restore undid that row.** It promoted any `pending` row whose group
   `getLocalGroups()` listed, and an evicted group stays listed: the promotion now reads membership,
   as above.
@@ -2436,13 +2447,13 @@ still, so every reader of a 5xx reads it as one); the salon reads `isUnavailable
 
 **Held, deterministically, and ended only by an answer:**
 
-| | DM / group (`outbox.ts`) | Salon (`messaging.ts`) |
-| --- | --- | --- |
-| "not now" | held on the PLAIN ladder (`retryLadder.ts`: 2, 5, 15, 30, 60 s, or the server's `Retry-After`), never counting toward nor resetting a run of real 5xx; in `transportHeld`, so a reconnect sends it at once; counted in the row (`unavailableAnswers`) | `pending`, held for the server (`holdForServer`): owed to the reconnect AND one ladder step of the same ladder, whichever comes first - a deploy that rotates one service drops no connection, so no reconnect would ever come; counted in its unsent ledger entry |
-| a reset / no answer | unchanged: `transportHeld`, the reconnect | unchanged: owed to the reconnect when the link is known down |
-| what ends it | the send (2xx), a REFUSAL (410, a 403, the 5th real 5xx), or the 12th "not now" in a row: `error` ("Echec" + "Reessayer") | the row, a refusal (`error`, its Retry), or the 12th "not now" in a row: `unconfirmed` (Retry, Discard, Restore) |
-| what the member can do meanwhile | delete it | Retry now, or Discard (`salonEchoSettleable`) |
-| what the bubble says meanwhile | "En attente du serveur..." / "En attente du reseau..." | the same |
+|                                  | DM / group (`outbox.ts`)                                                                                                                                                                                                                              | Salon (`messaging.ts`)                                                                                                                                                                                                                                             |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| "not now"                        | held on the PLAIN ladder (`retryLadder.ts`: 2, 5, 15, 30, 60 s, or the server's `Retry-After`), never counting toward nor resetting a run of real 5xx; in `transportHeld`, so a reconnect sends it at once; counted in the row (`unavailableAnswers`) | `pending`, held for the server (`holdForServer`): owed to the reconnect AND one ladder step of the same ladder, whichever comes first - a deploy that rotates one service drops no connection, so no reconnect would ever come; counted in its unsent ledger entry |
+| a reset / no answer              | unchanged: `transportHeld`, the reconnect                                                                                                                                                                                                             | unchanged: owed to the reconnect when the link is known down                                                                                                                                                                                                       |
+| what ends it                     | the send (2xx), a REFUSAL (410, a 403, the 5th real 5xx), or the 12th "not now" in a row: `error` ("Echec" + "Reessayer")                                                                                                                             | the row, a refusal (`error`, its Retry), or the 12th "not now" in a row: `unconfirmed` (Retry, Discard, Restore)                                                                                                                                                   |
+| what the member can do meanwhile | delete it                                                                                                                                                                                                                                             | Retry now, or Discard (`salonEchoSettleable`)                                                                                                                                                                                                                      |
+| what the bubble says meanwhile   | "En attente du serveur..." / "En attente du reseau..."                                                                                                                                                                                                | the same                                                                                                                                                                                                                                                           |
 
 **Bounded by answers, never by a clock (review of #3189).** A "not now" is uncounted toward the 5xx
 run only while there is evidence the service is alive, and the evidence is the send's OWN 2xx -
@@ -2622,15 +2633,15 @@ send down with it - and that makes silence the default failure mode. Each such b
 logs, because these are the only traces available when a message is accepted locally and never
 arrives (see WP-FWD-1):
 
-| Branch | Why silence there is dangerous |
-|---|---|
-| Reading the queue | A failure is indistinguishable from an empty queue, so the entry is simply never flushed |
-| The idle barrier | Failing it means sending at a possibly stale epoch - the silent loss above |
-| Group not sendable | Holds the message indefinitely while `requestReAdd` recovers; from outside it looks delivered |
-| Backoff skip | Explains a message sitting in the queue with nothing else happening |
-| Delete after send | Leaves a *sent* entry queued, so the next flush sends it again |
-| Backoff not persisted | Loses the attempt count, so the entry retries at full speed |
-| Media ref not persisted | A crash before the send re-uploads the same file |
+| Branch                  | Why silence there is dangerous                                                                |
+| ----------------------- | --------------------------------------------------------------------------------------------- |
+| Reading the queue       | A failure is indistinguishable from an empty queue, so the entry is simply never flushed      |
+| The idle barrier        | Failing it means sending at a possibly stale epoch - the silent loss above                    |
+| Group not sendable      | Holds the message indefinitely while `requestReAdd` recovers; from outside it looks delivered |
+| Backoff skip            | Explains a message sitting in the queue with nothing else happening                           |
+| Delete after send       | Leaves a _sent_ entry queued, so the next flush sends it again                                |
+| Backoff not persisted   | Loses the attempt count, so the entry retries at full speed                                   |
+| Media ref not persisted | A crash before the send re-uploads the same file                                              |
 
 ### A 413 ends the entry (2026-10-08)
 
@@ -2652,12 +2663,12 @@ sent bubble, and the copy stayed undated, so no history answer ever carried it e
 lost for good (cross-client rig, `1.4.1-alpha.3`, 2 of 2). **Who answered is now read before
 what was answered**, in ONE helper (`utils/apiJson.ts`, `readApiJson` / `assertAnsweredByApi`):
 
-| A 2xx with... | Read as |
-| --- | --- |
-| no JSON content type (a portal's HTML, an empty `204`) | `NotFromApiError`, the body never read |
-| a JSON type, a body that does not parse (empty, truncated) | `NotFromApiError`, the parse error as its cause |
-| the API's JSON of an unexpected shape | the API's answer - the caller reads what it needs |
-| the send's JSON without `receivedAt` (a server predating it) | accepted, undated - the legacy reading, kept |
+| A 2xx with...                                                | Read as                                           |
+| ------------------------------------------------------------ | ------------------------------------------------- |
+| no JSON content type (a portal's HTML, an empty `204`)       | `NotFromApiError`, the body never read            |
+| a JSON type, a body that does not parse (empty, truncated)   | `NotFromApiError`, the parse error as its cause   |
+| the API's JSON of an unexpected shape                        | the API's answer - the caller reads what it needs |
+| the send's JSON without `receivedAt` (a server predating it) | accepted, undated - the legacy reading, kept      |
 
 `NotFromApiError` is a `TransportFailureError`, so `isTransportFailure` reads it and every caller
 already does the right thing: the send throws `DeliveryUnreachableError`, the entry stays `pending`
@@ -2684,6 +2695,7 @@ nothing purged: <groups>`.
 
 The same review of status-only arms changed four more places, each to the rule "a status decides
 only when the API said it":
+
 - The 403 behind `NotAGroupMemberError` (`fetchGroupInfo`, `getGroupMembers`) counts only with the
   gateway's JSON. A caller retires the conversation on it, and an edge's HTML 403 (a WAF ban page)
   says nothing about membership.
@@ -2746,7 +2758,7 @@ type MessageEnvelope =
   | { type: 'reaction'; emoji: string; targetMessageId: string }
   | { type: 'edit'; targetMessageId: string; newContent: string }
   | { type: 'delete'; targetMessageId: string }
-  | { type: 'system'; event: string; data?: unknown }
+  | { type: 'system'; event: string; data?: unknown };
 ```
 
 `appMsgToEnvelope()` (`utils/chat/messageUtils.ts`) is the canonical decoder (protobuf AppMessage ->
@@ -2774,9 +2786,9 @@ reason the field is written as `...(x ? { voiceNote: true } : {})` in four place
 assignment.
 
 **What it decides today** is the shared-content panel: `aggregateSharedContent` drops a declared
-recording and keeps everything else (user, 2026-09-17: *"Les vocaux ne doivent pas s'afficher dans
+recording and keeps everything else (user, 2026-09-17: _"Les vocaux ne doivent pas s'afficher dans
 l'onglet 'Medias' d'une discussion. +1 s'il est possible de mettre les fichiers audios qui ont ete
-importes pour les differencier des audios enregistres directement dans la conversation."*). A voice
+importes pour les differencier des audios enregistres directement dans la conversation."_). A voice
 note is a turn in the conversation, like the sentence it replaces; a file someone picked from disk
 is something they chose to send, and it stays under Fichiers where it was.
 
@@ -2897,12 +2909,12 @@ into a conversation about to disappear.
 A notice the members are meant to SEE - a member added or removed, a rename, a new photo, a deleted
 group - is written by **two paths that never meet**, and copied between devices by a third:
 
-| path | where |
-| --- | --- |
-| live delivery | `systemMessageHandler.ts`, the `memberAdded` / `memberRemoved` / `memberLeft` / `groupRenamed` / `groupImageChanged` / `groupDeleted` branches |
-| archive replay | `historySystemEvents.ts`, the same events re-read from `history:{groupId}` |
-| a peer's `history_bundle` | `serializeForBundle` copies the row, **with the id that peer stored** |
-| the acting device itself | `sendVisibleNotice` (`visibleNotices.ts`) writes its own row under the frame's id once the frame is accepted, since MLS never hands it that frame (2026-10-25, [history-reconciliation](../../protocols/history-reconciliation.md#the-acting-device-writes-its-own-notice)) |
+| path                      | where                                                                                                                                                                                                                                                                       |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| live delivery             | `systemMessageHandler.ts`, the `memberAdded` / `memberRemoved` / `memberLeft` / `groupRenamed` / `groupImageChanged` / `groupDeleted` branches                                                                                                                              |
+| archive replay            | `historySystemEvents.ts`, the same events re-read from `history:{groupId}`                                                                                                                                                                                                  |
+| a peer's `history_bundle` | `serializeForBundle` copies the row, **with the id that peer stored**                                                                                                                                                                                                       |
+| the acting device itself  | `sendVisibleNotice` (`visibleNotices.ts`) writes its own row under the frame's id once the frame is accepted, since MLS never hands it that frame (2026-10-25, [history-reconciliation](../../protocols/history-reconciliation.md#the-acting-device-writes-its-own-notice)) |
 
 **Every deduplication in the application compares ids** - the bulk-ingest check in
 `addMessageToChat`, the bundle's `existingIds` set, the post-save merge. So a notice with no id
@@ -2986,11 +2998,11 @@ authority, and refused at ERROR when it has none. Never the local clock.** (A ro
 device's OWN act - an outbox failure line, a channel invitation it sent, the older-messages notice - is
 dated by that act, which is this device's clock by definition; it is out of this rule.)
 
-| Row | Authority | No authority |
-| --- | --- | --- |
-| Device line, uninvited-entry line (`deviceNotices.svelte.ts`) | The commit log row (`mls_commit_log.createdAt`) of the commit that admitted the device: `baseEpoch = event.epoch - 1`, read through `GET /api/mls/commits/:groupId/accepted-at` (members only, and never a commit older than the one that admitted the requester - a newcomer is not handed the past). **The floor is the commit that ADMITTED the requesting device, recorded on its seat by the commit gate** (`dm_device_group_memberships."admittedByBaseEpoch"`, migration 044, owner 2026-11-02): written with the advance on every admission - a member's Add (`admits`, and the target of the Welcome it carries), an external join (the committer's own commit), the group's creation (`0`), and a key group's creating publisher (the published epoch, only on a seat with none) - and never cleared by activation. Both kinds of group are floored per DEVICE. **It replaced a clock**: the floor was "the last commit accepted at or before the arrival" (the open stretch's `admittedAt ?? joinedAt`, a key-group row's `createdAt`), and both arrivals could predate the admission - a group conversation's `joinedAt` is written by the enrolment before the Add, so the floor landed one commit early, and a device kicked and re-added kept its first row, so it was answered the commit times from while it was out (review of #2890, LOW-D; acceptance times only, never content). A re-add now moves the floor past them. **A kick clears the admission** (`deactivateDeviceMembership` with `removedFromTreeAt`), a demotion with no kick (the stale-device cron, a self-report) leaves it, the leaf being still in the tree; a commit's DECLARED admission (`admits`, a Welcome target) is written on a `pending` seat only, so it cannot raise an active seat's floor. **An ACTIVE seat with no recorded admission is floored at its group's CURRENT epoch, and that is written once** (`admissionInferred = true`, refuse rather than leak, never refused for ever): migration 044 did it for every active seat at the deploy - the cost being that a line about a commit accepted before the deploy and merged after it is settled undated - and `commitFloorOf` does it at the first ask for an active seat the backfill could not reach (admitted by a replica still on the old code during a rollout, an aborted rollout, a rollback, or a seat the cron demoted and a report re-activated with no commit), ERROR once; the write is conditional on the seat still being active, unkicked and floorless, so a kick mid-ask wins. **A PENDING seat is never inferred** (owner's review, 2026-11-02): enrolled and not yet admitted, an inferred floor would hand it every commit time until its Add - the past a newcomer is not handed. It is floored only by the admission the gate wrote while it waits (`admittedAtEpoch - 1`, also 044's exact backfill), and otherwise refused quietly (`log`), as is a kicked seat. A refusal before an inferred floor is said at `log` (it refuses by design), before a recorded admission at WARN. Also refused at `log`: a member whose device holds no seat (a pending seat the 14-day cleanup purged while its owner stayed on the roster - it never processed a Welcome, so it has no commit of its own to ask about). **A rollback across 044 is the accepted cost, with a named roll-forward**: the old code neither clears a floor on a kick nor records one on a re-add, so a seat kicked and re-added while it ran keeps a stale LOW floor, and nothing distinguishes it afterwards - rolling forward means setting every floor back to NULL and re-running 044's two UPDATEs, a data change the owner approves then. Asked with no `X-Canari-Device` (either kind) is a 400. The floor is one row read by its unique key; no commit-log walk any more. Chosen over the commit frame's own `queuedCreatedAt` because it is ONE answer on every device and survives a restart, where the delivery time exists only for a device that drained the commit live (a Welcome-joined device never did). **A contact line in a DM or a group is dated by a commit of ANOTHER group** - the one where the device was first seen, often a community's key group - so it sits at the instant the device was admitted anywhere, not at an event of the conversation it is written in. Asked once per commit for the session (`cachedCommitInstants`): a log row never changes | The four answers are typed at the throw (`ServerInstant`, `serverInstant.ts`). No row (`none`): `[DEVICE_NOTICE] line settled UNDATED`, at the level of the server's `reason` - `pruned` at log (the retention working), `not-yet` at warn, `hole` (or no reason, an older server) at error. A 403 (`refused`: left the group, or a commit before the requester's arrival): settled, no warning - asking again could only be refused again. A 404 (`unserved`: this server does not serve the route, a build that shipped before its backend): ONE `[COMMIT_AT]` error for the session, the line PARKED - owed, not asked again. No answer (transport, 5xx): owed to the next delivery. An uninvited entry is reported (`[MLS] UNINVITED ENTRY`) only once its time is answered, so an entry kept owed is not accused at every drain |
-| Eviction notice (`recordEviction`) | The Remove commit's delivery time (`remove-commit` delivered live), or the removal announcement's (`system-event`). Every other evidence - a Remove commit applied through the replay (`commitReplay.ts` carries no delivery time), `inbound-frame`, `membership-check`, `outbound-refusal`, `server-refusal` - asks the server for its OWN seat's removal: `GET /api/mls/groups/:groupId/own-removal`, the person's closed membership stretch (`leftAt`) or this device's kick (`kickedAt`). It reads only the requester's own rows, so a removed device may ask; the members-only commit log could not answer it | The server holds no record (`none`, `refused`): `removal notice REFUSED`, said once per group (only the call that retired the row speaks), settled, and not asked again this session. **No answer - `unserved` (404), a throw, or a write that failed - leaves the line OWED, durably** (`removalNotice.ts`, `ACCOUNT_KEY.owedRemovalNotices`): the retired row receives no further evidence, so the next evidence for the group asks again and, at the latest, `drainOwedRemovalNotices` asks after the next session's restore (dropping a group re-admitted or gone). One write runs at a time per account and group, and **the row is re-read after every await**: the line is written only while the row is still `removed` and holds no line of THIS removal (the lines the thread held when the evidence retired the row are an earlier removal's, and kept in the owed record so the next session tells them apart), so a removal undone during the ask (a Welcome installing, which `retractEvictionNotice` cannot yet see) writes nothing - the 2026-09-22 rule kept across the ask - and two evidences landing together, whose instants differ (the Remove commit's delivery, the announcement's), write one row. The id is `evicted:<groupId>:<removedAt>`. An answered "no instant" is remembered per account and per session (cleared by the sign-out, said when it skips an ask), and the restore drain stops when its session ends; a live evidence whose row leaves the map during the ask (a sign-out clears it) keeps the line owed rather than settling it, and the next drain decides. The eviction itself and its banner never wait on either |
-| Call record (`callSystemMessages.ts`) | A received signal: its frame, `receivedNoticeTime(sentAt, queuedCreatedAt)`. This device's own act (`CallService`): the ONE instant the act is stamped with, shared with the frame's `sentAt`, plus the send's `receivedAt`. **The end record is written AT THE ACT, never held for the hangup's send** (a catch-up gate or an epoch barrier can hold a send for minutes, and a kill meanwhile left the row unfinalised); the server's acceptance is patched in when the send answers (`onCallEndAnswered` -> `patchCallRecordServerTime`, like `patchServerTimestamp`). **The duration is measured on ONE clock** (`callDurationMs`): the server's acceptances of the invite and of the end when both are known; otherwise, only for an end that is this device's own act (`ownAct`), its own two instants - the start row's `startClocks.local` and the act's stamp. Never the clock at finalisation: a remote end drained hours late would measure hours. The hangup's server time is patched only onto a row the END wrote (no started row on this device), never onto a started row whose invite's send answered none. **Known imprecision**: `startClocks.local` is when THIS device wrote its start row, so a callee launched cold by a native ring (iOS) starts its clock at the drain, possibly after the answer - its own-end duration then reads short by the cold launch, whenever the server time is missing on either side. `startedAt` is the inviter's clock, and subtracting this device's end from it measured one phone against another | A received signal with neither time: `[CallRecord] ... REFUSED`, no row. A duration with no single clock (a start row with no `startClocks`, which only a build before `1.6.2` wrote and the floor retired; or a received end with no server time) mixes two clocks and says so at `console.error` |
+| Row                                                           | Authority                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | No authority                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Device line, uninvited-entry line (`deviceNotices.svelte.ts`) | The commit log row (`mls_commit_log.createdAt`) of the commit that admitted the device: `baseEpoch = event.epoch - 1`, read through `GET /api/mls/commits/:groupId/accepted-at` (members only, and never a commit older than the one that admitted the requester - a newcomer is not handed the past). **The floor is the commit that ADMITTED the requesting device, recorded on its seat by the commit gate** (`dm_device_group_memberships."admittedByBaseEpoch"`, migration 044, owner 2026-11-02): written with the advance on every admission - a member's Add (`admits`, and the target of the Welcome it carries), an external join (the committer's own commit), the group's creation (`0`), and a key group's creating publisher (the published epoch, only on a seat with none) - and never cleared by activation. Both kinds of group are floored per DEVICE. **It replaced a clock**: the floor was "the last commit accepted at or before the arrival" (the open stretch's `admittedAt ?? joinedAt`, a key-group row's `createdAt`), and both arrivals could predate the admission - a group conversation's `joinedAt` is written by the enrolment before the Add, so the floor landed one commit early, and a device kicked and re-added kept its first row, so it was answered the commit times from while it was out (review of #2890, LOW-D; acceptance times only, never content). A re-add now moves the floor past them. **A kick clears the admission** (`deactivateDeviceMembership` with `removedFromTreeAt`), a demotion with no kick (the stale-device cron, a self-report) leaves it, the leaf being still in the tree; a commit's DECLARED admission (`admits`, a Welcome target) is written on a `pending` seat only, so it cannot raise an active seat's floor. **An ACTIVE seat with no recorded admission is floored at its group's CURRENT epoch, and that is written once** (`admissionInferred = true`, refuse rather than leak, never refused for ever): migration 044 did it for every active seat at the deploy - the cost being that a line about a commit accepted before the deploy and merged after it is settled undated - and `commitFloorOf` does it at the first ask for an active seat the backfill could not reach (admitted by a replica still on the old code during a rollout, an aborted rollout, a rollback, or a seat the cron demoted and a report re-activated with no commit), ERROR once; the write is conditional on the seat still being active, unkicked and floorless, so a kick mid-ask wins. **A PENDING seat is never inferred** (owner's review, 2026-11-02): enrolled and not yet admitted, an inferred floor would hand it every commit time until its Add - the past a newcomer is not handed. It is floored only by the admission the gate wrote while it waits (`admittedAtEpoch - 1`, also 044's exact backfill), and otherwise refused quietly (`log`), as is a kicked seat. A refusal before an inferred floor is said at `log` (it refuses by design), before a recorded admission at WARN. Also refused at `log`: a member whose device holds no seat (a pending seat the 14-day cleanup purged while its owner stayed on the roster - it never processed a Welcome, so it has no commit of its own to ask about). **A rollback across 044 is the accepted cost, with a named roll-forward**: the old code neither clears a floor on a kick nor records one on a re-add, so a seat kicked and re-added while it ran keeps a stale LOW floor, and nothing distinguishes it afterwards - rolling forward means setting every floor back to NULL and re-running 044's two UPDATEs, a data change the owner approves then. Asked with no `X-Canari-Device` (either kind) is a 400. The floor is one row read by its unique key; no commit-log walk any more. Chosen over the commit frame's own `queuedCreatedAt` because it is ONE answer on every device and survives a restart, where the delivery time exists only for a device that drained the commit live (a Welcome-joined device never did). **A contact line in a DM or a group is dated by a commit of ANOTHER group** - the one where the device was first seen, often a community's key group - so it sits at the instant the device was admitted anywhere, not at an event of the conversation it is written in. Asked once per commit for the session (`cachedCommitInstants`): a log row never changes | The four answers are typed at the throw (`ServerInstant`, `serverInstant.ts`). No row (`none`): `[DEVICE_NOTICE] line settled UNDATED`, at the level of the server's `reason` - `pruned` at log (the retention working), `not-yet` at warn, `hole` (or no reason, an older server) at error. A 403 (`refused`: left the group, or a commit before the requester's arrival): settled, no warning - asking again could only be refused again. A 404 (`unserved`: this server does not serve the route, a build that shipped before its backend): ONE `[COMMIT_AT]` error for the session, the line PARKED - owed, not asked again. No answer (transport, 5xx): owed to the next delivery. An uninvited entry is reported (`[MLS] UNINVITED ENTRY`) only once its time is answered, so an entry kept owed is not accused at every drain                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Eviction notice (`recordEviction`)                            | The Remove commit's delivery time (`remove-commit` delivered live), or the removal announcement's (`system-event`). Every other evidence - a Remove commit applied through the replay (`commitReplay.ts` carries no delivery time), `inbound-frame`, `membership-check`, `outbound-refusal`, `server-refusal` - asks the server for its OWN seat's removal: `GET /api/mls/groups/:groupId/own-removal`, the person's closed membership stretch (`leftAt`) or this device's kick (`kickedAt`). It reads only the requester's own rows, so a removed device may ask; the members-only commit log could not answer it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | The server holds no record (`none`, `refused`): `removal notice REFUSED`, said once per group (only the call that retired the row speaks), settled, and not asked again this session. **No answer - `unserved` (404), a throw, or a write that failed - leaves the line OWED, durably** (`removalNotice.ts`, `ACCOUNT_KEY.owedRemovalNotices`): the retired row receives no further evidence, so the next evidence for the group asks again and, at the latest, `drainOwedRemovalNotices` asks after the next session's restore (dropping a group re-admitted or gone). One write runs at a time per account and group, and **the row is re-read after every await**: the line is written only while the row is still `removed` and holds no line of THIS removal (the lines the thread held when the evidence retired the row are an earlier removal's, and kept in the owed record so the next session tells them apart), so a removal undone during the ask (a Welcome installing, which `retractEvictionNotice` cannot yet see) writes nothing - the 2026-09-22 rule kept across the ask - and two evidences landing together, whose instants differ (the Remove commit's delivery, the announcement's), write one row. The id is `evicted:<groupId>:<removedAt>`. An answered "no instant" is remembered per account and per session (cleared by the sign-out, said when it skips an ask), and the restore drain stops when its session ends; a live evidence whose row leaves the map during the ask (a sign-out clears it) keeps the line owed rather than settling it, and the next drain decides. The eviction itself and its banner never wait on either |
+| Call record (`callSystemMessages.ts`)                         | A received signal: its frame, `receivedNoticeTime(sentAt, queuedCreatedAt)`. This device's own act (`CallService`): the ONE instant the act is stamped with, shared with the frame's `sentAt`, plus the send's `receivedAt`. **The end record is written AT THE ACT, never held for the hangup's send** (a catch-up gate or an epoch barrier can hold a send for minutes, and a kill meanwhile left the row unfinalised); the server's acceptance is patched in when the send answers (`onCallEndAnswered` -> `patchCallRecordServerTime`, like `patchServerTimestamp`). **The duration is measured on ONE clock** (`callDurationMs`): the server's acceptances of the invite and of the end when both are known; otherwise, only for an end that is this device's own act (`ownAct`), its own two instants - the start row's `startClocks.local` and the act's stamp. Never the clock at finalisation: a remote end drained hours late would measure hours. The hangup's server time is patched only onto a row the END wrote (no started row on this device), never onto a started row whose invite's send answered none. **Known imprecision**: `startClocks.local` is when THIS device wrote its start row, so a callee launched cold by a native ring (iOS) starts its clock at the drain, possibly after the answer - its own-end duration then reads short by the cold launch, whenever the server time is missing on either side. `startedAt` is the inviter's clock, and subtracting this device's end from it measured one phone against another                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | A received signal with neither time: `[CallRecord] ... REFUSED`, no row. A duration with no single clock (a start row with no `startClocks`, which only a build before `1.6.2` wrote and the floor retired; or a received end with no server time) mixes two clocks and says so at `console.error`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
 A row already written with the wrong date by an older build keeps it. Pinned by
 `systemMessageHandler.noticeTime.test.ts` (a group drained six hours late keeps its notice above the
@@ -3014,7 +3026,7 @@ that SENDS the event: it decides what an honest client puts on the wire and noth
 modified one can. Until 2026-08-12 the handlers applied the mutation by id alone, so any member of a
 DM or group could delete or rewrite any other member's message on every device in it. A channel is
 different - the server owns channel content and checks ownership itself - and that asymmetry is the
-trap: DMs and groups are exactly the places where the server *cannot* check, being unable to read
+trap: DMs and groups are exactly the places where the server _cannot_ check, being unable to read
 them.
 
 `senderNorm` is the identity **MLS authenticated for the frame**, which is what makes the check
@@ -3062,12 +3074,12 @@ one invariant, and it was in one of them.
 Every place a message mutation is written was found by grepping the writes themselves
 (`isEdited: true`, `isDeleted: true`), not by reading the paths one expects:
 
-| Applier | Ordering | Tombstone |
-| --- | --- | --- |
-| `systemMessageHandler` live path | `editSupersedes` | refuses an edit of a deleted row |
-| `historySystemEvents` replay | `editSupersedes`, plus the deletes seen earlier in the page | same |
-| `history.ts` post-save pass | last edit in the page | `if (deletion) ... else if (edit)` - always had it |
-| `systemMessageHandler` `history_bundle` merge | `editSupersedes`, body taken ONLY from the author's own bundle | replaces the body with the tombstone (D5) |
+| Applier                                       | Ordering                                                       | Tombstone                                          |
+| --------------------------------------------- | -------------------------------------------------------------- | -------------------------------------------------- |
+| `systemMessageHandler` live path              | `editSupersedes`                                               | refuses an edit of a deleted row                   |
+| `historySystemEvents` replay                  | `editSupersedes`, plus the deletes seen earlier in the page    | same                                               |
+| `history.ts` post-save pass                   | last edit in the page                                          | `if (deletion) ... else if (edit)` - always had it |
+| `systemMessageHandler` `history_bundle` merge | `editSupersedes`, body taken ONLY from the author's own bundle | replaces the body with the tombstone (D5)          |
 
 The bundle merge is the interesting row. Any member's bundle may set the `isEdited` FLAG and fill a
 missing `editedAt`, but the edited BODY is taken only when the peer that answered the history request
@@ -3133,10 +3145,10 @@ repair, including the shape a damaged row actually has.
 Inviting someone to a community sends a `channel_invitation` system event into the 1:1 MLS DM, and
 BOTH sides render the same `channelInvite` card in that conversation:
 
-| Side | Envelope built by | Copy | Join button |
-|---|---|---|---|
-| Invitee | `mkChannelInviteEnvelope` | "{inviter} vous a invité..." | yes |
-| Inviter | `mkChannelInviteSentEnvelope` | "Vous avez invité {member}..." | no |
+| Side    | Envelope built by             | Copy                           | Join button |
+| ------- | ----------------------------- | ------------------------------ | ----------- |
+| Invitee | `mkChannelInviteEnvelope`     | "{inviter} vous a invité..."   | yes         |
+| Inviter | `mkChannelInviteSentEnvelope` | "Vous avez invité {member}..." | no          |
 
 `channelInvite.invitedName` is the discriminator: **present = the inviter's copy**, and its presence
 is what suppresses the Join button. Never set it on the invitee's copy.
@@ -3171,7 +3183,7 @@ same two hazards.
 not enough, because the conversations map is emptied and rebuilt wholesale by the IndexedDB restore
 (`loadExistingConversations`) and pruned on every community refetch, so a target selected while the
 map is still filling is dropped moments later. The selection watchdog in `useConversations` then
-nulls it, which is what made *every* deep link land in the right tab with nothing open. So:
+nulls it, which is what made _every_ deep link land in the right tab with nothing open. So:
 
 - `ChatBackgroundService` **owns the landing** and is the only place that runs it. It is mounted on
   every route and reads the same `globalConvs`/`globalChannels` singletons a page would, so a
@@ -3179,7 +3191,7 @@ nulls it, which is what made *every* deep link land in the right tab with nothin
 - The effect re-runs on every mutation of the conversations map and **re-asserts** a lost
   selection, then stays idle once the target is on screen - otherwise a plain incoming message
   would re-select it and refetch its history.
-- The watchdog keeps a selection that IS the landing: absent from the map means "not there *yet*"
+- The watchdog keeps a selection that IS the landing: absent from the map means "not there _yet_"
   while a landing is in progress.
 - **A target is a group id; a selection is a map key, and for a DM they are different strings.**
   Only a community channel is keyed by the very id that names it - a DM or group is keyed by its
@@ -3233,11 +3245,11 @@ nulls it, which is what made *every* deep link land in the right tab with nothin
 
 `/chat` and `/communities` are **separate route components**, each rendering its own
 `MainChatPage`, so moving between them remounts it. Its route-mode switch clears the selection so
-the previous tab's thread does not leak across - but a deep link publishes its selection *before*
+the previous tab's thread does not leak across - but a deep link publishes its selection _before_
 navigating, so an unconditional reset wipes precisely what the link asked for. Both a pending
 target and an existing selection are checked with `selectionBelongsToRoute`: one whose
 `chatDeepLinkRoute` already matches the incoming mode can only have come from a deep link, since a
-genuine tab switch carries one made under the mode being left. Entering the *other* mode ends the
+genuine tab switch carries one made under the mode being left. Entering the _other_ mode ends the
 landing. Pinned by `notificationRouting.test.ts`.
 
 The invite link resolves its landing channel from `getWorkspaceBySlug`, which returns only channels
@@ -3246,7 +3258,7 @@ than in whichever private channel happened to sort first.
 
 The inviter's copy is inserted **locally** by `inviteMemberToChannel`, because MLS never hands a
 device back its own application message. The `senderNorm === userId` branch of
-`systemMessageHandler` builds the identical envelope, and only ever runs on the inviter's *other*
+`systemMessageHandler` builds the identical envelope, and only ever runs on the inviter's _other_
 devices. Pinned by `systemMessageHandler.channelInvite.test.ts`.
 
 ### Opening from another page: a conversation, or the DM with a person (fixed 2026-11-11)
@@ -3254,10 +3266,10 @@ devices. Pinned by `systemMessageHandler.channelInvite.test.ts`.
 Another page hands the chat page something to open through `sessionStorage`, and there are two KINDS,
 each with its own key (`utils/chat/pendingChatOpening.ts`):
 
-| Key | Written by | Names | Answered by |
-| --- | --- | --- | --- |
-| `canari_pending_contact` | the posts mini panel, the multi-tab reload (`selectionAcrossReload.ts`) | a conversation's MAP key (its group id) | `selectConversation`, if the map holds it |
-| `canari_pending_direct_peer` | a profile's "Message" button | a PERSON (their user id), and the account that asked (`{ owner, peer }`) | `startNewConversation`: the DM in the map, else the server's, else a new one; a refusal is a toast (`conversationRefusalMessage`) |
+| Key                          | Written by                                                              | Names                                                                    | Answered by                                                                                                                       |
+| ---------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| `canari_pending_contact`     | the posts mini panel, the multi-tab reload (`selectionAcrossReload.ts`) | a conversation's MAP key (its group id)                                  | `selectConversation`, if the map holds it                                                                                         |
+| `canari_pending_direct_peer` | a profile's "Message" button                                            | a PERSON (their user id), and the account that asked (`{ owner, peer }`) | `startNewConversation`: the DM in the map, else the server's, else a new one; a refusal is a toast (`conversationRefusalMessage`) |
 
 **The defect (production web `1.6.10`):** the profile button wrote the person's USER id into the
 conversation key. No conversation is keyed by a user id
@@ -3292,15 +3304,15 @@ decides what happens locally. `channelEventHandler` normalises both onto one cal
 [`removalOutcome`](../../../../frontend/src/lib/utils/chat/memberRemoval.ts) turns it into one of
 four answers:
 
-| Outcome | When | Local effect |
-|---|---|---|
-| `ignore` | `kickedUserId` is not the local user | none - it is someone else's removal |
-| `community` | no `channelId` (community-wide kick) | purge the whole workspace + toast |
-| `channel` | private channel | drop that channel + toast |
-| `public-channel` | public channel | none - every member still reads it |
+| Outcome          | When                                 | Local effect                        |
+| ---------------- | ------------------------------------ | ----------------------------------- |
+| `ignore`         | `kickedUserId` is not the local user | none - it is someone else's removal |
+| `community`      | no `channelId` (community-wide kick) | purge the whole workspace + toast   |
+| `channel`        | private channel                      | drop that channel + toast           |
+| `public-channel` | public channel                       | none - every member still reads it  |
 
 The two traps this encodes are worth restating, because both shipped as bugs: acting on a
-broadcast without checking the target made *every* member's client delete a channel when one
+broadcast without checking the target made _every_ member's client delete a channel when one
 person was kicked from it, and a community kick carries no `channelId` at all, so a handler that
 started with `if (!event.channelId) return` did nothing for the very person being removed.
 
@@ -3359,12 +3371,12 @@ nothing is chosen on the member's behalf, and the group's PRESENCE means the ser
 
 ### Reactions: two mechanisms
 
-| | DM / group | Community channel |
-|---|---|---|
-| Transport | encrypted MLS system message (`add_reaction`/`remove_reaction`) | encrypted channel message, sealed under the sender's Graine session (WP-40, 2026-08-18) |
-| State | `useMessaging.messageReactions` | `stores/reactionStore.svelte.ts` |
-| Server sees | nothing | nothing - it stores one boolean, `silent`, saying whether the row may ring a phone |
-| Live update | replayed to every member by MLS | the ordinary `channel.message.created` fan-out |
+|             | DM / group                                                      | Community channel                                                                       |
+| ----------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| Transport   | encrypted MLS system message (`add_reaction`/`remove_reaction`) | encrypted channel message, sealed under the sender's Graine session (WP-40, 2026-08-18) |
+| State       | `useMessaging.messageReactions`                                 | `stores/reactionStore.svelte.ts`                                                        |
+| Server sees | nothing                                                         | nothing - it stores one boolean, `silent`, saying whether the row may ring a phone      |
+| Live update | replayed to every member by MLS                                 | the ordinary `channel.message.created` fan-out                                          |
 
 **The cleartext tally is GONE**, endpoint, `channel.reaction` broadcast and
 `channel_messages.reactions` column alike: a server that could not read "j'arrive" could still see
@@ -3385,7 +3397,7 @@ which applies it to the conversation AND writes it to the encrypted store.
 
 The sender's device never runs that handler: **MLS gives no echo of your own message**. So the
 issuing device has exactly one code path - the optimistic update in `useMessaging` - and that path
-owns *both* halves. Updating `ctx.conversations` alone makes the mutation look applied until the
+owns _both_ halves. Updating `ctx.conversations` alone makes the mutation look applied until the
 next load, at which point the store answers with the pre-mutation row and the change appears to
 have been rejected. That was WP-EDIT-1: an edit that reverted on refresh while every peer showed
 it correctly.
@@ -3403,7 +3415,7 @@ rendered it, and only then received the tombstone. Ordering the two entries coul
 that - the text still goes out - and neither could a delay, which would only move the window.
 
 `deleteMessage` therefore asks the outbox first. `cancelPending` answers the one question only the
-queue can answer - *is the frame still on this device* - and returns it as a boolean the caller acts
+queue can answer - _is the frame still on this device_ - and returns it as a boolean the caller acts
 on, rather than letting the caller learn it by watching a send happen. `true` drops the row and
 sends nothing at all; `false` means the peers have it and the `delete_message` event travels, which
 is the case that event exists for.
@@ -3455,7 +3467,7 @@ opens with a bulk-ingest early return that holds the message in `bulkIngestBuffe
 **before `saveMessage`**, so that a large inbound drain re-renders the list once instead of per
 message. Three facts turn that optimisation into a loss:
 
-- `bulkIngestActive` is raised by *every* inbound drain, not only a long one, so the window is
+- `bulkIngestActive` is raised by _every_ inbound drain, not only a long one, so the window is
   ordinary rather than exceptional;
 - `beginBulkMessageIngest` and `resetMessageCatchupState` both `clear()`ed the buffer without
   flushing (until #4054), so a second drain starting mid-window discarded what the first held;
@@ -3505,14 +3517,14 @@ that line at all. So an `[ADD_MSG] ✓ Message added` inside a window is necessa
 took the live path while `bulkIngestActive` was true - i.e. an own message through the branch this
 fix added.
 
-| own message | added at | window | verdict |
-| --- | --- | --- | --- |
-| `80e9927e` | 11:28:39.582 | opened 39.193, closed 39.601 (408 ms) | inside |
-| `050725aa` | 11:28:43.654 | opened 43.397, closed 44.790 (1393 ms) | inside |
-| `1537acbd` | 11:28:53.383 | opened 53.283, closed 53.612 (329 ms) | inside |
-| `bcba272f` | 11:28:59.295 | opened 58.874, closed 59.323 (449 ms) | inside |
-| `dde24b01` | 11:29:21.429 | opened 20.999, closed 21.464 (465 ms) | inside |
-| 6 others | - | between windows | outside |
+| own message | added at     | window                                 | verdict |
+| ----------- | ------------ | -------------------------------------- | ------- |
+| `80e9927e`  | 11:28:39.582 | opened 39.193, closed 39.601 (408 ms)  | inside  |
+| `050725aa`  | 11:28:43.654 | opened 43.397, closed 44.790 (1393 ms) | inside  |
+| `1537acbd`  | 11:28:53.383 | opened 53.283, closed 53.612 (329 ms)  | inside  |
+| `bcba272f`  | 11:28:59.295 | opened 58.874, closed 59.323 (449 ms)  | inside  |
+| `dde24b01`  | 11:29:21.429 | opened 20.999, closed 21.464 (465 ms)  | inside  |
+| 6 others    | -            | between windows                        | outside |
 
 11 sent, 25 windows opened over the run, **5 inside**, and after the reload and a quiescence gate
 (no `Drain start` for 20 s) **11 of 11 still present**. PASS.
@@ -3529,13 +3541,13 @@ a resume with one DM open, the socket back in 0.2 s, a pull of 148 frames, and t
 `Drain start ... messages=1` to `Drain complete` in **~10 s**. Per-frame time read from `Processing`
 to `messageCallback`, by what the frame was:
 
-| frames | what | path | per frame | total |
-| --- | --- | --- | --- | --- |
-| 34 | the peer's texts, all of them already shown as push previews | live (`Preview upgrade during a bulk ingest - taking the live path`) | ~80 ms | 2.7 s |
-| 23 | texts written on the owner's OTHER device | live (own message, WP-ECHO-1's exemption) | ~90 ms | 2.1 s |
-| 34 | reactions (`applyReactionFrame`, one store write each) | - | ~75 ms | 2.5 s |
-| 51 | read marks (the peer's: one `saveConversation` each, ~65 ms; this account's: ~2 ms) | - | ~34 ms | 1.7 s |
-| 6 | commits, Welcome, other notices | - | - | 0.5 s |
+| frames | what                                                                                | path                                                                 | per frame | total |
+| ------ | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------- | --------- | ----- |
+| 34     | the peer's texts, all of them already shown as push previews                        | live (`Preview upgrade during a bulk ingest - taking the live path`) | ~80 ms    | 2.7 s |
+| 23     | texts written on the owner's OTHER device                                           | live (own message, WP-ECHO-1's exemption)                            | ~90 ms    | 2.1 s |
+| 34     | reactions (`applyReactionFrame`, one store write each)                              | -                                                                    | ~75 ms    | 2.5 s |
+| 51     | read marks (the peer's: one `saveConversation` each, ~65 ms; this account's: ~2 ms) | -                                                                    | ~34 ms    | 1.7 s |
+| 6      | commits, Welcome, other notices                                                     | -                                                                    | -         | 0.5 s |
 
 The decrypt itself is 2-8 ms per frame (`Processing` to `Message decrypted`): **the time is the
 store**, a read and a write per message on the live path, a write per reaction or read mark. And not
@@ -4119,10 +4131,10 @@ travels with it.
 any kind. Two of its branches discarded a failure in silence, and in both the discarded value
 collided with a value the happy path returns on purpose:
 
-| Branch | On failure it became | Which also means |
-| --- | --- | --- |
-| `onSearchAll(convId, q)` | `ids = null` | "this is a channel - nothing is persisted locally, use the loaded window" |
-| `onRequestOlderFromPeers()` | `'unavailable'` | one of the three answers that call returns deliberately |
+| Branch                      | On failure it became | Which also means                                                          |
+| --------------------------- | -------------------- | ------------------------------------------------------------------------- |
+| `onSearchAll(convId, q)`    | `ids = null`         | "this is a channel - nothing is persisted locally, use the loaded window" |
+| `onRequestOlderFromPeers()` | `'unavailable'`      | one of the three answers that call returns deliberately                   |
 
 So the two were indistinguishable at every consumer, and both landed on the same
 `searchLimitedToLoaded = isChannel`. A user reporting that search found nothing left no trace
@@ -4165,14 +4177,14 @@ campaign's SEARCH-5 was written to record exactly that, and PASSED by asserting 
 
 `$lib/utils/textFold.ts` is now the only copy, and everything goes through it:
 
-| What | Uses |
-| --- | --- |
-| the in-conversation matcher (`ChatArea.svelte`), the local-store one (`MainChatPage.svelte`), the store search (`useConversations.svelte.ts`) | `foldForSearch` on BOTH sides |
-| the highlighter (`splitWithHighlight`, `chat/messageDisplay.ts`) | `foldWithIndex`, and slices the ORIGINAL |
-| the sidebar filter (`conversationMatchesQuery`, `chat/conversations.ts`) | `foldForSearch` on BOTH sides |
-| the admin user filter (`routes/admin/users`) | `foldForSearch` |
-| five slug builders - workspaces, QR file names, `admin/carte`, `associations/new`, `lists/new` | `slugify` |
-| the native-string guardrail's own comparison (`nativeStrings.test.ts`) | `foldForSearch` |
+| What                                                                                                                                          | Uses                                     |
+| --------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| the in-conversation matcher (`ChatArea.svelte`), the local-store one (`MainChatPage.svelte`), the store search (`useConversations.svelte.ts`) | `foldForSearch` on BOTH sides            |
+| the highlighter (`splitWithHighlight`, `chat/messageDisplay.ts`)                                                                              | `foldWithIndex`, and slices the ORIGINAL |
+| the sidebar filter (`conversationMatchesQuery`, `chat/conversations.ts`)                                                                      | `foldForSearch` on BOTH sides            |
+| the admin user filter (`routes/admin/users`)                                                                                                  | `foldForSearch`                          |
+| five slug builders - workspaces, QR file names, `admin/carte`, `associations/new`, `lists/new`                                                | `slugify`                                |
+| the native-string guardrail's own comparison (`nativeStrings.test.ts`)                                                                        | `foldForSearch`                          |
 
 **BOTH SIDES, ALWAYS.** Folding only the query is the half-fix that looks like it works: every
 unaccented query still finds every unaccented word, and the defect shows up only on the text this
@@ -4227,7 +4239,6 @@ time between the account's own devices, with no user gesture at all.
 obvious design has the RESPONDER send the digest and the REQUESTER diff. It ships the other way
 round: the **requester states what it wants, the elected responder diffs**. It costs one round trip
 fewer, because the responder's reply already carries the data instead of asking for it.
-
 
 **The legs as built.** Leg 1 is the WS `history_request` - server-side election is what keeps one
 responder instead of a storm. Leg 2 is the **probe**, sent inside MLS by the requester, and it is one
@@ -4401,16 +4412,16 @@ this flag, for a good reason: **`isSystem` and `senderId === 'system'` are the s
 putting both on the wire is where they get to disagree.** The flag was never missing from the
 bundle. It was missing from the READER.
 
-`isSystemSender`'s own docblock already stated the invariant - *every seam that MATERIALISES a row
-derives it from here instead of restating it* - and the 2026-09-14 fix honoured it in the REPLAY's
+`isSystemSender`'s own docblock already stated the invariant - _every seam that MATERIALISES a row
+derives it from here instead of restating it_ - and the 2026-09-14 fix honoured it in the REPLAY's
 `pushPendingMessage` only. The LIVE bundle merge in `systemMessageHandler` does not go through that
 function: its `toAdd` rows are handed to `batchAddMessages`, or to `addMessageToChat` one by one
 when the batch path is unavailable, and BOTH of those restated the caller's flag. Half an invariant
 is not an invariant. Both now derive:
 
 ```ts
-const isSystem = options.isSystem === true || isSystemSender(senderId);   // addMessageToChat
-const isSystem = pm.isSystem === true || isSystemSender(pm.senderId);     // batchAddMessages
+const isSystem = options.isSystem === true || isSystemSender(senderId); // addMessageToChat
+const isSystem = pm.isSystem === true || isSystemSender(pm.senderId); // batchAddMessages
 ```
 
 It widens the answer rather than replacing it: a row its writer flagged stays flagged whatever its
@@ -4485,7 +4496,6 @@ the deleted retry ladder: deleting the LADDER had not deleted the SWEEP, and the
 throughout. **A claim that a user-facing string is stale must name the mechanism that would honour it
 and show that mechanism gone** - one grep for the sweep constant would have refuted both before they
 were written.
-
 
 ### There is ONE repair, and deleting the other one is what fixed the escalation (2026-08-10)
 
@@ -4576,14 +4586,14 @@ All three are now fixed, and the rule each taught outlives it:
 There is no periodic comparison and no durable evidence gating one. Asking costs a single frame, so a
 device asks whenever something could have changed the answer:
 
-| Trigger | Where |
-|---|---|
-| every (re)connect, over every local group | `initializeConnection.ts` -> `reconcileAllGroups` |
-| a frame proved lost during a replay | `history.ts`, `sawUnreadableFrame` -> `reconcileGroup` |
-| a frame proved lost live | `setupMessageHandler.ts` -> `reconcileGroup` |
-| a fresh Welcome join | `sessionAuth.ts`, `onWelcomeProcessed` |
-| a re-add recovery completing | `recovery.ts` |
-| a peer coming back online | `sessionAuth.ts` -> `reconcileGroupsAwaitingResponder` |
+| Trigger                                   | Where                                                  |
+| ----------------------------------------- | ------------------------------------------------------ |
+| every (re)connect, over every local group | `initializeConnection.ts` -> `reconcileAllGroups`      |
+| a frame proved lost during a replay       | `history.ts`, `sawUnreadableFrame` -> `reconcileGroup` |
+| a frame proved lost live                  | `setupMessageHandler.ts` -> `reconcileGroup`           |
+| a fresh Welcome join                      | `sessionAuth.ts`, `onWelcomeProcessed`                 |
+| a re-add recovery completing              | `recovery.ts`                                          |
+| a peer coming back online                 | `sessionAuth.ts` -> `reconcileGroupsAwaitingResponder` |
 
 Every row is an EDGE, and the list has no sweep in it - the 15-minute one is deleted. Two notes in
 `historyReconcile.ts` keep it from turning into traffic, and **both are in memory and both describe a
@@ -4614,7 +4624,6 @@ would put the mechanism straight back where the sweep it replaces was.
 A group this device no longer holds is dropped from that set rather than re-elected: there is
 nothing to reconcile it against, and asking the server about a group we are not in is a question with
 no honest answer.
-
 
 ### Devices compare identities, never counts
 
@@ -4706,8 +4715,8 @@ it. There is no interval left to reason about.
 
 **A DISCRIMINATING EXTRA READ WOULD NOT HAVE WORKED, AND IT IS WORTH KNOWING WHY.** The obvious fix
 is to give the destructive reducer the signal its milder sibling already has: `decideAbsentGroupFate`
-takes `isStillUserMember` and keeps a group on `true` or `null`, naming this very hazard - *"may be
-stale for a group we just created/joined"*. But `getGroupUserMembers` reads `dm_group_members`, the
+takes `isStillUserMember` and keeps a group on `true` or `null`, naming this very hazard - _"may be
+stale for a group we just created/joined"_. But `getGroupUserMembers` reads `dm_group_members`, the
 table `registerMember` had not yet written, so inside the window it returns a genuine empty 200 and
 the reducer would have forgotten the group with more confidence, not less. **A second read that
 races the same write is not a discriminator.**
@@ -4743,7 +4752,7 @@ do not. **The instant the row exists, the group is a recovery candidate.** Insid
 recovery seam correctly types as `NotAGroupMemberError` - a TERMINATING answer, whose termination is
 `stopRecovering` -> `retireConversation`.
 
-So the creator of a brand-new DM was shown *"Cette conversation a ete supprimee"* on a conversation
+So the creator of a brand-new DM was shown _"Cette conversation a ete supprimee"_ on a conversation
 nobody had deleted. It was reported on 2026-09-01 for prod group `ab47add3`, whose `dm_groups` row is
 alive, whose two members are both in `dm_group_members`, which has no tombstone, no dismissal and one
 commit. The message he typed **was delivered**: two writers of `lifecycle` were racing and the retire
@@ -4753,7 +4762,7 @@ The row is now written ONCE, already `active`, after every prerequisite - the sa
 `createNewGroup` has had since 2026-08-30. A field written once cannot lose a race for it, and there
 is no intermediate state left for a reader to catch.
 
-**What hid it for a day was a comment.** The DM path carried *"SAME INVARIANT AS `createNewGroup`"*
+**What hid it for a day was a comment.** The DM path carried _"SAME INVARIANT AS `createNewGroup`"_
 above the early publish, and `groupCreation.order.test.ts` - the test named for this exact
 invariant - covered only the group path. The rule about a comment citing a precedent applies to a
 comment citing a SIBLING FUNCTION just as hard: the guarding test now asserts the order on both
@@ -4827,18 +4836,19 @@ db92be7a... - will ask when one returns`) and asked again on the next connection
 `createNewGroup` and `startNewConversation` answered `void`. Five distinct ways of declining ended
 in a `log()` line and nothing else:
 
-| Answer | What happened |
-|---|---|
-| `duplicate-group-name` | a group of that name is already open on this device |
-| `blocked` | a block stands between the two accounts, in one direction or the other |
-| `block-check-unavailable` | core-service could not be asked, so nothing is concluded |
-| `peer-has-no-device` | the peer has never signed in and has published no KeyPackage |
-| `creation-failed` | anything the creation threw; the log carries the detail |
+| Answer                    | What happened                                                          |
+| ------------------------- | ---------------------------------------------------------------------- |
+| `duplicate-group-name`    | a group of that name is already open on this device                    |
+| `blocked`                 | a block stands between the two accounts, in one direction or the other |
+| `block-check-unavailable` | core-service could not be asked, so nothing is concluded               |
+| `peer-has-no-device`      | the peer has never signed in and has published no KeyPackage           |
+| `creation-failed`         | anything the creation threw; the log carries the detail                |
 
 **The modal closed on every one of them.** It called, ignored the answer there was none of, and shut
+
 - so the member saw a sidebar that had not changed, over a conversation that did not exist, with
-nothing anywhere saying why. The server-side orphan was cleaned up correctly the whole time; the
-repair was never the missing half.
+  nothing anywhere saying why. The server-side orphan was cleaned up correctly the whole time; the
+  repair was never the missing half.
 
 **The fix is a discriminator, not a message.** `ConversationOutcome` is
 `{ ok: true; key } | { ok: false; reason }`, and the reason is a union of the five above. Prose in a
@@ -4880,14 +4890,14 @@ is to remember the asker and serve them the moment the group becomes ready.
 
 **That is a policy, and it was written at ONE of the two entrances.** The socket entrance passed an
 `onNotReady` that pushed the asker onto `ctx.deferredWelcomeRequests`; `onGroupReady`'s drain of that
-same queue passed none - and deleted the key before serving - so an asker who came back *not yet* on
+same queue passed none - and deleted the key before serving - so an asker who came back _not yet_ on
 the drain fell into a `?.()` on an absent callback and vanished, silently, with the queue already
 emptied.
 
 **The drain reaching a group that is still not ready is a state the code produces, not a
 hypothetical.** "Ready" there is the MLS group becoming sendable, which is not the same event as this
 device's conversation row reaching `active`: of `setupMessageHandler`'s two fire points, the
-redelivered-Welcome path sets the row first *if a row exists*, and the ordinary join path does not.
+redelivered-Welcome path sets the row first _if a row exists_, and the ordinary join path does not.
 Nothing re-derived a dropped asker; only their own 60-second retry brought them back, and the log
 said nothing at all.
 
@@ -4915,7 +4925,7 @@ that recovers it; or it was **still in flight**, and the push and the pull overl
 cooldown is what tells them apart, and it used to remember only Welcomes the `welcome_request`
 handler had sent itself. A group's creation fan-out, a pending invitation and a Graine admission
 send them too, so a device asking seconds after a creation fan-out (GRP-8, 2026-08-24) had its
-fresh leaf kicked, and the kick line said *no Welcome sent from here*.
+fresh leaf kicked, and the kick line said _no Welcome sent from here_.
 
 The record now lives in `welcomeSent.ts` and is written by `BaseMlsService.sendWelcome`, the one
 call all four paths go through, once the delivery succeeded. So an ask inside the cooldown is
@@ -4926,25 +4936,25 @@ sent before a reload is one the requester has had time to lose.
 ### One key per conversation - the "a DM has two keys" premise, audited and refuted (2026-10-04)
 
 **THE MAP KEY IS THE ROW'S `id`, FOR EVERY ROW.** The section that stood here (2026-09-01) said a DM
-learnt from a Welcome is keyed by the PEER'S USER ID, and wrote the rule *treat any `[key]` lookup
-over this heterogeneously-keyed map as a defect on sight* - without enumerating the consumers. The
+learnt from a Welcome is keyed by the PEER'S USER ID, and wrote the rule _treat any `[key]` lookup
+over this heterogeneously-keyed map as a defect on sight_ - without enumerating the consumers. The
 enumeration, done 2026-10-04 against `main`, refutes the premise instead: **no writer of
 `conversations` keys a row by anything but its `id`** (the MLS group id, or `channel_<id>`), and none
 did on 2026-09-01 either (`git grep` at `a939b6f97^`). The single-key store dates from `a6d5fb203`
-(2026-04-07, *"only one id will be used now"*). What misled the reading is a name: the key parameter
+(2026-04-07, _"only one id will be used now"_). What misled the reading is a name: the key parameter
 is still spelled `contactName` / `selectedContact` in `useConversations` and `history.ts`, and
 `deriveConversationIdentity` DOES return the peer as `contactName` - as a FIELD of the row, never as
 its key.
 
 The writers, which are the mechanism that holds the invariant:
 
-| Writer | Key it writes |
-| --- | --- |
-| boot restore (`conversations.ts`) | `meta.id`; `saveConversation` persists `toConversationMeta(key, ...)` with `id = key`, so the loop is closed |
-| `createNewGroup`, `startNewConversation`, the existing-server-DM path (`groupCreation.ts`) | the group id |
-| the Welcome's early placeholder and `upsertConversation` (`setupMessageHandler.ts`) | `joinedGroupId`; a LIVE DM matched by PEER under another group is deleted and **re-keyed onto `joinedGroupId`** - the one writer whose key is computed; a RETIRED one (`removed`) is never matched, see [a deleted DM is not carried into the next](#a-deleted-dm-is-not-carried-into-the-next-one) - pinned by `setupMessageHandler.test.ts` (*"a Welcome into a DM keys the row by the joined group id"*) |
-| `onWelcomeProcessed` (`sessionAuth.ts`), the FCM merge, channel builders, tab sync | the group / conversation id they were handed |
-| every other `set` (retire, unread, watermarks, rename, avatar, messages) | read-modify-write of a key already in the map |
+| Writer                                                                                     | Key it writes                                                                                                                                                                                                                                                                                                                                                                                               |
+| ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| boot restore (`conversations.ts`)                                                          | `meta.id`; `saveConversation` persists `toConversationMeta(key, ...)` with `id = key`, so the loop is closed                                                                                                                                                                                                                                                                                                |
+| `createNewGroup`, `startNewConversation`, the existing-server-DM path (`groupCreation.ts`) | the group id                                                                                                                                                                                                                                                                                                                                                                                                |
+| the Welcome's early placeholder and `upsertConversation` (`setupMessageHandler.ts`)        | `joinedGroupId`; a LIVE DM matched by PEER under another group is deleted and **re-keyed onto `joinedGroupId`** - the one writer whose key is computed; a RETIRED one (`removed`) is never matched, see [a deleted DM is not carried into the next](#a-deleted-dm-is-not-carried-into-the-next-one) - pinned by `setupMessageHandler.test.ts` (_"a Welcome into a DM keys the row by the joined group id"_) |
+| `onWelcomeProcessed` (`sessionAuth.ts`), the FCM merge, channel builders, tab sync         | the group / conversation id they were handed                                                                                                                                                                                                                                                                                                                                                                |
+| every other `set` (retire, unread, watermarks, rename, avatar, messages)                   | read-modify-write of a key already in the map                                                                                                                                                                                                                                                                                                                                                               |
 
 ### Telling a peer's deletion from a false "deleted" (a 1.6.12 report, 2026-11-16)
 
@@ -4976,32 +4986,32 @@ so every device that later received them in a history bundle marked them "non ve
 **One predicate now answers "the conversation with that peer" everywhere: `canRepresentThePeer`,
 applied inside `findDirectConversationByPeer`.** The callers, each decided:
 
-| Caller | Skips a tombstone | Why |
-| --- | --- | --- |
-| `upsertConversation` (`setupMessageHandler.ts`, the Welcome) | yes, for ANOTHER group's row | the retired DM keeps its own entry and rows, the new group starts empty (`[WELCOME] ... starts empty` names the retired ids); the joined group's OWN DM row is still revived whatever its lifecycle - a re-Welcome into the same group is a re-add |
-| the media send following a re-keyed DM (`useMessaging.svelte.ts`) | yes | it follows the row the Welcome moved, so it asks the same question; a file is never sent into a retired DM |
-| discovery's local de-dup (`serverGroupConversation.ts`) | yes (already did, inline) | a record pending removal must not refuse its own replacement (user report, 2026-08-23) |
-| `startNewConversation` (`groupCreation.ts`) | yes (inline before, same outcome) | a non-active row fell through to the server check anyway; a retired row listed before a live one no longer hides it |
-| the community invitation DM (`useChannelWorkspaces.svelte.ts`) | yes | an invitation written into a deleted DM reaches nobody |
-| `mergeDirectConversationDuplicates` (startup) | yes (already did) | a tombstone competing on `updatedAt` destroyed the fresh group for both parties |
+| Caller                                                            | Skips a tombstone                 | Why                                                                                                                                                                                                                                                |
+| ----------------------------------------------------------------- | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `upsertConversation` (`setupMessageHandler.ts`, the Welcome)      | yes, for ANOTHER group's row      | the retired DM keeps its own entry and rows, the new group starts empty (`[WELCOME] ... starts empty` names the retired ids); the joined group's OWN DM row is still revived whatever its lifecycle - a re-Welcome into the same group is a re-add |
+| the media send following a re-keyed DM (`useMessaging.svelte.ts`) | yes                               | it follows the row the Welcome moved, so it asks the same question; a file is never sent into a retired DM                                                                                                                                         |
+| discovery's local de-dup (`serverGroupConversation.ts`)           | yes (already did, inline)         | a record pending removal must not refuse its own replacement (user report, 2026-08-23)                                                                                                                                                             |
+| `startNewConversation` (`groupCreation.ts`)                       | yes (inline before, same outcome) | a non-active row fell through to the server check anyway; a retired row listed before a live one no longer hides it                                                                                                                                |
+| the community invitation DM (`useChannelWorkspaces.svelte.ts`)    | yes                               | an invitation written into a deleted DM reaches nobody                                                                                                                                                                                             |
+| `mergeDirectConversationDuplicates` (startup)                     | yes (already did)                 | a tombstone competing on `updatedAt` destroyed the fresh group for both parties                                                                                                                                                                    |
 
-Pinned by `setupMessageHandler.test.ts` (*"the stored rows of the previous DM with that peer"*) and
-`conversations.directPeer.test.ts` (*"findDirectConversationByPeer"*).
+Pinned by `setupMessageHandler.test.ts` (_"the stored rows of the previous DM with that peer"_) and
+`conversations.directPeer.test.ts` (_"findDirectConversationByPeer"_).
 
 The consumers that look a conversation up by a group id, and the verdict on each:
 
-| Consumer | Lookup | Verdict |
-| --- | --- | --- |
-| `processPendingInvitations` (`actions.ts`) | `get(groupId)` / `has(groupId)` | correct - the key is the id |
-| `handleWelcomeRequest`, *"No ready conversation - deferring"* (`actions.ts`) | `get(groupId)` | correct |
-| `handleHistoryRequest`, the history-serving gate (`actions.ts`) | `get(groupId)` | correct |
-| the promotion after a successful external join (`recovery.ts`) | `findByGroupId` (by `id`), saved by the found key | correct |
-| `requestReAdd` idempotence, `stopRecovering`, `purgePhantomConversation` (`recovery.ts`) | `findByGroupId` | correct |
-| the redelivered-Welcome branch (`setupMessageHandler.ts`) | `get(terminalId)` | correct |
-| `upsertConversation`'s migrated-peer read (`setupMessageHandler.ts`) | `get(joinedGroupId)` | correct |
-| SYNC_WATCHDOG candidates (`sessionWatchdogs.ts`) | `convo.id`, channels skipped on the key | correct |
-| `onWelcomeProcessed` (`sessionAuth.ts`) | `has(groupId)` | correct |
-| group avatar refresh (`actions.ts`), call notices (`callSystemMessages.ts`) | `get(groupId)` | correct |
+| Consumer                                                                                 | Lookup                                            | Verdict                     |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------------- | --------------------------- |
+| `processPendingInvitations` (`actions.ts`)                                               | `get(groupId)` / `has(groupId)`                   | correct - the key is the id |
+| `handleWelcomeRequest`, _"No ready conversation - deferring"_ (`actions.ts`)             | `get(groupId)`                                    | correct                     |
+| `handleHistoryRequest`, the history-serving gate (`actions.ts`)                          | `get(groupId)`                                    | correct                     |
+| the promotion after a successful external join (`recovery.ts`)                           | `findByGroupId` (by `id`), saved by the found key | correct                     |
+| `requestReAdd` idempotence, `stopRecovering`, `purgePhantomConversation` (`recovery.ts`) | `findByGroupId`                                   | correct                     |
+| the redelivered-Welcome branch (`setupMessageHandler.ts`)                                | `get(terminalId)`                                 | correct                     |
+| `upsertConversation`'s migrated-peer read (`setupMessageHandler.ts`)                     | `get(joinedGroupId)`                              | correct                     |
+| SYNC_WATCHDOG candidates (`sessionWatchdogs.ts`)                                         | `convo.id`, channels skipped on the key           | correct                     |
+| `onWelcomeProcessed` (`sessionAuth.ts`)                                                  | `has(groupId)`                                    | correct                     |
+| group avatar refresh (`actions.ts`), call notices (`callSystemMessages.ts`)              | `get(groupId)`                                    | correct                     |
 
 **No defect, so nothing was re-routed.** `findByGroupId` stays private to `recovery.ts`: it reads by
 `id` and is right whatever the key, and replacing the `get`s above with an O(n) scan would buy
@@ -5138,11 +5148,11 @@ and from `ChatBackgroundService` on reconnect and on history events.
 
 So the two combine into a conversation that renders NOTHING:
 
-| step | in-memory messages | groups | `windowStart` | rendered |
-| --- | --- | --- | --- | --- |
-| a bulk ingest / history bundle has grown the open list | 598 | ~300 | - | - |
-| the conversation is clicked: the key changes | 598 | ~300 | `300 - 60 = 240` | 60 groups |
-| `loadHistoryForConversation` replaces the list with one page | 60 | ~65 | still 240 | `slice(240, 65)` = **none** |
+| step                                                         | in-memory messages | groups | `windowStart`    | rendered                    |
+| ------------------------------------------------------------ | ------------------ | ------ | ---------------- | --------------------------- |
+| a bulk ingest / history bundle has grown the open list       | 598                | ~300   | -                | -                           |
+| the conversation is clicked: the key changes                 | 598                | ~300   | `300 - 60 = 240` | 60 groups                   |
+| `loadHistoryForConversation` replaces the list with one page | 60                 | ~65    | still 240        | `slice(240, 65)` = **none** |
 
 `slice` with a start past its end returns `[]` without complaining. There is no error, no log, and no
 skeleton - `showSkeleton` requires `isLoadingHistory`, which is false by then - and no empty state,
@@ -5258,10 +5268,10 @@ could not say is that the landing takes the entry away again.
 reproduced exactly - same component, action, data and flags as the `PendingIntent` built in
 `CanariFirebaseMessagingService.kt` - and compared against the same conversation reached by hand:
 
-| journey | BACK 1 | BACK 2 | BACK 3 |
-| --- | --- | --- | --- |
-| by hand: posts -> chat tab -> row | list | posts | app exits |
-| notification tap | **app exits** | - | - |
+| journey                           | BACK 1        | BACK 2 | BACK 3    |
+| --------------------------------- | ------------- | ------ | --------- |
+| by hand: posts -> chat tab -> row | list          | posts  | app exits |
+| notification tap                  | **app exits** | -      | -         |
 
 The route push was never the missing part: `[notifNav] routing to /chat` is in the log of the failing
 run.
@@ -5603,12 +5613,12 @@ listing was still in its answer, and the listing drew it back.
 learned at. Salons are keyed by conversation id, communities by `community:<slug>`. Every live
 write goes through one of four places, and the listing's own writes go through none of them:
 
-| Live fact | Where it is dated |
-| --- | --- |
-| salon created here, heard of (`channel.member.joined`), or drawn by a community creation | `addChannelToWorkspace` (the listing draws through `upsertChannelRow`) |
-| community heard of on an event, or created here | `ensureWorkspaceForChannelEvent`, `ensureWorkspaceByName` |
-| salon deleted, left, kicked from (`channel.deleted`, `channel.member.kicked`/`removed`) | `removeChannelFromWorkspaces` (the prune removes through `dropChannelRow`) |
-| community deleted, left, removed from | `purgeWorkspaceLocally`, before its first await, for the community and every salon on its rail |
+| Live fact                                                                                | Where it is dated                                                                              |
+| ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| salon created here, heard of (`channel.member.joined`), or drawn by a community creation | `addChannelToWorkspace` (the listing draws through `upsertChannelRow`)                         |
+| community heard of on an event, or created here                                          | `ensureWorkspaceForChannelEvent`, `ensureWorkspaceByName`                                      |
+| salon deleted, left, kicked from (`channel.deleted`, `channel.member.kicked`/`removed`)  | `removeChannelFromWorkspaces` (the prune removes through `dropChannelRow`)                     |
+| community deleted, left, removed from                                                    | `purgeWorkspaceLocally`, before its first await, for the community and every salon on its rail |
 
 `leaveCurrentChannel` and `deleteCurrentChannel` record the removal as soon as the server answers,
 before they await the store delete: a listing answered during that await used to set the
@@ -5742,8 +5752,8 @@ sidebar order kept when they answer in reverse, and no retry while a sibling is 
 
 ### The swipe gesture was switched off by a variable nothing writes (2026-09-20)
 
-*"la reponse en swipant un message n'a pas l'air de marcher, est-elle implementee ? Testee sur
-mobile ?"* (user). It was implemented, in `messageSwipeReply.ts`, with its own unit tests - and it
+_"la reponse en swipant un message n'a pas l'air de marcher, est-elle implementee ? Testee sur
+mobile ?"_ (user). It was implemented, in `messageSwipeReply.ts`, with its own unit tests - and it
 had never run once, on any device, since 2026-03-26.
 
 `MessageBubble` gated the gesture on `let supportsHover = $state(true)`. **Nothing in the repository
@@ -5755,7 +5765,7 @@ dead with it.
 throughout: it tests the gesture MATHS - the lock between horizontal and vertical, the clamped drag
 offset, the trigger threshold - and every one of those functions was correct. The predicate deciding
 whether any of it would be CALLED lived in the component, privately, where no test could reach it.
-*A green gate is not a working system*, in its sharpest form: the tested part worked and the
+_A green gate is not a working system_, in its sharpest form: the tested part worked and the
 untested part was one wrong default.
 
 The fix moves the predicate into the tested module as `canStartReplySwipe`, and the capability it
@@ -5794,23 +5804,23 @@ the pointer-event path is its own question.
 
 ### The reaction swipe is gone, and the reply hint moved to the outer edge (2026-09-22)
 
-Two days after the gesture was switched back on, the user met it and cut half of it. *"swiper pour
-reagir n'est pas quelque chose de bien, c'est meme assez bizarre. Tu peux retirer ceci."* And on the
-half that stayed: *"swiper vers l'interieur fait apparaitre une bulle avec le logo repondre, mais a
+Two days after the gesture was switched back on, the user met it and cut half of it. _"swiper pour
+reagir n'est pas quelque chose de bien, c'est meme assez bizarre. Tu peux retirer ceci."_ And on the
+half that stayed: _"swiper vers l'interieur fait apparaitre une bulle avec le logo repondre, mais a
 l'interieur et qui ne bouge pas, donc c'est un peu bizarre (le message passe dessous, pas
-intuitif)"*.
+intuitif)"_.
 
 **BOTH WERE SETTLED BY MEASUREMENT RATHER THAN BY TASTE, ON MESSENGER 579.0.0.61.91, ON THE SAME
 HANDSET.** The rig drives it with `adb shell input swipe` over a long duration and screenshots
 MID-GESTURE, which is the only way to see an affordance that exists solely while a finger is down.
 
-| Gesture | Messenger | Canari before | Canari now |
-| --- | --- | --- | --- |
-| Drag toward the thread centre | reply | reply | reply |
-| Drag away from the centre | **no displacement at all** | reaction tray | **nothing** |
-| Long press | reaction bar on the bubble + action bar docked at the screen bottom | one mobile sheet | one mobile sheet (kept, user) |
-| Double tap | nothing observed | heart | heart (kept, user) |
-| Thread-list row swipe | **none**; every action is the long press | none | none |
+| Gesture                       | Messenger                                                           | Canari before    | Canari now                    |
+| ----------------------------- | ------------------------------------------------------------------- | ---------------- | ----------------------------- |
+| Drag toward the thread centre | reply                                                               | reply            | reply                         |
+| Drag away from the centre     | **no displacement at all**                                          | reaction tray    | **nothing**                   |
+| Long press                    | reaction bar on the bubble + action bar docked at the screen bottom | one mobile sheet | one mobile sheet (kept, user) |
+| Double tap                    | nothing observed                                                    | heart            | heart (kept, user)            |
+| Thread-list row swipe         | **none**; every action is the long press                            | none             | none                          |
 
 **THE HINT IS REVEALED, NOT DRIVEN OVER, AND THAT IS THE WHOLE DEFECT.** The hint is absolutely
 positioned on the wrapper and does not move; the bubble does. It was anchored on the side the bubble
@@ -5831,7 +5841,7 @@ never render - dead the moment the gesture was.
 
 ### A double tap likes and does NOTHING else: the single tap waits out the window (2026-10-12)
 
-*"double tap pour liker ne doit pas aussi faire l'action du simple tap"* (user). On a phone the
+_"double tap pour liker ne doit pas aussi faire l'action du simple tap"_ (user). On a phone the
 bubble's tap toggles `MessageInfoTooltip` (time, readers) and its double tap sends a heart. Both
 lived in one `onclick`: the first tap opened the panel AT ONCE and stamped `lastTapTime`, the second
 saw the 300 ms window, liked and closed the panel. So every heart flashed the readers' panel, and a
@@ -5871,8 +5881,8 @@ contextmenu tests were each proven by reverting the behaviour they pin.
 
 ### The edge-swipe-back gesture had no target guard, and the back button sits inside its own edge zone (2026-09-22)
 
-*"you can only swipe page on no elements (if I swipe on a button, it doesn't click it, but doesn't
-swipe either)"* (user). The back button (`ChatHeader.svelte`, and the null-conversation safety net
+_"you can only swipe page on no elements (if I swipe on a button, it doesn't click it, but doesn't
+swipe either)"_ (user). The back button (`ChatHeader.svelte`, and the null-conversation safety net
 in `ChatArea.svelte`) is the LEFTMOST element in the header - well inside `swipeBack.ts`'s default
 28px edge zone - and `onTouchStart` armed the gesture on `clientX` alone, with no check of what the
 touch actually started on.
@@ -5952,10 +5962,10 @@ committed with it. All logic stays in the non-generated `KeyboardMediaBridge`, i
 which is why the template can name it unqualified.
 
 **The hook was lost for four months (2026-07-25 to 2026-11-22).** It was first written into the
-generated copy (`ebdc943366`, 2026-07-02, with a comment asking to *"re-apply after `tauri android`
-regeneration"*), and the next regeneration, committed as `3614a79518` ("fix"), erased it. The bridge
+generated copy (`ebdc943366`, 2026-07-02, with a comment asking to _"re-apply after `tauri android`
+regeneration"_), and the next regeneration, committed as `3614a79518` ("fix"), erased it. The bridge
 kept compiling with no caller, the WebView advertised no image MIME type, and Gboard answered
-*"GIF non disponibles ici avec cette appli"* on every Android build since. A comment
+_"GIF non disponibles ici avec cette appli"_ on every Android build since. A comment
 asking a human to re-apply a hunk after a tool rewrites the file is not a mechanism: the hook moved
 to the template, which no build rewrites, and
 `.github/scripts/tests/android-keyboard-media-hook.test.mjs` (in `make test-ci-scripts`) fails if
@@ -5972,14 +5982,14 @@ every unwired field taking the GIF and losing it. `utils/keyboardMedia.ts` is no
 root layout installs one window listener, and a composer registers with the `keyboardMediaTarget`
 action. The event goes to the innermost registered element containing the focused element:
 
-| Surface | Registered on | What a keyboard GIF does |
-| --- | --- | --- |
-| `chat` | `ChatComposer`'s footer | attached through `onFilesSelected`, the picked-file path (DM, group, channel) |
-| `chat-edit` | the same footer, while a message is edited | refused: toast `keyboard_media_refused` |
-| `comment` | `CommentComposer`'s field | staged through `stageMediaFile` |
-| `post` | `CreatePostForm`'s root | added through `addFiles`, the picked-file path |
-| any other focused field (a channel poll, a reel caption, a profile field) | nothing | refused: toast `keyboard_media_refused`, and one `KeyboardMedia` line naming the surface (`data-media-surface` if an ancestor declares one, else the tag) |
-| no focused field | - | nothing attached, one line, **no toast**: no keyboard commits without an editor, so this is iOS seeing the app's own pasteboard write (an image copied in the app), and "GIFs cannot be added here" would be false |
+| Surface                                                                   | Registered on                              | What a keyboard GIF does                                                                                                                                                                                           |
+| ------------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `chat`                                                                    | `ChatComposer`'s footer                    | attached through `onFilesSelected`, the picked-file path (DM, group, channel)                                                                                                                                      |
+| `chat-edit`                                                               | the same footer, while a message is edited | refused: toast `keyboard_media_refused`                                                                                                                                                                            |
+| `comment`                                                                 | `CommentComposer`'s field                  | staged through `stageMediaFile`                                                                                                                                                                                    |
+| `post`                                                                    | `CreatePostForm`'s root                    | added through `addFiles`, the picked-file path                                                                                                                                                                     |
+| any other focused field (a channel poll, a reel caption, a profile field) | nothing                                    | refused: toast `keyboard_media_refused`, and one `KeyboardMedia` line naming the surface (`data-media-surface` if an ancestor declares one, else the tag)                                                          |
+| no focused field                                                          | -                                          | nothing attached, one line, **no toast**: no keyboard commits without an editor, so this is iOS seeing the app's own pasteboard write (an image copied in the app), and "GIFs cannot be added here" would be false |
 
 An unreadable payload toasts `keyboard_media_unreadable`, and so does a native ERROR event: both bridges, instead of only logging, send `{ error: 'too-large' | 'unreadable' }` with no data when they received an image they could not hand over (empty, over 12 MiB, a read that threw). The focus rule comes first for errors too, so a too-large image copied on iOS outside any composer shows nothing. Before this, the chat page sent ANY
 dispatched image into the open conversation whatever had focus - an image copied on iOS included.
@@ -5988,10 +5998,10 @@ WebView; on devices where it is unavailable the in-app GIF picker still works.
 
 ### The thread sticks to its own bottom, and ONE boolean says whether it should (2026-09-22)
 
-The user described the whole of it in one sentence: *"c'est une histoire de 'coller' le bas de la
+The user described the whole of it in one sentence: _"c'est une histoire de 'coller' le bas de la
 discussion lorsqu'on n'est pas en train de remonter (j'imagine qu'un True/False pourrait etre
 coherent ?) a ce qu'il y a en dessous, et suivre les mouvements de maniere fluide plutot que de
-cacher involontairement des morceaux de l'interface"*.
+cacher involontairement des morceaux de l'interface"_.
 
 **The boolean exists and is `isNearBottom` in `ChatArea.svelte`.** `handleScroll` is its only
 writer, because a scroll is the only thing that can express an intent to leave the live end of a
@@ -6001,11 +6011,11 @@ scroll handler, which nothing could test and nothing could explain.
 
 **Three things can grow the pane under the reader, and before this only one of them was watched.**
 
-| What grows | What sees it | Why it is the same quantity |
-|---|---|---|
-| The content - a row added, a reaction chip, an image settling | `MutationObserver` on the scroller | - |
-| The pane's own box - soft keyboard, window resize, a side panel opening | `ResizeObserver` on the scroller | - |
-| The composer band - a message wrapping onto a third line | `ResizeObserver` on the band | its measured height IS the scroller's `padding-bottom` (`--chat-composer-height`), and `scrollHeight` INCLUDES `padding-bottom` |
+| What grows                                                              | What sees it                       | Why it is the same quantity                                                                                                     |
+| ----------------------------------------------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| The content - a row added, a reaction chip, an image settling           | `MutationObserver` on the scroller | -                                                                                                                               |
+| The pane's own box - soft keyboard, window resize, a side panel opening | `ResizeObserver` on the scroller   | -                                                                                                                               |
+| The composer band - a message wrapping onto a third line                | `ResizeObserver` on the band       | its measured height IS the scroller's `padding-bottom` (`--chat-composer-height`), and `scrollHeight` INCLUDES `padding-bottom` |
 
 That last row is the one that makes a single mechanism correct rather than convenient: **composer
 growth and content growth are literally the same number**, so all three observers call one `follow()`
@@ -6332,6 +6342,7 @@ cannot be scrolled.**
 
   Without that stop, either one re-asked at once, forever. A peer's answer that lands after a
   conversation switch is dropped rather than written into the next conversation.
+
 - **The entry fill is SILENT** (lead decision, review of #3545). Two things show only for a load the
   READER asked for by scrolling (`olderAskedBy`), never for one the fill asked:
   - the older-history spinner;
@@ -6340,6 +6351,7 @@ cannot be scrolled.**
   A reader who later reaches the top takes over whatever load is running, and its state shows from
   then on. A scroll event on a pane that cannot scroll is a box changing under the keyboard, so it no
   longer counts as the reader reaching the top.
+
 - `ChatArea.entryWindow.svelte.test.ts` ("short thread fill") pins it:
   - an exhausted store is asked once with no scroll;
   - a growing store is asked until the pane overflows;
@@ -6351,6 +6363,7 @@ cannot be scrolled.**
   - an overflowing pane is never asked.
 
   Each fails on the code before it.
+
 - **A reader at the bottom follows the keyboard during a store read.** While older messages are
   being prepended, the observer keeps the row at the top of the viewport (`keep-row`). The exception
   is a change of the pane's BOX height under a reader at the bottom: it moved the bottom, so that
@@ -6384,11 +6397,11 @@ written for iOS only ([keyboard-and-send-motion](../keyboard-and-send-motion.md#
 Measured on the Mi 9T (`1.6.11-alpha.5` release build on dev, over the WebView's DevTools socket,
 a probe element sized in each unit):
 
-| keyboard | `innerHeight` | `60svh` = `60lvh` = `60dvh` = `60vh` | a 1080x2340 screenshot in a 290 px frame |
-| --- | --- | --- | --- |
-| closed | 945 | 567.3 px | 567 px tall, 90% of the picture shown |
-| LatinIME (357 px) | 588 | 352.7 px | 353 px tall, 56% shown, cropped top and bottom |
-| ADB keyboard (90 px) | 855 | 513.5 px | - |
+| keyboard             | `innerHeight` | `60svh` = `60lvh` = `60dvh` = `60vh` | a 1080x2340 screenshot in a 290 px frame       |
+| -------------------- | ------------- | ------------------------------------ | ---------------------------------------------- |
+| closed               | 945           | 567.3 px                             | 567 px tall, 90% of the picture shown          |
+| LatinIME (357 px)    | 588           | 352.7 px                             | 353 px tall, 56% shown, cropped top and bottom |
+| ADB keyboard (90 px) | 855           | 513.5 px                             | -                                              |
 
 The 214 px is the same number the [2026-10-30 anchor fix](#a-reader-at-the-bottom-is-anchored-to-the-bottom-in-both-directions-2026-10-30)
 measured as the photo's loss - that fix kept the reader at the bottom, but the picture still shrank.
@@ -6419,7 +6432,7 @@ keyboard-open threshold (160 px on Android) no keyboard is "open", so a 90 px ke
 
 It used to be a strip inside `ChatComposer`, above the input. It appeared and disappeared UNDER the
 conversation, so the last message slid out of view and back every time somebody touched their
-keyboard - the *"cacher involontairement des morceaux de l'interface"* above, in its purest form.
+keyboard - the _"cacher involontairement des morceaux de l'interface"_ above, in its purest form.
 No padding could reach it, because the strip was inside the band whose height the padding reserves,
 and the reservation was published only after the fact.
 
@@ -6428,8 +6441,8 @@ same `--bubble-in` fill and `--radius-bubble` corner as a received message, thre
 Inside the scroller it grows the pane like any other row, so the follow observers raise the thread
 for it and lower it again when it goes - no special case anywhere.
 
-**ONE BUBBLE, HOWEVER MANY PEOPLE** (the user's question, *"A voir comment tu gères plusieurs
-personnes ;)"*). A bubble per typer turns a lively group into a wall of dots. Who is typing is
+**ONE BUBBLE, HOWEVER MANY PEOPLE** (the user's question, _"A voir comment tu gères plusieurs
+personnes ;)"_). A bubble per typer turns a lively group into a wall of dots. Who is typing is
 carried by up to three stacked avatars, each ringed in `--chat-thread-ground` so they read as a
 stack; past three the rest become a `+N` chip, because a fourth avatar is wider than the bubble.
 
@@ -6564,10 +6577,10 @@ the shift), so it wants a bench of its own, not a line in this fix.
 
 ## Routes
 
-| Route | Description |
-|---|---|
-| `/chat` | Main chat page (conversation list + active chat) |
-| `/communities` | Same page in community mode (channels) |
+| Route             | Description                                                     |
+| ----------------- | --------------------------------------------------------------- |
+| `/chat`           | Main chat page (conversation list + active chat)                |
+| `/communities`    | Same page in community mode (channels)                          |
 | `/c/join/[token]` | Accept a community invite link, then land in the joined channel |
 
 There is **no per-conversation URL**. `/chat/[groupId]`, `/c/[groupId]` and `/g/[groupId]` were
@@ -6615,24 +6628,24 @@ account, `P` the other party, `B2` a second tab of `B`'s browser. No clock is re
 time of a frame is the `queuedCreatedAt` the test hands in. Vitest, not the rig: the local estate
 was not up, and every one of these paths is decided in the client.
 
-| Path | Platform | Before | Why |
-| --- | --- | --- | --- |
-| DM/group read on A -> B, live (`read_watermark`, `withOwnReadAdvanced`) | all | works | the frame reaches every leaf, own devices included; the count follows the mark |
-| same, B offline then catching up (pending pull, frames in order) | all | works | a message newer than the read stays counted |
-| A's read -> P's "Vu" (`withReadMark`, `readersOf`) | all | works | |
-| salon read on A -> B, live (`channel.read`, audience includes the reader) | all | works | count falls whether or not B holds the rows |
-| salon, B reconnects (`unread-counts`) | all | works, **except the salon B has selected** | see below |
-| shade "Marquer comme lu" -> the phone's own badge (`read_watermarks.ndjson`) | Android | works | merged at login AND at resume |
-| **Android resumed on an open conversation** | Android | **FAILED** | the receipt effect read `isAppInForeground()`, a plain global; it returned while the app was in the background and nothing ran it again on the way back. What landed in the background stayed unread on the phone, and the mark never left, so on every other device too, until something else changed the conversation (a send, a new message, a reload) |
-| iOS resumed on an open conversation | iOS | works | WKWebView fires `visibilitychange`, which the effect follows |
-| **a frame arriving in the seconds before iOS suspends the app** | iOS | **FAILED** | `isAppInForeground()` was always `true` on iOS, so the arrival counted as read - fixed by the iOS follow-up ([below](#read-state-between-devices---the-census-2026-11-02)) |
-| **a read made inside the 2 s window before leaving the app** | iOS | **FAILED** (late, never lost) | the delivery was handed to the outbox and nothing held the process; it left at the next open - fixed by the iOS follow-up |
-| **resumed from a notification for Y with X left open** | Android (and iOS) | **FAILED** | the foreground edge re-ran the receipt effect on X before the tap's link selected Y, so X was marked read - a conversation nobody looked at. Owner, 2026-11-02: X must not be marked, the same on both platforms (below) |
-| web tab hidden, then shown / window refocused | web | works | `isTabVisible` / `isWindowFocused` are state |
-| **any read (own other device, or the peer's receipt) -> a FOLLOWER tab** | web, desktop | **FAILED** | a follower opens no socket; the leader relayed messages and counts but no read state, so the follower kept its badge and drew no "Vu" until reloaded |
-| **salon counts re-read by the leader (reconnect, a community cleared elsewhere) -> a follower tab** | web, desktop | **FAILED** | same: only the leader asks, and it relayed nothing |
-| **a read in one tab -> the other tab's thread** (`conversation_read`) | web, desktop | **FAILED (half)** | the badge fell, the watermark did not, so the list said read and the open thread's divider and scroll button still said unread |
-| **salon left selected but not read (another page, hidden tab, app in background), read on another device while this one was offline** | all | **FAILED** | `reconcileSalonUnread` skips the selected salon because the receipt effect owns its count - but it owns it only while the salon is READ. "Selected is not a screen" ([below](#a-selection-is-not-a-screen-2026-10-10)): the server's 0 was thrown away and the badge stayed until the reader came back to the salon |
+| Path                                                                                                                                  | Platform          | Before                                     | Why                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| DM/group read on A -> B, live (`read_watermark`, `withOwnReadAdvanced`)                                                               | all               | works                                      | the frame reaches every leaf, own devices included; the count follows the mark                                                                                                                                                                                                                                                                            |
+| same, B offline then catching up (pending pull, frames in order)                                                                      | all               | works                                      | a message newer than the read stays counted                                                                                                                                                                                                                                                                                                               |
+| A's read -> P's "Vu" (`withReadMark`, `readersOf`)                                                                                    | all               | works                                      |                                                                                                                                                                                                                                                                                                                                                           |
+| salon read on A -> B, live (`channel.read`, audience includes the reader)                                                             | all               | works                                      | count falls whether or not B holds the rows                                                                                                                                                                                                                                                                                                               |
+| salon, B reconnects (`unread-counts`)                                                                                                 | all               | works, **except the salon B has selected** | see below                                                                                                                                                                                                                                                                                                                                                 |
+| shade "Marquer comme lu" -> the phone's own badge (`read_watermarks.ndjson`)                                                          | Android           | works                                      | merged at login AND at resume                                                                                                                                                                                                                                                                                                                             |
+| **Android resumed on an open conversation**                                                                                           | Android           | **FAILED**                                 | the receipt effect read `isAppInForeground()`, a plain global; it returned while the app was in the background and nothing ran it again on the way back. What landed in the background stayed unread on the phone, and the mark never left, so on every other device too, until something else changed the conversation (a send, a new message, a reload) |
+| iOS resumed on an open conversation                                                                                                   | iOS               | works                                      | WKWebView fires `visibilitychange`, which the effect follows                                                                                                                                                                                                                                                                                              |
+| **a frame arriving in the seconds before iOS suspends the app**                                                                       | iOS               | **FAILED**                                 | `isAppInForeground()` was always `true` on iOS, so the arrival counted as read - fixed by the iOS follow-up ([below](#read-state-between-devices---the-census-2026-11-02))                                                                                                                                                                                |
+| **a read made inside the 2 s window before leaving the app**                                                                          | iOS               | **FAILED** (late, never lost)              | the delivery was handed to the outbox and nothing held the process; it left at the next open - fixed by the iOS follow-up                                                                                                                                                                                                                                 |
+| **resumed from a notification for Y with X left open**                                                                                | Android (and iOS) | **FAILED**                                 | the foreground edge re-ran the receipt effect on X before the tap's link selected Y, so X was marked read - a conversation nobody looked at. Owner, 2026-11-02: X must not be marked, the same on both platforms (below)                                                                                                                                  |
+| web tab hidden, then shown / window refocused                                                                                         | web               | works                                      | `isTabVisible` / `isWindowFocused` are state                                                                                                                                                                                                                                                                                                              |
+| **any read (own other device, or the peer's receipt) -> a FOLLOWER tab**                                                              | web, desktop      | **FAILED**                                 | a follower opens no socket; the leader relayed messages and counts but no read state, so the follower kept its badge and drew no "Vu" until reloaded                                                                                                                                                                                                      |
+| **salon counts re-read by the leader (reconnect, a community cleared elsewhere) -> a follower tab**                                   | web, desktop      | **FAILED**                                 | same: only the leader asks, and it relayed nothing                                                                                                                                                                                                                                                                                                        |
+| **a read in one tab -> the other tab's thread** (`conversation_read`)                                                                 | web, desktop      | **FAILED (half)**                          | the badge fell, the watermark did not, so the list said read and the open thread's divider and scroll button still said unread                                                                                                                                                                                                                            |
+| **salon left selected but not read (another page, hidden tab, app in background), read on another device while this one was offline** | all               | **FAILED**                                 | `reconcileSalonUnread` skips the selected salon because the receipt effect owns its count - but it owns it only while the salon is READ. "Selected is not a screen" ([below](#a-selection-is-not-a-screen-2026-10-10)): the server's 0 was thrown away and the badge stayed until the reader came back to the salon                                       |
 
 **The list badge and the open thread** read two things: `unreadCount` (list, nav dot, title,
 favicon) and the reader's own watermark (the thread's divider and scroll-button count). Every path
@@ -6829,12 +6842,12 @@ reconnect) still does. Pinned by `readState.test.ts`, "PINS THE SALON BEHAVIOUR"
 
 **The read point - ONE clock, the server's, for all it adds to the saved marks.**
 
-| What applies | Server point | Why |
-| --- | --- | --- |
-| a saved mark (either map) | the saved marks, max the seed | the marks are what says "read"; the seed keeps covering what the row held at the upgrade, so a mark BELOW it (another device's, an old "Marquer comme lu" from the shade) never un-hides it - `applyNativeReadWatermarks` ASSIGNS the count, and a lower point there RAISED a badge on a read (tested) |
-| the upgrade's local seed (`localReadSeed`) | the seed | see below |
-| no saved mark, an own message the server dated | its SERVER time, max the seed | a reply is written with the thread open, so what the server holds before it was on screen. The server's clock, never the author's: a phone an hour fast hid the peer's later answer, one an hour slow counted an earlier message (both cases tested). An own row not yet dated (queued) implies nothing |
-| none of them | 0 - every foreign message counts | a conversation new on this install, never opened, never answered: a first contact, which IS unread |
+| What applies                                   | Server point                     | Why                                                                                                                                                                                                                                                                                                     |
+| ---------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| a saved mark (either map)                      | the saved marks, max the seed    | the marks are what says "read"; the seed keeps covering what the row held at the upgrade, so a mark BELOW it (another device's, an old "Marquer comme lu" from the shade) never un-hides it - `applyNativeReadWatermarks` ASSIGNS the count, and a lower point there RAISED a badge on a read (tested)  |
+| the upgrade's local seed (`localReadSeed`)     | the seed                         | see below                                                                                                                                                                                                                                                                                               |
+| no saved mark, an own message the server dated | its SERVER time, max the seed    | a reply is written with the thread open, so what the server holds before it was on screen. The server's clock, never the author's: a phone an hour fast hid the peer's later answer, one an hour slow counted an earlier message (both cases tested). An own row not yet dated (queued) implies nothing |
+| none of them                                   | 0 - every foreign message counts | a conversation new on this install, never opened, never answered: a first contact, which IS unread                                                                                                                                                                                                      |
 
 **The upgrade's local seed - no flood on upgrade (owner), written INSIDE the store migration.**
 Older builds counted only what a session received, so a group read but never marked, a first contact
@@ -6876,8 +6889,7 @@ the store migration that adds the field** - SQLite v20 (`CONVERSATION_LOCAL_READ
 - **A backup exported before the column** restores rows with no seed (NULL covers nothing), so a row
   with no saved mark lights up to one page (60) of what it holds.
 - **A downgrade, then a re-upgrade**, is the same case: an older build's `INSERT OR REPLACE` writes
-  the row without the column, which NULLs it, and the fill never runs again once `user_version` is
-  20.
+  the row without the column, which NULLs it, and the fill never runs again once `user_version` is 20.
 - **A web rollback after this ships** fails `indexedDB.open(name, 13)` with a `VersionError`, said as
   `StorageOpenError`. No data is lost; this is true of every IndexedDB version bump.
 - **Stale marks now count** (accepted): a conversation whose saved mark is old, with messages past it
@@ -6915,7 +6927,6 @@ IndexedDB upgrade), `readState.test.ts`, `fcmMemoryMerge.test.ts`,
 (the bundle recount); each fails on the code it replaced. **Owed:** the owner's reading on the
 Android phone.
 
-
 ## A community's salons have an order everyone shares, and a name that is only a name (2026-10-05)
 
 **Order.** `channels."sortOrder"` (migration 076; the backfill numbers each never-arranged community
@@ -6942,7 +6953,7 @@ already delete the salons. This is NOT the community rail's order, which is pers
   starts a drag with NO movement: it lifts the row from under the finger and drops it back on
   release, so the browser's `click` never reaches the row. Measured on the iPhone 12 bench as a
   community manager: holds of 60, 150 and 300 ms opened the salon, 400, 600 and 900 ms opened
-  nothing, every time - the *"je clique sur le salon mais rien ne se passe"* report. The verdict is
+  nothing, every time - the _"je clique sur le salon mais rien ne se passe"_ report. The verdict is
   read from where the library's placeholder went, never from a clock
   (`utils/chat/channelPressGesture.ts`): a drag whose shadow never left its starting index was a
   press, and `handleChannelDndFinalize` delivers it as the row's own tap (`activateChannelRow`) and
@@ -7015,7 +7026,7 @@ The sidebar sorts in a `$derived` (`Sidebar.svelte`, `filteredConversationEntrie
 
 Now `conversationRecency(convo)` (`utils/chat/conversations.ts`) is the time (`messageTime`: the server's acceptance, else `sentAt`) of the newest message in `messages` (sorted by `compareMessageOrder`), falling back to the persisted seed only while nothing is loaded, else 0; `compareConversationRecency` breaks ties by id. A message applied by ANY path - live, pending drain, history seed - moves the row, because the key is read from the list rather than remembered. Reactions, edits and read receipts do not touch `messages` order, so they do not move it. Known residue: the local-only "member joined" notice in `ChatBackgroundService` is stamped with the local clock and does count. Test: `conversations.recency.test.ts`.
 
-**The server's newest visible frame is a floor under the key (2026-11-24).** Owner report on a new web device (prod `1.7.3`): *"mes discussions ne sont pas dans l'ordre"*. A new device learns its 153 conversations from `GET /mls/users/:id/groups` at once, and their history over the next two minutes, oldest page first (`history_bundle` chunks of 200), from the members' devices that happen to be online; some never arrive (a group nobody online can answer for). So the list was ordered by group creation (`startedAt`) and then by whatever page had landed - and stayed wrong for every conversation whose history never came. The server already holds the fact every device of every member would agree on: the receive time of the newest frame it accepted into the group. `dm_groups."lastMessageAt"` (migration 057) records it for every VISIBLE frame - `silent` false, durable, not addressed, never a Welcome or a Commit: a message, or a group event the members see (a rename) - moved forward only, and the hourly retention sweep clears it once it is older than the queued copies it stands for (`MESSAGE_RETENTION_MS`). The members' list returns it and is ordered by it; the single-group read (`GET /mls/groups/:groupId`, which answers whoever holds the id) never does. The client reads it on every connection's discovery sweep (`recordGroupStart`, forward only) into `Conversation.serverLastMessageAt`, and `conversationRecency` is `max(local key, serverLastMessageAt)` - the local history takes over once it reaches the fact, and the persisted `updatedAt` carries the raised key across a reload. What it does not do: a group event counts (the server cannot tell it from a message), so a rename can raise a row where the local key, which skips notices, would not - the same on every device; and the row's preview stays the newest LOADED message until the history arrives. No content and no author: it is one more time per conversation of the kind every queued copy already carries, kept no longer than they are (register C3). Tests: `conversations.recency.test.ts`, `serverGroupConversation.groupStart.test.ts`, `members.controller.user-groups.spec.ts`, `groups.controller.get-group.spec.ts`, `messaging.durability.spec.ts`, `queued-payload.integration.spec.ts`.
+**The server's newest visible frame is a floor under the key (2026-11-24).** Owner report on a new web device (prod `1.7.3`): _"mes discussions ne sont pas dans l'ordre"_. A new device learns its 153 conversations from `GET /mls/users/:id/groups` at once, and their history over the next two minutes, oldest page first (`history_bundle` chunks of 200), from the members' devices that happen to be online; some never arrive (a group nobody online can answer for). So the list was ordered by group creation (`startedAt`) and then by whatever page had landed - and stayed wrong for every conversation whose history never came. The server already holds the fact every device of every member would agree on: the receive time of the newest frame it accepted into the group. `dm_group_last_message` (migration 057, one row per group) records it for every VISIBLE frame - `silent` false, durable, not addressed, never a Welcome or a Commit - upserted with GREATEST, so it only moves forward. **A table of its own, never a column of `dm_groups`:** an UPDATE of the group row takes FOR NO KEY UPDATE, which conflicts with the FOR SHARE every send into the group takes on that row (`enqueueForLiveGroup`), so the sends of one group would have queued behind each other's note (the first build did exactly that, and its comment claimed the opposite - review of #4064); the insert takes only FOR KEY SHARE on `dm_groups`, its foreign key check (`057_dm_group_last_message.integration.spec.ts` holds a FOR SHARE and writes under a 1 s lock timeout, with an UPDATE of the group row as the contrast that does time out). The row goes with its conversation (ON DELETE CASCADE, and `GROUP_OWNED_TABLES` for the soft delete that keeps the tombstone), and the hourly retention sweep deletes it once older than the queued copies it stands for (`MESSAGE_RETENTION_MS`, 90 days). A repeat that finishes an interrupted first send notes it at the first copy's instant (`finishFirstCopy`). The members' list returns it and is ordered by it - **except to a seat still awaiting admission** (someone who followed an invitation link and was never let in), which gets `null` and is sorted by the row's last update; the single-group read (`GET /mls/groups/:groupId`) never carries it. The client reads it on every connection's discovery sweep (`recordGroupStart`, forward only) into `Conversation.serverLastMessageAt`, PERSISTED on its own (`ConversationMeta.serverLastMessageAt`, SQLite column `server_last_message_at` added on every open), and `conversationRecency` is `max(local key, serverLastMessageAt)` - the local history takes over once it reaches the fact, and a reload keeps the floor whatever page is loaded (`updatedAt` alone was read back only while no message was). **Which notices move it:** every group event the members see travels as a visible frame, so the server cannot tell it from a message - a rename, `memberAdded`, `memberRemoved`, `memberLeft`, the photo change and `groupDeleted` all raise the row, where the local key, which skips notices, would not; the same on every device. The row's preview stays the newest LOADED message until the history arrives. **No backfill, and none is possible:** the history stream does not record which frames were silent, so a conversation already quiet when this shipped has no row and keeps the old order (its last update) until its next visible frame. The measurement that says when that residue is gone: `SELECT (l."groupId" IS NULL) AS unknown, count(*) FROM dm_groups g LEFT JOIN dm_group_last_message l ON l."groupId" = g.id WHERE g."deletedAt" IS NULL GROUP BY 1`, run N days after the deploy - the `unknown` share should fall to the conversations silent for N days. No content and no author: it is one more time per conversation of the kind every queued copy already carries, kept no longer than they are (register C3, and the privacy policy). Tests: `conversations.recency.test.ts`, `serverGroupConversation.groupStart.test.ts`, `sqliteConversationColumns.test.ts`, `members.controller.user-groups.spec.ts`, `messaging.durability.spec.ts`, `messaging.send-race.spec.ts`, `group-purge.spec.ts`, `queued-payload.integration.spec.ts`, `057_dm_group_last_message.integration.spec.ts`.
 
 ### A reply belongs to ONE conversation (2026-10-06)
 
@@ -7299,10 +7310,10 @@ The position (`utils/chat/visibleRow.ts`) is the last row above the scroller's b
 
 A user in the English app wanted a GROUP and created a COMMUNITY: the community dialog was titled by its name field ("Club or group name" / "Nom de l'association ou du groupe"), and English called a community a "club" in the community screens. Decided: the words never overlap.
 
-| Entry point | What it creates | fr / en |
-|---|---|---|
-| "Nouvelle discussion" with two or more people chosen, then the name step (`SidebarNewChatModal`, `onCreateGroup`; [one panel](#one-new-discussion-panel)) | an MLS group conversation | button "Créer un groupe avec N personnes" / "Create a group with N people", then "Créer la discussion de groupe" / "Create group conversation" |
-| The rail's dashed "+" (`SidebarNewCommunityModal`, `onCreateWorkspace`) | a community (workspace with channels) | title "Nouvelle communauté" / "New community", field "Nom de la communauté" / "Community name", button "Créer la communauté" / "Create community" |
+| Entry point                                                                                                                                               | What it creates                       | fr / en                                                                                                                                           |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| "Nouvelle discussion" with two or more people chosen, then the name step (`SidebarNewChatModal`, `onCreateGroup`; [one panel](#one-new-discussion-panel)) | an MLS group conversation             | button "Créer un groupe avec N personnes" / "Create a group with N people", then "Créer la discussion de groupe" / "Create group conversation"    |
+| The rail's dashed "+" (`SidebarNewCommunityModal`, `onCreateWorkspace`)                                                                                   | a community (workspace with channels) | title "Nouvelle communauté" / "New community", field "Nom de la communauté" / "Community name", button "Créer la communauté" / "Create community" |
 
 **English never says "club" for a community** (the `chat_*` strings about a community's settings, invitation and deletion now say "community"). "Club" stays where it names an ASSOCIATION (the `asso_*`, `admin_*`, `posts_*`, `payout_*` and `dependency_*` families): there it is the English word for the French "association", a different object from a community.
 
@@ -7313,11 +7324,11 @@ EMPTY group whose members were added afterwards from its own panel. Now there is
 (`SidebarNewChatModal`) and people are chosen FIRST; the number chosen decides
 ([principe 7](../../../principes.md), simple).
 
-| Chosen | The footer button | What it does |
-| --- | --- | --- |
-| nobody | "Démarrer la discussion", disabled | - |
-| one person | "Démarrer la discussion" | opens the 1:1 with them, or creates it (`startNewConversation`, unchanged) |
-| two or more | "Créer un groupe avec N personnes" | opens the NAME STEP, a second panel over the first |
+| Chosen      | The footer button                  | What it does                                                               |
+| ----------- | ---------------------------------- | -------------------------------------------------------------------------- |
+| nobody      | "Démarrer la discussion", disabled | -                                                                          |
+| one person  | "Démarrer la discussion"           | opens the 1:1 with them, or creates it (`startNewConversation`, unchanged) |
+| two or more | "Créer un groupe avec N personnes" | opens the NAME STEP, a second panel over the first                         |
 
 **The chips row has one height from the opening** (2026-11-18): a hint before any pick, a single line scrolling
 sideways after - the first chip used to push the recent list under the finger about to tap the second person
@@ -7335,6 +7346,7 @@ from its panel. An invitation that added NOBODY names everyone it invited, and o
 device's add lock is owed rather than refused ([below](#nothing-takes-the-add-lock-it-does-not-commit-under-2026-11-17)).
 
 **Decisions taken here (reversible):**
+
 - **Layout**: the chosen people are removable chips ABOVE the search, the Messenger pattern; the
   recent 1:1 peers are listed below as toggles (a check in a circle), so a group of familiar people
   costs a tap each. Tapping a recent peer no longer opens their 1:1 at once - it chooses them, and the
@@ -7357,15 +7369,15 @@ was refused (`add-lock-busy`), and nobody was added.
 
 Every taker of the add lock, and when it takes it:
 
-| Caller | Takes the lock | What it commits under it |
-| --- | --- | --- |
-| `processPendingInvitations` (`actions.ts`), the sweep | **at the first row that needs an Add** (`takeLockForAnAdd`), after its leaf check and BEFORE its package is claimed; vouching, an ask raised for a member and a cleanup take none | the Add of a pending device NOT in the tree |
-| `handleWelcomeRequest` (`actions.ts`) | **once the Add is decided**: after the cooldown, the refused-device check and the anti-livelock limit (a refused lock is not counted as an attempt), before the package is claimed | the Add or replace answering a `welcome_request`; a package missing or refused by the vetting is still learned under it |
-| `processWelcomeRequestBackground` (Android FCM service) | on entry, after its "already refused from these bytes" check, before the package is claimed | the background answer; its native stage may still decline (`already-member`, `stale-epoch-known`, `foreground-active`), which only the stage - built from the claimed package - can tell. Left as it is: changing it means a native build, for a path that answers a request with an Add as its purpose; its `Thread.sleep` retry of the lock is a [backlog entry](../../backlog.d/p2-the-android-background-welcome-answer-retries-the-add-lock-on-a-clock.md) |
-| `createGroup` (`groupCreation.ts`) | before the creation's Add of the creator's other devices | that Add |
-| `processBulkAddition` (`groupCreation.ts`) | before the invitation's Add | the invitation |
-| `performDirectAdd` (`groupCreation.ts`) | before the 1:1's Add | the peer's and own devices |
-| `admitNewcomer` (`graine/admitNewcomer.ts`) | before the Add | a newcomer into a key-distribution group |
+| Caller                                                  | Takes the lock                                                                                                                                                                     | What it commits under it                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `processPendingInvitations` (`actions.ts`), the sweep   | **at the first row that needs an Add** (`takeLockForAnAdd`), after its leaf check and BEFORE its package is claimed; vouching, an ask raised for a member and a cleanup take none  | the Add of a pending device NOT in the tree                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `handleWelcomeRequest` (`actions.ts`)                   | **once the Add is decided**: after the cooldown, the refused-device check and the anti-livelock limit (a refused lock is not counted as an attempt), before the package is claimed | the Add or replace answering a `welcome_request`; a package missing or refused by the vetting is still learned under it                                                                                                                                                                                                                                                                                                                                         |
+| `processWelcomeRequestBackground` (Android FCM service) | on entry, after its "already refused from these bytes" check, before the package is claimed                                                                                        | the background answer; its native stage may still decline (`already-member`, `stale-epoch-known`, `foreground-active`), which only the stage - built from the claimed package - can tell. Left as it is: changing it means a native build, for a path that answers a request with an Add as its purpose; its `Thread.sleep` retry of the lock is a [backlog entry](../../backlog.d/p2-the-android-background-welcome-answer-retries-the-add-lock-on-a-clock.md) |
+| `createGroup` (`groupCreation.ts`)                      | before the creation's Add of the creator's other devices                                                                                                                           | that Add                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `processBulkAddition` (`groupCreation.ts`)              | before the invitation's Add                                                                                                                                                        | the invitation                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `performDirectAdd` (`groupCreation.ts`)                 | before the 1:1's Add                                                                                                                                                               | the peer's and own devices                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `admitNewcomer` (`graine/admitNewcomer.ts`)             | before the Add                                                                                                                                                                     | a newcomer into a key-distribution group                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 A lazily taken lock decides nothing the eager one did: it never made the local tree current (a
 holder's commit may still be queued here when it releases) - the server's epoch gate does, and the
@@ -7461,13 +7473,13 @@ first, then an unverified entry, then the oldest. A reset is DATED like a set, s
 a late statement cannot resurrect a cleared name. Nothing is keyed by the setter: a nickname stays when
 its setter leaves.
 
-| | DM / group (MLS room) | Community |
-|---|---|---|
-| Who may set | any member, any member (no ranks) | a moderator (`viewerCanModerate`); the target may only CLEAR their own |
-| Carried by | a silent `nickname` system frame, `{ userId, nickname, at }`, `DELIVERY.mutation` (`setConversationNickname`) | `channel_members.nickname`, `nicknameSetBy`, `nicknameSetAt` (migration 149), written by `PUT /api/channels/workspaces/:id/nicknames/:userId` |
-| Checked by | every reader: the setter is the MLS-authenticated sender, never a payload field; the value is held to the contract; the TARGET must be in the tree (`getGroupMemberIdentities`, `nicknameMembersOf`), with an unreadable tree refusing the frame (`applyNicknameFrame`). The setter is not checked against the current tree: decryption already proved they were in it at the frame's epoch, and a check against today's tree would make a device that reads the frame after a commit removing the setter disagree with one that read it before. Live and replay apply one rule | the server, on every write (`CommunityNicknamesService.set`, `memberCanModerate` read from the role rows) |
-| Reaches others | the group's shared log (live and replay) | `workspace.updated { workspaceId, nickname }` to every member, plus `GET .../nicknames` read once per session at the first salon opened and at each opening of the screen |
-| Kept | per device AND per account, `localStorage` `canari_nicknames:v1:<account>:<groupId>` (`ACCOUNT_KEY`; the 500-entry hard cap above), wiped at sign-out (`clearUserLocally`) and by the account deletion's sweep (`eraseAccountRecordsLocally`) | in memory; the server holds it |
+|                | DM / group (MLS room)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Community                                                                                                                                                                 |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Who may set    | any member, any member (no ranks)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | a moderator (`viewerCanModerate`); the target may only CLEAR their own                                                                                                    |
+| Carried by     | a silent `nickname` system frame, `{ userId, nickname, at }`, `DELIVERY.mutation` (`setConversationNickname`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | `channel_members.nickname`, `nicknameSetBy`, `nicknameSetAt` (migration 149), written by `PUT /api/channels/workspaces/:id/nicknames/:userId`                             |
+| Checked by     | every reader: the setter is the MLS-authenticated sender, never a payload field; the value is held to the contract; the TARGET must be in the tree (`getGroupMemberIdentities`, `nicknameMembersOf`), with an unreadable tree refusing the frame (`applyNicknameFrame`). The setter is not checked against the current tree: decryption already proved they were in it at the frame's epoch, and a check against today's tree would make a device that reads the frame after a commit removing the setter disagree with one that read it before. Live and replay apply one rule | the server, on every write (`CommunityNicknamesService.set`, `memberCanModerate` read from the role rows)                                                                 |
+| Reaches others | the group's shared log (live and replay)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | `workspace.updated { workspaceId, nickname }` to every member, plus `GET .../nicknames` read once per session at the first salon opened and at each opening of the screen |
+| Kept           | per device AND per account, `localStorage` `canari_nicknames:v1:<account>:<groupId>` (`ACCOUNT_KEY`; the 500-entry hard cap above), wiped at sign-out (`clearUserLocally`) and by the account deletion's sweep (`eraseAccountRecordsLocally`)                                                                                                                                                                                                                                                                                                                                   | in memory; the server holds it                                                                                                                                            |
 
 **The late joiner.** A member added after a `nickname` frame went out never receives it. The
 inviter's JOIN PUSH to the new device restates the register (`nicknames`, beside `pins`), even when
@@ -7604,9 +7616,9 @@ Svelte does not track, and the screen kept the old name until that was found.
 
 **A notification names a member by their nickname in that conversation, composed by the device**
 (owner, 2026-11-14, reversing the 2026-11-08 rule that kept nicknames out of every notification):
-*"comme sur Messenger, tous les pseudos"* - the nickname set in THAT conversation, whoever set it,
-lock screen included; and *"Tout pourrait etre donne par l'appareil et rien par le serveur, ce serait
-plus homogene"* - no server puts a nickname in a push, for any kind (DM, group, community). The
+_"comme sur Messenger, tous les pseudos"_ - the nickname set in THAT conversation, whoever set it,
+lock screen included; and _"Tout pourrait etre donne par l'appareil et rien par le serveur, ce serait
+plus homogene"_ - no server puts a nickname in a push, for any kind (DM, group, community). The
 owner's reasoning: the server will soon know nothing (content-free push), and the device composes
 the notification and holds the nicknames. Blocks apply exactly as on the screen: a nickname of the
 viewer set by somebody in a block with them is not shown, and while that block status is unknown the
@@ -7614,13 +7626,13 @@ profile name is.
 
 One rule, `libs/contracts/notification-nickname.cases.json`, asserted by every reader:
 
-| Path | Where | What names the member |
-| --- | --- | --- |
-| The WebView's own notifications (web, desktop, the iOS app alive, and Android's socket trigger) | `notifyInbound` -> `resolveNotificationSenderName(senderId, conversationKey, convo)` / `notificationSenderName` (`displayName.ts`) | the one resolver with the scope of `notificationNicknameScope` (the group itself, or a salon's `community:<id>`, from the salon placements `noteSalonCommunities` keeps) |
-| The native copy | `nicknameMirror.ts` -> Rust `store_conversation_nicknames` -> `conversation_nicknames.json` (data directory, and the iOS App Group) | `{userId, scopes: {scope: {member: nickname}}, channels: {salon: scope}}`, only nicknames the account may SEE (`mirroredNickname`: the block rule is applied before the write, and a block answer re-mirrors) |
-| Android FCM (killed app) | `CanariFirebaseMessagingService.nicknameLookup` -> pure `push/ConversationNicknames.kt` | an MLS frame's banner (`shownName`), a salon's speaker (`ChannelBannerAuthor.of(nickname = ...)`, a PROVEN author only), the socket trigger's salon speaker, a chat reaction's actor, the call ring's caller (`knownCallerName`) |
-| iOS extension | `NotificationService.conversationNicknameLookup` / `conversationNickname` | the MLS banner (`shownName`), the salon speaker (`channelBannerAuthor(nickname:)`) and its "X vous a mentionne" line, a chat reaction's actor |
-| iOS app alive | `canari_push.mm` `CanariConversationNicknameLookup` / `CanariConversationNickname` | the MLS banner, the salon speaker (`CanariSalonSpeaker`) and its mention line, a chat reaction's actor, the CallKit caller (`CanariCallerDisplayName(callerId, groupId)`) |
+| Path                                                                                            | Where                                                                                                                               | What names the member                                                                                                                                                                                                            |
+| ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The WebView's own notifications (web, desktop, the iOS app alive, and Android's socket trigger) | `notifyInbound` -> `resolveNotificationSenderName(senderId, conversationKey, convo)` / `notificationSenderName` (`displayName.ts`)  | the one resolver with the scope of `notificationNicknameScope` (the group itself, or a salon's `community:<id>`, from the salon placements `noteSalonCommunities` keeps)                                                         |
+| The native copy                                                                                 | `nicknameMirror.ts` -> Rust `store_conversation_nicknames` -> `conversation_nicknames.json` (data directory, and the iOS App Group) | `{userId, scopes: {scope: {member: nickname}}, channels: {salon: scope}}`, only nicknames the account may SEE (`mirroredNickname`: the block rule is applied before the write, and a block answer re-mirrors)                    |
+| Android FCM (killed app)                                                                        | `CanariFirebaseMessagingService.nicknameLookup` -> pure `push/ConversationNicknames.kt`                                             | an MLS frame's banner (`shownName`), a salon's speaker (`ChannelBannerAuthor.of(nickname = ...)`, a PROVEN author only), the socket trigger's salon speaker, a chat reaction's actor, the call ring's caller (`knownCallerName`) |
+| iOS extension                                                                                   | `NotificationService.conversationNicknameLookup` / `conversationNickname`                                                           | the MLS banner (`shownName`), the salon speaker (`channelBannerAuthor(nickname:)`) and its "X vous a mentionne" line, a chat reaction's actor                                                                                    |
+| iOS app alive                                                                                   | `canari_push.mm` `CanariConversationNicknameLookup` / `CanariConversationNickname`                                                  | the MLS banner, the salon speaker (`CanariSalonSpeaker`) and its mention line, a chat reaction's actor, the CallKit caller (`CanariCallerDisplayName(callerId, groupId)`)                                                        |
 
 What stays the profile name, and why:
 
@@ -7698,7 +7710,7 @@ theirs, or blocks.
 
 ### Channel access is a choice, not a switch (2026-11-10)
 
-Channel settings > Accès draws visibility as a two-option `SegmentedControl` - **Public** (every community member) and **Restreint** (only the allowed members) - with both one-line explanations listed under it and the current one emphasised. It replaces a `role=switch` that was ON for *private*: a public channel therefore showed "Canal public" beside a grey, OFF track, which read as "public is disabled" (owner report, a dark pattern). The binding was NOT wrong (`accessIsPrivate` is the server's `isPrivate`, the card only renders after the load); the control's polarity was. Decision by the lead, reversible. A member without `channel.manage` sees the explanations only. Picking the current option writes nothing; picking the other one asks the same confirmation as before.
+Channel settings > Accès draws visibility as a two-option `SegmentedControl` - **Public** (every community member) and **Restreint** (only the allowed members) - with both one-line explanations listed under it and the current one emphasised. It replaces a `role=switch` that was ON for _private_: a public channel therefore showed "Canal public" beside a grey, OFF track, which read as "public is disabled" (owner report, a dark pattern). The binding was NOT wrong (`accessIsPrivate` is the server's `isPrivate`, the card only renders after the load); the control's polarity was. Decision by the lead, reversible. A member without `channel.manage` sees the explanations only. Picking the current option writes nothing; picking the other one asks the same confirmation as before.
 
 ## The media viewer of a conversation walks its images and videos (2026-11-13)
 

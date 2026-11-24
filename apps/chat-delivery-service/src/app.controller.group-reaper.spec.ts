@@ -131,8 +131,8 @@ describe('AppController - cleanupSoftDeletedGroups', () => {
 
     await run();
 
-    // Thirteen owned tables plus the dismissals, all in one unit of work with dm_groups itself.
-    expect(deletedInTx).toEqual(Array(14).fill('in'));
+    // Fourteen owned tables plus the dismissals, all in one unit of work with dm_groups itself.
+    expect(deletedInTx).toEqual(Array(15).fill('in'));
     expect(groupDeletedInTx).toBe(true);
     expect(groupRepo.manager.transaction).toHaveBeenCalledTimes(1);
   });

@@ -536,10 +536,8 @@ export class GroupsController {
     });
     this.logger.log(`[GET_GROUP] groupId=${groupId} found=true`);
     // `createdBy` is internal - it decides the creation bootstrap and nothing a client reads - so it
-    // never leaves the service, whoever holds the id. Nor does `lastMessageAt` (migration 057): this
-    // read answers whoever holds the id, and the newest message's time is said to the members only,
-    // on their own list (`GET /mls/users/:id/groups`).
-    const { createdBy: _createdBy, lastMessageAt: _lastMessageAt, ...visible } = g;
+    // never leaves the service, whoever holds the id.
+    const { createdBy: _createdBy, ...visible } = g;
     return { ...visible, groupId: g.id, baseEpoch: base?.baseEpoch ?? null };
   }
 

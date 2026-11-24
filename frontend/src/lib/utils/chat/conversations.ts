@@ -105,6 +105,11 @@ export function toConversationMeta(
     serverReadWatermarks: convo.serverReadWatermarks,
     historyFloor: convo.historyFloor,
     startedAt: convo.startedAt,
+    // The server's floor under that key, persisted on its own so a reload keeps it a floor whatever
+    // page of the history is loaded - `updatedAt` alone is read back only while no message is.
+    ...(convo.serverLastMessageAt !== undefined
+      ? { serverLastMessageAt: convo.serverLastMessageAt }
+      : {}),
     ...(convo.nameAt !== undefined ? { nameAt: convo.nameAt } : {}),
     ...nameRankFields(convo),
     ...(convo.nameSync !== undefined ? { nameSync: convo.nameSync } : {}),
@@ -1127,6 +1132,7 @@ export function restoredConversationRow(
       serverReadWatermarks: meta.serverReadWatermarks,
       historyFloor: meta.historyFloor,
       startedAt: meta.startedAt,
+      serverLastMessageAt: meta.serverLastMessageAt,
       localReadSeed: meta.localReadSeed,
     });
   }
@@ -1164,6 +1170,7 @@ export function restoredConversationRow(
     serverReadWatermarks: meta.serverReadWatermarks,
     historyFloor: meta.historyFloor,
     startedAt: meta.startedAt,
+    serverLastMessageAt: meta.serverLastMessageAt,
     nameAt: meta.nameAt,
     nameRank: nameRankFields(meta),
     nameSync: meta.nameSync,
@@ -1328,6 +1335,10 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
         const serverReadWatermarks = live.serverReadWatermarks ?? meta.serverReadWatermarks;
         const historyFloor = live.historyFloor ?? meta.historyFloor;
         const startedAt = live.startedAt ?? meta.startedAt;
+        const serverLastMessageAt = Math.max(
+          live.serverLastMessageAt ?? 0,
+          meta.serverLastMessageAt ?? 0
+        );
         ctx.conversations.set(meta.id, {
           ...live,
           ...(lastMessageAt !== undefined ? { lastMessageAt } : {}),
@@ -1335,6 +1346,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
           ...(serverReadWatermarks !== undefined ? { serverReadWatermarks } : {}),
           ...(historyFloor !== undefined ? { historyFloor } : {}),
           ...(startedAt !== undefined ? { startedAt } : {}),
+          ...(serverLastMessageAt > 0 ? { serverLastMessageAt } : {}),
         });
       }
       continue;

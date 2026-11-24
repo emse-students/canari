@@ -263,7 +263,11 @@ async function repairGroupLabel(
   // AWAITED, NOT FIRE-AND-FORGET. The block this replaced in `discoverMissingGroups` awaited its
   // save, and a repair whose write may not have landed re-runs on the next sweep and logs again -
   // a line that repeats is a line its reader learns to skip.
-  await saveConversation?.(key).catch(() => {});
+  await saveConversation?.(key).catch((e: unknown) =>
+    console.warn(
+      `[GROUP_LABEL] ${groupIdShort(group.groupId)} relabel not persisted - the next sweep repairs it again: ${String(e).slice(0, 160)}`
+    )
+  );
 }
 
 /**
@@ -307,7 +311,13 @@ async function recordGroupStart(
     ...(startedAt !== undefined ? { startedAt } : {}),
     ...(serverLastMessageAt !== undefined ? { serverLastMessageAt } : {}),
   });
-  await saveConversation?.(key).catch(() => {});
+  // Every swallowed branch logs: the row is right in memory, and only a reload before the next
+  // sweep would read the older one back.
+  await saveConversation?.(key).catch((e: unknown) =>
+    console.warn(
+      `[GROUP_START] ${groupIdShort(group.groupId)} start/last-message instant not persisted - the next sweep writes it again: ${String(e).slice(0, 160)}`
+    )
+  );
 }
 
 /**

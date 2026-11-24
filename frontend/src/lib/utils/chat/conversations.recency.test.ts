@@ -6,6 +6,7 @@ import { describe, it, expect } from 'vitest';
 import {
   compareConversationRecency,
   conversationRecency,
+  restoredConversationRow,
   toConversationMeta,
 } from './conversations';
 import { advanceLastMessageAt } from './messageOrder';
@@ -169,5 +170,16 @@ describe("the server's newest visible frame (2026-11-24)", () => {
   it('carries into the persisted key, so a reload keeps the order before the next sweep', () => {
     const meta = toConversationMeta('c', withServer(convo('c', [msg('1', 100)]), 900), 'u1');
     expect(meta.updatedAt).toBe(900);
+    expect(meta.serverLastMessageAt).toBe(900);
+  });
+
+  it('stays the floor of the RELOADED row once a page older than it is loaded', () => {
+    // `updatedAt` is read back only while no message is: the first page loaded after a reload
+    // used to replace the key with its own newest message, below what the server had said.
+    const meta = toConversationMeta('c', withServer(convo('c', [msg('1', 100)]), 900), 'u1');
+    const reloaded = restoredConversationRow(meta, 'u1', undefined);
+    expect(reloaded.serverLastMessageAt).toBe(900);
+    const withPage = { ...reloaded, messages: [msg('1', 100)] };
+    expect(conversationRecency(withPage)).toBe(900);
   });
 });

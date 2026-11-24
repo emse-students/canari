@@ -172,6 +172,27 @@ describe("the server's newest visible frame reaches every row on the sweep (2026
     expect(saveConversation).toHaveBeenCalledTimes(1);
   });
 
+  it('says a failed save rather than swallowing it - the row stays right in memory', async () => {
+    const conversations = held({ startedAt: CREATED_MS });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const saveConversation = vi.fn(async () => {
+      throw new Error('disk full');
+    });
+    await ensureConversationForServerGroup(serverRow({ lastMessageAt: LAST_ISO }), {
+      mlsService: {} as unknown as IMlsService,
+      userId: 'u1',
+      conversations,
+      saveConversation,
+      owedExits: new Set<string>(),
+      log: vi.fn(),
+    });
+    expect(conversations.get(GROUP_ID)?.serverLastMessageAt).toBe(LAST_MS);
+    expect(warn.mock.calls.map(([l]) => String(l))).toContainEqual(
+      expect.stringContaining('[GROUP_START]')
+    );
+    warn.mockRestore();
+  });
+
   it('moves it forward only: an older or absent value leaves the row and writes nothing', async () => {
     for (const lastMessageAt of ['2026-11-01T00:00:00.000Z', null, undefined, 'not-a-date']) {
       const conversations = held({ startedAt: CREATED_MS, serverLastMessageAt: LAST_MS });

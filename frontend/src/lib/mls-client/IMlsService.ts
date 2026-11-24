@@ -741,8 +741,8 @@ export type UserGroupRow = {
   createdAt?: string | null;
   /**
    * The server's receive time of the group's newest VISIBLE frame (a message or a group event the
-   * members see), ISO-8601 - `null` when none is inside the retention window, absent from a server
-   * that predates it (migration 057). It orders the conversation list of a device whose history is
+   * members see), ISO-8601 - `null` when none is inside the retention window or this account's seat
+   * still awaits admission, absent from a server that predates it (migration 057). It orders the conversation list of a device whose history is
    * behind it (`Conversation.serverLastMessageAt`). No content, no author.
    */
   lastMessageAt?: string | null;

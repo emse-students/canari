@@ -3,7 +3,7 @@
 import { Logger } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { MessagingService, SendMessageBody } from './messaging.service';
+import { MessagingService, NOTE_LAST_MESSAGE_SQL, SendMessageBody } from './messaging.service';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { GroupMember } from '../entities/group-member.entity';
 import { Group } from '../entities/group.entity';
@@ -283,7 +283,7 @@ describe('MessagingService - visibility vs durability', () => {
   describe("the group's newest visible frame (migration 057)", () => {
     /** The `lastMessageAt` writes this test's sends made, as `[groupId, receivedAt]`. */
     const lastMessageWrites = () =>
-      groupRepo.manager.query.mock.calls.filter(([sql]) => String(sql).includes('"lastMessageAt"'));
+      groupRepo.manager.query.mock.calls.filter(([sql]) => String(sql) === NOTE_LAST_MESSAGE_SQL);
 
     it('moves it forward, never back, to the receive time of a visible message', async () => {
       const before = Date.now();
@@ -291,10 +291,31 @@ describe('MessagingService - visibility vs durability', () => {
 
       const writes = lastMessageWrites();
       expect(writes).toHaveLength(1);
-      expect(String(writes[0][0])).toContain('"lastMessageAt" < $2');
       const [groupId, at] = writes[0][1] as [string, Date];
       expect(groupId).toBe('g1');
       expect(at.getTime()).toBeGreaterThanOrEqual(before);
+    });
+
+    /**
+     * THE STATEMENT'S SHAPE IS THE LOCK IT TAKES. An UPDATE of `dm_groups` takes FOR NO KEY UPDATE
+     * on the group row, which conflicts with the FOR SHARE every concurrent send into the group takes
+     * there (`enqueueForLiveGroup`), so the sends of one group would queue behind each other's note.
+     * An insert into a table of its own takes only FOR KEY SHARE on `dm_groups` (its foreign key),
+     * which conflicts with neither; GREATEST keeps it monotonic without reading first.
+     */
+    it("is an upsert into its own table, never a write of the group row a send's FOR SHARE holds", () => {
+      expect(NOTE_LAST_MESSAGE_SQL).toMatch(/^INSERT INTO dm_group_last_message /);
+      expect(NOTE_LAST_MESSAGE_SQL).toMatch(/ON CONFLICT \("groupId"\) DO UPDATE SET/);
+      expect(NOTE_LAST_MESSAGE_SQL).toContain(
+        'GREATEST(dm_group_last_message."lastMessageAt", EXCLUDED."lastMessageAt")'
+      );
+      expect(NOTE_LAST_MESSAGE_SQL).not.toMatch(/\bdm_groups\b/);
+    });
+
+    it('is written once per visible message', async () => {
+      await service.sendMessage(send({ silent: false, durable: true }));
+      const writes = lastMessageWrites();
+      expect(writes).toHaveLength(1);
     });
 
     it('is not moved by a silent mutation, a transport frame or a handshake', async () => {

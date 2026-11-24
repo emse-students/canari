@@ -31,6 +31,8 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
   let deviceGroupRepo: { find: jest.Mock };
   let queuedRepo: { find: jest.Mock };
   let redis: { mget: jest.Mock };
+  /** `dm_group_last_message` (migration 057), read through the data source's manager. */
+  let lastMessages: { groupId: string; lastMessageAt: Date }[];
   let warn: jest.SpyInstance;
 
   const ORDINARY = {
@@ -79,6 +81,7 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
     deviceGroupRepo = { find: jest.fn().mockResolvedValue([]) };
     queuedRepo = { find: jest.fn().mockResolvedValue([]) };
     redis = { mget: jest.fn().mockResolvedValue([]) };
+    lastMessages = [];
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [MembersController],
@@ -93,7 +96,19 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
         { provide: getRepositoryToken(RevokedDeviceGroup), useValue: {} },
         { provide: getRepositoryToken(MlsGroupInfo), useValue: groupInfoRepo },
         { provide: 'REDIS_CLIENT', useValue: redis },
-        { provide: DataSource, useValue: {} },
+        {
+          provide: DataSource,
+          useValue: {
+            manager: {
+              find: jest.fn(
+                async (_entity: unknown, { where }: { where: { groupId: unknown } }) => {
+                  const ids = (where.groupId as { _value: string[] })._value;
+                  return lastMessages.filter((r) => ids.includes(r.groupId));
+                }
+              ),
+            },
+          },
+        },
       ],
     })
       .overrideGuard(UserThrottlerGuard)
@@ -168,24 +183,13 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
    * creation). So the answer carries the newest visible frame's receive time, and is ordered by it.
    */
   it('orders by the newest visible frame and carries its time, the row update otherwise', async () => {
-    const quietButEdited = {
-      ...ORDINARY,
-      id: 'g-quiet',
-      updatedAt: new Date(9_000),
-      lastMessageAt: new Date(3_000),
-    };
-    const busy = {
-      ...ORDINARY,
-      id: 'g-busy',
-      updatedAt: new Date(1_000),
-      lastMessageAt: new Date(8_000),
-    };
-    const unknown = {
-      ...ORDINARY,
-      id: 'g-unknown',
-      updatedAt: new Date(5_000),
-      lastMessageAt: null,
-    };
+    const quietButEdited = { ...ORDINARY, id: 'g-quiet', updatedAt: new Date(9_000) };
+    const busy = { ...ORDINARY, id: 'g-busy', updatedAt: new Date(1_000) };
+    const unknown = { ...ORDINARY, id: 'g-unknown', updatedAt: new Date(5_000) };
+    lastMessages = [
+      { groupId: 'g-quiet', lastMessageAt: new Date(3_000) },
+      { groupId: 'g-busy', lastMessageAt: new Date(8_000) },
+    ];
     groupMemberRepo.find.mockResolvedValue([
       { groupId: 'g-quiet', userId: 'u1' },
       { groupId: 'g-busy', userId: 'u1' },
@@ -197,6 +201,32 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
 
     expect(got.map((g) => g.groupId)).toEqual(['g-busy', 'g-unknown', 'g-quiet']);
     expect(got.map((g) => g.lastMessageAt)).toEqual([new Date(8_000), null, new Date(3_000)]);
+  });
+
+  /**
+   * A SEAT AWAITING ADMISSION IS SOMEONE WHO OPENED AN INVITATION LINK AND WAS NEVER LET IN. The
+   * members' activity is not theirs to read: the time is withheld, and the row sorts by its last
+   * update as if the server held none.
+   */
+  it("withholds the newest message's time from a seat still awaiting admission, and sorts it without", async () => {
+    const waiting = { ...ORDINARY, id: 'g-waiting', updatedAt: new Date(1_000) };
+    const member = { ...ORDINARY, id: 'g-member', updatedAt: new Date(2_000) };
+    lastMessages = [
+      { groupId: 'g-waiting', lastMessageAt: new Date(9_000) },
+      { groupId: 'g-member', lastMessageAt: new Date(3_000) },
+    ];
+    groupMemberRepo.find.mockResolvedValue([
+      { groupId: 'g-waiting', userId: 'u1', awaitingAdmission: true },
+      { groupId: 'g-member', userId: 'u1' },
+    ]);
+    groupRepo.find.mockResolvedValue([waiting, member]);
+
+    const got = await controller.getUserGroups('u1', 'u1');
+
+    expect(got.map((g) => [g.groupId, g.awaitingAdmission, g.lastMessageAt])).toEqual([
+      ['g-member', false, new Date(3_000)],
+      ['g-waiting', true, null],
+    ]);
   });
 
   it('still hides a deleted ordinary group, which is a different exclusion', async () => {
