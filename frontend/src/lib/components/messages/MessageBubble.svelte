@@ -171,7 +171,9 @@
     /** When this device met this reel message's `410` (`ChatMessage.mediaPurgedAt`), RC-6. */
     reelPurgedAt?: number;
     /** The reel viewer met this message's `410` at `atMs`: record it on the local row (RC-6). */
-    onReelPurged?: (messageId: string, atMs: number) => void;
+    onReelPurged?: (messageId: string, atMs: number, conversationId: string) => void;
+    /** The conversation this row is drawn in: the reel viewer keeps it when it opens (RC-6). */
+    conversationId?: string;
     /**
      * Called when the user chooses "edit" on their own text message, with its current text. The
      * edit itself happens in the conversation's composer (user, 2026-10-02: *"modification des
@@ -235,6 +237,7 @@
     onTogglePin,
     reelPurgedAt,
     onReelPurged,
+    conversationId,
     currentUserId = '',
     authToken = '',
     shouldAnimate = false,
@@ -1274,7 +1277,10 @@
                   {messageId}
                   {authToken}
                   {reelPurgedAt}
-                  onReelPurged={onReelPurged ? (at) => onReelPurged(messageId, at) : undefined}
+                  {conversationId}
+                  onReelPurged={onReelPurged
+                    ? (at, openedFrom) => onReelPurged(messageId, at, openedFrom)
+                    : undefined}
                   onNear={() => (isNearViewport = true)}
                   onActions={isMobile && !isDeleted ? openActionsFromVideo : undefined}
                   {upload}

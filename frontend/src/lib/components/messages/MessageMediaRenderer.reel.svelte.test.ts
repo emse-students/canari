@@ -143,7 +143,10 @@ describe('MessageMediaRenderer - a reel whose file is gone before its hint (RC-6
 
   it('a 410 met in the viewer turns the tile into "CanaReel supprime" and is reported ONCE', async () => {
     const onReelPurged = vi.fn();
-    render(video({ intent: 'reel-message', expiresAtMs: HINT }), { onReelPurged });
+    render(video({ intent: 'reel-message', expiresAtMs: HINT }), {
+      onReelPurged,
+      conversationId: 'c1',
+    });
     tile()!.click();
     await settle();
     document.querySelector<HTMLButtonElement>('[data-reel-viewer-stub-gone]')!.click();
@@ -151,6 +154,7 @@ describe('MessageMediaRenderer - a reel whose file is gone before its hint (RC-6
     flushSync();
     expect(onReelPurged).toHaveBeenCalledTimes(1);
     expect(typeof onReelPurged.mock.calls[0][0]).toBe('number');
+    expect(onReelPurged.mock.calls[0][1]).toBe('c1');
     expect(tile()).toBeNull();
     expect(tomb()!.dataset.reelTombstone).toBe('deleted');
     expect(tomb()!.textContent).toContain(m.reel_chat_deleted());

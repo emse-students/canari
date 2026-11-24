@@ -140,7 +140,7 @@ describe('handleDeleteReelEverywhere', { timeout: 30_000 }, () => {
     const run = await messaging.handleDeleteReelEverywhere('s-2', ctx);
 
     expect(run).toEqual({ ended: 1, skipped: 0, running: false });
-    expect(settledMock).toHaveBeenCalledWith('s-1');
+    expect(settledMock).toHaveBeenCalledWith('s-1', 'g-1');
     expect(deleteMock).not.toHaveBeenCalled();
     expect(ctx.log).toHaveBeenCalledWith(
       expect.stringContaining('left the queue without going out')
