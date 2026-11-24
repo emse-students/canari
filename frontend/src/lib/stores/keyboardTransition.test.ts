@@ -3,6 +3,8 @@ import {
   keyboardTransitionCount,
   keyboardTransitionMoving,
   noteKeyboardAtRest,
+  noteKeyboardFrameAwaited,
+  noteKeyboardFrameLanded,
   noteKeyboardTransition,
   onKeyboardTransitionEdge,
 } from './keyboardTransition';
@@ -42,5 +44,51 @@ describe('the edges of a keyboard transition', () => {
     expect(warn).toHaveBeenCalledTimes(2);
     expect(String(warn.mock.calls[0][1])).toContain('an edge listener threw');
     warn.mockRestore();
+  });
+});
+
+/**
+ * THE iOS REST IS TWO FACTS (iPhone 12, `1.8.0-alpha.6`, 5 returns of 11): the shell's word that the
+ * keyboard is at rest, AND the WebView's frame for it landed (the hand-off spent). A keyboard coming
+ * back with the app shows with no animation, so its rest could come before the frame - and the move the
+ * resize brings was read as the reader's. The order of the two facts decides nothing.
+ */
+describe('a rest heard before the keyboard frame landed', () => {
+  it('is held, and the transition keeps moving until the frame lands', () => {
+    noteKeyboardAtRest('test start');
+    const warn = vi.spyOn(Log, 'w').mockImplementation(() => {});
+    const heard: string[] = [];
+    const off = onKeyboardTransitionEdge((edge, n) => heard.push(`#${n} ${edge}`));
+    noteKeyboardTransition('the shell: a keyboard will show');
+    const n = keyboardTransitionCount();
+    noteKeyboardFrameAwaited('a hand-off of 301px');
+    noteKeyboardAtRest('the shell: did show');
+    // The engine's move of the resize still to come belongs to this transition.
+    expect(keyboardTransitionMoving()).toBe(true);
+    expect(String(warn.mock.calls[0]?.[1])).toContain("before the keyboard's frame landed");
+    noteKeyboardFrameLanded('keyboard target 301 spent');
+    expect(keyboardTransitionMoving()).toBe(false);
+    expect(heard).toEqual([`#${n} starts`, `#${n} at rest`]);
+    off();
+    warn.mockRestore();
+  });
+
+  it('a frame that lands first leaves the rest to the shell', () => {
+    noteKeyboardAtRest('test start');
+    noteKeyboardTransition('the shell: a keyboard will show');
+    noteKeyboardFrameAwaited('a hand-off of 301px');
+    noteKeyboardFrameLanded('keyboard target 301 spent');
+    expect(keyboardTransitionMoving()).toBe(true);
+    noteKeyboardAtRest('the shell: did show, after its frame');
+    expect(keyboardTransitionMoving()).toBe(false);
+  });
+
+  it('a landing with no frame awaited, or no rest held, rests nothing', () => {
+    noteKeyboardAtRest('test start');
+    noteKeyboardTransition('keyboard opened');
+    noteKeyboardFrameLanded('nothing was awaited');
+    expect(keyboardTransitionMoving()).toBe(true);
+    noteKeyboardAtRest('at rest');
+    expect(keyboardTransitionMoving()).toBe(false);
   });
 });

@@ -24,7 +24,12 @@
 
 import { detectRuntimeDeviceOs } from '$lib/mls-client/mlsPlatform';
 import { orientationOf, rememberKeyboardHeight } from './keyboardHeightMemory';
-import { noteKeyboardAtRest, noteKeyboardTransition } from './keyboardTransition';
+import {
+  noteKeyboardAtRest,
+  noteKeyboardFrameAwaited,
+  noteKeyboardFrameLanded,
+  noteKeyboardTransition,
+} from './keyboardTransition';
 import { isTauriRuntime } from '$lib/utils/tauriRuntime';
 import { cssColorToHex, groundOf } from './imeGround';
 import { parseImeTarget, resolveImeTarget, type ImeAnimation, type ImeTarget } from './imeTarget';
@@ -402,10 +407,10 @@ function measureViewport(w: WindowReading = readWindow()): ViewportMeasurement {
   const raw = { winH, vvHeight: w.vvHeight, offsetTop: w.offsetTop, scale: w.scale };
   const { measurement, drop } = resolveImeTarget(raw, baselineHeight, imeTarget);
   if (drop) {
-    Log.d(
-      'keyboardViewport',
-      `keyboard target ${imeTarget?.px} spent (layout ${winH}, visual ${raw.vvHeight})`
-    );
+    const spent = `keyboard target ${imeTarget?.px} spent (layout ${winH}, visual ${raw.vvHeight})`;
+    Log.d('keyboardViewport', spent);
+    // The hand-off's frame is on the page: a keyboard transition may now rest (`keyboardTransition.ts`).
+    if (imeTarget?.kind === 'handoff') noteKeyboardFrameLanded(spent);
     imeTarget = null;
   }
   return measurement;
@@ -1168,6 +1173,8 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
       // A rise ends any fall still waiting for its resize, and any ride still running: the rise's
       // layout, and the screen-update proof the shell takes of it, must carry no stale transform.
       if (target.px > 0) endRides('a rise');
+      // No keyboard transition rests before the WebView takes this frame (`keyboardTransition.ts`).
+      if (target.px > 0) noteKeyboardFrameAwaited(`a hand-off of ${target.px}px`);
       imeTarget = target;
       update();
       return true;
@@ -1238,8 +1245,8 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
   /**
    * `window.canariKeyboardAtRest`: the iOS shell's word that the keyboard has come to rest
    * (`UIKeyboardDidShow` / `DidHide`, or `DidChangeFrame` for a height change while open, once
-   * WebKit's pending updates are on screen) - the end of the keyboard transition
-   * (`keyboardTransition.ts`).
+   * WebKit's pending updates are on screen and a rise's frame is set) - the end of the keyboard
+   * transition (`keyboardTransition.ts`), which also waits for the hand-off's frame to land here.
    */
   (window as unknown as { canariKeyboardAtRest?: () => void }).canariKeyboardAtRest = () =>
     noteKeyboardAtRest('the shell: the keyboard did show, hide or change height, on screen');
@@ -1283,6 +1290,7 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
         navigator as unknown as { virtualKeyboard: { overlaysContent: boolean } }
       ).virtualKeyboard.overlaysContent = false;
     }
+    if (imeTarget?.kind === 'handoff') noteKeyboardFrameLanded('teardown');
     imeTarget = null;
     endRides('teardown');
     cancelPlacement?.();

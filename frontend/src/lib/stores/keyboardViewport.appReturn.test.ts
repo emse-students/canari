@@ -21,6 +21,7 @@ vi.mock('$lib/mls-client/mlsPlatform', async (importOriginal) => ({
 type Hooks = {
   canariKeyboardAtRest?: () => void;
   canariKeyboardShows?: () => void;
+  canariImeTarget?: (v: unknown) => boolean;
   __TAURI_INTERNALS__?: unknown;
 };
 const hooks = () => window as unknown as Hooks;
@@ -91,6 +92,29 @@ describe('a keyboard the shell says will show', () => {
     expect(keyboardTransitionMoving()).toBe(true);
     hooks().canariKeyboardShows?.();
     expect(keyboardTransitionCount()).toBe(moving);
+    hooks().canariKeyboardAtRest?.();
+    expect(keyboardTransitionMoving()).toBe(false);
+  });
+
+  /**
+   * THE KEYBOARD COMES BACK WITH NO ANIMATION (iPhone 12, `1.8.0-alpha.6`, 5 returns of 11): its rest can
+   * reach the page before the WebView's frame is set, so the transition rests on BOTH - the shell's word
+   * and the hand-off spent by the resize - in whichever order they come.
+   */
+  it('a rest before the hand-off is spent waits for the resize', () => {
+    hooks().canariKeyboardShows?.();
+    expect(hooks().canariImeTarget?.(301)).toBe(true);
+    hooks().canariKeyboardAtRest?.(); // the did-show, ahead of the frame
+    expect(keyboardTransitionMoving()).toBe(true);
+    resizeTo(543); // the frame lands: the target is spent
+    expect(keyboardTransitionMoving()).toBe(false);
+  });
+
+  it('a hand-off spent before the rest leaves the rest to the shell', () => {
+    hooks().canariKeyboardShows?.();
+    hooks().canariImeTarget?.(301);
+    resizeTo(543);
+    expect(keyboardTransitionMoving()).toBe(true);
     hooks().canariKeyboardAtRest?.();
     expect(keyboardTransitionMoving()).toBe(false);
   });

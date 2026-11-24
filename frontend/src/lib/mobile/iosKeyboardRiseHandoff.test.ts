@@ -17,7 +17,8 @@ describe('the iOS keyboard hand-off (canari_ios.mm)', () => {
   const composer = readFileSync('src/lib/components/chat/ChatComposer.svelte', 'utf8');
   const appCss = readFileSync('src/app.css', 'utf8');
   const body = (signature: string) => {
-    const from = native.slice(native.indexOf(signature));
+    // The definition, after any forward declaration of the same signature.
+    const from = native.slice(native.lastIndexOf(signature));
     return from.slice(0, from.indexOf('\n}\n'));
   };
   const proof = body('static void CanariAfterScreenUpdates(');
@@ -109,6 +110,54 @@ describe('the iOS keyboard hand-off (canari_ios.mm)', () => {
     expect(captured).toBeLessThan(proved);
     expect(dropped).toBeGreaterThan(proved);
     expect(told).toBeGreaterThan(dropped);
+  });
+
+  /**
+   * A REST WAITS FOR THE RISE'S FRAME (iPhone 12, `1.8.0-alpha.6`, 5 returns of 11): a keyboard that
+   * comes back with the app has its did-show before the rise has set the WebView's frame. The rest is
+   * then owed, and told by the settle of that frame - after its screen-update proof - never by a clock;
+   * a newer will-show supersedes it like a rest waiting for its proof.
+   */
+  it('a rest heard while a rise is pending is owed, and told by the settle of its frame', () => {
+    const rest = body('static void CanariTellPageKeyboardAtRest(');
+    const pending = rest.indexOf('if (g_keyboardRisePending) {');
+    const owed = rest.indexOf('g_keyboardRestOwed = YES;', pending);
+    const told = rest.indexOf('window.canariKeyboardAtRest?.()');
+    expect(pending).toBeGreaterThan(-1);
+    expect(owed).toBeGreaterThan(pending);
+    expect(rest.indexOf('return;', owed)).toBeLessThan(told);
+    const settled = body('static void CanariKeyboardLayoutSettled(');
+    expect(settled).toMatch(
+      /if \(g_keyboardRestOwed && !g_keyboardRisePending\) \{\s+CanariTellPageKeyboardAtRest\(\);/
+    );
+    expect(settled.indexOf('CanariTellPageKeyboardAtRest();')).toBeGreaterThan(
+      settled.indexOf('CanariClampDocumentScroll(')
+    );
+    expect(body('static void CanariTellPageKeyboardShows(')).toContain('g_keyboardRestOwed = NO;');
+  });
+
+  /**
+   * ONE AUTHORITY OVER THE KEYBOARD'S ROOM (iPhone 12, `1.8.0-alpha.6`): WebKit's own keyboard inset,
+   * measured against a frame the shell had not shrunk yet, took the keyboard off a second time
+   * (`keyboard open 602px`, a blank page). WebKit's inset-and-scroll observers are removed from the
+   * WebView before any keyboard; its did-show reveal stays.
+   */
+  it("detaches WebKit's own keyboard inset from the WebView, keeping its did-show reveal", () => {
+    const detach = body('static void CanariDetachWebKitKeyboardInset(');
+    for (const name of ['WillShow', 'WillHide', 'WillChangeFrame', 'DidChangeFrame']) {
+      expect(detach).toContain(
+        `[nc removeObserver:webView name:UIKeyboard${name}Notification object:nil];`
+      );
+    }
+    expect(detach).not.toContain('UIKeyboardDidShowNotification');
+    expect(apply).toContain('CanariDetachWebKitKeyboardInset(webView);');
+    expect(body('static void CanariOnDidBecomeActive(')).toContain(
+      'CanariDetachWebKitKeyboardInset(CanariFindWebView());'
+    );
+    // The settled report carries the scroll view's own bottom inset: a second inset shows there.
+    expect(body('static void CanariReportSettledKeyboardGeometry(')).toContain(
+      'scrollView.adjustedContentInset.bottom'
+    );
   });
 
   it('the proof is the public screen-update snapshot, never the private presentation hook', () => {

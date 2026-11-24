@@ -255,6 +255,31 @@ Height changes while open keep the frame animated on the keyboard's curve, unmea
 Messenger. Android rides both directions since 2026-11-14 (section 6), with the same
 `keyboardRide.ts`; the iOS fall above is unchanged by it - its thread still rides its box.
 
+### The shell is the one authority over the keyboard's room (2026-11-24)
+
+**What the iPhone said** (`1.8.0-alpha.6`, iPhone 12): twice the page read `keyboard open 602px` with a
+`clientHeight` of 195 and stayed blank, the native "+" stranded mid-screen, until the keyboard hid; and a
+streamed rise showed ~300 ms of the "+" mid-screen over an unpainted page
+([the entry](../backlog.d/p2-the-iphone-page-reads-a-doubled-keyboard-inset-and-stops-painting.md)).
+
+**Why.** WKWebView observes `UIKeyboardWillShow`, `WillHide`, `WillChangeFrame` and `DidChangeFrame`
+itself, and on each insets and scrolls its own scroll view by the keyboard's overlap of its frame at that
+moment. The hand-off above sets the frame only after the page's layout is on screen, so WebKit measured
+the keyboard against the FULL-HEIGHT frame every time: a second inset of 301 pt on a WebView already
+301 pt short. On nearly every rise the document scrolled 301 pt (`[nativeGlassPiece] ... compensating a
+document scroll: scrollY=301`) until the clamp put it back - the "+" follows the page's coordinates, so
+it jumped; twice the inset stayed (`keyboard settled: native offset=301.0 content=543.0 bounds=543.0`,
+which the clamp leaves alone only if the range carries the inset), and the visual viewport was the
+frame less the keyboard again.
+
+**The fix: `CanariDetachWebKitKeyboardInset`** removes those four observers from the WebView (public
+`removeObserver:name:object:`), once per WebView, from the first activation and from every keyboard
+change. The keyboard is taken off the page once, by the frame. WebKit's `UIKeyboardDidShow` observer
+stays: its reveal of the focused field now measures a frame already out of the keyboard, and the page
+reveals its own fields (`scrollFocusedFieldIntoView`). The settled line carries `inset bottom=`, the scroll
+view's own bottom inset, so a second authority shows in the syslog. Verified by compiling only; the reading
+is in the entry.
+
 Tests: `iosKeyboardRiseHandoff.test.ts` reads the native contract against the page's hooks,
 `iosKeyboardSettledReport.test.ts` the settle's place behind a proof, `keyboardRide.test.ts` the
 parsing, the refusals, each piece's own move and the frame follower, `keyboardViewport.ride.test.ts`
