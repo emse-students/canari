@@ -3,6 +3,7 @@ import {
   awaitProbe,
   digestIdentity,
   forgetGroupDigests,
+  MAX_STORED_PROBES_PER_ASKER,
   noteDigestSolicited,
   noteProbeReceived,
   resetHistoryDigestRendezvousForTests,
@@ -134,6 +135,30 @@ describe('historyDigestRendezvous', () => {
     const later = awaitProbe(GROUP, PEER, 5000, 0);
     await vi.advanceTimersByTimeAsync(5000);
     await expect(later).resolves.toBeNull();
+  });
+
+  it('a digest a waiter took also answers the solicitation, so a stale one cannot make us a second answerer', async () => {
+    noteDigestSolicited(GROUP, PEER, 1_000);
+    const waiting = awaitProbe(GROUP, PEER, 5000, 0);
+    expect(noteProbeReceived(GROUP, PEER, solicited(digest), 2_000)).toBe('waiter');
+    await expect(waiting).resolves.toEqual(solicited(digest));
+    // The asker's next digest - an exchange with another member - is stored, never answered late.
+    expect(noteProbeReceived(GROUP, PEER, solicited(other), 3_000)).toBe('stored');
+  });
+
+  it(`keeps at most ${MAX_STORED_PROBES_PER_ASKER} stored probes per asker, dropping the oldest at warn`, async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const nth = (i: number) => ({
+      ...solicited(digest),
+      requestId: `ask-${String(i).padStart(8, '0')}`,
+    });
+    for (let i = 0; i <= MAX_STORED_PROBES_PER_ASKER; i++) noteProbeReceived(GROUP, PEER, nth(i));
+    expect(warn.mock.calls.map(([l]) => String(l))).toEqual([
+      expect.stringContaining('[HISTORY_PROBE]'),
+    ]);
+    // The oldest (ask 0) went; the next one out is ask 1.
+    await expect(awaitProbe(GROUP, PEER, 2000)).resolves.toEqual(nth(1));
+    warn.mockRestore();
   });
 
   it('stores an unsolicited digest nobody waits for', () => {

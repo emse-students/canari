@@ -152,7 +152,9 @@ a member of any age, and that push is filtered for its own reader like every oth
      NAME, classified where it is decided (`AskRefusal` in `historyAddressing.ts`:
      `no-open-ask`, `answered-already` - the same answerer's second copy -, `not-the-inviter`,
      `answerers-full`; plus `not-addressed-to-us`, `no-sending-device`, `names-no-ask` and
-     `kind-mismatch` from the envelope), so the next such line says which cause it is. **The answerer is the device MLS
+     `kind-mismatch` from the envelope), so the next such line says which cause it is. An answerer still on `1.7.3` or older keeps answering twice, so one
+     `answered-already` ERROR per late chunk is expected until it updates - the rollout tail, dated in
+     [legacy-compatibility](../legacy-compatibility.md). **The answerer is the device MLS
      verified**: the decrypt compares the envelope's sending device with the credential and refuses
      a disagreement (`verifiedSender`), which it can do only when the envelope names one - so an
      addressed answer naming none is refused. chat-delivery has no device in its auth context (the

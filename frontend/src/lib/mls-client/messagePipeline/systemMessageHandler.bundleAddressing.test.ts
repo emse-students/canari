@@ -828,7 +828,7 @@ describe('history_bundle - an answer sealed to our ask', () => {
     );
 
     expect(lines(error, 'REFUSED an unsealed history_bundle')).toHaveLength(2);
-    expect(lines(error, 'answerers are all taken')).toHaveLength(0);
+    expect(lines(error, 'REFUSED an addressed')).toHaveLength(0);
     const added = (ctx.batchAddMessages.mock.calls[0][0] as Array<{ messageId: string }>).map(
       (m) => m.messageId
     );

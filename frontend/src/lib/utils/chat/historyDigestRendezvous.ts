@@ -91,6 +91,9 @@ type StoredProbe = { probe: SolicitedProbe; at: number };
  * dropped the first of them.
  */
 const probes = new Map<string, StoredProbe[]>();
+
+/** The most probes kept for one group and asker; past it the oldest is dropped, at warn. */
+export const MAX_STORED_PROBES_PER_ASKER = 32;
 const waiters = new Map<string, Array<(probe: SolicitedProbe) => void>>();
 
 /**
@@ -172,13 +175,27 @@ export function noteProbeReceived(
     const [oldest, ...rest] = pending;
     if (rest.length > 0) waiters.set(k, rest);
     else waiters.delete(k);
+    // A digest a waiter took also ANSWERS any solicitation outstanding for it: left in place, a
+    // stale solicitation would make the next digest from this asker - meant for another member -
+    // land on the late path here, and this device would answer as a second responder.
+    if (probe.kind === 'digest') takeDigestSolicitation(groupId, fromIdentity, now);
     oldest(probe);
     return 'waiter';
   }
   if (probe.kind === 'digest' && takeDigestSolicitation(groupId, fromIdentity, now)) {
     return 'solicitation';
   }
-  probes.set(k, [...(probes.get(k) ?? []), { probe, at: now }]);
+  const queue = [...(probes.get(k) ?? []), { probe, at: now }];
+  if (queue.length > MAX_STORED_PROBES_PER_ASKER) {
+    // Bounded by count, never by a clock: an asker cannot grow this without limit. The OLDEST goes,
+    // the one least likely to belong to an election still to come - and it is said, because a
+    // dropped probe is an election that will find nothing.
+    const dropped = queue.splice(0, queue.length - MAX_STORED_PROBES_PER_ASKER);
+    console.warn(
+      `[HISTORY_PROBE] ${groupId.slice(0, 8)}… dropped ${dropped.length} stored probe(s) from ${fromIdentity.slice(0, 8)} - more than ${MAX_STORED_PROBES_PER_ASKER} waiting for an election, the oldest goes`
+    );
+  }
+  probes.set(k, queue);
   return 'stored';
 }
 
