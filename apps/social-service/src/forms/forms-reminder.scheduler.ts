@@ -26,6 +26,7 @@ import {
 } from '../posts/post-notifications.service';
 import { FormsService } from './forms.service';
 import { LydiaReconciliationService } from './lydia-reconciliation.service';
+import { FormWaitlistNoticeService } from './waitlist-notice.service';
 import type { NotificationType } from '../push/notification-client-floor';
 import type { DueCashReminder } from './cash-reminder';
 
@@ -94,7 +95,9 @@ export class FormReminderScheduler {
     private readonly push: PushService,
     private readonly notifications: PostNotificationsService,
     private readonly formsService: FormsService,
-    private readonly reconciliation: LydiaReconciliationService
+    private readonly reconciliation: LydiaReconciliationService,
+    // Always injected by Nest; a spec of the other jobs may leave it out (its absence is an ERROR).
+    private readonly waitlistNotice?: FormWaitlistNoticeService
   ) {}
 
   /**
@@ -378,6 +381,26 @@ export class FormReminderScheduler {
         } catch (e) {
           this.logger.warn('[PENDING] Error expiring stale online payments', e);
         }
+      }
+      // THE WAITING LIST'S NOTICES OWED (`waitlist.ts`): a NOTICE, never a promotion, is retried here
+      // - every event that frees a place promotes in its own transaction, and tells right after its
+      // commit; this tells a promotion whose notice could not be written then. Its own `try`.
+      if (this.waitlistNotice) {
+        try {
+          await this.waitlistNotice.tellPending();
+        } catch (e) {
+          this.logger.error('[WAITLIST] promotion notices owed could not be read', e);
+        }
+      } else {
+        this.logger.error('[WAITLIST] no notifier wired: promotion notices owed are not told');
+      }
+      // A promotion that converted a `paid_over_capacity` answer owes what its payment buys; every
+      // promoter runs it after its commit (`afterCommit`), so this is the durable retry of one a
+      // stopped process never ran (`FormsService.fulfilConvertedPromotions`, WARN). Its own `try`.
+      try {
+        await this.formsService.fulfilConvertedPromotions();
+      } catch (e) {
+        this.logger.error('[WAITLIST] converted promotions owed could not be read', e);
       }
       // Its own `try`: a failed expiry must not keep a visitor key the rows no longer need, and a
       // failed forget must not hide an expiry that worked. AFTER the expiry, so the rows it just

@@ -1,327 +1,123 @@
 /**
- * The publish step does the server's contract in its order, sends the payload a reel must carry,
- * and names the stage it stopped at - with every service replaced, so nothing here needs a network
- * or an encoder.
+ * The CanaReels publish step's hand-over to the publish queue: what it writes on the device is what
+ * the queue will send - the take with its camera preparation, the post's payload, an id minted
+ * once, the chat take that adopts its upload. Sending it is the queue's (`publishQueue.test.ts`).
  */
 import { describe, expect, it, vi } from 'vitest';
 import { ANONYMOUS_POST_IDENTITY } from '$lib/posts/postComposerDraft';
-import { VideoPrepareError } from '$lib/video/prepareVideoForUpload';
-import { MediaService } from '$lib/media';
+import type { QueuedPost } from '$lib/posts/publishQueue/publishQueueStore';
 import {
-  defaultPublishReelDeps,
-  publishCameraPhoto,
-  publishReel,
-  ReelPublishError,
+  queueReelPublish,
+  ReelPublishNoAccountError,
   type PublishReelDeps,
+  type PublishReelInput,
 } from './publishReel';
 
-vi.mock('$lib/stores/user', () => ({ isGlobalAdmin: () => false }));
-vi.mock('$lib/media', async (importOriginal) => {
-  const original = await importOriginal<typeof import('$lib/media')>();
-  return {
-    ...original,
-    preparePostMedia: vi.fn(async () => ({
-      file: new File([new Uint8Array(4)], 'camera.webp', { type: 'image/webp' }),
-      dims: { width: 640, height: 480 },
-    })),
-  };
-});
-
-const ref = {
-  type: 'video' as const,
-  mediaId: 'm-1',
-  key: 'k',
-  iv: 'i',
-  mimeType: 'video/mp4',
-  size: 10,
-};
-
-function deps(calls: string[] = []): PublishReelDeps {
-  return {
-    assertNotMuted: vi.fn(async () => void calls.push('muted')),
-    getToken: vi.fn(async () => (calls.push('token'), 'tok')),
-    uploadLimits: vi.fn(async () => (calls.push('limits'), { maxPlaintextBytes: 1000 })),
-    prepare: vi.fn(async () => {
-      calls.push('prepare');
-      return {
-        file: new File([new Uint8Array(4)], 'reel.mp4', { type: 'video/mp4' }),
-        width: 720,
-        height: 1280,
-        durationSeconds: 12.3456,
-        sourceBytes: 8,
-        outputBytes: 4,
-      };
-    }),
-    upload: vi.fn(async () => (calls.push('upload'), ref)),
-    placeholder: vi.fn(async () => null),
-    createPost: vi.fn(async () => {
-      calls.push('create');
-      return { id: 'p-1' } as never;
+function deps(userId: string | null = 'alice') {
+  const queued: Array<{ userId: string; post: QueuedPost; files: File[] }> = [];
+  const d: PublishReelDeps = {
+    userId: () => userId,
+    enqueue: vi.fn(async (u: string, post: QueuedPost, files: File[]) => {
+      queued.push({ userId: u, post, files });
     }),
   };
+  return { d, queued };
 }
 
-const clip = { blob: new Blob(['x'], { type: 'video/webm' }), source: 'camera' as const };
-
-function input(overrides: Partial<Parameters<typeof publishReel>[0]> = {}) {
+function input(over: Partial<PublishReelInput> = {}): PublishReelInput {
   return {
-    clip,
+    clip: { blob: new Blob([new Uint8Array([1, 2, 3])], { type: 'video/mp4' }), source: 'camera' },
     caption: 'hello',
     identity: '',
     maxDurationMs: 90_000,
-    rule: { maxDurationMs: 90_000, maxAspectRatio: 0.8 },
-    video: {},
-    ...overrides,
+    ...over,
   };
 }
 
-describe('publishReel', () => {
-  it('checks, prepares, uploads, then creates - in that order', async () => {
-    const calls: string[] = [];
-    const stages: string[] = [];
-    await publishReel(input({ onStage: (s) => stages.push(s) }), deps(calls));
-    expect(calls).toEqual(['muted', 'token', 'limits', 'prepare', 'upload', 'create']);
-    expect(stages).toEqual([
-      'moderation',
-      'mediaToken',
-      'mediaPrepare',
-      'mediaUpload',
-      'createPost',
+describe('queueReelPublish', () => {
+  it('queues the take with the camera preparation and the payload, under one minted id', async () => {
+    const { d, queued } = deps();
+    const id = await queueReelPublish(input(), d);
+    expect(queued).toHaveLength(1);
+    const { userId, post, files } = queued[0];
+    expect(userId).toBe('alice');
+    expect(post.id).toBe(id);
+    expect(post.payload).toEqual({ markdown: 'hello' });
+    expect(post.media).toEqual([
+      { name: 'canareel.mp4', type: 'video/mp4', size: 3, take: { maxDurationMs: 90_000 } },
     ]);
+    expect(post.landing).toBe('all');
+    expect(post.chatTakeId).toBeUndefined();
+    expect(files[0].size).toBe(3);
   });
 
-  it('prepares within the server cap and the upload ceiling', async () => {
-    const d = deps();
-    await publishReel(input(), d);
-    expect(d.prepare).toHaveBeenCalledWith(
-      clip.blob,
-      expect.objectContaining({ maxSeconds: 90, maxBytes: 1000 })
+  it('records the removed sound, so a resume prepares the take silent too', async () => {
+    const { d, queued } = deps();
+    await queueReelPublish(
+      input({
+        clip: {
+          blob: new Blob([new Uint8Array([1])], { type: 'video/mp4' }),
+          source: 'camera',
+          soundRemoved: true,
+        },
+      }),
+      d
     );
-    expect(d.upload).toHaveBeenCalledWith(
-      expect.any(File),
-      'tok',
-      { width: 720, height: 1280 },
-      'reel-pending'
+    expect(queued[0].post.media[0].take).toEqual({ maxDurationMs: 90_000, removeAudio: true });
+  });
+
+  it('carries the chat take that adopts its upload (15.5)', async () => {
+    const { d, queued } = deps();
+    await queueReelPublish(input({ chatTakeId: 'take-1' }), d);
+    expect(queued[0].post.chatTakeId).toBe('take-1');
+  });
+
+  it('queues a camera PHOTO as an ordinary post: no take preparation, no chat take', async () => {
+    const { d, queued } = deps();
+    await queueReelPublish(
+      input({
+        clip: { blob: new Blob([new Uint8Array([1])], { type: 'image/jpeg' }), source: 'camera' },
+        chatTakeId: 'take-1',
+      }),
+      d
     );
+    expect(queued[0].post.media).toEqual([
+      { name: 'camera-photo.jpg', type: 'image/jpeg', size: 1 },
+    ]);
+    expect(queued[0].post.chatTakeId).toBeUndefined();
   });
 
-  it('publishes a take whose PREPARED frame is not vertical as an ordinary post, uploaded archive (owner, 2026-11-09)', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const d = deps();
-    vi.mocked(d.prepare).mockResolvedValueOnce({
-      file: new File([new Uint8Array(4)], 'wide.mp4', { type: 'video/mp4' }),
-      width: 1280,
-      height: 720,
-      durationSeconds: 12,
-      sourceBytes: 8,
-      outputBytes: 4,
-    });
-    const onUploaded = vi.fn(async () => {});
-    await publishReel(input({ onUploaded }), d);
-    expect(d.upload).toHaveBeenCalledWith(
-      expect.any(File),
-      'tok',
-      { width: 1280, height: 720 },
-      'archive'
+  it('publishes as an association or anonymously, with "Entre étudiants" and a reach where set', async () => {
+    const { d, queued } = deps();
+    await queueReelPublish(
+      input({
+        identity: 'asso-1',
+        studentsOnly: true,
+        reach: { spaces: ['s-1'], public: 'members' } as unknown as PublishReelInput['reach'],
+      }),
+      d
     );
-    expect(d.createPost).toHaveBeenCalledWith({ markdown: 'hello', media: [ref] });
-    expect(onUploaded).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('outside the rule'));
-  });
-
-  describe('under the rule of 2026-11-14 - vertical OR short', () => {
-    const orRule = { maxDurationMs: 90_000, maxAspectRatio: 0.8, maxVerticalDurationMs: 180_000 };
-    const prepared = (width: number, height: number, durationSeconds: number) => ({
-      file: new File([new Uint8Array(4)], 'take.mp4', { type: 'video/mp4' }),
-      width,
-      height,
-      durationSeconds,
-      sourceBytes: 8,
-      outputBytes: 4,
+    expect(queued[0].post.payload).toMatchObject({
+      associationId: 'asso-1',
+      studentsOnly: true,
+      reach: { spaces: ['s-1'], public: 'members' },
     });
+    expect(queued[0].post.landing).toBe('associations');
+    await queueReelPublish(input({ identity: ANONYMOUS_POST_IDENTITY }), d);
+    expect(queued[1].post.payload).toMatchObject({ anonymous: true });
+  });
 
-    it('publishes a short landscape take as a reel', async () => {
-      const d = deps();
-      vi.mocked(d.prepare).mockResolvedValueOnce(prepared(1280, 720, 12));
-      await publishReel(input({ rule: orRule, maxDurationMs: 180_000 }), d);
-      expect(d.createPost).toHaveBeenCalledWith(
-        expect.objectContaining({ kind: 'reel', durationMs: 12_000 })
-      );
+  it('queues nothing without an account, and says so with a type', async () => {
+    const { d } = deps(null);
+    await expect(queueReelPublish(input(), d)).rejects.toBeInstanceOf(ReelPublishNoAccountError);
+    expect(d.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('a write the device refuses is thrown to the step, which keeps the take', async () => {
+    const { d } = deps();
+    d.enqueue = vi.fn(async () => {
+      throw new DOMException('full', 'QuotaExceededError');
     });
-
-    it('publishes a long vertical take as a reel with its whole length declared', async () => {
-      const d = deps();
-      vi.mocked(d.prepare).mockResolvedValueOnce(prepared(720, 1280, 150));
-      await publishReel(input({ rule: orRule, maxDurationMs: 180_000 }), d);
-      expect(d.createPost).toHaveBeenCalledWith(
-        expect.objectContaining({ kind: 'reel', durationMs: 150_000 })
-      );
-    });
-
-    it('declares a landscape take at the recorder grace as the 90 s it is', async () => {
-      const d = deps();
-      vi.mocked(d.prepare).mockResolvedValueOnce(prepared(1280, 720, 90.2));
-      await publishReel(input({ rule: orRule, maxDurationMs: 180_000 }), d);
-      expect(d.createPost).toHaveBeenCalledWith(
-        expect.objectContaining({ kind: 'reel', durationMs: 90_000 })
-      );
-    });
-
-    it('publishes a long landscape take as an ordinary post, uploaded archive', async () => {
-      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      const d = deps();
-      vi.mocked(d.prepare).mockResolvedValueOnce(prepared(1280, 720, 120));
-      await publishReel(input({ rule: orRule, maxDurationMs: 180_000 }), d);
-      expect(d.upload).toHaveBeenCalledWith(
-        expect.any(File),
-        'tok',
-        { width: 1280, height: 720 },
-        'archive'
-      );
-      expect(d.createPost).toHaveBeenCalledWith({ markdown: 'hello', media: [ref] });
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining('cap 90000 ms'));
-      warn.mockRestore();
-    });
-  });
-
-  it('against an estate that serves no vertical rule, the take stays a reel as it did there', async () => {
-    const d = deps();
-    vi.mocked(d.prepare).mockResolvedValueOnce({
-      file: new File([new Uint8Array(4)], 'wide.mp4', { type: 'video/mp4' }),
-      width: 1280,
-      height: 720,
-      durationSeconds: 12,
-      sourceBytes: 8,
-      outputBytes: 4,
-    });
-    await publishReel(input({ rule: null }), d);
-    expect(d.createPost).toHaveBeenCalledWith(expect.objectContaining({ kind: 'reel' }));
-  });
-
-  it('keeps the sound by default and asks the encoder to REMOVE the audio track when the member did', async () => {
-    const kept = deps();
-    await publishReel(input(), kept);
-    expect(kept.prepare).toHaveBeenCalledWith(
-      clip.blob,
-      expect.objectContaining({ removeAudio: false, trimToVideo: true })
-    );
-
-    const silent = deps();
-    const soundless = { ...clip, soundRemoved: true };
-    await publishReel(input({ clip: soundless }), silent);
-    expect(silent.prepare).toHaveBeenCalledWith(
-      soundless.blob,
-      expect.objectContaining({ removeAudio: true })
-    );
-  });
-
-  it('creates a reel with its declared duration, its caption and one video', async () => {
-    const d = deps();
-    await publishReel(input(), d);
-    expect(d.createPost).toHaveBeenCalledWith({
-      kind: 'reel',
-      durationMs: 12346,
-      markdown: 'hello',
-      media: [ref],
-    });
-  });
-
-  it('carries the first frame ThumbHash of the uploaded file in the reel media', async () => {
-    const d = deps();
-    d.placeholder = vi.fn(async () => 'TH==');
-    await publishReel(input(), d);
-    const prepared = (await (d.prepare as ReturnType<typeof vi.fn>).mock.results[0].value).file;
-    expect(d.placeholder).toHaveBeenCalledWith(prepared);
-    expect(d.createPost).toHaveBeenCalledWith(
-      expect.objectContaining({ media: [{ ...ref, placeholder: 'TH==' }] })
-    );
-  });
-
-  it('publishes as an association or anonymously, as a post would', async () => {
-    const asso = deps();
-    await publishReel(input({ identity: 'asso-1' }), asso);
-    expect(asso.createPost).toHaveBeenCalledWith(
-      expect.objectContaining({ associationId: 'asso-1' })
-    );
-    const anon = deps();
-    await publishReel(input({ identity: ANONYMOUS_POST_IDENTITY }), anon);
-    expect(anon.createPost).toHaveBeenCalledWith(expect.objectContaining({ anonymous: true }));
-  });
-
-  it('carries "Entre étudiants" when the step set it, and nothing when it did not', async () => {
-    const on = deps();
-    await publishReel(input({ identity: 'asso-1', studentsOnly: true }), on);
-    expect(on.createPost).toHaveBeenCalledWith(expect.objectContaining({ studentsOnly: true }));
-    const off = deps();
-    await publishReel(input({ identity: 'asso-1' }), off);
-    expect(vi.mocked(off.createPost).mock.calls[0][0]).not.toHaveProperty('studentsOnly');
-  });
-
-  it('names the stage it stopped at and keeps the cause', async () => {
-    const d = deps();
-    const cause = new VideoPrepareError('unsupported', 'no');
-    vi.mocked(d.prepare).mockRejectedValueOnce(cause);
-    const err = await publishReel(input(), d).catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(ReelPublishError);
-    expect((err as ReelPublishError).stage).toBe('mediaPrepare');
-    expect((err as ReelPublishError).cause).toBe(cause);
-    expect(d.upload).not.toHaveBeenCalled();
-    expect(d.createPost).not.toHaveBeenCalled();
-  });
-
-  it('a muted member is stopped before anything is encoded', async () => {
-    const d = deps();
-    vi.mocked(d.assertNotMuted).mockRejectedValueOnce(new Error('muted'));
-    const err = await publishReel(input(), d).catch((e: unknown) => e);
-    expect((err as ReelPublishError).stage).toBe('moderation');
-    expect(d.prepare).not.toHaveBeenCalled();
-  });
-});
-
-describe('publishCameraPhoto', () => {
-  it('uploads the edited photo as an archive post, never as a reel', async () => {
-    const createPost = vi.fn(async () => ({ id: 'p-photo' }) as never);
-    const upload = vi.fn(async () => ({
-      ...ref,
-      type: 'image' as const,
-      mimeType: 'image/webp',
-    }));
-    await publishCameraPhoto(
-      {
-        clip: { blob: new Blob(['photo'], { type: 'image/jpeg' }), source: 'camera' },
-        caption: 'a photo',
-        identity: '',
-      },
-      {
-        assertNotMuted: vi.fn(async () => {}),
-        getToken: vi.fn(async () => 'tok'),
-        upload,
-        createPost,
-      }
-    );
-    expect(upload).toHaveBeenCalledWith(expect.any(File), 'tok', { width: 640, height: 480 });
-    expect(createPost).toHaveBeenCalledWith({
-      markdown: 'a photo',
-      media: [expect.objectContaining({ type: 'image' })],
-    });
-  });
-});
-
-/**
- * A feed reel is uploaded `reel-pending`, never `reel`: the server sweeps a pending upload a day
- * later unless the post's claim promotes it, so a publish that fails after its upload leaves no blob
- * behind for ever (reels audit, 2026-10-11).
- */
-describe('defaultPublishReelDeps', () => {
-  it('uploads the reel under the reel-pending class, which only the claim promotes', async () => {
-    const upload = vi
-      .spyOn(MediaService.prototype, 'encryptAndUpload')
-      .mockResolvedValue(ref as never);
-    const file = new File([new Uint8Array(4)], 'reel.mp4', { type: 'video/mp4' });
-
-    await defaultPublishReelDeps().upload(file, 'token', { width: 9, height: 16 }, 'reel-pending');
-
-    expect(upload).toHaveBeenCalledWith(file, 'token', { width: 9, height: 16 }, 'reel-pending');
-    upload.mockRestore();
+    await expect(queueReelPublish(input(), d)).rejects.toThrow('full');
   });
 });

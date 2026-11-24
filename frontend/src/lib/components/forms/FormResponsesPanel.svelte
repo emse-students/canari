@@ -5,6 +5,8 @@
   import RefundDialog from '$lib/components/associations/edit/RefundDialog.svelte';
   import FormSubmissionsTable from './FormSubmissionsTable.svelte';
   import FormResultsSummary from './FormResultsSummary.svelte';
+  import FormWaitlistSection from './FormWaitlistSection.svelte';
+  import { registeredOnly, waitingInOrder, waitlistFrozen } from '$lib/forms/waitlist';
   import {
     fileAnswerWords,
     validateCashSubmission,
@@ -76,7 +78,23 @@
     heldCount?: number;
   }
 
-  let { form, submissions, deletingId, onDelete, onReload, heldCount = 0 }: Props = $props();
+  let {
+    form,
+    submissions: allSubmissions,
+    deletingId,
+    onDelete,
+    onReload,
+    heldCount = 0,
+  }: Props = $props();
+
+  /**
+   * THE REGISTRATIONS, which every card, filter, total and export of this screen counts; the
+   * waiting list (`waitlist.ts`) holds no seat and owes nothing, so it is drawn apart, in arrival
+   * order, and never counted with them.
+   */
+  const submissions = $derived(registeredOnly(allSubmissions));
+  const waiting = $derived(waitingInOrder(allSubmissions));
+  const frozen = $derived(waitlistFrozen(form, waiting[0]));
 
   const anonymous = $derived(form.anonymous ?? false);
   const requiresPayment = $derived(form.requiresPayment ?? false);
@@ -318,6 +336,16 @@
 
   {#if tab === 'list'}
     <div class="flex flex-col gap-3" role="tabpanel" id="form-{form.id}-tabpanel-list">
+      {#if waiting.length > 0}
+        <FormWaitlistSection
+          formId={form.id}
+          {waiting}
+          {frozen}
+          {deletingId}
+          {onDelete}
+          {onReload}
+        />
+      {/if}
       <div class="flex flex-wrap items-center gap-2">
         <label
           class="bg-control-fill flex min-h-11 flex-[1_1_16rem] items-center gap-2 rounded-full px-3.5"

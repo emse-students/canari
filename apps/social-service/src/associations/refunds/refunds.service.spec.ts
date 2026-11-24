@@ -36,6 +36,7 @@ function make(canManage = true) {
   const service = new RefundsService(
     { manager: {} } as any,
     associations as any,
+    { tell: jest.fn() } as any,
     { tell: jest.fn() } as any
   );
   return { service, associations };
@@ -186,7 +187,12 @@ describe('RefundsService - the manager check and the recording of an answer', ()
       findOne: jest.fn().mockResolvedValue(row),
       update: jest.fn().mockResolvedValue({ affected: 1 }),
     };
-    const service = new RefundsService(refundRepo as any, {} as any, { tell: jest.fn() } as any);
+    const service = new RefundsService(
+      refundRepo as any,
+      {} as any,
+      { tell: jest.fn() } as any,
+      { tell: jest.fn() } as any
+    );
     const settle = jest
       .spyOn(service as unknown as { settle: () => Promise<unknown> }, 'settle')
       .mockImplementation(async () => ({ ...row, status: 'confirmed', outcome: 'refunded' }));

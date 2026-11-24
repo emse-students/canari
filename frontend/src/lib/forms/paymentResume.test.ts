@@ -62,4 +62,14 @@ describe('failedPaymentOffer', () => {
   ])('offers nothing for %s', (_why, patch) => {
     expect(failedPaymentOffer({ ...idle, cashSwitchable: answer, ...patch })).toBeNull();
   });
+
+  // A promoted answer owing its payment (the waiting list): answered already, its seat its own.
+  it('offers the payment of a promoted answer although it is answered and the form closed', () => {
+    expect(
+      failedPaymentOffer({ ...idle, submitted: true, closed: true, paymentDue: true })
+    ).toEqual({ answer, resume: true, cash: false });
+    expect(
+      failedPaymentOffer({ ...idle, submitted: true, paymentDue: true, preview: true })
+    ).toBeNull();
+  });
 });

@@ -3,7 +3,10 @@ import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { PostNotificationsService, SYSTEM_ACTOR_NAME } from '../posts/post-notifications.service';
 import { PushService } from '../push/push.service';
-import { formPaidOverCapacityContent } from '../push/push-content';
+import {
+  formPaidOverCapacityContent,
+  formPaidOverCapacityWaitlistedContent,
+} from '../push/push-content';
 import { FORM_RESPONSES_TARGET } from '../push/push-target';
 import { forEachBounded, PUSH_FAN_OUT_LIMIT } from '../push/fan-out';
 import type { Form } from './entities/form.entity';
@@ -51,6 +54,9 @@ const SYSTEM_ACTOR_ID = 'system';
  * list does not show them. Filtering the member tier through `mayAct` again would be a no-op.
  *
  * WHAT: the form's title and nothing else - no payer, no amount (`formPaidOverCapacityContent`).
+ * When the payer is on the form's waiting list (`payerInLine`), the row carries `meta.payerInLine`
+ * and the push its own key (`formPaidOverCapacityWaitlistedContent`): their place is kept, and the
+ * refund is owed only if they are never promoted - not now.
  */
 @Injectable()
 export class FormOrganiserAlertService {
@@ -92,7 +98,10 @@ export class FormOrganiserAlertService {
    * on. The pushes are best-effort and never throw here: a delivery failure is logged per
    * recipient, and re-sending the whole notice to retry one push would tell the others twice.
    */
-  async tell(form: Pick<Form, 'id' | 'title' | 'ownerId' | 'associationId'>): Promise<void> {
+  async tell(
+    form: Pick<Form, 'id' | 'title' | 'ownerId' | 'associationId'>,
+    { payerInLine = false }: { payerInLine?: boolean } = {}
+  ): Promise<void> {
     const recipients = await this.recipientsOf(form);
     const title = form.title ?? '';
     const written = await this.notifications.createNotifications({
@@ -102,14 +111,19 @@ export class FormOrganiserAlertService {
       actorId: SYSTEM_ACTOR_ID,
       actorName: SYSTEM_ACTOR_NAME,
       text: title,
+      // What the bell row says: a refund owed now, or only if the payer in line is never promoted.
+      ...(payerInLine ? { meta: { payerInLine: true } } : {}),
       // The push is sent below with the explicit target: `createNotifications` would draw the
       // ACTOR's picture, and the actor here is nobody.
       skipPush: true,
     });
     this.logger.log(
-      `[FORM-ALERT] form ${form.id.slice(0, 8)}: payment over capacity told to ${written} manager(s)`
+      `[FORM-ALERT] form ${form.id.slice(0, 8)}: payment over capacity told to ${written} manager(s)` +
+        (payerInLine ? ' (payer on the waiting list)' : '')
     );
-    const content = formPaidOverCapacityContent(title);
+    const content = payerInLine
+      ? formPaidOverCapacityWaitlistedContent(title)
+      : formPaidOverCapacityContent(title);
     void forEachBounded(recipients, PUSH_FAN_OUT_LIMIT, (recipientId) =>
       this.push.notifyContent(recipientId, content, {
         type: 'social',

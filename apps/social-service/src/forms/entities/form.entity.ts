@@ -42,6 +42,15 @@ export class Form {
   @Column({ nullable: true })
   maxSubmissions: number;
 
+  /**
+   * Whether a member's answer given once every place is taken waits in line instead of being
+   * refused (migration 183, owner 2026-11-23, opt-in: off by default). It takes effect only where
+   * `waitlistApplies` says so - a limited, named, single-answer form (`waitlist.ts`) - and turning
+   * it off stops new arrivals only: the answers already waiting keep their place and are promoted.
+   */
+  @Column({ default: false })
+  waitlistEnabled: boolean;
+
   /** When set, submissions are rejected until this instant (shotgun / scheduled opening). */
   @Column({ type: 'timestamptz', nullable: true })
   opensAt: Date | null;

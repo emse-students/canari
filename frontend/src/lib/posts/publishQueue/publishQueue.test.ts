@@ -24,6 +24,7 @@ import {
   PublishQueue,
   classifyPublishFailure,
   retryCannotCure,
+  type ChatTakeAdoption,
   type PublishUploadArgs,
   type PublishView,
 } from './publishQueue';
@@ -35,11 +36,13 @@ import {
   type MemberMarks,
   type QueuedFile,
   type QueuedPost,
+  type QueuedTakePreparation,
 } from './publishQueueStore';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { UploadAbortedError } from '$lib/utils/uploadXhr';
 import type { MediaRef } from '$lib/media';
+import { REEL_MEDIA_EXPIRED } from '$lib/reels/reelMediaExpired';
 
 /** An in-memory stand-in for `PublishQueueStore`, cloning like IndexedDB does. */
 function memoryStore() {
@@ -139,6 +142,20 @@ interface Rig {
   /** Called at every account check, before the check - a test's hook between two steps. */
   onCheckpoint: (() => void) | null;
   views: PublishView[];
+  /** The `take` each prepare was handed (`undefined`: an ordinary post media). */
+  takes: Array<QueuedTakePreparation | undefined>;
+  /** Every adoption the chat take was handed: the take, the file, the declared length. */
+  adopted: Array<{ takeId: string; mediaId: string; durationMs: number }>;
+  /** Every end of the chat take's wait, in order. */
+  waitEnded: string[];
+  /** What the next adoptions do instead of succeeding: throw, per call. */
+  adoptPlan: Array<() => Promise<void>>;
+  /** What an adoption that does not throw answers. */
+  adoptAnswer: ChatTakeAdoption;
+  /** How many times a pass ended (`passEnded`). */
+  passesEnded: number;
+  /** Every line the queue logged. */
+  logs: string[];
 }
 
 function rig(store = memoryStore()): Rig {
@@ -163,12 +180,20 @@ function rig(store = memoryStore()): Rig {
     video: { width: 720, height: 1280, durationMs: 41_250 },
     onCheckpoint: null,
     views: [] as PublishView[],
+    takes: [] as Rig['takes'],
+    adopted: [] as Rig['adopted'],
+    waitEnded: [] as string[],
+    adoptPlan: [] as Rig['adoptPlan'],
+    adoptAnswer: 'adopted',
+    passesEnded: 0,
+    logs: [] as string[],
   } as Rig;
   let n = 0;
   r.queue = new PublishQueue({
     store,
-    prepare: async (file) => {
+    prepare: async (file, _onProgress, _signal, take) => {
       r.calls.push(`prepare:${file.name}`);
+      r.takes.push(take);
       if (file.type.startsWith('video/')) {
         return {
           file: new File([await file.arrayBuffer()], file.name.replace(/\.\w+$/, '.mp4'), {
@@ -216,6 +241,17 @@ function rig(store = memoryStore()): Rig {
     release: async (id) => {
       r.released.push(id);
     },
+    adoptChatTake: async (takeId, uploaded) => {
+      r.calls.push(`adopt:${takeId}`);
+      const step = r.adoptPlan.shift();
+      if (step) await step();
+      r.adopted.push({ takeId, mediaId: uploaded.ref.mediaId, durationMs: uploaded.durationMs });
+      return r.adoptAnswer;
+    },
+    endChatTakeWait: (takeId) => {
+      r.calls.push(`end-wait:${takeId}`);
+      r.waitEnded.push(takeId);
+    },
     withdrawPost: async (id, mediaIds) => {
       r.calls.push(`withdraw:${id}`);
       r.withdrawals.push({ id, mediaIds });
@@ -251,7 +287,10 @@ function rig(store = memoryStore()): Rig {
       r.viewSources.push(fromRunner);
     },
     onPublished: (p) => r.published.push(p.id),
-    log: () => undefined,
+    passEnded: () => {
+      r.passesEnded += 1;
+    },
+    log: (line) => r.logs.push(line),
   });
   return r;
 }
@@ -888,5 +927,289 @@ describe('PublishQueue - every vertical video of 90 s or less is a CanaReel (own
     queueFiles(r.store, 'v-5', [['v.mp4', 'video/mp4']]);
     await r.queue.drain();
     expect(r.payloads[0].kind).toBeUndefined();
+  });
+});
+
+/** A take of the CanaReels camera, queued as `queueReelPublish` queues it. */
+function queueTake(
+  store: ReturnType<typeof memoryStore>,
+  id: string,
+  opts: { chatTakeId?: string; removeAudio?: true } = {}
+) {
+  store.posts.set(id, {
+    id,
+    queuedAt: 1,
+    payload: { markdown: 'caption' },
+    media: [
+      {
+        name: 'canareel.mp4',
+        type: 'video/mp4',
+        size: 3,
+        take: { maxDurationMs: 90_000, ...(opts.removeAudio ? { removeAudio: true } : {}) },
+      },
+    ],
+    landing: 'all',
+    ...(opts.chatTakeId ? { chatTakeId: opts.chatTakeId } : {}),
+  });
+  store.files.set(`${id}/0`, {
+    bytes: new Uint8Array([1, 2, 3]).buffer,
+    name: 'canareel.mp4',
+    type: 'video/mp4',
+  });
+}
+
+describe('PublishQueue - a CanaReels camera take (2026-11-24: the publish survives leaving the app)', () => {
+  it('prepares the take as the camera does - its cap and its removed sound - and creates ONE reel', async () => {
+    const r = rig();
+    queueTake(r.store, 'reel-1', { removeAudio: true });
+    await r.queue.drain();
+    expect(r.takes).toEqual([{ maxDurationMs: 90_000, removeAudio: true }]);
+    expect(r.uploads[0].retentionClass).toBe('archive');
+    expect(r.payloads).toHaveLength(1);
+    expect(r.payloads[0]).toMatchObject({ id: 'reel-1', kind: 'reel', durationMs: 41_250 });
+  });
+
+  it.each([
+    ['its first step', 'prepare'],
+    ['the upload', 'upload'],
+    ['the create', 'create'],
+  ])(
+    'an app stopped during %s (no answer) resumes on its return: ONE prepare, ONE upload, ONE post',
+    async (_label, step) => {
+      const r = rig();
+      queueTake(r.store, 'reel-2');
+      const cut = async () => {
+        throw new TransportFailureError(new TypeError('Failed to fetch'));
+      };
+      if (step === 'upload') r.uploadPlan.push(cut);
+      if (step === 'create') r.createPlan.push(cut);
+      if (step === 'prepare') {
+        // The page frozen mid-encode: the shell's return aborts the transfer it cannot trust.
+        r.onCheckpoint = () => {
+          r.onCheckpoint = null;
+          r.queue.resumeAfterSuspension();
+        };
+      }
+      const pass = r.queue.drain();
+      await settle();
+      r.queue.resumeAfterSuspension();
+      await pass;
+      await r.queue.drain();
+      expect(r.created.map((c) => c.id)).toEqual(['reel-2']);
+      expect(r.calls.filter((c) => c.startsWith('prepare:'))).toHaveLength(1);
+      expect(r.store.posts.size).toBe(0);
+      if (step === 'create') {
+        // The create whose answer was lost is sent again under the SAME id: one post on the server.
+        expect(r.calls.filter((c) => c === 'create:reel-2')).toHaveLength(2);
+        expect(r.calls.filter((c) => c.startsWith('upload:'))).toHaveLength(1);
+      }
+    }
+  );
+
+  it('a queue re-opened over the same store (a kill after the upload) creates the reel without uploading again', async () => {
+    const store = memoryStore();
+    const first = rig(store);
+    queueTake(store, 'reel-3');
+    first.createPlan.push(async () => {
+      throw new TransportFailureError(new TypeError('Failed to fetch'));
+    });
+    const pass = first.queue.drain();
+    await settle();
+    first.queue.stop();
+    await pass;
+    expect(store.posts.get('reel-3')?.media[0].ref).toBeDefined();
+    const second = rig(store);
+    await second.queue.drain();
+    expect(second.calls).toEqual(['create:reel-3']);
+    expect(second.payloads[0]).toMatchObject({ kind: 'reel', id: 'reel-3' });
+  });
+
+  it('CHATS TOO (15.5): uploaded reel-pending, adopted by the chat take BEFORE the post exists, the wait ended once', async () => {
+    const r = rig();
+    queueTake(r.store, 'reel-4', { chatTakeId: 'take-1' });
+    await r.queue.drain();
+    expect(r.uploads[0].retentionClass).toBe('reel-pending');
+    expect(r.calls).toEqual([
+      'prepare:canareel.mp4',
+      'upload:canareel.mp4',
+      'adopt:take-1',
+      'end-wait:take-1',
+      'create:reel-4',
+    ]);
+    expect(r.adopted).toEqual([
+      { takeId: 'take-1', mediaId: r.created[0].media[0].mediaId, durationMs: 41_250 },
+    ]);
+  });
+
+  it('CHATS TOO: a post refused after the upload leaves the chats their file, and tells the take nothing twice', async () => {
+    const r = rig();
+    queueTake(r.store, 'reel-5', { chatTakeId: 'take-2' });
+    r.createPlan.push(async () => {
+      throw new ApiRefusalError(422, null, 'refused');
+    });
+    await r.queue.drain();
+    expect(r.adopted).toHaveLength(1);
+    expect(r.waitEnded).toEqual(['take-2']);
+    expect(r.store.posts.get('reel-5')?.failure?.stage).toBe('createPost');
+    await r.queue.retry('reel-5');
+    expect(r.adopted).toHaveLength(1);
+    expect(r.waitEnded).toEqual(['take-2']);
+  });
+
+  it('CHATS TOO: a take outside the rule is a post uploaded archive, and the chat take uploads its own', async () => {
+    const r = rig();
+    r.video = { width: 1920, height: 1080, durationMs: 120_000 };
+    queueTake(r.store, 'reel-6', { chatTakeId: 'take-3' });
+    await r.queue.drain();
+    expect(r.uploads[0].retentionClass).toBe('archive');
+    expect(r.adopted).toEqual([]);
+    expect(r.waitEnded).toEqual(['take-3']);
+    expect(r.calls.indexOf('end-wait:take-3')).toBeLessThan(r.calls.indexOf('upload:canareel.mp4'));
+    expect(r.payloads[0].kind).toBeUndefined();
+  });
+
+  it('CHATS TOO: an adoption that fails is accused, ends the wait, and never stops the reel', async () => {
+    const r = rig();
+    queueTake(r.store, 'reel-7', { chatTakeId: 'take-4' });
+    r.adoptPlan.push(async () => {
+      throw new Error('no messaging layer');
+    });
+    await r.queue.drain();
+    expect(r.waitEnded).toEqual(['take-4']);
+    expect(r.created.map((c) => c.id)).toEqual(['reel-7']);
+  });
+
+  it('CHATS TOO: a reel the member deletes ends the wait, and its reel-pending file is never named to the withdrawal', async () => {
+    const r = rig();
+    queueTake(r.store, 'reel-8', { chatTakeId: 'take-5' });
+    r.createPlan.push(async () => {
+      throw new TransportFailureError(new TypeError('Failed to fetch'));
+    });
+    const pass = r.queue.drain();
+    await settle();
+    await r.queue.remove('reel-8');
+    await pass;
+    await r.queue.drain();
+    expect(r.withdrawals).toEqual([{ id: 'reel-8', mediaIds: [] }]);
+    expect(r.waitEnded).toEqual(['take-5']);
+    expect(r.created).toEqual([]);
+  });
+
+  it.each([
+    ['declined', 'declined'],
+    ['forwarded', 'is handed'],
+    ['adopted', 'adopts'],
+  ] as const)(
+    'CHATS TOO: an adoption the take answers %s is logged as what it did, never as an adoption it was not',
+    async (answer, said) => {
+      const r = rig();
+      r.adoptAnswer = answer;
+      queueTake(r.store, 'reel-9', { chatTakeId: 'take-6' });
+      await r.queue.drain();
+      const line = r.logs.find((l) => l.includes('its chat take take-6'));
+      expect(line).toContain(said);
+      if (answer !== 'adopted') expect(line).not.toContain(' adopts ');
+    }
+  );
+
+  it('CHATS TOO: a post a chat take waits on goes BEFORE an earlier, slower post', async () => {
+    const r = rig();
+    queuePost(r.store, 'slow', 2, 0);
+    queueTake(r.store, 'reel-10', { chatTakeId: 'take-7' });
+    await r.queue.drain();
+    expect(r.created.map((c) => c.id)).toEqual(['reel-10', 'slow']);
+    expect(r.calls.indexOf('end-wait:take-7')).toBeLessThan(r.calls.indexOf('prepare:p0.jpg'));
+  });
+
+  it('CHATS TOO: once handed over, the take no longer jumps the queue (oldest first again)', async () => {
+    const r = rig();
+    queuePost(r.store, 'slow', 1, 0);
+    queueTake(r.store, 'reel-11', { chatTakeId: 'take-8' });
+    r.store.posts.get('reel-11')!.takeHandedOver = true;
+    await r.queue.drain();
+    expect(r.created.map((c) => c.id)).toEqual(['slow', 'reel-11']);
+  });
+
+  it("CHATS TOO: an estate that does not serve the queue ends the take's wait at once, durably - and sends nothing", async () => {
+    const r = rig();
+    r.serverReady = false;
+    queueTake(r.store, 'reel-12', { chatTakeId: 'take-9' });
+    await r.queue.drain();
+    expect(r.waitEnded).toEqual(['take-9']);
+    expect(r.uploads).toEqual([]);
+    expect(r.store.posts.get('reel-12')?.takeHandedOver).toBe(true);
+    // Asked again (the version still says no): the take is not told twice.
+    await r.queue.drain();
+    expect(r.waitEnded).toEqual(['take-9']);
+  });
+
+  it('a create refused because its pending upload EXPIRED uploads the file again and publishes - never the same ref for ever', async () => {
+    const r = rig();
+    queueTake(r.store, 'reel-13', { chatTakeId: 'take-10' });
+    r.createPlan.push(async () => {
+      throw new ApiRefusalError(400, REEL_MEDIA_EXPIRED, 'upload it again');
+    });
+    await r.queue.drain();
+    expect(r.calls.filter((c) => c === 'prepare:canareel.mp4')).toHaveLength(1);
+    expect(r.uploads.map((u) => u.retentionClass)).toEqual(['reel-pending', 'reel-pending']);
+    expect(r.calls.filter((c) => c === 'create:reel-13')).toHaveLength(2);
+    expect(r.created).toHaveLength(1);
+    expect(r.created[0].media[0].mediaId).toMatch(/-2$/);
+    expect(r.published).toEqual(['reel-13']);
+    // The take was handed over once, with the first file: the second upload tells it nothing.
+    expect(r.waitEnded).toEqual(['take-10']);
+  });
+
+  it('the same refusal on a post that holds no pending upload is the failure it was answered', async () => {
+    const r = rig();
+    queueTake(r.store, 'reel-14');
+    r.createPlan.push(async () => {
+      throw new ApiRefusalError(400, REEL_MEDIA_EXPIRED, 'upload it again');
+    });
+    await r.queue.drain();
+    expect(r.uploads).toHaveLength(1);
+    expect(r.store.posts.get('reel-14')?.failure?.stage).toBe('createPost');
+  });
+});
+
+describe('PublishQueue - every way a pass ends is told (the screen it held goes with it)', () => {
+  it('a queue that empties ends the pass', async () => {
+    const r = rig();
+    queuePost(r.store, 'post-e', 1);
+    await r.queue.drain();
+    expect(r.passesEnded).toBe(1);
+  });
+
+  it('a HALT (the session is another account) ends the pass', async () => {
+    const r = rig();
+    r.sessionUser = 'bob';
+    queuePost(r.store, 'post-h', 1);
+    await r.queue.drain();
+    expect(r.created).toEqual([]);
+    expect(r.passesEnded).toBe(1);
+  });
+
+  it('an UNEXPECTED error out of the pass ends it', async () => {
+    const r = rig();
+    queuePost(r.store, 'post-u', 1);
+    r.store.list = async () => {
+      throw new Error('the store broke');
+    };
+    await r.queue.drain();
+    expect(r.passesEnded).toBe(1);
+  });
+
+  it('a LAST POST GONE mid-step, with no row drawn after it, ends the pass', async () => {
+    const r = rig();
+    queuePost(r.store, 'post-g', 1);
+    // Deleted from the store (another tab's Delete landed) while it is being prepared.
+    r.onCheckpoint = () => {
+      if (r.views.some((v) => v.phase === 'preparing')) r.store.posts.delete('post-g');
+    };
+    await r.queue.drain();
+    expect(r.created).toEqual([]);
+    // The last row drawn still says it was being worked on: only the end of the pass says otherwise.
+    expect(r.views.map((v) => v.phase)).toEqual(['uploading']);
+    expect(r.passesEnded).toBe(1);
   });
 });

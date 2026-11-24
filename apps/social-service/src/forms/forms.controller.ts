@@ -208,13 +208,13 @@ export class FormsController {
   @UseGuards(NginxAuthGuard)
   @Post(':id/draft/publish')
   @HttpCode(200)
-  publishDraft(
+  async publishDraft(
     @Param('id') id: string,
     @Headers('x-user-id') xUserId: string,
     @Body() dto: PublishFormRevisionDto,
     @Headers('x-global-admin') ga?: string
   ) {
-    return this.service.publishChanges(
+    const published = await this.service.publishChanges(
       id,
       dto.revision,
       xUserId,
@@ -222,6 +222,7 @@ export class FormsController {
       dto.overwrite === true,
       dto.confirmOpeningNotify ?? null
     );
+    return published;
   }
 
   /** "Abandonner les modifications": empties revision `revision`; the form stays as published. */
@@ -240,14 +241,14 @@ export class FormsController {
   /** Updates a form's metadata and items. Requires owner, co-owner, or MANAGE_FORMS flag. */
   @UseGuards(NginxAuthGuard)
   @Patch(':id')
-  update(
+  async update(
     @Param('id') id: string,
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') ga?: string,
     @Body() dto?: CreateFormDto,
     @Query('confirmOpeningNotify') confirmOpeningNotify?: string
   ) {
-    return this.service.update(
+    const saved = await this.service.update(
       id,
       dto,
       xUserId,
@@ -255,6 +256,7 @@ export class FormsController {
       undefined,
       confirmedAskersOf(confirmOpeningNotify)
     );
+    return saved;
   }
 
   /**
@@ -643,6 +645,37 @@ export class FormsController {
     @Headers('x-global-admin') ga?: string
   ) {
     return this.service.cancelSubmission(submissionId, xUserId, ga === 'true');
+  }
+
+  /**
+   * THE MEMBER LEAVES THE WAITING LIST (`waitlist.ts`): their own waiting answer is deleted. A 409
+   * `WAITLIST_ANSWER_NOT_WAITING` when it was promoted meanwhile; another person's answer is a 404.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Post('submissions/:submissionId/leave-waitlist')
+  @HttpCode(200)
+  leaveWaitlist(
+    @Param('submissionId') submissionId: string,
+    @Headers('x-user-id') xUserId: string
+  ) {
+    return this.service.leaveWaitlist(submissionId, xUserId);
+  }
+
+  /**
+   * A MANAGER PROMOTES ONE WAITING ANSWER BY HAND (`waitlist.ts`), above the capacity if the form is
+   * full. Requires form owner or MANAGE_FORMS flag. Removing one from the list is the ordinary
+   * delete of a submission.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Post(':id/submissions/:submissionId/promote')
+  @HttpCode(200)
+  promoteFromWaitlist(
+    @Param('id') id: string,
+    @Param('submissionId') submissionId: string,
+    @Headers('x-user-id') callerId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    return this.service.promoteByHand(id, submissionId, callerId, ga === 'true');
   }
 
   /** Deletes a submission. Requires form manager access. */
