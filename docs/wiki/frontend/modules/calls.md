@@ -3883,11 +3883,7 @@ playing. What changed:
   closes it exactly once. A closed audio (`CallAudioLife`) refuses a device callback or a focus
   change the main looper still delivers, with ONE accusing line each, and a close with nothing to
   close is accused too. Tests: `CallAudioSlotTest` (the same object relabelled, nothing closed; one
-  close; late callbacks refused). **Owed on the Mi 9T**, ideally with a Bluetooth headset: a call
-  replacing another in the service (the first call's stop lost) logs `audio hands over from
-  call=<old> to call=<new> - mode, output and focus kept` and NO `released:` line, and the voice
-  has no gap (the headset stays on, music stays paused); then a cellular call rung into it holds
-  and releases the microphone as (G) below.
+  close; late callbacks refused). **READ on the Mi 9T, `1.8.0-alpha.6` (2026-11-24, [readings](../../device-verification.md#the-readings-of-2026-11-24-180-alpha6-mi-9t-the-replace-call-handover-the-voice-note-permission-prompt-the-keyboard-gif-in-the-comment-box-the-composer-and-a-refusing-field)): PASS.** A second `start` sent to the bridge while a call held the foreground logs `audio hands over from call=<old> to call=<new> - mode, output and focus kept` and NO `released:` line; one focus entry for the app stays and the mode stays `MODE_IN_COMMUNICATION` through the handover; the later stop closes the audio exactly once and leaves no focus entry. Taken without a Bluetooth headset or a cellular call (the bench has no SIM, [decisions](../../decisions/owner-decisions-of-2026-11-24.md)): the cellular half is the closed reading above.
 - **EVERY mute control shows the call MUTED while held** - the in-app button, the minimised bar, the
   ongoing notification and the OS media controls all read `micShownMuted` (`isMuted ||
   audioFocusHeld`, `useCallModel`), and all tap through ONE function, `CallService.muteButtonTap`:
