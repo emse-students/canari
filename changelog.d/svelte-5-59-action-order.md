@@ -1,3 +1,3 @@
-### Fixed - the rail and salon drag zones and the ring's Accept focus no longer depend on Svelte's action order
+### Fixed - drag zones, tab-row observers and the focus moves no longer depend on Svelte's action order
 
-Svelte 5.59 starts an action before the `{#each}` or `{#if}` it sits beside has rendered, so the drag library configured an empty zone and the ring's Accept lookup found nothing. The zones now configure again when their rows appear (`dndzoneRendered`) and Accept takes the focus when it mounts (`focusOnMount`).
+Svelte 5.59 runs actions and effects before the sibling blocks render, which would have disarmed the rail's drag zones, the tab and chip observers and the focus of the ring and of an opened form card; each now follows the DOM or its own element ([architecture](docs/wiki/frontend/architecture.md#svelte-559-runs-actions-and-effects-before-the-sibling-blocks-render-2026-11-24)).

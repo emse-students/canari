@@ -1,3 +1,4 @@
+import { Log } from '$lib/utils/Log';
 import type { ActionReturn } from 'svelte/action';
 import { dndzone, type DndZoneAttributes, type Item, type Options } from 'svelte-dnd-action';
 
@@ -13,9 +14,10 @@ import { dndzone, type DndZoneAttributes, type Item, type Options } from 'svelte
  * was no longer prevented.) Older Svelte ran the action after the children, which hid it.
  *
  * The fix is to configure again whenever the zone's child list changes, driven by the DOM itself
- * (a `MutationObserver` on `childList`), never by a clock. It only re-configures when the child
- * COUNT differs from the one last configured, so the library's own shadow element during a drag
- * (which keeps the count) is not an extra configure.
+ * (a `MutationObserver` on `childList`), never by a clock. It re-configures only when the child
+ * LIST differs, element by element, from the one last configured: a keyed swap keeps the count but
+ * brings a node the library never armed, while a mutation that leaves the same children (the
+ * library's own shadow-element bookkeeping) is not an extra configure, so there is no loop.
  */
 export function dndzoneRendered<T extends Item>(
   node: HTMLElement,
@@ -23,17 +25,25 @@ export function dndzoneRendered<T extends Item>(
 ): ActionReturn<Options<T>, DndZoneAttributes<T>> {
   let latest = options;
   const inner = dndzone(node, options);
-  let configuredCount = node.children.length;
+  let configured = Array.from(node.children);
   const observer = new MutationObserver(() => {
-    if (node.children.length === configuredCount) return;
-    configuredCount = node.children.length;
+    // A drag in progress is the library's own: it re-reads the rows through the items the page hands it.
+    if (node.querySelector(':scope > [data-is-dnd-shadow-item-internal]')) return;
+    const now = Array.from(node.children);
+    if (now.length === configured.length && now.every((child, i) => child === configured[i]))
+      return;
+    Log.d(
+      'dndzoneRendered',
+      `child list changed (${configured.length} -> ${now.length}): configuring again`
+    );
+    configured = now;
     inner?.update?.(latest);
   });
   observer.observe(node, { childList: true });
   return {
     update(next: Options<T>) {
       latest = next;
-      configuredCount = node.children.length;
+      configured = Array.from(node.children);
       inner?.update?.(next);
     },
     destroy() {
