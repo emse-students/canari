@@ -1,6 +1,6 @@
 ## P2 - rows before ratchet: a frame carrying no message whose dispatch threw is withheld, but its redelivery reads as a duplicate (reviews of #3851, 2026-11-19)
 
-target: 1.8.0
+target: 1.9.0
 
 Left by the fixes of #3851
 ([chat](../frontend/modules/chat.md#a-poison-row-is-dropped-not-kept-2026-11-19)). A frame that

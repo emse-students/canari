@@ -1,6 +1,6 @@
 ## P3 - what the production log read of the `1.7.0` stable day left unexplained: two lines remain (2026-11-18)
 
-target: 1.8.0
+target: 1.10.0
 
 _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 

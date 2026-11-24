@@ -1,6 +1,6 @@
 ## P3 - Two association deletes that co-organise each other's events can deadlock (found 2026-10-19, review of #2116, not fixed)
 
-target: 1.8.0
+target: 1.10.0
 
 **Re-read 2026-11-11: unchanged.** `remove` still locks only its own row (`SELECT 1 FROM
 associations WHERE id = $1 FOR UPDATE`).

@@ -1,6 +1,6 @@
 ## P3 - A leader taken over in the middle of its own PIN change reloads and tears the change (found 2026-10-18, review of #2058)
 
-target: 1.8.0
+target: 1.10.0
 
 **Re-read 2026-11-11: unchanged.** The demotion handler (`setTabLeaderDemotedHandler`,
 `useChatSession.svelte.ts`) still reloads 50 ms later, and nothing checks a key change in progress.

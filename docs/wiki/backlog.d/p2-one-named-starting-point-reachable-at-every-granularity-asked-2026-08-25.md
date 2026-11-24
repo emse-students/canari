@@ -1,6 +1,6 @@
 ## P2 - ONE NAMED STARTING POINT, reachable at every granularity (asked 2026-08-25)
 
-target: 1.8.0
+target: 1.9.0
 
 Not built: one exported, idempotent entry point with an asserted postcondition (on `/chat`, unlocked, no
 overlay, mounted, deployed bundle), PIN typed only if the gate is up, a logged reload repair on web, A1

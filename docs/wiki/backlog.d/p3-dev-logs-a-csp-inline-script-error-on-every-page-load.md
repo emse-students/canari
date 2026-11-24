@@ -1,6 +1,6 @@
 ## P3 - the dev estate logs one CSP `inline script` refusal on every page load
 
-target: 1.8.0
+target: 1.10.0
 
 _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 

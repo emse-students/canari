@@ -1,6 +1,6 @@
 ## P2 - Graine rotates on every key-group epoch, so a growing community mints a seed per message (measured 2026-10-21)
 
-target: 1.8.0
+target: 1.9.0
 
 Every device joining a community's key group commits, and the outbound rotation rotated on any
 epoch change. Production: 845 sessions for 1 698 messages, and 458 seeds in the largest community's
