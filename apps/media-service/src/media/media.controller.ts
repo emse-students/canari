@@ -95,7 +95,8 @@ import {
   type LiveTrimResult,
 } from './live-segments.service';
 import { assertInternalSecret } from './internal-secret.util';
-import { subjectOfAccessToken } from './access-token';
+import { datingAccessToken, readAccessToken, type AccessCredential } from './access-token';
+import { assertMintableUserId } from './user-id';
 import { fetchLivesMode } from './lives-mode';
 import { handedRetention, mediaRetention, type MediaRetentionDays } from './retention-settings';
 import { requireUploadedFile, uploadedFileBuffer, uploadedFileMime } from './uploaded-file';
@@ -209,6 +210,15 @@ export class MediaController {
   // service has no exception filter, so without this line a 401 leaves nothing on the server. The
   // token itself is never written.
   private verifyToken(req: Request): string {
+    return this.verifyCredential(req).sub;
+  }
+
+  /**
+   * {@link verifyToken}, answering the token's mint time as well: what an upload route hands the
+   * erased-owner record, so a person who came back under an erased id is not refused
+   * (`erased-owners.ts`).
+   */
+  private verifyCredential(req: Request): AccessCredential {
     try {
       const header = req.headers['authorization'] ?? '';
       if (!header.startsWith('Bearer ')) {
@@ -221,13 +231,50 @@ export class MediaController {
         this.logger.error('[AUTH] JWT_SECRET is not configured - refusing the request');
         throw new InternalServerErrorException('JWT_SECRET is not configured');
       }
-      return subjectOfAccessToken(header.slice(7), secret, Math.floor(Date.now() / 1000));
+      return readAccessToken(header.slice(7), secret, Math.floor(Date.now() / 1000));
     } catch (err) {
       if (err instanceof UnauthorizedException) {
         this.logger.warn(`[auth] request refused, 401: ${err.message}`);
       }
       throw err;
     }
+  }
+
+  /**
+   * The mint time of the member's own access token that social-service forwards on a form-file
+   * store, VERIFIED here (signature, type, and that it names `ownerId`) - never a date another
+   * service states. Not its expiry: nginx and core authenticated the request when it arrived, and a
+   * large file can outlast the token on the way ({@link datingAccessToken}). `undefined` when there is none, or it does not verify: the upload is then judged
+   * old by the erased-owner record, which refuses it only for an erased owner.
+   */
+  private formFileIssuedAt(authorization: string | undefined, ownerId: string): number | undefined {
+    if (!authorization?.startsWith('Bearer ')) {
+      this.logger.debug('[FORM_FILE] no member token forwarded: the upload is undated');
+      return undefined;
+    }
+    const secret = process.env.JWT_SECRET;
+    if (!secret) {
+      this.logger.error('[AUTH] JWT_SECRET is not configured - refusing the request');
+      throw new InternalServerErrorException('JWT_SECRET is not configured');
+    }
+    let credential: AccessCredential;
+    try {
+      credential = datingAccessToken(authorization.slice(7), secret);
+    } catch (err) {
+      this.logger.warn(
+        `[FORM_FILE] the forwarded member token does not verify - the upload is undated: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+      return undefined;
+    }
+    if (credential.sub !== ownerId) {
+      this.logger.error(
+        '[FORM_FILE] the forwarded member token names another account than the uploader - the upload is undated'
+      );
+      return undefined;
+    }
+    return credential.issuedAt;
   }
 
   // ---------------------------------------------------------------------------
@@ -281,7 +328,7 @@ export class MediaController {
     @Body() body: { retentionClass?: unknown },
     @Req() req: Request
   ): Promise<{ mediaId: string }> {
-    const ownerId = this.verifyToken(req);
+    const { sub: ownerId, issuedAt } = this.verifyCredential(req);
 
     let upload: ReturnType<typeof requireUploadedFile>;
     try {
@@ -301,7 +348,12 @@ export class MediaController {
     // the sweep is an allowlist of `ephemeral` - so a missing hint costs storage, never a file.
     const retentionClass = clientRetentionClass(body?.retentionClass);
 
-    const mediaId = await this.mediaService.upload(upload.buffer, ownerId, retentionClass);
+    const mediaId = await this.mediaService.upload(
+      upload.buffer,
+      ownerId,
+      retentionClass,
+      issuedAt
+    );
     this.logger.log(
       `Stored encrypted blob: ${mediaId} (${upload.size} bytes, retention=${retentionClass ?? 'unclassified'})`
     );
@@ -323,7 +375,7 @@ export class MediaController {
     @Req() req: Request,
     @Body() body?: { size?: unknown }
   ): Promise<{ mediaId: string }> {
-    this.verifyToken(req);
+    const { sub: uploaderId, issuedAt } = this.verifyCredential(req);
     const size = publicImageSize(body?.size);
     const bound = PUBLIC_IMAGE_BOUNDS[size];
 
@@ -358,7 +410,12 @@ export class MediaController {
       throw new UnprocessableEntityException('The image could not be read');
     }
 
-    const mediaId = await this.mediaService.uploadPublicAsset(compressed, 'image/webp');
+    const mediaId = await this.mediaService.uploadPublicAsset(
+      compressed,
+      'image/webp',
+      uploaderId,
+      issuedAt
+    );
     this.logger.log(
       `Stored public asset: ${mediaId} (${upload.size} → ${compressed.length} bytes, webp, size=${size})`
     );
@@ -372,7 +429,7 @@ export class MediaController {
     @Body() body: { retentionClass?: unknown; totalBytes?: unknown } | undefined,
     @Req() req: Request
   ): Promise<{ uploadId: string }> {
-    const ownerId = this.verifyToken(req);
+    const { sub: ownerId, issuedAt } = this.verifyCredential(req);
     // A `chat-reel` declares its class and total HERE so the daily budget is reserved before any
     // byte is staged; every other caller sends no body and is unchanged.
     const retentionClass = clientRetentionClass(body?.retentionClass);
@@ -381,7 +438,8 @@ export class MediaController {
       ownerId,
       retentionClass,
       totalBytes,
-      MAX_BYTES
+      MAX_BYTES,
+      issuedAt
     );
     this.logger.log(
       `Initialized chunked upload: ${uploadId} (retention=${retentionClass ?? 'unclassified'})`
@@ -431,7 +489,7 @@ export class MediaController {
     @Body() body: { retentionClass?: unknown },
     @Req() req: Request
   ): Promise<{ mediaId: string }> {
-    const ownerId = this.verifyToken(req);
+    const { sub: ownerId, issuedAt } = this.verifyCredential(req);
     // Same hint as the single-shot upload: a 50 MB+ video posted to the feed is archive too, and
     // the class has to survive the path the file happened to take.
     const retentionClass = clientRetentionClass(body?.retentionClass);
@@ -439,7 +497,8 @@ export class MediaController {
       id,
       MAX_BYTES,
       ownerId,
-      retentionClass
+      retentionClass,
+      issuedAt
     );
     this.logger.log(
       `Completed chunked upload: ${id} -> ${mediaId} (retention=${retentionClass ?? 'unclassified'})`
@@ -466,7 +525,7 @@ export class MediaController {
       | undefined,
     @Req() req: Request
   ) {
-    const ownerId = this.verifyToken(req);
+    const { sub: ownerId, issuedAt } = this.verifyCredential(req);
     const retentionClass = clientRetentionClass(body?.retentionClass);
     return this.uploadSessions.init(
       ownerId,
@@ -477,7 +536,8 @@ export class MediaController {
         header: body?.header,
         encoding: body?.encoding,
       },
-      MAX_BYTES
+      MAX_BYTES,
+      issuedAt
     );
   }
 
@@ -506,7 +566,8 @@ export class MediaController {
     @Param('id') id: string,
     @Req() req: Request
   ): Promise<{ mediaId: string }> {
-    return this.uploadSessions.complete(this.verifyToken(req), id);
+    const { sub: ownerId, issuedAt } = this.verifyCredential(req);
+    return this.uploadSessions.complete(ownerId, id, issuedAt);
   }
 
   @Delete('upload/session/:id')
@@ -952,7 +1013,8 @@ export class MediaController {
   async uploadFormFile(
     @UploadedFile() file: unknown,
     @Body() body: { ownerId?: unknown },
-    @Headers('x-internal-secret') internalSecret: string | undefined
+    @Headers('x-internal-secret') internalSecret: string | undefined,
+    @Headers('authorization') authorization: string | undefined
   ): Promise<{ mediaId: string; sizeBytes: number }> {
     assertInternalSecret(internalSecret);
     if (typeof body?.ownerId !== 'string' || body.ownerId.length === 0) {
@@ -961,8 +1023,12 @@ export class MediaController {
     const upload = requireUploadedFile(file);
     // An image is re-encoded without its metadata (EXIF, GPS) before it is stored; `sizeBytes` is
     // what was STORED, never over FORM_FILE_MAX_BYTES. An image that does not decode, exceeds the
-    // pixel bound or cannot fit the cap is a 422.
-    return this.mediaService.uploadFormFile(upload.buffer, body.ownerId);
+    // pixel bound or cannot fit the cap is a 422. An erased owner's old token is a 410 OWNER_ERASED.
+    return this.mediaService.uploadFormFile(
+      upload.buffer,
+      body.ownerId,
+      this.formFileIssuedAt(authorization, body.ownerId)
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -1313,9 +1379,15 @@ export class MediaController {
     @Headers('x-internal-secret') internalSecret?: string
   ): Promise<{ ok: boolean; deleted: number; failed: number }> {
     assertInternalSecret(internalSecret);
-    // The open upload sessions first: no device of an erased account can release them any more.
-    await this.uploadSessions.cancelAllOwnedBy(userId);
+    // An id no account could carry is refused before anything is recorded under it.
+    assertMintableUserId(userId, this.logger, 'account-erasure');
+    // The objects FIRST: this call records the erasure before it reads the index, so from its first
+    // synchronous run no session of the owner can register anything, nor a new one open. Ending the
+    // sessions before it left a window in which one could open after the cancel and survive it.
     const { deleted, failed } = await this.mediaService.removeAllOwnedBy(userId);
+    // Then the sessions, the open ones and the completed ones' memos alike: no device of an erased
+    // account can release them, and each sidecar names the owner.
+    await this.uploadSessions.cancelAllOwnedBy(userId);
     if (failed > 0) {
       // A 2xx would tell the erasure queue this half is done. It is not: the objects that failed
       // are still stored, and only a retry of this call removes them.

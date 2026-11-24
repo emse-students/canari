@@ -2,6 +2,7 @@ import {
   BadRequestException,
   GoneException,
   HttpException,
+  Logger,
   NotFoundException,
   PayloadTooLargeException,
 } from '@nestjs/common';
@@ -10,6 +11,8 @@ import {
   FORM_FILE_MAX_BYTES,
   FORM_FILE_MAX_PENDING,
   FormFilesService,
+  OWNER_ERASED,
+  OwnerErasedRefusal,
   cleanFileName,
   detectFormFileType,
   fileAnswersOf,
@@ -255,6 +258,37 @@ describe('FormFilesService.upload - every refusal', () => {
       'could not be read'
     );
     expect(fileRepo.insert).not.toHaveBeenCalled();
+  });
+
+  it("forwards the member's own token, for the media service to date the upload with", async () => {
+    const { service, http } = makeService();
+    await service.upload('f1', 'q_cv', upload(PDF), 'u1', 'Bearer member-token');
+    expect(http.post.mock.calls[0][2].headers.authorization).toBe('Bearer member-token');
+    // No token: none forwarded (the media service then judges the upload undated).
+    await service.upload('f1', 'q_cv', upload(PDF), 'u1');
+    expect(http.post.mock.calls[1][2].headers).not.toHaveProperty('authorization');
+  });
+
+  it("answers the media service's 410 OWNER_ERASED as the same typed 410, never a 502", async () => {
+    const { service, http, fileRepo } = makeService();
+    const errors = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    http.post.mockReturnValueOnce(
+      throwError(() => ({ response: { status: 410, data: { code: OWNER_ERASED } } }))
+    );
+    const refused = service.upload('f1', 'q_cv', upload(PDF), 'u1', 'Bearer t');
+    await expect(refused).rejects.toBeInstanceOf(OwnerErasedRefusal);
+    await expect(refused).rejects.toMatchObject({
+      status: 410,
+      response: { code: OWNER_ERASED },
+    });
+    expect(errors).not.toHaveBeenCalled();
+    expect(fileRepo.insert).not.toHaveBeenCalled();
+    // Another 410 is not that refusal: still the store's failure.
+    http.post.mockReturnValueOnce(throwError(() => ({ response: { status: 410, data: {} } })));
+    await expect(service.upload('f1', 'q_cv', upload(PDF), 'u1')).rejects.toMatchObject({
+      status: 502,
+    });
+    errors.mockRestore();
   });
 
   it('takes the blob back when its row cannot be written, so nothing is stranded', async () => {

@@ -32,6 +32,8 @@ import { PART_MAX_BYTES } from './upload-session';
 
 process.env.MEDIA_CHAT_REEL_DAILY_BYTES = '100000';
 process.env.MEDIA_UPLOAD_SESSION_MAX_OPEN = '4';
+// The erased-owner record is keyed by an HMAC under this secret (erased-owners.ts).
+process.env.JWT_SECRET ??= 'test-erasure-key';
 
 // Loaded AFTER the env above: the daily budget is read once, at module load.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -75,7 +77,11 @@ interface Rig {
   dir: string;
   stored: Array<{ id: string; bytes: Buffer }>;
   failStore: { value: boolean };
+  /** The store WRITES the object, then answers an error (a timeout after the write). */
+  failAfterWrite: { value: boolean };
   registered: Array<{ id: string; size: number }>;
+  /** Every warning either service logged: a swallowed cleanup failure is visible to a test. */
+  warned: string[];
 }
 
 let dirs: string[] = [];
@@ -87,35 +93,54 @@ function rig(existingDir?: string, sharedMedia?: InstanceType<typeof MediaServic
   const stored: Rig['stored'] = [];
   const registered: Rig['registered'] = [];
   const failStore = { value: false };
+  const failAfterWrite = { value: false };
+  const warned: string[] = [];
+  const recordWarn = (msg: string) => void warned.push(msg);
   const media =
     sharedMedia ?? (Object.create(MediaService.prototype) as InstanceType<typeof MediaService>);
   if (!sharedMedia) {
     const m = media as unknown as Record<string, unknown>;
     m.meta = { items: Object.create(null) };
-    m.logger = { log: () => {}, warn: () => {}, error: () => {}, debug: () => {} };
+    m.logger = { log: () => {}, warn: recordWarn, error: () => {}, debug: () => {} };
     m.persistMetadata = () => Promise.resolve();
+    // The object store as the erasure and a refused registration reach it: a delete drops the copy.
+    m.storage = {
+      delete: async (id: string) => {
+        const at = stored.findIndex((s) => s.id === id);
+        if (at >= 0) stored.splice(at, 1);
+      },
+    };
   }
   const storage = {
     putFileStream: async (id: string, file: string) => {
       await new Promise((resolve) => setImmediate(resolve));
       if (failStore.value) throw new Error('store down');
       stored.push({ id, bytes: await fs.readFile(file) });
+      if (failAfterWrite.value) throw new Error('store timed out after the write');
     },
   };
   const svc = new UploadSessionService(media, storage as never);
   (svc as unknown as { logger: unknown }).logger = {
     log: () => {},
-    warn: () => {},
+    warn: recordWarn,
     error: () => {},
   };
   const meta = (media as unknown as { meta: { items: Record<string, { size?: number }> } }).meta;
   const real = media.registerUpload.bind(media);
-  media.registerUpload = (async (id: string, o: string, c: never, size: number, cb: () => void) => {
+  media.registerUpload = (async (
+    id: string,
+    o: string,
+    c: never,
+    size: number,
+    cb: () => void,
+    ...rest: never[]
+  ) => {
     registered.push({ id, size });
-    await real(id, o, c, size, cb);
+    // Every argument forwarded: the stamp, and the date the erased-owner record compares.
+    await (real as (...a: unknown[]) => Promise<void>)(id, o, c, size, cb, ...rest);
     void meta;
   }) as never;
-  return { svc, media, dir, stored, failStore, registered };
+  return { svc, media, dir, stored, failStore, failAfterWrite, registered, warned };
 }
 
 afterEach(async () => {
@@ -381,14 +406,208 @@ describe('the account erasure', () => {
     expect(await r.svc.cancelAllOwnedBy('alice')).toBe(0);
   });
 
-  it('leaves a session that completed: its blob is the media erasure one', async () => {
+  it('ends a session that completed too: its memo serves nobody now, and its sidecar names the owner', async () => {
     const r = rig();
     const s = await open(r, 'alice', 3000);
     for (const i of Array(s.totalParts).keys()) {
       await put(r, 'alice', s.uploadId, i, sliceOf(s.blob, 1024, i));
     }
     await r.svc.complete('alice', s.uploadId);
+    expect(await r.svc.cancelAllOwnedBy('alice')).toBe(1);
+    expect(await fs.readdir(r.dir)).toEqual([]);
+  });
+});
+
+/**
+ * AN ERASED OWNER REGISTERS NOTHING (docs/wiki/services/media-service.md#an-erased-owner-registers-nothing-2026-11-24).
+ * The erasure here is the route's: the objects first (which records it), then the sessions.
+ */
+describe('an upload session of an erased owner', () => {
+  async function erase(r: Rig, owner: string): Promise<void> {
+    await r.media.removeAllOwnedBy(owner);
+    await r.svc.cancelAllOwnedBy(owner);
+  }
+  const live = (r: Rig) =>
+    Object.values(
+      (r.media as unknown as { meta: { items: Record<string, { ownerId?: string }> } }).meta.items
+    );
+  const naming = (r: Rig, owner: string) => live(r).filter((e) => e.ownerId === owner);
+  async function filled(r: Rig, owner: string, cls?: 'chat-reel') {
+    const s = await open(r, owner, 3000, 1024, cls);
+    for (const i of Array(s.totalParts).keys()) {
+      await put(r, owner, s.uploadId, i, sliceOf(s.blob, 1024, i));
+    }
+    return s;
+  }
+  /** A staging removal that failed is a WARN naming the errno: asserted first, so it is what fails. */
+  const expectNoStagingLeft = async (r: Rig) => {
+    expect(r.warned.filter((w) => w.includes('not removed'))).toEqual([]);
+    expect(await fs.readdir(r.dir)).toEqual([]);
+  };
+  const erasedAtOf = (r: Rig) =>
+    Object.values(
+      (r.media as unknown as { meta: { erasedOwners?: Record<string, number> } }).meta
+        .erasedOwners ?? {}
+    )[0] ?? 0;
+  /** A token minted two whole seconds after the call: the person came back. */
+  const freshAfter = (erasedAt: number) => (Math.floor(erasedAt / 1000) + 2) * 1000;
+
+  it('THE CLOSING TEST: after the erasure, a second session of ALICE stores nothing and no entry names her', async () => {
+    const r = rig();
+    const first = await filled(r, 'alice');
+    await r.svc.complete('alice', first.uploadId);
+    expect(naming(r, 'alice')).toHaveLength(1);
+
+    await erase(r, 'alice');
+
+    // The same token's identity opens a second session: refused before anything is staged.
+    await expect(open(r, 'alice', 3000)).rejects.toMatchObject({
+      status: 410,
+      response: { code: 'OWNER_ERASED' },
+    });
+    await expectNoStagingLeft(r);
+    expect(r.stored).toEqual([]);
+    expect(naming(r, 'alice')).toEqual([]);
+    // Another member is untouched.
+    const bob = await filled(r, 'bob');
+    await expect(r.svc.complete('bob', bob.uploadId)).resolves.toBeDefined();
+  });
+
+  it('a complete arriving between the two halves of the erasure is refused, stores nothing and cleans its parts', async () => {
+    const r = rig();
+    const s = await filled(r, 'alice', 'chat-reel');
+    expect(reserved(r)).toBe(s.blob.length);
+
+    await r.media.removeAllOwnedBy('alice'); // the record is written; the sessions are not ended yet
+
+    await expect(r.svc.complete('alice', s.uploadId)).rejects.toMatchObject({
+      status: 410,
+      response: { code: 'OWNER_ERASED' },
+    });
+    expect(r.stored).toEqual([]);
+    expect(r.registered).toEqual([]);
+    await expectNoStagingLeft(r);
+    expect(reserved(r)).toBe(0);
+    expect(naming(r, 'alice')).toEqual([]);
+    // The second half finds nothing left to end.
     expect(await r.svc.cancelAllOwnedBy('alice')).toBe(0);
+  });
+
+  /** A filled session whose `complete` is started and held at the store write. */
+  async function completeHeldAtTheStore(r: Rig) {
+    const s = await filled(r, 'alice', 'chat-reel');
+    const storage = (
+      r.svc as unknown as { storage: { putFileStream: (...a: never[]) => Promise<void> } }
+    ).storage;
+    const realPut = storage.putFileStream;
+    let reached!: () => void;
+    const storeReached = new Promise<void>((resolve) => (reached = resolve));
+    let finishStore!: () => void;
+    const storeHeld = new Promise<void>((resolve) => (finishStore = resolve));
+    storage.putFileStream = (async (...args: never[]) => {
+      reached();
+      await storeHeld;
+      await realPut(...args);
+    }) as never;
+    const completing = r.svc.complete('alice', s.uploadId);
+    await storeReached;
+    return { completing, finishStore };
+  }
+
+  /** Whatever the order: nothing stored, nothing staged, nothing reserved, no entry naming her. */
+  async function expectNothingOfAlice(r: Rig) {
+    expect(r.stored).toEqual([]);
+    await expectNoStagingLeft(r);
+    expect(reserved(r)).toBe(0);
+    expect(naming(r, 'alice')).toEqual([]);
+  }
+
+  it('INTERLEAVED: an erasure landing while the bytes are stored ends REFUSED', async () => {
+    const r = rig();
+    const { completing, finishStore } = await completeHeldAtTheStore(r);
+    // The erasure runs while the store is in flight: its record is written in its first run.
+    const erasing = erase(r, 'alice');
+    finishStore();
+    await expect(completing).rejects.toMatchObject({ status: 410 });
+    await erasing;
+    await expectNothingOfAlice(r);
+  });
+
+  it('INTERLEAVED: an erasure landing after the registration ends ERASED', async () => {
+    const r = rig();
+    const { completing, finishStore } = await completeHeldAtTheStore(r);
+    finishStore();
+    await completing;
+    expect(naming(r, 'alice')).toHaveLength(1);
+    await erase(r, 'alice');
+    await expectNothingOfAlice(r);
+  });
+
+  it('A PERSON WHO CAME BACK opens and completes a session with a token minted after the call', async () => {
+    const r = rig();
+    await erase(r, 'alice');
+    const fresh = freshAfter(erasedAtOf(r));
+    const { blob, hex } = blobFor(3000);
+    const s = await r.svc.init(
+      'alice',
+      { totalBytes: blob.length, partBytes: 1024, header: hex },
+      MAX,
+      fresh
+    );
+    for (const i of Array(s.totalParts).keys()) {
+      await put(r, 'alice', s.uploadId, i, sliceOf(blob, 1024, i));
+    }
+    const { mediaId } = await r.svc.complete('alice', s.uploadId, fresh);
+    expect(r.stored.map((o) => o.id)).toEqual([mediaId]);
+    expect(naming(r, 'alice')).toHaveLength(1);
+  });
+
+  it("a session OPENED before the call stays the erased account's, whoever's fresh token completes it", async () => {
+    const r = rig();
+    const s = await filled(r, 'alice');
+    await r.media.removeAllOwnedBy('alice'); // the sessions are not ended yet
+    await expect(
+      r.svc.complete('alice', s.uploadId, freshAfter(erasedAtOf(r)))
+    ).rejects.toMatchObject({ status: 410, response: { code: 'OWNER_ERASED' } });
+    await expectNothingOfAlice(r);
+  });
+
+  it('AN OBJECT STORED UNDER THE SESSION AND NEVER REGISTERED goes with the erasure', async () => {
+    const r = rig();
+    const s = await filled(r, 'alice');
+    r.failAfterWrite.value = true;
+    await expect(r.svc.complete('alice', s.uploadId)).rejects.toMatchObject({ status: 500 });
+    r.failAfterWrite.value = false;
+    expect(r.stored).toHaveLength(1); // written, no entry names it: only the sidecar points at it
+    expect(naming(r, 'alice')).toEqual([]);
+
+    await erase(r, 'alice');
+
+    expect(r.stored).toEqual([]);
+    await expectNothingOfAlice(r);
+  });
+
+  it('AN OBJECT STORED UNDER THE SESSION AND NEVER REGISTERED goes with a refusal at admission', async () => {
+    const r = rig();
+    const s = await filled(r, 'alice');
+    r.failAfterWrite.value = true;
+    await expect(r.svc.complete('alice', s.uploadId)).rejects.toMatchObject({ status: 500 });
+    r.failAfterWrite.value = false;
+    await r.media.removeAllOwnedBy('alice'); // finds no entry: the object is not indexed
+
+    await expect(r.svc.complete('alice', s.uploadId)).rejects.toMatchObject({ status: 410 });
+
+    expect(r.stored).toEqual([]);
+    await expectNothingOfAlice(r);
+  });
+
+  it('records a keyed PSEUDONYM of the owner, never the id', async () => {
+    const r = rig();
+    await r.media.removeAllOwnedBy('alice');
+    const records = (r.media as unknown as { meta: { erasedOwners?: Record<string, number> } }).meta
+      .erasedOwners;
+    expect(Object.keys(records ?? {})).toHaveLength(1);
+    expect(JSON.stringify(records)).not.toContain('alice');
   });
 });
 

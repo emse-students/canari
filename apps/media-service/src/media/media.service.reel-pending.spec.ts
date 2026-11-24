@@ -24,6 +24,9 @@ import {
   resolvePendingReelTtlMs,
 } from './media.service';
 
+// The account erasure keys its erased-owner record with this secret (erased-owners.ts).
+process.env.JWT_SECRET ??= 'test-erasure-key';
+
 const ALICE = 'alice';
 const PENDING_OLD = '11111111-1111-4111-8111-111111111111';
 const PENDING_NEW = '22222222-2222-4222-8222-222222222222';

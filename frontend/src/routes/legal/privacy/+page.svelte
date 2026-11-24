@@ -970,7 +970,10 @@
               octobre 2026, ou par une version de l'application antérieure, sont pour l'instant conservés
               sans limite. Un CanaReel (de conversation, ou envoyé au fil et pas encore publié) supprimé
               à la fin de son délai laisse pendant 90 jours une trace sans contenu qui nomme son auteur,
-              pour lui dire de l'envoyer à nouveau ; elle est effacée avec le compte
+              pour lui dire de l'envoyer à nouveau ; elle est effacée avec le compte. Quand un compte
+              est supprimé, une empreinte de son identifiant calculée avec une clé secrète (HMAC) est
+              gardée un jour avec l'heure de la suppression : c'est une donnée pseudonyme, qui sert à
+              refuser un envoi de fichier commencé avant la suppression et qui se terminerait après
             </td>
           </tr>
           <tr>

@@ -135,6 +135,8 @@ const IN_BODY_AUTH = [
   'assertCercleApiKey',
   'verifyPushSecretAuth',
   'verifyToken',
+  // media-service's `verifyToken` returning the token's mint time too: the same Bearer, expiry checked.
+  'verifyCredential',
   'verifyLydiaRequestCallback',
   'requireAccessToken',
   // `GET /mls/link-preview/image` goes into an `<img src>`, which carries no Bearer and, on

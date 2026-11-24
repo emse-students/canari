@@ -3206,6 +3206,7 @@
   "form_file_error_size": "Ce fichier dépasse 8 Mo.",
   "form_file_error_too_many": "Trop de fichiers envoyés sans réponse pour ce formulaire : réessayez demain.",
   "form_file_error_generic": "L'envoi du fichier a échoué. Réessayez.",
+  "form_file_error_account_erased": "Ce compte a été supprimé : le fichier n'a pas été enregistré.",
   "form_answer_file": "Fichier",
   "form_answer_file_deleted": "Fichier supprimé",
   "form_answer_file_download": "Télécharger le fichier",
