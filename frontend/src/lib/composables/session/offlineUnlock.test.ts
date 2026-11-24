@@ -265,13 +265,11 @@ describe('what a revoked device stops before it deletes anything', () => {
   it('never flushes MLS state on the way out of a revocation', () => {
     // The flush writes back exactly what the wipe exists to delete, so it is gated on the reason
     // rather than shared - and the persister is still uninstalled either way.
-    const flushAt = tearDownBody.indexOf('flushActiveMlsStateEncrypted()');
-    expect(flushAt).toBeGreaterThan(-1);
-    const guard = tearDownBody.lastIndexOf("if (reason === 'logout') {", flushAt);
-    expect(guard).toBeGreaterThan(-1);
-    expect(guard).toBeLessThan(flushAt);
-    // Named: only the persister THIS session registered may be removed (the next one may be live).
-    expect(tearDownBody).toContain('unregisterMlsStatePersister(persister);');
+    // The final checkpoint is owed by a sign-out only; that `false` writes nothing and that only
+    // the persister THIS session registered is removed are pinned by behaviour, in
+    // `sessionStatePersisterEnd.test.ts`.
+    expect(tearDownBody).toContain("endSessionStatePersister(reason === 'logout', cb.log)");
+    expect(tearDownBody).not.toContain('flushActiveMlsStateEncrypted(');
   });
 });
 
