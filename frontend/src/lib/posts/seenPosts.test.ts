@@ -60,22 +60,39 @@ describe('the seen-posts record: what counts and how it is pruned', () => {
     expect(seen.size).toBe(0);
   });
 
-  it('prunes by the post age - past the trend window and its grace - never before', () => {
-    const seen: SeenPosts = new Map([
+  it('prunes a post only on what the bell proved: an answer past its window that reaches back before it', () => {
+    const entries: [string, number][] = [
       ['fresh', NOW - 1 * HOUR],
       ['edge', NOW - TREND_WINDOW_HOURS * HOUR],
       ['inside-grace', NOW - TREND_WINDOW_HOURS * HOUR - TREND_PRUNE_GRACE_MS + 1],
       ['too-old', NOW - TREND_WINDOW_HOURS * HOUR - TREND_PRUNE_GRACE_MS - 1],
+    ];
+    // A page that listed EVERY row (coveredFrom 0): the age alone decides, never before the window.
+    const full: SeenPosts = new Map(entries);
+    expect(pruneSeen(full, { answeredAt: NOW, coveredFrom: 0 })).toEqual({ aged: 1, capped: 0 });
+    expect([...full.keys()].sort()).toEqual(['edge', 'fresh', 'inside-grace']);
+    // No answer yet, or none past the window: nothing is pruned by age.
+    const none: SeenPosts = new Map(entries);
+    expect(pruneSeen(none, null)).toEqual({ aged: 0, capped: 0 });
+    expect(pruneSeen(none, { answeredAt: 0, coveredFrom: 0 })).toEqual({ aged: 0, capped: 0 });
+    expect(none.size).toBe(4);
+  });
+
+  it('keeps a post the answer did not reach back to, and drops the ones it did', () => {
+    const seen: SeenPosts = new Map([
+      ['older', NOW - 60 * HOUR],
+      ['newer', NOW - 40 * HOUR],
     ]);
-    const out = pruneSeen(seen, NOW);
+    // A full page of rows whose oldest is 50 h old: it covers `newer` (published later) but not `older`.
+    const out = pruneSeen(seen, { answeredAt: NOW, coveredFrom: NOW - 50 * HOUR });
     expect(out).toEqual({ aged: 1, capped: 0 });
-    expect([...seen.keys()].sort()).toEqual(['edge', 'fresh', 'inside-grace']);
+    expect([...seen.keys()]).toEqual(['older']);
   });
 
   it('caps the record and drops the OLDEST publications first', () => {
     const seen: SeenPosts = new Map();
     for (let i = 0; i < SEEN_POSTS_MAX + 3; i++) seen.set(`p${i}`, NOW - 1000 + i);
-    const out = pruneSeen(seen, NOW);
+    const out = pruneSeen(seen, null);
     expect(out).toEqual({ aged: 0, capped: 3 });
     expect(seen.has('p0')).toBe(false);
     expect(seen.has('p2')).toBe(false);

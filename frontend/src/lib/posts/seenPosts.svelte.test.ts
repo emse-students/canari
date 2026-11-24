@@ -184,6 +184,15 @@ describe('the record of the posts this device displayed', () => {
     expect(seenPostsStore.withholdsRow(a)).toBe(true);
   });
 
+  it('hides a trend row that has no decision yet, until an answer decides it', () => {
+    const trend = { id: 'r1', type: 'campus_trend', postId: 'never-seen' };
+    // Drawn from the sealed bell copy by an app killed before its first answer: not shown, then withdrawn.
+    expect(seenPostsStore.withholdsRow(trend)).toBe(true);
+    expect(seenPostsStore.withholdsRow({ ...trend, type: 'friend_comment' })).toBe(false);
+    seenPostsStore.decideRows([trend], false);
+    expect(seenPostsStore.withholdsRow(trend)).toBe(false);
+  });
+
   it('keeps both decisions in the sealed copy and drops them with their row (90 days)', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     try {

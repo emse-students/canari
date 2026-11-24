@@ -100,6 +100,26 @@ describe('the bell withholds a campus trend for a post this device displayed', (
     expect(postNotifStore.unread).toBe(0);
   });
 
+  it('ages the record out per post from a full page that reaches back before it (60 rows, 50 answered)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    seenPostsStore.note('p1', PUBLISHED);
+    const base = Date.now();
+    // 60 rows in 90 days, newest first: the bell answers 50, never a short page.
+    const rows = Array.from({ length: 50 }, (_, i) => ({
+      ...row(`r${i}`, i === 0 ? 'campus_trend' : 'friend_comment', 'p1'),
+      createdAt: new Date(base - i * 24 * HOURS).toISOString(),
+    }));
+    api.get.mockResolvedValue(rows);
+    await postNotifStore.load(50);
+    expect(seenPostsStore.size).toBe(1);
+    // Three days on, the page again: its oldest row is older than the post, the window is closed.
+    vi.setSystemTime(base + 72 * HOURS);
+    await postNotifStore.load(50);
+    expect(seenPostsStore.size).toBe(0);
+    // The withheld trend row stays out.
+    expect(postNotifStore.notifications.some((n) => n.id === 'r0')).toBe(false);
+  });
+
   it('never withholds under another account', async () => {
     seenPostsStore.note('p1', PUBLISHED);
     saved.id = 'someone-else';

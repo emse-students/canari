@@ -1190,14 +1190,21 @@ server.** The accepted limit: a post seen on another device is not recognised th
   page the server returns, so a row older than the newest 50 keeps its decision. Before the account's
   sealed copy is merged an undecided trend row is not shown (decided at the merge): never shown and then
   withdrawn.
-- **The record ages out in memory only after a bell answer that listed EVERY row** (an answer shorter
-  than the page asked for, `fullAnswerAt` in the sealed copy). An app closed through the whole window
-  therefore still withholds, at its reopening, the row whose push was withheld meanwhile: its entry was
-  not pruned before the bell asked. The NATIVE file keeps pruning by age (a push reads it, and a post past
-  the window can never be announced again). **Known residual**: a reader whose bell never returns a short
-  page keeps the record until the cap of 500 (oldest publication first) evicts it; a row older than
-  that many displayed posts can then be decided "kept". Bounded, and it costs a repeated row, never a
-  lost message.
+- **The record ages out in memory, per post, only on what the bell proved** (`pruneSeen`,
+  `BellCoverage`; re-review of #4065): a trend row for post P is created within the 24 h after P's
+  publication, so once a bell answer taken after that window (+ the hour of slack) reaches back BEFORE P
+  was published - its oldest row is older than P, or the page was short (`coveredFrom`, kept with the
+  instant in the sealed copy) - every row that could name P has been decided and P may go. An app closed
+  through the whole window therefore still withholds, at its reopening, the row whose push was withheld
+  meanwhile. This holds for an account with more rows than the page too (a 60-row bell answered 50 at a
+  time). The NATIVE file keeps pruning by age (a push reads it, and a post past the window can never be
+  announced again). **Known residual**: a bell with more rows inside one window than a page holds
+  never reaches back before that window's posts, so their entries stay until the cap of 500 (oldest
+  publication first) evicts them; a row older than that many displayed posts can then be decided "kept".
+  Bounded, and it costs a repeated row, never a lost message.
+- **A trend row with no decision yet is not shown**: drawn from the sealed bell copy by an app killed
+  before its first answer, or met before the account's record is read, it waits for the answer that
+  decides it - never shown and then withdrawn.
 - **One write per scroll frame, not per card**: `shownPost` shares ONE `IntersectionObserver` per scroll
   root, so the cards crossing in one frame arrive in one callback, are noted in one tick and share one
   microtask write. Never a timer.

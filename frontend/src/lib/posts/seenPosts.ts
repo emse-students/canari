@@ -60,18 +60,36 @@ export function noteSeen(seen: SeenPosts, postId: string, publishedAtMs: number)
 }
 
 /**
- * Drops what no trend can name any more, then the OLDEST publications beyond the cap. Returns how many
- * were dropped for age and how many for the cap, so the caller can say it.
- *
- * @param nowMs the clock, injected: a test asserts no wall clock.
+ * What the last bell answer proves it listed (newest first): `answeredAt` is the device instant it was
+ * taken, `coveredFrom` the `createdAt` (ms) of its OLDEST row - 0 when it listed EVERY row (a page
+ * shorter than the one asked for). Every row created after `coveredFrom` was in it.
  */
-export function pruneSeen(seen: SeenPosts, nowMs: number): { aged: number; capped: number } {
-  const horizon = nowMs - TREND_WINDOW_HOURS * 3_600_000 - TREND_PRUNE_GRACE_MS;
+export interface BellCoverage {
+  answeredAt: number;
+  coveredFrom: number;
+}
+
+/**
+ * Drops what the bell has PROVEN no trend can name any more, then the OLDEST publications beyond the cap.
+ * A post P is dropped only when a bell answer taken once its window had closed (`answeredAt` past
+ * publishedAt + {@link TREND_WINDOW_HOURS} + grace) reached back before P was published
+ * (`coveredFrom < publishedAt`): a trend row for P is created within the window after publishedAt, so
+ * every one of them was in that answer and has been decided. Without such an answer the entry stays
+ * (until the cap) - an app closed through the window still withholds at its reopening. Returns how many
+ * were dropped for age and how many for the cap, so the caller can say it.
+ */
+export function pruneSeen(
+  seen: SeenPosts,
+  coverage: BellCoverage | null
+): { aged: number; capped: number } {
   let aged = 0;
-  for (const [id, publishedAt] of seen) {
-    if (publishedAt < horizon) {
-      seen.delete(id);
-      aged++;
+  if (coverage && coverage.answeredAt > 0) {
+    const horizon = coverage.answeredAt - TREND_WINDOW_HOURS * 3_600_000 - TREND_PRUNE_GRACE_MS;
+    for (const [id, publishedAt] of seen) {
+      if (publishedAt < horizon && coverage.coveredFrom < publishedAt) {
+        seen.delete(id);
+        aged++;
+      }
     }
   }
   let capped = 0;
@@ -99,8 +117,8 @@ export interface SeenLedger {
   withheld: Map<string, number>;
   /** Rows whose post was not: kept for good, however the post is displayed afterwards. */
   kept: Map<string, number>;
-  /** The device instant of the last bell answer that listed EVERY row; 0 when there was none. */
-  fullAnswerAt: number;
+  /** What the last qualifying bell answer proved it listed; `answeredAt` 0 when there was none. */
+  coverage: BellCoverage;
 }
 
 /** Whether `publishedAtMs` is still inside the window a trend can name (the native readers prune by this). */
@@ -116,13 +134,13 @@ export function serializeSeen(
   posts: Record<string, number>;
   withheld?: Record<string, number>;
   kept?: Record<string, number>;
-  fullAnswerAt?: number;
+  coverage?: BellCoverage;
 } {
   const body: ReturnType<typeof serializeSeen> = { posts: Object.fromEntries(seen) };
   if (ledger) {
     body.withheld = Object.fromEntries(ledger.withheld);
     body.kept = Object.fromEntries(ledger.kept);
-    body.fullAnswerAt = ledger.fullAnswerAt;
+    body.coverage = ledger.coverage;
   }
   return body;
 }
@@ -139,12 +157,16 @@ function parseInstants(raw: unknown): Map<string, number> {
 
 /** The bell's ledger from a stored body; empty when the body carries none (tolerant, never refusing). */
 export function parseSeenLedger(body: unknown): SeenLedger {
-  const raw = body as { withheld?: unknown; kept?: unknown; fullAnswerAt?: unknown } | null;
-  const at = raw?.fullAnswerAt;
+  const raw = body as { withheld?: unknown; kept?: unknown; coverage?: unknown } | null;
+  const c = raw?.coverage as Partial<BellCoverage> | undefined;
+  const ok = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
   return {
     withheld: parseInstants(raw?.withheld),
     kept: parseInstants(raw?.kept),
-    fullAnswerAt: typeof at === 'number' && Number.isFinite(at) ? at : 0,
+    coverage:
+      c && ok(c.answeredAt) && ok(c.coveredFrom)
+        ? { answeredAt: c.answeredAt, coveredFrom: c.coveredFrom }
+        : { answeredAt: 0, coveredFrom: 0 },
   };
 }
 

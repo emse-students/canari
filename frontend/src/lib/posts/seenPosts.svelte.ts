@@ -7,6 +7,7 @@ import {
   serializeSeen,
   withinTrendWindow,
   BELL_ROW_RETENTION_MS,
+  type BellCoverage,
   type SeenPosts,
 } from '$lib/posts/seenPosts';
 import {
@@ -53,9 +54,10 @@ import { onPeerNamesEnded } from '$lib/utils/users/peerNameDirectory';
  * seenPostsStore.decideRows}) its post is either in the record (the row is WITHHELD for good) or not (the
  * row is KEPT for good): one fact, no comparison of two clocks. Both sets live in the sealed copy, each id
  * with the row's own `createdAt`, and are dropped when the row is older than its 90 days.
- * THE RECORD ITSELF IS NOT AGED OUT in memory until a bell answer that listed EVERY row was taken after
- * the entry's horizon (`fullAnswerAt`): an app closed through the window still withholds, at its reopening,
- * the row whose push was withheld meanwhile. The native file keeps pruning by age: it is read by pushes only.
+ * THE RECORD ITSELF IS NOT AGED OUT in memory until the bell has PROVEN it holds every trend row of a post
+ * (`BellCoverage`, `pruneSeen`): an answer taken after the post's window closed that reaches back before
+ * the post was published (its oldest row is older, or the page was short) - an app closed through the
+ * window still withholds, at its reopening, the row whose push was withheld meanwhile. The native file keeps pruning by age: it is read by pushes only.
  */
 
 // A plain Map on purpose: readers re-run on `revision`, which every change bumps.
@@ -81,8 +83,8 @@ let owner: string | null = null;
 let withheldRows = emptyInstants();
 /** Trend rows whose post had NOT been displayed when they first appeared: kept for good. */
 let keptRows = emptyInstants();
-/** The device instant of the last bell answer that listed every row (0: none); ages the record. */
-let fullAnswerAt = 0;
+/** What the last qualifying bell answer proved it listed (`answeredAt` 0: none); ages the record. */
+let coverage: BellCoverage = { answeredAt: 0, coveredFrom: 0 };
 /** The account whose sealed copy is merged into memory: decisions wait for it, withholding does not. */
 let mergedFor: string | null = null;
 /** The last bell answer, decided again once the sealed copy is merged. */
@@ -102,7 +104,7 @@ function reset(why: string): void {
   seen = emptyRecord();
   withheldRows = emptyInstants();
   keptRows = emptyInstants();
-  fullAnswerAt = 0;
+  coverage = { answeredAt: 0, coveredFrom: 0 };
   mergedFor = null;
   lastAnswer = null;
   owner = null;
@@ -162,7 +164,7 @@ onLocalCopiesOpen((access) => {
       for (const [id, at] of stored) if (noteSeen(seen, id, at)) added++;
       for (const [id, at] of ledger.withheld) if (!withheldRows.has(id)) withheldRows.set(id, at);
       for (const [id, at] of ledger.kept) if (!keptRows.has(id)) keptRows.set(id, at);
-      fullAnswerAt = Math.max(fullAnswerAt, ledger.fullAnswerAt);
+      if (ledger.coverage.answeredAt > coverage.answeredAt) coverage = ledger.coverage;
       const aged = ageRecord();
       if (added > 0 || aged > 0) revision++;
       // What the device copy held may be missing from the native file (a reinstall, a lost file, a
@@ -187,11 +189,10 @@ function awaitingCopy(who: string): boolean {
 }
 
 /**
- * Ages the in-memory record: by the post's age, but only up to the last bell answer that listed every
- * row (`fullAnswerAt`) - and the cap. Returns how many entries went.
+ * Ages the in-memory record, per entry, on what the last bell answer proved (`pruneSeen`) - and the cap. Returns how many entries went.
  */
 function ageRecord(): number {
-  const pruned = pruneSeen(seen, fullAnswerAt > 0 ? fullAnswerAt : 0);
+  const pruned = pruneSeen(seen, coverage);
   return pruned.aged + pruned.capped;
 }
 
@@ -215,19 +216,22 @@ export const seenPostsStore = {
    */
   withholdsRow(row: BellRow): boolean {
     void revision;
-    if (!owner || owner !== getSavedUserId()) return false;
-    if (withheldRows.has(row.id)) return true;
-    // A trend row met before this account's record is read is not shown: it is decided at the merge,
-    // never shown and then withdrawn.
-    return row.type === TREND_ROW_TYPE && !keptRows.has(row.id) && awaitingCopy(owner);
+    const who = getSavedUserId();
+    if (!who) return false;
+    const mine = owner === who;
+    if (mine && withheldRows.has(row.id)) return true;
+    // A trend row with NO decision yet - met before this account's record is read, or drawn from the
+    // sealed bell copy by an app killed before its first answer - is not shown: it is decided by the
+    // first answer, so a row is never shown and then withdrawn.
+    return row.type === TREND_ROW_TYPE && !(mine && keptRows.has(row.id));
   },
   /**
    * A bell answer: every trend row not yet decided is decided NOW, once - WITHHELD if its post is in
    * the record, KEPT if it is not - and the decision is kept as long as the row can exist. Before this
-   * account's sealed copy is merged only the withholding is decided (a post in memory is positive
-   * evidence); the rest waits for the merge, so a record not yet read never keeps a row it would have
-   * withheld. `complete` says the answer listed EVERY row (it was shorter than the page asked for): only
-   * then does the record start ageing out, since no row can still appear whose post it holds.
+   * account's sealed copy is merged nothing is decided (the answer is kept and decided at the merge), so
+   * a record not yet read never keeps a row it would have withheld. `complete` says the answer listed
+   * EVERY row (it was shorter than the page asked for); otherwise it still proves it listed every row
+   * newer than its oldest, which is what lets the record age out per post.
    */
   decideRows(rows: readonly BellRow[], complete: boolean): void {
     const who = currentOwner();
@@ -260,8 +264,12 @@ export const seenPostsStore = {
         }
       }
     }
-    if (complete) {
-      fullAnswerAt = Date.now();
+    // What this answer proves it listed: every row (a short page), or every row newer than its oldest.
+    const created = rows
+      .map((r) => Date.parse(r.createdAt ?? ''))
+      .filter((n) => Number.isFinite(n));
+    if (complete || (rows.length > 0 && created.length === rows.length)) {
+      coverage = { answeredAt: Date.now(), coveredFrom: complete ? 0 : Math.min(...created) };
       changed = true;
       if (ageRecord() > 0) revision++;
     }
@@ -296,7 +304,7 @@ async function writeRecord(): Promise<void> {
   if (isMobileTauriRuntime()) await mirrorToNative(who);
   await writeLocalCopy(
     SEEN_POSTS_SLOT,
-    serializeSeen(seen, { withheld: withheldRows, kept: keptRows, fullAnswerAt })
+    serializeSeen(seen, { withheld: withheldRows, kept: keptRows, coverage })
   );
 }
 
@@ -361,7 +369,7 @@ export function resetSeenPostsForTest(): void {
   seen = emptyRecord();
   withheldRows = emptyInstants();
   keptRows = emptyInstants();
-  fullAnswerAt = 0;
+  coverage = { answeredAt: 0, coveredFrom: 0 };
   mergedFor = null;
   lastAnswer = null;
   owner = null;
