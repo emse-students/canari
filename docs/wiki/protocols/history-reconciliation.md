@@ -1893,8 +1893,13 @@ every read, write and delete names the conversation (`getMessage`, `getMessageSt
 `getMessagesByIds`, `mergeMessages`, `updateMessage`, `deleteMessage`, the order-key fill, the
 device-key re-seal), the upsert (`saveMessages`) conflicts on the pair and never moves a row, and
 the one way a row changes conversation is `moveMessages` (the DM merge, a send re-keyed mid-flight):
-its old key deleted and its new one written in one atomic step, a row the destination already holds
-standing. A caller that knows only an id it minted (a quick reply, an own bubble) asks
+its old key deleted and its new one written in one atomic step. A row the destination already holds
+under the same id is the same message seen twice (a bundle or a replayed copy stored first during a
+1:1 re-key, a re-keyed send's echo): the source is UNITED onto it through the compare-and-set
+(`messageMove.ts`, `uniteMovedRow` - a tombstone wins and purges, the later edit wins, every
+reaction of both, the proofs of the kept bytes, the first recorded 410, an unsent reason) and only
+then deleted, while it is still the row that was read; a pair one side of which does not open is
+left as it is. A caller that knows only an id it minted (a quick reply, an own bubble) asks
 `findMessageConversations` and keeps the row THIS account authored (`ownStoredMessage`). What the
 screen draws follows the same key: the in-memory reactions are a `ReactionsByConversation`
 (`utils/chat/reactionsByConversation.ts`), every read and write naming the conversation, the bubble
@@ -1918,8 +1923,8 @@ answers a frame passes the frame's conversation: the deletion and edit lookups (
 reaction lookup (`reactionFrame.ts`), the settlement (`settlePendingFor`), the bundle's stored rows
 (`storedRowsForBundle`) and its merges, and the arriving-body verdicts (`storedRowsFor`). A member of
 A therefore cannot delete, edit, react to or relay over a row of B through a frame sent in A
-(`useMessaging.mutationsReachTargets.svelte.test.ts`), and a message sent in A under an id B holds is
-stored in A beside it. The window read is aligned too:
+(`useMessaging.mutationsReachTargets.svelte.test.ts`), and the same id in two conversations is two
+rows, each stored in its own. The window read is aligned too:
 `getMessagesSince` applies ONE rule on both backends (`storedTimeInWindow`) - a timestamp an older
 build stored as text is read and dated on IndexedDB as SQLite always did.
 

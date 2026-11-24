@@ -43,6 +43,7 @@ import {
   splitPendingMutation,
 } from './pendingMutationCodec';
 import { casMergeMessages, type RevisedRow, type RevisedWrite } from './messageCas';
+import { moveMessageRows } from './messageMove';
 import {
   attachOutboxBlob,
   clearOutboxBlobsLast,
@@ -337,7 +338,10 @@ export function rekeyMessagesByConversation(
     const cursor = walk.result;
     if (cursor) {
       const row = cursor.value as { conversationId?: unknown; id?: unknown };
-      if (typeof row.conversationId === 'string' && typeof row.id === 'string') {
+      // Every row with a conversation is kept: its id was the old store's key, so it is a valid key
+      // whatever its type, and the pair is one too. Only a row with no string conversation has
+      // nothing to be keyed under.
+      if (typeof row.conversationId === 'string') {
         staging.put(row);
         copied++;
       } else {
@@ -351,7 +355,7 @@ export function rekeyMessagesByConversation(
     console.info(`[IDB] Migration v14->v15: ${copied} message row(s) keyed by (conversation, id)`);
     if (unkeyable > 0) {
       console.error(
-        `[IDB] Migration v14->v15: ${unkeyable} message row(s) with no string conversation or id could not be keyed - no read ever reached them`
+        `[IDB] Migration v14->v15: ${unkeyable} message row(s) with no string conversation could not be keyed by one - not carried: no conversation read ever reached them`
       );
     }
     then();
@@ -1051,7 +1055,7 @@ export class IndexedDbStorage implements IStorage {
   }
 
   /** Remove one message row by its key; absent rows resolve without error, as IDB's delete does. */
-  async deleteMessage(id: string, conversationId: string): Promise<void> {
+  async deleteMessage(conversationId: string, id: string): Promise<void> {
     const db = this.ensureDb();
     invalidateHistoryStateKey(conversationId);
     return new Promise((resolve, reject) => {
@@ -1202,59 +1206,89 @@ export class IndexedDbStorage implements IStorage {
     return casMergeMessages(this.revisedRows(), conversationId, ids, merge, deviceKeyB64);
   }
 
-  /**
-   * See {@link IStorage.moveMessages}: ONE readwrite transaction - for each id, the source row read,
-   * the destination's key read, the row put under the destination's key unless a row stands there,
-   * and the source's key deleted. The ciphertext travels as it is: the payload names no conversation.
-   */
+  /** See {@link IStorage.moveMessages} and `messageMove.ts`, the one implementation. */
   async moveMessages(
     fromConversationId: string,
     toConversationId: string,
-    ids: readonly string[]
+    ids: readonly string[],
+    deviceKeyB64: string
   ): Promise<MessageMove> {
-    const out: MessageMove = { moved: [], alreadyThere: [] };
-    const unique = [...new Set(ids)];
-    if (unique.length === 0 || fromConversationId === toConversationId) return out;
     invalidateHistoryStateKey(fromConversationId);
     invalidateHistoryStateKey(toConversationId);
-    const db = this.ensureDb();
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction('messages', 'readwrite');
-      const store = tx.objectStore('messages');
-      for (const id of unique) {
-        const source = store.get([fromConversationId, id]);
-        source.onsuccess = () => {
-          const row = source.result;
-          if (!row) return;
-          const target = store.getKey([toConversationId, id]);
-          target.onsuccess = () => {
-            if (target.result !== undefined) {
-              out.alreadyThere.push(id);
-            } else {
-              if (
-                !guardedPut(store, {
-                  ...row,
-                  conversationId: toConversationId,
-                  rev: revisionOf(row) + 1,
-                })
-              ) {
-                return;
-              }
-              out.moved.push(id);
-            }
-            store.delete([fromConversationId, id]);
-          };
-        };
-      }
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () =>
-        reject(tx.error ?? new DOMException('IndexedDB transaction aborted', 'AbortError'));
-    });
-    console.debug(
-      `[DB] moved ${out.moved.length} message row(s) from ${fromConversationId.slice(0, 8)}... to ${toConversationId.slice(0, 8)}... (${out.alreadyThere.length} already held there, the copy removed)`
+    return moveMessageRows(
+      { ...this.revisedRows(), ...this.movableRows() },
+      fromConversationId,
+      toConversationId,
+      ids,
+      deviceKeyB64
     );
-    return out;
+  }
+
+  /**
+   * The two steps a move adds to the compare-and-set, each ONE readwrite transaction.
+   * `rekeyAbsent`: for each id, the source row read, the destination's key read, and - where no row
+   * stands there - the row put under the destination's key (the ciphertext as it is: the payload
+   * names no conversation) and the source's key removed. `deleteIfUnchanged`: the source's key
+   * removed only while its revision and iv are still the ones read.
+   */
+  private movableRows() {
+    const inOneTransaction = (body: (store: IDBObjectStore) => void): Promise<void> => {
+      const db = this.ensureDb();
+      return new Promise<void>((resolve, reject) => {
+        const tx = db.transaction('messages', 'readwrite');
+        body(tx.objectStore('messages'));
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () =>
+          reject(tx.error ?? new DOMException('IndexedDB transaction aborted', 'AbortError'));
+      });
+    };
+    return {
+      rekeyAbsent: async (from: string, to: string, ids: readonly string[]) => {
+        const moved: string[] = [];
+        const collided: string[] = [];
+        await inOneTransaction((store) => {
+          for (const id of new Set(ids)) {
+            const source = store.get([from, id]);
+            source.onsuccess = () => {
+              const row = source.result;
+              if (!row) return;
+              const target = store.getKey([to, id]);
+              target.onsuccess = () => {
+                if (target.result !== undefined) {
+                  collided.push(id);
+                  return;
+                }
+                if (!guardedPut(store, { ...row, conversationId: to, rev: revisionOf(row) + 1 })) {
+                  return;
+                }
+                store.delete([from, id]);
+                moved.push(id);
+              };
+            };
+          }
+        });
+        return { moved, collided };
+      },
+      deleteIfUnchanged: async (
+        conversationId: string,
+        rows: ReadonlyArray<{ id: string; rev: number; stamp: string }>
+      ) => {
+        const removed = new Set<string>();
+        await inOneTransaction((store) => {
+          for (const { id, rev, stamp } of rows) {
+            const req = store.get([conversationId, id]);
+            req.onsuccess = () => {
+              const current = req.result;
+              if (!current || revisionOf(current) !== rev || ivStamp(current.iv) !== stamp) return;
+              store.delete([conversationId, id]);
+              removed.add(id);
+            };
+          }
+        });
+        return removed;
+      },
+    };
   }
 
   /**

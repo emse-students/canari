@@ -198,13 +198,15 @@ export type MessageRowStanding = { kind: 'absent' } | { kind: 'unreadable' } | {
 
 /**
  * The answer of {@link IStorage.moveMessages}: the ids whose row now stands under the destination,
- * moved there (`moved`), and those whose destination already held a row under the same id, where the
- * source's copy was removed and the destination's row stands (`alreadyThere`). An id the source did
- * not hold is in neither.
+ * moved there (`moved`); those whose destination already held a row under the same id, the source
+ * UNITED onto it and then removed (`alreadyThere`, `messageMove.ts`); and those both sides hold where
+ * one side does not open on this device, left untouched under the source (`kept`). An id the source
+ * did not hold is in none.
  */
 export interface MessageMove {
   moved: string[];
   alreadyThere: string[];
+  kept: string[];
 }
 
 /** The answer of {@link IStorage.getMessagesByIds}. */
@@ -934,13 +936,16 @@ export interface IStorage {
    * in ONE atomic step (one IndexedDB transaction; one SQLite statement). The one way a row changes
    * conversation: a write never does (`saveMessages` writes under the key it is given).
    *
-   * A row `toConversationId` already holds under the same id STANDS: the source's copy is removed.
-   * Idempotent - a second call finds nothing left to move.
+   * A row `toConversationId` already holds under the same id is the same message seen twice: the
+   * source is UNITED onto it - tombstone, edit, proofs, reactions, recorded 410 and unsent reason
+   * kept - and only then removed (`messageMove.ts`). A pair one side of which does not open on this
+   * device is left as it is. Idempotent - a second call finds nothing left to move.
    */
   moveMessages(
     fromConversationId: string,
     toConversationId: string,
-    ids: readonly string[]
+    ids: readonly string[],
+    deviceKeyB64: string
   ): Promise<MessageMove>;
   /**
    * Remove one message row outright. No-op when the row is absent.
@@ -953,7 +958,7 @@ export interface IStorage {
    * `conversationId` is taken rather than looked up because the caller already knows it and the
    * cached history-state key is per-conversation.
    */
-  deleteMessage(id: string, conversationId: string): Promise<void>;
+  deleteMessage(conversationId: string, id: string): Promise<void>;
   /**
    * Decrypt and return ONE message by its key `(conversationId, id)`, or `null` when the row is
    * absent or undecryptable.

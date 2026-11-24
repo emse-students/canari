@@ -104,7 +104,7 @@ function storageOf(device: Device): IStorage {
         moved.push(id);
       }
       sync();
-      return { moved, alreadyThere: [] as string[] };
+      return { moved, alreadyThere: [] as string[], kept: [] as string[] };
     }),
     countMessages: vi.fn(
       async (conv: string) => [...messages.values()].filter((m) => m.conversationId === conv).length

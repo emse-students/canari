@@ -139,6 +139,7 @@ import { insertMessageOrdered, replaceMessageOrdered } from './messageOrder';
 import { mapStoredMessagesToChatMessages } from './messageUtils';
 import { noteServerTime } from './serverClock';
 import { beginConversationRowWrite } from './conversationRowWrites';
+import type { ReactionsByConversation } from './reactionsByConversation';
 
 /** How the queue left one message for now - see {@link OutboxController.awaitSettled}. */
 export type OutboxSettlement = 'sent' | 'failed' | 'pending';
@@ -563,6 +564,8 @@ export interface OutboxDeps {
   userId: string;
   deviceKey: () => string;
   conversations: SvelteMap<string, Conversation>;
+  /** What the screen draws reactions from, keyed like the stored row: a re-keyed send carries its own. */
+  messageReactions: ReactionsByConversation;
   log: (msg: string) => void;
   /** Emit a non-destructive welcome_request for a group missing from the WASM. */
   requestReAdd: (groupId: string) => Promise<void>;
@@ -1806,11 +1809,13 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     try {
       // RE-KEYED MID-SEND: the row stands under the conversation it was written with. It is MOVED
       // onto the live one first - every field it holds (proofs, reactions, a tombstone) goes with
-      // it, in one atomic step - and the send is then folded onto it like any other.
+      // it, UNITED with the echo already stored there if there is one (`messageMove.ts`) - and the
+      // send is then folded onto it like any other. The reactions the screen draws move with it.
       if (writtenUnder !== liveConvId) {
-        const move = await storage.moveMessages(writtenUnder, liveConvId, [messageId]);
+        const move = await storage.moveMessages(writtenUnder, liveConvId, [messageId], deviceKey());
+        const carried = deps.messageReactions.move(writtenUnder, liveConvId, [messageId]);
         log(
-          `[OUTBOX] ${messageId.slice(0, 8)}… was re-keyed mid-send from ${writtenUnder.slice(0, 8)}… to ${liveConvId.slice(0, 8)}…: ${move.moved.length} row moved, ${move.alreadyThere.length} already there`
+          `[OUTBOX] ${messageId.slice(0, 8)}… was re-keyed mid-send from ${writtenUnder.slice(0, 8)}… to ${liveConvId.slice(0, 8)}…: ${move.moved.length} row moved, ${move.alreadyThere.length} united with the row already there, ${move.kept.length} left (does not open), ${carried} reaction set(s) carried`
         );
       }
       if ((await foldSend()).has(messageId)) return;

@@ -394,8 +394,10 @@ specs, and this entry. The one-event link (`eventId` + its own `sig`) is NOT par
   An OLDER build opening such a store cannot write messages to it: on SQLite its upsert names
   `ON CONFLICT(id)`, which the new key no longer matches, so each of its message writes fails, said
   in its own log; in a browser it asks for a version below the stored one and cannot open the store.
-- **Who.** Only a device that installs an older build over a newer one by hand (a desktop package
-  downgrade). The stores never serve a lower build to an installed app, and the web is always current.
+- **Who.** A device that goes back to an older build: a desktop package installed over a newer
+  one by hand, or a TestFlight or Play testing build left for the store's older release (the
+  testing programmes run ahead of the stores, so leaving one can install a lower build). The web
+  always serves the current bundle.
 - **Why accepted knowingly.** A key cannot be both the pair and the id alone; keeping a unique index on
   the id would keep the very collision the new key removes. Nothing is lost: every row is still on
   disk, and the next current build opens it as it was.

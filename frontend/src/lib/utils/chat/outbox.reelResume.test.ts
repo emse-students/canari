@@ -17,6 +17,7 @@
  */
 import 'fake-indexeddb/auto';
 import { SvelteMap } from 'svelte/reactivity';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 /** This tab's role, and the outbox event handlers each life registered (a channel's receivers). */
 const tab = vi.hoisted(() => ({
@@ -353,6 +354,7 @@ function life(w: World, opts: LifeOptions = {}) {
     userId: 'u',
     deviceKey: () => KEY,
     conversations,
+    messageReactions: new ReactionsByConversation(),
     log: () => undefined,
     requestReAdd: vi.fn(async () => undefined),
     recoverRosterDisagreement: vi.fn(async () => undefined),

@@ -455,6 +455,7 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
     userId: ctx.getUserId(),
     deviceKey: () => ctx.getDeviceKey(),
     conversations: cb.conversations,
+    messageReactions: cb.messageReactions,
     log: cb.log,
     requestReAdd: (groupId: string) => requestReAdd(groupId, makeRecoveryDeps(ctx, cb)),
     recoverRosterDisagreement: (groupId: string) =>

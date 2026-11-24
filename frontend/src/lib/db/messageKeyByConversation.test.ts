@@ -188,7 +188,7 @@ describe.each(backends)('%s - one message id in two conversations', (_name, open
     await storage.saveMessages([row(A, 'in A')], KEY);
     await storage.saveMessages([row(B, 'in B')], KEY);
 
-    await storage.deleteMessage('shared-id', A);
+    await storage.deleteMessage(A, 'shared-id');
 
     const again = await reload();
     expect(await again.getMessage(A, 'shared-id', KEY)).toBeNull();
@@ -256,9 +256,9 @@ describe.each(backends)('%s - moveMessages', (_name, open) => {
       KEY
     );
 
-    const move = await storage.moveMessages(A, B, ['m1', 'not-there']);
+    const move = await storage.moveMessages(A, B, ['m1', 'not-there'], KEY);
 
-    expect(move).toEqual({ moved: ['m1'], alreadyThere: [] });
+    expect(move).toEqual({ moved: ['m1'], alreadyThere: [], kept: [] });
     const again = await reload();
     expect(await again.getMessage(A, 'm1', KEY)).toBeNull();
     expect(await again.getMessage(B, 'm1', KEY)).toMatchObject({
@@ -272,23 +272,79 @@ describe.each(backends)('%s - moveMessages', (_name, open) => {
     expect(await again.getMessage(B, 'm1', KEY)).toMatchObject({ isDeleted: true });
   });
 
-  it("leaves the destination's own row standing and removes the source's copy; a second move is a no-op", async () => {
-    const { storage } = await open();
+  it('a row the destination already holds is UNITED with the source, nothing lost, then the source removed', async () => {
+    const { storage, reload } = await open();
     await twoConversations(storage);
-    await storage.saveMessages([row(A, 'the copy in A')], KEY);
-    await storage.saveMessages([row(B, 'the row of B')], KEY);
+    // The source: this device's tombstone with its proof, a reaction, the recorded 410.
+    const proof = { body: 'b', proof: 'p', group: A };
+    await storage.saveMessages(
+      [
+        row(A, '', {
+          isDeleted: true,
+          deleteProof: proof,
+          reactions: [{ userId: 'bob', emoji: 'x', at: 2 }],
+          mediaPurgedAt: 70,
+        }),
+      ],
+      KEY
+    );
+    // The destination: a bare copy stored first (a bundle, a replayed copy, an echo).
+    await storage.saveMessages(
+      [row(B, 'the original body', { reactions: [{ userId: 'carol', emoji: 'y', at: 3 }] })],
+      KEY
+    );
 
-    expect(await storage.moveMessages(A, B, ['shared-id'])).toEqual({
+    expect(await storage.moveMessages(A, B, ['shared-id'], KEY)).toEqual({
       moved: [],
       alreadyThere: ['shared-id'],
+      kept: [],
     });
-    expect(await storage.getMessage(A, 'shared-id', KEY)).toBeNull();
-    expect(await storage.getMessage(B, 'shared-id', KEY)).toMatchObject({
-      content: 'the row of B',
-    });
-    expect(await storage.moveMessages(A, B, ['shared-id'])).toEqual({
+
+    const again = await reload();
+    expect(await again.getMessage(A, 'shared-id', KEY)).toBeNull();
+    const united = await again.getMessage(B, 'shared-id', KEY);
+    expect(united).toMatchObject({ isDeleted: true, content: '', mediaPurgedAt: 70 });
+    expect(united?.deleteProof).toEqual(proof);
+    expect(united?.reactions?.map((r) => r.emoji).sort()).toEqual(['x', 'y']);
+    expect(await again.moveMessages(A, B, ['shared-id'], KEY)).toEqual({
       moved: [],
       alreadyThere: [],
+      kept: [],
+    });
+  });
+
+  it('the other way round: a tombstone already at the destination stays, the source body does not come back', async () => {
+    const { storage } = await open();
+    await twoConversations(storage);
+    await storage.saveMessages(
+      [row(A, 'the original body', { unsentReason: 'not-a-member' as never })],
+      KEY
+    );
+    await storage.saveMessages([row(B, '', { isDeleted: true })], KEY);
+
+    await storage.moveMessages(A, B, ['shared-id'], KEY);
+
+    expect(await storage.getMessage(B, 'shared-id', KEY)).toMatchObject({
+      isDeleted: true,
+      content: '',
+      unsentReason: 'not-a-member',
+    });
+  });
+
+  it('a pair one side of which does not open is left as it is', async () => {
+    const { storage } = await open();
+    await twoConversations(storage);
+    await storage.saveMessages([row(A, 'sealed under another key')], NEW_KEY);
+    await storage.saveMessages([row(B, 'the row of B')], KEY);
+
+    expect(await storage.moveMessages(A, B, ['shared-id'], KEY)).toEqual({
+      moved: [],
+      alreadyThere: [],
+      kept: ['shared-id'],
+    });
+    expect(await storage.getMessageStanding(A, 'shared-id', KEY)).toEqual({ kind: 'unreadable' });
+    expect(await storage.getMessage(B, 'shared-id', KEY)).toMatchObject({
+      content: 'the row of B',
     });
   });
 });

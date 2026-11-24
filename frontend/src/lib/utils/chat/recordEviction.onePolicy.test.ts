@@ -275,6 +275,7 @@ async function runOutbox(opts: { active: boolean; send?: () => Promise<void> }):
     userId: 'me',
     deviceKey: () => 'device-key',
     conversations,
+    messageReactions: new ReactionsByConversation(),
     log: r.log,
     requestReAdd: vi.fn().mockResolvedValue(undefined),
     recoverRosterDisagreement: vi.fn().mockResolvedValue(undefined),

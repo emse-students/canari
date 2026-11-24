@@ -4720,7 +4720,8 @@ export function useMessaging() {
   ): Promise<void> {
     if (!ctx.storage) return;
     try {
-      await ctx.storage.deleteMessage(messageId, conversationId);
+      // The stored key is lowercased (`persistLocalMutation`); the caller hands the shown key.
+      await ctx.storage.deleteMessage(conversationId.toLowerCase(), messageId);
     } catch (e) {
       ctx.log(`[DB] Failed to drop withdrawn message ${messageId}: ${String(e)}`);
     }

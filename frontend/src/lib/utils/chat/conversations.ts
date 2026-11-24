@@ -804,8 +804,10 @@ export function resolveConversationListPresentation(
  * row is deleting its old key and writing its new one - in ONE atomic step, the ciphertext and every
  * field (proofs, reactions, a tombstone) carried as stored. A write never moves a row, and the scoped
  * compare-and-set (`mergeMessages`) never changes one's conversation. A row `toId` already holds
- * under the same id stands, and `fromId`'s copy is removed. A row this device cannot open is not
- * moved and is counted in `left`.
+ * under the same id (a bundle or a replayed copy of the joined group stored first) is the same
+ * message: `fromId`'s copy is UNITED onto it - its tombstone, edit, proofs and reactions kept - and
+ * then removed (`messageMove.ts`). A row this device cannot open is not moved and is counted in
+ * `left`.
  *
  * THE MUTATIONS WAITING UNDER `fromId` GO WITH ITS ROWS. A deletion, edit or reaction kept under
  * `fromId` (`pendingMutations`, its message not there yet) waits for a message that will now arrive
@@ -833,7 +835,8 @@ export async function moveDirectConversationRows(
   const move = await storage.moveMessages(
     fromId,
     toId,
-    source.map((m) => m.id)
+    source.map((m) => m.id),
+    deviceKeyB64
   );
   const left = await storage.countMessages(fromId);
   const carried = await carryPendingMutations(fromId, toId, storage, deviceKeyB64);

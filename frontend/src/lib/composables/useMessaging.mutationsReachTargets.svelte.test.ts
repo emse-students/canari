@@ -225,8 +225,8 @@ describe('a body re-delivered for a stored row memory does not show', () => {
 
 describe('a frame of one conversation naming a message of ANOTHER (review of #2936, P1)', () => {
   // A stored message is keyed by (conversation, id): a frame sent in A never reaches a row of B -
-  // deleting, editing or reacting to it there, or a relayed bundle rewriting it - and a message sent
-  // in A under an id B holds is simply A's own row.
+  // deleting, editing or reacting to it there, or a relayed bundle rewriting it - and the same id
+  // in two conversations is two rows, each its conversation's own.
   const IN_B = 'conversation-b';
   const rowOfB = () => storedBody({ id: 'b1', conversationId: IN_B, content: BODY });
 
@@ -242,7 +242,7 @@ describe('a frame of one conversation naming a message of ANOTHER (review of #29
   }
   let d0: Awaited<ReturnType<typeof deviceWithRowOfB>> | null = null;
 
-  it('a message sent in A under the id B holds is stored in A, and both survive a restart', async () => {
+  it('the same id in two conversations: each is stored in its own, and both survive a restart', async () => {
     const { storage, name } = await openStore();
     const d = await makeDevice(useMessaging, storage);
     await d.storage.saveConversation({ id: IN_B, name: 'b', lifecycle: 'active', updatedAt: 1 });

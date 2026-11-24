@@ -102,7 +102,7 @@ export function messageRowStore(rows: TestRow[], opts: { failSave?: boolean } = 
         byId.set(id, { ...row, conversationId: to });
         moved.push(id);
       }
-      return { moved, alreadyThere: [] as string[] };
+      return { moved, alreadyThere: [] as string[], kept: [] as string[] };
     }),
     getMessages: vi.fn(async (conv: string) =>
       [...byId.values()]

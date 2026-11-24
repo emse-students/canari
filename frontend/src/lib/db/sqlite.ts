@@ -45,6 +45,7 @@ import {
   type PendingMutationRowKey,
 } from './pendingMutationCodec';
 import { casMergeMessages, type RevisedRow, type RevisedWrite } from './messageCas';
+import { moveMessageRows } from './messageMove';
 
 import {
   attachOutboxBlob,
@@ -869,7 +870,7 @@ export class SqliteStorage implements IStorage {
   // -- Messages ------------------------------------------------------------
 
   /** Remove one message row by its key `(conversationId, id)`; a missing row is not an error. */
-  async deleteMessage(id: string, conversationId: string): Promise<void> {
+  async deleteMessage(conversationId: string, id: string): Promise<void> {
     invalidateHistoryStateKey(conversationId);
     await this.db.execute('DELETE FROM messages WHERE conversation_id = $1 AND id = $2', [
       conversationId,
@@ -993,53 +994,70 @@ export class SqliteStorage implements IStorage {
     return casMergeMessages(this.revisedRows(), conversationId, ids, merge, deviceKeyB64);
   }
 
-  /**
-   * See {@link IStorage.moveMessages}: ONE `UPDATE OR IGNORE` re-keys every named row of
-   * `fromConversationId` that `toConversationId` does not hold yet - one statement, atomic, the
-   * largest unit the plugin gives (`sqliteBatch.ts`) - then ONE `DELETE` removes from
-   * `fromConversationId` the rows `toConversationId` already held under the same id. Both are
-   * idempotent: a kill between them leaves a copy, which the next move removes.
-   */
+  /** See {@link IStorage.moveMessages} and `messageMove.ts`, the one implementation. */
   async moveMessages(
     fromConversationId: string,
     toConversationId: string,
-    ids: readonly string[]
+    ids: readonly string[],
+    deviceKeyB64: string
   ): Promise<MessageMove> {
-    const out: MessageMove = { moved: [], alreadyThere: [] };
-    const unique = [...new Set(ids)];
-    if (unique.length === 0 || fromConversationId === toConversationId) return out;
     invalidateHistoryStateKey(fromConversationId);
     invalidateHistoryStateKey(toConversationId);
-    for (const batch of chunk(unique, MAX_BOUND_PARAMETERS - 2)) {
-      const placeholders = batch.map((_, i) => `$${i + 3}`).join(', ');
-      const params = [fromConversationId, toConversationId, ...batch];
-      const rows: Array<{ id: string; conversation_id: string }> = await this.db.select(
-        `SELECT id, conversation_id FROM messages WHERE conversation_id IN ($1, $2) AND id IN (${placeholders})`,
-        params
-      );
-      const there = new Set(
-        rows.filter((r) => r.conversation_id === toConversationId).map((r) => String(r.id))
-      );
-      const here = new Set(
-        rows.filter((r) => r.conversation_id === fromConversationId).map((r) => String(r.id))
-      );
-      await this.db.execute(
-        `UPDATE OR IGNORE messages SET conversation_id = $2, rev = rev + 1 WHERE conversation_id = $1 AND id IN (${placeholders})`,
-        params
-      );
-      await this.db.execute(
-        `DELETE FROM messages WHERE conversation_id = $1 AND id IN (${placeholders}) AND id IN (SELECT id FROM messages WHERE conversation_id = $2)`,
-        params
-      );
-      for (const id of batch) {
-        if (!here.has(id)) continue;
-        (there.has(id) ? out.alreadyThere : out.moved).push(id);
-      }
-    }
-    console.debug(
-      `[DB] moved ${out.moved.length} message row(s) from ${fromConversationId.slice(0, 8)}... to ${toConversationId.slice(0, 8)}... (${out.alreadyThere.length} already held there, the copy removed)`
+    return moveMessageRows(
+      { ...this.revisedRows(), ...this.movableRows() },
+      fromConversationId,
+      toConversationId,
+      ids,
+      deviceKeyB64
     );
-    return out;
+  }
+
+  /**
+   * The two steps a move adds to the compare-and-set. `rekeyAbsent`: ONE `UPDATE OR IGNORE` re-keys
+   * every named row the destination does not hold - one statement, atomic, the largest unit the
+   * plugin gives (`sqliteBatch.ts`) - and what is still under the source afterwards is what collided.
+   * `deleteIfUnchanged`: one statement per row, matching its revision and iv.
+   */
+  private movableRows() {
+    return {
+      rekeyAbsent: async (from: string, to: string, ids: readonly string[]) => {
+        const moved: string[] = [];
+        const collided: string[] = [];
+        for (const batch of chunk([...new Set(ids)], MAX_BOUND_PARAMETERS - 2)) {
+          const placeholders = batch.map((_, i) => `$${i + 2}`).join(', ');
+          const before: Array<{ id: string }> = await this.db.select(
+            `SELECT id FROM messages WHERE conversation_id = $1 AND id IN (${placeholders})`,
+            [from, ...batch]
+          );
+          const movePlaceholders = batch.map((_, i) => `$${i + 3}`).join(', ');
+          await this.db.execute(
+            `UPDATE OR IGNORE messages SET conversation_id = $2, rev = rev + 1 WHERE conversation_id = $1 AND id IN (${movePlaceholders})`,
+            [from, to, ...batch]
+          );
+          const after: Array<{ id: string }> = await this.db.select(
+            `SELECT id FROM messages WHERE conversation_id = $1 AND id IN (${placeholders})`,
+            [from, ...batch]
+          );
+          const still = new Set(after.map((r) => String(r.id)));
+          for (const { id } of before) (still.has(String(id)) ? collided : moved).push(String(id));
+        }
+        return { moved, collided };
+      },
+      deleteIfUnchanged: async (
+        conversationId: string,
+        rows: ReadonlyArray<{ id: string; rev: number; stamp: string }>
+      ) => {
+        const deleted = new Set<string>();
+        for (const { id, rev, stamp } of rows) {
+          const result = await this.db.execute(
+            'DELETE FROM messages WHERE conversation_id = $1 AND id = $2 AND rev = $3 AND iv = $4',
+            [conversationId, id, rev, stamp]
+          );
+          if ((result?.rowsAffected ?? 0) > 0) deleted.add(id);
+        }
+        return deleted;
+      },
+    };
   }
 
   /**

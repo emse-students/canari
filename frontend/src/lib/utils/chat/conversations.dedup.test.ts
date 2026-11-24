@@ -26,7 +26,7 @@ function makeStorage(): IStorage {
     saveMessage: vi.fn().mockResolvedValue(undefined),
     saveMessages: vi.fn().mockResolvedValue(undefined),
     getMessages: vi.fn().mockResolvedValue([]),
-    moveMessages: vi.fn().mockResolvedValue({ moved: [], alreadyThere: [] }),
+    moveMessages: vi.fn().mockResolvedValue({ moved: [], alreadyThere: [], kept: [] }),
     countMessages: vi.fn().mockResolvedValue(0),
     getMessagesPage: vi.fn().mockResolvedValue([]),
     deleteOldMessages: vi.fn().mockResolvedValue(0),

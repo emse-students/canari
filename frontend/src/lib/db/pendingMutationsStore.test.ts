@@ -647,7 +647,7 @@ describe.each(backends)('%s - message rows: scope and compare-and-set', (_name, 
     const readAt = await revisionOf('m1');
     // Between the read and the write: deleted, stored again, and rewritten back to the SAME revision.
     writeBetweenReadAndWrite(storage, async () => {
-      await storage.deleteMessage('m1', 'conv');
+      await storage.deleteMessage('conv', 'm1');
       await storage.saveMessage(body('m1', 'second life'), KEY);
       for (let i = 0; (await revisionOf('m1')) < readAt && i < 10; i++) {
         await storage.saveMessage(body('m1', 'second life'), KEY);
