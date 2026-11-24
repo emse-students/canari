@@ -20,6 +20,7 @@ import type { TabCommitStore } from './tabCommitStore';
 import { frameHandoverExecutors, sealForHandover } from '$lib/mls-client/frameFromAnyTab';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
 import { toBase64 } from '$lib/utils/hex';
+import { leadHoldsInFlight, resetLeadHoldsForTests } from '$lib/mls-client/leadHolds';
 
 /**
  * A FOLLOWER TAB'S COMMIT, DONE BY THE LEADER - two tabs simulated in one realm.
@@ -484,6 +485,38 @@ describe('a follower is answered by a leader that lives', () => {
       status: 'refused',
       reason: 'not-delegable',
     });
+  });
+});
+
+// SECOND REVIEW OF #4053: a delegated salon seal waits on the salon's send gate, which only a
+// session end wakes. Run inside a lead hold, that wait kept an ended session in the lead - and every
+// follower's request with it. The executor takes NO hold: what it changes in the MLS state holds the
+// lead where it changes it (the mutex, a join, a mint), and a wait on the gate changes nothing.
+describe('a delegated gesture parked outside the MLS state holds no lead', () => {
+  it('a salon seal waiting on its send gate leaves the hold count at 0', async () => {
+    resetLeadHoldsForTests();
+    const w = makeWorld();
+    const leader = tab('L', w, { leader: true });
+    leader.server.listen();
+    let parked = false;
+    leader.server.register({
+      'seal-salon-message': () => {
+        parked = true;
+        // The gate's wait: nothing settles it here.
+        return new Promise(() => {});
+      },
+    });
+    const follower = tab('F', w, { leader: false });
+
+    void follower.delegate({
+      kind: 'seal-salon-message',
+      channelId: 'c1',
+      payload: { iv: 'aQ==', cipherText: 'aQ==' },
+    });
+    await settle();
+
+    expect(parked).toBe(true);
+    expect(leadHoldsInFlight()).toBe(0);
   });
 });
 

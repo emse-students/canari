@@ -2134,7 +2134,10 @@ worker in `1.9.0` ([design](../../backlog.d/a-browser-wide-worker-holds-the-mls-
   hands the record back, and the next leader runs it; an `unavailable` leader leaves the request
   `pending` for the next one; a promoted asker adopts and runs its own gesture and its visible or
   mutation frame (said at warn), drops a call's frame, and still removes another tab's orphan.
+  A delegated salon seal parked on its send gate holds no lead.
   `tabCommitDelegation.carry.test.ts`: the carried id is adopted on a reload only.
+- `BaseMlsService.rowsBeforeRatchet.test.ts`: a checkpoint holds the lead from its export to its
+  put, and none while it waits on the row writes before it.
 - `leadPublisher.test.ts`: eligibility before readiness; the lead kept while a hold is in flight and
   given up when it settles, on success or failure, after the last of several holds; one warn naming
   the holds of an ended session.
