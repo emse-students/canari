@@ -255,6 +255,48 @@ Height changes while open keep the frame animated on the keyboard's curve, unmea
 Messenger. Android rides both directions since 2026-11-14 (section 6), with the same
 `keyboardRide.ts`; the iOS fall above is unchanged by it - its thread still rides its box.
 
+### The shell is the one authority over the keyboard's room (2026-11-24)
+
+**What the iPhone said** (`1.8.0-alpha.6`, iPhone 12): twice the page read `keyboard open 602px` with a
+`clientHeight` of 195 and stayed blank, the native "+" stranded mid-screen, until the keyboard hid; and a
+streamed rise showed ~300 ms of the "+" mid-screen over an unpainted page
+([the entry](../backlog.d/p2-the-iphone-page-reads-a-doubled-keyboard-inset-and-stops-painting.md)).
+
+**Why.** WKWebView observes `UIKeyboardWillShow`, `WillHide`, `WillChangeFrame` and `DidChangeFrame`
+itself, and on each insets and scrolls its own scroll view by the keyboard's overlap of its frame at that
+moment. The hand-off above sets the frame only after the page's layout is on screen, so WebKit measured
+the keyboard against the FULL-HEIGHT frame every time: a second inset of 301 pt on a WebView already
+301 pt short. On nearly every rise the document scrolled 301 pt (`[nativeGlassPiece] ... compensating a
+document scroll: scrollY=301`) until the clamp put it back - the "+" follows the page's coordinates, so
+it jumped; twice the inset stayed (`keyboard settled: native offset=301.0 content=543.0 bounds=543.0`,
+which the clamp leaves alone only if the range carries the inset), and the visual viewport was the
+frame less the keyboard again.
+
+**The fix: `CanariDetachWebKitKeyboardInset`** removes those four observers from the WebView (public
+`removeObserver:name:object:`), once per WebView, from the first activation and from every keyboard
+change. The keyboard is taken off the page once, by the frame. WebKit registers those observers once,
+from `_initializeWithConfiguration:` (`_registerForNotifications`, `addObserver:self`, the same since
+iOS 8), so they stay removed. A WebView that heard a keyboard before the detach would keep that inset
+for its life (its will-hide is gone too): the detach then logs an ERROR with the inset. It reads that inset only once the page is edge to edge, which the safe-area publisher alone makes it (the top inset's one owner): the activation detaches AFTER the publish, and a keyboard change that would find the page not yet edge to edge logs an ERROR and leaves the detach to the next caller, so UIKit's 34 pt home-indicator strip is never read as WebKit's.
+
+**WebKit's reveal of the focused field goes with them** (review of #4058). Its
+`RevealFocusedElementDeferrer` waits for a keyboard will-show that only `_keyboardWillShow:` fulfils;
+did-show is not in its set while first-responder keyboard avoidance is on. So
+`_zoomToRevealFocusedElement` no longer runs, and **the page is the one reveal in the iOS shell**:
+`scrollFocusedFieldIntoView` (`block: 'nearest'`), on every keyboard opening (both updates of the
+hand-off, `keyboardRevealOnUpdate`), on every focus with the keyboard already up (`handleFocusIn`), and
+again when a keyboard-aware overlay settles (`handleTransitionEnd`). Which fields: `pageRevealsField` -
+every field but the chat composer, which sits on the keyboard by layout. Elsewhere `.app-layout` is
+still left to the engine (Chromium reveals the focused editable on its own resize); in the iOS shell
+nothing else would reveal it, so the page does. One authority for the keyboard's room (the frame), one
+for the reveal (the page). A witness keeps the main page honest: in the iOS shell a scroll that moves `.page-scroll-wrap` or
+`.app-layout` off its top logs `the main page shifted: <box> scrolled to N`, once until it is back
+(`shiftedPageBox`), the case a reveal through an `overflow: hidden` wrapper once made.
+Only the shell's will-show drops a rest the page holds (`noteKeyboardWillShow`), as the shell drops a rest it owes.
+
+The settled line carries `inset bottom=`, the scroll view's own bottom inset, so a second authority shows
+in the syslog. Verified by compiling only; the reading is in the entry.
+
 Tests: `iosKeyboardRiseHandoff.test.ts` reads the native contract against the page's hooks,
 `iosKeyboardSettledReport.test.ts` the settle's place behind a proof, `keyboardRide.test.ts` the
 parsing, the refusals, each piece's own move and the frame follower, `keyboardViewport.ride.test.ts`
