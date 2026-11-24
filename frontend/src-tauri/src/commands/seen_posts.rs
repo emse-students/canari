@@ -150,21 +150,41 @@ pub(crate) fn withholds_push(
 }
 
 /// The directories this account's copy lives in: the data directory, and on iOS the App Group the
-/// extension reads.
-fn mirror_dirs(app: &tauri::AppHandle) -> Result<Vec<std::path::PathBuf>, String> {
+/// extension reads. EACH is its own result: a missing App Group must not stop the data directory's
+/// copy from being written (the app's own readers), and the other way round - every failure is logged
+/// where it happens and the first one is returned once every copy was tried.
+fn mirror_dirs(app: &tauri::AppHandle) -> Vec<Result<std::path::PathBuf, String>> {
     use tauri::Manager;
     #[allow(unused_mut)]
-    let mut dirs = vec![app.path().app_data_dir().map_err(|e| e.to_string())?];
+    let mut dirs = vec![app.path().app_data_dir().map_err(|e| e.to_string())];
     #[cfg(target_os = "ios")]
-    {
-        let group = crate::app_group::app_group_dir().inspect_err(|e| {
-            log::error!(
-                "[SEEN_TREND] no App Group container - the extension shows trends for displayed posts: {e}"
-            );
-        })?;
-        dirs.push(group);
+    dirs.push(crate::app_group::app_group_dir().inspect_err(|e| {
+        log::error!(
+            "[SEEN_TREND] no App Group container - the extension shows trends for displayed posts: {e}"
+        );
+    }));
+    dirs
+}
+
+/// Writes `posts` for `owner` into every directory of `dirs`, each independently; returns the count the
+/// last written copy holds, or the first error once all were tried.
+pub(crate) fn replace_seen_posts_in(
+    dirs: Vec<Result<std::path::PathBuf, String>>,
+    owner: &str,
+    posts: &[SeenPost],
+) -> Result<usize, String> {
+    let mut held = 0;
+    let mut first_error: Option<String> = None;
+    for dir in dirs {
+        match dir.and_then(|d| replace_seen_posts(&d, owner, posts)) {
+            Ok(n) => held = n,
+            Err(e) => {
+                log::error!("[SEEN_TREND] a copy was NOT written, the others still are: {e}");
+                first_error.get_or_insert(e);
+            }
+        }
     }
-    Ok(dirs)
+    first_error.map_or(Ok(held), Err)
 }
 
 /// Mirrors the record of displayed posts the WebView holds, for `user_id` (the signed-in account),
@@ -176,11 +196,7 @@ pub(crate) fn store_seen_posts(
     posts: Vec<SeenPost>,
 ) -> Result<usize, String> {
     log::debug!("[SEEN_TREND] store_seen_posts: {} post(s)", posts.len());
-    let mut held = 0;
-    for dir in mirror_dirs(&app)? {
-        held = replace_seen_posts(&dir, &user_id, &posts)?;
-    }
-    Ok(held)
+    replace_seen_posts_in(mirror_dirs(&app), &user_id, &posts)
 }
 
 /// Removes `user_id`'s copy at sign-out (`forgetSeenPosts`): which posts a member displayed is theirs,
@@ -191,8 +207,8 @@ pub(crate) fn forget_seen_posts(app: tauri::AppHandle, user_id: String) -> Resul
     log::debug!("[SEEN_TREND] forget_seen_posts");
     let mut removed = false;
     let mut first_error: Option<String> = None;
-    for dir in mirror_dirs(&app)? {
-        match remove_seen_posts_of(&dir, &user_id) {
+    for dir in mirror_dirs(&app) {
+        match dir.and_then(|d| remove_seen_posts_of(&d, &user_id)) {
             Ok(r) => removed |= r,
             Err(e) => {
                 log::error!("[SEEN_TREND] a copy was not removed at sign-out: {e}");
@@ -219,6 +235,20 @@ mod tests {
 
     fn uuid(n: u32) -> String {
         format!("{n:08x}-0000-4000-8000-000000000000")
+    }
+
+    #[test]
+    fn a_missing_app_group_does_not_stop_the_data_directory_copy() {
+        let data = temp_dir("l3-data");
+        let id = uuid(1);
+        let dirs = vec![Err("no App Group".to_string()), Ok(data.clone())];
+        let out = replace_seen_posts_in(dirs, "me", &[post(&id, 5.0)]);
+        // The failure is reported so the WebView keeps the record dirty...
+        assert_eq!(out, Err("no App Group".to_string()));
+        // ...and the copy that could be written was.
+        let root: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(data.join(SEEN_POSTS_FILE)).unwrap()).unwrap();
+        assert!(root["posts"].get(&id).is_some());
     }
 
     fn post(id: &str, at: f64) -> SeenPost {

@@ -346,7 +346,8 @@
           réglage, le fait qu'un lecteur a déjà été prévenu d'une publication (jusqu'à l'effacement
           de la publication ou de son compte), le nombre de ces notifications reçues chaque jour
           (sept jours) et le nombre de suggestions reçues chaque semaine (quatorze jours après la
-          fin de la semaine).
+          fin de la semaine). Une tendance pour une publication que cet appareil a déjà affichée ne
+          vous est pas notifiée ; cette vérification se fait sur l'appareil (section 7).
         </dd>
       </div>
       <div>
@@ -1285,6 +1286,23 @@
             <td
               >Effacés à la déconnexion ; les suggestions de partage aussi à la désactivation du
               réglage, pas les données des notifications de message</td
+            >
+          </tr>
+          <tr>
+            <td>Publications déjà affichées (application et navigateur)</td>
+            <td>
+              Les identifiants des publications que Canari a affichées sur cet appareil, avec leur
+              date de publication, pour ne pas vous suggérer par une notification de tendance une
+              publication que vous avez déjà vue. Y est jointe la liste des notifications de
+              tendance que cet appareil a ainsi masquées, pour qu'elles ne réapparaissent pas dans
+              votre cloche. Ces listes restent sur l'appareil : rien n'en est envoyé à nos serveurs,
+              et une publication vue sur un autre appareil n'y est pas reconnue
+            </td>
+            <td
+              >Publications : jusqu'à 25 heures après leur publication, 500 au plus ; notifications
+              masquées : tant qu'elles figurent dans votre cloche. Effacées à la déconnexion, à la
+              suppression du compte, à l'effacement des données de l'application ou à sa
+              désinstallation</td
             >
           </tr>
           <tr>

@@ -673,6 +673,7 @@ I CanariFCM: [PUSH_SHOW] outcome=<token> conv=<g:8 | ch:8 | ?> channel=<id | ?> 
 | The member's level withholds it (`NotificationLevelGate`) - the message IS cached | `withheld-level`, `why: cached=<bool> <the gate's reason>` |
 | Refused for good while the real banner is already up | `refused-covered` |
 | Already read on another device ([read-elsewhere](../services/social-service.md)): before the build, or at the post itself under `READ_ELSEWHERE`'s lock | `suppressed-read-elsewhere`, `why: early` or `why: at-post` |
+| A campus trend for a post this device already displayed ([engagement](../engagement.md#a-campus-trend-for-a-post-this-device-already-displayed-shows-nothing-2026-11-24)): nothing shown, no post id in the line | `suppressed-seen-trend`, `why: seen-trend` |
 
 **The read-elsewhere decisions record the same line (2026-11-21)**, so a banner that went - or
 stayed - is explained as well as one that never came. Each is one outcome of `ReadElsewhereMarks`,

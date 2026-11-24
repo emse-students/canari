@@ -85,9 +85,46 @@ export function pruneSeen(seen: SeenPosts, nowMs: number): { aged: number; cappe
   return { aged, capped };
 }
 
-/** The record as a sealable body. */
-export function serializeSeen(seen: SeenPosts): { posts: Record<string, number> } {
-  return { posts: Object.fromEntries(seen) };
+/** What the bell keeps beside the record: see `seenPosts.svelte.ts`. */
+export interface SeenLedger {
+  /** post id -> epoch ms this device first displayed it. */
+  seenAt: Map<string, number>;
+  /** Ids of the bell rows this device withheld. */
+  withheld: Set<string>;
+}
+
+/** The record (and, for the sealed copy, the bell's ledger) as a sealable body. */
+export function serializeSeen(
+  seen: SeenPosts,
+  ledger?: SeenLedger
+): { posts: Record<string, number>; seenAt?: Record<string, number>; withheld?: string[] } {
+  const body: {
+    posts: Record<string, number>;
+    seenAt?: Record<string, number>;
+    withheld?: string[];
+  } = { posts: Object.fromEntries(seen) };
+  if (ledger) {
+    body.seenAt = Object.fromEntries(ledger.seenAt);
+    body.withheld = [...ledger.withheld];
+  }
+  return body;
+}
+
+/** The bell's ledger from a stored body; empty when the body carries none (tolerant, never refusing). */
+export function parseSeenLedger(body: unknown): SeenLedger {
+  const raw = body as { seenAt?: unknown; withheld?: unknown } | null;
+  const seenAt = new Map<string, number>();
+  if (raw?.seenAt && typeof raw.seenAt === 'object' && !Array.isArray(raw.seenAt)) {
+    for (const [id, at] of Object.entries(raw.seenAt)) {
+      if (typeof at === 'number' && Number.isFinite(at)) seenAt.set(normalisePostId(id), at);
+    }
+  }
+  const withheld = new Set<string>(
+    Array.isArray(raw?.withheld)
+      ? raw.withheld.filter((id): id is string => typeof id === 'string')
+      : []
+  );
+  return { seenAt, withheld };
 }
 
 /** The record from a stored body, or `null` when it does not have the shape this build writes. */

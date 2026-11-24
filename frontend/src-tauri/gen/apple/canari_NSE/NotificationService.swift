@@ -1599,6 +1599,12 @@ class NotificationService: UNNotificationServiceExtension {
     content.body = ""
     content.sound = nil
     content.attachments = []
+    // THE STAMP the app removes this row by (`CanariRemoveWithheldTrendNotifications`, at every
+    // foreground and when its process runs for a push): the blank row is noise. Dropping the push
+    // outright needs the filtering entitlement (`com.apple.developer.usernotifications.filtering`).
+    var info = content.userInfo
+    info["canariWithheld"] = "seen-trend"
+    content.userInfo = info
     if #available(iOS 15.0, *) {
       content.interruptionLevel = .passive
     }

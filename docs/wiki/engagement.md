@@ -1170,8 +1170,23 @@ server.** The accepted limit: a post seen on another device is not recognised th
   `store_seen_posts`; in the data directory and in the iOS App Group) because the FCM service, the iOS
   extension and `canari_push.mm` compose banners while the app is closed and cannot ask the WebView. The
   file names its owner; a reader uses it only when the owner is the account in `push_context.json`.
-  Writes follow the lifecycle, not a timer: the app going to the background (`visibilitychange` hidden,
-  `pagehide`) seals the record and hands it to Rust.
+  **Writes follow the note, not a timer and not the lifecycle** (review of #4065): a social push is
+  composed natively WHILE the app is in the foreground (Android `ForegroundGuard.actsInForeground`, iOS
+  `showsWhileForeground`), so a post noted in the open session must already be in the native file, and a
+  crash must not lose it. A note schedules one write on the microtask queue (cards noted in the same
+  tick share it); one write is in flight at a time and the next runs while the record is dirty. The
+  NATIVE file is written first, then the sealed copy, each mirror independently (a missing App Group
+  never stops the data-directory copy; each failure is logged and the record stays dirty). The
+  background flush stays as the last chance. A sealed copy merged into memory marks it dirty, so a
+  native file that was lost is written again.
+- **The bell's own durable fact** (B2/L1 of the review): the record is pruned at 25 h but a bell row
+  lives 90 days, so a withheld "Suggestion" row would come back, unread, when its post aged out. The
+  device therefore also keeps, in the same sealed copy (never sent anywhere), the ids of the ROWS it
+  withheld, for as long as the stored list holds them (pruned on each full server answer), and the
+  instant it FIRST displayed each post. **A row is withheld only if its post was displayed BEFORE the
+  row was created** - the case where its push was withheld too - so a trend the member already saw in
+  the bell, or tapped from a shown push, is displayed after its row and never vanishes. A wrong device
+  clock costs a repeated or a kept row, never a lost message.
 - **Erased with the other per-account stores**: the sign-out (`clearUserLocally` ->
   `forgetSeenPosts`, which also removes the native copy if it is this account's), the account deletion
   (`eraseAccountRecordsLocally`, and Rust's `remove_account_push_and_name_files` in the data directory and
@@ -1189,9 +1204,15 @@ server.** The accepted limit: a post seen on another device is not recognised th
   - **iOS extension** (`NotificationService.withholdsSeenTrend`): an extension cannot withhold an alert
     push without Apple's filtering entitlement, which this app does not hold, so the trend is delivered as
     the repo's blank passive content (no banner, no sound, no wake; the same form as
-    `blankSignedOutContent`); outcome `seen-trend`. **A blank row may remain in the notification centre:
-    the reading says whether that is acceptable.** `canari_push.mm` (the app-side twin that re-posts a
-    background push) returns before it posts.
+    `blankSignedOutContent`); outcome `seen-trend`. **The blank row is removed by the app**: the
+    extension stamps `userInfo["canariWithheld"] = "seen-trend"` on it, and `canari_push.mm`
+    (`CanariRemoveWithheldTrendNotifications`) removes every delivered notification carrying the stamp at
+    each foreground and whenever its process runs for a push (`CanariHandleFcmData`) - the precedent is
+    the `removeDeliveredNotificationsWithIdentifiers` of
+    [social-service](services/social-service.md). **Dropping the push outright needs the filtering
+    entitlement** (`com.apple.developer.usernotifications.filtering`, which lets the extension return no
+    content); applying for it is an owner action, and with it the stamp and the cleanup go.
+    `canari_push.mm` (the app-side twin that re-posts a background push) returns before it posts.
 - **Never silent**: a withheld trend is logged where the exported log keeps it and without the post id -
   `[SEEN_TREND] bell: a campus trend row withheld` once per row (`console.log`), Android a RECORDED info
   line (`Log.iRecorded`, the INFO stream the app log carries), iOS an `[CanariNSE] [SEEN_TREND]` notice and the

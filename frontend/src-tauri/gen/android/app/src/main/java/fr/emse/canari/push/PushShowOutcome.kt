@@ -60,6 +60,11 @@ object PushShowOutcome {
         SUPPRESSED_ALREADY_ALERTED("suppressed-already-alerted", false, recorded = false),
         /** Already read on another device ([ReadElsewhereMarks.covers], or refused at the post). */
         SUPPRESSED_READ_ELSEWHERE("suppressed-read-elsewhere", false),
+        /**
+         * A campus trend for a post this device already displayed ([SeenTrends]): nothing shown. No
+         * conversation, no channel and no post id in its line.
+         */
+        SUPPRESSED_SEEN_TREND("suppressed-seen-trend", false),
 
         // What a read on another device did to the banner ([ReadElsewhereMarks.ReadOutcome]).
         // The `*_NONE` outcomes found no banner to touch: every read of this device's own account

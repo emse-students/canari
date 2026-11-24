@@ -3516,6 +3516,30 @@ static BOOL CanariWithholdsSeenTrend(NSDictionary *data) {
   return withheld;
 }
 
+// The notification extension cannot DROP an alert push (that needs the filtering entitlement,
+// `com.apple.developer.usernotifications.filtering`), so it delivers a blank passive notification
+// for a withheld campus trend and stamps its userInfo `canariWithheld` = `seen-trend`
+// (`NotificationService.applySeenTrendWithheld`). This takes every such delivered notification out
+// of the centre - at each foreground and when the process runs for a push - so no blank row stays
+// in the notification list. One log line per run that removed something, no post id.
+static void CanariRemoveWithheldTrendNotifications(void) {
+  UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
+  [center getDeliveredNotificationsWithCompletionHandler:^(
+              NSArray<UNNotification *> *_Nonnull notifications) {
+    NSMutableArray<NSString *> *ids = [NSMutableArray array];
+    for (UNNotification *n in notifications) {
+      id stamp = n.request.content.userInfo[@"canariWithheld"];
+      if ([stamp isKindOfClass:[NSString class]] && [stamp isEqualToString:@"seen-trend"]) {
+        [ids addObject:n.request.identifier];
+      }
+    }
+    if (ids.count == 0) return;
+    [center removeDeliveredNotificationsWithIdentifiers:ids];
+    NSLog(@"[CanariPush] [SEEN_TREND] %lu blank notification(s) of withheld trends removed",
+          (unsigned long)ids.count);
+  }];
+}
+
 // Why a read of `display_names.json` names nobody, under `[MENTION_NAME]` - the mention renderers'
 // line. Nothing when the file names.
 static void CanariLogMentionNamesUnusable(NSString *_Nullable unusable) {
@@ -4984,6 +5008,8 @@ static void CanariHandleFcmData(NSDictionary *data) {
 
   NSLog(@"[CanariPush] onMessage type=%@ action=%@ groupId=%@", msgType, data[@"action"],
         data[@"groupId"]);
+  // The process runs: the blank rows the extension left for withheld trends go now.
+  CanariRemoveWithheldTrendNotifications();
 
   // A SIGNED-OUT DEVICE ACTS ON NOTHING. No account owns this install's pushes until the next
   // registration is answered (`push_registration.rs`); a push still reaching it was sent before the
@@ -6384,6 +6410,7 @@ void CanariPushSetup(void) {
               usingBlock:^(__unused NSNotification *note) {
                 CanariLogAppDelegateIdentity();
                 CanariCheckNotificationDelegate(@"activation");
+                CanariRemoveWithheldTrendNotifications();
               }];
 
 #if __has_include(<FirebaseMessaging/FirebaseMessaging.h>)

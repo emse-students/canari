@@ -25,11 +25,14 @@ vi.mock('$lib/posts/api', () => ({
 vi.mock('$lib/stores/user', () => ({ getSavedUserId: () => saved.id }));
 
 import { postNotifStore } from './postNotifStore.svelte';
-import { resetSeenPostsForTest, seenPostsStore } from '$lib/posts/seenPosts.svelte';
+import { flushSeenPosts, resetSeenPostsForTest, seenPostsStore } from '$lib/posts/seenPosts.svelte';
 
-const row = (id: string, type: string, postId: string, read = false) =>
-  ({ id, type, postId, read }) as PostNotification;
-const PUBLISHED = new Date(1_800_000_000_000).toISOString();
+// A row created a day from now: every post noted in a test was displayed BEFORE it (a push for it would
+// have been withheld), unless a test says otherwise.
+const LATER = new Date(Date.now() + 24 * 3_600_000).toISOString();
+const row = (id: string, type: string, postId: string, read = false, createdAt = LATER) =>
+  ({ id, type, postId, read, createdAt }) as PostNotification;
+const PUBLISHED = new Date().toISOString();
 
 describe('the bell withholds a campus trend for a post this device displayed', () => {
   let log: MockInstance<typeof console.log>;
@@ -46,18 +49,49 @@ describe('the bell withholds a campus trend for a post this device displayed', (
       row('r2', 'campus_trend', 'p2'),
       row('r3', 'friend_comment', 'p1'),
     ]);
-    await postNotifStore.load();
-    expect(postNotifStore.notifications.map((n) => n.id)).toEqual(['r1', 'r2', 'r3']);
-
     seenPostsStore.note('p1', PUBLISHED);
+    await postNotifStore.load();
     expect(postNotifStore.notifications.map((n) => n.id)).toEqual(['r2', 'r3']);
+  });
+
+  it('never makes a trend row vanish that the reader already saw in the bell (L1)', async () => {
+    api.get.mockResolvedValue([row('r1', 'campus_trend', 'p1', false, '2000-01-01T00:00:00Z')]);
+    await postNotifStore.load();
+    expect(postNotifStore.notifications).toHaveLength(1);
+    // The post is displayed AFTER its row exists: the row (or its push) was shown, it stays.
+    seenPostsStore.note('p1', PUBLISHED);
+    expect(postNotifStore.notifications).toHaveLength(1);
+    expect(postNotifStore.unread).toBe(1);
+  });
+
+  it('keeps a withheld row withheld after the record is pruned (B2)', async () => {
+    vi.useFakeTimers();
+    try {
+      seenPostsStore.note('p1', PUBLISHED);
+      api.get.mockResolvedValue([row('r1', 'campus_trend', 'p1')]);
+      await postNotifStore.load();
+      expect(postNotifStore.notifications).toHaveLength(0);
+      // Three days on: the 25 h record has pruned the post, the 90-day row is still listed.
+      vi.setSystemTime(Date.now() + 3 * 24 * 3_600_000);
+      await flushSeenPosts();
+      expect(seenPostsStore.size).toBe(0);
+      expect(postNotifStore.notifications).toHaveLength(0);
+      expect(postNotifStore.unread).toBe(0);
+      // The server no longer lists the row: the ledger forgets it with it.
+      api.get.mockResolvedValue([]);
+      await postNotifStore.load(100);
+      api.get.mockResolvedValue([row('r1', 'campus_trend', 'p1')]);
+      await postNotifStore.load();
+      expect(postNotifStore.notifications).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('counts only the rows the reader sees in the badge', async () => {
     api.get.mockResolvedValue([row('r1', 'campus_trend', 'p1'), row('r2', 'campus_trend', 'p2')]);
-    await postNotifStore.load();
-    expect(postNotifStore.unread).toBe(2);
     seenPostsStore.note('p2', PUBLISHED);
+    await postNotifStore.load();
     expect(postNotifStore.unread).toBe(1);
   });
 

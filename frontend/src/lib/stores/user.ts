@@ -137,13 +137,6 @@ export function clearUserLocally(): void {
   if (leaving) {
     forgetConversationNicknames(leaving);
     forgetConversationPins(leaving);
-    // The posts this device displayed (a campus trend for one shows nothing): its record is the
-    // account's and leaves with it, native copy included.
-    // Loaded on demand: the record's store reaches the whole storage layer, which this module (read
-    // by nearly everything) must not pull in.
-    void import('$lib/posts/seenPosts.svelte')
-      .then((m) => m.forgetSeenPosts(leaving))
-      .catch((e) => console.error('[SEEN_TREND] the sign-out erase did not run:', e));
   }
   setCurrentUserId(null);
 }

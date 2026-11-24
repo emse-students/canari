@@ -59,7 +59,7 @@ function isStoredNotification(value: unknown): value is PostNotification {
 const withheldLogged = new Set<string>();
 function shownRows(): PostNotification[] {
   return notifications.filter((n) => {
-    if (!seenPostsStore.isSeenTrend({ type: n.type }, n.postId)) return true;
+    if (!seenPostsStore.withholdsRow(n)) return true;
     if (!withheldLogged.has(n.id)) {
       withheldLogged.add(n.id);
       console.log(
@@ -167,7 +167,11 @@ export const postNotifStore = {
       fromCopy = false;
       listOwner = owner;
       // Only the full page seals: the dropdown's shorter one must not shrink the sealed list.
-      if (limit >= MAX_STORED_NOTIFICATIONS) persist();
+      if (limit >= MAX_STORED_NOTIFICATIONS) {
+        // The ledger of withheld rows is bounded by the stored list: a row no longer in it is forgotten.
+        seenPostsStore.retainWithheld(answer.map((n) => n.id));
+        persist();
+      }
     } catch (e) {
       // Stale data is better than an error screen. A load that got NO ANSWER is the link, which the
       // session already reports: said once per spell, not on every minute's poll while offline. Any

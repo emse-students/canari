@@ -1973,7 +1973,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 root.optJSONObject("posts")?.let { all -> for (id in all.keys()) ids.add(id.lowercase()) }
                 SeenTrends.Book(root.optString("userId").lowercase(), ids)
             } catch (e: Exception) {
-                Log.w(TAG, "$label seen_posts.json unreadable: ${e.javaClass.simpleName}")
+                // A WARN is a recorded line (FcmLog.w hands it to the in-app log): the trend that follows
+                // is shown for a post that may have been displayed, and the export must say why.
+                Log.w(TAG, "$label seen_posts.json unreadable, no trend is withheld: ${e.javaClass.simpleName}")
                 null
             }
         }
@@ -1989,7 +1991,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             if (key == null || key !in SeenTrends.TREND_KEYS) return false
             val me = MlsContextLoader.loadPushContext(context)?.userId
             val withheld = SeenTrends.withholds(readSeenPosts(context, "[SEEN_TREND]"), me, key, data["postId"])
-            if (withheld) Log.iRecorded(TAG, "[SEEN_TREND] a campus trend withheld - its post was already displayed on this device") // log-safe: system words only, no post id
+            // A RECORDED outcome like every other end of a push ([PushShowOutcome]): no post id, no text.
+            if (withheld) context.recordShowOutcome(PushShowOutcome.Outcome.SUPPRESSED_SEEN_TREND, null, null, detail = "seen-trend")
             return withheld
         }
 

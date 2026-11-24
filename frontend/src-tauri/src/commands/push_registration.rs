@@ -122,6 +122,16 @@ fn end_push_registration_files_then(
     for name in [PENDING_PUSH_SECRET_FILE, FCM_TOKEN_FILE, VOIP_TOKEN_FILE] {
         crate::commands::storage::remove_entry(&data_dir.join(name), &mut removed, &mut failures);
     }
+    // The record of the posts this device displayed is the leaving account's (it names its owner): the
+    // WebView's erase can be lost with an app swiped away mid sign-out, so Rust's own sign-out ends it
+    // too, in the data directory and in the App Group the extension reads.
+    for dir in std::iter::once(data_dir).chain(extension_dir) {
+        crate::commands::storage::remove_entry(
+            &dir.join(crate::commands::seen_posts::SEEN_POSTS_FILE),
+            &mut removed,
+            &mut failures,
+        );
+    }
     if let Some(dir) = extension_dir {
         // The extension's secret. NOT its context: the strip above made that copy the stripped
         // file, inside the context lock - removing it here, after the lock, deleted the copy of a
@@ -594,8 +604,14 @@ mod tests {
         std::fs::write(app.join(VOIP_TOKEN_FILE), "voip").unwrap();
         std::fs::write(group.join(EXTENSION_PUSH_SECRET_FILE), "secret").unwrap();
         std::fs::write(group.join(PUSH_CONTEXT_FILE), "{}").unwrap();
+        // The record of the displayed posts is the leaving account's, wherever a reader opens it.
+        let seen = crate::commands::seen_posts::SEEN_POSTS_FILE;
+        std::fs::write(app.join(seen), "{}").unwrap();
+        std::fs::write(group.join(seen), "{}").unwrap();
 
         end_push_registration_files(&app, Some(&group)).unwrap();
+        assert!(!app.join(seen).exists());
+        assert!(!group.join(seen).exists());
 
         assert!(app.join(SIGNED_OUT_FILE).exists());
         assert!(app.join(DELETION_OWED_FILE).exists());

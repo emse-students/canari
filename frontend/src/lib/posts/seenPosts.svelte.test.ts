@@ -96,6 +96,26 @@ describe('the record of the posts this device displayed', () => {
     expect(tauri.invoke).toHaveBeenCalledTimes(1);
   });
 
+  it('writes the native copy as soon as a post is noted - no visibility change, no timer (B1)', async () => {
+    bindLocalCopies({ userId: 'me', deviceKeyB64: 'K' });
+    seenPostsStore.note('a', fresh);
+    seenPostsStore.note('b', fresh);
+    await settle();
+    // Both notes of the same tick share one write, native file first.
+    expect(tauri.invoke).toHaveBeenCalledTimes(1);
+    expect(tauri.invoke.mock.calls[0][0]).toBe('store_seen_posts');
+    expect(
+      (tauri.invoke.mock.calls[0][1] as { posts: unknown[] }).posts.map(
+        (p) => (p as { postId: string }).postId
+      )
+    ).toEqual(['a', 'b']);
+    expect(sealed.rows.has(`me/${SEEN_POSTS_SLOT}`)).toBe(true);
+    // A later note writes again (the record is dirty again), with nothing else needed.
+    seenPostsStore.note('c', fresh);
+    await settle();
+    expect(tauri.invoke).toHaveBeenCalledTimes(2);
+  });
+
   it('writes no native copy off mobile', async () => {
     tauri.mobile = false;
     seenPostsStore.note('p1', fresh);
