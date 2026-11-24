@@ -14,78 +14,93 @@ type Listener = (event: unknown) => void;
 type LockCallback = (lock: { mode: string } | null) => unknown;
 
 /**
- * The browser's lock manager for one lock name: one holder, a FIFO queue, `ifAvailable`, `signal`,
- * and `steal` (the holder's request rejects with `AbortError` and the stealer holds at once).
+ * The browser's lock manager: per lock NAME one holder, a FIFO queue, `ifAvailable`, `signal`, and
+ * `steal` (the holder's request rejects with `AbortError` and the stealer holds at once), and `query`
+ * (the names held). `queued`, `isHeld` and `grants` read the leader lock, `canari-tab-leader`.
  */
 export function fakeLockManager(onGrant?: () => void) {
   type Entry = { cb: LockCallback; resolve: (v: unknown) => void; reject: (e: unknown) => void };
-  let holder: Entry | null = null;
-  let grants = 0;
-  const queue: Entry[] = [];
+  type Lock = { holder: Entry | null; queue: Entry[]; grants: number };
+  const locks = new Map<string, Lock>();
+  const lockOf = (name: string): Lock => {
+    let lock = locks.get(name);
+    if (!lock) {
+      lock = { holder: null, queue: [], grants: 0 };
+      locks.set(name, lock);
+    }
+    return lock;
+  };
 
-  function next(): void {
-    const following = queue.shift();
-    if (following) run(following);
-  }
-
-  function run(entry: Entry): void {
-    holder = entry;
-    grants += 1;
-    // The instant the browser hands the lock on, before the new holder's callback runs.
-    onGrant?.();
+  function run(name: string, entry: Entry): void {
+    const lock = lockOf(name);
+    lock.holder = entry;
+    lock.grants += 1;
+    // The instant the browser hands the leader lock on, before the new holder's callback runs.
+    if (name === LEADER_LOCK) onGrant?.();
     void Promise.resolve()
       .then(() => entry.cb({ mode: 'exclusive' }))
       .then(entry.resolve, entry.reject)
       .finally(() => {
         // A holder whose lock was stolen releases nothing when its callback ends.
-        if (holder !== entry) return;
-        holder = null;
-        next();
+        if (lock.holder !== entry) return;
+        lock.holder = null;
+        const following = lock.queue.shift();
+        if (following) run(name, following);
       });
   }
 
   const request = (
-    _name: string,
+    name: string,
     opts: { ifAvailable?: boolean; signal?: AbortSignal; steal?: boolean },
     cb: LockCallback
   ): Promise<unknown> =>
     new Promise((resolve, reject) => {
+      const lock = lockOf(name);
       const entry: Entry = { cb, resolve, reject };
       if (opts.steal) {
-        const robbed = holder;
-        holder = null;
+        const robbed = lock.holder;
+        lock.holder = null;
         robbed?.reject(Object.assign(new Error('stolen'), { name: 'AbortError' }));
-        run(entry);
+        run(name, entry);
         return;
       }
       if (opts.ifAvailable) {
-        if (holder) {
+        if (lock.holder) {
           void Promise.resolve(cb(null)).then(resolve, reject);
           return;
         }
-        run(entry);
+        run(name, entry);
         return;
       }
-      if (!holder) {
-        run(entry);
+      if (!lock.holder) {
+        run(name, entry);
         return;
       }
-      queue.push(entry);
+      lock.queue.push(entry);
       opts.signal?.addEventListener('abort', () => {
-        const at = queue.indexOf(entry);
+        const at = lock.queue.indexOf(entry);
         if (at === -1) return;
-        queue.splice(at, 1);
+        lock.queue.splice(at, 1);
         reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
       });
     });
 
+  const query = async () => ({
+    held: [...locks].filter(([, lock]) => lock.holder !== null).map(([name]) => ({ name })),
+    pending: [...locks].flatMap(([name, lock]) => lock.queue.map(() => ({ name }))),
+  });
+
   return {
-    locks: { request },
-    queued: () => queue.length,
-    isHeld: () => holder !== null,
-    grants: () => grants,
+    locks: { request, query },
+    queued: () => lockOf(LEADER_LOCK).queue.length,
+    isHeld: () => lockOf(LEADER_LOCK).holder !== null,
+    grants: () => lockOf(LEADER_LOCK).grants,
+    /** Whether a tab holds the serving lock (`tabLeader.ts`, `SERVING_LOCK`). */
+    serving: () => lockOf('canari-tab-serving').holder !== null,
   };
 }
+
+const LEADER_LOCK = 'canari-tab-leader';
 
 /** Lets every queued microtask and lock hand-off run. */
 export async function settle(): Promise<void> {
@@ -96,6 +111,8 @@ export interface Doc {
   mod: typeof import('./tabLeader');
   /** This document's own `stateAuthority` - the fact #3371 reads before every MLS state write. */
   auth: typeof import('./stateAuthority');
+  /** This document's own lead holds (`leadHolds.ts`): the MLS work that keeps its lead. */
+  holds: typeof import('./leadHolds');
   /** Dispatches a lifecycle event to THIS document only. */
   fire: (type: string, event?: unknown) => void;
   logs: string[];
@@ -103,17 +120,30 @@ export interface Doc {
   demoted: number;
   /** Why each demotion happened, in order. */
   demotions: TabDemotionCause[];
+  /** The login's election, settled once its answer is noted as the load's role (`stateAuthority`). */
+  elected: Promise<boolean>;
 }
 
 /**
  * Loads a fresh instance of the module - one document - and records the listeners it registers, so
  * an event can be dispatched to it and not to the other.
  */
-export async function openDocument(opts: { reloadsOnDemotion?: boolean } = {}): Promise<Doc> {
+export async function openDocument(
+  opts: {
+    reloadsOnDemotion?: boolean;
+    /**
+     * Returns before the election is answered - a page whose login WAITS for the lead (reloaded after
+     * its promotion, while no tab serves it). Its listeners are recorded up to the election's first
+     * wait; the lock hold it registers on a later grant is on the window (`unload` dispatches it).
+     */
+    pending?: boolean;
+  } = {}
+): Promise<Doc> {
   vi.resetModules();
   const mod = await import('./tabLeader');
   // Imported in the same module generation, so it reads THIS document's election.
   const auth = await import('./stateAuthority');
+  const holds = await import('./leadHolds');
   const listeners: Array<{ type: string; fn: Listener }> = [];
   const docAdd = vi
     .spyOn(document, 'addEventListener')
@@ -126,12 +156,14 @@ export async function openDocument(opts: { reloadsOnDemotion?: boolean } = {}): 
   const doc: Doc = {
     mod,
     auth,
+    holds,
     fire: (type, event = {}) =>
       listeners.filter((l) => l.type === type).forEach((l) => l.fn(event)),
     logs: [],
     promoted: 0,
     demoted: 0,
     demotions: [],
+    elected: Promise.resolve(false),
   };
   mod.setTabLeaderPromotedHandler(() => {
     doc.promoted += 1;
@@ -145,10 +177,18 @@ export async function openDocument(opts: { reloadsOnDemotion?: boolean } = {}): 
     if (cause === 'session-cannot-serve') return undefined;
     return opts.reloadsOnDemotion === false ? undefined : 'reloads';
   });
-  await mod.initTabLeadershipAsync((m) => doc.logs.push(m));
-  await settle();
-  // What the login does right after the election, before it reads the state (`sessionAuth`).
-  auth.noteMlsStateLoaded(mod.getIsTabLeader());
+  // What the login does right after the election, before it reads the state (`sessionAuth`): it
+  // loads with the answer it was handed.
+  doc.elected = mod
+    .initTabLeadershipAsync((m) => doc.logs.push(m))
+    .then((lead) => {
+      auth.noteMlsStateLoaded(lead);
+      return lead;
+    });
+  if (!opts.pending) {
+    await doc.elected;
+    await settle();
+  }
   docAdd.mockRestore();
   winAdd.mockRestore();
   return doc;

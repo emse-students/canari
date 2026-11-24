@@ -17,6 +17,8 @@
 // localStorage. Falls back to the heartbeat approach on platforms where
 // navigator.locks is unavailable (Tauri WebKitGTK, very old browsers).
 
+import { leadHoldsInFlight, onLeadHoldsReleased } from './leadHolds';
+
 const TAB_ID = crypto.randomUUID();
 
 /**
@@ -72,6 +74,8 @@ let decided = armDecided();
 function decide(state: 'leader' | 'follower'): void {
   const before = leadership;
   leadership = state;
+  // A document that stops leading stops serving, before anything else moves ({@link SERVING_LOCK}).
+  if (state === 'follower') dropServingLock();
   resolveDecided(state);
   if (before !== 'undecided' && before !== state)
     notifyLeaderTabChanged(`this tab is now ${state}`);
@@ -106,16 +110,11 @@ function notifyLeaderTabChanged(why: string): void {
 function hearLeaderAnnouncements(channel: BroadcastChannel): void {
   channel.addEventListener('message', (ev: MessageEvent) => {
     const type = ev.data?.type;
-    if (type === 'leader_promoted' || type === 'leader_closing') {
+    if (type === 'leader_promoted' || type === 'leader_closing' || type === 'leader_serving') {
       notifyLeaderTabChanged(`another tab sent ${type}`);
     }
-    if (type === 'leader_promotion_reloading') reloadingDocument = String(ev.data?.tabId ?? '');
-    // A channel delivers one sender's messages in order, so the reloading page's own earlier
-    // `leader_promoted` always arrives BEFORE its reload announcement, never after it.
-    if (type === 'leader_promoted') {
-      reloadingDocument = null;
-      endDeferredRejoin('a tab announced it holds the lead');
-    }
+    // A page waiting for the lead after its promotion reload follows a tab that serves it.
+    if (type === 'leader_serving') stopWaitingForTheLead?.('another tab serves the lead');
   });
 }
 
@@ -443,21 +442,23 @@ function ensureTabChannelForLocalStorage(log: (msg: string) => void): void {
  *   19:25:34.249  Promoted to leader / reloading ...       <- and the two trade it once more
  *   19:25:35.297  Another tab is active - read-only mode
  *
- * The reload is the same tab continuing, not a new candidate, so its election STEALS the lock
- * rather than queueing for it. Nothing else gets this: a first load, or a reload for any other
- * reason, queues as before.
+ * The reload is the same tab continuing, so its election WAITS IN THE QUEUE for the lock instead of
+ * giving up at once - but it never STEALS it (fourth review of #4053, M1). It used to: a steal ignored
+ * whatever the holder was doing, and two tabs promoted in place reload one after the other, so the
+ * second page's steal took the lock from the first page, already loaded as the leader and possibly in
+ * the middle of an external join or a group's first publish - a fork or a ghost leaf. Now it waits
+ * only while NO tab serves the lead ({@link SERVING_LOCK}), and follows the tab that does
+ * ({@link waitForTheLead}). Nothing else gets this: a first load, or a reload for any other reason,
+ * asks `ifAvailable` and queues as before.
  */
 const PROMOTION_RELOAD_KEY = 'canari_tab_promotion_reload';
 
 /**
  * Records that this tab is about to reload BECAUSE it was promoted - call it right before the
- * reload. The document the reload starts reclaims the leader lock instead of queueing behind the
- * tab that was granted it in between.
+ * reload. The document the reload starts waits for the lead while no tab serves it, instead of
+ * following a tab that was only promoted in place in between ({@link waitForTheLead}).
  */
 export function markPromotionReload(): void {
-  // Told to the other tabs, so a tab whose session comes back meanwhile does not take the lock in
-  // the gap this reload opens, only to have it reclaimed from under its login (review of #4053).
-  tabChannel?.postMessage({ type: 'leader_promotion_reloading', tabId: TAB_ID });
   try {
     sessionStorage.setItem(PROMOTION_RELOAD_KEY, '1');
   } catch (e) {
@@ -490,13 +491,138 @@ function consumePromotionReload(): boolean {
 }
 
 /**
+ * A LEADER THAT SERVES HOLDS A SECOND LOCK, `canari-tab-serving` (fourth review of #4053, M1).
+ *
+ * The leader lock says who LEADS; it cannot say whose copy of the MLS state is current. A tab promoted
+ * in place leads on the copy it loaded as a follower and reloads before it serves
+ * (`stateAuthority.promotedSinceLoad`); a tab whose login was handed the lead loads its state AS the
+ * leader and serves. Only the second may be followed, and only the second must never lose the lock to
+ * a steal: its MLS work (an external join, a group's first publish) is under way.
+ *
+ * So a document holds this lock exactly while it leads on a copy it loads, or loaded, as the leader:
+ * - TAKEN before the lead is decided, by an election grant whose login then loads its state
+ *   ({@link initWithWebLocks}, {@link waitForTheLead}), or when a later login of this document is
+ *   handed the lead ({@link initTabLeadershipAsync}); then said to the other tabs (`leader_serving`);
+ * - DROPPED by {@link decide} the instant this document becomes a follower - before the leader lock
+ *   moves on every path that releases it (a give-up, a freeze, an unload, a hand-over);
+ * - never taken by a tab promoted in place: it reloads, and its next page takes it if it leads.
+ *
+ * Read by `navigator.locks.query()`, the browser's own record - never a message that might not come.
+ */
+const SERVING_LOCK = 'canari-tab-serving';
+/** Lets go of the serving lock this document holds; `null` when it holds none. */
+let releaseServing: (() => void) | null = null;
+/** Ends the wait of a page reloaded after its promotion ({@link waitForTheLead}); `null` otherwise. */
+let stopWaitingForTheLead: ((why: string) => void) | null = null;
+
+/**
+ * Takes the serving lock (granted at once unless the leader it follows is still dropping it, which
+ * {@link decide} does before the leader lock moves), then reports whether this document may serve:
+ * `stillOurs` is read once the lock is held, since a hand-over steal may have taken the leader lock
+ * meanwhile - a stolen grant drops it again and does not lead.
+ */
+async function takeServingLock(stillOurs: () => boolean): Promise<boolean> {
+  if (!releaseServing) {
+    await new Promise<void>((held) => {
+      void navigator.locks.request(
+        SERVING_LOCK,
+        { mode: 'exclusive' },
+        () =>
+          new Promise<void>((release) => {
+            releaseServing = release;
+            held();
+          })
+      );
+    });
+  }
+  if (!stillOurs()) {
+    dropServingLock();
+    return false;
+  }
+  return true;
+}
+
+/** Releases the serving lock, if this document holds it. */
+function dropServingLock(): void {
+  const release = releaseServing;
+  releaseServing = null;
+  release?.();
+}
+
+/** Whether a tab serves the lead right now: the browser's own record of the serving lock. */
+async function aTabServes(): Promise<boolean> {
+  const state = await navigator.locks.query();
+  return (state.held ?? []).some((lock) => lock.name === SERVING_LOCK);
+}
+
+/** Says this document serves the lead: a page waiting after its promotion reload follows it. */
+function announceServing(): void {
+  tabChannel?.postMessage({ type: 'leader_serving', tabId: TAB_ID });
+}
+
+/**
+ * An election waiting in the queue: the page a promotion reload starts ({@link waitForTheLead}). Its
+ * grant answers the login - the copy is loaded after it, as the leader - unless the wait was ended
+ * first, and then the grant is an ordinary promotion.
+ */
+interface PendingElection {
+  /** Takes the answer for this grant: `true` if the login still waits for it. */
+  claim(): boolean;
+  /** Answers the login (`false` decides `follower`). */
+  answer(lead: boolean): void;
+  /** Ends the wait, if it still runs: the login follows (`stopWaitingForTheLead`). */
+  stop(why: string): void;
+}
+
+/**
+ * THE PAGE A PROMOTION RELOAD STARTS WAITS FOR THE LEAD WHILE NO TAB SERVES IT - IN THE QUEUE, NEVER
+ * BY A STEAL (fourth review of #4053, M1).
+ *
+ * Its lock was released by the reload, and in that gap the queue may have granted it to another tab
+ * promoted in place - which reloads in turn, never serving. So this page queues, and its login waits:
+ * - granted while it waits, it LEADS: the login loads its state after the grant, as the leader;
+ * - a tab that SERVES appears first (`leader_serving`, a fresh election that won the gap): the wait
+ *   ends, this page follows that tab, and its request stays queued as an ordinary promotion.
+ *
+ * Both end by a fact - a grant, or the serving tab's own announcement made once it holds the serving
+ * lock - never a clock. A run of tabs promoted in place each reloads once and is granted in queue
+ * order, and the first page granted while it waits serves and ends every other wait.
+ */
+function waitForTheLead(log: (msg: string) => void): Promise<boolean> {
+  return new Promise<boolean>((resolveLeadership) => {
+    let waiting = true;
+    const election: PendingElection = {
+      claim: () => {
+        const owed = waiting;
+        waiting = false;
+        stopWaitingForTheLead = null;
+        return owed;
+      },
+      answer: (lead) => {
+        if (!lead) decide('follower');
+        resolveLeadership(lead);
+      },
+      stop: (why) => {
+        if (!election.claim()) return;
+        log(
+          `[TAB] Stops waiting for the lead (${why}) - this page follows; its request stays queued.`
+        );
+        election.answer(false);
+      },
+    };
+    stopWaitingForTheLead = election.stop;
+    queueForPromotion(log, election);
+  });
+}
+
+/**
  * Handles the rejection of a leader-lock request. A lock STOLEN from under a serving leader demotes
  * it exactly as a take-over does, since the MLS ratchet must never advance in two tabs; any other
  * rejection is a document going away and needs nothing.
  */
 function onLeaderLockRejected(e: unknown, log: (msg: string) => void): void {
   if (leadership !== 'leader' || (e as { name?: unknown } | null)?.name !== 'AbortError') return;
-  log('[TAB] Leader lock reclaimed by a tab reloading after its promotion - handing over.');
+  log('[TAB] Leader lock taken by the tab the lead was handed to - handing over.');
   // The lock is no longer this document's: nothing may release it again (a freeze, the unload).
   releaseLeaderLock = null;
   decide('follower');
@@ -516,26 +642,34 @@ function onLeaderLockRejected(e: unknown, log: (msg: string) => void): void {
  * made behind our own hold waits for our own `beforeunload` - that is the defect
  * `initTabLeadershipAsync` is memoised to prevent, and it must not come back in through here.
  */
-function queueForPromotion(log: (msg: string) => void): void {
-  if (leaving) return;
+function queueForPromotion(log: (msg: string) => void, election?: PendingElection): void {
+  if (leaving) {
+    election?.stop('this page is leaving');
+    return;
+  }
   if (!leadEligible) {
     rejoinOwed = true;
     log(
       "[TAB] Not queueing for the lead - this tab's session cannot serve it; it rejoins the election at its next login."
     );
+    election?.stop("this tab's session cannot serve");
     return;
   }
   // Withdrawable, so a freeze can take it out of the queue (`watchPageLifecycle`).
   const request = new AbortController();
   promotionRequest = request;
   let hold: (() => void) | null = null;
+  let stolen = false;
   void navigator.locks
     .request('canari-tab-leader', { mode: 'exclusive', signal: request.signal }, async () => {
       if (promotionRequest === request) promotionRequest = null;
       // GRANTED, THEN WITHDRAWN: a freeze aborted the request after the browser granted it but
       // before this callback ran - the abort is then ignored. A page that withdrew does not lead:
       // returning releases the lock to the next tab, and its resume queues this page again.
-      if (request.signal.aborted) return;
+      if (request.signal.aborted) {
+        election?.stop('its request was withdrawn');
+        return;
+      }
       if (leadership === 'leader') return;
       // GRANTED TO A DOCUMENT WHOSE SESSION CANNOT SERVE: its withdrawal raced the grant. It does
       // not lead - returning releases the lock to the next tab - and rejoins at its next login.
@@ -544,19 +678,40 @@ function queueForPromotion(log: (msg: string) => void): void {
         log(
           '[TAB] Lead granted to a tab whose session cannot serve it - passed on to the next tab.'
         );
+        election?.stop("this tab's session cannot serve");
         return;
       }
-      decide('leader');
-      log('[TAB] Promoted to leader (Web Locks).');
-      requeueForPromotion = () => queueForPromotion(log);
-      tabChannel?.postMessage({ type: 'leader_promoted', tabId: TAB_ID });
-      notifyTabLeaderPromoted();
+      if (election?.claim()) {
+        // GRANTED WHILE ITS LOGIN WAITS (a page reloaded after its promotion): the state is loaded
+        // after this answer, as the leader - so this document serves.
+        if (!(await takeServingLock(() => !stolen))) {
+          election.answer(false);
+          queueForPromotion(log);
+          return;
+        }
+        decide('leader');
+        log('[TAB] Leadership acquired after the promotion reload (Web Locks).');
+        requeueForPromotion = () => queueForPromotion(log);
+        announceServing();
+        election.answer(true);
+      } else {
+        // PROMOTED IN PLACE: this copy was loaded as a follower, so it serves nothing - its promotion
+        // handler reloads it, and the page that reload starts waits for the lead.
+        decide('leader');
+        log('[TAB] Promoted to leader (Web Locks).');
+        requeueForPromotion = () => queueForPromotion(log);
+        tabChannel?.postMessage({ type: 'leader_promoted', tabId: TAB_ID });
+        notifyTabLeaderPromoted();
+      }
 
       await holdLeaderLockUntilUnload((letGo) => (hold = letGo));
     })
     .catch((e: unknown) => {
+      stolen = true;
       forgetHold(hold);
       onLeaderLockRejected(e, log);
+      // Withdrawn before any grant (a freeze, a session that cannot serve): the login stops waiting.
+      election?.stop('its request ended');
     });
 }
 
@@ -596,18 +751,7 @@ function watchHandover(channel: BroadcastChannel, log: (msg: string) => void): v
   channel.addEventListener('message', (ev: MessageEvent) => {
     const data = ev.data as { type?: unknown; tabId?: unknown; to?: unknown } | null;
     if (data?.type === 'leader_handover_request' && typeof data.tabId === 'string') {
-      if (leadership !== 'leader' || !releaseLeaderLock) return;
-      if (typeof document === 'undefined' || document.visibilityState !== 'hidden') return;
-      log(
-        `[TAB] Hidden leader asked for the lead by a visible tab (${data.tabId.slice(0, 8)}) - handing it over.`
-      );
-      // The lock is the requester's to steal: this document does not release it into the queue,
-      // which would grant it to whichever tab queued first. The ROLE ends here; the hold stays
-      // until the steal, the unload, or a freeze ({@link heldLock}, `watchPageLifecycle`).
-      releaseLeaderLock = null;
-      decide('follower');
-      channel.postMessage({ type: 'leader_handover_granted', to: data.tabId });
-      handOver();
+      answerHandover(data.tabId, channel, log);
       return;
     }
     if (data?.type === 'leader_handover_granted' && data.to === TAB_ID) {
@@ -620,9 +764,78 @@ function watchHandover(channel: BroadcastChannel, log: (msg: string) => void): v
 let handoverWatched = false;
 /** This page already SAID it asks for the lead in this visible stretch (the ask itself repeats). */
 let handoverAsked = false;
+/** The tab whose ask waits for this leader's lead holds to settle; `null` when none waits. */
+let handoverOwedTo: string | null = null;
+/** Removes the hold listener a waiting ask registered. */
+let stopAwaitingHolds: (() => void) | null = null;
 
-/** The requester's half: the lock taken from the hidden leader that granted it. */
+/**
+ * The hidden leader's half of a hand-over: the role ends here and the lock is left for the asker to
+ * steal - but NEVER WHILE A LEAD HOLD IS IN FLIGHT (fourth review of #4053, M1). Deciding `follower`
+ * makes the write latch refuse every checkpoint, so a hand-over in the middle of an external join or a
+ * group's first publish refused the checkpoint its commit was owed: a fork, or a ghost leaf. The ask
+ * waits for the holds to settle ({@link onLeadHoldsReleased}, which ends by each operation settling,
+ * never by a clock), and is answered then if this document still leads and is still hidden.
+ */
+function answerHandover(
+  asker: string,
+  channel: BroadcastChannel,
+  log: (msg: string) => void
+): void {
+  if (leadership !== 'leader' || !releaseLeaderLock) return;
+  if (typeof document === 'undefined' || document.visibilityState !== 'hidden') return;
+  if (leadHoldsInFlight() > 0) {
+    if (handoverOwedTo === null) {
+      log(
+        `[TAB] Hidden leader asked for the lead by a visible tab (${asker.slice(0, 8)}) while MLS work needs it - answered once that work settles.`
+      );
+    }
+    handoverOwedTo = asker;
+    stopAwaitingHolds ??= onLeadHoldsReleased(() => {
+      const owed = handoverOwedTo;
+      handoverOwedTo = null;
+      stopAwaitingHolds?.();
+      stopAwaitingHolds = null;
+      if (owed !== null) answerHandover(owed, channel, log);
+    });
+    return;
+  }
+  log(
+    `[TAB] Hidden leader asked for the lead by a visible tab (${asker.slice(0, 8)}) - handing it over.`
+  );
+  // The lock is the requester's to steal: this document does not release it into the queue,
+  // which would grant it to whichever tab queued first. The ROLE ends here; the hold stays
+  // until the steal, the unload, or a freeze ({@link heldLock}, `watchPageLifecycle`).
+  releaseLeaderLock = null;
+  decide('follower');
+  channel.postMessage({ type: 'leader_handover_granted', to: asker });
+  handOver();
+}
+
+/**
+ * The requester's half: the lock taken from the hidden leader that granted it - by the one steal left,
+ * and only while it holds the SERVING lock (fourth review of #4053, M1). The leader that granted
+ * dropped it when it decided `follower`; holding it here proves no tab serves while the steal runs,
+ * since an election grant takes it BEFORE deciding to lead ({@link takeServingLock}). Without it, a
+ * granting leader frozen or closed before the steal let the lock move on - possibly to a page that
+ * then served - and the steal took it from that page. Unavailable, a tab serves: nothing is stolen.
+ */
 function takeHandedOverLead(log: (msg: string) => void): void {
+  void navigator.locks.request(
+    SERVING_LOCK,
+    { mode: 'exclusive', ifAvailable: true },
+    async (serving) => {
+      if (serving === null) {
+        log('[TAB] Lead handed over, but another tab already serves it - nothing is taken.');
+        return;
+      }
+      await new Promise<void>((stealHeld) => stealHandedOverLead(log, stealHeld));
+    }
+  );
+}
+
+/** The steal itself, under the serving lock {@link takeHandedOverLead} holds until it is granted. */
+function stealHandedOverLead(log: (msg: string) => void, stealHeld: () => void): void {
   // This document's own place in the queue is moot once it holds the lock.
   const queued = promotionRequest;
   promotionRequest = null;
@@ -630,6 +843,7 @@ function takeHandedOverLead(log: (msg: string) => void): void {
   let hold: (() => void) | null = null;
   void navigator.locks
     .request('canari-tab-leader', { mode: 'exclusive', steal: true }, async () => {
+      stealHeld();
       if (leadership === 'leader') return;
       // The asker's session stopped being able to serve between its ask and the grant: the lock it
       // stole goes on to the queue (returning releases it) rather than to a tab that cannot serve.
@@ -640,6 +854,7 @@ function takeHandedOverLead(log: (msg: string) => void): void {
         );
         return;
       }
+      // Its copy was loaded as a follower: promoted in place, it serves nothing until its reload.
       decide('leader');
       log('[TAB] Lead handed over by the hidden leader tab - promoted (Web Locks).');
       requeueForPromotion = () => queueForPromotion(log);
@@ -648,6 +863,7 @@ function takeHandedOverLead(log: (msg: string) => void): void {
       await holdLeaderLockUntilUnload((letGo) => (hold = letGo));
     })
     .catch((e: unknown) => {
+      stealHeld();
       forgetHold(hold);
       onLeaderLockRejected(e, log);
     });
@@ -688,33 +904,47 @@ async function initWithWebLocks(log: (msg: string) => void): Promise<boolean> {
   watchPageLifecycle(log);
   watchHandover(tabChannel, log);
 
-  const reclaim = consumePromotionReload();
-  if (reclaim) log('[TAB] Reloaded after a promotion - reclaiming the leader lock.');
+  if (consumePromotionReload()) {
+    // Read AFTER the channel listens, so a tab that starts serving later is heard
+    // (`leader_serving`), and one that serves already is in the browser's record.
+    if (!(await aTabServes())) {
+      log(
+        '[TAB] Reloaded after a promotion - waiting in the queue for the lead, which no tab serves.'
+      );
+      const lead = await waitForTheLead(log);
+      if (!lead) log('[TAB] Another tab is active - read-only mode (Web Locks).');
+      return lead;
+    }
+    log(
+      '[TAB] Reloaded after a promotion, but another tab serves the lead - this page follows it.'
+    );
+  }
   let hold: (() => void) | null = null;
+  let stolen = false;
   const acquired = await new Promise<boolean>((resolveLeadership) => {
     void navigator.locks
-      .request(
-        'canari-tab-leader',
-        reclaim ? { mode: 'exclusive', steal: true } : { mode: 'exclusive', ifAvailable: true },
-        async (lock) => {
-          // A session that cannot serve does not lead even on a free lock (its login failed while the
-          // election was in flight): returning releases it, and the follower branch below owes the
-          // rejoin ({@link queueForPromotion}).
-          if (lock === null || !leadEligible) {
-            resolveLeadership(false);
-            return;
-          }
-          decide('leader');
-          log('[TAB] Leadership acquired (Web Locks).');
-          requeueForPromotion = () => queueForPromotion(log);
-          // A RECLAIM ENDS THE GAP its reload opened: the tabs that deferred their rejoin for it
-          // queue now, behind this hold ({@link endDeferredRejoin}).
-          if (reclaim) tabChannel?.postMessage({ type: 'leader_promoted', tabId: TAB_ID });
-          resolveLeadership(true);
-          await holdLeaderLockUntilUnload((letGo) => (hold = letGo));
+      .request('canari-tab-leader', { mode: 'exclusive', ifAvailable: true }, async (lock) => {
+        // A session that cannot serve does not lead even on a free lock (its login failed while the
+        // election was in flight): returning releases it, and the follower branch below owes the
+        // rejoin ({@link queueForPromotion}).
+        if (lock === null || !leadEligible) {
+          resolveLeadership(false);
+          return;
         }
-      )
+        // The login loads its state after this answer, as the leader: this document serves.
+        if (!(await takeServingLock(() => !stolen))) {
+          resolveLeadership(false);
+          return;
+        }
+        decide('leader');
+        log('[TAB] Leadership acquired (Web Locks).');
+        requeueForPromotion = () => queueForPromotion(log);
+        announceServing();
+        resolveLeadership(true);
+        await holdLeaderLockUntilUnload((letGo) => (hold = letGo));
+      })
       .catch((e: unknown) => {
+        stolen = true;
         forgetHold(hold);
         onLeaderLockRejected(e, log);
         resolveLeadership(false);
@@ -750,23 +980,6 @@ async function initWithWebLocks(log: (msg: string) => void): Promise<boolean> {
 let leadEligible = true;
 /** This document left the election because its session could not serve: its next login rejoins it. */
 let rejoinOwed = false;
-/**
- * The document that said it reloads after its promotion (`leader_promotion_reloading`), while no
- * other document has said it holds the lead since (`leader_promoted`). IN MEMORY ONLY, and read by
- * ONE decision - a login's rejoin ({@link setTabLeadEligibility}) - whose deferral ends on that
- * login's own outcome, so a reloading tab closed instead can never leave anything waiting on it.
- *
- * NOT used to hold back a tab whose session is already live (third review of #4053): nothing
- * distinguishes "that tab is between its two pages" from "that tab was closed between them" - no
- * page of it exists in the gap, so it holds no lock and answers nothing - and a live tab deferred on
- * it could only be released by the reclaim, which the closed tab never makes. A durable mark of the
- * reload left every tab without a leader that way. So a live tab queued for the lead takes it when
- * granted in the gap, and the reclaim's steal demotes it if the reloading page comes back: at most
- * one extra reload, never a tab without a leader.
- */
-let reloadingDocument: string | null = null;
-/** This document's rejoin waits for that tab's lead, or for its own session to go live. */
-let rejoinDeferred = false;
 /** The logger of this document's election, kept so a rejoin and a step-down say what they do. */
 let electionLog: ((msg: string) => void) | null = null;
 
@@ -811,39 +1024,10 @@ export function setTabLeadEligibility(eligible: boolean, why: string): void {
   }
   if (!rejoinOwed || leaving) return;
   rejoinOwed = false;
-  if (reloadingDocument !== null) {
-    // ANOTHER TAB IS RELOADING AFTER ITS PROMOTION, and its page will reclaim the lock with a steal:
-    // taken in the gap, the lock would be stolen from under this login. So this document joins as a
-    // follower and queues once that tab says it holds the lead - or once this session goes live
-    // ({@link noteTabSessionLive}), whichever comes first: no clock, and never waiting for ever.
-    rejoinDeferred = true;
-    log(
-      `[TAB] This tab's session can serve again (${why}), but another tab is reloading after its promotion - it joins as a follower and queues once that tab holds the lead.`
-    );
-    election = Promise.resolve(false);
-    return;
-  }
+  // No reload gap is waited out here: nothing steals the lock any more, so a login that wins it in
+  // another tab's promotion reload serves, and that tab's next page follows it ({@link waitForTheLead}).
   log(`[TAB] This tab's session can serve again (${why}) - it rejoins the election.`);
   election = initWithWebLocks(log);
-}
-
-/**
- * This document's session is live. A rejoin deferred for another tab's promotion reload that never
- * announced its lead (the tab closed during its reload) ends here, so a live session is never left
- * outside the election: the lock is queued for, and granted if nobody holds it.
- */
-export function noteTabSessionLive(): void {
-  endDeferredRejoin('this tab went live before the reloading tab announced its lead');
-}
-
-/** Ends a deferred rejoin, if one is owed: this document queues for the lead. */
-function endDeferredRejoin(why: string): void {
-  if (!rejoinDeferred) return;
-  rejoinDeferred = false;
-  const log = electionLog;
-  if (!log || leaving || !leadEligible || leadership === 'leader') return;
-  log(`[TAB] Deferred rejoin ends (${why}) - queueing for the lead.`);
-  queueForPromotion(log);
 }
 
 /** The `false` half of {@link setTabLeadEligibility}: this document lets go of everything it holds. */
@@ -1018,9 +1202,22 @@ async function initWithLocalStorage(log: (msg: string) => void): Promise<boolean
  * not the first call's boolean, which goes stale the moment a follower is promoted.
  */
 export function initTabLeadershipAsync(log: (msg: string) => void): Promise<boolean> {
-  if (election) return election.then(() => getIsTabLeader());
+  if (election) return election.then(() => serveIfLeading());
   election = runElection(log);
   return election;
+}
+
+/**
+ * The answer a LATER login of this document is handed: it loads its state after it, so a lead it is
+ * handed is served - the serving lock is taken first ({@link SERVING_LOCK}), and a lead lost meanwhile
+ * is answered `false`. Outside Web Locks (one tab, the localStorage fallback) there is nothing to take.
+ */
+async function serveIfLeading(): Promise<boolean> {
+  if (!getIsTabLeader()) return false;
+  if (releaseServing || typeof navigator === 'undefined' || navigator.locks == null) return true;
+  if (!(await takeServingLock(() => leadership === 'leader'))) return false;
+  announceServing();
+  return true;
 }
 
 async function runElection(log: (msg: string) => void): Promise<boolean> {
@@ -1084,8 +1281,11 @@ export function resetTabLeaderStateForTests(): void {
   leaving = false;
   leadEligible = true;
   rejoinOwed = false;
-  reloadingDocument = null;
-  rejoinDeferred = false;
+  dropServingLock();
+  stopWaitingForTheLead = null;
+  handoverOwedTo = null;
+  stopAwaitingHolds?.();
+  stopAwaitingHolds = null;
   electionLog = null;
   handoverAsked = false;
   // The channel is closed above: the next election's channel needs its own listener.
