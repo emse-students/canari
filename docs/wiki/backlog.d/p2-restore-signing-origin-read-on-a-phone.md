@@ -1,6 +1,8 @@
 ## Reading owed - P2 - the restore signing origin the app reads is the one Credential Manager sends
 
-target: 1.8.0
+target: 1.8.1
+
+_2026-11-25: moved to 1.8.1 when 1.8.0 shipped._
 
 Built (2026-11-23): the restore plugin's `signing_origins` reads this APK's
 `android:apk-key-hash:` origin, and the client mints a restore key only when the registration options'
