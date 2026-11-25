@@ -121,7 +121,10 @@ and one inline script, `prefers-color-scheme`, real links and buttons, a status 
   style-src 'sha256-<its style>'; img-src 'none'; base-uri 'none'; form-action 'none';
   frame-ancestors 'none'` (computed from the bytes served, so it cannot drift),
   `Cache-Control: no-store`, `Vary: User-Agent`, `X-Robots-Tag: noindex, nofollow`, `nosniff`,
-  `Referrer-Policy: no-referrer`; status `200`.
+  `Referrer-Policy: no-referrer` as the gate writes them (MiConnect and the siblings); status `200`.
+  **On Canari, nginx owns the last two** (below), so the interstitial carries Canari's own
+  `Referrer-Policy`, which is NONE on most paths. Nothing depends on it: the page loads no resource
+  and its only ways out (an intent, `x-safari-`, the app's scheme) send no referrer.
 - **Content**: the site's host, one sentence, the exit button where a door exists ("Ouvrir dans
   Safari" / "Ouvrir dans le navigateur"), the app button when the server wrote one into the
   `leave-iab-app` meta (Canari, iOS, a claimed page), the manual way out ("••• puis Ouvrir dans
@@ -137,9 +140,12 @@ and one inline script, `prefers-color-scheme`, real links and buttons, a status 
 
 - **`hooks.server.ts`** calls `canariLeaveInAppBrowser` (`lib/server/leaveInAppBrowser.ts`) first,
   before any page head is built. The frontend nginx keeps a `no-store` the SSR declared (the
-  `$ssr_cache_control_declared` map), so the interstitial is never stamped `s-maxage=60`; in `@ssr` it
-  hides the interstitial's own `Referrer-Policy` and `nosniff` and writes its own, so each header is
-  sent once.
+  `$ssr_cache_control_declared` map), so the interstitial is never stamped `s-maxage=60`. In `@ssr`
+  nginx hides the interstitial's own `Referrer-Policy` and `X-Content-Type-Options` and writes its
+  own: `nosniff` always, and `Referrer-Policy` from `$capability_referrer_policy` - set on the
+  capability paths (`/f/`, the join links, the sign-in) and ABSENT everywhere else. So neither header
+  is ever sent twice, and the interstitial on Canari carries no `Referrer-Policy` on most paths
+  (harmless, see the header list above).
 - **The client guard is LOAD-BEARING** (`lib/mobile/inAppBrowserGuard.ts`): it is what stands
   wherever the server's answer was skipped - `@app_shell` (nginx's shell while `frontend-ssr` is
   down), and dev's Cloudflare cache until the bypass rule below exists (a page cached for a real

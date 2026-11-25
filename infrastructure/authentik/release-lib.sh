@@ -137,6 +137,46 @@ ak_env_tag() {
   awk -v re="$ak_env_tag_line" '$0 ~ re { v = substr($0, index($0, "=") + 1) } END { gsub(/^[[:space:]"\047]+|[[:space:]"\047]+$/, "", v); print v }'
 }
 
+# ak_front_door  - the address the host's nginx proxies MiConnect to, read from the `.env` on stdin:
+# `<IPv4>:<port>` (the loopback for an absent or `0.0.0.0` host), or `refuse:<cause>`. The line is
+# `AUTHENTIK_PUBLISH=` as compose's dotenv reader takes it - an `export ` prefix, CRLF line ends, an
+# inline ` #comment` after an unquoted value, surrounding quotes, the LAST assignment winning - and an
+# absent or empty value is compose's own default, `${AUTHENTIK_PUBLISH:-9000}`. Anything it cannot
+# turn into one probe-able address (port 0, a range, a name, an IPv6 address, an unclosed quote) is a
+# REFUSAL naming why, never a guess: a wrong address would fail the morning preflight for a reason
+# nobody could read. The value itself is never printed (the log is public).
+ak_front_door() {
+  awk '
+    { sub(/\r$/, "") }
+    /^[[:space:]]*(export[[:space:]]+)?AUTHENTIK_PUBLISH[[:space:]]*=/ { v = substr($0, index($0, "=") + 1) }
+    END {
+      sub(/^[[:space:]]+/, "", v)
+      if (v ~ /^"/) {
+        v = substr(v, 2); i = index(v, "\"")
+        if (!i) { print "refuse:AUTHENTIK_PUBLISH opens a double quote it never closes"; exit }
+        v = substr(v, 1, i - 1)
+      } else if (v ~ /^\047/) {
+        v = substr(v, 2); i = index(v, "\047")
+        if (!i) { print "refuse:AUTHENTIK_PUBLISH opens a single quote it never closes"; exit }
+        v = substr(v, 1, i - 1)
+      } else {
+        sub(/[[:space:]]+#.*$/, "", v); sub(/[[:space:]]+$/, "", v)
+      }
+      if (v == "") v = "9000"
+      n = split(v, part, ":")
+      if (n == 1) { host = ""; port = part[1] }
+      else if (n == 2) { host = part[1]; port = part[2] }
+      else { print "refuse:AUTHENTIK_PUBLISH is neither <port> nor <IPv4>:<port>"; exit }
+      if (port !~ /^[0-9]+$/) { print "refuse:AUTHENTIK_PUBLISH names no numeric port"; exit }
+      if (port + 0 == 0) { print "refuse:AUTHENTIK_PUBLISH names port 0, an ephemeral port no proxy can be pointed at"; exit }
+      if (port + 0 > 65535) { print "refuse:AUTHENTIK_PUBLISH names a port above 65535"; exit }
+      if (host == "" || host == "0.0.0.0") host = "127.0.0.1"
+      else if (host !~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) { print "refuse:AUTHENTIK_PUBLISH names a host that is not an IPv4 address"; exit }
+      print host ":" (port + 0)
+    }
+  '
+}
+
 # ak_env_set_tag <tag>  - the `.env` on stdin with exactly ONE `AUTHENTIK_TAG=<tag>` line: the first
 # one rewritten in place (an `export ` prefix kept), any later one dropped, appended when there was
 # none. Every other line is copied untouched - the file carries the stack's secrets and only this line

@@ -314,25 +314,26 @@ oidc_discovery_ok() {
 }
 
 # THE FRONT DOOR: the address the host's nginx proxies MiConnect to, `AUTHENTIK_PUBLISH` in the
-# stack's `.env` (compose's own default, 9000, when the line is absent). Once MiConnect's in-app
-# browser gate is in place that address is the `gate` service, before it authentik's server - one
-# probe, whichever stands there, so a gate that stopped answering is named by the morning preflight
-# and by every release instead of by the first person signing in (docs/wiki/frontend/
-# leaving-in-app-browsers.md). An ordinary client asks, so the gate lets it through. The address is
-# not printed: the log is public.
-front_door_address() {
-  local value host port
-  value="$(sed -n 's/^AUTHENTIK_PUBLISH=//p' -- "$env_file" 2>/dev/null | tail -n 1 | tr -d "\"'")"
-  value="${value:-9000}"
-  case "$value" in
-    *:*) host="${value%:*}" port="${value##*:}" ;;
-    *) host="" port="$value" ;;
-  esac
-  case "$host" in "" | 0.0.0.0) host=127.0.0.1 ;; esac
-  printf '%s:%s' "$host" "$port"
-}
+# stack's `.env` (release-lib.sh, ak_front_door, which also owns compose's default). Once MiConnect's
+# in-app browser gate is in place that address is the `gate` service, before it authentik's server -
+# one probe, whichever stands there, so a gate that stopped answering is named by the morning
+# preflight and by every release instead of by the first person signing in (docs/wiki/frontend/
+# leaving-in-app-browsers.md). An ordinary client asks, so the gate lets it through. A line that
+# names no probe-able address is a REFUSAL naming its cause, never a skip. The address is not
+# printed: the log is public.
+front_door=""
 front_door_ok() {
-  curl -fsS -o /dev/null --max-time 10 -A 'canari-miconnect-deploy' "http://$(front_door_address)/-/health/live/"
+  curl -fsS -o /dev/null --max-time 10 -A 'canari-miconnect-deploy' "http://$front_door/-/health/live/"
+}
+check_front_door() {
+  front_door="$(ak_front_door <"$env_file" 2>/dev/null)" || front_door="refuse:the stack's .env could not be read"
+  case "$front_door" in
+    refuse:*)
+      err "MiConnect's front door cannot be probed: ${front_door#refuse:} (the stack's .env)"
+      return 1
+      ;;
+  esac
+  probe "GET /-/health/live/ through the front door (AUTHENTIK_PUBLISH, the gate once it stands)" front_door_ok
 }
 
 # after_checks <expected-tag> - both containers healthy, both on the tag, the endpoints answering.
@@ -357,7 +358,7 @@ after_checks() {
     probe "GET $path" curl -fsS -o /dev/null --max-time 10 "http://127.0.0.1:$port$path" || return 1
   done
   probe "the OIDC discovery document of '$oidc_slug' (with an issuer)" oidc_discovery_ok "$port" || return 1
-  probe "GET /-/health/live/ through the front door (AUTHENTIK_PUBLISH, the gate once it stands)" front_door_ok || return 1
+  check_front_door || return 1
   log "checks passed: server and worker healthy on $expected, health endpoints, OIDC discovery and the front door answer"
 }
 
@@ -382,8 +383,8 @@ log "pinned $pin; running server=$old_server worker=${old_worker:-none}; .env ta
 # fails. A no-op, a record or a kept newer version restarts nothing, so compose has nothing to prove.
 if [ "$mode" = preflight ]; then
   # The front door first: a dead one is what every sign-in meets, whatever the release decides.
-  probe "GET /-/health/live/ through the front door (AUTHENTIK_PUBLISH, the gate once it stands)" front_door_ok ||
-    { err "MiConnect's front door does not answer - the host's nginx proxies every sign-in to it. Nothing was changed."; exit 1; }
+  check_front_door ||
+    { err "MiConnect's front door fails - the host's nginx proxies every sign-in to it. Nothing was changed."; exit 1; }
   case "$decision" in
     refuse:*) err "${decision#refuse:}. Nothing was changed."; exit 1 ;;
     upgrade) ;;
