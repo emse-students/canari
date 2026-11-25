@@ -29,7 +29,18 @@ package fr.emse.canari.push
  * 2026-08-11: twenty `local=false` verdicts from ten epoch queries - half the answers were given by
  * a timeout, about the main DM.
  */
-enum class GroupLocality { LOCAL, ABSENT, UNKNOWN }
+enum class GroupLocality {
+    LOCAL,
+    ABSENT,
+    /** The state could not be read (`mls.bin` unreadable, device key missing, JNI absent). */
+    UNKNOWN,
+    /**
+     * The MLS state lock was held by another thread for the whole wait. NOT a fact about the group
+     * and NOT a fact about the frame - only about the lock - so it is its own value (2026-11-25): a
+     * replay of a held frame keeps the frame for it, where [UNKNOWN] is an answer it may act on.
+     */
+    BUSY,
+}
 
 /** The recovery ladder a refused background decrypt goes down. */
 object PushRecoveryLadder {
@@ -47,6 +58,8 @@ object PushRecoveryLadder {
      * @param locality where the group is
      * @param catchUp the commit catch-up, `null` when it could not produce an outcome
      * @param log every branch says which one it took; a silent ladder is unreadable in a bug report
+     * @param busy the outcome a [GroupLocality.BUSY] answers - the caller's "the lock was held", so a
+     *   lock timeout is never returned as the refusal it is not
      */
     fun <T> run(
         initial: T,
@@ -55,6 +68,7 @@ object PushRecoveryLadder {
         locality: () -> GroupLocality,
         catchUp: () -> T?,
         log: (String) -> Unit,
+        busy: T,
     ): T {
         var outcome = initial
         if (!isRefused(outcome)) return outcome
@@ -69,6 +83,12 @@ object PushRecoveryLadder {
             // WorkManager fallback, which is where work with no deadline belongs.
             GroupLocality.UNKNOWN ->
                 log("locality unknown group=$groupTag -> leaving it to the worker")
+
+            // The lock, not the group: nothing was learnt, and the frame is not refused either.
+            GroupLocality.BUSY -> {
+                log("locality not read, the MLS state lock was held group=$groupTag -> state busy")
+                outcome = busy
+            }
 
             // The group exists locally: the only plausible reason for a direct failure is an epoch
             // gap (a commit arrived while the app was closed). The catch-up is the answer.
