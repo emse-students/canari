@@ -1313,7 +1313,7 @@ The fix is in what CI saves, not in a retry:
 - `android-app-compile.sh` also runs the REAL release chain minus rust: `checkUniversalReleaseAarMetadata`,
   `checkUniversalReleaseDuplicateClasses`, `processUniversalReleaseMainManifest`,
   `mergeUniversalReleaseNativeLibs` (the android-jni transform that failed), `minifyUniversalReleaseWithR8`,
-  `assembleUniversalRelease` and `bundleUniversalRelease` (R8, the resource shrinker, lint-vital,
+  `assembleUniversalRelease` and `bundleUniversalRelease` (R8, the resource shrinker,
   packaging, bundletool, signing). The three `rustBuild*Release` tasks are excluded (native code this
   gate does not need). Two things are made in the job and never committed: a STUB `libstub.so` under
   `jniLibs` (without an input, `mergeUniversalReleaseNativeLibs` is NO-SOURCE and resolves nothing: the
