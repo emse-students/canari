@@ -24,7 +24,7 @@ export interface LessonGoal {
  * speak about (the group, tinted), with what to conclude. Authored, not computed: a step explains a
  * pattern, and the order a person reads it in is a teaching choice.
  */
-export interface HintStep {
+interface HintStep {
   numbers: readonly Coord[];
   group: readonly Coord[];
   text: () => string;
