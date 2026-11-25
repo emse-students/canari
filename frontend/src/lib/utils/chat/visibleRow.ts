@@ -23,21 +23,42 @@ export function viewportBottom(containerBottom: number, paddingBottom: number): 
 /**
  * The index of the last row whose top edge is above `limit`, or -1. Rows are in DOM order, so their
  * tops increase and "above the limit" is a prefix: a binary search reads O(log n) rects per frame.
- * `topOf` returns `-Infinity` for a row above what is drawn, `Infinity` for one below or not mounted.
+ * `topOf` returns `-Infinity` for a row above what is drawn, `Infinity` for one below, and `null` for
+ * a row that has NO BOX to measure (drawn, but nothing carries its id).
+ *
+ * A BOXLESS ROW IS NEITHER ABOVE NOR BELOW, so it must not steer the search: read as `Infinity` it
+ * sent every probe that landed on it to the left, and the rows after it were never examined - a
+ * thread ending after one reported its newest row out of view while the reader stood on it (Mi 9T,
+ * 2026-11-25, `newestVisible=false` three times in three). The probe moves to the nearest row that
+ * has a box, and the result is always a row that has one.
+ *
+ * @param onBoxless called once per boxless row the search met, so the caller can accuse it.
  */
 export function lastRowAbove(
   count: number,
-  topOf: (index: number) => number,
-  limit: number
+  topOf: (index: number) => number | null,
+  limit: number,
+  onBoxless?: (index: number) => void
 ): number {
   let lo = 0;
   let hi = count - 1;
   let found = -1;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
-    if (topOf(mid) < limit) {
-      found = mid;
-      lo = mid + 1;
+    let probe = mid;
+    let top = topOf(probe);
+    while (top === null) {
+      onBoxless?.(probe);
+      probe++;
+      if (probe > hi) break;
+      top = topOf(probe);
+    }
+    if (top === null) {
+      // Nothing from `mid` to `hi` has a box: the answer, if any, is on the left.
+      hi = mid - 1;
+    } else if (top < limit) {
+      found = probe;
+      lo = probe + 1;
     } else {
       hi = mid - 1;
     }

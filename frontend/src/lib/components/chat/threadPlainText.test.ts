@@ -32,6 +32,14 @@ describe('system line', () => {
   });
 });
 
+describe('system row box', () => {
+  it('carries the msg- id of its row, like a bubble: every row has one box to measure', () => {
+    const i = groups.indexOf('{#if msg.isSystem}');
+    expect(i).toBeGreaterThan(0);
+    expect(groups.slice(i, i + 700)).toContain('id={`msg-${msg.id}`}');
+  });
+});
+
 describe('internals stay off user surfaces', () => {
   it('a system preview carries no [Info] prefix', () => {
     expect(getPreviewText({ kind: 'system', text: 'Appel manque' } as never)).toBe('Appel manque');

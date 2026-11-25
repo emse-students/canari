@@ -1114,10 +1114,18 @@
       (i) => {
         if (i < drawnStart) return -Infinity;
         const row = drawn[i - drawnStart];
-        const el = row ? document.getElementById(`msg-${row.message.id}`) : null;
-        return el ? el.getBoundingClientRect().top : Infinity;
+        // A row below the window, or not yet drawn, is below; a DRAWN row with no element is boxless
+        // (`null`): it must not steer the search (`lastRowAbove`).
+        if (!row) return Infinity;
+        const el = document.getElementById(`msg-${row.message.id}`);
+        return el ? el.getBoundingClientRect().top : null;
       },
-      limit
+      limit,
+      (boxless) =>
+        Log.w(
+          'ChatArea',
+          `last-visible measure: row ${boxless} (${messageRows[boxless]?.id.slice(0, 8)}) is drawn but has no msg- element`
+        )
     );
     return index < 0 ? null : { id: messageRows[index].id, index };
   }
