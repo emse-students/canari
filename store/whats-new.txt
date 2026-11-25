@@ -1,3 +1,2 @@
-version: 1.8.0
-
-Connexion Alumni : les anciens élèves se connectent avec leur compte Alumni et le rattachent à leur compte de l'École. Formulaires : liste d'attente sur un formulaire limité, résumé des réponses par question, "Autre : précisez" et commentaire libre, formats de réponse, paiement par carte échoué réglable sur place. "Mes notes", une conversation avec vous-même. Un nouvel appareil range ses conversations dans le bon ordre et l'historique arrive d'un coup. Appels et notifications plus fiables.
+version: 1.8.1
+"Mes notes" affiche votre photo et votre nom. Un reel dont la préparation est interrompue quand vous quittez l'application est gardé et repris au retour. Les onglets du fil restent lisibles avec un grand texte. Les dates du classement du Démineur sont plus courtes. Messages de groupe et historique plus fiables, notamment sur un nouvel appareil.
