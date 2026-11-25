@@ -7605,6 +7605,21 @@ for a console attached to the device. What the exported log carries (2026-11-09)
   a render-window defect (the row is not mounted); `pinned=false` with `isNearBottom=true` is a
   change the follow did not answer.
 
+  **A boxless row used to make it lie (2026-11-25).** The Mi 9T opened a DM ending in a voice note
+  and two 738 px images, visibly at its end, and read `newestVisible=false` three times in three.
+  `measureLastVisibleAnchor` binary-searches the rows' tops and read a drawn row with no element
+  (`document.getElementById('msg-<id>')` null) as `Infinity`, "below": a system line (call, device
+  notice) had no `msg-` id, and the probe landing on it sent the search left, so the rows after it
+  were never examined (confirmed on the Mi 9T DOM: at n=10 the first probe is row 4, the boxless
+  "added a device" line, then 1, 2, 3, ending on row 3). The mapping of drawn groups onto `messageRows` was 1:1 and was not the
+  defect. Two sources fixed: `MessageBubble`'s two system roots carry `msg-<id>` like the bubble, decided by its own
+  `effectiveSystem` (`isSystem` OR a system envelope), so every row has exactly one box, and `lastRowAbove` takes `null` for "no box", probes the next row that has one
+  and names the boxless row (`Log.w 'last-visible measure: ... has no msg- element'`). Consumers of
+  the measure: the entry line (it lied), the unread pill's anchor (`lastVisibleAnchor` feeding
+  `countUnreadBelow`: the badge counted from an earlier row, over-counting rows the reader had
+  seen), and `remeasureAnchor`'s missing-anchor warning (could accuse a healthy thread). The
+  `msg-` selector of the fill measure and the growth observer now counts system rows too.
+
 ### Rows received as notifications appeared only at the second open (2026-11-09)
 
 Reported by the owner (Android 1.6.8): messages received as push notifications showed in the DM only

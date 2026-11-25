@@ -40,6 +40,44 @@ describe('the last row above the limit', () => {
   });
 });
 
+describe('a drawn row with no box of its own', () => {
+  // The Mi 9T ending (2026-11-25): ten rows, the thread pinned at its end - a voice note then two
+  // 738 px images - so every top is above the limit. Row 4 is a system line that had no id (the first probe at n=10).
+  const pinned = (boxless: ReadonlySet<number>) => (i: number) =>
+    boxless.has(i) ? null : i < 7 ? -4000 + i * 100 : -738 * (10 - i) + 400;
+
+  it('does not hide the rows after it: the newest row is found', () => {
+    const met: number[] = [];
+    expect(lastRowAbove(10, pinned(new Set([4])), 480, (i) => met.push(i))).toBe(9);
+    expect(met).toEqual([4]);
+  });
+
+  it('is the production n=10 case: a boxless row read as Infinity hid the newest row', () => {
+    // Mi 9T DOM: row 4 is the "added a device" line. The old accessor answered Infinity for it, so
+    // the first probe (4) sent the search left and it ended on row 3.
+    const asBefore = (i: number) => (i === 4 ? Infinity : pinned(new Set())(i));
+    expect(lastRowAbove(10, asBefore, 480)).toBe(3);
+    expect(lastRowAbove(10, pinned(new Set([4])), 480)).toBe(9);
+  });
+
+  it('whichever probe it lands on', () => {
+    for (const i of [4, 7, 8]) {
+      expect(lastRowAbove(10, pinned(new Set([i])), 480)).toBe(9);
+    }
+  });
+
+  it('answers with a row that has a box, and from the left when none is left on the right', () => {
+    expect(lastRowAbove(10, pinned(new Set([9])), 480)).toBe(8);
+    expect(lastRowAbove(3, () => null, 480)).toBe(-1);
+  });
+
+  it('stands aside for a reader in the middle of the thread', () => {
+    // Rows 0-3 above the limit, row 4 boxless, rows 5-9 below: the last visible is row 3.
+    const mid = (i: number) => (i === 4 ? null : i < 4 ? i * 100 : 600 + i * 100);
+    expect(lastRowAbove(10, mid, 480)).toBe(3);
+  });
+});
+
 describe('resolving the anchor against the thread now', () => {
   const ids = ['a', 'b', 'c', 'd'];
 
