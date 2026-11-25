@@ -369,13 +369,99 @@ describe('a known absence', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('is never remembered for an outage - a 502 says nothing about whether there is a photo', async () => {
+  it('is remembered for the life of an outage, never as an absence, and says so once', async () => {
+    const { forgetAvatarOutage } = await import('./userAvatarCache');
+    const [a, b] = [nextUser(), nextUser()];
+    const fetchSpy = vi.fn(async () => new Response(null, { status: 502 }));
+    vi.stubGlobal('fetch', fetchSpy);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // Three remounts of one face and one of another: one ask each, the fallback every time.
+    for (let i = 0; i < 3; i++) expect(await resolveUserAvatarDisplay(a)).toEqual({ kind: 'none' });
+    expect(await resolveUserAvatarDisplay(b)).toEqual({ kind: 'none' });
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    // ONE line for the outage, not one per face.
+    expect(warn).toHaveBeenCalledTimes(1);
+    // A navigation boundary ends it: the face is asked again.
+    forgetAvatarOutage('navigation');
+    await resolveUserAvatarDisplay(a);
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+    warn.mockRestore();
+  });
+
+  it('ends the outage when the source answers for any other face', async () => {
+    const [down, other] = [nextUser(), nextUser()];
+    const fetchSpy = vi.fn(async (url: string) =>
+      String(url).includes(down)
+        ? new Response(null, { status: 502 })
+        : new Response(null, { status: 404 })
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await resolveUserAvatarDisplay(down);
+    await resolveUserAvatarDisplay(down);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    await resolveUserAvatarDisplay(other);
+    await resolveUserAvatarDisplay(down);
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+  });
+
+  it('warns once for a face failing for ever while other faces answer', async () => {
+    const [bad, good] = [nextUser(), nextUser()];
+    const fetchSpy = vi.fn(async (url: string) =>
+      String(url).includes(bad)
+        ? new Response(null, { status: 500 })
+        : new Response(null, { status: 404 })
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    for (let i = 0; i < 5; i++) {
+      await resolveUserAvatarDisplay(bad);
+      // Each answer for another face clears the ledger, so the bad face asks again - silently.
+      await resolveUserAvatarDisplay(`${good}-${i}`);
+    }
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
+  it('is not ended by a 403 - that is core-service auth, not the gallery answering', async () => {
+    const [down, refused] = [nextUser(), nextUser()];
+    const fetchSpy = vi.fn(
+      async (url: string) => new Response(null, { status: String(url).includes(down) ? 502 : 403 })
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await resolveUserAvatarDisplay(down);
+    await resolveUserAvatarDisplay(refused);
+    await resolveUserAvatarDisplay(down);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('ends the outage when the app returns to the foreground', async () => {
     const user = nextUser();
     const fetchSpy = vi.fn(async () => new Response(null, { status: 502 }));
     vi.stubGlobal('fetch', fetchSpy);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
     await resolveUserAvatarDisplay(user);
+    await resolveUserAvatarDisplay(user);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    document.dispatchEvent(new Event('visibilitychange'));
     await resolveUserAvatarDisplay(user);
     expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('ends the outage on the online event and on the reader changing', async () => {
+    const { forgetReaderCaches } = await import('./sharedCache');
+    const user = nextUser();
+    const fetchSpy = vi.fn(async () => new Response(null, { status: 503 }));
+    vi.stubGlobal('fetch', fetchSpy);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await resolveUserAvatarDisplay(user);
+    window.dispatchEvent(new Event('online'));
+    await resolveUserAvatarDisplay(user);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    forgetReaderCaches();
+    await resolveUserAvatarDisplay(user);
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
   });
 
   it('is never remembered for a refused token - a 403 says nothing about the photo', async () => {

@@ -8,38 +8,22 @@ import {
 } from './appSiteAssociation';
 
 /**
- * Leaving the browser built into Messenger, Facebook or Instagram, for the app.
+ * The app's own doors from a web page: "Ouvrir dans l'application" on the login page, and the iOS
+ * app link the in-app browser interstitial offers as its second button.
  *
- * Those apps never hand a tapped link to the system: they load it in their own WebView, so a
- * verified App Link (Android) or Universal Link (iOS) is never consulted and a Canari link opens
- * as a web page even on a phone with the app installed (user, 2026-09-28). Nothing on the server
- * can change that. What the PAGE can do is offer a tap that leaves: an `intent:` URL on Android,
- * which those WebViews hand to the system, and the app's own scheme on iOS.
- *
- * Protocol and the reasoning: `docs/wiki/frontend/mobile.md#leaving-an-in-app-browser-for-the-app`.
+ * A browser built into Messenger, Facebook, Instagram or Threads never reaches these pages: every
+ * Canari page answers it with the shared interstitial (`$lib/leaveInAppBrowser`, owner decision of
+ * 2026-11-25), whose Android exit reaches the app by Android's own resolution. Protocol and
+ * reasoning: `docs/wiki/frontend/leaving-in-app-browsers.md`, and
+ * `docs/wiki/frontend/mobile.md#leaving-an-in-app-browser-for-the-app` for the doors themselves.
  */
 
-/** The phone's system, as far as leaving an in-app browser is concerned. */
-export type InAppBrowserOs = 'android' | 'ios';
+/** The phone's system, as far as the app's doors are concerned. */
+type PhoneOs = 'android' | 'ios';
 
-/**
- * Whether `userAgent` is the browser built into a Meta app, and on which system.
- *
- * The tokens are the ones those apps add to their WebView's user agent: `FBAN`/`FBAV` (Facebook
- * and Messenger on iOS, `FBAN/MessengerForiOS`), `FB_IAB` (both on Android, Messenger as
- * `FB_IAB/Orca-Android`) and `Instagram`. Any other browser, the app's own WebView included,
- * answers null: a real browser follows App Links by itself and needs no offer.
- */
-export function detectInAppBrowser(userAgent: string): InAppBrowserOs | null {
-  if (!/FBAN\/|FBAV\/|FB_IAB|Instagram/.test(userAgent)) return null;
-  if (/Android/.test(userAgent)) return 'android';
-  if (/iPhone|iPad|iPod/.test(userAgent)) return 'ios';
-  return null;
-}
-
-/** A way out of the in-app browser: where the tap goes, and where to get the app without it. */
+/** A way into the app: where the tap goes, and where to get the app without it. */
 export interface OpenInAppOffer {
-  os: InAppBrowserOs;
+  os: PhoneOs;
   /** Opens `href` in the app. */
   openHref: string;
   /** The store listing, for a phone without the app. */
@@ -47,21 +31,13 @@ export interface OpenInAppOffer {
 }
 
 /**
- * The offer for the page at `href`, seen by `userAgent` - or null when there is nothing to offer:
- * not an in-app browser, not a Canari page, or a path the app does not claim.
- *
- * - **Android**: `intent://<host><path>#Intent;scheme=https;package=fr.emse.canari;...`. The
- *   system resolves it against the app's existing https App Link filter - the same entry a tap in
- *   any other app takes - and falls back to the Play listing when the app is absent. The page's
- *   `#fragment` cannot travel: an intent URL uses the fragment for its own parameters.
- * - **iOS**: `fr.emse.canari://open?url=<href>`. The scheme is registered with no host filter,
- *   and `hooks.client.ts` opens the URL only if it is a claimed Canari page, like a Universal
- *   Link. iOS has no fallback of its own, hence {@link OpenInAppOffer.storeHref} on screen.
+ * The iOS app link for the page at `url` - `fr.emse.canari://open?url=<page>` - or null when the
+ * app does not claim it. The interstitial shows it as a TAPPED second button only: iOS has no
+ * fallback when the app is absent, and a page cannot tell "not installed" from success without a
+ * timer (owner, 2026-11-25). Behind `/login`, the page the visitor came for.
  */
-export function openInAppOffer(href: string, userAgent: string): OpenInAppOffer | null {
-  const os = detectInAppBrowser(userAgent);
-  if (!os || !isPublicAppUrl(href)) return null;
-  return offerFor(os, pageBehindLogin(new URL(href)));
+export function iosAppOpenHref(url: URL): string | null {
+  return offerFor('ios', pageBehindLogin(url))?.openHref ?? null;
 }
 
 /**
@@ -84,14 +60,14 @@ export function loginOpenInAppOffer(href: string, userAgent: string): OpenInAppO
 }
 
 /** The phone system named by `userAgent`, whatever the browser. */
-function phoneOs(userAgent: string): InAppBrowserOs | null {
+function phoneOs(userAgent: string): PhoneOs | null {
   if (/Android/.test(userAgent)) return 'android';
   if (/iPhone|iPad|iPod/.test(userAgent)) return 'ios';
   return null;
 }
 
 /** The offer for `url` on `os`, or null when it is not a page the app claims. */
-function offerFor(os: InAppBrowserOs, url: URL): OpenInAppOffer | null {
+function offerFor(os: PhoneOs, url: URL): OpenInAppOffer | null {
   if (!isPublicAppUrl(url.href)) return null;
   // The claimed HOSTS, not every Canari name: an intent naming the package matches only the filter,
   // and `dev.canari-emse.fr` is in no filter - it would send a phone with the app to the store.
@@ -117,9 +93,9 @@ function offerFor(os: InAppBrowserOs, url: URL): OpenInAppOffer | null {
 /**
  * The page a visitor was sent to `/login` from, or `url` itself.
  *
- * An in-app browser holds no Canari session - it is not the phone's browser - so EVERY Messenger
- * visitor lands on `/login?returnTo=<path>` (`routes/+layout.ts`), a path the app does not claim.
- * Offering `/login` itself would open the app on nothing; the page they came for is `returnTo`.
+ * A visitor with no session lands on `/login?returnTo=<path>` (`routes/+layout.ts`), a path the app
+ * does not claim. Offering `/login` itself would open the app on nothing; the page they came for is
+ * `returnTo`.
  * It is resolved against the site's own origin and then held to the same tests as any page, so a
  * `returnTo` naming another host is refused rather than offered.
  */

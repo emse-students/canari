@@ -70,6 +70,26 @@ case "$(ak_decide "$P" "" "" "")" in refuse:*) pass "a stack that is not running
 case "$(ak_decide "$P" ghcr.io/goauthentik/server:latest "$P" "")" in refuse:*) pass "a running tag that is not a version is refused" ;; *) fail "an unorderable running tag is not refused" ;; esac
 eq "versions order numerically, not as text" "$(ak_version_gt 2026.10.0 2026.8.5 && echo y)" y
 
+echo "the front door is read from AUTHENTIK_PUBLISH as compose reads it, or refused by name:"
+eq "absent: compose's own default, 9000 on the loopback" "$(printf 'A=1\n' | ak_front_door)" 127.0.0.1:9000
+eq "empty: the same default (compose's :-)" "$(printf 'AUTHENTIK_PUBLISH=\n' | ak_front_door)" 127.0.0.1:9000
+eq "a bare port" "$(printf 'AUTHENTIK_PUBLISH=9100\n' | ak_front_door)" 127.0.0.1:9100
+eq "an IPv4 and a port" "$(printf 'AUTHENTIK_PUBLISH=127.0.0.1:9101\n' | ak_front_door)" 127.0.0.1:9101
+eq "0.0.0.0 is asked on the loopback" "$(printf 'AUTHENTIK_PUBLISH=0.0.0.0:9102\n' | ak_front_door)" 127.0.0.1:9102
+eq "an export prefix" "$(printf 'export AUTHENTIK_PUBLISH=127.0.0.1:9103\n' | ak_front_door)" 127.0.0.1:9103
+eq "a CRLF line end" "$(printf 'AUTHENTIK_PUBLISH=127.0.0.1:9104\r\n' | ak_front_door)" 127.0.0.1:9104
+eq "an inline comment after an unquoted value" "$(printf 'AUTHENTIK_PUBLISH=127.0.0.1:9105 # the vhost targets this\n' | ak_front_door)" 127.0.0.1:9105
+eq "double quotes" "$(printf 'AUTHENTIK_PUBLISH="127.0.0.1:9106"\n' | ak_front_door)" 127.0.0.1:9106
+eq "single quotes, a comment after them" "$(printf "AUTHENTIK_PUBLISH='9107' # x\n" | ak_front_door)" 127.0.0.1:9107
+eq "the LAST assignment wins" "$(printf 'AUTHENTIK_PUBLISH=9108\nX=1\nAUTHENTIK_PUBLISH=127.0.0.1:9109\n' | ak_front_door)" 127.0.0.1:9109
+eq "a variable merely ending in AUTHENTIK_PUBLISH is not the line" "$(printf 'OLD_AUTHENTIK_PUBLISH=1\n' | ak_front_door)" 127.0.0.1:9000
+eq "port 0 is refused, by name" "$(printf 'AUTHENTIK_PUBLISH=127.0.0.1:0\n' | ak_front_door)" "refuse:AUTHENTIK_PUBLISH names port 0, an ephemeral port no proxy can be pointed at"
+eq "a port range is refused" "$(printf 'AUTHENTIK_PUBLISH=9000-9001\n' | ak_front_door)" "refuse:AUTHENTIK_PUBLISH names no numeric port"
+eq "a port above 65535 is refused" "$(printf 'AUTHENTIK_PUBLISH=70000\n' | ak_front_door)" "refuse:AUTHENTIK_PUBLISH names a port above 65535"
+eq "a host name is refused" "$(printf 'AUTHENTIK_PUBLISH=localhost:9000\n' | ak_front_door)" "refuse:AUTHENTIK_PUBLISH names a host that is not an IPv4 address"
+eq "an IPv6 address is refused" "$(printf 'AUTHENTIK_PUBLISH=[::1]:9000\n' | ak_front_door)" "refuse:AUTHENTIK_PUBLISH is neither <port> nor <IPv4>:<port>"
+eq "an unclosed quote is refused" "$(printf 'AUTHENTIK_PUBLISH="9000\n' | ak_front_door)" "refuse:AUTHENTIK_PUBLISH opens a double quote it never closes"
+
 echo "the .env line is the release's and nothing else in the file is:"
 printf 'PG_PASS=s3cret\nAUTHENTIK_TAG=2026.8.0\nX=1\nAUTHENTIK_TAG="2026.7.0"\n' >"$tmp/env"
 eq "the last AUTHENTIK_TAG wins, quotes stripped" "$(ak_env_tag <"$tmp/env")" 2026.7.0
@@ -323,6 +343,7 @@ sed -i "s|__STATE__|'$S'|" "$tmp/bin/docker"
 # deploy while it runs, which is how a test interrupts the after-checks.
 cat >"$tmp/bin/curl" <<EOF
 #!/usr/bin/env bash
+echo "\$*" >>'$S/curl-calls'
 if [ "\$(cat '$S/signal-on' 2>/dev/null)" = curl ]; then rm -f '$S/signal-on'; kill -TERM "\$PPID"; fi
 # \`probe-fails\` = how many of the next probes fail (a server still warming its workers)
 if [ -s '$S/probe-fails' ] && [ "\$(cat '$S/probe-fails')" -gt 0 ]; then echo \$((\$(cat '$S/probe-fails') - 1)) >'$S/probe-fails'; echo "curl: (7) Failed to connect" >&2; exit 7; fi
@@ -363,6 +384,7 @@ fake_reset() {
   echo 774 >"$S/migrations"
   echo 12 >"$S/vh"
   : >"$S/calls"
+  : >"$S/curl-calls"
   : >"$S/broken"
   : >"$S/leak"
   echo '/dev/root 1000000 500000 500000 50% /' >"$S/rootdf"
@@ -550,6 +572,29 @@ fake_reset "$O" 2026.8.0; touch "$S/migrate"; echo 5 >"$S/probe-fails"
 run_deploy; st=$?
 eq "five probes missed in a row: rolled back, exit 1" "$st" 1
 eq "  saying how many" "$(grep -c 'failed 5 times in a row' "$tmp/out")" 1
+eq "  and the five were the FIRST probe's (the front door, asked last, shifted no injected count)" \
+  "$(grep -c 'GET /-/health/live/ failed 5 times in a row' "$tmp/out")/$(grep -c 'through the front door.* failed' "$tmp/out")" 1/0
+
+echo "the front door (AUTHENTIK_PUBLISH) is probed after the endpoints, and in the preflight:"
+fake_reset "$O" 2026.8.0
+run_deploy health; st=$?
+eq "health on a stack with no AUTHENTIK_PUBLISH line: exit 0" "$st" 0
+eq "  the front door asked on compose's default, as an ordinary client" "$(grep -c -- '-A canari-miconnect-deploy http://127.0.0.1:9000/-/health/live/' "$S/curl-calls")" 1
+eq "  and asked LAST, after the server's own endpoints" "$(tail -n 1 "$S/curl-calls" | grep -c 'canari-miconnect-deploy')" 1
+fake_reset "$O" 2026.8.0; printf 'export AUTHENTIK_PUBLISH="127.0.0.1:9123" # the vhost\r\n' >>"$S/dir/.env"
+run_deploy preflight; st=$?
+eq "a preflight with a quoted, exported, commented CRLF line: passes, exit 0" "$st" 0
+eq "  asking that address" "$(grep -c 'http://127.0.0.1:9123/-/health/live/' "$S/curl-calls")" 1
+fake_reset "$O" 2026.8.0; printf 'AUTHENTIK_PUBLISH=127.0.0.1:0\n' >>"$S/dir/.env"
+run_deploy preflight; st=$?
+eq "a preflight whose AUTHENTIK_PUBLISH is port 0: refused, exit 1" "$st" 1
+eq "  naming the cause, never a silent skip" "$(grep -c 'front door cannot be probed: AUTHENTIK_PUBLISH names port 0' "$tmp/out")" 1
+eq "  and asking nothing" "$(grep -c 'canari-miconnect-deploy' "$S/curl-calls")" 0
+fake_reset "$O" 2026.8.0; echo 5 >"$S/probe-fails"
+run_deploy preflight; st=$?
+eq "a preflight whose front door never answers: refused, exit 1" "$st" 1
+eq "  saying so" "$(grep -c "front door fails - the host's nginx proxies every sign-in to it" "$tmp/out")" 1
+eq "  nothing changed" "$(changed)" 0
 
 fake_reset "$O" 2026.8.0; touch "$S/hugedb"
 run_deploy; st=$?

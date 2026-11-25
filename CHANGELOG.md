@@ -8820,7 +8820,7 @@ Tapping a republication or co-organisation proposal now opens the receiving asso
 
 ### The Messenger/Facebook/Instagram in-app browser now shows a large "open in the app" card
 
-The thin blue strip became a full card with one big button, because nobody should stay in that browser ([OpenInAppBanner](frontend/src/lib/components/shared/OpenInAppBanner.svelte)).
+The thin blue strip became a full card with one big button, because nobody should stay in that browser (`OpenInAppBanner`, replaced on 2026-11-25 by the [in-app browser gate](docs/wiki/frontend/leaving-in-app-browsers.md)).
 
 ### Fixed - an upload the edge refuses with 413 is no longer retried for ever
 

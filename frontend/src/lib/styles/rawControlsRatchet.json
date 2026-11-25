@@ -1014,11 +1014,6 @@
     "select": 0,
     "input": 0
   },
-  "src/lib/components/shared/OpenInAppBanner.svelte": {
-    "button": 1,
-    "select": 0,
-    "input": 0
-  },
   "src/lib/components/shared/PdfViewerModal.svelte": {
     "button": 3,
     "select": 0,

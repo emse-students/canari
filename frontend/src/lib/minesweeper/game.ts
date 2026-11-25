@@ -56,6 +56,13 @@ export interface MinesweeperBoard {
   generator: GeneratorVersion;
   /** What generation did (v2 only), for the caller to log; null until the first reveal. */
   generationReport: GenerationReport | null;
+  /**
+   * The reasoning score a v2 generation climbs to. Ranked is ALWAYS {@link V2_TARGET_SCORE}: the server
+   * replays a challenge with the default, so a ranked board never names another. An unranked game may
+   * name a lower one - that is how its difficulty is chosen (owner, 2026-11-25) - because it is never
+   * submitted. Ignored by generator 1.
+   */
+  targetScore: number;
 }
 
 /**
@@ -176,11 +183,14 @@ function rngOf(board: MinesweeperBoard): Rng {
  * Creates an empty board; mines are placed on the first reveal.
  * @param seed - When set, enables deterministic ranked generation for anti-cheat replay.
  * @param generator - Mine-placement version; defaults to 1 so nothing changes unless a caller opts in.
+ * @param targetScore - The v2 reasoning score to climb to; defaults to the ranked one, and only an
+ *   unranked board (never replayed by the server) passes another.
  */
 export function createBoard(
   config: MinesweeperConfig = DEFAULT_CONFIG,
   seed: string | null = null,
-  generator: GeneratorVersion = 1
+  generator: GeneratorVersion = 1,
+  targetScore: number = V2_TARGET_SCORE
 ): MinesweeperBoard {
   const { width, height, mineCount } = config;
   const total = width * height;
@@ -202,6 +212,7 @@ export function createBoard(
     rng: null,
     generator,
     generationReport: null,
+    targetScore,
   };
 }
 
@@ -1121,7 +1132,7 @@ const V2_GENERATION_NODE_BUDGET = 3_000_000;
 /** v2: cached enumerations kept at once; the cache is dropped whole past it (it only ever saves work). */
 const V2_CACHE_ENTRIES = 1000;
 /** v2: the reasoning score the climb aims for. */
-const V2_TARGET_SCORE = 60;
+export const V2_TARGET_SCORE = 60;
 /** v2: swaps tried before the climb settles for the best board it has. */
 const V2_MAX_EVALS = 300;
 /** v2: starting layouts tried before giving up on finding one the v2 solver clears. */
@@ -1600,7 +1611,7 @@ function placeMinesV2(board: MinesweeperBoard, safeIndex: number): void {
   if (!solve || !solve.won) {
     board.generationReport = {
       score: solve?.score ?? 0,
-      targetScore: V2_TARGET_SCORE,
+      targetScore: board.targetScore,
       evals: 0,
       searchNodes: V2_GENERATION_NODE_BUDGET - ctx.nodesLeft,
       reachedTarget: false,
@@ -1616,7 +1627,7 @@ function placeMinesV2(board: MinesweeperBoard, safeIndex: number): void {
 
   let score = solve.score;
   let evals = 0;
-  while (evals < V2_MAX_EVALS && score < V2_TARGET_SCORE && ctx.nodesLeft > 0) {
+  while (evals < V2_MAX_EVALS && score < board.targetScore && ctx.nodesLeft > 0) {
     evals++;
     const mineSlot = Math.floor(rng() * mines.length);
     const from = mines[mineSlot];
@@ -1646,10 +1657,10 @@ function placeMinesV2(board: MinesweeperBoard, safeIndex: number): void {
 
   board.generationReport = {
     score,
-    targetScore: V2_TARGET_SCORE,
+    targetScore: board.targetScore,
     evals,
     searchNodes: V2_GENERATION_NODE_BUDGET - ctx.nodesLeft,
-    reachedTarget: score >= V2_TARGET_SCORE,
+    reachedTarget: score >= board.targetScore,
     fellBack: false,
   };
 }

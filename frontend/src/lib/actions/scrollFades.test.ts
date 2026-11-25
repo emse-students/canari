@@ -49,6 +49,8 @@ describe('scrollFades - children rendered after the action started', () => {
   it('observes a chip added later, and stops on destroy', async () => {
     const watched = new Set<Element>();
     const stub = class {
+      // The real constructor takes the callback; the stub never fires it.
+      constructor(_callback: ResizeObserverCallback) {}
       observe(el: Element) {
         watched.add(el);
       }

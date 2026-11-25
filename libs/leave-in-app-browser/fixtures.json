@@ -1,0 +1,214 @@
+{
+  "about": "User agents and the answer every adapter of the Meta in-app browser gate must give for each: detect.ts, the SvelteKit gate, the interstitial's own script and MiConnect's nginx map. The in-app ones are the shapes Meta's apps send (tokens matter; versions are realistic padding); the Threads ones are as reported, unmeasured here. The rest must NEVER match: Meta's link-preview crawler and fetchers (blocking them blanks every preview card), other unfurlers, real browsers and the Canari app's own WebView.",
+  "cases": [
+    {
+      "name": "Messenger, iOS 18",
+      "userAgent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 [FBAN/MessengerForiOS;FBAV/485.0.0.42.109;FBBV/680000000;FBDV/iPhone15,2;FBMD/iPhone;FBSN/iOS;FBSV/18.1;FBSS/3;FBID/phone;FBLC/fr_FR;FBOP/5]",
+      "expect": {
+        "app": "messenger",
+        "os": "ios",
+        "iosMajor": 18
+      }
+    },
+    {
+      "name": "Messenger, iOS 16",
+      "userAgent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_7_10 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 [FBAN/MessengerForiOS;FBAV/470.0.0.41.105;FBBV/650000000;FBDV/iPhone10,4;FBMD/iPhone;FBSN/iOS;FBSV/16.7.10;FBSS/2;FBID/phone;FBLC/fr_FR;FBOP/5]",
+      "expect": {
+        "app": "messenger",
+        "os": "ios",
+        "iosMajor": 16
+      }
+    },
+    {
+      "name": "Messenger, iPad iOS 17",
+      "userAgent": "Mozilla/5.0 (iPad; CPU OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 [FBAN/MessengerForiOS;FBAV/475.0.0.30.110;FBDV/iPad13,1;FBMD/iPad;FBSN/iPadOS;FBSV/17.5;FBLC/fr_FR]",
+      "expect": {
+        "app": "messenger",
+        "os": "ios",
+        "iosMajor": 17
+      }
+    },
+    {
+      "name": "Messenger, Android",
+      "userAgent": "Mozilla/5.0 (Linux; Android 14; Pixel 7 Build/AP2A.240805.005; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/129.0.6668.100 Mobile Safari/537.36 [FB_IAB/Orca-Android;FBAV/480.0.0.47.109;]",
+      "expect": {
+        "app": "messenger",
+        "os": "android",
+        "iosMajor": null
+      }
+    },
+    {
+      "name": "Facebook, iOS 17",
+      "userAgent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 [FBAN/FBIOS;FBAV/482.0.0.39.105;FBBV/670000000;FBDV/iPhone14,5;FBMD/iPhone;FBSN/iOS;FBSV/17.6.1;FBSS/3;FBID/phone;FBLC/fr_FR;FBOP/5;FBRV/0]",
+      "expect": {
+        "app": "facebook",
+        "os": "ios",
+        "iosMajor": 17
+      }
+    },
+    {
+      "name": "Facebook, Android",
+      "userAgent": "Mozilla/5.0 (Linux; Android 13; SM-A536B Build/TP1A.220624.014; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/129.0.6668.81 Mobile Safari/537.36 [FB_IAB/FB4A;FBAV/483.0.0.48.71;]",
+      "expect": {
+        "app": "facebook",
+        "os": "android",
+        "iosMajor": null
+      }
+    },
+    {
+      "name": "Facebook Lite, Android",
+      "userAgent": "Mozilla/5.0 (Linux; Android 11; M2006C3MG Build/RP1A.200720.011; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/128.0.6613.146 Mobile Safari/537.36 [FBAN/EMA;FBLC/fr_FR;FBAV/430.0.0.11.111;]",
+      "expect": {
+        "app": "facebook",
+        "os": "android",
+        "iosMajor": null
+      }
+    },
+    {
+      "name": "Instagram, iOS 17",
+      "userAgent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 350.0.0.20.88 (iPhone14,5; iOS 17_4; fr_FR; fr; scale=3.00; 1170x2532; 640000000)",
+      "expect": {
+        "app": "instagram",
+        "os": "ios",
+        "iosMajor": 17
+      }
+    },
+    {
+      "name": "Instagram, Android",
+      "userAgent": "Mozilla/5.0 (Linux; Android 14; Pixel 7 Build/AP2A.240805.005; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/129.0.6668.100 Mobile Safari/537.36 Instagram 350.0.0.38.109 Android (34/14; 420dpi; 1080x2400; Google/google; Pixel 7; panther; panther; fr_FR; 640000000)",
+      "expect": {
+        "app": "instagram",
+        "os": "android",
+        "iosMajor": null
+      }
+    },
+    {
+      "name": "Threads, iOS 18 (reported shape)",
+      "userAgent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Barcelona 352.0.0.21.86 (iPhone15,3; iOS 18_1; fr_FR; fr; scale=3.00; 1290x2796; 650000000)",
+      "expect": {
+        "app": "threads",
+        "os": "ios",
+        "iosMajor": 18
+      }
+    },
+    {
+      "name": "Threads, Android (reported shape)",
+      "userAgent": "Mozilla/5.0 (Linux; Android 14; Pixel 8 Build/AP2A.240805.005; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/129.0.6668.100 Mobile Safari/537.36 Barcelona 352.0.0.21.86 Android (34/14; 420dpi; 1080x2400; Google/google; Pixel 8; shiba; shiba; fr_FR; 650000000)",
+      "expect": {
+        "app": "threads",
+        "os": "android",
+        "iosMajor": null
+      }
+    },
+    {
+      "name": "Meta link-preview crawler",
+      "userAgent": "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
+      "expect": null
+    },
+    {
+      "name": "Meta link-preview crawler, short form",
+      "userAgent": "facebookexternalhit/1.1",
+      "expect": null
+    },
+    {
+      "name": "Facebot",
+      "userAgent": "Facebot",
+      "expect": null
+    },
+    {
+      "name": "Meta external agent",
+      "userAgent": "meta-externalagent/1.1 (+https://developers.facebook.com/docs/sharing/webmasters/crawler)",
+      "expect": null
+    },
+    {
+      "name": "Meta external fetcher",
+      "userAgent": "meta-externalfetcher/1.1 (+https://developers.facebook.com/docs/sharing/webmasters/crawler)",
+      "expect": null
+    },
+    {
+      "name": "Meta web indexer",
+      "userAgent": "meta-webindexer/1.1 (+https://developers.facebook.com/docs/sharing/webmasters/crawler)",
+      "expect": null
+    },
+    {
+      "name": "Meta external ads",
+      "userAgent": "meta-externalads/1.1 (+https://developers.facebook.com/docs/sharing/webmasters/crawler)",
+      "expect": null
+    },
+    {
+      "name": "WhatsApp unfurler",
+      "userAgent": "WhatsApp/2.24.20.80 A",
+      "expect": null
+    },
+    {
+      "name": "Twitterbot",
+      "userAgent": "Twitterbot/1.0",
+      "expect": null
+    },
+    {
+      "name": "Slack unfurler",
+      "userAgent": "Slackbot-LinkExpanding 1.0 (+https://api.slack.com/robots)",
+      "expect": null
+    },
+    {
+      "name": "Discord unfurler",
+      "userAgent": "Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)",
+      "expect": null
+    },
+    {
+      "name": "Chrome, Android",
+      "userAgent": "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Mobile Safari/537.36",
+      "expect": null
+    },
+    {
+      "name": "Safari, iOS 17",
+      "userAgent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
+      "expect": null
+    },
+    {
+      "name": "Chrome, iOS",
+      "userAgent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/129.0.6668.69 Mobile/15E148 Safari/604.1",
+      "expect": null
+    },
+    {
+      "name": "Chrome, desktop",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+      "expect": null
+    },
+    {
+      "name": "Firefox, desktop",
+      "userAgent": "Mozilla/5.0 (X11; Linux x86_64; rv:131.0) Gecko/20100101 Firefox/131.0",
+      "expect": null
+    },
+    {
+      "name": "the Canari app's Android WebView",
+      "userAgent": "Mozilla/5.0 (Linux; Android 14; Pixel 7 Build/AP2A.240805.005; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/129.0.6668.100 Mobile Safari/537.36",
+      "expect": null
+    },
+    {
+      "name": "Telegram unfurler",
+      "userAgent": "TelegramBot (like TwitterBot)",
+      "expect": null
+    },
+    {
+      "name": "Googlebot, smartphone",
+      "userAgent": "Mozilla/5.0 (Linux; Android 6.0.1; Nexus 5X Build/MMB29P) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.69 Mobile Safari/537.36 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+      "expect": null
+    },
+    {
+      "name": "the Canari app's iOS WKWebView (Tauri)",
+      "userAgent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148",
+      "expect": null
+    },
+    {
+      "name": "a Capacitor app's Android WebView",
+      "userAgent": "Mozilla/5.0 (Linux; Android 14; SM-S911B Build/UP1A.231005.007; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/130.0.6723.102 Mobile Safari/537.36 Capacitor",
+      "expect": null
+    },
+    {
+      "name": "no user agent",
+      "userAgent": "",
+      "expect": null
+    }
+  ]
+}

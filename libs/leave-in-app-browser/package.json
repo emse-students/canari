@@ -1,0 +1,6 @@
+{
+  "name": "canari-leave-in-app-browser-source",
+  "private": true,
+  "description": "The source of the Meta in-app browser gate every site of the ecosystem vendors byte-identically (detect, gate, interstitial), MiConnect's nginx gate generated from it, and their tests (make test-ci-scripts).",
+  "type": "module"
+}
