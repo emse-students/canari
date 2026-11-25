@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { getLocale, setLocale } from '$lib/paraglide/runtime';
 import {
   matchesSelfConversationAlias,
@@ -15,7 +15,7 @@ afterEach(() => setLocale(initial, { reload: false }));
 describe('the title of "Mes notes" - the own name and a localized suffix', () => {
   it.each(['fr', 'en'] as const)('ends with the suffix and names the account in %s', (locale) => {
     setLocale(locale, { reload: false });
-    const title = selfConversationTitle('Camille DUPONT');
+    const title = selfConversationTitle('Camille DUPONT', ME);
     expect(title).toBe('Camille DUPONT (Notes)');
     expect(title.endsWith(' (Notes)')).toBe(true);
     expect(title).not.toContain('Mes notes');
@@ -59,7 +59,50 @@ describe('the pickers title "Mes notes" with the own name once it arrives', () =
   it('asks for the own name like a peer, and the late answer makes the row findable', () => {
     expect(missingPeerNameIds([['k', convo]], ME)).toEqual([ME]);
     expect(shareCandidates(input({}))).toEqual([]);
+    // accents fold on both sides, like the sidebar
+    expect(shareCandidates({ ...input({ [ME]: 'Zoé MARTIN' }), query: 'zoe' })).toHaveLength(1);
     const rows = shareCandidates(input({ [ME]: 'Zoe MARTIN' }));
     expect(rows.map((r) => r.label)).toEqual(['Zoe MARTIN (Notes)']);
+  });
+});
+
+describe('"Mes notes" without a real own name', () => {
+  it('never doubles the suffix nor builds " (Notes)" from an empty first frame', () => {
+    const title = selfConversationTitle('', ME);
+    expect(title.startsWith(' ')).toBe(false);
+    expect(title.match(/\(Notes\)/g)).toHaveLength(1);
+  });
+
+  it('warns once, however many titles are built', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    selfConversationTitle('', ME);
+    selfConversationTitle('', ME);
+    expect(
+      warn.mock.calls.filter((c) => String(c[0]).includes('[SELF]')).length
+    ).toBeLessThanOrEqual(1);
+    warn.mockRestore();
+  });
+
+  it('a one-letter query does not surface the row through its aliases', () => {
+    expect(matchesSelfConversationAlias('n')).toBe(false);
+    expect(matchesSelfConversationAlias('no')).toBe(true);
+  });
+
+  it('is withheld from the pickers until the own name is known', () => {
+    const convo = {
+      id: 'g-self',
+      name: '',
+      conversationType: 'self',
+      lifecycle: 'active',
+    } as never;
+    const rows = shareCandidates({
+      conversations: [['k', convo]],
+      currentUserId: ME,
+      workspaces: [],
+      peerNames: {},
+      query: '',
+      order: 'recent',
+    });
+    expect(rows).toEqual([]);
   });
 });

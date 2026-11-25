@@ -440,7 +440,7 @@
   );
   /** The own name is read reactively like a DM peer's, so a late or renamed profile repaints the row. */
   const ownName = userDisplayName(() => (onOpenSelfConversation ? currentUserId : ''));
-  const selfTitle = $derived(selfConversationTitle(ownName.current));
+  const selfTitle = $derived(selfConversationTitle(ownName.current, currentUserId));
   const selfRowShown = $derived(
     Boolean(onOpenSelfConversation) &&
       selfConversationMatchesQuery(

@@ -242,7 +242,7 @@
 
   const effectiveDisplayName = $derived(
     isSelfConversation
-      ? selfConversationTitle(ownName.current || displayName)
+      ? selfConversationTitle(ownName.current, currentUserId)
       : !isGroupConversation && !isChannel
         ? peerName.current
         : displayName

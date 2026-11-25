@@ -129,9 +129,21 @@ export function toConversationMeta(
  * (Notes)" (owner, 2026-11-25). `ownName` is the one resolver's, the one a DM peer gets: a caller that
  * redraws reads it reactively (`userDisplayName`) so a late or renamed profile repaints the title.
  */
-export function selfConversationTitle(ownName: string): string {
-  return m.conversation_self_named({ name: ownName });
+export function selfConversationTitle(ownName: string, userId: string): string {
+  // The RAW name only: a caller's reactive read may still be empty on its first frame, and the
+  // title must never be built from a title (a doubled suffix) or from nothing (" (Notes)").
+  const name = ownName.trim() || getUserDisplayNameSync(userId);
+  if (name === m.user_unknown_label() && !selfTitleWithoutNameLogged) {
+    selfTitleWithoutNameLogged = true;
+    console.warn(
+      `[SELF] "Mes notes" titled without a real own name (${userId ? 'profile not resolved yet' : 'no user id'}): it reads "${name} (Notes)" until the name resolves`
+    );
+  }
+  return m.conversation_self_named({ name });
 }
+
+/** One warning per session is the signal; a line per row per frame would be the noise. */
+let selfTitleWithoutNameLogged = false;
 
 /**
  * Whether a search `query` is one of the words "Mes notes" has always answered to ("notes", "mes
@@ -139,7 +151,8 @@ export function selfConversationTitle(ownName: string): string {
  */
 export function matchesSelfConversationAlias(query: string): boolean {
   const q = foldForSearch(query.trim());
-  if (!q) return false;
+  // Two characters at least: a one-letter query would surface the row for every word typed.
+  if (q.length < 2) return false;
   return m
     .conversation_self_search_aliases()
     .split('|')
@@ -725,7 +738,7 @@ export function resolveConversationListPresentation(
     return {
       conversationType: 'self',
       contactId: input.id,
-      displayName: selfConversationTitle(getUserDisplayNameSync(userId)),
+      displayName: selfConversationTitle('', userId),
       displayNameResolved: true,
     };
   }

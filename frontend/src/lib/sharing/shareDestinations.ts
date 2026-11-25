@@ -10,7 +10,8 @@ import {
   selfConversationTitle,
   resolveConversationListPresentation,
 } from '$lib/utils/chat/conversations';
-import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
+import { peekUserDisplayName } from '$lib/utils/users/displayName';
+import { foldForSearch } from '$lib/utils/textFold';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import type { Conversation } from '$lib/types';
 
@@ -123,10 +124,14 @@ export function shareCandidates(input: {
       const pres = shareDestinationPresentation(c, input.currentUserId);
       const label =
         pres.conversationType === 'self'
-          ? selfConversationTitle(
-              input.peerNames[input.currentUserId.toLowerCase()] ??
-                getUserDisplayNameSync(input.currentUserId)
-            )
+          ? // Withheld (an empty label drops the row) until the own name is really known: a
+            // placeholder title would list "Utilisateur inconnu (Notes)".
+            (() => {
+              const own =
+                input.peerNames[input.currentUserId.toLowerCase()] ??
+                peekUserDisplayName(input.currentUserId);
+              return own ? selfConversationTitle(own, input.currentUserId) : '';
+            })()
           : pres.displayNameResolved
             ? pres.displayName
             : (input.peerNames[pres.contactId] ?? pres.displayName);
@@ -137,7 +142,7 @@ export function shareCandidates(input: {
     .filter(
       (cand) =>
         !q ||
-        cand.label.toLowerCase().includes(q) ||
+        foldForSearch(cand.label).includes(foldForSearch(q)) ||
         (cand.conversation.conversationType === 'self' && matchesSelfConversationAlias(q)) ||
         (cand.community?.toLowerCase().includes(q) ?? false)
     )

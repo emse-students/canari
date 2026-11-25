@@ -83,6 +83,8 @@ describe('the "Mes notes" row', () => {
   it('repaints when the own profile name arrives after the first render', async () => {
     mountSidebar(vi.fn());
     expect(selfRow()?.textContent).not.toContain('Camille DUPONT');
+    // the first frame is never " (Notes)" with an empty name
+    expect(selfRow()?.textContent?.trimStart().startsWith('(Notes)')).toBe(false);
     ownProfile.resolve('Camille DUPONT');
     await new Promise((r) => setTimeout(r, 0));
     flushSync();
