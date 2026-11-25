@@ -38,6 +38,12 @@ import * as m from '$lib/paraglide/messages';
 import { seedUserDisplayName } from '$lib/utils/users/displayName';
 import { SvelteMap } from 'svelte/reactivity';
 import type { Conversation } from '$lib/types';
+import {
+  buildConversationRow,
+  restoredConversationRow,
+  selfConversationIdentity,
+  toConversationMeta,
+} from '$lib/utils/chat/conversations';
 import Sidebar from './Sidebar.svelte';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 
@@ -48,8 +54,19 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-/** A held conversation whose last activity is `at`. */
+/**
+ * A held conversation whose last activity is `at`. A self row is built the way a RESTORED session
+ * builds it - stored as meta, read back - so it carries no name of its own (`name: ''`) and is
+ * keyed by its group id, like the real one: a hand-made `name: id` hid the #4100 regression.
+ */
 function row(id: string, type: 'direct' | 'self', at: number): Conversation {
+  if (type === 'self') {
+    const built = {
+      ...buildConversationRow({ id, lifecycle: 'active', identity: selfConversationIdentity() }),
+      lastMessageAt: at,
+    };
+    return restoredConversationRow(toConversationMeta(id, built, 'me'), 'me');
+  }
   return {
     id,
     name: id,
@@ -67,7 +84,7 @@ function row(id: string, type: 'direct' | 'self', at: number): Conversation {
 function mountSidebar(
   onOpenSelfConversation?: () => void,
   rows: Conversation[] = [],
-  map = new SvelteMap<string, Conversation>(rows.map((r) => [r.name, r]))
+  map = new SvelteMap<string, Conversation>(rows.map((r) => [r.id, r]))
 ) {
   for (const id of ['alice', 'bob']) seedUserDisplayName(id, id, id);
   const target = document.createElement('div');
@@ -162,6 +179,21 @@ describe('the "Mes notes" row', () => {
       flushSync();
       expect(order(held)).toEqual([]);
     });
+    it('draws a RESTORED held row, keyed by its group id and nameless, in its recency place', () => {
+      const notes = row('e4c1f0aa-0000-4000-8000-00000000005e', 'self', 300);
+      expect(notes.name).toBe('');
+      const t = mountSidebar(vi.fn(), [
+        row('alice', 'direct', 200),
+        notes,
+        row('bob', 'direct', 400),
+      ]);
+      expect(order(t)).toEqual(['bob', 'self', 'alice']);
+      expect(t.querySelectorAll('[data-self-conversation-row]')).toHaveLength(1);
+      search(t, 'notes');
+      expect(order(t)).toEqual(['self']);
+      expect(t.textContent).not.toContain(m.chat_no_discussion_found());
+    });
+
     it('replaces the placeholder when the row is created late, with no duplicate', () => {
       const rows = new SvelteMap<string, Conversation>([['alice', row('alice', 'direct', 200)]]);
       const t = mountSidebar(vi.fn(), [], rows);
