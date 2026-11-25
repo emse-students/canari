@@ -1,7 +1,8 @@
 <script lang="ts">
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import SectionHub from '$lib/components/navigation/SectionHub.svelte';
-  import MinesweeperModal from '$lib/components/settings/MinesweeperModal.svelte';
+  import { goto } from '$app/navigation';
+  import { resolve } from '$app/paths';
   import { settingsHubRows } from '$lib/settings/settingsSections';
   import { m } from '$lib/paraglide/messages';
 
@@ -13,7 +14,6 @@
   // Account management hub: a list of sections, each a route segment (`/settings/<section>`).
   // Identity (avatar, bio, associations...) stays on /profile. Each section owns its own data
   // loading; the sign-in guard is the layout's.
-  let minesweeperOpen = $state(false);
   let tapCount = $state(0);
   let lastTapAt = 0;
 
@@ -25,7 +25,7 @@
     tapCount += 1;
     if (tapCount >= EASTER_EGG_TAPS) {
       tapCount = 0;
-      minesweeperOpen = true;
+      void goto(resolve('/games/play'));
     }
   }
 </script>
@@ -39,7 +39,3 @@
 <div class="space-y-6 md:space-y-8">
   <SectionHub rows={settingsHubRows()} label={m.settings_page_title()} />
 </div>
-
-{#if minesweeperOpen}
-  <MinesweeperModal open={true} onClose={() => (minesweeperOpen = false)} />
-{/if}
