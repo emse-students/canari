@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Pause, Play, RotateCcw } from '@lucide/svelte';
-  import Modal from '$lib/components/shared/Modal.svelte';
+  import { ArrowLeft, Pause, Play, RotateCcw } from '@lucide/svelte';
+  import { resolve } from '$app/paths';
   import Button from '$lib/components/ui/Button.svelte';
   import MinesweeperCell from '$lib/components/settings/MinesweeperCell.svelte';
   import { fetchMinesweeperReplay, formatDurationMs } from '$lib/minesweeper/api';
@@ -11,6 +11,7 @@
   import { animationFactor, loadMinesweeperSettings } from '$lib/minesweeper/settings';
   import { m } from '$lib/paraglide/messages';
   import { refusalStatus } from '$lib/utils/apiRefusal';
+  import { sideSafePadding } from '$lib/utils/sideSafeArea';
   import { Log } from '$lib/utils/Log';
 
   /**
@@ -19,16 +20,16 @@
    * faster - so anyone can see how a record was played, and a moderator can judge whether a hand did
    * it. Opened from a row of the Games ranking. docs/wiki/frontend/modules/minesweeper.md, "The replay".
    *
-   * The screen is the board: full-screen on a phone, the whole grid fitted to the space it is given
-   * (`fitCellSize`, re-fitted on every resize or rotation), the controls in one bar under it.
+   * The screen is the board: a full-screen place (`/games/replay/[id]`, no shell chrome), the whole grid
+   * fitted to the space it is given (`fitCellSize`, re-fitted on every resize or rotation), the controls
+   * in one bar under it. It pads itself by the safe area, as the shell gives that padding back.
    */
   interface Props {
     /** The score to replay. */
     scoreId: string;
-    onClose: () => void;
   }
 
-  let { scoreId, onClose }: Props = $props();
+  let { scoreId }: Props = $props();
 
   /** Playback speeds offered: a real game is often a minute or more. */
   const SPEEDS = [1, 2, 4, 8] as const;
@@ -166,16 +167,24 @@
     type === 'reveal' ? m.minesweeper_replay_action_reveal() : m.minesweeper_replay_action_flag();
 </script>
 
-<Modal
-  open={true}
-  title={data
-    ? m.minesweeper_replay_title({ name: data.displayName })
-    : m.minesweeper_replay_open()}
-  {onClose}
-  phoneFullScreen={true}
-  maxWidth="max-w-none sm:max-w-3xl"
-  panelClass="sm:h-[min(92dvh,60rem)]!"
+<div
+  class="bg-cn-surface flex h-full min-h-0 w-full flex-col"
+  style="padding-top: var(--safe-area-inset-top, 0px); padding-bottom: var(--safe-area-inset-bottom, 0px); {sideSafePadding()}"
 >
+  <header class="border-cn-border flex shrink-0 items-center gap-2 border-b px-2 py-2">
+    <!-- A link, not a button: Back goes to the page the viewer came from (`data-back-link`). -->
+    <a
+      href={resolve('/games')}
+      data-back-link
+      aria-label={m.common_back()}
+      class="ui-icon-button text-text-main rounded-full"
+    >
+      <ArrowLeft size={18} />
+    </a>
+    <h1 class="text-text-main min-w-0 text-base font-bold break-words">
+      {data ? m.minesweeper_replay_title({ name: data.displayName }) : m.minesweeper_replay_open()}
+    </h1>
+  </header>
   {#if phase === 'loading'}
     <p class="text-text-muted p-4 text-sm" role="status">{m.minesweeper_replay_loading()}</p>
   {:else if phase === 'missing'}
@@ -299,4 +308,4 @@
       </div>
     </div>
   {/if}
-</Modal>
+</div>

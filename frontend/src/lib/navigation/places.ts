@@ -117,11 +117,22 @@ export const CAMERA_PLACE = { id: 'camera', href: '/camera' } as const satisfies
 >;
 
 /**
+ * The Minesweeper's own screens: the game board and the replay of a game. Like the camera, the board IS
+ * the page, so the shell draws nothing around it (owner, 2026-11-25: the game was a modal whose portal,
+ * focus trap and history overlay cost frames, and is a page now). The Games page, the tutorial and the
+ * rest of `/games` keep the shell.
+ */
+export const FULL_SCREEN_GAME_PATHS = ['/games/play', '/games/replay'] as const;
+
+/**
  * Whether this path draws full screen, with no header and no tab bar: the camera, whose preview IS
- * the page. The layout hides its chrome on it as it does for an open conversation on a phone.
+ * the page, and the Minesweeper's board and replay. The layout hides its chrome on it as it does for
+ * an open conversation on a phone.
  */
 export function isFullScreenPlace(pathname: string): boolean {
-  return pathname === CAMERA_PLACE.href || pathname.startsWith(`${CAMERA_PLACE.href}/`);
+  return [CAMERA_PLACE.href, ...FULL_SCREEN_GAME_PATHS].some(
+    (href) => pathname === href || pathname.startsWith(`${href}/`)
+  );
 }
 
 /** Returns the active place ID for the given pathname, or null if no place matches. */

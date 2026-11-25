@@ -154,6 +154,7 @@ const PAGE_TITLES: Record<string, () => string> = {
   '/forms/create': () => m.form_create_heading(),
   '/forms/success': () => m.form_success_title(),
   '/games': () => m.games_page_title(),
+  '/games/play': () => m.minesweeper_title(),
   '/institutions': () => m.inst_heading(),
   '/institutions/new': () => m.inst_new_create_btn(),
   '/lists': () => m.list_heading(),
@@ -216,6 +217,11 @@ export function resolveSeoForPath(pathname: string): SeoMeta {
 
   if (path.startsWith('/g/join/')) {
     return appPageSeo(path, m.group_join_page_title());
+  }
+
+  // One game's replay: a page of its own, named for what it is, never for the score id it carries.
+  if (path.startsWith('/games/replay/')) {
+    return appPageSeo(path, m.minesweeper_replay_open());
   }
 
   // A settings section is a page of its own, named for what it holds.
