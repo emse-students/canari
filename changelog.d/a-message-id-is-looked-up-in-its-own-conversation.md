@@ -1,3 +1,0 @@
-### Fixed - a message id shared with a peer's message in another conversation no longer patches the wrong row
-
-The outbox and the reel-410 record looked a message up by id across all conversations and took the first hit, and an id travels to peers. They now look in the conversation the message was queued for (or the one the reel viewer was opened from), own rows only for the outbox, and the reel's stored row is read and written under that conversation too ([chat](docs/wiki/frontend/modules/chat.md)). A tab of the previous build still publishing events with no conversation is resolved from the queue entry or the own row held until 2026-12-15 ([legacy-compatibility](docs/wiki/legacy-compatibility.md)).

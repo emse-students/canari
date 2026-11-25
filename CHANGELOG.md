@@ -14,6 +14,490 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-11-25
+
+### Fixed - an Android call started during a phone call no longer runs with a live microphone
+
+A refused audio focus at the call's start now holds the microphone, and the delayed focus gain released when the phone call ends gives it back with no tap ([calls](docs/wiki/frontend/modules/calls.md)).
+
+### Changed - a campus-trend suggestion for a post you already saw in the feed no longer shows
+
+The phone keeps its own list of the posts it displayed (nothing is sent to the server, and it is erased at sign-out), and a "Suggestion" for one of them gets no banner and no bell row on the web, Android and iOS; a post seen on another device is not recognised ([engagement](docs/wiki/engagement.md#a-campus-trend-for-a-post-this-device-already-displayed-shows-nothing-2026-11-24)).
+
+### Fixed - a cash sale's default price is quoted under the buyer's tier lock
+
+A tier granted or revoked in the same instant can no longer leave the recorded default one tier off;
+two comments that said a paid form is ranked like a settlement are corrected
+([cotisations](docs/wiki/cotisations.md#c-manual-grant-from-the-cotisations-tab-cash--retroactive)).
+
+### Fixed - a catch-up lands in the open conversation in one render, and says it is running
+
+Push-preview upgrades and messages from this account's other device now wait for the drain's flush
+like any other arrival, instead of a render and two store round trips each (about half of a resume's
+ten-second catch-up on Android); the "receiving pending messages" banner shows whenever the buffer
+holds enough, and each drain logs its frame count and total time once. A buffered message leaves the buffer only for a store, written where its thread lives at the close (a recorded re-key, never a sender-chosen message id)
+(a reset during group creation, or a Welcome re-keying the conversation mid-window, used to drop the
+window's rows, which were then acknowledged), other tabs receive the upgraded rows, and a catch-up ending with a message from the
+other device no longer pulls a reader who had scrolled up
+([chat](docs/wiki/frontend/modules/chat.md#a-catch-up-lands-in-one-render-2026-11-24)).
+
+### Fixed - a DM thread keeps its end when the app returns with the keyboard up (iPhone)
+
+The iOS shell's keyboard will-show now starts a keyboard transition the page could not see (the app
+returns at the size it left with), so WebKit's reveal at the return is put back like a rise's instead of read as the reader leaving; the pane logs its geometry at
+every foreground and keyboard edge ([chat](docs/wiki/frontend/modules/chat.md#the-keyboard-comes-back-with-the-app-2026-11-23)).
+
+### Fixed - a group creation is logged once
+
+The client no longer writes a second `[GROUP] Group created successfully` line beside `[OK] Group ... created.`. The rest of the rig-defects entry (GRP and GRAINE waits, identity check) concerned archived rig code and is deleted.
+
+### Fixed - a message id shared with a peer's message in another conversation no longer patches the wrong row
+
+The outbox and the reel-410 record looked a message up by id across all conversations and took the first hit, and an id travels to peers. They now look in the conversation the message was queued for (or the one the reel viewer was opened from), own rows only for the outbox, and the reel's stored row is read and written under that conversation too ([chat](docs/wiki/frontend/modules/chat.md)). A tab of the previous build still publishing events with no conversation is resolved from the queue entry or the own row held until 2026-12-15 ([legacy-compatibility](docs/wiki/legacy-compatibility.md)).
+
+### Fixed - a product nothing prices is refused when it is saved, not at its first checkout
+
+Creating or editing a product with no fixed amount, no free amount and no grid answers a typed 400
+`PRODUCT_HAS_NO_PRICE`, worded in the editor ([payments](docs/wiki/frontend/modules/payments.md)).
+
+### Fixed - two browser tabs promoted one after the other could take the lead from a tab already serving it
+
+The page a promotion reload starts no longer steals the leader lock: it waits in the queue while no tab serves the lead and follows the tab that does, and a hidden leader hands the lead over only once its MLS work has settled ([chat](docs/wiki/frontend/modules/chat.md#a-leader-whose-own-session-ended-gives-the-lead-up-2026-11-24)).
+
+### Fixed - a CanaReel publish no longer dies when the phone stops the app
+
+"Publier" on the CanaReels camera now hands the take to the background publish queue: it is kept on
+the device, sent in resumable parts, created once under its own id, and shown in the banner while it
+waits or fails. The screen stays on while a post is being sent, since a screen going to sleep stopped
+the app and, under battery saver, cut its network mid-upload ([reels](docs/wiki/frontend/modules/reels.md#publishing-r3-on-c2-and-c3)).
+
+### Fixed - an Android call that replaces another in the call service takes its audio over
+
+The call audio is handed over to the new call, keeping its mode, output and focus, so its focus
+events carry the new call's id and a cellular call ending during it gives the microphone back
+([calls](docs/wiki/frontend/modules/calls.md#a-call-behaves-like-a-phone-call-2026-10-30-after-the-owners-first-production-call)).
+
+### Fixed - a second tab was refused "Nouvelle discussion" while the main tab sat locked or signed out
+
+The leader tab kept the lead after its own session ended (keypad, sign-out, expired session); it now gives it up once the MLS work it has in flight settles (an external join included, so it cannot fork a group), a tab that can serve takes it, and a gesture asked by the tab that is promoted survives its reload ([chat](docs/wiki/frontend/modules/chat.md#a-leader-whose-own-session-ended-gives-the-lead-up-2026-11-24)).
+
+### Changed - MiConnect's Alumni sign-in is live behind a direct link
+
+The Alumni SAML source now verifies Alumnforce's signing certificate and is enabled, without a button on the login page, so its real answers were measured before it is offered to anyone: a persistent alumni id, both levels signed in SHA-256, and a link onto an existing account ([authentik](docs/wiki/infrastructure/authentik.md#the-alumni-saml-source-enabled-not-promoted-measured-2026-11-23)).
+
+### Added - the Alumni link reminder, and the merge of an Alumni duplicate
+
+A person whose Alumni link is due (from 1 September of their second year) and missing is asked to
+make it by a dismissible banner; global admins see the accounts an Alumni sign-in created that match
+an existing one, and "Rattacher" marks the duplicate after naming what it holds in Canari, MiConnect
+moving its Alumni link onto the real account at its next Alumni sign-in - only if that account holds
+a CAS link and the name the Alumni SSO asserts - before the duplicate's Canari account is erased
+([profiles-and-access](docs/wiki/profiles-and-access.md#the-work-packages-in-order)).
+
+### Added - MiConnect: the Alumni SSO on the login page, the link due mid second year, the cotisant gate
+
+The Alumni button sits beside the CAS; an Alumni sign-in records the membership, a new Alumni identity
+first says whether it has a School account, MiGallery and Le Cercle admit cotisants after the free
+window, and the MiConnect terms change to say so; Canari's sign-in to those sites answers the same
+rule from one shared case table. An Alumni duplicate an admin marks in Canari is merged into the real
+account at its next Alumni sign-in, once it holds a CAS link and the asserted name, each merge
+journalled; the link reminder shows once per session
+([authentik](docs/wiki/infrastructure/authentik.md#the-alumni-sso-as-built-for-180-d42-d49-owner-2026-11-23)).
+
+### Fixed - an upload finishing after the account erasure no longer keeps the erased owner
+
+media-service now records the erasure (a keyed pseudonym of the id and the time of the latest pass, kept 24 h) before it deletes, and every path that registers an object refuses a credential or session from before it with `410 OWNER_ERASED`, which the app treats as final, deleting what it had stored; a person who signs in again is not refused ([media-service](docs/wiki/services/media-service.md#an-erased-owner-registers-nothing-2026-11-24)).
+
+### Fixed - a message reaching an iPhone just left is announced, and a reaction is never louder than a message
+
+The page judged the reader in front until the background edge, which follows the home gesture by
+seconds while the socket still ACKs, so no push and no banner announced it; it now also asks the
+shell's active state, and re-asks just before posting. A reaction notifies exactly where a message in
+the same place would ([mobile](docs/wiki/frontend/mobile.md#an-app-that-is-not-active-is-not-read-2026-11-23)).
+
+### Fixed - the in-app log keeps the lines that explain a crash, and says when the last session ended abruptly
+
+The log was written to disk only by batch, on leaving the screen or on export, so an app killed
+during a call lost the whole call from its log. An error is now written at once, the call
+lifecycle writes the batch at its milestones, and a boot that finds the previous session ended while
+on screen says so in one line
+([in-app log](docs/wiki/frontend/mobile.md#the-in-app-log)).
+
+### Fixed - a ready, green pull request is no longer stranded when two merges land together
+
+After the base moved, GitHub read the merge state `UNKNOWN` (not computed yet) and `arm-auto-merge` failed (#3945); it now merges on `UNKNOWN` under the same strict reads, GitHub refusing a real conflict itself
+([cicd](docs/wiki/cicd.md#package-1-opening-a-pull-request-ciyml)).
+
+### Fixed - the image scan is green again on authentik 2026.8.6's Debian krb5 advisories
+
+Fourteen krb5 advisories in authentik's Debian base, with no authentik release carrying the fix, are allowlisted by purl and retire with the next release ([cicd](docs/wiki/cicd.md#container-images-are-scanned-2026-10-23)).
+
+### Changed - the backlog shed eleven settled entries and its decision records
+
+Eleven entries that were done, duplicate, obsolete, unreadable on the bench or accepted left `backlog.d/`, and the nineteen decision records moved to `docs/wiki/decisions/` ([decisions of 2026-11-23](docs/wiki/decisions/owner-decisions-of-2026-11-23.md)).
+
+### Fixed - the bell picker takes its default level when a re-follow resets the bell
+
+The follow answer now says `bellReset`, and the association page hands the bell its default level
+at once, instead of showing the old level until the page is opened again
+([engagement](docs/wiki/engagement.md#wp-3---the-bell-built)).
+
+### Fixed - a call that never connected is said on the screen, written as not connected, and diagnosable
+
+A 1:1 call answered but never connected showed "Connexion..." while the other party was gone and was
+recorded as answered: the screen now says "<name> a perdu la connexion...", the record reads
+"Appel non abouti" with a call-back button, and `[CALL_REPORT]` counts the ICE candidates each way
+while the relay's `PeerAway` says how the other socket ended
+([calls](docs/wiki/frontend/modules/calls.md#a-call-that-never-connected-is-said-and-written-so-2026-11-22)).
+
+### Fixed - the call path line names the path the call ended on
+
+The `selected path` line is written again when ICE moves to another pair, so a call that left a relay no longer reads `relayed=yes` ([calls](docs/wiki/frontend/modules/calls.md)).
+
+### Fixed - a Lydia request whose answer was lost is no longer read as a refusal
+
+Core answered a `request/do` timeout as a 400, which the boutique read as "nothing was created" and
+closed the attempt while Lydia could still hold a payable request; core now answers 502, every
+refusal it raises before Lydia is typed `CHECKOUT_REQUEST_INVALID`, and only a typed refusal code
+releases an attempt or a form answer ([forms](docs/wiki/frontend/modules/forms.md#a-released-payment-is-resumed-on-the-same-answer-owner-decision-of-2026-11-21)).
+
+### Fixed - the access log no longer pairs an address with a form id or a user id; three rig and test papercuts
+
+The nginx access log writes `/api/forms/<id>/submit` and `/api/public/forms/<id>/submit` as their route and drops the whole query of `/api/ws` (its `userId` included) ([nginx](docs/wiki/infrastructure/nginx.md#the-access-log-never-records-a-token-2026-10-06)). The iPhone sign-in helper scrolls to a terms "Continue" below the fold, the rig classifier names a seat's ordinary start lines (`SEAT_START_NARRATION`, exact shapes) so a KILL row can read clean, and two slow-under-load frontend tests pay their cold paths in a `beforeAll`.
+
+### Fixed - a comment with neither text nor media, or an edit to blank text, is refused with a 400
+
+The comment route stored a body carrying neither (a misnamed field) as an empty comment and pushed
+"Nouveau commentaire" to the post's author; the edit route accepted whitespace-only text. Both DTOs now
+refuse them ([social-service](docs/wiki/services/social-service.md#posts-apiposts)).
+
+### Fixed - a comment notification tapped while its post is already open opens the comment
+
+The post card now reacts to a new `?comment=` on the post already on screen: the sheet opens, the post is read again if the reply arrived after it was read, and the comment is scrolled to and ringed ([posts](docs/wiki/frontend/modules/posts.md)).
+
+### Fixed - a new device orders its conversations before their history arrives
+
+The server now keeps the receive time of each conversation's newest visible message (migration 057,
+no content, said to the admitted members only), and the list uses it as a floor until the restored
+history reaches it. A conversation already quiet when this ships keeps its old place until its next
+visible message ([chat](docs/wiki/frontend/modules/chat.md#the-conversation-list-has-one-ordering-key-2026-10-06)).
+
+### Fixed - the Rust dependency audit is green again on `cookie` 0.18.3
+
+RUSTSEC-2026-0594 (medium) hit `cookie` 0.18.2 in the Tauri shell's lockfile; only the lock moved, to the fixed 0.18.3 ([cicd](docs/wiki/cicd.md#the-audit-blocks-on-what-we-ship-2026-11-17)).
+
+### Changed - dev accepts the Android upload-key origin for account restore
+
+A bench APK installed by hand (upload key) can now register a restore key on dev, through the dev-only `ANDROID_UPLOAD_KEY_SHA256`; production keeps the Play key only ([account-restore](docs/wiki/account-restore.md)).
+
+### Fixed - a DM ending in photos stays at its last message when the iPhone keyboard opens
+
+WebKit's own scroll of the thread as the composer takes focus - no reader input, a keyboard transition under way, the reach unchanged - is now put back at the end, once per transition; any other unexplained move, a screen reader's included, still leaves the end ([chat](docs/wiki/frontend/modules/chat.md#the-engines-keyboard-move-is-put-back-and-only-it-2026-11-23)).
+
+### Fixed - the push cache merge refuses a salon id
+
+`fcmMemoryMerge.ts` guards its own seam against a `channel_` conversation id; the two-ids-for-one-row case is an accepted risk recorded on the wiki ([chat](docs/wiki/frontend/modules/chat.md#a-visible-system-notice-needs-an-identity-the-sender-minted)).
+
+### Added - a form left open with no answer is asked about once, and the editor offers a closing date
+
+17 of 21 forms on production had no closing date. The publish step now offers one (7, 14 or 21 days by
+the form's nature, one tap to keep it open), and a daily sweep asks the owner and the managers of a form
+silent for 21 days "Ce formulaire est toujours ouvert. Le fermer ?" - once, in the bell only, with close,
+keep open and set a date
+([forms](docs/wiki/frontend/modules/forms.md#the-question-put-to-a-form-left-open-owner-2026-11-21-migration-180)).
+
+### Fixed - an opening's push (form, booking space, event) names the association, shows its logo and, for a form, quotes its title, as its bell row does
+
+The push carried the association and the title, but the phones composed only the fixed "Formulaire
+ouvert !" and the server sent no picture; booking-space and event openings sent no logo either. Both
+native composers now use the facts and the server sends the logo id, from the same row as the bell
+([engagement](docs/wiki/engagement.md)).
+
+### Added - an optional waiting list on a limited form
+
+Past its capacity, a form whose organiser switched the list on keeps a member's answer in line; a freed
+place registers the first in line at once, in the same transaction, with one notification - a paid
+online one is told its place is held for its payment - a list whose first in line can no longer pay
+is frozen, never reordered, until a save makes that payment possible again, and a late payment that
+landed over capacity becomes the registration at its payer's turn instead of a second charge (owner
+decision of 2026-11-23,
+[forms](docs/wiki/frontend/modules/forms.md#a-waiting-list-on-a-limited-form-owner-decision-of-2026-11-23-180)).
+
+### Changed - an anonymous form's answer keeps only its week, never its day
+
+A released batch is dated with the Monday of its week, migration 181 cuts the answers already stored,
+and the managers' list and export read "semaine du 16 nov." - a day with one answer was a group of one
+([forms](docs/wiki/frontend/modules/forms.md#an-anonymous-answer-keeps-only-its-week-2026-11-22)).
+
+### Added - a short answer can be a number, a phone number or an e-mail
+
+A short text question takes a format: a number (whole, or with decimals, with an optional minimum and maximum), a phone
+number or an e-mail, judged on the page and again by the server. Numbers are exported as numbers, and a skipped
+optional question is no longer stored as an empty string
+([forms](docs/wiki/frontend/modules/forms.md#answer-formats-on-a-short-text-question-and-the-empty-answer-stored-as-absent-owner-2026-11-21-180)).
+
+### Added - a failed card payment on a form can be settled in person instead
+
+On a paid form taking cash, "Payer en direct" moves the SAME answer to a cash payment the association validates, after its Lydia request is settled so it is never paid twice ([forms](docs/wiki/frontend/modules/forms.md#a-failed-card-payment-is-settled-in-person-instead-owner-decision-of-2026-11-23)).
+
+### Added - a choice question can take a free comment and an "Autre : précisez"
+
+A form's single choice, checkboxes and drop-down get two switches: an optional comment under the question, and
+an "Autre" option whose picker may write what they mean. Both show beside the answer in the responses and the
+spreadsheet, and the text stays optional so an older app is never locked out
+([forms](docs/wiki/frontend/modules/forms.md#a-choice-questions-free-comment-and-its-autre-owner-2026-11-21-180)).
+
+### Added - the form editor warns under a question the form already answers
+
+A question titled like a field the form already transmits with every answer (Nom, Prénom, Promo...) gets a non-blocking note suggesting to delete it, following the editor's live settings ([forms](docs/wiki/frontend/modules/forms.md#a-question-the-form-already-answers-owner-2026-11-23)).
+
+### Added - a released form payment can be resumed, and a cash hold is announced before it expires
+
+A cancelled or expired online payment shows "Reprendre le paiement" on the form page and pays the same
+answer through a new Lydia request; a member waiting to pay cash gets one notice before the hold
+expires ([forms](docs/wiki/frontend/modules/forms.md#a-released-payment-is-resumed-on-the-same-answer-owner-decision-of-2026-11-21)).
+
+### Added - a form's managers read a per-question summary of the answers
+
+The "Résumé" tab now counts on the server, per option, cell and scale step, with a mean for a scale
+and the denominator on every card; an anonymous form hides a question with fewer than five answers
+and offers no cross-tab ([forms](docs/wiki/frontend/modules/forms.md#the-per-question-results-summary-g-results-owner-2026-11-21)).
+
+### Fixed - a free-amount limit the payment provider would refuse is refused at the save
+
+A bound outside 0.50-1000 EUR answers a typed `AMOUNT_OUT_OF_RANGE` carrying that range, and the
+product editor names it ([payments](docs/wiki/frontend/modules/payments.md)).
+
+### Fixed - the moderation "hidden" row names the association that published the post
+
+`GET /api/posts/hidden` carries the association's name and logo from the database, and the row shows the institution first and the author second ([admin](docs/wiki/frontend/modules/admin.md)).
+
+### Fixed - the social-service integration job prints no WARN or ERROR line a spec did not assert
+
+The specs' doubles now implement what the code under test calls (`incr`, `incrEach`, `deleteMatching`, `notifyPostActivity`, the internal secret), so no run logs a harness gap. A log guard (`integration-log-guard.it-fixture.ts`) records every WARN/ERROR an integration test provokes and FAILS the test unless it asserted each with `takeLogged`; nothing is silenced. The five cache and reel sweeps that passed the error as Nest's context argument now describe it in the message (`describeError`, shared with the push service).
+
+### Fixed - iPhone: a DM thread keeps its end when the keyboard comes back with the app, and the keyboard is taken off the page once
+
+The keyboard's rest now waits for the WebView's frame on both sides of the bridge, and WebKit's own keyboard inset is detached so the shell's frame is the only one ([chat](docs/wiki/frontend/modules/chat.md#a-rest-is-two-facts-the-keyboard-at-rest-and-its-frame-landed-2026-11-24), [keyboard](docs/wiki/frontend/keyboard-and-send-motion.md#the-shell-is-the-one-authority-over-the-keyboards-room-2026-11-24)).
+
+### Fixed - the iPhone share sheet no longer offers the previous account's sender after a sign-out
+
+The sign-out's erase now also runs `INInteraction.deleteAll` (awaited, after the notification extension's group delete), and says its outcome at INFO so the exported log records it ([backlog](docs/wiki/backlog.d/p2-the-share-sheet-still-offers-the-previous-account-s-sender-after-a-sign-out.md)).
+
+### Fixed - the lives integration specs no longer fail once in a while
+
+A live's announcement runs in the background, so its `[LIVE_ANNOUNCE]` warning could land in the NEXT test: two specs only passed because of that leak. Each reading now awaits `announcementsSettled()` and says the true count; the service itself was not racy. Same mechanism as the log guard of [testing-methodology](docs/wiki/testing-methodology.md).
+
+### Fixed - a camera refused by the Android permission is said to be denied, with a way to the settings
+
+Android reports a camera the OS refused as the same error as a busy one, so a member was told to close
+other apps. The camera error is now classified at the throw from the OS's own permission state (a native
+plugin command); the denied sentence appears on the live sheet, the camera tab and the composer, and the
+"Ouvrir les réglages" button is native-only and shown only for a denied camera, never a busy one
+([live module](docs/wiki/frontend/modules/live.md#a-refused-camera-on-the-pre-live-sheet-2026-11-23)).
+
+### Fixed - the lives_mode relay line is logged when the mode changes, not on every live segment
+
+social-service remembers the last mode it relayed to media-service and logs only a change (or the first
+answer of a process) ([lives](docs/wiki/services/lives.md#the-two-switches-live_enabled-and-lives_mode)).
+
+### Fixed - two frontend tests no longer fail when the machine is loaded
+
+`ChatArea.scrollAnchor` timed out at 5 s (CPU-bound under faked timers) and `PostCard.commentSync` read its page after a guessed four macrotask turns; the first takes the load bounds, the second waits for the rows to land ([test-suite-reform](docs/wiki/test-suite-reform.md#8-intermittent-local-failures-under-load-read-2026-10-30)).
+
+### Added - "Mes notes", a conversation with oneself
+
+A pinned row at the top of the conversation list opens an end-to-end encrypted conversation whose only members are your own devices. While the account has one device, it says that losing it loses the notes and links the backup. The server refuses to add anyone else, to call in it, or to hand it to a build that does not know it ([chat](docs/wiki/frontend/modules/chat.md#mes-notes---the-conversation-with-oneself-2026-11-22)).
+
+### Fixed - the MiConnect terms and first-sign-in checkboxes read as one left-aligned row
+
+On a phone the terms checkbox sat at the far left while its label centred in a narrower column and "Obligatoire." fell under the box. A box and its label are now one left-aligned row, the helper sits under the label, and the information paragraph is left-aligned too; applied by the next stable ([authentik](docs/wiki/infrastructure/authentik.md#login-page-branding)).
+
+### Fixed - Android no longer logs "Keystore lost" at ERROR after an ordinary sign-out
+
+The sign-out's erasure of the push secret is carried to the health check as a durable mark; a real loss still accuses ([mobile](docs/wiki/frontend/mobile.md)).
+
+### Fixed - a message the reader left during its write is no longer both read on arrival and notified
+
+The single-message path decided the read on arrival before writing the row and the notification after
+it, so a reader backing out in between got a message counted read (no unread, banners retired on the
+other devices) and a banner here. One verdict, taken after the writes, now drives all four effects
+([mobile](docs/wiki/frontend/mobile.md#an-app-that-is-not-active-is-not-read-2026-11-23)).
+
+### Fixed - a device elected twice for one asker answers its history ask once
+
+One history probe now wakes one waiting election instead of all of them, and a late digest answered
+for our own request is no longer stored for a second election, so a new device no longer receives
+the same answer twice and refuses the copy at error; each refusal is now logged by its named cause
+([history-answer-addressing](docs/wiki/protocols/history-answer-addressing.md#the-rules-as-built)).
+
+### Fixed - a message parked as failed keeps its real cause, and is accused once
+
+A message parked as failed was read back after a start as "5xx on 5 attempts" whatever it had failed on (a native refusal, a "not now"), and every start logged each parked entry again at ERROR. The park now stores its cause as a type, and an entry found already parked is carried forward in one quiet line ([mobile](docs/wiki/frontend/mobile.md)).
+
+### Fixed - a pull that ends incomplete settles what waits on it, and a stalled resend after a 401 is asked smaller
+
+A refused page or a page of one row that never arrives ends the pending pull typed, never as a drained mailbox, and any pull that ends without emptying the mailbox settles every drain wait at once so each caller decodes now or defers to the next complete pull; the resend after a 401 joins the page-halving ladder ([sessions](docs/wiki/sessions.md#a-401-renews-the-token-and-sends-the-same-request-once---one-rule-every-caller)).
+
+### Added - the sizes of a shop are typed once: product grids may share their columns
+
+A form's product grids can name a shared column set: edit a size in one grid and every grid of the
+set follows, with no migration and no change to answers, prices or exports
+([forms](docs/wiki/frontend/modules/forms.md#product-grids-may-share-their-columns-owner-2026-11-21)).
+
+### Fixed - a conversation removed while a message batch was being written no longer gets its rows back
+
+The removal cleared the store before taking the conversation out of the map, so a write that had
+already asked the map inserted after the clear. A removal now leaves the map first and waits for the
+writes in flight before clearing the store. A message sent into a conversation removed meanwhile is
+refused and the member told, rather than queued
+([chat](docs/wiki/frontend/modules/chat.md#adds-to-one-conversation-are-not-serialized-so-an-add-renders-onto-the-row-as-it-is-now-2026-11-23)).
+
+### Fixed - a failed push is one explained WARN, an association with no logo is silent
+
+`PushService` puts the error (and the timeout budget) in its message instead of Nest's context slot, and the "pushes no picture" WARN now fires only for a logo id that is present but refused. The checkout refusal for an unpriced product is logged, and two lines of the 1.7.0 reading stay owned ([entry](docs/wiki/backlog.d/p3-what-the-1-7-0-stable-day-log-read-left-unexplained-or-noisy.md)).
+
+### Fixed - a type error in a NestJS service, its specs included, now fails the push
+
+Jest runs ts-jest with `isolatedModules`, so specs are transpiled without types and #3989 shipped
+TS2345/TS2493 in a scheduler and its spec. The push now runs `tsc --noEmit` for each service its
+range touches, 4-11 s each ([cicd](docs/wiki/cicd.md#checks-at-commit-at-push-and-in-ci-only)).
+
+### Fixed - the quick-reaction strip and the feed's "Add reaction" button are reachable by assistive tech
+
+The message long-press strip is a named group of named 44 px buttons, and the feed's assistive "Add reaction" button is a real 44 px target instead of a 1 pt `sr-only` one ([posts](docs/wiki/frontend/modules/posts.md)).
+
+### Changed - the `1.8.0-alpha.3` readings on the iPhone 12: three entries closed, one reading failed
+
+The form and booking pushes name the association with its logo on the iPhone, the banners go with their conversation, the in-app log reports no false unclean end, and the iOS 27 build runs; a DM thread left above its end after a home-button return is reproduced once and stays open ([readings of 2026-11-23](docs/wiki/device-verification.md#the-readings-of-2026-11-23-180-alpha3-iphone-12-the-resume-from-settings-the-pushes-name-and-logo-the-banners-the-share-logos-the-ios-27-launch)).
+
+### Changed - the `1.8.0-alpha.3` readings on the Mi 9T: two entries closed, six updated
+
+The opening pushes of a form, a booking space and an event read right on the phone, the restore registers on dev with the upload key, and the group and community logos reach the share shortcuts ([readings of 2026-11-23](docs/wiki/device-verification.md#the-readings-of-2026-11-23-180-alpha3-the-form-booking-and-event-pushes-the-restore-on-the-upload-key-the-share-logos)).
+
+### Changed - the `1.8.0-alpha.4` readings on the iPhone 12: the bell and the banner rows pass, the DM thread fails 4 of 10
+
+The bell reads "Publications et lives" at once after a re-follow, the DM and mention banners and both Focus rows pass, the voice note is recorded mono with a clean capture line, and a DM thread left above its end after a home-button return with the keyboard up is reproduced 4 times in 10 and becomes a defect ([readings of 2026-11-23](docs/wiki/device-verification.md#the-readings-of-2026-11-23-180-alpha4-iphone-12-the-bell-after-a-re-follow-the-dm-thread-the-communication-banners-the-focus-rows-the-voice-note-the-composer)).
+
+### Changed - the `1.8.0-alpha.4` readings on the Mi 9T, second group: the salon search is by design, the broadcaster's column holds
+
+The salon access field lists community members only, so the test account had to join the community first; a long live title and the keyboard up leave the broadcaster's column clear ([readings](docs/wiki/device-verification.md#the-readings-of-2026-11-23-180-alpha4-mi-9t-second-group-the-salon-access-search-the-broadcasters-column-the-form-blocks)).
+
+### Changed - the `1.8.0-alpha.4` readings on the Mi 9T: four fixes read right, four unreadable Lydia readings closed
+
+The live sheet names a refused camera permission, the Rediffusion switch shows both states, the bell follows a re-follow, the mute covers votes and comment likes, and a group creation is logged once ([readings of 2026-11-23](docs/wiki/device-verification.md#the-readings-of-2026-11-23-180-alpha4-mi-9t-the-live-sheets-camera-sentence-the-switch-the-bell-the-mute-the-group-creation-log)). The Lydia cashier, managers and organiser notices and the Responsable hand-over need a Lydia sandbox, so their entries are closed.
+
+### Changed - the `1.8.0-alpha.5` readings on the Mi 9T: no keystore-lost line after a sign-out, the comment push rings, the notification state follows the OS
+
+A sign-out then a sign-in logs no "Keystore lost"; a comment push opens and rings its comment even with the post page open; the device row reads `off`, `channel-off`, `on` as the OS changes; a Gboard GIF arrives in a DM; the cellular-call reading is closed (no SIM on the bench) ([readings](docs/wiki/device-verification.md#the-readings-of-2026-11-24-180-alpha5-mi-9t-sign-out-and-sign-in-the-comment-push-the-hidden-tab-the-notification-state-the-keyboard-gif-the-voice-note-under-a-banner)).
+
+### Changed - the `1.8.0-alpha.6` readings on the iPhone 12: the upload and the broadcaster's column pass, the DM thread and the share sheet fail
+
+The upload carries no ITMS-90725 and the iOS 27 SDK build installs and runs, the broadcaster's control column holds with a long title and the keyboard up, and the voice note's capture line is clean; the DM thread is still left above its end on 5 of 11 Home-button returns after #4023 (the keyboard reveal lands after its transition has rested), the page twice read a doubled keyboard inset and stopped painting, and the share sheet still offers the previous account's sender after a sign-out ([readings of 2026-11-24](docs/wiki/device-verification.md#the-readings-of-2026-11-24-180-alpha6-iphone-12-the-dm-thread-again-the-composer-the-ios-27-sdk-build-the-broadcasters-column-the-voice-note-the-sign-out-row)).
+
+### Fixed - a sideloaded Android build no longer warns at every start that the estate refused its restore key
+
+The app now reads which certificate signs it and compares it with the origins the server accepts
+before it mints a restore key, so an APK installed outside Play mints nothing and says so once at log
+level, instead of being refused once per version and warning at every later start
+([account-restore](docs/wiki/account-restore.md#a-build-the-estate-does-not-vouch-for-is-known-before-any-key-2026-11-23)).
+
+### Changed - a resume re-reads the key group only of a community that changed
+
+Every return of the live stream read the key-group reference and the roster of every community to conclude "nobody to remove" (46% of the requests on one phone over 131 resumes). One request now asks a digest of both per community, and a community unchanged since its last converged pass, with this device's tree where that pass left it, skips them. The saving is in client round trips, not server work: the server still reads both answers to hash them ([offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md#a-return-re-reads-the-key-group-only-of-a-community-that-changed-2026-11-22)).
+
+### Changed - a resume no longer re-reads the key group of an unchanged private salon
+
+The `1.8.0-alpha.1` reading showed the community key-group passes skipped on resume, while each private salon the account reads still made its two reads every time. The versions answer now carries each salon's version beside its community's, so a salon unchanged since its last converged pass makes no request; the server reads each community's roster once for all its salons ([offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md#a-return-re-reads-the-key-group-only-of-a-community-that-changed-2026-11-22)).
+
+### Fixed - a salon's "member added" notice carries a minted id
+
+The salon invitation notice goes through `mkVisibleSystem` like every group notice, so a replay or a re-fetch can deduplicate it ([chat](docs/wiki/frontend/modules/chat.md#a-visible-system-notice-needs-an-identity-the-sender-minted)).
+
+### Fixed - a flaky salon read test no longer polls a wall clock
+
+`useConversations.salonReadAfterDrain` awaits a "drain was asked" promise instead of `vi.waitFor` with its 1 s default timeout ([channel-encryption](docs/wiki/protocols/channel-encryption.md)).
+
+### Fixed - a salon's unreadable rows are warned once per set of rows, not on every open
+
+Reopening a salon with rows this device can never read no longer repeats the same warning ([channel-encryption](docs/wiki/protocols/channel-encryption.md)).
+
+### Fixed - launcher and share-sheet shortcuts finally receive their picture (a contact's photo, a group image, a community logo)
+
+The Rust `publish_share_targets` command dropped the picture field before the Android side saw it, so
+every shortcut was initials. A "no photo" remembered from a 404 also outlived `avatar-presence`;
+a user known to have a photo now makes the native side drop it
+([sharing](docs/wiki/frontend/sharing.md#the-picture-of-a-shortcut-absence-yields-to-presence)).
+
+### Fixed - a tap on a shared CanaReel's card opens the reels viewer, not the post page
+
+The document's link handler navigated first and the card's own handler came too late; the card now owns its click ([sharing](docs/wiki/frontend/sharing.md)).
+
+### Fixed - a message shown while another arrival awaited the store is no longer erased from the screen
+
+An arriving message rendered onto the copy of its conversation read before its store read, so a
+message sent or received in that gap vanished from memory until the next load; an edit did the same
+across its send. Both now write onto the row as it stands, and an arrival whose id was shown meanwhile
+(or whose conversation was removed) is decided again instead of being counted and announced twice
+([chat](docs/wiki/frontend/modules/chat.md#adds-to-one-conversation-are-not-serialized-so-an-add-renders-onto-the-row-as-it-is-now-2026-11-23)).
+
+### Fixed - social-service race specs assumed an outcome the race decides
+
+The refund race specs assumed a fixed number of winners and one refusal wording, and the concurrent slug-derivation spec assumed the cotisation-stem refusal is always logged; each failed intermittently in a full-suite run. They now derive or bound the expected warnings from the outcome. The service was correct. See [testing-methodology](docs/wiki/testing-methodology.md).
+
+### Changed - social-service, core-service and chat-delivery-service pin `TZ=UTC`, and their Postgres session zone
+
+Zone-less timestamps are read in the process zone, so the anonymous week cut and the XLSX dates were
+right only while the base image happened to run UTC; the images, the compose files and the connection
+now say it, and a test holds it
+([social-service](docs/wiki/services/social-service.md#environment-variables)).
+
+### Changed - "Personnel" reaches every EMSE or ME post holder, students included
+
+An institution's "Personnel" public now reaches an account holding the MiConnect post EMSE or ME, with or without a cursus, instead of every account without a cursus; an alumnus who works at the School reads both student and staff posts. A form's "Personnel" status follows the same rule, so an ALUMNI post alone no longer counts ([profiles-and-access](docs/wiki/profiles-and-access.md#staff-is-a-post-emse-or-me-owner-2026-11-24)).
+
+### Fixed - drag zones, tab-row observers and the focus moves no longer depend on Svelte's action order
+
+Svelte 5.59 runs actions and effects before the sibling blocks render, which would have disarmed the rail's drag zones, the tab and chip observers and the focus of the ring and of an opened form card; each now follows the DOM or its own element ([architecture](docs/wiki/frontend/architecture.md#svelte-559-runs-actions-and-effects-before-the-sibling-blocks-render-2026-11-24)).
+
+### Fixed - the first post published after an app start no longer crashes the feed page
+
+Switching a fully mounted feed to a tab not yet loaded in the process (the publish from Pour toi lands on Campus) drew the "500" page on the iPhone: the progressive mount wrote its reset count from an effect, and Svelte 5.59 re-read the emptied list before tearing down its block. The reset is now derived ([architecture](docs/wiki/frontend/architecture.md#a-write-from-an-effect-re-runs-a-block-that-re-reads-later-svelte-559-2026-11-25)).
+
+### Fixed - a muted account can no longer vote in a poll or like a comment, and sees both disabled
+
+`votePoll` and `likeComment` refuse a muted caller first, like every other participating route, and
+the served `canVote` / `canLikeComments` read the mute so the poll and the heart are drawn disabled
+instead of refusing after a tap (a muted account can still take back a like it holds); a spec asserts every write route asks the mute or is exempt
+([moderation-authority](docs/wiki/moderation-authority.md#sanctions)).
+
+### Fixed - the responses panel counts the answers that hold a seat
+
+"Toutes" no longer counts abandoned online payments: a 50-seat form with 3 cancelled or expired answers read "50" while 3 seats were free. They sit under a new "Abandonnées" chip, and a capped form shows "47 / 50 places". See [the responses screen](docs/wiki/frontend/modules/forms.md#the-responses-screen-client-half-of-wp-g4-2026-11-06).
+
+### Fixed - the iOS "main page shifted" warning no longer fires on plain scrolling, and a page crash names where it threw
+
+The witness of a shifted main page accuses only a box whose own CSS refuses scrolling, never the page scroller a reader scrolls ([keyboard](docs/wiki/frontend/keyboard-and-send-motion.md)); the `[App] page crash` line now carries the first frames of the stack, so the next crash says where it threw.
+
+### Fixed - the Rediffusion switch is visible when off on the dark pre-live sheet
+
+The `on-media` tone of the shared switch now draws a translucent white OFF track with a white ring
+instead of the near-background border grey, so the control no longer looks absent over the camera
+([live replays](docs/wiki/live-replays.md#the-organisers-rediffusion-switch-owner-2026-11-20)).
+
+### Added - the usage dashboard page
+
+Global admins get `/admin/usage`: distinct people per day, week and month, by platform category
+and version, the week-by-hour map and the daily activity totals, anonymously
+([usage-dashboard](docs/wiki/usage-dashboard.md#the-page-adminusage)).
+
+### Added - the usage dashboard's anonymous counters and their read
+
+The server now counts, for the platform admins only, the distinct people who use Canari per Paris
+day, week and month (overall, per platform category, per app version; a keyed hash of the account, never its id, reaches Redis, and only a release number becomes a version), a
+week-by-hour map, and six daily activity totals; the figures are kept in `usage_figures` and served
+by `GET /api/admin/usage` ([usage-dashboard](docs/wiki/usage-dashboard.md)).
+
 ## [1.7.3] - 2026-11-22
 
 ### Fixed - a reply typed in an Android banner over the open app goes out at once

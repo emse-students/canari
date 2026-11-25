@@ -1,3 +1,0 @@
-### Changed - the `1.8.0-alpha.5` readings on the Mi 9T: no keystore-lost line after a sign-out, the comment push rings, the notification state follows the OS
-
-A sign-out then a sign-in logs no "Keystore lost"; a comment push opens and rings its comment even with the post page open; the device row reads `off`, `channel-off`, `on` as the OS changes; a Gboard GIF arrives in a DM; the cellular-call reading is closed (no SIM on the bench) ([readings](docs/wiki/device-verification.md#the-readings-of-2026-11-24-180-alpha5-mi-9t-sign-out-and-sign-in-the-comment-push-the-hidden-tab-the-notification-state-the-keyboard-gif-the-voice-note-under-a-banner)).
