@@ -294,6 +294,9 @@ import {
 } from '$lib/mls-client/addLockMarkers';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
+/** How a catch-up that holds the MLS mutex names itself to the scheduler - see `catchUpMutexHolder`. */
+const CATCH_UP_MUTEX_HOLDER = 'catch-up of';
+
 /**
  * How many times {@link BaseMlsService.externalJoin} may re-read the base and resubmit.
  *
@@ -301,9 +304,6 @@ import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
  * where the commit lock was busy and the base may legitimately have moved by the next read; a base
  * that is behind the group's epoch ends the loop on that fact, whatever this number is.
  */
-/** How a catch-up that holds the MLS mutex names itself to the scheduler - see `catchUpMutexHolder`. */
-const CATCH_UP_MUTEX_HOLDER = 'catch-up of';
-
 const EXTERNAL_JOIN_MAX_ATTEMPTS = 3;
 
 /**
