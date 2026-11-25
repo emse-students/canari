@@ -1,6 +1,8 @@
 ## Reading owed - the MiConnect editor token's narrowed write path, on production
 
-target: 1.8.1
+target: 1.8.2
+
+_2026-11-25: moved to 1.8.2 when 1.8.1 shipped._
 
 Built: the editor role no longer holds a global write right on users; its one write path is the flow
 `miconnect-profile-write`, whose policy writes `name`, `attributes.profile` and the merge-mark keys on

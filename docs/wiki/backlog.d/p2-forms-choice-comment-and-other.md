@@ -1,6 +1,8 @@
 ## P2 - forms: a free comment and an "Autre : précisez" on choice questions
 
-target: 1.8.1
+target: 1.8.2
+
+_2026-11-25: moved to 1.8.2 when 1.8.1 shipped._
 
 Owner decision 2026-11-21 (read-only production survey: 6 of 18 questions of one anonymous survey were a
 "Commentaire" long text after a yes/no, answered 20-57% of the time; 1 choice question in 42 offered an "Autre").

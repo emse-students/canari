@@ -1,6 +1,8 @@
 ## Reading owed - a phone with notifications switched off states it, and the daily count shows it
 
-target: 1.8.1
+target: 1.8.2
+
+_2026-11-25: moved to 1.8.2 when 1.8.1 shipped._
 
 _2026-11-25: moved to 1.8.1 when 1.8.0 shipped._
 

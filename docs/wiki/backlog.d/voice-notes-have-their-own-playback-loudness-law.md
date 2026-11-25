@@ -1,6 +1,8 @@
 ## Voice notes get their own playback loudness law: -16 LUFS, gain capped at +12 dB (owner, 2026-11-22)
 
-target: 1.8.1
+target: 1.8.2
+
+_2026-11-25: moved to 1.8.2 when 1.8.1 shipped._
 
 A voice note is a recording of one voice, often quiet, and is played beside music and video that carry a different level. Owner decision of 2026-11-22 ([decisions](../decisions/owner-decisions-of-2026-11-22.md), item 6): the playback of a voice note aims at **-16 LUFS** and never applies more than **+12 dB** of gain, so that a whisper is lifted but not turned into noise. Charter principle 2 ([principes](../../principes.md)): the essential, a heard message, is never lost.
 
