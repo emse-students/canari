@@ -77,7 +77,8 @@
   import { followBirthdaysToday } from '$lib/birthdays/birthdaysToday.svelte';
   import { startFormDraftResend, stopFormDraftResend } from '$lib/forms/draftResend';
   import ConnectionAnnouncer from '$lib/components/shared/ConnectionAnnouncer.svelte';
-  import OpenInAppBanner from '$lib/components/shared/OpenInAppBanner.svelte';
+  import LeaveInAppBrowser from '$lib/components/shared/LeaveInAppBrowser.svelte';
+  import { detectMetaInAppBrowser } from '$lib/leaveInAppBrowser/detect';
   import AlumniLinkBanner from '$lib/components/shared/AlumniLinkBanner.svelte';
   import { getKeyboardViewport, initKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
   import {
@@ -124,6 +125,13 @@
   const isIosApp = isIosTauriRuntime();
   // No app chrome on a page a visitor without an account reads: login, the legal pages, and a
   // public form's guest page (`/f/`), whose sidebar and tabs would all lead to a login screen.
+  // A META IN-APP BROWSER GETS NOTHING OF THE APP (owner decision of 2026-11-25). The server answers
+  // its page requests with the shared interstitial; this is the same refusal for the one shell the
+  // server does not write (`@app_shell`, frontend-ssr down). The app's own WebView carries no Meta
+  // token, so it never matches. docs/wiki/frontend/leaving-in-app-browsers.md.
+  const metaInAppBrowser =
+    typeof navigator === 'undefined' ? null : detectMetaInAppBrowser(navigator.userAgent);
+
   const isLoginPage = $derived(
     pathname === '/login' || pathname.startsWith('/legal') || pathname.startsWith('/f/')
   );
@@ -188,6 +196,8 @@
     window.__canariWebViewGuard?.mounted();
     // The router exists from here: inputs consumed once (the iOS notification tap) wait for this.
     markRouterReady();
+    // Nothing else starts under the in-app browser screen: no queue, no listener, no session.
+    if (metaInAppBrowser) return;
     // A click goes to the component the press began on, never to what a layout change put under it.
     const disposePressedClickGuard = installPressedClickGuard();
     // A GIF committed by the soft keyboard goes to the focused composer, or the member is told it
@@ -804,143 +814,147 @@
 
 <SeoHead />
 
-<a href="#main-content" class="skip-link">{m.layout_skip_to_content()}</a>
+{#if metaInAppBrowser}
+  <LeaveInAppBrowser browser={metaInAppBrowser} />
+{:else}
+  <a href="#main-content" class="skip-link">{m.layout_skip_to_content()}</a>
 
-<PlatformGateOverlay />
-<IdentitySplitOverlay />
+  <PlatformGateOverlay />
+  <IdentitySplitOverlay />
 
-<!-- The swipe gesture's touch listeners are bound to this node in script, and only on a screen that
-     can swipe - see the effect above. They are deliberately NOT `ontouch*` attributes: those bind
-     unconditionally and non-passively, which is what cost every scroll in the app its compositor. -->
-<div
-  bind:this={appShell}
-  class="app-shell flex h-(--app-viewport-height,100dvh) w-screen flex-col overflow-hidden pt-(--safe-area-inset-top) pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)]"
->
-  <!-- ONE COLUMN FOR THE WINDOW-SCALE BANNERS. Both of these used to place themselves - `fixed top-0`
-       at 120 and `fixed top-safe-area` at 50 - so when both were up the maintenance notice simply
-       painted over the fatal MLS error, hiding the only message that says the messaging stack is
-       dead. Stacked in one flex column they queue instead, which is the lesson `ChatArea` had already
-       learnt for the conversation-scale pair. The column takes the `--z-banner` rung of the layer
-       ladder in `app.css`; a sheet the reader opened sits above it, deliberately.
-
-       AND IT IS IN FLOW, WHICH IS THE HALF THAT WAS MISSING. The column was `fixed`, so it reserved
-       nothing and simply painted over whatever the top of the page happened to be - exactly the
-       defect `.mobile-nav-inset` in `app.css` records for the BottomNav at the other edge ("it
-       reserves nothing for itself, so whatever it covers is covered for good"). The thing it covered
-       is the app header, which is `sticky top-0` and therefore lands in the same band: measured on
-       dev 2026-09-14 at 1440px the banner was 44px tall and hid the header's top 44px, logo
-       included; at 390px it was 84px tall and hid the whole 56px mobile header, so the phone showed
-       no top bar at all. A row in the shell's own column cannot overlap it, at any width and for any
-       number of banners, with nothing measured and no variable to keep in step. -->
+  <!-- The swipe gesture's touch listeners are bound to this node in script, and only on a screen that
+       can swipe - see the effect above. They are deliberately NOT `ontouch*` attributes: those bind
+       unconditionally and non-passively, which is what cost every scroll in the app its compositor. -->
   <div
-    bind:this={bannerColumn}
-    class="app-banner-column z-(--z-banner) flex shrink-0 flex-col"
-    inert={bootBlocked}
+    bind:this={appShell}
+    class="app-shell flex h-(--app-viewport-height,100dvh) w-screen flex-col overflow-hidden pt-(--safe-area-inset-top) pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)]"
   >
-    {#if showMaintenanceAdminBanner}
-      <MaintenanceAdminBanner />
-    {/if}
-    <MlsFatalErrorBanner />
-    <!-- A MINIMISED CALL (2026-10-19) - right after the interrupting facts, before the transients: a
-         call in progress is what the reader is doing, and its hang-up must stay at the top of the
-         screen, the one edge no native chrome is drawn over (CallBanner). -->
-    <CallBanner />
-    <!-- A post being sent in the background (owner, 2026-11-06): one discreet row per queued post. -->
-    <PublishQueueBanner />
-    <ConnectionAnnouncer />
-    <!-- Only inside the browser built into Messenger, Facebook or Instagram; it decides itself. -->
-    <OpenInAppBanner />
-    <!-- The Alumni link, due mid second year and missing (D44); skippable, it decides itself. -->
-    {#if !isLoginPage}
-      <AlumniLinkBanner />
-    {/if}
-  </div>
+    <!-- ONE COLUMN FOR THE WINDOW-SCALE BANNERS. Both of these used to place themselves - `fixed top-0`
+         at 120 and `fixed top-safe-area` at 50 - so when both were up the maintenance notice simply
+         painted over the fatal MLS error, hiding the only message that says the messaging stack is
+         dead. Stacked in one flex column they queue instead, which is the lesson `ChatArea` had already
+         learnt for the conversation-scale pair. The column takes the `--z-banner` rung of the layer
+         ladder in `app.css`; a sheet the reader opened sits above it, deliberately.
 
-  <!-- THE ROW THAT WAS THE SHELL. It takes what the banners leave, so the height chain
-       `app.css` documents above `.app-layout` still subtracts the status-bar inset exactly once -
-       the wrapper above owns `h-(--app-viewport-height,100dvh)` and its padding, and this only ever
-       divides what is left. `min-h-0` because a flex child's default `min-height:auto` refuses to
-       shrink below its content, which is what turns an overflowing chat list into a page scroll. -->
-  <div class="flex min-h-0 w-full flex-1" inert={bootBlocked}>
-    <svelte:boundary onerror={(e) => console.error('[ChatBackgroundService] crash recovered:', e)}>
-      <ChatBackgroundService />
-    </svelte:boundary>
-
-    <!-- Sidebar (navigation principale) -->
-    {#if !isLoginPage && !isFullScreen}
-      <AppSidebar />
-    {/if}
-
-    <!--
-      THE GUTTER IS DECIDED BY THE SAME PREDICATE AS THE SIDEBAR IT MAKES ROOM FOR. It was a constant
-      `md:pl-[6rem]` while `AppSidebar` above was already conditional, so `/login` and `/legal/*`
-      reserved 96px for a bar they do not render: the card centred 48px right of the viewport, while
-      the confirm dialog - portalled to the body and `fixed inset-0` - centred on the real middle, and
-      the two disagreed on screen. Measured on production 2026-09-12 at 1280px: card centre 685,
-      dialog centre 640. Two independent statements about one fact, with nothing comparing them.
-    -->
-    <!--
-      A FULL-SCREEN PLACE (`isFullScreen`, the camera) DRAWS NO CHROME AT ALL: sidebar, top bar and
-      gutter go with the header and the tab bar. The sidebar and the top bar are `md:` pieces, so a
-      phone turned to landscape (800+ px wide) brought the desktop shell back around the camera
-      (owner, Android 1.6.10, 2026-11-11): chrome follows the PLACE, never the width.
-    -->
+         AND IT IS IN FLOW, WHICH IS THE HALF THAT WAS MISSING. The column was `fixed`, so it reserved
+         nothing and simply painted over whatever the top of the page happened to be - exactly the
+         defect `.mobile-nav-inset` in `app.css` records for the BottomNav at the other edge ("it
+         reserves nothing for itself, so whatever it covers is covered for good"). The thing it covered
+         is the app header, which is `sticky top-0` and therefore lands in the same band: measured on
+         dev 2026-09-14 at 1440px the banner was 44px tall and hid the header's top 44px, logo
+         included; at 390px it was 84px tall and hid the whole 56px mobile header, so the phone showed
+         no top bar at all. A row in the shell's own column cannot overlap it, at any width and for any
+         number of banners, with nothing measured and no variable to keep in step. -->
     <div
-      class="relative z-10 flex flex-1 flex-col overflow-hidden {isLoginPage || isFullScreen
-        ? ''
-        : 'md:pl-24'}"
+      bind:this={bannerColumn}
+      class="app-banner-column z-(--z-banner) flex shrink-0 flex-col"
+      inert={bootBlocked}
     >
-      {#if !isLoginPage && !isKeyboardOpen && !isFullScreen}
-        <Navbar />
-        {#if !isMobileConvoOpen}
-          <MobileHeader />
-        {/if}
+      {#if showMaintenanceAdminBanner}
+        <MaintenanceAdminBanner />
       {/if}
-
-      <main id="main-content" class="relative flex-1 overflow-hidden">
-        <div
-          bind:this={pageScrollWrap}
-          class="page-scroll-wrap absolute inset-0 overflow-y-auto {pageScrollPaddingClass(
-            !isLoginPage
-          )}"
-        >
-          <!-- NO BOUNDARY HERE: SvelteKit 3 wraps every route node in its own, closer to the page,
-               armed with `+error.svelte` and reported through `handleClientError` - one held here
-               could never catch anything (docs/wiki/frontend/architecture.md#a-page-that-crashes). -->
-          {#if !bootBlocked}
-            {@render children?.()}
-          {/if}
-        </div>
-      </main>
-
-      <!-- THE iOS APP DRAWS THE BAR NATIVELY (Liquid Glass on iOS 26) and hands the bottom back to
-           the web bar only if the native one could not be configured - which it says at error
-           level. Both obey the same rule, passed to the native bar as `visible`. -->
-      {#if isIosApp && nativeTabBar.status !== 'failed'}
-        <!-- Mounted outside the login page only: configuring it there would draw it for a frame
-             before `visible` hid it. The keyboard and an open conversation hide it without
-             unmounting, because a reconfiguration per keystroke would be a native round trip each.
-             So does anything that covers the screen (`coversScreen`): a native bar is drawn ABOVE
-             the WebView, so no modal can paint over it the way it paints over the web bar. -->
-        {#if !isLoginPage}
-          <NativeTabBar
-            visible={!isKeyboardOpen &&
-              !isMobileConvoOpen &&
-              !isFullScreen &&
-              !screenCover.covered &&
-              !bootBlocked}
-          />
-        {/if}
-      {:else if !isKeyboardOpen && !isLoginPage && !isMobileConvoOpen && !isFullScreen}
-        <BottomNav />
+      <MlsFatalErrorBanner />
+      <!-- A MINIMISED CALL (2026-10-19) - right after the interrupting facts, before the transients: a
+           call in progress is what the reader is doing, and its hang-up must stay at the top of the
+           screen, the one edge no native chrome is drawn over (CallBanner). -->
+      <CallBanner />
+      <!-- A post being sent in the background (owner, 2026-11-06): one discreet row per queued post. -->
+      <PublishQueueBanner />
+      <ConnectionAnnouncer />
+      <!-- The Alumni link, due mid second year and missing (D44); skippable, it decides itself. -->
+      {#if !isLoginPage}
+        <AlumniLinkBanner />
       {/if}
     </div>
-  </div>
 
-  <BootGate />
-  <ToastContainer />
-  <ConfirmDialog />
-  <AnnouncementModal />
-  <!-- The guided tours and first-time hints: it decides itself when the app is quiet enough. -->
-  <GuideOverlay chromeless={isLoginPage} />
-</div>
+    <!-- THE ROW THAT WAS THE SHELL. It takes what the banners leave, so the height chain
+         `app.css` documents above `.app-layout` still subtracts the status-bar inset exactly once -
+         the wrapper above owns `h-(--app-viewport-height,100dvh)` and its padding, and this only ever
+         divides what is left. `min-h-0` because a flex child's default `min-height:auto` refuses to
+         shrink below its content, which is what turns an overflowing chat list into a page scroll. -->
+    <div class="flex min-h-0 w-full flex-1" inert={bootBlocked}>
+      <svelte:boundary
+        onerror={(e) => console.error('[ChatBackgroundService] crash recovered:', e)}
+      >
+        <ChatBackgroundService />
+      </svelte:boundary>
+
+      <!-- Sidebar (navigation principale) -->
+      {#if !isLoginPage && !isFullScreen}
+        <AppSidebar />
+      {/if}
+
+      <!--
+        THE GUTTER IS DECIDED BY THE SAME PREDICATE AS THE SIDEBAR IT MAKES ROOM FOR. It was a constant
+        `md:pl-[6rem]` while `AppSidebar` above was already conditional, so `/login` and `/legal/*`
+        reserved 96px for a bar they do not render: the card centred 48px right of the viewport, while
+        the confirm dialog - portalled to the body and `fixed inset-0` - centred on the real middle, and
+        the two disagreed on screen. Measured on production 2026-09-12 at 1280px: card centre 685,
+        dialog centre 640. Two independent statements about one fact, with nothing comparing them.
+      -->
+      <!--
+        A FULL-SCREEN PLACE (`isFullScreen`, the camera) DRAWS NO CHROME AT ALL: sidebar, top bar and
+        gutter go with the header and the tab bar. The sidebar and the top bar are `md:` pieces, so a
+        phone turned to landscape (800+ px wide) brought the desktop shell back around the camera
+        (owner, Android 1.6.10, 2026-11-11): chrome follows the PLACE, never the width.
+      -->
+      <div
+        class="relative z-10 flex flex-1 flex-col overflow-hidden {isLoginPage || isFullScreen
+          ? ''
+          : 'md:pl-24'}"
+      >
+        {#if !isLoginPage && !isKeyboardOpen && !isFullScreen}
+          <Navbar />
+          {#if !isMobileConvoOpen}
+            <MobileHeader />
+          {/if}
+        {/if}
+
+        <main id="main-content" class="relative flex-1 overflow-hidden">
+          <div
+            bind:this={pageScrollWrap}
+            class="page-scroll-wrap absolute inset-0 overflow-y-auto {pageScrollPaddingClass(
+              !isLoginPage
+            )}"
+          >
+            <!-- NO BOUNDARY HERE: SvelteKit 3 wraps every route node in its own, closer to the page,
+                 armed with `+error.svelte` and reported through `handleClientError` - one held here
+                 could never catch anything (docs/wiki/frontend/architecture.md#a-page-that-crashes). -->
+            {#if !bootBlocked}
+              {@render children?.()}
+            {/if}
+          </div>
+        </main>
+
+        <!-- THE iOS APP DRAWS THE BAR NATIVELY (Liquid Glass on iOS 26) and hands the bottom back to
+             the web bar only if the native one could not be configured - which it says at error
+             level. Both obey the same rule, passed to the native bar as `visible`. -->
+        {#if isIosApp && nativeTabBar.status !== 'failed'}
+          <!-- Mounted outside the login page only: configuring it there would draw it for a frame
+               before `visible` hid it. The keyboard and an open conversation hide it without
+               unmounting, because a reconfiguration per keystroke would be a native round trip each.
+               So does anything that covers the screen (`coversScreen`): a native bar is drawn ABOVE
+               the WebView, so no modal can paint over it the way it paints over the web bar. -->
+          {#if !isLoginPage}
+            <NativeTabBar
+              visible={!isKeyboardOpen &&
+                !isMobileConvoOpen &&
+                !isFullScreen &&
+                !screenCover.covered &&
+                !bootBlocked}
+            />
+          {/if}
+        {:else if !isKeyboardOpen && !isLoginPage && !isMobileConvoOpen && !isFullScreen}
+          <BottomNav />
+        {/if}
+      </div>
+    </div>
+
+    <BootGate />
+    <ToastContainer />
+    <ConfirmDialog />
+    <AnnouncementModal />
+    <!-- The guided tours and first-time hints: it decides itself when the app is quiet enough. -->
+    <GuideOverlay chromeless={isLoginPage} />
+  </div>
+{/if}

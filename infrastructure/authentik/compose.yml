@@ -94,9 +94,13 @@ services:
     # host's nginx with the DSI certificate, exactly as it is for the other estates - carrying
     # `9443` across would need either a second certificate there or `proxy_ssl_verify off`, and
     # both are refused. AUTHENTIK_PUBLISH holds the whole left-hand side so a move can bind it to
-    # loopback (`127.0.0.1:9000`) without editing this file.
+    # loopback (`127.0.0.1:9000`) without editing this file - and it is the GATE's since 2026-11-25.
+    # SINCE THE GATE (2026-11-25) THE PUBLIC ADDRESS IS THE GATE'S, below, and authentik is reached
+    # through it. This publish is the release's own door: deploy-stack.sh reads `docker port` of this
+    # container for its health probes. An ephemeral loopback port by default (`127.0.0.1:0`), so it
+    # can collide with nothing on the shared host and is reachable from nowhere else.
     ports:
-      - ${AUTHENTIK_PUBLISH:-9000}:9000
+      - ${AUTHENTIK_DIRECT_PUBLISH:-127.0.0.1:0}:9000
     shm_size: 512mb
     depends_on:
       postgresql:
@@ -104,6 +108,34 @@ services:
     volumes:
       - ./data:/data
       - ./custom-templates:/templates
+
+  # THE GATE IN FRONT OF EVERY MICONNECT PAGE (owner decision of 2026-11-25). A page request from
+  # the browser built into Messenger, Facebook, Instagram or Threads is answered with one blocking
+  # page that sends the visitor to their real browser; every other request is proxied to authentik
+  # unchanged. Its configuration is GENERATED from Canari's libs/leave-in-app-browser (the same
+  # definition every site of the ecosystem enforces) - never edit ./leave-in-app-browser by hand:
+  # `bun libs/leave-in-app-browser/generate.ts`. docs/wiki/frontend/leaving-in-app-browsers.md.
+  # It holds AUTHENTIK_PUBLISH, the address the host's nginx proxies to, so the vhost does not move.
+  gate:
+    logging: *logging
+    image: nginx:1.31.9-alpine@sha256:fb4658584bd9a916ffb6f6e365f97c25cfdb2923801f551ea08356e695f14ff7
+    restart: unless-stopped
+    command: ["nginx", "-c", "/etc/nginx/leave-in-app-browser/nginx.conf", "-g", "daemon off;"]
+    # The DIRECTORY, not the file: a file replaced by a new inode keeps showing the old one through a
+    # single-file bind mount.
+    volumes:
+      - ./leave-in-app-browser:/etc/nginx/leave-in-app-browser:ro
+    ports:
+      - ${AUTHENTIK_PUBLISH:-9000}:8080
+    # HEALTHY MEANS LISTENING (the shape of Canari's edge): the pid file the master writes once its
+    # listener is open, and the LISTEN row on :8080 (0x1F90). Nothing is proxied by the probe.
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /var/run/nginx.pid && grep -q ' 00000000:1F90 00000000:0000 0A ' /proc/net/tcp"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+      start_interval: 1s
 
   worker:
     logging: *logging

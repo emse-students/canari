@@ -107,7 +107,10 @@ deleting an export that smells like a bridge, grep its name under `frontend/src-
    their `export` one side at a time, so the file gets an `ignoreIssues` entry in `knip.json`.
    Today two files: `visibleText.ts`, and `src/lib/minesweeper/game.ts` (the engine the server replays
    to judge a ranked score; compared as code, so its exports and types stay in step with
-   `apps/social-service/src/minesweeper/engine/game.ts`, where the server uses them).
+   `apps/social-service/src/minesweeper/engine/game.ts`, where the server uses them). And the
+   vendored in-app browser gate, `src/lib/leaveInAppBrowser/detect.ts` and `gate.ts` (2026-11-25):
+   byte-identical copies of `libs/leave-in-app-browser/`, whose exports the source's tests and
+   MiConnect's nginx generator use ([leaving-in-app-browsers](frontend/leaving-in-app-browsers.md)).
 3. A translation key reached without being named: add it to `frontend/dead-code-allowlist.json`,
    `{ "messages": { "the_key": "why it is reached" } }`. The reason is mandatory.
 

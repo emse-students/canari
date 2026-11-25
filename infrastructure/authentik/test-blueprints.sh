@@ -29,6 +29,8 @@ cleanup() {
 trap cleanup EXIT
 
 cp "$here/compose.yml" "$work/compose.yml"
+# The gate's generated configuration, mounted by the `gate` service (compose.yml).
+cp -R "$here/leave-in-app-browser" "$work/leave-in-app-browser"
 # Throwaway values. The secret key only has to be long; the CAS secret only has to be SET, since
 # this instance never talks to the CAS.
 cat >"$work/.env" <<EOF
@@ -413,3 +415,54 @@ PY
   exit 1
 fi
 echo "the CAS button reads CAS EMSE and the dev tiles are hidden, not gated"
+
+# THE GATE IN FRONT OF EVERY PAGE, DRIVEN (owner decision of 2026-11-25). The real nginx, with the
+# generated configuration, in front of this real authentik: every user agent of the shared fixtures
+# gets the interstitial for a page request when it is a Meta in-app browser and authentik's own
+# answer otherwise; a fetch, an API path and a crawler always reach authentik; and a recreated
+# `server` - which is what a release does - is reached again with no gate restart.
+echo "the in-app browser gate: driving it with every fixture"
+gate_port="$(docker port "${project}-gate-1" 8080/tcp | awk -F: '!/^\[/ && !seen++ {print $NF}')"
+[ -n "$gate_port" ] || { echo "::error::the gate publishes no port"; exit 1; }
+gate="http://127.0.0.1:$gate_port"
+page_accept='text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+fixtures="$(git -C "$here" rev-parse --show-toplevel)/libs/leave-in-app-browser/fixtures.json"
+# One line per case: "gated|let" TAB user agent. Python reads the JSON - the CI job installs no bun,
+# and the runner's interpreter is `python3` (PYTHON overrides it on a machine that names it otherwise);
+# the shell only drives curl.
+cases="$("${PYTHON:-python3}" -c 'import json, sys
+for c in json.load(open(sys.argv[1], encoding="utf-8"))["cases"]:
+    print(("gated" if c["expect"] else "let") + chr(9) + c["userAgent"])' "$fixtures")"
+[ "$(grep -c . <<<"$cases")" -ge 20 ] || { echo "::error::the fixtures did not load"; exit 1; }
+marker='<meta name="leave-iab-app"'
+gated=0
+while IFS=$'\t' read -r verdict ua; do
+  body="$(curl -sS --max-time 20 -A "$ua" -H "Accept: $page_accept" "$gate/if/flow/default-authentication-flow/")"
+  if [ "$verdict" = gated ]; then
+    grep -qF "$marker" <<<"$body" || { echo "::error::the gate let an in-app browser through: $ua"; exit 1; }
+    gated=$((gated + 1))
+  else
+    if grep -qF "$marker" <<<"$body"; then echo "::error::the gate blocked a client it must not: ${ua:-<no user agent>}"; exit 1; fi
+  fi
+done <<<"$cases"
+messenger="$(awk -F'\t' '$1 == "gated" {print $2; exit}' <<<"$cases")"
+# The CRs stripped: a header line ends in CRLF, and the comparison is on the text. Exact case - nginx
+# writes each name as gate's nginx.conf spells it.
+headers="$(curl -sS --max-time 20 -o /dev/null -D - -A "$messenger" -H 'Sec-Fetch-Dest: document' -H "Accept: $page_accept" "$gate/" | tr -d '\r')"
+for expected in 'HTTP/1.1 200' 'Cache-Control: no-store' 'Vary: User-Agent' 'X-Robots-Tag: noindex, nofollow' "Content-Security-Policy: default-src 'none'; script-src 'sha256-"; do
+  grep -qF "$expected" <<<"$headers" || { echo "::error::the interstitial lacks '$expected'"; printf '%s\n' "$headers" >&2; exit 1; }
+done
+# A fetch and an API path from the same in-app browser reach authentik. (A health path asked AS a page
+# is a page: the deploy's probes reach authentik's own port, never through the gate.)
+for probe in "-H Sec-Fetch-Dest:empty $gate/if/flow/default-authentication-flow/" "$gate/api/v3/root/config/"; do
+  # shellcheck disable=SC2086 # the probe is a word list on purpose
+  probe_body="$(curl -sS --max-time 20 -A "$messenger" -H "Accept: $page_accept" $probe)"
+  if grep -qF "$marker" <<<"$probe_body"; then
+    echo "::error::the gate answered a request that is not a page: $probe"; exit 1
+  fi
+done
+echo "the gate sent $gated in-app browser(s) away and let every other client, fetch and API call through"
+docker compose -p "$project" --project-directory "$work" -f "$work/compose.yml" up -d --no-deps --force-recreate --wait server >/dev/null
+status="$(curl -sS --max-time 20 -o /dev/null -w '%{http_code}' "$gate/-/health/live/")"
+[ "$status" = 200 ] || { echo "::error::after recreating server, the gate answers $status on /-/health/live/ (stale upstream address?)"; exit 1; }
+echo "a recreated server is reached through the gate with no restart of it"

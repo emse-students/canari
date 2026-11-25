@@ -81,6 +81,7 @@
 - [Startup load and send delay, 2026-10-12](frontend/startup-load-audit-2026-10-12.md) - a return after 3 h: 775 already-held seed bundles in the queue, 26 salon re-reads, communities in series, and a salon send with no bubble for 6.1 s
 - [A heavy store phone, read, 2026-10-13](frontend/store-phone-reading-2026-10-13.md) - a 15.5 MB state on a Pixel 6a: faces re-mirrored on every salon open, a frozen press, a misleading `[HISTORY]` line, the KeyPackage share of every checkpoint, past-epoch drops, and why logcat holds no JavaScript
 - [Mobile architecture](frontend/mobile.md) — Tauri 2, iOS NSE, Android push, native FFI
+- [Leaving a Meta in-app browser](frontend/leaving-in-app-browsers.md) — every site blocks Messenger, Facebook and Instagram's WebView and sends the visitor to the browser or the app (draft, 2026-11-25)
 - [Sharing into and out of Canari](frontend/sharing.md) - the OS share sheet both ways: the Android SEND filter, the native copy and its handoff file, the "Envoyer a..." picker, and the lots left (share out, the iOS extension, suggestions)
 - [App icons](frontend/app-icons.md) — one drawing, the bird at half of what is seen, four generators
 - [Android / iOS parity audit](frontend/android-ios-parity.md) - where the two native projects DISAGREE, read from source 2026-08-28
