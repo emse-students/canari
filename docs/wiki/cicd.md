@@ -1273,6 +1273,19 @@ release was **half-shipped by construction**. `tools/app-store/submit.mjs` close
 about how, including the release-notes file a human owes each stable and why its first line names
 its own version, is in [its README](../../tools/app-store/README.md), the only copy.
 
+**A deferred App Store submission is completed by the clock, not by a human (2026-11-25).** When a
+stable's iOS arm finds Apple's single version slot held by a version in review, it defers (exit 75,
+green). Until 2026-11-25 nothing ever retried: `1.8.1` deferred on `1.8.0`, the slot freed, and the
+App Store had no `1.8.1` while Play did. The daily `stores` job of `scheduled.yml` now runs
+`submit.mjs --catch-up` before its report - the latest stable only (a stale missing one is skipped),
+never older than a version Apple holds, never over a version Apple is reviewing or one App Review
+refused, and never while a stable's `release.yml` run is in flight - with the notes read from the
+stable's own tag, the App Store credential in the one step that submits, and no wait anywhere, so a
+10-minute timeout bounds its writes far below any stable's time to its own submit. A stable queued
+behind a version in review now reads `queued` in the store report, a pass. The rules, the
+interaction with the next stable and the tests are in
+[the App Store README](../../tools/app-store/README.md#a-deferred-submission-completes-itself---catch-up-2026-11-25).
+
 ### The Android release build packages both ABIs because Gradle builds them (2026-11-21)
 
 `v1.7.3-alpha.4` failed the new ABI check ("has no native library for armeabi-v7a") although `--target aarch64 armv7` was passed. The log shows ONE `cargo` run (`Finished release ... in 4m 37s`), one `symlinking lib ... jniLibs/arm64-v8a`, then Gradle's "There are no .so files available to package in the APK for armeabi-v7a". The tauri CLI compiles only the FIRST target itself; every other ABI is built by the Gradle task `rustBuild<Arch><Profile>`, which runs `tauri android android-studio-script --target <t>`. In this repo those tasks were empty `DefaultTask`s: `d4b181ef40` (2026-04-10, "routine Tauri gen update") deleted `buildSrc/.../BuildTask.kt` and its wiring in `RustPlugin.kt`. That is why the build was arm64-only before #3932 too, and why `--target` changed nothing.

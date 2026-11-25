@@ -5452,7 +5452,7 @@ two of the three are edited by a machine outside it, and one of those is edited 
 | production web | `curl -s https://canari.emse.fr/api/version` |
 | dev web | `curl -s https://dev.canari-emse.fr/api/version` |
 | Google Play | `bun tools/play-vitals/vitals.mjs` - the `production` track line |
-| App Store | the `App Store / Build iOS IPA` job of that release's `release.yml` run, plus App Store Connect for whether Apple has since APPROVED what was submitted |
+| App Store | the `App Store / Build iOS IPA` job of that release's `release.yml` run - and when it DEFERRED on a held slot, the latest `stores` run of `scheduled.yml`, whose catch-up submits the latest stable the first morning the slot is free ([how](../../../tools/app-store/README.md#a-deferred-submission-completes-itself---catch-up-2026-11-25)) - plus App Store Connect for whether Apple has since APPROVED what was submitted |
 
 **THE LAST ROW IS THE ONE THAT CANNOT BE CLOSED FROM HERE.** A green iOS job means the version was
 created, the build attached and the submission submitted - it means the REQUEST succeeded, never
