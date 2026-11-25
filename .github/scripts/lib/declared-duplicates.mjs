@@ -183,6 +183,15 @@ export const DECLARED_GROUPS = [
     ],
   },
   {
+    what: 'which path a sign-in handoff may land on, server and client',
+    compare: 'exact',
+    why: 'one question - "may a handoff land on this path" - answered by core-service, which refuses a mint for any other dest, and by the client, which hands off a link tapped in a message and passes a return path to a site sign-in only for such a path; the two must not disagree. No shared TS package between the NestJS service and the SvelteKit app; the file imports nothing, which is what lets the copies be identical. Its spec sits beside the core-service copy and reads libs/contracts/handoff-dest.cases.json.',
+    files: [
+      'apps/core-service/src/auth/handoff/handoff-dest.ts',
+      'frontend/src/lib/navigation/handoffDest.ts',
+    ],
+  },
+  {
     what: "a booking space's booking window (D26), server and screen",
     compare: 'exact',
     why: 'one question - "may this range be booked now" - decided by the server on its own clock and drawn by the grid on the device clock, which must not disagree on a rule or its order. No shared TS package between the NestJS service and the SvelteKit app; the file takes plain numbers rather than either side\'s model, which is what lets the copies be identical, and both specs read libs/contracts/booking-window.cases.json.',

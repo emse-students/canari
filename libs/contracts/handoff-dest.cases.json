@@ -1,0 +1,30 @@
+{
+  "$comment": [
+    "WHICH PATH A HANDOFF MAY LAND ON, ASSERTED ON BOTH SIDES.",
+    "",
+    "`destIsAllowed` is one file copied byte for byte between core-service, which refuses a mint",
+    "for any other `dest` (apps/core-service/src/auth/handoff/handoff-dest.ts), and the client,",
+    "which hands off a link tapped in a message only when its path is allowed and passes no other",
+    "path to a site's sign-in entry (frontend/src/lib/navigation/handoffDest.ts). A declared",
+    "duplicate (.github/scripts/lib/declared-duplicates.mjs), so the spec beside the core-service",
+    "copy (handoff-sites.spec.ts) proves both.",
+    "Exact match, segment by segment; `{uuid}` is one lowercase UUID segment; no normalisation."
+  ],
+  "allowlist": ["/", "/mes-photos", "/albums/{uuid}"],
+  "allowed": ["/", "/mes-photos", "/albums/0b8e6f9a-1c2d-4e3f-8a9b-0c1d2e3f4a5b"],
+  "refused": [
+    "",
+    "mes-photos",
+    "/mes-photos/",
+    "/mes-photos?x=1",
+    "/mes-photos#x",
+    "//evil.example",
+    "https://evil.example/",
+    "/albums/../admin",
+    "/albums/0B8E6F9A-1C2D-4E3F-8A9B-0C1D2E3F4A5B",
+    "/albums/not-a-uuid",
+    "/albums/0b8e6f9a-1c2d-4e3f-8a9b-0c1d2e3f4a5b/edit",
+    "/mes-photos/confirmer",
+    "/admin"
+  ]
+}

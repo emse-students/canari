@@ -120,10 +120,19 @@ export function installAppLinkClickHandler(): void {
  * `AppLink`/`LinkPreviewCard` gated their own `onclick`, but on Tauri that handler never ran -
  * the capture-phase listener below already intercepted the click and called this function
  * directly. Gating here instead covers every current and future caller uniformly.
+ *
+ * For the same reason it is where a link to a sibling site is handed off (`openEcosystemSiteLink`):
+ * every path that opens a link written in a message or a post comes through here, after the gate.
  */
 export async function openExternal(url: string): Promise<void> {
   const proceed = await confirmUnsafeLinkIfNeeded(url);
   if (!proceed) return;
+
+  // A link to a sibling site whose handoff is on, at a path of its allowlist, opens the reader
+  // signed in (owner, 2026-11-25) - AFTER the gate above, which no link skips. Imported on demand:
+  // the opener carries the authenticated fetch, and this module is imported by half the app.
+  const { openEcosystemSiteLink } = await import('$lib/navigation/openEcosystemSite');
+  if (openEcosystemSiteLink(url)) return;
 
   if (isTauriRuntime()) {
     const { openUrl } = await import('@tauri-apps/plugin-opener');

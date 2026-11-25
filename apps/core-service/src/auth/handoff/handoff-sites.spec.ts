@@ -56,26 +56,38 @@ describe('the handoff registry', () => {
     expect(handoffSite('migallery', [on])).toEqual({ site: on });
   });
 
-  it('matches a dest against the allowlist exactly, segment by segment', () => {
-    const allowed = ['/', '/mes-photos', '/albums/{uuid}'];
-    expect(destIsAllowed('/', allowed)).toBe(true);
-    expect(destIsAllowed('/mes-photos', allowed)).toBe(true);
-    expect(destIsAllowed('/albums/0b8e6f9a-1c2d-4e3f-8a9b-0c1d2e3f4a5b', allowed)).toBe(true);
-    for (const refused of [
-      '',
-      'mes-photos',
-      '/mes-photos/',
-      '/mes-photos?x=1',
-      '/mes-photos#x',
-      '//evil.example',
-      'https://evil.example/',
-      '/albums/../admin',
-      '/albums/0B8E6F9A-1C2D-4E3F-8A9B-0C1D2E3F4A5B',
-      '/albums/not-a-uuid',
-      '/albums/0b8e6f9a-1c2d-4e3f-8a9b-0c1d2e3f4a5b/edit',
-      '/admin',
-    ]) {
-      expect([refused, destIsAllowed(refused, allowed)]).toEqual([refused, false]);
+  it('matches a dest against the allowlist exactly, segment by segment, as the client does', () => {
+    // The same cases run against the client's copy (`frontend/.../ecosystemSites.test.ts`).
+    const cases = JSON.parse(
+      readFileSync(
+        join(
+          __dirname,
+          '..',
+          '..',
+          '..',
+          '..',
+          '..',
+          'libs',
+          'contracts',
+          'handoff-dest.cases.json'
+        ),
+        'utf8'
+      )
+    ) as { allowlist: string[]; allowed: string[]; refused: string[] };
+    expect(cases.allowed.length).toBeGreaterThan(0);
+    expect(cases.refused.length).toBeGreaterThan(0);
+    for (const ok of cases.allowed) {
+      expect([ok, destIsAllowed(ok, cases.allowlist)]).toEqual([ok, true]);
+    }
+    for (const refused of cases.refused) {
+      expect([refused, destIsAllowed(refused, cases.allowlist)]).toEqual([refused, false]);
+    }
+  });
+
+  it('gives every MiConnect site a sign-in entry, and no other site one', () => {
+    for (const site of ECOSYSTEM_SITES) {
+      expect([site.id, site.miconnect === (site.signIn !== null)]).toEqual([site.id, true]);
+      if (site.signIn) expect([site.id, site.signIn.path.startsWith('/')]).toEqual([site.id, true]);
     }
   });
 });

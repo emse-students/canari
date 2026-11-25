@@ -882,8 +882,9 @@ which also holds **the contract a site implements**. This section is what Canari
   `alumni_cotisant_required` - a page MiConnect shows the person first, the terms, the Alumni link
   step or why the Alumni gate stops them - each with its OWN 403 code
   (`HANDOFF_TERMS_NOT_ACCEPTED`, `HANDOFF_ALUMNI_LINK_REQUIRED`, `HANDOFF_ALUMNI_COTISANT_REQUIRED`)
-  at info on both sides: the client opens the site plainly, and its MiConnect sign-in is that
-  person's PRIMARY path, not a fallback; and
+  at info on both sides: the client opens the site THROUGH ITS MICONNECT SIGN-IN ENTRY, returning
+  to the destination (owner, 2026-11-25, below), which is that person's PRIMARY path, not a
+  fallback; and
   `miconnect_not_configured`, `miconnect_unreachable`, `miconnect_refused` (503
   `HANDOFF_MICONNECT_UNAVAILABLE`, at error) - a MiConnect failure never mints. **The watch:** each
   boot logs one `[HANDOFF_ACCESS]` line per handoff application, at warn when it has gained a
@@ -899,7 +900,11 @@ which also holds **the contract a site implements**. This section is what Canari
   equals the file. The client names a site by id; **core-service composes the URL**
   (`<origin>/auth/handoff#<token>`), so the route is no open redirect. `dest` must equal one path
   of the site's allowlist exactly (`{uuid}` one lowercase UUID segment; no query, no fragment, no
-  normalisation). A site is minted for only while its `handoff` flag is true; **MiGallery's is true since 2026-11-14, every other flag ships
+  normalisation) - one rule in two byte-identical files, `handoff-dest.ts` here and the client's `handoffDest.ts`
+  (a declared duplicate), its cases in `libs/contracts/handoff-dest.cases.json`.
+  Each MiConnect site also declares its own sign-in entry, `signIn: { path, returnParam }`
+  (MiGallery `/api/auth/login` reading `redirectTo`; Sky and Le Cercle `/auth/login`, reading no
+  return path). A site is minted for only while its `handoff` flag is true; **MiGallery's is true since 2026-11-14, every other flag ships
   false**. A flag goes on only when core-service runs MiConnect's access check at mint (F3-bound,
   above - without it a handoff bypasses MiConnect's decisions), the site's provider `sub_mode` was read as `hashed_user_id`, and the site's
   redemption is live with handoff sessions MARKED and stepped up through a MiConnect sign-in before
@@ -927,19 +932,35 @@ which also holds **the contract a site implements**. This section is what Canari
   in the click itself (a popup blocker drops a window opened after an `await`), cut from its opener,
   then pointed at the URL. **A site without the flag is opened plainly**, today's behaviour. **A
   refused or failed mint opens the site plainly and says so at `warn` with its class** (the code and
-  status, or the error's name): the primary path failed. `HANDOFF_NOT_OFFERED` is the estate's
+  status, or the error's name): the primary path failed. **A refusal that is a page MiConnect must
+  show the person first** (`HANDOFF_TERMS_NOT_ACCEPTED`, `HANDOFF_ALUMNI_LINK_REQUIRED`,
+  `HANDOFF_ALUMNI_COTISANT_REQUIRED`, `SETTLED_AT_MICONNECT`) **opens the site's sign-in entry
+  instead** (`signInSiteUrl`), with the destination as the return path only when the site reads
+  one, it is not the home, and it is on the site's `dests`: the person sees MiConnect's page once
+  and lands signed in where they were going (owner, 2026-11-25; before, 21 of 27 production mints
+  in four hours landed signed out after the terms of 2026-11-24). Said at info. `HANDOFF_NOT_OFFERED` is the estate's
   configured state and is said once at info. A minted URL not on the site's origin is refused
   (`HandoffUrlMismatchError`). The launcher's anchors carry `data-ecosystem-site`, which the global
-  link handler leaves to their own `onclick`. **Links inside messages and posts are never handed
-  off**: a link someone else wrote must not choose what the user's own session opens.
+  link handler leaves to their own `onclick`. **A link inside a message or a post is handed off
+  only when it names a flagged site and a path of its `dests`** (owner, 2026-11-25):
+  `openExternal`, which every path opening a written link funnels through (the Tauri capture
+  listener, `AppLink` in message and post text and GIFs, `LinkPreviewCard`, the conversation's
+  shared-links tab), runs its Safe Browsing gate, then `openEcosystemSiteLink`, which matches with
+  `ecosystemSiteLink` - the exact origin, no query, no fragment, no credentials, the normalised
+  path on the allowlist - and otherwise opens the link as before. Why a link someone else wrote may
+  do this, and why it cannot leak the token: [the design note, section 3.7](backlog.d/sign-in-handoff-to-the-ecosystem-sites-and-migallery-notifications.md).
 - **Pinned by** `handoff.service.spec.ts` (the mint, refusals, fail-closed, the audit line, the token
   in no log line), `handoff-redeem.contract.spec.ts` (a reference verifier, the contract's steps in
   order, run over the vectors `libs/contracts/handoff-token.cases.json` and over minted tokens:
   single use, replay, expiry, audience, a forged `sub`, another issuer, another key),
   `auth.controller.handoff.spec.ts` (a live session only, the body's `sub` ignored, the JWKS),
-  `handoff-sites.spec.ts` and `ecosystemSites.test.ts` (the contract file), `openEcosystemSite.test.ts`
-  (flagged, unflagged, refused, transport failure, foreign URL, not offered, the web tab, and a scan
-  that fails if any module but `ecosystemSites.ts` writes a registered origin). The vectors are
+  `handoff-sites.spec.ts` and `ecosystemSites.test.ts` (the contract file, `signIn` included, and
+  the dest cases; `ecosystemSiteLink`'s matched and unmatched links), `openEcosystemSite.test.ts`
+  (flagged, unflagged, refused, transport failure, foreign URL, not offered, the web tab, each
+  refusal class to the sign-in entry or the plain open, a return path off the allowlist never
+  passed, message links matched and not, and a scan that fails if any module but
+  `ecosystemSites.ts` writes a registered origin), `openExternal.test.ts` (the gate runs before the
+  handoff, a refused link never reaches it). The vectors are
   written by `bun tools/handoff-vectors/generate.ts` with core-service's own signing code.
 
 ## Keys
