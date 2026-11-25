@@ -14,6 +14,87 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-11-25
+
+### Fixed - a seed whose storing failed is no longer lost, nor counted as a network loss
+
+A key-group frame's plaintext is now kept in the MLS state by the decrypt that spends its generation,
+and its handler is run again on the redelivery or at the next start until it succeeds
+([mls-desync-prevention section 11](docs/wiki/protocols/mls-desync-prevention.md#11-client---a-key-group-frame-is-kept-until-its-handler-succeeds-2026-11-25)).
+
+### Fixed - a stored message is keyed by its conversation
+
+The device's message store now keys every row by its conversation and its id, on SQLite and in the browser, so two conversations holding the same message id each keep their own row; existing stores are migrated in place, every row kept ([history-reconciliation](docs/wiki/protocols/history-reconciliation.md#a-stored-message-is-keyed-by-its-conversation-review-of-2936-the-key-itself-2026-11-24)).
+
+### Added - the device that enters a conversation with no leaf of its account says so itself
+
+Slice 1 of the admission fix-forward: the engine's door answers three ways, and the entrant reports
+its own entry under the seat reading that opened it, paired with its members' count
+([admission-fix-forward](docs/wiki/protocols/admission-fix-forward.md)).
+
+### Fixed - a history catch-up is no longer thrown away by a send already under way
+
+A web catch-up now waits for the sends already between the send gate and their encrypt before it
+snapshots, so their encrypt can no longer land after the snapshot and get the catch-up's work
+discarded
+([mls-desync-prevention](docs/wiki/protocols/mls-desync-prevention.md)).
+
+### Fixed - MiGallery and Le Cercle offer no refresh grant, which would bypass their access policy
+
+authentik's `refresh_token` grant evaluates no application binding, so a refresh token would outlive the
+cotisant gate (D43). Neither site refreshes; their providers now list `authorization_code` alone, and
+`test-refresh-gate.py` asserts every provider of a gated application closed and probes its token endpoint
+([authentik](docs/wiki/infrastructure/authentik.md#the-refresh-grant-is-closed-on-gated-providers-181)).
+
+### Fixed - creating a space or a resource with an empty body is refused with a 400
+
+`POST /api/bookings/spaces` and `POST .../resources` with no name answered 500: the settings class's optional `name` silenced the create class's required one, so the request reached the database with no name. The name is now declared once per route, required on create.
+
+### Fixed - the chat list previews a member addition in the reader's language
+
+Every preview of a "X added Y to the group" row (and rename, leave, removal) was the sentence stored in the writer's language, so the English list read French. Every caller (list, reply, search, notification) now draws it from the ids the row carries through the shared name cache, as the bubble already did, in the language of the app; a name not in the cache yet keeps the stored sentence, and the list resolves it and redraws ([history-reconciliation](docs/wiki/protocols/history-reconciliation.md)).
+
+### Fixed - the feed's tabs no longer clip "Organisations" at a doubled system font
+
+A tab may now shrink to any width and break inside a word, as the theme control's segment does, so the row never overflows and never scrolls a tab under its edge fade
+([design-reference](docs/wiki/frontend/design-reference.md)).
+
+### Security - the MiConnect profile editor token writes through one allowlisted path
+
+The token Canari edits profiles and marks Alumni duplicates with loses its broader write right on users: it writes a profile, a name or a merge mark on a person, non-superuser account through one MiConnect flow, and a daily check reports any other grant or write ([authentik](docs/wiki/infrastructure/authentik.md#the-profile-editors-one-write-path-181)).
+
+### Fixed - MiConnect reads "CAS EMSE" and no longer lists the dev applications
+
+The CAS login button now reads "Continue with CAS EMSE", and `Canari (dev)` and `Canari Local` are hidden from the application dashboard without gating sign-in to them ([authentik](docs/wiki/infrastructure/authentik.md)).
+
+### Changed - the Minesweeper leaderboard and stats show record dates as DD/MM/YY
+
+The long date was cut off in the ranking rows; it is now `25/11/26`, with the full date in the tooltip ([minesweeper](docs/wiki/frontend/modules/minesweeper.md#one-leaderboard-the-games-page-owner-2026-11-13)).
+
+### Fixed - a CanaReel whose video encode is cut by leaving the app is kept and prepared again on return
+
+On the iPhone, Home pressed about a second after "Publish" stopped the hardware encoder and the post ended at "Failed". An encoder failure while the app was out of view is now the `interrupted` fault, typed at the throw from the lifecycle edges, and the publish queue keeps the post and prepares it again when the app is back in view ([posts](docs/wiki/frontend/modules/posts.md#the-background-publish-queue)).
+
+### Changed - "Mes notes" shows your own avatar and name
+
+The conversation with yourself is now named "Prenom NOM (Notes)" and drawn with your avatar everywhere (list, header, pickers, notifications); search still finds it by "notes" or "mes notes" ([chat](docs/wiki/frontend/modules/chat.md#mes-notes---the-conversation-with-oneself-2026-11-22)).
+
+### Changed - the store notes for 1.8.1 are written, and the 1.8.1-alpha.3 Mi 9T readings folded
+
+`store/whats-new.txt` names 1.8.1; the feed tabs at a doubled font read whole on the Mi 9T (entry closed), and the reel row (3) reading is corrected to the feed-and-chats path it names ([readings](docs/wiki/backlog.d/reading-owed-a-reel-publish-survives-leaving-the-app.md)).
+
+### Fixed - a seed request no longer freezes the message drain
+
+A device asked for seeds while its community key group held a commit of unknown outcome could stop applying every incoming message until a reload: the answer is now sent after the frame that asked, never awaited under the drain's lock ([mls-desync-prevention](docs/wiki/protocols/mls-desync-prevention.md#10-client---the-drain-awaits-no-send-the-seed-answer-freeze-2026-11-25)).
+
+### Fixed - the cross-client rig passes the Alumni-link reminder and boots every web seat in French
+
+`login.mjs` now answers the D44 reminder stage (`authentik-continue`) instead of reporting a blank page, and `launch.mjs` starts every seat with `--lang=fr` ([authentik](docs/wiki/infrastructure/authentik.md#the-terms-of-use-are-a-stage-of-the-authorization-flow-2026-10-16)). The Svelte regression note now names 5.58.1 and the upstream issue ([architecture](docs/wiki/frontend/architecture.md)).
+
+### Fixed - a Welcome sent again is no longer published twice
+
+A re-send of the same Welcome waits for the delivery already running and publishes nothing if it ran, so a new device no longer receives one Welcome live twice (migration 058, [mls-protocol](docs/wiki/protocols/mls-protocol.md)).
+
 ## [1.8.0] - 2026-11-25
 
 ### Fixed - an Android call started during a phone call no longer runs with a live microphone
