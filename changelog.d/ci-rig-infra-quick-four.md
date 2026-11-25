@@ -1,3 +1,0 @@
-### Fixed - the access log no longer pairs an address with a form id or a user id; three rig and test papercuts
-
-The nginx access log writes `/api/forms/<id>/submit` and `/api/public/forms/<id>/submit` as their route and drops the whole query of `/api/ws` (its `userId` included) ([nginx](docs/wiki/infrastructure/nginx.md#the-access-log-never-records-a-token-2026-10-06)). The iPhone sign-in helper scrolls to a terms "Continue" below the fold, the rig classifier names a seat's ordinary start lines (`SEAT_START_NARRATION`, exact shapes) so a KILL row can read clean, and two slow-under-load frontend tests pay their cold paths in a `beforeAll`.
