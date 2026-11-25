@@ -1,6 +1,8 @@
 ## The post search filters by person and by association (owner, 2026-11-19)
 
-target: 1.8.1
+target: 1.8.2
+
+_2026-11-25: moved to 1.8.2 when 1.8.1 shipped._
 
 **Asked by the owner on 2026-11-19, in place of the global search.** He did not see what a global
 search would be for; what he wants is a better POST search: *"filtrer les posts d'une personne, ou

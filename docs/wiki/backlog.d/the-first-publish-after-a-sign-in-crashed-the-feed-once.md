@@ -1,6 +1,8 @@
 ## P1 - The first publish after a sign-in crashed the feed page once (iPhone 12, 1.8.0-alpha.7)
 
-target: 1.8.1
+target: 1.8.2
+
+_2026-11-25: moved to 1.8.2 when 1.8.1 shipped._
 
 _2026-11-25: moved to 1.8.1 when 1.8.0 shipped._
 

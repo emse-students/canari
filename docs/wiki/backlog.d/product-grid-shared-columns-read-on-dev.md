@@ -1,6 +1,8 @@
 ## Product grids: the shared size columns, built - what is still owed is a reading on dev
 
-target: 1.8.1
+target: 1.8.2
+
+_2026-11-25: moved to 1.8.2 when 1.8.1 shipped._
 
 Built (owner, 2026-11-21: "shared size columns for product grids", launch now): a form's priced
 grids may name a SHARED COLUMN SET, so the sizes of a shop are typed once and every grid that uses

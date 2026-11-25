@@ -1,6 +1,8 @@
 ## P2 - the Alumni SSO: the free window, the link due mid second year, the cotisant gate, the merge
 
-target: 1.8.1
+target: 1.8.2
+
+_2026-11-25: moved to 1.8.2 when 1.8.1 shipped._
 
 _2026-11-25: moved to 1.8.1 when 1.8.0 shipped._
 

@@ -1,6 +1,8 @@
 ## Reading owed - P2 - the restore signing origin the app reads is the one Credential Manager sends
 
-target: 1.8.1
+target: 1.8.2
+
+_2026-11-25: moved to 1.8.2 when 1.8.1 shipped._
 
 _2026-11-25: moved to 1.8.1 when 1.8.0 shipped._
 

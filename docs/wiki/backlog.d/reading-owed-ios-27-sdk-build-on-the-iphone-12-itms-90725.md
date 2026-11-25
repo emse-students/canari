@@ -1,6 +1,8 @@
 ## Reading owed - the iOS 27 SDK build (#3813, `xcode-27`) read on the iPhone 12, and an upload without ITMS-90725
 
-target: 1.8.1
+target: 1.8.2
+
+_2026-11-25: moved to 1.8.2 when 1.8.1 shipped._
 
 _2026-11-25: moved to 1.8.1 when 1.8.0 shipped._
 

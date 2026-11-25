@@ -1,6 +1,8 @@
 ## P3 - a community history answer relays v1 seeds that every receiver refuses
 
-target: 1.8.1
+target: 1.8.2
+
+_2026-11-25: moved to 1.8.2 when 1.8.1 shipped._
 
 **Seen 2026-11-24** (a new web device, prod `1.7.3`): six `[GRAINE] REFUSED N v1 seed(s) relayed by
 <member> ... a v1 seed is no longer accepted` (4 to 34 seeds each, from three members' up-to-date

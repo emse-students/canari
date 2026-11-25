@@ -1,6 +1,8 @@
 ## P2 - iPhone message banners as communication notifications: one iPhone reading owed, the sign-out row (2026-11-21)
 
-target: 1.8.1
+target: 1.8.2
+
+_2026-11-25: moved to 1.8.2 when 1.8.1 shipped._
 
 Built (owner's decision of 2026-11-21): the notification extension donates an incoming
 `INSendMessageIntent` and redraws each DM and group banner from it, the app carries
