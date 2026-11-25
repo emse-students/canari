@@ -25,6 +25,7 @@ import {
   ValidateCommitBody,
 } from '../services/messaging.service';
 import {
+  canonicalLeafIdentity,
   canonicalUserId,
   sanitizeDevicePairLogValue,
   sanitizeEpoch,
@@ -429,12 +430,17 @@ export class MessagingController {
         : UNINVITED_ENTRY_KINDS.includes(body.kind as string)
           ? (body.kind as string)
           : 'invalid';
-    // An entrant's own word names the caller, whatever the body says - in the canonical form
-    // (`canonicalDeviceKey`: the user half trimmed and lowercased) a member's report of the same
-    // entry is keyed by, so the two rows pair whatever case the header carried.
+    // An entrant's own word names the caller, whatever the body says. BOTH sides are keyed in the
+    // canonical form (`canonicalDeviceKey`: the user half trimmed and lowercased) before the cut, so
+    // an entrant's row and a member's report of the same entry pair whatever case either carried -
+    // never on the client's own canonicalisation.
+    const memberSaid =
+      typeof body.entrant === 'string'
+        ? (canonicalLeafIdentity(body.entrant.trim()) ?? body.entrant)
+        : body.entrant;
     const entrant = ENTRANT_UNINVITED_ENTRY_KINDS.includes(kind)
       ? sanitizeDevicePairLogValue(authUserId.trim().toLowerCase(), reporterDeviceId)
-      : sanitizeLeafLogValue(body.entrant);
+      : sanitizeLeafLogValue(memberSaid);
     // `none` is the device's own answer (it holds no record of the group); `unstated` is a build
     // that does not send it; `-` is a kind the device decides without its record.
     const watchedFrom = !EVIDENCED_UNINVITED_ENTRY_KINDS.includes(kind)

@@ -360,10 +360,10 @@ describe('MessagingController - POST mls/uninvited-entry', () => {
     );
   });
 
-  it("pairs an entrant whose header carries its id in another case with a member's lowercase report", async () => {
+  it('pairs an entrant and a member report whatever case either carries the user in', async () => {
     await controller.reportUninvitedEntry('alice', 'web-alice-1', {
       groupId: 'g-1234',
-      entrant: 'bob:dev2',
+      entrant: 'BOB:dev2',
       epoch: 7,
       kind: 'new-person',
       watchedFromEpoch: 2,

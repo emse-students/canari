@@ -626,6 +626,9 @@ describe('requestReAdd', () => {
         // The account's other leaf went between the two bases: the self-join is then an entry no
         // member made, and its members write `new-person` - so the entrant must say so too, or the
         // admission gate would read zero on a legitimate producer (review of #4078).
+        // This pins the SEAM (an accepted join carrying the epoch is reported); it passes on the code
+        // before the fix too. The regression itself - the D1 join not reading the standing - is
+        // caught in `BaseMlsService.externalJoin.test.ts`.
         const sent = vi.fn().mockResolvedValue(undefined);
         resetReportedUninvitedEntries();
         setUninvitedEntryReporter(sent);

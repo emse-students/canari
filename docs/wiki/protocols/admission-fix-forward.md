@@ -51,11 +51,15 @@ your conversation without a member letting them in). Concretely, all of these ho
     AND "firstSeenAt" >= '<the day the floor was raised>'
   GROUP BY kind;
 
-  -- (b) The members' word: no `new-person` entry of a group conversation, once the pre-038 link
-  -- seats (their pair list, matched on group and entrant user) are subtracted.
+  -- (b) The members' word: no `new-person` entry of a group conversation, the pre-038 link seats
+  -- subtracted IN the statement. `pre038` is their pair list (group, user cut to eight characters,
+  -- as the row holds it), kept in the private operations notes and loaded as a temporary table.
   SELECT count(*) FROM uninvited_entries u
   JOIN dm_groups g ON g.id = u."groupId" AND g."isGroup"
-  WHERE u.kind = 'new-person' AND u."firstSeenAt" >= '<the day the floor was raised>';
+  LEFT JOIN pre038 p
+    ON p."groupId" = u."groupId" AND p."userCut" = split_part(u."entrantUserDevice", ':', 1)
+  WHERE u.kind = 'new-person' AND p."groupId" IS NULL
+    AND u."firstSeenAt" >= '<the day the floor was raised>';
   ```
 
   (a) alone is NOT the gate: an entrant's report is at-most-once per session and never retried, so
