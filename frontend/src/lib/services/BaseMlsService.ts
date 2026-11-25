@@ -214,6 +214,7 @@ import {
   transportFailureEvidence,
 } from '$lib/utils/transportFailure';
 import type {
+  DistributionFrame,
   DistributionFrameHandler,
   DistributionGroupInfoTransport,
   WelcomeRequestAnswer,
@@ -229,9 +230,21 @@ import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { openExternalCommitWindow } from '$lib/utils/chat/externalCommitVerdict';
 import {
   forgetSeenCipherCaches,
+  hasHistoryFrameBeenConsumed,
+  markHistoryFrameConsumed,
   noteFrameConsumed,
   stagePendingHistoryMarks,
 } from '$lib/utils/chat/history';
+import { frameFingerprint } from '$lib/mls-client/inboundFrameLedger';
+import { deviceIdOfLeaf, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
+import {
+  UnhandleableFrameError,
+  forgetKeptFrame,
+  keptFrameIds,
+  keptFrameKey,
+  readKeptFrame,
+  roomToKeep,
+} from '$lib/mls-client/keptKeyGroupFrames';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { Log } from '$lib/utils/Log';
 import { recordAbandonedDevice, retireAbandonedDevices } from '$lib/mls-client/abandonedDevices';
@@ -695,6 +708,18 @@ export abstract class BaseMlsService implements IMlsService {
 
   /** Set once at wiring time; see {@link onDistributionFrame}. */
   private distributionFrameHandler: DistributionFrameHandler | null = null;
+
+  /**
+   * The handler runs of kept key-group frames in flight, by ledger key: one run per frame at a time
+   * (`handleKeptDistributionFrame`). Emptied by each run's own end.
+   */
+  private readonly keptFrameRuns = new Map<string, Promise<boolean>>();
+
+  /**
+   * Whether "the kept frames fill their budget" has been said since the set last had room - said once
+   * per episode, and the frames it left unread are fetched again when a kept one is forgotten.
+   */
+  private keptFramesFullSaid = false;
 
   /** Set once per session; see {@link setDistributionGroupStore}. */
   private distributionGroupStore: DistributionGroupStore | null = null;
@@ -7650,6 +7675,8 @@ export abstract class BaseMlsService implements IMlsService {
       this.persistDistributionGroup(scope, groupId);
     }
     this.collectFramesLeftForKeyGroup(groupId);
+    // Its roster is named now, so a frame of it kept unhandled from before can be handled.
+    this.handleKeptDistributionFrames(groupId);
   }
 
   /**
@@ -8130,6 +8157,8 @@ export abstract class BaseMlsService implements IMlsService {
   /** Wires what decrypted key-distribution frames are handed to. Set once, at startup. */
   onDistributionFrame(handler: DistributionFrameHandler | null): void {
     this.distributionFrameHandler = handler;
+    // A frame kept unhandled by an earlier session (or this one, before a handler existed) runs now.
+    this.handleKeptDistributionFrames();
   }
 
   /**
@@ -8164,11 +8193,43 @@ export abstract class BaseMlsService implements IMlsService {
       noteUnackedFrame(groupId, 'unscoped-distribution-group');
       return false;
     }
-    const { workspaceId } = scope;
+    const fingerprint = frameFingerprint(ciphertext);
 
+    // A FRAME WHOSE PLAINTEXT THIS DEVICE ALREADY KEEPS is never decrypted again: its generation is
+    // spent, and the redelivered bytes would only be refused as `secret-reuse`. Its handler runs on
+    // the kept plaintext instead (mls-desync-prevention section 11).
+    if (readKeptFrame(this.userId, groupId, fingerprint) !== null) {
+      return this.handleKeptDistributionFrame(groupId, fingerprint, 'its redelivery');
+    }
+
+    // ROOM BEFORE THE GENERATION IS SPENT: once decrypted, the plaintext must have somewhere to be
+    // kept, so a frame that would pass the budget is not opened while others are kept. One too large
+    // for even an EMPTY set is opened WITHOUT keeping: it may be a commit (a bulk add carries every
+    // key package, and has no plaintext to keep), and a commit acknowledged unread would leave the
+    // group behind for good. An application frame that large is refused after the decrypt, below.
+    const room = roomToKeep(this.userId, ciphertext.length);
+    const keep = room !== 'too-large';
+    if (room === 'full') {
+      if (!this.keptFramesFullSaid) {
+        this.keptFramesFullSaid = true;
+        console.warn(
+          `[GRAINE] the key-group frames kept until handled fill their budget - frames of key group ${groupId.slice(0, 8)}... wait unread until a kept one is handled`
+        );
+      }
+      noteUnackedFrame(groupId, 'kept-frames-full');
+      return false;
+    }
+
+    const keepFingerprint = keep ? fingerprint : undefined;
     let plaintext: Uint8Array | null;
     try {
-      plaintext = await this.openDistributionFrame(groupId, sender, ciphertext, senderDeviceId);
+      plaintext = await this.openDistributionFrame(
+        groupId,
+        sender,
+        ciphertext,
+        senderDeviceId,
+        keepFingerprint
+      );
     } catch (e) {
       // A FRAME FROM AN EPOCH THIS DEVICE HAS NOT REACHED IS THE ONE REFUSAL A REPLAY REPAIRS, and it
       // used to be refused bare: not acknowledged, no gap armed, so nothing caught the group up and
@@ -8180,7 +8241,7 @@ export abstract class BaseMlsService implements IMlsService {
       // the hole lets the queue apply them in order. Bounded by the log - every step applies a
       // commit, or ends the loop.
       if (classifyIncomingDecryptError(e) !== 'epoch-gap') {
-        return this.dispositionOfUnreadableFrame(groupId, e);
+        return this.dispositionOfUnreadableFrame(groupId, e, fingerprint);
       }
       // A LIVE FRAME IS NOT A PROOF THAT THE MISSING COMMITS ARE MISSING FROM THE MAILBOX. One that
       // ARRIVED before a pull had listed the whole mailbox on this link (`aheadOfMailbox`, stamped
@@ -8202,11 +8263,17 @@ export abstract class BaseMlsService implements IMlsService {
       while (!opened) {
         if (!(await this.stepDistributionGroup(groupId))) return false;
         try {
-          plaintext = await this.openDistributionFrame(groupId, sender, ciphertext, senderDeviceId);
+          plaintext = await this.openDistributionFrame(
+            groupId,
+            sender,
+            ciphertext,
+            senderDeviceId,
+            keepFingerprint
+          );
           opened = true;
         } catch (again) {
           if (classifyIncomingDecryptError(again) !== 'epoch-gap') {
-            return this.dispositionOfUnreadableFrame(groupId, again);
+            return this.dispositionOfUnreadableFrame(groupId, again, fingerprint);
           }
         }
       }
@@ -8235,51 +8302,193 @@ export abstract class BaseMlsService implements IMlsService {
       return true;
     }
 
+    if (!keep) {
+      // An application frame larger than any an honest client sends (the largest, a bundle page,
+      // always fits an empty kept set): it can never be handled, and nothing was lost in transit.
+      markHistoryFrameConsumed(this.userId, groupId, fingerprint);
+      console.error(
+        `[GRAINE] frame of ${ciphertext.length} bytes from ${sender.slice(0, 8)} on community ${scope.workspaceId.slice(0, 8)} can never be handled: larger than any frame an honest client sends - acknowledged unhandled; not a network loss`
+      );
+      return true;
+    }
+
+    // THE PLAINTEXT IS KEPT - the decrypt kept it in the same mutation that spent the generation -
+    // so the handler runs on it exactly as a redelivery or the next start would.
+    return this.handleKeptDistributionFrame(groupId, fingerprint, 'its arrival', {
+      sender,
+      plaintext,
+      ...(senderDeviceId ? { senderDeviceId } : {}),
+    });
+  }
+
+  /**
+   * Runs the Graine handler on a key-group frame whose plaintext the MLS state keeps, and forgets it
+   * once the handler succeeded or can never succeed (mls-desync-prevention section 11).
+   *
+   * ONE RUN PER FRAME AT A TIME: the arrival, a redelivery and the start-up sweep may meet the same
+   * kept frame, and a second caller shares the first one's run instead of storing the seed twice.
+   *
+   * `live` is the frame as it just decrypted, with its envelope's sender (which the sender check
+   * just matched); without it the frame is read back from the kept value and attributed to the
+   * sender MLS verified at the decrypt.
+   *
+   * @returns whether the frame may be acknowledged: true once handled or found unhandleable for
+   *   good, false while its handler fails (its plaintext stays kept for the next attempt)
+   */
+  private handleKeptDistributionFrame(
+    groupId: string,
+    fingerprint: string,
+    occasion: string,
+    live?: Pick<DistributionFrame, 'sender' | 'plaintext' | 'senderDeviceId'>
+  ): Promise<boolean> {
+    const key = keptFrameKey(groupId, fingerprint);
+    const running = this.keptFrameRuns.get(key);
+    if (running) return running;
+    const run = this.runKeptDistributionFrame(groupId, fingerprint, occasion, live).finally(() =>
+      this.keptFrameRuns.delete(key)
+    );
+    this.keptFrameRuns.set(key, run);
+    return run;
+  }
+
+  /** The body of {@link handleKeptDistributionFrame}, run once per frame at a time. */
+  private async runKeptDistributionFrame(
+    groupId: string,
+    fingerprint: string,
+    occasion: string,
+    live?: Pick<DistributionFrame, 'sender' | 'plaintext' | 'senderDeviceId'>
+  ): Promise<boolean> {
+    const scope = this.distributionScopeByGroup.get(groupId);
+    if (scope === undefined) {
+      // Every caller checks the scope first; a forget in between leaves the frame kept, and the
+      // registration that names the group again runs it.
+      console.warn(
+        `[GRAINE] kept frame on key group ${groupId.slice(0, 8)}... not handled on ${occasion}: its roster is no longer named - kept for its registration`
+      );
+      return false;
+    }
+    const { workspaceId } = scope;
     const handler = this.distributionFrameHandler;
     if (!handler) {
       // Not silent, and not acknowledged: the frame is a seed somebody needs, and the ONLY symptom
       // of a handler never wired would otherwise be a community whose history quietly never loads.
+      // Its plaintext stays kept; wiring the handler runs it (`onDistributionFrame`).
       console.error(
-        `[GRAINE] no handler wired - dropping a ${plaintext.length}-byte frame from ${sender.slice(0, 8)}... on community ${workspaceId.slice(0, 8)}...`
+        `[GRAINE] no handler wired - a frame on community ${workspaceId.slice(0, 8)}... is kept unhandled (${occasion})`
       );
       return false;
     }
 
-    try {
-      await handler({
+    let frame: DistributionFrame;
+    if (live) {
+      frame = { scope, workspaceId, groupId, ...live };
+    } else {
+      const kept = readKeptFrame(this.userId, groupId, fingerprint);
+      // Handled and forgotten by a run that ended before this one began.
+      if (kept === null) return true;
+      if (kept === 'corrupt' || kept.verifiedSender === null) {
+        // No writer of this build produces either: the value is the one `mls-core` wrote, with the
+        // credential MLS verified. A frame that cannot be read back or attributed can never be
+        // handled, and it is no network loss.
+        this.forgetKeptDistributionFrame(groupId, fingerprint);
+        console.error(
+          `[GRAINE] kept frame on key group ${groupId.slice(0, 8)}... can never be handled (${kept === 'corrupt' ? 'its kept value does not parse' : 'no verified sender'}) - forgotten and acknowledged; not a network loss`
+        );
+        return true;
+      }
+      frame = {
         scope,
         workspaceId,
         groupId,
-        sender,
-        plaintext,
-        ...(senderDeviceId ? { senderDeviceId } : {}),
-      });
+        sender: userIdOfLeaf(kept.verifiedSender),
+        senderDeviceId: deviceIdOfLeaf(kept.verifiedSender),
+        plaintext: kept.plaintext,
+      };
+    }
+
+    try {
+      await handler(frame);
     } catch (e) {
-      // NOT acknowledged: the handler is what STORES a seed, so a throw here means the seed did not
-      // land. BUT REDELIVERY DOES NOT RECOVER IT, whatever this comment once claimed: the frame was
-      // DECRYPTED above (`openDistributionFrame`), its generation spent and recorded
-      // (`noteFrameConsumed`), so the redelivered bytes are refused as `secret-reuse` and counted
-      // as a key-group frame LOSS (`noteKeyGroupFrameLost`) - the seed then comes back only through
-      // a seed request. Keeping the decrypted plaintext until its handler succeeds is the open item
-      // `backlog.d/a-key-group-frame-whose-handler-threw-is-lost.md`. A seed ASK no longer throws
-      // here at all: its answer runs past the frame (mls-desync-prevention section 10).
-      //
-      // BY CLASS: a handler that could not REACH the server (it asks the delivery service, which got
-      // no answer - `DeliveryUnreachableError`) refused nothing about the frame. That is the expected
-      // state of an absent link, said as what is owed next; anything else is a defect and accuses.
+      // CLASSIFIED AT THE THROW, and never as `secret-reuse`: the frame WAS read, so nothing was lost
+      // in transit and `noteKeyGroupFrameLost` is never told.
+      if (e instanceof UnhandleableFrameError) {
+        // Can never succeed on this plaintext: kept, it would be re-run on every redelivery for
+        // ever. Forgotten and acknowledged, said once at error - a sender sent what this build
+        // cannot use.
+        this.forgetKeptDistributionFrame(groupId, fingerprint);
+        console.error(
+          `[GRAINE] frame from ${frame.sender.slice(0, 8)} on community ${workspaceId.slice(0, 8)} can never be handled (${e.reason}) - forgotten and acknowledged; not a network loss`
+        );
+        return true;
+      }
+      // A handler that could not REACH the server (it asks the delivery service, which got no
+      // answer - `DeliveryUnreachableError`) refused nothing about the frame: the expected state of
+      // an absent link, said as what is owed next.
       if (isTransportFailure(e)) {
         console.warn(
-          `[GRAINE] frame from ${sender.slice(0, 8)} on community ${workspaceId.slice(0, 8)} not handled - the server got no answer; not acknowledged, so the next pull redelivers it: ${String(e)}`
+          `[GRAINE] frame from ${frame.sender.slice(0, 8)} on community ${workspaceId.slice(0, 8)} not handled - the server got no answer; its plaintext is kept and the frame unacknowledged, so the redelivery runs the handler again: ${String(e)}`
         );
         return false;
       }
+      // Anything else is a defect and accuses - but loses nothing: the plaintext stays kept, the
+      // frame unacknowledged, and its redelivery (or the next start) runs the handler again.
       console.error(
-        `[GRAINE] handler refused a frame from ${sender.slice(0, 8)} on community ${workspaceId.slice(0, 8)} - not acknowledged:`,
+        `[GRAINE] handler refused a frame from ${frame.sender.slice(0, 8)} on community ${workspaceId.slice(0, 8)} (${occasion}) - its plaintext is kept and the frame unacknowledged:`,
         String(e)
       );
       return false;
     }
+    this.forgetKeptDistributionFrame(groupId, fingerprint);
     return true;
+  }
+
+  /**
+   * Forgets a kept key-group frame - handled, or unhandleable - and records its bytes consumed
+   * beside, so a redelivery of them is known as handled rather than lost
+   * ({@link dispositionOfUnreadableFrame}). Both reach the state in the next checkpoint.
+   *
+   * It frees room in the kept set, so the frames left unread for lack of it are fetched again.
+   */
+  private forgetKeptDistributionFrame(groupId: string, fingerprint: string): void {
+    markHistoryFrameConsumed(this.userId, groupId, fingerprint);
+    forgetKeptFrame(this.userId, groupId, fingerprint);
+    if (this.keptFramesFullSaid) {
+      this.keptFramesFullSaid = false;
+      this.refetchFramesLeftBehind('kept-frames-full', 'a kept key-group frame was handled');
+    }
+  }
+
+  /**
+   * Runs every key-group frame the MLS state keeps from before - a handler that threw, or a kill
+   * before its frame was forgotten - once a handler is wired and its group's roster is named.
+   *
+   * Called where either becomes true: {@link onDistributionFrame} and
+   * {@link registerDistributionGroup}. Awaited by neither (a registration is synchronous, and the
+   * handler awaits no send - mls-desync-prevention section 10): each run says its own outcome, and
+   * a run that failed stays kept for the next occasion.
+   */
+  private handleKeptDistributionFrames(onlyGroupId?: string): void {
+    if (!this.distributionFrameHandler) return;
+    const due = keptFrameIds(this.userId).filter(
+      ({ groupId, fingerprint }) =>
+        (onlyGroupId === undefined || groupId === onlyGroupId) &&
+        this.distributionScopeByGroup.has(groupId) &&
+        !this.keptFrameRuns.has(keptFrameKey(groupId, fingerprint))
+    );
+    if (due.length === 0) return;
+    console.info(
+      `[GRAINE] ${due.length} key-group frame(s) kept unhandled from before - running their handler`
+    );
+    for (const { groupId, fingerprint } of due) {
+      this.handleKeptDistributionFrame(groupId, fingerprint, 'the start-up sweep').catch(
+        (e: unknown) => {
+          console.error(
+            `[GRAINE] kept frame on key group ${groupId.slice(0, 8)}... - its run threw outside the handler:`,
+            String(e)
+          );
+        }
+      );
+    }
   }
 
   /**
@@ -8288,29 +8497,41 @@ export abstract class BaseMlsService implements IMlsService {
    * `senderDeviceId` is the envelope's device claim: handed to the sender check, a frame whose
    * device disagrees with the credential is refused like a user mismatch (`[SENDER_MISMATCH]
    * path=distribution kind=device`), so a device cannot speak in a sibling's name.
+   *
+   * `keepFingerprint` keeps an application message's plaintext in the MLS state under the frame's
+   * key, in the same mutation that spends its generation (`keptKeyGroupFrames.ts`).
    */
   private async openDistributionFrame(
     groupId: string,
     sender: string,
     ciphertext: Uint8Array,
-    senderDeviceId?: string
+    senderDeviceId?: string,
+    keepFingerprint?: string
   ): Promise<Uint8Array | null> {
     let plaintext: Uint8Array | null;
     try {
       // A key-group frame relays no history, so its author verdict has no use here.
       plaintext =
         (
-          await this.processIncomingMessage(groupId, ciphertext, {
-            userId: sender,
-            ...(senderDeviceId ? { deviceId: senderDeviceId } : {}),
-            path: 'distribution',
-          })
+          await this.processIncomingMessage(
+            groupId,
+            ciphertext,
+            {
+              userId: sender,
+              ...(senderDeviceId ? { deviceId: senderDeviceId } : {}),
+              path: 'distribution',
+            },
+            keepFingerprint === undefined ? undefined : keptFrameKey(groupId, keepFingerprint)
+          )
         )?.plaintext ?? null;
     } catch (e) {
-      // REFUSED FOR ITS SENDER, BUT DECRYPTED: the generation is spent all the same (WP-G2-1b).
+      // REFUSED FOR ITS SENDER, BUT DECRYPTED: the generation is spent all the same (WP-G2-1b). The
+      // decrypt kept the plaintext before the check refused it; it is handed to nobody, so it is
+      // forgotten.
       if (e instanceof SenderMismatchError) {
         noteFrameConsumed(this.userId, groupId, ciphertext);
         noteInboundMlsFrame(false);
+        if (keepFingerprint !== undefined) forgetKeptFrame(this.userId, groupId, keepFingerprint);
       }
       throw e;
     }
@@ -8330,9 +8551,12 @@ export abstract class BaseMlsService implements IMlsService {
   /**
    * Whether a key-group frame this device could not open may be acknowledged.
    *
+   * `fingerprint` is the frame's ({@link frameFingerprint}): with it, a spent generation this device
+   * spent on these very bytes is told apart from a loss.
+   *
    * @returns true for a frame no redelivery can ever make readable, false for one a later epoch may.
    */
-  private dispositionOfUnreadableFrame(groupId: string, e: unknown): boolean {
+  private dispositionOfUnreadableFrame(groupId: string, e: unknown, fingerprint?: string): boolean {
     // WHY THIS ASKS WHICH FAILURE IT WAS. Refusing to acknowledge is right for a frame that may
     // still become readable - the join has not landed, a commit is missing - and it is an
     // INFINITE REDELIVERY LOOP for one that never will. This branch used to refuse them all, so
@@ -8348,6 +8572,20 @@ export abstract class BaseMlsService implements IMlsService {
     // accused it at ERROR, so the "comes back through a history request" line below would only be
     // a second, wrong, account of it.
     if (kind === 'sender-mismatch') return true;
+    // A GENERATION THIS DEVICE SPENT ON THESE VERY BYTES, whose plaintext it no longer keeps, was
+    // HANDLED (or found unhandleable): a kept frame is forgotten only then, and the kept set is read
+    // before anything is decrypted (`routeDistributionFrame`). So this is a redelivery whose
+    // acknowledgement was lost, not a loss, and it is never counted as one.
+    if (
+      kind === 'secret-reuse' &&
+      fingerprint !== undefined &&
+      hasHistoryFrameBeenConsumed(this.userId, groupId, fingerprint)
+    ) {
+      console.debug(
+        `[GRAINE] frame on ${groupId.slice(0, 8)}... was already handled here (its generation spent on these bytes, nothing kept) - acknowledged`
+      );
+      return true;
+    }
     const permanent =
       kind === 'own-message' ||
       kind === 'secret-reuse' ||
@@ -9752,7 +9990,8 @@ export abstract class BaseMlsService implements IMlsService {
   abstract processIncomingMessage(
     groupId: string,
     messageBytes: Uint8Array,
-    envelope?: EnvelopeSender
+    envelope?: EnvelopeSender,
+    keepAs?: string
   ): Promise<DecryptedApplication | null>;
   abstract exportSecret(
     groupId: string,

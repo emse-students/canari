@@ -1257,11 +1257,17 @@ export interface IMlsService {
    * against the sender OpenMLS verified, and a disagreement throws a `SenderMismatchError`: the
    * frame is decrypted and consumed, and nothing of it is shown (channel-encryption section 21.1,
    * WP-G2-1b).
+   *
+   * `keepAs` (a `kept-frame:` ledger key, `keptKeyGroupFrames.ts`) keeps an application message's
+   * plaintext in the MLS state IN THE SAME MUTATION that spends its generation, and mirrors it into
+   * the document's ledger view - the key-group route's crash guarantee (mls-desync-prevention
+   * section 11). A sender mismatch throws after the plaintext was kept; the caller forgets it.
    */
   processIncomingMessage(
     groupId: string,
     messageBytes: Uint8Array,
-    envelope?: EnvelopeSender
+    envelope?: EnvelopeSender,
+    keepAs?: string
   ): Promise<DecryptedApplication | null>;
   /**
    * Decrypts a page of ciphertexts in ratchet order with a single WASM crossing when available.

@@ -41,7 +41,14 @@ export type UnackedReason =
    * the one copy outside memory, rather than acknowledged as a decrypt failure. No event discharges
    * it - the next pull lists it again - so it is counted and never put on the work list.
    */
-  | 'dispatch-failed';
+  | 'dispatch-failed'
+  /**
+   * A key-group frame NOT DECRYPTED because the frames kept until handled filled their budget
+   * (`keptKeyGroupFrames.ts`, `roomToKeep`): opened, its generation would be spent with nowhere to
+   * keep its plaintext. Discharged by a kept frame being forgotten - handled, or found unhandleable -
+   * which is what frees the room (`BaseMlsService.forgetKeptDistributionFrame`).
+   */
+  | 'kept-frames-full';
 
 /** The reasons no event re-fetches for: counted in the report, kept off the work list. */
 const NOT_ON_THE_WORK_LIST: ReadonlySet<UnackedReason> = new Set(['dispatch-failed']);

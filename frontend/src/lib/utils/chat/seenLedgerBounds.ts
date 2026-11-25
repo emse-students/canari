@@ -22,6 +22,7 @@ import {
   stateLedgerKeys,
   STATE_LEDGER,
 } from '$lib/mls-client/stateLedgers';
+import { KEPT_FRAMES_BYTE_BUDGET } from '$lib/mls-client/keptKeyGroupFrames';
 
 /** Fingerprints kept per group. The busiest measured conversation held 2 073; this leaves 2.4x. */
 export const MAX_FINGERPRINTS_PER_LEDGER = 5000;
@@ -36,7 +37,7 @@ export const MAX_LEDGERS_PER_USER = 256;
  * THE BYTES ONE LEDGER MAY TAKE, whatever its entries look like. The counts above do not bound
  * bytes: a row key of an id-less row embeds 64 characters of content the SERVER hands over, which
  * JSON may escape to six bytes each, so 5 000 of them alone passed 2 MB. 256 kB is three times the
- * busiest measured conversation (2 073 fingerprints and 2 762 row keys, about 75 kB), and a quarter
+ * busiest measured conversation (2 073 fingerprints and 2 762 row keys, about 75 kB), and under half
  * of {@link SEEN_LEDGERS_BYTE_BUDGET}, so a few busy conversations always fit together.
  */
 export const MAX_BYTES_PER_LEDGER = 256 * 1024;
@@ -50,9 +51,12 @@ const CBOR_STRING_HEADER_BYTES = 5;
 /**
  * What the seen ledgers and their index may take of {@link APP_LEDGERS_BYTE_BUDGET}. The rest is kept
  * for the ledgers this module does not bound - the send ledger's `persisted` counts (about 50 bytes
- * per group this device sent in, forgotten once their epoch is spent) and the format key.
+ * per group this device sent in, forgotten once their epoch is spent) and the format key - and for
+ * the key-group frames kept until handled, which `keptKeyGroupFrames.ts` bounds to
+ * {@link KEPT_FRAMES_BYTE_BUDGET} before it decrypts one.
  */
-const SEEN_LEDGERS_BYTE_BUDGET = APP_LEDGERS_BYTE_BUDGET - 64 * 1024;
+export const SEEN_LEDGERS_BYTE_BUDGET =
+  APP_LEDGERS_BYTE_BUDGET - 64 * 1024 - KEPT_FRAMES_BYTE_BUDGET;
 
 /** No character from 0x80 up: every one is a single UTF-8 byte, so the length IS the byte count. */
 const NON_ASCII = /[\u0080-\uffff]/;
@@ -179,7 +183,7 @@ function weightInState(userId: string, key: string): number {
  * there AFTER its last walk - an accusation if the walk re-reads one - and in the quietest group that
  * set is the smallest there is. Lowering the per-ledger caps instead would cut the BUSIEST
  * conversation, the one most likely to re-read a recent frame, on every profile, and would still not
- * bound a ledger's bytes. A budget four times the busiest measured profile (247 kB) means a real
+ * bound a ledger's bytes. A budget more than twice the busiest measured profile (247 kB) means a real
  * profile evicts nothing.
  */
 function evictOverByteBudget(userId: string, index: string[], keep: string): string[] {

@@ -121,10 +121,12 @@ function makeCtx(moveEpochDuringExport: boolean) {
     publishCurrentBase: proto.publishCurrentBase,
     groupInfoChannel: proto.groupInfoChannel,
     registerDistributionGroup: proto.registerDistributionGroup,
-    // What a registration also does - store the row, collect the frames refused before it - is
-    // `BaseMlsService.distributionGroup.test.ts`'s subject, not this file's.
+    // What a registration also does - store the row, collect the frames refused before it, run the
+    // frames kept unhandled - is `BaseMlsService.distributionGroup.test.ts`'s subject, not this
+    // file's.
     persistDistributionGroup: vi.fn(),
     collectFramesLeftForKeyGroup: vi.fn(),
+    handleKeptDistributionFrames: vi.fn(),
     // Classifying the group for the admission rule is `BaseMlsService.distributionGroup.test.ts`'s
     // subject, not this file's.
     openAdmissionOfKeyGroup: vi.fn(),

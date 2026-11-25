@@ -1124,7 +1124,10 @@ at.
 
 **Acknowledgement rules, since they decide what is lost:** a commit is applied and acknowledged (no
 payload, and a replay would only be refused); a frame that cannot be decrypted yet is NOT
-acknowledged, so the server redelivers it once the join lands; a dispatched frame is acknowledged.
+acknowledged, so the server redelivers it once the join lands; a dispatched frame is acknowledged. A
+frame whose handler THREW is not acknowledged either, and its plaintext is kept in the MLS state by
+the decrypt itself, so the redelivery (or the next start) runs the handler again instead of meeting a
+spent generation ([mls-desync-prevention section 11](mls-desync-prevention.md#11-client---a-key-group-frame-is-kept-until-its-handler-succeeds-2026-11-25)).
 
 ### Phase 4 - send, receive, repair
 
@@ -4516,7 +4519,8 @@ unreadable-row=a,declined=b,holder-online=c,epoch-left=d, newest row A..B old, k
 seed was asked for: a row it could not read, a decline from the previous answerer, a holder that
 came online, or a request held while the device left an epoch. The losses are key-group frames this
 device could not open, counted by `noteKeyGroupFrameLost` (`keyGroupFrameLosses.ts`) per
-classification (for example `past-epoch-application`). The history request line carries
+classification (for example `past-epoch-application`). A frame that WAS opened and whose handler
+failed is never among them: it is kept until handled ([mls-desync-prevention section 11](mls-desync-prevention.md#11-client---a-key-group-frame-is-kept-until-its-handler-succeeds-2026-11-25)). The history request line carries
 `reason key-group-rejoined|no-seed-held` and the same loss count.
 
 ### Old clients (floor 1.0.3), side by side

@@ -59,6 +59,7 @@ import {
   isHeartbeatFrame,
 } from '$lib/mls-client/channelEventTypes';
 import type { StateLedgerChanges } from '$lib/mls-client/stateLedgers';
+import { noteFrameKept } from '$lib/mls-client/keptKeyGroupFrames';
 import { liveMlsFrameMessage } from '$lib/mls-client/liveFrame';
 import {
   loadMlsState,
@@ -1559,14 +1560,24 @@ export class WebMlsService extends BaseMlsService {
   async processIncomingMessage(
     groupId: string,
     messageBytes: Uint8Array,
-    envelope?: EnvelopeSender
+    envelope?: EnvelopeSender,
+    keepAs?: string
   ): Promise<DecryptedApplication | null> {
-    const result = this.client.process_incoming_message_with_sender(groupId, messageBytes) as {
+    // ONE WASM CALL spends the generation and, for a key-group frame, keeps the plaintext
+    // (mls-desync-prevention section 11): no checkpoint can export between the two.
+    const result = (
+      keepAs === undefined
+        ? this.client.process_incoming_message_with_sender(groupId, messageBytes)
+        : this.client.process_incoming_message_kept(groupId, messageBytes, keepAs)
+    ) as {
       data: Uint8Array;
       sender: string | null;
       author: AuthorVerdict;
     } | null;
     if (!result) return null;
+    if (keepAs !== undefined) {
+      noteFrameKept(this.userId, keepAs, result.sender, result.data);
+    }
     assertVerifiedSender(groupId, envelope, result.sender);
     return { plaintext: result.data, author: result.author };
   }
