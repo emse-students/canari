@@ -839,6 +839,9 @@ export class ChannelService {
     const held = new Map<string, CommunityBootReadDto>();
     const ids = [...new Set(workspaceIds)];
     let released = false;
+    // READ THROUGH A CALL, not the variable: `released` flips while a handle awaits `versions`, and a
+    // direct read after the early return above it is narrowed to `false` by the compiler.
+    const isReleased = () => released;
     const chunks: string[][] = [];
     // One community: the batch would replace nothing.
     if (ids.length >= 2) {
@@ -880,12 +883,12 @@ export class ChannelService {
         // A released handle answers nothing more: its load has ended, and no request starts here.
         if (released) return null;
         const known = await versions;
-        return released ? null : (known.communities.get(workspaceId) ?? null);
+        return isReleased() ? null : (known.communities.get(workspaceId) ?? null);
       },
       salonKeyGroupVersion: async (channelId) => {
         if (released) return null;
         const known = await versions;
-        return released ? null : (known.salons.get(channelId) ?? null);
+        return isReleased() ? null : (known.salons.get(channelId) ?? null);
       },
       listChannels: async (workspaceId) => {
         await pending;

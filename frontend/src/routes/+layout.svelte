@@ -1,5 +1,6 @@
 <script lang="ts">
   import { internalPath } from '$lib/utils/internalPath';
+  import { forgetAvatarOutage } from '$lib/utils/userAvatarCache';
   import { resolve } from '$app/paths';
   import '../app.css';
   import { pageScrollPaddingClass } from '$lib/components/layout/pageScrollPadding';
@@ -755,6 +756,8 @@
    */
   afterNavigate((nav) => {
     const { shallow, type } = nav;
+    // A navigation boundary ends an avatar outage: faces the source could not serve are asked again.
+    forgetAvatarOutage('navigation');
     // The entry remembers where it came from (Back arrow) and where it was left (offset); the hook
     // ignores a shallow navigation of any type itself.
     onArrivedAtEntry(nav, pageScrollWrap);

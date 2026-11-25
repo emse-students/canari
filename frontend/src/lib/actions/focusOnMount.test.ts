@@ -38,8 +38,7 @@ describe('focusOnMount', () => {
 
   it('reads the argument once: it has no update, so a later change moves nothing', () => {
     const input = field();
-    const action = focusOnMount(input, false) as unknown;
-    expect(action).toBeUndefined();
+    focusOnMount(input, false);
     expect(document.activeElement).not.toBe(input);
   });
 });

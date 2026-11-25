@@ -745,6 +745,13 @@ and `userAvatarCache.ts` forgot `none` with the mount.
   404**: a 502 `unavailable` is not an answer. **What would make it wrong**: the user adds a photo, in
   MiGallery, which no Canari screen does and nothing here is told; initials stay until the app reloads,
   the accepted cost. Guarded by `userAvatarCache.test.ts` ("a known absence").
+- **A 5xx is remembered per user for the life of the OUTAGE, never as an absence, and with no clock** (2026-11-25;
+  one client sent ~446 requests in a minute during a 6 s gallery outage: 95 faces, ~4.7 asks each, all 502).
+  The ledger (`unavailableUsers`) makes every later mount draw the fallback without asking. It ends on an
+  EVENT: any avatar the source answered (photo, 404 or 403, from any user), the browser's `online`, the app
+  returning to the foreground, a navigation boundary (root layout), or the reader changing. One `warn` per
+  outage, one `Log.d` when it ends. **What would make it wrong**: a face stuck on initials after the source
+  is back with no event firing - bounded by the next navigation. Guarded by `userAvatarCache.test.ts`.
 - **Group photos came late for another reason**: `ConversationMeta` did not hold `imageMediaId`, so a
   restored sidebar row had no photo id until the server's group list arrived after the connection (the
   per-group `GET /api/mls/groups/:id` is NOT what feeds it). The id is now persisted (IndexedDB row, SQLite

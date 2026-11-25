@@ -122,7 +122,7 @@ export async function settlePinSessionRefusal(
   // DECIDED WHEN THE ANSWER ARRIVES, before the reset below: the login's own revocation wipe signs the
   // account out on purpose, and reading `stillListening` after it would call that sign-out a login that
   // left and announce a verdict nobody lost.
-  let listening = true;
+  let listening: boolean;
   try {
     await deps.askSession();
     listening = deps.stillListening();
