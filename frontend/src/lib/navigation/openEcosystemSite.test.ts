@@ -17,19 +17,44 @@ const openUrl = vi.fn(async (_url: string) => {});
 const apiFetch = vi.fn();
 const sites = vi.hoisted(() => ({
   list: [
-    { id: 'migallery', href: 'https://gallery.mitv.fr', handoff: true },
-    { id: 'le-cercle', href: 'https://cercle.emse.fr', handoff: false },
-  ] as Array<{ id: string; href: string; handoff: boolean }>,
+    {
+      id: 'migallery',
+      href: 'https://gallery.mitv.fr',
+      handoff: true,
+      dests: ['/', '/mes-photos', '/albums/{uuid}'],
+      signIn: { path: '/api/auth/login', returnParam: 'redirectTo' },
+    },
+    {
+      id: 'le-cercle',
+      href: 'https://cercle.emse.fr',
+      handoff: false,
+      dests: ['/'],
+      signIn: { path: '/auth/login', returnParam: null },
+    },
+  ],
 }));
 
 vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: (url: string) => openUrl(url) }));
 vi.mock('$lib/utils/apiFetch', () => ({ apiFetch: (...a: unknown[]) => apiFetch(...a) }));
 vi.mock('$lib/utils/apiUrl', () => ({ coreUrl: () => 'https://canari.example' }));
 vi.mock('$lib/utils/Log', () => ({ Log: { d: vi.fn(), i: vi.fn() } }));
-vi.mock('$lib/navigation/ecosystemSites', () => ({ ECOSYSTEM_SITES: sites.list }));
+vi.mock('$lib/navigation/ecosystemSites', async (importOriginal) => {
+  const real = await importOriginal<typeof import('$lib/navigation/ecosystemSites')>();
+  return {
+    ...real,
+    ECOSYSTEM_SITES: sites.list,
+    ecosystemSiteLink: (href: string) => real.ecosystemSiteLink(href, sites.list as never),
+  };
+});
 
-const { openEcosystemSite, resetEcosystemSiteForTests, plainSiteUrl, SETTLED_AT_MICONNECT } =
-  await import('./openEcosystemSite');
+const {
+  openEcosystemSite,
+  openEcosystemSiteLink,
+  resetEcosystemSiteForTests,
+  plainSiteUrl,
+  signInSiteUrl,
+  SETTLED_AT_MICONNECT,
+} = await import('./openEcosystemSite');
 const { Log } = await import('$lib/utils/Log');
 
 const MINTED = 'https://gallery.mitv.fr/auth/handoff#eyJ.header.sig';
@@ -125,14 +150,29 @@ describe('openEcosystemSite', () => {
       'opens through the MiConnect sign-in on %s, said at info and never at warn',
       async (code, words) => {
         apiFetch.mockImplementation(async () => json(403, { code }));
-        openEcosystemSite('migallery');
+        openEcosystemSite('migallery', '/mes-photos');
         await vi.waitFor(() => expect(openUrl).toHaveBeenCalledTimes(1));
-        expect(openUrl).toHaveBeenCalledWith('https://gallery.mitv.fr');
+        // The site's own sign-in, returning to the page the person was going to.
+        expect(openUrl).toHaveBeenCalledWith(
+          'https://gallery.mitv.fr/api/auth/login?redirectTo=%2Fmes-photos'
+        );
         expect(warn).not.toHaveBeenCalled();
         const said = vi.mocked(Log.i).mock.calls.filter(([, line]) => String(line).includes(words));
         expect(said).toHaveLength(1);
       }
     );
+
+    it.each([
+      ['HANDOFF_ACCESS_REFUSED', 403],
+      ['HANDOFF_MICONNECT_UNAVAILABLE', 503],
+      ['HANDOFF_BAD_DEST', 400],
+    ])('opens plainly, never through the sign-in, on %s', async (code, status) => {
+      apiFetch.mockImplementation(async () => json(status, { code }));
+      openEcosystemSite('migallery', '/mes-photos');
+      await vi.waitFor(() => expect(openUrl).toHaveBeenCalledTimes(1));
+      expect(openUrl).toHaveBeenCalledWith('https://gallery.mitv.fr/mes-photos');
+      expect(String(warn.mock.calls[0][0])).toContain(`class=${code} (${status})`);
+    });
 
     it('knows every 403 code the contract gives a person MiConnect must see first', () => {
       const contract = JSON.parse(
@@ -186,6 +226,18 @@ describe('openEcosystemSite', () => {
       expect(String(warn.mock.calls[0][0])).toContain('class=uncoded (503)');
     });
 
+    it('points the tab at the site sign-in when MiConnect has a page to show first', async () => {
+      apiFetch.mockResolvedValue(json(403, { code: 'HANDOFF_TERMS_NOT_ACCEPTED' }));
+      const tab = { opener: null, closed: false, location: { href: 'about:blank' } };
+      vi.spyOn(window, 'open').mockReturnValue(tab as unknown as Window);
+      openEcosystemSite('migallery', '/mes-photos');
+      await settle();
+      expect(tab.location.href).toBe(
+        'https://gallery.mitv.fr/api/auth/login?redirectTo=%2Fmes-photos'
+      );
+      expect(warn).not.toHaveBeenCalled();
+    });
+
     it('mints nothing when a popup rule blocks the tab, and never replaces Canari', async () => {
       vi.spyOn(window, 'open').mockReturnValue(null);
       openEcosystemSite('migallery');
@@ -200,6 +252,77 @@ describe('openEcosystemSite', () => {
       expect(open).toHaveBeenCalledWith('https://cercle.emse.fr', '_blank', 'noopener');
       expect(apiFetch).not.toHaveBeenCalled();
     });
+  });
+
+  describe('a link written in a message or a post', () => {
+    beforeEach(() => {
+      (window as TauriWindow).__TAURI_INTERNALS__ = {};
+    });
+
+    it('is handed off when it names a flagged site and an allowlisted path', async () => {
+      apiFetch.mockResolvedValue(json(200, { url: MINTED }));
+      expect(openEcosystemSiteLink('https://gallery.mitv.fr/mes-photos')).toBe(true);
+      await settle();
+      const [, init] = apiFetch.mock.calls[0] as [string, RequestInit];
+      expect(JSON.parse(String(init.body))).toEqual({ aud: 'migallery', dest: '/mes-photos' });
+      expect(openUrl).toHaveBeenCalledWith(MINTED);
+    });
+
+    it('names an album by its pattern in every log line, never by its id', async () => {
+      apiFetch.mockResolvedValue(json(200, { url: MINTED }));
+      const album = '/albums/0b8e6f9a-1c2d-4e3f-8a9b-0c1d2e3f4a5b';
+      expect(openEcosystemSiteLink(`https://gallery.mitv.fr${album}`)).toBe(true);
+      await settle();
+      const [, init] = apiFetch.mock.calls[0] as [string, RequestInit];
+      expect(JSON.parse(String(init.body))).toEqual({ aud: 'migallery', dest: album });
+      const said = JSON.stringify([vi.mocked(Log.i).mock.calls, vi.mocked(Log.d).mock.calls]);
+      expect(said).toContain('/albums/{uuid}');
+      expect(said).not.toContain('0b8e6f9a');
+    });
+
+    it.each([
+      'https://gallery.mitv.fr/mes-photos/confirmer',
+      'https://gallery.mitv.fr/mes-photos?x=1',
+      'https://cercle.emse.fr/',
+      'https://example.com/mes-photos',
+    ])('is left to the ordinary opener, minting nothing: %s', async (href) => {
+      expect(openEcosystemSiteLink(href)).toBe(false);
+      await settle();
+      expect(apiFetch).not.toHaveBeenCalled();
+      expect(openUrl).not.toHaveBeenCalled();
+    });
+
+    it('never lets the token leave for another origin than the site the link named', async () => {
+      // A minted URL naming another place is refused; the link's own site opens plainly.
+      apiFetch.mockResolvedValue(
+        json(200, { url: 'https://gallery.mitv.fr.evil.example/auth/handoff#t' })
+      );
+      openEcosystemSiteLink('https://gallery.mitv.fr/');
+      await settle();
+      expect(openUrl).toHaveBeenCalledWith('https://gallery.mitv.fr');
+      expect(String(warn.mock.calls[0][0])).toContain('class=HandoffUrlMismatchError');
+    });
+  });
+
+  it('writes a sign-in address that returns only to an allowlisted path', () => {
+    const [gallery, cercle] = sites.list as never[];
+    expect(signInSiteUrl(gallery, '/mes-photos')).toBe(
+      'https://gallery.mitv.fr/api/auth/login?redirectTo=%2Fmes-photos'
+    );
+    expect(signInSiteUrl(gallery, '/albums/0b8e6f9a-1c2d-4e3f-8a9b-0c1d2e3f4a5b')).toBe(
+      'https://gallery.mitv.fr/api/auth/login?redirectTo=%2Falbums%2F0b8e6f9a-1c2d-4e3f-8a9b-0c1d2e3f4a5b'
+    );
+    // Home needs no return path; a path off the allowlist is never passed.
+    expect(signInSiteUrl(gallery, '/')).toBe('https://gallery.mitv.fr/api/auth/login');
+    expect(signInSiteUrl(gallery, '/mes-photos/confirmer')).toBe(
+      'https://gallery.mitv.fr/api/auth/login'
+    );
+    expect(signInSiteUrl(gallery, '//evil.example')).toBe('https://gallery.mitv.fr/api/auth/login');
+    // A site that reads no return path lands on its home after the sign-in.
+    expect(signInSiteUrl(cercle, '/')).toBe('https://cercle.emse.fr/auth/login');
+    // A site outside MiConnect has no sign-in to send anyone to.
+    const portail = { id: 'portail-etu', href: 'https://p.example', dests: [], signIn: null };
+    expect(signInSiteUrl(portail as never, '/')).toBe('https://p.example');
   });
 
   it('writes a plain address from the origin and the path', () => {

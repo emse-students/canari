@@ -56,6 +56,26 @@ handoff session) does not cover them - admin-only, they set an impersonation coo
 user data; and at the stable that ships the flag, confirm Canari's `iss` (the first `FRONTEND_URL`)
 equals MiGallery's `CANARI_HANDOFF_ISSUER`, then open MiGallery from Canari once and read it signed in.
 
+**The owner's two decisions of 2026-11-25** ([decisions](../decisions/owner-decisions-of-2026-11-25.md), item 10),
+built the same day ([sessions](../sessions.md#the-sign-in-handoff-to-the-miconnect-sites-2026-11-08)).
+Measured on production that morning (the `1.8.1` core-service, about four hours): 27 mints for
+MiGallery, 21 refused `terms_not_accepted` (everyone who accepted MiConnect's terms before the text
+of 2026-11-24, the owner included), 3 `miconnect_unreachable` - and a refused mint opened the site
+plainly, so the person landed signed out. (1) **A mint refused because MiConnect has a page to show
+the person first** (`HANDOFF_TERMS_NOT_ACCEPTED`, `HANDOFF_ALUMNI_LINK_REQUIRED`,
+`HANDOFF_ALUMNI_COTISANT_REQUIRED`) **opens the site through its own MiConnect sign-in entry**, with
+the destination as the return target when the site reads one and the path is on its `dests`: the
+person sees MiConnect's page once and lands signed in where they were going. Each site declares the
+entry in the registry (`signIn`): MiGallery `/api/auth/login?redirectTo=<path>`
+(`../MiGallery/src/routes/api/auth/login/+server.ts`, `safeRedirectTarget`), Sky `/auth/login` and
+Le Cercle `/auth/login`, neither of which reads a return path today - their `dests` are `['/']`, so
+nothing is lost; the day one of them gains a page to land on, it adds a return parameter to its
+login route first. Every other refusal keeps the plain open, at its level. (2) **A link to a flagged
+site tapped in a message or a post is handed off** when its path is exactly one of the site's
+`dests` (no query, no fragment, no credentials), after the Safe Browsing gate; anything else opens
+as before. This REVERSES the "links inside messages" row of section 3.7, and the row now says why
+the reversal is safe.
+
 **A site's flag goes on only when ALL of these hold** (security review of #3155, 2026-11-08; the
 same list heads `libs/contracts/ecosystem-sites.json`):
 
@@ -135,9 +155,9 @@ OIDC sign-in and its MiConnect end-session (`frontend/src/lib/stores/auth.ts:594
 
 **Opened plainly, out of scope:** Portail-etu (`ecosystemSites.ts:45-50`; it has no sign-in at all,
 [profiles-and-access](../profiles-and-access.md) section 1), payment checkouts, calendar
-exports, store and release pages, links inside messages and posts, legal links, and a MiGallery
-album link inside a message (`frontend/src/lib/utils/ecosystemHosts.ts:55-66` only previews it).
-The last one is excluded deliberately, see section 3.7.
+exports, store and release pages, links inside messages and posts, and legal links. A link to a
+flagged site inside a message or a post was excluded too until 2026-11-25; since the owner's
+decision of that day it is handed off when its path is on the site's `dests` (section 3.7).
 
 ### 2. How the three sites authenticate today
 
@@ -337,7 +357,7 @@ state-changing action without a fresh MiConnect sign-in.
 | **Phishing** | a token reaches only a registered origin. A phishing page cannot get one, because Canari never builds a URL from input, and a token stolen anyway is bound to one `aud` and expires in 60 s. The landing page loads no third-party script that could read the fragment |
 | **CSRF on the redemption** | JSON with a same-origin `Origin` check. This stops a cross-site POST, and NOTHING more: the site's OWN landing page posts the token, so the check passes for any token that reaches it |
 | **Login CSRF - the serious one** (review of 2026-11-08, High) | **The attack:** the attacker's server holds HIS Canari session and mints a fresh token on every visit (the throttle allows 20 a minute), then sends any visitor to `<site>/auth/handoff#<token>`. The landing page posts it, `Origin` passes, and a visitor with no site session is signed in AS THE ATTACKER. On MiGallery, a victim then invited to enrol their face (from `/mes-photos`, which Canari itself links) puts their biometric into the attacker's account. **The 60 s lifetime is no defence**: the token is minted per visit. **The answers, in order of weight:** **(a) decisive - a session opened by a handoff is MARKED** (a column on the site's session row), and every state-changing action that matters requires a FRESH MiConnect OIDC sign-in from such a session (a step-up that replaces the mark): on MiGallery the face enrolment, every consent or grant, and the `/mes-photos/confirmer` "C'est moi" actions. An attacker's account can be browsed into, never written to by the victim. **(b) the interstitial of 3.6, always**: "Vous allez être connecté en tant que B", with B's photo, before anything is written, even with no session. It warns, it does not prove: a victim may click through. **(c) recorded, not chosen: binding the token to the opening browser.** The site sets a nonce cookie and sends the browser through a Canari app link carrying the nonce, Canari mints with it, and the site redeems only a token whose nonce equals its cookie. It defeats the attack completely, at a UX cost: every open becomes a round trip site -> app -> browser, which on iOS and Android leaves the browser and comes back through the app's link handling, and fails where the app is not installed or the link is not claimed. Not chosen while (a) holds; it is the answer if a site cannot mark its sessions. **Sky and Le Cercle:** the same review of their state-changing actions is owed before their flags go on (section 0) |
-| **Links inside messages** | **never handed off.** Otherwise a link a stranger wrote would decide which path the victim's own signed-in session opens, and would extend any GET with side effects on that site to users whose cookie had expired. Only Canari's own buttons (the launcher, the profile photo, a push tap) mint |
+| **Links inside messages** | **Handed off only on a path of the site's `dests`, since 2026-11-25** (owner; until then never). The two risks this row named are bounded, not ignored: (a) *a stranger chooses which path the reader's session opens* - only an exact registered origin whose flag is on, and only a path of the closed allowlist (`/`, `/mes-photos`, `/albums/{uuid}` on MiGallery: pages, none of them an action; `/mes-photos/confirmer` and the admin GET routes are off it), with no query, fragment or credentials, matched on the path the browser would load (`ecosystemSiteLink`, through a byte-identical copy of the server's `destIsAllowed`, `handoffDest.ts`); core-service refuses any other `dest` anyway; (b) *a GET with side effects extended to readers whose cookie had expired* - MiGallery's loads of those three pages only read (SELECT), and every POST/PUT/PATCH/DELETE of a handoff session is refused until a fresh MiConnect sign-in (its step-up, `hooks.server.ts`), so a handoff session opened from a link can browse and never write. **The token cannot leak to the link's author**: it is minted for the READER's own session, core-service composes the URL on the site's own `/auth/handoff`, the client refuses any other origin (`HandoffUrlMismatchError`), and it rides in the fragment. The Safe Browsing gate runs first, for every link (`openExternal`). **The sign-in branch** (a refusal code MiConnect must show a page for) **lands an UNMARKED session**, opened by the reader's own full MiConnect sign-in: exactly a plain open followed by the reader pressing "Se connecter" themselves, and only ever on an allowlisted path, since no other return path reaches the sign-in entry |
 | **Minting abuse** | an access token is required, the account is throttled, every mint is logged, and `aud` and `dest` come from closed lists |
 
 #### 3.8 Logout
@@ -520,7 +540,8 @@ so an unread earlier notice is replaced on the device rather than stacked.
 
 Reversible choices taken as recommended unless the owner says otherwise: ES256 and a JWKS; 60 s;
 the fragment; the confirmation before a session for another `sub` is replaced; no handoff from
-links inside content; social-service as the receiver; one key per caller.
+links inside content (reversed by the owner on 2026-11-25 for a path of the site's `dests`, section
+3.7); social-service as the receiver; one key per caller.
 
 ### 8. The contract MiGallery implements (WP-H4)
 

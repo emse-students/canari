@@ -9,6 +9,11 @@ vi.mock('$lib/utils/checkLinkSafety', () => ({
   confirmUnsafeLinkIfNeeded: (...args: unknown[]) => confirmUnsafeLinkIfNeeded(...args),
 }));
 vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: (...args: unknown[]) => openUrl(...args) }));
+/** The handoff of a sibling-site link: its matching is pinned in `ecosystemSites.test.ts`. */
+const openEcosystemSiteLink = vi.fn((_url: string) => false);
+vi.mock('$lib/navigation/openEcosystemSite', () => ({
+  openEcosystemSiteLink: (url: string) => openEcosystemSiteLink(url),
+}));
 
 import {
   ECOSYSTEM_SITE_ATTRIBUTE,
@@ -151,6 +156,8 @@ describe('openExternal', () => {
   beforeEach(() => {
     openUrl.mockReset();
     confirmUnsafeLinkIfNeeded.mockReset();
+    openEcosystemSiteLink.mockReset();
+    openEcosystemSiteLink.mockReturnValue(false);
     delete (window as TauriWindow).__TAURI_INTERNALS__;
   });
 
@@ -188,5 +195,49 @@ describe('openExternal', () => {
 
     expect(open).not.toHaveBeenCalled();
     expect(openUrl).not.toHaveBeenCalled();
+  });
+
+  it('hands a sibling-site link to the handoff once the gate passes, and opens nothing else', async () => {
+    const order: string[] = [];
+    confirmUnsafeLinkIfNeeded.mockImplementation(async () => {
+      order.push('gate');
+      return true;
+    });
+    openEcosystemSiteLink.mockImplementation(() => {
+      order.push('handoff');
+      return true;
+    });
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+
+    await openExternal('https://site.example/mes-photos');
+
+    expect(order).toEqual(['gate', 'handoff']);
+    expect(openEcosystemSiteLink).toHaveBeenCalledWith('https://site.example/mes-photos');
+    expect(open).not.toHaveBeenCalled();
+    expect(openUrl).not.toHaveBeenCalled();
+  });
+
+  it('never hands a link the gate refused to the handoff - Safe Browsing runs first for every link', async () => {
+    confirmUnsafeLinkIfNeeded.mockResolvedValue(false);
+    openEcosystemSiteLink.mockReturnValue(true);
+
+    await openExternal('https://site.example/mes-photos');
+
+    expect(openEcosystemSiteLink).not.toHaveBeenCalled();
+    expect(openUrl).not.toHaveBeenCalled();
+  });
+
+  it('opens a link the handoff declines exactly as before', async () => {
+    confirmUnsafeLinkIfNeeded.mockResolvedValue(true);
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+
+    await openExternal('https://site.example/admin');
+
+    expect(openEcosystemSiteLink).toHaveBeenCalledWith('https://site.example/admin');
+    expect(open).toHaveBeenCalledWith(
+      'https://site.example/admin',
+      '_blank',
+      'noopener,noreferrer'
+    );
   });
 });

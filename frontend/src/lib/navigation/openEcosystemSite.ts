@@ -1,4 +1,9 @@
-import { ECOSYSTEM_SITES, type EcosystemSite } from '$lib/navigation/ecosystemSites';
+import {
+  ECOSYSTEM_SITES,
+  ecosystemSiteLink,
+  type EcosystemSite,
+} from '$lib/navigation/ecosystemSites';
+import { destIsAllowed, destPattern } from '$lib/navigation/handoffDest';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { refusalFromResponse, ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { coreUrl } from '$lib/utils/apiUrl';
@@ -14,8 +19,10 @@ const HANDOFF_NOT_OFFERED = 'HANDOFF_NOT_OFFERED';
 /**
  * The 403 codes of a person MiConnect itself must see first - the current terms, the Alumni link step
  * (D44), or why the Alumni gate of MiGallery / Le Cercle stops them (D42-D43). For that person the
- * site's own MiConnect sign-in IS the primary path, since MiConnect shows them that page: said at info
- * with what MiConnect will ask, never at warn. The codes are libs/contracts/ecosystem-sites.json's.
+ * site's own MiConnect sign-in IS the primary path, since MiConnect shows them that page: the site is
+ * opened THROUGH that sign-in ({@link signInSiteUrl}, owner 2026-11-25), so they see the page once
+ * and land signed in where they were going; said at info with what MiConnect will ask, never at warn.
+ * The codes are libs/contracts/ecosystem-sites.json's.
  */
 export const SETTLED_AT_MICONNECT: Readonly<Record<string, string>> = {
   HANDOFF_TERMS_NOT_ACCEPTED: 'the current MiConnect terms are not accepted yet',
@@ -37,9 +44,31 @@ class HandoffUrlMismatchError extends Error {
 /** Said once per app run: an estate without the handoff opens every site plainly by design. */
 let notOfferedSaid = false;
 
+/**
+ * `dest` as a log line may name it: its allowlist pattern (`/albums/{uuid}`, never the album id a
+ * link in a message carried), as core-service's audit line does; `off-list` for any other path.
+ */
+function loggedDest(site: EcosystemSite, dest: string): string {
+  return destPattern(dest, site.dests) ?? 'off-list';
+}
+
 /** The plain address of `dest` on `site`: today's behaviour, and what a site without the flag gets. */
 export function plainSiteUrl(site: EcosystemSite, dest: string): string {
   return dest === '/' ? site.href : `${site.href}${dest}`;
+}
+
+/**
+ * The site's own MiConnect sign-in entry, returning to `dest` (libs/contracts/ecosystem-sites.json's
+ * `signIn`). The return path is passed only when the site reads one, `dest` is not its home, and
+ * `dest` is on the site's allowlist: a path the registry did not vouch for never reaches a sign-in.
+ * A site without an entry (none outside MiConnect) gets its plain address.
+ */
+export function signInSiteUrl(site: EcosystemSite, dest: string): string {
+  if (!site.signIn) return plainSiteUrl(site, dest);
+  const entry = `${site.href}${site.signIn.path}`;
+  const { returnParam } = site.signIn;
+  if (!returnParam || dest === '/' || !destIsAllowed(dest, site.dests)) return entry;
+  return `${entry}?${returnParam}=${encodeURIComponent(dest)}`;
 }
 
 /**
@@ -50,7 +79,7 @@ export function plainSiteUrl(site: EcosystemSite, dest: string): string {
  * because this is the one place a credential is about to leave the app.
  */
 async function mintSiteHandoff(site: EcosystemSite, dest: string): Promise<string> {
-  Log.d('ecosystemSite.mint', { site: site.id, dest });
+  Log.d('ecosystemSite.mint', { site: site.id, dest: loggedDest(site, dest) });
   const res = await apiFetch(`${coreUrl()}/api/auth/handoff`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -66,19 +95,22 @@ async function mintSiteHandoff(site: EcosystemSite, dest: string): Promise<strin
 }
 
 /**
- * Says why a site opens plainly although its handoff is on. The PRIMARY PATH FAILED, so it is said
- * at `warn` with its class (the refusal's code and status, or the error's name) - except an estate
- * that holds no key, whose plain open is its configured state and is said once at info, and a person
- * MiConnect must show a page first ({@link SETTLED_AT_MICONNECT}), for whom the site's MiConnect
- * sign-in is the primary path, said at info.
+ * Where a site opens when its handoff is on but no token was minted, and why, said once.
+ *
+ * A person MiConnect must show a page first ({@link SETTLED_AT_MICONNECT}) opens the site's MiConnect
+ * sign-in towards `dest` ({@link signInSiteUrl}): that is their primary path, said at info. Every
+ * other refusal opens the site plainly, as before. The PRIMARY PATH FAILED there, so it is said at
+ * `warn` with its class (the refusal's code and status, or the error's name) - except an estate that
+ * holds no key, whose plain open is its configured state and is said once at info.
  */
-function reportPlainOpen(site: EcosystemSite, err: unknown): void {
+function urlWithoutHandoff(site: EcosystemSite, dest: string, err: unknown): string {
+  const plain = plainSiteUrl(site, dest);
   if (err instanceof ApiRefusalError && err.status === 404 && err.code === HANDOFF_NOT_OFFERED) {
     if (!notOfferedSaid) {
       notOfferedSaid = true;
       Log.i('ecosystemSite', 'no sign-in handoff on this estate - sites open plainly');
     }
-    return;
+    return plain;
   }
   // MiConnect has a page to show this person first (terms, Alumni link, Alumni gate): EXPECTED for
   // whole cohorts, and opening the site through its sign-in is how they reach that page. One info
@@ -89,7 +121,7 @@ function reportPlainOpen(site: EcosystemSite, err: unknown): void {
       : undefined;
   if (settled) {
     Log.i('ecosystemSite', `${site.id} opens through its MiConnect sign-in: ${settled}`);
-    return;
+    return signInSiteUrl(site, dest);
   }
   const cls =
     err instanceof ApiRefusalError
@@ -101,6 +133,7 @@ function reportPlainOpen(site: EcosystemSite, err: unknown): void {
     `[ecosystemSite] handoff to ${site.id} not minted, class=${cls} - opening it plainly`,
     err
   );
+  return plain;
 }
 
 /** Opens `url` in the system browser (native shells). A rejected open is logged, never thrown. */
@@ -123,16 +156,17 @@ function openInSystemBrowser(url: string, site: EcosystemSite): void {
  * A site whose `handoff` flag is on is opened SIGNED IN: a token is minted for this tap
  * ({@link mintSiteHandoff}) and the site redeems it. A site without the flag is opened plainly,
  * which is today's behaviour and not a fallback. A refused or failed mint opens it plainly too, and
- * THAT is a fallback: said at warn with its class ({@link reportPlainOpen}) - unless MiConnect has a
- * page to show the person first, which only its own sign-in reaches.
+ * THAT is a fallback: said at warn with its class ({@link urlWithoutHandoff}) - unless MiConnect has a
+ * page to show the person first, which only its own sign-in reaches: the site is then opened through
+ * that sign-in, returning to `dest`.
  *
  * Never leaves Canari: the system browser on the native shells; a NEW TAB on the web, opened
  * `about:blank` in the click's own turn - a window opened after an `await` is no longer a user
  * gesture and a popup blocker drops it - then cut from its opener and pointed at the URL once the
  * mint answers (the Adminer pattern, `adminerSession.ts`).
  *
- * Never for a link inside a message or a post: a link someone else wrote must not choose what the
- * user's own session opens (the design note, section 3.7).
+ * A link inside a message or a post reaches it only through {@link openEcosystemSiteLink}, and only
+ * for a path of the site's allowlist (owner, 2026-11-25).
  */
 export function openEcosystemSite(id: EcosystemSite['id'], dest = '/'): void {
   const site = ECOSYSTEM_SITES.find((s) => s.id === id);
@@ -141,7 +175,10 @@ export function openEcosystemSite(id: EcosystemSite['id'], dest = '/'): void {
     return;
   }
   const plain = plainSiteUrl(site, dest);
-  Log.i('ecosystemSite', `opening ${site.id} ${dest} handoff=${site.handoff ? 'on' : 'off'}`);
+  Log.i(
+    'ecosystemSite',
+    `opening ${site.id} ${loggedDest(site, dest)} handoff=${site.handoff ? 'on' : 'off'}`
+  );
 
   if (isTauriRuntime()) {
     if (!site.handoff) {
@@ -149,10 +186,7 @@ export function openEcosystemSite(id: EcosystemSite['id'], dest = '/'): void {
       return;
     }
     void mintSiteHandoff(site, dest)
-      .catch((err: unknown) => {
-        reportPlainOpen(site, err);
-        return plain;
-      })
+      .catch((err: unknown) => urlWithoutHandoff(site, dest, err))
       .then((url) => openInSystemBrowser(url, site));
     return;
   }
@@ -171,10 +205,7 @@ export function openEcosystemSite(id: EcosystemSite['id'], dest = '/'): void {
   // The opener link is cut before the tab is steered: the site must not reach back into Canari.
   tab.opener = null;
   void mintSiteHandoff(site, dest)
-    .catch((err: unknown) => {
-      reportPlainOpen(site, err);
-      return plain;
-    })
+    .catch((err: unknown) => urlWithoutHandoff(site, dest, err))
     .then((url) => {
       if (tab.closed) {
         Log.d('ecosystemSite.tabClosed', { site: site.id });
@@ -182,6 +213,34 @@ export function openEcosystemSite(id: EcosystemSite['id'], dest = '/'): void {
       }
       tab.location.href = url;
     });
+}
+
+/**
+ * OPENS A LINK WRITTEN IN A MESSAGE OR A POST THROUGH THE HANDOFF, when it points at a flagged site
+ * and a path of its allowlist ({@link ecosystemSiteLink}: exact origin, no query, no fragment, no
+ * credentials). Returns false, opening nothing, for any other link, which then opens as any external
+ * link does. Called by `openExternal` AFTER its Safe Browsing gate, so that gate runs first for
+ * every link (owner, 2026-11-25).
+ *
+ * Why a link someone else wrote may do this: it cannot choose the site (the origin must be a
+ * registered one), the page (only an allowlisted path, each one a page a handoff session can browse
+ * and never change anything from - the site's step-up, design note section 3.7), or where the token
+ * goes (core-service composes the URL on the site's own landing path, and {@link mintSiteHandoff}
+ * refuses any other). The token is minted for the READER's own session, so nobody is signed in as
+ * anybody else.
+ */
+export function openEcosystemSiteLink(href: string): boolean {
+  const link = ecosystemSiteLink(href);
+  if (!link) {
+    Log.d('ecosystemSite.link', { handoff: false });
+    return false;
+  }
+  Log.i(
+    'ecosystemSite',
+    `a link in content opens ${link.site.id} ${loggedDest(link.site, link.dest)} through the handoff`
+  );
+  openEcosystemSite(link.site.id, link.dest);
+  return true;
 }
 
 /** Test seam: forgets that the not-offered state was said. */

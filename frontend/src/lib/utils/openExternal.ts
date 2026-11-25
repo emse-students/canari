@@ -5,6 +5,7 @@ import { isTauriRuntime } from '$lib/utils/tauriRuntime';
 import { MOBILE_APP_PROTOCOL } from '$lib/mobile/appSiteAssociation';
 import { handlePlaceLinkClick } from '$lib/navigation/scrollToTop';
 import { BACK_LINK_ATTRIBUTE, backLinkTaken } from '$lib/navigation/backToOrigin';
+import { openEcosystemSiteLink } from '$lib/navigation/openEcosystemSite';
 
 export { isTauriRuntime };
 
@@ -14,7 +15,7 @@ const EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:', 'tel:', 'webca
  * Marks an anchor whose click `openEcosystemSite` owns (the app launcher). {@link handleAppLinkClick}
  * leaves such an anchor to its own `onclick`: otherwise, on the native shells, this capture-phase
  * handler would open the bare address before the sign-in handoff could be minted. Declared here,
- * not beside the opener, so this module imports nothing of the authenticated fetch.
+ * beside the one handler that reads it.
  */
 export const ECOSYSTEM_SITE_ATTRIBUTE = 'data-ecosystem-site';
 
@@ -120,10 +121,17 @@ export function installAppLinkClickHandler(): void {
  * `AppLink`/`LinkPreviewCard` gated their own `onclick`, but on Tauri that handler never ran -
  * the capture-phase listener below already intercepted the click and called this function
  * directly. Gating here instead covers every current and future caller uniformly.
+ *
+ * For the same reason it is where a link to a sibling site is handed off (`openEcosystemSiteLink`):
+ * every path that opens a link written in a message or a post comes through here, after the gate.
  */
 export async function openExternal(url: string): Promise<void> {
   const proceed = await confirmUnsafeLinkIfNeeded(url);
   if (!proceed) return;
+
+  // A link to a sibling site whose handoff is on, at a path of its allowlist, opens the reader
+  // signed in (owner, 2026-11-25) - AFTER the gate above, which no link skips.
+  if (openEcosystemSiteLink(url)) return;
 
   if (isTauriRuntime()) {
     const { openUrl } = await import('@tauri-apps/plugin-opener');

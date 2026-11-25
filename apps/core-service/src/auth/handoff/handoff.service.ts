@@ -9,6 +9,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import type { KeyObject } from 'node:crypto';
+import { destPattern } from './handoff-dest';
 import {
   destIsAllowed,
   ECOSYSTEM_SITES,
@@ -211,8 +212,11 @@ export class HandoffService {
       exp: iat + HANDOFF_TOKEN_LIFETIME_SECONDS,
       dest: path,
     });
-    // THE AUDIT LINE, always - and never the token, here or anywhere.
-    this.logger.log(`[HANDOFF] minted aud=${site.id} user=${userId} jti=${jti} dest=${path}`);
+    // THE AUDIT LINE, always - and never the token, here or anywhere. The dest is named by its
+    // allowlist PATTERN (`/albums/{uuid}`), never by the album id a link in a message carried.
+    this.logger.log(
+      `[HANDOFF] minted aud=${site.id} user=${userId} jti=${jti} dest=${destPattern(path, site.dests)}`
+    );
     return {
       url: `${site.origin}${HANDOFF_LANDING_PATH}#${token}`,
       expiresInSeconds: HANDOFF_TOKEN_LIFETIME_SECONDS,
