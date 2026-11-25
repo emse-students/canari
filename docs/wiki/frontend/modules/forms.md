@@ -2576,6 +2576,33 @@ A new editor on an older server loses the settings at save (whitelist), no gate.
 question was judged not cheap enough to be quiet (a label heuristic in French and English, shown while typing); the
 production signal is better served by the new choice comment and "Autre" above.
 
+## A group made from a form's respondents (owner, 2026-11-19)
+
+**Decision** (owner, 2026-11-19, from a user's request): a "Créer un groupe" button on the responses screen
+creates a group conversation with everyone who answered, the same effect as creating a group and adding each
+respondent by hand. Charter: principle 1 (an anonymous form's group would reveal who answered, so it is never
+offered there).
+
+- **Who has it:** whoever reads the named answers (`assertFormManager`: the creator and the managers). The route
+  is `GET /forms/:id/respondents` (`form-respondents.ts`, `FormsService.respondentsForGroup`).
+- **Where it is refused, on the SERVER:** an anonymous form (`409 FORM_RESPONDENTS_ANONYMOUS`) and a public form
+  (`409 FORM_RESPONDENTS_PUBLIC`, a guest has no account). The button is not drawn there either
+  (`respondentGroupOffered`), but the refusal never depends on it.
+- **Who counts:** each account once, in first-answer order; a guest row, a `cancelled` and an `expired` answer
+  name nobody. A waiting-list answer counts, the person answered. The signed-in account is never one of its
+  own members.
+- **The button only fills the picker** (`groupDraft.svelte.ts`, memory only, named by the account that made
+  it): the chat page's sidebar opens the new-discussion panel with the respondents chosen
+  (`SidebarNewChatModal`'s `initialMembers`), and the member names the group and presses create. The invitation,
+  the admission and the outcome it tells are exactly a manual add's: the button grants no new power.
+- **No ceiling exists to share.** The "same group-size ceiling" of the decision is vacuous today: the panel and
+  the invitation path hold no member limit (production's largest group conversation is 42 people,
+  [dm-vs-community-encryption](../../protocols/dm-vs-community-encryption.md)). If one is added to the invitation path,
+  the button inherits it and must say the count it refused, never truncate (not built, nothing to refuse).
+- **Respondents who left** (no `users` row) are skipped and COUNTED: a toast names how many. Fewer than two other
+  people is refused in a toast (one person is a direct conversation).
+- **Read on a phone:** [reading entry](../../backlog.d/reading-owed-a-group-made-from-a-form-s-respondents.md).
+
 ## Note on form management
 
 Association admins reach the same list, scoped to their association, through the associations
