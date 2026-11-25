@@ -1,6 +1,8 @@
 ## Reading owed - a CanaReel publish survives the screen sleeping and the app being left
 
-target: 1.8.0
+target: 1.8.1
+
+_2026-11-25: moved to 1.8.1 when 1.8.0 shipped._
 
 Built 2026-11-24: the CanaReels camera's "Publier" queues the take in the background publish queue,
 and the screen stays on while a post is worked on ([reels](../frontend/modules/reels.md#publishing-r3-on-c2-and-c3),
