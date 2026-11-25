@@ -43,6 +43,7 @@ import { TransportFailureError } from '$lib/utils/transportFailure';
 import { UploadAbortedError } from '$lib/utils/uploadXhr';
 import type { MediaRef } from '$lib/media';
 import { REEL_MEDIA_EXPIRED } from '$lib/reels/reelMediaExpired';
+import { VideoPrepareError } from '$lib/video/prepareVideoForUpload';
 
 /** An in-memory stand-in for `PublishQueueStore`, cloning like IndexedDB does. */
 function memoryStore() {
@@ -152,6 +153,10 @@ interface Rig {
   adoptPlan: Array<() => Promise<void>>;
   /** What an adoption that does not throw answers. */
   adoptAnswer: ChatTakeAdoption;
+  /** Per-call behaviour of the preparation: throw instead of preparing. */
+  preparePlan: Array<() => Promise<void>>;
+  /** Whether the app is in view (`isAppInView`). */
+  inView: boolean;
   /** How many times a pass ended (`passEnded`). */
   passesEnded: number;
   /** Every line the queue logged. */
@@ -185,6 +190,8 @@ function rig(store = memoryStore()): Rig {
     waitEnded: [] as string[],
     adoptPlan: [] as Rig['adoptPlan'],
     adoptAnswer: 'adopted',
+    preparePlan: [] as Rig['preparePlan'],
+    inView: true,
     passesEnded: 0,
     logs: [] as string[],
   } as Rig;
@@ -194,6 +201,8 @@ function rig(store = memoryStore()): Rig {
     prepare: async (file, _onProgress, _signal, take) => {
       r.calls.push(`prepare:${file.name}`);
       r.takes.push(take);
+      const step = r.preparePlan.shift();
+      if (step) await step();
       if (file.type.startsWith('video/')) {
         return {
           file: new File([await file.arrayBuffer()], file.name.replace(/\.\w+$/, '.mp4'), {
@@ -274,6 +283,7 @@ function rig(store = memoryStore()): Rig {
       r.payloads.push({ ...p });
     },
     assertNotMuted: async () => undefined,
+    inView: () => r.inView,
     failureMessage: (e) => `refused: ${(e as Error).message}`,
     lock: (fn) => fn(),
     // NO CLOCK: a wait ends only when the queue is woken.
@@ -1211,5 +1221,78 @@ describe('PublishQueue - every way a pass ends is told (the screen it held goes 
     // The last row drawn still says it was being worked on: only the end of the pass says otherwise.
     expect(r.views.map((v) => v.phase)).toEqual(['uploading']);
     expect(r.passesEnded).toBe(1);
+  });
+});
+
+describe('a preparation the app leaving the view stopped (iPhone 12, 1.8.1-alpha.1)', () => {
+  const interrupted = () =>
+    Promise.reject(new VideoPrepareError('interrupted', 'video: the encoder stopped out of view'));
+
+  it('is classified interrupted from its typed fault, never failed', () => {
+    expect(classifyPublishFailure(new VideoPrepareError('interrupted', 'x'))).toBe('interrupted');
+    expect(classifyPublishFailure(new VideoPrepareError('encode', 'x'))).toBe('failed');
+  });
+
+  it('keeps the post out of view, prepares it again once back in view, and publishes it once', async () => {
+    const r = rig();
+    queuePost(r.store, 'p1', 1);
+    r.inView = false;
+    r.preparePlan.push(interrupted);
+    await r.queue.drain();
+
+    // Kept as it was: no failure, nothing prepared recorded, nothing created, the pass ended.
+    const kept = r.store.posts.get('p1')!;
+    expect(kept.failure).toBeUndefined();
+    expect(kept.media[0].prepared).toBeUndefined();
+    expect(r.created).toEqual([]);
+    expect(r.views.find((v) => v.id === 'p1')?.phase).toBe('waiting');
+    expect(r.calls).toEqual(['prepare:p0.jpg']);
+
+    // A wake (a reconnect, `online`) does not start it: only the app back in view does.
+    r.queue.wake('online');
+    await settle();
+    expect(r.calls).toEqual(['prepare:p0.jpg']);
+
+    r.inView = true;
+    r.queue.backInView();
+    await settle();
+    await r.queue.drain();
+    expect(r.calls.filter((c) => c.startsWith('prepare:'))).toHaveLength(2);
+    expect(r.created.map((c) => c.id)).toEqual(['p1']);
+    expect(r.published).toEqual(['p1']);
+    expect(r.store.posts.has('p1')).toBe(false);
+  });
+
+  it('goes again at once when the app is already back in view as the interruption lands', async () => {
+    const r = rig();
+    queuePost(r.store, 'p1', 1);
+    r.inView = true;
+    r.preparePlan.push(interrupted);
+    await r.queue.drain();
+    expect(r.calls.filter((c) => c.startsWith('prepare:'))).toHaveLength(2);
+    expect(r.published).toEqual(['p1']);
+  });
+
+  it('a back-in-view edge with nothing interrupted starts nothing', async () => {
+    const r = rig();
+    r.queue.backInView();
+    await settle();
+    expect(r.passesEnded).toBe(0);
+  });
+
+  it('an encoder failure with the app in view throughout stays a failure with its Retry', async () => {
+    const r = rig();
+    queuePost(r.store, 'p1', 1);
+    r.preparePlan.push(() =>
+      Promise.reject(new VideoPrepareError('encode', 'video: the encoder failed'))
+    );
+    await r.queue.drain();
+    const stopped = r.store.posts.get('p1')!;
+    expect(stopped.failure?.stage).toBe('mediaPrepare');
+    expect(stopped.failure?.final).toBeUndefined();
+    expect(r.created).toEqual([]);
+    r.queue.backInView();
+    await settle();
+    expect(r.calls).toEqual(['prepare:p0.jpg']);
   });
 });

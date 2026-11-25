@@ -26,7 +26,7 @@ import { serverPublishQueue } from '$lib/stores/appVersionCheck.svelte';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { showToast } from '$lib/stores/toast.svelte';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
-import { onAppForegroundChange } from '$lib/utils/appForeground';
+import { isAppInView, onAppForegroundChange, onAppViewChange } from '$lib/utils/appForeground';
 import { decodeTokenClaims } from '$lib/utils/jwtClaims';
 import { appendLog } from '$lib/utils/sessionLog';
 import {
@@ -166,6 +166,7 @@ export function startPublishQueue(userId: string): void {
     withdrawPost: (postId, mediaIds) => withdrawPost(postId, mediaIds),
     serverReady: serverPublishQueue,
     assertNotMuted,
+    inView: isAppInView,
     assertAccount: async () => {
       await token();
     },
@@ -226,6 +227,11 @@ export function startPublishQueue(userId: string): void {
       // Only the native shells emit it; on the web a background tab keeps uploading.
       onAppForegroundChange((foreground) => {
         if (foreground) queue.resumeAfterSuspension();
+      }),
+      // The edge that prepares again a video whose encoder the app leaving the view stopped - on
+      // iOS `didBecomeActive` comes after the foreground edge, on the web `visibilitychange`.
+      onAppViewChange((inView) => {
+        if (inView) queue.backInView();
       }),
       () => window.removeEventListener('online', onOnline),
       () => document.removeEventListener('visibilitychange', onVisible),

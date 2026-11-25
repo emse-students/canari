@@ -1187,6 +1187,7 @@ describe('one take, several conversations (RC-13)', () => {
       assertAccount: async () => undefined,
       sessionEnded: () => false,
       assertNotMuted: async () => undefined,
+      inView: () => true,
       failureMessage: () => 'refused',
       lock: (fn) => fn(),
       sleep: async () => undefined,

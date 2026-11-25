@@ -18,8 +18,11 @@ import {
   isAppActive,
   isAppInForeground,
   isAppInFront,
+  isAppInView,
   onAppActiveChange,
   onAppForegroundChange,
+  onAppViewChange,
+  watchViewLoss,
 } from './appForeground';
 
 const FLAG = '__canariForeground';
@@ -159,5 +162,61 @@ describe('the ACTIVE fact (iOS willResignActive / didBecomeActive)', () => {
     off();
     window.dispatchEvent(new CustomEvent(APP_ACTIVE_EVENT, { detail: { active: false } }));
     expect(seen).toEqual([false, true]);
+  });
+});
+
+describe('the VIEW: foreground, active and the page visible (an encoder the system stops)', () => {
+  const active = (value: boolean) => {
+    (window as unknown as Record<string, unknown>).__canariActive = value;
+    window.dispatchEvent(new CustomEvent(APP_ACTIVE_EVENT, { detail: { active: value } }));
+  };
+  const foreground = (value: boolean) => {
+    set(value);
+    window.dispatchEvent(new CustomEvent(APP_FOREGROUND_EVENT, { detail: { foreground: value } }));
+  };
+
+  it('is out of view when any one of the three says so', () => {
+    expect(isAppInView()).toBe(true);
+    active(false);
+    expect(isAppInView()).toBe(false);
+    active(true);
+    foreground(false);
+    expect(isAppInView()).toBe(false);
+  });
+
+  it('reports one edge per change of the combined answer', () => {
+    const edges: boolean[] = [];
+    const off = onAppViewChange((inView) => edges.push(inView));
+    active(false);
+    foreground(false);
+    foreground(true);
+    active(true);
+    off();
+    active(false);
+    expect(edges).toEqual([false, true]);
+  });
+
+  it('latches a loss the app has already come back from', () => {
+    const watch = watchViewLoss();
+    expect(watch.lost).toBe(false);
+    active(false);
+    active(true);
+    expect(watch.lost).toBe(true);
+    watch.stop();
+  });
+
+  it('is lost from the start when the app is already out of view', () => {
+    foreground(false);
+    const watch = watchViewLoss();
+    foreground(true);
+    expect(watch.lost).toBe(true);
+    watch.stop();
+  });
+
+  it('stays clear when nothing left the view', () => {
+    const watch = watchViewLoss();
+    watch.stop();
+    active(false);
+    expect(watch.lost).toBe(false);
   });
 });

@@ -34,7 +34,8 @@ prepareVideoForUpload(source: Blob, {
 | `no-video-track` | a container with no video in it | same |
 | `too-long` | over `maxSeconds` (+0.5 s grace for the recorder's last frame), or too long for the ceiling even at 400 kb/s | say how long a video may be |
 | `unsupported` | this engine cannot decode the source, encode H.264, or encode AAC for a source whose audio is NOT AAC-LC - read as a FACT from the conversion's discarded tracks, before a frame is touched | say this device cannot prepare it |
-| `encode` | the encoder or the muxer failed mid-way | offer to try again |
+| `encode` | the encoder or the muxer failed mid-way, the app in view throughout | offer to try again |
+| `interrupted` | the encoder failed while the app was OUT OF VIEW at some moment of the conversion (resigned active, backgrounded, page hidden - latched by `watchViewLoss`, never read from the error): the system tears a hardware encoder down then (iPhone 12, 1.8.1-alpha.1) | prepare again once the app is back in view - the publish queue does it by itself ([posts](modules/posts.md#the-background-publish-queue)) |
 | `too-large` | the output came out over `maxBytes` despite the plan | same as `too-long` |
 
 **There is no second path.** An engine that cannot make the format is refused, never handed the

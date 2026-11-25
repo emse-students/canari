@@ -24,6 +24,8 @@ export function videoPrepareFailureMessage(error: VideoPrepareError): string | n
       return m.video_prepare_unsupported();
     case 'encode':
       return m.video_prepare_failed();
+    case 'interrupted':
+      return m.video_prepare_interrupted();
   }
 }
 
@@ -31,7 +33,8 @@ export function videoPrepareFailureMessage(error: VideoPrepareError): string | n
  * Whether a fault is a FACT of the take or of this engine, so preparing the same take again on the
  * same device is refused the same way (a queued chat reel then fails for good, RC-5). `encode` - the
  * encoder or muxer failing while working - is the one left retryable: a device under memory pressure
- * can succeed later. `aborted` is the member's act, not a refusal.
+ * can succeed later; `interrupted` - the encoder stopped as the app left the view - prepares in view.
+ * `aborted` is the member's act, not a refusal.
  */
 export function isUnpreparableFault(fault: VideoPrepareFault): boolean {
   switch (fault) {
@@ -42,6 +45,7 @@ export function isUnpreparableFault(fault: VideoPrepareFault): boolean {
     case 'too-large':
       return true;
     case 'encode':
+    case 'interrupted':
     case 'aborted':
       return false;
   }
