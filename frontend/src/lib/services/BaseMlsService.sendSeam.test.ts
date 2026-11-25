@@ -100,8 +100,12 @@ abstract class SendSeamHarness extends BaseMlsService {
   }
 
   /** Opens a catch-up window from the test, as a real off-thread session does. */
-  openCatchUp(groupId = 'g-seam'): void {
-    this.beginCatchUp(groupId);
+  openCatchUp(groupId = 'g-seam', holdsMutex = false): void {
+    this.beginCatchUp(groupId, holdsMutex);
+  }
+  /** The scheduler whose mutex the drain, a commit and a web catch-up take. */
+  get scheduler(): { acquireMlsLock: (holder?: string) => Promise<() => void> } {
+    return this.messageScheduler;
   }
   closeCatchUp(groupId = 'g-seam'): void {
     this.endCatchUp(groupId);
@@ -410,5 +414,59 @@ describe('BaseMlsService.sendMessage - the sends already past the catch-up gate'
     svc.closeCatchUp('g-next');
     await send;
     expect(svc.encryptCalls).toBe(1);
+  });
+
+  it('a send waiting at the gate is not registered with the epoch barrier: a commit of its group does not wait for the catch-up', async () => {
+    const svc = new FakeMlsService();
+    // The sequential path: the catch-up holds no mutex, so a commit of g1 can run during it.
+    svc.openCatchUp();
+    const send = svc.sendMessage('g1', new Uint8Array([9]), undefined, DELIVERY.transport);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    let committed = false;
+    const commit = runAsEpochAdvance('g1', async () => {
+      committed = true;
+    });
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    // A send registered and THEN parked at the gate would hold this commit for the whole catch-up.
+    expect(committed).toBe(true);
+    await commit;
+    expect(svc.encryptCalls).toBe(0);
+
+    svc.closeCatchUp();
+    await send;
+    expect(svc.encryptCalls).toBe(1);
+  });
+
+  it('a send meeting the gate of a mutex-holding catch-up while something else holds the mutex is accused at error', async () => {
+    const svc = new FakeMlsService();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // The broken order the check exists for: a frame holds the mutex while a catch-up claiming to
+    // hold it has closed the gate.
+    const releaseFrame = await svc.scheduler.acquireMlsLock('frame of g1');
+    svc.openCatchUp('g-seam', true);
+    const send = svc.sendMessage('g1', new Uint8Array([9]), undefined, DELIVERY.transport);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('the lock order the gate relies on is broken')
+    );
+    svc.closeCatchUp();
+    releaseFrame();
+    await send;
+    error.mockRestore();
+  });
+
+  it('a send meeting the gate of a catch-up that holds the mutex, as it should, is not accused', async () => {
+    const svc = new FakeMlsService();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const releaseCatchUp = await svc.scheduler.acquireMlsLock('catch-up of g-seam');
+    svc.openCatchUp('g-seam', true);
+    const send = svc.sendMessage('g1', new Uint8Array([9]), undefined, DELIVERY.transport);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    svc.closeCatchUp();
+    releaseCatchUp();
+    await send;
+    expect(error).not.toHaveBeenCalled();
+    error.mockRestore();
   });
 });

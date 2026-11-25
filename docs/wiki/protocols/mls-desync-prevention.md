@@ -232,9 +232,9 @@ Every such seam therefore passes **two** guards, and neither substitutes for the
 (`WebMlsService.createDecryptSession`) takes the MLS lock, closes the send gate, waits for every send
 already between the gate and its ENCRYPT (`BaseMlsService.beginCatchUpAfterSends`; the passage is
 counted in the same synchronous step as the gate check, `passCatchUpGate`), and only then snapshots.
-The gate sits at the top of `emitFrame`, after the settle of a kept commit and the epoch barrier,
-and the counted window ends at the counted advance (`noteLiveMutation`), so only LOCAL work is ever
-waited for - an owed burn and an encrypt, both direct client calls - never the mutex, the network or
+The gate is passed as the frame registers with the epoch barrier (`runAsEpochSend`'s `SendPassage`,
+in the same synchronous step), after the settle of a kept commit, and the counted window ends at the
+counted advance (`noteLiveMutation`), so only LOCAL work is ever waited for - an owed burn and an encrypt, both direct client calls - never the mutex, the network or
 the post. Before, a send that had passed the gate a moment earlier encrypted after the snapshot and
 the not-overtaken guard refused the swap: 17 `catch-up (<group>) state DISCARDED` lines in one
 restore of a new web device, 2026-11-24, each one a worker's ratchet advance and decrypt work thrown
@@ -246,6 +246,13 @@ away.
   gate: a permanent deadlock. With the lock first, no mutex holder ever finds a web catch-up's gate
   closed. On the sequential path (Tauri, web without the crypto worker) the session takes no JS mutex
   at all, so a frame waiting at its gate waits for a session that needs nothing it holds.
+- **Why the gate is passed BEFORE registering with the epoch barrier.** A send registered and then
+  parked at a closed gate would hold every local commit of its group - which waits for registered
+  frames under the mutex - for the rest of the catch-up, and on the sequential path the drain with
+  it. It waits for both gates unregistered and registers in the step that finds both open.
+- **The order is checked, not only argued.** The scheduler names its holder (`mutexHolder`); a send
+  meeting the gate of a mutex-holding catch-up while anything else holds the mutex logs at `error`
+  (`accuseGateClosedUnderAnotherHolder`) - the precondition of the deadlock above.
 - **What the global gate costs.** The gate is global: while any catch-up is open, every send in every
   group waits at its encrypt, and a boot that catches up N conversations holds sends for the sum of
   those sessions. The wait this fix ADDS is bounded by local work only - one burn and one encrypt per

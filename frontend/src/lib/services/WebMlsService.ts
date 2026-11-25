@@ -1597,9 +1597,9 @@ export class WebMlsService extends BaseMlsService {
     // gate just before it closed encrypted after the snapshot and the swap below was refused for it
     // (17 times in one restore, 2026-11-24). The gate is never closed before the lock: the drain
     // awaits sends under the lock, and would then wait on a catch-up that waits on it.
-    const release = await this.messageScheduler.acquireMlsLock();
+    const release = await this.messageScheduler.acquireMlsLock(this.catchUpMutexHolder(groupId));
     try {
-      await this.beginCatchUpAfterSends(groupId);
+      await this.beginCatchUpAfterSends(groupId, true);
     } catch (e) {
       // Nothing in the wait rejects today; a future one that does must not leave the gate closed
       // and the lock held for ever.

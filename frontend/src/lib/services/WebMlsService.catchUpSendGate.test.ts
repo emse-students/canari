@@ -182,4 +182,41 @@ describe('WebMlsService.createDecryptSession - the sends around a catch-up', () 
     expect(trace).toEqual(['encrypt', 'post', 'snapshot', 'install']);
     expect(discarded()).toEqual([]);
   });
+
+  it("a frame borrowing a commit's loan awaits a send while a catch-up waits for the mutex: all three complete", async () => {
+    const { svc, raw } = makeService();
+    const scheduler = raw.messageScheduler as {
+      runCommitUnderMlsLock: <T>(g: string, fn: () => Promise<T>) => Promise<T>;
+      lendMlsLockWhile: <T>(g: string, work: () => Promise<T>) => Promise<T>;
+      acquireMlsLockForFrame: (key: string) => Promise<(() => void) | null>;
+    };
+    const network = held<void>();
+    let borrowed = false;
+    let sent = false;
+    // A commit of ANOTHER group holds the mutex and lends it while its request is on the network.
+    const commit = scheduler.runCommitUnderMlsLock('g-commit', () =>
+      scheduler.lendMlsLockWhile('g-commit', async () => {
+        // A frame of g1 borrows the loan and awaits a send inline, as a seed answer does.
+        const releaseFrame = await scheduler.acquireMlsLockForFrame('g1');
+        borrowed = releaseFrame !== null;
+        await svc.sendMessage('g1', new Uint8Array([9]), undefined, DELIVERY.transport);
+        sent = true;
+        releaseFrame?.();
+        await network.promise;
+      })
+    );
+    await flush();
+    const opening = svc.createDecryptSession('g1');
+    await flush();
+    expect(borrowed).toBe(true);
+    expect(sent).toBe(true);
+    // The catch-up has not taken the mutex: the commit still holds it.
+    expect(trace).toEqual(['encrypt', 'post']);
+
+    network.resolve();
+    await commit;
+    await runCatchUp(opening);
+    expect(trace).toEqual(['encrypt', 'post', 'snapshot', 'install']);
+    expect(discarded()).toEqual([]);
+  });
 });

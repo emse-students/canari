@@ -146,7 +146,11 @@ import {
 } from '$lib/mls-client/catchupBenchmark';
 import { attemptCommitReplay, replayAndRecord } from '$lib/utils/chat/commitReplay';
 import { markEpochGap, clearEpochGap, isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
-import { runAsEpochAdvance, runAsEpochSend } from '$lib/utils/chat/epochSendBarrier';
+import {
+  runAsEpochAdvance,
+  runAsEpochSend,
+  type SendPassage,
+} from '$lib/utils/chat/epochSendBarrier';
 import {
   parseServerTimestampMs,
   type DeliveryArrival,
@@ -297,6 +301,9 @@ import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
  * where the commit lock was busy and the base may legitimately have moved by the next read; a base
  * that is behind the group's epoch ends the loop on that fact, whatever this number is.
  */
+/** How a catch-up that holds the MLS mutex names itself to the scheduler - see `catchUpMutexHolder`. */
+const CATCH_UP_MUTEX_HOLDER = 'catch-up of';
+
 const EXTERNAL_JOIN_MAX_ATTEMPTS = 3;
 
 /**
@@ -2189,7 +2196,7 @@ export abstract class BaseMlsService implements IMlsService {
    * session is nested, a different group is concurrent. `openedAt` is diagnostic only; nothing
    * branches on it.
    */
-  private openCatchUps: Array<{ groupId: string; openedAt: number }> = [];
+  private openCatchUps: Array<{ groupId: string; openedAt: number; holdsMutex: boolean }> = [];
 
   /** Open catch-up sessions. A depth rather than a flag: nothing guarantees only one at a time. */
   private catchUpDepth = 0;
@@ -2202,7 +2209,7 @@ export abstract class BaseMlsService implements IMlsService {
 
   /**
    * Sends between the catch-up gate and the end of their ENCRYPT: counted from the instant a send
-   * goes through the gate ({@link passCatchUpGate}, at the top of `emitFrame`) to the point its
+   * goes through the gate ({@link catchUpPassage}, as it registers with the epoch barrier) to the point its
    * advance is counted ({@link noteLiveMutation}), or to its throw before that.
    *
    * THE HALF OF THE GATE THAT WAS MISSING. The gate stops a send from REACHING its encrypt while a
@@ -2257,8 +2264,8 @@ export abstract class BaseMlsService implements IMlsService {
    * rewind. The victim is always the next send after the swap - usually the focused tab's read
    * watermark, which is why the loss looked for days like a property of silent frames.
    */
-  protected beginCatchUp(groupId: string): void {
-    this.openCatchUps.push({ groupId, openedAt: Date.now() });
+  protected beginCatchUp(groupId: string, holdsMutex = false): void {
+    this.openCatchUps.push({ groupId, openedAt: Date.now(), holdsMutex });
     this.catchUpDepth++;
     if (this.catchUpDepth === 1) {
       this.catchUpGate = new Promise<void>((resolve) => {
@@ -2292,7 +2299,7 @@ export abstract class BaseMlsService implements IMlsService {
    * Resolves when no catch-up session is open.
    *
    * Awaited by the mailbox barrier; the send path passes the same gate through
-   * {@link passCatchUpGate}, which also counts it.
+   * {@link catchUpPassage}, which also counts it.
    *
    * A SEND AWAITED UNDER THE MLS MUTEX MAY MEET THIS GATE, AND IT STILL TERMINATES. The drain does
    * await sends under the mutex - a key group's seed answer (`frameHandler.ts`, `answerSeedRequest`)
@@ -2309,18 +2316,47 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /**
-   * Waits until no catch-up is open, then counts this send as past the gate - in the SAME
-   * synchronous step as the last check, which is what makes it a passage rather than a
-   * check-then-act. A single `await` of the gate would not do: it resumes a microtask later, and a
-   * catch-up opened in between would find nothing counted and snapshot under this send. Every call
-   * is paired with one {@link leaveCatchUpGate}, from a `finally`.
+   * The catch-up gate as the epoch barrier takes it (`runAsEpochSend`): a send passes it and is
+   * counted in the SAME synchronous step as the check AND as its registration with the barrier,
+   * which makes it a passage rather than a check-then-act - a catch-up opened a microtask later finds
+   * it counted, and a local commit never finds a frame registered that is still waiting here. Every
+   * passage is paired with one {@link leaveCatchUpGate}, from `emitFrame`'s `finally`.
    */
-  private async passCatchUpGate(): Promise<void> {
-    while (this.catchUpGate) await this.catchUpGate;
-    this.sendsPastGate++;
+  private readonly catchUpPassage: SendPassage = {
+    passIfOpen: () => {
+      if (this.catchUpGate === null) {
+        this.sendsPastGate++;
+        return true;
+      }
+      this.accuseGateClosedUnderAnotherHolder();
+      return false;
+    },
+    untilOpen: () => this.waitForCatchUpIdle(),
+  };
+
+  /**
+   * THE LOCK ORDER, CHECKED RATHER THAN ARGUED. A catch-up that holds the MLS mutex for its whole
+   * life (the web worker session) closes the gate only AFTER the mutex is granted to it and opens it
+   * BEFORE releasing it, so while one is open the mutex holder is that catch-up. A send finding such
+   * a gate closed while anything else holds the mutex is the precondition of the deadlock review
+   * found in the first version of #4083: a frame holding the mutex waits at the gate of a catch-up
+   * that waits for the mutex. Said at `error`; the send still waits, as it must.
+   */
+  private accuseGateClosedUnderAnotherHolder(): void {
+    if (!this.openCatchUps.some((s) => s.holdsMutex)) return;
+    const holder = this.messageScheduler.mutexHolder;
+    if (holder !== null && holder.startsWith(CATCH_UP_MUTEX_HOLDER)) return;
+    console.error(
+      `[MLS] a send met the catch-up gate closed by [${this.openCatchUps.map((s) => s.groupId.slice(0, 8)).join(', ')}] while the MLS mutex is held by ${holder ?? 'nobody'}, not by that catch-up - the lock order the gate relies on is broken`
+    );
   }
 
-  /** Ends a {@link passCatchUpGate} passage; the last one out releases the catch-ups waiting on it. */
+  /** The label a catch-up holding the MLS mutex acquires it under, read back by the gate's check. */
+  protected catchUpMutexHolder(groupId: string): string {
+    return `${CATCH_UP_MUTEX_HOLDER} ${groupId.slice(0, 8)}`;
+  }
+
+  /** Ends a {@link catchUpPassage} passage; the last one out releases the catch-ups waiting on it. */
   private leaveCatchUpGate(): void {
     this.sendsPastGate--;
     if (this.sendsPastGate > 0) return;
@@ -2346,8 +2382,8 @@ export abstract class BaseMlsService implements IMlsService {
    * the gate again. The wait is therefore bounded by a burn and an encrypt per counted send - no
    * clock in it.
    */
-  protected async beginCatchUpAfterSends(groupId: string): Promise<void> {
-    this.beginCatchUp(groupId);
+  protected async beginCatchUpAfterSends(groupId: string, holdsMutex = false): Promise<void> {
+    this.beginCatchUp(groupId, holdsMutex);
     if (this.sendsPastGate === 0) return;
     // Said, because a wait nobody can see cannot be verified - and it is rare by construction (a
     // send already between the gate and its frame at the instant a catch-up opens).
@@ -9513,8 +9549,8 @@ export abstract class BaseMlsService implements IMlsService {
    * CONCRETE, AND SHARED BY BOTH PLATFORMS ON PURPOSE. Three things must happen around every send,
    * and each of them was previously the responsibility of the caller:
    *
-   * - nothing is encrypted while a catch-up is open ({@link passCatchUpGate}, at the top of the
-   *   frame), because a send advances the ratchet of a client the catch-up is about to replace with
+   * - nothing is encrypted while a catch-up is open ({@link catchUpPassage}, taken as the frame
+   *   registers with the epoch barrier), because a send advances the ratchet of a client the catch-up is about to replace with
    *   a copy taken before it - and a send already past the gate when a catch-up opens is waited out
    *   before its snapshot ({@link beginCatchUpAfterSends});
    * - the advance is COUNTED ({@link noteLiveMutation}), which is what lets every state-replacement
@@ -9571,7 +9607,11 @@ export abstract class BaseMlsService implements IMlsService {
     // overlap rather than detecting it afterwards - see `epochSendBarrier`, which also carries the
     // lock order this relies on.
     const emit = () =>
-      runAsEpochSend(groupId, () => this.emitFrame(groupId, messageBytes, frameDelivery));
+      runAsEpochSend(
+        groupId,
+        () => this.emitFrame(groupId, messageBytes, frameDelivery),
+        this.catchUpPassage
+      );
     let sent: SentFrame;
     try {
       sent = await emit();
@@ -9648,11 +9688,11 @@ export abstract class BaseMlsService implements IMlsService {
     messageBytes: Uint8Array,
     frameDelivery: FrameDelivery
   ): Promise<SentFrame> {
-    // THE CATCH-UP GATE, AND THE WINDOW IT COUNTS: from here to the counted advance. Only the burn
-    // and the encrypt lie inside, both direct client calls, so a catch-up holding the MLS mutex can
-    // wait for this window to close (`beginCatchUpAfterSends`). The settle before this frame takes
-    // the mutex and the post below takes the network: neither may be counted.
-    await this.passCatchUpGate();
+    // THE WINDOW THE CATCH-UP GATE COUNTS ends here: it began as this frame passed the gate and
+    // registered (`catchUpPassage`), and it closes at the counted advance. Only the burn and the
+    // encrypt lie inside, both direct client calls, so a catch-up holding the MLS mutex can wait for
+    // it (`beginCatchUpAfterSends`). The settle before this frame takes the mutex and the post below
+    // takes the network: neither may be counted.
     let sealed: AuthoredFrame & { epoch: number };
     try {
       sealed = await this.sealPastOwedBurns(groupId, messageBytes);
