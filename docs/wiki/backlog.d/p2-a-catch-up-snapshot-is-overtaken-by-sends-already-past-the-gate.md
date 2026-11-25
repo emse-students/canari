@@ -1,28 +1,19 @@
-## P2 - a history catch-up is thrown away because sends already past the gate land after its snapshot
+## Reading owed - P2 - a history catch-up is no longer thrown away by sends already past the gate
 
 target: 1.8.1
 
 **Seen 2026-11-24** (a new web device, prod `1.7.3`, 2 min 20 s of restore): 17 lines
 `[MLS] catch-up (<group>) state DISCARDED: the live client was mutated N time(s) since the snapshot`,
-N from 1 to 14. Not an expected-on-a-new-device warning: the code itself calls the branch unreachable
-(`WebMlsService.createDecryptSession`, "the gate in `sendMessage` should make this unreachable").
+N from 1 to 14.
 
-**The mechanism, read from the code.** `createDecryptSession` takes the MLS lock, closes the send gate
-(`beginCatchUp`) and snapshots. `sendMessage` waits on that gate (`waitForCatchUpIdle`) only at its
-TOP; it then awaits `settleBeforeSend` and the epoch barrier (`runAsEpochSend`) before the encrypt
-counts the mutation (`emitFrame` -> `noteLiveMutation`). A send that passed the gate before the
-catch-up opened is still in flight, and its encrypt lands after the snapshot: a check-then-act race. A
-new device sends a frame per group per step (digests, register asks, welcome requests, read marks), so
-the window is hit often. The swap is refused, which is the invariant doing its job, but the worker's
-ratchet advance is dropped and its decrypt work wasted - a race that heals is still a defect
-([durable-rules](../durable-rules.md)).
+**Built (2026-11-25).** The catch-up took the MLS lock, closed the send gate and snapshotted, while a
+send that had passed the gate just before had not encrypted yet and encrypted after the snapshot. The
+gate now sits just before the encrypt, and the catch-up takes the lock, closes the gate, waits out the
+sends between the gate and their encrypt (local work only), then snapshots
+([mls-desync-prevention](../protocols/mls-desync-prevention.md)). Pinned by
+`BaseMlsService.sendSeam.test.ts` and `WebMlsService.catchUpSendGate.test.ts`.
 
-**The fix to build.** Count the sends between the gate and the end of `emitFrame` (in flight), and
-have `createDecryptSession` close the gate, wait for that count to reach zero, THEN take the MLS lock
-and snapshot - in that order, because a send in flight may itself need the lock (`settleBeforeSend`),
-and holding the lock while waiting for it would deadlock. Check the nested-session rule of
-`waitForMessageQueueIdle` (`openCatchUps`) against the new order.
-
-**The test that closes it:** `BaseMlsService.sendSeam.test.ts` - a send parked between the gate and its
-encrypt (a held `settleBeforeSend`) while a catch-up opens: the snapshot is taken only after that
-send's encrypt, the install is not refused, and no `state DISCARDED` line is logged.
+**What closes it, on the first pre-release that carries it:** a NEW web device (fresh browser profile)
+restoring the bench account on dev, with conversations that receive traffic during the restore, logs
+NO `[MLS] catch-up (...) state DISCARDED` line; a `catch-up (...) waits for N send(s) already past the
+gate` debug line, if any, is followed by the catch-up completing.

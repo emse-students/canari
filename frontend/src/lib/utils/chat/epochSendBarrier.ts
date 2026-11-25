@@ -42,15 +42,18 @@
  * nothing the advance is waiting for. A caller that raised the barrier outside the mutex - or a send
  * issued from inside it - would reintroduce the cycle.
  *
- * Registered sends never need the mutex themselves (`encryptForSend` is a direct client call), so an
- * advance holding the mutex can wait for them to land.
+ * Registered sends never need the mutex themselves (`encryptForSend` is a direct client call), nor
+ * wait at the catch-up gate - they pass it before registering (`SendPassage`) - so an advance holding
+ * the mutex can wait for them to land.
  *
  * **A LOAN DOES NOT CHANGE THE ORDER.** While its request is on the network the commit lends the
  * mutex to the drain, one frame of ANOTHER group at a time (`MlsPerGroupScheduler.lendMlsLockWhile`),
- * so a borrower can now observe this group's barrier raised. It never waits on it: the drain applies
- * frames and sends nothing it awaits - a send from the pipeline is deferred past the frame (the
- * history answers run after the mailbox drained), which it already had to be, since a send can
- * settle a commit and settling takes the mutex the drain holds.
+ * so a borrower can now observe this group's barrier raised. It never waits on it: a borrower applies
+ * a frame of ANOTHER group, and a send it awaits inline (a key group's seed answer,
+ * `frameHandler.ts` `answerSeedRequest`) is for that frame's group, never the lender's. Most sends
+ * from the pipeline are deferred past the frame anyway (the history answers run after the mailbox
+ * drained). The catch-up gate a send meets is ordered separately: see
+ * `BaseMlsService.beginCatchUpAfterSends`.
  */
 
 /** Groups whose epoch a local commit is currently moving; the promise resolves at the merge. */
@@ -60,21 +63,50 @@ const barriers = new Map<string, Promise<void>>();
 const inFlight = new Map<string, Set<Promise<unknown>>>();
 
 /**
+ * A second gate a send must pass before it registers, passed in the SAME synchronous step as the
+ * registration - the history catch-up's (`BaseMlsService`). `passIfOpen` either passes (and counts
+ * the passage) and returns true, or returns false without counting; `untilOpen` resolves when it
+ * may be tried again.
+ */
+export interface SendPassage {
+  passIfOpen(): boolean;
+  untilOpen(): Promise<void>;
+}
+
+/**
  * Runs one application send for `groupId`, ordered against local epoch advances.
  *
- * Waits out any advance in progress, then registers itself so an advance starting next waits for
- * this frame to reach the wire. `fn` must cover BOTH the encrypt and the POST: registering only the
- * POST would leave the straddle this exists to delete.
+ * Waits out any advance in progress - and the `passage` when one is given - then registers itself so
+ * an advance starting next waits for this frame to reach the wire. `fn` must cover BOTH the encrypt
+ * and the POST: registering only the POST would leave the straddle this exists to delete.
+ *
+ * THE PASSAGE IS TAKEN BEFORE THE REGISTRATION, NEVER AFTER IT. A send registered here and then
+ * parked at a closed catch-up gate would hold every local commit of `groupId` - which waits for the
+ * registered frames under the MLS mutex - for the rest of that catch-up, and the drain with it. So a
+ * send waits for both gates UNREGISTERED, and registers only in the step where it finds both open.
  */
-export async function runAsEpochSend<T>(groupId: string, fn: () => Promise<T>): Promise<T> {
+export async function runAsEpochSend<T>(
+  groupId: string,
+  fn: () => Promise<T>,
+  passage?: SendPassage
+): Promise<T> {
   // A loop rather than a single await: the barrier that replaces this one belongs to a different
   // commit, and a frame encrypted between two of them is exactly as stale. It terminates because a
   // barrier is only ever raised while its raiser holds the MLS mutex, so raising one requires
-  // completing the previous one.
-  for (let barrier = barriers.get(groupId); barrier; barrier = barriers.get(groupId)) {
-    // A failed commit does not move the epoch, so its rejection is not this send's business - what
-    // matters is only that the transaction is over.
-    await barrier.catch(() => undefined);
+  // completing the previous one - and a catch-up gate opens when its session ends.
+  for (;;) {
+    const barrier = barriers.get(groupId);
+    if (barrier) {
+      // A failed commit does not move the epoch, so its rejection is not this send's business -
+      // what matters is only that the transaction is over.
+      await barrier.catch(() => undefined);
+      continue;
+    }
+    if (passage && !passage.passIfOpen()) {
+      await passage.untilOpen();
+      continue;
+    }
+    break;
   }
 
   // NOT AWAITED BEFORE REGISTERING, and that is the whole point: `fn()` runs up to its first
