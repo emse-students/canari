@@ -95,3 +95,50 @@ describe('MinesweeperCell computed transition', () => {
     expect(durationAt('normal')).toBe(180);
   });
 });
+
+/**
+ * ONE RING PER CELL (review of #4091): a cell both `marked` (the replay's last move) and lit by the
+ * bulb shows the bulb's ring only, and a lit cell carries a label a screen reader can hear.
+ */
+describe('MinesweeperCell highlight', () => {
+  const cleanups: Array<() => void> = [];
+  afterEach(() => {
+    for (const c of cleanups.splice(0)) c();
+    document.body.innerHTML = '';
+  });
+
+  function cellWith(props: { marked?: boolean; highlight?: 'hint' | 'wrong' | null }) {
+    const app = mount(MinesweeperCell, {
+      target: document.body,
+      props: {
+        cell: { mine: false, adjacent: 2, state: 'revealed' },
+        index: 0,
+        pending: false,
+        ...props,
+      },
+    });
+    cleanups.push(() => unmount(app));
+    flushSync();
+    return document.querySelector<HTMLButtonElement>('[data-cell="0"]')!;
+  }
+
+  it('lets the hint win over the replay ring, never both', () => {
+    const wrong = cellWith({ marked: true, highlight: 'wrong' });
+    expect(wrong.className).toContain('ring-red-err');
+    expect(wrong.className).not.toContain('ring-accent');
+    expect(wrong.className.match(/\bring-2\b/g)).toHaveLength(1);
+  });
+
+  it('keeps the replay ring alone when nothing is lit', () => {
+    const marked = cellWith({ marked: true });
+    expect(marked.className).toContain('ring-accent');
+    expect(marked.className).not.toContain('ms-hint');
+    expect(marked.getAttribute('aria-label')).toBeNull();
+  });
+
+  it('names a lit number and a misplaced flag for a screen reader', () => {
+    expect(cellWith({ highlight: 'hint' }).getAttribute('aria-label')).toBe('2, indice');
+    document.body.innerHTML = '';
+    expect(cellWith({ highlight: 'wrong' }).getAttribute('aria-label')).toBe('Drapeau mal placé');
+  });
+});

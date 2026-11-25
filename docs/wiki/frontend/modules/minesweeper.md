@@ -13,6 +13,8 @@ it can be cleared without guessing, with a ranked leaderboard checked by server-
 | Vibration patterns | `frontend/src/lib/minesweeper/haptics.ts` |
 | Player settings (per device) | `frontend/src/lib/minesweeper/settings.ts` |
 | Per-cell diff behind the render | `frontend/src/lib/minesweeper/cellViews.ts`, `MinesweeperCell.svelte` |
+| The bulb of an unranked game (client only) | `frontend/src/lib/minesweeper/hint.ts` |
+| The unranked levels (client only) | `frontend/src/lib/minesweeper/levels.ts` |
 | Challenge issue, replay, scores | `apps/social-service/src/minesweeper/minesweeper.service.ts` |
 
 ## The screen is the board (2026-10-07)
@@ -28,6 +30,8 @@ over the board:
 | Leaderboard | top right, trophy icon only | closes the game and goes to the Games page (`/games`), THE one leaderboard since 2026-11-13; the game has no sheet of its own |
 | Ranked / unranked | bottom, beside the mode | **"Libre" = no challenge is requested at the first dig**, so nothing is submitted; stored in `canari.minesweeper.unranked`; locked once the first cell is dug, since a game's ranking is decided when its board is generated |
 | Mode (dig / flag) | bottom centre, thumb reach | what a SHORT press does; a long press does the other. Same stored setting as the old "flags first" |
+| Level (Debutant / Intermediaire / Expert) | bottom, after the mode, until the first dig | **unranked games only** ([below](#three-levels-in-an-unranked-game-owner-2026-11-25)) |
+| Hint (bulb) | bottom, after the mode, once dug | **unranked games only** ([below](#the-bulb-a-hint-in-an-unranked-game-owner-2026-11-25)) |
 
 **No zoom buttons.** Pinch, wheel (proportional to the delta, so a trackpad pinch is smooth), and a
 double-tap. The double-tap zooms in on the tapped point and out to the fit; it only counts when the first
@@ -62,6 +66,116 @@ per row and the banned list with unban, each behind a confirmation. The settings
 game (it is about input, not ranking). Pinned by `page.svelte.test.ts`, `page.moderation.svelte.test.ts`,
 `MinesweeperStats.svelte.test.ts`, `MinesweeperModal.chrome.svelte.test.ts`. The two sections below
 describe the stats and paging mechanics, now on the page (page size 25, "Voir plus").
+
+## Three levels in an unranked game (owner, 2026-11-25)
+
+*"le demineur est vraiment super dur, la barriere a l'entree est terrifiante ... sans remettre en cause le niveau
+du classe"* (owner). Libre offers three levels; **ranked is exactly as before** - the board, the generator, the
+challenge, the replay and the ranking ([decisions](../../decisions/owner-decisions-of-2026-11-25.md)).
+
+| Level | Board | Generator |
+| --- | --- | --- |
+| Debutant | 9x9, 10 mines | 1 |
+| Intermediaire | 16x16, 40 mines | 1 |
+| Expert | the ranked board, 18x32, 150 mines | 2 (the latest) |
+
+**Why generator 1 for the small levels.** The owner asked for boards still guess-free but with SIMPLE
+deductions. Generator 1 stops at the FIRST layout its solver clears, so its boards are as easy as that solver
+lets them be; generator 2 climbs on purpose to a reasoning score of 60. Both are called through the existing
+`createBoard(config, null, generator)`: no line of either generator, no fingerprint and nothing on the server
+changes. A casual game is never submitted, so which generator it uses is the client's alone. The engine already
+generated these sizes ([the 2026-09-24 measurement](#what-the-first-dig-costs-2026-09-24) covers 200 beginner and
+100 intermediate boards).
+
+**The picker** (`levels.ts`, `LEVEL_SPECS`) is a chip that cycles Debutant -> Intermediaire -> Expert, in Libre
+only and only until the first dig - then the bulb takes its place, since the bulb has nothing to read before
+that dig and three chips is what the row holds on a phone (the level stays visible as the board's size).
+While the first dig is being prepared it is disabled, like the ranked / Libre toggle. Changing the level, or
+switching between ranked and Libre, installs the blank board of the new size and refits it. A ranked start that
+fails and falls back to a casual game keeps the ranked board's size: the player tapped on it.
+
+**Stored per device** (`canari.minesweeper.level`, validated on read; a value that is not a level is logged and
+ignored). With none stored, a player who already chose ranked or Libre on this device (`canari.minesweeper.unranked`
+is set) starts on Expert, the board they knew; a newcomer starts on Debutant. **The default is answered ONCE and
+stored** the moment it is resolved: asked again on a later open, it would read the Libre choice the newcomer
+has just made and turn their Debutant into Expert (review of #4091; pinned across two modal mounts).
+
+**Losing stays as it is**: no undo after a mine (owner's answer).
+
+**The view.** The fit used to scale a board up to 3x, which on a desktop turns a 9x9 board into tiles. The fit is
+now capped, for the two small levels only, where a cell reaches 48 px (`MAX_FIT_CELL_PX`, the touch target Android recommends; `fitScaleCap`);
+a pinch can still zoom past it. On a phone the cap does not bind (a 9x9 board fits at about 40 px cells), and the
+ranked board is never capped (`levelFitCap`: Expert fits exactly as it always did, even on a stage tall enough
+for the cap to bind - a 4K-sized stage is the test). The mines counter, the clamp and the bulb read whatever board is installed.
+
+**Pinned:** `levels.test.ts` (the specs; eight fixed seeds per small level, each board of the right size and mine
+count and cleared by the solver from the first click; the cycle; the default and a bad stored value),
+`view.test.ts` (the cap on a desktop, no cap on a phone, the ranked board unchanged),
+`MinesweeperModal.levels.svelte.test.ts` (no picker ranked; the cycle resizes the board and is stored; the
+ranked / Libre switch resizes it; the picker gone and the size kept after the first dig; a ranked game asks
+for its challenge as before and plays 18x32 whatever Libre last used). **Owed:** the phone reading
+([reading](../../backlog.d/reading-owed-the-minesweeper-hint.md)).
+
+## The bulb: a hint in an unranked game (owner, 2026-11-25)
+
+*"En mode non classe (libre), j'aimerais bien qu'on puisse avoir un peu de didacticiel pour s'entrainer ...
+indiquer une des cases chiffrees qui donne le prochain coup ? Sans donner la reponse, cela oriente le regard."*
+(owner). A `Lightbulb` chip beside the mode button; a press lights WHAT JUSTIFIES the next certain move, never
+the move, with one line saying what is lit. The next move (or a new board) clears it.
+
+**The owner's four decisions (2026-11-25, [decisions](../../decisions/owner-decisions-of-2026-11-25.md)):**
+
+1. **The numbers that justify the deduction, as few as suffice**: ONE number when it settles its neighbours alone
+   (a chord), the TWO of a pair pattern, else the smallest group found. Never the cell to play.
+2. **A wrong flag comes first**: a flag on a cell with no mine is ringed in red and said to be misplaced.
+3. **When only the total decides**, the mines-left counter in the HUD is ringed.
+4. **Unranked only.** A ranked game draws no bulb, and `showHint()` refuses (a `warn`) outside one; nothing
+   enters the move log, so nothing the server replays changes. The bulb is offered when the player chose
+   "Libre" before the first dig, or when a started game holds no challenge (a ranked start that failed).
+
+**How it finds the hint** (`findHint`, pure, read-only). It reads what the PLAYER sees - revealed numbers,
+flags, the mine total - so what it points at is a deduction a player could make. The hidden layout is read for
+one question only: is a flag on a mine (decision 2). No visible state can prove that, and once every flag is
+known right, every count the numbers still need is exact - a "contradictory visible state" can only come from a
+wrong flag, so it is caught there. Then the cheapest explanation, in a fixed order (same state, same hint):
+
+| Tier | Lights | What it is |
+| --- | --- | --- |
+| wrong flag | that flag (the first in reading order) | decision 2 |
+| single | one number | its hidden neighbours are all safe, or all mines |
+| pair | two numbers sharing a hidden neighbour | they settle a cell together (1-2, 1-2-1 and their kin; the generator's *subset* tier is a special case) |
+| group | the fewest numbers found | one group of linked numbers settles a cell, ignoring the total |
+| counter | the HUD's mines left | only the total settles a cell (the generator's *global* tier) |
+| none | nothing; "no certain move was found" | logged: a `warn` when the search was complete (a no-guess board never gets there), an `info` when it ran out of budget |
+
+Within a tier, a deduction that OPENS a cell is preferred to one that flags a mine. **The group is minimal, not
+minimum**: rings of numbers grow around the settled cell until they settle it (adding a number never unsettles a
+cell), then every number the deduction holds without is dropped in reading order. Finding the true minimum means
+trying every subset; this gives a set where no number can be removed, cheaply, and every set it keeps is a valid
+hint - so a budget spent midway leaves a true hint, only a larger one. Bounded by COUNTED search nodes (200 000
+per enumeration, 2 million per hint), never a clock.
+
+**Why it does not call the engine's solver.** `game.ts` is held identical to the server's copy and frozen per
+generator; its helpers are private, and its tiers MUTATE the board they solve (they flag and open as they go).
+Exporting them would be an edit of a frozen file for no gain. So `hint.ts` re-expresses the same enumeration
+over the visible state (a depth-first search that cuts a branch as soon as one number cannot be met, the counts
+combined across groups and "the sea" exactly as `globalTier` does) and imports only the board's TYPE. Nothing in
+it can change a board, a replay or a fingerprint.
+
+**The render.** A lit cell gets a ring in a token colour (`accent`, `red-err` for a wrong flag) and a glow that
+breathes at `--ms-anim` - a `filter`, since Tailwind draws the ring with `box-shadow`; at "Aucune" only the ring
+stays. Each cell reads `highlight` as a primitive, so a hint re-renders the few cells it lights, as `pending`
+does, and the 576 views are untouched. One ring per cell: the hint wins over the replay viewer's `marked` ring. For a screen reader a lit cell is labelled ("2, indice", "Drapeau mal place" through Paraglide), the ringed counter carries a hidden "(indice)", and the message line is a `role="status"` region that stays mounted, empty, so its first message is announced. **Fixed on the way:** the Classe / Libre toggle was still live while the first dig waited for its challenge; it is locked then too.
+
+**Charter.** Principle 3 (your attention is not for sale): the bulb is asked for, never offered by a prompt, and
+it explains itself in one line. Principle 7 (simple): one control, in the mode nothing ranks.
+
+**Measured** (a throwaway script, 20 generated boards played through by revealing around each lit number, 5 537
+hints on a workstation): 0.03 ms on average, 1.6 ms at most; never "none". **Pinned:** `hint.test.ts` (each
+tier on a hand-drawn board, safe preferred, the wrong flag first, nothing on a 50/50, determinism, the board
+untouched, a real generator-2 board), `MinesweeperModal.hint.svelte.test.ts` (no bulb ranked, the cells and the
+counter lit, the highlight cleared by the next move). **Owed:** one reading on a phone
+([reading](../../backlog.d/reading-owed-the-minesweeper-hint.md)).
 
 ## Stats, paging, settings and the cell diff (2026-11-04)
 

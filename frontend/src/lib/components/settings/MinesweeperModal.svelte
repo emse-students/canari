@@ -3,13 +3,13 @@
   import { fade, scale as scaleTransition } from 'svelte/transition';
   import { backOut } from 'svelte/easing';
   import Modal from '$lib/components/shared/Modal.svelte';
+  import Button from '$lib/components/ui/Button.svelte';
   import {
     createBoard,
     revealCell,
     toggleFlag,
     remainingMines,
     DEFAULT_CONFIG,
-    LATEST_GENERATOR_VERSION,
     type MinesweeperBoard,
   } from '$lib/minesweeper/game';
   import {
@@ -31,6 +31,16 @@
     type MinesweeperSettings,
   } from '$lib/minesweeper/settings';
   import { EMPTY_CELL_VIEWS, syncCellViews } from '$lib/minesweeper/cellViews';
+  import { findHint, type MinesweeperHint } from '$lib/minesweeper/hint';
+  import {
+    LEVEL_SPECS,
+    levelFitCap,
+    loadMinesweeperLevel,
+    nextLevel,
+    saveMinesweeperLevel,
+    type LevelSpec,
+    type MinesweeperLevel,
+  } from '$lib/minesweeper/levels';
   import type { TimedMove } from '$lib/minesweeper/replay';
   import MinesweeperCell from './MinesweeperCell.svelte';
   import {
@@ -57,6 +67,8 @@
     ArrowLeft,
     Bomb,
     Flag,
+    Gauge,
+    Lightbulb,
     Pickaxe,
     RotateCcw,
     Settings,
@@ -148,9 +160,41 @@
 
   /** Only offered before the first dig: a game's ranking is decided when its board is generated. */
   function toggleUnranked() {
-    if (board.minesPlaced) return;
+    // Also locked while the first dig's challenge request is in flight: the mode is being decided.
+    if (board.minesPlaced || firstClickBusy) return;
     unranked = !unranked;
     saveFlag(UNRANKED_STORAGE_KEY, unranked);
+    // Ranked always plays Expert's board, Libre the chosen level: the blank board follows.
+    installBlankBoard();
+  }
+
+  /** The unranked level (owner, 2026-11-25), per device; ranked always plays `expert`'s board. */
+  let level = $state<MinesweeperLevel>(loadMinesweeperLevel());
+  /** What the next game plays on: the chosen level in Libre, Expert (the ranked board) otherwise. */
+  const playLevel = $derived<MinesweeperLevel>(unranked ? level : 'expert');
+
+  /** The level picker: Libre only, before the first dig, like the ranked / Libre toggle. */
+  function cycleLevel() {
+    if (!unranked || board.minesPlaced || firstClickBusy) return;
+    level = nextLevel(level);
+    saveMinesweeperLevel(level);
+    console.debug('[minesweeper] level chosen', { level });
+    installBlankBoard();
+  }
+
+  /** The label of a level, in the player's language. */
+  function levelLabel(l: MinesweeperLevel): string {
+    return l === 'beginner'
+      ? m.minesweeper_level_beginner()
+      : l === 'intermediate'
+        ? m.minesweeper_level_intermediate()
+        : m.minesweeper_level_expert();
+  }
+
+  /** Puts the blank board of the level about to be played on screen, refitted to its size. */
+  function installBlankBoard() {
+    installBoard(createBoard(LEVEL_SPECS[untrack(() => playLevel)].config, null));
+    void afterBoardChange();
   }
 
   /**
@@ -166,6 +210,49 @@
   let elapsedMs = $state(0);
   let startTimeMs = 0;
   let timerHandle: ReturnType<typeof setInterval> | null = null;
+  /**
+   * What the bulb shows (`hint.ts`), null when nothing is lit. Cleared by the next move and by a new
+   * board, so a highlight never outlives the state it was read from.
+   */
+  let hint = $state<MinesweeperHint | null>(null);
+  /**
+   * The bulb exists only in a game nothing will rank (owner, 2026-11-25): chosen unranked before the
+   * first dig, or a started game that holds no challenge. A ranked game draws no bulb at all.
+   */
+  const hintOffered = $derived(board.minesPlaced ? !rankedMode : unranked);
+  /** The bulb answers only during a game: before the first dig there is nothing to read. */
+  const hintReady = $derived(board.minesPlaced && board.status === 'playing');
+  /** The cells the bulb lights, read per cell by the grid: a handful of indices, never a copy of the board. */
+  const hintCells = $derived(
+    hint?.kind === 'numbers' ? hint.cells : hint?.kind === 'wrong-flag' ? [hint.cell] : []
+  );
+  const hintMessage = $derived(
+    hint === null
+      ? null
+      : hint.kind === 'numbers'
+        ? hint.cells.length === 1
+          ? m.minesweeper_hint_single()
+          : m.minesweeper_hint_numbers()
+        : hint.kind === 'counter'
+          ? m.minesweeper_hint_counter()
+          : hint.kind === 'wrong-flag'
+            ? m.minesweeper_hint_wrong_flag()
+            : m.minesweeper_hint_none()
+  );
+
+  /** The bulb: reads the visible board for what justifies the next certain move. Never in a ranked game. */
+  function showHint() {
+    if (!hintOffered) {
+      console.warn('[minesweeper] hint asked outside an unranked game; refused', { rankedMode });
+      return;
+    }
+    if (!hintReady) {
+      console.debug('[minesweeper] hint: no game in progress');
+      return;
+    }
+    hint = findHint(board);
+  }
+
   /** Measured RTT of POST /challenges; sent on submit to size network credit. */
   let challengeRoundTripMs = $state<number | undefined>(undefined);
   /** True while the first-dig challenge request is in flight, to guard against double-taps. */
@@ -320,7 +407,7 @@
   function centerView() {
     const g = geometry();
     if (!g) return;
-    const fit = fitView(g.viewport, g.board, FIT_INSETS);
+    const fit = fitView(g.viewport, g.board, FIT_INSETS, levelFitCap(board, g.board.width));
     fitScale = fit.scale;
     scale = fit.scale;
     panX = fit.panX;
@@ -350,7 +437,8 @@
     pendingCell = null;
     lastTap = null;
     elapsedMs = 0;
-    installBoard(createBoard(DEFAULT_CONFIG, null));
+    // Untracked: this runs inside the effect that starts a game, which must not restart on a level change.
+    installBoard(createBoard(LEVEL_SPECS[untrack(() => playLevel)].config, null));
   }
 
   /** Waits for the DOM to settle after a board change, then fits/centers the viewport. */
@@ -377,9 +465,13 @@
    * dig and starts the local timer. Once mines are placed, this just digs directly.
    * Preserves the current pan/zoom (player may have framed a corner before the first dig).
    */
-  /** An unseeded, unranked board: no challenge, nothing to submit. */
-  function startCasualBoard() {
-    installBoard(createBoard(DEFAULT_CONFIG, null, LATEST_GENERATOR_VERSION));
+  /**
+   * An unseeded, unranked board: no challenge, nothing to submit. `spec` is the chosen level in
+   * Libre, and Expert's board when a ranked start fell back (the player tapped on that board).
+   */
+  function startCasualBoard(spec: LevelSpec) {
+    console.debug('[minesweeper] casual board', spec);
+    installBoard(createBoard(spec.config, null, spec.generator));
     challengeId = null;
     rankedMode = false;
     challengeRoundTripMs = undefined;
@@ -411,7 +503,7 @@
       console.debug('[minesweeper] first dig', { unranked });
       if (unranked) {
         // The player chose not to be ranked: no challenge is requested, so there is nothing to refuse.
-        startCasualBoard();
+        startCasualBoard(LEVEL_SPECS[level]);
       } else {
         try {
           const t0 = performance.now();
@@ -439,7 +531,7 @@
             submitError = true;
             submitMessage = m.minesweeper_update_required();
           }
-          startCasualBoard();
+          startCasualBoard(LEVEL_SPECS.expert);
         }
       }
       // Generation is synchronous and blocks the main thread; paint the pressed cell first
@@ -534,7 +626,7 @@
       }
       const g = geometry();
       if (!g) return;
-      fitScale = fitView(g.viewport, g.board, FIT_INSETS).scale;
+      fitScale = fitView(g.viewport, g.board, FIT_INSETS, levelFitCap(board, g.board.width)).scale;
       applyView({ scale, panX, panY });
     });
     observer.observe(viewportEl);
@@ -544,6 +636,7 @@
   /** Puts a freshly created board on screen; a board of hidden cells replaces hidden views without allocating. */
   function installBoard(next: MinesweeperBoard) {
     board = next;
+    hint = null;
     // Untracked: this runs inside the effect that starts a game, which must not depend on what it writes.
     cellViews = syncCellViews(
       next.cells,
@@ -558,6 +651,8 @@
    */
   function commit() {
     board = { ...board };
+    // The next move clears the bulb: what it lit was read from the board before it.
+    hint = null;
     cellViews = syncCellViews(board.cells, cellViews).next;
   }
 
@@ -934,7 +1029,16 @@
           onpointerdown={handleGridPointerDown}
         >
           {#each cellViews.views as cell, i (i)}
-            <MinesweeperCell {cell} index={i} pending={pendingCell === i} />
+            <MinesweeperCell
+              {cell}
+              index={i}
+              pending={pendingCell === i}
+              highlight={hintCells.includes(i)
+                ? hint?.kind === 'wrong-flag'
+                  ? 'wrong'
+                  : 'hint'
+                : null}
+            />
           {/each}
         </div>
       </div>
@@ -1052,9 +1156,18 @@
         <div
           class="ms-chip text-text-main pointer-events-auto flex h-11 items-center gap-3 rounded-full pl-3.5 text-sm font-bold shadow-sm backdrop-blur-sm md:h-[2.375rem]"
         >
-          <span class="flex items-center gap-1.5 leading-none">
+          <span
+            class="-mx-1.5 flex items-center gap-1.5 rounded-full px-1.5 py-1 leading-none {hint?.kind ===
+            'counter'
+              ? 'ring-accent ring-2'
+              : ''}"
+            data-hint={hint?.kind === 'counter' ? 'counter' : undefined}
+          >
             <Bomb size={16} class="text-cn-dark" />
             {remainingMines(board)}
+            {#if hint?.kind === 'counter'}
+              <span class="sr-only">{m.minesweeper_hint_counter_cue()}</span>
+            {/if}
           </span>
           <span class="text-text-muted flex items-center gap-1 font-mono leading-none tabular-nums">
             <Timer size={15} />
@@ -1109,6 +1222,16 @@
       </p>
     {/if}
 
+    <!-- Always mounted, so a screen reader announces the line when it fills (a live region must exist first). -->
+    <p
+      role="status"
+      class={hintMessage === null
+        ? 'sr-only'
+        : `ms-chip pointer-events-none absolute inset-x-3 bottom-20 z-20 mx-auto w-fit max-w-full rounded-full px-3 py-1 text-center text-xs font-semibold shadow-sm ${hint?.kind === 'wrong-flag' ? 'text-red-err' : 'text-text-main'}`}
+    >
+      {hintMessage ?? ''}
+    </p>
+
     <!-- Mode button, within thumb reach: what a short press does (a long press does the other). -->
     <div class="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-center gap-2 p-3">
       <button
@@ -1131,7 +1254,7 @@
       <button
         type="button"
         onclick={toggleUnranked}
-        disabled={board.minesPlaced}
+        disabled={board.minesPlaced || firstClickBusy}
         aria-pressed={unranked}
         title={m.minesweeper_unranked_hint()}
         class="pointer-events-auto flex h-12 items-center gap-2 rounded-full px-4 text-sm font-bold shadow-md backdrop-blur-sm transition-colors disabled:opacity-50 {unranked
@@ -1141,6 +1264,46 @@
         <Trophy size={18} strokeWidth={2.5} class={unranked ? 'opacity-40' : ''} />
         {unranked ? m.minesweeper_casual() : m.minesweeper_ranked()}
       </button>
+      {#if unranked && !board.minesPlaced}
+        <!-- The level (Libre only), until the first dig; the bulb takes its place once there is a
+             board to read, so the row holds three chips on a phone. -->
+        <div
+          class="ms-chip pointer-events-auto rounded-full shadow-md backdrop-blur-sm {firstClickBusy
+            ? 'opacity-50'
+            : ''}"
+        >
+          <Button
+            variant="bare"
+            onclick={cycleLevel}
+            disabled={firstClickBusy}
+            aria-label={m.minesweeper_level_label({ level: levelLabel(level) })}
+            title={m.minesweeper_level_hint()}
+            class="text-text-main flex h-12 items-center gap-2 rounded-full px-4 text-sm font-bold"
+          >
+            <Gauge size={18} strokeWidth={2.5} />
+            {levelLabel(level)}
+          </Button>
+        </div>
+      {:else if hintOffered}
+        <!-- The bulb (unranked only): lights what justifies the next certain move, never the move.
+             The chip is the wrapper because `.ms-chip` is scoped here and cannot reach into `Button`. -->
+        <div
+          class="ms-chip pointer-events-auto rounded-full shadow-md backdrop-blur-sm {hintReady
+            ? ''
+            : 'opacity-50'}"
+        >
+          <Button
+            variant="bare"
+            onclick={showHint}
+            disabled={!hintReady}
+            aria-label={m.minesweeper_hint()}
+            title={m.minesweeper_hint()}
+            class="text-text-main flex h-12 w-12 items-center justify-center rounded-full"
+          >
+            <Lightbulb size={18} strokeWidth={2.5} />
+          </Button>
+        </div>
+      {/if}
     </div>
 
     {#if showSettings}
