@@ -339,6 +339,36 @@ describe('ChatArea entry window (F6)', () => {
     expect(el!.scrollTop).toBe(el!.scrollHeight);
   });
 
+  it('the widen writes no scrollTop of its own: the thread observer is the one writer of a prepend', async () => {
+    // Owner's Android, production 1.8.0, 2026-11-25: every widen step was written twice - pinned by
+    // the observer, then `prevTop + (scrollHeight - prevHeight)` by the widen, from heights a glide in
+    // flight inflates. Two writers of one change; the open was drawn at its end, then yanked up.
+    rowPx = 48;
+    modelGeometry();
+    const target = mountArea(THREAD);
+    await vi.advanceTimersByTimeAsync(0);
+    const el = target.querySelector<HTMLElement>('.chat-messages-scroll')!;
+    const native = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop')!;
+    const writes: number[] = [];
+    Object.defineProperty(el, 'scrollTop', {
+      configurable: true,
+      get() {
+        return native.get!.call(this);
+      },
+      set(v: number) {
+        // Only the widen's steps are counted: the rows mounted when the write lands.
+        writes.push(this.querySelectorAll(ROW_SELECTOR).length);
+        native.set!.call(this, v);
+      },
+    });
+    await settleEntry();
+    expect(target.querySelectorAll(ROW_SELECTOR).length).toBe(60);
+    // One write per widen step (30, 40, 50, 60 rows), each the observer's pin to the new end.
+    const widenWrites = writes.filter((rows) => rows > 20);
+    expect(widenWrites).toEqual([30, 40, 50, 60]);
+    expect(el.scrollTop).toBe(el.scrollHeight);
+  });
+
   it('writes ONE info-level [CHAT_VIEW] line per entry, with where the pane stands', async () => {
     // The exported log records no debug: this line is what a device reading has of the pane.
     rowPx = 48;

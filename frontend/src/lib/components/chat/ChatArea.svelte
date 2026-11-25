@@ -922,9 +922,12 @@
    * Grows the entry window from its first-frame size to `INITIAL_RENDER_GROUPS`, AFTER the frame
    * that showed the tail, so a page of rows is never one long task before the first paint.
    *
-   * The new rows go ABOVE the viewport, so the scroll offset is moved by exactly the height they
-   * add (the same compensation `loadOlderGroups` makes) and the reader sees nothing move. It only
-   * lowers the start: a reader who has paginated further up keeps their wider window.
+   * The new rows go ABOVE the viewport, and the widen writes NO `scrollTop` for them: the thread's
+   * observer is the one writer of a prepend, as for `loadOlderGroups` - it pins a reader at the
+   * bottom and keeps the top row of one in history (`observeThreadGrowth`). The widen's own write,
+   * `prevTop + (scrollHeight - prevHeight)`, was a second writer of the same change, computed from
+   * heights a glide in flight inflates (owner's Android, 1.8.0, 2026-11-25: chat.md). It only lowers
+   * the start: a reader who has paginated further up keeps their wider window.
    */
   async function widenEntryWindow(epoch: number) {
     try {
@@ -952,13 +955,10 @@
         }
         const next = widenStepStart(renderWindow.start, target, ENTRY_WIDEN_STEP);
         if (next === null) return;
-        const prevHeight = chatContainer.scrollHeight;
-        const prevTop = chatContainer.scrollTop;
         Log.d('chat.entry', `widening window ${renderWindow.start} -> ${next} (target ${target})`);
         windowStart = next;
         await tick();
         if (epoch !== entryEpoch || !chatContainer) return;
-        chatContainer.scrollTop = prevTop + (chatContainer.scrollHeight - prevHeight);
         await yieldToMainThread();
       }
     } finally {
@@ -1010,7 +1010,11 @@
     });
   }
 
-  function measureScroll() {
+  /**
+   * @param raisePill false for a re-measure the READER did not cause (a glide's end): the day pill
+   * shown by a scroll is corrected or withdrawn, never raised by it.
+   */
+  function measureScroll({ raisePill = true }: { raisePill?: boolean } = {}) {
     if (!chatContainer) return;
     // THE ONLY WRITER of the thread's stick-to-bottom flag. A scroll is the only thing that can
     // express the reader's intent to leave the live end, so it is the only thing that revises it.
@@ -1071,7 +1075,7 @@
     lastMeasuredScrollTop = c.scrollTop;
     lastMeasuredReach = threadReach(c);
     lastVisibleAnchor = measureLastVisibleAnchor();
-    updateStickyDateIndicator();
+    updateStickyDateIndicator(raisePill);
     // A pane its thread does not fill cannot be scrolled by the reader: a scroll event there is a box
     // changing (the keyboard), and its past is the silent entry fill's to bring.
     if (
@@ -1117,8 +1121,9 @@
     stickyDateTimer = null;
   }
 
-  function updateStickyDateIndicator() {
+  function updateStickyDateIndicator(raise = true) {
     if (!chatContainer) return;
+    if (!raise && !showStickyDate) return;
     const dates = Array.from(
       chatContainer.querySelectorAll<HTMLElement>('[data-chat-date-separator]')
     );
@@ -1150,6 +1155,7 @@
 
     if (!currentDate) return;
     stickyDateLabel = currentDate;
+    if (!raise) return;
     showStickyDate = true;
     clearStickyDateTimer();
     stickyDateTimer = setTimeout(() => {
@@ -1955,7 +1961,13 @@
       composerBand,
       // The pane's place is the baseline the next scroll measurement compares against: a move the
       // observer made (a pin after a clamp included) is not the reader leaving the bottom.
-      placedAt
+      placedAt,
+      // A glide's end moves nothing and fires no `scroll`: what was measured while the rows were
+      // drawn off their place (the flag behind the arrow, the day pill) is re-taken at rest.
+      () => {
+        Log.d('ChatArea', 'glide ended: the pane is measured at rest');
+        measureScroll({ raisePill: false });
+      }
     );
   });
 

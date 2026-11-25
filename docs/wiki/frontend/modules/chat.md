@@ -3906,6 +3906,62 @@ mark saves the conversation row before its handler returns (~4.2 s of this drain
 the next step ([backlog](../../backlog.d/per-frame-store-writes-of-a-catch-up-batched.md)); the
 reading on the Mi 9T PASSED on `1.8.1-alpha.2` (2026-11-25: 136 frames drained in 2245 ms with the pane at the end; scrolled up, 67 frames in 1985 ms, `scrollTop` unchanged, banner gone with the drain). The unread pill showed no count after it: [backlog](../../backlog.d/p3-the-scroll-to-bottom-arrow-shows-no-unread-count-after-a-catch-up.md).
 
+#### An open lands once: a change above the reader never glides (2026-11-25)
+
+**What the owner's recordings showed** (own Android phone, production `1.8.0`, two DMs, read frame by
+frame at 60 fps; the recordings are private and are not kept): on three opens the thread was drawn
+correctly at its end for ~67 ms, then **yanked about one screen up** (older rows, a voice note still
+its grey placeholder), the round down-arrow appeared, and the thread **slid back down over 300-600 ms,
+not monotonically** - in one open it rose again mid-way; in the other DM two yanks 0.25 s apart. At
+rest it was at its end, but **the arrow stayed**, and a day pill naming a date from far up the history
+stayed under the correct one.
+
+**The cause, read in the code and reproduced in the component test** (the modelled pane, 40 px rows):
+after the reveal, `widenEntryWindow` mounts the older rows ten groups per step ABOVE a reader at the
+end. The growth observer (`observeThreadGrowth`) answered each step `follow-bottom` - right - and then
+asked `appendGlidePx` whether to glide the pin's jump, and that predicate took ANY change of `rows`
+under a reader at the end, by up to half the pane, for an arrival. So every step under half a pane
+(the 240 px last step of the model) played the thread's glide: all the rows drawn that much LOWER,
+i.e. history crossing the screen, then slid back to their place; a second step mid-glide chained onto
+it (`glideTravel`), hence the long, non-monotonic descent. A voice note above the fold turning from its
+placeholder into its player is a `rows` change too, and glided the same way. **The voice note and the
+image were not the cause of the yank** - their late heights were already followed by the observer -
+only the glide drew them where the reader could see them.
+
+**And the widen was a second writer.** It wrote `scrollTop = prevTop + (scrollHeight - prevHeight)`
+after each step, on top of the observer's pin, from heights a glide in flight inflates (a translated
+row counts in the scroller's overflow). The note in `observeThreadGrowth` already said a prepend is
+kept by the observer "and only here"; the widen was the copy that predated it.
+
+**What changed:**
+
+- **only what grew BELOW the reader's top row glides.** The observer measures how far the row at the
+  top of the viewport moved in layout (`offsetTop`, before and after) and `appendGlidePx` glides the
+  pin's jump MINUS that: an arrival keeps its glide, a prepend, a widen step or a row settling above
+  the fold is a plain pin (Messenger shows nothing moving there either). A change whose top row left
+  the document cannot be placed, and jumps. One debug line per such pin (`pinned without a glide`);
+- **the widen writes no `scrollTop`**: the observer is the one writer of a prepend, for a reader at
+  the end (pin) and one in history (row anchor);
+- **a glide's end re-measures the pane** (`onGlideEnd`, on the animation's own `finish` event): a
+  measurement taken mid-glide reads a `scrollHeight` past the real end and separators drawn lower than
+  they stand, and the end of a glide fires no `scroll`, so the flag behind the arrow and the day pill
+  decided then outlived it. The re-measure corrects or withdraws a pill a scroll raised, and never
+  raises one (`measureScroll({ raisePill: false })`).
+
+**Pinned by** `threadAppendGlide.test.ts` (a change above the viewport, an arrival with a trim, a lost
+anchor), `threadGlide.test.ts` (three widen steps under a reader at the end play no glide; an arrival
+after a prepend glides its own height; `onGlideEnd` once per glide that ends, never for one replaced),
+`ChatArea.entryWindow.svelte.test.ts` (one `scrollTop` write per widen step, the observer's) and
+`ChatArea.scrollAnchor.svelte.test.ts` (the entry glides nothing; a glide's end withdraws an arrow a
+mid-glide measurement raised; it raises no pill).
+
+**What only a phone proves** - happy-dom lays nothing out, so the tests prove the decisions, not the
+frames: that no frame above the end is drawn at an open, and that the arrow and the stale pill are
+gone at rest. **Not proved from code:** the exact interleaving that left the flag down at rest (the
+two writers and the inflated overflow can produce it; the exported log's INFO line `left the bottom
+with no finger on the pane` would name it if it survives). The reading is
+[backlog](../../backlog.d/reading-owed-a-dm-opens-at-its-end-in-one-render.md).
+
 #### Rows before ratchet: a checkpoint stores the buffered rows first (2026-11-17)
 
 **The defect (P1, second review of #3321).** A live drain decrypts each frame and holds its row in

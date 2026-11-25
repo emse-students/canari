@@ -93,7 +93,10 @@ describe('the thread follows its own bottom from four triggers', () => {
     expect(read(CHAT_AREA)).toContain('composerBand,\n');
     // The pane's placements are the baseline of the flag's measurement (the photo DM, 2026-11-21),
     // and the end of any reader's move (2026-11-23).
-    expect(read(CHAT_AREA)).toContain('      placedAt\n    );');
+    expect(read(CHAT_AREA)).toContain('      placedAt,\n');
+    // A glide's end re-takes what was measured while the rows were drawn off their place (owner's
+    // Android, 1.8.0, 2026-11-25).
+    expect(read(CHAT_AREA)).toContain('measureScroll({ raisePill: false });');
     const wiring = read(GROWTH);
     // A box change is never an arrival, so it never glides (keyboard-and-send-motion.md).
     expect(wiring).toContain("const boxes = new ResizeObserver(() => follow('box'));");

@@ -463,6 +463,12 @@ export interface AppendGlide {
   isEntering: boolean;
   /** `prefers-reduced-motion: reduce`. */
   reducedMotion: boolean;
+  /**
+   * How far the row at the top of the viewport moved IN LAYOUT in this change (`offsetTop` after
+   * minus before, signed): what grew or shrank ABOVE what the reader sees. `null` when that row left
+   * the document, so where the change happened cannot be told.
+   */
+  anchorMovedPx: number | null;
 }
 
 /** Above this share of the pane, an arrival is a batch and the thread jumps rather than glides. */
@@ -470,6 +476,16 @@ const GLIDE_MAX_SHARE_OF_PANE = 0.5;
 
 /**
  * HOW FAR THE THREAD GLIDES INTO ITS NEW BOTTOM, in px, or 0 to leave the pin as a jump.
+ *
+ * **ONLY WHAT GREW BELOW THE READER'S TOP ROW GLIDES** (owner's Android, production 1.8.0,
+ * 2026-11-25: every DM open drawn at its end, then yanked one screen up and slid back down). The pin's
+ * jump is the whole change of the reach, and a change ABOVE the viewport moves the reach exactly as
+ * much as an arrival - the entry's widen mounting ten older rows per step, a voice note above the fold
+ * turning from its placeholder into its player. For those the pin alone keeps every row in view where
+ * it was drawn, and gliding the jump drew the whole thread one step LOWER and slid it back: ten rows of
+ * history crossing the screen per widen step, chained into one long descent by `glideTravel`. So the
+ * glide is the jump minus what moved the reader's top row, which is the arrival's height and nothing
+ * else; a change whose top row left the document cannot be placed and jumps.
  *
  * Messenger makes room for a new message by sliding the thread up by the row's height (~220 ms,
  * measured 2026-11-13, keyboard-and-send-motion.md); Canari jumped there in one frame. The pin itself
@@ -484,9 +500,10 @@ const GLIDE_MAX_SHARE_OF_PANE = 0.5;
 export function appendGlidePx(g: AppendGlide): number {
   if (g.cause !== 'rows' || g.isEntering || g.reducedMotion) return 0;
   if (Math.abs(g.currentClientHeight - g.previousClientHeight) > 1) return 0;
-  const delta = g.currentScrollTop - g.previousScrollTop;
-  if (delta <= 0 || delta > g.currentClientHeight * GLIDE_MAX_SHARE_OF_PANE) return 0;
-  return delta;
+  if (g.anchorMovedPx === null) return 0;
+  const travel = g.currentScrollTop - g.previousScrollTop - g.anchorMovedPx;
+  if (travel <= 0 || travel > g.currentClientHeight * GLIDE_MAX_SHARE_OF_PANE) return 0;
+  return travel;
 }
 
 /** Where the keyboard stands when {@link paneGeometryLine} is written. */
