@@ -1071,10 +1071,9 @@
             `${keyboardTransitionMoving() ? ' moving' : ' at rest'})`
         );
       }
-      // INSIDE A GLIDE the fall also carries the last `follow()` pass's numbers (iPhone 12, an image
-      // arriving): which of a native anchor, a clamp or a stale replay moved the pane.
-      const inGlide = describeGlideFall(c);
-      if (inGlide) Log.i('ChatArea', inGlide);
+      // INSIDE A GLIDE the fall also prints the glide's buffered `follow()` passes and scroll moves
+      // (iPhone 12, an image arriving): the only INFO lines of that trace, so an ordinary arrival writes none.
+      for (const line of describeGlideFall(c) ?? []) Log.i('ChatArea', line);
     }
     if (response === 'put-back') {
       spentKeyboardTransition = transitions;

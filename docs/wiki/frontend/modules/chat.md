@@ -3988,15 +3988,19 @@ transient content size, (c) a stale `held.px` replayed. Code reading does not pr
 a transform and writes no `scrollTop`. Backlog:
 [the entry](../../backlog.d/an-image-arrival-drops-a-pinned-dm-on-the-iphone.md).
 
-**What is written** (`GlideTrace` in `threadGrowthObserver.ts`, INFO because the exported log records no
-DEBUG): only while a glide runs, never on steady scrolling, never per frame, at most
-`GLIDE_TRACE_MAX_LINES` (8) pass lines per glide, the rest counted. One line per `follow()` pass that
-starts or finds a glide, e.g. `glide pass 2 (box, +55ms): top/height/box before 910/1443/400, suspended
-910/1430/400, pinned 1030/1443/400; held 70px with 53px left; follow-bottom, new travel 0px, replay 70px
-at 55ms`; and ONE `the fall came inside a glide of ...` line from `ChatArea` right after the `left the
-bottom` line, with the numbers now and the last pass (`describeGlideFall`). `top/height/box` is
-`scrollTop/scrollHeight/clientHeight`: a move at `suspended` is (a) or (b) (a shrunk height is (b)), one
-after `pinned` with a replay unlike the layout is (c). Pinned by `threadGlide.test.ts`.
+**What is written** (`GlideTrace` in `threadGrowthObserver.ts`): **INFO only with the fall line, nothing at
+pass time** - every ordinary message makes a glide, so a line per pass would be noise forever. The
+`follow()` passes that start or find a glide wait in a ring of `GLIDE_TRACE_MAX_LINES` (8, older ones
+counted), with the `scroll` moves after the last pass (a passive listener armed for the glide only:
+ms into the glide and `scrollTop` delta, the async case, no forced layout). When the pane's
+measurement finds a fall inside a glide, `ChatArea` prints them right after the `left the bottom`
+line (`describeGlideFall`), e.g. `glide pass 2 (box, +55ms): top/height/box previous end 910/1310/400,
+suspended 910/1430/400, pinned 1030/1430/400; held 70px with 53px left; follow-bottom, new travel 0px,
+replay 70px at 55ms`. `top/height/box` is `scrollTop/scrollHeight/clientHeight`, read only where the
+layout is clean (`suspended`, after the transforms are cancelled; `pinned`, after the pin and before
+the replay). Native anchoring (a) moves `top` at `suspended` with the height unchanged; a clamp (b)
+with a shrunk height; stable pass numbers and a later scroll move are (b) or an engine move outside
+the passes - not "nothing found"; (c) is only a visual offset. Pinned by `threadGlide.test.ts`.
 
 #### Rows before ratchet: a checkpoint stores the buffered rows first (2026-11-17)
 
