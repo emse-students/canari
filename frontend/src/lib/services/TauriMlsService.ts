@@ -1478,9 +1478,10 @@ export class TauriMlsService extends BaseMlsService {
     // of those rounds orphans the previous 50 locally for ever. What bounds it is
     // `MlsManager::prune_expired_key_packages`, which runs once per load in `load_or_create` and so
     // covers this path, the web one and the background FCM one alike.
-    const existing = await this.delivery.fetchPrekeyCount();
-    const needed = Math.max(0, 50 - existing);
-    console.log(`[MLS][Tauri] generateKeyPackage native batch path needed=${needed}`);
+    const { needed, counted } = await this.oneTimePackagesNeeded();
+    console.log(
+      `[MLS][Tauri] generateKeyPackage native batch path needed=${needed}${counted ? '' : ' (no count - fallback only)'}`
+    );
 
     // Single native command: generate fallback + OTKPs + persist encrypted state.
     const nativeBatch = await invoke<NativeKeyPackageBatchResult>(

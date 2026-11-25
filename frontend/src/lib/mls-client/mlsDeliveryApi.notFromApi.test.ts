@@ -276,14 +276,18 @@ describe("a rename, a group image and a member registration are done only on the
   });
 
   it('a portal 200 on registerMember is logged as no answer, never read as an enrolment', async () => {
+    // No answer is narrated at WARN by its class, never filed beside a defect at ERROR (2026-11-25).
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warns = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { api } = makeApi(portal, () => Response.json({ status: 'added' }));
     await expect(api.registerMember('g1', 'u2')).resolves.toBeUndefined();
-    expect(errors.mock.calls.some((c) => c[1] instanceof NotFromApiError)).toBe(true);
-    errors.mockClear();
+    expect(warns.mock.calls.some((c) => String(c[0]).includes('NotFromApiError'))).toBe(true);
+    warns.mockClear();
     await expect(api.registerMember('g1', 'u2')).resolves.toBeUndefined();
+    expect(warns).not.toHaveBeenCalled();
     expect(errors).not.toHaveBeenCalled();
     errors.mockRestore();
+    warns.mockRestore();
   });
 });
 

@@ -33,7 +33,9 @@ vi.mock('$lib/mls-client/mlsStatePersisterRegistry', async (importOriginal) => (
   persistMlsStructuralCheckpoint: (...args: unknown[]) => persistMlsStructuralCheckpoint(...args),
 }));
 
+import { BaseMlsService } from './BaseMlsService';
 import { WebMlsService } from './WebMlsService';
+import { PrekeyCountUnreadableError } from '$lib/mls-client/mlsDeliveryApi';
 
 const HELD = new Uint8Array([0xbe, 0xef]);
 const MINTED = new Uint8Array([0xfa]);
@@ -53,7 +55,7 @@ const dated = (bytes: Uint8Array) => ({
   [Symbol.dispose]: vi.fn(),
 });
 
-function makeCtx(opts: { poolOnServer: number; held?: Uint8Array }) {
+function makeCtx(opts: { poolOnServer: number | Error; held?: Uint8Array }) {
   const saveState = vi.fn(() => new Uint8Array(16));
   const publishKeyPackage = vi.fn().mockResolvedValue(undefined);
   const publishKeyPackages = vi.fn().mockResolvedValue(undefined);
@@ -74,7 +76,18 @@ function makeCtx(opts: { poolOnServer: number; held?: Uint8Array }) {
       // harness: the worker path pays for everything this one does and a round trip besides.
       useKeyPackageWorker: false,
       client,
-      delivery: { fetchPrekeyCount: vi.fn().mockResolvedValue(opts.poolOnServer) },
+      delivery: {
+        fetchPrekeyCount:
+          opts.poolOnServer instanceof Error
+            ? vi.fn().mockRejectedValue(opts.poolOnServer)
+            : vi.fn().mockResolvedValue(opts.poolOnServer),
+      },
+      // The real count step, shared by both platforms' rounds.
+      oneTimePackagesNeeded: (
+        BaseMlsService.prototype as unknown as {
+          oneTimePackagesNeeded: () => Promise<{ needed: number; counted: boolean }>;
+        }
+      ).oneTimePackagesNeeded,
       publishKeyPackage,
       publishKeyPackages,
     },
@@ -91,6 +104,56 @@ const round = (ctx: unknown): Promise<{ bytes: Uint8Array; notAfterSecs: number 
       generateKeyPackageImpl(k: string): Promise<{ bytes: Uint8Array; notAfterSecs: number }>;
     }
   ).generateKeyPackageImpl.call(ctx, 'device-key');
+
+describe('a count nobody gave mints no one-time package and still refreshes the fallback', () => {
+  beforeEach(() => persistMlsStructuralCheckpoint.mockClear());
+
+  it('publishes the held fallback and no pool, said once (owner log, 2026-11-25)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { ctx, client, publishKeyPackage, publishKeyPackages } = makeCtx({
+      poolOnServer: new PrekeyCountUnreadableError('transport', null, new Error('dns')),
+      held: HELD,
+    });
+    await round(ctx);
+    expect(client.generate_key_packages).not.toHaveBeenCalled();
+    expect(publishKeyPackages).not.toHaveBeenCalled();
+    expect(publishKeyPackage).toHaveBeenCalledWith({ bytes: HELD, notAfterSecs: NOT_AFTER });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain('mints no one-time package');
+    // The line after it says what is known: no count, never "pool full".
+    const said = log.mock.calls.flat().join(' ');
+    expect(said).toContain('no count, last-resort valid');
+    expect(said).not.toContain('pool full');
+    warn.mockRestore();
+    log.mockRestore();
+  });
+
+  it('after a fresh start (no held fallback) still mints and publishes a NEW fallback', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { ctx, client, publishKeyPackage } = makeCtx({
+      poolOnServer: new PrekeyCountUnreadableError('status', 502),
+    });
+    await round(ctx);
+    expect(client.generate_last_resort_key_package).toHaveBeenCalled();
+    expect(publishKeyPackage).toHaveBeenCalledWith(
+      expect.objectContaining({ bytes: MINTED, notAfterSecs: NOT_AFTER })
+    );
+    warn.mockRestore();
+  });
+
+  it('a deadline still fails the round', async () => {
+    const { ctx, publishKeyPackage } = makeCtx({
+      poolOnServer: new (await import('$lib/mls-client/mlsDeliveryApi')).DeliveryDeadlineError(
+        'prekey-count',
+        1
+      ),
+      held: HELD,
+    });
+    await expect(round(ctx)).rejects.toThrow('prekey-count');
+    expect(publishKeyPackage).not.toHaveBeenCalled();
+  });
+});
 
 describe('a key package round that mints nothing writes nothing', () => {
   beforeEach(() => persistMlsStructuralCheckpoint.mockClear());

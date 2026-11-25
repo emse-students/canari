@@ -2993,11 +2993,11 @@ export async function loginImpl(
     // it. The code is NAMED in the line so the two can still be told apart at a glance.
     // A hardware-held key gone is ACCUSED ONCE, by the restart it decides (`[DEVICE_RESTART]`, once
     // the PIN was accepted) - so it is narrated here, never filed twice at `error`.
+    // ONE LINE PER OUTCOME: `cb.log` is a `console.log` too, so narrating it there as well wrote
+    // every failed login twice, once plain and once at its level (owner's Android log, 2026-11-25).
     if (isExpectedLoginOutcome(code) || restartsAsNewDevice(code)) {
-      cb.log(`[INIT] Login did not complete (${code}): ${String(_e)}`);
       console.warn(`[INIT] Login did not complete (${code}):`, _e);
     } else {
-      cb.log(`Error: ${String(_e)}`);
       console.error(`[INIT] Login failed (${code}):`, _e);
     }
     // A LOGIN THAT FAILED AFTER IT WENT LIVE LEAVES NOTHING ACTING ON ITS SESSION. A failed reopen of
