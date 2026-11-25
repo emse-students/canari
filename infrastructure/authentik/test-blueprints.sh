@@ -239,6 +239,17 @@ if ! run_ak_shell "$worker" <"$here/test-pkce.py" 2>&1 | tee >(cat >&2) | grep -
 fi
 echo "a challenged code is redeemed with its verifier only, and a verifier is never ignored"
 
+# THE COTISANT GATE, AT A REFRESH. authentik's refresh_token grant evaluates no binding; the gated
+# offline_access mapping (10-mappings.yaml) re-reads MiGallery's and Le Cercle's bindings there. Only
+# the real token endpoint shows that a person the gate now refuses gets `invalid_grant`
+# (infrastructure/authentik/test-refresh-gate.py).
+echo "cotisant gate: refreshing a token before and after the gate's input flips"
+if ! run_ak_shell "$worker" <"$here/test-refresh-gate.py" 2>&1 | tee >(cat >&2) | grep -x 'REFRESH-GATE-OK' >/dev/null; then
+  echo "::error::a refresh token outlived the application's access policy - read the assertion above"
+  exit 1
+fi
+echo "a person the gate refuses cannot refresh, and an admitted one can"
+
 # THE TERMS OF USE, DRIVEN. 45-consent.yaml builds the flow on every instance; which providers ask
 # for it is declared in 50-providers.yaml: all eight since the hold on production was lifted
 # (2026-11-20). The driven test asserts that exact set, walks the page on a bound provider, and

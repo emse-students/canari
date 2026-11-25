@@ -6582,12 +6582,25 @@ it. **The lesson the entry leaves:** a keyboard the system re-presents at a retu
 rise, and a transition is only ever ended by facts - the paired did-show or did-hide, and the frame landed
 ([the next section](#a-rest-is-two-facts-the-keyboard-at-rest-and-its-frame-landed-2026-11-24)).
 
+**Read and closed again, with the two-fact rest (`1.8.1-alpha.2`, iPhone 12, 2026-11-25): 11 of 11.** The
+`1.8.0-alpha.6` gesture that had passed 6 of 11 (keyboard up at the end of the DM, Home, 3 to 10 s
+away, relaunch): the thread at its end every time and the arrow never up; every return's transition
+`at rest` with `fromEnd 0 pinned=true`; no `not a keyboard move of the engine, the flag falls`, no `left
+the bottom` (with WebKit's reveal detached the pane no longer moves at a return), no `a rest heard before
+the keyboard's frame landed` WARN; the owed-rest path ran (`keyboard at rest before rise #N set its
+frame`) and the page's rest followed the frame; every `keyboard settled` line read native offset and
+inset bottom `0.0`, and the detach line `scroll view inset bottom 0.0` came once. **The lesson:** a rest
+told from a notification is a guess about the screen when that notification can arrive before the frame
+it describes - an un-animated keyboard's did-show precedes the WebView's resize - so a rest is the
+CONJUNCTION of the keyboard at rest and its frame landed, each carried from the side that knows it, and
+the second inset the engine would add on its own is removed rather than compensated.
+
 ### A rest is two facts: the keyboard at rest AND its frame landed (2026-11-24)
 
 **What the iPhone said** (`1.8.0-alpha.6`, iPhone 12, the same gesture): #4023 passed 6 returns of 11.
 Every failing return logged `not a keyboard move of the engine, the flag falls (keyboard transition #N at
 rest)`, the transition at rest 36 to 45 ms before the move
-([the entry](../../backlog.d/p2-a-dm-thread-is-left-above-its-end-by-a-keyboard-reveal-that-lands-after-the-transition-rests.md)).
+([the sitting](../../device-verification.md#the-readings-of-2026-11-24-180-alpha6-iphone-12-the-dm-thread-again-the-composer-the-ios-27-sdk-build-the-broadcasters-column-the-voice-note-the-sign-out-row)).
 
 **Why, from the syslog.** A keyboard that comes back with the app shows with no animation: UIKit's
 did-show follows its will-show at once, while the shell's rise is still waiting for the page's layout
@@ -6612,8 +6625,8 @@ Tests: `keyboardTransition.test.ts` (a rest before the frame is held, a frame fi
 the shell, a landing with nothing held rests nothing), `keyboardViewport.appReturn.test.ts` (the hand-off
 through `canariImeTarget` and the resize, in both orders), `ChatArea.scrollAnchor.svelte.test.ts` (a move
 after an early rest, frame still awaited, is put back), `iosKeyboardRiseHandoff.test.ts` (the owed rest
-and its settle), `keyboardTransition.test.ts` again (a newer change drops a held rest). **Owed: the iPhone
-reading of the same gesture, eleven returns, eleven at the end.**
+and its settle), `keyboardTransition.test.ts` again (a newer change drops a held rest). **Read and closed
+on `1.8.1-alpha.2` (iPhone 12, 2026-11-25): 11 of 11** ([above](#the-keyboard-comes-back-with-the-app-2026-11-23)).
 
 ### A short thread sits at the bottom, and asks for its past at entry (2026-11-14)
 

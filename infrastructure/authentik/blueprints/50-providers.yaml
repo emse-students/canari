@@ -199,6 +199,12 @@ entries:
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-name"]]
         - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-openid"]]
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-profile"]]
+        # The offline_access scope exists on this provider ONLY through this mapping, which re-reads the
+        # application's bindings at every refresh (10-mappings.yaml, the cotisant gate, 1.8.1).
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-offline-access-gated"]]
+      # PINNED: the gated offline_access mapping runs at a refresh only inside the id_token's claims
+      # (`IDToken.new`), which authentik builds only while this is true (its default).
+      include_claims_in_id_token: true
       grant_types:
         - "authorization_code"
         - "refresh_token"
@@ -236,6 +242,12 @@ entries:
         - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-openid"]]
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-profile"]]
         - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-profile"]]
+        # The offline_access scope exists on this provider ONLY through this mapping, which re-reads the
+        # application's bindings at every refresh (10-mappings.yaml, the cotisant gate, 1.8.1).
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-offline-access-gated"]]
+      # PINNED: the gated offline_access mapping runs at a refresh only inside the id_token's claims
+      # (`IDToken.new`), which authentik builds only while this is true (its default).
+      include_claims_in_id_token: true
       grant_types:
         - "authorization_code"
         - "refresh_token"

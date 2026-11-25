@@ -177,6 +177,62 @@ entries:
         return {"alumni_linked": UserSourceConnection.objects.filter(user=request.user, source__slug="alumni").exists()}
       scope_name: "profile"
       description: "Says whether the account is linked to its Alumni account"
+  # THE APPLICATION'S ACCESS POLICY, RE-READ AT EVERY TOKEN REFRESH (1.8.1), on MiGallery and Le
+  # Cercle: the D43 gate (60-applications.yaml) must refuse at a refresh what it refuses at an
+  # authorization. authentik 2026.8.6's `refresh_token` grant evaluates no binding
+  # (`create_refresh_response` in providers/oauth2/views/token.py), but it DOES evaluate this:
+  #   - a refresh is refused `invalid_scope` unless `offline_access` is in the token's scope
+  #     (views/token.py:183), and a scope survives only if a mapping of the provider carries its
+  #     name (token/base.py `check_scopes`), so on a provider whose ONLY `offline_access` mapping is
+  #     this one, every refresh that mints anything carries it;
+  #   - the new access token's id_token is built by `IDToken.new` before anything is saved
+  #     (views/token.py:196-203), which evaluates every mapping of the token's scopes
+  #     (`UserInfoView.get_claims`) while `include_claims_in_id_token` is true - pinned on both
+  #     providers (50-providers.yaml);
+  #   - `get_claims` swallows a failing mapping (PropertyMappingExpressionException becomes a
+  #     configuration-error Event and is skipped), but `PropertyMapping.evaluate` re-raises a
+  #     ControlFlowException untouched (core/models.py:1262), and `TokenView.post` answers ANY
+  #     TokenError as `400 {"error": ...}` (views/token.py:101). So the refusal is an exception that
+  #     is both: `invalid_grant`, exactly what the client gets for a revoked refresh token.
+  # The decision is authentik's own access check, run as the client-credentials grant runs it
+  # (`check_policy_access` in token/base.py): the application's PolicyEngine, uncached, so the
+  # rule lives once, in its bindings (the policy OR `acces-<app>`, engine mode `any`), and a change
+  # of date, of post, of the Alumni read or of the group is read at the next refresh - no
+  # revocation to schedule, no copy of the rule. Nothing is revoked on a refusal: a person admitted
+  # again (a cotisation read, a group granted) refreshes again. It decides at the REFRESH grant only:
+  # the code exchange follows an authorization the bindings just admitted, and the userinfo
+  # endpoint must not answer a 500 for a five-minute access token.
+  # Driven in CI by test-refresh-gate.py (via test-blueprints.sh).
+  - model: authentik_providers_oauth2.scopemapping
+    identifiers:
+      name: "miconnect-offline-access-gated"
+    attrs:
+      expression: |-
+        from authentik.core.apps import AppAccessWithoutBindings
+        from authentik.lib.expression.exceptions import ControlFlowException
+        from authentik.policies.engine import PolicyEngine
+        from authentik.providers.oauth2.errors import TokenError
+
+        http = request.http_request
+        if http is None or http.method != "POST" or http.POST.get("grant_type") != "refresh_token":
+            return None
+        application = provider.application
+        engine = PolicyEngine(application, request.user, http)
+        engine.empty_result = AppAccessWithoutBindings.get()
+        engine.use_cache = False
+        engine.request.context["oauth_grant_type"] = "refresh_token"
+        engine.build()
+        if engine.result.passing:
+            ak_logger.debug("refresh admitted by the application's bindings", app=application.slug, user=request.user.pk)
+            return None
+        ak_logger.info("refresh refused by the application's bindings", app=application.slug, user=request.user.pk)
+
+        class RefreshRefusedByApplication(ControlFlowException, TokenError):
+            """Passes through get_claims (a ControlFlowException) and is answered by TokenView (a TokenError)."""
+
+        raise RefreshRefusedByApplication("invalid_grant")
+      scope_name: "offline_access"
+      description: "Garde l'accès sans reconnexion, tant que l'application t'est ouverte"
   - model: authentik_sources_oauth.oauthsourcepropertymapping
     identifiers:
       name: "miconnect-cas-identity"

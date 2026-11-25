@@ -34,3 +34,12 @@ a minute - no "Failed" row; the log reads `[video-prep] the encoder stopped whil
 view` and `[PUBLISH-QUEUE] <id> its preparation was interrupted as the app left the view` (both at
 info, no `E` line), then `back in view: preparing it again` and ONE `published`. Rows (2) without the
 early leave and (3) stay as written.
+
+**2026-11-25, `1.8.1-alpha.2` (iPhone 12): row (2) regression PASS, the interrupted path NOT exercised -
+still owed.** Seven leaves 0.2 to 1.4 s after "Publish" (back after 1 s once, 15 to 25 s otherwise): all
+seven published once (one `published` per queue id), no "Failed" row, no terminal failure; two cut at the
+upload resumed from their part. But the page's `App in background` lands 1.2 to 1.7 s after Home and the
+encode took 0.8 to 1.4 s, so every encode finished before the app left the view: the encoder was never
+torn down and the `interrupted` branch's two lines never ran. **Owed on the next alpha:** the same leave
+with a longer video, whose encode takes over 2 s, so that Home lands inside the encode and the two
+`interrupted` lines, then `back in view: preparing it again` and ONE `published`, are read.
