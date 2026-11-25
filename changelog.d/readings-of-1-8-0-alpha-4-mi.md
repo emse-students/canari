@@ -1,3 +1,0 @@
-### Changed - the `1.8.0-alpha.4` readings on the Mi 9T: four fixes read right, four unreadable Lydia readings closed
-
-The live sheet names a refused camera permission, the Rediffusion switch shows both states, the bell follows a re-follow, the mute covers votes and comment likes, and a group creation is logged once ([readings of 2026-11-23](docs/wiki/device-verification.md#the-readings-of-2026-11-23-180-alpha4-mi-9t-the-live-sheets-camera-sentence-the-switch-the-bell-the-mute-the-group-creation-log)). The Lydia cashier, managers and organiser notices and the Responsable hand-over need a Lydia sandbox, so their entries are closed.
