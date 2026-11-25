@@ -7,7 +7,7 @@ it can be cleared without guessing, with a ranked leaderboard checked by server-
 | --- | --- |
 | Engine (generation, solver, play, replay) | `frontend/src/lib/minesweeper/game.ts` |
 | Server copy of the engine | `apps/social-service/src/minesweeper/engine/game.ts` |
-| Screen | `frontend/src/lib/components/settings/MinesweeperModal.svelte` |
+| Screen (a full-screen PAGE at `/games/play`; the file keeps its historical `Modal` name and path, see below) | `frontend/src/lib/components/settings/MinesweeperModal.svelte`, `frontend/src/routes/games/play/+page.svelte` |
 | THE leaderboard (ranking, promo, Stats, moderation) | `frontend/src/routes/games/+page.svelte`, `frontend/src/lib/components/games/MinesweeperStats.svelte` |
 | View geometry (fit, bounds, zoom, flick) | `frontend/src/lib/minesweeper/view.ts` |
 | Vibration patterns | `frontend/src/lib/minesweeper/haptics.ts` |
@@ -20,9 +20,14 @@ it can be cleared without guessing, with a ranked leaderboard checked by server-
 ## The screen is the board (2026-10-07)
 
 *"affichage plein ecran, avec juste un bouton classement qui flotte en haut a droite"* and *"amelioration de
-la fluidite et de la facilite de controle"* (user). The modal has no title bar and no tabs: on a phone it
-fills the screen (`phoneFullScreen`), on a desktop it stays a 96vw/96dvh dialog. Everything else floats
-over the board:
+la fluidite et de la facilite de controle"* (user). The game has no title bar and no tabs. **It is a page, not a modal
+(owner, 2026-11-25: the modal's portal, focus trap and history overlay cost frames a 576-cell board cannot
+spare):** `/games/play` is a full-screen place (`isFullScreenPlace` in `lib/navigation/places.ts`, like the
+camera), so the shell draws no header or bar and the page pads itself by the safe area. Leaving it is
+navigation: the close and the trophy are `<a href="/games" data-back-link>`, so Back returns to the page the
+player came from, and the game starts on mount and stops on destroy (it was an effect on an `open` flag).
+**The component kept its name and path**: the raw-controls ratchet reads a moved file as a NEW entry, so a
+rename of a file that carries raw controls cannot pass it. Everything else floats over the board:
 
 | Control | Where | Notes |
 | --- | --- | --- |
@@ -237,8 +242,7 @@ feel - owed on the Mi 9T and the iPhone (`device-verification.md`).
 ## The Games page and the per-promo ranking (owner, 2026-11-10)
 
 `/games` (`routes/games/+page.svelte`, a row of the dashboard's Explorer, open to every signed-in
-account; the 5 taps on the settings title still open the game) carries **"Jouer"** (opens the same
-`MinesweeperModal`), the reader's own record (`GET minesweeper/me`) and the ranking in two tabs: overall
+account; the 5 taps on the settings title still open the game) carries **"Jouer"** (a link to `/games/play`), the reader's own record (`GET minesweeper/me`) and the ranking in two tabs: overall
 and **per promo**. Moderation of scores is on this page for global admins (see the one-leaderboard section above).
 
 - **Server**: `GET minesweeper/leaderboard?promo=<year>` narrows the board to one entry year, ranks
@@ -461,10 +465,11 @@ own; a score the ranking hides - a banned player's, the other side of the review
 controller of this service does) sees every score, because judging a cheat means opening a banned player's
 game or an earlier win. A member's read is logged at `debug` (routine traffic); **an admin's at `log`**, since
 it can reach what the ranking hides and the trace must survive in production. On the Games page every ranking row has a
-"Revoir cette partie" button (admins also keep remove and ban); it opens `MinesweeperReplay.svelte`.
+"Revoir cette partie" button (admins also keep remove and ban); it is a link to `/games/replay/<scoreId>`, a full-screen page like the game (`MinesweeperReplay.svelte`).
 
 THE SCREEN IS THE BOARD (owner, 2026-11-18: the first window was too small for the grid on a phone): the
-viewer is a full-screen sheet on a phone (`phoneFullScreen`), a tall dialog on a larger screen. The stage
+viewer is a full-screen PAGE (`/games/replay/[id]`, since 2026-11-25; it was a modal), with a header
+whose arrow is a Back link. The stage
 takes every pixel the controls leave and **the whole grid is fitted to it** - `fitCellSize` picks the cell
 size from the stage's measured room, re-fitted by a `ResizeObserver` on every resize or rotation, clamped
 to 14-44 px (below 14 the cell's 12 px digit no longer fits) - so the grid is on screen whole. Its
