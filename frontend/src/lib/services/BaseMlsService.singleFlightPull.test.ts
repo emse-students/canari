@@ -13,6 +13,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { BaseMlsService } from '$lib/services/BaseMlsService';
+import { GroupDrainAbandonedError } from '$lib/mls-client/IMlsService';
 import type { MlsQueuedMessage } from '$lib/mls-client/mlsPerGroupScheduler';
 
 /** @see BaseMlsService.deliveryIdentity.test.ts - same reason the cast is what instantiates the base. */
@@ -226,7 +227,9 @@ describe('a pull asked while another pull or a drain is running', () => {
     expect(inner(svc).owedPull).toBeNull();
 
     applying.settle();
-    await Promise.all([first, barrier]);
+    // The barrier is RELEASED by the destroy, as a refusal: its group will never drain here.
+    await expect(barrier).rejects.toBeInstanceOf(GroupDrainAbandonedError);
+    await first;
     expect(pulls).toBe(1);
   });
 

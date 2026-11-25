@@ -9,6 +9,7 @@
  */
 import type { Mock } from 'vitest';
 import { appendLog } from '$lib/utils/sessionLog';
+import { GroupDrainAbandonedError } from '$lib/mls-client/IMlsService';
 import {
   answerAfterMailboxDrained,
   reconcileGroup,
@@ -553,20 +554,44 @@ describe('the mailbox barrier', () => {
     const gateway = gate();
     const answer = vi.fn().mockResolvedValue(undefined);
 
-    // Returns void, synchronously: every responder leg runs inside the pipeline, so awaiting the
-    // queue from there would be the drain waiting on itself.
-    expect(
-      answerAfterMailboxDrained({ waitForGroupQueueIdle: gateway.wait } as never, GROUP, answer)
-    ).toBeUndefined();
+    // Returns at once, with the leg still pending: every responder leg runs inside the pipeline, so
+    // awaiting the queue from there would be the drain waiting on itself. The returned promise is
+    // the leg's END, for a caller outside the drain that must know it.
+    let ended = false;
+    const leg = answerAfterMailboxDrained(
+      { waitForGroupQueueIdle: gateway.wait } as never,
+      GROUP,
+      answer
+    );
+    void leg.then(() => (ended = true));
     // THE GROUP IT WAITS FOR, not the whole account: this leg describes ONE conversation, and a
     // device rejoining twenty-nine of them reached whole-mailbox idle 189 s after it was asked.
     expect(gateway.wait).toHaveBeenCalledWith('history answer', GROUP);
     await flush();
     expect(answer).not.toHaveBeenCalled();
 
+    expect(ended).toBe(false);
+
     gateway.open();
-    await flush();
+    await leg;
     expect(answer).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs no answer when the service ended before the group went idle, says so, and the leg ends', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const answer = vi.fn().mockResolvedValue(undefined);
+    await answerAfterMailboxDrained(
+      {
+        waitForGroupQueueIdle: vi.fn().mockRejectedValue(new GroupDrainAbandonedError(GROUP)),
+      } as never,
+      GROUP,
+      answer
+    );
+    expect(answer).not.toHaveBeenCalled();
+    expect(info.mock.calls.map((c) => String(c[0])).join(' | ')).toMatch(
+      /GroupDrainAbandonedError/
+    );
+    info.mockRestore();
   });
 
   it('still answers when the barrier itself rejects - a broken queue must not silence a peer', async () => {

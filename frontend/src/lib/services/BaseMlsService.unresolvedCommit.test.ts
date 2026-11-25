@@ -1781,6 +1781,7 @@ describe('settleUnresolvedCommits - a kept invitation that did not land', () => 
         pauseSocket: vi.fn(),
         wakeKeyPackageRoundWaiters: vi.fn(),
         abandonGroupDrainedWaiters: vi.fn(),
+        messageScheduler: { abandonGroupIdleWaiters: vi.fn() },
         destroyPlatformResources: vi.fn(),
         heartbeatTimer: null,
         heldFrames: [],

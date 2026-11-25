@@ -27,7 +27,11 @@ import {
   redeemInviteLinkGrant,
 } from '$lib/crypto/graineAdmission';
 import type { DeviceSignatureKeys } from '$lib/mls-client/deviceKeyPackage';
-import { MailboxListingIncompleteError } from '$lib/mls-client/IMlsService';
+import {
+  GroupDrainAbandonedError,
+  MailboxListingIncompleteError,
+} from '$lib/mls-client/IMlsService';
+import { connectivity } from '$lib/stores/connectivity.svelte';
 import {
   deferredSeedAnswersSettled,
   handleDistributionFrame as handleFrame,
@@ -982,17 +986,127 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
         .map((c) => String(c[0]))
         .filter((l) => l.includes("the answer to bob:bob-phone's request r-link"));
       expect(lost).toHaveLength(1);
-      expect(lost[0]).toMatch(/parked for the next connection/);
+      expect(lost[0]).toMatch(/it waits for the link/);
       expect(parkedAskCount()).toBe(1);
       expect(sendMessage).toHaveBeenCalledTimes(1);
 
       // The next connection's catch-up: answered once, and a second catch-up sends nothing more.
-      await releaseAsksAwaitingLink();
+      await releaseAsksAwaitingLink('the connection caught up');
       expect(sendMessage).toHaveBeenCalledTimes(2);
       expect(parkedAskCount()).toBe(0);
-      await releaseAsksAwaitingLink();
+      await releaseAsksAwaitingLink('the connection caught up');
       expect(sendMessage).toHaveBeenCalledTimes(2);
       warn.mockRestore();
+      info.mockRestore();
+    });
+
+    /** A runtime whose `sendMessage` is the given mock, holding `sess-1`. */
+    function wireSend(sendMessage: ReturnType<typeof vi.fn>, extra: Record<string, unknown> = {}) {
+      const { storage } = fakeStorage([heldSeed('sess-1', 12)]);
+      setGraineRuntime({
+        storage,
+        deviceKey: () => 'device-key',
+        userId: 'alice',
+        mlsService: graineMls({ sendMessage, ...extra }),
+      });
+    }
+    const noAnswer = () => new TransportFailureError(new TypeError('Failed to fetch'));
+
+    it('a link that came back WHILE the send hung is not waited for again: the answer goes at once', async () => {
+      const quiet = [
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined),
+        vi.spyOn(console, 'info').mockImplementation(() => undefined),
+      ];
+      const hung = gate();
+      const sendMessage = vi
+        .fn()
+        .mockImplementationOnce(async () => {
+          await hung.promise;
+          throw noAnswer();
+        })
+        .mockResolvedValue(undefined);
+      wireSend(sendMessage);
+
+      await handleFrame(askFor('alice', 'r-race'));
+      await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+      // The socket reconnects and catches up while the send hangs: nothing is parked yet.
+      await releaseAsksAwaitingLink('the connection caught up');
+      hung.open();
+      await deferredSeedAnswersSettled();
+
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(parkedAskCount()).toBe(0);
+      for (const spy of quiet) spy.mockRestore();
+    });
+
+    it('a release that meets a second transport failure parks again, and the next release answers', async () => {
+      const quiet = [
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined),
+        vi.spyOn(console, 'info').mockImplementation(() => undefined),
+      ];
+      const sendMessage = vi
+        .fn()
+        .mockRejectedValueOnce(noAnswer())
+        .mockRejectedValueOnce(noAnswer())
+        .mockResolvedValue(undefined);
+      wireSend(sendMessage);
+
+      await handleFrame(askFor('alice', 'r-twice'));
+      await deferredSeedAnswersSettled();
+      expect(parkedAskCount()).toBe(1);
+
+      await releaseAsksAwaitingLink('the connection caught up');
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(parkedAskCount()).toBe(1);
+
+      await releaseAsksAwaitingLink('the connection caught up');
+      expect(sendMessage).toHaveBeenCalledTimes(3);
+      expect(parkedAskCount()).toBe(0);
+      for (const spy of quiet) spy.mockRestore();
+    });
+
+    it('the server reachable again releases a park made with the socket still open', async () => {
+      const quiet = [
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined),
+        vi.spyOn(console, 'info').mockImplementation(() => undefined),
+      ];
+      const listeners: Array<() => void> = [];
+      const onReconnect = vi.spyOn(connectivity, 'onReconnect').mockImplementation((listener) => {
+        listeners.push(listener);
+        return () => listeners.splice(listeners.indexOf(listener), 1);
+      });
+      const sendMessage = vi.fn().mockRejectedValueOnce(noAnswer()).mockResolvedValue(undefined);
+      wireSend(sendMessage);
+
+      await handleFrame(askFor('alice', 'r-reachable'));
+      await deferredSeedAnswersSettled();
+      expect(listeners).toHaveLength(1);
+
+      listeners[0]();
+      await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2));
+      expect(parkedAskCount()).toBe(0);
+      // Disarmed with the release: nothing waits for the link any more.
+      expect(listeners).toHaveLength(0);
+      onReconnect.mockRestore();
+      for (const spy of quiet) spy.mockRestore();
+    });
+
+    it('a client destroyed before the frame drained answers nothing, and the deferred answer ends', async () => {
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+      const sendMessage = vi.fn().mockResolvedValue(undefined);
+      wireSend(sendMessage, {
+        waitForGroupQueueIdle: async (_caller: string, groupId: string) => {
+          throw new GroupDrainAbandonedError(groupId);
+        },
+      });
+
+      await handleFrame(askFor('alice', 'r-destroyed'));
+      await deferredSeedAnswersSettled();
+
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(info.mock.calls.map((c) => String(c[0])).join(' | ')).toMatch(
+        /an answer about g-1 is not sent - GroupDrainAbandonedError/
+      );
       info.mockRestore();
     });
 

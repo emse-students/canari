@@ -541,8 +541,12 @@ export function answerAfterMailboxDrained(
   // in its own `.catch(log)`, whose value is whatever that leg happened to resolve to. Nothing here
   // reads it, and demanding `void` only forces a wrapper at each call site that discards it.
   answer: () => Promise<unknown>
-): void {
-  void (async () => {
+): Promise<void> {
+  // RETURNED, never awaited by the drain that scheduled it: the caller that must know when the leg
+  // ENDED - run, or not run because the service ended - reads it here (`deferSeedAnswer`); every
+  // other caller drops it. It never rejects: each `answer` ends in its own catch, and the wait's
+  // failure is caught below.
+  return (async () => {
     // The leg runs OUTSIDE the drain that scheduled it and owns no catch-up session, so this waits
     // rather than deadlocking however long the group takes.
     try {

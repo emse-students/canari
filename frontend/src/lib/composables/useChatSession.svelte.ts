@@ -245,7 +245,7 @@ export function useChatSession() {
       markConnectionCaughtUp(isWsConnected);
       // A seed answer whose send got no answer from the server waits for exactly this: a link that
       // is up and caught up (`parkAskUntilNextLink`).
-      if (isWsConnected) void releaseAsksAwaitingLink();
+      if (isWsConnected) void releaseAsksAwaitingLink('the connection caught up');
     },
     getLoginError: () => loginError,
     setLoginError: (v) => {

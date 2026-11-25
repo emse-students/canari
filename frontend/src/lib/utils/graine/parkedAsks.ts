@@ -11,6 +11,7 @@ import {
   type GraineRuntime,
 } from './runtime';
 import { communityKeyGroupOf } from './admissionGate';
+import { connectivity } from '$lib/stores/connectivity.svelte';
 
 /**
  * SEED ASKS THIS DEVICE CANNOT DECIDE YET, waiting for the one event that lets it.
@@ -29,8 +30,8 @@ import { communityKeyGroupOf } from './admissionGate';
  * - **the NEXT CONNECTION** ({@link parkAskUntilNextLink}). The answer was ready and its send got no
  *   answer from the server (a transport failure): nothing was refused, and the ask's frame is
  *   acknowledged already, so nothing would answer it before the requester's next start. It waits
- *   for the next connection's catch-up pull ({@link releaseAsksAwaitingLink}) - an event, never a
- *   clock.
+ *   for the link to come back - a connection's catch-up pull, or the server reachable again
+ *   ({@link releaseAsksAwaitingLink}) - an event, never a clock.
  *
  * Neither is a refusal. The ask is parked here, in memory, and decided again by the event:
  *
@@ -168,33 +169,77 @@ export function parkAskUntilRuleKnown(
 }
 
 /**
- * Parks `frame`'s ask until the next connection of this session has caught up, then answers it again
- * with `answer`. For an answer whose send got no answer from the server: see the module doc.
+ * How many times the link came back in this document: bumped by every {@link releaseAsksAwaitingLink},
+ * whether or not an ask waited. An answer records it when it starts ({@link linkGenerationNow}) so a
+ * park made AFTER the event it waits for is not made at all (see {@link parkAskUntilNextLink}).
+ */
+let linkGeneration = 0;
+
+/** The unsubscribe of the reconnect wake, armed while an ask waits for the link. */
+let stopReconnectWake: (() => void) | null = null;
+
+/** The current link generation, recorded by an answer before its send. */
+export function linkGenerationNow(): number {
+  return linkGeneration;
+}
+
+/**
+ * Parks `frame`'s ask until the link comes back, then answers it again with `answer`. For an answer
+ * whose send got no answer from the server: see the module doc.
+ *
+ * **NOT PARKED WHEN THE EVENT ALREADY HAPPENED.** A send can hang until its deadline while the socket
+ * reconnects and catches up: that catch-up found nothing to release, and a park made after it would
+ * wait for the NEXT one, which may never come. `sinceGeneration` is the generation the answer started
+ * at; when it has moved, nothing is parked and `false` tells the caller to answer again now. Bounded
+ * by the events, never by a clock: each further attempt needs another link event.
+ *
+ * @returns true when the ask is parked, false when the caller must answer again at once.
  */
 export function parkAskUntilNextLink(
   frame: DistributionFrame,
   request: canari.GraineRequestMsg.$Properties,
-  answer: AskAnswerer
-): void {
+  answer: AskAnswerer,
+  sinceGeneration: number
+): boolean {
+  if (linkGeneration !== sinceGeneration) {
+    console.info(
+      `[GRAINE] the link came back while ${frame.sender}:${frame.senderDeviceId}'s answer was being sent ` +
+        `in community ${frame.workspaceId.slice(0, 8)} - answering again now`
+    );
+    return false;
+  }
   const session = requireGraineRuntime('cannot park a seed ask');
-  if (!enqueue(frame, request, answer, session, { kind: 'link' })) return;
+  if (!enqueue(frame, request, answer, session, { kind: 'link' })) return true;
   console.info(
     `[GRAINE] parked ${frame.sender}:${frame.senderDeviceId}'s ask in community ${frame.workspaceId.slice(0, 8)} ` +
-      `until the next connection has caught up (${parked.size} parked)`
+      `until the link comes back (${parked.size} parked)`
   );
+  // THE SERVER REACHABLE AGAIN is the other half of the event: a send can fail on the network while
+  // the socket stays open, and then no reconnect, so no catch-up, ever comes. Armed only while an
+  // ask waits, and disarmed by the release that answers it.
+  stopReconnectWake ??= connectivity.onReconnect(() => {
+    void releaseAsksAwaitingLink('the server is reachable again');
+  });
+  return true;
 }
 
 /**
- * The connection of this session has caught up (its post-connect pull is done, on an open socket):
- * answers again every ask parked for the next link. Called by the session's `onConnectionCaughtUp`,
- * once per connection and not awaited there (it never rejects: each answer runs in its own `try`); a
- * no-op, silently, when no ask waits for it - the routine case.
+ * The link came back - the connection caught up after a (re)connect (`onConnectionCaughtUp`), or the
+ * server answered again after it was unreachable (`connectivity.onReconnect`): bumps the link
+ * generation and answers again every ask parked for it. ONE function for both events, never awaited
+ * by them (it never rejects: each answer runs in its own `try`); a no-op, silently, when no ask waits -
+ * the routine case.
  */
-export async function releaseAsksAwaitingLink(): Promise<void> {
+export async function releaseAsksAwaitingLink(cause: string): Promise<void> {
+  linkGeneration += 1;
   if (!isGraineReady()) return;
   const session = requireGraineRuntime('cannot answer a parked ask');
   const due = (wait: AskWait) => wait.kind === 'link';
   if (![...parked.values()].some((ask) => due(ask.wait) && ask.session === session)) return;
+  // Disarmed BEFORE the answers run: one that fails again parks again and re-arms it.
+  stopReconnectWake?.();
+  stopReconnectWake = null;
+  console.info(`[GRAINE] ${cause}`);
   await releaseParked(due, session);
 }
 
@@ -302,4 +347,6 @@ export function clearParkedAsks(): void {
   }
   parked.clear();
   armed.clear();
+  stopReconnectWake?.();
+  stopReconnectWake = null;
 }

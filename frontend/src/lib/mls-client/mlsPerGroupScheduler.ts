@@ -192,7 +192,16 @@ export class MlsPerGroupScheduler {
   private currentGroupKey: string | null = null;
 
   /** Waiters for ONE group's queue, by bucket key. See {@link waitUntilGroupIdle}. */
-  private readonly groupIdleWaiters = new Map<string, Array<() => void>>();
+  private readonly groupIdleWaiters = new Map<
+    string,
+    Array<{ resolve: () => void; reject: (e: Error) => void }>
+  >();
+
+  /**
+   * Set by {@link abandonGroupIdleWaiters} when the client that owns this scheduler ends: what a
+   * group-idle wait is rejected with from then on, since no frame will ever be applied here again.
+   */
+  private groupIdleAbandonedWith: ((groupId: string) => Error) | null = null;
 
   /** Whether the MLS client mutex has a holder (a loan does not change it: the commit still holds). */
   private lockHeld = false;
@@ -381,12 +390,31 @@ export class MlsPerGroupScheduler {
    * arrived, three minutes late, on a repair that had already been fixed twice that evening.
    */
   waitUntilGroupIdle(groupId: string): Promise<void> {
+    if (this.groupIdleAbandonedWith) return Promise.reject(this.groupIdleAbandonedWith(groupId));
     if (this.isGroupIdle(groupId)) return Promise.resolve();
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const waiters = this.groupIdleWaiters.get(groupId) ?? [];
-      waiters.push(resolve);
+      waiters.push({ resolve, reject });
       this.groupIdleWaiters.set(groupId, waiters);
     });
+  }
+
+  /**
+   * Rejects every pending {@link waitUntilGroupIdle} with `reason(groupId)`, and every later one at
+   * once: the client that owns this scheduler is ending and will apply nothing more. Without it a
+   * wait on a group with frames still queued hung until a reload - a deferred answer and everything
+   * it held with it. Called by the client's `destroy`.
+   */
+  abandonGroupIdleWaiters(reason: (groupId: string) => Error): void {
+    this.groupIdleAbandonedWith = reason;
+    let pending = 0;
+    for (const waiters of this.groupIdleWaiters.values()) pending += waiters.length;
+    if (pending > 0) console.info(`[QUEUE] destroy - ${pending} group-idle waiter(s) abandoned`);
+    const waiting = [...this.groupIdleWaiters];
+    this.groupIdleWaiters.clear();
+    for (const [groupId, waiters] of waiting) {
+      for (const { reject } of waiters) reject(reason(groupId));
+    }
   }
 
   /**
@@ -401,7 +429,7 @@ export class MlsPerGroupScheduler {
     for (const [groupId, waiters] of this.groupIdleWaiters) {
       if (!this.isGroupIdle(groupId)) continue;
       this.groupIdleWaiters.delete(groupId);
-      for (const resolve of waiters) resolve();
+      for (const { resolve } of waiters) resolve();
     }
   }
 

@@ -26,7 +26,12 @@ import {
 import { sameScope, scopeLabel, type DistributionScope } from '$lib/mls-client/distributionScope';
 import { applyHistoryFloors, historyFloorsFor } from './historyBoundary';
 import { pastPolicyFor } from './admissionGate';
-import { parkAsk, parkAskUntilNextLink, parkAskUntilRuleKnown } from './parkedAsks';
+import {
+  linkGenerationNow,
+  parkAsk,
+  parkAskUntilNextLink,
+  parkAskUntilRuleKnown,
+} from './parkedAsks';
 import { mirrorGraineSeed } from './graineMirror';
 import {
   forgetAskedSession,
@@ -550,22 +555,18 @@ function deferSeedAnswer(
 ): void {
   const session = requireGraineRuntime('cannot answer a seed request');
   if (String(request.answererUserId ?? '').toLowerCase() !== session.userId) return;
-  const ran = new Promise<void>((resolve) => {
-    answerAfterMailboxDrained(session.mlsService, frame.groupId, async () => {
-      try {
-        // The session that received the ask is the one that answers it, never the next account's.
-        if (!isGraineReady() || requireGraineRuntime('cannot answer a seed request') !== session) {
-          console.info(
-            `[GRAINE] not answering ${requesterOf(frame)}'s request ${String(request.requestId ?? '')} in community ` +
-              `${frame.workspaceId.slice(0, 8)}: the session that received it ended before its frame drained`
-          );
-          return;
-        }
-        await answerSeedAsk(frame, request);
-      } finally {
-        resolve();
-      }
-    });
+  // Its END is tracked, not only its answer: a client destroyed before the frame drained runs no
+  // answer at all (`answerAfterMailboxDrained` says so), and the leg still ends.
+  const ran = answerAfterMailboxDrained(session.mlsService, frame.groupId, async () => {
+    // The session that received the ask is the one that answers it, never the next account's.
+    if (!isGraineReady() || requireGraineRuntime('cannot answer a seed request') !== session) {
+      console.info(
+        `[GRAINE] not answering ${requesterOf(frame)}'s request ${String(request.requestId ?? '')} in community ` +
+          `${frame.workspaceId.slice(0, 8)}: the session that received it ended before its frame drained`
+      );
+      return;
+    }
+    await answerSeedAsk(frame, request);
   });
   deferredAnswers.add(ran);
   void ran.then(() => deferredAnswers.delete(ran));
@@ -586,8 +587,9 @@ interface AnswerProgress {
  * Answers a seed ask, and never throws: what a failed send leaves is said ONCE, here, by class.
  *
  * The frame that carried the ask is acknowledged already, so nothing redelivers it. A server that
- * got NO ANSWER (`isTransportFailure`) refused nothing: the ask is parked until the next connection's
- * catch-up pull ({@link parkAskUntilNextLink}) - an event, never a clock - and answered then. Any
+ * got NO ANSWER (`isTransportFailure`) refused nothing: the ask is parked until the link comes back - a
+ * connection's catch-up pull, or the server reachable again ({@link parkAskUntilNextLink}) - an event,
+ * never a clock - and answered then; at once if the link came back while the send hung. Any
  * other failure is a defect and accuses; the requester asks again at its next start. Every parked
  * ask is answered again through this same function, so a second failure is classified the same way.
  */
@@ -596,6 +598,8 @@ async function answerSeedAsk(
   request: canari.GraineRequestMsg.$Properties
 ): Promise<void> {
   const progress: AnswerProgress = { sent: 0, pages: 0 };
+  // Recorded BEFORE the send: a link that comes back while it hangs must not be missed by its park.
+  const startedAt = linkGenerationNow();
   try {
     await answerSeedRequest(frame, request, progress);
   } catch (e) {
@@ -607,10 +611,10 @@ async function answerSeedAsk(
       `[GRAINE] the answer to ${requesterOf(frame)}'s request ${String(request.requestId ?? '')} in community ` +
       `${frame.workspaceId.slice(0, 8)} was not sent${pages}`;
     if (isTransportFailure(e)) {
-      console.warn(
-        `${line} - the server got no answer; parked for the next connection: ${String(e)}`
-      );
-      parkAskUntilNextLink(frame, request, answerSeedAsk);
+      console.warn(`${line} - the server got no answer; it waits for the link: ${String(e)}`);
+      if (!parkAskUntilNextLink(frame, request, answerSeedAsk, startedAt)) {
+        await answerSeedAsk(frame, request);
+      }
       return;
     }
     console.error(`${line} - the requester asks again at its next start: ${String(e)}`);

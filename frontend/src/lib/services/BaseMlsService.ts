@@ -1210,6 +1210,11 @@ export abstract class BaseMlsService implements IMlsService {
     externalJoinFlights.get(this)?.clear();
     // Nor a wait for a drain this client will never see (the admission gate's parked asks).
     this.abandonGroupDrainedWaiters();
+    // Nor a wait for one group's queue to go idle (a deferred seed or history answer): no frame will
+    // be applied here again, so it would hang until a reload.
+    this.messageScheduler.abandonGroupIdleWaiters(
+      (groupId) => new GroupDrainAbandonedError(groupId)
+    );
     // Nor a pull owed for later: issued after this, it would decrypt and acknowledge for nobody.
     // Its askers are released with nothing listed.
     if (this.owedPull) {
@@ -2779,10 +2784,18 @@ export abstract class BaseMlsService implements IMlsService {
   private armGroupDrained(groupId: string): void {
     if (this.groupDrainedArmed.has(groupId) || this.messageScheduler.isGroupIdle(groupId)) return;
     this.groupDrainedArmed.add(groupId);
-    void this.messageScheduler.waitUntilGroupIdle(groupId).then(() => {
-      this.groupDrainedArmed.delete(groupId);
-      this.wakeGroupDrainedWaiters('group idle');
-    });
+    void this.messageScheduler.waitUntilGroupIdle(groupId).then(
+      () => {
+        this.groupDrainedArmed.delete(groupId);
+        this.wakeGroupDrainedWaiters('group idle');
+      },
+      (e: unknown) => {
+        // The client ended: its drain waiters are rejected by `abandonGroupDrainedWaiters`, which
+        // says so once; this arm only stops.
+        this.groupDrainedArmed.delete(groupId);
+        console.debug(`[QUEUE] stopped arming ${groupId.slice(0, 8)}'s drain wait: ${String(e)}`);
+      }
+    );
   }
 
   /**

@@ -566,10 +566,18 @@ ordering is the guarantee.
   `noteHistoryHeldNothing` -> `requestCommunityHistory`, `onCallSignal`). The frame is acknowledged
   once its answer is scheduled - a request is transport, and an unanswered requester asks again at its
   next start. A failed deferred answer is said ONCE, by class (`answerSeedAsk`): a transport failure
-  (the server got no answer) warns and PARKS the ask until the next connection's catch-up pull
-  (`parkAskUntilNextLink`, released by `releaseAsksAwaitingLink` from `onConnectionCaughtUp`, an event
-  and never a clock, bounded by `MAX_PARKED_ASKS` and dropped with the session); anything else accuses
-  at error and is left to the requester's next start.
+  (the server got no answer) warns and PARKS the ask until the link comes back
+  (`parkAskUntilNextLink`, released by `releaseAsksAwaitingLink` from BOTH link events: a connection's
+  catch-up, `onConnectionCaughtUp`, and the server reachable again, `connectivity.onReconnect`, for a
+  send that failed on an open socket). Events, never a clock; bounded by `MAX_PARKED_ASKS` and dropped
+  with the session. A park made AFTER the event it waits for is not made: every release bumps a link
+  generation, the answer records it before its send, and an answer whose send hung across a
+  reconnect is sent again at once. Anything else accuses at error and is left to the requester's
+  next start.
+- **A leg whose client ended ends too.** `destroy` rejects the scheduler's pending group-idle waits
+  (`abandonGroupIdleWaiters`, `GroupDrainAbandonedError`), so `answerAfterMailboxDrained` says the
+  answer is not sent and its leg ends; before, a wait on a group with frames still queued hung until
+  a reload.
 - **The frame is not where a lost answer is recovered.** A key-group frame's generation is spent at
   decrypt, before its handler runs, so a handler throw left unacknowledged is refused as `secret-reuse`
   on redelivery and counted as a key-group frame loss. Recovering a failed seed STORE that way is
