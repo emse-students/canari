@@ -36,3 +36,14 @@ info, no `E` line), then `back in view: preparing it again` and ONE `published`.
 early leave and (3) stay as written.
 
 **2026-11-25, `1.8.1-alpha.2` (Mi 9T, battery saver ON): row (1) PASS and row (2) PASS as a regression.** Three leaves within 0.8 s of the SECOND "Publier" (the caption step's), with encodes of 13-26 s, each published ONCE with no error line. **Android does not stop the WebView encoder when the app leaves the view, so the `interrupted` path is not exercised on the Mi** (the `the encoder stopped while the app was out of view` line never appeared): it stays the iPhone's reading, with a long encode. **Not taken:** row (3), "Envoyer a..." with a conversation ticked.
+
+**2026-11-25, `1.8.1-alpha.2` (iPhone 12): row (2) regression PASS, the interrupted path NOT exercised -
+still owed.** Seven leaves 0.2 to 1.4 s after "Publish" (back after 1 s once, 15 to 25 s otherwise): all
+seven published once (one `published` per queue id), no "Failed" row, no terminal failure; two cut at the
+upload resumed from their part. But the page's `App in background` lands 1.2 to 1.7 s after Home and the
+encode took 0.8 to 1.4 s, so every encode finished before the app left the view: the encoder was never
+torn down and the `interrupted` branch's two lines never ran. **Owed on the next alpha:** the same leave
+with a longer video, whose encode takes over 2 s, so that Home lands inside the encode and the two
+`interrupted` lines, then `back in view: preparing it again` and ONE `published`, are read.
+
+**2026-11-25, `1.8.1-alpha.2` part 2 (iPhone 12): row (2) PASS 4/4 on the interrupted path - row (2) is closed on both phones.** A 24.6 s clip (encode 2.6-2.8 s), Home 0.8-1.05 s after the second "Publier": each run logged `[video-prep] the encoder stopped while the app was out of view: interrupted, not failed` and `[PUBLISH-QUEUE] ... interrupted as the app left the view: kept`, was prepared again on return, and published ONCE. **Still owed:** row (3), "Envoyer a..." with a conversation ticked, on the Mi.

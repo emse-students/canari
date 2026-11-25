@@ -520,3 +520,25 @@ vulnerabilities:
       - "pkg:deb/debian/libkrb5-3@1.21.3-5+deb13u1"
       - "pkg:deb/debian/libkrb5support0@1.21.3-5+deb13u1"
     statement: "krb5 1.21.3-5+deb13u1 in authentik 2026.8.6's Debian base: a kadmind-side flaw (the admin server, krb5-admin-server and libkadm5srv), which the image does not ship - only the client libraries (libkadm5clnt, libgssrpc) are reported, and they decode replies, not the requests these advisories are about. authentik 2026.8.6 ships these client libraries for its optional Kerberos source (python gssapi, python-kadmin-rs), and no Kerberos source is configured (checked read-only on both estates, 2026-11-23). Upstream image: 2026.8.6 (built 2026-11-20) is the newest authentik release and carries deb13u1; remove when an authentik release, or an in-place rebuild of the 2026.8.6 tag, ships krb5 1.21.3-5+deb13u2."
+
+  # --- zstd 1.5.7+dfsg-1, Debian, in the same authentik image (2026-11-25) -----------------------
+  # The Trivy DB of 2026-11-25 (~07:11Z) reported CVE-2026-124851 (HIGH) on libzstd1 1.5.7+dfsg-1,
+  # fixed by Debian 1.5.7+dfsg-1+deb13u1 (DSA-6657-1); it turned main's CI and every pull request red.
+  # Upstream zstd 1.5.1-1.5.7: crafted input makes the DECOMPRESSED output carry the decoder's internal
+  # buffer (uninitialized memory, or literals of an earlier decompression on the same context), so the
+  # attacker must both supply zstd data and READ what came out. Measured in the image that day
+  # (sha256:da89d833..., ELF DT_NEEDED and ldd): only libcrypto.so.3 (OpenSSL 3.5.7, built -DZSTD)
+  # links libzstd; libssl, libpq, libldap, libsasl2, Python's _ssl, psycopg_c and cryptography reach it
+  # through it. OpenSSL uses it for TLS certificate decompression (RFC 8879), and authentik's TLS
+  # client does offer it (a handshake in the image showed `compress_certificate: zlib, zstd`), so a
+  # server authentik connects to can send a zstd-compressed certificate - but the expanded bytes are
+  # parsed by the client and never sent back. Nothing else decompresses zstd: Python 3.14 is built
+  # without `_zstd`, urllib3 and aiohttp advertise `gzip,deflate` only, no `zstandard` package, and the
+  # Go binary links no libzstd. No authentik tag is newer than 2026.8.6 (2026.11.0 is an rc), and the
+  # tag is still the 2026-11-20 digest. postgres, nginx and redis (Alpine zstd-libs 1.5.7-r2) and
+  # debian:bookworm-slim (1.5.4+dfsg2-5) carry affected versions too, but no fix is published for
+  # their distribution yet, so `--ignore-unfixed` hides them: the day one is, they go red on their own.
+  - id: CVE-2026-124851
+    purls:
+      - "pkg:deb/debian/libzstd1@1.5.7+dfsg-1"
+    statement: "libzstd1 1.5.7+dfsg-1 in authentik 2026.8.6's Debian base: the flaw leaks decoder memory into the decompressed OUTPUT, so it needs an attacker who supplies zstd data and reads the result. Here only libcrypto (OpenSSL) links libzstd, to decompress a TLS certificate a server sends (RFC 8879); authentik's TLS client offers it, but the expanded certificate is parsed locally and never returned to the peer. Python 3.14 has no _zstd, urllib3 and aiohttp accept gzip,deflate only, and the Go binary links no libzstd. Upstream image: 2026.8.6 (built 2026-11-20) is the newest authentik release; remove when an authentik release, or an in-place rebuild of the 2026.8.6 tag, ships 1.5.7+dfsg-1+deb13u1."

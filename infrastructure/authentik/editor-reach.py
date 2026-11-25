@@ -24,6 +24,13 @@ THREE PARTS (docs/wiki/infrastructure/authentik.md, "The profile editor's one wr
      as the revocation) - a cutoff read from MiConnect's own state, never a clock. Anything else is a
      finding until its id is added to editor-reach-known.txt with what it was. What a log cannot
      say: WHICH fields a PATCH changed (authentik records the diff only under its enterprise licence).
+  4. THE REFRESH GRANT ON GATED PROVIDERS (1.8.1). authentik's `refresh_token` grant evaluates no
+     application binding, so the provider of every application carrying a policy binding (the D43
+     gate on MiGallery and Le Cercle) offers no refresh: no `offline_access` scope mapping, and - once
+     the given `50-providers.yaml` (`PROVIDERS`, the same tree's) closes the D43 providers, i.e. from
+     the stable that closed them - no `refresh_token` grant type. The read-only form of
+     test-refresh-gate.py's check (a): docs/wiki/infrastructure/authentik.md, "The refresh grant is
+     closed on gated providers".
 
 The log is PUBLIC (the scheduled job's): a finding names an event id, its action, the model kind and
 the request path - never a person, a value or an address.
@@ -34,10 +41,11 @@ import sys
 from guardian.models import RoleModelPermission, RoleObjectPermission
 
 from authentik.blueprints.v1.importer import Importer
-from authentik.core.models import Token, User
+from authentik.core.models import Application, Token, User
 from authentik.events.models import Event
 from authentik.flows.models import Flow, FlowStageBinding
 from authentik.policies.models import PolicyBinding
+from authentik.providers.oauth2.models import OAuth2Provider, ScopeMapping
 from authentik.stages.prompt.models import PromptStage
 
 EDITOR = "miconnect-canari-editor"
@@ -181,6 +189,36 @@ for event in Event.objects.filter(user__username=EDITOR, action__in=WRITES).orde
     shown = re.sub(r"/([0-9]+|[0-9a-fA-F-]{32,36})(?=/|$)", "/<id>", path) or "?"
     finding(f"event {event.pk}: {event.action} of {kind} through {method or '?'} {shown}")
 print(f"{counted} write event(s) authored by the account examined", flush=True)
+
+# 4. THE REFRESH GRANT ON GATED PROVIDERS.
+# Whether the given providers blueprint closes the refresh grant on the D43 providers: the RELEASED file
+# before the stable that closed it still grants it, and production with it - not a finding until then.
+D43_PROVIDERS = ("miconnect-migallery", "miconnect-cercle")
+declared = {}
+for entry in Importer.from_string(PROVIDERS).blueprint.iter_entries():  # noqa: F821 - prefixed
+    if entry.model == "authentik_providers_oauth2.oauth2provider" and "grant_types" in entry.attrs:
+        declared[entry.identifiers.get("name")] = list(entry.attrs["grant_types"])
+refresh_closed = all(name in declared and "refresh_token" not in declared[name] for name in D43_PROVIDERS)
+gated = sorted(
+    application.slug
+    for application in Application.objects.all()
+    if PolicyBinding.objects.including_expired().filter(target=application).exists()
+)
+print(
+    f"the refresh grant is {'closed' if refresh_closed else 'not yet closed'} by the blueprint given; "
+    f"applications with policy bindings: {gated}",
+    flush=True,
+)
+for slug in gated:
+    application = Application.objects.get(slug=slug)
+    provider = OAuth2Provider.objects.filter(pk=application.provider_id).first()
+    if provider is None:
+        finding(f"application {slug} carries policy bindings and its provider is not an OAuth2 provider - extend this check")
+        continue
+    if ScopeMapping.objects.filter(provider=provider, scope_name="offline_access").exists():
+        finding(f"provider {provider.name} of gated application {slug} carries an offline_access scope mapping")
+    if refresh_closed and "refresh_token" in provider.grant_types:
+        finding(f"provider {provider.name} of gated application {slug} allows the refresh_token grant")
 
 if findings:
     print(f"{len(findings)} finding(s)", flush=True)
