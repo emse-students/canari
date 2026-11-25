@@ -1299,6 +1299,44 @@ cache, not a retry or a longer timeout: `actions/cache/restore` of `~/.gradle/ca
   downloads as before.
 - `test-android` and `compile-android-app` already cached these paths with `actions/cache`.
 
+### The Android release build resolves from a cache CI completes and proves offline (2026-11-25)
+
+Twice on 2026-11-25 (the `1.8.1` stable, run 45606794415, and `1.8.2-alpha.1`, run 45628311408) the
+Android build died on Maven Central `429 Too Many Requests` for `error_prone_annotations-2.26.0.jar`,
+resolving `:app:universalReleaseRuntimeClasspath`. **The restore above had HIT its exact key**
+(`Cache restored from key: gradle-app-Linux-...`, 1956 MB): the cache was restored and incomplete.
+`compile-android-app` only runs DEBUG tasks (`compileArm64DebugKotlin` and three more), so no release
+classpath was ever resolved there, and nothing in the cache named the jars only a release links.
+
+The fix is in what CI saves, not in a retry:
+
+- `gen/android/ci/resolve-all.init.gradle` (an init script, passed with `-I`) adds a task
+  `resolveAllArtifacts` that downloads every variant classpath (`*Release|Debug*Runtime|CompileClasspath`)
+  strictly, and every other resolvable configuration best-effort (tooling artifacts; one that cannot
+  resolve alone is logged and skipped).
+- `android-app-compile.sh` runs it online (this is what fills `~/.gradle`) and then with `--offline`,
+  which reaches no network and fails if the resolution needs anything the cache does not hold. It also
+  refuses a run that resolved no classpath. Its self-test covers both refusals.
+- **The cache key moves by itself**: the init script sits under `gen/android/`, which the key's
+  `hashFiles` already covers (`ci.yml` and `android.yml` identically). Without that the old key would
+  have kept winning: an exact hit is never re-saved, so the incomplete entry would have lived on.
+  Any later change to the script, or to a build file, re-keys it the same way.
+- `android.yml` is unchanged: still restore-only, still online. A release now finds the release
+  classpath in the cache and Gradle does not ask the network for what it holds.
+
+**What the offline pass does not prove**, said plainly: it runs in the job that just filled the cache,
+so it shows that the resolution needs nothing outside `~/.gradle`, not that a later restore holds it
+(the restore and the save are two jobs). That last link is the next `main` run saving under the new
+key and the next release restoring it; the release log's `Cache restored from key` plus no `Download`
+lines from `repo.maven.apache.org` is the reading. **A cold cache** (nothing saved yet on `main`, or
+evicted after 7 days) still downloads as before and can still meet a `429`; the answer is a rerun of
+the failed job, written into `CHANGELOG.md`, never a skipped gate. Dependency locking was not added:
+the versions are already pinned by the build files and the Gradle wrapper, and a lockfile would not
+have kept a missing jar out of the cache.
+
+**iOS has no twin of this defect**: `compile-ios-app` builds the whole app (not a debug subset) before
+saving SwiftPM's cache, so the release resolves the same packages.
+
 ### The iOS release build restores SwiftPM, it never saves it (2026-11-09)
 
 The Android twin above, for the Swift packages: `compile-ios-app` (`ci.yml`) saves
