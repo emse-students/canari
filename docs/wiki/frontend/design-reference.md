@@ -2649,7 +2649,7 @@ at a 390px phone, box / with the inset (before: computed from the classes, `text
 | Post being sent | label, bar on a second row, Retry and Delete wrapped below | 46-76 / 70-100 | label, bar and controls on one row | 32 / 48 |
 
 Left as they were, on purpose: the minimised-call bar (its mute and hang-up are 44px touch targets),
-the chat's catch-up strip (`text-xs`, 29px, already one line) and `OpenInAppBanner` (a full card with
+the chat's catch-up strip (`text-xs`, 29px, already one line) and `OpenInAppBanner` (deleted 2026-11-25 for the [in-app browser gate](leaving-in-app-browsers.md); a full card with
 one button, decided 2026-10-08).
 
 `appContentTop.test.ts` counts the readers of `var(--app-top-bar-height)` across the whole

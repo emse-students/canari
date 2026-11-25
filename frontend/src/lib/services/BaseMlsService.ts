@@ -31,6 +31,7 @@ import {
 } from '$lib/mls-client/mlsDecryptSession';
 import {
   DeliveryDeadlineError,
+  PrekeyCountUnreadableError,
   DeviceRevokedError,
   DeviceRevokedByOwnerError,
   KEY_PACKAGE_ROUND_DEADLINE_MS,
@@ -5103,6 +5104,34 @@ export abstract class BaseMlsService implements IMlsService {
 
   async listUserDevices(userId: string): Promise<UserDeviceEntry[]> {
     return this.delivery.listUserDevices(userId);
+  }
+
+  /** The one-time pool a round refills to. */
+  protected static readonly ONE_TIME_POOL_SIZE = 50;
+
+  /**
+   * How many one-time packages this round mints: the pool size minus the count the server GAVE.
+   *
+   * A COUNT NOBODY GAVE MINTS NO ONE-TIME PACKAGE, AND STILL LETS THE ROUND REFRESH THE FALLBACK.
+   * `fetchPrekeyCount` throws {@link PrekeyCountUnreadableError} for a request with no answer, a
+   * refusal or an answer without a number (it read all three as 0 until 2026-11-25, and a phone whose
+   * resolver failed for a moment minted fifty bundles it could not publish). Failing the whole round
+   * on it would be worse in one place: right after a fresh start's purge, the static fallback must be
+   * republished or peers are served a stale one (`NoMatchingKeyPackage`). So the round goes on with
+   * none, said ONCE here; if the publication then fails too, that is its own line. A deadline is not
+   * caught: it fails the round, as before.
+   */
+  protected async oneTimePackagesNeeded(): Promise<number> {
+    try {
+      const existing = await this.delivery.fetchPrekeyCount();
+      return Math.max(0, BaseMlsService.ONE_TIME_POOL_SIZE - existing);
+    } catch (e) {
+      if (!(e instanceof PrekeyCountUnreadableError)) throw e;
+      console.warn(
+        `[MLS] ${e.message} - this round mints no one-time package and refreshes only the fallback; the next round counts again`
+      );
+      return 0;
+    }
   }
 
   /**

@@ -99,8 +99,7 @@ describe('the key package round has a per-request deadline', () => {
 
   // NOTHING A SERVER DID NOT SAY IS A ZERO (owner's Android log, 2026-11-25): a resolver failure was
   // read as an empty pool, and the phone minted fifty bundles it could not publish.
-  it('FAILS the round on a count that got no answer, typed `transport` at the throw', async () => {
-    const warn = vi.mocked(console.warn);
+  it('throws on a count that got no answer, typed `transport` at the throw', async () => {
     const e = await countThrough(
       vi
         .fn()
@@ -110,10 +109,37 @@ describe('the key package round has a per-request deadline', () => {
     );
     expect(e).toBeInstanceOf(PrekeyCountUnreadableError);
     expect((e as PrekeyCountUnreadableError).reason).toBe('transport');
-    expect(warn.mock.calls.flat().join(' ')).toContain('the key package round is skipped');
   });
 
-  it('FAILS the round on a refused count, typed `status` with the status it answered', async () => {
+  it('types a body the link lost as `transport`, and a body that is not JSON as `malformed`', async () => {
+    const lost = new Response('{"count":3}');
+    vi.spyOn(lost, 'text').mockRejectedValue(new TypeError('body stream lost'));
+    const e1 = await countThrough(vi.fn().mockResolvedValue(lost) as unknown as typeof fetch);
+    expect((e1 as PrekeyCountUnreadableError).reason).toBe('transport');
+    const e2 = await countThrough(
+      vi.fn().mockResolvedValue(new Response('<html>portal</html>')) as unknown as typeof fetch
+    );
+    expect((e2 as PrekeyCountUnreadableError).reason).toBe('malformed');
+  });
+
+  it('types a 401 whose token renewal failed as `status` 401 - an answer, no count', async () => {
+    const api = new MlsDeliveryApi({
+      historyUrl: 'https://example.test',
+      getToken: async () => 'token',
+      refreshToken: async () => {
+        throw new TransportFailureError('refresh unreachable');
+      },
+      fetchImpl: vi
+        .fn()
+        .mockResolvedValue(new Response('{}', { status: 401 })) as unknown as typeof fetch,
+    });
+    const e = await api.fetchPrekeyCount().catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(PrekeyCountUnreadableError);
+    expect((e as PrekeyCountUnreadableError).reason).toBe('status');
+    expect((e as PrekeyCountUnreadableError).status).toBe(401);
+  });
+
+  it('throws on a refused count, typed `status` with the status it answered', async () => {
     const e = await countThrough(
       vi.fn().mockResolvedValue(new Response('{}', { status: 500 })) as unknown as typeof fetch
     );
@@ -122,7 +148,7 @@ describe('the key package round has a per-request deadline', () => {
     expect((e as PrekeyCountUnreadableError).status).toBe(500);
   });
 
-  it('FAILS the round on an answer without a count, typed `malformed`', async () => {
+  it('throws on an answer without a count, typed `malformed`', async () => {
     const e = await countThrough(
       vi.fn().mockResolvedValue(new Response('{"pool":3}')) as unknown as typeof fetch
     );

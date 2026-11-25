@@ -15,6 +15,7 @@ it can be cleared without guessing, with a ranked leaderboard checked by server-
 | Per-cell diff behind the render | `frontend/src/lib/minesweeper/cellViews.ts`, `MinesweeperCell.svelte` |
 | The bulb of an unranked game (client only) | `frontend/src/lib/minesweeper/hint.ts` |
 | The unranked levels (client only) | `frontend/src/lib/minesweeper/levels.ts` |
+| The tutorial (page, lessons, mini-grid) | `frontend/src/routes/games/tutorial/+page.svelte`, `frontend/src/lib/minesweeper/tutorial/`, `frontend/src/lib/components/games/MinesweeperMiniGrid.svelte` |
 | Challenge issue, replay, scores | `apps/social-service/src/minesweeper/minesweeper.service.ts` |
 
 ## The screen is the board (2026-10-07)
@@ -35,7 +36,7 @@ rename of a file that carries raw controls cannot pass it. Everything else float
 | Leaderboard | top right, trophy icon only | closes the game and goes to the Games page (`/games`), THE one leaderboard since 2026-11-13; the game has no sheet of its own |
 | Ranked / unranked | bottom, beside the mode | **"Libre" = no challenge is requested at the first dig**, so nothing is submitted; stored in `canari.minesweeper.unranked`; locked once the first cell is dug, since a game's ranking is decided when its board is generated |
 | Mode (dig / flag) | bottom centre, thumb reach | what a SHORT press does; a long press does the other. Same stored setting as the old "flags first" |
-| Level (Debutant / Intermediaire / Expert) | bottom, after the mode, until the first dig | **unranked games only** ([below](#three-levels-in-an-unranked-game-owner-2026-11-25)) |
+| Level (Debutant / Intermediaire / Expert: a generation target, never a size) | bottom, after the mode, until the first dig | **unranked games only** ([below](#three-levels-in-an-unranked-game-owner-2026-11-25)) |
 | Hint (bulb) | bottom, after the mode, once dug | **unranked games only** ([below](#the-bulb-a-hint-in-an-unranked-game-owner-2026-11-25)) |
 
 **No zoom buttons.** Pinch, wheel (proportional to the delta, so a trackpad pinch is smooth), and a
@@ -75,29 +76,34 @@ describe the stats and paging mechanics, now on the page (page size 25, "Voir pl
 ## Three levels in an unranked game (owner, 2026-11-25)
 
 *"le demineur est vraiment super dur, la barriere a l'entree est terrifiante ... sans remettre en cause le niveau
-du classe"* (owner). Libre offers three levels; **ranked is exactly as before** - the board, the generator, the
-challenge, the replay and the ranking ([decisions](../../decisions/owner-decisions-of-2026-11-25.md)).
+du classe"* (owner), then *"priorise les difficultes par generation et pas par taille"*. Libre offers three
+levels; **ranked is exactly as before** - the board, the generator, the challenge, the replay and the ranking
+([decisions](../../decisions/owner-decisions-of-2026-11-25.md)).
 
-| Level | Board | Generator |
+**A LEVEL IS A GENERATION, NOT A SIZE.** Every level plays the ranked board (18x32, 150 mines) on generator 2 and
+differs only by the reasoning score that generator climbs to (`targetScore`, [the climb](#generator-v2-owner-2026-11-13)).
+The player never sees the number.
+
+| Level | Target score | What the board is |
 | --- | --- | --- |
-| Debutant | 9x9, 10 mines | 1 |
-| Intermediaire | 16x16, 40 mines | 1 |
-| Expert | the ranked board, 18x32, 150 mines | 2 (the latest) |
+| Debutant | 0 | the first layout the solver clears: guess-free, simple deductions (generator 1's scores were median 11) |
+| Intermediaire | 30 | some subset and local reasoning on top (the owner called 26 "interesting") |
+| Expert | 60 (`V2_TARGET_SCORE`) | the ranked board's target |
 
-**Why generator 1 for the small levels.** The owner asked for boards still guess-free but with SIMPLE
-deductions. Generator 1 stops at the FIRST layout its solver clears, so its boards are as easy as that solver
-lets them be; generator 2 climbs on purpose to a reasoning score of 60. Both are called through the existing
-`createBoard(config, null, generator)`: no line of either generator, no fingerprint and nothing on the server
-changes. A casual game is never submitted, so which generator it uses is the client's alone. The engine already
-generated these sizes ([the 2026-09-24 measurement](#what-the-first-dig-costs-2026-09-24) covers 200 beginner and
-100 intermediate boards).
+**How the target travels.** `MinesweeperBoard.targetScore` (default `V2_TARGET_SCORE`) is read by
+`placeMinesV2` in place of the constant; `createBoard(config, seed, generator, targetScore)` sets it. **Ranked
+never passes one**, and the server's `verifySolve` builds its board with the default, so a ranked board is the
+one the server replays: pinned by "an explicit ranked target and the default are the same board" and by the
+untouched fingerprints. The engine and its server copy changed together (the duplicate gate). A casual game
+is never submitted, so its target is the client's alone. A higher target costs more climbing on the main
+thread (bounded by the existing swap and node budgets; the worker stays the
+[backlog entry](../../backlog.d/p3-minesweeper-generation-off-the-main-thread.md)).
 
 **The picker** (`levels.ts`, `LEVEL_SPECS`) is a chip that cycles Debutant -> Intermediaire -> Expert, in Libre
 only and only until the first dig - then the bulb takes its place, since the bulb has nothing to read before
-that dig and three chips is what the row holds on a phone (the level stays visible as the board's size).
-While the first dig is being prepared it is disabled, like the ranked / Libre toggle. Changing the level, or
-switching between ranked and Libre, installs the blank board of the new size and refits it. A ranked start that
-fails and falls back to a casual game keeps the ranked board's size: the player tapped on it.
+that dig and three chips is what the row holds on a phone. While the first dig is being prepared it is
+disabled, like the ranked / Libre toggle. **The grid is the same at every level, so choosing one redraws
+nothing.** A ranked start that fails and falls back to a casual game plays Expert's target.
 
 **Stored per device** (`canari.minesweeper.level`, validated on read; a value that is not a level is logged and
 ignored). With none stored, a player who already chose ranked or Libre on this device (`canari.minesweeper.unranked`
@@ -107,19 +113,56 @@ has just made and turn their Debutant into Expert (review of #4091; pinned acros
 
 **Losing stays as it is**: no undo after a mine (owner's answer).
 
-**The view.** The fit used to scale a board up to 3x, which on a desktop turns a 9x9 board into tiles. The fit is
-now capped, for the two small levels only, where a cell reaches 48 px (`MAX_FIT_CELL_PX`, the touch target Android recommends; `fitScaleCap`);
-a pinch can still zoom past it. On a phone the cap does not bind (a 9x9 board fits at about 40 px cells), and the
-ranked board is never capped (`levelFitCap`: Expert fits exactly as it always did, even on a stage tall enough
-for the cap to bind - a 4K-sized stage is the test). The mines counter, the clamp and the bulb read whatever board is installed.
+**Pinned:** `levels.test.ts` (every level on the ranked size and generator, Expert on the ranked target, targets
+rising; three fixed seeds per level, each board naming its own target and guess-free, the mean score rising
+from Debutant to Expert; the cycle; the default and a bad stored value), `game.test.ts` (an explicit ranked
+target equals the default, cell for cell; target 0 stops before any swap),
+`MinesweeperModal.levels.svelte.test.ts` (no picker ranked; the cycle redraws nothing and is stored; each
+level generates with its own target; the picker gone after the first dig; a ranked game asks for its
+challenge as before and generates with the ranked target whatever Libre last used). **Owed:** the phone
+reading ([reading](../../backlog.d/reading-owed-the-minesweeper-hint.md)), and the first-dig time of Expert on
+a phone, unchanged from ranked.
 
-**Pinned:** `levels.test.ts` (the specs; eight fixed seeds per small level, each board of the right size and mine
-count and cleared by the solver from the first click; the cycle; the default and a bad stored value),
-`view.test.ts` (the cap on a desktop, no cap on a phone, the ranked board unchanged),
-`MinesweeperModal.levels.svelte.test.ts` (no picker ranked; the cycle resizes the board and is stored; the
-ranked / Libre switch resizes it; the picker gone and the size kept after the first dig; a ranked game asks
-for its challenge as before and plays 18x32 whatever Libre last used). **Owed:** the phone reading
-([reading](../../backlog.d/reading-owed-the-minesweeper-hint.md)).
+## The tutorial (owner, 2026-11-25)
+
+*"une section tutoriel qui explique le fonctionnement du demineur avec des mini-grilles ... les regles, les
+mecaniques de base, miner, poser un drapeau, mais aussi une partie plus avancee qui explique le chording, et
+les patterns les plus courants (1-2-1, 1-2-2-1 etc.)"*, and *"un bouton d'indications (entourer en jaune des
+groupes de cases ...) fais quelque chose de vraiment explicatif, mais en montrant"* (owner). `/games/tutorial`
+is an ordinary page (it keeps the shell), reached from the Games page and from the game's settings sheet.
+
+**It is the real game in small.** A lesson's grid is a PICTURE in text (`tutorial/layout.ts`: `#` hidden mine,
+`.` hidden safe, `F` a flag that is a premise, `0`-`8` a revealed number); `boardFromLayout` builds the engine's
+own `MinesweeperBoard` with its mines placed, so the mini-grid plays on `revealCell`, `toggleFlag` and the chord
+and draws with the game's own `MinesweeperCell` - what the tutorial teaches is what the game does. **A digit that
+lies about its neighbours throws**, so a wrong picture cannot reach a player.
+
+| Lesson | Teaches | Picture |
+| --- | --- | --- |
+| Reveal | open a cell, what a number and a 0 mean (a gesture: the target is lit from the start) | 5x4, hidden |
+| Flag | a 1 with one hidden neighbour; Drapeau mode, right-click | 3x3 |
+| Chording | a number with all its flags opens the rest in one tap (the flags are the premise) | 3x3 |
+| 1-1 | two neighbouring 1s share cells: the extra one is safe | 4x2 against the edge |
+| 1-2-1 | the middle is safe, both sides are mines | 3x2 |
+| 1-2-2-1 | the two middle cells are mines, the ends are safe | 4x2 |
+
+**The "Indice" button** walks the lesson's authored steps (`HintStep`): each rings the NUMBER(S) the reasoning
+reads (`highlight: 'hint'`, the bulb's own ring) and tints the hidden cells they speak about (`highlight:
+'group'`, a softer ring with no glow, added to `MinesweeperCell`), and the sentence under the grid says what to
+conclude. It cycles step 1, 2, 3, then hides. It is authored, not computed: a step explains a pattern, and the
+order a person reads it in is a teaching choice (the in-game bulb, `hint.ts`, computes the next certain move on
+a real board instead).
+
+**Every lesson is PROVED** (`tutorial/lessons.test.ts`), not read: the test enumerates every arrangement of the
+hidden cells that the visible numbers allow and requires that **the cells a lesson asks to open are safe in all
+of them, the cells it asks to flag are mines in all of them, and that nothing the numbers force is left
+unasked** - the goal IS what the picture forces. A hint step must read a revealed number and speak about cells
+that number touches. `lessonDone` also refuses a lucky flag beside the right ones: the point is the deduction.
+
+**Pinned:** `layout.test.ts`, `lessons.test.ts`, `MinesweeperMiniGrid.svelte.test.ts` (tap, flag, right-click, a
+chord in either mode, a mine ends the lesson, solved ONCE, what a hint lights), `routes/games/tutorial/page.svelte.test.ts`
+(the lessons chain to a closing screen that leads to a game, the hint cycle, restart, Back to `/games`).
+**Owed:** the phone reading ([reading](../../backlog.d/reading-owed-the-minesweeper-hint.md), items 11 and 12).
 
 ## The bulb: a hint in an unranked game (owner, 2026-11-25)
 

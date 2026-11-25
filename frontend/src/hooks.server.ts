@@ -6,6 +6,7 @@ import { degradedHeaders } from '$lib/seo/upstream';
 // Lives in its own module so a test can import it WITHOUT pulling `$app/env/private` in
 // through the SEO chain above - the same reason `handleError` is not written here either.
 import { preloadableAsset } from '$lib/server/preload';
+import { canariLeaveInAppBrowser } from '$lib/server/leaveInAppBrowser';
 import { WASM_PRELOAD_MARKER, wasmPreloadMetaFor } from '$lib/server/wasmPreload';
 // The content-hashed URL of the MLS engine, as the bundler resolved it: the same string the client
 // loader's own `?url` import yields, so the preload and the later fetch share one cache entry.
@@ -57,6 +58,11 @@ export { handleError } from '$lib/server/handleError';
 
 export const handle: Handle = async ({ event, resolve }) => {
   const pathname = event.url.pathname;
+
+  // A Meta in-app browser gets the page that sends it away, and nothing of the app (owner decision
+  // of 2026-11-25, docs/wiki/frontend/leaving-in-app-browsers.md). First, so no page head is built.
+  const leave = canariLeaveInAppBrowser(event.request, event.url);
+  if (leave) return leave;
 
   // Assets, API proxies and prerendered files never carry a head worth writing.
   if (pathname.startsWith('/_app/') || pathname.startsWith('/api/')) {

@@ -871,8 +871,17 @@ reason it does not know, so a new reason that should retire anything does so onl
 `MlsDeliveryApi.fetchPrekeyCount` read a request with no answer, a non-2xx and a 2xx without a
 numeric `count` as `0`, so the round minted `50 - 0` bundles. Read in the owner's Android log: a
 resolver failure of a few seconds, `prekey count unreadable - read as 0`, then `needed=50`, then the
-publication itself failed on the same resolver - fifty bundles minted for nothing. A deadline already
-threw `DeliveryDeadlineError`; the three other cases now throw `PrekeyCountUnreadableError`, typed at
-the throw with its `reason` (`transport` / `status` / `malformed`), logged once at WARN, and the round
-fails exactly as on a deadline - nothing is minted, the next connection's round asks again. Only an
-ANSWERED number is a count. Tests: `mlsDeliveryApi.roundDeadline.test.ts`.
+publication itself failed on the same resolver - fifty bundles minted for nothing.
+
+It now throws `PrekeyCountUnreadableError`, typed at the throw by its `reason`: `transport` (no
+answer, or a body lost on the way), `status` (a non-2xx, a 401 whose token renewal failed included)
+or `malformed` (a body that is not JSON, or has no numeric count). A deadline stays
+`DeliveryDeadlineError` and still fails the round; a verdict on the session passes as it came.
+
+**The round goes on with no one-time package, and still refreshes the static fallback**
+(`BaseMlsService.oneTimePackagesNeeded`, the one count step of both platforms' rounds, which says the
+skip ONCE at WARN). Failing the whole round was tried first and refused in review: right after a fresh
+start's purge (`freshStart`, `republishKeyMaterial`) the fallback must be republished, or peers are
+served a stale one and the `NoMatchingKeyPackage` loop is back. If the publication then fails too,
+that is its own `[KP] Publication failed` line, never a second line for the same count. Tests:
+`mlsDeliveryApi.roundDeadline.test.ts`, `WebMlsService.keyPackageRound.test.ts`.

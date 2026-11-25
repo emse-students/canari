@@ -76,6 +76,20 @@ describe('registerMember - the refusals a caller acts on', () => {
     err.mockRestore();
     warn.mockRestore();
   });
+
+  it("narrates a portal's non-2xx page (no JSON) at WARN too - not our API's refusal", async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const portal = new Response('<html>sign in to the network</html>', {
+      status: 511,
+      headers: { 'content-type': 'text/html' },
+    });
+    await expect(api(portal).registerMember('g1', 'joe')).resolves.toBeUndefined();
+    expect(err).not.toHaveBeenCalled();
+    expect(warn.mock.calls[0][0]).toContain('NotFromApiError');
+    err.mockRestore();
+    warn.mockRestore();
+  });
 });
 
 describe('getGroupRosterAtGeneration', () => {

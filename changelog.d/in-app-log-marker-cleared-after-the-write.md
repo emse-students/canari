@@ -1,3 +1,3 @@
-### Fixed - the in-app log reports a session killed while its last lines were being written
+### Fixed - the in-app log says when a session's last lines may be missing
 
-The on-screen marker is cleared only once the leave-screen write has settled, so a kill in between is reported at the next boot instead of losing the lines silently ([mobile](docs/wiki/frontend/mobile.md#the-in-app-log)).
+The on-screen marker is cleared only once the leave-screen write has settled, so a write that never settled is said at the next boot, neutrally, with the time the app left the screen ([mobile](docs/wiki/frontend/mobile.md#the-in-app-log)).

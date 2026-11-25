@@ -10,6 +10,7 @@ import {
   solveTiered,
   createSolverContext,
   LATEST_GENERATOR_VERSION,
+  V2_TARGET_SCORE,
   DEFAULT_CONFIG,
   CHALLENGE,
   type MinesweeperBoard,
@@ -315,6 +316,34 @@ describe('generator v2 (2026-11-13)', () => {
       expect(solve.score).toBe(report.score);
       expect(solve.score).toBeGreaterThanOrEqual(report.targetScore);
     }
+  }, 60_000);
+
+  it('names the ranked target by default, so a ranked board is the one the server replays', () => {
+    // The target is a parameter of the BOARD, not of the generator: ranked never passes one, so an
+    // explicit ranked target and the default must be the same board, cell for cell.
+    for (const [seed, x, y] of fixtures.slice(0, 2)) {
+      const byDefault = createBoard(CHALLENGE, seed, 2);
+      const explicit = createBoard(CHALLENGE, seed, 2, V2_TARGET_SCORE);
+      expect(byDefault.targetScore).toBe(V2_TARGET_SCORE);
+      revealCell(byDefault, x, y);
+      revealCell(explicit, x, y);
+      expect(layoutOf(explicit)).toBe(layoutOf(byDefault));
+    }
+  }, 60_000);
+
+  it('stops climbing at a lower target: an unranked level is a cheaper, easier board', () => {
+    const [seed, x, y] = fixtures[0];
+    const easy = createBoard(CHALLENGE, seed, 2, 0);
+    revealCell(easy, x, y);
+    const report = easy.generationReport!;
+    // Target 0 is met by the first layout the solver clears: no swap is tried.
+    expect(report.targetScore).toBe(0);
+    expect(report.reachedTarget).toBe(true);
+    expect(report.evals).toBe(0);
+    expect(report.fellBack).toBe(false);
+    const ranked = createBoard(CHALLENGE, seed, 2);
+    revealCell(ranked, x, y);
+    expect(report.score).toBeLessThan(ranked.generationReport!.score);
   }, 60_000);
 
   it('keeps the first click and its neighbours free of mines', () => {

@@ -505,7 +505,7 @@ every plugin with a JS command surface, and an exemption there is how that test 
 | Storage | IndexedDB `CanariDBLog`, store `chunks`, auto-increment keys (two web tabs never collide), an index on each record's size. The same database on the web and in the Tauri WebView: one implementation, nothing native to verify. |
 | Write | Batched in memory, written as **one new record per batch**: at 32 KiB or 200 lines, when the app leaves the screen (`onAppScreenChange`, which is the only honest signal on Android, plus `pagehide`), and before an export. **Never on a timer.** Nothing already written is rewritten. |
 | Write on events that matter | A process or WebContent kill loses the unwritten batch, exactly the lines that explain it (an iPhone call died in setup and its export had NO line from four minutes before the death until the cold relaunch). So the batch is ALSO written on every ERROR line (a WARN rides along in the next batch) and at `flushAppLogAtMilestone(reason)`, called by `CallService` at call start, accept, the first offer sent (the negotiationneeded path) or received, the first connection and the end (once per call, after `cleanup`'s own lines; each writes a `[APPLOG] milestone: <reason>` line, so a log that stops is read against the last milestone). Bounded by events, never by line volume: L, I and W lines never ask for a write, requests coalesce (one write in flight, at most one queued, which takes everything pending). The ring is bounded by size AND by record count (512), so many small writes cannot grow the (key, size) walk each write does. Still no timer. |
-| Unclean end | A `localStorage` marker (`canari_applog_on_screen`) is set while the app is on screen (`1`), set to `leaving` at the leave-screen edge (`onAppScreenChange` false, `pagehide`), and cleared only once THAT edge's leave-screen write has settled - landed, or cut short by the suspension and kept for the return (said at the time). It used to be cleared synchronously at the edge, so a process killed while the write was on its way lost the session's last lines AND the report of their loss (owner's Android log, 2026-11-25: a session's last minutes vanished with no line at the next boot). A marker still set at boot, on the mobile shells only, the ones with the `canari:foreground` contract (two browser tabs share `localStorage`, and a desktop quit may fire neither `visibilitychange` nor `pagehide`), logs ONE W line: `the previous session ended while on screen (killed or crashed)` for `1`, `... ended as it left the screen, before its last lines reached disk (killed)` for `leaving`, each with `- last written line at <stamp>`. A kill while backgrounded, after the write settled, is normal on iOS and finds the marker cleared, so it is never reported. **Owed a phone reading** (WebKit commits `localStorage` asynchronously): background, wait, kill, relaunch, confirm no false report - [readings](../device-verification.md#the-readings-of-2026-11-23-180-alpha3-iphone-12-the-resume-from-settings-the-pushes-name-and-logo-the-banners-the-share-logos-the-ios-27-launch). |
+| Unclean end | A `localStorage` marker (`canari_applog_on_screen`) is set while the app is on screen (`1`), set to `leaving:<epoch ms>` at the leave-screen edge (`onAppScreenChange` false, `pagehide`), and cleared only once THAT edge's leave-screen write has settled - landed, or cut short by the suspension and kept for the return (said at the time). It used to be cleared synchronously at the edge, so a process killed while the write was on its way lost the session's last lines AND the report of their loss (owner's Android log, 2026-11-25: a session's last minutes vanished with no line at the next boot). A marker still set at boot, on the mobile shells only, the ones with the `canari:foreground` contract (two browser tabs share `localStorage`, and a desktop quit may fire neither `visibilitychange` nor `pagehide`), logs ONE line. `1` is a W, `the previous session ended while on screen (killed or crashed) - last written line at <stamp>`: nothing normal ends a session in front. `leaving:` is an I, `the previous session's leave-screen write never settled (killed while leaving, or suspended and reclaimed in background) - left the screen at <stamp>, last written line at <stamp>`, on every platform: WebKit settles a write it suspended only on RESUME, so a backgrounded iOS app jetsammed mid-write leaves exactly the marker a kill leaves (and Android's cached-app freezer can do the same). The marker cannot tell a fault from a normal reclaim, and a normal reclaim must never be reported as a fault, so the line accuses nothing - it marks where the log may have lost its last lines. A jetsam after the write settled finds the marker cleared and is never reported. **Owed a phone reading** (WebKit commits `localStorage` asynchronously): background, wait, kill, relaunch, confirm no false report - [readings](../device-verification.md#the-readings-of-2026-11-23-180-alpha3-iphone-12-the-resume-from-settings-the-pushes-name-and-logo-the-banners-the-share-logos-the-ios-27-launch). |
 | Bound | After each write, the oldest records are deleted until the total is under **2 MiB** (UTF-16 code units; a redacted line is ASCII). Rotation is by SIZE. The newest record is never evicted. |
 | Failure | No IndexedDB, or a failed write ON screen: persistence stops for the process, said ONCE at `error` (`[APPLOG] the in-app log is no longer written to disk`), lines stay in a 256 KiB memory tail (oldest dropped and counted), and the export header names the state. **The export still reads the ring already on disk** - it read the memory tail alone, 19 KB against 191 KB stored (iPhone 12, 1.2.9-alpha.3). Not a second storage path. |
 | Write cut short off screen | WebKit aborts the IndexedDB transaction in flight when it suspends a backgrounded WebView, so on iOS the leave-screen flush lost that race (`log write failed` 69 ms after `[LIFECYCLE] App in background`, alpha.2 and alpha.3). A write that fails while the app is OFF screen (known from the same `onAppScreenChange` that asked for it) is not a storage failure: its lines go back in front, the connection is dropped, the batch thresholds stop asking until the app is back, and the return writes them. WebKit delivers that abort on RESUME, so the app may already be on screen when it arrives: the hold then applies only while the app is still off screen, and otherwise the lines are written again at once. One `info` line says so. `appLog.test.ts` pins it. |
@@ -818,40 +818,39 @@ installed** (user, 2026-09-28), and nothing above is at fault: the claim is serv
 both names. Those apps never hand a tapped link to the system - they load it in their own WebView -
 so neither an App Link nor a Universal Link is ever consulted. No server setting reaches that.
 
-What the page can do is offer a tap that leaves. `OpenInAppBanner` (root layout, banner column)
-shows only when `detectInAppBrowser` recognises the user agent (`FBAN/`, `FBAV/`, `FB_IAB`,
-`Instagram`) AND the page is one the app claims: a host of `MOBILE_APP_LINK_HOSTS` - not every
-Canari name, since an intent naming the package matches only the filter and `dev.canari-emse.fr` is in
-none - and a path of `MOBILE_UNIVERSAL_LINK_PATHS` (`isClaimedAppLinkPath`). `openInAppOffer` (`lib/mobile/openInApp.ts`) builds the way out:
+**Since 2026-11-25 such a browser gets nothing of the app** (owner decision): every page request
+from Messenger, Facebook, Instagram or Threads is answered with one blocking page that leaves for
+the real browser, or for the app - [leaving-in-app-browsers](leaving-in-app-browsers.md) is the
+mechanism, shared with every site of the ecosystem. What stays here is the two doors into the app,
+which that page and the login page's "Ouvrir dans l'application" (`loginOpenInAppOffer`,
+`lib/mobile/openInApp.ts`) use:
 
-| System | Tap | Without the app |
+| System | Door | Without the app |
 |---|---|---|
-| Android | `intent://<host><path>?<query>#Intent;scheme=https;package=fr.emse.canari;S.browser_fallback_url=<Play>;end` - resolved against the EXISTING https App Link filter, so nothing native changes | the Play listing, by the intent's own fallback |
-| iOS | `fr.emse.canari://open?url=<page>` - the scheme is registered with no host filter (the plugin writes `CFBundleURLSchemes` only), so nothing native changes either | nothing happens; the banner carries the App Store link |
+| Android, from the in-app browser | `intent://<host><path>?<query>#Intent;scheme=https;action=android.intent.action.VIEW;category=android.intent.category.BROWSABLE;end` - no package: Android's own resolution opens the app when its verified App Link claims the page | the default browser |
+| Android, from the login page | the same with `package=fr.emse.canari;S.browser_fallback_url=<Play>` - resolved against the EXISTING https App Link filter, so nothing native changes | the Play listing, by the intent's own fallback |
+| iOS | `fr.emse.canari://open?url=<page>` - the scheme is registered with no host filter (the plugin writes `CFBundleURLSchemes` only), so nothing native changes either. A TAPPED button only (`iosAppOpenHref`): the in-app browser's automatic exit goes to Safari | nothing happens; the login page carries the App Store link |
 
-**Behind the login.** An in-app browser holds no Canari session, so EVERY visitor from Messenger
-lands on `/login?returnTo=<path>`, which is not claimed. The offer is built for `returnTo`, resolved
-against the site's origin and held to the same two tests, so a `returnTo` naming another host
-offers nothing.
+An app door is offered only for a page the app claims: a host of `MOBILE_APP_LINK_HOSTS` - not every
+Canari name, since an intent naming the package matches only the filter and `dev.canari-emse.fr` is
+in none - and a path of `MOBILE_UNIVERSAL_LINK_PATHS` (`isClaimedAppLinkPath`).
+
+**Behind the login.** A visitor with no Canari session lands on `/login?returnTo=<path>`, which is
+not claimed. The door is built for `returnTo`, resolved against the site's origin and held to the
+same two tests, so a `returnTo` naming another host offers nothing.
 
 **`fr.emse.canari://open` opens only what an App Link could.** Anyone can write that URL, so
 `openClaimedAppLink` (`utils/appLinkNavigation.ts`, used by `hooks.client.ts` for both doors)
 applies the claim test the system applies before delivering a link; `/auth/callback` in particular
 is refused, for the reason the paragraph on bare hosts above gives.
 
-**A tap, never a redirect**: a visitor without the app would be thrown out of the page they came
-to read. The page's `#fragment` does not travel on Android - an intent URL uses the fragment for its
-own parameters. **Not yet verified inside Messenger itself** - both halves are measured only in a
-browser carrying Messenger's user agent (the production build, served locally under the legacy
-name, 2026-09-28: the banner above the login page, `Ouvrir` carrying the intent to the post behind
-`returnTo`, nothing in a plain Chrome); the iOS half also needs a store release, because the
-`open` host is handled by the app's own code. **On iOS that handler is in every store build since
-`v0.18.28`, and it works only on a RUNNING app**: from `v1.2.0` to the fix of 2026-10-14 a tap that
-had to launch the app opened it on the feed instead of the page
-([below](#a-cold-start-on-the-scene-lifecycle-lost-its-link)). Whether Messenger, Instagram and
-Facebook hand a tapped `fr.emse.canari://` to iOS at all is still unmeasured: no bench iPhone carries
-a Meta app (a user report about "Ouvrir dans l'application" on an iPhone, 2026-10-13, names neither
-the app nor the page).
+The page's `#fragment` does not travel on Android - an intent URL uses the fragment for its own
+parameters. **On iOS the `open` handler is in every store build since `v0.18.28`, and it works only
+on a RUNNING app**: from `v1.2.0` to the fix of 2026-10-14 a tap that had to launch the app opened it
+on the feed instead of the page ([below](#a-cold-start-on-the-scene-lifecycle-lost-its-link)).
+Whether Messenger, Instagram, Facebook and Threads hand a tapped `fr.emse.canari://` or an
+`intent:` to the system at all is the owner's reading ([leaving-in-app-browsers](leaving-in-app-browsers.md#4-what-the-owner-reads-on-his-phone)):
+no bench phone carries a Meta app.
 
 ### How a deep link actually reaches the app — two paths, only one of them gated
 

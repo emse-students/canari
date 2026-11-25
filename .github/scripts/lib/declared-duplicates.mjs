@@ -316,4 +316,25 @@ export const ACKNOWLEDGED_IDIOMS = [
       'apps/social-service/src/minesweeper/engine/game.ts',
     ],
   },
+  {
+    what: 'the Meta in-app browser gate: which user agent is a Messenger, Facebook, Instagram or Threads browser, which request it is refused, and the one page that sends it away',
+    compare: 'exact',
+    why: 'ONE definition enforced by every site of the ecosystem and by MiConnect (owner, 2026-11-25): libs/leave-in-app-browser is the source, tested there and generating the nginx gate of MiConnect; each SvelteKit site carries a byte-identical copy at its own path (the copy of each GitHub sibling joins tools/ecosystem-shape in the pull request that vendors it). The frontend cannot import it from libs/ into the client bundle it ships; docs/wiki/frontend/leaving-in-app-browsers.md.',
+    files: ['libs/leave-in-app-browser/detect.ts', 'frontend/src/lib/leaveInAppBrowser/detect.ts'],
+  },
+  {
+    what: 'the Meta in-app browser gate, server half: the requests gated, the headers and hashed CSP of the interstitial',
+    compare: 'exact',
+    why: 'the source and its Canari copy, for the reason the group above gives.',
+    files: ['libs/leave-in-app-browser/gate.ts', 'frontend/src/lib/leaveInAppBrowser/gate.ts'],
+  },
+  {
+    what: 'the Meta in-app browser interstitial: the one static page, French and English, with its one hashed script',
+    compare: 'exact',
+    why: 'the source and its Canari copy, for the reason the group above gives; the copy MiConnect serves is written by libs/leave-in-app-browser/generate.ts and held by its --check.',
+    files: [
+      'libs/leave-in-app-browser/interstitial.html',
+      'frontend/src/lib/leaveInAppBrowser/interstitial.html',
+    ],
+  },
 ];

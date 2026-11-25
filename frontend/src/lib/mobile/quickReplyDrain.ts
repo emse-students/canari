@@ -310,6 +310,8 @@ export async function drainNativeQuickReplies(why: string, announced = false): P
     // 2026-11-25). The registration drains in any case, so nothing waits on the line.
     if (announced) {
       appendLog(`[QuickReply] ${why}: no signed-in session yet - the replies wait in their file`);
+    } else {
+      console.debug(`[QuickReply] ${why}: no signed-in session yet - nothing announced, no take`);
     }
     return;
   }

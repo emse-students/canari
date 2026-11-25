@@ -616,14 +616,15 @@ class PendingResendDidNotArrive extends Error {
 }
 
 /**
- * The device's one-time prekey count could not be read, so the key package round must not mint:
- * `transport` (no answer - DNS, no route, a reset socket), `status` (the service answered a non-2xx,
- * kept in {@link status}) or `malformed` (a 2xx without a numeric `count`). A deadline is the
- * separate {@link DeliveryDeadlineError}.
+ * The device's one-time prekey count could not be read, so the round mints no one-time package:
+ * - `transport`: no answer - DNS, no route, a reset socket, or a body lost on its way;
+ * - `status`: the service answered a non-2xx, kept in {@link status} - a 401 whose token renewal
+ *   failed included (the guard answered, the request did nothing);
+ * - `malformed`: a 2xx whose body is not JSON, or has no numeric `count`.
+ * A deadline is the separate {@link DeliveryDeadlineError}.
  *
- * TYPED AT THE THROW, never read back from its message: the round's callers see one type and its
- * `reason`. Reading any of the three as `0` was a heal - fifty new bundles against a count nobody
- * gave.
+ * TYPED AT THE THROW, never read back from its message. Reading any of them as `0` was a heal -
+ * fifty new bundles against a count nobody gave.
  */
 export class PrekeyCountUnreadableError extends Error {
   constructor(
@@ -637,7 +638,7 @@ export class PrekeyCountUnreadableError extends Error {
           ? `the service answered ${status}`
           : reason === 'transport'
             ? `no answer: ${cause instanceof Error ? transportFailureEvidence(cause) : typeof cause}`
-            : 'an answer without a count'
+            : 'an answer without a readable count'
       })`,
       { cause }
     );
@@ -1859,6 +1860,9 @@ export class MlsDeliveryApi {
         assertAnsweredByApi(res, `POST /api/mls/groups/members (group ${groupId.slice(0, 8)})`);
         return;
       }
+      // A non-2xx that is not our API's (a portal's 511, an edge's HTML page) is no answer from the
+      // service: NotFromApiError, narrated below like any other request that got none.
+      assertAnsweredByApi(res, `POST /api/mls/groups/members (group ${groupId.slice(0, 8)})`);
       const refusal = await refusalFromResponse(res, 'registerMember refused');
       if (refusal.code === 'USER_BLOCKED') throw new UserBlockedError(userId);
       if (refusal.code === REVIEW_COHORT_BOUNDARY_CODE) throw new ReviewCohortBoundaryError(userId);
@@ -2503,14 +2507,14 @@ export class MlsDeliveryApi {
    * fails the round, because reading it as `0` made both platforms mint and publish a full pool of
    * fifty against a server that never answered - the deadline would have become a heal.
    *
-   * NOR IS ANY OTHER COUNT NOBODY GAVE: a request with no answer (a DNS failure), a refusal (non-2xx)
-   * or an answer without a number throws {@link PrekeyCountUnreadableError}, typed at the throw with
-   * which of the three it was, and fails the round the same way. Each was read as `0` until
-   * 2026-11-25, and a phone whose resolver failed for a moment minted fifty bundles it could not even
-   * publish (owner's Android log).
+   * NOR IS ANY OTHER COUNT NOBODY GAVE, and it is said by its caller, once
+   * (`BaseMlsService.oneTimePackagesNeeded`): {@link PrekeyCountUnreadableError}, typed at the throw
+   * by its {@link PrekeyCountUnreadableError.reason}. Each case was read as `0` until 2026-11-25, and
+   * a phone whose resolver failed for a moment minted fifty bundles it could not even publish
+   * (owner's Android log). A verdict on the session (a dead refresh cookie, a sign-out) and a defect
+   * of ours pass as they came.
    */
   async fetchPrekeyCount(): Promise<number> {
-    let failure: PrekeyCountUnreadableError;
     try {
       return await this.underDeadline('prekey-count', async (signal) => {
         const res = await this.f(
@@ -2518,22 +2522,34 @@ export class MlsDeliveryApi {
           { headers: await this.auth(), signal }
         );
         if (!res.ok) throw new PrekeyCountUnreadableError('status', res.status);
-        const data = (await res.json().catch(() => null)) as { count?: unknown } | null;
+        // The BODY READ and the PARSE are two facts: a body the link lost on its way is no answer
+        // (`transport`), a body that arrived and is not JSON is an answer we cannot read (`malformed`).
+        let text: string;
+        try {
+          text = await res.text();
+        } catch (e) {
+          throw new PrekeyCountUnreadableError('transport', null, e);
+        }
+        let data: { count?: unknown } | null;
+        try {
+          data = JSON.parse(text) as { count?: unknown } | null;
+        } catch (e) {
+          if (e instanceof SyntaxError) throw new PrekeyCountUnreadableError('malformed', null, e);
+          throw e;
+        }
         if (typeof data?.count !== 'number') throw new PrekeyCountUnreadableError('malformed');
         return data.count;
       });
     } catch (e) {
-      if (e instanceof DeliveryDeadlineError) throw e;
-      if (e instanceof PrekeyCountUnreadableError) failure = e;
-      else if (isTransportFailure(e))
-        failure = new PrekeyCountUnreadableError('transport', null, e);
-      else throw e;
+      if (e instanceof DeliveryDeadlineError || e instanceof PrekeyCountUnreadableError) throw e;
+      if (isTransportFailure(e)) throw new PrekeyCountUnreadableError('transport', null, e);
+      // The service answered 401 and the token renewal failed: an ANSWER, and no count.
+      if (e instanceof DeliveryRenewalFailedError) {
+        throw new PrekeyCountUnreadableError('status', e.status, e);
+      }
+      // Anything else - a verdict on the session, a defect of ours - passes as it came.
+      throw e;
     }
-    // ACCUSED, AND THE ROUND STOPS HERE: nothing is minted against a count nobody gave.
-    console.warn(
-      `[MLS] ${failure.message} - the key package round is skipped, nothing minted; the next connection's round asks again`
-    );
-    throw failure;
   }
 
   /**

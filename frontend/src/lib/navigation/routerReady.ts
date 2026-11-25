@@ -29,3 +29,12 @@ export function markRouterReady(): void {
   console.log('[router] ready - deferred one-shot inputs may be taken');
   resolveReady();
 }
+
+/**
+ * Resolves {@link routerReady} on the FIRST navigation that settles: the root layout passes
+ * SvelteKit's `afterNavigate`, which must be called during component initialisation. Injected so a
+ * test drives the real wiring with a fake `afterNavigate`.
+ */
+export function readyOnFirstNavigation(afterNavigate: (callback: () => void) => void): void {
+  afterNavigate(() => markRouterReady());
+}

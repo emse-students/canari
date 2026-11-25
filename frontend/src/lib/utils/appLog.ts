@@ -38,16 +38,16 @@
  *
  * AN UNCLEAN END IS REPORTED AT THE NEXT BOOT. A durable marker (`canari_applog_on_screen`, in
  * `localStorage`: a synchronous write that needs no flush and no open database) is set while the
- * app is on screen, set to `leaving` at the leave-screen edge, and cleared once the leave-screen
- * write has settled, so a marker still set at boot means the previous session ended ON screen, or
- * was killed before its last lines reached disk - never "backgrounded then jetsammed" (on iOS that
- * is normal, and the marker is cleared once the leave-screen flush settles, whether or not it won
- * its race). It is kept on the mobile shells only, the ones that speak the
+ * app is on screen, set to `leaving:<epoch ms>` at the leave-screen edge, and cleared once the leave-screen
+ * write has settled. A marker still `1` at boot means the previous session ended ON screen (a W
+ * line); one still `leaving:<when>` means its leave-screen write never settled - killed while
+ * leaving, or suspended mid-write and reclaimed in the background, which the marker cannot tell
+ * apart, so it is an I line that accuses nothing. A jetsam after the write settled finds the marker
+ * cleared and is never reported. It is kept on the mobile shells only, the ones that speak the
  * `canari:foreground` contract: two browser tabs share `localStorage` (a second tab would read the
  * first one's marker as a crash), and a desktop window close or quit may fire neither
- * `visibilitychange` nor `pagehide`. The report is ONE W line naming the last line that reached
- * disk, which bounds when the
- * session died.
+ * `visibilitychange` nor `pagehide`. The report is ONE line naming the last line that reached
+ * disk, which bounds when the session died.
  *
  * IT NEVER LOGS THROUGH THE CONSOLE FROM INSIDE A CAPTURE (that would recurse); its own failures
  * are written as lines of the log itself and printed through the console outside the capture.
@@ -448,19 +448,24 @@ function sayMarkerFailure(error: unknown): void {
 }
 
 /**
- * What the marker says of the session that wrote it: on screen, leaving it (the leave-screen write
- * has not landed yet), or nothing (cleared once that write landed).
+ * What the marker says of the session that wrote it: on screen, or leaving it since `leftAt` (epoch
+ * ms; null when the value cannot be read as one) with its leave-screen write not settled yet. No
+ * marker at all: the write settled, or nothing was ever set.
  */
-type MarkerState = 'on-screen' | 'leaving' | null;
+type MarkerState = { kind: 'on-screen' } | { kind: 'leaving'; leftAt: number | null } | null;
 
-/** The stored value of each state; `'1'` is what every build before `leaving` wrote for on screen. */
-const MARKER_VALUE = { 'on-screen': '1', leaving: 'leaving' } as const;
+/** The stored value for on screen: `'1'`, what every earlier build wrote too. */
+const MARKER_ON_SCREEN = '1';
+/** The stored prefix of a leave: `leaving:<epoch ms>`. */
+const MARKER_LEAVING_PREFIX = 'leaving:';
 
-/** Sets or clears the on-screen marker. Never throws. */
-function writeOnScreenMarker(state: MarkerState): void {
+/** Sets the marker to on screen, to leaving (now), or clears it. Never throws. */
+function writeOnScreenMarker(state: 'on-screen' | 'leaving' | null): void {
   try {
-    if (state) localStorage.setItem(ON_SCREEN_KEY, MARKER_VALUE[state]);
-    else localStorage.removeItem(ON_SCREEN_KEY);
+    if (state === 'on-screen') localStorage.setItem(ON_SCREEN_KEY, MARKER_ON_SCREEN);
+    else if (state === 'leaving') {
+      localStorage.setItem(ON_SCREEN_KEY, `${MARKER_LEAVING_PREFIX}${Date.now()}`);
+    } else localStorage.removeItem(ON_SCREEN_KEY);
   } catch (error) {
     sayMarkerFailure(error);
   }
@@ -471,7 +476,9 @@ function readOnScreenMarker(): MarkerState {
   try {
     const value = localStorage.getItem(ON_SCREEN_KEY);
     if (value === null) return null;
-    return value === MARKER_VALUE.leaving ? 'leaving' : 'on-screen';
+    if (!value.startsWith(MARKER_LEAVING_PREFIX)) return { kind: 'on-screen' };
+    const leftAt = Number(value.slice(MARKER_LEAVING_PREFIX.length));
+    return { kind: 'leaving', leftAt: Number.isFinite(leftAt) && leftAt > 0 ? leftAt : null };
   } catch (error) {
     sayMarkerFailure(error);
     return null;
@@ -496,15 +503,28 @@ async function lastWrittenStamp(): Promise<string> {
 }
 
 /**
- * At boot, once: a marker still set means the previous session ended on screen (see the module
- * doc). One W line, written with the next batch.
+ * At boot, once: a marker still set means the previous session ended on screen, or that its last
+ * leave-screen write never settled (see the module doc). One line, written with the next batch.
+ *
+ * ON SCREEN IS A W: nothing normal ends a session in front. A WRITE THAT NEVER SETTLED IS AN I, on
+ * every platform, because the marker cannot tell its two causes apart and only one is a fault: a
+ * process killed while it was writing, or a WebView the system suspended mid-write and later
+ * reclaimed in the background - WebKit settles such a write only on resume, and a backgrounded iOS
+ * app that is jetsammed never resumes; Android's cached-app freezer can do the same. Reclaiming a
+ * backgrounded app is normal and must never be reported as a fault, so the line accuses nothing: it
+ * marks where the log may have lost its last lines, and when the app left the screen.
  */
 async function reportPreviousSessionEnd(state: Exclude<MarkerState, null>): Promise<void> {
   const last = await lastWrittenStamp();
-  console.warn(
-    state === 'on-screen'
-      ? `[APPLOG] the previous session ended while on screen (killed or crashed) - last written line at ${last}`
-      : `[APPLOG] the previous session ended as it left the screen, before its last lines reached disk (killed) - last written line at ${last}`
+  if (state.kind === 'on-screen') {
+    console.warn(
+      `[APPLOG] the previous session ended while on screen (killed or crashed) - last written line at ${last}`
+    );
+    return;
+  }
+  const left = state.leftAt === null ? 'unknown' : stamp(new Date(state.leftAt));
+  console.info(
+    `[APPLOG] the previous session's leave-screen write never settled (killed while leaving, or suspended and reclaimed in background) - left the screen at ${left}, last written line at ${last}`
   );
 }
 
@@ -513,7 +533,8 @@ async function reportPreviousSessionEnd(state: Exclude<MarkerState, null>): Prom
  * SETTLED. Clearing it first - synchronously, while the write was still on its way - meant a process
  * killed in between lost the lines AND the report that they were lost: a session's last minutes
  * vanished with no line at the next boot (owner's Android log, 2026-11-25). Until the write settles
- * the marker says `leaving`, so such a kill is reported as what it is.
+ * the marker says `leaving:<when>`, so the next boot says the log may have lost its last lines
+ * ({@link reportPreviousSessionEnd}).
  *
  * A write cut short by the suspension also settles it: its lines are kept for the return and that
  * loss is said at the time ({@link flushAppLog}), and a jetsam of a backgrounded app is normal (see

@@ -548,13 +548,13 @@ describe('an unclean end is reported at the next boot', () => {
     appLog.captureConsoleLine('log', ['[A] the last minutes']);
     screen.change(false);
     // Synchronously after the edge, the write is still on its way: the marker says so.
-    expect(localStorage.getItem(ON_SCREEN_KEY)).toBe('leaving');
+    expect(localStorage.getItem(ON_SCREEN_KEY)).toMatch(/^leaving:\d+$/);
     await appLog.flushAppLog();
     expect(localStorage.getItem(ON_SCREEN_KEY)).toBeNull();
     expect((await records()).map((r) => r.text).join(' ')).toContain('[A] the last minutes');
   });
 
-  it('a session killed DURING the leave-screen write is reported at the next boot, as such', async () => {
+  it('a session killed DURING the leave-screen write is reported at the next boot - neutrally, at INFO', async () => {
     tauri();
     appLog.installAppLogFlushTriggers();
     // The database never answers: the process is killed before the leave-screen write lands.
@@ -564,18 +564,22 @@ describe('an unclean end is reported at the next boot', () => {
     appLog.captureConsoleLine('log', ['[A] lost with the kill']);
     screen.change(false);
     await Promise.resolve();
-    expect(localStorage.getItem(ON_SCREEN_KEY)).toBe('leaving');
+    expect(localStorage.getItem(ON_SCREEN_KEY)).toMatch(/^leaving:\d+$/);
     open.mockRestore();
     await nextProcess();
 
+    // A kill and a suspended WebView reclaimed in the background leave the same marker: the line
+    // accuses neither, and a normal reclaim is never a warning.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
     appLog.installAppLogFlushTriggers();
-    await vi.waitFor(() => expect(warn).toHaveBeenCalledTimes(1));
-    expect(warn).toHaveBeenCalledWith(
+    await vi.waitFor(() => expect(info).toHaveBeenCalledTimes(1));
+    expect(info).toHaveBeenCalledWith(
       expect.stringMatching(
-        /^\[APPLOG\] the previous session ended as it left the screen, before its last lines reached disk \(killed\) - last written line at /
+        /^\[APPLOG\] the previous session's leave-screen write never settled \(killed while leaving, or suspended and reclaimed in background\) - left the screen at \d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3}, last written line at /
       )
     );
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it('a return to the screen during the leave-screen write keeps the marker the return set', async () => {
@@ -586,6 +590,21 @@ describe('an unclean end is reported at the next boot', () => {
     screen.change(true);
     await appLog.flushAppLog();
     expect(localStorage.getItem(ON_SCREEN_KEY)).toBe('1');
+  });
+
+  it('two leave edges in a row (pagehide, then the screen signal) clear the marker once both settle', async () => {
+    tauri();
+    appLog.installAppLogFlushTriggers();
+    appLog.captureConsoleLine('log', ['[A] first']);
+    window.dispatchEvent(new Event('pagehide'));
+    appLog.captureConsoleLine('log', ['[A] second']);
+    screen.change(false);
+    expect(localStorage.getItem(ON_SCREEN_KEY)).toMatch(/^leaving:\d+$/);
+    await appLog.flushAppLog();
+    expect(localStorage.getItem(ON_SCREEN_KEY)).toBeNull();
+    const text = (await records()).map((r) => r.text).join(' ');
+    expect(text).toContain('[A] first');
+    expect(text).toContain('[A] second');
   });
 
   it('a boot while the app is off screen sets no marker', async () => {

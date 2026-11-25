@@ -1158,8 +1158,7 @@ export class WebMlsService extends BaseMlsService {
     // of those rounds orphans the previous 50 locally for ever. What bounds it is
     // `MlsManager::prune_expired_key_packages`, which runs once per load in `load_or_create` and so
     // covers this path, the web one and the background FCM one alike.
-    const existing = await this.delivery.fetchPrekeyCount();
-    const needed = Math.max(0, 50 - existing);
+    const needed = await this.oneTimePackagesNeeded();
 
     // A ROUND THAT MINTS NOTHING OWES THE DISK NOTHING, AND THAT IS THE ORDINARY ROUND.
     //

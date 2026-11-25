@@ -246,7 +246,7 @@ describe('a tap reaches the page through durable state', () => {
     // Registered before the plugin import, so a failed import cannot take it down.
     expect(listen).toBeLessThan(hooks.indexOf("import('@tauri-apps/plugin-deep-link')"));
     // Once the FIRST NAVIGATION HAS SETTLED, not at mount: the root mounts inside that navigation.
-    expect(layout).toMatch(/afterNavigate\(\(nav\) => \{[\s\S]{0,400}markRouterReady\(\);/);
+    expect(layout).toContain('readyOnFirstNavigation(afterNavigate);');
   });
 });
 
