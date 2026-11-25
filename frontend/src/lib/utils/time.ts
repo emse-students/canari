@@ -30,6 +30,16 @@ export function exactDate(dateStr: string): string {
 }
 
 /**
+ * Compact numeric date in the reader's local time: "25/11/26" (DD/MM/YY, whatever the locale).
+ * For tight rows such as the Minesweeper ranking, where the long `exactDate` is cut off.
+ */
+export function shortDate(dateStr: string): string {
+  const d = new Date(dateStr);
+  const two = (n: number) => String(n).padStart(2, '0');
+  return `${two(d.getDate())}/${two(d.getMonth() + 1)}/${two(d.getFullYear() % 100)}`;
+}
+
+/**
  * The option label of a calendar event a post can be linked to: "12 mai 2026 14:30 - Gala".
  * One implementation for the composer and the editor, which each carried a copy.
  */

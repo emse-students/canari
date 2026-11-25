@@ -27,7 +27,7 @@
   import { currentUserId } from '$lib/stores/user';
   import { m } from '$lib/paraglide/messages';
   import { Log } from '$lib/utils/Log';
-  import { exactDate } from '$lib/utils/time';
+  import { exactDate, shortDate } from '$lib/utils/time';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { globalAdminState } from '$lib/stores/userState.svelte';
 
@@ -76,7 +76,7 @@
 
   /** The visible date of a record; nothing for a date the server did not send. */
   function dateOf(iso: string): string {
-    return Number.isNaN(new Date(iso).getTime()) ? '' : exactDate(iso);
+    return Number.isNaN(new Date(iso).getTime()) ? '' : shortDate(iso);
   }
 
   async function loadBans() {
@@ -288,7 +288,11 @@
                     {entry.displayName}
                   </span>
                   {#if dateOf(entry.verifiedAt)}
-                    <span class="text-text-muted block truncate text-xs" data-testid="games-date">
+                    <span
+                      class="text-text-muted block truncate text-xs"
+                      data-testid="games-date"
+                      title={exactDate(entry.verifiedAt)}
+                    >
                       {dateOf(entry.verifiedAt)}
                     </span>
                   {/if}

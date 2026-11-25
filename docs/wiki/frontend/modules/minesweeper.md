@@ -55,7 +55,7 @@ unaffected. **Verified:** the geometry (`view.test.ts`), the chrome and the mode
 The game used to carry its own "Classement" sheet (ranking, Stats, admin moderation) next to the
 Games page's ranking. The sheet is DELETED; `/games` is the only leaderboard and the trophy leads
 there. The page has three tabs - overall, per promo, **Stats** - and carries over everything the
-sheet had: each ranking row shows the date of the record (`verifiedAt` through `exactDate`, so
+sheet had: each ranking row shows the date of the record (`verifiedAt` as `DD/MM/YY` through `shortDate`, the full `exactDate` in the tooltip, so
 **no migration**: the date was already on the score row and in the leaderboard payload); the Stats
 tab (`MinesweeperStats.svelte`, loaded when opened) shows ranked games played, wins, lost or
 abandoned, win rate, rank, best, average and median time, the sparkline of the latest wins and their
