@@ -45,7 +45,7 @@ import {
 } from './audioTimeline';
 import { declareMp4Duration } from '$lib/utils/mp4Duration';
 import { LoudnessMeter, type MediaLoudness } from './loudnessMeter';
-import { watchViewLoss } from '$lib/utils/appForeground';
+import { isAppActive, isAppInForeground, watchViewLoss } from '$lib/utils/appForeground';
 
 /**
  * How far past `maxSeconds` a source may run and still be accepted. A recorder told to stop at 90 s
@@ -452,7 +452,12 @@ export async function prepareVideoForUpload(
           cause: e,
         });
       }
-      console.error('[video-prep] the encoder failed', e);
+      // THE VIEW FACTS AS THEY STAND, so a missed ordering - the rejection landing before the edge
+      // that would have made it `interrupted` - is named on the reading, not guessed.
+      console.error(
+        `[video-prep] the encoder failed, the app in view throughout (foreground=${isAppInForeground()} active=${isAppActive()} visibility=${typeof document === 'undefined' ? 'none' : document.visibilityState})`,
+        e
+      );
       throw new VideoPrepareError('encode', 'video: the encoder failed', { cause: e });
     } finally {
       viewLoss.stop();

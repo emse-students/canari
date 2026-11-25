@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { prepareQueuedChatReel, type PrepareQueuedChatReelDeps } from './prepareQueuedChatReel';
-import { OutboxPrepareRefusedError } from './outbox';
+import { OutboxPrepareInterruptedError, OutboxPrepareRefusedError } from './outbox';
+import { VideoPrepareError } from '$lib/video/prepareVideoForUpload';
 import { ChatReelCapMissingError } from '$lib/reels/chatReelWriter';
 import { UploadAbortedError } from '$lib/utils/uploadXhr';
 import type { ReelLimits } from '$lib/posts/api';
@@ -69,5 +70,21 @@ describe('prepareQueuedChatReel', () => {
     expect(err).toBeInstanceOf(ChatReelCapMissingError);
     expect(err).not.toBeInstanceOf(OutboxPrepareRefusedError);
     expect(d.prepare).not.toHaveBeenCalled();
+  });
+
+  it('an encoder the app leaving the view stopped is the typed hold, never a refusal', async () => {
+    const d = deps({
+      prepare: () => Promise.reject(new VideoPrepareError('interrupted', 'out of view')),
+    });
+    const err = await prepareQueuedChatReel(MEDIA, opts(), d.deps).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OutboxPrepareInterruptedError);
+  });
+
+  it('an encoder failure in view is no hold: the outbox parks it as a failure', async () => {
+    const failed = new VideoPrepareError('encode', 'the encoder failed');
+    const d = deps({ prepare: () => Promise.reject(failed) });
+    const err = await prepareQueuedChatReel(MEDIA, opts(), d.deps).catch((e: unknown) => e);
+    expect(err).toBe(failed);
+    expect(err).not.toBeInstanceOf(OutboxPrepareInterruptedError);
   });
 });

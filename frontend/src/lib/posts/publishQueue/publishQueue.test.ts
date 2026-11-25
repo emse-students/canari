@@ -159,11 +159,16 @@ interface Rig {
   inView: boolean;
   /** How many times a pass ended (`passEnded`). */
   passesEnded: number;
+  /** Resolved, and emptied, at every end of a pass: what a test awaits instead of a clock. */
+  passEndWaiters: Array<() => void>;
   /** Every line the queue logged. */
   logs: string[];
 }
 
-function rig(store = memoryStore()): Rig {
+function rig(
+  store = memoryStore(),
+  lock: <T>(fn: () => Promise<T>) => Promise<T> = (fn) => fn()
+): Rig {
   const r = {
     store,
     calls: [] as string[],
@@ -193,6 +198,7 @@ function rig(store = memoryStore()): Rig {
     preparePlan: [] as Rig['preparePlan'],
     inView: true,
     passesEnded: 0,
+    passEndWaiters: [] as Array<() => void>,
     logs: [] as string[],
   } as Rig;
   let n = 0;
@@ -285,7 +291,7 @@ function rig(store = memoryStore()): Rig {
     assertNotMuted: async () => undefined,
     inView: () => r.inView,
     failureMessage: (e) => `refused: ${(e as Error).message}`,
-    lock: (fn) => fn(),
+    lock,
     // NO CLOCK: a wait ends only when the queue is woken.
     sleep: (_ms, signal) =>
       new Promise((resolve) => {
@@ -299,11 +305,15 @@ function rig(store = memoryStore()): Rig {
     onPublished: (p) => r.published.push(p.id),
     passEnded: () => {
       r.passesEnded += 1;
+      for (const resolve of r.passEndWaiters.splice(0)) resolve();
     },
     log: (line) => r.logs.push(line),
   });
   return r;
 }
+
+/** Resolves at the next end of a pass of `r`'s queue. */
+const nextPassEnd = (r: Rig) => new Promise<void>((resolve) => r.passEndWaiters.push(resolve));
 
 /** Lets every pending microtask and macrotask of the queue run. */
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -1254,9 +1264,9 @@ describe('a preparation the app leaving the view stopped (iPhone 12, 1.8.1-alpha
     expect(r.calls).toEqual(['prepare:p0.jpg']);
 
     r.inView = true;
+    const ended = nextPassEnd(r);
     r.queue.backInView();
-    await settle();
-    await r.queue.drain();
+    await ended;
     expect(r.calls.filter((c) => c.startsWith('prepare:'))).toHaveLength(2);
     expect(r.created.map((c) => c.id)).toEqual(['p1']);
     expect(r.published).toEqual(['p1']);
@@ -1270,6 +1280,74 @@ describe('a preparation the app leaving the view stopped (iPhone 12, 1.8.1-alpha
     r.preparePlan.push(interrupted);
     await r.queue.drain();
     expect(r.calls.filter((c) => c.startsWith('prepare:'))).toHaveLength(2);
+    expect(r.published).toEqual(['p1']);
+  });
+
+  it('an edge that lands while the lock is still settling after the pass is not lost', async () => {
+    // A Web Lock resolves on a later task: the pass has ended (the loop looked at `again` for the
+    // last time) but `draining` is still set, and the back-in-view edge lands in between.
+    let hook: (() => void) | null = null;
+    const r = rig(memoryStore(), async (fn) => {
+      const value = await fn();
+      const fire = hook;
+      hook = null;
+      fire?.();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      return value;
+    });
+    queuePost(r.store, 'p1', 1);
+    r.inView = false;
+    r.preparePlan.push(interrupted);
+    hook = () => {
+      r.inView = true;
+      r.queue.backInView();
+    };
+    const published = new Promise<void>((resolve) => {
+      const check = () => (r.published.length > 0 ? resolve() : r.passEndWaiters.push(check));
+      r.passEndWaiters.push(check);
+    });
+    void r.queue.drain();
+    await published;
+    expect(r.calls.filter((c) => c.startsWith('prepare:'))).toHaveLength(2);
+    expect(r.created.map((c) => c.id)).toEqual(['p1']);
+    expect(r.published).toEqual(['p1']);
+  });
+
+  it('terminates: interrupted, then prepared in view and failing there, ends failed - no loop', async () => {
+    const r = rig();
+    queuePost(r.store, 'p1', 1);
+    r.inView = false;
+    r.preparePlan.push(interrupted, () =>
+      Promise.reject(new VideoPrepareError('encode', 'video: the encoder failed'))
+    );
+    await r.queue.drain();
+    r.inView = true;
+    const ended = nextPassEnd(r);
+    r.queue.backInView();
+    await ended;
+    expect(r.store.posts.get('p1')!.failure?.stage).toBe('mediaPrepare');
+    expect(r.calls.filter((c) => c.startsWith('prepare:'))).toHaveLength(2);
+    // Nothing runs on by itself after the failure: a further edge finds nothing interrupted.
+    r.queue.backInView();
+    await settle();
+    expect(r.calls.filter((c) => c.startsWith('prepare:'))).toHaveLength(2);
+    expect(r.created).toEqual([]);
+  });
+
+  it('a foreground edge before the app is in view leaves the interrupted post to the view edge', async () => {
+    const r = rig();
+    queuePost(r.store, 'p1', 1);
+    r.inView = false;
+    r.preparePlan.push(interrupted);
+    await r.queue.drain();
+    // iOS: `willEnterForeground` (the foreground edge) comes before `didBecomeActive`.
+    r.queue.resumeAfterSuspension();
+    await settle();
+    expect(r.calls).toEqual(['prepare:p0.jpg']);
+    r.inView = true;
+    const ended = nextPassEnd(r);
+    r.queue.backInView();
+    await ended;
     expect(r.published).toEqual(['p1']);
   });
 

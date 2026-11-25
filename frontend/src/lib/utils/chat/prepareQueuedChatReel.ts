@@ -2,7 +2,11 @@ import { m } from '$lib/paraglide/messages';
 import type { OutboxEntry } from '$lib/db/types';
 import type { ReelLimits } from '$lib/posts/api';
 import type { PrepareVideoOptions, PreparedVideo } from '$lib/video/prepareVideoForUpload';
-import { OutboxPrepareRefusedError, type PreparedOutboxMedia } from '$lib/utils/chat/outbox';
+import {
+  OutboxPrepareInterruptedError,
+  OutboxPrepareRefusedError,
+  type PreparedOutboxMedia,
+} from '$lib/utils/chat/outbox';
 
 /** What the preparation reads and runs, injectable so a test can refuse the cap or count the encoder. */
 export interface PrepareQueuedChatReelDeps {
@@ -36,6 +40,9 @@ async function defaultDeps(): Promise<PrepareQueuedChatReelDeps> {
  *   without the chat cap (`ChatReelCapMissingError`) is an ORDINARY failure: the outbox parks the take
  *   (kept, Retry), and it is never prepared without its cap nor under the 90 s reel cap instead.
  * - A cancel is re-thrown as the outbox's `UploadAbortedError`, the member's act, never a failure.
+ * - An encoder the APP LEAVING THE VIEW stopped (the `interrupted` fault) is
+ *   `OutboxPrepareInterruptedError`: the outbox keeps the take and prepares it again once the app is
+ *   back in view - not a failure, never a Retry for the member to find.
  * - A FACT of the take or the engine (`isUnpreparableFault`) is `OutboxPrepareRefusedError`: failed
  *   for good with the composer's own sentence for it.
  */
@@ -92,6 +99,10 @@ export async function prepareQueuedChatReel(
       (isVideoPrepareError(e) && e.fault === 'aborted')
     ) {
       throw new UploadAbortedError(opts.signal.reason);
+    }
+    // THE SYSTEM STOPPED THE ENCODER AS THE APP LEFT THE VIEW, typed at the encoder's throw: kept.
+    if (isVideoPrepareError(e) && e.fault === 'interrupted') {
+      throw new OutboxPrepareInterruptedError(e);
     }
     // A FACT OF THE TAKE OR THE ENGINE, classified here at the throw by its typed fault: failed for
     // good with the composer's own sentence for it, never a retry that is refused the same way.

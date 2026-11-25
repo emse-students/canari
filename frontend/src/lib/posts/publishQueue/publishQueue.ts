@@ -379,6 +379,13 @@ export class PublishQueue {
       )
       .finally(() => {
         this.draining = null;
+        // AN EDGE THAT LANDED AFTER THE LOOP'S LAST LOOK, while the lock was still settling (a Web
+        // Lock resolves on a later task), asked for another pass and found this one still
+        // `draining`: it is run now, or it is lost - a `backInView`, a resume, a nudge alike.
+        if (this.again && !this.stopped) {
+          this.deps.log('[PUBLISH-QUEUE] asked again as the pass ended: one more pass');
+          void this.drain();
+        }
         try {
           this.deps.passEnded();
         } catch (e) {
@@ -408,9 +415,17 @@ export class PublishQueue {
       );
       this.current.abort.abort('resume' satisfies AbortReason);
     }
-    // The pass it starts prepares an interrupted post again: `backInView` has nothing left to do.
-    this.interrupted = null;
     this.wake('back on screen');
+    // ON iOS THE FOREGROUND EDGE COMES BEFORE `didBecomeActive`: a pass started now would encode an
+    // interrupted post while the app is still inactive, and be interrupted again. Out of view, the
+    // interrupted post is left to `backInView`, whose edge follows.
+    if (this.interrupted && !this.deps.inView()) {
+      this.deps.log(
+        `[PUBLISH-QUEUE] ${this.interrupted} back in the foreground but not yet in view: prepared again when it is`
+      );
+      return;
+    }
+    this.interrupted = null;
     void this.drain();
   }
 

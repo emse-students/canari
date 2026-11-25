@@ -80,6 +80,7 @@ import { onConversationStored } from '$lib/db/conversationStored';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { isTransportFailure } from '$lib/utils/transportFailure';
+import { isAppInView, onAppViewChange } from '$lib/utils/appForeground';
 import { installReachabilityProbe } from '$lib/utils/reachabilityProbe';
 import {
   ExclusionsRefusedError,
@@ -356,6 +357,19 @@ export class OutboxPrepareRefusedError extends Error {
   ) {
     super('the take was refused by its preparer', { cause });
     this.name = 'OutboxPrepareRefusedError';
+  }
+}
+
+/**
+ * The take's preparation was STOPPED BY THE APP LEAVING THE VIEW (the encoder's `interrupted` fault,
+ * typed at its throw from the lifecycle edges): not a fact of the take, not the link. The outbox keeps
+ * it, untouched, and prepares it again on the edge that brings the app back in view - the publish
+ * queue's rule ([posts](docs/wiki/frontend/modules/posts.md#the-background-publish-queue)).
+ */
+export class OutboxPrepareInterruptedError extends Error {
+  constructor(cause?: unknown) {
+    super('the take preparation was interrupted as the app left the view', { cause });
+    this.name = 'OutboxPrepareInterruptedError';
   }
 }
 
@@ -1029,6 +1043,13 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    */
   const parked = new Set<string>();
   /**
+   * Entries and takes whose preparation the APP LEAVING THE VIEW stopped
+   * ({@link OutboxPrepareInterruptedError}), each also in `parked` so no pass prepares it out of
+   * view. The edge that brings the app back in view resumes them, ONCE ({@link holdForView}). In
+   * memory: a reload's first pass prepares the take again anyway.
+   */
+  const viewHeld = new Set<string>();
+  /**
    * Entries adopted from the native mirror whose CLAIM did not land: the mirror still holds them as
    * native lines, which a background drain may send. Not sent from here until a mirror write that
    * holds them lands ({@link writeMirror}), so the server's messageId dedup is never what stands
@@ -1476,6 +1497,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   if (typeof window !== 'undefined') {
     document.addEventListener('visibilitychange', onVisible);
   }
+  const unsubscribeView = onAppViewChange((inView) => {
+    if (inView) resumeViewHeld();
+  });
 
   // A NATIVE LINE LEFT FOR WANT OF ITS CONVERSATION'S ROW IS ADOPTED BY THAT ROW'S WRITE (review of
   // #3969, S2) - a Welcome, a discovery, a restore - not at the next return to the front, which may
@@ -2418,6 +2442,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     } catch (e) {
       if (e instanceof UploadAbortedError) throw e;
       if (signal.aborted) throw new UploadAbortedError(signal.reason);
+      // Interrupted by the app leaving the view: passed through, kept by `holdForView`.
+      if (e instanceof OutboxPrepareInterruptedError) {
+        log(`[OUTBOX] ${id}… its take's preparation was interrupted out of view`);
+        throw e;
+      }
       // Refused for good: the preparer's own type, passed through for `settleFailure` to retire.
       if (e instanceof OutboxPrepareRefusedError) {
         log(
@@ -2756,6 +2785,51 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       );
     }
     return outcome;
+  }
+
+  /**
+   * Keeps an entry or a take whose preparation the app leaving the view stopped: NOT A FAILURE, so it
+   * is said at info and drawn `queued`, never `error`. Out of view, it is parked in `viewHeld` until
+   * the back-in-view edge ({@link resumeViewHeld}); already back in view when the outcome lands (read
+   * with no await before the mark), that edge has passed, so it is prepared again at once.
+   * TERMINATION: the next preparation runs in view, where an encoder failure is `encode` - a failure
+   * parked by {@link parkAsError} - and only another leave of the view can interrupt it again.
+   */
+  function holdForView(entry: OutboxEntry, take: boolean): FlushOutcome {
+    const id = entry.id;
+    const short = id.slice(0, 8);
+    transportHeld.delete(id);
+    repairHeld.delete(id);
+    unexpected.delete(id);
+    patchStatus(id, 'pending', entry.conversationId);
+    patchUpload(id, { phase: 'queued' });
+    if (isAppInView()) {
+      console.info(
+        `[OUTBOX] ${short}… its take's preparation was interrupted out of view, and the app is back: preparing it again`
+      );
+      resuming.add(id);
+      if (take) takesRerun = true;
+      else void runFlush();
+      return 'parked';
+    }
+    console.info(
+      `[OUTBOX] ${short}… its take's preparation was interrupted as the app left the view: kept, prepared again when the app is back in view`
+    );
+    parked.add(id);
+    viewHeld.add(id);
+    return 'parked';
+  }
+
+  /** The app is back in view: every take {@link holdForView} kept is prepared again, once. */
+  function resumeViewHeld(): void {
+    if (viewHeld.size === 0) return;
+    log(`[OUTBOX] back in view: preparing ${viewHeld.size} interrupted take(s) again`);
+    for (const id of viewHeld) {
+      parked.delete(id);
+      resuming.add(id);
+    }
+    viewHeld.clear();
+    void runFlush();
   }
 
   /**
@@ -3562,6 +3636,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // THE TAKE COULD NOT BE PREPARED (RC-5): the encoder refused it, or its result could not be
     // stored. About this device and this file, never the link - so no ladder; the take is KEPT and
     // the member retries (a new preparation) or deletes.
+    if (e instanceof OutboxPrepareInterruptedError) return holdForView(entry, false);
     if (e instanceof OutboxPrepareError) {
       return parkAsError(entry, `${e.message} (${String(e.cause).slice(0, 120)})`);
     }
@@ -4303,7 +4378,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     const id = take.id;
     const short = id.slice(0, 8);
     takeWithdrawn.add(id);
-    for (const set of [parked, uploadOwed, resuming, transportHeld] as Set<string>[])
+    for (const set of [parked, viewHeld, uploadOwed, resuming, transportHeld] as Set<string>[])
       set.delete(id);
     noAnswer.delete(id);
     bestLoaded.delete(id);
@@ -4609,6 +4684,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       transportHeld.delete(id);
       patchStatus(id, 'pending', take.conversationId);
       patchUpload(id, { phase: refusal === 'blocked' ? 'blocked' : 'failed' });
+      return;
+    }
+    if (e instanceof OutboxPrepareInterruptedError) {
+      holdForView(take, true);
       return;
     }
     if (e instanceof OutboxPrepareError) {
@@ -5633,6 +5712,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       backoffTimer = null;
       unsubscribeTabOutbox();
       unsubscribeReconnect();
+      unsubscribeView();
       unsubscribeConversationStored();
       if (typeof window !== 'undefined') {
         document.removeEventListener('visibilitychange', onVisible);

@@ -535,19 +535,54 @@ describe('prepareVideoForUpload', () => {
     // The page as the shells write it: `__canariActive` / `__canariForeground` and their events.
     let page: EventTarget & Record<string, unknown>;
     let doc: EventTarget & { visibilityState: string };
+    /** Listeners added minus removed, on the page and the document together. */
+    let listening = 0;
+    const counted = <T extends EventTarget>(target: T): T => {
+      const add = target.addEventListener.bind(target);
+      const remove = target.removeEventListener.bind(target);
+      target.addEventListener = (...args: Parameters<EventTarget['addEventListener']>) => {
+        listening += 1;
+        add(...args);
+      };
+      target.removeEventListener = (...args: Parameters<EventTarget['removeEventListener']>) => {
+        listening -= 1;
+        remove(...args);
+      };
+      return target;
+    };
     const edge = (type: string, detail: Record<string, boolean>, flag: string, value: boolean) => {
       page[flag] = value;
       page.dispatchEvent(new CustomEvent(type, { detail }));
     };
     beforeEach(() => {
-      page = new EventTarget() as EventTarget & Record<string, unknown>;
-      doc = Object.assign(new EventTarget(), { visibilityState: 'visible' });
+      listening = 0;
+      page = counted(new EventTarget()) as EventTarget & Record<string, unknown>;
+      doc = Object.assign(counted(new EventTarget()), { visibilityState: 'visible' });
       vi.stubGlobal('window', page);
       vi.stubGlobal('document', doc);
       state.script.executeError = new Error('EncodingError');
     });
     afterEach(() => {
       vi.unstubAllGlobals();
+    });
+
+    it('leaves no listener behind - after a success, an abort and a failure', async () => {
+      state.script.executeError = undefined;
+      await prepareVideoForUpload(SOURCE);
+      expect(listening).toBe(0);
+
+      const during = new AbortController();
+      state.script.duringExecute = () => during.abort();
+      state.script.executeError = new Error('cancelled underneath');
+      expect(await faultOf(prepareVideoForUpload(SOURCE, { signal: during.signal }))).toBe(
+        'aborted'
+      );
+      expect(listening).toBe(0);
+
+      state.script.duringExecute = undefined;
+      state.script.executeError = new Error('EncodingError');
+      expect(await faultOf(prepareVideoForUpload(SOURCE))).toBe('encode');
+      expect(listening).toBe(0);
     });
 
     it('stays an encode fault when the app was in view throughout', async () => {

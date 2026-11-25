@@ -590,8 +590,18 @@ failure with that latch set is the `interrupted` fault, logged at info. The queu
 back in view - on iOS `didBecomeActive`, on Android `onResume`, on the web `visibilitychange`. An
 encoder failure with the app in view throughout stays `encode`: a failure with its Retry. Android
 runs the same code (its shell writes `canari:foreground` from `onPause`/`onResume`); the encoder
-dying there with the app has not been observed. The chat outbox's take treats `interrupted` as it
-treats `encode` (retryable, never `isUnpreparableFault`).
+dying there with the app has not been observed. **The chat outbox's take is kept the same way:**
+`prepareQueuedChatReel` types the fault as `OutboxPrepareInterruptedError` at the throw, and the
+outbox holds the take (`holdForView`: drawn `queued`, logged at info, never the `error` park and its
+Retry) until `onAppViewChange` says the app is back in view, then prepares it again once; an encoder
+failure in view there is `OutboxPrepareError`, parked as a failure. **Two holes closed in review:**
+an edge that landed after the pass's last look but before the Web Lock settled set `again` on a pass
+that would not look again - `drain` now runs one more pass when it ends with `again` set (a
+`backInView`, a resume, a nudge alike); and a foreground edge that comes before the app is in view
+(iOS: `willEnterForeground` before `didBecomeActive`) leaves an interrupted post to the view edge
+instead of starting an encode doomed to be interrupted again. An `encode` failure's line names the
+view facts as they stood (`foreground`, `active`, `visibility`), so a rejection that beat its edge is
+named on the reading.
 
 **Backgrounding, without native code.** A native shell emits `canari:foreground` when the app comes
 back; the queue then ABORTS the transfer in flight (it was frozen with the webview and its socket is
