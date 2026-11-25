@@ -32,6 +32,10 @@ import type {
   GraineRunReading,
   MlsBatchProcessResult,
 } from '$lib/mls-client/IMlsService';
+import {
+  parseExternalJoinStanding,
+  type ExternalJoinStanding,
+} from '$lib/mls-client/externalJoinStanding';
 import type { AuthorVerdict } from '$lib/crypto/messageAuthorship';
 import type { SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
 import {
@@ -1803,11 +1807,15 @@ export class TauriMlsService extends BaseMlsService {
     return new Uint8Array(gi);
   }
 
-  /** Tauri-native `invoke` wrapper - `mls_external_join_is_a_further_device`. */
-  protected async isFurtherDeviceIn(groupInfoBytes: Uint8Array): Promise<boolean> {
-    return invoke<boolean>('mls_external_join_is_a_further_device', {
-      groupInfoBytes: Array.from(groupInfoBytes),
-    });
+  /** Tauri-native `invoke` wrapper - `mls_external_join_standing`. */
+  protected async externalJoinStandingIn(
+    groupInfoBytes: Uint8Array
+  ): Promise<ExternalJoinStanding> {
+    return parseExternalJoinStanding(
+      await invoke<string>('mls_external_join_standing', {
+        groupInfoBytes: Array.from(groupInfoBytes),
+      })
+    );
   }
 
   /** Tauri-native `invoke` wrapper - builds an external commit from a served GroupInfo and stages it.

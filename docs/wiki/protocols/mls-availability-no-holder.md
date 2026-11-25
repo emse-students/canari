@@ -67,7 +67,7 @@ conversation today is the door policy below.
 from any caller holding a roster seat that is not awaiting (`seat !== null`,
 `messaging.service.ts:3571`) and binds the new leaf to the authenticated caller
 (`external_leaf_foreign`, `:2294`). The further-device refusal is the client's own choice, read off
-the unverified tree of the served GroupInfo (`external_join_is_a_further_device`, `welcome.rs:27-38`).
+the unverified tree of the served GroupInfo (`external_join_standing`, `welcome.rs`).
 It exists so that an honest device never makes the entry members' observers flag as
 `unvouched-device` (`DeviceEvent::enters_as_unvouched_device`,
 `frontend/mls-core/src/device_trust.rs:175`; TypeScript twin `deviceTrust.ts:154`).
@@ -129,8 +129,8 @@ else answers.
   still needs a live member.
 
 **The candidate in the brief is verified.** A user's new device, in a group whose tree still holds a
-leaf of that user's dead device, with no member device ever able to answer: `external_join_is_a_further_device`
-is `true` on every attempt (it is re-read on every fresh base, `BaseMlsService.ts:6985-7002`), the
+leaf of that user's dead device, with no member device ever able to answer: `external_join_standing`
+is `further-device` on every attempt (it is re-read on every fresh base, `BaseMlsService.ts:6985-7002`), the
 device asks, nobody answers, and nothing removes the dead leaf. It waits forever, and the server
 holds a base it would have accepted a join on.
 

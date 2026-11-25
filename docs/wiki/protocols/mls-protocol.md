@@ -1558,7 +1558,7 @@ breaks conversations for good on paths that are legitimate, so the refusal and t
 removed the same day and today's behaviour returned:
 
 - **Legitimate paths produce exactly that commit.** A peer whose KeyPackage was skipped at creation
-  (a 1:1 included) enters as a person (`external_join_is_a_further_device` false, `welcome.rs`); a
+  (a 1:1 included) enters as a person (`external_join_standing` answers `no-leaf-of-user`, `welcome.rs`); a
   user whose only device was revoked had its leaf removed by the stray sweep; a user whose only leaf
   was evicted while the seat stands rejoins on `unhonoured-seat` (`recovery.ts`). Each was frozen out.
 - **A frozen group dropped every later frame for good**, the freeze had no way to be lifted
@@ -1584,7 +1584,7 @@ build wrote deafens nothing) and its announcement are deleted. Pinned by
 `setupMessageHandler.staleFreeze.test.ts` and the push path's
 `an_uninvited_external_commit_in_a_closed_group_is_not_refused_for_good`.
 
-**What the fix-forward owes before the rule refuses anything again** ([backlog](../backlog.d/p1-the-admission-rule-fix-forward.md)):
+**What the fix-forward owes before the rule refuses anything again** ([backlog](../backlog.d/p1-the-admission-rule-fix-forward.md)) - **the design, its five slices and the gate that lifts the refusal are on [admission-fix-forward](admission-fix-forward.md)**, which supersedes the order below where they differ:
 
 1. **Read the `[UNINVITED_ENTRY]` count on production first**, by `kind`, so the legitimate paths are
    measured before anything else is built. The count is durable since migration 053
@@ -1755,6 +1755,11 @@ interval never fires in a service redeployed more often than daily), with the co
 the shortened user id; an account sharing those eight characters loses its rows of the count too).
 Register: C13 ([register-of-processing](../compliance/register-of-processing.md)).
 
+**The entrant speaks too (2026-11-25).** A device whose own external commit was accepted on a tree
+holding no leaf of its account writes a row of its own under an `entrant-*` kind, on the same
+`(group, entrant, epoch)` as its members' rows, its `entrant` taken from the authenticated caller
+([slice 1](admission-fix-forward.md#slice-1---the-entrants-own-word-built-2026-11-25)).
+
 **Reading it** - read-only, any time, the whole window in one statement:
 
 ```sql
@@ -1852,7 +1857,7 @@ alert rather than gated by a tap.
 2026-10-31, D1 of [mls-availability-no-holder](mls-availability-no-holder.md#decisions-taken-2026-10-31)).
 A device whose user holds a leaf in the tree of the GroupInfo its external commit would be built on,
 but none of its own, first sends a `welcome_request` (`externalJoin(groupId, { asAFurtherDevice:
-'ask' })` answers `further_device`, `external_join_is_a_further_device` in `welcome.rs`). A member
+'ask' })` answers `further_device`, `external_join_standing` in `welcome.rs`). A member
 device online adds it. A `stored` answer - the server's own verdict that no member device is online
 - makes it join by itself IN THE SAME PASS (`requestReAdd`, `recovery.ts`), with `welcomeOwed: 'ask'`
 so an Add already under way (the seat served with the base: `welcomeQueued`, `addInFlight`) is waited
