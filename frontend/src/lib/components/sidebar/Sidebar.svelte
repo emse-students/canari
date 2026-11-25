@@ -182,8 +182,8 @@
     /** Callback fired when the user selects a direct or group conversation. */
     onSelectConversation: (name: string) => void;
     /**
-     * Opens "Mes notes", creating it the first time (`openSelfConversation`). The pinned row calls it
-     * when this device holds no self conversation yet. Absent (a preview), the row is not drawn.
+     * Opens "Mes notes", creating it the first time (`openSelfConversation`). The placeholder row calls
+     * it when this device holds no self conversation yet. Absent (a preview), the row is not drawn.
      */
     onOpenSelfConversation?: () => void | Promise<void>;
     /** Callback fired when the user selects a channel conversation. */
@@ -429,9 +429,9 @@
   );
 
   /**
-   * "MES NOTES", PINNED AT THE TOP of the discussions (owner, 2026-11-22): drawn whether or not this
-   * device holds it yet - the first tap creates it - and kept out of the recency-sorted list below,
-   * so it never moves. Matched by the search like any row, on the label it shows.
+   * "MES NOTES" sits in the ONE recency-sorted list like every other conversation (owner,
+   * 2026-11-25): its place is its last activity. The held row, if
+   * any; drawn only when the sidebar can open it (a signed-in session).
    */
   const selfRow = $derived(
     conversationRows.find(
@@ -441,24 +441,31 @@
   /** The own name is read reactively like a DM peer's, so a late or renamed profile repaints the row. */
   const ownName = userDisplayName(() => (onOpenSelfConversation ? currentUserId : ''));
   const selfTitle = $derived(selfConversationTitle(ownName.current, currentUserId));
-  const selfRowShown = $derived(
+  /** The row's search label: its own title and aliases, never the resolver's name for the group. */
+  const matchesSelfRow = (convo: Conversation) =>
+    selfConversationMatchesQuery(selfTitle, previewContentOf(convo.messages) ?? '', searchQuery);
+  /**
+   * This device holds no Notes conversation yet (the first tap creates it): it has no recency, so
+   * its entry is drawn AFTER the list - discoverable, never jumping above real activity.
+   */
+  const selfPlaceholderShown = $derived(
     Boolean(onOpenSelfConversation) &&
-      selfConversationMatchesQuery(
-        selfTitle,
-        selfRow ? (previewContentOf(selfRow.convo.messages) ?? '') : '',
-        searchQuery
-      )
+      selfRow === null &&
+      selfConversationMatchesQuery(selfTitle, '', searchQuery)
   );
 
   let filteredConversationEntries = $derived.by(() =>
     conversationRows
-      .filter(({ convo }) => convo.conversationType !== 'self')
       .filter(({ convo, resolved }) =>
-        conversationMatchesQuery(
-          resolved.displayName,
-          previewContentOf(convo.messages) ?? '',
-          searchQuery
-        )
+        convo.conversationType === 'self'
+          ? Boolean(onOpenSelfConversation) &&
+            convo.lifecycle !== 'removed' &&
+            matchesSelfRow(convo)
+          : conversationMatchesQuery(
+              resolved.displayName,
+              previewContentOf(convo.messages) ?? '',
+              searchQuery
+            )
       )
       .sort((a, b) => compareConversationRecency(a.convo, b.convo))
   );
@@ -773,43 +780,58 @@
       }}
     >
       {#if activeSidebarTab === 'discussions'}
-        {#if selfRowShown}
+        {#each filteredConversationEntries as { name, convo, resolved } (name)}
+          {#if convo.conversationType === 'self'}
+            <div class="relative" data-self-conversation-row>
+              <ConversationTile
+                conversationId={convo.id}
+                contactName={currentUserId}
+                displayName={selfTitle}
+                conversationType="self"
+                lastMessage={previewContentOf(convo.messages)}
+                isReady={convo.lifecycle === 'active'}
+                isSelected={selectedContact === name}
+                unreadCount={convo.unreadCount ?? 0}
+                lastActivityAt={conversationRecency(convo)}
+                onClick={() => onSelectConversation(name)}
+              />
+            </div>
+          {:else}
+            <div class="relative">
+              <ConversationTile
+                conversationId={convo.id}
+                contactName={resolved.contactId}
+                displayName={resolved.displayName}
+                displayNameResolved={resolved.displayNameResolved}
+                conversationType={convo.conversationType}
+                lastMessage={previewContentOf(convo.messages)}
+                isReady={convo.lifecycle === 'active'}
+                isRemoved={convo.lifecycle === 'removed'}
+                awaitingAdmission={isNeverAdmitted(convo)}
+                isSelected={selectedContact === name}
+                unreadCount={convo.unreadCount ?? 0}
+                imageMediaId={convo.imageMediaId}
+                lastActivityAt={conversationRecency(convo)}
+                onClick={() => onSelectConversation(name)}
+              />
+            </div>
+          {/if}
+        {/each}
+        {#if selfPlaceholderShown}
           <div class="relative" data-self-conversation-row>
             <ConversationTile
-              conversationId={selfRow?.convo.id ?? 'self'}
+              conversationId="self"
               contactName={currentUserId}
               displayName={selfTitle}
               conversationType="self"
-              lastMessage={selfRow ? previewContentOf(selfRow.convo.messages) : undefined}
-              isReady={selfRow ? selfRow.convo.lifecycle === 'active' : true}
-              isSelected={selfRow !== null && selectedContact === selfRow.name}
-              unreadCount={selfRow?.convo.unreadCount ?? 0}
-              lastActivityAt={selfRow ? conversationRecency(selfRow.convo) : 0}
-              onClick={() =>
-                selfRow ? onSelectConversation(selfRow.name) : void onOpenSelfConversation?.()}
+              isReady={true}
+              isSelected={false}
+              unreadCount={0}
+              lastActivityAt={0}
+              onClick={() => void onOpenSelfConversation?.()}
             />
           </div>
         {/if}
-        {#each filteredConversationEntries as { name, convo, resolved } (name)}
-          <div class="relative">
-            <ConversationTile
-              conversationId={convo.id}
-              contactName={resolved.contactId}
-              displayName={resolved.displayName}
-              displayNameResolved={resolved.displayNameResolved}
-              conversationType={convo.conversationType}
-              lastMessage={previewContentOf(convo.messages)}
-              isReady={convo.lifecycle === 'active'}
-              isRemoved={convo.lifecycle === 'removed'}
-              awaitingAdmission={isNeverAdmitted(convo)}
-              isSelected={selectedContact === name}
-              unreadCount={convo.unreadCount ?? 0}
-              imageMediaId={convo.imageMediaId}
-              lastActivityAt={conversationRecency(convo)}
-              onClick={() => onSelectConversation(name)}
-            />
-          </div>
-        {/each}
 
         {#if filteredConversationEntries.length === 0}
           <div class="text-text-muted px-6 py-12 text-center">

@@ -8170,9 +8170,15 @@ person's AND the aliases `conversation_self_search_aliases` ("notes", "mes notes
 `matchesSelfConversationAlias`, `selfConversationMatchesQuery`, and the picker filter). No avatar
 means the usual initials. The own name is read REACTIVELY like a DM peer's (`userDisplayName` in the row and the header; the pickers ask for it through `missingPeerNameIds` and `peerNames`), so a late or renamed profile repaints them without a reload. Tests: `selfConversationName.test.ts`.
 
-**The list.** `Sidebar` pins one row at the top (own avatar and name, see above)
-and the subtitle "Visible uniquement sur vos appareils". It is drawn even before the group exists;
-a tap opens the held row or calls `openSelfConversation`. A row of a self group built while its kind
+**The list (owner, 2026-11-25).** The row (own avatar and name, see above, and the subtitle "Visible
+uniquement sur vos appareils") is NOT pinned: it sits in the one recency-sorted list
+(`compareConversationRecency`, the same search filter) like every other conversation, so a newer DM
+is above it and an older one below. **A device that holds no Notes conversation yet** draws one
+placeholder entry AFTER the list (it has no recency; the first tap creates it, `openSelfConversation`),
+so it stays discoverable without jumping above real activity; it is searchable by the same aliases.
+A tap on a held row opens it. The earlier pin at the top was wrongly attributed to the owner (see
+[the decision](../../decisions/owner-decisions-of-2026-11-25.md)). Pinned by `Sidebar.selfRow.svelte.test.ts`. The share-destination
+pickers (`shareDestinations.ts`) never pinned it: they rank by their own recency, unchanged. A row of a self group built while its kind
 could not be read (a Welcome whose group read failed makes a `group` row) is re-typed by the next
 listing (`retaggedAsSelf` in the `known` branch of `ensureConversationForServerGroup`). The share
 pickers draw it the same way (`ConversationPickList`).

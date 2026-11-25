@@ -34,6 +34,7 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', async () => ({
 vi.mock('$lib/components/shared/Avatar.svelte', () => ({ default: () => {} }));
 
 import { flushSync, mount, unmount } from 'svelte';
+import { seedUserDisplayName } from '$lib/utils/users/displayName';
 import { SvelteMap } from 'svelte/reactivity';
 import type { Conversation } from '$lib/types';
 import Sidebar from './Sidebar.svelte';
@@ -46,13 +47,30 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-function mountSidebar(onOpenSelfConversation?: () => void) {
+/** A held conversation whose last activity is `at`. */
+function row(id: string, type: 'direct' | 'self', at: number): Conversation {
+  return {
+    id,
+    name: id,
+    contactName: id,
+    conversationType: type,
+    ...(type === 'direct' ? { directPeerId: id } : {}),
+    messages: [],
+    lifecycle: 'active',
+    mlsStateHex: null,
+    unreadCount: 0,
+    lastMessageAt: at,
+  } as Conversation;
+}
+
+function mountSidebar(onOpenSelfConversation?: () => void, rows: Conversation[] = []) {
+  for (const id of ['alice', 'bob']) seedUserDisplayName(id, id, id);
   const target = document.createElement('div');
   document.body.appendChild(target);
   const app = mount(Sidebar, {
     target,
     props: {
-      conversations: new SvelteMap<string, Conversation>(),
+      conversations: new SvelteMap<string, Conversation>(rows.map((r) => [r.name, r])),
       selectedContact: null,
       onAddContact: async () => ({ ok: true }) as never,
       onCreateGroup: async () => ({ ok: true }) as never,
@@ -63,7 +81,14 @@ function mountSidebar(onOpenSelfConversation?: () => void) {
   });
   mounted.push(() => unmount(app));
   flushSync();
+  return target;
 }
+
+/** The ids of the drawn rows, top to bottom: the self row reads "self", a held one by its tile. */
+const order = (target: HTMLElement) =>
+  [...target.querySelectorAll('[data-conversation-tile]')].map((el) =>
+    el.closest('[data-self-conversation-row]') ? 'self' : el.getAttribute('data-conversation-tile')
+  );
 
 const selfRow = () => document.querySelector('[data-self-conversation-row]');
 
@@ -94,5 +119,35 @@ describe('the "Mes notes" row', () => {
   it('is not drawn without the handler - the logged-out preview', () => {
     mountSidebar();
     expect(selfRow()).toBeNull();
+  });
+
+  describe('its place is its recency, like every other conversation (owner, 2026-11-25)', () => {
+    it('sorts BELOW a DM with newer activity', () => {
+      const t = mountSidebar(vi.fn(), [row('notes', 'self', 100), row('alice', 'direct', 200)]);
+      expect(order(t)).toEqual(['alice', 'self']);
+    });
+
+    it('sorts ABOVE a DM with older activity', () => {
+      const t = mountSidebar(vi.fn(), [row('notes', 'self', 300), row('alice', 'direct', 200)]);
+      expect(order(t)).toEqual(['self', 'alice']);
+    });
+
+    it('is drawn LAST while this device holds none, and only once', () => {
+      const t = mountSidebar(vi.fn(), [row('alice', 'direct', 200), row('bob', 'direct', 100)]);
+      expect(order(t)).toEqual(['alice', 'bob', 'self']);
+    });
+
+    it('is found by "notes", held or not, and hidden by a query that is not its own', () => {
+      const held = mountSidebar(vi.fn(), [row('notes', 'self', 100), row('alice', 'direct', 200)]);
+      const search = held.querySelector('input') as HTMLInputElement;
+      search.value = 'notes';
+      search.dispatchEvent(new Event('input', { bubbles: true }));
+      flushSync();
+      expect(order(held)).toEqual(['self']);
+      search.value = 'zzz';
+      search.dispatchEvent(new Event('input', { bubbles: true }));
+      flushSync();
+      expect(order(held)).toEqual([]);
+    });
   });
 });
