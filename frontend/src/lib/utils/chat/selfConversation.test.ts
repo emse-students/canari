@@ -21,7 +21,6 @@ import {
   SelfConversationExistsError,
   SelfConversationUnsupportedError,
 } from '$lib/mls-client/mlsDeliveryApi';
-import { m } from '$lib/paraglide/messages';
 import {
   buildConversationRow,
   findSelfConversation,
@@ -29,6 +28,7 @@ import {
   resolveConversationListPresentation,
   restoredConversationRow,
   selfConversationIdentity,
+  selfConversationTitle,
   toConversationMeta,
 } from './conversations';
 import { ensureConversationForServerGroup } from './serverGroupConversation';
@@ -84,7 +84,7 @@ describe('the row of "Mes notes"', () => {
     expect(pres).toEqual({
       conversationType: 'self',
       contactId: SELF_GROUP,
-      displayName: m.conversation_self_title(),
+      displayName: selfConversationTitle(ME),
       displayNameResolved: true,
     });
   });

@@ -8052,12 +8052,20 @@ same), so the server's `kind` is carried to every place a row is born - `ensureC
 'self'`, a `kind` column in SQLite (added on every open) and the same field in IndexedDB.
 `restoredConversationRow` reads it back before any name parsing.
 
-**The list.** `Sidebar` pins one row at the top, "Mes notes" / "My notes" with Lucide `Bookmark`
+**The name (owner, 2026-11-25, `1.8.1`).** The row no longer says "Mes notes" with a Bookmark: it is
+the account's OWN avatar and "Prenom NOM (Notes)" (`selfConversationTitle`, the name from the one
+resolver, the suffix `conversation_self_named` in fr/en), in the row, the header, the share pickers
+and the notification (`notificationGroupName`'s `selfUserId`). The search matches the own name like a
+person's AND the aliases `conversation_self_search_aliases` ("notes", "mes notes", "my notes";
+`matchesSelfConversationAlias`, `selfConversationMatchesQuery`, and the picker filter). No avatar
+means the usual initials. Tests: `selfConversationName.test.ts`.
+
+**The list.** `Sidebar` pins one row at the top (own avatar and name, see above)
 and the subtitle "Visible uniquement sur vos appareils". It is drawn even before the group exists;
 a tap opens the held row or calls `openSelfConversation`. A row of a self group built while its kind
 could not be read (a Welcome whose group read failed makes a `group` row) is re-typed by the next
 listing (`retaggedAsSelf` in the `known` branch of `ensureConversationForServerGroup`). The share
-pickers draw it with the Bookmark too (`ConversationPickList`).
+pickers draw it the same way (`ConversationPickList`).
 
 **Creation.** `createSelfConversation` (in `groupCreation.ts`, sharing `createOwnedGroup` with
 `createNewGroup`) creates the group with `kind: 'self'`, adding only the account's other devices whose
@@ -8075,7 +8083,7 @@ is deleted as such and the creation refused (`SelfConversationUnsupportedError`,
 offered only to a signed-in session: the logged-out preview gets no `onOpenSelfConversation`, so it
 draws no row (`Sidebar.selfRow.svelte.test.ts`).
 
-**The header.** `ChatHeader` with `isSelfConversation`: no calls, no settings, the Bookmark avatar
+**The header.** `ChatHeader` with `isSelfConversation`: no calls, no settings, the own avatar
 and the lock subtitle. Every `directPeerId` path (peer resolution, DM repair, blocking, nicknames,
 calls) skips a self row because it has no peer; notifications name it with the reader's own label.
 

@@ -33,6 +33,8 @@
   import {
     compareConversationRecency,
     conversationMatchesQuery,
+    selfConversationMatchesQuery,
+    selfConversationTitle,
     conversationRecency,
     recentDirectPeers,
     resolveConversationListPresentation,
@@ -435,10 +437,11 @@
       ({ convo }) => convo.conversationType === 'self' && convo.lifecycle !== 'removed'
     ) ?? null
   );
+  const selfTitle = $derived(selfConversationTitle(currentUserId));
   const selfRowShown = $derived(
     Boolean(onOpenSelfConversation) &&
-      conversationMatchesQuery(
-        m.conversation_self_title(),
+      selfConversationMatchesQuery(
+        selfTitle,
         selfRow ? (previewContentOf(selfRow.convo.messages) ?? '') : '',
         searchQuery
       )
@@ -771,8 +774,8 @@
           <div class="relative" data-self-conversation-row>
             <ConversationTile
               conversationId={selfRow?.convo.id ?? 'self'}
-              contactName=""
-              displayName={m.conversation_self_title()}
+              contactName={currentUserId}
+              displayName={selfTitle}
               conversationType="self"
               lastMessage={selfRow ? previewContentOf(selfRow.convo.messages) : undefined}
               isReady={selfRow ? selfRow.convo.lifecycle === 'active' : true}

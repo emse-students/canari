@@ -58,6 +58,13 @@ describe('the "Mes notes" row', () => {
     expect(selfRow()).not.toBeNull();
   });
 
+  it('shows the own name and the suffix, no longer the old label and its icon', () => {
+    mountSidebar(vi.fn());
+    expect(selfRow()?.textContent).toContain('(Notes)');
+    expect(selfRow()?.textContent).not.toContain('Mes notes');
+    expect(selfRow()?.querySelector('svg.lucide-bookmark')).toBeNull();
+  });
+
   it('is not drawn without the handler - the logged-out preview', () => {
     mountSidebar();
     expect(selfRow()).toBeNull();

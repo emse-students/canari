@@ -125,6 +125,27 @@ export function toConversationMeta(
 }
 
 /**
+ * The title of "Mes notes": the account's OWN name followed by a localized suffix, "Prenom NOM
+ * (Notes)" (owner, 2026-11-25). The name is the one resolver's, the one a DM peer gets.
+ */
+export function selfConversationTitle(userId: string): string {
+  return m.conversation_self_named({ name: getUserDisplayNameSync(userId) });
+}
+
+/**
+ * Whether a search `query` is one of the words "Mes notes" has always answered to ("notes", "mes
+ * notes", "my notes"), kept as aliases beside the user's own name now in its title.
+ */
+export function matchesSelfConversationAlias(query: string): boolean {
+  const q = foldForSearch(query.trim());
+  if (!q) return false;
+  return m
+    .conversation_self_search_aliases()
+    .split('|')
+    .some((alias) => foldForSearch(alias).includes(q));
+}
+
+/**
  * The identity of "Mes notes", the account's conversation with itself (server `kind: 'self'`). No
  * `directPeerId`, ever: every peer path keys on it and has nothing to find here. The label is the
  * reader's own language, drawn at render (`resolveConversationListPresentation`), so the row keeps
@@ -703,7 +724,7 @@ export function resolveConversationListPresentation(
     return {
       conversationType: 'self',
       contactId: input.id,
-      displayName: m.conversation_self_title(),
+      displayName: selfConversationTitle(userId),
       displayNameResolved: true,
     };
   }
@@ -1760,6 +1781,18 @@ export function conversationMatchesQuery(
   const q = foldForSearch(query.trim());
   if (!q) return true;
   return foldForSearch(displayName).includes(q) || foldForSearch(lastMessageContent).includes(q);
+}
+
+/** {@link conversationMatchesQuery} for "Mes notes": its title (own name), its preview, or an alias. */
+export function selfConversationMatchesQuery(
+  title: string,
+  lastMessageContent: string,
+  query: string
+): boolean {
+  return (
+    conversationMatchesQuery(title, lastMessageContent, query) ||
+    matchesSelfConversationAlias(query)
+  );
 }
 
 /** One person offered by "Nouvelle discussion" before anything is typed. */

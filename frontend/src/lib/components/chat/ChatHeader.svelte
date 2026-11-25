@@ -11,7 +11,6 @@
     Images,
     Hash,
     Ellipsis,
-    Bookmark,
   } from '@lucide/svelte';
   import GlassMenuButton, {
     type GlassMenuItem,
@@ -313,11 +312,8 @@
             <Hash size={18} strokeWidth={2.5} />
           </span>
         {:else if isSelfConversation}
-          <span
-            data-glass-avatar
-            class="bg-accent/15 text-accent-icon flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
-          >
-            <Bookmark size={16} strokeWidth={2.25} />
+          <span data-glass-avatar class="flex h-8 w-8 shrink-0 items-center justify-center">
+            <Avatar userId={currentUserId} size="md" fallbackLabel={displayName} />
           </span>
         {:else if isGroupConversation}
           <span data-glass-avatar class="flex h-8 w-8 shrink-0 items-center justify-center">
@@ -387,10 +383,8 @@
       <Hash size={22} strokeWidth={2.5} />
     </div>
   {:else if isSelfConversation}
-    <div
-      class="bg-accent/15 text-accent-icon flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
-    >
-      <Bookmark size={20} strokeWidth={2.25} />
+    <div class="flex h-10 w-10 shrink-0 items-center justify-center">
+      <Avatar userId={currentUserId} fill fallbackLabel={displayName} />
     </div>
   {:else if isGroupConversation}
     <div class="flex h-10 w-10 shrink-0 items-center justify-center">

@@ -6,6 +6,7 @@
  */
 import {
   compareConversationRecency,
+  matchesSelfConversationAlias,
   resolveConversationListPresentation,
 } from '$lib/utils/chat/conversations';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
@@ -129,6 +130,7 @@ export function shareCandidates(input: {
       (cand) =>
         !q ||
         cand.label.toLowerCase().includes(q) ||
+        (cand.conversation.conversationType === 'self' && matchesSelfConversationAlias(q)) ||
         (cand.community?.toLowerCase().includes(q) ?? false)
     )
     .sort(
