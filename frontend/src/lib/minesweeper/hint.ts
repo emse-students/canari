@@ -32,7 +32,7 @@ const HINT_ENUM_NODE_BUDGET = 200_000;
 const HINT_NODE_BUDGET = 2_000_000;
 
 /** Which kind of reasoning the highlighted numbers stand for. */
-export type HintTier = 'single' | 'pair' | 'group';
+type HintTier = 'single' | 'pair' | 'group';
 
 /** What the bulb shows. Cell indices are row-major, as on the board. */
 export type MinesweeperHint =
