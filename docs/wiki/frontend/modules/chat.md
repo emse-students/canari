@@ -8177,8 +8177,11 @@ is above it and an older one below. **A device that holds no Notes conversation 
 placeholder entry AFTER the list (it has no recency; the first tap creates it, `openSelfConversation`),
 so it stays discoverable without jumping above real activity; it is searchable by the same aliases.
 A tap on a held row opens it. The earlier pin at the top was wrongly attributed to the owner (see
-[the decision](../../decisions/owner-decisions-of-2026-11-25.md)). Pinned by `Sidebar.selfRow.svelte.test.ts`. The share-destination
-pickers (`shareDestinations.ts`) never pinned it: they rank by their own recency, unchanged. A row of a self group built while its kind
+[the decision](../../decisions/owner-decisions-of-2026-11-25.md)). Covered by
+`Sidebar.selfRow.svelte.test.ts`. The share-destination pickers (`shareDestinations.ts`) never
+pinned it: they rank by their own recency, unchanged. Only ONE self row is drawn (the first held,
+non-removed one), and the "no discussion found" message is not shown beside the placeholder of a
+search. A row of a self group built while its kind
 could not be read (a Welcome whose group read failed makes a `group` row) is re-typed by the next
 listing (`retaggedAsSelf` in the `known` branch of `ensureConversationForServerGroup`). The share
 pickers draw it the same way (`ConversationPickList`).

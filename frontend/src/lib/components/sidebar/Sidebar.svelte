@@ -430,8 +430,8 @@
 
   /**
    * "MES NOTES" sits in the ONE recency-sorted list like every other conversation (owner,
-   * 2026-11-25): its place is its last activity. The held row, if
-   * any; drawn only when the sidebar can open it (a signed-in session).
+   * 2026-11-25): its place is its last activity. The held Notes row, if any; its absence means the
+   * placeholder below. Drawn only when the sidebar can open it (a signed-in session).
    */
   const selfRow = $derived(
     conversationRows.find(
@@ -458,9 +458,7 @@
     conversationRows
       .filter(({ convo, resolved }) =>
         convo.conversationType === 'self'
-          ? Boolean(onOpenSelfConversation) &&
-            convo.lifecycle !== 'removed' &&
-            matchesSelfRow(convo)
+          ? Boolean(onOpenSelfConversation) && convo.name === selfRow?.name && matchesSelfRow(convo)
           : conversationMatchesQuery(
               resolved.displayName,
               previewContentOf(convo.messages) ?? '',
@@ -833,7 +831,7 @@
           </div>
         {/if}
 
-        {#if filteredConversationEntries.length === 0}
+        {#if filteredConversationEntries.length === 0 && !(searchQuery.trim() && selfPlaceholderShown)}
           <div class="text-text-muted px-6 py-12 text-center">
             <div class="mb-4 flex justify-center">
               <div class="rounded-2xl bg-black/5 p-4 dark:bg-white/5">
