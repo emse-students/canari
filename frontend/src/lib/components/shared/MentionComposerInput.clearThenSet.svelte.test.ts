@@ -6,6 +6,7 @@
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
+import { flushMacrotask } from '../../../test/flush';
 import Harness from './MentionComposerInput.clearThenSet.harness.svelte';
 
 const mounted: (() => void)[] = [];
@@ -28,7 +29,7 @@ describe('MentionComposerInput - text loaded after a send cleared the field', ()
     api.send();
     flushSync();
     await tick();
-    await new Promise((r) => setTimeout(r, 5));
+    await flushMacrotask();
     api.load(loaded);
     flushSync();
     await tick();
