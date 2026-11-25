@@ -1,6 +1,8 @@
 ## An institution chooses each post's spaces and public: the iPhone's change-and-save and the "Entre etudiants" chip in the viewer, owed on the phones (a reading deferred to 1.7.1)
 
-target: 1.8.1
+target: 1.8.2
+
+_2026-11-25: moved to 1.8.2 when 1.8.1 shipped._
 
 _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 

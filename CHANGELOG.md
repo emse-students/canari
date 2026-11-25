@@ -81,7 +81,7 @@ The conversation with yourself is now named "Prenom NOM (Notes)" and drawn with 
 
 ### Changed - the store notes for 1.8.1 are written, and the 1.8.1-alpha.3 Mi 9T readings folded
 
-`store/whats-new.txt` names 1.8.1; the feed tabs at a doubled font read whole on the Mi 9T (entry closed), and the reel row (3) reading is corrected to the feed-and-chats path it names ([readings](docs/wiki/backlog.d/reading-owed-a-reel-publish-survives-leaving-the-app.md)).
+`store/whats-new.txt` names 1.8.1; the feed tabs at a doubled font read whole on the Mi 9T (entry closed), and the reel row (3) reading is corrected to the feed-and-chats path it names ([readings](docs/wiki/device-verification.md#the-readings-of-2026-11-25-181-alpha3-and-181-alpha4-the-reel-publish-the-session-the-dates-the-feed-tabs)).
 
 ### Fixed - a seed request no longer freezes the message drain
 

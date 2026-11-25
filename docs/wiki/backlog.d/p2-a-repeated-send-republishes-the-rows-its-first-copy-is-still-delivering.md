@@ -1,6 +1,8 @@
 ## P2 - Reading owed - a Welcome sent again is published once
 
-target: 1.8.1
+target: 1.8.2
+
+_2026-11-25: moved to 1.8.2 when 1.8.1 shipped._
 
 **Built (2026-11-25):** a re-send of the same Welcome no longer publishes its still-queued row a
 second time. The delivery claims the row in the transaction that publishes it (`deliveryRan`,

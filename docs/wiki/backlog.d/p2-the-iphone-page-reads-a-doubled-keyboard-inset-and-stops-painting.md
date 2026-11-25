@@ -1,6 +1,8 @@
 ## P2 - on the iPhone the page twice read a doubled keyboard inset (602 px) after a rise and stopped painting, the native "+" stranded mid-screen (2026-11-24)
 
-target: 1.8.1
+target: 1.8.2
+
+_2026-11-25: moved to 1.8.2 when 1.8.1 shipped._
 
 **Found while reading [the composer stands still while the keyboard rises](reading-owed-the-composer-stands-still-while-the-keyboard-rises.md) on the iPhone 12, `1.8.0-alpha.6`** ([sitting](../device-verification.md#the-readings-of-2026-11-24-180-alpha6-iphone-12-the-dm-thread-again-the-composer-the-ios-27-sdk-build-the-broadcasters-column-the-voice-note-the-sign-out-row)). Fixed by `fix/ios-keyboard-reveal-and-inset` (below), unread on a phone. A defect of its own, in a DM, with the keyboard raised by tapping the composer.
 
@@ -33,3 +35,13 @@ comment box, a field low in a form and a field in the new-discussion modal each 
 keyboard: overlap 301 (328 for a secure field), never 602, settled inset 0.0, no document-scroll
 compensation. **Still owed, alone:** a field focused in an `.app-layout` sheet while it is still sliding in
 - the main page does not shift and no `the main page shifted` WARN is logged. Then this entry is deleted.
+
+**2026-11-25, `1.8.1-alpha.3` (iPhone 12): the last row could not be reached with the driver.** Six
+attempts to focus a field in a sheet (Messages > New discussion) while it was still sliding in: a
+driver tap costs about 780 ms and the sheet has settled by then, and a compound touch sequence (tap the
+button, pause 60 ms to 1.5 s, tap the field) landed every time on the row BEHIND the sheet, so it is not a
+valid reproduction. Nothing was focused in a sheet: the syslog held four `keyboard settled` lines, all
+`native offset=0.0` and `inset bottom=0.0`, no `overlap=602`, no `detached too late`, no
+`compensating a document scroll`, and the in-app log no `the main page shifted` WARN. **Stays open:** a
+human finger or a frame-stream capture is needed, and the owner is to be asked whether to close the row
+as unreachable by tooling.

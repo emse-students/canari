@@ -1,6 +1,8 @@
 ## P3 - on the iPhone the native "+" jumps and the web composer hides while the keyboard rises (the Mi 9T half passed)
 
-target: 1.8.1
+target: 1.8.2
+
+_2026-11-25: moved to 1.8.2 when 1.8.1 shipped._
 
 **What is built:** the composer stands still while the keyboard rises (2026-10-09, Android double report and iOS stale inset, unit-proven only)
 

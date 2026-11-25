@@ -1,6 +1,8 @@
 ## P2 - a new device's restore is paced by one member device adding it group by group
 
-target: 1.8.1
+target: 1.8.2
+
+_2026-11-25: moved to 1.8.2 when 1.8.1 shipped._
 
 **Measured 2026-11-24** (a new web device, prod `1.7.3`, 153 conversations, log of 13:44:11 to
 13:46:34 local): history was still arriving when the log was exported.

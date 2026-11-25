@@ -34,6 +34,18 @@ Owner, 2026-11-23 ([decisions](decisions/owner-decisions-of-2026-11-23.md)): a r
 
 Owner, 2026-11-24 ([decisions](decisions/owner-decisions-of-2026-11-24.md), item 3): two Android call readings need a cellular call, and the bench Mi 9T has no SIM. Both are CLOSED, never queued: a Canari call started during a cellular call (the peer sees the microphone cut), and the microphone coming back by itself when the cellular call ends. The hold and its release are covered by `CallFocusHoldTest` and `CallAudioSlotTest` ([calls](frontend/modules/calls.md)).
 
+## The readings of 2026-11-25 (`1.8.1-alpha.3` and `1.8.1-alpha.4`): the reel publish, the session, the dates, the feed tabs
+
+Mi 9T and iPhone 12 on dev, the `1.8.1` alphas the stable shipped. Verdicts only; the accounts and the logs stay in the private notes.
+
+| Row | Verdict | What was read |
+| --- | --- | --- |
+| A CanaReel publish survives the screen sleeping and the app being left, rows (1) to (3) (entry deleted) | **PASS** | (1) The screen stayed on while the banner said "Envoi" and went to sleep once nothing was sent, on both phones (`screen held on` / `released`). (2) A leave within 1 s of "Publier" published ONCE on both phones; on the iPhone the encoder is torn down as the app resigns active, and the post is kept (`the encoder stopped while the app was out of view: interrupted, not failed`) and prepared again on return, 4 of 4 with a 24.6 s clip; on the Mi the encoder survives the leave, so that path is the iPhone's. (3) Mi 9T, `1.8.1-alpha.4`, the feed-and-chats path ("Envoyer a..." with "Publier" and a conversation ticked, Home 1.5 s after "Publier", back after about 70 s): the upload stalled while hidden (`UploadStalledError`, kept), ONE upload session resumed on return, `[OUTBOX] take ... waits for its publish step's upload`, then `adopts the published file` (a literal log line), ONE `[PUBLISH-QUEUE] ... published (1 media)`, ONE feed card and ONE bubble that plays. The send-only path ("Envoyer a..." with no "Publier") also survives a leave ([reels](frontend/modules/reels.md#publishing-r3-on-c2-and-c3), [posts](frontend/modules/posts.md#the-background-publish-queue)) |
+| The session survives cold starts (#4087) | **PASS** | Both phones, `alpha.3` and `alpha.4`, three cold starts each (force-stop or terminate): each one `refresh -> ... (no token in memory)`, then `refresh OK`, the feed reached, no sign-in screen, no 401 or 403 line |
+| Minesweeper record dates as DD/MM/YY (#4090) | **PASS** | Both phones, `alpha.4`: the leaderboard's date reads `DD/MM/YY`, fully visible, the time and the row's icons unharmed. The Stats tab was not read (no ranked win on the account) |
+| The feed tabs at `font_scale` 2.0 (#4089) | **PASS** | Mi 9T, `alpha.3`: the three tabs sit wholly inside the pill and the screen, the labels wrap or hyphenate inside their own tab, none clipped. `font_scale` restored |
+| A field focused in an `.app-layout` sheet while it slides in (the iPhone keyboard-inset entry) | **NOT REACHED** | iPhone 12, `alpha.3`: six attempts with the driver; a driver tap costs about 780 ms, the sheet has settled by then, and a compound touch sequence landed behind the sheet. The entry stays open ([backlog](backlog.d/p2-the-iphone-page-reads-a-doubled-keyboard-inset-and-stops-painting.md)) |
+
 ## The readings triage of 2026-11-14 - what is kept, what each needs, and the sittings
 
 **The rule (owner, 2026-11-14):** the readings owed reach ZERO before a release; each is READ with evidence or

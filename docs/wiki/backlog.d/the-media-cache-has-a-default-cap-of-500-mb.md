@@ -1,6 +1,8 @@
 ## The media cache has a default cap of 500 MB, with member tiers (owner, 2026-11-22)
 
-target: 1.8.1
+target: 1.8.2
+
+_2026-11-25: moved to 1.8.2 when 1.8.1 shipped._
 
 The Cache Storage bucket `canari-media-ciphertext-v1` grows without bound. Owner decision of 2026-11-22 ([decisions](../decisions/owner-decisions-of-2026-11-22.md), items 8 and 9): a default cap of **500 MB**, the member choosing 250 MB, 1 GB or unlimited. Eviction is LRU and **never evicts a sole copy**: the server purges ephemeral media after 90 days idle, so an old cached copy may be the only one left. There is **no server re-touch before eviction**. Charter principles 2 and 1 ([principes](../../principes.md)).
 
