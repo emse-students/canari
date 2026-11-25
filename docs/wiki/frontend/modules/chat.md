@@ -4003,6 +4003,55 @@ the replay). Native anchoring (a) moves `top` at `suspended` with the height unc
 with a shrunk height; stable pass numbers and a later scroll move are (b) or an engine move outside
 the passes - not "nothing found"; (c) is only a visual offset. The fall line carries NO "now top/height/box": the scroll-move lines carry the top. A glide cancelled by a pass whose replay is refused is an end too (`endUnreplayed`: the trace listener is disarmed and `onGlideEnd` fires). Pinned by `threadGlide.test.ts`.
 
+**Pins made outside `follow()` are traced too, and the lines are merged in time order.** A third ring
+holds every `pinThreadToEnd` write inside the glide (`glide write by <writer> (+Tms): top/height/box
+...`, read after the write, transforms off), and `describeGlideFall` prints passes, writes and scroll
+moves in RECORDING order, which is real time - never sorted by the `+Tms` label, since a second arrival
+restarts the glide's clock and its pass reads `+0ms` after lines of `+55ms`; the header counts all three
+(`N follow pass(es), W write(s) outside follow and M scroll move(s) in this glide`). A write between two
+passes is a second writer.
+
+#### The cause: a second writer pinned inside the glide (2026-11-25)
+
+**Read from the 1.8.2-alpha.3 trace on the iPhone 12.** The arrival's `rows` pass pinned the layout end
+and started the glide. A tick later the new-message effect ran its own `scrollToBottom()` - a plain
+`scrollTop = scrollHeight` with the glide's transforms ON the rows. A transformed row counts in the
+overflow by `max(0, offset - padding-bottom)`; the padding is the composer band (86 px on the phone),
+so an image row of ~250-300 px inflated `scrollHeight` by ~160-210 px, exactly the falls measured. The
+effect wrote that overshoot and called `placedAt` with it. The image's `box` pass then took the
+transforms off (`suspend`), the engine clamped `scrollTop` back to the layout end, and the next
+`measureScroll` read a top below the last placed value: `left the bottom`, the flag down for the rest
+of the glide (the arrow could flash, and growth in that window was answered `keep-row`). It is
+intermittent because only a travel over ~206 px crosses `THREAD_BOTTOM_SLACK_PX` (120) past the
+86 px padding; a text row never does, and Reduce Motion plays no glide.
+
+**The fix is every pin against the layout - no timer, any thread size.**
+
+- `pinThreadToEnd(scroller, writer)` (`threadGrowthObserver.ts`) is the pane's only way to write its
+  end: it takes a running glide off (`suspend`), writes `scrollHeight` against the layout, and replays
+  the glide at the same time and distance (`play(held.px, held.time)`), or ends it once
+  (`endUnreplayed`) if the replay is refused - exactly what `follow()` does around its own pin. The
+  pin is registered per scroller by `observeThreadGrowth` (a `WeakMap`, like the glide); an
+  unobserved scroller gets the bare write and a `Log.w` (`<writer> pinned a pane no growth observer
+  follows`), since the pane always has one. `ChatArea.scrollToBottom()` is
+  `placedAt(pinThreadToEnd(chatContainer, writer))`, so every caller targets the layout end.
+- **The new-message effect's pin stays, for every `follow-bottom`.** Under a reader at the end it now
+  lands on the same layout end the observer's pass wrote and replays the glide - no overshoot, no
+  clamp. It is not redundant: while an older page loads (`isLoadingOlder`, the short-thread fill
+  included) `threadGrowthResponse` answers `keep-row` and the observer writes nothing, so this pin is
+  what shows the arrival. Removing it (the first draft of #4105) left the message under the composer.
+
+**Pinned by** `threadGlide.test.ts` (`pinThreadToEnd`: with an 86 px padding and a 300 px row, the
+modelled overflow is inflated, the pane pin lands on the layout end and no placed value passes it; a
+pin mid-glide replays at the same time and px; a refused replay is one `onGlideEnd`; the write line
+sits between the passes; the lines keep recording order across a restarted glide clock; a plain write
+instead fails four of them) and `ChatArea.scrollAnchor.svelte.test.ts` (an arrival under a reader at the
+end writes only the layout end and logs no `left the bottom`; with an older page pending it still
+reaches the end; the reader's own message sent from history still pins once). No
+real-layout bench exists in the repository for this (the media-frame bench of 2026-10-02 was not
+committed), so the overflow is the measured model above. **Owed:** the iPhone reading on the next
+alpha ([the entry](../../backlog.d/an-image-arrival-drops-a-pinned-dm-on-the-iphone.md)).
+
 #### Rows before ratchet: a checkpoint stores the buffered rows first (2026-11-17)
 
 **The defect (P1, second review of #3321).** A live drain decrypts each frame and holds its row in
