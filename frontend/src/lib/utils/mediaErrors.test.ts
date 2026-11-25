@@ -2,6 +2,7 @@ import { TransportFailureError } from './transportFailure';
 import { describe, it, expect, vi } from 'vitest';
 import { SegmentedMediaError } from '$lib/mediaSegmented';
 import {
+  readMediaBody,
   MediaDecryptError,
   MediaDownloadError,
   MediaNotFoundError,
@@ -115,5 +116,25 @@ describe('resolveMediaCredential - an unreachable refresh is typed at the throw'
     const dead = new Error('session ended');
     await expect(resolveMediaCredential(() => Promise.reject(dead))).rejects.toBe(dead);
     await expect(resolveMediaCredential(() => Promise.resolve('tok'))).resolves.toBe('tok');
+  });
+});
+
+describe('readMediaBody', () => {
+  it('types a body read that failed after the head answered as unreachable', async () => {
+    const dropped = new TypeError('Load failed');
+    const err = await readMediaBody(() => Promise.reject(dropped)).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MediaUnreachableError);
+    expect(mediaFailureCause(err)).toBe('unreachable');
+  });
+
+  it('lets the holder own abort go up unchanged', async () => {
+    const ctl = new AbortController();
+    ctl.abort();
+    const abort = new DOMException('aborted', 'AbortError');
+    await expect(readMediaBody(() => Promise.reject(abort), ctl.signal)).rejects.toBe(abort);
+  });
+
+  it('returns the bytes of a read that succeeds', async () => {
+    await expect(readMediaBody(() => Promise.resolve(7))).resolves.toBe(7);
   });
 });

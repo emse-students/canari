@@ -1042,6 +1042,17 @@
     };
   });
 
+  // A MEDIA THAT GOT NO ANSWER IS DRAWN AGAIN WHEN THE LINK RETURNS, without a hand on it (a 45 MB
+  // file whose load failed during an outage stayed on its retry icon, 2026-11-18). Only a bubble
+  // holding an `unreachable` failure listens; the return is the store's event, never a timer.
+  $effect(() => {
+    if (mediaFailure !== 'unreachable') return;
+    return connectivity.onReconnect(() => {
+      Log.d('MESSAGE', `media ${mediaBlobId?.slice(0, 8)}: link back, drawing it again`);
+      mediaAttempt += 1;
+    });
+  });
+
   onDestroy(() => {
     cancelLongPress();
   });

@@ -1,6 +1,6 @@
 ## P3 - Connectivity stays "reachable" through a captive portal, so the send waits for the ladder (review of #2428, 2026-10-25)
 
-target: 1.10.0
+target: 1.9.0
 
 _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
@@ -20,3 +20,5 @@ portal would flip it back and fire a resume into the portal. The fix needs `trac
 which routes speak JSON, the version probe included.
 
 Re-read 2026-11-11 (batch 12): still real - nothing marks the server down on a portal answer; the fix still needs `trackedFetch` to know which routes speak JSON. Re-read again 2026-12-11.
+
+_2026-11-25 (batch 10): held, moved to 1.9.0. It touches `trackedFetch` and the connectivity store, which the open draft PR #4111 (connectivity and captive-portal changes) is editing; it is rebased onto that PR after it merges, not built beside it. The `p3-connectivity-flaps-when-the-two-http-stacks-disagree` entry that PR adds is a DIFFERENT mechanism (one `serverReachable` for two HTTP stacks) with its own per-stack decision, so it was not bundled._
