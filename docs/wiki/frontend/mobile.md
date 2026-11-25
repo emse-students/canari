@@ -3823,9 +3823,13 @@ Both Android and the iOS NSE run the same ladder when an encrypted MLS message p
 1. Try a direct decrypt (`tryDecrypt` / `decryptProto`). **A refusal at an epoch this device already holds stops here** (reason `mls-refused-for-good`, Kotlin `PushDecrypt.RefusedForGood`, since 2026-10-04): `background.rs` `refused_by_mls` splits MLS refusals by `DecryptErrorKind`, and a spent generation, a same-epoch refusal, a past epoch, our own frame or an eviction cannot be read by any later epoch. So no catch-up and no worker - each used to cost `fetchCommitsFromBackend` and an enqueue per message to learn `no commit to catch up`. A visible push still gets the generic banner, **and since NOTIF-10 (b) that banner is paired with the real one** (`push/GenericBannerLedger.kt`, tested by `GenericBannerLedgerTest`): the refusal means another engine (the WebView, alive but backgrounded) holds the message and posts the real line through `notifyMessageFromWebSocket`. Generic first: its MessagingStyle instant is remembered and the real post REPLACES it (`supersedes`, the channel path's mechanism). Real first (the order measured on the Mi 9T, 2026-10-06, 56 ms apart): a credit, kept only while a push for that group is in flight, makes the refused push post nothing. No clock; a real post with no push behind it leaves no credit. **ONE REAL POST CAN STAND FOR N MESSAGES** (2026-10-06, Mi 9T: a 600 s radio cut ended in ONE banner, `messages=5`, against three refused pushes - the first was covered, the second left a generic line, the third was suppressed): a catch-up flush raises a single banner for the last of N, so `covers` (N, 1 for a live frame) crosses the bridge (`useMessaging` flush -> `nativeNotification.ts` -> `notify_native_message` -> `notifyMessageFromWebSocket`) and `realPosted(groupId, covers)` answers up to N pushes: it replaces up to N generic lines (`supersedes` plus `alsoSupersedes`) and credits the rest, still capped by the pushes in flight. (The in-app iOS path, `canari_push.mm`, does not read the reason yet.)
 2. If that fails, ask where the group stands: `groupLocality` / `GroupLocality` returns `LOCAL`, `ABSENT` or `UNKNOWN`.
 3. `UNKNOWN` — the state could not be reached at all (lock not acquired, `mls.bin` unreadable, device key missing, JNI absent). **Neither recovery runs**, because neither is an answer to it. The push falls through to the fallback below.
-4. `LOCAL` (epoch ≥ 0) — run in-memory commit catch-up (`tryDecryptWithCommitCatchup` / `decryptWithCommitCatchup`) immediately.
+4. `LOCAL` (epoch ≥ 0) — run in-memory commit catch-up (`tryDecryptWithCommitCatchup` / `decryptWithCommitCatchup`) immediately. On Android its answer is never a bare "nothing" for two cases that are not refusals (2026-11-25): **a server the commit fetch could not reach** is `PushDecrypt.Unreachable` (classified at the throw, `push/CommitFetch.kt`), and **a foreground that took over** while it waited is `PushDecrypt.Yielded` - it used to be `null`, read as `Refused`, which enqueued a worker and posted the accusing fallback while the app was in front.
 5. `ABSENT` — **nothing is waited for**, and the push falls through to the fallback below. On Android a frame whose Welcome is QUEUED on the push lane never reaches this step: it is queued again behind that Welcome (`WELCOMES_ON_LANE`, [channel-encryption §20](../protocols/channel-encryption.md#how-it-is-built)). What this step was until 2026-09-28 - three decrypts 1.8 s apart on both platforms, betting that another engine joined the group meanwhile - was a clock nobody had seen win, and on Android it sat in front of the very Welcome it waited for (NOTIF-21). Deleted on both at the user's word (*"Supprime ce délai"*).
-6. If everything fails, Android enqueues `MlsBackgroundWorker` and shows the generic fallback notification (unless the push is silent, in which case it returns quietly). The iOS NSE cannot enqueue work from the extension, so it shows the fallback directly.
+6. If everything fails, a visible push shows the generic fallback line (a silent one returns quietly), and what Android does besides depends on WHY:
+   - **refused** (`PushDecrypt.Refused`): `MlsBackgroundWorker` is enqueued, and **it does not retry the frame** - it sweeps the pending DB (`background.rs` `cleanup_pending_db`) and never fetches, decrypts or re-posts. The generic line stays until the app's drain reads the message. The log line says so (`MLS refused the frame -> MlsBackgroundWorker enqueued to sweep the pending DB ...`); it used to read `Decryption failed -> MlsBackgroundWorker enqueued`, promising a retry that does not exist.
+   - **the server could not be reached** (`PushDecrypt.Unreachable`): no `MlsBackgroundWorker`; the frame is HELD and replayed once a network is back, and the real line replaces the generic one - [below](#a-push-the-network-refused-is-held-and-replayed-2026-11-25).
+
+   The iOS NSE cannot enqueue work from the extension, so it shows the fallback directly.
 
 **Every answer of this ladder may carry `ownDeviceAdded`** - the keys of the "a new device was added to your account" alerts the commits it merged in memory produced. Both platforms claim them in a shared marker ledger and raise one local notification for the keys they claimed (`announceOwnDevicesAdded` in Kotlin and in the NSE); see [mls-protocol](../protocols/mls-protocol.md#new-device-notices-decided-by-the-user-2026-10-22-refined-the-same-day).
 
@@ -3856,6 +3860,59 @@ the file, where a silent exclusion would leave the ladder untested again under a
 The two constants live there too, so `3 x 1.8 s` has one definition rather than one per reader.
 
 **`UNKNOWN` is step 3 and not a value of "is it local" because the two were the same value until WP-PUSHHERD-1.** Every failure to reach the state answered "not local", so a message in a months-old DM went down the Welcome-race branch, whose retries re-entered the very lock that had just timed out. Twenty such verdicts came from ten epoch queries in one measured run. See [cross-client-testing](../cross-client-testing.md).
+
+##### A push the network refused is held, and replayed (2026-11-25)
+
+**What happened.** An Android reading of 2026-11-25: a DM peer committed while the phone was in the
+background, so every later push of that DM was one epoch ahead of the stored state. The ladder ran
+the catch-up, whose `fetchCommitsFromBackend` hit `UnknownHostException` (the phone's native resolver
+failed for minutes at a time) and returned `null` - the same `null` as an HTTP refusal - so the
+outcome stayed `Refused`. Each push enqueued `MlsBackgroundWorker`, logged `Decryption failed`, and
+posted "Nouveau message". Nothing ever upgraded those lines: the worker sweeps the DB, and the app's
+drain read every message hours later, when it was opened. The frames were readable the whole time.
+
+**The mechanism.**
+
+- **Classified at the throw.** `fetchCommitsFromBackend` answers a `CommitFetch` (`push/CommitFetch.kt`):
+  `Commits`, `Answered(httpCode)`, `Unreadable`, or `Unreachable` for any `IOException` (DNS, connect,
+  TLS, timeout, a cut body). The catch-up turns `Unreachable` into `PushDecrypt.Unreachable`; every
+  other failure stays "no outcome", read as `Refused`, as before.
+- **Held, with its line's identity.** The visible push still posts the generic line - the user is owed
+  the fact of a message. `showMessageNotification` returns the MessagingStyle instant it posted the
+  line at, and the frame (its data map, unchanged) is written to `noBackupFilesDir/held_push_frames.json`
+  with that instant (`HeldFrameWorker.hold`, arithmetic in `push/HeldFrames.kt`). A suppressed post
+  (app in front, already read) holds nothing: there is no line to upgrade.
+- **One job per conversation, waiting on an event.** `HeldFrameWorker` is enqueued under
+  `HeldFrames.uniqueWorkName(groupId)` with `NetworkType.CONNECTED`. `ExistingWorkPolicy.REPLACE`, not
+  `KEEP`: the frame is written before the enqueue, and a `KEEP` arriving while a run is past its last
+  read of the store would be dropped and leave the frame to no job. A replaced run stops between two
+  frames, and its successor waits on a process-wide lock rather than replaying beside it.
+- **Replayed through the push path itself**, on `MLS_PUSH_LANE` (`replayHeldFrame`): the same
+  `tryDecrypt`, the same ladder (`recoverRefused`), the same foreground yield, and the same
+  presentation (`presentFrame`) - with `supersedes`/`alsoSupersedes` set to the held instants, so the
+  real line REPLACES the generic one (`push/SupersededLines.kt`, the mechanism
+  the refused-for-good pairing and the salon seed redraw already use). The job's service instance is
+  given the application context as its base (`attachedTo`), because the replay reads files, posts and
+  takes wake locks through it.
+- **Ended by durable state, never by a clock.** Before any MLS work the replay asks whether the app
+  is in front (`FOREGROUND`) and whether a generic line of the frame is still in the conversation's
+  notification (`GONE` when read, swiped or read elsewhere) - both logged at debug, nothing posted.
+  `MainActivity.onResume` empties the store and cancels every replay (`takenOverByApp`): the app's
+  drain reads those frames from the server queue, so a job that runs afterwards finds nothing held
+  and says so at debug. A network that is up and still refuses (`STILL_UNREACHABLE`) keeps the frame
+  and the run retries on WorkManager's backoff until one of those ends it.
+
+**No smart reply to a placeholder.** The reply action allowed generated replies unconditionally, so
+Android offered chips ("Si", "OK") answering the generic line. Each line now carries
+`LINE_PLACEHOLDER`; when the newest line is one, `PlaceholderReplies` turns off both
+`setAllowGeneratedReplies` and `setAllowSystemGeneratedContextualActions`. "Répondre" and "Marquer
+comme lu" stay.
+
+Tests (JVM, `frontend/src-tauri/android-tests`): `CommitFetchTest`, `HeldFramesTest`,
+`SupersededLinesTest`, `PlaceholderRepliesTest`, and the two ladder cases in `PushDecryptLadderTest`
+(an unreachable catch-up and a yielding one are handed on, never left refused). Owed on the Mi 9T: a
+DM push with the stored state one commit behind while the resolver fails, then the network back -
+the generic line must become the real text with no second alert.
 
 #### One lane for everything that touches `mls.bin`
 

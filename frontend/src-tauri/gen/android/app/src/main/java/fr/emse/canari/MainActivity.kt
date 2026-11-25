@@ -976,6 +976,12 @@ class MainActivity : TauriActivity() {
         }
         MlsBackgroundWorker.resetFailureFlag(this)
         OutboxRetryWorker.resetFailureFlag(this)
+        // The frames held for the network are the app's now: its drain reads them from the server
+        // queue, and no replay may re-post what it holds ([HeldFrameWorker]). Off the main thread
+        // (a file read and a WorkManager call), and AFTER `isInForeground = true` above, so a replay
+        // already on the lane yields to the foreground rather than posting.
+        val appContext = applicationContext
+        Thread({ HeldFrameWorker.takenOverByApp(appContext) }, "canari-held-frames-takeover").start()
         // Opening the app does NOT clear message, mention or reaction banners (owner, 2026-11-21):
         // each goes with its conversation, when it is read or ended. What the open app takes over
         // - the rings, the wake notice - is retired here.

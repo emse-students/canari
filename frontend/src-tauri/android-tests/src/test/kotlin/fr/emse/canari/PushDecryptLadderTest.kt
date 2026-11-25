@@ -25,7 +25,7 @@ class PushDecryptLadderTest {
      * The outcome the fakes pass around. `REFUSED` is the only value the ladder reacts to, which is
      * exactly what it knows about the service's `PushDecrypt` sealed interface.
      */
-    private enum class Outcome { REFUSED, DECRYPTED, CAUGHT_UP }
+    private enum class Outcome { REFUSED, DECRYPTED, CAUGHT_UP, UNREACHABLE, YIELDED }
 
     /** A run: what it ended on, and every line the ladder logged, in order. */
     private data class Run(val outcome: Outcome, val log: List<String>)
@@ -121,6 +121,42 @@ class PushDecryptLadderTest {
             ),
             r.log,
         )
+    }
+
+    /**
+     * THE SERVER COULD NOT BE REACHED, AND THAT IS NOT A REFUSAL (2026-11-25). The catch-up's commit
+     * fetch hit a DNS failure, and its `null` used to leave the outcome `Refused`: a worker that only
+     * sweeps the DB was enqueued under "Decryption failed", and the generic line was never upgraded.
+     * The catch-up now answers `Unreachable`, and the ladder hands that answer on untouched - it is
+     * what the caller holds the frame for a replay on.
+     */
+    @Test
+    fun `a catch-up that could not reach the server is returned as unreachable, not left refused`() {
+        val r = ladder(
+            initial = Outcome.REFUSED,
+            locality = { GroupLocality.LOCAL },
+            catchUp = { Outcome.UNREACHABLE },
+        )
+
+        assertEquals(Outcome.UNREACHABLE, r.outcome)
+    }
+
+    /**
+     * A FOREGROUND THAT TOOK OVER DURING THE CATCH-UP IS A YIELD (2026-11-25). The catch-up re-asks
+     * `foregroundTookOver` under the lock and answered `null` - which the caller read as `Refused`, and
+     * it enqueued a worker and posted the accusing fallback while the app was in front, the overlap
+     * the yield exists to avoid. It answers the yield now, and the ladder must not turn it back into
+     * a refusal.
+     */
+    @Test
+    fun `a catch-up that yielded to the foreground is the yield, not a refusal`() {
+        val r = ladder(
+            initial = Outcome.REFUSED,
+            locality = { GroupLocality.LOCAL },
+            catchUp = { Outcome.YIELDED },
+        )
+
+        assertEquals(Outcome.YIELDED, r.outcome)
     }
 
     @Test

@@ -49,6 +49,11 @@ import fr.emse.canari.push.ConversationNicknames
 import fr.emse.canari.push.SeenTrends
 import fr.emse.canari.push.ConversationRef
 import fr.emse.canari.push.ChannelReadMark
+import fr.emse.canari.push.CommitFetch
+import fr.emse.canari.push.HeldFrame
+import fr.emse.canari.push.HeldFrames
+import fr.emse.canari.push.PlaceholderReplies
+import fr.emse.canari.push.SupersededLines
 import fr.emse.canari.push.ConversationShape
 import fr.emse.canari.push.UnsendableCause
 import fr.emse.canari.push.FallbackLine
@@ -512,6 +517,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         const val LINE_OWN = "canari.line.own"
 
         /**
+         * Set on a generic "Nouveau message" line standing in for a message this device could not open
+         * ([showMessageNotification]'s `showsMessage` false). Read back from the shade's newest line
+         * to decide whether the system may suggest answers ([PlaceholderReplies]).
+         */
+        const val LINE_PLACEHOLDER = "canari.line.placeholder"
+
+        /** Whether the newest of [lines] is a placeholder ([LINE_PLACEHOLDER]). */
+        internal fun newestIsPlaceholder(lines: List<NotificationCompat.MessagingStyle.Message>): Boolean =
+            lines.lastOrNull()?.extras?.getBoolean(LINE_PLACEHOLDER, false) == true
+
+        /**
          * Set on the PENDING REPLY drawn in the shade (this account's inline send that has not gone
          * out): no read on another device covers it, so a banner holding one stays - it is the only
          * place that says "not sent yet". Explicit, never inferred from a name a peer may share.
@@ -878,6 +894,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             notifId: Int,
             sentAt: Long,
             serverAt: Long,
+            /** [PlaceholderReplies.Flags.generatedReplies]: false when the newest line is not the message. */
+            allowGeneratedReplies: Boolean,
         ): NotificationCompat.Action {
             val remoteInput = RemoteInput.Builder(KEY_TEXT_REPLY)
                 .setLabel(res.getString(R.string.notif_action_reply))
@@ -894,7 +912,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             )
             return NotificationCompat.Action.Builder(
                 R.drawable.ic_notification, res.getString(R.string.notif_action_reply), pendingIntent
-            ).addRemoteInput(remoteInput).setAllowGeneratedReplies(true).build()
+            ).addRemoteInput(remoteInput).setAllowGeneratedReplies(allowGeneratedReplies).build()
         }
 
         /** Builds the "Marquer comme lu" action, routed to [CanariNotificationActionReceiver]. */
@@ -1019,7 +1037,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         // ([ConversationShape]).
                         .apply { existing.shortcutId?.let { setShortcutId(it) } }
                     if (groupId.isNotEmpty() && !groupId.startsWith("channel_")) {
-                        builder.addAction(buildReplyAction(context, res, groupId, notifId, sentAt, serverAt))
+                        // The pending line is this account's own: the suggestions answer the newest
+                        // line SOMEBODY ELSE wrote, which may be a placeholder ([PlaceholderReplies]).
+                        val replies = PlaceholderReplies.of(newestIsPlaceholder(held.messages))
+                        builder.setAllowSystemGeneratedContextualActions(replies.systemContextualActions)
+                        builder.addAction(buildReplyAction(context, res, groupId, notifId, sentAt, serverAt, replies.generatedReplies))
                         builder.addAction(buildMarkReadAction(context, res, groupId, notifId, sentAt, serverAt))
                     }
                     val notif = conversationBanner(context, builder, groupId, notifId)
@@ -4222,7 +4244,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // THE FILTER COMES BEFORE THE BOUND, so superseding a line never costs a real one.
                 held
                     ?.messages
-                    ?.filter { (supersedes == 0L || it.timestamp != supersedes) && it.timestamp !in alsoSupersedes }
+                    ?.filter { SupersededLines.kept(it.timestamp, supersedes, alsoSupersedes) }
                     ?.takeLast(MAX_NOTIF_MESSAGES - 1)
                     ?.forEach { style.addMessage(it) }
                 // Rich media (WP-XP-3): attach the decrypted image inline via setData so it renders as a
@@ -4253,6 +4275,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // carries a message's extras), so each line keeps its own instants for as long as it shows.
                 newMessage.extras.putLong(LINE_SENT_AT, sentAt)
                 newMessage.extras.putLong(LINE_SERVER_AT, serverAt)
+                newMessage.extras.putBoolean(LINE_PLACEHOLDER, !showsMessage)
                 if (mediaUri != null && mediaMime != null) {
                     newMessage.setData(mediaMime, mediaUri)
                 }
@@ -4416,7 +4439,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // Quick actions (WP-XP-1): MLS-only (DM/group), never on a channel_ conversation - channels
                 // are server-authoritative and do not go through the MLS outbox (see outbox.ts isChannelConversationId).
                 if (quickActions && groupId.isNotEmpty() && !groupId.startsWith("channel_")) {
-                    notifBuilder.addAction(buildReplyAction(this, res, groupId, notifId, sentAt, serverAt))
+                    // NO SUGGESTED ANSWER TO A PLACEHOLDER: the chips would answer "Nouveau message",
+                    // a sentence this device wrote ([PlaceholderReplies]). Reply and mark-read stay.
+                    val replies = PlaceholderReplies.of(newestIsPlaceholder(style.messages))
+                    notifBuilder.setAllowSystemGeneratedContextualActions(replies.systemContextualActions)
+                    notifBuilder.addAction(buildReplyAction(this, res, groupId, notifId, sentAt, serverAt, replies.generatedReplies))
                     notifBuilder.addAction(buildMarkReadAction(this, res, groupId, notifId, sentAt, serverAt))
                 } else if (quickActions && ChannelReadMark.offered(groupId, sentAt, showsMessage)) {
                     // A SALON offers "Mark as read" ONLY: its read state is a server row the receiver
@@ -4763,9 +4790,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     ): String
 
     /**
-     * A refused push frame leaves the state behind: the worker retries it on the next cycle. One
-     * implementation for the two branches that owe it - a frame drawn as the fallback banner, and
-     * a frame withheld by the conversation's `mentions` level.
+     * A refused push frame: the worker sweeps the pending DB (`background.rs` `cleanup_pending_db`).
+     * It does NOT fetch, decrypt or re-post the frame - the app's drain reads it when it next opens.
+     * One implementation for the two branches that owe it - a frame drawn as the fallback banner,
+     * and a frame withheld by the conversation's `mentions` level. A frame the server could not be
+     * reached for is held instead ([HeldFrameWorker]).
      */
     private fun enqueueRefusedFrameWorker() {
         val workRequest = OneTimeWorkRequestBuilder<MlsBackgroundWorker>()
@@ -4773,7 +4802,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.MIN_BACKOFF_MILLIS, TimeUnit.MILLISECONDS)
             .build()
         enqueueWorkerIfHealthy(workRequest)
-        Log.w(TAG, "Decryption failed -> MlsBackgroundWorker enqueued")
+        // WHAT THE WORKER DOES, NOT WHAT IT DOES NOT: it sweeps the pending DB and never retries this
+        // frame, so "Decryption failed -> ... enqueued" promised a recovery that does not exist.
+        Log.w(TAG, "MLS refused the frame -> MlsBackgroundWorker enqueued to sweep the pending DB (it does not retry this frame; the app's drain reads it)")
     }
 
     /** Structured result of the MLS decryption, extracted from the JSON returned by Rust. */
@@ -5105,26 +5136,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * for its group - see [WELCOMES_ON_LANE].
      */
     private fun handleMlsFrame(data: Map<String, String>, silent: Boolean) {
-        val groupId         = data["groupId"] ?: ""
-        val groupName       = data["groupName"]?.takeIf { it.isNotEmpty() } ?: ""
-        // THE CONVERSATION'S KIND, WHICH `groupName` COULD NOT CARRY. Empty meant a DM, a group
-        // nobody named, and a group row the server could not read - three states as one, and
-        // production says the middle one is a third of all groups. Null here means the push did
-        // not say (an older server, or one that logged a failed read), and the consumer must
-        // then fall back to what it did before rather than invent an answer.
-        val isGroup: Boolean? = data["isGroup"]?.let { it == "true" }
+        val frame           = MlsFrameFields.of(data)
+        val groupId         = frame.groupId
         // Whether this conversation is a Graine KEY-DISTRIBUTION group. Same three states as
-        // `isGroup`, same reason: an absent key says the server did not know, which is not the
-        // same sentence as "no". See `PushMessageInput.isKeyDistribution`.
+        // `isGroup` ([MlsFrameFields]), same reason: an absent key says the server did not know,
+        // which is not the same sentence as "no". See `PushMessageInput.isKeyDistribution`.
         val isKeyDistribution: Boolean? = data["isKeyDistribution"]?.let { it == "true" }
-        val senderName      = data["senderName"]?.takeIf { it.isNotEmpty() } ?: ""
-        val senderId        = data["senderId"] ?: ""
-        val queuedMessageId = data["queuedMessageId"]
-        val inlineProto     = data["proto"]?.takeIf { it.isNotEmpty() }
-        // The server's acceptance of this message (`queued_message.createdAt`, ISO 8601): the key the
-        // conversation is ordered and read on (readState.ts, owner 2026-10-31). Carried to the cache
-        // row and to the shade's actions. 0 when absent or unreadable, which is said.
-        val pushServerAt    = serverInstantOf(data["createdAt"])
+        val senderName      = frame.senderName
+        val senderId        = frame.senderId
+        val queuedMessageId = frame.queuedMessageId
+        val inlineProto     = frame.inlineProto
 
         Log.d(TAG, "thread: groupId=${ConversationRef.of(groupId)} named=${senderName.isNotEmpty()} silent=$silent inlineProto=${inlineProto != null}")
 
@@ -5201,36 +5222,109 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             return
         }
 
+        outcome = recoverRefused(outcome, frame)
+
+        presentFrame(data, silent, outcome)
+    }
+
+    /**
+     * The cleartext fields of an MLS push frame, read once - by the push itself and by the replay of a
+     * frame held for the network ([replayHeldFrame]), which reads the same map.
+     */
+    private data class MlsFrameFields(
+        val groupId: String,
+        val groupName: String,
+        /**
+         * THE CONVERSATION'S KIND, WHICH `groupName` COULD NOT CARRY. Empty meant a DM, a group
+         * nobody named, and a group row the server could not read - three states as one, and
+         * production says the middle one is a third of all groups. Null here means the push did
+         * not say (an older server, or one that logged a failed read), and the consumer must
+         * then fall back to what it did before rather than invent an answer.
+         */
+        val isGroup: Boolean?,
+        val senderName: String,
+        val senderId: String,
+        val queuedMessageId: String?,
+        val inlineProto: String?,
+        /**
+         * The server's acceptance of this message (`queued_message.createdAt`, ISO 8601): the key the
+         * conversation is ordered and read on (readState.ts, owner 2026-10-31). Carried to the cache
+         * row and to the shade's actions. 0 when absent or unreadable, which is said.
+         */
+        val pushServerAt: Long,
+    ) {
+        companion object {
+            fun of(data: Map<String, String>) = MlsFrameFields(
+                groupId         = data["groupId"] ?: "",
+                groupName       = data["groupName"]?.takeIf { it.isNotEmpty() } ?: "",
+                isGroup         = data["isGroup"]?.let { it == "true" },
+                senderName      = data["senderName"]?.takeIf { it.isNotEmpty() } ?: "",
+                senderId        = data["senderId"] ?: "",
+                queuedMessageId = data["queuedMessageId"],
+                inlineProto     = data["proto"]?.takeIf { it.isNotEmpty() },
+                pushServerAt    = serverInstantOf(data["createdAt"]),
+            )
+        }
+    }
+
+    /**
+     * The recovery ladder over a refused first decrypt - the push's, and the replay's of a frame held
+     * for the network.
+     *
+     * THE LADDER ITSELF LIVES IN `fr.emse.canari.push`, AND IT IS NOT A STYLE CHOICE: that package is
+     * compiled by the standalone JVM test project too, so `PushDecryptLadderTest` runs THIS branching
+     * rather than a copy of it. Everything the ladder cannot have without Android - the JNI decrypt,
+     * the state lock, the logger - is handed in from here.
+     */
+    private fun recoverRefused(outcome: PushDecrypt, frame: MlsFrameFields): PushDecrypt {
         // ONLY `Refused` CARRIES THE DIAGNOSIS THIS LADDER ANSWERS. It used to run on any empty
         // result, and the comment on its LOCAL branch states the premise it was resting on -
         // "the only plausible reason for a direct failure is an epoch gap". A frame that
         // decrypted and had nothing to render has no epoch gap, and a frame the foreground took
         // is not this thread's business at all. See `PushDecrypt` for what that cost.
-        //
-        // THE LADDER ITSELF LIVES IN `fr.emse.canari.push`, AND IT IS NOT A STYLE CHOICE: that
-        // package is compiled by the standalone JVM test project too, so `PushDecryptLadderTest`
-        // runs THIS branching rather than a copy of it. Everything the ladder cannot have
-        // without Android - the JNI decrypt, the state lock, the logger - is handed
-        // in from here.
-        if (outcome is PushDecrypt.Refused && !queuedMessageId.isNullOrEmpty()) {
-            outcome = PushRecoveryLadder.run(
-                initial = outcome,
-                groupTag = groupId.take(8),
-                isRefused = { it is PushDecrypt.Refused },
-                locality = { groupLocality(groupId) },
-                catchUp = {
-                    tryDecryptWithCommitCatchup(queuedMessageId, groupId, inlineProto, senderId)
-                },
-                log = { Log.d(TAG, it) },
-            )
-        }
+        if (outcome !is PushDecrypt.Refused || frame.queuedMessageId.isNullOrEmpty()) return outcome
+        return PushRecoveryLadder.run(
+            initial = outcome,
+            groupTag = frame.groupId.take(8),
+            isRefused = { it is PushDecrypt.Refused },
+            locality = { groupLocality(frame.groupId) },
+            catchUp = {
+                tryDecryptWithCommitCatchup(frame.queuedMessageId, frame.groupId, frame.inlineProto, frame.senderId)
+            },
+            log = { Log.d(TAG, it) },
+        )
+    }
+
+    /**
+     * Everything an MLS frame owes once its outcome is known: key material absorbed, the banner
+     * posted - the real text or the generic line - the cache row written, and a frame the network
+     * refused held for its replay ([HeldFrameWorker]).
+     *
+     * @param replacing the generic lines this post replaces: empty for a push, the held frame's
+     *   placeholders for its replay ([replayHeldFrame]), the only caller that passes any
+     * @return the instant of the line posted, 0 when nothing was posted
+     */
+    private fun presentFrame(
+        data: Map<String, String>,
+        silent: Boolean,
+        outcome: PushDecrypt,
+        replacing: Set<Long> = emptySet(),
+    ): Long {
+        val frame           = MlsFrameFields.of(data)
+        val groupId         = frame.groupId
+        val groupName       = frame.groupName
+        val isGroup         = frame.isGroup
+        val senderName      = frame.senderName
+        val senderId        = frame.senderId
+        val queuedMessageId = frame.queuedMessageId
+        val pushServerAt    = frame.pushServerAt
 
         // KEY MATERIAL IS ABSORBED HERE, NOT IN THE PARSER. `decryptProto` carries it out as a
         // string so that reading a frame stays reading a frame; this is the handler, and the
         // only place in this file that may write to the Tauri data directory.
         (outcome as? PushDecrypt.KeyMaterial)?.let { keyMaterial ->
             absorbGraineSeeds(NativeCacheKey.retrieve(this), keyMaterial.seedsJson, groupId)
-            return
+            return 0L
         }
 
         // Everything below asks for the MESSAGE, and there is exactly one outcome that has one.
@@ -5244,12 +5338,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // #2727). Control (answer/ICE/hangup/answered): hangup/answered stops an active ring.
         if (decrypted?.type == "call_invite") {
             Log.d(TAG, "call_invite over MLS: not a ring - the server's call_ring is the only one")
-            return
+            return 0L
         }
         if (decrypted?.type == "call_control") {
             if (decrypted.callEnded) cancelIncomingCallNotification(this, decrypted.callId ?: "")
             Log.d(TAG, "call_control: suppressed (ended=${decrypted.callEnded})")
-            return
+            return 0L
         }
 
         if (decrypted == null && silent) {
@@ -5263,10 +5357,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 is PushDecrypt.NothingToRender -> "nothing to render in it"
                 is PushDecrypt.Yielded -> "the foreground holds it"
                 is PushDecrypt.RefusedForGood -> "MLS refused it at an epoch this device holds"
+                is PushDecrypt.Unreachable -> "its catch-up could not reach the server"
                 else -> "it could not be decrypted"
             }
             Log.d(TAG, "Silent push group=${ConversationRef.of(groupId)} shows nothing - $why")
-            return
+            return 0L
         }
 
         // A YIELD IS NOT A FAILURE, AND EVERYTHING BELOW TREATS `decrypted == null` AS ONE.
@@ -5293,7 +5388,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         if (outcome is PushDecrypt.Yielded) {
             Log.d(TAG, "push yielded to the foreground, which holds this frame - no fallback, no worker")
             recordShowOutcome(PushShowOutcome.Outcome.YIELDED, groupId, null)
-            return
+            return 0L
         }
 
         // Read once and used twice below: to render the mention tokens the decrypted body
@@ -5305,7 +5400,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // text below, which would otherwise announce a banner this never raises. A withheld
         // message is still cached, so it is in the conversation, unread, when the app opens.
         // A REFUSED frame at `mentions` is withheld too (the stated rule); its worker is still
-        // enqueued, because the worker advances the state, which is owed whatever is drawn.
+        // enqueued, as for a drawn one - it sweeps the pending DB, and the app's drain reads the frame.
         val gate = NotificationLevelGate.decide(data["notifLevel"], decrypted?.mentionedUserIds, myUserId)
         if (gate is NotificationLevelGate.Decision.Withhold) {
             Log.d(TAG, "[NOTIF] group=${ConversationRef.of(groupId)} withheld: ${gate.reason}")
@@ -5315,11 +5410,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             if (outcome is PushDecrypt.Refused && !queuedMessageId.isNullOrEmpty()) {
                 enqueueRefusedFrameWorker()
             }
+            // Nothing was drawn, so nothing is held for the network: the app's drain reads it.
+            if (outcome is PushDecrypt.Unreachable) {
+                Log.d(TAG, "[NOTIF] group=${ConversationRef.of(groupId)} withheld while the server could not be reached -> nothing held, the app's drain reads it")
+            }
             MlsContextLoader.loadPushContext(this)?.let { drainCtx ->
                 maybeNotifyPendingSync(drainOutboxBackground(this, this, drainCtx))
             }
             recordShowOutcome(PushShowOutcome.Outcome.WITHHELD_LEVEL, groupId, null, detail = "cached=${decrypted != null} ${gate.reason}")
-            return
+            return 0L
         }
 
         // THE NAME THE BANNER GIVES THE SENDER: their nickname in THIS conversation, from the phone's
@@ -5331,19 +5430,24 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             renderMentions(it, myUserId, appLocaleContext(this))
         }
             ?: run {
-                // Insufficient catch-up (no commit, below the floor, or group not joined yet):
-                // enqueue the worker to retry on the next cycle.
+                // THE GENERIC LINE, AND WHAT EACH FAILURE OWES BESIDES IT.
                 //
-                // ONLY FOR A REFUSAL. A visible push whose plaintext held nothing renderable
-                // still owes the user the generic notification below - there IS a message - but
-                // a retry cannot help it: the frame decrypted, and the worker would decrypt the
-                // same bytes into the same unrenderable plaintext while reaching for `mls.bin`
-                // as a third engine.
+                // A REFUSAL (no commit, below the floor, group not joined yet) enqueues
+                // `MlsBackgroundWorker`, which sweeps the pending DB. IT DOES NOT RETRY THIS FRAME:
+                // it never fetches, decrypts or re-posts, so the generic line stays until the app's
+                // drain reads the message. Its log line says exactly that.
+                //
+                // A SERVER THE CATCH-UP COULD NOT REACH owes more, and gets it: the frame is held
+                // for a replay once a network is back ([HeldFrameWorker]), whose real line REPLACES
+                // this one - see the post below. No `MlsBackgroundWorker`: a sweep answers nothing.
+                //
+                // A visible push whose plaintext held nothing renderable still owes the generic
+                // line - there IS a message - but no retry can help it: the frame decrypted.
                 if (outcome is PushDecrypt.Refused && !queuedMessageId.isNullOrEmpty()) {
                     enqueueRefusedFrameWorker()
                 }
                 buildFallbackText(appLocaleContext(this), shownName, groupName, isGroup)
-                    .also { Log.w(TAG, "Fallback notification: shown chars=${it.length} named=${shownName != null && shownName.isNotEmpty()} group=${ConversationRef.of(groupId)}") }
+                    .also { Log.w(TAG, "Fallback notification: shown chars=${it.length} named=${shownName.isNotEmpty()} group=${ConversationRef.of(groupId)}") }
             }
 
         if (silent) {
@@ -5358,7 +5462,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // the state is behind. Reachable only when calls are on, since the skip above
             // returns first.
             Log.d(TAG, "FCM silent -> nothing to show for a silent frame, and no state was written")
-            return
+            return 0L
         }
 
         if (decrypted != null) {
@@ -5381,6 +5485,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // floor (nobody else is proven to post), but it is REPLACED when the real one comes, or
         // not added at all if that already came - see [GenericBannerLedger].
         val refusedForGood = outcome is PushDecrypt.RefusedForGood
+        var posted = 0L
         synchronized(GENERIC_BANNERS_LOCK) {
             if (refusedForGood && GENERIC_BANNERS.refusedCoveredByRealPost(groupId)) {
                 Log.d(TAG, "refused for good, and the real banner is already up -> no generic banner (groupId=${ConversationRef.of(groupId)})")
@@ -5389,14 +5494,32 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 val stamp = showMessageNotification(
                     shownName, groupName, body, largeIcon, groupId, media?.first, media?.second,
                     channel, sentAt = decrypted?.sentAt ?: 0L, serverAt = pushServerAt,
+                    // A replay names the generic lines it stands for, by the instants their posts
+                    // handed back ([SupersededLines]); a push replaces nothing.
+                    supersedes = replacing.firstOrNull() ?: 0L,
+                    alsoSupersedes = replacing.drop(1).toSet(),
                     namesEachSender = true,
                     // The payload's own discriminator: an unnamed group is still a group.
                     declaredGroup = isGroup,
+                    // A generic line is not the message: no smart replies to it ([PlaceholderReplies]).
+                    showsMessage = decrypted?.text != null,
                 )
+                posted = stamp
                 if (refusedForGood && stamp != 0L) {
                     GENERIC_BANNERS.genericPosted(groupId, stamp)
                     Log.d(TAG, "refused for good -> generic banner kept until the real one replaces it (groupId=${ConversationRef.of(groupId)} stamp=$stamp)")
                 }
+            }
+        }
+
+        // THE FRAME THE NETWORK REFUSED IS HELD, WITH THE INSTANT OF ITS GENERIC LINE - that
+        // instant is the identity its replay supersedes. Only when a line was posted: a suppressed
+        // one (the app in front, already read) has nothing to upgrade, and the app reads the frame.
+        if (outcome is PushDecrypt.Unreachable && replacing.isEmpty() && !queuedMessageId.isNullOrEmpty()) {
+            if (posted != 0L) {
+                HeldFrameWorker.hold(this, HeldFrame(groupId, queuedMessageId, setOf(posted), data))
+            } else {
+                Log.d(TAG, "server unreachable and no generic line was posted -> nothing held (groupId=${ConversationRef.of(groupId)})")
             }
         }
 
@@ -5408,6 +5531,95 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val remaining = drainOutboxBackground(this, this, drainCtx)
             maybeNotifyPendingSync(remaining)
         }
+        return posted
+    }
+
+    /**
+     * Gives this instance [context] as its own, for a job that runs the push path outside a delivery
+     * ([HeldFrameWorker]). The bare instances elsewhere back JNI only; the replay also reads files,
+     * posts notifications and takes wake locks through `this`, which is a `ContextWrapper` whose base
+     * the system sets only for a service it starts. The application context is the same base the
+     * system would give it: the files, the preferences and the system services are the app's.
+     */
+    internal fun attachedTo(context: Context): CanariFirebaseMessagingService =
+        apply { attachBaseContext(context.applicationContext) }
+
+    /**
+     * Replays one frame held for the network ([HeldFrames]) ON [MLS_PUSH_LANE], in arrival order with
+     * the pushes, and answers what it came to. Blocks the calling job's thread until the lane ran it:
+     * the lane is where every touch of `mls.bin` from outside the app is serialised, and the replay is
+     * one more, never a second engine beside it.
+     */
+    internal fun replayHeldFrame(frame: HeldFrame): HeldFrames.Replay {
+        val answer = java.util.concurrent.atomic.AtomicReference(HeldFrames.Replay.NOT_READABLE)
+        val ran = java.util.concurrent.CountDownLatch(1)
+        runSerializedWithWakeLock("held_frame_replay") {
+            try {
+                answer.set(replayOnLane(frame))
+            } catch (e: Throwable) {
+                Log.e(TAG, "replayHeldFrame: the replay threw group=${ConversationRef.of(frame.groupId)}: ${throwableSite(e)}")
+            } finally {
+                ran.countDown()
+            }
+        }
+        ran.await()
+        return answer.get()
+    }
+
+    /**
+     * The replay itself: the same foreground yield, the same decrypt and ladder, and the same
+     * presentation as the push - only the post REPLACES the generic line(s) the push left.
+     *
+     * Asked first, before any MLS work, and from durable state: whether the app is in front (its
+     * engine owns the state and its drain reads the frame) and whether a generic line of this frame
+     * is still in the shade (the conversation's notification as the system holds it). Neither is a
+     * clock, and either ends the frame with nothing posted.
+     */
+    private fun replayOnLane(frame: HeldFrame): HeldFrames.Replay {
+        val fields = MlsFrameFields.of(frame.fields)
+        val shown = conversationLineStamps(fields.groupId)
+        HeldFrames.before(frame, MainActivity.isInForeground, shown)?.let { return it }
+        val replacing = HeldFrames.stillShown(frame, shown)
+
+        val outcome = recoverRefused(
+            tryDecrypt(fields.queuedMessageId, fields.groupId, fields.inlineProto, fields.senderId),
+            fields,
+        )
+        return when (outcome) {
+            is PushDecrypt.Message -> {
+                val posted = presentFrame(frame.fields, silent = false, outcome = outcome, replacing = replacing)
+                if (posted != 0L) {
+                    HeldFrames.Replay.UPGRADED
+                } else {
+                    // `presentFrame` said why at its own level: the app came in front, or the message
+                    // was read meanwhile. Either way nothing is owed here any more.
+                    HeldFrames.Replay.GONE
+                }
+            }
+            is PushDecrypt.Unreachable -> HeldFrames.Replay.STILL_UNREACHABLE
+            is PushDecrypt.Yielded -> HeldFrames.Replay.FOREGROUND
+            is PushDecrypt.KeyMaterial -> {
+                // Owed its write whatever else: absorbed exactly as the push would have.
+                presentFrame(frame.fields, silent = false, outcome = outcome)
+                HeldFrames.Replay.NOT_READABLE
+            }
+            is PushDecrypt.Refused, is PushDecrypt.RefusedForGood, is PushDecrypt.NothingToRender ->
+                HeldFrames.Replay.NOT_READABLE
+        }
+    }
+
+    /**
+     * The instants of the lines the conversation's notification holds now - this process's own record
+     * of its last post, else the shade's ([ReadElsewhereMarks.bannerOf]). Empty when none is posted.
+     */
+    private fun conversationLineStamps(groupId: String): Set<Long> {
+        if (groupId.isEmpty()) return emptySet()
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val notifId = getStableNotifId(this, groupId)
+        return READ_ELSEWHERE.bannerOf(groupId) { shadeBannerOf(manager, notifId) }
+            ?.messages
+            ?.mapTo(HashSet()) { it.timestamp }
+            ?: emptySet()
     }
 
     // --- Helpers ---------------------------------------------------------------
@@ -6023,9 +6235,23 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         /**
          * Nothing could be decrypted - the crypto refused, the state was unreadable, the proto could
          * not be fetched, or the lock was held. **The only outcome the recovery ladder can help**,
-         * and the only one that owes the worker a retry.
+         * and the only one `MlsBackgroundWorker` is enqueued for - which sweeps the pending DB and
+         * does NOT retry the frame; the app's drain reads it.
          */
         object Refused : PushDecrypt
+
+        /**
+         * The commit catch-up could not reach the server ([CommitFetch.Unreachable]): the stored
+         * epoch is behind the frame, and the commits that would close the gap are one fetch away.
+         *
+         * **NOT [Refused], BECAUSE NOTHING IS WRONG WITH THE FRAME OR THE STATE.** It was `Refused`
+         * until 2026-11-25, so a DNS failure enqueued `MlsBackgroundWorker` - a DB sweep that never
+         * fetches, decrypts or re-posts - under the line `Decryption failed`, and the generic banner
+         * stayed until the app was opened. A visible push still posts that banner; the frame is then
+         * held ([HeldFrames]) and replayed by [HeldFrameWorker] once a network is back, and the real
+         * line replaces the generic one.
+         */
+        object Unreachable : PushDecrypt
 
         /**
          * MLS refused the frame at an epoch this device already holds - a spent generation, a
@@ -6742,8 +6968,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * (PushSecret), and apply them in memory to decrypt this message - producing a real notification
      * instead of a generic fallback. NEVER persists mls.bin; the foreground commit-log replay catches
      * the durable state up on next open. Answers the same [PushDecrypt] as [tryDecrypt] - a Graine
-     * seed sealed one commit ahead comes back as [PushDecrypt.KeyMaterial] - and null only when no
-     * outcome was reached (no commit to apply, lock not acquired, proto unreadable).
+     * seed sealed one commit ahead comes back as [PushDecrypt.KeyMaterial], a foreground that took
+     * over as [PushDecrypt.Yielded], a server that could not be reached as [PushDecrypt.Unreachable]
+     * - and null only when no outcome was reached (no commit to apply, lock not acquired, proto
+     * unreadable, the server answered without commits).
      */
     private fun tryDecryptWithCommitCatchup(
         queuedMessageId: String?,
@@ -6779,10 +7007,23 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         // 2) Fetch the ordered commits since our epoch (outside the lock: HTTP).
-        val commitsJson = fetchCommitsFromBackend(groupId, epoch, ctx, secret)
-        if (commitsJson == null || commitsJson == "[]") {
-            Log.d(TAG, "catchup: no commit to catch up (epoch=$epoch) -> fallback")
-            return null
+        //
+        // A SERVER THAT COULD NOT BE REACHED IS ITS OWN ANSWER ([PushDecrypt.Unreachable]): the gap
+        // is one fetch from closed, so the caller holds the frame for a replay once a network is
+        // back. Every other failure is an answer about the frame or the server, and stays `null`.
+        val commitsJson = when (val fetched = fetchCommitsFromBackend(groupId, epoch, ctx, secret)) {
+            is CommitFetch.Unreachable -> {
+                Log.i(TAG, "catchup: the server could not be reached (${fetched.cause}) epoch=$epoch group=${ConversationRef.of(groupId)} -> Unreachable") // log-safe: an exception class name (CommitFetch.ofThrowable), no input
+                return PushDecrypt.Unreachable
+            }
+            is CommitFetch.Commits -> fetched.json.takeIf { it != "[]" } ?: run {
+                Log.d(TAG, "catchup: no commit to catch up (epoch=$epoch) -> fallback")
+                return null
+            }
+            is CommitFetch.Answered, is CommitFetch.Unreadable -> {
+                Log.d(TAG, "catchup: the commit fetch gave no commits ($fetched) epoch=$epoch -> fallback") // log-safe: a CommitFetch carrying an HTTP status or an exception class name
+                return null
+            }
         }
 
         // 3) Apply the commits in memory and decrypt (brief lock: mls.bin + Argon2 via JNI).
@@ -6792,7 +7033,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // every commit since. It is also the path that APPLIES commits, so it moves the state
         // furthest - which makes it the worst one to run beside a live foreground engine.
         return withMlsStateLock(5) {
-            if (foregroundTookOver("catchup")) return@withMlsStateLock null
+            // A YIELD, NOT A MISSING ANSWER: `null` here read as `Refused` to the caller, which then
+            // enqueued a worker and posted the accusing fallback while the app was in front - the
+            // very overlap the yield exists to avoid (see `PushDecrypt.Yielded`).
+            if (foregroundTookOver("catchup")) return@withMlsStateLock PushDecrypt.Yielded
             val stateBytes = MlsContextLoader.loadMlsState(this) ?: return@withMlsStateLock null
             // WHAT THE CATCH-UP COST, said on every one: nothing persists it, so every salon push of
             // a shut phone pays it again, and its size grows with the key group and the days the
@@ -6903,15 +7147,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
     /**
      * Fetches the ordered replayable commits for [groupId] with baseEpoch >= [sinceEpoch] via the
-     * PushSecret endpoint, and returns them as a JSON array of base64 commit strings
-     * (`["b64",...]`, the shape nativeDecryptMessageWithCommits expects), or null on failure.
+     * PushSecret endpoint, as a JSON array of base64 commit strings (`["b64",...]`, the shape
+     * nativeDecryptMessageWithCommits expects) - or WHY not, classified at the throw ([CommitFetch]):
+     * a server that could not be reached is not a server that refused.
      */
     private fun fetchCommitsFromBackend(
         groupId: String,
         sinceEpoch: Long,
         ctx: PushContext,
         secret: String,
-    ): String? {
+    ): CommitFetch {
         return try {
             val url = URL("${ctx.baseUrl}/api/mls/push/commits")
             val payload = JSONObject().apply {
@@ -6933,10 +7178,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 val code = conn.responseCode
                 if (code != 200 && code != 201) {
                     Log.e(TAG, "fetchCommitsFromBackend: HTTP $code")
-                    return null
+                    return CommitFetch.Answered(code)
                 }
                 val text = conn.inputStream.bufferedReader().use { it.readText() }
-                val commits = JSONObject(text).optJSONArray("commits") ?: return "[]"
+                val commits = JSONObject(text).optJSONArray("commits") ?: return CommitFetch.Commits("[]")
                 // Keep only the ordered base64 commit protos - the shape the native catch-up expects.
                 val protos = JSONArray()
                 for (i in 0 until commits.length()) {
@@ -6944,13 +7189,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     if (!proto.isNullOrEmpty()) protos.put(proto)
                 }
                 Log.d(TAG, "fetchCommitsFromBackend: ${protos.length()} commit(s) since epoch=$sinceEpoch")
-                protos.toString()
+                CommitFetch.Commits(protos.toString())
             } finally {
                 conn.disconnect()
             }
         } catch (e: Exception) {
-            Log.w(TAG, "fetchCommitsFromBackend: exception: ${e.javaClass.simpleName}")
-            null
+            CommitFetch.ofThrowable(e).also {
+                Log.w(TAG, "fetchCommitsFromBackend: ${it.javaClass.simpleName} (${e.javaClass.simpleName})")
+            }
         }
     }
 
