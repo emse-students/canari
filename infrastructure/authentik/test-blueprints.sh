@@ -111,7 +111,48 @@ if ! run_ak_shell "$worker" <"$here/test-profile-editor.py" 2>&1 | tee >(cat >&2
   echo "::error::the profile editor's token does not behave - read the assertion above"
   exit 1
 fi
-echo "the profile editor reads and changes users, and nothing else"
+echo "the profile editor reads users and writes through its one flow, and nothing else"
+
+# THE EDITOR'S REACH, REPORTED as production's daily job reports it (editor-reach.sh): after the token
+# test above wrote through the flow and was refused everything else, the account holds exactly the
+# blueprint's grant and every write it authored is an expected one.
+echo "profile editor: its grant and the writes it authored"
+if ! bash "$here/editor-reach.sh" "$here/blueprints/80-profile-editor.yaml" "$worker"; then
+  echo "::error::the profile editor's reach is not what its blueprint grants - read the FINDING lines above"
+  exit 1
+fi
+# A CHECK NEVER SEEN RED PROVES NOTHING: a grant the applier would not revoke (an object permission
+# on one user) and a write through another path (an Event recorded as the account's), each planted
+# and then removed, must each turn it red.
+for plant in grant write; do
+  run_ak_shell "$worker" >/dev/null 2>&1 <<PY
+from authentik.core.models import User
+from authentik.events.models import Event
+editor = User.objects.get(username="miconnect-canari-editor")
+if "$plant" == "grant":
+    editor.get_managed_role(create=True).assign_perms("authentik_core.change_user", User.objects.exclude(pk=editor.pk).first())
+else:
+    Event.objects.create(action="model_deleted", app="test", user={"pk": editor.pk, "username": editor.username}, context={"model": {"app": "authentik_core", "model_name": "user"}, "http_request": {"path": "/api/v3/core/users/1/", "method": "DELETE"}}, client_ip="127.0.0.1")
+PY
+  if bash "$here/editor-reach.sh" "$here/blueprints/80-profile-editor.yaml" "$worker" >/dev/null 2>&1; then
+    echo "::error::editor-reach.sh did not report a planted $plant - the daily check would miss one"
+    exit 1
+  fi
+  run_ak_shell "$worker" >/dev/null 2>&1 <<PY
+from authentik.core.models import User
+from authentik.events.models import Event
+editor = User.objects.get(username="miconnect-canari-editor")
+role = editor.get_managed_role()
+if role is not None:
+    role.delete()
+Event.objects.filter(app="test", user__username=editor.username).delete()
+PY
+done
+if ! bash "$here/editor-reach.sh" "$here/blueprints/80-profile-editor.yaml" "$worker" >/dev/null 2>&1; then
+  echo "::error::editor-reach.sh stays red after the planted grant and write were removed"
+  exit 1
+fi
+echo "the profile editor holds exactly its grant, and the check sees a planted grant and a planted write"
 
 # THE HANDOFF READER, USED. What core-service's mint reads (a user by uuid, the three handoff
 # applications, their bindings, the default-access flag) and nothing else: no other application, no

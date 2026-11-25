@@ -1,0 +1,3 @@
+# Events authored by the MiConnect profile editor account that editor-reach.py reported and that were
+# examined: one authentik event id per line, then what it was. Read by editor-reach.sh.
+# Empty on 2026-11-25. The ids are random; never write a person, an account or a value here.

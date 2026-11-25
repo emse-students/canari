@@ -170,12 +170,10 @@ function isPersonAccount(user: { type: string }): boolean {
   return user.type === 'internal' || user.type === 'external';
 }
 
-/** The attribute bag with the merge mark removed. */
-function withoutMark(attributes: Record<string, unknown>): Record<string, unknown> {
-  const rest = { ...attributes };
-  for (const key of Object.values(MERGE_MARK)) delete rest[key];
-  return rest;
-}
+/** The write that removes the merge mark: each of its keys set to null, which MiConnect deletes. */
+const MARK_REMOVED: Record<string, null> = Object.fromEntries(
+  Object.values(MERGE_MARK).map((key) => [key, null])
+);
 
 /**
  * THE ALUMNI DUPLICATES AND THEIR MERGE (D47, D48), through the profile editor's MiConnect account.
@@ -391,9 +389,9 @@ export class AlumniMergeService {
       );
     }
 
-    // RE-READ JUST BEFORE THE WRITE, and only the mark's keys changed: authentik's PATCH replaces the
-    // whole bag, so the bag written is the one read now, not the one read before the holdings were
-    // counted - the window for a concurrent edit is the two calls' own, not the whole request's.
+    // RE-READ JUST BEFORE THE WRITE: a duplicate gone since the holdings were counted is refused here,
+    // typed. The write names the mark's keys only, and MiConnect merges them into the stored bag
+    // under the account's row lock, so no other key is written and no concurrent edit is lost.
     const fresh = await this.editor.userByUuid(duplicateUuid);
     if (!fresh) {
       this.logger.warn(
@@ -401,9 +399,8 @@ export class AlumniMergeService {
       );
       throw new AlumniMergeNotFoundError();
     }
-    await this.editor.writeUser(fresh.pk, {
+    await this.editor.writeUser(fresh.uuid, {
       attributes: {
-        ...fresh.attributes,
         [MERGE_MARK.into]: targetUuid,
         [MERGE_MARK.by]: actorId,
         [MERGE_MARK.at]: new Date().toISOString(),
@@ -438,7 +435,7 @@ export class AlumniMergeService {
       throw new AlumniMergeAlreadyMergedError();
     }
     if (Object.values(MERGE_MARK).some((key) => key in dup.attributes)) {
-      await this.editor.writeUser(dup.pk, { attributes: withoutMark(dup.attributes) });
+      await this.editor.writeUser(dup.uuid, { attributes: MARK_REMOVED });
       this.logger.log(`[ALUMNI_MERGE] mark removed at MiConnect ${tag}`);
     }
     await this.dataSource.query(

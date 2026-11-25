@@ -37,10 +37,29 @@ interface AuthentikPage<T> {
 /** The most pages one listing walks: 100 users each, far above the estate (~1k accounts). */
 const MAX_LIST_PAGES = 50;
 
+/** The slug of MiConnect's write flow, the editor token's only write path (80-profile-editor.yaml). */
+export const WRITE_FLOW = 'miconnect-profile-write';
+
+/**
+ * What one write may change: the display name, and the allowlisted attribute keys (`profile`, the
+ * merge mark's three) - a key set to `null` is removed. MiConnect refuses anything else.
+ */
+export interface MiconnectUserWrite {
+  name?: string;
+  attributes?: Record<string, unknown>;
+}
+
+/** The part of a flow executor's answer the write reads: which challenge, and the prompt's errors. */
+interface FlowChallenge {
+  component?: string;
+  response_errors?: Record<string, { string: string }[]>;
+}
+
 /**
  * Reads and writes a person at the source of truth: authentik, through the service account
  * `miconnect-canari-editor` (infrastructure/authentik/blueprints/80-profile-editor.yaml), whose role
- * may view and change users and read their source connections, and nothing else.
+ * may read users and their source connections, and write only through the flow `miconnect-profile-write`
+ * ({@link writeUser}) - the profile, the name and the merge mark of a person, non-superuser account.
  *
  * PRODUCTION ONLY, and the refusal is a type. Dev and production share ONE MiConnect, so a dev
  * write would change a real person: {@link assertAvailable} throws
@@ -91,16 +110,44 @@ export class MiconnectEditorClient {
   }
 
   /**
-   * Writes the user's WHOLE `attributes` (and its display name). authentik's PATCH replaces the
-   * `attributes` object rather than merging it, so the caller passes the bag it read with its change
-   * applied - a partial bag would erase every other key.
+   * Writes `changes` on the account with this uuid, through the ONE write path the token has: the
+   * flow `miconnect-profile-write` (80-profile-editor.yaml), one POST to authentik's flow executor
+   * carrying the prompt. MiConnect MERGES the named attribute keys into the stored ones under the
+   * account's row lock (`null` removes a key), so only what is named here is written and no
+   * read-modify-write window exists.
+   *
+   * MiConnect refuses - nothing written - a field other than `name` and `attributes`, an attribute
+   * other than `profile` and the merge mark's three keys, a mark on an account that is not `alumni-`,
+   * a service account and a superuser. A refusal, an access-denied answer or anything but the flow's
+   * end is a {@link ProfileEditUpstreamError}, logged at error with what MiConnect said.
    */
-  async writeUser(
-    pk: number,
-    patch: { name?: string; attributes: Record<string, unknown> }
-  ): Promise<void> {
+  async writeUser(uuid: string, changes: MiconnectUserWrite): Promise<void> {
     const { baseUrl, token } = this.assertAvailable();
-    await this.call('PATCH', `${baseUrl}/api/v3/core/users/${pk}/`, token, patch);
+    const url = `${baseUrl}/api/v3/flows/executor/${WRITE_FLOW}/?query=`;
+    const answer = await this.call<FlowChallenge>('POST', url, token, {
+      component: 'ak-stage-prompt',
+      target: uuid,
+      changes: JSON.stringify(changes),
+    });
+    if (answer.component === 'xak-flow-redirect') {
+      this.logger.log(
+        `[PROFILE_EDIT] MiConnect wrote ${uuid.slice(0, 8)}: ` +
+          `${Object.keys(changes.attributes ?? {}).join(',') || '-'}${changes.name === undefined ? '' : ' +name'}`
+      );
+      return;
+    }
+    const said = Object.values(answer.response_errors ?? {})
+      .flat()
+      .map((e) => e.string)
+      .join(' | ');
+    this.logger.error(
+      `[PROFILE_EDIT] MiConnect's write flow did not write ${uuid.slice(0, 8)}: ` +
+        `${answer.component ?? 'no component'}${said ? ` (${said})` : ''}`
+    );
+    throw new ProfileEditUpstreamError(
+      null,
+      `write flow answered ${answer.component ?? 'nothing'}`
+    );
   }
 
   /**
