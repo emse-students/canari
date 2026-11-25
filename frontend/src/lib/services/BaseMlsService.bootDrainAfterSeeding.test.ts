@@ -69,6 +69,7 @@ function makeService(conversations: SvelteMap<string, Conversation>) {
     messageScheduler: {
       waitUntilIdle: vi.fn().mockResolvedValue(undefined),
       waitUntilGroupIdle: vi.fn().mockResolvedValue(undefined),
+      abandonGroupIdleWaiters: vi.fn(),
       hasQueuedFrom: () => false,
       draining: false,
     },

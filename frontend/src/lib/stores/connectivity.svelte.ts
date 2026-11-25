@@ -178,6 +178,18 @@ class ConnectivityStore {
   private probePausesOffScreen = false;
   private listeners = new Set<ReconnectListener>();
   private listenersInstalled = false;
+  /** How many times {@link onReconnect} fired in this document - see {@link reconnectCount}. */
+  private reconnects = 0;
+
+  /**
+   * How many times connectivity was regained in this document, counted whether or not anyone was
+   * listening. Monotonic (even across {@link reset}): a reader records it before a request and
+   * compares after, so a return that happened while it waited is not missed - the seed answer's
+   * park (`parkAskUntilNextLink`) is that reader.
+   */
+  get reconnectCount(): number {
+    return this.reconnects;
+  }
 
   /**
    * Installs the `online`/`offline` window listeners once. Called from every mutator so a store
@@ -496,6 +508,7 @@ class ConnectivityStore {
 
   /** Runs every reconnect listener, isolating failures so one bad listener cannot starve the rest. */
   private emitReconnect(): void {
+    this.reconnects += 1;
     for (const listener of this.listeners) {
       try {
         listener();

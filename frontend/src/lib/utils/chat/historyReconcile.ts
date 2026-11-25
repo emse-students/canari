@@ -1,4 +1,4 @@
-import type { IMlsService } from '$lib/mls-client/IMlsService';
+import { GroupDrainAbandonedError, type IMlsService } from '$lib/mls-client/IMlsService';
 import { appendLog } from '$lib/utils/sessionLog';
 import { forEachBounded, NETWORK_READ_CONCURRENCY } from '$lib/utils/boundedConcurrency';
 import { forgetOwedPulls, owedPullsIn, resetOwedPulls } from '$lib/utils/chat/historyOverheardPull';
@@ -541,11 +541,29 @@ export function answerAfterMailboxDrained(
   // in its own `.catch(log)`, whose value is whatever that leg happened to resolve to. Nothing here
   // reads it, and demanding `void` only forces a wrapper at each call site that discards it.
   answer: () => Promise<unknown>
-): void {
-  void (async () => {
+): Promise<void> {
+  // RETURNED, never awaited by the drain that scheduled it: the caller that must know when the leg
+  // ENDED - run, or not run because the service ended - reads it here (`deferSeedAnswer`); every
+  // other caller drops it. It never rejects: each `answer` ends in its own catch, and the wait's
+  // failure is caught below.
+  return (async () => {
     // The leg runs OUTSIDE the drain that scheduled it and owns no catch-up session, so this waits
     // rather than deadlocking however long the group takes.
-    await mlsService.waitForGroupQueueIdle('history answer', groupId).catch(() => {});
+    try {
+      await mlsService.waitForGroupQueueIdle('history answer', groupId);
+    } catch (e) {
+      // THE SERVICE ENDED before the group went idle: nobody is left to send the answer, so it is
+      // not run. Said by class - the only other trace would be an answer that never left.
+      if (e instanceof GroupDrainAbandonedError) {
+        console.info(
+          `[HISTORY_REQ] an answer about ${groupId.slice(0, 8)} is not sent - ${e.name}: ${e.message}`
+        );
+        return;
+      }
+      console.warn(
+        `[HISTORY_REQ] the wait for ${groupId.slice(0, 8)} to go idle failed (${e instanceof Error ? e.name : typeof e}) - answering anyway: ${String(e)}`
+      );
+    }
     await answer();
   })();
 }

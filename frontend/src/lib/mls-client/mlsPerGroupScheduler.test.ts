@@ -45,6 +45,21 @@ describe('the drain summary line', () => {
   });
 });
 
+describe('a group-idle wait when the client ends', () => {
+  it('is rejected, pending or asked after, so nothing waits for a drain that will never run', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const scheduler = new MlsPerGroupScheduler('web');
+    scheduler.enqueue(msg('group-a', 'a1'));
+    const pending = scheduler.waitUntilGroupIdle('group-a');
+
+    scheduler.abandonGroupIdleWaiters((groupId) => new Error(`ended before ${groupId}`));
+
+    await expect(pending).rejects.toThrow('ended before group-a');
+    await expect(scheduler.waitUntilGroupIdle('group-b')).rejects.toThrow('ended before group-b');
+    info.mockRestore();
+  });
+});
+
 describe('MlsPerGroupScheduler', () => {
   it('round-robins application messages across groups (web mode)', async () => {
     const scheduler = new MlsPerGroupScheduler('web');

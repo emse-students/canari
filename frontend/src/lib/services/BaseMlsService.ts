@@ -1210,6 +1210,11 @@ export abstract class BaseMlsService implements IMlsService {
     externalJoinFlights.get(this)?.clear();
     // Nor a wait for a drain this client will never see (the admission gate's parked asks).
     this.abandonGroupDrainedWaiters();
+    // Nor a wait for one group's queue to go idle (a deferred seed or history answer): no frame will
+    // be applied here again, so it would hang until a reload.
+    this.messageScheduler.abandonGroupIdleWaiters(
+      (groupId) => new GroupDrainAbandonedError(groupId)
+    );
     // Nor a pull owed for later: issued after this, it would decrypt and acknowledge for nobody.
     // Its askers are released with nothing listed.
     if (this.owedPull) {
@@ -2301,9 +2306,9 @@ export abstract class BaseMlsService implements IMlsService {
    * Awaited by the mailbox barrier; the send path passes the same gate through
    * {@link catchUpPassage}, which also counts it.
    *
-   * A SEND AWAITED UNDER THE MLS MUTEX MAY MEET THIS GATE, AND IT STILL TERMINATES. The drain does
-   * await sends under the mutex - a key group's seed answer (`frameHandler.ts`, `answerSeedRequest`)
-   * is sealed inline while its frame holds it. On web the gate is closed only by a catch-up that
+   * A SEND AWAITED UNDER THE MLS MUTEX WOULD STILL TERMINATE HERE. The drain awaits no send (section
+   * 10 of mls-desync-prevention: a key group's seed answer runs past its frame, `deferSeedAnswer`),
+   * and the order below holds for any mutex holder that ever did. On web the gate is closed only by a catch-up that
    * ALREADY holds the mutex ({@link beginCatchUpAfterSends} is called after the lock is taken), so a
    * holder of the mutex never finds it closed. On the sequential path (Tauri, and web without the
    * crypto worker) the catch-up takes no JS mutex at all - its pages go straight to the engine - so a
@@ -2371,10 +2376,10 @@ export abstract class BaseMlsService implements IMlsService {
    * overtaken by one of them.
    *
    * THE ORDER IS LOCK, GATE, SENDS, SNAPSHOT, and the web caller takes the lock first. Closing the
-   * gate BEFORE the lock was tried and refused in review (#4083): the drain awaits a send under the
-   * mutex (`answerSeedRequest`), so a catch-up waiting for the mutex behind a closed gate and a frame
-   * waiting at that gate behind the catch-up would never end. With the lock first, no mutex holder
-   * ever finds the gate closed by a web catch-up.
+   * gate BEFORE the lock was tried and refused in review (#4083): a mutex holder awaiting a send
+   * (then the drain's seed answer; the drain awaits no send since mls-desync-prevention section 10)
+   * would wait at that gate behind a catch-up waiting for the mutex, for good. With the lock first,
+   * no mutex holder ever finds the gate closed by a web catch-up.
    *
    * Waiting for the sends WHILE HOLDING the lock is sound because the counted window holds only
    * local work ({@link sendsPastGate}): the settle of a kept commit, which takes the mutex, runs
@@ -2779,10 +2784,18 @@ export abstract class BaseMlsService implements IMlsService {
   private armGroupDrained(groupId: string): void {
     if (this.groupDrainedArmed.has(groupId) || this.messageScheduler.isGroupIdle(groupId)) return;
     this.groupDrainedArmed.add(groupId);
-    void this.messageScheduler.waitUntilGroupIdle(groupId).then(() => {
-      this.groupDrainedArmed.delete(groupId);
-      this.wakeGroupDrainedWaiters('group idle');
-    });
+    void this.messageScheduler.waitUntilGroupIdle(groupId).then(
+      () => {
+        this.groupDrainedArmed.delete(groupId);
+        this.wakeGroupDrainedWaiters('group idle');
+      },
+      (e: unknown) => {
+        // The client ended: its drain waiters are rejected by `abandonGroupDrainedWaiters`, which
+        // says so once; this arm only stops.
+        this.groupDrainedArmed.delete(groupId);
+        console.debug(`[QUEUE] stopped arming ${groupId.slice(0, 8)}'s drain wait: ${String(e)}`);
+      }
+    );
   }
 
   /**
@@ -8242,10 +8255,14 @@ export abstract class BaseMlsService implements IMlsService {
         ...(senderDeviceId ? { senderDeviceId } : {}),
       });
     } catch (e) {
-      // NOT acknowledged, on purpose: the handler is what STORES a seed, so a throw here means the
-      // seed did not land, and acknowledging would drop key material nobody can ask for again.
-      // Redelivery is exactly the right outcome - including after a logout, where the session this
-      // handler needs is gone by construction.
+      // NOT acknowledged: the handler is what STORES a seed, so a throw here means the seed did not
+      // land. BUT REDELIVERY DOES NOT RECOVER IT, whatever this comment once claimed: the frame was
+      // DECRYPTED above (`openDistributionFrame`), its generation spent and recorded
+      // (`noteFrameConsumed`), so the redelivered bytes are refused as `secret-reuse` and counted
+      // as a key-group frame LOSS (`noteKeyGroupFrameLost`) - the seed then comes back only through
+      // a seed request. Keeping the decrypted plaintext until its handler succeeds is the open item
+      // `backlog.d/a-key-group-frame-whose-handler-threw-is-lost.md`. A seed ASK no longer throws
+      // here at all: its answer runs past the frame (mls-desync-prevention section 10).
       //
       // BY CLASS: a handler that could not REACH the server (it asks the delivery service, which got
       // no answer - `DeliveryUnreachableError`) refused nothing about the frame. That is the expected

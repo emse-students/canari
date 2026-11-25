@@ -79,7 +79,9 @@ describe('a native answer is acted on once the session has caught up', () => {
 
   it('the session reports the socket state at the end of the catch-up, not a constant', () => {
     const session = readSource('src/lib/composables/useChatSession.svelte.ts');
-    expect(session).toContain('onConnectionCaughtUp: () => markConnectionCaughtUp(isWsConnected)');
+    expect(session).toMatch(
+      /onConnectionCaughtUp: \(\) => \{\s*markConnectionCaughtUp\(isWsConnected\);/
+    );
   });
 
   it('drops an answer recorded too long ago', () => {

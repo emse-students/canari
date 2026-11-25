@@ -1595,8 +1595,9 @@ export class WebMlsService extends BaseMlsService {
     // The lock FIRST, then the gate, then the sends already past it, then the snapshot
     // (`beginCatchUpAfterSends` carries the whole argument). Without the wait, a send that passed the
     // gate just before it closed encrypted after the snapshot and the swap below was refused for it
-    // (17 times in one restore, 2026-11-24). The gate is never closed before the lock: the drain
-    // awaits sends under the lock, and would then wait on a catch-up that waits on it.
+    // (17 times in one restore, 2026-11-24). The gate is never closed before the lock: a holder of
+    // the lock that awaited a send would then wait on a catch-up that waits on it (the drain awaits
+    // no send since mls-desync-prevention section 10; the order keeps any holder safe).
     const release = await this.messageScheduler.acquireMlsLock(this.catchUpMutexHolder(groupId));
     try {
       await this.beginCatchUpAfterSends(groupId, true);
