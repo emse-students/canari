@@ -342,7 +342,7 @@ volume), and production's copy lacks the `MICONNECT_READER_TOKEN` line and the l
 ### The daily report: does the host run what was released, and was MiConnect edited by hand?
 
 `scheduled.yml`, job `drift` (07:30 UTC, self-hosted, in the `production` environment like the
-deploy it mirrors, with `deployment: false`: it deploys nothing and reads none of its secrets), four
+deploy it mirrors, with `deployment: false`: it deploys nothing and reads none of its secrets), five
 read-only reports that run independently, and one write:
 
 - **Images** (`infrastructure/deploy/image-drift-report.sh`): for `canari-prod` and `miconnect`
@@ -377,6 +377,10 @@ read-only reports that run independently, and one write:
   after its field, validation lines and anything that is not the applier's own line are withheld and
   counted (`ak_redact_blueprint_output`). The values are read on the host, with `apply-blueprints.sh
   dry-run`.
+- **The profile editor's reach** (`infrastructure/authentik/editor-reach.sh`, with the `prod-released`
+  tree's `80-profile-editor.yaml`): the editor account's grant against that file, and every write it
+  authored against its one write path - red on any finding
+  ([the write path](#the-profile-editors-one-write-path-181)).
 - **Access** (`deploy-stack.sh access`): the runner can still read and write each MiConnect `.env`,
   the release's one precondition, by `test -r && test -w` - the file is never opened.
 - **Rehearsal and preflight of the TEST stack** (`deploy-stack.sh rehearsal`, then `preflight
@@ -408,7 +412,7 @@ is mounted into or copied onto the host.
 
 | Who | Mode | What it proves |
 | --- | --- | --- |
-| CI, job `test-miconnect-blueprints`, when `infrastructure/authentik/` changes | `apply` twice on a FRESH authentik booted from the real `compose.yml`; then, on a second one, `main`'s blueprints first and these over them (`PREVIOUS_REF`, the tested commit's first parent - the main it sits on; a live fetch of `main` is newer than the tree under test on a re-run, and failed every open pull request on 2026-11-11 when main gained a blueprint whose `!Env` the older `compose.yml` did not pass) | every object can be BUILT, every `!Find`/`!Env` resolves, every rename runs, and the second apply reports `0 change(s)` |
+| CI, job `test-miconnect-blueprints`, when `infrastructure/authentik/` changes | two parallel matrix legs, each with its own budget (`fresh` 20 min, `upgraded` 35; the planted-fault self-test of the editor-reach check runs in `fresh` only): `apply` twice on a FRESH authentik booted from the real `compose.yml`; and, in the other leg, `main`'s blueprints first and these over them (`PREVIOUS_REF`, the tested commit's first parent - the main it sits on; a live fetch of `main` is newer than the tree under test on a re-run, and failed every open pull request on 2026-11-11 when main gained a blueprint whose `!Env` the older `compose.yml` did not pass) | every object can be BUILT, every `!Find`/`!Env` resolves, every rename runs, and the second apply reports `0 change(s)` |
 | a pre-release (`serve-dev.yml`) | `dry-run` against production | prints exactly what the stable will change, then rolls back. Dev signs in through the production MiConnect, so it must write nothing |
 | a stable release (`serve-prod.yml`, after the version step, before `prod-released` moves) | `apply` | one transaction: a failure leaves MiConnect as it was and fails the job |
 | the daily `drift` job (`scheduled.yml`) | `dry-run` of the RELEASED tree against production | a change is a hand edit the next stable would overwrite ([above](#the-daily-report-does-the-host-run-what-was-released-and-was-miconnect-edited-by-hand)) |
@@ -446,14 +450,14 @@ bash infrastructure/authentik/test-blueprints.sh   # or snapshot a local instanc
 ```
 
 **An eighth blueprint, `80-profile-editor.yaml` (WP4, 2026-10-04)**, builds the service account Canari
-writes profiles through: a role holding `view_user` and `change_user` only, the group that carries it,
+writes profiles through: a role holding `view_user` only (and, below, `view_usersourceconnection`), the group that carries it,
 the account `miconnect-canari-editor` and its API token, whose key is `!Env MICONNECT_EDITOR_TOKEN`.
-CI then USES the token (`test-profile-editor.py`): read by uuid and PATCH work, creating or deleting a
-user and changing a flow answer `403`. The applier compares the token's `key` by digest like the other
+CI then USES the token (`test-profile-editor.py`): read by uuid works; a PATCH, creating or deleting a
+user and changing a flow answer `403`; every write goes through the write flow below. The applier compares the token's `key` by digest like the other
 secrets, and ignores `expires` on a non-expiring token, which authentik rewrites at every apply
 ([profiles-and-access](../profiles-and-access.md#the-work-packages-in-order)).
 **For the Alumni merge (D48)** the role also holds `view_usersourceconnection`: the token reads a
-user's links and writes the merge MARK on a duplicate (`change_user`); it may not create or delete a
+user's links and writes the merge MARK on a duplicate (through the write flow); it may not create or delete a
 user, add, change or delete a connection, nor touch a source or a flow, and CI proves each. The merge
 itself is authentik's: `miconnect-alumni-merge-or-refuse` moves the link and deletes the duplicate at
 its next Alumni sign-in (the Alumni section below). **A blueprint role's global permissions are
@@ -524,6 +528,84 @@ application slugs are in each client's issuer URL, a rename deferred with the OI
 provider names are read by nothing outside authentik, and those are the ones renamed.
 
 **The login button and the dev tiles (2026-11-25).** The CAS source's display name is `CAS EMSE` (the button reads "Continue with <name>"); its slug `cas-emse` identifies it, so the rename updates in place and nothing is created. `canari-dev` and `canari-local` carry `meta_hide: true`: the tile leaves every person's application library, and NO policy binding is added, because a binding on an application also gates authorization through it and the test accounts, every pre-release build and the local estate sign in to those providers. `test-blueprints.sh` asserts both (`LOGIN-POLISH-OK`): the field, the library listing of an ordinary user (dev tiles absent, `canari` present) and a granted authorization on the dev provider. The script also derives its compose project name from the checkout path (override: `MICONNECT_TEST_PROJECT`), so two worktrees never share one test instance.
+
+### The profile editor's one write path (1.8.1)
+
+**Why** (a P1 of 1.8.1): before 1.8.1 the editor role held a broader write right on users than the
+profile corrections and merge marks Canari holds the token for. authentik has no field-level or
+per-account permission, so the narrowing is a WRITE PATH rather than a smaller permission.
+
+**What.** `80-profile-editor.yaml` leaves the role no global write permission on users (the applier
+revokes the old one at the 1.8.1 stable, a `REVOKED` line in its output and an authentik Event
+`custom_role_permission_revoked` in the same transaction) and builds the flow `miconnect-profile-write`
+(`stage_configuration`, `require_authenticated`, policy engine mode `all`, bound to the group
+`miconnect-profile-editors` only): one prompt stage with two text fields, `target` (an account uuid)
+and `changes` (a JSON object), whose validation policy `miconnect-profile-write` WRITES. core-service
+sends ONE `POST /api/v3/flows/executor/miconnect-profile-write/?query=` with the token and the prompt,
+no session (`MiconnectEditorClient.writeUser`): with no plan in the request, the executor plans the
+flow and hands the POST to the prompt stage in the same request. The answer is a challenge:
+`xak-flow-redirect` is the write done; the prompt back with `response_errors` is a refusal;
+`ak-stage-access-denied` is a caller the flow does not admit (no token, or an account outside the
+group). Anything but the first is `ProfileEditUpstreamError`.
+
+**Refusals carry a stable code**, `refused:<code>: <reason>`, which core-service types
+(`writeRefusalOf`, the error's `refusal`) and never reads from the prose: `malformed` and
+`not_editor` are faults (logged at error), `no_account`, `not_a_person`, `superuser` and
+`mark_not_alumni` are answers the account's own state explains (logged at warning).
+`profile-write.contract.spec.ts` holds the codes, the name limit, the byte cap and the control
+characters of both sides together; core-service's own validation (`validateProfileEdit`: names
+without a control character, at most `CURSUS_MAX` = 20 cursus entries) refuses an admin's bad input
+as a `400` field problem before MiConnect would call it malformed, and the spec proves the biggest
+edit it accepts fits the cap.
+
+**The allowlist, decided inside one transaction under the target's row lock**: `changes` is at most
+16 KiB of UTF-8, strict JSON (no `NaN` or `Infinity`, no nesting deep enough to exhaust the parser),
+and names only `name` (no control character - C0, DEL, C1, U+2028, U+2029 - at most 201 characters:
+two names of `NAME_MAX` = 100 and a space) and `attributes`; `attributes`
+names only `profile` (an object whose known keys keep the types every reader relies on: `campus` a
+string or null, `cursus` a list of objects, `posts` a list of strings, the names strings, `version` an
+integer; unknown keys of a future version pass) and the merge mark's three keys (a string, or `null`
+to remove the key); the target is exactly one account, of type `internal` or `external`, not a
+superuser (no superuser group on its ancestry); a mark key is written on an `alumni-` account only;
+the caller is the editor service account. The named keys are MERGED into the stored attributes, so
+nothing else is written, and an edit by any other writer that takes the same row lock (the Alumni
+merge policy does) is not lost; a writer that saves without it is not covered. A refusal writes
+nothing and is logged at warning (`[PROFILE_WRITE]`); a write at info with the account pk and the keys
+written, never the values.
+
+**Detection** (`editor-reach.sh`, daily in the `drift` job with the RELEASED file, and in CI after the
+token test): the account is the service account, not a superuser, in `miconnect-profile-editors`
+alone, holding exactly its one token; every role reaching it holds no global permission beyond the
+file's list and no object permission at all; the write flow, when the given file declares it (the
+released file before 1.8.1 does not, and production has no flow until then), is bound exactly as
+declared (one group binding, one stage, one validation policy, mode `all`); and every authentik Event the account authored
+that records a write is a `model_updated` of a user through the write flow, or through `PATCH
+/api/v3/core/users/<pk>/` - the older path - only while the role still holds the user-change
+permission or when the Event predates the FIRST `custom_role_permission_revoked` Event for it: a
+cutoff read from MiConnect's own durable state, never a clock. The first, so a hand re-grant and a
+later re-revocation make every PATCH in between a finding (the safe direction). And no legitimate
+PATCH can follow the revocation: the stable deploys the new core-service, which no longer PATCHes,
+BEFORE it applies the blueprints that revoke. Paths in a finding show `<id>` for a pk or a uuid. Anything else is a `FINDING` (event
+id, action, model kind, path; never a value) until its id is entered in `editor-reach-known.txt` with
+what it was. **What the log cannot say**: which fields an older PATCH changed - authentik records the
+diff only under its enterprise licence. CI proves the check red on a planted object permission, a
+planted deletion, a planted PATCH past the cutoff, a second token and a second binding on the flow,
+and green once they are removed; on the upgrade run, green with the PREVIOUS blueprint on the previous
+instance (production's daily check until 1.8.1), exactly one revocation Event recorded, and green
+with a PATCH dated before it.
+
+**The rollout window, measured from the deploy order**: `serve-prod.yml` deploys the estate (the new
+core-service, writing through the flow) BEFORE it applies the blueprints (which create the flow). For
+the minutes between the two steps of the 1.8.1 stable, an admin's profile correction or "Rattacher"
+answers `PROFILE_EDIT_UPSTREAM` (the executor's 404), nothing written, and succeeds once retried after
+the apply. The other order would fail the OLD core-service's PATCH instead; no order removes the window
+without a release in between, and the action is rare and admin-only.
+
+**A rollback** of core-service to a release before 1.8.1 leaves MiConnect narrowed (a rollback does
+not re-apply older blueprints onto it): the older core-service PATCHes and is refused `403`, so profile
+corrections and "Rattacher" answer `PROFILE_EDIT_UPSTREAM`, nothing written, until core-service rolls
+forward again. Re-granting the old permission by hand would restore them, and would be reported by the
+daily blueprint dry run and by `editor-reach.sh`.
 
 ## The Alumni SAML source: enabled, not promoted, measured (2026-11-23)
 

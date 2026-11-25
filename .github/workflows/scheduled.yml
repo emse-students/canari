@@ -244,7 +244,7 @@ jobs:
   # 2026-11-13, twice in one day. Production MiConnect ran authentik 2026.8.0 for weeks while this
   # repository pinned 2026.8.5 - its tag lived in the stack's own `.env`, and the image scan read the
   # repository's. And the `1.6.11` stable overwrote a provider whose callbacks had been edited by
-  # hand in the admin UI, because nothing had said the edit existed. Four read-only reports:
+  # hand in the admin UI, because nothing had said the edit existed. Five read-only reports:
   #
   #   - IMAGES: every third-party image the RELEASED compose files pin (production and MiConnect from
   #     `prod-released`, dev and the test MiConnect from `dev-deployed` - never `main`, whose
@@ -254,6 +254,9 @@ jobs:
   #     back - the call every pre-release makes), red on any change, which is a hand edit the next
   #     stable would overwrite. infrastructure/authentik/blueprint-drift.sh. The log is PUBLIC, so
   #     it names the object and field that changed, never the values.
+  #   - EDITOR REACH: the account Canari writes MiConnect profiles with holds no grant beyond the
+  #     released `80-profile-editor.yaml` and wrote nothing outside its one write flow.
+  #     infrastructure/authentik/editor-reach.sh. Ids, kinds and paths in the log, never values.
   #   - ACCESS: the runner can still write each MiConnect `.env`, the release's one precondition.
   #   - PREFLIGHT: what the next pre-release would refuse on the test stack (`deploy-stack.sh
   #     rehearsal` and `preflight`, against `main`'s pin), named with the exact hand command the
@@ -367,6 +370,15 @@ jobs:
         run: |
           set -euo pipefail
           bash infrastructure/authentik/blueprint-drift.sh released-prod/infrastructure/authentik/apply-blueprints.sh
+
+      # THE PROFILE EDITOR'S REACH: the account Canari writes MiConnect profiles with holds nothing
+      # beyond the RELEASED blueprint's grant, and every write it authored went through its one write
+      # path (editor-reach.sh, read-only). The script is main's, the allowlist the released file's.
+      - name: Check what the MiConnect profile editor may reach and has written
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          bash infrastructure/authentik/editor-reach.sh released-prod/infrastructure/authentik/blueprints/80-profile-editor.yaml
 
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   # WOULD PRODUCTION MICONNECT TAKE THE PIN? A JOB OF ITS OWN, BECAUSE A STABLE'S GATE READS IT.

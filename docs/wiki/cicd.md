@@ -309,7 +309,12 @@ which is how three chains came to each re-derive the same fact:
 5. MiConnect's blueprints: a pre-release DRY-RUNS them against the production MiConnect, and a
    stable APPLIES them before `prod-released` moves. The same runner lives on MiConnect's host, so
    `apply-blueprints.sh` reaches the worker container directly. The fresh-instance gate before both
-   is the CI job `test-miconnect-blueprints` ([authentik](infrastructure/authentik.md#the-configuration-is-code-infrastructureauthentikblueprints-2026-09-30)).
+   is the CI job `test-miconnect-blueprints` ([authentik](infrastructure/authentik.md#the-configuration-is-code-infrastructureauthentikblueprints-2026-09-30)),
+   a two-leg matrix since 2026-11-25 - `fresh` (an empty authentik, budget 20 min, measured 8.6-10.1)
+   and `upgraded` (main's blueprints first, budget 35 min, measured 10.1 then over 15) - in parallel,
+   each with its own budget: as two steps of one job under 25 min the pair was cancelled at 25 once
+   the editor's reach tests joined it. The job id is unchanged, so `CI passed` needs it as before and
+   fails when either leg fails.
 
 **THE CALLER DECIDES, ONCE, AND A HYPHEN IS STILL THE DEFINITION.** The reason this used to be
 read out of the manifest here is worth keeping, because it explains what NOT to go back to:
@@ -3809,7 +3814,7 @@ docs-only push runs the path rules and the whole-tree scans, in seconds.
 | `test-call-service-e2e` | CI only | - | - | coturn and five headless browsers on a Linux runner |
 | `dependency-ceiling` | CI only | - | - | decides on a Dependabot pull request only |
 | `dependency-audit` | CI only | - | - | a verdict on the advisory databases, not on the commit; ~5 min per tree |
-| `test-miconnect-blueprints` | CI only | - | - | a full Authentik pair in Docker, twice |
+| `test-miconnect-blueprints` | CI only | - | - | a full Authentik pair in Docker, in two parallel legs (fresh, upgraded) |
 | `upstream-monitor-freshness` | CI only | - | - | a push to `main` only; reads GitHub |
 | `ci-passed` | CI only | - | - | the aggregation of the jobs above |
 

@@ -148,10 +148,18 @@ describe('AlumniMergeService', () => {
           identifier: found?.ids?.[slug] ?? null,
         }));
       }),
-      writeUser: jest.fn(async (pk: number, patch: { attributes: Record<string, unknown> }) => {
-        const found = Object.values(accounts).find((a) => a.user.pk === pk)!;
-        found.user.attributes = patch.attributes;
-      }),
+      // As MiConnect's write flow does: the named keys MERGED into the stored bag, null removing one.
+      writeUser: jest.fn(
+        async (uuid: string, changes: { attributes?: Record<string, unknown> }) => {
+          const found = accounts[uuid]!;
+          const next = { ...found.user.attributes };
+          for (const [key, value] of Object.entries(changes.attributes ?? {})) {
+            if (value === null) delete next[key];
+            else next[key] = value;
+          }
+          found.user = { ...found.user, attributes: next };
+        }
+      ),
     };
     const dataSource = {
       query: jest.fn(async (sql: string, params: unknown[] = []) => {
@@ -279,11 +287,18 @@ describe('AlumniMergeService', () => {
     expect(accounts[TARGET_UUID].user.attributes).toEqual(TARGET.attributes);
     expect(erasure.requestErasure).not.toHaveBeenCalled();
     expect(editor.writeUser).toHaveBeenCalledTimes(1);
+    expect(editor.writeUser).toHaveBeenCalledWith(DUP_UUID, {
+      attributes: {
+        [MERGE_MARK.into]: TARGET_UUID,
+        [MERGE_MARK.by]: 'admin-1',
+        [MERGE_MARK.at]: expect.any(String),
+      },
+    });
     expect(rows).toHaveLength(1);
     expect(rows[0].markedAt).not.toBeNull();
   });
 
-  it('marks the bag as it is just before the write, not as it was first read', async () => {
+  it('names only the mark: an edit made meanwhile at MiConnect is kept', async () => {
     const { service, editor, accounts } = make({ accounts: world() });
     const first = accounts[DUP_UUID].user;
     editor.userByUuid.mockImplementationOnce(async () => first);
@@ -511,11 +526,14 @@ describe('AlumniMergeService', () => {
         ...DUP,
         attributes: { ...DUP.attributes, [MERGE_MARK.into]: TARGET_UUID, [MERGE_MARK.by]: 'a' },
       };
-      const { service, rows, accounts } = make({
+      const { service, rows, accounts, editor } = make({
         accounts: { ...world(), [DUP_UUID]: { user: marked, slugs: ['alumni'] } },
         rows: [{ markedAt: new Date() }],
       });
       await service.cancel(DUP_UUID, 'admin-2');
+      expect(editor.writeUser).toHaveBeenCalledWith(DUP_UUID, {
+        attributes: { [MERGE_MARK.into]: null, [MERGE_MARK.by]: null, [MERGE_MARK.at]: null },
+      });
       expect(accounts[DUP_UUID].user.attributes).toEqual(DUP.attributes);
       expect(rows[0].cancelledAt).not.toBeNull();
       expect(rows[0].completedAt).not.toBeNull();

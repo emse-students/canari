@@ -3,11 +3,13 @@ exactly that - and no more.
 
 Run through `ak shell` by test-blueprints.sh, after the blueprints applied (and by hand on any
 disposable instance). It calls authentik's REAL API in-process, with the token the blueprint wrote,
-the way core-service does: read a user by uuid, PATCH its whole `attributes` (WP4); list a user's
-source connections and write the merge mark on an `alumni-` duplicate (D48). Then it proves the
-role's limits - the same token may not create or DELETE a user, add, move or delete a source
-connection, change the Alumni source, nor change a flow. It prints `PROFILE-EDITOR-OK` when
-every assertion held and raises otherwise.
+the way core-service does: read a user by uuid; WRITE only through the flow `miconnect-profile-write`
+(one POST to the flow executor, no session carried, as core-service sends it) - the profile and the
+name (WP4), the merge mark on an `alumni-` duplicate and its removal (D48); list a user's source
+connections. Then it proves the limits: the same token may not PATCH a user at all, nor create or
+DELETE one, add, move or delete a source connection, change the Alumni source, nor change a flow; the
+write flow refuses every field, attribute and account outside its allowlist, and every other caller.
+It prints `PROFILE-EDITOR-OK` when every assertion held and raises otherwise.
 
 WHY THE API AND NOT `user.has_perm`: the permission list on a role says what was GRANTED, and the
 API is what a stolen token could DO. A role that silently carried more than the blueprint named would
@@ -18,7 +20,7 @@ import os
 
 from django.test import Client
 
-from authentik.core.models import Group, Token, User, UserSourceConnection
+from authentik.core.models import Group, Token, TokenIntents, User, UserSourceConnection
 from authentik.flows.models import Flow
 from authentik.rbac.models import Role
 from authentik.sources.oauth.models import OAuthSource, UserOAuthSourceConnection
@@ -28,6 +30,7 @@ TOKEN = os.environ["MICONNECT_EDITOR_TOKEN"]
 USERNAME = "miconnect-canari-editor"
 PROBE = "miconnect-editor-probe"
 DUPLICATE = "alumni-editor-probe-0001"
+WRITE_FLOW = "/api/v3/flows/executor/miconnect-profile-write/?query="
 
 
 def check(condition, message):
@@ -47,6 +50,37 @@ def call(method, path, body=None):
     return getattr(client, method)(path, **kwargs)
 
 
+def write(target, changes, token=TOKEN):
+    """One write through the flow, as core-service sends it: a FRESH client (no session cookie, so
+    every call plans the flow anew), the token, the prompt. Returns the challenge authentik answered.
+    `token=None` sends no Authorization header at all."""
+    body = {
+        "component": "ak-stage-prompt",
+        "target": str(target),
+        "changes": changes if isinstance(changes, str) else json.dumps(changes),
+    }
+    headers = {} if token is None else {"HTTP_AUTHORIZATION": f"Bearer {token}"}
+    answer = Client(HTTP_HOST="localhost").post(
+        WRITE_FLOW, data=json.dumps(body), content_type="application/json", **headers
+    )
+    if answer.status_code != 200:
+        raise AssertionError(f"the write flow answered {answer.status_code}, not 200")
+    return answer.json()
+
+
+def written(challenge):
+    """The flow ran to its end: the write held."""
+    return challenge.get("component") == "xak-flow-redirect"
+
+
+def refused(challenge, code="malformed"):
+    """The prompt came back with the policy's refusal, carrying this stable code: nothing was written."""
+    errors = (challenge.get("response_errors") or {}).get("non_field_errors") or []
+    return challenge.get("component") == "ak-stage-prompt" and any(
+        (e.get("string") or "").startswith(f"refused:{code}: ") for e in errors
+    )
+
+
 editor = User.objects.get(username=USERNAME)
 check(editor.type == "service_account", "the editor is a service account")
 check(not editor.is_superuser, "the editor is not a superuser")
@@ -58,6 +92,7 @@ User.objects.filter(username=PROBE).delete()
 probe = User.objects.create(
     username=PROBE,
     name="Probe",
+    email="probe@example.invalid",
     attributes={"profile": {"version": 1, "campus": "gardanne", "cursus": [], "posts": ["EMSE"]}, "keep": "me"},
 )
 try:
@@ -68,33 +103,120 @@ try:
     attributes = results[0]["attributes"]
     check(attributes.get("keep") == "me", "the read carries the whole attributes")
 
-    merged = {**attributes, "profile": {**attributes["profile"], "campus": "saint-etienne"}}
-    patched = call("patch", f"/api/v3/core/users/{probe.pk}/", {"attributes": merged})
-    check(patched.status_code == 200, "the editor changes a user's attributes")
+    # NO DIRECT WRITE: the role holds no `change_user`, so a PATCH of anything - the attributes
+    # included - is refused, and the account is untouched.
+    for body, label in (
+        ({"attributes": {**attributes, "profile": {"campus": "saint-etienne"}}}, "attributes"),
+        ({"email": "intruder@example.invalid"}, "e-mail"),
+        ({"is_active": False}, "active flag"),
+        ({"username": "renamed-probe"}, "username"),
+    ):
+        patched = call("patch", f"/api/v3/core/users/{probe.pk}/", body)
+        check(patched.status_code == 403, f"the editor may NOT PATCH a user's {label} (got {patched.status_code})")
+    probe.refresh_from_db()
+    check(
+        probe.attributes["profile"]["campus"] == "gardanne"
+        and probe.email == "probe@example.invalid"
+        and probe.is_active
+        and probe.username == PROBE,
+        "no PATCH changed the account",
+    )
+
+    # THE ALLOWLISTED WRITE: the profile and the name, MERGED server-side - every other key kept.
+    profile = {**attributes["profile"], "campus": "saint-etienne"}
+    check(written(write(probe.uuid, {"name": "Probe Renamed", "attributes": {"profile": profile}})), "the flow writes the profile and the name")
     probe.refresh_from_db()
     check(probe.attributes["profile"]["campus"] == "saint-etienne", "the profile was written")
-    check(probe.attributes.get("keep") == "me", "the read-modify-write kept every other key")
+    check(probe.name == "Probe Renamed", "the name was written")
+    check(probe.attributes.get("keep") == "me", "every other attribute key was kept")
+    check(probe.email == "probe@example.invalid" and probe.is_active, "nothing outside the allowlist changed")
+
+    # THE ALLOWLIST, REFUSED ENTRY BY ENTRY - each answer a refusal, the account unchanged.
+    before = (probe.name, dict(probe.attributes), probe.email, probe.is_active, probe.username)
+    for changes, label in (
+        ({"email": "intruder@example.invalid"}, "a field outside the allowlist (email)"),
+        ({"is_active": False}, "a field outside the allowlist (is_active)"),
+        ({"username": "renamed"}, "a field outside the allowlist (username)"),
+        ({"groups": []}, "a field outside the allowlist (groups)"),
+        ({"name": "x", "type": "service_account"}, "an allowlisted field beside one outside it"),
+        ({"attributes": {"keep": "changed"}}, "an attribute outside the allowlist"),
+        ({"attributes": {"goauthentik.io/user/sources": []}}, "an authentik attribute"),
+        ({"attributes": {"profile": "not an object"}}, "a profile that is not an object"),
+        ({"attributes": {"profile": {"cursus": "ICM"}}}, "a profile whose cursus is not a list of objects"),
+        ({"attributes": {"profile": {"posts": [1]}}}, "a profile whose posts are not strings"),
+        ({"attributes": {"profile": {"campus": 3}}}, "a profile whose campus is not a string"),
+        ({"attributes": {"profile": {"version": "1"}}}, "a profile whose version is not an integer"),
+        ({"attributes": {"profile": {"cursus": [], "pad": "x" * 17000}}}, "a change longer than 16 KiB"),
+        (json.dumps({"attributes": {"profile": {"cursus": [], "pad": chr(0x20AC) * 6000}}}, ensure_ascii=False), "a change of ~6000 characters but over 16 KiB of UTF-8"),
+        ({"name": ""}, "an empty name"),
+        ({"name": "x" * 202}, "a name of 202 characters"),
+        ({"name": "Probe" + chr(10) + "Injected"}, "a name holding a newline"),
+        ({"name": "Probe" + chr(0x85) + "C1"}, "a name holding a C1 control (U+0085)"),
+        ({"name": "Probe" + chr(0x2028) + "Sep"}, "a name holding a line separator (U+2028)"),
+        ({}, "an empty change"),
+        ("not json", "a change that is not JSON"),
+        ('{"name": NaN}', "a change holding NaN"),
+        ("{\"name\": " + "[" * 5000 + "]" * 5000 + "}", "a change nested too deep to parse"),
+    ):
+        check(refused(write(probe.uuid, changes)), f"the flow refuses {label}")
+    check(refused(write(probe.uuid, {"attributes": {"alumni_merge_into": str(probe.uuid)}}), "mark_not_alumni"), "the flow refuses a merge mark on an account that is not alumni-")
+    check(refused(write("not-a-uuid", {"name": "x"})), "the flow refuses a target that is not a uuid")
+    check(refused(write("00000000-0000-4000-8000-000000000000", {"name": "x"}), "no_account"), "the flow refuses a uuid no account carries")
+    probe.refresh_from_db()
+    check((probe.name, probe.attributes, probe.email, probe.is_active, probe.username) == before, "no refused write changed the account")
+    longest = f"{'a' * 100} {'b' * 100}"
+    check(written(write(probe.uuid, {"name": longest})), "the flow writes the longest name core-service sends (two names of 100 and a space)")
+    probe.refresh_from_db()
+    check(probe.name == longest, "the longest name was written")
+    anonymous = write(probe.uuid, {"name": "Anonymous"}, token=None)
+    check(anonymous.get("component") == "ak-stage-access-denied", f"a request with no token may NOT run the write flow (got {anonymous.get('component')})")
+    probe.refresh_from_db()
+    check(probe.name == longest, "the anonymous request wrote nothing")
 
     created = call("post", "/api/v3/core/users/", {"username": "miconnect-editor-intruder", "name": "x"})
     check(created.status_code == 403, f"the editor may NOT create a user (got {created.status_code})")
     check(not User.objects.filter(username="miconnect-editor-intruder").exists(), "no user was created")
-    flow = Flow.objects.first()
+    flow = Flow.objects.exclude(slug="miconnect-profile-write").first()
     changed = call("patch", f"/api/v3/flows/instances/{flow.slug}/", {"title": "hijacked"})
     check(changed.status_code in (403, 404), f"the editor may NOT change a flow (got {changed.status_code})")
     flow.refresh_from_db()
     check(flow.title != "hijacked", "the flow is untouched")
+    own = Flow.objects.get(slug="miconnect-profile-write")
+    changed = call("patch", f"/api/v3/flows/instances/{own.slug}/", {"title": "hijacked"})
+    check(changed.status_code in (403, 404), f"the editor may NOT change its own write flow (got {changed.status_code})")
 finally:
     probe.delete()
 
-# WHAT THE TOKEN MAY NOT GRANT: a superuser group, to anyone or to itself, and a role.
+# WHAT THE FLOW MAY NOT REACH: a superuser account, a service account (the editor itself), and any
+# caller other than the editor - another account's token meets the access-denied stage.
+Token.objects.filter(identifier="miconnect-editor-reach-token").delete()
 User.objects.filter(username__startswith="miconnect-editor-reach").delete()
 Group.objects.filter(name__startswith="miconnect-editor-reach").delete()
 superusers = Group.objects.create(name="miconnect-editor-reach-su", is_superuser=True)
+admin = User.objects.create(username="miconnect-editor-reach-admin", name="Reach Admin", attributes={"profile": {"version": 1}})
+admin.groups.add(superusers)
 reach = User.objects.create(username="miconnect-editor-reach-u", name="Reach Probe")
+outsider_token = Token.objects.create(
+    identifier="miconnect-editor-reach-token", user=reach, intent=TokenIntents.INTENT_API, expiring=False
+)
 try:
-    escalated = call("patch", f"/api/v3/core/users/{reach.pk}/", {"groups": [str(superusers.pk)]})
+    check(refused(write(admin.uuid, {"attributes": {"profile": {"version": 1, "campus": "x"}}}), "superuser"), "the flow refuses a superuser account")
+    admin.refresh_from_db()
+    check(admin.attributes == {"profile": {"version": 1}}, "the superuser account is untouched")
+    check(refused(write(editor.uuid, {"name": "Hijacked"}), "not_a_person"), "the flow refuses a service account (the editor itself)")
+    editor.refresh_from_db()
+    check(editor.name == "Canari - profile editor", "the editor account is untouched")
+    outsider = write(reach.uuid, {"name": "Self Renamed"}, token=outsider_token.key)
+    check(outsider.get("component") == "ak-stage-access-denied", f"the token of an account in no group may NOT run the write flow (got {outsider.get('component')})")
     reach.refresh_from_db()
-    check(escalated.status_code == 400 and not reach.groups.filter(pk=superusers.pk).exists(), f"the token may NOT put anyone in a superuser group (got {escalated.status_code})")
+    check(reach.name == "Reach Probe", "the outsider wrote nothing")
+
+    # WHAT THE TOKEN MAY NOT GRANT: a group (superuser or not), to anyone or to itself, and a role.
+    editors = Group.objects.get(name="miconnect-profile-editors")
+    for group, label in ((superusers, "a superuser group"), (editors, "an ordinary group")):
+        escalated = call("patch", f"/api/v3/core/users/{reach.pk}/", {"groups": [str(group.pk)]})
+        reach.refresh_from_db()
+        check(escalated.status_code in (400, 403) and not reach.groups.filter(pk=group.pk).exists(), f"the token may NOT put anyone in {label} (got {escalated.status_code})")
     itself = call("patch", f"/api/v3/core/users/{editor.pk}/", {"groups": [str(superusers.pk)]})
     editor.refresh_from_db()
     check(itself.status_code in (400, 403) and not editor.groups.filter(pk=superusers.pk).exists(), f"the token may NOT put its own account in a superuser group (got {itself.status_code})")
@@ -102,19 +224,20 @@ try:
     granted = call("patch", f"/api/v3/core/users/{reach.pk}/", {"roles": [str(role.pk)]})
     check(granted.status_code in (400, 403) and not reach.roles.exists(), f"the token may NOT assign a role (got {granted.status_code})")
 finally:
+    Token.objects.filter(identifier="miconnect-editor-reach-token").delete()
     User.objects.filter(username__startswith="miconnect-editor-reach").delete()
     Group.objects.filter(name__startswith="miconnect-editor-reach").delete()
 
 # THE MARK (D47, D48). A CAS account (the target) and an `alumni-` account the Alumni source created
 # for the same person (the duplicate). What core-service does: read both accounts' connections, then
-# write the mark on the duplicate - the merge itself is authentik's, at the next Alumni sign-in
-# (test-enrollment-flow.py, step M). What it must NOT be able to do: delete the duplicate (or any
-# account), move or delete a connection, touch the source.
+# write the mark on the duplicate through the flow - the merge itself is authentik's, at the next
+# Alumni sign-in (test-enrollment-flow.py, step M) - and, on "Annuler", remove it (null). What it must
+# NOT be able to do: delete the duplicate (or any account), move or delete a connection, touch the source.
 alumni = SAMLSource.objects.get(slug="alumni")
 cas = OAuthSource.objects.get(slug="cas-emse")
 User.objects.filter(username__in=[PROBE, DUPLICATE]).delete()
 target = User.objects.create(username=PROBE, name="Probe Person")
-duplicate = User.objects.create(username=DUPLICATE, name="Probe Person")
+duplicate = User.objects.create(username=DUPLICATE, name="Probe Person", attributes={"profile": {"version": 1}})
 UserOAuthSourceConnection.objects.create(user=target, source=cas, identifier="probe.person")
 link = UserSAMLSourceConnection.objects.create(user=duplicate, source=alumni, identifier="0001")
 try:
@@ -151,10 +274,15 @@ try:
     check(alumni.enabled == was_enabled, "the source is untouched")
 
     mark = {"alumni_merge_into": str(target.uuid), "alumni_merge_marked_by": "probe-admin", "alumni_merge_marked_at": "2026-11-23T12:00:00Z"}
-    marked = call("patch", f"/api/v3/core/users/{duplicate.pk}/", {"attributes": {**duplicate.attributes, **mark}})
-    check(marked.status_code == 200, f"the editor writes the merge mark on the duplicate (got {marked.status_code})")
+    check(written(write(duplicate.uuid, {"attributes": mark})), "the flow writes the merge mark on the duplicate")
     duplicate.refresh_from_db()
     check(duplicate.attributes.get("alumni_merge_into") == str(target.uuid), "the mark names the target")
+    check(duplicate.attributes.get("profile") == {"version": 1}, "the mark kept the duplicate's profile")
+    check(refused(write(duplicate.uuid, {"attributes": {"alumni_merge_into": 7}})), "the flow refuses a mark that is not a string")
+    check(written(write(duplicate.uuid, {"attributes": {key: None for key in mark}})), "the flow removes the mark (null)")
+    duplicate.refresh_from_db()
+    check(not any(key in duplicate.attributes for key in mark) and duplicate.attributes.get("profile") == {"version": 1}, "the mark is gone and the profile kept")
+    check(written(write(duplicate.uuid, {"attributes": mark})), "the flow writes the mark again")
 
     for victim, label in ((duplicate, "the duplicate"), (target, "the target")):
         removed = call("delete", f"/api/v3/core/users/{victim.pk}/")
