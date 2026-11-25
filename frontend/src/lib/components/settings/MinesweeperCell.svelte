@@ -14,9 +14,11 @@
     marked?: boolean;
     /**
      * Lit by the bulb of an unranked game: `hint` a number to read, `wrong` a misplaced flag
-     * (`hint.ts`). Null otherwise; a primitive, so only the cells whose value changed re-render.
+     * (`hint.ts`); by the tutorial, `group` a cell the lit number speaks about (ringed, no glow: the
+     * number is what the eye should find first). Null otherwise; a primitive, so only the cells whose
+     * value changed re-render.
      */
-    highlight?: 'hint' | 'wrong' | null;
+    highlight?: 'hint' | 'wrong' | 'group' | null;
   }
 
   let { cell, index, pending, marked = false, highlight = null }: Props = $props();
@@ -60,9 +62,11 @@
       ? 'ms-hint ring-accent ring-2 ring-inset'
       : highlight === 'wrong'
         ? 'ms-hint ms-hint-wrong ring-red-err ring-2 ring-inset'
-        : marked
-          ? 'ring-accent ring-2 ring-inset'
-          : ''
+        : highlight === 'group'
+          ? 'ring-accent/70 ring-2 ring-inset'
+          : marked
+            ? 'ring-accent ring-2 ring-inset'
+            : ''
   );
   /** What a screen reader hears for a lit cell: the ring alone says nothing to it. */
   const hintLabel = $derived(
@@ -70,7 +74,9 @@
       ? m.minesweeper_hint_cell({ n: String(cell.adjacent) })
       : highlight === 'wrong'
         ? m.minesweeper_hint_wrong_cell()
-        : undefined
+        : highlight === 'group'
+          ? m.minesweeper_tutorial_group_cell()
+          : undefined
   );
   const numberColor = $derived(
     cell.state === 'revealed' && !cell.mine && cell.adjacent > 0 ? NUMBER_COLORS[cell.adjacent] : ''
