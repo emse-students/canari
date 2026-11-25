@@ -1602,22 +1602,39 @@ jobs:
   # a pre-release dry-runs it there first. This is the step before both: the REAL compose.yml boots
   # an empty authentik, the blueprints must build every object on it with each !Find and !Env
   # resolved, and a second apply must report `0 change(s)` - a field a blueprint keeps rewriting is
-  # a field it would rewrite on 600 accounts' sign-in at every release. ~2 min, most of it the boot.
+  # a field it would rewrite on 600 accounts' sign-in at every release.
+  #
+  # TWO LEGS IN PARALLEL, EACH WITH ITS OWN BUDGET (2026-11-25). The two runs were one job's two
+  # steps under one 25-minute budget, and #4076's token tests and reach self-tests pushed the pair past
+  # it (cancelled at 25 min, no assertion failed). Measured on GitHub's runners: the FRESH leg 8.6 and
+  # 10.1 min (runs 45526877121, 45531297533); the UPGRADED leg 10.1 min, then more than 15 min once the
+  # reach checks of the upgrade path joined it (cancelled at 15.1). Each budget is about twice its
+  # measurement. The planted-fault self-test of the editor's reach check runs in the fresh leg only:
+  # it tests the detector, which the upgrade does not change; the upgrade leg runs the cutoff's own
+  # checks. The job id is unchanged, so `CI passed` still needs it, and a matrix job fails when
+  # either leg fails.
   test-miconnect-blueprints:
-    name: MiConnect blueprints (fresh and upgraded)
+    name: MiConnect blueprints (${{ matrix.leg }})
     needs: [changes]
     if: ${{ needs.changes.outputs.run-miconnect == 'true' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - leg: fresh
+            previous: ''
+            budget: 20
+          - leg: upgraded
+            previous: 'HEAD^1'
+            budget: 35
+    timeout-minutes: ${{ matrix.budget }}
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
-          # Two commits: the tested one and its first parent, which the upgrade step starts from.
+          # Two commits: the tested one and its first parent, which the upgraded leg starts from.
           fetch-depth: 2
-
-      - name: Apply the blueprints to a fresh MiConnect, twice
-        run: bash infrastructure/authentik/test-blueprints.sh
 
       # Production is never fresh: it carries main's blueprints, and a rename entry only runs there.
       # "MAIN" IS THE TESTED COMMIT'S FIRST PARENT, NEVER A FETCH OF THE BRANCH. On a pull request
@@ -1626,8 +1643,11 @@ jobs:
       # RUNS: a re-run after main gained a blueprint with a new `!Env` applied that blueprint in a
       # container booted from the OLDER compose.yml under test, which does not hand the variable to
       # the worker, and failed every such pull request (2026-11-11, docs/wiki/infrastructure/authentik.md).
-      - name: Apply them over main's blueprints, twice
-        run: PREVIOUS_REF=HEAD^1 bash infrastructure/authentik/test-blueprints.sh
+      # The fresh leg: an empty authentik. The upgraded leg: main's blueprints first, these over them.
+      - name: Apply the blueprints, twice (${{ matrix.leg }})
+        env:
+          PREVIOUS_REF: ${{ matrix.previous }}
+        run: bash infrastructure/authentik/test-blueprints.sh
 
   # =================================================================================================
   # IS THE UPSTREAM MONITOR STILL READING? - ASKED FROM OUTSIDE THE SCHEDULER

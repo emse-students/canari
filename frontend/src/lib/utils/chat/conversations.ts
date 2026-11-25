@@ -125,6 +125,41 @@ export function toConversationMeta(
 }
 
 /**
+ * The title of "Mes notes": the account's OWN name followed by a localized suffix, "Prenom NOM
+ * (Notes)" (owner, 2026-11-25). `ownName` is the one resolver's, the one a DM peer gets: a caller that
+ * redraws reads it reactively (`userDisplayName`) so a late or renamed profile repaints the title.
+ */
+export function selfConversationTitle(ownName: string, userId: string): string {
+  // The RAW name only: a caller's reactive read may still be empty on its first frame, and the
+  // title must never be built from a title (a doubled suffix) or from nothing (" (Notes)").
+  const name = ownName.trim() || getUserDisplayNameSync(userId);
+  if (name === m.user_unknown_label() && !selfTitleWithoutNameLogged) {
+    selfTitleWithoutNameLogged = true;
+    console.warn(
+      `[SELF] "Mes notes" titled without a real own name (${userId ? 'profile not resolved yet' : 'no user id'}): it reads "${name} (Notes)" until the name resolves`
+    );
+  }
+  return m.conversation_self_named({ name });
+}
+
+/** One warning per session is the signal; a line per row per frame would be the noise. */
+let selfTitleWithoutNameLogged = false;
+
+/**
+ * Whether a search `query` is one of the words "Mes notes" has always answered to ("notes", "mes
+ * notes", "my notes"), kept as aliases beside the user's own name now in its title.
+ */
+export function matchesSelfConversationAlias(query: string): boolean {
+  const q = foldForSearch(query.trim());
+  // Two characters at least: a one-letter query would surface the row for every word typed.
+  if (q.length < 2) return false;
+  return m
+    .conversation_self_search_aliases()
+    .split('|')
+    .some((alias) => foldForSearch(alias).includes(q));
+}
+
+/**
  * The identity of "Mes notes", the account's conversation with itself (server `kind: 'self'`). No
  * `directPeerId`, ever: every peer path keys on it and has nothing to find here. The label is the
  * reader's own language, drawn at render (`resolveConversationListPresentation`), so the row keeps
@@ -703,7 +738,7 @@ export function resolveConversationListPresentation(
     return {
       conversationType: 'self',
       contactId: input.id,
-      displayName: m.conversation_self_title(),
+      displayName: selfConversationTitle('', userId),
       displayNameResolved: true,
     };
   }
@@ -1760,6 +1795,18 @@ export function conversationMatchesQuery(
   const q = foldForSearch(query.trim());
   if (!q) return true;
   return foldForSearch(displayName).includes(q) || foldForSearch(lastMessageContent).includes(q);
+}
+
+/** {@link conversationMatchesQuery} for "Mes notes": its title (own name), its preview, or an alias. */
+export function selfConversationMatchesQuery(
+  title: string,
+  lastMessageContent: string,
+  query: string
+): boolean {
+  return (
+    conversationMatchesQuery(title, lastMessageContent, query) ||
+    matchesSelfConversationAlias(query)
+  );
 }
 
 /** One person offered by "Nouvelle discussion" before anything is typed. */

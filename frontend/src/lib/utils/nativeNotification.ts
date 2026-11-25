@@ -29,7 +29,7 @@
 
 import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion';
 import type { ConversationType } from '$lib/types';
-import { m } from '$lib/paraglide/messages';
+import { selfConversationTitle } from '$lib/utils/chat/conversations';
 import type { AnnouncedMessage } from '$lib/utils/chat/announcedMessages';
 
 /**
@@ -388,12 +388,13 @@ export function notificationGroupName(
   conversationType: ConversationType | undefined,
   contactName: string,
   name: string,
-  groupTitle?: string | null
+  groupTitle?: string | null,
+  selfUserId = ''
 ): string {
   if (conversationType === 'direct') return '';
   if (conversationType === 'channel') return name || contactName;
-  // "Mes notes" is titled in the reader's language; it has no name of its own.
-  if (conversationType === 'self') return m.conversation_self_title();
+  // "Mes notes" is titled with the reader's own name and a localized suffix.
+  if (conversationType === 'self') return selfConversationTitle('', selfUserId);
   return groupTitle || contactName || name;
 }
 

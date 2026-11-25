@@ -15,7 +15,7 @@
    * `bare` - one tap on a surface that draws itself.
    */
   import type { Snippet } from 'svelte';
-  import { Bookmark, Hash, Search } from '@lucide/svelte';
+  import { Hash, Search } from '@lucide/svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import GroupAvatar from '$lib/components/shared/GroupAvatar.svelte';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
@@ -36,6 +36,8 @@
     searchLabel: string;
     /** Extra attributes on the search field (a test hook). */
     searchAttrs?: Record<string, string>;
+    /** The signed-in account, whose avatar draws "Mes notes". */
+    currentUserId: string;
     sections: PickerSection[];
     /** Said in place of the sections when they hold no row. */
     emptyText: string;
@@ -68,6 +70,7 @@
     searchPlaceholder,
     searchLabel,
     searchAttrs = {},
+    currentUserId,
     sections,
     emptyText,
     emptyAttrs = {},
@@ -135,11 +138,8 @@
                 fallbackLabel={cand.label}
               />
             {:else if cand.conversation.conversationType === 'self'}
-              <div
-                class="bg-accent/15 text-accent-icon flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
-                data-self-conversation-icon
-              >
-                <Bookmark size={16} strokeWidth={2.25} />
+              <div data-self-conversation-icon>
+                <Avatar userId={currentUserId} size="md" fallbackLabel={cand.label} />
               </div>
             {:else if cand.conversation.conversationType === 'channel'}
               <div class="text-text-muted flex h-8 w-8 shrink-0 items-center justify-center">

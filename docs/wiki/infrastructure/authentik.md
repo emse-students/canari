@@ -412,7 +412,7 @@ is mounted into or copied onto the host.
 
 | Who | Mode | What it proves |
 | --- | --- | --- |
-| CI, job `test-miconnect-blueprints`, when `infrastructure/authentik/` changes | `apply` twice on a FRESH authentik booted from the real `compose.yml`; then, on a second one, `main`'s blueprints first and these over them (`PREVIOUS_REF`, the tested commit's first parent - the main it sits on; a live fetch of `main` is newer than the tree under test on a re-run, and failed every open pull request on 2026-11-11 when main gained a blueprint whose `!Env` the older `compose.yml` did not pass) | every object can be BUILT, every `!Find`/`!Env` resolves, every rename runs, and the second apply reports `0 change(s)` |
+| CI, job `test-miconnect-blueprints`, when `infrastructure/authentik/` changes | two parallel matrix legs, each with its own budget (`fresh` 20 min, `upgraded` 35; the planted-fault self-test of the editor-reach check runs in `fresh` only): `apply` twice on a FRESH authentik booted from the real `compose.yml`; and, in the other leg, `main`'s blueprints first and these over them (`PREVIOUS_REF`, the tested commit's first parent - the main it sits on; a live fetch of `main` is newer than the tree under test on a re-run, and failed every open pull request on 2026-11-11 when main gained a blueprint whose `!Env` the older `compose.yml` did not pass) | every object can be BUILT, every `!Find`/`!Env` resolves, every rename runs, and the second apply reports `0 change(s)` |
 | a pre-release (`serve-dev.yml`) | `dry-run` against production | prints exactly what the stable will change, then rolls back. Dev signs in through the production MiConnect, so it must write nothing |
 | a stable release (`serve-prod.yml`, after the version step, before `prod-released` moves) | `apply` | one transaction: a failure leaves MiConnect as it was and fails the job |
 | the daily `drift` job (`scheduled.yml`) | `dry-run` of the RELEASED tree against production | a change is a hand edit the next stable would overwrite ([above](#the-daily-report-does-the-host-run-what-was-released-and-was-miconnect-edited-by-hand)) |
@@ -526,6 +526,8 @@ has taken it, and is deleted then - so the names older pages quote are kept here
 application slugs are in each client's issuer URL, a rename deferred with the OIDC issuer. The slug
 `password-login` is the test campaign's `PASSWORD_LOGIN_FLOW_SLUG`. Stage, prompt, policy, mapping and
 provider names are read by nothing outside authentik, and those are the ones renamed.
+
+**The login button and the dev tiles (2026-11-25).** The CAS source's display name is `CAS EMSE` (the button reads "Continue with <name>"); its slug `cas-emse` identifies it, so the rename updates in place and nothing is created. `canari-dev` and `canari-local` carry `meta_hide: true`: the tile leaves every person's application library, and NO policy binding is added, because a binding on an application also gates authorization through it and the test accounts, every pre-release build and the local estate sign in to those providers. `test-blueprints.sh` asserts both (`LOGIN-POLISH-OK`): the field, the library listing of an ordinary user (dev tiles absent, `canari` present) and a granted authorization on the dev provider. The script also derives its compose project name from the checkout path (override: `MICONNECT_TEST_PROJECT`), so two worktrees never share one test instance.
 
 ### The profile editor's one write path (1.8.1)
 

@@ -113,6 +113,7 @@
   <!-- One untitled section: the forward picker is one list (the shared rows, `ConversationPickList`). -->
   <ConversationPickList
     bind:query
+    {currentUserId}
     searchPlaceholder={m.chat_search_discussion_placeholder()}
     searchLabel={m.chat_search_discussion_label()}
     sections={[{ id: 'all', title: null, rows: candidates }]}
