@@ -67,11 +67,15 @@ export class ProfileEditNotLinkedError extends ConflictException {
   }
 }
 
-/** authentik did not answer, or answered something other than success. Nothing was written. */
+/**
+ * authentik did not answer, or answered something other than success. Nothing was written.
+ * `refusal` is the stable code of a refusal by MiConnect's write flow, null for anything else.
+ */
 export class ProfileEditUpstreamError extends HttpException {
   constructor(
     readonly upstreamStatus: number | null,
-    detail: string
+    detail: string,
+    readonly refusal: string | null = null
   ) {
     super(
       {

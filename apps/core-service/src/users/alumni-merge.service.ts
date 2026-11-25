@@ -391,7 +391,7 @@ export class AlumniMergeService {
 
     // RE-READ JUST BEFORE THE WRITE: a duplicate gone since the holdings were counted is refused here,
     // typed. The write names the mark's keys only, and MiConnect merges them into the stored bag
-    // under the account's row lock, so no other key is written and no concurrent edit is lost.
+    // under the account's row lock: no other key is written, and no edit by a writer taking that lock is lost.
     const fresh = await this.editor.userByUuid(duplicateUuid);
     if (!fresh) {
       this.logger.warn(

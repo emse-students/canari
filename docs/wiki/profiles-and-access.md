@@ -1091,8 +1091,8 @@ claim and calls the editor account.
   (`CORE_ERASURE_STATEMENTS`), as for `profile_changes`
   ([register](compliance/register-of-processing.md), M1).
 - **The editor role** (`80-profile-editor.yaml`): `view_user` and `view_usersourceconnection`, and
-  ONE write path, the flow `miconnect-profile-write` (since 1.8.1; the global `change_user` it
-  replaces reached every field of every account). Canari reads users and their links and writes a
+  ONE write path, the flow `miconnect-profile-write` (since 1.8.1; the broader write right it
+  replaces reached far beyond that use). Canari reads users and their links and writes a
   profile, a name and the mark through it ([authentik](infrastructure/authentik.md#the-profile-editors-one-write-path-181));
   no `delete_user`, the merge being authentik's own at sign-in.
   `test-profile-editor.py` USES the token: it writes a profile, a name, the mark and its removal

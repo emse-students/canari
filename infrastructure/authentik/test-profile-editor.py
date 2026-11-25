@@ -52,14 +52,16 @@ def call(method, path, body=None):
 
 def write(target, changes, token=TOKEN):
     """One write through the flow, as core-service sends it: a FRESH client (no session cookie, so
-    every call plans the flow anew), the token, the prompt. Returns the challenge authentik answered."""
+    every call plans the flow anew), the token, the prompt. Returns the challenge authentik answered.
+    `token=None` sends no Authorization header at all."""
     body = {
         "component": "ak-stage-prompt",
         "target": str(target),
         "changes": changes if isinstance(changes, str) else json.dumps(changes),
     }
+    headers = {} if token is None else {"HTTP_AUTHORIZATION": f"Bearer {token}"}
     answer = Client(HTTP_HOST="localhost").post(
-        WRITE_FLOW, data=json.dumps(body), content_type="application/json", HTTP_AUTHORIZATION=f"Bearer {token}"
+        WRITE_FLOW, data=json.dumps(body), content_type="application/json", **headers
     )
     if answer.status_code != 200:
         raise AssertionError(f"the write flow answered {answer.status_code}, not 200")
@@ -71,11 +73,11 @@ def written(challenge):
     return challenge.get("component") == "xak-flow-redirect"
 
 
-def refused(challenge):
-    """The prompt came back with the policy's refusal: nothing was written."""
+def refused(challenge, code="malformed"):
+    """The prompt came back with the policy's refusal, carrying this stable code: nothing was written."""
     errors = (challenge.get("response_errors") or {}).get("non_field_errors") or []
     return challenge.get("component") == "ak-stage-prompt" and any(
-        (e.get("string") or "").startswith("refused:") for e in errors
+        (e.get("string") or "").startswith(f"refused:{code}: ") for e in errors
     )
 
 
@@ -140,16 +142,32 @@ try:
         ({"attributes": {"keep": "changed"}}, "an attribute outside the allowlist"),
         ({"attributes": {"goauthentik.io/user/sources": []}}, "an authentik attribute"),
         ({"attributes": {"profile": "not an object"}}, "a profile that is not an object"),
-        ({"attributes": {"alumni_merge_into": str(probe.uuid)}}, "a merge mark on an account that is not alumni-"),
+        ({"attributes": {"profile": {"cursus": "ICM"}}}, "a profile whose cursus is not a list of objects"),
+        ({"attributes": {"profile": {"posts": [1]}}}, "a profile whose posts are not strings"),
+        ({"attributes": {"profile": {"campus": 3}}}, "a profile whose campus is not a string"),
+        ({"attributes": {"profile": {"version": "1"}}}, "a profile whose version is not an integer"),
+        ({"attributes": {"profile": {"cursus": [], "pad": "x" * 17000}}}, "a change longer than 16 KiB"),
         ({"name": ""}, "an empty name"),
+        ({"name": "x" * 202}, "a name of 202 characters"),
+        ({"name": "Probe" + chr(10) + "Injected"}, "a name holding a newline"),
         ({}, "an empty change"),
         ("not json", "a change that is not JSON"),
+        ('{"name": NaN}', "a change holding NaN"),
     ):
         check(refused(write(probe.uuid, changes)), f"the flow refuses {label}")
+    check(refused(write(probe.uuid, {"attributes": {"alumni_merge_into": str(probe.uuid)}}), "mark_not_alumni"), "the flow refuses a merge mark on an account that is not alumni-")
     check(refused(write("not-a-uuid", {"name": "x"})), "the flow refuses a target that is not a uuid")
-    check(refused(write("00000000-0000-4000-8000-000000000000", {"name": "x"})), "the flow refuses a uuid no account carries")
+    check(refused(write("00000000-0000-4000-8000-000000000000", {"name": "x"}), "no_account"), "the flow refuses a uuid no account carries")
     probe.refresh_from_db()
     check((probe.name, probe.attributes, probe.email, probe.is_active, probe.username) == before, "no refused write changed the account")
+    longest = f"{'a' * 100} {'b' * 100}"
+    check(written(write(probe.uuid, {"name": longest})), "the flow writes the longest name core-service sends (two names of 100 and a space)")
+    probe.refresh_from_db()
+    check(probe.name == longest, "the longest name was written")
+    anonymous = write(probe.uuid, {"name": "Anonymous"}, token=None)
+    check(anonymous.get("component") == "ak-stage-access-denied", f"a request with no token may NOT run the write flow (got {anonymous.get('component')})")
+    probe.refresh_from_db()
+    check(probe.name == longest, "the anonymous request wrote nothing")
 
     created = call("post", "/api/v3/core/users/", {"username": "miconnect-editor-intruder", "name": "x"})
     check(created.status_code == 403, f"the editor may NOT create a user (got {created.status_code})")
@@ -178,14 +196,14 @@ outsider_token = Token.objects.create(
     identifier="miconnect-editor-reach-token", user=reach, intent=TokenIntents.INTENT_API, expiring=False
 )
 try:
-    check(refused(write(admin.uuid, {"attributes": {"profile": {"version": 1, "campus": "x"}}})), "the flow refuses a superuser account")
+    check(refused(write(admin.uuid, {"attributes": {"profile": {"version": 1, "campus": "x"}}}), "superuser"), "the flow refuses a superuser account")
     admin.refresh_from_db()
     check(admin.attributes == {"profile": {"version": 1}}, "the superuser account is untouched")
-    check(refused(write(editor.uuid, {"name": "Hijacked"})), "the flow refuses a service account (the editor itself)")
+    check(refused(write(editor.uuid, {"name": "Hijacked"}), "not_a_person"), "the flow refuses a service account (the editor itself)")
     editor.refresh_from_db()
     check(editor.name == "Canari - profile editor", "the editor account is untouched")
     outsider = write(reach.uuid, {"name": "Self Renamed"}, token=outsider_token.key)
-    check(outsider.get("component") == "ak-stage-access-denied", f"another account's token may NOT run the write flow (got {outsider.get('component')})")
+    check(outsider.get("component") == "ak-stage-access-denied", f"the token of an account in no group may NOT run the write flow (got {outsider.get('component')})")
     reach.refresh_from_db()
     check(reach.name == "Reach Probe", "the outsider wrote nothing")
 

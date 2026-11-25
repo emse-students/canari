@@ -121,38 +121,54 @@ if ! bash "$here/editor-reach.sh" "$here/blueprints/80-profile-editor.yaml" "$wo
   echo "::error::the profile editor's reach is not what its blueprint grants - read the FINDING lines above"
   exit 1
 fi
-# A CHECK NEVER SEEN RED PROVES NOTHING: a grant the applier would not revoke (an object permission
-# on one user) and a write through another path (an Event recorded as the account's), each planted
-# and then removed, must each turn it red.
-for plant in grant write; do
+# A CHECK NEVER SEEN RED PROVES NOTHING. Each of these, planted and then removed, must turn it red: a
+# grant the applier would not revoke (an object permission on one user), a write through another path
+# (a deletion recorded as the account's), a PATCH of a user made after the older path closed (a write
+# whose path was once expected, past its cutoff), a second token for the account, and a second
+# policy binding on the write flow.
+for plant in grant write patch token binding; do
   run_ak_shell "$worker" >/dev/null 2>&1 <<PY
-from authentik.core.models import User
+from authentik.core.models import Token, TokenIntents, User
 from authentik.events.models import Event
+from authentik.flows.models import Flow
+from authentik.policies.models import PolicyBinding
 editor = User.objects.get(username="miconnect-canari-editor")
+other = User.objects.exclude(pk=editor.pk).exclude(type="internal_service_account").first()
+def planted(method, path, action):
+    Event.objects.create(action=action, app="test", user={"pk": editor.pk, "username": editor.username}, context={"model": {"app": "authentik_core", "model_name": "user"}, "http_request": {"path": path, "method": method}}, client_ip="127.0.0.1")
 if "$plant" == "grant":
-    editor.get_managed_role(create=True).assign_perms("authentik_core.change_user", User.objects.exclude(pk=editor.pk).first())
+    editor.get_managed_role(create=True).assign_perms("authentik_core.change_user", other)
+elif "$plant" == "write":
+    planted("DELETE", "/api/v3/core/users/1/", "model_deleted")
+elif "$plant" == "patch":
+    planted("PATCH", "/api/v3/core/users/1/", "model_updated")
+elif "$plant" == "token":
+    Token.objects.create(identifier="editor-reach-planted", user=editor, intent=TokenIntents.INTENT_API, expiring=False)
 else:
-    Event.objects.create(action="model_deleted", app="test", user={"pk": editor.pk, "username": editor.username}, context={"model": {"app": "authentik_core", "model_name": "user"}, "http_request": {"path": "/api/v3/core/users/1/", "method": "DELETE"}}, client_ip="127.0.0.1")
+    PolicyBinding.objects.create(target=Flow.objects.get(slug="miconnect-profile-write"), user=other, order=99)
 PY
   if bash "$here/editor-reach.sh" "$here/blueprints/80-profile-editor.yaml" "$worker" >/dev/null 2>&1; then
     echo "::error::editor-reach.sh did not report a planted $plant - the daily check would miss one"
     exit 1
   fi
   run_ak_shell "$worker" >/dev/null 2>&1 <<PY
-from authentik.core.models import User
+from authentik.core.models import Token, User
 from authentik.events.models import Event
+from authentik.policies.models import PolicyBinding
 editor = User.objects.get(username="miconnect-canari-editor")
 role = editor.get_managed_role()
 if role is not None:
     role.delete()
 Event.objects.filter(app="test", user__username=editor.username).delete()
+Token.objects.filter(identifier="editor-reach-planted").delete()
+PolicyBinding.objects.filter(target__flow__slug="miconnect-profile-write", order=99).delete()
 PY
 done
 if ! bash "$here/editor-reach.sh" "$here/blueprints/80-profile-editor.yaml" "$worker" >/dev/null 2>&1; then
-  echo "::error::editor-reach.sh stays red after the planted grant and write were removed"
+  echo "::error::editor-reach.sh stays red after every planted fault was removed"
   exit 1
 fi
-echo "the profile editor holds exactly its grant, and the check sees a planted grant and a planted write"
+echo "the profile editor holds exactly its grant, and the check sees each planted fault"
 
 # THE HANDOFF READER, USED. What core-service's mint reads (a user by uuid, the three handoff
 # applications, their bindings, the default-access flag) and nothing else: no other application, no

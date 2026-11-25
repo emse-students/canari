@@ -529,43 +529,57 @@ provider names are read by nothing outside authentik, and those are the ones ren
 
 ### The profile editor's one write path (1.8.1)
 
-**Why** (a P1 of 1.8.1): the editor role held the GLOBAL
-`change_user`, which reaches every field of every account - far more than the profile corrections and
-merge marks Canari holds the token for. authentik has no field-level or per-account permission, so the
-narrowing is a WRITE PATH rather than a smaller permission.
+**Why** (a P1 of 1.8.1): before 1.8.1 the editor role held a broader write right on users than the
+profile corrections and merge marks Canari holds the token for. authentik has no field-level or
+per-account permission, so the narrowing is a WRITE PATH rather than a smaller permission.
 
-**What.** `80-profile-editor.yaml` drops `change_user` (the applier revokes it on production at the
-1.8.1 stable, `REVOKED` in its output) and builds the flow `miconnect-profile-write`
-(`stage_configuration`, `require_authenticated`, bound to the group `miconnect-profile-editors` only):
-one prompt stage with two text fields, `target` (an account uuid) and `changes` (a JSON object), whose
-validation policy `miconnect-profile-write` WRITES. core-service sends ONE `POST
-/api/v3/flows/executor/miconnect-profile-write/?query=` with the token and the prompt, no session
-(`MiconnectEditorClient.writeUser`): with no plan in the request, the executor plans the flow and hands
-the POST to the prompt stage in the same request. The answer is a challenge: `xak-flow-redirect` is
-the write done; the prompt back with `response_errors` is a refusal (each message starts
-`refused:`); `ak-stage-access-denied` is a caller the flow does not admit. Anything but the first is
-`ProfileEditUpstreamError`, logged at error with what MiConnect said.
+**What.** `80-profile-editor.yaml` leaves the role no global write permission on users (the applier
+revokes the old one at the 1.8.1 stable, a `REVOKED` line in its output and an authentik Event
+`custom_role_permission_revoked` in the same transaction) and builds the flow `miconnect-profile-write`
+(`stage_configuration`, `require_authenticated`, policy engine mode `all`, bound to the group
+`miconnect-profile-editors` only): one prompt stage with two text fields, `target` (an account uuid)
+and `changes` (a JSON object), whose validation policy `miconnect-profile-write` WRITES. core-service
+sends ONE `POST /api/v3/flows/executor/miconnect-profile-write/?query=` with the token and the prompt,
+no session (`MiconnectEditorClient.writeUser`): with no plan in the request, the executor plans the
+flow and hands the POST to the prompt stage in the same request. The answer is a challenge:
+`xak-flow-redirect` is the write done; the prompt back with `response_errors` is a refusal;
+`ak-stage-access-denied` is a caller the flow does not admit (no token, or an account outside the
+group). Anything but the first is `ProfileEditUpstreamError`.
 
-**The allowlist, decided inside one transaction under the target's row lock**: `changes` names only
-`name` (a non-empty string) and `attributes`, and `attributes` only `profile` (an object) and the
-merge mark's three keys (a string, or `null` to remove the key); the target is exactly one account,
-of type `internal` or `external`, not a superuser (no superuser group on its ancestry); a mark key is
-written on an `alumni-` account only; the caller is the editor service account. The named keys are
-MERGED into the stored attributes, so nothing else is written - which also closes the read-modify-write
-window the PATCH had (it replaced the whole bag). A refusal writes nothing and is logged at warning
-(`[PROFILE_WRITE]`); a write is logged at info with the account pk and the keys written, never the values.
+**Refusals carry a stable code**, `refused:<code>: <reason>`, which core-service types
+(`writeRefusalOf`, the error's `refusal`) and never reads from the prose: `malformed` and
+`not_editor` are faults (logged at error), `no_account`, `not_a_person`, `superuser` and
+`mark_not_alumni` are answers the account's own state explains (logged at warning).
+`profile-write.contract.spec.ts` holds the codes and the name limit of both sides together.
+
+**The allowlist, decided inside one transaction under the target's row lock**: `changes` is at most
+16 KiB of strict JSON (no `NaN` or `Infinity`) and names only `name` (one line, no control character,
+at most 201 characters - two names of `NAME_MAX` = 100 and a space) and `attributes`; `attributes`
+names only `profile` (an object whose known keys keep the types every reader relies on: `campus` a
+string or null, `cursus` a list of objects, `posts` a list of strings, the names strings, `version` an
+integer; unknown keys of a future version pass) and the merge mark's three keys (a string, or `null`
+to remove the key); the target is exactly one account, of type `internal` or `external`, not a
+superuser (no superuser group on its ancestry); a mark key is written on an `alumni-` account only;
+the caller is the editor service account. The named keys are MERGED into the stored attributes, so
+nothing else is written, and an edit by any other writer that takes the same row lock (the Alumni
+merge policy does) is not lost; a writer that saves without it is not covered. A refusal writes
+nothing and is logged at warning (`[PROFILE_WRITE]`); a write at info with the account pk and the keys
+written, never the values.
 
 **Detection** (`editor-reach.sh`, daily in the `drift` job with the RELEASED file, and in CI after the
 token test): the account is the service account, not a superuser, in `miconnect-profile-editors`
-alone; every role reaching it holds no global permission beyond the file's list and no object
-permission at all (a hand grant the applier does not revoke); and every authentik Event the account
-authored that records a write is a `model_updated` of a user through the write flow, or through
-`PATCH /api/v3/core/users/<pk>/` - the path `change_user` served until 1.8.1, which the token is
-refused since. Anything else is a `FINDING` (event id, action, model kind, path; never a value) until
-its id is entered in `editor-reach-known.txt` with what it was. **What the log cannot say**: which
-fields a PATCH changed - authentik records the diff only under its enterprise licence - so a PATCH from
-before 1.8.1 is accepted on its path. CI proves the check red on a planted object permission and a
-planted write, and green once they are removed.
+alone, holding exactly its one token; every role reaching it holds no global permission beyond the
+file's list and no object permission at all; the write flow is bound exactly as declared (one group
+binding, one stage, one validation policy, mode `all`); and every authentik Event the account authored
+that records a write is a `model_updated` of a user through the write flow, or through `PATCH
+/api/v3/core/users/<pk>/` - the older path - only while the role still holds the user-change
+permission or when the Event predates the first `custom_role_permission_revoked` Event for it: a
+cutoff read from MiConnect's own durable state, never a clock. Anything else is a `FINDING` (event
+id, action, model kind, path; never a value) until its id is entered in `editor-reach-known.txt` with
+what it was. **What the log cannot say**: which fields an older PATCH changed - authentik records the
+diff only under its enterprise licence. CI proves the check red on a planted object permission, a
+planted deletion, a planted PATCH past the cutoff, a second token and a second binding on the flow,
+and green once they are removed.
 
 **The rollout window, measured from the deploy order**: `serve-prod.yml` deploys the estate (the new
 core-service, writing through the flow) BEFORE it applies the blueprints (which create the flow). For
@@ -573,6 +587,12 @@ the minutes between the two steps of the 1.8.1 stable, an admin's profile correc
 answers `PROFILE_EDIT_UPSTREAM` (the executor's 404), nothing written, and succeeds once retried after
 the apply. The other order would fail the OLD core-service's PATCH instead; no order removes the window
 without a release in between, and the action is rare and admin-only.
+
+**A rollback** of core-service to a release before 1.8.1 leaves MiConnect narrowed (a rollback does
+not re-apply older blueprints onto it): the older core-service PATCHes and is refused `403`, so profile
+corrections and "Rattacher" answer `PROFILE_EDIT_UPSTREAM`, nothing written, until core-service rolls
+forward again. Re-granting the old permission by hand would restore them, and would be reported by the
+daily blueprint dry run and by `editor-reach.sh`.
 
 ## The Alumni SAML source: enabled, not promoted, measured (2026-11-23)
 

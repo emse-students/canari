@@ -70,13 +70,14 @@ describe('validateProfileEdit', () => {
 describe('ProfileEditService', () => {
   const env = { ...process.env };
   let errorLog: jest.SpyInstance;
+  let warnLog: jest.SpyInstance;
 
   beforeEach(() => {
     delete process.env.DEPLOY_BUILD;
     process.env.AUTHENTIK_BASE_URL = 'https://miconnect.example/';
     process.env.MICONNECT_EDITOR_TOKEN = 'editor-token';
     jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
-    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    warnLog = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     errorLog = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
   });
   afterEach(() => {
@@ -272,24 +273,42 @@ describe('ProfileEditService', () => {
     expect(manager.save).not.toHaveBeenCalled();
   });
 
-  it('a refusal by the write flow is an upstream error, logged with what MiConnect said', async () => {
-    const { service, manager, userRows, fetchMock } = make();
-    fetchMock.mockImplementation(async (_url, init) =>
+  function refusedWith(message: string) {
+    const made = make();
+    made.fetchMock.mockImplementation(async (_url, init) =>
       (init?.method ?? 'GET') === 'GET'
         ? Response.json({ results: [{ pk: 42, name: 'x', attributes: {} }] })
         : Response.json({
             component: 'ak-stage-prompt',
-            response_errors: {
-              non_field_errors: [{ string: 'refused: the target is a superuser' }],
-            },
+            response_errors: { non_field_errors: [{ string: message }] },
           })
+    );
+    return made;
+  }
+
+  it('a refusal the account explains is typed by its code and logged below error', async () => {
+    const { service, manager, userRows } = refusedWith(
+      'refused:superuser: the target is a superuser'
     );
     const attempt = service.applyEdit('u-target', 'u-admin', EDIT);
     await expect(attempt).rejects.toBeInstanceOf(ProfileEditUpstreamError);
-    await expect(attempt).rejects.toMatchObject({ upstreamStatus: null, status: 502 });
-    expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('the target is a superuser'));
+    await expect(attempt).rejects.toMatchObject({
+      upstreamStatus: null,
+      status: 502,
+      refusal: 'superuser',
+    });
+    expect(warnLog).toHaveBeenCalledWith(expect.stringContaining('the target is a superuser'));
+    expect(errorLog).not.toHaveBeenCalled();
     expect(manager.save).not.toHaveBeenCalled();
     expect(userRows.update).not.toHaveBeenCalled();
+  });
+
+  it('a malformed write is a fault: typed, and logged at error', async () => {
+    const { service } = refusedWith('refused:malformed: attribute(s) outside the allowlist');
+    await expect(service.applyEdit('u-target', 'u-admin', EDIT)).rejects.toMatchObject({
+      refusal: 'malformed',
+    });
+    expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('outside the allowlist'));
   });
 
   it('a caller the write flow does not admit is an upstream error', async () => {

@@ -37,7 +37,7 @@ output="$({
   echo "KNOWN = [${known}]"
   cat "$here/editor-reach.py"
 } | run_ak_shell "$container" 2>&1)" || true
-printf '%s\n' "$output" | grep -E '^(FINDING|ERROR|EDITOR-REACH-OK|the blueprint|[0-9]+ (write event|finding))' || true
+printf '%s\n' "$output" | grep -E '^(FINDING|ERROR|EDITOR-REACH-OK|the blueprint|the older PATCH path|[0-9]+ (write event|finding))' || true
 if grep -qx 'EDITOR-REACH-OK' <<<"$output"; then
   exit 0
 fi

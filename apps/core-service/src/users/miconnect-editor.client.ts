@@ -49,6 +49,45 @@ export interface MiconnectUserWrite {
   attributes?: Record<string, unknown>;
 }
 
+/**
+ * The stable codes MiConnect's write policy refuses with (`refused:<code>: <reason>`,
+ * 80-profile-editor.yaml). `malformed` and `not_editor` mean this client or the deployment is wrong.
+ */
+export type WriteRefusal =
+  | 'malformed'
+  | 'not_editor'
+  | 'no_account'
+  | 'not_a_person'
+  | 'superuser'
+  | 'mark_not_alumni';
+
+export const WRITE_REFUSALS: readonly WriteRefusal[] = [
+  'malformed',
+  'not_editor',
+  'no_account',
+  'not_a_person',
+  'superuser',
+  'mark_not_alumni',
+];
+
+/** The refusals the target account's own state explains: an answer, not a fault. */
+export const EXPECTED_WRITE_REFUSALS: ReadonlySet<WriteRefusal> = new Set([
+  'no_account',
+  'not_a_person',
+  'superuser',
+  'mark_not_alumni',
+]);
+
+/** The stable code of the first `refused:<code>:` message, or null when none carries one. */
+export function writeRefusalOf(messages: string[]): WriteRefusal | null {
+  for (const message of messages) {
+    const code = /^refused:([a-z_]+): /.exec(message)?.[1];
+    const known = WRITE_REFUSALS.find((r) => r === code);
+    if (known) return known;
+  }
+  return null;
+}
+
 /** The part of a flow executor's answer the write reads: which challenge, and the prompt's errors. */
 interface FlowChallenge {
   component?: string;
@@ -113,13 +152,16 @@ export class MiconnectEditorClient {
    * Writes `changes` on the account with this uuid, through the ONE write path the token has: the
    * flow `miconnect-profile-write` (80-profile-editor.yaml), one POST to authentik's flow executor
    * carrying the prompt. MiConnect MERGES the named attribute keys into the stored ones under the
-   * account's row lock (`null` removes a key), so only what is named here is written and no
-   * read-modify-write window exists.
+   * account's row lock (`null` removes a key), so only what is named here is written, and no edit by
+   * another writer taking that lock (the Alumni merge policy) is lost.
    *
    * MiConnect refuses - nothing written - a field other than `name` and `attributes`, an attribute
    * other than `profile` and the merge mark's three keys, a mark on an account that is not `alumni-`,
    * a service account and a superuser. A refusal, an access-denied answer or anything but the flow's
-   * end is a {@link ProfileEditUpstreamError}, logged at error with what MiConnect said.
+   * end is a {@link ProfileEditUpstreamError} carrying the refusal's stable code (`refusal`, read
+   * from the `refused:<code>:` prefix the policy writes, never from its prose). A refusal the
+   * account's state explains ({@link EXPECTED_WRITE_REFUSALS}) is logged at warning; anything else
+   * is a fault on one side or the other, logged at error.
    */
   async writeUser(uuid: string, changes: MiconnectUserWrite): Promise<void> {
     const { baseUrl, token } = this.assertAvailable();
@@ -138,15 +180,19 @@ export class MiconnectEditorClient {
     }
     const said = Object.values(answer.response_errors ?? {})
       .flat()
-      .map((e) => e.string)
-      .join(' | ');
-    this.logger.error(
+      .map((e) => e.string);
+    const refusal = writeRefusalOf(said);
+    const line =
       `[PROFILE_EDIT] MiConnect's write flow did not write ${uuid.slice(0, 8)}: ` +
-        `${answer.component ?? 'no component'}${said ? ` (${said})` : ''}`
-    );
+      `${answer.component ?? 'no component'}${said.length ? ` (${said.join(' | ')})` : ''}`;
+    if (refusal && EXPECTED_WRITE_REFUSALS.has(refusal)) this.logger.warn(line);
+    else this.logger.error(line);
     throw new ProfileEditUpstreamError(
       null,
-      `write flow answered ${answer.component ?? 'nothing'}`
+      refusal
+        ? `write refused: ${refusal}`
+        : `write flow answered ${answer.component ?? 'nothing'}`,
+      refusal
     );
   }
 

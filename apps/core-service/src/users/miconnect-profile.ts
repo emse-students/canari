@@ -211,7 +211,8 @@ export const FORMATIONS = ['ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre'] as const;
 /** The oldest and newest entry year an edit accepts - a typo guard, not a school rule. */
 const PROMO_MIN = 1900;
 const PROMO_MAX = 2100;
-const NAME_MAX = 100;
+/** The longest first or last name an edit accepts; MiConnect's write flow allows two and a space. */
+export const NAME_MAX = 100;
 
 /**
  * The version-1 profile as authentik stores it in `attributes.profile` and as an edit records it
