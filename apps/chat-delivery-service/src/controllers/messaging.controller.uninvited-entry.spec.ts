@@ -360,6 +360,25 @@ describe('MessagingController - POST mls/uninvited-entry', () => {
     );
   });
 
+  it("pairs an entrant whose header carries its id in another case with a member's lowercase report", async () => {
+    await controller.reportUninvitedEntry('alice', 'web-alice-1', {
+      groupId: 'g-1234',
+      entrant: 'bob:dev2',
+      epoch: 7,
+      kind: 'new-person',
+      watchedFromEpoch: 2,
+    });
+    await controller.reportUninvitedEntry(' BoB ', 'dev2', {
+      groupId: 'g-1234',
+      epoch: 7,
+      kind: 'entrant-no-device-row',
+    });
+
+    expect(table).toEqual(
+      new Set(['g-1234|bob:dev2|7|new-person', 'g-1234|bob:dev2|7|entrant-no-device-row'])
+    );
+  });
+
   it('takes each of the four entrant kinds and no other entrant word', async () => {
     for (const [i, kind] of [
       'entrant-direct-peer',

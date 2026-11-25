@@ -622,6 +622,27 @@ describe('requestReAdd', () => {
         );
       });
 
+      it("reports the entrant's own word when the D1 self-join lands on a tree with no leaf of the account", async () => {
+        // The account's other leaf went between the two bases: the self-join is then an entry no
+        // member made, and its members write `new-person` - so the entrant must say so too, or the
+        // admission gate would read zero on a legitimate producer (review of #4078).
+        const sent = vi.fn().mockResolvedValue(undefined);
+        resetReportedUninvitedEntries();
+        setUninvitedEntryReporter(sent);
+        try {
+          const deps = furtherThen(
+            { status: 'stored', selfJoin: true },
+            { joined: true, enteredWithNoLeafAtEpoch: 11 }
+          );
+          await requestReAdd('g1', deps);
+          expect(sent).toHaveBeenCalledWith(
+            expect.objectContaining({ kind: 'entrant-unhonoured-seat', groupId: 'g1', epoch: 11 })
+          );
+        } finally {
+          setUninvitedEntryReporter(null);
+        }
+      });
+
       it('does not join when the ask was forwarded: the member online is the door', async () => {
         const deps = furtherThen({ status: 'forwarded', target: 'user-b:web-b' }, { joined: true });
         await requestReAdd('g1', deps);

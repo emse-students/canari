@@ -8524,11 +8524,15 @@ export abstract class BaseMlsService implements IMlsService {
         //
         // THE SAME READ NAMES AN ENTRY NO MEMBER MADE (slice 1 of the admission fix-forward,
         // docs/wiki/protocols/admission-fix-forward.md): a tree holding no leaf of this account is the
-        // commit every member's verdict calls `Uninvited`. Nothing changes about the join - the
-        // standing travels to the caller with the accepted outcome, which reports it with what only
-        // the caller knows (the conversation's kind, the seat it read) as the entrant's own word.
+        // commit every member's verdict calls `Uninvited`. It is read on EVERY conversation join,
+        // whatever the caller asked - the D1 further-device self-join included, whose fresh base may
+        // no longer hold the account's other leaf - so no call site can forget it, and a caller that
+        // shares another's flight gets it too. A key group is exempt: an external commit is how every
+        // member enters one. Nothing changes about the join - the standing travels to the caller with
+        // the accepted outcome, which reports it with what only the caller knows (the conversation's
+        // kind, the seat it read) as the entrant's own word.
         let enteringWithNoLeaf = false;
-        if (opts.asAFurtherDevice === 'ask') {
+        if (opts.asAFurtherDevice === 'ask' || !this.isDistributionGroup(groupId)) {
           let standing: ExternalJoinStanding;
           try {
             standing = await this.externalJoinStandingIn(fromBase64(gi.groupInfo));
@@ -8538,7 +8542,7 @@ export abstract class BaseMlsService implements IMlsService {
             );
             return { joined: false, reason: 'build_failed' };
           }
-          if (standing === 'further-device') {
+          if (standing === 'further-device' && opts.asAFurtherDevice === 'ask') {
             console.log(
               `[MLS] externalJoin ${short}... the tree holds this account's other device and not this one - not built, a member's Add is its door`
             );
@@ -8546,7 +8550,7 @@ export abstract class BaseMlsService implements IMlsService {
           }
           if (standing === 'no-leaf-of-user') {
             console.log(
-              `[MLS] externalJoin ${short}... the served tree holds no leaf of this account - an entry no member made; joined as before and reported by the caller (admission fix-forward, slice 1)`
+              `[MLS] externalJoin ${short}... the served tree holds no leaf of this account - an entry no member made; will join as before, reported by the caller if accepted (admission fix-forward, slice 1)`
             );
             enteringWithNoLeaf = true;
           }

@@ -429,9 +429,11 @@ export class MessagingController {
         : UNINVITED_ENTRY_KINDS.includes(body.kind as string)
           ? (body.kind as string)
           : 'invalid';
-    // An entrant's own word names the caller, whatever the body says.
+    // An entrant's own word names the caller, whatever the body says - in the canonical form
+    // (`canonicalDeviceKey`: the user half trimmed and lowercased) a member's report of the same
+    // entry is keyed by, so the two rows pair whatever case the header carried.
     const entrant = ENTRANT_UNINVITED_ENTRY_KINDS.includes(kind)
-      ? reporter
+      ? sanitizeDevicePairLogValue(authUserId.trim().toLowerCase(), reporterDeviceId)
       : sanitizeLeafLogValue(body.entrant);
     // `none` is the device's own answer (it holds no record of the group); `unstated` is a build
     // that does not send it; `-` is a kind the device decides without its record.

@@ -41,21 +41,33 @@ your conversation without a member letting them in). Concretely, all of these ho
   `no-device-row`), and in `mls-core` by the three legitimate producers of `admission_policy.rs`
   (each asserting today that the entrant's standing is `NoLeafOfUser`).
 - **The measurement** (read on production, read-only): once `minClientVersion` is the emission build
-  and that floor has served **14 days**, the entrant's own word for a group entry is ZERO:
+  and that floor has served **14 days**, BOTH words are zero for a group conversation since the
+  floor was raised:
 
   ```sql
+  -- (a) The entrant's own word: no client at the floor emitted a group entry.
   SELECT kind, count(*) FROM uninvited_entries
   WHERE kind IN ('entrant-unhonoured-seat', 'entrant-not-pending', 'entrant-no-device-row')
     AND "firstSeenAt" >= '<the day the floor was raised>'
   GROUP BY kind;
+
+  -- (b) The members' word: no `new-person` entry of a group conversation, once the pre-038 link
+  -- seats (their pair list, matched on group and entrant user) are subtracted.
+  SELECT count(*) FROM uninvited_entries u
+  JOIN dm_groups g ON g.id = u."groupId" AND g."isGroup"
+  WHERE u.kind = 'new-person' AND u."firstSeenAt" >= '<the day the floor was raised>';
   ```
 
-  Zero rows is the gate. Any row is a legitimate path the emission side missed: the refusal stays
-  disarmed, and the row's kind names the seat reading to close next. `entrant-direct-peer` is not in
-  the gate - a 1:1's own peer is never refused.
+  (a) alone is NOT the gate: an entrant's report is at-most-once per session and never retried, so
+  a lost report reads as zero. (b) is what a lost report cannot hide - every member device reports
+  the same entry - and (a) is what names the path when (b) is not zero. Zero rows on both is the
+  gate. A row of (a) is a legitimate path the emission side missed (its kind names the seat reading
+  to close next); a row of (b) not explained by (a) or by the pre-038 list is either a client that is
+  not ours or a legitimate path neither word names - the refusal stays disarmed until it is read.
+  `entrant-direct-peer` and `direct-peer` are not in the gate - a 1:1's own peer is never refused.
 
-Every `new-person` row a MEMBER writes after that is then, by construction, an entry no client at the
-floor made - the population the refusal exists for - except the pre-038 link seats, which are
+Every `new-person` row a MEMBER writes after the re-arm is then, by construction, an entry no client
+at the floor made - the population the refusal exists for - except the pre-038 link seats, which are
 subtracted by their pair list ([mls-protocol](mls-protocol.md#the-count-is-a-table-uninvited_entries-migration-053-2026-11-17)).
 
 ## The slices, in order
@@ -94,8 +106,13 @@ already reads as "the tree could not be read" and builds nothing. This is also t
 decides on.
 
 **Nothing about the join changes.** `externalJoin` under `asAFurtherDevice: 'ask'` (the conversation
-door) still refuses a further device and still joins on the other two. A join ACCEPTED on
-`no-leaf-of-user` returns `{ joined: true, enteredWithNoLeafAtEpoch }`. `requestReAdd`, the only
+door) still refuses a further device and still joins on the other two. The standing is read on EVERY
+conversation join, whatever the caller asked (a key group is exempt: an external commit is how every
+member enters one) - so no call site can forget it, and a caller that shares another's flight gets
+it. That covers the **D1 further-device self-join** (`requestReAdd` after a `stored` answer,
+`welcomeOwed: 'ask'`): the fresh base it builds on may no longer hold the account's other leaf,
+and then it IS an entry no member made (review of #4078). A join ACCEPTED on `no-leaf-of-user`
+returns `{ joined: true, enteredWithNoLeafAtEpoch }`. `requestReAdd`, the only
 caller that knows the conversation's kind and the seat reading that opened the door, reports it once
 per session (`reportOwnUninvitedEntry`, `uninvitedEntry.ts`) under the entrant's own kind:
 
@@ -138,6 +155,13 @@ GROUP BY 1, 2 ORDER BY 1, 2;
 ```
 
 Counts only go in the repository; the pairs stay on the server.
+
+**A modified client can INFLATE the entrant's word**, never forge another device's: the server takes
+the entrant from the authenticated caller, the reporter must be a member of the group, the route is
+throttled per user, and a row lives 90 days. So (a) can be pushed UP, by a member about itself, and
+the reading reads it that way: an `entrant-*` row with no member row on the same `(group, entrant,
+epoch)` is a claim nobody saw - counted apart, never taken as a legitimate path; only a pair is.
+Inflation can only hold the gate shut, never open it.
 
 **What it cannot see, said so nobody reads it as a proof.** A report is at-most-once per app session
 and never retried (the members' rule), so an unpaired member row is "not reported", never "not

@@ -91,6 +91,10 @@ function makeCtx(moveEpochDuringExport: boolean) {
     runUnderMlsLock: <T>(fn: () => Promise<T>) => fn(),
     getLocalGroups: vi.fn().mockReturnValue([]),
     createGroup: vi.fn().mockResolvedValue(undefined),
+    // The door read off the served tree: a conversation join reads it on every attempt.
+    externalJoinStandingIn: vi.fn().mockResolvedValue('own-leaf'),
+    isDistributionGroup: (BaseMlsService.prototype as unknown as Record<string, unknown>)
+      .isDistributionGroup,
     joinByExternalCommit: vi.fn().mockImplementation(async () => {
       // The external commit is applied to the returned instance at once: the epoch moves here.
       tree.epoch += 1;
