@@ -63,19 +63,6 @@ static void CanariEnsureNativeCacheKey(void) {
   }
 }
 
-/// Keeps the two native caches - `graine_seeds.json` and the push cache - out of every backup, in
-/// the app's data directory and in the App Group container the notification extension reads.
-/// Since 1.7.2 the Rust launch pass (`backup_exclusion.rs`) excludes those DIRECTORIES whole, with
-/// WebKit's stores and the preferences, so nothing local travels to another phone; this per-file
-/// pass is then redundant and is deleted once the iPhone reading proves the directory flag holds
-/// (mobile.md, "Nothing local travels to another phone"). Per file, so every writer re-applies it
-/// after its atomic write; this pass at bootstrap and activation covers a file an older build
-/// wrote. Android excludes its data domain (`data_extraction_rules.xml`).
-static void CanariExcludeNativeCachesFromBackup(void) {
-  CanariExcludeNativeCacheFilesFromBackup(CanariTauriDataDir());
-  CanariExcludeNativeCacheFilesFromBackup(CanariAppGroupPath());
-}
-
 static void CanariProcessPendingPushSecret(void) {
   NSString *secret = CanariRetrievePushSecret();
   if (secret != nil) {
@@ -2125,10 +2112,9 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   CanariPublishDynamicType();
   CanariProcessPendingPushSecret();
   CanariCheckKeystoreHealth();
-  // Before the frontend's first take of the push cache: the key that seals it, and the backup
-  // exclusion of where it lives. Both idempotent; the bootstrap ran them already when it could.
+  // Before the frontend's first take of the push cache: the key that seals it. Idempotent; the
+  // bootstrap ran it already when it could.
   CanariEnsureNativeCacheKey();
-  CanariExcludeNativeCachesFromBackup();
   CanariPushCancelMessageNotifications();
   // Pick up whatever the NSE decrypted while we were killed or backgrounded. It writes into the
   // App Group because an extension cannot reach the app's data container; this is the hop that
@@ -2369,10 +2355,9 @@ void canari_ios_bootstrap(void) {
               }];
   CanariProcessPendingPushSecret();
   CanariCheckKeystoreHealth();
-  // The native cache key before any push can be handled by this process, and the backup exclusion
-  // of where the caches live (see each; the activation runs them again).
+  // The native cache key before any push can be handled by this process (the activation runs it
+  // again).
   CanariEnsureNativeCacheKey();
-  CanariExcludeNativeCachesFromBackup();
   // Cold start: drain before the WebView exists, so the very first take_fcm_cache of
   // this launch already sees the pushes handled while the app was killed.
   CanariDrainAppGroupFcmCache();
