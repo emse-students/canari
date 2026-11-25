@@ -17,14 +17,15 @@ travel of ~250-300 px overshot by ~160-210 px, the falls measured. The image's `
 transforms off, the engine clamped back to the layout end, and the pane read that clamp as a fall
 below the last placed value. Only a travel over ~206 px crosses the 120 px slack, hence intermittent
 and never with text or Reduce Motion. Hypotheses (a), (b) and (c) below are retired. **Fix**
-(`pinThreadToEnd`, one writer for a reader at the end, the write in the trace): see
+(`pinThreadToEnd`: every pane pin takes the glide off, writes the layout end and replays it; the
+write is in the trace): see
 [chat](../frontend/modules/chat.md#the-cause-a-second-writer-pinned-inside-the-glide-2026-11-25).
 
 **Reading owed (iPhone 12, Reduce Motion OFF, the first alpha carrying the fix):** with a DM open and
 pinned, have an image sent to it three times and export the in-app log: no `left the bottom` line, no
 arrow flash. The entry closes on that reading.
 
-**The trace stays** (below), now with the pins made outside `follow()` merged in time order.
+**The trace stays** (below), now with the pins made outside `follow()` merged in recording order.
 
 **The hypotheses before the trace (retired).** An image arrival gets a second `follow()` pass (the child `ResizeObserver`,
 cause `box`, as the image takes its size) inside the running glide: `suspend` cancels the transforms,

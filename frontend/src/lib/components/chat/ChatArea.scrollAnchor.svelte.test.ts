@@ -701,11 +701,11 @@ describe('ChatArea at the end of a glide', () => {
   }
 
   /**
-   * ONE WRITER FOR A READER AT THE END (iPhone 12, 2026-11-25, chat.md): the growth observer pins the
+   * EVERY PIN LANDS ON THE LAYOUT END (iPhone 12, 2026-11-25, chat.md): the growth observer pins the
    * end and starts the glide in the mutation's task; the new-message effect's own pin a tick later
-   * landed inside that glide, read its overflow and wrote past the end. It no longer writes for them.
+   * lands inside that glide, and used to read its overflow and write past the end.
    */
-  it('an arrival with the reader at the end is one write of the pane, and no fall', async () => {
+  it('an arrival with the reader at the end writes only the end, and no fall', async () => {
     const info = vi.spyOn(Log, 'i');
     const area = mountArea('g1', ROWS);
     await settleEntry();
@@ -718,7 +718,8 @@ describe('ChatArea at the end of a glide', () => {
     await vi.advanceTimersByTimeAsync(100);
     flushSync();
     expect(finishes.length).toBeGreaterThan(0); // the observer's pass played the glide
-    expect(writes).toEqual([reach()]);
+    expect(writes.length).toBeGreaterThan(0);
+    for (const top of writes) expect(top).toBe(reach());
     scroller.dispatchEvent(new Event('scroll'));
     await vi.advanceTimersByTimeAsync(50);
     flushSync();
@@ -726,6 +727,32 @@ describe('ChatArea at the end of a glide', () => {
       false
     );
     expect(arrowShown(area.target)).toBe(false);
+  });
+
+  /**
+   * WHILE AN OLDER PAGE LOADS the growth observer keeps the reader's row and writes nothing
+   * (`threadGrowthResponse`), so the new-message effect's pin is the only one that shows the arrival.
+   */
+  it('an arrival under a reader at the end while an older page is pending still reaches the end', async () => {
+    let release: (value: boolean) => void = () => {};
+    const load = vi.fn(() => new Promise<boolean>((resolve) => (release = resolve)));
+    const area = mountArea('g1', ROWS, { onLoadOlderMessages: load });
+    await settleEntry();
+    const scroller = scrollerOf(area.target);
+    // A pending page: the reader's own pull to the top, then back down to the end while it loads.
+    await scrollTo(scroller, 0);
+    expect(load).toHaveBeenCalled();
+    await scrollTo(scroller, reach());
+    expect(arrowShown(area.target)).toBe(false);
+
+    area.props.conversation = conversationOf(ROWS + 1);
+    flushSync();
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(100);
+    flushSync();
+    expect(scroller.scrollTop).toBe(reach());
+    release(false);
+    await vi.advanceTimersByTimeAsync(0);
   });
 
   it("the reader's own message sent from history still takes them to the end, with one pin", async () => {

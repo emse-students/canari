@@ -1771,18 +1771,16 @@
         // A RESTORE IN FLIGHT IS NOT AN ENTRY TO PIN: a late merge or catch-up lands as `stay`, and the
         // row the reader is put back on is kept by the thread's row anchor.
         //
-        // ONE WRITER FOR A READER AT THE END (iPhone 12, 2026-11-25): the growth observer follows the
-        // bottom for them in the mutation's own task, and starts the arrival's glide there. A second
-        // pin from here, a tick later, landed INSIDE that glide - so it is made only for a reader who
-        // was NOT at the end (their own message sent from history), whom the observer leaves on their
-        // row. The flag is the one `respondToNewMessage` read.
-        const readerAtEnd = isNearBottom;
+        // THIS PIN MAY LAND INSIDE THE ARRIVAL'S GLIDE (iPhone 12, 2026-11-25): the growth observer
+        // pinned and started it in the mutation's task, a tick earlier. It is still owed - while an
+        // older page loads the observer keeps the row and writes nothing - and it is harmless there
+        // because `scrollToBottom` pins the LAYOUT end (`pinThreadToEnd`), never the glide's overflow.
         const response: NewMessageResponse = restoringEntry
           ? 'stay'
           : respondToNewMessage({
               entering,
               catchupActive,
-              isNearBottom: readerAtEnd,
+              isNearBottom,
               ownMessageAdded: ownMessageAppended(lastNewestMessageId, c.messages.at(-1)),
             });
         viewResponse = response;
@@ -1796,7 +1794,7 @@
           windowStart =
             response === 'repin-entry' ? Math.min(renderWindow.start, entryStart) : entryStart;
           if (response === 'repin-entry') tick().then(() => fillViewportThenPin());
-          else if (!readerAtEnd) tick().then(() => scrollToBottom('new-message'));
+          else tick().then(() => scrollToBottom('new-message'));
         }
       }
 

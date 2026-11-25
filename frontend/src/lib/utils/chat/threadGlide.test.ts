@@ -690,9 +690,43 @@ describe('pinThreadToEnd - the pane pins the layout end, never the glide overflo
     stop();
   });
 
-  it('a thread no observer follows is written to its end and nothing else', () => {
+  it('a thread no observer follows is written to its end, and the missing observer is accused', () => {
     const { scroller, layoutReach } = makeThread(Array(30).fill(60), PANE, COMPOSER);
+    const warn = vi.spyOn(Log, 'w').mockImplementation(() => {});
     expect(pinThreadToEnd(scroller, 'new-message')).toBe(layoutReach());
+    expect(warn).toHaveBeenCalledWith(
+      'threadGrowth',
+      'new-message pinned a pane no growth observer follows'
+    );
+    warn.mockRestore();
     expect(animations).toHaveLength(0);
+  });
+
+  it('prints the lines in recording order, though a second arrival restarts the glide clock', async () => {
+    const { scroller, layoutReach, addRow } = makeThread(Array(20).fill(60), 400);
+    scroller.scrollTop = layoutReach();
+    const stop = observeThreadGrowth(scroller, atBottom);
+    addRow(70);
+    await flush();
+    now = 55;
+    pinThreadToEnd(scroller, 'new-message');
+    now = 110;
+    addRow(70); // the second arrival: a new glide, its clock back at 0
+    await flush();
+    now = 130;
+    fireResize(); // 20 ms into the new glide
+    now = 140;
+    pinThreadToEnd(scroller, 'new-message');
+    const lines = (describeGlideFall(scroller) ?? []).slice(1);
+    expect(
+      lines.map((l) => /^glide (pass \d+|write by \S+) \(?[a-z, ]*\+(\d+)ms/.exec(l)?.slice(1))
+    ).toEqual([
+      ['pass 1', '0'],
+      ['write by new-message', '55'],
+      ['pass 2', '110'],
+      ['pass 3', '20'],
+      ['write by new-message', '30'],
+    ]);
+    stop();
   });
 });

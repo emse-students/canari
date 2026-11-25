@@ -89,7 +89,7 @@ export const GLIDE_TRACE_MAX_LINES = 8;
  * reach unchanged. **NOTHING IS WRITTEN AT PASS TIME**: every ordinary message makes a glide, so a
  * line per pass would be noise forever. The passes, the pins made outside them
  * ({@link pinThreadToEnd}) and the scroll moves wait in three rings of {@link GLIDE_TRACE_MAX_LINES}
- * (the oldest drop, counted), and {@link describeGlideFall} prints them merged in time order, at
+ * (the oldest drop, counted), and {@link describeGlideFall} prints them merged in recording order, at
  * INFO, only when the pane's own measurement finds a fall inside the glide. A new glide empties the
  * rings. No read is added in the glide's window: the numbers are the ones `follow()` and the pin
  * read anyway, taken at points where the layout is clean.
@@ -108,7 +108,7 @@ class GlideTrace {
   private passCount = 0;
   private writeCount = 0;
   private scrollCount = 0;
-  /** The order of every recorded line, to break a tie of two lines at the same millisecond. */
+  /** The order of every recorded line: the order they are printed in. */
   private seq = 0;
   /** Where the last pass left the pane, and the scroll position the last scroll event saw. */
   lastEnd: Geometry | null = null;
@@ -160,7 +160,8 @@ class GlideTrace {
 
   /**
    * The lines of the fall: a header, then the buffered passes, outside writes and scroll moves
-   * MERGED IN THE ORDER THEY HAPPENED (time into the glide, then recording order) - a write that
+   * MERGED IN THE ORDER THEY WERE RECORDED, which is real time - never by `atMs`, the label: a second
+   * arrival restarts the glide's clock, so its pass reads `+0ms` after lines of `+55ms`. A write that
    * lands between two passes reads between them, which is what names a second writer.
    */
   lines(): string[] | null {
@@ -186,7 +187,7 @@ class GlideTrace {
         atMs: m.scroll.atMs,
         scroll: m.scroll,
       })),
-    ].sort((a, b) => a.atMs - b.atMs || a.seq - b.seq);
+    ].sort((a, b) => a.seq - b.seq);
     return [
       `${this.passCount} follow pass(es)${dropped(this.passCount, this.passes.length)}, ` +
         `${this.writeCount} write(s) outside follow${dropped(this.writeCount, this.writes.length)} and ` +
@@ -539,11 +540,13 @@ const pinsByScroller = new WeakMap<Element, (writer: string) => number>();
  * the difference. A replay the engine refuses is the glide's end, told once as every end is. The
  * write is recorded in the glide's trace under `writer`.
  *
- * A thread no observer follows has no glide: the write is the whole of it.
+ * A thread no observer follows has no glide to take off, so the write is the whole of it - but the pane
+ * always has one, so reaching that branch says the observer is not wired: it is logged as such.
  */
 export function pinThreadToEnd(scroller: HTMLElement, writer: string): number {
   const pin = pinsByScroller.get(scroller);
   if (pin) return pin(writer);
+  Log.w('threadGrowth', `${writer} pinned a pane no growth observer follows`);
   scroller.scrollTop = scroller.scrollHeight;
   return scroller.scrollTop;
 }
