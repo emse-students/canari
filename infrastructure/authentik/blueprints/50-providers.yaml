@@ -301,11 +301,12 @@ entries:
       authorization_flow: !Find [authentik_flows.flow, [slug, "miconnect-authorization"]]
       invalidation_flow: !Find [authentik_flows.flow, [slug, "default-provider-invalidation-flow"]]
       # The Rootz association's supervision console of the MDE network (owner, 2026-11-25): a name and
-      # an identity, nothing of the profile, the school status or the promo.
+      # an identity, nothing of the profile, the school status or the promo. NOT authentik's managed
+      # `profile` mapping, which names every group of the person: its own, which names `acces-reseau` only.
       property_mappings:
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-name"]]
         - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-openid"]]
-        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-profile"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-reseau-profile"]]
       # NO REFRESH GRANT: the application admits the group `acces-reseau` only (60-applications.yaml),
       # and authentik 2026.8.6's refresh_token grant evaluates no application binding, so a refresh token
       # would outlive a removal from the group. The console never refreshes: its session ends, and the

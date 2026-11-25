@@ -1005,7 +1005,7 @@ read from the host a client asks: the old name `auth.canari-emse.fr` still answe
 | Cercle (`cercle`) | `miconnect-cercle` | `7s6QrKeD...` | the cotisant gate OR `acces-cercle` (D43) | no |
 | MiGallery (`migallery`) | `miconnect-migallery` | `GMU5F3Dn...` | the cotisant gate OR `acces-migallery` (D43) | no |
 | MinoWiki (`mino-wiki`) | `miconnect-mino-wiki` | `nep2XHic...` | anybody signed in | yes |
-| Réseau MDE (`reseau`) | `miconnect-reseau` | `muAU7MIl71ksswikfWz1cu5EuITYSMdTuUguyt0Y` | the group `acces-reseau` ONLY | no |
+| Réseau MDE (`reseau`) | `miconnect-reseau` | `muAU7MIl...` | the group `acces-reseau` ONLY | no |
 | Sky (`sky`) | `miconnect-sky` | `JJqZZbhI...` | anybody signed in | yes |
 
 A `client_id` is not a secret (it travels in every authorization URL); the client SECRETS are in no
@@ -1024,11 +1024,22 @@ The Rootz association's supervision console of the MDE network, a Python server 
   session ends and the next sign-in passes the binding again.
 - **One strict redirect URI**, `https://reseau.rootz-emse.fr/auth/callback`, no logout URI.
 - **Scopes `openid`, `profile` and `name`** (the mapping `miconnect-claim-name` answers the scope
-  `name`, giving `firstName`/`lastName`; `profile` gives authentik's `name`, `given_name`,
-  `preferred_username`, `nickname` and `groups` - the person's group names, `acces-reseau` among them).
-  Nothing of the profile, the cursus, the school status or the e-mail (the id_token read in CI). `sub` is pinned to
-  `hashed_user_id`, as on the three site providers.
-- **The group `acces-reseau` alone admits**: one policy binding, order 0, no expression policy.
+  `name`, giving `firstName`/`lastName`). **`profile` is the console's OWN mapping,
+  `miconnect-claim-reseau-profile`, not authentik's managed one**, which would send the name of EVERY
+  group the person belongs to: it gives `name`, `given_name`, `preferred_username` and `groups`, the
+  last filtered to `["acces-reseau"]`. Nothing of the profile, the cursus, the school status, the
+  e-mail or any other membership (the id_token read in CI, for a member who holds another group too).
+  `sub` is pinned to `hashed_user_id`, as on the three site providers. **`hashed_user_id` is not
+  pairwise**: the same person has the same `sub` at every provider of this instance, so two services
+  could join their records on it. Accepted (lead, 2026-11-25, on the security review): authentik
+  2026.8 offers no pairwise subject mode, and every other mode it offers (uuid, username, e-mail) is
+  as stable across services and more readable.
+- **The group `acces-reseau` alone admits**: one policy binding, order 0, no expression policy,
+  engine mode `all` (with one binding `any` and `all` agree; under `all` a binding added later can only
+  narrow who enters). The binding names `enabled: true` and `negate: false`, authentik's defaults,
+  because an application with no enabled binding admits every account: a binding deleted, disabled or
+  negated by hand is then a change the daily drift dry run reports and the next stable writes back
+  (`test-blueprints.sh` plants the deletion and the disabling and reads each in the dry run).
   **No cotisant gate and no Alumni gate**: the D42-D43 gate is a rule about the ecosystem's member
   services (MiGallery, Le Cercle) and WP5 extends the SHAPE (a group `acces-<app>` per application),
   not the cotisant rule, to the others; an association's operator console is admitted by its operators'
@@ -1043,10 +1054,17 @@ The Rootz association's supervision console of the MDE network, a Python server 
   applies the blueprints, lives in MiConnect's database only, and reaches the console's host by a
   pipe, never a message ([MIGRATION](../../../infrastructure/MIGRATION.md#3-github-secrets), the row "MiConnect client of the Reseau console").
 
-`test-blueprints.sh` asserts all of it on a built instance (`RESEAU-APP-OK`): the fields, the one
-binding, and, driven, a person outside the group refused and not listed, a member listed and given a
-code redeemed with the secret and the verifier only, into an id_token whose issuer ends in
-`/application/o/reseau/` and whose `sub` is the hashed user id. `test-refresh-gate.py` probes its
+**What the console MUST check on every id_token: `aud` equal to its `client_id` and `iss` equal to
+`https://miconnect.emse.fr/application/o/reseau/`**, on top of the signature. Every provider of this
+instance signs with the SAME key pair (`authentik Self-signed Certificate`), so a token minted for
+another application - to a person the console's group never admitted - verifies on its signature
+alone; only `aud` and `iss` say it was issued for the console.
+
+`test-blueprints.sh` asserts all of it on a built instance (`RESEAU-APP-OK`): the fields, the mappings,
+the one binding, and, driven, a person outside the group refused by authentik's access-denied answer and
+not listed, a member listed and given a code redeemed with the secret and the verifier only, into an
+id_token whose issuer ends in `/application/o/reseau/`, whose `sub` is the hashed user id and whose
+`groups` is `acces-reseau` alone. `test-refresh-gate.py` probes its
 closed refresh grant like the other gated providers'.
 
 ### The three Canari providers, and what each one lets a client come back to

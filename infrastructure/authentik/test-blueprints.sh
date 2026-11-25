@@ -417,10 +417,12 @@ echo "the CAS button reads CAS EMSE and the dev tiles are hidden, not gated"
 # THE RESEAU CONSOLE (owner, 2026-11-25): the Rootz association's supervision console of the MDE
 # network. The configuration as declared - a confidential client with the code grant only (the group
 # gate would be outlived by a refresh), one strict redirect, the name and identity scopes, the terms
-# flow, a pinned subject - and ONE binding, the group `acces-reseau`. Then BEHAVIOUR: a person outside
-# the group neither sees the tile nor gets a code; a member sees it, gets a code with an S256 challenge,
-# and redeems it with the secret and the verifier only, into an id_token whose issuer is the
-# application's and whose subject is the hashed user id.
+# flow, a pinned subject, its own `profile` mapping - and ONE binding, the group `acces-reseau`, under
+# engine mode `all`. Then BEHAVIOUR: a person outside the group is shown authentik's access-denied page
+# and no tile; a member sees the tile, gets a code with an S256 challenge, and redeems it with the
+# secret and the verifier only, into an id_token whose issuer is the application's, whose subject is
+# the hashed user id, and whose `groups` is `acces-reseau` alone though the member holds another group.
+# Last, the daily drift dry run is shown to SEE the binding deleted or disabled by hand.
 echo "reseau console: its provider, its one group binding, and who gets a code"
 if ! run_ak_shell "$worker" 2>&1 <<'PY' | tee >(cat >&2) | grep -x 'RESEAU-APP-OK' >/dev/null; then
 import base64, hashlib, json, secrets
@@ -430,6 +432,7 @@ from django.conf import settings
 from django.test import Client
 
 from authentik.core.models import Application, Group, User
+from authentik.policies.denied import AccessDeniedResponse
 from authentik.policies.models import PolicyBinding
 from authentik.providers.oauth2.models import OAuth2Provider, ScopeMapping
 from authentik.root.middleware import SessionMiddleware
@@ -447,10 +450,13 @@ uris = [(value(u.matching_mode), u.url, value(u.redirect_uri_type)) for u in pro
 assert uris == [("strict", REDIRECT, "authorization")], uris
 scopes = sorted(ScopeMapping.objects.filter(provider=provider).values_list("scope_name", flat=True))
 assert scopes == ["name", "openid", "profile"], scopes
+mappings = sorted(m.managed or m.name for m in ScopeMapping.objects.filter(provider=provider))
+assert mappings == ["goauthentik.io/providers/oauth2/scope-openid", "miconnect-claim-name", "miconnect-claim-reseau-profile"], mappings
 
 app = Application.objects.get(slug="reseau")
 assert app.provider_id == provider.pk and app.name == "Réseau MDE", (app.provider_id, app.name)
 assert app.meta_launch_url == "https://reseau.rootz-emse.fr/", app.meta_launch_url
+assert app.policy_engine_mode == "all", app.policy_engine_mode
 bindings = list(PolicyBinding.objects.including_expired().filter(target=app))
 assert [(b.group.name if b.group else None, b.policy_id, b.user_id, b.order, b.enabled, b.negate) for b in bindings] == [("acces-reseau", None, None, 0, True, False)], bindings
 group = Group.objects.get(name="acces-reseau")
@@ -475,10 +481,10 @@ def authorize(u, challenge):
                        "code_challenge": challenge, "code_challenge_method": "S256"})
     resp = c.get(f"/application/o/authorize/?{query}")
     target = resp.get("Location", "") if resp.status_code in (301, 302) else ""
-    if target.startswith(REDIRECT):
-        return target, None
+    if target.startswith(REDIRECT) or isinstance(resp, AccessDeniedResponse):
+        return target, None, resp
     body = c.get(f"/api/v3/flows/executor/{provider.authorization_flow.slug}/?{urlencode({'query': query})}").json()
-    return body.get("to", ""), body
+    return body.get("to", ""), body, resp
 
 
 def listed(u):
@@ -501,19 +507,22 @@ def probe(username):
 outsider = probe("reseau-probe-outsider")
 member = probe("reseau-probe-member")
 member.groups.add(group)
+member.groups.add(Group.objects.get(name="acces-migallery"))
 try:
     verifier = b64url(secrets.token_bytes(32))
     challenge = b64url(hashlib.sha256(verifier.encode()).digest())
 
-    # Outside the group: no tile, no code.
+    # Outside the group: no tile, and authentik's own access-denied answer at the authorization -
+    # the application's policy refusing, not a flow that merely ended elsewhere.
     assert "reseau" not in listed(outsider), "the tile is listed to a person outside acces-reseau"
-    target, body = authorize(outsider, challenge)
+    target, body, resp = authorize(outsider, challenge)
+    assert isinstance(resp, AccessDeniedResponse), f"the outsider was not refused by the access check: {resp.status_code} {type(resp).__name__} {target} {json.dumps(body)[:300]}"
     assert not target.startswith(REDIRECT), f"a person outside acces-reseau got a code: {target}"
-    print(f"  outside the group: refused ({(body or {}).get('component')})")
+    print(f"  outside the group: {type(resp).__name__} {resp.status_code}")
 
     # A member: the tile, a code, and a redeem that needs the verifier.
     assert "reseau" in listed(member), "the tile is not listed to a member"
-    target, body = authorize(member, challenge)
+    target, body, _ = authorize(member, challenge)
     assert target.startswith(REDIRECT), f"a member got no code: {json.dumps(body)[:400]}"
     code = parse_qs(urlparse(target).query)["code"][0]
 
@@ -526,7 +535,7 @@ try:
 
     status, answer = redeem({})
     assert status == 400 and answer.get("error") == "invalid_grant", f"a challenged code was redeemed without its verifier: {status} {answer}"
-    target, _ = authorize(member, challenge)
+    target, _, _ = authorize(member, challenge)
     code = parse_qs(urlparse(target).query)["code"][0]
     status, answer = redeem({"code_verifier": verifier})
     assert status == 200 and answer.get("id_token"), f"the member's code was refused: {status} {answer}"
@@ -538,6 +547,8 @@ try:
     assert claims["sub"] == member.uid, "the subject is not the hashed user id"
     assert claims.get("name") == "Reseau Probe", claims.get("name")
     assert (claims.get("firstName"), claims.get("lastName")) == ("Reseau", "Probe"), sorted(claims)
+    assert claims.get("groups") == ["acces-reseau"], f"groups beyond the console's own: {claims.get('groups')}"
+    assert claims.get("preferred_username") == member.username, claims.get("preferred_username")
     assert not {"promo", "formation", "profile", "school_status", "email"} & set(claims), sorted(claims)
     print(f"  a member: code redeemed with the verifier, iss {claims['iss']}, claims {sorted(claims)}")
 finally:
@@ -549,3 +560,35 @@ PY
   exit 1
 fi
 echo "the Reseau console admits acces-reseau only, by a confidential code grant with PKCE"
+
+# THE DAILY DRIFT JOB SEES THE GATE TAMPERED WITH. An application with no enabled binding admits every
+# account, so the binding deleted, or disabled, by hand must show in the dry run blueprint-drift.sh
+# makes - each planted, read in the dry run's change list, then put back by an apply.
+for plant in deleted disabled; do
+  run_ak_shell "$worker" >/dev/null 2>&1 <<PY
+from authentik.policies.models import PolicyBinding
+binding = PolicyBinding.objects.get(target__application__slug="reseau", group__name="acces-reseau")
+if "$plant" == "deleted":
+    binding.delete()
+else:
+    binding.enabled = False
+    binding.save()
+PY
+  case "$plant" in
+    deleted) expected='^\[miconnect-blueprints\] CREATED  60-applications\.yaml#[0-9]+ authentik_policies\.policybinding$' ;;
+    disabled) expected='^\[miconnect-blueprints\] CHANGED  60-applications\.yaml#[0-9]+ authentik_policies\.policybinding \.enabled: false -> true$' ;;
+  esac
+  dry="$(bash "$here/apply-blueprints.sh" dry-run "$worker" 2>&1 || true)"
+  if ! grep -Eq "$expected" <<<"$dry"; then
+    grep -E '^\[miconnect-blueprints\] (CREATED|CHANGED|DELETED|[0-9]+ change)' <<<"$dry" || true
+    echo "::error::the drift dry run does not report the reseau binding $plant by hand - the daily job would miss it"
+    exit 1
+  fi
+  echo "reseau binding $plant by hand: the drift dry run reports it"
+  bash "$here/apply-blueprints.sh" apply "$worker" >/dev/null 2>&1
+done
+if [ "$(bash "$here/apply-blueprints.sh" dry-run "$worker" 2>&1 | grep -E '^\[miconnect-blueprints\] [0-9]+ change\(s\)$')" != "[miconnect-blueprints] 0 change(s)" ]; then
+  echo "::error::the apply did not put the reseau binding back"
+  exit 1
+fi
+echo "the drift dry run sees the reseau gate deleted or disabled, and an apply puts it back"

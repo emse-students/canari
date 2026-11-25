@@ -85,7 +85,9 @@ entries:
       # gate - the console is the Rootz association's tool, not a service of the ecosystem's members -
       # and so no expression policy. A person outside the group is refused at authorization, and
       # authentik's application library does not list the tile to them.
-      policy_engine_mode: "any"
+      # `all`, not `any`: with one binding they agree, but under `all` a binding added later can only
+      # NARROW who enters, never widen it.
+      policy_engine_mode: "all"
       provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "miconnect-reseau"]]
       meta_launch_url: "https://reseau.rootz-emse.fr/"
   - model: authentik_core.application
@@ -186,3 +188,9 @@ entries:
       target: !Find [authentik_policies.policybindingmodel, [application__slug, "reseau"]]
       group: !Find [authentik_core.group, [name, "acces-reseau"]]
       order: 0
+    # NAMED, though both are authentik's defaults: an application with no enabled binding admits every
+    # account, so a binding disabled or negated by hand must read as drift in the daily dry run, and
+    # be written back by the next stable - an attribute no entry names is one neither ever looks at.
+    attrs:
+      enabled: true
+      negate: false
