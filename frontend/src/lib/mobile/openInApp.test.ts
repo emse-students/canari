@@ -1,88 +1,45 @@
-import { detectInAppBrowser, loginOpenInAppOffer, openInAppOffer } from './openInApp';
+import { iosAppOpenHref, loginOpenInAppOffer } from './openInApp';
 import { isClaimedAppLinkPath } from './appSiteAssociation';
-import { APP_STORE_URL, PLAY_STORE_URL } from '$lib/utils/appVersion';
 
-/** User agents as those apps send them (tokens only matter; the rest is realistic padding). */
+/** Real browsers' user agents (only the system matters to the login offer). */
 const UA = {
-  messengerAndroid:
-    'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Mobile Safari/537.36 [FB_IAB/Orca-Android;FBAV/480.0.0.0;]',
-  messengerIos:
-    'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 [FBAN/MessengerForiOS;FBAV/480.0;FBDV/iPhone15,2]',
-  instagramIos:
-    'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 350.0.0',
   chromeAndroid:
     'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Mobile Safari/537.36',
   safariIos:
     'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1',
 };
 
-describe('detectInAppBrowser', () => {
-  it('recognises the Meta in-app browsers, per system', () => {
-    expect(detectInAppBrowser(UA.messengerAndroid)).toBe('android');
-    expect(detectInAppBrowser(UA.messengerIos)).toBe('ios');
-    expect(detectInAppBrowser(UA.instagramIos)).toBe('ios');
+describe('iosAppOpenHref', () => {
+  const open = (page: string) => `fr.emse.canari://open?url=${encodeURIComponent(page)}`;
+
+  it("the app's own scheme carrying a claimed page", () => {
+    expect(iosAppOpenHref(new URL('https://canari.emse.fr/c/join/tok'))).toBe(
+      open('https://canari.emse.fr/c/join/tok')
+    );
+    // The legacy name IS claimed.
+    expect(iosAppOpenHref(new URL('https://canari-emse.fr/posts/abc'))).toBe(
+      open('https://canari-emse.fr/posts/abc')
+    );
   });
 
-  it('leaves real browsers alone - they follow App Links by themselves', () => {
-    expect(detectInAppBrowser(UA.chromeAndroid)).toBeNull();
-    expect(detectInAppBrowser(UA.safariIos)).toBeNull();
-  });
-});
-
-describe('openInAppOffer', () => {
-  it('Android: an intent on the https App Link, the Play listing as fallback, no fragment', () => {
-    const offer = openInAppOffer(
-      'https://canari.emse.fr/posts/abc?x=1#comment',
-      UA.messengerAndroid
-    );
-
-    expect(offer?.openHref).toBe(
-      'intent://canari.emse.fr/posts/abc?x=1#Intent;scheme=https;package=fr.emse.canari;' +
-        `S.browser_fallback_url=${encodeURIComponent(PLAY_STORE_URL)};end`
-    );
-    expect(offer?.storeHref).toBe(PLAY_STORE_URL);
-  });
-
-  it("iOS: the app's own scheme carrying the page, and the App Store on screen", () => {
-    const offer = openInAppOffer('https://canari.emse.fr/c/join/tok', UA.messengerIos);
-
-    expect(offer?.openHref).toBe(
-      `fr.emse.canari://open?url=${encodeURIComponent('https://canari.emse.fr/c/join/tok')}`
-    );
-    expect(offer?.storeHref).toBe(APP_STORE_URL);
-  });
-
-  it('behind the login redirect, offers the page the visitor came for', () => {
-    // An in-app browser has no Canari session, so every visitor from Messenger lands here.
-    const offer = openInAppOffer(
-      `https://canari.emse.fr/login?returnTo=${encodeURIComponent('/posts/abc?x=1')}`,
-      UA.messengerAndroid
-    );
-    expect(offer?.openHref.startsWith('intent://canari.emse.fr/posts/abc?x=1#Intent;')).toBe(true);
-
+  it('behind the login redirect, the page the visitor came for', () => {
+    expect(
+      iosAppOpenHref(
+        new URL(`https://canari.emse.fr/login?returnTo=${encodeURIComponent('/posts/abc?x=1')}`)
+      )
+    ).toBe(open('https://canari.emse.fr/posts/abc?x=1'));
     // A returnTo naming another host is refused, not offered.
     expect(
-      openInAppOffer(
-        'https://canari.emse.fr/login?returnTo=//example.com/posts/abc',
-        UA.messengerIos
-      )
+      iosAppOpenHref(new URL('https://canari.emse.fr/login?returnTo=//example.com/posts/abc'))
     ).toBeNull();
     // A bare /login is not a page of the app.
-    expect(openInAppOffer('https://canari.emse.fr/login', UA.messengerIos)).toBeNull();
+    expect(iosAppOpenHref(new URL('https://canari.emse.fr/login'))).toBeNull();
   });
 
-  it('offers nothing for a path the app does not claim, a foreign page, or a real browser', () => {
-    // An intent naming the package matches only the claimed filter: an unclaimed path would send an
-    // installed phone to the store.
-    expect(
-      openInAppOffer('https://canari.emse.fr/auth/callback?code=1', UA.messengerAndroid)
-    ).toBeNull();
-    expect(openInAppOffer('https://example.com/posts/abc', UA.messengerAndroid)).toBeNull();
-    // A Canari name the app does not claim (the dev estate): the intent would miss the filter.
-    expect(openInAppOffer('https://dev.canari-emse.fr/posts/abc', UA.messengerAndroid)).toBeNull();
-    // The legacy name IS claimed.
-    expect(openInAppOffer('https://canari-emse.fr/posts/abc', UA.messengerIos)).not.toBeNull();
-    expect(openInAppOffer('https://canari.emse.fr/posts/abc', UA.chromeAndroid)).toBeNull();
+  it('nothing for a path the app does not claim, a foreign page, or a name no filter holds', () => {
+    expect(iosAppOpenHref(new URL('https://canari.emse.fr/auth/callback?code=1'))).toBeNull();
+    expect(iosAppOpenHref(new URL('https://example.com/posts/abc'))).toBeNull();
+    expect(iosAppOpenHref(new URL('https://dev.canari-emse.fr/posts/abc'))).toBeNull();
   });
 });
 

@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="leave-iab-app" content="" />
+    <title>Ouvrir dans le navigateur</title>
+    <style>
+      :root {
+        --bg: #f7f7f8;
+        --card: #ffffff;
+        --ink: #17181c;
+        --muted: #5b5f6b;
+        --accent: #1f6feb;
+        --on-accent: #ffffff;
+        --line: #d9dbe1;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #111216;
+          --card: #1b1d23;
+          --ink: #f1f2f5;
+          --muted: #a8adb9;
+          --accent: #4c8dff;
+          --on-accent: #0b0c0f;
+          --line: #343843;
+        }
+      }
+      [hidden] {
+        display: none !important;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--bg);
+        color: var(--ink);
+        font:
+          17px/1.45 -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          Roboto,
+          sans-serif;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+      }
+      main {
+        width: 100%;
+        max-width: 28rem;
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 24px 20px;
+      }
+      h1 {
+        font-size: 1.35rem;
+        line-height: 1.25;
+        margin: 0 0 12px;
+      }
+      p {
+        margin: 0 0 16px;
+      }
+      .site {
+        color: var(--muted);
+        font-size: 0.9rem;
+        margin-bottom: 8px;
+        word-break: break-all;
+      }
+      .action {
+        display: block;
+        width: 100%;
+        min-height: 48px;
+        padding: 12px 16px;
+        margin: 0 0 12px;
+        border-radius: 999px;
+        border: 1px solid var(--accent);
+        background: var(--accent);
+        color: var(--on-accent);
+        font: inherit;
+        font-weight: 600;
+        text-align: center;
+        text-decoration: none;
+        cursor: pointer;
+      }
+      .action.secondary {
+        background: transparent;
+        color: var(--accent);
+      }
+      .manual {
+        color: var(--muted);
+      }
+      label {
+        display: block;
+        font-size: 0.9rem;
+        color: var(--muted);
+        margin-bottom: 4px;
+      }
+      input {
+        width: 100%;
+        min-height: 44px;
+        padding: 8px 10px;
+        margin: 0 0 12px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--bg);
+        color: var(--ink);
+        font: inherit;
+        font-size: 0.95rem;
+      }
+      [role='status'] {
+        min-height: 1.45em;
+        margin: 0;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="site" id="site"></p>
+      <div lang="fr" data-lang="fr">
+        <h1>Ouvrez ce lien dans votre navigateur</h1>
+        <p>
+          Ce site ne fonctionne pas dans le navigateur intégré de Messenger, Facebook, Instagram ou
+          Threads.
+        </p>
+        <a class="action" data-exit="ios" hidden>Ouvrir dans Safari</a>
+        <a class="action" data-exit="android" hidden>Ouvrir dans le navigateur</a>
+        <a class="action secondary" data-app hidden>Ouvrir dans l'application</a>
+        <p class="manual" data-manual="ios">
+          Sinon, touchez ••• en haut à droite, puis &quot;Ouvrir dans Safari&quot; (ou &quot;Ouvrir
+          dans le navigateur&quot;).
+        </p>
+        <p class="manual" data-manual="android" hidden>
+          Sinon, touchez ⋮ en haut à droite, puis &quot;Ouvrir dans Chrome&quot; (ou &quot;Ouvrir
+          dans le navigateur&quot;).
+        </p>
+        <noscript
+          ><p>
+            Copiez l'adresse de cette page depuis la barre d'adresse, puis ouvrez-la dans votre
+            navigateur.
+          </p></noscript
+        >
+        <label for="link-fr">Le lien :</label>
+        <input id="link-fr" data-link readonly />
+        <button class="action secondary" type="button" data-copy>Copier le lien</button>
+        <p role="status" aria-live="polite" data-copied hidden>Lien copié.</p>
+        <p role="status" aria-live="polite" data-copy-failed hidden>
+          Copie impossible : sélectionnez le lien ci-dessus.
+        </p>
+      </div>
+      <div lang="en" data-lang="en" hidden>
+        <h1>Open this link in your browser</h1>
+        <p>
+          This site does not work in the browser built into Messenger, Facebook, Instagram or
+          Threads.
+        </p>
+        <a class="action" data-exit="ios" hidden>Open in Safari</a>
+        <a class="action" data-exit="android" hidden>Open in the browser</a>
+        <a class="action secondary" data-app hidden>Open in the app</a>
+        <p class="manual" data-manual="ios">
+          Otherwise, tap ••• at the top right, then &quot;Open in Safari&quot; (or &quot;Open in
+          browser&quot;).
+        </p>
+        <p class="manual" data-manual="android" hidden>
+          Otherwise, tap ⋮ at the top right, then &quot;Open in Chrome&quot; (or &quot;Open in
+          browser&quot;).
+        </p>
+        <noscript
+          ><p>
+            Copy this page's address from the address bar, then open it in your browser.
+          </p></noscript
+        >
+        <label for="link-en">The link:</label>
+        <input id="link-en" data-link readonly />
+        <button class="action secondary" type="button" data-copy>Copy the link</button>
+        <p role="status" aria-live="polite" data-copied hidden>Link copied.</p>
+        <p role="status" aria-live="polite" data-copy-failed hidden>
+          Copying failed: select the link above.
+        </p>
+      </div>
+    </main>
+    <script>
+      // THE WAY OUT, computed here because this page is the SAME BYTES on every site and in front of
+      // every server (a SvelteKit hook, MiConnect's nginx): nothing is templated into it but the app
+      // link meta. `exitFor` mirrors `exitHref` in detect.ts; leave-in-app-browser.test.ts runs both
+      // on the same cases. Canari's docs/wiki/frontend/leaving-in-app-browsers.md.
+      function exitFor(userAgent, href) {
+        var url = new URL(href);
+        if (/iPhone|iPad|iPod/.test(userAgent)) {
+          var version = /(?:iPhone|iPad|iPod|CPU) OS ([0-9]+)_/.exec(userAgent);
+          var major = version ? Number(version[1]) : null;
+          return { os: 'ios', href: major !== null && major >= 17 ? 'x-safari-' + url.href : null };
+        }
+        if (/Android/.test(userAgent)) {
+          return {
+            os: 'android',
+            href:
+              'intent://' +
+              url.host +
+              url.pathname +
+              url.search +
+              '#Intent;scheme=' +
+              url.protocol.slice(0, -1) +
+              ';action=android.intent.action.VIEW;' +
+              'category=android.intent.category.BROWSABLE;end',
+          };
+        }
+        return { os: 'other', href: null };
+      }
+      function main() {
+        var all = function (selector) {
+          return Array.prototype.slice.call(document.querySelectorAll(selector));
+        };
+        var lang = /^fr\b/i.test(navigator.language || 'fr') ? 'fr' : 'en';
+        document.documentElement.lang = lang;
+        all('[data-lang]').forEach(function (node) {
+          node.hidden = node.getAttribute('data-lang') !== lang;
+        });
+        document.getElementById('site').textContent = location.host;
+        all('[data-link]').forEach(function (node) {
+          node.value = location.href;
+        });
+        var exit = exitFor(navigator.userAgent, location.href);
+        all('[data-manual]').forEach(function (node) {
+          node.hidden =
+            node.getAttribute('data-manual') !== (exit.os === 'android' ? 'android' : 'ios');
+        });
+        all('[data-exit]').forEach(function (node) {
+          if (exit.href && node.getAttribute('data-exit') === exit.os) {
+            node.href = exit.href;
+            node.hidden = false;
+          }
+        });
+        var app = document.querySelector('meta[name="leave-iab-app"]').content;
+        if (app && exit.os === 'ios') {
+          all('[data-app]').forEach(function (node) {
+            node.href = app;
+            node.hidden = false;
+          });
+        }
+        all('[data-copy]').forEach(function (button) {
+          button.addEventListener('click', function () {
+            var scope = button.parentNode;
+            var show = function (ok) {
+              scope.querySelector('[data-copied]').hidden = !ok;
+              scope.querySelector('[data-copy-failed]').hidden = ok;
+              if (!ok) scope.querySelector('[data-link]').select();
+            };
+            if (!navigator.clipboard) return show(false);
+            navigator.clipboard.writeText(location.href).then(
+              function () {
+                show(true);
+              },
+              function () {
+                show(false);
+              }
+            );
+          });
+        });
+        // ONE ATTEMPT, NO TIMER: if the in-app browser does not let the page leave by itself, this
+        // page with its buttons is the end state.
+        if (exit.href) location.href = exit.href;
+      }
+      if (typeof document !== 'undefined') main();
+    </script>
+  </body>
+</html>

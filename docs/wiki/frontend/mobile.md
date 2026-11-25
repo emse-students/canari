@@ -818,40 +818,39 @@ installed** (user, 2026-09-28), and nothing above is at fault: the claim is serv
 both names. Those apps never hand a tapped link to the system - they load it in their own WebView -
 so neither an App Link nor a Universal Link is ever consulted. No server setting reaches that.
 
-What the page can do is offer a tap that leaves. `OpenInAppBanner` (root layout, banner column)
-shows only when `detectInAppBrowser` recognises the user agent (`FBAN/`, `FBAV/`, `FB_IAB`,
-`Instagram`) AND the page is one the app claims: a host of `MOBILE_APP_LINK_HOSTS` - not every
-Canari name, since an intent naming the package matches only the filter and `dev.canari-emse.fr` is in
-none - and a path of `MOBILE_UNIVERSAL_LINK_PATHS` (`isClaimedAppLinkPath`). `openInAppOffer` (`lib/mobile/openInApp.ts`) builds the way out:
+**Since 2026-11-25 such a browser gets nothing of the app** (owner decision): every page request
+from Messenger, Facebook, Instagram or Threads is answered with one blocking page that leaves for
+the real browser, or for the app - [leaving-in-app-browsers](leaving-in-app-browsers.md) is the
+mechanism, shared with every site of the ecosystem. What stays here is the two doors into the app,
+which that page and the login page's "Ouvrir dans l'application" (`loginOpenInAppOffer`,
+`lib/mobile/openInApp.ts`) use:
 
-| System | Tap | Without the app |
+| System | Door | Without the app |
 |---|---|---|
-| Android | `intent://<host><path>?<query>#Intent;scheme=https;package=fr.emse.canari;S.browser_fallback_url=<Play>;end` - resolved against the EXISTING https App Link filter, so nothing native changes | the Play listing, by the intent's own fallback |
-| iOS | `fr.emse.canari://open?url=<page>` - the scheme is registered with no host filter (the plugin writes `CFBundleURLSchemes` only), so nothing native changes either | nothing happens; the banner carries the App Store link |
+| Android, from the in-app browser | `intent://<host><path>?<query>#Intent;scheme=https;action=android.intent.action.VIEW;category=android.intent.category.BROWSABLE;end` - no package: Android's own resolution opens the app when its verified App Link claims the page | the default browser |
+| Android, from the login page | the same with `package=fr.emse.canari;S.browser_fallback_url=<Play>` - resolved against the EXISTING https App Link filter, so nothing native changes | the Play listing, by the intent's own fallback |
+| iOS | `fr.emse.canari://open?url=<page>` - the scheme is registered with no host filter (the plugin writes `CFBundleURLSchemes` only), so nothing native changes either. A TAPPED button only (`iosAppOpenHref`): the in-app browser's automatic exit goes to Safari | nothing happens; the login page carries the App Store link |
 
-**Behind the login.** An in-app browser holds no Canari session, so EVERY visitor from Messenger
-lands on `/login?returnTo=<path>`, which is not claimed. The offer is built for `returnTo`, resolved
-against the site's origin and held to the same two tests, so a `returnTo` naming another host
-offers nothing.
+An app door is offered only for a page the app claims: a host of `MOBILE_APP_LINK_HOSTS` - not every
+Canari name, since an intent naming the package matches only the filter and `dev.canari-emse.fr` is
+in none - and a path of `MOBILE_UNIVERSAL_LINK_PATHS` (`isClaimedAppLinkPath`).
+
+**Behind the login.** A visitor with no Canari session lands on `/login?returnTo=<path>`, which is
+not claimed. The door is built for `returnTo`, resolved against the site's origin and held to the
+same two tests, so a `returnTo` naming another host offers nothing.
 
 **`fr.emse.canari://open` opens only what an App Link could.** Anyone can write that URL, so
 `openClaimedAppLink` (`utils/appLinkNavigation.ts`, used by `hooks.client.ts` for both doors)
 applies the claim test the system applies before delivering a link; `/auth/callback` in particular
 is refused, for the reason the paragraph on bare hosts above gives.
 
-**A tap, never a redirect**: a visitor without the app would be thrown out of the page they came
-to read. The page's `#fragment` does not travel on Android - an intent URL uses the fragment for its
-own parameters. **Not yet verified inside Messenger itself** - both halves are measured only in a
-browser carrying Messenger's user agent (the production build, served locally under the legacy
-name, 2026-09-28: the banner above the login page, `Ouvrir` carrying the intent to the post behind
-`returnTo`, nothing in a plain Chrome); the iOS half also needs a store release, because the
-`open` host is handled by the app's own code. **On iOS that handler is in every store build since
-`v0.18.28`, and it works only on a RUNNING app**: from `v1.2.0` to the fix of 2026-10-14 a tap that
-had to launch the app opened it on the feed instead of the page
-([below](#a-cold-start-on-the-scene-lifecycle-lost-its-link)). Whether Messenger, Instagram and
-Facebook hand a tapped `fr.emse.canari://` to iOS at all is still unmeasured: no bench iPhone carries
-a Meta app (a user report about "Ouvrir dans l'application" on an iPhone, 2026-10-13, names neither
-the app nor the page).
+The page's `#fragment` does not travel on Android - an intent URL uses the fragment for its own
+parameters. **On iOS the `open` handler is in every store build since `v0.18.28`, and it works only
+on a RUNNING app**: from `v1.2.0` to the fix of 2026-10-14 a tap that had to launch the app opened it
+on the feed instead of the page ([below](#a-cold-start-on-the-scene-lifecycle-lost-its-link)).
+Whether Messenger, Instagram, Facebook and Threads hand a tapped `fr.emse.canari://` or an
+`intent:` to the system at all is the owner's reading ([leaving-in-app-browsers](leaving-in-app-browsers.md#4-what-the-owner-reads-on-his-phone)):
+no bench phone carries a Meta app.
 
 ### How a deep link actually reaches the app — two paths, only one of them gated
 

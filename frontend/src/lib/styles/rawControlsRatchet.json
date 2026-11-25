@@ -915,7 +915,7 @@
     "input": 0
   },
   "src/lib/components/settings/MinesweeperModal.svelte": {
-    "button": 11,
+    "button": 9,
     "select": 0,
     "input": 0
   },
@@ -1010,11 +1010,6 @@
     "input": 0
   },
   "src/lib/components/shared/MultiUserSelector.svelte": {
-    "button": 1,
-    "select": 0,
-    "input": 0
-  },
-  "src/lib/components/shared/OpenInAppBanner.svelte": {
     "button": 1,
     "select": 0,
     "input": 0
