@@ -13,7 +13,16 @@
  * Run: bun tools/store-divergence/divergence.test.mjs
  */
 
-import { matchesVersion, classifyAppStore, classifyPlay, verdict, NEEDS_A_HUMAN } from './divergence.mjs';
+import {
+  matchesVersion,
+  classifyAppStore,
+  classifyPlay,
+  verdict,
+  NEEDS_A_HUMAN,
+  pickLatestStable,
+  releaseInFlight,
+  UNFINISHED_RUN_STATUSES,
+} from './divergence.mjs';
 
 let pass = 0;
 let fail = 0;
@@ -68,24 +77,49 @@ const asState = (wanted, versions) => classifyAppStore({ wanted, versions }).sta
   // an earlier version held Apple's one slot and `submit.mjs` had correctly refused to touch it.
   // The two want opposite errands - a re-run, and a decision in App Store Connect - so the report
   // may not answer them with the same sentence.
-  const held = classifyAppStore({
+  //
+  // AND SINCE 2026-11-25 THE OCCUPANT'S TYPED STATE SPLITS IT AGAIN. A review queue frees by itself
+  // and the catch-up then submits, so it is `queued` and passes; a version waiting for a human to
+  // press release does not free by itself, and stays `slot-held`, red.
+  const queued = classifyAppStore({
     wanted: '0.18.14',
     versions: [V('0.18.13', 'WAITING_FOR_REVIEW'), V('0.18.12', 'READY_FOR_SALE')],
   });
-  eq('absent because an earlier version is WITH Apple is slot-held, not not-submitted', held.state, 'slot-held');
+  eq('absent behind a version Apple is REVIEWING is queued, not not-submitted', queued.state, 'queued');
   eq(
     'and it names the occupant and its state, or the reader has to go and look',
-    held.why.includes('0.18.13') && held.why.includes('WAITING_FOR_REVIEW'),
+    queued.why.includes('0.18.13') && queued.why.includes('WAITING_FOR_REVIEW'),
     true
   );
-  // A RE-RUN IS THE WRONG ERRAND HERE and saying so is the whole point of the new state.
+  eq('IN_REVIEW is queued too', asState('0.18.14', [V('0.18.13', 'IN_REVIEW')]), 'queued');
+  eq('and a queue needs nobody', NEEDS_A_HUMAN.has('queued'), false);
+
+  const held = classifyAppStore({
+    wanted: '0.18.14',
+    versions: [V('0.18.13', 'PENDING_DEVELOPER_RELEASE'), V('0.18.12', 'READY_FOR_SALE')],
+  });
+  eq('absent behind a version waiting for its DEVELOPER release is slot-held', held.state, 'slot-held');
+  // A RE-RUN IS THE WRONG ERRAND HERE and saying so is the whole point of the state.
   eq('the errand it states is App Store Connect', held.why.includes('App Store Connect'), true);
 
-  // AN OCCUPANT THAT IS STILL EDITABLE IS THE OTHER CASE: the next iOS run renames it, so the
-  // errand really is a re-run and the state stays `not-submitted`.
+  // AN OLDER VERSION APP REVIEW REFUSED, still in the slot: the catch-up will not write over it, so
+  // the report must not call it a deferral either.
+  eq(
+    'an older version App Review refused, in the slot, is rejected',
+    asState('0.16.5', [V('0.16.4', 'REJECTED')]),
+    'rejected'
+  );
+  eq(
+    'one a human withdrew is no refusal - still not-submitted',
+    asState('0.16.5', [V('0.16.4', 'DEVELOPER_REJECTED')]),
+    'not-submitted'
+  );
+
+  // AN OCCUPANT THAT IS STILL EDITABLE IS THE OTHER CASE: the catch-up step that runs before this
+  // report renames it and submits, so reading it here means that step did not, and says why.
   const renameable = classifyAppStore({ wanted: '0.16.5', versions: [V('0.16.4', 'PREPARE_FOR_SUBMISSION')] });
   eq('an editable occupant is still not-submitted', renameable.state, 'not-submitted');
-  eq('and the line says a re-run resolves it', renameable.why.includes('re-running'), true);
+  eq('and the line sends the reader to the catch-up step that should have submitted it', renameable.why.includes('catch-up'), true);
 
   // TWO OCCUPANTS CONTRADICT APPLE'S OWN RULE. Nothing here can pick between them, and a re-run
   // will not either, so it reads as a held slot rather than a deferral.
@@ -159,6 +193,68 @@ const asState = (wanted, versions) => classifyAppStore({ wanted, versions }).sta
   // exits 0 is worse than no report - it is a green light nobody asked for.
   eq('and NOT LOOKING is not a pass', both('unknown', 'live').ok, false);
   eq('unknown is in the set that needs a human', NEEDS_A_HUMAN.has('unknown'), true);
+}
+
+{
+  process.stdout.write('\nthe App Store catch-up is handed the LATEST stable, and only while no release is in flight\n');
+  // NEWEST FIRST, as GitHub lists them: the catch-up target is the first stable, so a stale missing
+  // stable (1.8.1) is never handed to it once 1.8.2 is published - the latest stable always wins.
+  const rows = [
+    { tag_name: 'v1.8.3-alpha.1', prerelease: true, draft: false },
+    { tag_name: 'v1.8.2', prerelease: false, draft: false, published_at: 't2' },
+    { tag_name: 'v1.8.2-alpha.4', prerelease: true, draft: false },
+    { tag_name: 'v1.8.1', prerelease: false, draft: false, published_at: 't1' },
+  ];
+  eq('a newer stable wins over the one still missing', pickLatestStable(rows)?.version, '1.8.2');
+  eq('and the tag is carried as GitHub names it', pickLatestStable(rows)?.tag, 'v1.8.2');
+  eq('a draft is not a stable', pickLatestStable([{ tag_name: 'v2.0.0', draft: true }, ...rows])?.version, '1.8.2');
+  eq('no stable at all is null, never a pre-release', pickLatestStable([rows[0], rows[2]]), null);
+  eq('and no list at all is null', pickLatestStable(undefined), null);
+
+  // A STABLE IS PUBLISHED BEFORE ITS BUILD EXISTS. While its release run is unfinished, that run owns
+  // the submission; a catch-up acting then would race its POST /v1/reviewSubmissions.
+  eq('a finished history leaves the catch-up free', releaseInFlight([{ id: 1, status: 'completed' }]), null);
+  eq(
+    'an in-progress release makes it stand down, naming the run',
+    releaseInFlight([
+      { id: 2, status: 'in_progress', head_branch: 'v1.8.2' },
+      { id: 1, status: 'completed', head_branch: 'v1.8.1' },
+    ]),
+    { id: 2, status: 'in_progress', tag: 'v1.8.2' }
+  );
+  eq('so does a queued one', releaseInFlight([{ id: 3, status: 'queued', head_branch: 'v1.8.2' }])?.status, 'queued');
+  eq('and one waiting on an environment', releaseInFlight([{ id: 4, status: 'waiting', head_branch: 'v1.8.2' }])?.status, 'waiting');
+  eq('no run at all is nothing in flight', releaseInFlight([]), null);
+
+  // A PRE-RELEASE NEVER TOUCHES AN APP STORE VERSION - it goes to TestFlight - so it cannot race the
+  // catch-up, and letting it stand the catch-up down would cost a day every day an alpha is cut.
+  eq(
+    'an alpha release in flight does not stand the catch-up down',
+    releaseInFlight([{ id: 5, status: 'in_progress', head_branch: 'v1.8.2-alpha.4' }]),
+    null
+  );
+  eq(
+    'but a stable behind it still does',
+    releaseInFlight([
+      { id: 5, status: 'in_progress', head_branch: 'v1.8.2-alpha.4' },
+      { id: 6, status: 'queued', head_branch: 'v1.8.2' },
+    ])?.id,
+    6
+  );
+  eq(
+    'a run whose tag is unknown counts as in flight - unknown is never harmless',
+    releaseInFlight([{ id: 7, status: 'in_progress' }])?.id,
+    7
+  );
+  // EVERY UNFINISHED STATUS IS ASKED FOR, so an old re-run below twenty newer runs is still seen.
+  eq(
+    'the statuses asked for cover every unfinished state GitHub reports',
+    ['queued', 'in_progress', 'waiting', 'requested', 'pending', 'action_required'].every((s) =>
+      UNFINISHED_RUN_STATUSES.includes(s)
+    ),
+    true
+  );
+  eq('and never the finished one', UNFINISHED_RUN_STATUSES.includes('completed'), false);
 }
 
 process.stdout.write('\n');

@@ -505,7 +505,7 @@ every plugin with a JS command surface, and an exemption there is how that test 
 | Storage | IndexedDB `CanariDBLog`, store `chunks`, auto-increment keys (two web tabs never collide), an index on each record's size. The same database on the web and in the Tauri WebView: one implementation, nothing native to verify. |
 | Write | Batched in memory, written as **one new record per batch**: at 32 KiB or 200 lines, when the app leaves the screen (`onAppScreenChange`, which is the only honest signal on Android, plus `pagehide`), and before an export. **Never on a timer.** Nothing already written is rewritten. |
 | Write on events that matter | A process or WebContent kill loses the unwritten batch, exactly the lines that explain it (an iPhone call died in setup and its export had NO line from four minutes before the death until the cold relaunch). So the batch is ALSO written on every ERROR line (a WARN rides along in the next batch) and at `flushAppLogAtMilestone(reason)`, called by `CallService` at call start, accept, the first offer sent (the negotiationneeded path) or received, the first connection and the end (once per call, after `cleanup`'s own lines; each writes a `[APPLOG] milestone: <reason>` line, so a log that stops is read against the last milestone). Bounded by events, never by line volume: L, I and W lines never ask for a write, requests coalesce (one write in flight, at most one queued, which takes everything pending). The ring is bounded by size AND by record count (512), so many small writes cannot grow the (key, size) walk each write does. Still no timer. |
-| Unclean end | A `localStorage` marker (`canari_applog_on_screen`) is set while the app is on screen and cleared at the leave-screen edge (`onAppScreenChange` false, `pagehide`) - synchronously, whether or not the leave-screen flush won its race. A marker still set at boot, on the mobile shells only, the ones with the `canari:foreground` contract (two browser tabs share `localStorage`, and a desktop quit may fire neither `visibilitychange` nor `pagehide`), logs ONE W line: `the previous session ended while on screen (killed or crashed) - last written line at <stamp>`. A kill while backgrounded is normal on iOS and finds the marker cleared, so it is never reported. **Owed a phone reading** (WebKit commits `localStorage` asynchronously): background, wait, kill, relaunch, confirm no false report - [readings](../device-verification.md#the-readings-of-2026-11-23-180-alpha3-iphone-12-the-resume-from-settings-the-pushes-name-and-logo-the-banners-the-share-logos-the-ios-27-launch). |
+| Unclean end | A `localStorage` marker (`canari_applog_on_screen`) is set while the app is on screen (`1`), set to `leaving:<epoch ms>` at the leave-screen edge (`onAppScreenChange` false, `pagehide`), and cleared only once THAT edge's leave-screen write has settled - landed, or cut short by the suspension and kept for the return (said at the time). It used to be cleared synchronously at the edge, so a process killed while the write was on its way lost the session's last lines AND the report of their loss (owner's Android log, 2026-11-25: a session's last minutes vanished with no line at the next boot). A marker still set at boot, on the mobile shells only, the ones with the `canari:foreground` contract (two browser tabs share `localStorage`, and a desktop quit may fire neither `visibilitychange` nor `pagehide`), logs ONE line. `1` is a W, `the previous session ended while on screen (killed or crashed) - last written line at <stamp>`: nothing normal ends a session in front. `leaving:` is an I, `the previous session's leave-screen write never settled (killed while leaving, or suspended and reclaimed in background) - left the screen at <stamp>, last written line at <stamp>`, on every platform: WebKit settles a write it suspended only on RESUME, so a backgrounded iOS app jetsammed mid-write leaves exactly the marker a kill leaves (and Android's cached-app freezer can do the same). The marker cannot tell a fault from a normal reclaim, and a normal reclaim must never be reported as a fault, so the line accuses nothing - it marks where the log may have lost its last lines. A jetsam after the write settled finds the marker cleared and is never reported. **Owed a phone reading** (WebKit commits `localStorage` asynchronously): background, wait, kill, relaunch, confirm no false report - [readings](../device-verification.md#the-readings-of-2026-11-23-180-alpha3-iphone-12-the-resume-from-settings-the-pushes-name-and-logo-the-banners-the-share-logos-the-ios-27-launch). |
 | Bound | After each write, the oldest records are deleted until the total is under **2 MiB** (UTF-16 code units; a redacted line is ASCII). Rotation is by SIZE. The newest record is never evicted. |
 | Failure | No IndexedDB, or a failed write ON screen: persistence stops for the process, said ONCE at `error` (`[APPLOG] the in-app log is no longer written to disk`), lines stay in a 256 KiB memory tail (oldest dropped and counted), and the export header names the state. **The export still reads the ring already on disk** - it read the memory tail alone, 19 KB against 191 KB stored (iPhone 12, 1.2.9-alpha.3). Not a second storage path. |
 | Write cut short off screen | WebKit aborts the IndexedDB transaction in flight when it suspends a backgrounded WebView, so on iOS the leave-screen flush lost that race (`log write failed` 69 ms after `[LIFECYCLE] App in background`, alpha.2 and alpha.3). A write that fails while the app is OFF screen (known from the same `onAppScreenChange` that asked for it) is not a storage failure: its lines go back in front, the connection is dropped, the batch thresholds stop asking until the app is back, and the return writes them. WebKit delivers that abort on RESUME, so the app may already be on screen when it arrives: the hold then applies only while the app is still off screen, and otherwise the lines are written again at once. One `info` line says so. `appLog.test.ts` pins it. |
@@ -880,6 +880,14 @@ Two consequences worth carrying:
 - **This is not platform-specific.** One capability file, one `hooks.client.ts`: iOS was equally
   affected and has never been checked on hardware.
 
+**EVERY LINK WAITS FOR THE ROUTER, IN ONE PLACE** (`processAppLinks`, `$lib/mobile/appLinkRouter.ts`,
+2026-11-25). A cold-start tap delivers its link before SvelteKit's first navigation has settled; a
+`goto` then threw `Cannot read properties of null (reading 'pathname')` (the client's current URL is
+still null) and a tap on the agenda or the moderation queue landed nowhere - the chat branch survived
+only because it publishes a target and lets a mounted effect route it. The router now routes nothing
+before `routerReady`, which the root layout resolves in its first `afterNavigate`: the same wait the
+iOS tap drain makes, for every branch. Test: `appLinkRouter.test.ts`.
+
 The diagnosis is cheap when a cold start misbehaves, because each hop logs separately: the OS prints
 `START ... act=android.intent.action.VIEW dat=fr.emse.canari://chat/...`, the WebView prints
 `[hooks] Deep-link listener registered`, the handoff prints `[hooks] Processing URL`, and the product
@@ -1039,8 +1047,9 @@ delegate no longer `openURL`s its own scheme.
   `processUrls` as a deep link (`$lib/mobile/notificationTapDrain.ts`, wired in `hooks.client.ts`).
   That wiring sits outside the deep-link plugin's import chain, so a failed import cannot take the
   tap down.
-- **NOTHING IS TAKEN BEFORE THE ROUTER IS MOUNTED** (`$lib/navigation/routerReady`, resolved by the
-  root layout's `onMount`; review F4). The take deletes the file, and a page link's `goto`
+- **NOTHING IS TAKEN BEFORE THE ROUTER IS READY** (`$lib/navigation/routerReady`, resolved by the
+  root layout's FIRST `afterNavigate` since 2026-11-25 - its `onMount` runs inside the first
+  navigation, before SvelteKit can take a `goto`; review F4). The take deletes the file, and a page link's `goto`
   (post, form, agenda, proposals) issued before the router exists does nothing. So a cold-start
   tap on one of them used to be read and lost. Waiting keeps ONE path for every link.
 - No clock is involved. The file is written before the event, and the listener is registered before
@@ -1130,7 +1139,9 @@ Notification Center over an open app was lost. The fix:
 - The page (`$lib/mobile/quickReplyDrain.ts`, registered by `ChatBackgroundService` once signed in)
   takes the lines (`read_and_clear_pending_quick_replies`, with its account id) when the native side
   says one waits, when a session registers, and whenever the app comes back to the front
-  (`visibilitychange`, M2). It sends each one through the composer's path (`useMessaging.sendTextTo`
+  (`visibilitychange` or `canari:foreground`, M2 - ONE drain per return, whichever says it first).
+  With no session yet, only the native side's event, which proves a reply waits, says so in the log
+  (it printed four times in 130 ms on one cold start, for replies that were not there). It sends each one through the composer's path (`useMessaging.sendTextTo`
   -> `sendChatMessage`).
 - A line the page cannot queue (for example, its conversation is not loaded yet) is APPENDED BACK,
   sealed again (`return_pending_quick_replies`), and the page shows "your reply is waiting" once
@@ -3822,9 +3833,13 @@ Both Android and the iOS NSE run the same ladder when an encrypted MLS message p
 1. Try a direct decrypt (`tryDecrypt` / `decryptProto`). **A refusal at an epoch this device already holds stops here** (reason `mls-refused-for-good`, Kotlin `PushDecrypt.RefusedForGood`, since 2026-10-04): `background.rs` `refused_by_mls` splits MLS refusals by `DecryptErrorKind`, and a spent generation, a same-epoch refusal, a past epoch, our own frame or an eviction cannot be read by any later epoch. So no catch-up and no worker - each used to cost `fetchCommitsFromBackend` and an enqueue per message to learn `no commit to catch up`. A visible push still gets the generic banner, **and since NOTIF-10 (b) that banner is paired with the real one** (`push/GenericBannerLedger.kt`, tested by `GenericBannerLedgerTest`): the refusal means another engine (the WebView, alive but backgrounded) holds the message and posts the real line through `notifyMessageFromWebSocket`. Generic first: its MessagingStyle instant is remembered and the real post REPLACES it (`supersedes`, the channel path's mechanism). Real first (the order measured on the Mi 9T, 2026-10-06, 56 ms apart): a credit, kept only while a push for that group is in flight, makes the refused push post nothing. No clock; a real post with no push behind it leaves no credit. **ONE REAL POST CAN STAND FOR N MESSAGES** (2026-10-06, Mi 9T: a 600 s radio cut ended in ONE banner, `messages=5`, against three refused pushes - the first was covered, the second left a generic line, the third was suppressed): a catch-up flush raises a single banner for the last of N, so `covers` (N, 1 for a live frame) crosses the bridge (`useMessaging` flush -> `nativeNotification.ts` -> `notify_native_message` -> `notifyMessageFromWebSocket`) and `realPosted(groupId, covers)` answers up to N pushes: it replaces up to N generic lines (`supersedes` plus `alsoSupersedes`) and credits the rest, still capped by the pushes in flight. (The in-app iOS path, `canari_push.mm`, does not read the reason yet.)
 2. If that fails, ask where the group stands: `groupLocality` / `GroupLocality` returns `LOCAL`, `ABSENT` or `UNKNOWN`.
 3. `UNKNOWN` — the state could not be reached at all (lock not acquired, `mls.bin` unreadable, device key missing, JNI absent). **Neither recovery runs**, because neither is an answer to it. The push falls through to the fallback below.
-4. `LOCAL` (epoch ≥ 0) — run in-memory commit catch-up (`tryDecryptWithCommitCatchup` / `decryptWithCommitCatchup`) immediately.
+4. `LOCAL` (epoch ≥ 0) — run in-memory commit catch-up (`tryDecryptWithCommitCatchup` / `decryptWithCommitCatchup`) immediately. On Android its answer is never a bare "nothing" for two cases that are not refusals (2026-11-25): **a server the commit fetch could not reach** is `PushDecrypt.Unreachable` (classified at the throw, `push/ServerFetch.kt`; the ciphertext fetch of step 1 answers it too), **an MLS state lock held elsewhere** is `PushDecrypt.StateBusy`, and **a foreground that took over** while it waited is `PushDecrypt.Yielded` - it used to be `null`, read as `Refused`, which enqueued a worker and posted the accusing fallback while the app was in front.
 5. `ABSENT` — **nothing is waited for**, and the push falls through to the fallback below. On Android a frame whose Welcome is QUEUED on the push lane never reaches this step: it is queued again behind that Welcome (`WELCOMES_ON_LANE`, [channel-encryption §20](../protocols/channel-encryption.md#how-it-is-built)). What this step was until 2026-09-28 - three decrypts 1.8 s apart on both platforms, betting that another engine joined the group meanwhile - was a clock nobody had seen win, and on Android it sat in front of the very Welcome it waited for (NOTIF-21). Deleted on both at the user's word (*"Supprime ce délai"*).
-6. If everything fails, Android enqueues `MlsBackgroundWorker` and shows the generic fallback notification (unless the push is silent, in which case it returns quietly). The iOS NSE cannot enqueue work from the extension, so it shows the fallback directly.
+6. If everything fails, a visible push shows the generic fallback line (a silent one returns quietly), and what Android does besides depends on WHY:
+   - **refused** (`PushDecrypt.Refused`): `MlsBackgroundWorker` is enqueued, and **it does not retry the frame** - it sweeps the pending DB (`background.rs` `cleanup_pending_db`) and never fetches, decrypts or re-posts. The generic line stays until the app's drain reads the message. The log line says so (`MLS refused the frame -> MlsBackgroundWorker enqueued to sweep the pending DB ...`); it used to read `Decryption failed -> MlsBackgroundWorker enqueued`, promising a retry that does not exist.
+   - **the server could not be reached** (`PushDecrypt.Unreachable`): no `MlsBackgroundWorker`; the frame is HELD and replayed once a network is back, and the real line replaces the generic one - [below](#a-push-the-network-refused-is-held-and-replayed-2026-11-25).
+
+   The iOS NSE cannot enqueue work from the extension, so it shows the fallback directly.
 
 **Every answer of this ladder may carry `ownDeviceAdded`** - the keys of the "a new device was added to your account" alerts the commits it merged in memory produced. Both platforms claim them in a shared marker ledger and raise one local notification for the keys they claimed (`announceOwnDevicesAdded` in Kotlin and in the NSE); see [mls-protocol](../protocols/mls-protocol.md#new-device-notices-decided-by-the-user-2026-10-22-refined-the-same-day).
 
@@ -3855,6 +3870,89 @@ the file, where a silent exclusion would leave the ladder untested again under a
 The two constants live there too, so `3 x 1.8 s` has one definition rather than one per reader.
 
 **`UNKNOWN` is step 3 and not a value of "is it local" because the two were the same value until WP-PUSHHERD-1.** Every failure to reach the state answered "not local", so a message in a months-old DM went down the Welcome-race branch, whose retries re-entered the very lock that had just timed out. Twenty such verdicts came from ten epoch queries in one measured run. See [cross-client-testing](../cross-client-testing.md).
+
+##### A push the network refused is held, and replayed (2026-11-25)
+
+**What happened.** An Android reading of 2026-11-25: a DM peer committed while the phone was in the
+background, so every later push of that DM was one epoch ahead of the stored state. The ladder ran
+the catch-up, whose `fetchCommitsFromBackend` hit `UnknownHostException` (the phone's native resolver
+failed for minutes at a time) and returned `null` - the same `null` as an HTTP refusal - so the
+outcome stayed `Refused`. Each push enqueued `MlsBackgroundWorker`, logged `Decryption failed`, and
+posted "Nouveau message". Nothing ever upgraded those lines: the worker sweeps the DB, and the app's
+drain read every message hours later, when it was opened. The frames were readable the whole time.
+
+**The mechanism.**
+
+- **Classified at the throw.** Both fetches of a background decrypt answer a `ServerFetch`
+  (`push/ServerFetch.kt`): `Got`, `Answered(httpCode)`, `Unreadable`, or `Unreachable` for any
+  `IOException` (DNS, connect, TLS, timeout, a cut body). `fetchProtoFromBackend` (the ciphertext) and
+  `fetchCommitsFromBackend` (the catch-up) both turn `Unreachable` into `PushDecrypt.Unreachable`;
+  every other failure stays a refusal, as before.
+- **A held lock is not a refusal either.** `tryDecrypt`'s tryLock, the catch-up's two
+  `withMlsStateLock` sections and `groupLocality` (`GroupLocality.BUSY`, handed to the ladder as its
+  `busy` outcome) answer `PushDecrypt.StateBusy` when the MLS state lock stayed held. It used to be
+  `Refused`, which a replay read as "drop the frame" and logged at WARN.
+- **Held, with its line's identity.** The visible push still posts the generic line - the user is owed
+  the fact of a message. `showMessageNotification` returns the MessagingStyle instant it posted the
+  line at, and the frame (its data map, unchanged) is written to `noBackupFilesDir/held_push_frames.json`
+  with that instant (`HeldFrameWorker.hold`, arithmetic in `push/HeldFrames.kt`). A suppressed post
+  (app in front, already read) holds nothing: there is no line to upgrade. The hold asks whether the
+  app is in front under the store's lock, which the takeover takes too, so the two cannot interleave.
+- **One job per conversation, waiting on an event, blocking no thread.** `HeldFrameWorker` is a
+  `CoroutineWorker` enqueued under `HeldFrames.uniqueWorkName(groupId)` with `NetworkType.CONNECTED`.
+  Every step of a run - pick the next held frame, replay it, settle it - is ONE task on
+  `MLS_PUSH_LANE`, and the job suspends until the lane ran it. WorkManager's shared pool (four threads
+  on the Mi 9T, shared with `OutboxRetryWorker` and `MlsBackgroundWorker`) is never parked behind MLS
+  work, however many conversations come back with the network, and a cancel frees the job at once.
+  `ExistingWorkPolicy.REPLACE`, not `KEEP`: the frame is written before the enqueue, and a `KEEP`
+  arriving while a run is past its last read of the store would be dropped and leave the frame to no
+  job. No lock: the lane is one thread, so a replaced run's last step settles its frame before its
+  successor's first step reads the store. A lane task whose job was cancelled while it waited picks
+  nothing. A run STOPS at its first kept replay (`HeldFrames.stopsRun`): the next frame meets the same
+  network, lock or app, and one more unreachable fetch costs a full network timeout.
+- **Replayed through the push path itself** (`replayHeldFrameOnLane`): the same `tryDecrypt`, the same
+  ladder (`recoverRefused`), the same foreground yield, and the same presentation (`presentFrame`) -
+  with `supersedes`/`alsoSupersedes` set to the held instants, so the real line REPLACES the generic
+  one (`push/SupersededLines.kt`, the mechanism the refused-for-good pairing and the salon seed redraw
+  already use), AT ITS PLACE (`SupersededLines.insertionIndex`, asked by the replay alone through
+  `keepsPlace`; the two live supersedes append as they did): appended, a replayed message read as
+  newer than the lines that arrived after it. Its quick actions then carry the NEWEST line's instants
+  (`SupersededLines.actionInstants`), or "Marquer comme lu" would leave the lines below it unread.
+  The job's service instance is given the application
+  context as its base (`attachedTo`), because the replay reads files, posts and takes wake locks
+  through it.
+- **What each replay comes to** (`HeldFrames.Replay`): `UPGRADED`; `EMPTY` - it decrypted to NO
+  message (a control frame, key material absorbed as on the push), so its generic line is removed
+  (`dropLines`, which matches only `LINE_PLACEHOLDER` lines of the held instants, through the same
+  silent re-post as the pending reply, `repostBanner`); `UNSHOWN` - it decrypted to a REAL message
+  this path cannot draw (`PushDecrypt.NothingToRender` carries `push/UnshownReason.kt`: an unknown
+  kind, a sender MLS did not verify, a seed request), so the generic line STAYS, as on the live push;
+  `CONSUMED` - refused for good, the app's drain or another engine already read it; `NOT_READABLE` -
+  refused, at WARN; `FAILED` - the replay threw, settled and said once at ERROR, so a frame that
+  throws every time cannot hold back its conversation's other frames; and three that say nothing
+  about the frame and KEEP it: `STILL_UNREACHABLE`, `STATE_BUSY` (both retry the run on
+  WorkManager's backoff) and `FOREGROUND`.
+- **Ended by durable state, never by a clock.** Before any MLS work the replay asks whether the app
+  is in front and whether a generic line of the frame is still in the conversation's notification
+  (`GONE` when read, swiped or read elsewhere: debug, nothing posted). `MainActivity.onResume`
+  cancels every replay but EMPTIES NOTHING (`takenOverByApp`): an app opened offline drains nothing,
+  so its frames are still owed. `onPause` hands every held conversation back to its job (`handBack`),
+  as the outbox is handed back - unless the app is in front again by then, asked under the store's
+  lock as the hold asks it. A frame the app's drain did read meets an MLS state that has moved
+  past it, is refused for good, and ends `CONSUMED` at debug with nothing re-posted.
+
+**No smart reply to a placeholder.** The reply action allowed generated replies unconditionally, so
+Android offered chips ("Si", "OK") answering the generic line. Each line now carries
+`LINE_PLACEHOLDER`; when the newest line somebody else wrote is one (this account's answers and
+pending replies are skipped), `PlaceholderReplies` turns off both
+`setAllowGeneratedReplies` and `setAllowSystemGeneratedContextualActions`. "Répondre" and "Marquer
+comme lu" stay.
+
+Tests (JVM, `frontend/src-tauri/android-tests`): `ServerFetchTest`, `HeldFramesTest`,
+`SupersededLinesTest` (including the insertion place), `PlaceholderRepliesTest` (including own lines
+skipped), and the ladder cases in `PushDecryptLadderTest` (an unreachable catch-up, a yielding one and
+a locality the lock kept from being read are handed on, never left refused). Owed on the Mi 9T:
+[the reading](../backlog.d/reading-owed-a-push-the-network-refused-is-replayed-on-the-mi-9t.md).
 
 #### One lane for everything that touches `mls.bin`
 
@@ -5441,7 +5539,7 @@ two of the three are edited by a machine outside it, and one of those is edited 
 | production web | `curl -s https://canari.emse.fr/api/version` |
 | dev web | `curl -s https://dev.canari-emse.fr/api/version` |
 | Google Play | `bun tools/play-vitals/vitals.mjs` - the `production` track line |
-| App Store | the `App Store / Build iOS IPA` job of that release's `release.yml` run, plus App Store Connect for whether Apple has since APPROVED what was submitted |
+| App Store | the `App Store / Build iOS IPA` job of that release's `release.yml` run - and when it DEFERRED on a held slot, the latest `stores` run of `scheduled.yml`, whose catch-up submits the latest stable the first morning the slot is free ([how](../../../tools/app-store/README.md#a-deferred-submission-completes-itself---catch-up-2026-11-25)) - plus App Store Connect for whether Apple has since APPROVED what was submitted |
 
 **THE LAST ROW IS THE ONE THAT CANNOT BE CLOSED FROM HERE.** A green iOS job means the version was
 created, the build attached and the submission submitted - it means the REQUEST succeeded, never

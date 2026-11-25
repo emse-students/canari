@@ -11,7 +11,7 @@
   import { cancelRestore } from '$lib/navigation/scrollMemory';
   import { preloadRouteCodeOnce } from '$lib/navigation/routeCodePreload';
   import { onMount, tick } from 'svelte';
-  import { markRouterReady } from '$lib/navigation/routerReady';
+  import { readyOnFirstNavigation } from '$lib/navigation/routerReady';
   import { themeStore } from '$lib/stores/themeStore.svelte';
   import ChatBackgroundService from '$lib/components/layout/ChatBackgroundService.svelte';
   import CallBanner from '$lib/components/layout/CallBanner.svelte';
@@ -197,8 +197,6 @@
     // The bundle parsed and the layout is up: tell the old-WebView guard of app.html: it stops watching and
     // removes its update screen if one was drawn (mobile.md, the old Android System WebView section).
     window.__canariWebViewGuard?.mounted();
-    // The router exists from here: inputs consumed once (the iOS notification tap) wait for this.
-    markRouterReady();
     // Nothing else starts under the in-app browser screen: no queue, no listener, no session.
     if (inAppBrowser) return;
     // A click goes to the component the press began on, never to what a layout change put under it.
@@ -766,6 +764,10 @@
     swipeGesture = null;
     snapSwipeBack();
   }
+
+  // The first navigation has settled: the router takes a `goto` from here, so the inputs that wait
+  // for it (a deep link, the iOS notification tap) may be routed (`routerReady.ts`).
+  readyOnFirstNavigation(afterNavigate);
 
   /**
    * The entrance the app keeps where view transitions do not exist, played from `afterNavigate`

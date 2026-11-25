@@ -27,17 +27,23 @@
  * same check through `--check-notes` before anything moves at all.
  *
  * Usage: bun tools/app-store/submit.mjs
+ *        bun tools/app-store/submit.mjs --catch-up      # the daily completion of a deferral
  *        bun tools/app-store/submit.mjs --check-notes   # the notes rule alone, no credentials
  *   env  ASC_KEY_ID, ASC_ISSUER_ID, ASC_API_KEY_P8 (base64 of the .p8)
  *        APP_BUNDLE_ID     the app to act on
  *        MARKETING_VERSION the versionString, e.g. 0.15.0 - numeric, no pre-release suffix
  *        BUILD_NUMBER      the CFBundleVersion the bump wrote, e.g. 1500099
  *        WHATS_NEW_FILE    optional path; defaults to store/whats-new.txt
+ *        WHATS_NEW_REF     optional git ref (the catch-up passes the stable's tag): the notes are
+ *                          read from THAT tree, never from the checkout, whose file already
+ *                          names the next version
  *        DRY_RUN           set to 1 to read everything and change nothing
  */
 
 import { createSign } from 'node:crypto';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const API = 'https://api.appstoreconnect.apple.com';
 const PLATFORM = 'IOS';
@@ -155,6 +161,16 @@ export const VERSION_REJECTED = new Set([
   'METADATA_REJECTED',
   'INVALID_BINARY',
 ]);
+
+/**
+ * The rejections APPLE made, as opposed to `DEVELOPER_REJECTED`, which is a human withdrawing a
+ * version from review in App Store Connect. The release path may write over either (a new release
+ * IS the answer to App Review); the daily catch-up may write over neither kind of App Review
+ * refusal, because answering one with no new code is a decision a clock must not take.
+ */
+export const VERSION_REVIEW_REJECTED = new Set(
+  [...VERSION_REJECTED].filter((s) => s !== 'DEVELOPER_REJECTED')
+);
 
 export const VERSION_EDITABLE = new Set([
   'PREPARE_FOR_SUBMISSION',
@@ -442,7 +458,7 @@ export function rejectedItemsOfVersion({ items, versionId }) {
  * @returns {{action: 'use', id: string, state: string}
  *          | {action: 'done', why: string}
  *          | {action: 'rename', id: string, from: string, state: string}
- *          | {action: 'blocked', why: string}
+ *          | {action: 'blocked', why: string, occupant: string, state: string}
  *          | {action: 'create'}
  *          | {action: 'fail', why: string}}
  */
@@ -491,8 +507,154 @@ export function chooseVersionSlot({ versions, versionString }) {
 
   return {
     action: 'blocked',
+    // TYPED, so a reader can tell a review queue (it frees by itself) from a version a human must
+    // release - `tools/store-divergence` greens the first and keeps the second red.
+    occupant: name,
+    state,
     why: `version ${name} occupies the app's only version slot and is ${state}. A release script must not cancel a review or a pending release - decide what happens to ${name} in App Store Connect, then re-run this.`,
   };
+}
+
+/**
+ * The numeric order of two marketing versions (`1.8.2` against `1.8.10`), or `null` when either is
+ * not a plain dotted number. Apple's `versionString` is numeric by its own rule and so is every
+ * stable this repository cuts; a missing component reads as 0, so `1.8` equals `1.8.0`.
+ *
+ * NULL, NOT A GUESS, for anything else: a version this cannot order is one the catch-up cannot
+ * prove is older than the one it is about to submit, and `chooseCatchUp` refuses on that.
+ *
+ * @param {string | undefined} a
+ * @param {string | undefined} b
+ * @returns {-1 | 0 | 1 | null}
+ */
+export function compareVersions(a, b) {
+  const parse = (v) =>
+    typeof v === 'string' && /^\d+(\.\d+)*$/.test(v) ? v.split('.').map(Number) : null;
+  const x = parse(a);
+  const y = parse(b);
+  if (!x || !y) return null;
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const d = (x[i] ?? 0) - (y[i] ?? 0);
+    if (d !== 0) return d > 0 ? 1 : -1;
+  }
+  return 0;
+}
+
+/**
+ * SHOULD THE DAILY CATCH-UP SUBMIT THE LATEST STABLE NOW, given every version the app has?
+ *
+ * WHY THIS EXISTS (2026-11-25). The `1.8.1` stable's iOS arm found `1.8.0` holding Apple's only
+ * version slot in `WAITING_FOR_REVIEW` and deferred - `SlotHeldError`, green, correct. Then `1.8.0`
+ * was approved, the slot freed, and NOTHING EVER ASKED AGAIN: the App Store had no `1.8.1` at all,
+ * Play had it, iOS users stayed on the old version, and the daily store report went red and only
+ * reported. A deferral whose completion waits for a human to notice is a queue nobody drains. The
+ * fact that decides it is already durable - the latest stable release says what must ship, and
+ * App Store Connect's version list says what is there - so the scheduled `stores` job asks this
+ * function every morning and, when it says `submit`, runs the SAME submission the release runs.
+ *
+ * THE ARMS, in the order they are asked, and the first three never write:
+ *
+ *   - Apple holds a version NEWER than this one (any state)  -> nothing. The catch-up never
+ *     submits an older version than one already there, whatever a release list says.
+ *   - this version is itself with Apple or released          -> nothing; the deferral is over.
+ *   - this version is itself REJECTED                        -> nothing. Resubmitting the build
+ *     App Review refused, unread, is not a decision a clock may take; the store report stays red
+ *     with `rejected`, which names that errand. Nor does a clock undo a human's withdrawal of it
+ *     (`DEVELOPER_REJECTED`).
+ *   - an OLDER version App Review refused holds the slot     -> nothing, for the same reason: the
+ *     release renames over it because a release is a new answer; a catch-up has none. A version a
+ *     human withdrew (`DEVELOPER_REJECTED`) is no refusal and stays writable.
+ *   - another version holds the slot and is with Apple      -> defer (`SlotHeldError`, exit 75).
+ *     Never touch a version Apple is reviewing.
+ *   - the slot is free, or holds an older editable version   -> submit, through `chooseVersionSlot`
+ *     exactly as the release would (create, use, or rename).
+ *
+ * WHY ONLY THE LATEST STABLE, EVER. The caller passes the newest published stable and no other, so
+ * a stale missing stable (`1.8.1` once `1.8.2` is out) is SKIPPED by construction: the newer build
+ * carries everything the older one did, and submitting the older first would spend a whole review
+ * cycle holding the slot against the version users should actually get. If `1.8.1` is submitted
+ * and `1.8.2` follows, `1.8.2`'s release defers on the busy slot and this same function submits it
+ * the first morning after `1.8.1` leaves review. The latest stable always wins.
+ *
+ * @param {{versions: unknown, versionString: string}} input
+ * @returns {{action: 'submit', why: string}
+ *          | {action: 'nothing', why: string}
+ *          | {action: 'defer', why: string}
+ *          | {action: 'fail', why: string}}
+ */
+export function chooseCatchUp({ versions, versionString }) {
+  if (!versionString || compareVersions(versionString, versionString) === null)
+    return {
+      action: 'fail',
+      why: `${JSON.stringify(versionString)} is not a stable marketing version`,
+    };
+  if (!Array.isArray(versions))
+    return {
+      action: 'fail',
+      why: 'the app returned no version list, so what is already with Apple is unknown',
+    };
+
+  for (const v of versions) {
+    const name = v?.attributes?.versionString;
+    const order = compareVersions(name, versionString);
+    if (order === null)
+      return {
+        action: 'fail',
+        why: `Apple holds a version named ${JSON.stringify(name)}, which cannot be ordered against ${versionString} - refusing to risk submitting an older version over it`,
+      };
+    if (order > 0)
+      return {
+        action: 'nothing',
+        why: `Apple already holds ${name} (${v?.attributes?.appStoreState}), newer than ${versionString} - a catch-up never submits an older version`,
+      };
+  }
+
+  const mine = versions.find((v) => v?.attributes?.versionString === versionString);
+  const mineState = mine?.attributes?.appStoreState;
+  if (mineState && VERSION_REVIEW_REJECTED.has(mineState))
+    return {
+      action: 'nothing',
+      why: `${versionString} is ${mineState} - App Review refused it, and resubmitting that build unread is a human's decision, not a clock's`,
+    };
+  if (mineState === 'DEVELOPER_REJECTED')
+    return {
+      action: 'nothing',
+      why: `${versionString} is DEVELOPER_REJECTED - a human withdrew it from review in App Store Connect, and a clock does not undo a human's withdrawal of the very version it would resubmit`,
+    };
+
+  // AN OLDER VERSION APP REVIEW REFUSED, STILL IN THE SLOT. The release path renames it - a new
+  // release IS the answer to App Review - but the catch-up has no new code to answer with, only the
+  // build that may carry the same fault, so the refusal is left for a human to read. A version a
+  // human WITHDREW (`DEVELOPER_REJECTED`) is no refusal, and stays writable.
+  const refused = versions.find(
+    (v) =>
+      v?.attributes?.versionString !== versionString &&
+      VERSION_REVIEW_REJECTED.has(v?.attributes?.appStoreState)
+  );
+  if (refused)
+    return {
+      action: 'nothing',
+      why: `the slot holds ${refused.attributes.versionString}, which App Review refused (${refused.attributes.appStoreState}) - writing ${versionString} over it would answer that refusal with no one having read it`,
+    };
+  // ASKED HERE AND NOT LEFT TO `chooseVersionSlot`, which filters terminal versions out before it
+  // looks for this one: a released `1.8.1` would otherwise read as an empty slot and a `create`.
+  if (mineState && (VERSION_DONE.has(mineState) || VERSION_IN_REVIEW.has(mineState)))
+    return {
+      action: 'nothing',
+      why: `${versionString} is ${mineState} - it is with Apple or released already`,
+    };
+
+  const slot = chooseVersionSlot({ versions, versionString });
+  if (slot.action === 'done') return { action: 'nothing', why: `${versionString}: ${slot.why}` };
+  if (slot.action === 'blocked') return { action: 'defer', why: slot.why };
+  if (slot.action === 'fail') return { action: 'fail', why: slot.why };
+  const how =
+    slot.action === 'create'
+      ? 'the slot is free and no version exists for it'
+      : slot.action === 'rename'
+        ? `the slot holds ${slot.from} (${slot.state}), still editable`
+        : `it exists and is still editable (${slot.state})`;
+  return { action: 'submit', why: `${versionString} is not with Apple: ${how}` };
 }
 
 /**
@@ -702,6 +864,38 @@ const log = (msg) => process.stdout.write(`${msg}\n`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
+ * EVERY PAGE of a list, following Apple's `links.next` until it stops.
+ *
+ * The version list is where "never submit an older version than one Apple has" and "who holds the
+ * slot" are decided, and `limit=50` is a page, not a promise: an app with more versions than that
+ * would answer both questions from a truncated list, silently. So a guard is only as good as the
+ * completeness of what it reads, and this makes it complete. `links.next` is absolute; the client
+ * takes a path, so the API origin is stripped - and a `next` on any other origin is refused rather
+ * than followed with our token.
+ *
+ * @param {(m: string, p: string) => Promise<any>} api
+ * @param {string} path the first page
+ * @returns {Promise<any[] | null>} null when a page answered without a `data` list: "Apple said
+ *   nothing" is not "Apple has no versions", and every reader treats it as unknown
+ */
+export async function listAll(api, path) {
+  const rows = [];
+  let next = path;
+  for (let page = 1; next; page++) {
+    if (page > 100) throw new Error(`${path} still had a next page after 100 pages`);
+    const res = await api('GET', next);
+    if (!Array.isArray(res?.data)) return null;
+    rows.push(...res.data);
+    const link = res?.links?.next;
+    if (!link) break;
+    if (!link.startsWith(`${API}/`))
+      throw new Error(`Apple's next page points off ${API}: ${link} - refusing to follow it`);
+    next = link.slice(API.length);
+  }
+  return rows;
+}
+
+/**
  * PUT THE VERSION IN THE SUBMISSION, AND SURVIVE NOT KNOWING WHETHER THE LAST ATTEMPT DID.
  *
  * THE CASE. `v0.18.10` got `POST /v1/reviewSubmissionItems -> 500 An unexpected error occurred on
@@ -757,6 +951,26 @@ async function addVersionToSubmission(api, submissionId, versionId) {
   }
 }
 
+/**
+ * The notes file AS A STABLE'S OWN TREE HOLDS IT, copied to a temporary file whose path is
+ * returned. The daily catch-up submits a stable whose release ran days ago, from a checkout of
+ * `main`, whose notes file already names the next version. Reading it here rather than with
+ * `git show` in the workflow keeps this file the only one that names the path in code
+ * (`release-chain.test.sh` asserts it); the rule that judges the text is still `readWhatsNew`.
+ *
+ * @param {string} ref a tag or commit the checkout has fetched
+ * @returns {string} the path of the extracted copy
+ */
+export function notesFromRef(ref) {
+  const out = Bun.spawnSync(['git', 'show', `${ref}:store/whats-new.txt`]);
+  if (out.exitCode !== 0)
+    throw new Error(`git show ${ref}:store/whats-new.txt failed: ${out.stderr.toString().trim()}`);
+  const path = join(tmpdir(), `whats-new-${process.pid}.txt`);
+  writeFileSync(path, out.stdout);
+  log(`  release notes taken from ${ref}, not from the checkout`);
+  return path;
+}
+
 async function main() {
   const need = (name) => {
     const v = process.env[name];
@@ -802,17 +1016,63 @@ async function main() {
 
   const keyId = need('ASC_KEY_ID');
   const issuerId = need('ASC_ISSUER_ID');
-  const bundleId = need('APP_BUNDLE_ID');
-  const versionString = need('MARKETING_VERSION');
-  const buildNumber = need('BUILD_NUMBER');
-  const whatsNewFile = process.env.WHATS_NEW_FILE || 'store/whats-new.txt';
-  const dryRun = process.env.DRY_RUN === '1';
-
   const privateKey = Buffer.from(need('ASC_API_KEY_P8'), 'base64').toString('utf8');
-  const api = client(() => mintToken({ keyId, issuerId, privateKey }));
+  const catchUp = process.argv.includes('--catch-up');
 
+  const result = await submitToAppStore({
+    api: client(() => mintToken({ keyId, issuerId, privateKey })),
+    bundleId: need('APP_BUNDLE_ID'),
+    versionString: need('MARKETING_VERSION'),
+    buildNumber: need('BUILD_NUMBER'),
+    whatsNewFile: process.env.WHATS_NEW_REF
+      ? notesFromRef(process.env.WHATS_NEW_REF)
+      : process.env.WHATS_NEW_FILE || 'store/whats-new.txt',
+    dryRun: process.env.DRY_RUN === '1',
+    catchUp,
+  });
+
+  // THE CATCH-UP REPORTS WHAT IT DID, in the run's summary, because "exit 0" is three different
+  // mornings - submitted, nothing owed, a dry run - and a reader of `gh run view` must not have to
+  // open the log to learn which. The release path has its own summary in `ios.yml`.
+  if (catchUp && process.env.GITHUB_STEP_SUMMARY) {
+    const { appendFileSync } = await import('node:fs');
+    appendFileSync(
+      process.env.GITHUB_STEP_SUMMARY,
+      `### App Store catch-up: \`${result.outcome}\`\n\n${result.why}\n\n`
+    );
+  }
+}
+
+/**
+ * THE SUBMISSION ITSELF, for the release and for the daily catch-up - ONE implementation.
+ *
+ * `api` is injected rather than built here so `submit.test.mjs` can run the whole chain against an
+ * in-memory App Store and assert WHICH WRITES HAPPEN in each catch-up case. That fake proves the
+ * decisions and their wiring, never Apple's behaviour - the README says which half is which.
+ *
+ * `catchUp` is the scheduled path (`scheduled.yml`, job `stores`): `chooseCatchUp` decides first,
+ * from the whole version list, whether anything is owed at all; and the build is NOT waited for,
+ * because a catch-up only ever runs after the release that uploaded it has ended - an absent build
+ * then is a finding, not a delay.
+ *
+ * @param {{api: (m: string, p: string, b?: unknown, o?: {appleRefusesDuplicate?: boolean}) => Promise<any>,
+ *          bundleId: string, versionString: string, buildNumber: string, whatsNewFile?: string,
+ *          dryRun?: boolean, catchUp?: boolean, pollMs?: number}} input
+ * @returns {Promise<{outcome: 'submitted' | 'nothing' | 'dry-run', why: string}>} a held slot
+ *   throws `SlotHeldError` instead, so it leaves through `EXIT_SLOT_HELD` on both paths.
+ */
+export async function submitToAppStore({
+  api,
+  bundleId,
+  versionString,
+  buildNumber,
+  whatsNewFile = 'store/whats-new.txt',
+  dryRun = false,
+  catchUp = false,
+  pollMs = 60_000,
+}) {
   log(
-    `App Store submission - ${bundleId} ${versionString} (build ${buildNumber})${dryRun ? ' [DRY RUN]' : ''}`
+    `App Store ${catchUp ? 'catch-up' : 'submission'} - ${bundleId} ${versionString} (build ${buildNumber})${dryRun ? ' [DRY RUN]' : ''}`
   );
 
   // -- the app ------------------------------------------------------------------------------------
@@ -823,6 +1083,21 @@ async function main() {
   const app = apps?.data?.[0];
   if (!app) throw new Error(`no app with bundle id ${bundleId} is visible to this API key`);
   log(`  app ${app.id} - ${app.attributes?.name ?? '(unnamed)'}`);
+
+  // -- the catch-up's own question, asked BEFORE anything else is read ----------------------------
+  // So a morning with nothing owed (the usual one) needs neither the notes nor the build, and its
+  // answer is the decision's sentence rather than a side effect of some later step.
+  if (catchUp) {
+    const listed = await listAll(
+      api,
+      `/v1/apps/${app.id}/appStoreVersions?filter[platform]=${PLATFORM}&limit=50`
+    );
+    const decision = chooseCatchUp({ versions: listed, versionString });
+    log(`  catch-up decision: ${decision.action} - ${decision.why}`);
+    if (decision.action === 'nothing') return { outcome: 'nothing', why: decision.why };
+    if (decision.action === 'defer') throw new SlotHeldError(decision.why);
+    if (decision.action === 'fail') throw new Error(decision.why);
+  }
 
   const notes = readWhatsNew({ file: whatsNewFile, version: versionString });
   if (!notes.ok) throw new Error(notes.why);
@@ -850,26 +1125,34 @@ async function main() {
       break;
     }
     if (verdict.action === 'fail') throw new Error(verdict.why);
+    // THE CATCH-UP DOES NOT WAIT: it runs only once the release that uploaded this build has ended,
+    // so a build that is absent or still processing then is a finding about that release.
+    if (catchUp)
+      throw new Error(
+        `build ${buildNumber} is not ${BUILD_READY} in App Store Connect` +
+          `${found ? ` (${found.attributes?.processingState})` : ' (it does not exist)'} - ` +
+          `the catch-up submits only a build its release already uploaded; read that release's iOS job`
+      );
     if (Date.now() > deadline)
       throw new Error(
         `build ${buildNumber} was still not ${BUILD_READY} after 45 minutes` +
           `${found ? ` (${found.attributes?.processingState})` : ' (it never appeared)'}`
       );
     log(`  waiting for build ${buildNumber} to finish processing (attempt ${attempt})`);
-    await sleep(60_000);
+    await sleep(pollMs);
   }
 
   // -- the version --------------------------------------------------------------------------------
   // EVERY VERSION, NOT THE ONE THIS RELEASE IS CALLED. An app has a single non-terminal version
   // slot; asking `filter[versionString]=0.16.0` answers a narrower question than the POST needs and
   // is how `v0.16.0` earned a 409 saying so. `chooseVersionSlot` carries the whole list.
-  const all = await api(
-    'GET',
+  const all = await listAll(
+    api,
     `/v1/apps/${app.id}/appStoreVersions?filter[platform]=${PLATFORM}&limit=50`
   );
-  const slot = chooseVersionSlot({ versions: all?.data ?? [], versionString });
+  const slot = chooseVersionSlot({ versions: all, versionString });
 
-  for (const v of all?.data ?? []) {
+  for (const v of all ?? []) {
     const st = v?.attributes?.appStoreState;
     if (st && !VERSION_DONE.has(st)) log(`  version slot: ${v?.attributes?.versionString} (${st})`);
   }
@@ -877,7 +1160,7 @@ async function main() {
   if (slot.action === 'done') {
     log(`  version ${versionString} needs nothing: ${slot.why}`);
     log('done.');
-    return;
+    return { outcome: 'nothing', why: `${versionString}: ${slot.why}` };
   }
   if (slot.action === 'fail') throw new Error(slot.why);
   // NOT AN ERROR, AND NOT AN exit 1: the slot is held by a version that is with Apple, which is the
@@ -898,7 +1181,10 @@ async function main() {
   } else if (slot.action === 'rename') {
     if (dryRun) {
       log(`  [dry run] would rename version ${slot.from} to ${versionString}`);
-      return;
+      return {
+        outcome: 'dry-run',
+        why: `would rename ${slot.from} to ${versionString} and submit it`,
+      };
     }
     // THE PREPARED-BUT-UNSUBMITTED SLOT IS THE ONE THIS RELEASE WANTS. Renaming it is what the App
     // Store Connect UI does, and it is the only way to reach a slot a previous attempt left behind
@@ -914,7 +1200,7 @@ async function main() {
   } else {
     if (dryRun) {
       log(`  [dry run] would create version ${versionString}`);
-      return;
+      return { outcome: 'dry-run', why: `would create ${versionString} and submit it` };
     }
     const created = await api('POST', '/v1/appStoreVersions', {
       data: {
@@ -929,7 +1215,10 @@ async function main() {
 
   if (dryRun) {
     log('  [dry run] would attach the build, write the release notes and submit for review');
-    return;
+    return {
+      outcome: 'dry-run',
+      why: `would attach build ${buildNumber} to ${versionString}, write its notes and submit it`,
+    };
   }
 
   // -- attach the build ---------------------------------------------------------------------------
@@ -999,12 +1288,20 @@ async function main() {
         break;
       }
       if (verdict.action === 'fail') throw new Error(verdict.why);
+      // NOR DOES IT WAIT FOR MEDIA, and that is what bounds its write window: with no wait anywhere,
+      // a catch-up's writes are a handful of requests (seconds; minutes at the retry ceiling), far
+      // below the twenty-plus minutes any stable needs from publication to its own submit. The
+      // version it wrote is still editable, so tomorrow's catch-up resumes it.
+      if (catchUp)
+        throw new Error(
+          `${verdict.pending} store asset(s) are still processing - the catch-up does not wait for media; tomorrow resumes this version`
+        );
       if (Date.now() > assetDeadline)
         throw new Error(`${verdict.pending} store asset(s) still processing after 30 minutes`);
       log(
         `  waiting for ${verdict.pending} store asset(s) to finish processing (attempt ${attempt})`
       );
-      await sleep(60_000);
+      await sleep(pollMs);
     }
   }
 
@@ -1066,6 +1363,10 @@ async function main() {
   });
   log(`  submitted ${versionString} for review`);
   log('done.');
+  return {
+    outcome: 'submitted',
+    why: `${versionString} (build ${buildNumber}) was submitted for review`,
+  };
 }
 
 // Only when run, so the decisions above can be imported by the test without reaching Apple.

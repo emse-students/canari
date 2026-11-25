@@ -66,3 +66,11 @@ By default it looks for the four checkouts as siblings of this one. Override wit
 ```sh
 CANARI_ECOSYSTEM_ROOT=/path/to/parent bun tools/ecosystem-shape/shape.mjs
 ```
+
+## Vendored copies
+
+`vendored.mjs` is the table of files copied byte-identically from Canari into a sibling (the sign-in
+handoff, and the Meta in-app browser gate in Sky, MiGallery and Portail-etu). `shape.mjs` compares
+each copy; it reads the siblings' CHECKOUTS beside Canari (or `CANARI_ECOSYSTEM_ROOT`), never their
+`main` on GitHub, so it passes once each sibling's gate pull request is merged and pulled.
+`.github/scripts/tests/ecosystem-shape-vendored.test.mjs` (in `make test-ci-scripts`) needs no sibling.
