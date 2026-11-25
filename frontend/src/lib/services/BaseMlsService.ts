@@ -242,6 +242,7 @@ import {
   KEPT_FRAME_FAILURES_ACCUSED,
   UnhandleableFrameError,
   describeKeptFrames,
+  describeKeptFramesByGroup,
   forgetKeptFrame,
   forgetKeptFramesOfGroup,
   keptFrameIds,
@@ -739,6 +740,20 @@ export abstract class BaseMlsService implements IMlsService {
    */
   private readonly keyGroupsHeldInOrder = new Set<string>();
 
+  /**
+   * Key groups whose epoch check waits on their kept frames, with the server epoch it was asked
+   * against ({@link verifyDistributionEpoch}). Re-run, by the event that releases the group
+   * ({@link releaseFramesWaitingOnKept}), never by a clock.
+   */
+  private readonly epochChecksHeldByKept = new Map<string, number>();
+
+  /**
+   * Whether the "kept frames fill their budget" line was said at warn in this episode - one that ends
+   * when nothing is kept any more. Every later refusal of the episode says it at info: the same fact,
+   * re-met as each released group is fetched again and refused once more.
+   */
+  private keptFramesFullWarned = false;
+
   /** Set once per session; see {@link setDistributionGroupStore}. */
   private distributionGroupStore: DistributionGroupStore | null = null;
 
@@ -790,7 +805,7 @@ export abstract class BaseMlsService implements IMlsService {
   /** The {@link verifyDistributionEpoch} checks still answering, by group. Deleted as each settles. */
   private readonly distributionEpochChecks = new Map<
     string,
-    Promise<'current' | DistributionGapVerdict>
+    Promise<'current' | 'deferred' | DistributionGapVerdict>
   >();
 
   /**
@@ -7574,9 +7589,14 @@ export abstract class BaseMlsService implements IMlsService {
     // once the queue has applied what it held; the caller surfaces this refusal meanwhile, and its
     // next attempt is built on the epoch the queue reached. Not awaited: the caller holds the MLS
     // lock, and the drain needs it.
-    if (this.isDistributionGroup(groupId) && !this.mailboxListedOnThisLink()) {
+    // Nor while it holds frames back behind a kept one (section 11): they are queued too, and the
+    // check defers until they are released.
+    if (
+      this.isDistributionGroup(groupId) &&
+      (!this.mailboxListedOnThisLink() || this.keyGroupWaitsOnKeptFrame(groupId))
+    ) {
       log(
-        `[COMMIT] ${short}... refused on key group at epoch ${baseEpoch} (${reason ?? 'no reason'}, server ${activeEpoch ?? 'unknown'}) before the mailbox was listed on this link - no log replay past the queued frames; the epoch is checked once the queue has drained`
+        `[COMMIT] ${short}... refused on key group at epoch ${baseEpoch} (${reason ?? 'no reason'}, server ${activeEpoch ?? 'unknown'}) while frames are still queued for it (mailbox not listed on this link, or held behind a kept frame) - no log replay past them; the epoch is checked once the queue has drained`
       );
       if (activeEpoch !== undefined && activeEpoch > baseEpoch) {
         void this.verifyDistributionEpoch(groupId, activeEpoch);
@@ -7769,16 +7789,21 @@ export abstract class BaseMlsService implements IMlsService {
    * Drops every kept key-group frame whose group the opened state no longer holds - gated, like the
    * row deletion of {@link hydrateDistributionGroups}, on the held groups having been LISTED.
    *
-   * AT ERROR, because no path of this build leaves one: a leave forgets its group's kept frames in
-   * the checkpoint that drops the group ({@link forgetDistributionGroupById}). One found here is a
-   * leave path that skipped it, or a re-join killed between its drop and its join; its group's
-   * registration will never run it, and the state would carry it for ever.
+   * SPARED: a group a stored row still names. A drop to re-join keeps its row
+   * ({@link forgetDistributionGroupById}), so a kill between that drop and the join leaves kept
+   * frames the loader's re-join will run - this opening deletes the stale row, and the join writes it
+   * back; a re-join that never comes is dropped at the opening after.
+   *
+   * AT ERROR, because no path of this build leaves one otherwise: a leave forgets its group's kept
+   * frames in the checkpoint that drops the group. One found here is a leave path that skipped it,
+   * or a re-join that never came; its group's registration will never run it, and the state would
+   * carry it for ever.
    */
-  private dropKeptFramesOfGroupsNotHeld(): void {
+  private dropKeptFramesOfGroupsNotHeld(namedByARow: ReadonlySet<string>): void {
     const orphans = new Set(
       keptFrameIds(this.userId)
         .map(({ groupId }) => groupId)
-        .filter((groupId) => !holdsGroupState(this, groupId))
+        .filter((groupId) => !holdsGroupState(this, groupId) && !namedByARow.has(groupId))
     );
     if (orphans.size === 0) return;
     let dropped = 0;
@@ -7818,7 +7843,6 @@ export abstract class BaseMlsService implements IMlsService {
     }
     this.heldAtHydration.clear();
     for (const groupId of this.getLocalGroups()) this.heldAtHydration.add(groupId);
-    this.dropKeptFramesOfGroupsNotHeld();
 
     let rows: Awaited<ReturnType<DistributionGroupStore['getDistributionGroups']>>;
     try {
@@ -7830,6 +7854,8 @@ export abstract class BaseMlsService implements IMlsService {
       );
       return;
     }
+
+    this.dropKeptFramesOfGroupsNotHeld(new Set(rows.map((row) => row.groupId)));
 
     let restored = 0;
     const stale: string[] = [];
@@ -7871,9 +7897,9 @@ export abstract class BaseMlsService implements IMlsService {
   verifyDistributionEpoch(
     groupId: string,
     activeEpoch: number
-  ): Promise<'current' | DistributionGapVerdict> {
+  ): Promise<'current' | 'deferred' | DistributionGapVerdict> {
     const short = groupId.slice(0, 8);
-    const check = (async (): Promise<'current' | DistributionGapVerdict> => {
+    const check = (async (): Promise<'current' | 'deferred' | DistributionGapVerdict> => {
       // AFTER THE DRAIN, BECAUSE BEFORE IT "BEHIND" IS NOT A FACT. The server's epoch was read while
       // this device's own queue may still hold every commit it is missing - production 2026-09-28
       // held eight - and those apply in order with their seeds between them. Replaying from the log
@@ -7891,8 +7917,22 @@ export abstract class BaseMlsService implements IMlsService {
         () => this.whenGroupDrained(groupId),
         `epoch check of key group ${short}...`
       );
+      // A GROUP HELD BEHIND A KEPT FRAME IS NOT DRAINED, whatever the queue says: the frames it
+      // refused are still on the server, ahead of any replay (section 11).
+      if (this.keyGroupWaitsOnKeptFrame(groupId)) {
+        return this.deferDistributionEpochCheck(groupId, activeEpoch);
+      }
       const local = this.getEpoch(groupId);
-      if (local >= activeEpoch) return 'current';
+      if (local >= activeEpoch) {
+        // A gap a deferral armed is closed by the epoch reaching its target - here, when the frames
+        // it held back carried the group there without a commit of this pull to say so.
+        const closesAt = this.distributionGapTarget.get(groupId);
+        if (isInEpochGap(groupId) && closesAt !== undefined && local >= closesAt) {
+          this.closeDistributionGap(groupId);
+          this.tellDistributionGapVerdict(groupId, 'caught-up');
+        }
+        return 'current';
+      }
       // A PROOF, AND SAID AS ONE: the drain has settled and the group is still short of an epoch the
       // server named before it began, so its commits were never queued to this device. A commit
       // still on the wire can make this line wrong by one epoch; the replay below is then a no-op
@@ -8178,6 +8218,12 @@ export abstract class BaseMlsService implements IMlsService {
     // "distribution group" for state this device no longer holds, and the sweep would go on
     // sparing it for ever.
     this.knownDistributionGroups.delete(groupId);
+    this.epochChecksHeldByKept.delete(groupId);
+    // A RE-JOIN KEEPS THE ROW: it is what tells the next opening that kept frames of this group
+    // belong to a group being re-joined, should a kill land between this drop and the join
+    // ({@link dropKeptFramesOfGroupsNotHeld}). That opening deletes it as stale anyway (the tree is
+    // gone), and the join writes it back.
+    if (options?.rejoining === true) return true;
     // The stored row too, for the same reason one start-up later. Hydration would delete it anyway
     // (the tree is gone), so a failure here costs a read, never a mis-routed frame.
     await this.distributionGroupStore?.deleteDistributionGroup(groupId).catch((e: unknown) => {
@@ -8297,14 +8343,19 @@ export abstract class BaseMlsService implements IMlsService {
     const keep = room !== 'too-large';
     if (room === 'full') {
       this.keyGroupsWaitingForRoom.add(groupId);
-      console.warn(
-        `[GRAINE] the key-group frames kept until handled fill their budget (${keptFramesBytes(this.userId)} bytes held) - frames of key group ${groupId.slice(0, 8)}... wait unread, in server order, until a kept one is handled`
+      const say = this.keptFramesFullWarned ? console.info : console.warn;
+      this.keptFramesFullWarned = true;
+      say(
+        `[GRAINE] the key-group frames kept until handled fill their budget (${keptFramesBytes(this.userId)} bytes held, by ${describeKeptFramesByGroup(this.userId)}) - frames of key group ${groupId.slice(0, 8)}... wait unread, in server order, until a kept one is handled`
       );
       noteUnackedFrame(groupId, 'kept-frames-full');
       return false;
     }
     // And room in the STATE: the seen ledgers give way to the frame about to be kept, before its
-    // generation is spent (`seenLedgerBounds.ts`).
+    // generation is spent (`seenLedgerBounds.ts`). For a commit too, which keeps nothing: every group
+    // here takes openmls's `PURE_CIPHERTEXT` policy, so a commit cannot be told from an application
+    // frame before the decrypt, and the room must exist BEFORE it. What a commit costs is the eviction
+    // of seen ledgers the kept frames would have pressed anyway - only ever while frames are kept.
     if (keep) makeRoomToKeepFrame(this.userId, keptFrameNeeds(ciphertext.length));
 
     const keepFingerprint = keep ? fingerprint : undefined;
@@ -8564,6 +8615,50 @@ export abstract class BaseMlsService implements IMlsService {
       this.keyGroupsWaitingForRoom.clear();
       this.refetchFramesLeftBehind('kept-frames-full', trigger);
     }
+    if (keptFramesBytes(this.userId) === 0) this.keptFramesFullWarned = false;
+    // AFTER the re-fetches, which make the mailbox read "not listed" until their pull has run: the
+    // check re-run here waits for that pull, so it compares the epoch only once the frames this
+    // group held back have been applied - never replays past them.
+    for (const [held, activeEpoch] of this.epochChecksHeldByKept) {
+      if (this.keyGroupWaitsOnKeptFrame(held)) continue;
+      this.epochChecksHeldByKept.delete(held);
+      void this.verifyDistributionEpoch(held, activeEpoch);
+    }
+  }
+
+  /** @inheritdoc */
+  keyGroupWaitsOnKeptFrame(groupId: string): boolean {
+    return (
+      this.keyGroupsWaitingForRoom.has(groupId) ||
+      keptFramesOfGroup(this.userId, groupId).length > 0
+    );
+  }
+
+  /**
+   * Defers the epoch check of a key group whose frames wait on a kept frame (its own, or room to
+   * keep one): "drained" is not a fact about it, since what it holds back is still in the server
+   * queue, and a replay from the commit log would jump the epochs those frames were sealed at - their
+   * seeds, `past-epoch-application` once the kept frame is handled, lost (review of #4086).
+   *
+   * THE GAP IS ARMED meanwhile, up to the server's epoch, so no seed and no request is sealed at an
+   * epoch the group is about to leave (`distributionEpochFor`). The check runs again when the group
+   * is released ({@link releaseFramesWaitingOnKept}); the sync watchdog leaves such a gap alone
+   * (`keyGroupWaitsOnKeptFrame`), since escalating it would re-join past the same frames.
+   */
+  private deferDistributionEpochCheck(groupId: string, activeEpoch: number): 'deferred' {
+    const previous = this.epochChecksHeldByKept.get(groupId);
+    this.epochChecksHeldByKept.set(groupId, Math.max(previous ?? activeEpoch, activeEpoch));
+    markEpochGap(groupId);
+    this.distributionGapTarget.set(
+      groupId,
+      Math.max(activeEpoch, this.distributionGapTarget.get(groupId) ?? activeEpoch)
+    );
+    if (previous === undefined) {
+      console.info(
+        `[GRAINE] epoch check of key group ${groupId.slice(0, 8)}... deferred: its frames wait on one kept unhandled (${describeKeptFrames(this.userId, groupId)}) or on room to keep one - no replay past them; nothing is sealed at its epoch meanwhile, and it is checked again once they are released`
+      );
+    }
+    return 'deferred';
   }
 
   /**

@@ -193,6 +193,12 @@ export function startSyncWatchdogImpl(ctx: SessionContext, cb: ChatSessionCallba
       // A gap is a claim about HELD state lagging behind the group's epoch. A device holding
       // nothing has no epoch to be behind, and the candidate loop below already owns its recovery.
       if (!localGroups.has(id)) continue;
+      // A key group held behind a kept frame (mls-desync-prevention section 11) is in a gap BY
+      // DESIGN - armed so nothing is sealed at its stale epoch while the frames it holds back wait
+      // on the server. Escalating it would re-join past those frames and lose their seeds, then hold
+      // again on the kept frame the re-join keeps: one external commit per tick. Its epoch check
+      // runs again when the kept frame is released, and said so once when it deferred.
+      if (recoveryDeps.mlsService.keyGroupWaitsOnKeptFrame(id)) continue;
       // An escalation DROPS the state and re-joins by commit; under the commit rate limit the drop
       // would be followed by a refused join. The gap stays marked, so the next tick takes it.
       if (commitRateLimitRemainingMs(now) > 0) {

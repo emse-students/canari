@@ -681,7 +681,23 @@ ordering is the guarantee.
     by the ciphertext) fits `KEPT_FRAMES_BYTE_BUDGET` (768 kB). A full set leaves the frame UNREAD
     and unacknowledged (`kept-frames-full`) and holds EVERY later frame of that group with it, a
     small one included (the same order rule); forgetting any kept frame fetches those groups again.
-    Events, never a timer.
+    Events, never a timer. Its line names the groups holding the room (`describeKeptFramesByGroup`:
+    each one's frames, failed runs and bytes), so "A and B hold back C" is read from the log; it is
+    a warn once per episode (until nothing is kept) and info after, as released groups meet it again.
+
+  **The epoch check waits too.** A group held behind a kept frame (`keyGroupWaitsOnKeptFrame`: its
+  own, or room to keep one) is NOT drained for `verifyDistributionEpoch`, whatever the queue says:
+  the frames it refused are still on the server. Replayed from the commit log past them
+  (`catchUpDistributionGroup`), their seeds would be `past-epoch-application` once the kept frame is
+  handled - lost; and a failed replay would re-join through the loader, keep the kept frame
+  (`rejoining`), hold again, and re-join on every load. So the check DEFERS: it arms the epoch gap up
+  to the server's epoch (no seed and no request is sealed at the stale epoch, `distributionEpochFor`),
+  says so once per episode at info with `describeKeptFrames`, and runs again from
+  `releaseFramesWaitingOnKept` - after the re-fetch it asks for, so it waits for that pull to have
+  applied the frames held back. A gap the deferral armed is closed by the epoch reaching its target
+  (`caught-up`, which releases the requests held for the group). A refused commit on such a group
+  replays nothing either (`catchUpOnRefusedCommit`), and the sync watchdog leaves its gap alone
+  (`sessionWatchdogs.ts`): escalating it is the same re-join past the same frames.
 
   **What one failing community costs the others: nothing.** A community whose handler fails for good
   holds one share; every other group still has a whole share, enough for its largest frame - and its
@@ -694,24 +710,28 @@ ordering is the guarantee.
 
   **The seen ledgers give way.** `SEEN_LEDGERS_BYTE_BUDGET` stays 1 MB less 64 kB, but what they may
   take NOW is that less the kept frames, less the room of a frame about to be kept
-  (`seenLedgersBudgetNow`, `seenLedgerBounds.ts`): before a keeping decrypt, `makeRoomToKeepFrame`
-  (`history.ts`) evicts the least recently written seen ledgers until both fit, so the state the
+  (`seenLedgersBudgetNow`, `seenLedgerBounds.ts`): before a keeping decrypt - a commit's included,
+  since under `PURE_CIPHERTEXT` a commit cannot be told from an application frame before it is
+  decrypted - `makeRoomToKeepFrame` (`history.ts`) evicts the least recently written seen ledgers until both fit, so the state the
   next checkpoint exports stays within `APP_LEDGERS_BYTE_BUDGET`. The kept frames go first because
   the losses differ: a dropped seen ledger costs a re-check of its archive (or one false accusation,
   below), a dropped kept frame is a seed lost. Nothing is kept outside the seconds a handler runs,
   so a real profile keeps its whole seen budget; even at the kept frames' own budget the seen ledgers
   keep 192 kB.
-- **Leaving a community forgets them; a re-join keeps them.** `forgetDistributionGroupById` - the
+- **Leaving a community forgets them; a re-join keeps them, and its row.** `forgetDistributionGroupById` - the
   leave path (`forgetCommunityGraine` through `forgetDistributionGroup`) and a group the server no
   longer lists - stages the deletion of every `kept-frame:<group>:` key BEFORE it drops the tree, so
   the checkpoint the drop awaits writes both; nothing else would ever name that group to run or
   forget them. A drop to RE-JOIN the same group (`{ rejoining: true }`: a leaf evicted, a roster row
   missing, a group behind its server) keeps them: the frame was read and verified, its seed is
-  still the community's, and the re-joined registration runs it. At the opening, once the held
-  groups are LISTED (the gate of the row deletion beside it), `hydrateDistributionGroups` drops at
-  error any kept frame whose group the state no longer holds (`dropKeptFramesOfGroupsNotHeld`): no
-  path of this build leaves one, so one found is a leave path that skipped the forget, or a re-join
-  killed between its drop and its join.
+  still the community's, and the re-joined registration runs it. It keeps the group's stored ROW
+  too. At the opening, once the held groups are LISTED and the rows read (the gate of the row
+  deletion beside it), `hydrateDistributionGroups` drops at error any kept frame whose group the
+  state no longer holds AND no row names (`dropKeptFramesOfGroupsNotHeld`). A re-join killed between
+  its drop and its join is therefore spared at the next opening - which deletes its stale row; the
+  loader's re-join writes it back and runs the frame - and dropped at the one after only if the
+  re-join never came. No other path of this build leaves one, so one dropped is a leave path that
+  skipped the forget, or a re-join that never came.
 - **A sign-out keeps them; a device wipe deletes them.** A sign-out keeps the account's MLS state for
   its next sign-in, ratchets included, and the kept frames live in it: dropping them there would spend
   the generations for nothing, and the redelivery would then be read as handled (point 4) - a silent
@@ -734,8 +754,11 @@ ordering is the guarantee.
     count, never a data loss: the frame was handled (or refused for good) before its kept value was
     forgotten, and its seed is held. It needs the group to go quiet long enough to be the least
     recently written while its acknowledgement is lost, or the kept frames to press the seen ledgers.
-  - A re-join killed between its drop and its join leaves a kept frame of a group the next opening
-    does not hold: dropped there at error (above), and its seed comes back through a seed request.
+  - A re-join killed between its drop and its join, and never re-tried through a whole start,
+    leaves a kept frame dropped at error at the second opening (above); its seed comes back through
+    a seed request.
+  - Nothing on screen says a community's keys are pending on this device: the log only
+    ([backlog](../backlog.d/p3-no-ui-signal-for-keys-pending-on-this-device.md)).
   - A follower tab's kept values die with its copy, like its seen marks.
 - **It also closes** the crash window the rows-before-ratchet review filed for this path (a
   checkpoint exporting a key-group frame's advance before its seed was stored,
@@ -754,7 +777,11 @@ ordering is the guarantee.
   a kept frame is handled; a sender mismatch frees its room through the one forget; a frame past a
   share applies as a commit and is terminal as an application frame; one full bundle page fits a
   share; leaving a community forgets its kept frames through the leave path, a re-join keeps them;
-  an opening drops at error the kept frames of groups it no longer holds), `keptKeyGroupFrames.test.ts`,
+  an opening drops at error the kept frames of groups it no longer holds and no row names, and spares
+  a re-join's; a held group's epoch check runs no replay and no re-join after a complete drain, seals
+  nothing at the stale epoch, and runs once the kept frame is handled), `BaseMlsService.refusedCommit.test.ts`
+  (a refused commit on a held key group replays nothing), `sessionWatchdogs.test.ts` (the stuck-gap
+  net leaves a held key group alone), `keptKeyGroupFrames.test.ts`,
   `seenLedgerBounds.test.ts` (the seen ledgers give way to the kept frames and the one about to be
   kept),
   `frameHandler.test.ts` (an undecodable payload throws the terminal kind) and

@@ -1643,12 +1643,20 @@ export interface IMlsService {
    * which is what keeps a seed or a request from being sealed at the stale epoch
    * (`distributionEpochFor`). The outcome reaches {@link onDistributionGapVerdict}.
    *
-   * @returns `current` when the group was not behind, else the verdict.
+   * @returns `current` when the group was not behind, `deferred` when it holds frames back behind a
+   *   kept key-group frame (its gap is armed and the check runs again once they are released), else
+   *   the verdict.
    */
   verifyDistributionEpoch(
     groupId: string,
     activeEpoch: number
-  ): Promise<'current' | DistributionGapVerdict>;
+  ): Promise<'current' | 'deferred' | DistributionGapVerdict>;
+  /**
+   * Whether key group `groupId` holds its frames back behind a kept frame - its own, unhandled, or
+   * room to keep one (mls-desync-prevention section 11). Its epoch is not to be judged, nor its gap
+   * escalated, meanwhile: the frames it holds back are still queued on the server.
+   */
+  keyGroupWaitsOnKeptFrame(groupId: string): boolean;
   /**
    * Resolves once nothing about `groupId`'s epoch is still being established: the initial drain has
    * settled and any {@link verifyDistributionEpoch} in flight for it has answered. What a request

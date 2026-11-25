@@ -51,6 +51,7 @@ import { flushMacrotask } from '../../test/flush';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { leadHoldsInFlight, resetLeadHoldsForTests } from '$lib/mls-client/leadHolds';
 import { SenderMismatchError } from '$lib/mls-client/verifiedSender';
+import { distributionEpochFor } from '$lib/utils/graine/seedDistribution';
 import {
   closeStateLedgers,
   hydrateStateLedgers,
@@ -148,7 +149,11 @@ const proto = BaseMlsService.prototype as unknown as {
   forgetKeptDistributionFrame(groupId: string, fingerprint: string): void;
   handleKeptDistributionFrames(onlyGroupId?: string): void;
   releaseFramesWaitingOnKept(groupId: string, trigger: string): void;
-  dropKeptFramesOfGroupsNotHeld(): void;
+  dropKeptFramesOfGroupsNotHeld(namedByARow: ReadonlySet<string>): void;
+  keyGroupWaitsOnKeptFrame(groupId: string): boolean;
+  deferDistributionEpochCheck(groupId: string, activeEpoch: number): 'deferred';
+  verifyDistributionEpoch(groupId: string, activeEpoch: number): Promise<string>;
+  catchUpDistributionGroup(groupId: string, target: number): Promise<string>;
   onDistributionFrame(handler: unknown): void;
 };
 
@@ -251,6 +256,14 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     keptFrameRuns: new Map<string, Promise<boolean>>(),
     keyGroupsWaitingForRoom: new Set<string>(),
     keyGroupsHeldInOrder: new Set<string>(),
+    epochChecksHeldByKept: new Map<string, number>(),
+    keptFramesFullWarned: false,
+    keyGroupWaitsOnKeptFrame: proto.keyGroupWaitsOnKeptFrame,
+    deferDistributionEpochCheck: proto.deferDistributionEpochCheck,
+    verifyDistributionEpoch: proto.verifyDistributionEpoch,
+    catchUpDistributionGroup: proto.catchUpDistributionGroup,
+    distributionEpochChecks: new Map(),
+    whenGroupDrained: vi.fn().mockResolvedValue(undefined),
     releaseFramesWaitingOnKept: proto.releaseFramesWaitingOnKept,
     dropKeptFramesOfGroupsNotHeld: proto.dropKeptFramesOfGroupsNotHeld,
     distributionGroupFor: proto.distributionGroupFor,
@@ -2032,11 +2045,31 @@ describe('a key-group frame whose handler threw (section 11)', () => {
     expect(await route(ctx, 'g-1', 'peer', new Uint8Array(40))).toBe(false);
     expect(processIncomingMessage).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('fill their budget'));
+    // It names who holds the room, so "A and B hold back C" is read from the log.
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /fill their budget .*by g-0: 1 frame\(s\), 0 failed run\(s\), \d+ bytes; g-2: 1 frame\(s\)/
+      )
+    );
 
-    // The kept ones are handled, which frees the room and asks for what waited.
+    // One kept frame is handled: the room it frees is re-fetched, and a refusal met again in the
+    // same episode is said at info - the same fact, no repeating warn.
     const fetched = vi.fn().mockResolvedValue(undefined);
     ctx.fetchPendingMessages = fetched;
+    const info = vi.mocked(console.info);
+    proto.forgetKeptDistributionFrame.call(ctx, 'g-0', 'k:1');
+    expect(fetched).toHaveBeenCalledWith(['g-1']);
+    noteStateLedgerHeldByState(
+      'u',
+      keptFrameKey('g-0', 'k:2'),
+      keptFrameValue('peer:peer-phone', nearShare)
+    );
+    expect(await route(ctx, 'g-1', 'peer', new Uint8Array(70_000))).toBe(false);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(info).toHaveBeenCalledWith(expect.stringContaining('fill their budget'));
+
+    // Every kept one is handled: the room is back, and the group is fetched again.
+    fetched.mockClear();
     proto.onDistributionFrame.call(ctx, vi.fn().mockResolvedValue(undefined));
     await flushMacrotask();
     expect(keptFrameIds('u')).toEqual([]);
@@ -2115,7 +2148,13 @@ describe('a key-group frame whose handler threw (section 11)', () => {
     expect(await route(ctx, 'g-2', 'peer', LATER)).toBe(false);
     expect(keptFrameIds('u')).toHaveLength(2);
 
-    // A re-join of the salon's group keeps its frame: its seed is still the community's.
+    // A re-join of the salon's group keeps its frame - its seed is still the community's - and its
+    // row, which is what spares the frame at an opening a kill lands on before the join.
+    const store = makeStore([
+      { groupId: 'g-1', workspaceId: 'ws-1', channelId: null },
+      { groupId: 'g-2', workspaceId: 'ws-1', channelId: 'chan-1' },
+    ]);
+    ctx.distributionGroupStore = store;
     await proto.forgetDistributionGroupById.call(
       ctx,
       'g-2',
@@ -2125,12 +2164,14 @@ describe('a key-group frame whose handler threw (section 11)', () => {
       }
     );
     expect(keptFrameIds('u').map((id) => id.groupId)).toEqual(['g-1', 'g-2']);
+    expect(store.rows.has('g-2')).toBe(true);
 
     // Leaving the community (`forgetCommunityGraine` asks this for each of its scopes).
     expect(await proto.forgetDistributionGroup.call(ctx, WS)).toBe('g-1');
     // Staged BEFORE the drop, so the checkpoint the drop awaits carries the deletion.
     expect(keptAtDrop).toEqual([['g-1', 'g-2'], ['g-2']]);
     expect(keptFrameIds('u').map((id) => id.groupId)).toEqual(['g-2']);
+    expect(store.rows.has('g-1')).toBe(false);
     expect(info).toHaveBeenCalledWith(
       expect.stringContaining('forgotten with it (distribution group left)')
     );
@@ -2139,19 +2180,31 @@ describe('a key-group frame whose handler threw (section 11)', () => {
   it('drops at error, once the held groups are listed, a kept frame whose group the state no longer holds', async () => {
     noteStateLedgerHeldByState('u', keptFrameKey('g-held', '1:a'), keptFrameValue('p:d', SEED));
     noteStateLedgerHeldByState('u', keptFrameKey('g-gone', '1:b'), keptFrameValue('p:d', SEED));
+    // A re-join killed between its drop and its join: the tree is gone, its row is not.
+    noteStateLedgerHeldByState('u', keptFrameKey('g-rejoin', '1:c'), keptFrameValue('p:d', SEED));
     const ctx = makeCtx({
       getLocalGroups: vi.fn().mockReturnValue(['g-held']),
-      distributionGroupStore: makeStore([]),
+      distributionGroupStore: makeStore([
+        { groupId: 'g-rejoin', workspaceId: 'ws-1', channelId: null },
+      ]),
     });
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
 
     await proto.hydrateDistributionGroups.call(ctx);
 
-    expect(keptFrameIds('u')).toEqual([{ groupId: 'g-held', fingerprint: '1:a' }]);
+    expect(keptFrameIds('u').map((id) => id.groupId)).toEqual(['g-held', 'g-rejoin']);
     expect(error).toHaveBeenCalledWith(
       expect.stringContaining('1 kept key-group frame(s) of 1 group(s) this state no longer holds')
     );
+    // That opening deleted the stale row: a re-join that never came is judged at the next one.
+    await proto.hydrateDistributionGroups.call(
+      makeCtx({
+        getLocalGroups: vi.fn().mockReturnValue(['g-held']),
+        distributionGroupStore: makeStore([]),
+      })
+    );
+    expect(keptFrameIds('u').map((id) => id.groupId)).toEqual(['g-held']);
 
     // Not judged without the listing: nothing is dropped then.
     noteStateLedgerHeldByState('u', keptFrameKey('g-gone', '1:b'), keptFrameValue('p:d', SEED));
@@ -2159,5 +2212,109 @@ describe('a key-group frame whose handler threw (section 11)', () => {
       makeCtx({ heldGroupsKnown: () => false, distributionGroupStore: makeStore([]) })
     );
     expect(keptFrameIds('u')).toHaveLength(2);
+  });
+  describe('the epoch check of a key group held behind a kept frame', () => {
+    /** A group at `epoch`, its server ahead with commits in the log, a kept frame of its own. */
+    function heldBehind(epoch: number, serverEpoch: number) {
+      const tree = { epoch };
+      const listener = vi.fn();
+      const ctx = registered({
+        processIncomingMessage: spendingMls(),
+        distributionFrameHandler: vi
+          .fn()
+          .mockRejectedValueOnce(new Error('seed store write failed'))
+          .mockResolvedValue(undefined),
+        getLocalGroups: vi.fn().mockReturnValue(['g-1']),
+        getEpoch: vi.fn(() => tree.epoch),
+        fetchCommitsSince: vi.fn(async () => ({
+          commits: [{ baseEpoch: epoch, proto: 'AA==' }],
+          activeEpoch: serverEpoch,
+          belowFloor: false,
+        })),
+        distributionGapListener: listener,
+      });
+      return { ctx, tree, listener };
+    }
+
+    beforeEach(() => resetEpochGapRegistry());
+
+    it('runs no replay and no re-join after a complete drain, and seals nothing at the stale epoch', async () => {
+      const { ctx, listener } = heldBehind(4, 6);
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+      expect(await route(ctx, 'g-1', 'peer', FRAME)).toBe(false);
+
+      // The drain is complete (`whenGroupDrained` resolves) and the server is ahead: deferred.
+      expect(await proto.verifyDistributionEpoch.call(ctx, 'g-1', 6)).toBe('deferred');
+      expect(await proto.verifyDistributionEpoch.call(ctx, 'g-1', 6)).toBe('deferred');
+      expect(ctx.fetchCommitsSince).not.toHaveBeenCalled();
+      expect(listener).not.toHaveBeenCalled();
+      // Said once for the episode, with what the group keeps.
+      const deferrals = info.mock.calls.filter((c) =>
+        String(c[0]).includes('epoch check of key group')
+      );
+      expect(deferrals).toHaveLength(1);
+      expect(String(deferrals[0][0])).toContain('1 frame(s), 1 failed run(s)');
+      // No seed and no request is sealed at epoch 4 meanwhile.
+      expect(isInEpochGap('g-1')).toBe(true);
+      expect(distributionEpochFor(ctx as never, WS)).toBeNull();
+    });
+
+    it('runs the check once the kept frame is handled - after the frames it held back', async () => {
+      const { ctx, tree, listener } = heldBehind(4, 6);
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      vi.spyOn(console, 'info').mockImplementation(() => undefined);
+      vi.spyOn(console, 'log').mockImplementation(() => undefined);
+      expect(await route(ctx, 'g-1', 'peer', FRAME)).toBe(false);
+      expect(await proto.verifyDistributionEpoch.call(ctx, 'g-1', 6)).toBe('deferred');
+      // The drain of the re-fetch the release asks for, settled by hand.
+      let settle!: () => void;
+      const drained = new Promise<void>((r) => {
+        settle = r;
+      });
+      const whenGroupDrained = vi.fn(() => drained);
+      ctx.whenGroupDrained = whenGroupDrained;
+
+      // The redelivery handles it; the frames it held back come in and carry the group to 6.
+      expect(await route(ctx, 'g-1', 'peer', FRAME)).toBe(true);
+      expect(whenGroupDrained).toHaveBeenCalledWith('g-1');
+      expect(isInEpochGap('g-1')).toBe(true);
+      tree.epoch = 6;
+      settle();
+      await flushMacrotask();
+
+      expect(ctx.fetchCommitsSince).not.toHaveBeenCalled();
+      // The gap the deferral armed is closed by the epoch reaching its target, and said.
+      expect(isInEpochGap('g-1')).toBe(false);
+      expect(listener).toHaveBeenCalledWith('g-1', 'caught-up');
+      expect(distributionEpochFor(ctx as never, WS)).toBe(6);
+    });
+
+    it('replays from the log once released, when what it held back did not reach the server', async () => {
+      const { ctx, tree, listener } = heldBehind(4, 5);
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      vi.spyOn(console, 'info').mockImplementation(() => undefined);
+      vi.spyOn(console, 'log').mockImplementation(() => undefined);
+      // The replayed commit moves the tree.
+      ctx.processIncomingMessage = vi.fn(async (_g: string, bytes: Uint8Array) => {
+        if (bytes === FRAME) throw new Error('SecretReuseError: already-consumed generation');
+        tree.epoch += 1;
+        return null;
+      });
+      noteStateLedgerHeldByState(
+        'u',
+        keptFrameKey('g-1', frameFingerprint(FRAME)),
+        keptFrameValue('peer:peer-phone', SEED)
+      );
+      expect(await proto.verifyDistributionEpoch.call(ctx, 'g-1', 5)).toBe('deferred');
+
+      ctx.distributionFrameHandler = vi.fn().mockResolvedValue(undefined);
+      expect(await route(ctx, 'g-1', 'peer', FRAME)).toBe(true);
+      await flushMacrotask();
+
+      expect(ctx.fetchCommitsSince).toHaveBeenCalled();
+      expect(tree.epoch).toBe(5);
+      expect(listener).toHaveBeenCalledWith('g-1', 'caught-up');
+    });
   });
 });

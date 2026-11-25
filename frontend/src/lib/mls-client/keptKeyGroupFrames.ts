@@ -226,6 +226,16 @@ export function describeKeptFrames(userId: string, groupId: string): string {
   return `${fingerprints.length} frame(s), ${failures} failed run(s), ${bytes} bytes`;
 }
 
+/**
+ * Every group holding kept frames, each described as {@link describeKeptFrames} does - what the
+ * "budget full" line names, so "A and B hold the room C waits for" is read from the log.
+ */
+export function describeKeptFramesByGroup(userId: string): string {
+  const groups = [...new Set(keptFrameIds(userId).map((id) => id.groupId))];
+  if (groups.length === 0) return 'none';
+  return groups.map((g) => `${g.slice(0, 8)}: ${describeKeptFrames(userId, g)}`).join('; ');
+}
+
 /** The bytes keeping a frame of `ciphertextBytes` costs, at most (its plaintext is no larger). */
 export function keptFrameNeeds(ciphertextBytes: number): number {
   return base64Bytes(ciphertextBytes) + KEPT_FRAME_OVERHEAD_BYTES;

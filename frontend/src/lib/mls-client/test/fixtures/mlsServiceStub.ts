@@ -108,6 +108,7 @@ export function createMlsServiceStub(
     // about catching up must not have to arrange.
     whenInitialDrainSettled: vi.fn().mockResolvedValue(undefined),
     verifyDistributionEpoch: vi.fn().mockResolvedValue('current'),
+    keyGroupWaitsOnKeptFrame: vi.fn().mockReturnValue(false),
     whenDistributionEpochSettled: vi.fn().mockResolvedValue(undefined),
     onDistributionGapVerdict: vi.fn(),
     getDeviceId: vi.fn().mockReturnValue('device-test'),
