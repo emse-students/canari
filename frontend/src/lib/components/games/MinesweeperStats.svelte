@@ -6,7 +6,7 @@
     type MinesweeperStats,
   } from '$lib/minesweeper/api';
   import { m } from '$lib/paraglide/messages';
-  import { exactDate } from '$lib/utils/time';
+  import { exactDate, shortDate } from '$lib/utils/time';
   import { Log } from '$lib/utils/Log';
 
   /**
@@ -33,7 +33,7 @@
 
   /** The visible date of a win; nothing for a date the server did not send, never "Invalid Date". */
   function dateOf(iso: string): string {
-    return Number.isNaN(new Date(iso).getTime()) ? '' : exactDate(iso);
+    return Number.isNaN(new Date(iso).getTime()) ? '' : shortDate(iso);
   }
 
   /** The bars of the sparkline: oldest win first, each as a share of the slowest shown. */
@@ -111,7 +111,11 @@
         <li
           class="bg-cn-surface border-cn-border flex items-center justify-between gap-3 rounded-lg border px-3 py-2"
         >
-          <span class="text-text-muted truncate text-xs">{dateOf(win.verifiedAt)}</span>
+          <span
+            class="text-text-muted truncate text-xs"
+            title={dateOf(win.verifiedAt) ? exactDate(win.verifiedAt) : undefined}
+            >{dateOf(win.verifiedAt)}</span
+          >
           <span class="text-text-main font-mono text-sm font-semibold">
             {formatDurationMs(win.durationMs)}
           </span>
