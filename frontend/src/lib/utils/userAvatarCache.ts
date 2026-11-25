@@ -74,6 +74,58 @@ const absentUsers = new Set<string>();
 registerPerReaderCache(() => absentUsers.clear());
 
 /**
+ * The users whose avatar the source could not serve (a 5xx - MiGallery behind core-service down): an
+ * OUTAGE LEDGER, kept for the life of the outage and not a minute longer.
+ *
+ * WHY (production, 2026-11: one client sent ~446 avatar requests in one minute during a 6 s gallery
+ * outage - 95 faces, ~4.7 asks each, every one a 502). A 502 is not an answer about the photo, so it
+ * is never held as an absence; but with nothing held, every remount asked again and the in-flight
+ * join only covered mounts that overlapped. Now the failure is remembered per user id and shared with
+ * every later mount, which draws the fallback without a request.
+ *
+ * NO CLOCK ENDS IT. THE OUTAGE ENDS ON AN EVENT THAT PROVES OR SUGGESTS THE SOURCE IS BACK: any
+ * avatar load the source ANSWERED (a photo or a 404 - from any user, since one answer says the
+ * source is up), the browser's `online` or the app returning to the foreground, a navigation
+ * boundary ({@link forgetAvatarOutage}, called by the root layout), or the reader changing. Until
+ * one of them fires, each face asked for itself at most once.
+ */
+const unavailableUsers = new Set<string>();
+/**
+ * The ids the outage warn has been said for, KEPT ACROSS {@link forgetAvatarOutage}: one face failing
+ * for ever while the others answer would otherwise clear the ledger at each answer and warn again at
+ * every remount. An id leaves it only when the source answers FOR THAT ID (a photo or a 404), and a
+ * new warn is said only when it is empty - so a total outage warns once, however many faces fail.
+ *
+ * WHAT IS NOT DONE, ON PURPOSE: a ledgered face is not probed again on every remount. That is the
+ * defect (~4.7 asks per face in 6 s). A page that stays visible with no navigation, no `online`, no
+ * foreground event and no other face answering therefore keeps the initials; the test that would lift
+ * it is a gallery-health signal the client already receives for free (none exists today: the presence
+ * answer is cached per id and cannot tell a live answer from a held one).
+ */
+const warnedUsers = new Set<string>();
+registerPerReaderCache(() => {
+  unavailableUsers.clear();
+  warnedUsers.clear();
+});
+
+/**
+ * Ends the outage: every face may be asked for again. Called on each event that says the source may
+ * be back; says so ONCE per outage (a ledger that was already empty is not an event).
+ */
+export function forgetAvatarOutage(why: string): void {
+  if (unavailableUsers.size === 0) return;
+  Log.d('AvatarCache', `outage over (${why}): ${unavailableUsers.size} face(s) may be asked again`);
+  unavailableUsers.clear();
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => forgetAvatarOutage('link back'));
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') forgetAvatarOutage('app in the foreground');
+  });
+}
+
+/**
  * What to draw for one avatar, and where the bytes are.
  *
  * IT IS A KIND AND NOT A NULLABLE URL because the three cases lead to three different renders, and
@@ -107,12 +159,30 @@ async function loadAvatar(userId: string): Promise<AvatarDisplay> {
     // A RESPONSE THAT IS NOT OK IS STILL AN ANSWER. Handing the same URL to an `<img>` would ask
     // the same server the same question and receive the same refusal, at the cost of a second
     // request and a second console line.
+    // THE SOURCE ANSWERED (any status below 500): whatever it said, it is up again.
+    // ONLY A 200 OR A 404 PROVES THE GALLERY ANSWERED ABOUT A PHOTO: a 401/403 is core-service's own
+    // auth talking, and says nothing of the source behind it.
+    if (fetched.status === 200 || fetched.status === 404) {
+      warnedUsers.delete(userId);
+      forgetAvatarOutage('the source answered');
+    }
     if (!fetched.ok) {
       // ONLY A 404 IS AN ANSWER ABOUT THE PHOTO. A 502 `unavailable` says nothing about whether there
       // is one, so remembering it would turn an outage into minutes of initials.
       if (fetched.status === 404) {
         absentUsers.add(userId);
         Log.d('AvatarCache', `404 for ${who}: absent for the rest of the session`);
+      } else if (fetched.status >= 500) {
+        // THE SOURCE IS DOWN: remembered per user until an event ends the outage, and said ONCE per
+        // outage, at warn (a gallery outage is never expected), not once per face.
+        if (warnedUsers.size === 0) {
+          console.warn(
+            `[AvatarCache] ${fetched.status} for ${who}: avatar source unavailable - faces fall back until it answers`
+          );
+        }
+        warnedUsers.add(userId);
+        unavailableUsers.add(userId);
+        return { kind: 'none' };
       } else if (fetched.status === 403) {
         // A REFUSED TOKEN, not an answer about the photo: the server holds this session's avatar
         // token to be wrong or its session ended. Not remembered - the next load carries whatever
@@ -164,6 +234,8 @@ export async function resolveUserAvatarDisplay(userId: string | null): Promise<A
   // A FACE KNOWN TO HAVE NO PHOTO COSTS NOTHING TO REMOUNT. `none` used to be dropped with the mount
   // that received it, so every conversation switch or list redraw asked again.
   if (absentUsers.has(id)) return { kind: 'none' };
+  // A FACE THE SOURCE COULD NOT SERVE IS NOT ASKED AGAIN WHILE THE OUTAGE LASTS.
+  if (unavailableUsers.has(id)) return { kind: 'none' };
 
   const held = blobs.tryRetain(id);
   if (held) return { kind: 'blob', url: held };

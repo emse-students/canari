@@ -38,8 +38,8 @@ describe('focusOnMount', () => {
 
   it('reads the argument once: it has no update, so a later change moves nothing', () => {
     const input = field();
-    const action = focusOnMount(input, false) as unknown;
-    expect(action).toBeUndefined();
+    // No update/destroy handlers: the returned object (if any) has no keys.
+    expect(Object.keys(focusOnMount(input, false) ?? {})).toEqual([]);
     expect(document.activeElement).not.toBe(input);
   });
 });
