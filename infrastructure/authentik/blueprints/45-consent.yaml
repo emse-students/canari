@@ -167,8 +167,8 @@ entries:
   #
   # THE LINK COMES BACK TO THE APPLICATION (2026-11-25, miconnect-sign-in-paths.md). The page's link
   # is the link flow of 30-sources.yaml with THIS authorization as `next`, and the policy that shows
-  # the page writes the OFFER (`miconnect/alumni-link-offered` = the account's pk) the link flow
-  # honours: no D49 confirmation (D49 is "every link outside the D44 step"), Alumnforce, the link,
+  # the page writes the OFFER (`miconnect/alumni-link-offered` = the account's pk and a nonce the
+  # page's link carries, used once) the link flow honours: no D49 confirmation (D49 is "every link outside the D44 step"), Alumnforce, the link,
   # then authentik restores the done flow from the session's flow token and the authorization runs
   # again - signed in, linked, so this step no longer shows and the application gets its code. No
   # Enterprise Source stage: authentik's own `handle_existing_link` resumes a session flow token.
@@ -192,6 +192,7 @@ entries:
       execution_logging: false
       expression: |-
         from datetime import date, datetime
+        from uuid import uuid4
         from zoneinfo import ZoneInfo
         from authentik.core.models import UserSourceConnection
 
@@ -229,8 +230,12 @@ entries:
         if request.http_request is not None:
             session[REMINDED] = user.pk
             # The OFFER the link flow honours (30-sources.yaml): MiConnect proposes the link to THIS
-            # account, so the D49 confirmation is not shown and the link resumes this sign-in.
-            session[OFFERED] = user.pk
+            # account, so the D49 confirmation is not shown and the link resumes this sign-in. It is
+            # a NONCE the page's link carries: the offer outlives the page (after "Continuer"), and
+            # only the link MiConnect showed may use it, once - a visit without it meets D49.
+            offer = session.get(OFFERED)
+            if not (isinstance(offer, dict) and offer.get("pk") == user.pk and offer.get("nonce")):
+                session[OFFERED] = {"pk": user.pk, "nonce": uuid4().hex}
             if plan is not None:
                 plan.context[REMINDED] = user.pk
         return True
@@ -241,6 +246,7 @@ entries:
       execution_logging: false
       expression: |-
         from datetime import date, datetime
+        from uuid import uuid4
         from zoneinfo import ZoneInfo
         from authentik.core.models import UserSourceConnection
 
@@ -261,8 +267,11 @@ entries:
         first = min(promos)
         due = today >= max(date(first + 2, 2, 1), date(2027, 2, 1))
         if due and request.http_request is not None:
-            # The OFFER the link flow honours (30-sources.yaml), as the reminder's.
-            session["miconnect/alumni-link-offered"] = user.pk
+            # The OFFER the link flow honours (30-sources.yaml), a nonce the page's link carries, as
+            # the reminder's: kept while it is this account's, so every rendering shows the same one.
+            offer = session.get("miconnect/alumni-link-offered")
+            if not (isinstance(offer, dict) and offer.get("pk") == user.pk and offer.get("nonce")):
+                session["miconnect/alumni-link-offered"] = {"pk": user.pk, "nonce": uuid4().hex}
         return due
   # The blocking page cannot be submitted until the link exists (a person who linked in another tab
   # goes on from here).
@@ -289,17 +298,24 @@ entries:
       initial_value_expression: true
       initial_value: |-
         from html import escape
-        from urllib.parse import quote
+        from urllib.parse import urlencode
 
         # The link goes through the link flow with THIS authorization as `next` (30-sources.yaml), so
         # the person lands on the application once linked. The authorization's query is what the
         # flow executor stored in the session for this flow (the authorize view's parameters).
         query = http_request.session.get("authentik/flows/get") if http_request is not None else None
-        link = "/if/flow/miconnect-alumni-link/"
+        # The OFFER's nonce (the policy showing this page wrote it): without it the link flow shows D49.
+        offer = http_request.session.get("miconnect/alumni-link-offered") if http_request is not None else None
+        params = {}
+        if isinstance(offer, dict) and offer.get("pk") == getattr(user, "pk", None) and offer.get("nonce"):
+            params["offer"] = offer["nonce"]
+        else:
+            ak_logger.warning("miconnect-alumni-link: the page shows with no offer for this account, its link will meet the D49 confirmation")
         if query is not None and query.get("client_id"):
-            link += "?next=" + quote("/application/o/authorize/?" + query.urlencode(), safe="")
+            params["next"] = "/application/o/authorize/?" + query.urlencode()
         else:
             ak_logger.warning("miconnect-alumni-link: an authorization with no client_id, the link will not come back to an application")
+        link = "/if/flow/miconnect-alumni-link/" + ("?" + urlencode(params) if params else "")
         return f"<p>Ton compte MiConnect n'est pas encore lié à ton compte <strong>Alumni</strong> (le réseau des anciens des Mines de Saint-Étienne, où tu as un compte depuis ton entrée à l'École). Lie-le maintenant : quand ton compte de l'École disparaîtra, à la fin de tes études, c'est lui qui te connectera, avec le même profil.</p><p><a href=\"{escape(link)}\">Lier mon compte Alumni</a> (tu reviens ensuite directement au service)</p><p>Le lien sera obligatoire au milieu de ta deuxième année. Pour l'instant, tu peux continuer sans.</p>"
   - model: authentik_stages_prompt.prompt
     identifiers:
@@ -312,15 +328,22 @@ entries:
       initial_value_expression: true
       initial_value: |-
         from html import escape
-        from urllib.parse import quote
+        from urllib.parse import urlencode
 
         # As the reminder's link: through the link flow, back to THIS authorization once linked.
         query = http_request.session.get("authentik/flows/get") if http_request is not None else None
-        link = "/if/flow/miconnect-alumni-link/"
+        # The OFFER's nonce (the policy showing this page wrote it): without it the link flow shows D49.
+        offer = http_request.session.get("miconnect/alumni-link-offered") if http_request is not None else None
+        params = {}
+        if isinstance(offer, dict) and offer.get("pk") == getattr(user, "pk", None) and offer.get("nonce"):
+            params["offer"] = offer["nonce"]
+        else:
+            ak_logger.warning("miconnect-alumni-link: the page shows with no offer for this account, its link will meet the D49 confirmation")
         if query is not None and query.get("client_id"):
-            link += "?next=" + quote("/application/o/authorize/?" + query.urlencode(), safe="")
+            params["next"] = "/application/o/authorize/?" + query.urlencode()
         else:
             ak_logger.warning("miconnect-alumni-link: an authorization with no client_id, the link will not come back to an application")
+        link = "/if/flow/miconnect-alumni-link/" + ("?" + urlencode(params) if params else "")
         return f"<p>Pour continuer, lie ton compte MiConnect à ton compte <strong>Alumni</strong> (le réseau des anciens des Mines de Saint-Étienne, où tu as un compte depuis ton entrée à l'École). Quand ton compte de l'École disparaîtra, c'est lui qui te connectera, avec le même profil.</p><p><a href=\"{escape(link)}\">Lier mon compte Alumni</a></p><p>Une fois le lien fait, tu arrives directement sur le service.</p>"
   - model: authentik_stages_prompt.promptstage
     identifiers:

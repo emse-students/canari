@@ -808,7 +808,7 @@ every signed-in way to the source: the Settings > Sources "Connect" button and t
 marker in a URL ("the link step sent them") would be read when the flow is planned, where authentik
 caches a policy result per session and user, so it would silence the next direct visit. **Since
 2026-11-25 the link step's link skips it**: the D44 policies
-write a server-side OFFER when their page is due and the link flow turns it into a single-use
+write a server-side OFFER whose nonce only the page's link carries, and the link flow turns it into a single-use
 PROPOSAL; the routing page no longer goes through the source at all
 ([sign-in paths](miconnect-sign-in-paths.md#the-security-boundary-a-change-to-how-a-source-connection-is-created)). `test-enrollment-flow.py` drives it through `/source/saml/alumni/`:
 signed in, the page names the account, refuses without the tick and then hands over to the

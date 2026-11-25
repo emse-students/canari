@@ -454,6 +454,26 @@ with Tenant.objects.get(ready=True):
             check(UserSAMLSourceConnection.objects.filter(user=student, source=alumni, identifier="99101").exists(), f"{page_key}: the identity Alumnforce asserted is linked to the signed-in account")
             check(SESSION_KEY_OVERRIDE_FLOW_TOKEN not in session_of(browser) and not FlowToken.objects.filter(user=student).exists(), f"{page_key}: the resume token is spent: out of the session and the database")
 
+        # The OFFER outlives its page: after "Continuer" under the reminder, and while the block shows.
+        # A visit to the link flow that does not carry the page's nonce (a lured link) meets D49.
+        for promos, today, page_key in (([2024], date(2026, 1, 15), "alumni_link_reminder"), ([2020], date(2027, 3, 1), "alumni_link_required")):
+            become({"promos": promos, "posts": [], "alumni": None, "linked": False})
+            browser = new_session(student.username)
+            target, page, query = authorize_on(browser, local, today)
+            href = link_of(fields(page)[page_key]["initial_value"])
+            if page_key == "alumni_link_reminder":
+                gone = executor(browser, SLUG, {"component": "ak-stage-prompt"}, query)
+                check("external" in gone, f"{page_key}: 'Continuer' ends the authorization")
+            check(isinstance(session_of(browser).get("miconnect/alumni-link-offered"), dict), f"{page_key}: the offer is still in the session after its page")
+            for lure in ("/if/flow/miconnect-alumni-link/", "/if/flow/miconnect-alumni-link/?offer=0123456789abcdef0123456789abcdef"):
+                page = go(browser, lure)
+                check(page.get("component") == "ak-stage-prompt" and "alumni_link_confirm" in fields(page), f"{page_key}: a link without the page's nonce ({lure}) meets the D49 confirmation ({page.get('component')})")
+            to_alumnforce = go(browser, href)
+            check(to_alumnforce.get("component") == "ak-stage-autosubmit", f"{page_key}: the page's own link still skips D49 ({to_alumnforce.get('component')})")
+            check("miconnect/alumni-link-offered" not in session_of(browser), f"{page_key}: the offer is spent once its nonce is used")
+            page = go(browser, href)
+            check("alumni_link_confirm" in fields(page), f"{page_key}: the same link a second time meets D49")
+
         # 11 - THE ROUTING PAGE'S "I HAVE A SCHOOL ACCOUNT" (D47), FROM THE APPLICATION BACK TO IT
         # (path P6). Before: the login page again, the CAS, the D49 page, Alumnforce a second time,
         # the settings, and a second sign-in to the application. Now (owner, 2026-11-25, option 1): the
@@ -484,7 +504,8 @@ with Tenant.objects.get(ready=True):
             )
             after_cas = session_of(browser)[SESSION_KEY_GET].get("next", "")
             check(comes_back(after_cas, query), f"[{suffix}] after the CAS, the link flow, then THIS authorization ({after_cas})")
-            check(session_of(browser).get("miconnect/alumni-link-parked", {}).get("identifier") == af_id, f"[{suffix}] the identity Alumnforce asserted is kept in the session, server-side")
+            parked = session_of(browser).get("miconnect/alumni-link-parked", {})
+            check(parked.get("identifier") == af_id and parked.get("nonce") and parse_qs(urlparse(after_cas).query).get("parked") == [parked["nonce"]], f"[{suffix}] the identity Alumnforce asserted is kept in the session, server-side, with a nonce only this link names")
             if meanwhile:
                 meanwhile()
             return account, browser, source_answers(browser, "cas-emse", f"cas-e2e-{suffix}"), met, (target, query)
@@ -517,38 +538,74 @@ with Tenant.objects.get(ready=True):
         fourth, browser, refused_again, met, _ = routing("j", "99107", ("Consent", "Test"), meanwhile=lambda: UserSAMLSourceConnection.objects.create(user=elsewhere, source=alumni, identifier="99107"))
         check(refused_again.get("component") == "ak-stage-access-denied" and not UserSAMLSourceConnection.objects.filter(user=fourth).exists(), f"an identity linked to another account meanwhile is refused, nothing linked ({refused_again.get('component')})")
 
+        # A PARKED RECORD LEFT BEHIND: X signs in with Alumni in a shared browser, chooses "I have a School
+        # account" and walks away at the CAS page; V (a HOMONYM, the case no page would catch) signs in
+        # there by the ordinary login page - Django's login keeps the anonymous session's data - and later
+        # follows the D44 step's link. X's identity must not be linked to V: the link does not name the
+        # record's nonce, so the record is dropped and the step's link goes on as for anyone.
+        browser = Client(HTTP_HOST="localhost")
+        authorize(browser, local)
+        go(browser, "/source/saml/alumni/")
+        source_answers(browser, "alumni", "99108", properties={"username": "alumni-99108", "name": "Consent Test", "firstname": "Consent", "lastname": "Test", "alumni_read": read})
+        executor(browser, "miconnect-enrollment", {"component": "ak-stage-prompt", "alumni_route": "cas"})
+        check(session_of(browser).get("miconnect/alumni-link-parked", {}).get("identifier") == "99108", "X's identity is parked, X walks away")
+        become({"promos": [2024], "posts": [], "alumni": None, "linked": False})
+        executor(browser, "password-login")
+        executor(browser, "password-login", {"component": "ak-stage-identification", "uid_field": student.username})
+        executor(browser, "password-login", {"component": "ak-stage-password", "password": PASSWORD})
+        check(session_of(browser).get("miconnect/alumni-link-parked", {}).get("identifier") == "99108", "V's ordinary sign-in keeps the anonymous session's data, X's record included")
+        target, page, query = authorize_on(browser, local, date(2026, 1, 15))
+        followed = go(browser, link_of(fields(page)["alumni_link_reminder"]["initial_value"]))
+        check(followed.get("component") == "ak-stage-autosubmit" and not UserSourceConnection.objects.filter(source=alumni, identifier="99108").exists(), f"V's link step goes to Alumnforce, and X's parked identity is linked to nobody ({followed.get('component')})")
+        check("miconnect/alumni-link-parked" not in session_of(browser), "the record the link did not name is dropped")
+
         # 12 - THE BOUNDARY: only a link MiConnect proposed in this session, to this account, skips the
         # confirmation and resumes; nothing a browser sends can make one.
         stranger, stranger_client = signed_in(PREFIX + "g", {"cgu_version": VERSION, **copy.deepcopy(PROFILE)})
         page = go(stranger_client, "/if/flow/miconnect-alumni-link/?next=%2Fapplication%2Fo%2Fauthorize%2F")
         check(page.get("component") == "ak-stage-prompt" and "alumni_link_confirm" in fields(page), f"the link flow reached with no offer (a link from anywhere) shows the D49 confirmation ({page.get('component')})")
 
-        def offer(value):
+        def offer(pk, session_key=None, value=None):
             store = session_of(stranger_client)
-            store["miconnect/alumni-link-offered"] = value
+            store["miconnect/alumni-link-offered"] = {"pk": pk, "nonce": "n0nce"}
+            if session_key:
+                store[session_key] = value
             store.save()
 
         offer(holder.pk)
-        page = go(stranger_client, "/if/flow/miconnect-alumni-link/")
+        page = go(stranger_client, "/if/flow/miconnect-alumni-link/?offer=n0nce")
         check("alumni_link_confirm" in fields(page), "an offer made to ANOTHER account of the session shows the confirmation")
-        offer(stranger.pk)
-        page = go(stranger_client, "/if/flow/miconnect-alumni-link/?next=https%3A%2F%2Fevil.example%2F")
-        check("alumni_link_confirm" in fields(page), "an offer whose `next` leaves MiConnect is no proposal: the confirmation shows")
-        page = go(stranger_client, "/if/flow/miconnect-alumni-link/")
-        check("alumni_link_confirm" in fields(page), "an offer is spent once read: a second visit shows the confirmation")
+        for evil in ("https%3A%2F%2Fevil.example%2F", "%2F%09%2Fevil.example%2F", "%2F%5Cevil.example"):
+            offer(stranger.pk)
+            page = go(stranger_client, f"/if/flow/miconnect-alumni-link/?offer=n0nce&next={evil}")
+            check("alumni_link_confirm" in fields(page), f"an offer whose `next` leaves MiConnect ({evil}) is no proposal: the confirmation shows")
+        page = go(stranger_client, "/if/flow/miconnect-alumni-link/?offer=n0nce")
+        check("alumni_link_confirm" in fields(page), "an offer is spent once its nonce is read: a second visit shows the confirmation")
+        offer(stranger.pk, "authentik/impersonate/user", stranger)
+        page = go(stranger_client, "/if/flow/miconnect-alumni-link/?offer=n0nce")
+        check("alumni_link_confirm" in fields(page), f"an offer in an IMPERSONATED session is no proposal: the confirmation shows ({page.get('component')})")
+        store = session_of(stranger_client)
+        store.pop("authentik/impersonate/user", None)
+        store.save()
         # A resume token planted for ANOTHER account (a stale or foreign plan) never links: the done flow refuses.
         done_flow = Flow.objects.get(slug="miconnect-alumni-link-done")
-        planner = FlowPlanner(done_flow)
-        planner.use_cache = False
-        plant = RequestFactory().get("/")
-        plant.user = holder
-        plant.session = session_of(stranger_client)
-        foreign = FlowToken.objects.create(user=holder, flow=done_flow, identifier="consent-e2e-foreign-token", _plan=FlowToken.pickle(planner.plan(plant, {PLAN_CONTEXT_PENDING_USER: holder})))
+
+        def token_for(account, name):
+            planner = FlowPlanner(done_flow)
+            planner.use_cache = False
+            plant = RequestFactory().get("/")
+            plant.user = account
+            plant.session = session_of(stranger_client)
+            return FlowToken.objects.create(user=account, flow=done_flow, identifier=f"consent-e2e-{name}", _plan=FlowToken.pickle(planner.plan(plant, {PLAN_CONTEXT_PENDING_USER: account})))
+
+        foreign = token_for(holder, "foreign-token")
         UserSAMLSourceConnection.objects.filter(user=holder).delete()
 
-        def plant_token():
+        def plant_token(token=None, next_url=None):
             store = session_of(stranger_client)
-            store[SESSION_KEY_OVERRIDE_FLOW_TOKEN] = foreign
+            store[SESSION_KEY_OVERRIDE_FLOW_TOKEN] = token or foreign
+            store.pop(SESSION_KEY_PLAN, None)
+            store[SESSION_KEY_GET] = {"next": next_url} if next_url else {}
             store.save()
 
         plant_token()
@@ -565,6 +622,23 @@ with Tenant.objects.get(ready=True):
         landed = source_answers(stranger_client, "alumni", "99104", user=stranger)
         check("#/settings;page-sources" in landed.get("landed", ""), f"a link nobody proposed ends where authentik ends it, on the settings ({landed})")
         check(UserSAMLSourceConnection.objects.filter(user=stranger, identifier="99104").exists(), "and is linked to the session's account")
+
+        # The done flow's other refusals: the account already holds an Alumni link (99104 above)...
+        plant_token(token_for(stranger, "own-token"))
+        refused_link = source_answers(stranger_client, "alumni", "99109", user=stranger)
+        check(refused_link.get("component") == "ak-stage-access-denied" and not UserSourceConnection.objects.filter(source=alumni, identifier="99109").exists(), f"a resumed link to an account that already holds an Alumni link is refused, nothing linked ({refused_link.get('component')})")
+        # ... and a redirect that leaves MiConnect, even a tab variant.
+        UserSAMLSourceConnection.objects.filter(user=stranger).delete()
+        for evil in ("https://evil.example/", "/\t/evil.example/"):
+            plant_token(token_for(stranger, "own-token-evil"), evil)
+            refused_link = source_answers(stranger_client, "alumni", "99110", user=stranger)
+            check(refused_link.get("component") == "ak-stage-access-denied" and not UserSourceConnection.objects.filter(source=alumni, identifier="99110").exists(), f"a resumed link whose redirect leaves MiConnect ({evil!r}) is refused, nothing linked ({refused_link.get('component')})")
+        # A token left by an abandoned Alumni link that meets a link of ANOTHER source (the CAS from the
+        # settings) does not refuse it: linked to the session's own account, as authentik links it.
+        plant_token(token_for(stranger, "own-token-cas"))
+        linked = source_answers(stranger_client, "cas-emse", "cas-e2e-stale", user=stranger)
+        check(linked.get("component") != "ak-stage-access-denied" and UserOAuthSourceConnection.objects.filter(user=stranger, source=cas_source, identifier="cas-e2e-stale").exists(), f"a stale Alumni token does not refuse a CAS link from the settings: linked to the session's account ({linked})")
+        check(SESSION_KEY_OVERRIDE_FLOW_TOKEN not in session_of(stranger_client), "and the stale token is spent")
     finally:
         User.objects.filter(username__startswith=PREFIX).delete()
         User.objects.filter(username__startswith="alumni-991").delete()

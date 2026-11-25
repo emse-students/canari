@@ -18,7 +18,7 @@ Two traps met writing it, both about the TEST and not the flow:
 import json
 from datetime import date
 from importlib import import_module
-from urllib.parse import quote, urlencode, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from django.conf import settings
 from django.contrib.auth.models import AnonymousUser
@@ -285,9 +285,17 @@ with Tenant.objects.get(ready=True):
         # ...and "I have one" leaves for the CAS-only sign-in, then the link MiConnect proposes; with no
         # application in the plan, the link flow has no `next` (test-consent-flow.py step 11 drives the
         # path from an application back to it).
+        def after_cas(to):
+            """The link flow `to` sends the browser to after the CAS-only sign-in: (its path, its query)."""
+            outer = urlparse(to)
+            inner = urlparse(parse_qs(outer.query).get("next", [""])[0])
+            return outer.path, inner.path, parse_qs(inner.query)
+
         left = step(client, {"alumni_route": "cas"})
-        check(left.get("component") == "xak-flow-redirect" and left.get("to") == "/if/flow/miconnect-auth-cas/?next=%2Fif%2Fflow%2Fmiconnect-alumni-link%2F", f"'I have a School account' sends to the CAS, then to the link ({left})")
-        check(import_module(settings.SESSION_ENGINE).SessionStore(SessionMiddleware.decode_session_key(client.cookies[settings.SESSION_COOKIE_NAME].value)).get("miconnect/alumni-link-parked", {}).get("identifier") == "90001", "and keeps the identity Alumnforce asserted in the session, for the link after the CAS")
+        cas_path, link_path, link_query = after_cas(left.get("to", ""))
+        check(left.get("component") == "xak-flow-redirect" and (cas_path, link_path) == ("/if/flow/miconnect-auth-cas/", "/if/flow/miconnect-alumni-link/") and "next" not in link_query, f"'I have a School account' sends to the CAS, then to the link ({left})")
+        parked = import_module(settings.SESSION_ENGINE).SessionStore(SessionMiddleware.decode_session_key(client.cookies[settings.SESSION_COOKIE_NAME].value)).get("miconnect/alumni-link-parked", {})
+        check(parked.get("identifier") == "90001" and parked.get("nonce") and link_query.get("parked") == [parked["nonce"]], "and keeps the identity Alumnforce asserted in the session, with a nonce only that link names")
         # The plan's application comes along: the link flow's `next` is where the sign-in was going.
         client = seed(SLUG, {
             PLAN_CONTEXT_PROMPT: alumni_properties("90008"),
@@ -297,7 +305,7 @@ with Tenant.objects.get(ready=True):
         })
         step(client)
         left = step(client, {"alumni_route": "cas"})
-        check(left.get("to") == "/if/flow/miconnect-auth-cas/?next=" + quote("/if/flow/miconnect-alumni-link/?next=" + quote("/application/o/authorize/?client_id=x&state=y", safe=""), safe=""), f"...with the application's authorization as the link's `next` ({left.get('to')})")
+        check(after_cas(left.get("to", ""))[2].get("next") == ["/application/o/authorize/?client_id=x&state=y"], f"...with the application's authorization as the link's `next` ({left.get('to')})")
         client = seed(SLUG, {
             PLAN_CONTEXT_PROMPT: alumni_properties("90009"),
             PLAN_CONTEXT_SOURCE: SAMLSource.objects.get(slug="alumni"),
@@ -306,7 +314,7 @@ with Tenant.objects.get(ready=True):
         })
         step(client)
         left = step(client, {"alumni_route": "cas"})
-        check(left.get("to") == "/if/flow/miconnect-auth-cas/?next=%2Fif%2Fflow%2Fmiconnect-alumni-link%2F", f"...and never a `next` that leaves MiConnect ({left.get('to')})")
+        check(after_cas(left.get("to", ""))[1] == "/if/flow/miconnect-alumni-link/" and "next" not in after_cas(left.get("to", ""))[2], f"...and never a `next` that leaves MiConnect ({left.get('to')})")
         check(not User.objects.filter(username="alumni-90001").exists(), "and creates no account")
 
         # H - "I have none" creates the account (D46): `alumni-<af_id>`, the Alumni e-mail, the two names

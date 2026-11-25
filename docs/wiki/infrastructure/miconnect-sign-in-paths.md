@@ -124,12 +124,13 @@ field, no passwordless flow). The redirect stage's target is set by its policy
 (`redirect_stage_target`), with the link flow as `next`.
 
 **5. No D49 page for the link step (P8-P9).** D49 is, in the owner's words, "every link outside the
-D44 step"; as built it showed on the step's link too, because a marker in a URL would be read at
-plan time. It is now a server-side session marker: the D44 policies, when their page is due, write
-an OFFER (`miconnect/alumni-link-offered` = the account's pk); the link flow turns it into the
-PROPOSAL (`miconnect/alumni-link-proposed`) the pre-authentication policy consumes. Settings >
-"Connect" and any direct visit still meet the page and still end on the settings, as authentik ends
-them.
+D44 step"; as built it showed on the step's link too. The D44 policies, when their page is due, now
+write an OFFER into the session (`miconnect/alumni-link-offered`: the account's pk and a random
+nonce), and the page's link carries that nonce (`offer=`). The link flow honours the offer only when
+the link names its nonce, for that account, and spends it; it then hands the pre-authentication
+policy a PROPOSAL (`miconnect/alumni-link-proposed`), which skips the page. The offer outlives its
+page ("Continuer", a block shown again), so a visit without the nonce - Settings > "Connect", a direct
+visit, a lured link - still meets the page and still ends on the settings, as authentik ends them.
 
 ### The security boundary (a change to how a source connection is created)
 
@@ -141,42 +142,57 @@ skipped for the link step.
 
 **What holds, and what stops each threat:**
 
-- **The identity is always one Alumnforce asserted in THIS session**, signed (`signed_response`,
-  `signed_assertion`) and answering a request this session issued (`allow_idp_initiated: false`). The
-  parked record is written only by a policy, from the plan's source connection authentik built from
-  that assertion, into the server-side session; nothing a browser sends reaches it. The first link
-  flow that runs takes it out of the session (single-use), and honours it only for a signed-in,
-  non-impersonated session with a `next` on MiConnect.
+- **The identity is always one Alumnforce asserted in THIS browser session**, signed
+  (`signed_response`, `signed_assertion`) and answering a request this session issued
+  (`allow_idp_initiated: false`). The parked record is written only by a policy, from the plan's
+  source connection authentik built from that assertion, into the server-side session; nothing a
+  browser sends reaches it. The first link flow that runs takes it out of the session, and honours it
+  only when the link names the record's NONCE (`parked=`, carried only by the link the routing policy
+  builds, through the CAS-only sign-in), for a signed-in, non-impersonated session with a `next` on
+  MiConnect. A record the link does not name is dropped, logged at warning.
 - **Attaching someone else's Alumni identity to one's own account** needs a signed assertion for that
   identity answering this session's request: unchanged.
-- **Attaching one's own Alumni identity to someone else's account.** Through the parked record: only
-  when that someone signs in with the CAS in the SAME browser session before the record is used (a
-  shared computer left after "I have a School account"). Then the names decide: a different name
-  meets the page naming BOTH accounts, which that person refuses or closes; **a homonym is linked
-  with no page - the residual risk the owner accepted** (2026-11-25). Before this change the second
-  Alumnforce sign-in proved the identity again; the owner traded it for the fluid path. Through the
-  resume token: it is created only for the account the session holds at that moment; a session
-  cannot change account without being flushed, and the done flow re-checks it (same account, Alumni
-  source, no existing link, a redirect on MiConnect) before authentik writes; otherwise the deny page
-  and nothing written (`failure_result: true`: an error denies too). The token is single-use, and any
-  token is removed by every link that was not proposed.
-- **Two links for one identity or one account.** The parked write locks the account row and refuses
-  when the account already holds an Alumni link or the identity is linked elsewhere (another tab):
-  the deny page, nothing written. The link, its membership read and its `source_linked` Event are
-  one transaction.
-- **Skipping D49 by a crafted link.** Nothing in a URL makes a proposal. The link flow proposes only
-  when the session already holds an offer for that account, consumes it at once, and refuses a
-  `next` that leaves MiConnect. A lured visit meets the D49 page, as before.
+- **Attaching one's own Alumni identity to someone else's account, through the parked record.**
+  Django's `login()` keeps an anonymous session's data, so the record survives any sign-in in that
+  browser. The nonce confines it to the routing page's own path: only someone who signs in with the
+  CAS at the CAS-only page that "I have a School account" opened, in the same browser, reaches the link
+  that names it (a shared computer left at that page). A later sign-in by the ordinary login page,
+  then the D44 step's link or any other visit, drops it. On the routing path the names decide: a
+  different name meets the page naming BOTH accounts, which that person refuses or closes; **a
+  homonym is linked with no page - the residual risk the owner accepted** (2026-11-25). Before this
+  change the second Alumnforce sign-in proved the identity again; the owner traded it for the fluid
+  path.
+- **Through the resume token.** It is created only for the account the session holds at that moment;
+  a sign-in as ANOTHER account flushes an authenticated session (Django's `login()`), and the done
+  flow checks again before authentik writes: the session's account is the token's, an Alumni identity
+  goes to an account with no Alumni link, the redirect is a path on MiConnect. Otherwise the deny
+  page and nothing written (`failure_result: true`: an error denies too). The token is single-use,
+  and every link that was not proposed removes it. A token left by an abandoned round trip that meets
+  a link of ANOTHER source (the CAS from the settings) is let through, logged at warning: authentik
+  would link it to the same account (the session's, checked) without the token.
+- **Two links for one identity or one account.** The parked write locks the Alumni source's row, then
+  the account's, and refuses when the account already holds an Alumni link or the identity is linked
+  elsewhere (another tab, another account): the deny page, nothing written. The link, its membership
+  read and its `source_linked` Event are one transaction.
+- **Skipping D49 by a crafted link.** Nothing a browser sends makes a proposal. The link flow proposes
+  only when the link names the nonce of an offer the session holds for that account, spends it, and
+  refuses a `next` that leaves MiConnect. A lured visit, or the step's link used a second time, meets
+  the D49 page.
 - **An open redirect through `next`.** authentik's `_flow_done` redirects to a plan's `redirect`
   unchecked; the link flow and the done flow refuse anything but a path on MiConnect, and the routing
-  policy drops it.
+  policy drops it - a relative path checked by Django's `url_has_allowed_host_and_scheme` too, so a
+  tab or a backslash that a browser would read as another host is refused.
 
 `test-consent-flow.py` steps 10-12 drive each of these on a throwaway authentik, from a real
 authorization to the application's code (only the IdP round trips are emulated, by authentik's own
 `SourceFlowManager.get_flow` on the browser's session): names that agree (no page, linked, the read
 stored), names that differ (the page naming both, nothing without the tick, linked with it), an
 identity linked elsewhere meanwhile (refused), the link step (one Alumnforce answer, the same
-authorization), and the boundary cases. `test-enrollment-flow.py` step G checks the routing target
+authorization), and the boundary cases: an offer outliving its page (after "Continuer", under the
+block) and a link without its nonce, a parked record left by someone else in a shared browser and a
+homonym's later D44 link, an offer to another account, a `next` leaving MiConnect (a tab and a
+backslash variant included), an impersonated session, a foreign token, the done flow's refusals (an
+account already linked, a redirect leaving MiConnect) and a stale token meeting a CAS link. `test-enrollment-flow.py` step G checks the routing target
 and the parked identity, step M the merge through the shared comparison.
 
 **An abandoned first attempt (read on production 2026-11-25).** The enrolment page was served after

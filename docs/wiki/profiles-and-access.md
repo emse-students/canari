@@ -969,7 +969,7 @@ user sets" with a rule per promo, and adds the cotisant gate. Planned in `1.8.0`
   through the CAS, the owner reached the Alumni entry and was linked at once, with no page. Every
   link outside the D44 step therefore asks "Lier ton compte Alumni au compte MiConnect <name> ?" -
   the settings page's "Connect" button included. As built, the page shows on EVERY signed-in way to
-  the source except the D44 step's link: since 2026-11-25 the step writes a server-side offer that
+  the source except the D44 step's link: since 2026-11-25 the step writes a server-side offer whose nonce its link carries, that
   the link flow turns into a single-use proposal, and that link resumes the application's sign-in
   ([sign-in paths](infrastructure/miconnect-sign-in-paths.md)). It runs because the source's binding is `POST_AUTO`, which Alumnforce accepts (read
   on production 2026-11-23)
