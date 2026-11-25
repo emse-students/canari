@@ -7,7 +7,7 @@
  * overlapping on the one WASM client. The asks are ordered by the calls alone - each restore here is
  * a deferred the test settles by hand, so no timer and no clock decides anything.
  */
-import { SvelteMap } from 'svelte/reactivity';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 const loadExistingConversations = vi.hoisted(() => vi.fn());
 
@@ -57,7 +57,7 @@ function makeCtx(userId = 'u1') {
     ensureMls: () => mls,
     userId,
     deviceKeyB64: 'k',
-    messageReactions: new SvelteMap(),
+    messageReactions: new ReactionsByConversation(),
     log: vi.fn(),
     addMessageToChat: vi.fn(),
   } as never;

@@ -205,6 +205,9 @@ interface LifeOptions {
 
 const ACCEPT = async () => undefined;
 
+/** Where a tombstoned send's row stands now: never a conversation a take queued for. */
+const MOVED_CONVERSATION = 'conversation-moved-since-the-press';
+
 /** Every life a case started and did not kill itself: `afterEach` ends them (see there). */
 const openLives = new Set<{ kill(): void }>();
 
@@ -215,8 +218,15 @@ function life(w: World, opts: LifeOptions = {}) {
   const s = w.storage;
   const storage = {
     saveMessage: vi.fn(async () => undefined),
-    getMessage: vi.fn(async (id: string) =>
-      opts.tombstones?.includes(id) ? { id, isDeleted: true } : null
+    // A tombstone stands under a conversation the press never queued for: its row MOVED since (a
+    // send re-keyed mid-flight, a merged thread), and maintenance follows the row, not the press.
+    findMessageConversations: vi.fn(async (id: string) =>
+      opts.tombstones?.includes(id) ? [MOVED_CONVERSATION] : []
+    ),
+    getMessage: vi.fn(async (conversationId: string, id: string) =>
+      conversationId === MOVED_CONVERSATION && opts.tombstones?.includes(id)
+        ? { id, conversationId, senderId: 'u', isDeleted: true }
+        : null
     ),
     saveOutboxEntry: (e: OutboxEntry, k: string) => live(() => s.saveOutboxEntry(e, k)),
     saveReelTake: (
@@ -1546,7 +1556,7 @@ describe('one take, several conversations (RC-13)', () => {
     }
   });
 
-  it('L2: a deletion whose forwarded event no leader took is RE-DERIVED from its tombstone by the next leader, and the last releases the file', async () => {
+  it('L2: a deletion whose forwarded event no leader took is RE-DERIVED from its tombstone by the next leader - wherever its row moved since the press - and the last releases the file', async () => {
     const w = world();
     const first = life(w);
     await enqueueTake(first, 1);

@@ -13,7 +13,7 @@
  * conversation does arrive in the end, and `conversationsRestored` is true either way. What
  * distinguishes the fix is the answer given DURING the span, which is where the landing ran.
  */
-import { SvelteMap } from 'svelte/reactivity';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 const loadExistingConversations = vi.hoisted(() => vi.fn());
 
@@ -48,7 +48,7 @@ function makeCtx() {
     ensureMls: () => mls,
     userId: 'u1',
     deviceKeyB64: 'k',
-    messageReactions: new SvelteMap(),
+    messageReactions: new ReactionsByConversation(),
     log: vi.fn(),
     addMessageToChat: vi.fn(),
   } as never;

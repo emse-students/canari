@@ -95,6 +95,17 @@ function storageOf(device: Device): IStorage {
       for (const m of msgs) messages.set(m.id, m);
       sync();
     }),
+    moveMessages: vi.fn(async (from: string, to: string, ids: readonly string[]) => {
+      const moved: string[] = [];
+      for (const id of ids) {
+        const m = messages.get(id);
+        if (!m || m.conversationId !== from) continue;
+        messages.set(id, { ...m, conversationId: to });
+        moved.push(id);
+      }
+      sync();
+      return { moved, alreadyThere: [] as string[], kept: [] as string[] };
+    }),
     countMessages: vi.fn(
       async (conv: string) => [...messages.values()].filter((m) => m.conversationId === conv).length
     ),

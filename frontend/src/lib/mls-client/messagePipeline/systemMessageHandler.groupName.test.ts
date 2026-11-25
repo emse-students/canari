@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 // Resolve names offline: identity function so the handler runs without the user store / network.
 vi.mock('$lib/utils/users/displayName', () => ({
@@ -39,7 +40,7 @@ function device(conversationType: 'group' | 'direct' = 'group') {
     userId: 'me',
     deviceKey: () => 'device-key',
     conversations,
-    messageReactions: new Map(),
+    messageReactions: new ReactionsByConversation(),
     addMessageToChat: vi.fn().mockResolvedValue(undefined),
     batchAddMessages: vi.fn(),
     deleteConversation: vi.fn().mockResolvedValue(undefined),
@@ -153,7 +154,7 @@ describe('a received groupNamed statement', () => {
       userId: 'me',
       deviceKey: () => 'device-key',
       conversations: d.conversations,
-      messageReactions: new Map(),
+      messageReactions: new ReactionsByConversation(),
       addMessageToChat,
       batchAddMessages: vi.fn(),
       deleteConversation: vi.fn().mockResolvedValue(undefined),
@@ -324,7 +325,7 @@ describe('a statement outranked by a rename-dated name of another text is answer
         userId,
         deviceKey: () => 'device-key',
         conversations,
-        messageReactions: new Map(),
+        messageReactions: new ReactionsByConversation(),
         addMessageToChat: vi.fn().mockResolvedValue(undefined),
         batchAddMessages: vi.fn(),
         deleteConversation: vi.fn().mockResolvedValue(undefined),

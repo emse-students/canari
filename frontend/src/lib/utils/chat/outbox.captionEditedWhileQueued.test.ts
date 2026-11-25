@@ -210,7 +210,7 @@ describe('what a sent row is stored with - the STORED row decides (review of #33
     await outbox.flush();
     await vi.waitFor(() => expect(mlsService.sendMessage).toHaveBeenCalledTimes(1));
     await vi.waitFor(async () => {
-      const row = await storage.getMessage('A', KEY);
+      const row = await storage.getMessage('g1', 'A', KEY);
       const atRest = parseEnvelope(row!.content);
       expect(atRest.kind === 'media' && atRest.media.mediaId).toBe('blob-1');
       expect(atRest.kind === 'media' && atRest.caption).toBe('edited in another tab');

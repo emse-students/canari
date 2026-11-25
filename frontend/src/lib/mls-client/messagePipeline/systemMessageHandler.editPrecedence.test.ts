@@ -1,5 +1,6 @@
 import { handleSystemEvent } from './systemMessageHandler';
 import { envelopeBodyText, mkTextEnvelope, parseEnvelope, serializeEnvelope } from '$lib/envelope';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 /**
  * An edit is applied only if it is newer than the one the row already carries.
@@ -55,7 +56,7 @@ function makeCtx(
     userId: 'me',
     deviceKey: () => 'device-key',
     conversations,
-    messageReactions: new Map(),
+    messageReactions: new ReactionsByConversation(),
     addMessageToChat: vi.fn(),
     batchAddMessages: vi.fn(),
     deleteConversation: vi.fn(),

@@ -19,6 +19,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Conversation } from '$lib/types';
 import { BaseMlsService } from '$lib/services/BaseMlsService';
 import { resetUnackedFrames } from '$lib/mls-client/messagePipeline/unackedFrames';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   globalMessaging: { isMessageCatchupActive: false, resetMessageCatchupState: vi.fn() },
@@ -110,7 +111,7 @@ function restore(conversations: SvelteMap<string, Conversation>, svc: BaseMlsSer
       getDismissedGroups: vi.fn(async () => ({ kind: 'listed' as const, groupIds: [] })),
     },
     conversations,
-    messageReactions: new SvelteMap(),
+    messageReactions: new ReactionsByConversation(),
     userId: 'u1',
     deviceKeyB64: 'k',
     archivedConversationIds: [],

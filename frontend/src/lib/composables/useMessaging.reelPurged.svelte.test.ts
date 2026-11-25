@@ -53,6 +53,7 @@ function fakeStorage(rows: StoredMessage[]) {
       }
       return { rows: out, unreadable: new Set<string>() };
     }),
+    getMessage: vi.fn(async (c: string, id: string) => byKey.get(`${c}/${id}`) ?? null),
   };
 }
 
@@ -84,18 +85,18 @@ describe('recordReelPurged', () => {
     const { useMessaging } = await import('./useMessaging.svelte');
     const storage = fakeStorage([row('r1', DM)]);
     const ctx = ctxFor({ [DM]: [msg('r0'), msg('r1')] }, storage);
-    await useMessaging().recordReelPurged('r1', 1234, ctx, DM);
+    await useMessaging().recordReelPurged(DM, 'r1', 1234, ctx);
     expect(ctx.conversations.get(DM)!.messages[1].mediaPurgedAt).toBe(1234);
     expect(ctx.conversations.get(DM)!.messages[0].mediaPurgedAt).toBeUndefined();
     expect(storage.rows.get('r1')!.mediaPurgedAt).toBe(1234);
     expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('recorded on its row'));
   });
 
-  it('finds the message in a conversation that is not the one on screen', async () => {
+  it('writes the message of the conversation it is named, even when another is on screen', async () => {
     const { useMessaging } = await import('./useMessaging.svelte');
     const storage = fakeStorage([row('r9', OTHER)]);
     const ctx = ctxFor({ [DM]: [msg('r1')], [OTHER]: [msg('r9')] }, storage);
-    await useMessaging().recordReelPurged('r9', 55, ctx, OTHER);
+    await useMessaging().recordReelPurged(OTHER, 'r9', 55, ctx);
     expect(ctx.conversations.get(OTHER)!.messages[0].mediaPurgedAt).toBe(55);
   });
 
@@ -103,7 +104,7 @@ describe('recordReelPurged', () => {
     const { useMessaging } = await import('./useMessaging.svelte');
     const storage = fakeStorage([row('r1', DM, { mediaPurgedAt: 10 })]);
     const ctx = ctxFor({ [DM]: [msg('r1', { mediaPurgedAt: 10 })] }, storage);
-    await useMessaging().recordReelPurged('r1', 99, ctx, DM);
+    await useMessaging().recordReelPurged(DM, 'r1', 99, ctx);
     expect(ctx.conversations.get(DM)!.messages[0].mediaPurgedAt).toBe(10);
     expect(storage.updateMessage).not.toHaveBeenCalled();
   });
@@ -112,10 +113,10 @@ describe('recordReelPurged', () => {
     const { useMessaging } = await import('./useMessaging.svelte');
     const storage = fakeStorage([row('r1', DM)]);
     const messaging = useMessaging();
-    await messaging.recordReelPurged('r1', 100, ctxFor({ [DM]: [msg('r1')] }, storage), DM);
+    await messaging.recordReelPurged(DM, 'r1', 100, ctxFor({ [DM]: [msg('r1')] }, storage));
     // Another page life: memory no longer carries it (a reload not yet re-read, another tab).
     const later = ctxFor({ [DM]: [msg('r1')] }, storage);
-    await messaging.recordReelPurged('r1', 900, later, DM);
+    await messaging.recordReelPurged(DM, 'r1', 900, later);
     expect(storage.rows.get('r1')!.mediaPurgedAt).toBe(100);
     expect(storage.updateMessage).toHaveBeenCalledTimes(1);
     // Memory is aligned to the stored first instant, not left on the later one.
@@ -123,20 +124,33 @@ describe('recordReelPurged', () => {
     expect(later.log).toHaveBeenCalledWith(expect.stringContaining('the first kept'));
   });
 
-  it('with the message in no loaded conversation, still records it on the row, once', async () => {
+  it('with the message in no loaded conversation, still writes its row, and keeps a first instant', async () => {
     const { useMessaging } = await import('./useMessaging.svelte');
-    const storage = fakeStorage([row('r5', DM, { mediaPurgedAt: 3 })]);
+    const storage = fakeStorage([row('r5', DM), row('r6', DM, { mediaPurgedAt: 3 })]);
     const ctx = ctxFor({ [DM]: [] }, storage);
-    await useMessaging().recordReelPurged('r5', 8, ctx, DM);
-    expect(storage.rows.get('r5')!.mediaPurgedAt).toBe(3);
-    expect(storage.updateMessage).not.toHaveBeenCalled();
+    const messaging = useMessaging();
+    await messaging.recordReelPurged(DM, 'r5', 8, ctx);
+    await messaging.recordReelPurged(DM, 'r6', 8, ctx);
+    expect(storage.rows.get('r5')!.mediaPurgedAt).toBe(8);
+    expect(storage.rows.get('r6')!.mediaPurgedAt).toBe(3);
+    expect(storage.updateMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('the same id in two conversations: only the named one is recorded, in memory and on its row', async () => {
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const storage = fakeStorage([row('r1', DM)]);
+    const ctx = ctxFor({ [DM]: [msg('r1')], [OTHER]: [msg('r1')] }, storage, OTHER);
+    await useMessaging().recordReelPurged(DM, 'r1', 42, ctx);
+    expect(ctx.conversations.get(DM)!.messages[0].mediaPurgedAt).toBe(42);
+    expect(ctx.conversations.get(OTHER)!.messages[0].mediaPurgedAt).toBeUndefined();
+    expect(storage.updateMessage).toHaveBeenCalledWith(DM, 'r1', { mediaPurgedAt: 42 }, 'k');
   });
 
   it('says, with its cost, a row it could not write (absent or unreadable)', async () => {
     const { useMessaging } = await import('./useMessaging.svelte');
     const storage = fakeStorage([]);
     const ctx = ctxFor({ [DM]: [msg('r1')] }, storage);
-    await useMessaging().recordReelPurged('r1', 7, ctx, DM);
+    await useMessaging().recordReelPurged(DM, 'r1', 7, ctx);
     expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('NOT persisted'));
   });
 
@@ -145,7 +159,7 @@ describe('recordReelPurged', () => {
     // The peer's row (DM, first in the map, SELECTED) and mine (OTHER) share an id.
     const storage = fakeStorage([row('dup', DM), row('dup', OTHER)]);
     const ctx = ctxFor({ [DM]: [msg('dup')], [OTHER]: [msg('dup')] }, storage, DM);
-    await useMessaging().recordReelPurged('dup', 77, ctx, OTHER);
+    await useMessaging().recordReelPurged(OTHER, 'dup', 77, ctx);
     expect(ctx.conversations.get(OTHER)!.messages[0].mediaPurgedAt).toBe(77);
     expect(ctx.conversations.get(DM)!.messages[0].mediaPurgedAt).toBeUndefined();
     expect(storage.rowOf(OTHER, 'dup')!.mediaPurgedAt).toBe(77);
@@ -157,7 +171,7 @@ describe('recordReelPurged', () => {
     const { useMessaging } = await import('./useMessaging.svelte');
     const storage = fakeStorage([row('dup', DM), row('dup', OTHER, { mediaPurgedAt: 5 })]);
     const ctx = ctxFor({ [DM]: [msg('dup')], [OTHER]: [msg('dup')] }, storage, DM);
-    await useMessaging().recordReelPurged('dup', 900, ctx, OTHER);
+    await useMessaging().recordReelPurged(OTHER, 'dup', 900, ctx);
     expect(ctx.conversations.get(OTHER)!.messages[0].mediaPurgedAt).toBe(5);
     expect(ctx.conversations.get(DM)!.messages[0].mediaPurgedAt).toBeUndefined();
     expect(storage.updateMessage).not.toHaveBeenCalled();
@@ -168,7 +182,7 @@ describe('recordReelPurged', () => {
     recordConversationMove('old-key', OTHER);
     const storage = fakeStorage([row('dup', DM), row('dup', OTHER)]);
     const ctx = ctxFor({ [DM]: [msg('dup')], [OTHER]: [msg('dup')] }, storage, DM);
-    await useMessaging().recordReelPurged('dup', 31, ctx, 'old-key');
+    await useMessaging().recordReelPurged('old-key', 'dup', 31, ctx);
     expect(ctx.conversations.get(OTHER)!.messages[0].mediaPurgedAt).toBe(31);
     expect(ctx.conversations.get(DM)!.messages[0].mediaPurgedAt).toBeUndefined();
     expect(storage.rowOf(OTHER, 'dup')!.mediaPurgedAt).toBe(31);
@@ -180,7 +194,7 @@ describe('recordReelPurged', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const storage = fakeStorage([row('dup', DM)]);
     const ctx = ctxFor({ [DM]: [msg('dup')], [OTHER]: [] }, storage);
-    await useMessaging().recordReelPurged('dup', 7, ctx, OTHER);
+    await useMessaging().recordReelPurged(OTHER, 'dup', 7, ctx);
     expect(ctx.conversations.get(DM)!.messages[0].mediaPurgedAt).toBeUndefined();
     expect(storage.updateMessage).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('does not hold the row'));

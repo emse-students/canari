@@ -14,7 +14,7 @@ import type {
   EncryptedGraineRow,
   EncryptedMessageRow,
   IStorage,
-  MergeMessagesOptions,
+  MessageMove,
   MessageRowStanding,
   OutboxEntry,
   PageKey,
@@ -43,6 +43,7 @@ import {
   splitPendingMutation,
 } from './pendingMutationCodec';
 import { casMergeMessages, type RevisedRow, type RevisedWrite } from './messageCas';
+import { moveMessageRows } from './messageMove';
 import {
   attachOutboxBlob,
   clearOutboxBlobsLast,
@@ -75,6 +76,7 @@ import {
   compareStoredOrder,
   fromMessagePayload,
   mergeStoredMessage,
+  singleConversationOf,
   storedOrderAt,
   toMessagePayload,
 } from './messagePayload';
@@ -90,7 +92,20 @@ import {
 // ---------------------------------------------------------------------------
 
 /** The schema version `init` opens; every branch of its upgrade handler is written against it. */
-const IDB_SCHEMA_VERSION = 14;
+const IDB_SCHEMA_VERSION = 15;
+
+/**
+ * THE `messages` STORE IS KEYED BY ITS CONVERSATION (v15): a stored message is the pair
+ * `[conversationId, id]`. A message id is chosen by the frame that carries it, so the same id may
+ * name a row in two conversations, and each conversation keeps its own.
+ */
+const MESSAGE_KEY_PATH = ['conversationId', 'id'];
+
+/** The index of the message id alone (v15): `findMessageConversations`. */
+const MESSAGES_BY_ID = 'byId';
+
+/** The v15 staging store, renamed `messages` once every row is copied into it. */
+const MESSAGES_REKEY_STAGING = 'messagesRekey';
 
 /** The store of mutations whose message is not here yet (`PendingMutation`), since v13. */
 const PENDING_MUTATIONS = 'pendingMutations';
@@ -261,6 +276,85 @@ function keyStoredRowsProvisionally(tx: IDBTransaction): void {
       }
     }
     cursor.continue();
+  };
+}
+
+/**
+ * A `messages` store keyed by `[conversationId, id]` ({@link MESSAGE_KEY_PATH}), with every index the
+ * reads walk - created under `name`, the staging name of the v15 step.
+ */
+function createKeyedMessageStore(db: IDBDatabase, name: string): IDBObjectStore {
+  const store = db.createObjectStore(name, { keyPath: MESSAGE_KEY_PATH });
+  store.createIndex('byConversation', 'conversationId', { unique: false });
+  // The id ALONE, which the key `[conversationId, id]` cannot serve (`findMessageConversations`).
+  store.createIndex(MESSAGES_BY_ID, 'id', { unique: false });
+  store.createIndex(MESSAGES_BY_CONVERSATION_TIME, ['conversationId', 'timestamp'], {
+    unique: false,
+  });
+  store.createIndex(MESSAGES_BY_CONVERSATION_ORDER, ['conversationId', 'orderAt', 'id'], {
+    unique: false,
+  });
+  store.createIndex(MESSAGES_BY_CONVERSATION_PENDING, ['conversationId', 'orderPending', 'id'], {
+    unique: false,
+  });
+  return store;
+}
+
+/**
+ * THE v14 -> v15 STEP: `messages` re-keyed by `[conversationId, id]`. An object store's key path
+ * cannot change, so a staging store is created with the new one, every row is copied into it by a
+ * cursor, the old store is deleted and the staging store renamed `messages` - then `then` runs (the
+ * other row walks, which read the store by name and so meet the new one).
+ *
+ * RESUMABLE BY CONSTRUCTION: it runs inside the versionchange transaction, which is atomic - a kill
+ * or an abort anywhere in it leaves the database at its old version with its old store untouched,
+ * and the next open runs the whole step again. Nothing is decided from a clock; the version stamp
+ * commits with the rows. A store whose key path is already the pair (a fresh database's) is left as
+ * it is.
+ *
+ * A row the new key cannot hold (no string conversation or id - an IndexedDB key must be valid) was
+ * never reachable by any read, every one of which goes through its conversation; it is counted and
+ * said at error rather than aborting the upgrade, which would leave the store unopenable.
+ */
+function rekeyMessagesByConversation(db: IDBDatabase, tx: IDBTransaction, then: () => void): void {
+  const old = tx.objectStore('messages');
+  if (Array.isArray(old.keyPath)) {
+    then();
+    return;
+  }
+  const staging = createKeyedMessageStore(db, MESSAGES_REKEY_STAGING);
+  let copied = 0;
+  let unkeyable = 0;
+  const walk = old.openCursor();
+  walk.onerror = () => {
+    console.error('[IDB] Migration v14->v15: message cursor error', walk.error);
+    tx.abort();
+  };
+  walk.onsuccess = () => {
+    const cursor = walk.result;
+    if (cursor) {
+      const row = cursor.value as { conversationId?: unknown; id?: unknown };
+      // Every row with a conversation is kept: its id was the old store's key, so it is a valid key
+      // whatever its type, and the pair is one too. Only a row with no string conversation has
+      // nothing to be keyed under.
+      if (typeof row.conversationId === 'string') {
+        staging.put(row);
+        copied++;
+      } else {
+        unkeyable++;
+      }
+      cursor.continue();
+      return;
+    }
+    db.deleteObjectStore('messages');
+    staging.name = 'messages';
+    console.info(`[IDB] Migration v14->v15: ${copied} message row(s) keyed by (conversation, id)`);
+    if (unkeyable > 0) {
+      console.error(
+        `[IDB] Migration v14->v15: ${unkeyable} message row(s) with no string conversation could not be keyed by one - not carried: no conversation read ever reached them`
+      );
+    }
+    then();
   };
 }
 
@@ -523,6 +617,7 @@ export class IndexedDbStorage implements IStorage {
       // Version 11: adds the `byConversationTime` index on messages ([conversationId, timestamp]).
       // Version 13: adds the `pendingMutations` store (mutations whose message is not here yet).
       // Version 14: writes each conversation's local read seed (`seedLocalReadPointsInUpgrade`).
+      // Version 15: keys `messages` by `[conversationId, id]` (`rekeyMessagesByConversation`).
       const request = indexedDB.open(this.dbName, IDB_SCHEMA_VERSION);
 
       request.onerror = () =>
@@ -705,78 +800,87 @@ export class IndexedDbStorage implements IStorage {
           }
         }
 
-        // The two row walks, in sequence (see `keyStoredRowsProvisionally`): the v11 repair of string
-        // timestamps, then the v12 provisional keys. The first only on a store that had rows to
-        // repair (v6..v10), the second on every store below v12.
-        const keyProvisionally = () => {
-          if (oldVersion < 12) keyStoredRowsProvisionally(tx);
-        };
-        if (oldVersion < 11 && oldVersion >= 6) normalizeStoredTimestamps(tx, keyProvisionally);
-        else keyProvisionally();
-
-        // v13 -> v14: the local read seed, per conversation, inside this exclusive transaction.
-        // Only from v12 on: below it every stored row was just keyed provisionally (its `orderAt` is
-        // its `timestamp`), so there is no dated row to seed from and every conversation reads 0
-        // ("absent" reads as 0 too) - the walk would race the provisional one for nothing.
-        if (oldVersion >= 12 && oldVersion < 14) seedLocalReadPointsInUpgrade(tx);
-
-        if (oldVersion < 3 && oldVersion >= 2) {
-          // Migrate v2→v3: set conversation.id = conversation.groupId for all existing rows,
-          // and update messages.conversationId accordingly.
-          const convStore = tx.objectStore('conversations');
-          const msgStore = tx.objectStore('messages');
-
-          const oldToNew = new Map<string, string>();
-
-          const cursorReq = convStore.openCursor();
-          cursorReq.onerror = () => {
-            console.error('[IDB] Migration v2→v3: conversation cursor error', cursorReq.error);
-            tx.abort();
-          };
-          cursorReq.onsuccess = () => {
-            const cursor = cursorReq.result;
-            if (cursor) {
-              const old = cursor.value as ConversationMeta & { groupId?: string };
-              const newId = old.groupId ?? old.id;
-              if (newId !== old.id) {
-                oldToNew.set(old.id, newId);
-                // Insert with new key; delete old
-                const { groupId: _drop, ...rest } = old as any;
-                convStore.add({ ...rest, id: newId });
-                cursor.delete();
-              } else {
-                // Same key - just strip groupId field if present
-                if ('groupId' in old) {
-                  const { groupId: _drop, ...rest } = old as any;
-                  cursor.update(rest);
-                }
-              }
-              cursor.continue();
-            } else {
-              // After conversations are migrated, update messages.conversationId
-              if (oldToNew.size > 0) {
-                const msgCursorReq = msgStore.openCursor();
-                msgCursorReq.onerror = () => {
-                  console.error('[IDB] Migration v2→v3: message cursor error', msgCursorReq.error);
-                  tx.abort();
-                };
-                msgCursorReq.onsuccess = () => {
-                  const c = msgCursorReq.result;
-                  if (c) {
-                    const row = c.value;
-                    const mapped = oldToNew.get(row.conversationId);
-                    if (mapped) {
-                      c.update({ ...row, conversationId: mapped });
-                    }
-                    c.continue();
-                  }
-                };
-              }
-            }
-          };
-        }
+        // v14 -> v15 FIRST (`rekeyMessagesByConversation`): the store is replaced, so every walk
+        // below runs after it, on the store that now bears the name.
+        rekeyMessagesByConversation(db, tx, () => this.walkStoredRows(tx, oldVersion));
       };
     });
+  }
+
+  /**
+   * The row walks an upgrade owes, run once the v15 re-key has put the `messages` store in place.
+   */
+  private walkStoredRows(tx: IDBTransaction, oldVersion: number): void {
+    // The two row walks, in sequence (see `keyStoredRowsProvisionally`): the v11 repair of string
+    // timestamps, then the v12 provisional keys. The first only on a store that had rows to
+    // repair (v6..v10), the second on every store below v12.
+    const keyProvisionally = () => {
+      if (oldVersion < 12) keyStoredRowsProvisionally(tx);
+    };
+    if (oldVersion < 11 && oldVersion >= 6) normalizeStoredTimestamps(tx, keyProvisionally);
+    else keyProvisionally();
+
+    // v13 -> v14: the local read seed, per conversation, inside this exclusive transaction.
+    // Only from v12 on: below it every stored row was just keyed provisionally (its `orderAt` is
+    // its `timestamp`), so there is no dated row to seed from and every conversation reads 0
+    // ("absent" reads as 0 too) - the walk would race the provisional one for nothing.
+    if (oldVersion >= 12 && oldVersion < 14) seedLocalReadPointsInUpgrade(tx);
+
+    if (oldVersion < 3 && oldVersion >= 2) {
+      // Migrate v2→v3: set conversation.id = conversation.groupId for all existing rows,
+      // and update messages.conversationId accordingly.
+      const convStore = tx.objectStore('conversations');
+      const msgStore = tx.objectStore('messages');
+
+      const oldToNew = new Map<string, string>();
+
+      const cursorReq = convStore.openCursor();
+      cursorReq.onerror = () => {
+        console.error('[IDB] Migration v2→v3: conversation cursor error', cursorReq.error);
+        tx.abort();
+      };
+      cursorReq.onsuccess = () => {
+        const cursor = cursorReq.result;
+        if (cursor) {
+          const old = cursor.value as ConversationMeta & { groupId?: string };
+          const newId = old.groupId ?? old.id;
+          if (newId !== old.id) {
+            oldToNew.set(old.id, newId);
+            // Insert with new key; delete old
+            const { groupId: _drop, ...rest } = old as any;
+            convStore.add({ ...rest, id: newId });
+            cursor.delete();
+          } else {
+            // Same key - just strip groupId field if present
+            if ('groupId' in old) {
+              const { groupId: _drop, ...rest } = old as any;
+              cursor.update(rest);
+            }
+          }
+          cursor.continue();
+        } else {
+          // After conversations are migrated, update messages.conversationId
+          if (oldToNew.size > 0) {
+            const msgCursorReq = msgStore.openCursor();
+            msgCursorReq.onerror = () => {
+              console.error('[IDB] Migration v2→v3: message cursor error', msgCursorReq.error);
+              tx.abort();
+            };
+            msgCursorReq.onsuccess = () => {
+              const c = msgCursorReq.result;
+              if (c) {
+                const row = c.value;
+                const mapped = oldToNew.get(row.conversationId);
+                if (mapped) {
+                  c.update({ ...row, conversationId: mapped });
+                }
+                c.continue();
+              }
+            };
+          }
+        }
+      };
+    }
   }
 
   /** Throw if init() has not been called yet; otherwise return the open database handle. */
@@ -946,13 +1050,13 @@ export class IndexedDbStorage implements IStorage {
     });
   }
 
-  /** Remove one message row by primary key; absent rows resolve without error, as IDB's delete does. */
-  async deleteMessage(id: string, conversationId: string): Promise<void> {
+  /** Remove one message row by its key; absent rows resolve without error, as IDB's delete does. */
+  async deleteMessage(conversationId: string, id: string): Promise<void> {
     const db = this.ensureDb();
     invalidateHistoryStateKey(conversationId);
     return new Promise((resolve, reject) => {
       const tx = db.transaction('messages', 'readwrite');
-      tx.objectStore('messages').delete(id);
+      tx.objectStore('messages').delete([conversationId, id]);
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
@@ -984,10 +1088,11 @@ export class IndexedDbStorage implements IStorage {
     return this.saveMessages([msg], deviceKeyB64);
   }
 
-  /** See {@link IStorage.saveMessagesIfAbsent}: `add`, which the key constraint refuses on a held id. */
+  /** See {@link IStorage.saveMessagesIfAbsent}: `add`, which the key constraint refuses on a held key. */
   async saveMessagesIfAbsent(msgs: StoredMessage[], deviceKeyB64: string): Promise<Set<string>> {
     const written = new Set<string>();
     if (msgs.length === 0) return written;
+    const conversationId = singleConversationOf(msgs);
     const db = this.ensureDb();
     // Sealed BEFORE the transaction: it closes on the first await of anything but IndexedDB.
     const rows = await Promise.all(
@@ -1018,7 +1123,7 @@ export class IndexedDbStorage implements IStorage {
         req.onsuccess = () => written.add(row.id);
         req.onerror = (event) => {
           if (req.error?.name === 'ConstraintError') {
-            // A held id is an answer, not a failure: keep the transaction alive and go on.
+            // A held key is an answer, not a failure: keep the transaction alive and go on.
             event.preventDefault();
             event.stopPropagation();
           }
@@ -1027,7 +1132,7 @@ export class IndexedDbStorage implements IStorage {
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject('saveMessagesIfAbsent error: ' + tx.error);
     });
-    for (const msg of msgs) if (written.has(msg.id)) invalidateHistoryStateKey(msg.conversationId);
+    if (written.size > 0) invalidateHistoryStateKey(conversationId);
     return written;
   }
 
@@ -1092,17 +1197,97 @@ export class IndexedDbStorage implements IStorage {
     conversationId: string,
     ids: readonly string[],
     merge: StoredMessageMerge,
-    deviceKeyB64: string,
-    opts: MergeMessagesOptions = {}
+    deviceKeyB64: string
   ): Promise<Set<string>> {
-    return casMergeMessages(
-      this.revisedRows(),
-      conversationId,
+    return casMergeMessages(this.revisedRows(), conversationId, ids, merge, deviceKeyB64);
+  }
+
+  /** See {@link IStorage.moveMessages} and `messageMove.ts`, the one implementation. */
+  async moveMessages(
+    fromConversationId: string,
+    toConversationId: string,
+    ids: readonly string[],
+    deviceKeyB64: string
+  ): Promise<MessageMove> {
+    invalidateHistoryStateKey(fromConversationId);
+    invalidateHistoryStateKey(toConversationId);
+    return moveMessageRows(
+      { ...this.revisedRows(), ...this.movableRows() },
+      fromConversationId,
+      toConversationId,
       ids,
-      merge,
-      deviceKeyB64,
-      opts.foreignExpected === true
+      deviceKeyB64
     );
+  }
+
+  /**
+   * The two steps a move adds to the compare-and-set, each ONE readwrite transaction.
+   * `rekeyAbsent`: for each id, the source row read, the destination's key read, and - where no row
+   * stands there - the row put under the destination's key (the ciphertext as it is: the payload
+   * names no conversation) and the source's key removed. `deleteIfUnchanged`: the source's key
+   * removed only while its revision and iv are still the ones read.
+   */
+  private movableRows() {
+    const inOneTransaction = (body: (store: IDBObjectStore) => void): Promise<void> => {
+      const db = this.ensureDb();
+      return new Promise<void>((resolve, reject) => {
+        const tx = db.transaction('messages', 'readwrite');
+        body(tx.objectStore('messages'));
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () =>
+          reject(tx.error ?? new DOMException('IndexedDB transaction aborted', 'AbortError'));
+      });
+    };
+    return {
+      rekeyAbsent: async (from: string, to: string, ids: readonly string[]) => {
+        const moved: string[] = [];
+        const collided: string[] = [];
+        await inOneTransaction((store) => {
+          for (const id of new Set(ids)) {
+            const source = store.get([from, id]);
+            source.onsuccess = () => {
+              const row = source.result;
+              if (!row) return;
+              const target = store.getKey([to, id]);
+              target.onsuccess = () => {
+                if (target.result !== undefined) {
+                  collided.push(id);
+                  return;
+                }
+                if (!guardedPut(store, { ...row, conversationId: to, rev: revisionOf(row) + 1 })) {
+                  // The transaction is ABORTED: none of this call's writes land, `moved` included,
+                  // and `rekeyAbsent` rejects - the move fails whole, every row where it was.
+                  // `guardedPut` has already said so at error.
+                  return;
+                }
+                store.delete([from, id]);
+                moved.push(id);
+              };
+            };
+          }
+        });
+        return { moved, collided };
+      },
+      deleteIfUnchanged: async (
+        conversationId: string,
+        rows: ReadonlyArray<{ id: string; rev: number; stamp: string }>
+      ) => {
+        const removed = new Set<string>();
+        await inOneTransaction((store) => {
+          for (const { id, rev, stamp } of rows) {
+            const req = store.get([conversationId, id]);
+            req.onsuccess = () => {
+              const current = req.result;
+              if (!current || revisionOf(current) !== rev || ivStamp(current.iv) !== stamp) return;
+              store.delete([conversationId, id]);
+              removed.add(id);
+            };
+          }
+        });
+        return removed;
+      },
+    };
   }
 
   /**
@@ -1112,14 +1297,10 @@ export class IndexedDbStorage implements IStorage {
    */
   private revisedRows() {
     return {
-      read: (
-        conversationId: string | null,
-        ids: readonly string[],
-        deviceKeyB64: string,
-        foreignExpected: boolean
-      ) => this.readRows(conversationId, ids, deviceKeyB64, foreignExpected),
+      read: (conversationId: string, ids: readonly string[], deviceKeyB64: string) =>
+        this.readRows(conversationId, ids, deviceKeyB64),
       writeIfUnchanged: async (
-        conversationId: string | null,
+        conversationId: string,
         writes: ReadonlyArray<RevisedWrite>,
         deviceKeyB64: string
       ): Promise<Set<string>> => {
@@ -1145,11 +1326,10 @@ export class IndexedDbStorage implements IStorage {
           // the writer can tell a row the store will never take from a transaction that failed.
           let refused: RowRefusedError | null = null;
           for (const { rev, stamp, record } of sealed) {
-            const req = store.get(record.id);
+            const req = store.get([conversationId, record.id]);
             req.onsuccess = () => {
               const current = req.result;
               if (!current || revisionOf(current) !== rev || ivStamp(current.iv) !== stamp) return;
-              if (conversationId !== null && current.conversationId !== conversationId) return;
               try {
                 store.put({ ...record, rev: rev + 1 });
                 written.add(record.id);
@@ -1179,15 +1359,13 @@ export class IndexedDbStorage implements IStorage {
   }
 
   /**
-   * The rows under `ids` with their revision, opened - scoped to `conversationId` when one is given:
-   * a row of another conversation is never opened, and is said at warn unless the caller handles it
-   * (`foreignExpected`).
+   * The rows of `conversationId` under `ids` with their revision, opened: one `get` per key
+   * `[conversationId, id]`, so a row another conversation holds under the same id is never read.
    */
   private async readRows(
-    conversationId: string | null,
+    conversationId: string,
     ids: readonly string[],
-    deviceKeyB64: string,
-    foreignExpected = false
+    deviceKeyB64: string
   ): Promise<{ rows: Map<string, RevisedRow>; unreadable: Set<string> }> {
     const out = { rows: new Map<string, RevisedRow>(), unreadable: new Set<string>() };
     const unique = [...new Set(ids)];
@@ -1198,7 +1376,7 @@ export class IndexedDbStorage implements IStorage {
       const store = tx.objectStore('messages');
       const rows: any[] = [];
       for (const id of unique) {
-        const req = store.get(id);
+        const req = store.get([conversationId, id]);
         req.onsuccess = () => {
           if (req.result) rows.push(req.result);
         };
@@ -1207,10 +1385,6 @@ export class IndexedDbStorage implements IStorage {
       tx.onerror = () => reject(tx.error);
     });
     for (const existing of found) {
-      if (conversationId !== null && existing.conversationId !== conversationId) {
-        if (!foreignExpected) warnForeignRow(existing.id, conversationId);
-        continue;
-      }
       try {
         const payload = (await decryptData(
           existing.cipherText,
@@ -1251,10 +1425,17 @@ export class IndexedDbStorage implements IStorage {
   }
 
   /** See {@link IStorage.getMessageStanding}: one `get`, one open, nothing said. */
-  async getMessageStanding(id: string, deviceKeyB64: string): Promise<MessageRowStanding> {
+  async getMessageStanding(
+    conversationId: string,
+    id: string,
+    deviceKeyB64: string
+  ): Promise<MessageRowStanding> {
     const db = this.ensureDb();
     const row: any = await new Promise((resolve, reject) => {
-      const req = db.transaction('messages', 'readonly').objectStore('messages').get(id);
+      const req = db
+        .transaction('messages', 'readonly')
+        .objectStore('messages')
+        .get([conversationId, id]);
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
     });
@@ -1262,20 +1443,38 @@ export class IndexedDbStorage implements IStorage {
     try {
       await decryptData(row.cipherText, row.iv, deviceKeyB64);
     } catch (e) {
-      if (e instanceof PayloadUnreadableError) {
-        return { kind: 'unreadable', conversationId: row.conversationId };
-      }
+      if (e instanceof PayloadUnreadableError) return { kind: 'unreadable' };
       throw e;
     }
-    return { kind: 'readable', conversationId: row.conversationId };
+    return { kind: 'readable' };
   }
 
-  /** Decrypt and return one message by id; `null` when the row is absent or undecryptable. */
-  async getMessage(id: string, deviceKeyB64: string): Promise<StoredMessage | null> {
+  /** See {@link IStorage.findMessageConversations}: one read of the id index, nothing opened. */
+  async findMessageConversations(id: string): Promise<string[]> {
+    const db = this.ensureDb();
+    // The primary keys only, `[conversationId, id]`: no row, no ciphertext, is read.
+    const keys: IDBValidKey[] = await new Promise((resolve, reject) => {
+      const req = db
+        .transaction('messages', 'readonly')
+        .objectStore('messages')
+        .index(MESSAGES_BY_ID)
+        .getAllKeys(IDBKeyRange.only(id));
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    return keys.map((k) => String((k as [string, string])[0]));
+  }
+
+  /** Decrypt and return one message by its key; `null` when the row is absent or undecryptable. */
+  async getMessage(
+    conversationId: string,
+    id: string,
+    deviceKeyB64: string
+  ): Promise<StoredMessage | null> {
     const db = this.ensureDb();
     const existing: any = await new Promise((resolve, reject) => {
       const tx = db.transaction('messages', 'readonly');
-      const req = tx.objectStore('messages').get(id);
+      const req = tx.objectStore('messages').get([conversationId, id]);
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
     });
@@ -1855,7 +2054,7 @@ export class IndexedDbStorage implements IStorage {
           tx.oncomplete = () => resolve();
           tx.onerror = () => reject(tx.error);
           for (const { id, orderAt } of keyed) {
-            const req = store.get(id);
+            const req = store.get([conversationId, id]);
             req.onsuccess = () => {
               const current = req.result;
               if (current?.orderPending !== ORDER_PENDING) return;
@@ -1902,7 +2101,7 @@ export class IndexedDbStorage implements IStorage {
     });
   }
 
-  /** Non-destructive insert: write the encrypted row only if no row with this id already exists. */
+  /** Non-destructive insert: write the encrypted row only if no row stands under its key. */
   async importEncryptedRow(row: EncryptedMessageRow): Promise<void> {
     invalidateHistoryStateKey(row.conversationId);
     this.orderKeyDerivations.rearm(row.conversationId);
@@ -2559,6 +2758,8 @@ export class IndexedDbStorage implements IStorage {
     });
     return rows.map((row) => ({
       id: store === 'graine' ? row.sessionId : row.id,
+      // A message row's key is its conversation AND its id (v15).
+      ...(store === 'messages' ? { conversationId: row.conversationId } : {}),
       iv: row.iv,
       cipherText: row.cipherText,
     }));
@@ -2581,7 +2782,7 @@ export class IndexedDbStorage implements IStorage {
       const tx = db.transaction(store, 'readwrite');
       const os = tx.objectStore(store);
       for (const swap of swaps) {
-        const req = os.get(swap.id);
+        const req = os.get(store === 'messages' ? [swap.conversationId ?? '', swap.id] : swap.id);
         req.onsuccess = () => {
           const row = req.result;
           if (!row || !sameBytes(row.cipherText, swap.expected)) return;
@@ -2740,14 +2941,14 @@ function revisionOf(record: { rev?: unknown }): number {
 }
 
 /**
- * Puts a message record as the NEXT revision of whatever stands under its id - read inside the same
+ * Puts a message record as the NEXT revision of whatever stands under its key - read inside the same
  * transaction, so a compare-and-set that read the previous revision cannot write over this one.
  */
 function putMessageRecord(
   store: IDBObjectStore,
-  record: { id: string } & Record<string, unknown>
+  record: { id: string; conversationId: string } & Record<string, unknown>
 ): void {
-  const req = store.get(record.id);
+  const req = store.get([record.conversationId, record.id]);
   req.onsuccess = () => {
     guardedPut(store, { ...record, rev: req.result ? revisionOf(req.result) + 1 : 0 });
   };
@@ -2768,13 +2969,6 @@ function guardedPut(store: IDBObjectStore, value: unknown): boolean {
     store.transaction.abort();
     return false;
   }
-}
-
-/** Said at each read that meets it: a frame of one conversation named a message of another. */
-function warnForeignRow(id: string, conversationId: string): void {
-  console.warn(
-    `[DB] ${id.slice(0, 8)} is a message of another conversation than ${conversationId.slice(0, 8)}... - read as absent there`
-  );
 }
 
 /** One sender's entries in one conversation, on `bySenderTierAt`. */

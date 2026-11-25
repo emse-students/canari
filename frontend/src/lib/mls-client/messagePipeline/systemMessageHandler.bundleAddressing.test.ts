@@ -13,6 +13,7 @@ import {
   noteHistoryAsk,
   noteJoinSolicited,
 } from '$lib/utils/chat/historyAddressing';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 /**
  * A BROADCAST `history_bundle` (an older peer, or a server that predates addressed answers) reaches
@@ -47,7 +48,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     userId: ME,
     deviceKey: () => 'device-key',
     conversations,
-    messageReactions: new Map(),
+    messageReactions: new ReactionsByConversation(),
     addMessageToChat: vi.fn(),
     batchAddMessages: vi.fn(),
     deleteConversation: vi.fn(),

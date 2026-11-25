@@ -358,7 +358,7 @@ describe('retractEvictionNotice - a Welcome disproves the notice, so it is withd
 
     expect(n).toBe(1);
     expect(conversations.get('g1')!.messages.map((m) => m.id)).toEqual(['m2']);
-    expect(storage.deleteMessage).toHaveBeenCalledWith('m1', 'g1');
+    expect(storage.deleteMessage).toHaveBeenCalledWith('g1', 'm1');
   });
 
   it('leaves every other message alone, system ones included', async () => {

@@ -7,9 +7,9 @@
  * `{ ...convo, name }` - and the notice vanished from the one screen that had never drawn it. Run
  * through the real handlers, with an `addMessageToChat` that writes into the real map.
  */
-import { SvelteMap } from 'svelte/reactivity';
 import type { AddMessageToChatOptions, Conversation } from '$lib/types';
 import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceStub';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   globalSession: {},
@@ -81,7 +81,7 @@ function setup() {
     userId: 'alice',
     deviceKeyB64: 'k',
     historyBaseUrl: '',
-    messageReactions: new SvelteMap(),
+    messageReactions: new ReactionsByConversation(),
     log: vi.fn(),
     addMessageToChat,
   } as never;

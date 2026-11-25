@@ -2,10 +2,10 @@
  * F4 of community-open-budget: a salon's last page is kept on the device and drawn while its
  * server page is on the wire; the server page then replaces the copy, on screen and in the store.
  */
-import { SvelteMap } from 'svelte/reactivity';
 import type { Conversation } from '$lib/types';
 import type { StoredMessage } from '$lib/db';
 import { flushMacrotask } from '../../test/flush';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 const listMessages = vi.hoisted(() => vi.fn());
 const listReadMarks = vi.hoisted(() => vi.fn());
@@ -97,7 +97,7 @@ function makeCtx(storage: unknown) {
     userId: 'u1',
     deviceKeyB64: 'k',
     historyBaseUrl: '',
-    messageReactions: new SvelteMap(),
+    messageReactions: new ReactionsByConversation(),
     log: vi.fn(),
     addMessageToChat: vi.fn(),
   } as never;

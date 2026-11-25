@@ -37,6 +37,7 @@ import {
   resetSeenCipherCacheForTests,
   stagePendingHistoryMarks,
 } from './history';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 const USER = 'user-ckpt';
 const GROUP = 'group-ckpt';
@@ -101,7 +102,7 @@ const replayOnePage = async (
     storage: null,
     getConversation: () => undefined,
     setConversation: () => undefined,
-    messageReactions: new Map(),
+    messageReactions: new ReactionsByConversation(),
     log: () => undefined,
     primedFirstPage: { rows: [page] },
   });

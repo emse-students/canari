@@ -238,7 +238,13 @@ export async function resealDeviceKeyStores(
         const plain = await openSealedBytes(row.cipherText, row.iv, oldDeviceKeyB64);
         if (plain) {
           const sealed = await sealBytes(plain, newDeviceKeyB64);
-          swaps.push({ id: row.id, expected: row.cipherText, ...sealed });
+          // A message row is named by its conversation AND its id: both are carried to the swap.
+          swaps.push({
+            id: row.id,
+            ...(row.conversationId !== undefined ? { conversationId: row.conversationId } : {}),
+            expected: row.cipherText,
+            ...sealed,
+          });
         } else if (await openSealedBytes(row.cipherText, row.iv, newDeviceKeyB64)) {
           report.alreadyNew++;
         } else {

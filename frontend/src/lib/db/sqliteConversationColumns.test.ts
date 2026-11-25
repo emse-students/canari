@@ -130,7 +130,7 @@ describe("SqliteStorage - the dated name's rank v22 added, on a store already st
     // What an earlier head left: stamped 22 with only the first rank column.
     engine.exec('ALTER TABLE conversations DROP COLUMN name_rename_at');
     engine.exec('ALTER TABLE conversations DROP COLUMN name_renamed_by');
-    expect(engine.prepare('PRAGMA user_version').get()).toEqual({ user_version: 22 });
+    expect(engine.prepare('PRAGMA user_version').get()).toEqual({ user_version: 23 });
 
     const reopened = new SqliteStorage(`sqlite-rank-in-place-${n++}`);
     await reopened.init();

@@ -304,7 +304,8 @@ export async function retractEvictionNotice(deps: {
 
   for (const msg of stale) {
     await storage
-      ?.deleteMessage(msg.id, key)
+      // The stored key is lowercased; `key` is the map key as shown.
+      ?.deleteMessage(key.toLowerCase(), msg.id)
       .catch((e: unknown) =>
         log(
           `[EVICT] ${short}… - removal notice withdrawn from the thread but not from storage: ` +

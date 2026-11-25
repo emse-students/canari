@@ -5,6 +5,7 @@ vi.mock('$lib/utils/nativeNotification', async (importOriginal) => ({
 }));
 
 import { handleSystemEvent } from './systemMessageHandler';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 /**
  * Read state on the LIVE path: the `read_watermark` frame, the legacy `read_receipt` shape it
@@ -32,7 +33,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     userId: 'me',
     deviceKey: () => 'device-key',
     conversations,
-    messageReactions: new Map(),
+    messageReactions: new ReactionsByConversation(),
     addMessageToChat: vi.fn(),
     batchAddMessages: vi.fn(),
     deleteConversation: vi.fn(),

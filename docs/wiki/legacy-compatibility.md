@@ -416,6 +416,22 @@ both feeds (a `sig` is then the 403 it was without a signature), `feed-signature
 `signAgendaFeedSelection`, `legacySelectionRead`, `DailySightings`, `logDigest`, their
 specs, and this entry. The one-event link (`eventId` + its own `sig`) is NOT part of it.
 
+### A tolerated degradation: a build older than the conversation-keyed store, reinstalled over it (2026-11-24)
+
+- **What.** The message store is keyed by `(conversation, id)` since SQLite v23 and IndexedDB v15
+  ([history-reconciliation](protocols/history-reconciliation.md#a-stored-message-is-keyed-by-its-conversation-review-of-2936-the-key-itself-2026-11-24)).
+  An OLDER build opening such a store cannot write messages to it: on SQLite its upsert names
+  `ON CONFLICT(id)`, which the new key no longer matches, so each of its message writes fails, said
+  in its own log; in a browser it asks for a version below the stored one and cannot open the store.
+- **Who.** A device that goes back to an older build: a desktop package installed over a newer
+  one by hand, or a TestFlight or Play testing build left for the store's older release (the
+  testing programmes run ahead of the stores, so leaving one can install a lower build). The web
+  always serves the current bundle.
+- **Why accepted knowingly.** A key cannot be both the pair and the id alone; keeping a unique index on
+  the id would keep the very collision the new key removes. Nothing is lost: every row is still on
+  disk, and the next current build opens it as it was.
+- **Removal.** Nothing to remove: no shim was added for it.
+
 ### A tolerated degradation: ranked Minesweeper for a build older than generator 2 (owner, 2026-11-13)
 
 - **What.** `POST /minesweeper/challenges` answers `426 generator_update_required` to a client that does not

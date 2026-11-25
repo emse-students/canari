@@ -6,6 +6,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SvelteMap } from 'svelte/reactivity';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 const keepPendingMutation = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock('$lib/utils/chat/pendingMutationStore', () => ({ keepPendingMutation }));
@@ -25,7 +26,7 @@ function deps(mergeMessages: ReturnType<typeof vi.fn>) {
     },
     deviceKey: () => 'device-key',
     conversations: new SvelteMap(),
-    messageReactions: new SvelteMap(),
+    messageReactions: new ReactionsByConversation(),
     log: vi.fn(),
   } as never;
 }

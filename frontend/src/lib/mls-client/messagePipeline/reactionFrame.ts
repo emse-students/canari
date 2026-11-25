@@ -117,7 +117,7 @@ export async function applyReactionFrame(
   const messageAuthorId = shownMessage?.senderId ?? stored?.senderId ?? null;
 
   const updated = applyReaction(
-    messageReactions.get(msgId) ?? stored?.reactions ?? [],
+    messageReactions.get(convoKey, msgId) ?? stored?.reactions ?? [],
     sender,
     emoji,
     at,
@@ -125,7 +125,7 @@ export async function applyReactionFrame(
     authorship
   );
   if (!updated) return { changed: false, messageAuthorId, storeFailed };
-  messageReactions.set(msgId, updated);
+  messageReactions.set(convoKey, msgId, updated);
   const c = conversations.get(convoKey);
   const idx = c ? c.messages.findIndex((m) => m.id === msgId) : -1;
   if (c && idx !== -1) {

@@ -221,7 +221,7 @@ describe('conversationStartedAtStatement (v17)', () => {
 
   it('is a no-op on a fresh database, whose CREATE TABLE already has the column', () => {
     expect(conversationStartedAtStatement(['id', 'name', 'started_at'])).toBeNull();
-    expect(SCHEMA_VERSION).toBe(22);
+    expect(SCHEMA_VERSION).toBe(23);
   });
 });
 
@@ -260,7 +260,7 @@ describe('outboxUnavailableAnswersStatement (v19)', () => {
 
   it('is a no-op on a fresh database, whose CREATE TABLE already has the column', () => {
     expect(outboxUnavailableAnswersStatement(['id', 'unavailable_answers'])).toBeNull();
-    expect(SCHEMA_VERSION).toBe(22);
+    expect(SCHEMA_VERSION).toBe(23);
   });
 });
 
@@ -308,6 +308,6 @@ describe('conversationNameAtStatement (v21)', () => {
     engine.exec(kind!);
     expect(engine.prepare('SELECT kind FROM conversations').get()).toEqual({ kind: null });
     expect(conversationKindStatement(columnsOf())).toBeNull();
-    expect(SCHEMA_VERSION).toBe(22);
+    expect(SCHEMA_VERSION).toBe(23);
   });
 });

@@ -4,9 +4,9 @@
  * Only the server and the seal are stubbed: `decodeChannelMessagePage`, `UnreadableRowTally` and the
  * notice are the production ones, so the count the notice reads is the one the load really kept.
  */
-import { SvelteMap } from 'svelte/reactivity';
 import type { Conversation } from '$lib/types';
 import { encodeAppMessage, mkText } from '$lib/proto/codec';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 const listMessages = vi.hoisted(() => vi.fn());
 const listReadMarks = vi.hoisted(() => vi.fn());
@@ -61,7 +61,7 @@ function makeCtx() {
     userId: 'u1',
     deviceKeyB64: 'k',
     historyBaseUrl: '',
-    messageReactions: new SvelteMap(),
+    messageReactions: new ReactionsByConversation(),
     log: vi.fn(),
     addMessageToChat: vi.fn(),
   } as never;

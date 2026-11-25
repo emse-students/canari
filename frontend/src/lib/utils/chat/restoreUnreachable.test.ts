@@ -13,6 +13,7 @@ import type { Conversation } from '$lib/types';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { RequestDeadlineError } from '$lib/utils/requestDeadline';
 import { connectivity } from '$lib/stores/connectivity.svelte';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   globalMessaging: { isMessageCatchupActive: false, resetMessageCatchupState: vi.fn() },
@@ -75,7 +76,7 @@ function restore(
     },
     mlsService: service,
     conversations,
-    messageReactions: new SvelteMap(),
+    messageReactions: new ReactionsByConversation(),
     userId: 'u1',
     deviceKeyB64: 'k',
     archivedConversationIds: [],

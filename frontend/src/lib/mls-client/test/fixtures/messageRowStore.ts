@@ -1,7 +1,10 @@
 /**
- * A message store keyed by message id, each row naming its conversation - the IndexedDB shape the
- * 1:1 re-key and the boot merge move rows across. Its scoped read records a row of another
- * conversation where the real one warns, so a test can assert that never happens; a row marked
+ * A message store whose rows are keyed by `(conversation, id)` like the real ones (SQLite v23,
+ * IndexedDB v15), held by id because every test here gives each row its own id - a write that would
+ * make one id stand in two conversations throws, so a test can never lean on that by accident. Rows
+ * change conversation ONLY through `moveMessages`, as in the real stores: the 1:1 re-key and the boot
+ * merge move rows across with it. Its scoped read records a row of another conversation under the id
+ * it asked for (`foreign`), so a test can assert a read never even meets one; a row marked
  * `unreadable` stands in the store but does not open, as one sealed under another device key.
  * Mutations waiting for their message (`pending`) are kept the way the real store keeps them: one
  * entry per conversation, message, sender, kind and slot, the higher rank winning, the first on a tie.
@@ -16,12 +19,21 @@ const pendingKey = (e: PendingMutation) =>
 /** A stored row, plus whether this device's key opens it. */
 export type TestRow = StoredMessage & { unreadable?: boolean };
 
-/** Builds the store; `failSave` makes every whole-row write reject. */
+/** Builds the store; `failSave` makes every whole-row write and every move reject. */
 export function messageRowStore(rows: TestRow[], opts: { failSave?: boolean } = {}) {
   const byId = new Map<string, TestRow>(rows.map((r) => [r.id, { ...r }]));
   const conversations = new Map<string, ConversationMeta>();
   const foreign: string[] = [];
   const pending = new Map<string, PendingMutation>();
+  /** A write never moves a row (the real key is `(conversation, id)`): this fixture refuses one. */
+  const oneRowPerId = (m: StoredMessage) => {
+    const held = byId.get(m.id);
+    if (held && held.conversationId !== m.conversationId) {
+      throw new Error(
+        `fixture: ${m.id} is held under ${held.conversationId} - a write under ${m.conversationId} would be a second row, and only moveMessages moves one`
+      );
+    }
+  };
   const store = {
     byId,
     conversations,
@@ -66,13 +78,31 @@ export function messageRowStore(rows: TestRow[], opts: { failSave?: boolean } = 
         if (pending.get(key)?.rank === e.rank) pending.delete(key);
       }
     }),
-    getMessageStanding: vi.fn(async (id: string) => {
+    getMessageStanding: vi.fn(async (conv: string, id: string) => {
       const row = byId.get(id);
-      if (!row) return { kind: 'absent' as const };
-      return {
-        kind: row.unreadable ? ('unreadable' as const) : ('readable' as const),
-        conversationId: row.conversationId,
-      };
+      if (!row || row.conversationId !== conv) return { kind: 'absent' as const };
+      return { kind: row.unreadable ? ('unreadable' as const) : ('readable' as const) };
+    }),
+    getMessage: vi.fn(async (conv: string, id: string) => {
+      const row = byId.get(id);
+      if (!row || row.conversationId !== conv || row.unreadable) return null;
+      const { unreadable: _u, ...stored } = row;
+      return stored as StoredMessage;
+    }),
+    findMessageConversations: vi.fn(async (id: string) => {
+      const row = byId.get(id);
+      return row ? [row.conversationId] : [];
+    }),
+    moveMessages: vi.fn(async (from: string, to: string, ids: readonly string[]) => {
+      if (opts.failSave) throw new Error('store refuses writes');
+      const moved: string[] = [];
+      for (const id of ids) {
+        const row = byId.get(id);
+        if (!row || row.conversationId !== from || from === to) continue;
+        byId.set(id, { ...row, conversationId: to });
+        moved.push(id);
+      }
+      return { moved, alreadyThere: [] as string[], kept: [] as string[] };
     }),
     getMessages: vi.fn(async (conv: string) =>
       [...byId.values()]
@@ -96,11 +126,15 @@ export function messageRowStore(rows: TestRow[], opts: { failSave?: boolean } = 
     ),
     saveMessages: vi.fn(async (msgs: StoredMessage[]) => {
       if (opts.failSave) throw new Error('store refuses writes');
-      for (const m of msgs) byId.set(m.id, { ...m });
+      for (const m of msgs) {
+        oneRowPerId(m);
+        byId.set(m.id, { ...m });
+      }
     }),
     saveMessagesIfAbsent: vi.fn(async (msgs: StoredMessage[]) => {
       const written = new Set<string>();
       for (const m of msgs) {
+        oneRowPerId(m);
         if (byId.has(m.id)) continue;
         byId.set(m.id, { ...m });
         written.add(m.id);
