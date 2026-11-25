@@ -523,6 +523,8 @@ application slugs are in each client's issuer URL, a rename deferred with the OI
 `password-login` is the test campaign's `PASSWORD_LOGIN_FLOW_SLUG`. Stage, prompt, policy, mapping and
 provider names are read by nothing outside authentik, and those are the ones renamed.
 
+**The login button and the dev tiles (2026-11-25).** The CAS source's display name is `CAS EMSE` (the button reads "Continue with <name>"); its slug `cas-emse` identifies it, so the rename updates in place and nothing is created. `canari-dev` and `canari-local` carry `meta_hide: true`: the tile leaves every person's application library, and NO policy binding is added, because a binding on an application also gates authorization through it and the test accounts, every pre-release build and the local estate sign in to those providers. `test-blueprints.sh` asserts both (`LOGIN-POLISH-OK`): the field, the library listing of an ordinary user (dev tiles absent, `canari` present) and a granted authorization on the dev provider. The script also derives its compose project name from the checkout path (override: `MICONNECT_TEST_PROJECT`), so two worktrees never share one test instance.
+
 ## The Alumni SAML source: enabled, not promoted, measured (2026-11-23)
 
 The data each source sends, and what applications receive, are on [identity-sources](identity-sources.md).

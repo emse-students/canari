@@ -16,7 +16,10 @@ here="$(cd "$(dirname "$0")" && pwd)"
 # The terms-of-use version is one value in four files; checked before any container starts.
 bash "$here/check-consent-version.sh"
 
-project="miconnect-blueprint-test"
+# ONE INSTANCE PER CHECKOUT: two worktrees running this at once must never share a compose project,
+# or one's `down -v` kills the other's database. The suffix is a hash of this checkout's path;
+# MICONNECT_TEST_PROJECT overrides it.
+project="${MICONNECT_TEST_PROJECT:-miconnect-blueprint-test-$(printf '%s' "$here" | cksum | cut -d' ' -f1)}"
 work="$(mktemp -d)"
 
 cleanup() {
@@ -197,3 +200,74 @@ PY
   exit 1
 fi
 echo "every SAML source is signed, strongly, and none is enabled without a verification certificate"
+
+# THE LOGIN BUTTON'S NAME, AND THE TWO DEV TILES. The CAS source is identified by its slug, so its
+# display name ("Continue with <name>") is renamed in place: one source, not a second one. The dev and
+# local applications are hidden from the application library WITHOUT a policy binding (a binding would
+# gate sign-in to dev and to the local estate); every other application stays listed.
+echo "login polish: the CAS button name, and the dev tiles hidden but not gated"
+if ! run_ak_shell "$worker" 2>&1 <<'PY' | tee >(cat >&2) | grep -x 'LOGIN-POLISH-OK' >/dev/null; then
+from authentik.core.models import Application
+from authentik.policies.models import PolicyBinding
+from authentik.sources.oauth.models import OAuthSource
+
+cas = OAuthSource.objects.filter(slug="cas-emse")
+assert cas.count() == 1 and cas.first().name == "CAS EMSE", [(s.slug, s.name) for s in cas]
+assert not OAuthSource.objects.filter(name="Cas EMSE").exists(), "the old-named source is still there"
+for slug in ("canari-dev", "canari-local"):
+    app = Application.objects.get(slug=slug)
+    assert app.meta_hide is True, f"{slug} is listed on the dashboard"
+    assert not PolicyBinding.objects.filter(target=app).exists(), f"{slug} is gated by a binding"
+for slug in ("canari", "archives", "sky"):
+    assert Application.objects.get(slug=slug).meta_hide is False, f"{slug} must stay listed"
+
+# BEHAVIOUR, NOT THE FIELD: as an ordinary signed-in person, the library the dashboard lists omits the
+# dev tiles and keeps `canari`, and an authorization against the dev provider is still granted.
+import json, secrets
+from urllib.parse import parse_qs, urlencode, urlparse
+
+from django.conf import settings
+from django.test import Client
+
+from authentik.core.models import User
+from authentik.providers.oauth2.models import OAuth2Provider
+from authentik.root.middleware import SessionMiddleware
+from authentik.stages.prompt.models import Prompt
+
+person, _ = User.objects.get_or_create(username="login-polish-probe", defaults={"name": "Login polish probe"})
+person.attributes["cgu_version"] = Prompt.objects.get(name="miconnect-consent-prompt-version").initial_value
+person.save()
+assert not person.is_superuser
+
+
+def client_for(u):
+    c = Client(HTTP_HOST="localhost")
+    c.force_login(u)
+    c.cookies[settings.SESSION_COOKIE_NAME] = SessionMiddleware.encode_session(c.session.session_key, u)
+    return c
+
+
+listing = client_for(person).get("/api/v3/core/applications/?page_size=200")
+assert listing.status_code == 200, listing.status_code
+listed = {a["slug"] for a in listing.json()["results"]}
+assert "canari" in listed, f"canari must stay listed: {sorted(listed)}"
+assert not listed & {"canari-dev", "canari-local"}, f"hidden tiles are listed: {sorted(listed)}"
+
+dev = OAuth2Provider.objects.get(name="miconnect-canari-dev")
+redirect = "https://dev.canari-emse.fr/auth/callback"
+query = urlencode({"client_id": dev.client_id, "redirect_uri": redirect, "response_type": "code",
+                   "scope": "openid profile", "state": secrets.token_urlsafe(8)})
+c = client_for(person)
+resp = c.get(f"/application/o/authorize/?{query}")
+target = resp.get("Location", "") if resp.status_code in (301, 302) else ""
+if not target.startswith(redirect):
+    body = c.get(f"/api/v3/flows/executor/{dev.authorization_flow.slug}/?{urlencode({'query': query})}").json()
+    target = body.get("to", "")
+    assert target.startswith(redirect), f"authorizing on dev was refused: {json.dumps(body)[:400]}"
+assert "code" in parse_qs(urlparse(target).query), target
+print("LOGIN-POLISH-OK")
+PY
+  echo "::error::the CAS button name or the hidden dev tiles are wrong - read the assertion above"
+  exit 1
+fi
+echo "the CAS button reads CAS EMSE and the dev tiles are hidden, not gated"
