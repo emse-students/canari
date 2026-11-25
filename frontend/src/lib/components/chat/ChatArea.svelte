@@ -54,7 +54,11 @@
     paneGeometryLine,
     type NewMessageResponse,
   } from '$lib/utils/chat/threadAnchor';
-  import { describeGlideFall, observeThreadGrowth } from '$lib/utils/chat/threadGrowthObserver';
+  import {
+    describeGlideFall,
+    observeThreadGrowth,
+    pinThreadToEnd,
+  } from '$lib/utils/chat/threadGrowthObserver';
   import { trackTouchHold, type TouchHold } from '$lib/utils/chat/touchHold';
   import { trackReaderInput, type ReaderInput } from '$lib/utils/chat/readerInput';
   import {
@@ -563,11 +567,16 @@
    * reply bubble - was answered as growth under a reader in history: the glide ended at the OLD
    * bottom and the new rows stayed below the fold. Any plain `scrollTop` write also aborts a glide
    * (the jump-to-message defect of 2026-10-12, chat.md). An instant scroll has nothing in flight.
+   *
+   * **THE LAYOUT'S END, NEVER THE GLIDE'S OVERFLOW** (iPhone 12, 2026-11-25): `pinThreadToEnd` takes
+   * a running glide off the rows before it writes and puts it back after, as the growth observer's own
+   * pin does - a plain write mid-glide went past the end and the engine's clamp read as a fall.
+   *
+   * @param writer who asked, for the glide's trace (`describeGlideFall`)
    */
-  function scrollToBottom() {
+  function scrollToBottom(writer = 'scrollToBottom') {
     if (!chatContainer) return;
-    chatContainer.scrollTo({ top: chatContainer.scrollHeight, behavior: 'auto' });
-    placedAt(chatContainer.scrollTop);
+    placedAt(pinThreadToEnd(chatContainer, writer));
   }
 
   /**
@@ -1761,6 +1770,11 @@
         // just arrived - so the message was, to the reader, simply not delivered.
         // A RESTORE IN FLIGHT IS NOT AN ENTRY TO PIN: a late merge or catch-up lands as `stay`, and the
         // row the reader is put back on is kept by the thread's row anchor.
+        //
+        // THIS PIN MAY LAND INSIDE THE ARRIVAL'S GLIDE (iPhone 12, 2026-11-25): the growth observer
+        // pinned and started it in the mutation's task, a tick earlier. It is still owed - while an
+        // older page loads the observer keeps the row and writes nothing - and it is harmless there
+        // because `scrollToBottom` pins the LAYOUT end (`pinThreadToEnd`), never the glide's overflow.
         const response: NewMessageResponse = restoringEntry
           ? 'stay'
           : respondToNewMessage({
@@ -1780,7 +1794,7 @@
           windowStart =
             response === 'repin-entry' ? Math.min(renderWindow.start, entryStart) : entryStart;
           if (response === 'repin-entry') tick().then(() => fillViewportThenPin());
-          else tick().then(() => scrollToBottom());
+          else tick().then(() => scrollToBottom('new-message'));
         }
       }
 
