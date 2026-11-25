@@ -119,10 +119,16 @@ class HeldFrameWorker(context: Context, workerParams: WorkerParameters) :
         /**
          * The app left the front: every conversation with a frame still held gets its job back, as
          * [OutboxRetryWorker.enqueueIfMirrorHolds] hands the outbox back. Called by [MainActivity.onPause],
-         * off the main thread.
+         * off the main thread - so the app may be back in front by the time it runs (a pause that is
+         * only a dialog, a quick switch back): asked under the store's lock, as [hold] asks it, and
+         * nothing is enqueued then.
          */
         fun handBack(context: Context) {
             synchronized(STORE_LOCK) {
+                if (!HeldFrames.admits(MainActivity.isInForeground)) {
+                    Log.d(TAG, "handBack: the app is in front again -> nothing handed back")
+                    return
+                }
                 val groups = HeldFrames.groupsHeld(readStore(context))
                 groups.forEach { enqueue(context, it) }
                 if (groups.isNotEmpty()) Log.d(TAG, "handBack: ${groups.size} conversation(s) with held frames handed back to their replay")
@@ -200,8 +206,11 @@ class HeldFrameWorker(context: Context, workerParams: WorkerParameters) :
             synchronized(STORE_LOCK) { HeldFrames.next(readStore(context), groupId, done) }
     }
 
-    /** One step of a run, as the lane answered it: the frame it replayed, or none left. */
-    private class Step(val frame: HeldFrame?, val replay: HeldFrames.Replay?)
+    /**
+     * One step of a run, as the lane answered it: the frame it replayed and what that came to (with
+     * the throw's site when it threw), or none left.
+     */
+    private class Step(val frame: HeldFrame?, val replay: HeldFrames.Replay?, val failure: String? = null)
 
     override suspend fun doWork(): Result {
         val groupId = inputData.getString(KEY_GROUP)
@@ -216,21 +225,34 @@ class HeldFrameWorker(context: Context, workerParams: WorkerParameters) :
             val step = onLane(service) {
                 // PICKED ON THE LANE: a cancelled run's last step settles its frame before this reads.
                 val frame = nextHeld(applicationContext, groupId, done) ?: return@onLane Step(null, null)
-                val replay = service.replayHeldFrameOnLane(frame)
+                // A THROW IS A VERDICT ON THIS FRAME, NOT ON THE RUN: it is settled like any other
+                // ([HeldFrames.Replay.FAILED]), so a frame that throws every time cannot hold back its
+                // conversation's other frames, nor accuse again on every pause.
+                var failure: String? = null
+                val replay = try {
+                    service.replayHeldFrameOnLane(frame)
+                } catch (e: Throwable) {
+                    failure = throwableSite(e)
+                    HeldFrames.Replay.FAILED
+                }
                 if (!HeldFrames.keeps(replay)) settle(applicationContext, frame)
-                Step(frame, replay)
+                Step(frame, replay, failure)
             }
             val frame = step.frame
             val replay = step.replay
             if (frame == null || replay == null) break
             done += frame.frameKey
             replays += replay
-            val line = "doWork: replay ${replay.name} group=${ConversationRef.of(groupId)} lines=${frame.placeholderStamps.size}" // log-safe: an enum constant's name and a count
+            val cause = step.failure?.let { " threw at $it" } ?: "" // log-safe: a throwable's class and frame site, no input
+            val line = "doWork: replay ${replay.name} group=${ConversationRef.of(groupId)} lines=${frame.placeholderStamps.size}$cause" // log-safe: an enum constant's name, a count and a throw site
             when (HeldFrames.level(replay)) {
                 HeldFrames.Level.DEBUG -> Log.d(TAG, line)
                 HeldFrames.Level.INFO -> Log.iRecorded(TAG, line)
                 HeldFrames.Level.WARN -> Log.w(TAG, line)
+                HeldFrames.Level.ERROR -> Log.e(TAG, line)
             }
+            // THE NEXT FRAME WOULD MEET THE SAME NETWORK, LOCK OR APP: the run stops here.
+            if (HeldFrames.stopsRun(replay)) break
         }
         if (replays.isEmpty()) {
             // THE ORDINARY END OF A REPLACED JOB, AND OF ONE AN EARLIER RUN SETTLED: nothing is owed.
@@ -249,10 +271,16 @@ class HeldFrameWorker(context: Context, workerParams: WorkerParameters) :
     private suspend fun onLane(service: CanariFirebaseMessagingService, block: () -> Step): Step =
         suspendCancellableCoroutine { cont ->
             service.onPushLane("held_frame_replay") {
+                // AN ORPHANED TASK PICKS NOTHING: the job was cancelled (the app came in front) while
+                // this task waited in the lane, and a frame picked now would be replayed for nobody.
+                if (!cont.isActive) {
+                    Log.d(TAG, "onLane: the job was cancelled while queued -> nothing picked")
+                    return@onPushLane
+                }
                 val step = try {
                     block()
                 } catch (e: Throwable) {
-                    Log.e(TAG, "onLane: the replay step threw: ${throwableSite(e)}")
+                    Log.e(TAG, "onLane: reading or settling the store threw: ${throwableSite(e)}")
                     Step(null, null)
                 }
                 if (cont.isActive) cont.resume(step)

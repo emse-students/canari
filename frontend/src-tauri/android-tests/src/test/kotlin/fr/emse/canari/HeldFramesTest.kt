@@ -3,6 +3,7 @@ package fr.emse.canari
 import fr.emse.canari.push.HeldFrame
 import fr.emse.canari.push.HeldFrames
 import fr.emse.canari.push.HeldFrames.Replay
+import fr.emse.canari.push.UnshownReason
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -126,13 +127,11 @@ class HeldFramesTest {
 
     @Test
     fun `every verdict on the frame settles it`() {
-        listOf(Replay.UPGRADED, Replay.GONE, Replay.EMPTY, Replay.CONSUMED, Replay.NOT_READABLE).forEach {
-            assertFalse(it.name, HeldFrames.keeps(it))
-        }
-        assertEquals(
-            HeldFrames.RunEnd.DONE,
-            HeldFrames.runEnd(listOf(Replay.UPGRADED, Replay.GONE, Replay.EMPTY, Replay.CONSUMED, Replay.NOT_READABLE)),
+        val verdicts = listOf(
+            Replay.UPGRADED, Replay.GONE, Replay.EMPTY, Replay.UNSHOWN, Replay.CONSUMED, Replay.NOT_READABLE, Replay.FAILED,
         )
+        verdicts.forEach { assertFalse(it.name, HeldFrames.keeps(it)) }
+        assertEquals(HeldFrames.RunEnd.DONE, HeldFrames.runEnd(verdicts))
         assertEquals("a run with nothing held is done", HeldFrames.RunEnd.DONE, HeldFrames.runEnd(emptyList()))
     }
 
@@ -144,10 +143,53 @@ class HeldFramesTest {
     fun `only a frame that should have opened and did not accuses`() {
         assertEquals(HeldFrames.Level.DEBUG, HeldFrames.level(Replay.EMPTY))
         assertEquals(HeldFrames.Level.DEBUG, HeldFrames.level(Replay.CONSUMED))
+        assertEquals(HeldFrames.Level.DEBUG, HeldFrames.level(Replay.UNSHOWN))
         assertEquals(HeldFrames.Level.WARN, HeldFrames.level(Replay.NOT_READABLE))
         assertEquals(
             listOf(Replay.NOT_READABLE),
             Replay.values().filter { HeldFrames.level(it) == HeldFrames.Level.WARN },
         )
+    }
+
+    /**
+     * ONLY A CONTROL FRAME HOLDS NO MESSAGE. An unknown kind, a sender MLS did not verify and a seed
+     * request are real messages whose generic line the live push keeps; the replay removed it.
+     */
+    @Test
+    fun `only a control frame removes its generic line`() {
+        assertEquals(Replay.EMPTY, HeldFrames.ofUnshown(UnshownReason.CONTROL_FRAME))
+        assertEquals(
+            listOf(UnshownReason.CONTROL_FRAME),
+            UnshownReason.values().filter { HeldFrames.ofUnshown(it) == Replay.EMPTY },
+        )
+        UnshownReason.values().filterNot { it.dropsGenericLine }.forEach {
+            assertEquals(it.name, Replay.UNSHOWN, HeldFrames.ofUnshown(it))
+        }
+    }
+
+    /**
+     * A THROW SETTLES ITS FRAME, SAID ONCE AT ERROR: kept, a frame that throws every time held back its
+     * conversation's other frames for ever and accused again on every pause.
+     */
+    @Test
+    fun `a replay that threw is settled, at error, and does not retry the run`() {
+        assertFalse(HeldFrames.keeps(Replay.FAILED))
+        assertFalse(HeldFrames.stopsRun(Replay.FAILED))
+        assertEquals(HeldFrames.Level.ERROR, HeldFrames.level(Replay.FAILED))
+        assertEquals(HeldFrames.RunEnd.DONE, HeldFrames.runEnd(listOf(Replay.FAILED)))
+    }
+
+    /**
+     * THE NEXT FRAME MEETS THE SAME NETWORK, LOCK OR APP: a run stops at the first kept replay rather
+     * than spend a full network timeout per remaining frame. A verdict on one frame goes on.
+     */
+    @Test
+    fun `a run stops at the first replay that says nothing about the frame`() {
+        listOf(Replay.STILL_UNREACHABLE, Replay.STATE_BUSY, Replay.FOREGROUND).forEach {
+            assertTrue(it.name, HeldFrames.stopsRun(it))
+        }
+        Replay.values().filterNot { HeldFrames.keeps(it) }.forEach {
+            assertFalse(it.name, HeldFrames.stopsRun(it))
+        }
     }
 }

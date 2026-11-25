@@ -3896,27 +3896,38 @@ drain read every message hours later, when it was opened. The frames were readab
   `ExistingWorkPolicy.REPLACE`, not `KEEP`: the frame is written before the enqueue, and a `KEEP`
   arriving while a run is past its last read of the store would be dropped and leave the frame to no
   job. No lock: the lane is one thread, so a replaced run's last step settles its frame before its
-  successor's first step reads the store.
+  successor's first step reads the store. A lane task whose job was cancelled while it waited picks
+  nothing. A run STOPS at its first kept replay (`HeldFrames.stopsRun`): the next frame meets the same
+  network, lock or app, and one more unreachable fetch costs a full network timeout.
 - **Replayed through the push path itself** (`replayHeldFrameOnLane`): the same `tryDecrypt`, the same
   ladder (`recoverRefused`), the same foreground yield, and the same presentation (`presentFrame`) -
   with `supersedes`/`alsoSupersedes` set to the held instants, so the real line REPLACES the generic
   one (`push/SupersededLines.kt`, the mechanism the refused-for-good pairing and the salon seed redraw
-  already use), AT ITS PLACE (`SupersededLines.insertionIndex`): appended, a replayed message read as
-  newer than the lines that arrived after it. The job's service instance is given the application
+  already use), AT ITS PLACE (`SupersededLines.insertionIndex`, asked by the replay alone through
+  `keepsPlace`; the two live supersedes append as they did): appended, a replayed message read as
+  newer than the lines that arrived after it. Its quick actions then carry the NEWEST line's instants
+  (`SupersededLines.actionInstants`), or "Marquer comme lu" would leave the lines below it unread.
+  The job's service instance is given the application
   context as its base (`attachedTo`), because the replay reads files, posts and takes wake locks
   through it.
-- **What each replay comes to** (`HeldFrames.Replay`): `UPGRADED`; `EMPTY` - it decrypted to nothing
-  a line can show (a commit, key material, absorbed as on the push), so its generic line is removed
-  (`dropLines`, through the same silent re-post as the pending reply, `repostBanner`); `CONSUMED` -
-  refused for good, the app's drain or another engine already read it; `NOT_READABLE` - refused, the
-  only one at WARN; and three that say nothing about the frame and KEEP it: `STILL_UNREACHABLE`,
-  `STATE_BUSY` (both retry the run on WorkManager's backoff) and `FOREGROUND`.
+- **What each replay comes to** (`HeldFrames.Replay`): `UPGRADED`; `EMPTY` - it decrypted to NO
+  message (a control frame, key material absorbed as on the push), so its generic line is removed
+  (`dropLines`, which matches only `LINE_PLACEHOLDER` lines of the held instants, through the same
+  silent re-post as the pending reply, `repostBanner`); `UNSHOWN` - it decrypted to a REAL message
+  this path cannot draw (`PushDecrypt.NothingToRender` carries `push/UnshownReason.kt`: an unknown
+  kind, a sender MLS did not verify, a seed request), so the generic line STAYS, as on the live push;
+  `CONSUMED` - refused for good, the app's drain or another engine already read it; `NOT_READABLE` -
+  refused, at WARN; `FAILED` - the replay threw, settled and said once at ERROR, so a frame that
+  throws every time cannot hold back its conversation's other frames; and three that say nothing
+  about the frame and KEEP it: `STILL_UNREACHABLE`, `STATE_BUSY` (both retry the run on
+  WorkManager's backoff) and `FOREGROUND`.
 - **Ended by durable state, never by a clock.** Before any MLS work the replay asks whether the app
   is in front and whether a generic line of the frame is still in the conversation's notification
   (`GONE` when read, swiped or read elsewhere: debug, nothing posted). `MainActivity.onResume`
   cancels every replay but EMPTIES NOTHING (`takenOverByApp`): an app opened offline drains nothing,
   so its frames are still owed. `onPause` hands every held conversation back to its job (`handBack`),
-  as the outbox is handed back. A frame the app's drain did read meets an MLS state that has moved
+  as the outbox is handed back - unless the app is in front again by then, asked under the store's
+  lock as the hold asks it. A frame the app's drain did read meets an MLS state that has moved
   past it, is refused for good, and ends `CONSUMED` at debug with nothing re-posted.
 
 **No smart reply to a placeholder.** The reply action allowed generated replies unconditionally, so

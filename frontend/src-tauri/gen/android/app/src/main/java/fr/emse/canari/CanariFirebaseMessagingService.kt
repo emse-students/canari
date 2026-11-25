@@ -54,6 +54,7 @@ import fr.emse.canari.push.HeldFrame
 import fr.emse.canari.push.HeldFrames
 import fr.emse.canari.push.PlaceholderReplies
 import fr.emse.canari.push.SupersededLines
+import fr.emse.canari.push.UnshownReason
 import fr.emse.canari.push.ConversationShape
 import fr.emse.canari.push.UnsendableCause
 import fr.emse.canari.push.FallbackLine
@@ -1042,7 +1043,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         /**
-         * Removes the lines of instants [stamps] from [groupId]'s notification, re-posted silently with
+         * Removes the GENERIC lines of instants [stamps] from [groupId]'s notification, re-posted silently with
          * every other line - or the notification itself when nothing else is left. For a held frame
          * whose replay decrypted to nothing a line can show: its generic line stood for no message.
          */
@@ -1059,7 +1060,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         Log.d(TAG, "dropLines: no banner for group=${ConversationRef.of(groupId)} - nothing to remove")
                         return
                     }
-                    val left = held.messages.filter { it.timestamp !in stamps }
+                    // ONLY THE GENERIC LINES OF THIS FRAME: a real line that happens to carry the same
+                    // instant (another trigger's post of another message) is never removed.
+                    val left = held.messages.filterNot {
+                        it.timestamp in stamps && it.extras.getBoolean(LINE_PLACEHOLDER, false)
+                    }
                     if (left.size == held.messages.size) return
                     if (left.isEmpty()) {
                         true
@@ -4186,6 +4191,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
              */
             alsoSupersedes: Set<Long> = emptySet(),
             /**
+             * Whether the replacing line takes the PLACE of the first line it replaces
+             * ([SupersededLines.insertionIndex]) rather than being appended. TRUE from the replay of
+             * a held frame only, which posts behind every line that arrived meanwhile; the live
+             * supersedes (the refused-for-good pairing, the salon seed redraw) append as they did.
+             */
+            keepsPlace: Boolean = false,
+            /**
              * Whether this notification is a conversation between PEOPLE, so every message carries
              * its author's name - the other person's above theirs, [R.string.notif_sender_self]
              * above ours - as a group already did.
@@ -4320,7 +4332,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     ?.forEach { style.addMessage(it) }
                 // A REPLACING LINE TAKES THE PLACE OF THE LINE IT REPLACES ([SupersededLines.insertionIndex]):
                 // appended, a replayed message read as newer than the lines that came after it.
-                val supersededAt = held?.messages?.let { lines ->
+                // Asked by the replay only ([keepsPlace]); a live supersede appends like any post.
+                val supersededAt = if (!keepsPlace) null else held?.messages?.let { lines ->
                     SupersededLines.insertionIndex(lines.map { it.timestamp }, supersedes, alsoSupersedes, MAX_NOTIF_MESSAGES - 1)
                 }
                 // Rich media (WP-XP-3): attach the decrypted image inline via setData so it renders as a
@@ -4346,6 +4359,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // not: see [alertedKey]. Any message that is not plain prose failed the match and was
                 // added a second time.
                 val alreadyPosted = sentAt > 0 && style.messages.any { it.timestamp == stamp }
+                var insertedInPlace = false
                 val newMessage = NotificationCompat.MessagingStyle.Message(body, stamp, senderPerson)
                 // Re-injected with the line on every later post (`extractMessagingStyleFromNotification`
                 // carries a message's extras), so each line keeps its own instants for as long as it shows.
@@ -4370,6 +4384,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     }
                 } else if (supersededAt != null && supersededAt < style.messages.size) {
                     style.messages.add(supersededAt, newMessage)
+                    insertedInPlace = true
                 } else {
                     style.addMessage(newMessage)
                 }
@@ -4521,8 +4536,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // a sentence this device wrote ([PlaceholderReplies]). Reply and mark-read stay.
                     val replies = PlaceholderReplies.of(newestIsPlaceholder(style.messages))
                     notifBuilder.setAllowSystemGeneratedContextualActions(replies.systemContextualActions)
-                    notifBuilder.addAction(buildReplyAction(this, res, groupId, notifId, sentAt, serverAt, replies.generatedReplies))
-                    notifBuilder.addAction(buildMarkReadAction(this, res, groupId, notifId, sentAt, serverAt))
+                    // A LINE REPLAYED AT ITS PLACE IS NOT THE NEWEST: the actions carry the newest line's
+                    // instants, or "Marquer comme lu" would leave the lines below it unread.
+                    val (actionSentAt, actionServerAt) = SupersededLines.actionInstants(
+                        posted = sentAt to serverAt,
+                        newest = style.messages.lastOrNull()?.extras?.let {
+                            it.getLong(LINE_SENT_AT, 0L) to it.getLong(LINE_SERVER_AT, 0L)
+                        },
+                        insertedInPlace = insertedInPlace,
+                    )
+                    notifBuilder.addAction(buildReplyAction(this, res, groupId, notifId, actionSentAt, actionServerAt, replies.generatedReplies))
+                    notifBuilder.addAction(buildMarkReadAction(this, res, groupId, notifId, actionSentAt, actionServerAt))
                 } else if (quickActions && ChannelReadMark.offered(groupId, sentAt, showsMessage)) {
                     // A SALON offers "Mark as read" ONLY: its read state is a server row the receiver
                     // reaches with one PushSecret call. Reply stays off - the send is end-to-end
@@ -5578,6 +5602,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // handed back ([SupersededLines]); a push replaces nothing.
                     supersedes = replacing.firstOrNull() ?: 0L,
                     alsoSupersedes = replacing.drop(1).toSet(),
+                    // ...and takes their place: it runs behind every line that arrived meanwhile.
+                    keepsPlace = replacing.isNotEmpty(),
                     namesEachSender = true,
                     // The payload's own discriminator: an unnamed group is still a group.
                     declaredGroup = isGroup,
@@ -5666,12 +5692,20 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             is PushDecrypt.Unreachable -> HeldFrames.Replay.STILL_UNREACHABLE
             is PushDecrypt.StateBusy -> HeldFrames.Replay.STATE_BUSY
             is PushDecrypt.Yielded -> HeldFrames.Replay.FOREGROUND
-            // DECRYPTED, WITH NOTHING A LINE CAN SHOW: the generic line stood for nothing, so it is
-            // replaced by nothing. Key material is still owed its write, exactly as on the push.
-            is PushDecrypt.KeyMaterial, is PushDecrypt.NothingToRender -> {
-                if (outcome is PushDecrypt.KeyMaterial) presentFrame(frame.fields, silent = false, outcome = outcome)
+            // DECRYPTED, WITH NO MESSAGE IN IT: the generic line stood for nothing, so it is replaced
+            // by nothing. Key material is still owed its write, exactly as on the push.
+            is PushDecrypt.KeyMaterial -> {
+                presentFrame(frame.fields, silent = false, outcome = outcome)
                 dropLines(this, fields.groupId, replacing)
                 HeldFrames.Replay.EMPTY
+            }
+            // DECRYPTED, AND ONLY A CONTROL FRAME HOLDS NO MESSAGE. An unknown kind, a sender MLS did
+            // not verify, a seed request: each is a real message the live push keeps the generic
+            // line for, and so does the replay ([UnshownReason]).
+            is PushDecrypt.NothingToRender -> {
+                val replay = HeldFrames.ofUnshown(outcome.reason)
+                if (replay == HeldFrames.Replay.EMPTY) dropLines(this, fields.groupId, replacing)
+                replay
             }
             is PushDecrypt.RefusedForGood -> HeldFrames.Replay.CONSUMED
             is PushDecrypt.Refused -> HeldFrames.Replay.NOT_READABLE
@@ -6276,8 +6310,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * untouched, there is no epoch gap to close, and retrying will produce the same
          * unrenderable plaintext. A visible push still owes the user a generic notification; a
          * silent one owes nothing at all.
+         *
+         * [reason] is the producer's token, carried rather than collapsed: a control frame holds no
+         * message, the other reasons hold one this path cannot draw - and a replay must not remove
+         * the generic line of a real message ([UnshownReason]).
          */
-        object NothingToRender : PushDecrypt
+        class NothingToRender(val reason: UnshownReason) : PushDecrypt
 
         /**
          * The foreground engine holds this frame - see `foregroundTookOver`.
@@ -6945,11 +6983,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             return when (val reason = json.optString("reason", "unspecified")) {
                 "control-frame" -> {
                     Log.d(TAG, "$where: control frame applied - state advanced, nothing to render")
-                    PushDecrypt.NothingToRender
+                    PushDecrypt.NothingToRender(UnshownReason.CONTROL_FRAME)
                 }
                 "plaintext-not-renderable" -> {
                     Log.d(TAG, "$where: decrypted, nothing renderable in it - no catch-up is owed")
-                    PushDecrypt.NothingToRender
+                    PushDecrypt.NothingToRender(UnshownReason.NOT_RENDERABLE)
                 }
                 "graine-key-material" -> {
                     // The seeds ride ON the refusal, because `ok: false` is what the
@@ -6969,14 +7007,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // would decrypt it into the same disagreement. Said here because the Rust line
                     // goes nowhere in a killed app.
                     Log.e(TAG, "$where: SENDER MISMATCH - REFUSED, the push names a sender MLS did not verify")
-                    PushDecrypt.NothingToRender
+                    PushDecrypt.NothingToRender(UnshownReason.SENDER_MISMATCH)
                 }
                 "graine-request" -> {
                     // A PEER ASKING, NOT A PEER GIVING. Only the foreground can answer one -
                     // it needs the group's history and a send - so the background states what
                     // it saw and stops, rather than retrying a frame no ladder can help.
                     Log.d(TAG, "$where: a peer asks for a seed - the foreground answers those")
-                    PushDecrypt.NothingToRender
+                    PushDecrypt.NothingToRender(UnshownReason.GRAINE_REQUEST)
                 }
                 "mls-refused-for-good" -> {
                     // Told by the layer that KNOWS (`DecryptErrorKind`), never re-derived from the
@@ -7009,7 +7047,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // `ok` with no text is the same fact as `plaintext-not-renderable`: it decrypted and
         // there is nothing to draw. It was a `null` too, and inherited the same wasted ladder.
         val text = json.optString("text").takeIf { it.isNotEmpty() || isCall }
-            ?: return PushDecrypt.NothingToRender
+            ?: return PushDecrypt.NothingToRender(UnshownReason.NOT_RENDERABLE)
         Log.d(TAG, "$where: success type=$type chars=${text.length}")
         return PushDecrypt.Message(DecryptedMessage(
             text      = text.take(200),
@@ -8078,9 +8116,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         )
         val keyMaterial = outcome as? PushDecrypt.KeyMaterial
         if (keyMaterial == null) {
-            // Yielded is the foreground holding the state, which the WebSocket serves; everything
-            // else is a frame that should have opened and did not, which is why this is a warning.
-            val level = if (outcome is PushDecrypt.Yielded) Log.DEBUG else Log.WARN
+            // Yielded is the foreground holding the state, which the WebSocket serves. A held lock and
+            // an unreachable server are facts about the device, not the frame, and the ladder is
+            // skipped for them ON PURPOSE (`isRefused` is false): its locality read and catch-up meet
+            // the same lock or the same network, and the message is held for the seed push, whose
+            // redraw replaces the generic line. Everything else is a frame that should have opened
+            // and did not, which is why that is a warning.
+            val level = when (outcome) {
+                is PushDecrypt.Yielded -> Log.DEBUG
+                is PushDecrypt.StateBusy, is PushDecrypt.Unreachable -> Log.INFO
+                else -> Log.WARN
+            }
             Log.println(level, TAG, "openSeedFrame: frame did not yield key material outcome=${outcome.javaClass.simpleName} group=${ConversationRef.of(groupId)} channel=${ConversationRef.ofSalon(channelId)} session=$sessionId")
             return false
         }

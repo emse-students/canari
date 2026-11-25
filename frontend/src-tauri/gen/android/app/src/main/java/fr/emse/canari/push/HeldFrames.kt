@@ -101,15 +101,30 @@ object HeldFrames {
         /** The MLS state lock was held - a fact about the lock, not the frame: kept, the job retries. */
         STATE_BUSY,
         /**
-         * The frame decrypted to nothing a line can show (a commit, key material): its generic line
-         * is replaced by NOTHING - removed - and the frame is done.
+         * The frame decrypted to no message at all (a commit, key material - [UnshownReason.CONTROL_FRAME]):
+         * its generic line is replaced by NOTHING - removed - and the frame is done.
          */
         EMPTY,
+        /**
+         * The frame decrypted to a message this path cannot draw ([UnshownReason], every reason but a
+         * control frame): the generic line STAYS, as on the live push, and the frame is done.
+         */
+        UNSHOWN,
         /** Refused for good: the app's drain (or another engine) already read it. Done, nothing posted. */
         CONSUMED,
         /** Refused: a frame that should have opened and did not. Dropped, and said. */
         NOT_READABLE,
+        /**
+         * The replay THREW. Settled, and said once at error: a frame that throws every time would
+         * otherwise hold back its conversation's other frames for ever, and accuse on every pause.
+         * Its generic line stays; the app's drain reads the message.
+         */
+        FAILED,
     }
+
+    /** What a replay comes to when the frame decrypted and shows no message, for [reason]. */
+    fun ofUnshown(reason: UnshownReason): Replay =
+        if (reason.dropsGenericLine) Replay.EMPTY else Replay.UNSHOWN
 
     /**
      * Asked BEFORE any MLS work: whether the replay can stop here. Null means "decrypt it".
@@ -131,6 +146,13 @@ object HeldFrames {
     fun keeps(replay: Replay): Boolean =
         replay == Replay.STILL_UNREACHABLE || replay == Replay.STATE_BUSY || replay == Replay.FOREGROUND
 
+    /**
+     * Whether a run stops at [replay] rather than go on to its conversation's next frame. Every kept
+     * replay is a fact about the device - the network, the lock, the app in front - that the next
+     * frame meets too: one more unreachable fetch costs a full network timeout and tells nothing new.
+     */
+    fun stopsRun(replay: Replay): Boolean = keeps(replay)
+
     /** How a job's run ends. */
     enum class RunEnd { DONE, RETRY }
 
@@ -142,15 +164,16 @@ object HeldFrames {
         if (replays.any { it == Replay.STILL_UNREACHABLE || it == Replay.STATE_BUSY }) RunEnd.RETRY else RunEnd.DONE
 
     /** The level a replay is logged at. */
-    enum class Level { DEBUG, INFO, WARN }
+    enum class Level { DEBUG, INFO, WARN, ERROR }
 
     /**
      * Nothing owed is DEBUG - the line is gone, the app has it, a frame with nothing to show - because
      * each is the mechanism working. Only a frame that should have opened and did not accuses.
      */
     fun level(replay: Replay): Level = when (replay) {
-        Replay.GONE, Replay.FOREGROUND, Replay.EMPTY, Replay.CONSUMED -> Level.DEBUG
+        Replay.GONE, Replay.FOREGROUND, Replay.EMPTY, Replay.UNSHOWN, Replay.CONSUMED -> Level.DEBUG
         Replay.UPGRADED, Replay.STILL_UNREACHABLE, Replay.STATE_BUSY -> Level.INFO
         Replay.NOT_READABLE -> Level.WARN
+        Replay.FAILED -> Level.ERROR
     }
 }

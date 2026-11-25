@@ -60,4 +60,32 @@ class SupersededLinesTest {
         // Kept: 100, 200, 300; bound 2 keeps 200, 300; the replaced 400 sat after both.
         assertEquals(2, SupersededLines.insertionIndex(shade, 400L, emptySet(), bound = 2))
     }
+
+    /**
+     * A LINE REPLAYED AT ITS PLACE IS NOT THE NEWEST: "Marquer comme lu" carried its older instants
+     * and left every line below it unread. The actions carry the newest line's instants then.
+     */
+    @Test
+    fun `a line inserted at its place hands the actions the newest line's instants`() {
+        assertEquals(
+            900L to 950L,
+            SupersededLines.actionInstants(posted = 100L to 150L, newest = 900L to 950L, insertedInPlace = true),
+        )
+    }
+
+    @Test
+    fun `an appended line, or a newest line with no instant, keeps the posted instants`() {
+        assertEquals(
+            100L to 150L,
+            SupersededLines.actionInstants(posted = 100L to 150L, newest = 900L to 950L, insertedInPlace = false),
+        )
+        assertEquals(
+            100L to 150L,
+            SupersededLines.actionInstants(posted = 100L to 150L, newest = 0L to 0L, insertedInPlace = true),
+        )
+        assertEquals(
+            100L to 150L,
+            SupersededLines.actionInstants(posted = 100L to 150L, newest = null, insertedInPlace = true),
+        )
+    }
 }
