@@ -29,12 +29,17 @@ make_project() {
 case " \$* " in *" --offline "*) [ -n "\${FAKE_OFFLINE_FAIL:-}" ] && { echo "Could not resolve (offline)"; exit 1; } ;; esac
 case " \$* " in *" :app:bundleUniversalRelease "*) [ -n "\${FAKE_NO_JAR:-}" ] || { mkdir -p "\$GRADLE_USER_HOME/caches/modules-2/files-2.1/com.google.errorprone/error_prone_annotations/2.0/h"; : > "\$GRADLE_USER_HOME/caches/modules-2/files-2.1/com.google.errorprone/error_prone_annotations/2.0/h/e.jar"; } ;; esac
 case " \$* " in *" :app:help "*) echo "Type"; echo "     \${FAKE_TASKTYPE:-BuildTask} (\${FAKE_TASKTYPE:-BuildTask})"; exit 0 ;; esac
+OFFLINE_SUFFIX=""
+case " \$* " in *" --offline "*)
+  [ -e app/build/marker ] && { echo "build outputs still present"; exit 1; }
+  OFFLINE_SUFFIX="\${FAKE_OFFLINE_SUFFIX:+ \$FAKE_OFFLINE_SUFFIX}" ;;
+  *) mkdir -p app/build; : > app/build/marker ;; esac
 for t in "\$@"; do
   case "\$t" in :app:*) ;; *) continue ;; esac
   if [ "\$t" = "$skip" ]; then
     [ -n "$suffix" ] && echo "> Task \$t $suffix"
   else
-    echo "> Task \$t"
+    echo "> Task \$t\${OFFLINE_SUFFIX:-}"
   fi
 done
 exit 0
@@ -116,6 +121,12 @@ for t in :app:mergeUniversalReleaseNativeLibs :app:minifyUniversalReleaseWithR8 
   make_project "$t" "UP-TO-DATE"
   expect "$t UP-TO-DATE on the online pass" nonzero "$t did not execute (online)"
 done
+make_project
+FAKE_OFFLINE_SUFFIX=UP-TO-DATE expect "a release task UP-TO-DATE on the offline pass is refused" nonzero "did not execute (offline)"
+unset FAKE_OFFLINE_SUFFIX
+make_project
+FAKE_OFFLINE_SUFFIX=NO-SOURCE expect "a release task NO-SOURCE on the offline pass is refused" nonzero "did not execute (offline)"
+unset FAKE_OFFLINE_SUFFIX
 make_project
 echo 'storeFile=real.jks' > "$work/android/keystore.properties"
 expect "a real keystore.properties is never overwritten" nonzero "will not overwrite"

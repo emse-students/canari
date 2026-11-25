@@ -1320,12 +1320,13 @@ The fix is in what CI saves, not in a retry:
   first version of this gate ran it that way and proved little), and a THROWAWAY keystore plus
   `keystore.properties` from `keytool` (the release signing config needs a store; no secret is used).
   Both are removed on exit, and a real `keystore.properties` or stub is never overwritten.
-- **It runs twice**: online (fills `~/.gradle`; every one of those tasks must EXECUTE, so NO-SOURCE,
-  SKIPPED and UP-TO-DATE are refused) and `--offline` (reaches no network, fails if the chain needs
-  anything the cache does not hold, and a `> Could not` line fails it; a task up to date still
-  resolves its inputs). It then asserts an `error_prone_annotations` jar (any version) is in
-  `modules-2/files-2.1`. The self-test covers each refusal. (An earlier attempt resolved configurations
-  from an init script; AGP's flavored configurations do not resolve outside AGP's own tasks.)
+- **It runs twice**, and every one of those tasks must EXECUTE both times (NO-SOURCE, SKIPPED and
+  UP-TO-DATE are refused): online (fills `~/.gradle`) and `--offline`, which reaches no network and
+  fails on a `> Could not` line. **Between the two, `app/build` is deleted** (the Gradle caches stay):
+  without that the offline pass is all UP-TO-DATE and proves only that inputs can be fingerprinted,
+  not that the task actions run from the cache. It then asserts an `error_prone_annotations` jar (any
+  version) is in `modules-2/files-2.1`. The self-test covers each refusal. (An earlier attempt resolved
+  configurations from an init script; AGP's flavored configurations do not resolve outside AGP's own tasks.)
 - **The cache key moves**: `android-app-compile.sh` is now part of the key's `hashFiles` (`ci.yml` and
   `android.yml` identically). Without that the old key would have kept winning: an exact hit is never
   re-saved, so the incomplete entry would have lived on. Any later change to the script, or to a build

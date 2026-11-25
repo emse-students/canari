@@ -109,7 +109,7 @@ echo "OK ${tasks[*]} ran and succeeded"
 # (a key hit) still went to Maven Central for `error_prone_annotations` and met a 429 - in
 # `mergeUniversalReleaseNativeLibs`, the android-jni transform over the release runtime classpath.
 # So run the REAL release chain minus rust: `assembleUniversalRelease` and `bundleUniversalRelease`
-# (R8, the resource shrinker, lint-vital, packaging, bundletool, signing), then again `--offline`,
+# (R8, the resource shrinker, packaging, bundletool, signing), then again `--offline`,
 # which reaches no network and fails if any of it needs something not in ~/.gradle. A task that is
 # up to date still resolves its inputs, so the offline pass is a real resolution. What it cannot see
 # is a restore (the job just filled the cache it reads): it proves the chain needs nothing the cache
@@ -129,7 +129,7 @@ if [ -e "$props" ] || [ -e "$stub_so" ]; then
   exit 1
 fi
 ks_dir="$(mktemp -d)"
-cleanup_release_stubs() { rm -rf "$ks_dir" "$props" "$stub_so"; }
+cleanup_release_stubs() { rm -rf "$ks_dir" "$props" "$stub_so"; rmdir "$stub_dir" "$android/app/src/main/jniLibs" 2>/dev/null || true; }
 trap cleanup_release_stubs EXIT
 "${KEYTOOL:-keytool}" -genkeypair -keystore "$ks_dir/throwaway.jks" -storepass ci-throwaway -keypass ci-throwaway \
   -alias ci -keyalg RSA -keysize 2048 -validity 2 -dname "CN=ci throwaway" > /dev/null 2>&1 \
@@ -147,7 +147,13 @@ release_tasks=(
 )
 skip_rust=(-x rustBuildUniversalRelease -x rustBuildArmRelease -x rustBuildArm64Release)
 for mode in online offline; do
-  flag=(); [ "$mode" = offline ] && flag=(--offline)
+  flag=()
+  if [ "$mode" = offline ]; then
+    # THE OUTPUTS GO, THE GRADLE CACHES STAY: otherwise every task is UP-TO-DATE and only its inputs are
+    # fingerprinted. Removing the app build dir makes each task ACTION run again, from ~/.gradle alone.
+    rm -rf "$android/app/build"
+    flag=(--offline)
+  fi
   echo "== 4. run the release chain (${mode}): ${release_tasks[*]}"
   (cd "$android" && ./gradlew --no-daemon --console=plain "${flag[@]}" "${skip_rust[@]}" "${release_tasks[@]}") 2>&1 | tee "$log" \
     || { echo "::error::the release chain failed ($mode)"; exit 1; }
@@ -155,13 +161,8 @@ for mode in online offline; do
     echo "::error::Gradle reported a resolution problem ($mode)"; exit 1
   fi
   for t in "${release_tasks[@]}"; do
-    if [ "$mode" = online ]; then
-      grep -qE "^> Task ${t}$" "$log" \
-        || { echo "::error::${t} did not execute ($mode) - a green build that did not run it resolved nothing"; exit 1; }
-    else
-      grep -qE "^> Task ${t}( |$)" "$log" \
-        || { echo "::error::${t} did not appear ($mode)"; exit 1; }
-    fi
+    grep -qE "^> Task ${t}$" "$log" \
+      || { echo "::error::${t} did not execute ($mode) - a green build that did not run it resolved nothing"; exit 1; }
   done
   echo "OK the release chain ran ($mode)"
 done
