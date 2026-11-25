@@ -1,30 +1,41 @@
 # The account Canari writes a person's profile through (WP4 of the profile reform,
 # docs/wiki/profiles-and-access.md, decision D9), and marks an Alumni duplicate through (D47, D48): a
-# SERVICE ACCOUNT that may view and change users and read their source connections, and do nothing
-# else, and its API token.
+# SERVICE ACCOUNT that may READ users and their source connections, and WRITE through one flow only.
 #
 # Applied by infrastructure/authentik/apply-blueprints.py, never by the worker's own discovery
 # (instantiate: false) - see infrastructure/authentik/README.md.
 #
 # WHY A ROLE AND A GROUP. authentik grants a global permission to a ROLE, and a role reaches a user
 # only through a group. The role carries exactly:
-#   - `view_user`, `change_user`: read a user by uuid and PATCH its attributes - the profile (WP4),
-#     and the merge MARK an admin's "Rattacher" writes on a duplicate (`attributes.alumni_merge_into`
-#     and who marked it, when; D48);
+#   - `view_user`: read a user by uuid (its profile, a duplicate's mark), list users by search;
 #   - `view_usersourceconnection`: list which sources a user is linked to, which is how the merge
 #     checks the duplicate holds the Alumni link alone and the target none, and how the admin's
 #     duplicates list is made.
-# NOT `delete_user`. The merge itself - the Alumni link moved onto the marked account, the duplicate
-# deleted, in one transaction - is done by authentik at the duplicate's next Alumni sign-in, after
-# re-checking the mark against what the Alumni SSO asserts at that sign-in (30-sources.yaml,
-# `miconnect-alumni-merge-or-refuse`). `change_user` is a GLOBAL permission, broader than the profile
-# corrections and merge marks it is held for; narrowing it is planned
-# (docs/wiki/backlog.d/the-miconnect-editor-token-reach.md). The applier revokes any
-# permission a role holds beyond this list (apply-blueprints.py), so an instance that once granted
-# `delete_user` loses it at the next apply.
-# Not enough to create or delete an account, add, change or delete a source connection, touch a
-# source, a flow, a provider or another role. It is deliberately NOT a superuser group.
-# test-profile-editor.py proves each of these by USING the token.
+# No global write permission on users (since 1.8.1, docs/wiki/backlog.d/the-miconnect-editor-token-reach.md):
+# the role held a broader write right before, far beyond the profile corrections and merge marks it
+# is for, and authentik has no per-field permission - hence the write flow below. NOT `delete_user`: the merge itself - the
+# Alumni link moved onto the marked account, the duplicate deleted, in one transaction - is done by
+# authentik at the duplicate's next Alumni sign-in (30-sources.yaml, `miconnect-alumni-merge-or-refuse`).
+# The applier revokes any permission a role holds beyond this list (apply-blueprints.py), so an
+# instance that once granted more loses it at the next apply - recorded as an authentik Event
+# `custom_role_permission_revoked`, which editor-reach.py reads as the end of the older write path.
+#
+# THE ONE WRITE PATH: the flow `miconnect-profile-write`, below. core-service POSTs one prompt to the
+# flow executor with the token (`target` = the account's uuid, `changes` = a JSON object), and the
+# prompt's validation policy writes it, under the target's row lock, if and only if:
+#   - the caller is the editor account (the flow's group binding, and the policy again);
+#   - `changes` (at most 16 KiB of strict JSON) names only `name` (one line, at most 201 characters) and
+#     `attributes`, and `attributes` only `profile` (an object whose known keys have their types) and
+#     the three merge-mark keys (a string, or null to remove the key) - the ALLOWLIST;
+#   - the target is exactly one account, a person (internal or external) and not a superuser (no
+#     superuser group on its ancestry);
+#   - a merge-mark key is written on an `alumni-` account only (the only accounts a mark is for).
+# The keys named are MERGED into the stored attributes server-side under that lock, so no other key
+# is ever written, and no edit by another writer that takes the same row lock is lost. Anything else
+# is refused, nothing written, with a stable code (`refused:<code>: <reason>`, typed by core-service)
+# and logged at warning with `[PROFILE_WRITE]`. Every write is logged at info with the keys written.
+# test-profile-editor.py proves each of these by USING the token; editor-reach.py checks, on every
+# test instance and daily on production, that the account holds nothing beyond this file.
 #
 # THE TOKEN KEY IS `!Env`, never written here: the file is public. It is read from the worker's
 # environment (`MICONNECT_EDITOR_TOKEN`, declared with `:?` in compose.yml), and the same value is the
@@ -42,7 +53,6 @@ entries:
     attrs:
       permissions:
         - authentik_core.view_user
-        - authentik_core.change_user
         - authentik_core.view_usersourceconnection
   - model: authentik_core.group
     identifiers:
@@ -70,3 +80,174 @@ entries:
       expiring: false
       description: "Canari core-service - writes attributes.profile (WP4), merges Alumni duplicates (D48)"
       key: !Env MICONNECT_EDITOR_TOKEN
+  # THE WRITE PATH. Two text fields, never `hidden`: authentik resets a hidden field to its default.
+  - model: authentik_stages_prompt.prompt
+    identifiers:
+      name: "miconnect-profile-write-prompt-target"
+    attrs:
+      field_key: "target"
+      label: "target"
+      type: "text"
+      required: true
+      order: 0
+  - model: authentik_stages_prompt.prompt
+    identifiers:
+      name: "miconnect-profile-write-prompt-changes"
+    attrs:
+      field_key: "changes"
+      label: "changes"
+      type: "text_area"
+      required: true
+      order: 1
+  # A validation policy that WRITES: the check and the write are one transaction under the target's
+  # row lock, so nothing can change the account between the decision and the write. It runs in the
+  # request's process (a lone policy outside a daemon, as `miconnect-alumni-merge-or-refuse`).
+  - model: authentik_policies_expression.expressionpolicy
+    identifiers:
+      name: "miconnect-profile-write"
+    attrs:
+      execution_logging: false
+      expression: |-
+        import json
+        import uuid
+
+        from django.db import transaction
+
+        from authentik.core.models import User
+
+        EDITOR = "miconnect-canari-editor"
+        MARK = ("alumni_merge_into", "alumni_merge_marked_by", "alumni_merge_marked_at")
+        ALLOWED = ("profile",) + MARK
+        # 2 x NAME_MAX (apps/core-service/src/users/miconnect-profile.ts) + the space between the two
+        # names: core-service's profile-write.contract.spec.ts holds the two numbers together.
+        NAME_MAX = 201
+        # The UTF-8 size of `changes`; the biggest profile core-service validates fits (the spec too).
+        CHANGES_MAX = 16384
+        # A control character: C0, DEL, C1 (U+0085 among them) and the two Unicode line separators.
+        # core-service's CONTROL_CHARACTERS is the same set (the contract spec pins both spellings).
+        is_control = lambda c: ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F or ord(c) in (0x2028, 0x2029)
+
+        # A refusal carries a STABLE CODE, `refused:<code>: <reason>`, which core-service types
+        # (miconnect-editor.client.ts, WRITE_REFUSALS): never a message to branch on.
+        def refuse(code, reason):
+            ak_logger.warning("[PROFILE_WRITE] refused, nothing written", code=code, reason=reason)
+            ak_message(f"refused:{code}: {reason}")
+            return False
+
+        def no_constant(name):
+            raise ValueError(f"{name} is not JSON")
+
+        caller = request.user
+        if caller is None or caller.username != EDITOR or caller.type != "service_account":
+            return refuse("not_editor", "the caller is not the profile editor")
+        prompt = request.context.get("prompt_data") or {}
+        try:
+            target_uuid = uuid.UUID(str(prompt.get("target") or ""))
+        except ValueError:
+            return refuse("malformed", "target is not a uuid")
+        raw = str(prompt.get("changes") or "")
+        if len(raw.encode("utf-8")) > CHANGES_MAX:
+            return refuse("malformed", f"changes is longer than {CHANGES_MAX} bytes")
+        try:
+            changes = json.loads(raw, parse_constant=no_constant)
+        except (ValueError, RecursionError):
+            return refuse("malformed", "changes is not JSON")
+        if not isinstance(changes, dict) or not changes:
+            return refuse("malformed", "changes is not a non-empty object")
+        extra = sorted(set(changes) - {"name", "attributes"})
+        if extra:
+            return refuse("malformed", f"field(s) outside the allowlist: {extra}")
+        name = changes.get("name")
+        if "name" in changes:
+            if not isinstance(name, str) or not name.strip() or len(name) > NAME_MAX:
+                return refuse("malformed", f"name is not a non-empty string of at most {NAME_MAX} characters")
+            if any(is_control(c) for c in name):
+                return refuse("malformed", "name holds a control character")
+        attributes = changes.get("attributes", {})
+        if not isinstance(attributes, dict):
+            return refuse("malformed", "attributes is not an object")
+        extra = sorted(set(attributes) - set(ALLOWED))
+        if extra:
+            return refuse("malformed", f"attribute(s) outside the allowlist: {extra}")
+        if "profile" in attributes:
+            profile = attributes["profile"]
+            # The shape every reader of the profile relies on (the claim mappings, the consent
+            # policy, Canari's sign-in parser); unknown keys of a future version pass.
+            if not isinstance(profile, dict):
+                return refuse("malformed", "attributes.profile is not an object")
+            if "campus" in profile and profile["campus"] is not None and not isinstance(profile["campus"], str):
+                return refuse("malformed", "profile.campus is neither a string nor null")
+            if "cursus" in profile and not (isinstance(profile["cursus"], list) and all(isinstance(e, dict) for e in profile["cursus"])):
+                return refuse("malformed", "profile.cursus is not a list of objects")
+            if "posts" in profile and not (isinstance(profile["posts"], list) and all(isinstance(p, str) for p in profile["posts"])):
+                return refuse("malformed", "profile.posts is not a list of strings")
+            for key in ("firstName", "lastName"):
+                if key in profile and not isinstance(profile[key], str):
+                    return refuse("malformed", f"profile.{key} is not a string")
+            if "version" in profile and (not isinstance(profile["version"], int) or isinstance(profile["version"], bool)):
+                return refuse("malformed", "profile.version is not an integer")
+        for key in MARK:
+            if key in attributes and attributes[key] is not None and not isinstance(attributes[key], str):
+                return refuse("malformed", f"attributes.{key} is neither a string nor null")
+        if "name" not in changes and not attributes:
+            return refuse("malformed", "nothing to write")
+        with transaction.atomic():
+            targets = list(User.objects.select_for_update().filter(uuid=target_uuid))
+            if len(targets) != 1:
+                return refuse("no_account", f"{len(targets)} account(s) carry the target uuid")
+            target = targets[0]
+            if target.type not in ("internal", "external"):
+                return refuse("not_a_person", f"the target is a {target.type} account")
+            if target.is_superuser:
+                return refuse("superuser", "the target is a superuser")
+            if any(key in attributes for key in MARK) and not target.username.startswith("alumni-"):
+                return refuse("mark_not_alumni", "a merge mark is written on an alumni- account only")
+            stored = dict(target.attributes or {})
+            for key, value in attributes.items():
+                if value is None:
+                    stored.pop(key, None)
+                else:
+                    stored[key] = value
+            target.attributes = stored
+            fields = ["attributes"]
+            if "name" in changes:
+                target.name = name
+                fields.append("name")
+            target.save(update_fields=fields)
+        ak_logger.info("[PROFILE_WRITE] written", target_pk=target.pk, keys=sorted(attributes), name_written="name" in changes)
+        return True
+  - model: authentik_stages_prompt.promptstage
+    identifiers:
+      name: "miconnect-profile-write"
+    attrs:
+      fields:
+        - !Find [authentik_stages_prompt.prompt, [name, "miconnect-profile-write-prompt-target"]]
+        - !Find [authentik_stages_prompt.prompt, [name, "miconnect-profile-write-prompt-changes"]]
+      validation_policies:
+        - !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-profile-write"]]
+  - model: authentik_flows.flow
+    identifiers:
+      slug: "miconnect-profile-write"
+    attrs:
+      name: "miconnect-profile-write"
+      title: "Canari - profile write"
+      designation: "stage_configuration"
+      authentication: "require_authenticated"
+      # A refusal of the caller is an answer (`ak-stage-access-denied`), never a redirect elsewhere.
+      denied_action: "message"
+      # Every binding must pass - the one group binding below today, and any added tomorrow.
+      policy_engine_mode: "all"
+  # Only the editors' group may plan it: anyone else meets the access-denied stage before any prompt.
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_policies.policybindingmodel, [flow__slug, "miconnect-profile-write"]]
+      group: !Find [authentik_core.group, [name, "miconnect-profile-editors"]]
+      order: 0
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "miconnect-profile-write"]]
+      stage: !Find [authentik_stages_prompt.promptstage, [name, "miconnect-profile-write"]]
+      order: 10
+    attrs:
+      evaluate_on_plan: true
+      re_evaluate_policies: false

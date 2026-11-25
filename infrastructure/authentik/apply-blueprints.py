@@ -229,10 +229,16 @@ def exact_role_permissions():
     `assign_perms` only, read in 2026.8.6), so a permission dropped from a blueprint would stay
     granted on every instance that ever had it - the instance a release upgrades. Here the list is
     the role's whole grant: the upgrade test (PREVIOUS_REF) and the token tests prove it on the
-    upgraded instance."""
+    upgraded instance.
+
+    Each revocation is also RECORDED on the instance, as an authentik Event
+    `custom_role_permission_revoked` (role, permission) in the same transaction - a dry run rolls it
+    back with the rest. It is durable evidence of WHEN a write path closed: editor-reach.py accepts
+    an older write of the profile editor through a permission only if it predates that Event."""
     from django.contrib.auth.models import Permission  # noqa: F401 - the FK below
     from guardian.models import RoleModelPermission
 
+    from authentik.events.models import Event
     from authentik.rbac.models import Role
 
     revoked = []
@@ -248,6 +254,7 @@ def exact_role_permissions():
             }
             for extra in sorted(held - wanted):
                 role.remove_perms(extra)
+                Event.new("role_permission_revoked", app="miconnect", role=role.name, permission=extra).save()
                 revoked.append(f"REVOKED  {file_name} role {role.name}: {extra}")
     return revoked
 

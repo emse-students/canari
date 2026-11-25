@@ -70,13 +70,14 @@ describe('validateProfileEdit', () => {
 describe('ProfileEditService', () => {
   const env = { ...process.env };
   let errorLog: jest.SpyInstance;
+  let warnLog: jest.SpyInstance;
 
   beforeEach(() => {
     delete process.env.DEPLOY_BUILD;
     process.env.AUTHENTIK_BASE_URL = 'https://miconnect.example/';
     process.env.MICONNECT_EDITOR_TOKEN = 'editor-token';
     jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
-    jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    warnLog = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     errorLog = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
   });
   afterEach(() => {
@@ -115,13 +116,15 @@ describe('ProfileEditService', () => {
           results: [{ pk: 42, name: 'Old Name', attributes: opts.attributes ?? { keep: 'me' } }],
         });
       }
-      expect(url).toBe('https://miconnect.example/api/v3/core/users/42/');
-      return Response.json({});
+      expect(url).toBe(
+        'https://miconnect.example/api/v3/flows/executor/miconnect-profile-write/?query='
+      );
+      return Response.json({ component: 'xak-flow-redirect', to: '/' });
     });
     return { service, user, manager, userRows, saved, fetchMock, dataSource };
   }
 
-  it('writes authentik FIRST with the whole attributes, then the row, then the audit', async () => {
+  it('writes authentik FIRST through the write flow, then the row, then the audit', async () => {
     const { service, user, manager, userRows, fetchMock } = make({
       attributes: { keep: 'me', promo: 2020, profile: { version: 1, campus: 'saint-etienne' } },
     });
@@ -132,13 +135,15 @@ describe('ProfileEditService', () => {
     expect(((get[1] as RequestInit).headers as Record<string, string>).Authorization).toBe(
       'Bearer editor-token'
     );
-    expect(patch[1]?.method).toBe('PATCH');
+    expect(patch[1]?.method).toBe('POST');
     const sent = JSON.parse(patch[1]?.body as string);
-    expect(sent.name).toBe('Camille Durand');
-    // read-modify-write: every other key survives, the profile is the edit's
-    expect(sent.attributes.keep).toBe('me');
-    expect(sent.attributes.promo).toBe(2020);
-    expect(sent.attributes.profile).toMatchObject({ version: 1, ...EDIT });
+    expect(sent.component).toBe('ak-stage-prompt');
+    expect(sent.target).toBe(UUID);
+    const changes = JSON.parse(sent.changes);
+    expect(changes.name).toBe('Camille Durand');
+    // The profile key ALONE: MiConnect merges it, so no other key is ever sent (or overwritten).
+    expect(Object.keys(changes.attributes)).toEqual(['profile']);
+    expect(changes.attributes.profile).toMatchObject({ version: 1, ...EDIT });
 
     expect(user).toMatchObject({
       campus: 'gardanne',
@@ -266,6 +271,57 @@ describe('ProfileEditService', () => {
       UserRowGoneError
     );
     expect(manager.save).not.toHaveBeenCalled();
+  });
+
+  function refusedWith(message: string) {
+    const made = make();
+    made.fetchMock.mockImplementation(async (_url, init) =>
+      (init?.method ?? 'GET') === 'GET'
+        ? Response.json({ results: [{ pk: 42, name: 'x', attributes: {} }] })
+        : Response.json({
+            component: 'ak-stage-prompt',
+            response_errors: { non_field_errors: [{ string: message }] },
+          })
+    );
+    return made;
+  }
+
+  it('a refusal the account explains is typed by its code and logged below error', async () => {
+    const { service, manager, userRows } = refusedWith(
+      'refused:superuser: the target is a superuser'
+    );
+    const attempt = service.applyEdit('u-target', 'u-admin', EDIT);
+    await expect(attempt).rejects.toBeInstanceOf(ProfileEditUpstreamError);
+    await expect(attempt).rejects.toMatchObject({
+      upstreamStatus: null,
+      status: 502,
+      refusal: 'superuser',
+    });
+    expect(warnLog).toHaveBeenCalledWith(expect.stringContaining('the target is a superuser'));
+    expect(errorLog).not.toHaveBeenCalled();
+    expect(manager.save).not.toHaveBeenCalled();
+    expect(userRows.update).not.toHaveBeenCalled();
+  });
+
+  it('a malformed write is a fault: typed, and logged at error', async () => {
+    const { service } = refusedWith('refused:malformed: attribute(s) outside the allowlist');
+    await expect(service.applyEdit('u-target', 'u-admin', EDIT)).rejects.toMatchObject({
+      refusal: 'malformed',
+    });
+    expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('outside the allowlist'));
+  });
+
+  it('a caller the write flow does not admit is an upstream error', async () => {
+    const { service, fetchMock } = make();
+    fetchMock.mockImplementation(async (_url, init) =>
+      (init?.method ?? 'GET') === 'GET'
+        ? Response.json({ results: [{ pk: 42, name: 'x', attributes: {} }] })
+        : Response.json({ component: 'ak-stage-access-denied' })
+    );
+    await expect(service.applyEdit('u-target', 'u-admin', EDIT)).rejects.toBeInstanceOf(
+      ProfileEditUpstreamError
+    );
+    expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('ak-stage-access-denied'));
   });
 
   it('a uuid that matches no authentik user is an upstream error', async () => {

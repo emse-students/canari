@@ -1,27 +1,17 @@
-## P2 - a repeated send republishes the queued rows its first copy is still delivering
+## P2 - Reading owed - a Welcome sent again is published once
 
 target: 1.8.1
 
-**Seen 2026-11-24** (a new web device, prod `1.7.3`): one Welcome row arrived live twice, 160 ms
-apart, same queued id, same size - `[QUEUE] delivery ... arrived twice - THE SERVER PUBLISHED THE SAME
-ROW TWICE`. The client deduplicated it (acknowledged, not decrypted again), so nothing was lost; the
-line is right to accuse the server.
+**Built (2026-11-25):** a re-send of the same Welcome no longer publishes its still-queued row a
+second time. The delivery claims the row in the transaction that publishes it (`deliveryRan`,
+migration 058), so a second delivery waits for the first and then only re-arms the deferred push
+([mls-protocol](../protocols/mls-protocol.md), "...and delivered once"). The defect was seen on a new
+web device (prod `1.7.3`, 2026-11-24): one Welcome row arrived live twice, 160 ms apart. The server
+log of that day was gone before it was read, so the trigger (the `[WELCOME] DUPLICATE` path, NOT the
+named-frame repeat this entry first blamed) is established from the code.
 
-**The mechanism, read from the code** (`apps/chat-delivery-service/src/services/messaging.service.ts`).
-The server publishes a queued row from exactly two places: the first send's delivery step
-(`deliverQueuedRows` after the enqueue) and a REPEAT of the same `messageId` that finds its receipt
-unsettled (`finishFirstCopy`, migration 048). The first send marks its receipt settled only AFTER its
-delivery ran (`markSentFrameSettled`). So a repeat arriving while the first send is still delivering -
-a sender whose first POST timed out on its side and was sent again - takes the settlement
-(`takeSentFrameSettlement`) and delivers the still-queued rows a second time. "Unsettled" means both
-"the first send may have crashed" and "the first send is still running", and the receipt cannot tell
-them apart. To confirm on production, read-only: a `REPEAT_FINISHED_FIRST_COPY` line on chat-delivery
-for that group around 12:45:43Z on 2026-11-24.
-
-**The fix to build:** the receipt states which send is delivering, taken in the enqueue transaction and
-released at the settle, so a repeat finishes only a delivery nobody is running - without a clock, which
-rules out a lease.
-
-**The test that closes it:** `messaging.send-race.spec.ts` - a repeat of the same `messageId` arriving
-while the first send is parked between its enqueue and its settle publishes nothing, and the first
-send's delivery publishes each row once.
+**The reading that closes it**, on production after the stable that carries migration 058: a
+`[WELCOME] ... DELIVERY_ALREADY_RAN` line on chat-delivery confirms the re-send path is real and now
+publishes nothing. On a device enrolled after that stable, no `[QUEUE] ... arrived twice - THE SERVER
+PUBLISHED THE SAME ROW TWICE` line for a Welcome. A `DELIVERY_ALREADY_RAN` count is enough: read-only
+`docker logs ... | grep -c DELIVERY_ALREADY_RAN`.

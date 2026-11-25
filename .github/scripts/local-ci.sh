@@ -71,7 +71,7 @@ dependency-ceiling                 ci-only   decides on a Dependabot pull reques
 security                           split     the lockfile guards at push; CodeQL and the secret scan in CI only
 dependency-audit                   ci-only   a verdict on the advisory databases, not on the commit; ~5 min per tree
 mls-forward-compat                 ci-only   mls-forward-compat.sh: a WASM build
-test-miconnect-blueprints          ci-only   a full Authentik pair in Docker, twice
+test-miconnect-blueprints          ci-only   a full Authentik pair in Docker, two parallel legs
 upstream-monitor-freshness         ci-only   a push to main only; reads GitHub
 ci-passed                          ci-only   the aggregation of the jobs above
 '

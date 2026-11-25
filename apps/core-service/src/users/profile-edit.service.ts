@@ -84,10 +84,10 @@ export class ProfileEditService {
 
     const unchanged = before !== null && canonical(before) === canonical(after);
     if (!unchanged) {
-      await this.editor.writeUser(record.pk, {
+      // The profile key alone: MiConnect merges it into the stored attributes, every other key kept.
+      await this.editor.writeUser(user.miconnectUuid, {
         name: `${after.firstName} ${after.lastName}`,
-        // The WHOLE bag, read-modify-write: authentik's PATCH replaces `attributes`.
-        attributes: { ...record.attributes, profile: after },
+        attributes: { profile: after },
       });
       this.logger.log(`[PROFILE_EDIT] authentik written for ${targetId.slice(0, 8)}`);
     } else {

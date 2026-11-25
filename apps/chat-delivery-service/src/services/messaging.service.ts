@@ -99,6 +99,7 @@ import {
 } from '../utils/group-membership';
 import { RepeatCounter, cutDeviceId, cutUserId } from '../utils/log-repeat';
 import { selfConversationUnawareDevices } from '../utils/self-conversation';
+import { claimQueuedDelivery } from '../utils/queued-delivery-claim';
 import {
   claimSentFrameReceipt,
   markSentFrameSettled,
@@ -5508,18 +5509,61 @@ export class MessagingService {
    * `pushable` also arms the deferred fallback. A frozen Android app reads as online, so a Welcome
    * published into a socket nobody was reading was followed by nothing: the device stayed unjoined
    * until its next foreground pull.
+   *
+   * ONE LIVE PUBLISH PER ROW, WHOEVER HANDS IT IN. The same row reaches here from the request that
+   * stored it and from every re-send of the same bytes (`[WELCOME] DUPLICATE`), and those can overlap:
+   * a sender that did not read its answer re-sends while the first request is still publishing. The
+   * publish therefore runs inside the transaction that CLAIMS it ({@link claimQueuedDelivery}): the
+   * claim holds the row lock until the publish committed, so a second delivery waits and then finds
+   * it ran; a delivery that threw or died rolled back, and the next re-send delivers.
+   *
+   * A row whose publish ALREADY RAN and is still queued is not published again, but its deferred push
+   * is re-armed: the first request's own fallback timer lived in its process, and a deploy that killed
+   * it left a frozen-but-online Android with nothing to wake it but this re-send. `runDeferredPush`
+   * re-reads the row, so a device that acknowledged it meanwhile is pushed nothing. A row GONE is
+   * acknowledged (or swept) and owes nothing.
+   *
+   * NOTHING BUT THE PUBLISH RUNS UNDER THE ROW LOCK: presence is read before the transaction. The
+   * publish itself is bounded the way every Redis command of this service is - by the client's own
+   * per-request retry limit (`ioredis` `maxRetriesPerRequest`, its default, no timer of ours); past
+   * it the command rejects, the claim rolls back and the row stays deliverable. While it waits, the
+   * lock delays only another delivery of this one row and its device's acknowledgement of it.
+   *
+   * @returns whether this call published (or pushed) the row
    */
-  private async deliverWelcome(queued: QueuedMessage, traceId: string): Promise<void> {
-    const isOnline = await this.redis.exists(
+  private async deliverWelcome(queued: QueuedMessage, traceId: string): Promise<boolean> {
+    const online = !!(await this.redis.exists(
       devicePresenceKey(queued.recipientId, queued.deviceId)
-    );
-    await this.deliverQueuedFrame(queued, {
-      tag: 'WELCOME',
-      traceId,
-      online: !!isOnline,
-      silent: true,
-      pushable: true,
+    ));
+    const claim = await this.queuedMessageRepo.manager.transaction(async (m) => {
+      const found = await claimQueuedDelivery(m, queued.id);
+      if (found !== 'claimed') return found;
+      await this.deliverQueuedFrame(queued, {
+        tag: 'WELCOME',
+        traceId,
+        online,
+        silent: true,
+        pushable: true,
+      });
+      return found;
     });
+    const who = `id=${queued.id} recipient=${queued.recipientId}:${queued.deviceId} group=${queued.groupId ?? ''}`;
+    if (claim === 'gone') {
+      this.logger.log(
+        `[WELCOME][${traceId}] DELIVERY_ROW_GONE ${who} - its device acknowledged it (or it was swept) ` +
+          `before this delivery: nothing published, nothing pushed`
+      );
+      return false;
+    }
+    if (claim === 'already_ran') {
+      this.logger.log(
+        `[WELCOME][${traceId}] DELIVERY_ALREADY_RAN ${who} - an earlier request published this row ` +
+          `and it is still unacknowledged: not published again, its deferred push re-armed`
+      );
+      this.scheduleDeferredPush(queued, traceId, queued.groupId ?? '', queued.senderId ?? '', true);
+      return false;
+    }
+    return true;
   }
 
   /**
@@ -5751,13 +5795,13 @@ export class MessagingService {
     );
     if (stored && stored !== queuedWelcome) {
       // A RE-SEND OF THE SAME BYTES, already queued: nothing is stored a second time. The queued
-      // row is handed to the delivery again - the same row, so nothing new is queued, and a device
-      // that already joined from it takes the copy as a redelivery (`setupMessageHandler`) - because
-      // the first request may have died between its store and its delivery, and a re-send is the
-      // only thing left to arm the live publish and the push.
+      // row is handed to the delivery, because the first request may have died between its store
+      // and its delivery and a re-send is then the only thing left to arm the live publish and the
+      // push - and the delivery publishes it only if no delivery of it ran ({@link deliverWelcome}):
+      // a first request still publishing, or done, is not published over.
       this.logger.log(
         `[WELCOME][${traceId}] DUPLICATE id=${stored.id} recipient=${deviceInfo.userId}:${targetDeviceId} ` +
-          `group=${safeGroupId} - the same Welcome is already queued, nothing stored again; its row is delivered again`
+          `group=${safeGroupId} - the same Welcome is already queued, nothing stored again; its row is delivered unless a delivery of it ran`
       );
       await this.deliverWelcome(stored, traceId);
       return this.welcomeAnswer(group, deviceInfo.userId, targetDeviceId, safeGroupId, traceId);

@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, HttpException, HttpStatus } from '@nestjs/common';
 import type { ProfileEditProblem } from './miconnect-profile';
+import type { WriteRefusal } from './miconnect-editor.client';
 
 /**
  * Every way an admin's profile edit can be refused, as a TYPE with a stable `code` in the body.
@@ -67,11 +68,15 @@ export class ProfileEditNotLinkedError extends ConflictException {
   }
 }
 
-/** authentik did not answer, or answered something other than success. Nothing was written. */
+/**
+ * authentik did not answer, or answered something other than success. Nothing was written.
+ * `refusal` is the stable code of a refusal by MiConnect's write flow, null for anything else.
+ */
 export class ProfileEditUpstreamError extends HttpException {
   constructor(
     readonly upstreamStatus: number | null,
-    detail: string
+    detail: string,
+    readonly refusal: WriteRefusal | null = null
   ) {
     super(
       {
