@@ -3905,7 +3905,7 @@ conversation, ~0.1-0.3 s by the per-operation cost above), so this catch-up goes
 ~5 s. **What remains is per frame and not batched here**: a reaction stores itself and a peer's read
 mark saves the conversation row before its handler returns (~4.2 s of this drain); batching them is
 the next step ([backlog](../../backlog.d/per-frame-store-writes-of-a-catch-up-batched.md)); the
-reading on the Mi 9T PASSED on `1.8.1-alpha.2` (2026-11-25: 136 frames drained in 2245 ms with the pane at the end; scrolled up, 67 frames in 1985 ms, `scrollTop` unchanged, banner gone with the drain). The unread pill showed no count after it: [backlog](../../backlog.d/p3-the-scroll-to-bottom-arrow-shows-no-unread-count-after-a-catch-up.md).
+reading on the Mi 9T PASSED on `1.8.1-alpha.2` (2026-11-25: 136 frames drained in 2245 ms with the pane at the end; scrolled up, 67 frames in 1985 ms, `scrollTop` unchanged, banner gone with the drain). The unread pill showed no count after it: [backlog](../../backlog.d/reading-owed-the-scroll-to-bottom-arrow-counts-a-catch-up.md).
 
 #### An open lands once: a change above the reader never glides (2026-11-25)
 
@@ -7783,6 +7783,8 @@ Two consequences of the drafts outliving the page (review of #2614, 2026-10-27):
 ### The scroll-to-bottom badge counts only what lies below the viewport (2026-11-01)
 
 The owner saw a yellow "1" on the floating arrow while scrolled up in a conversation with nothing new. The badge was `countUnreadForUser` over the WHOLE thread: any foreign row not covered by the read mark - above the viewport, in view, or held back by `serverMarkCeiling` or an unfocused window - raised it. Reactions, edits and pins are not rows and never counted. It is now `countUnreadBelow` (`readState.ts`): the unread rows after `lastVisibleMessageId`, measured by `ChatArea.measureScroll` next to `isNearBottom`; an unmeasured position counts nothing. `readState.test.ts`.
+
+**The count is taken against the marks held when the reader LEFT THE LIVE END (2026-11-25).** The open window marks every arrival read (the read-mark effect has no scroll position), so against the live marks a catch-up into a scrolled-up thread counted 0 and the arrow carried no number (Mi 9T, `1.8.1-alpha.2`). `ChatArea` freezes the reader's counting marks (`pillBaseline`) on the first run away from the end and drops them on the way back or on another conversation; `pillCountingPoint` (`readState.ts`) takes the lower of baseline and live. Reading owed: [backlog](../../backlog.d/reading-owed-the-scroll-to-bottom-arrow-counts-a-catch-up.md).
 
 The position (`utils/chat/visibleRow.ts`) is the last row above the scroller's bottom MINUS its padding (the floating composer's height), found by binary search over the display-ordered `messageRows`; it is re-measured when the thread or conversation changes, not only on scroll, a vanished anchor resolves to the nearest surviving row (logged once), and nothing is counted while pinned to the live end.
 
