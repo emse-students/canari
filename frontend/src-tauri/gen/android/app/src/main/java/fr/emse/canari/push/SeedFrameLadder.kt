@@ -55,7 +55,7 @@ object SeedFrameLadder {
                 onAbsent()
                 initial
             }
-            GroupLocality.UNKNOWN -> {
+            GroupLocality.UNKNOWN, GroupLocality.BUSY -> {
                 log("seed frame refused group=$groupTag locality=$where -> nothing established, the message is held for its seed push")
                 initial
             }
