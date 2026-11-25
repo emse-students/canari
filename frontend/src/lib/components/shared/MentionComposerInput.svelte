@@ -524,12 +524,20 @@
     }
   }
 
-  /** @public - Force-clears the editor immediately without waiting for reactive prop propagation. */
+  /**
+   * @public - Force-clears the editor's DOM immediately without waiting for reactive prop propagation.
+   *
+   * It NEVER WRITES `value`. A write here made the field's text a local override of the parent's
+   * prop, and the next text the parent loaded was lost to it: after a send, "Modifier" put the
+   * banner up with an EMPTY field (owner, 2026-11-25, web; measured on dev - an edit begun after a
+   * send showed nothing, one begun after typing anything else, or after cancelling, showed the
+   * text). The parent clears its own text when it sends, so the prop is the one writer; the DOM
+   * follows it through the effect above.
+   */
   export function clearEditor() {
     if (!editorEl) return;
     pendingInternalSync = 0;
     editorHasContent = false;
-    value = '';
     lastRenderedValue = '';
     renderPlainTextToMentionEditor(editorEl, '');
     mention.handleEditorInput('', 0);
