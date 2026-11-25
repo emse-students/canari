@@ -54,7 +54,11 @@
     paneGeometryLine,
     type NewMessageResponse,
   } from '$lib/utils/chat/threadAnchor';
-  import { describeGlideFall, observeThreadGrowth } from '$lib/utils/chat/threadGrowthObserver';
+  import {
+    describeGlideFall,
+    observeThreadGrowth,
+    pinThreadToEnd,
+  } from '$lib/utils/chat/threadGrowthObserver';
   import { trackTouchHold, type TouchHold } from '$lib/utils/chat/touchHold';
   import { trackReaderInput, type ReaderInput } from '$lib/utils/chat/readerInput';
   import {
@@ -563,11 +567,16 @@
    * reply bubble - was answered as growth under a reader in history: the glide ended at the OLD
    * bottom and the new rows stayed below the fold. Any plain `scrollTop` write also aborts a glide
    * (the jump-to-message defect of 2026-10-12, chat.md). An instant scroll has nothing in flight.
+   *
+   * **THE LAYOUT'S END, NEVER THE GLIDE'S OVERFLOW** (iPhone 12, 2026-11-25): `pinThreadToEnd` takes
+   * a running glide off the rows before it writes and puts it back after, as the growth observer's own
+   * pin does - a plain write mid-glide went past the end and the engine's clamp read as a fall.
+   *
+   * @param writer who asked, for the glide's trace (`describeGlideFall`)
    */
-  function scrollToBottom() {
+  function scrollToBottom(writer = 'scrollToBottom') {
     if (!chatContainer) return;
-    chatContainer.scrollTo({ top: chatContainer.scrollHeight, behavior: 'auto' });
-    placedAt(chatContainer.scrollTop);
+    placedAt(pinThreadToEnd(chatContainer, writer));
   }
 
   /**
@@ -1761,12 +1770,19 @@
         // just arrived - so the message was, to the reader, simply not delivered.
         // A RESTORE IN FLIGHT IS NOT AN ENTRY TO PIN: a late merge or catch-up lands as `stay`, and the
         // row the reader is put back on is kept by the thread's row anchor.
+        //
+        // ONE WRITER FOR A READER AT THE END (iPhone 12, 2026-11-25): the growth observer follows the
+        // bottom for them in the mutation's own task, and starts the arrival's glide there. A second
+        // pin from here, a tick later, landed INSIDE that glide - so it is made only for a reader who
+        // was NOT at the end (their own message sent from history), whom the observer leaves on their
+        // row. The flag is the one `respondToNewMessage` read.
+        const readerAtEnd = isNearBottom;
         const response: NewMessageResponse = restoringEntry
           ? 'stay'
           : respondToNewMessage({
               entering,
               catchupActive,
-              isNearBottom,
+              isNearBottom: readerAtEnd,
               ownMessageAdded: ownMessageAppended(lastNewestMessageId, c.messages.at(-1)),
             });
         viewResponse = response;
@@ -1780,7 +1796,7 @@
           windowStart =
             response === 'repin-entry' ? Math.min(renderWindow.start, entryStart) : entryStart;
           if (response === 'repin-entry') tick().then(() => fillViewportThenPin());
-          else tick().then(() => scrollToBottom());
+          else if (!readerAtEnd) tick().then(() => scrollToBottom('new-message'));
         }
       }
 

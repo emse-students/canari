@@ -9,7 +9,24 @@ fires, and the pane later returns. Measured on the phone: image arrivals with Re
 6 of 6, Reduce Motion ON 0 of 2, a short text 0 of 3, a 12-line text 0 of 3. So the arrival glide (or a
 row animation) is necessary, and so is an image row.
 
-**Unproved hypothesis.** An image arrival gets a second `follow()` pass (the child `ResizeObserver`,
+**Cause found (1.8.2-alpha.3 trace, 2026-11-25): a second writer pinned inside the glide.** The
+arrival's `rows` pass pinned the layout end and started the glide; a tick later the new-message
+effect's own `scrollToBottom()` wrote `scrollTop = scrollHeight` with the transforms ON the rows,
+whose overflow counts `max(0, offset - padding-bottom)` (composer padding 86 px): an image row's
+travel of ~250-300 px overshot by ~160-210 px, the falls measured. The image's `box` pass took the
+transforms off, the engine clamped back to the layout end, and the pane read that clamp as a fall
+below the last placed value. Only a travel over ~206 px crosses the 120 px slack, hence intermittent
+and never with text or Reduce Motion. Hypotheses (a), (b) and (c) below are retired. **Fix**
+(`pinThreadToEnd`, one writer for a reader at the end, the write in the trace): see
+[chat](../frontend/modules/chat.md#the-cause-a-second-writer-pinned-inside-the-glide-2026-11-25).
+
+**Reading owed (iPhone 12, Reduce Motion OFF, the first alpha carrying the fix):** with a DM open and
+pinned, have an image sent to it three times and export the in-app log: no `left the bottom` line, no
+arrow flash. The entry closes on that reading.
+
+**The trace stays** (below), now with the pins made outside `follow()` merged in time order.
+
+**The hypotheses before the trace (retired).** An image arrival gets a second `follow()` pass (the child `ResizeObserver`,
 cause `box`, as the image takes its size) inside the running glide: `suspend` cancels the transforms,
 the pin writes or not, then `play(held.px, held.time)` replays. What lowers `scrollTop` is one of
 (a) iOS 27 WebKit's native scroll anchoring reacting to the transform cancel and re-creation (the code
@@ -33,8 +50,3 @@ moves it with a height that shrank; stable in-pass numbers followed by a scroll 
 are (b) or an engine move outside the passes (the async case), NOT "nothing found"; (c) a stale
 replay is only a visual offset of the rows and cannot be a `scrollTop` cause. The fall line carries no "now top/height/box": the scroll-move lines carry the top. See
 [chat](../frontend/modules/chat.md#the-trace-of-the-passes-inside-a-glide-2026-11-25).
-
-**Reading owed (iPhone 12, Reduce Motion OFF, the first alpha carrying the trace):** with a DM open and
-pinned, have an image sent to it three times and export the in-app log, then read the `glide pass` and `glide scroll move` lines next to each `left the bottom` (a fall with scroll moves after stable passes is the async case). The entry closes with the
-cause named from those lines and a fix pinned by a test, or with the glide's difference (Reduce Motion)
-explained.

@@ -7,6 +7,7 @@ import {
   GLIDE_TRACE_MAX_LINES,
   glideTravel,
   observeThreadGrowth,
+  pinThreadToEnd,
   takeThreadGlideOff,
 } from './threadGrowthObserver';
 
@@ -90,13 +91,13 @@ function drawnOffset(): number {
 
 const PADDING = 40;
 
-function makeThread(heights: number[], box: number) {
+function makeThread(heights: number[], box: number, padding = PADDING) {
   const scroller = document.createElement('div');
   const layout = { heights: [] as number[], box, scrollTop: 0 };
-  const content = () => layout.heights.reduce((s, h) => s + h, 0) + PADDING;
+  const content = () => layout.heights.reduce((s, h) => s + h, 0) + padding;
   const layoutReach = () => Math.max(0, content() - layout.box);
   // What the browser reports: the layout plus what a transformed row adds past the padding.
-  const scrollHeight = () => content() + Math.max(0, drawnOffset() - PADDING);
+  const scrollHeight = () => content() + Math.max(0, drawnOffset() - padding);
   Object.defineProperties(scroller, {
     scrollHeight: { get: scrollHeight },
     clientHeight: { get: () => layout.box },
@@ -484,7 +485,7 @@ describe('observeThreadGrowth - the trace of the passes inside a glide', () => {
     const lines = describeGlideFall(scroller) ?? [];
     expect(lines).toHaveLength(3);
     expect(lines[0]).toMatch(
-      /^the fall came inside a glide of 70px, 55ms in; 2 follow pass\(es\) and 0 scroll move\(s\)/
+      /^the fall came inside a glide of 70px, 55ms in; 2 follow pass\(es\), 0 write\(s\) outside follow and 0 scroll move\(s\)/
     );
     expect(lines[1]).toMatch(
       /^glide pass 1 \(rows, \+0ms\): top\/height\/box previous end none, suspended \d+\/\d+\/400, pinned \d+\/\d+\/400; held none;/
@@ -507,7 +508,7 @@ describe('observeThreadGrowth - the trace of the passes inside a glide', () => {
     scroller.scrollTop = layoutReach() - 180;
     scroller.dispatchEvent(new Event('scroll'));
     const lines = describeGlideFall(scroller) ?? [];
-    expect(lines[0]).toContain('1 follow pass(es) and 1 scroll move(s)');
+    expect(lines[0]).toContain('1 follow pass(es), 0 write(s) outside follow and 1 scroll move(s)');
     expect(lines[lines.length - 1]).toMatch(/^glide scroll move \+60ms: top \d+ \(-180\)$/);
     // The listener is armed for the glide only: once it ends a scroll records nothing.
     now = 400;
@@ -540,7 +541,7 @@ describe('observeThreadGrowth - the trace of the passes inside a glide', () => {
     addRow(70);
     await flush();
     const again = describeGlideFall(scroller) ?? [];
-    expect(again[0]).toContain('1 follow pass(es) and 0 scroll move(s)');
+    expect(again[0]).toContain('1 follow pass(es), 0 write(s) outside follow and 0 scroll move(s)');
     stop();
   });
 
@@ -596,5 +597,102 @@ describe('observeThreadGrowth - the trace of the passes inside a glide', () => {
     now = 300; // past its end with no finish delivered: nothing is drawn
     expect(glide.peek()).toBeNull();
     void addRow;
+  });
+});
+
+/**
+ * ONE WRITER AT THE END, AGAINST THE LAYOUT (iPhone 12, iOS 27, an image arriving at a pinned DM,
+ * chat.md, 2026-11-25). The composer band is the scroller's `padding-bottom` (86 px on the phone), so
+ * a row taller than it, gliding, inflates `scrollHeight` by `offset - padding`. The pane's own pin
+ * (`ChatArea.scrollToBottom`, a tick after the observer's pass) read that inflation and wrote past the
+ * end; the next pass's clamp then read as a fall. `pinThreadToEnd` is that pin, made as `follow()`
+ * makes its own.
+ */
+describe('pinThreadToEnd - the pane pins the layout end, never the glide overflow', () => {
+  const COMPOSER = 86;
+  const IMAGE = 300;
+  // A phone's pane: a 300 px row is a glide there (under half the pane).
+  const PANE = 700;
+
+  async function imageArriving() {
+    const t = makeThread(Array(30).fill(60), PANE, COMPOSER);
+    t.scroller.scrollTop = t.layoutReach();
+    const placed: number[] = [];
+    const ended = vi.fn();
+    const stop = observeThreadGrowth(t.scroller, atBottom, null, (top) => placed.push(top), ended);
+    t.addRow(IMAGE);
+    await flush();
+    return { ...t, placed, ended, stop };
+  }
+
+  it('an arrival plus the pane pin leaves scrollTop at the layout end, and nothing is placed past it', async () => {
+    const { scroller, layout, layoutReach, placed, stop } = await imageArriving();
+    expect(live().length).toBeGreaterThan(0);
+    expect(live().every((a) => a.px === IMAGE)).toBe(true);
+    // The fall's precondition, as on the phone: the glide inflates the overflow past the padding.
+    now = 5;
+    expect(scroller.scrollHeight - layout.box - layoutReach()).toBeCloseTo(
+      IMAGE * (1 - 5 / DURATION) - COMPOSER
+    );
+
+    // The new-message effect's pin, a tick after the observer's pass, inside the glide.
+    placed.push(pinThreadToEnd(scroller, 'new-message'));
+    expect(scroller.scrollTop).toBe(layoutReach());
+
+    // The image takes its size: the box pass finds the pane where it was put - no clamp, no fall.
+    now = 50;
+    fireResize();
+    expect(scroller.scrollTop).toBe(layoutReach());
+    expect(placed.length).toBeGreaterThan(1);
+    for (const top of placed) expect(top).toBeLessThanOrEqual(layoutReach());
+    stop();
+  });
+
+  it('a pin mid-glide replays the glide at the same time and distance', async () => {
+    const { scroller, layoutReach, ended, stop } = await imageArriving();
+    now = 55;
+    const before = live().length;
+    expect(pinThreadToEnd(scroller, 'new-message')).toBe(layoutReach());
+    expect(live()).toHaveLength(before);
+    expect(live().every((a) => a.px === IMAGE && a.currentTime === 55)).toBe(true);
+    await flush();
+    expect(ended).not.toHaveBeenCalled();
+    stop();
+  });
+
+  it('a pin whose replay is refused is the glide end, told once', async () => {
+    const { scroller, layoutReach, ended, stop } = await imageArriving();
+    document.documentElement.style.removeProperty('--motion-thread-glide');
+    const warn = vi.spyOn(Log, 'w').mockImplementation(() => {});
+    now = 30;
+    expect(pinThreadToEnd(scroller, 'new-message')).toBe(layoutReach());
+    warn.mockRestore();
+    await flush();
+    expect(ended).toHaveBeenCalledTimes(1);
+    expect(live()).toHaveLength(0);
+    stop();
+  });
+
+  it('the trace prints the pin between the passes it fell between, in time order', async () => {
+    const { scroller, layout, stop } = await imageArriving();
+    now = 20;
+    pinThreadToEnd(scroller, 'new-message');
+    now = 50;
+    layout.heights[layout.heights.length - 1] += 10;
+    fireResize();
+    const lines = describeGlideFall(scroller) ?? [];
+    expect(lines[0]).toContain('2 follow pass(es), 1 write(s) outside follow and 0 scroll move(s)');
+    expect(lines[1]).toMatch(/^glide pass 1 \(rows, \+0ms\)/);
+    expect(lines[2]).toMatch(
+      /^glide write by new-message \(\+20ms\): top\/height\/box \d+\/\d+\/700$/
+    );
+    expect(lines[3]).toMatch(/^glide pass 2 \(box, \+50ms\)/);
+    stop();
+  });
+
+  it('a thread no observer follows is written to its end and nothing else', () => {
+    const { scroller, layoutReach } = makeThread(Array(30).fill(60), PANE, COMPOSER);
+    expect(pinThreadToEnd(scroller, 'new-message')).toBe(layoutReach());
+    expect(animations).toHaveLength(0);
   });
 });

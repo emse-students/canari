@@ -680,6 +680,74 @@ describe('ChatArea at the end of a glide', () => {
     expect(load).toHaveBeenCalledTimes(1);
   });
 
+  /** Where every write of the pane's `scrollTop` (an assignment or a `scrollTo`) landed, from now on. */
+  function countWrites(scroller: HTMLElement): number[] {
+    const writes: number[] = [];
+    const scrollTop = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop')!;
+    Object.defineProperty(scroller, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop.get!.call(scroller),
+      set: (value: number) => {
+        scrollTop.set!.call(scroller, value);
+        writes.push(scrollTop.get!.call(scroller));
+      },
+    });
+    const scrollToOf = scroller.scrollTo.bind(scroller);
+    scroller.scrollTo = ((options: ScrollToOptions) => {
+      scrollToOf(options);
+      writes.push(scrollTop.get!.call(scroller));
+    }) as typeof scroller.scrollTo;
+    return writes;
+  }
+
+  /**
+   * ONE WRITER FOR A READER AT THE END (iPhone 12, 2026-11-25, chat.md): the growth observer pins the
+   * end and starts the glide in the mutation's task; the new-message effect's own pin a tick later
+   * landed inside that glide, read its overflow and wrote past the end. It no longer writes for them.
+   */
+  it('an arrival with the reader at the end is one write of the pane, and no fall', async () => {
+    const info = vi.spyOn(Log, 'i');
+    const area = mountArea('g1', ROWS);
+    await settleEntry();
+    const scroller = scrollerOf(area.target);
+    const writes = countWrites(scroller);
+
+    area.props.conversation = conversationOf(ROWS + 1);
+    flushSync();
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(100);
+    flushSync();
+    expect(finishes.length).toBeGreaterThan(0); // the observer's pass played the glide
+    expect(writes).toEqual([reach()]);
+    scroller.dispatchEvent(new Event('scroll'));
+    await vi.advanceTimersByTimeAsync(50);
+    flushSync();
+    expect(info.mock.calls.some(([, line]) => String(line).includes('left the bottom'))).toBe(
+      false
+    );
+    expect(arrowShown(area.target)).toBe(false);
+  });
+
+  it("the reader's own message sent from history still takes them to the end, with one pin", async () => {
+    const area = mountArea('g1', ROWS);
+    await settleEntry();
+    const scroller = scrollerOf(area.target);
+    await scrollTo(scroller, 200);
+    expect(arrowShown(area.target)).toBe(true);
+    const writes = countWrites(scroller);
+
+    const sent = conversationOf(ROWS + 1);
+    sent.messages[ROWS] = { ...sent.messages[ROWS], isOwn: true, status: 'pending' };
+    area.props.conversation = sent;
+    flushSync();
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(100);
+    flushSync();
+    // The observer keeps a reader in history on their row and writes nothing; the effect pins once.
+    expect(writes.filter((top) => top >= reach())).toHaveLength(1);
+    expect(scroller.scrollTop).toBe(reach());
+  });
+
   it('raises no day pill at the end of an arrival glide nobody scrolled through', async () => {
     const area = mountArea('g1', ROWS);
     await settleEntry();
