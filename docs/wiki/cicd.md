@@ -1310,20 +1310,32 @@ classpath was ever resolved there, and nothing in the cache named the jars only 
 
 The fix is in what CI saves, not in a retry:
 
-- `android-app-compile.sh` also runs the RELEASE variant's dependency-resolving tasks
-  (`checkUniversalReleaseAarMetadata`, `checkUniversalReleaseDuplicateClasses`,
-  `processUniversalReleaseMainManifest`, `mergeUniversalReleaseNativeLibs`, with the three
-  `rustBuild*Release` tasks excluded: they build native code the gate does not need). That is what
-  fills `~/.gradle` with the release classpath. It then runs them again with `--offline`, which
-  reaches no network and fails if resolving them needs anything the cache does not hold (a task up to
-  date still resolves its inputs). Its self-test covers a failing offline pass and a task that did not run.
-  (A first attempt resolved configurations directly from an init script; AGP's flavored configurations
-  do not resolve outside AGP's own tasks, so the real tasks are the honest probe.)
+- `android-app-compile.sh` also runs the REAL release chain minus rust: `checkUniversalReleaseAarMetadata`,
+  `checkUniversalReleaseDuplicateClasses`, `processUniversalReleaseMainManifest`,
+  `mergeUniversalReleaseNativeLibs` (the android-jni transform that failed), `minifyUniversalReleaseWithR8`,
+  `assembleUniversalRelease` and `bundleUniversalRelease` (R8, the resource shrinker, lint-vital,
+  packaging, bundletool, signing). The three `rustBuild*Release` tasks are excluded (native code this
+  gate does not need). Two things are made in the job and never committed: a STUB `libstub.so` under
+  `jniLibs` (without an input, `mergeUniversalReleaseNativeLibs` is NO-SOURCE and resolves nothing: the
+  first version of this gate ran it that way and proved little), and a THROWAWAY keystore plus
+  `keystore.properties` from `keytool` (the release signing config needs a store; no secret is used).
+  Both are removed on exit, and a real `keystore.properties` or stub is never overwritten.
+- **It runs twice**: online (fills `~/.gradle`; every one of those tasks must EXECUTE, so NO-SOURCE,
+  SKIPPED and UP-TO-DATE are refused) and `--offline` (reaches no network, fails if the chain needs
+  anything the cache does not hold, and a `> Could not` line fails it; a task up to date still
+  resolves its inputs). It then asserts an `error_prone_annotations` jar (any version) is in
+  `modules-2/files-2.1`. The self-test covers each refusal. (An earlier attempt resolved configurations
+  from an init script; AGP's flavored configurations do not resolve outside AGP's own tasks.)
 - **The cache key moves**: `android-app-compile.sh` is now part of the key's `hashFiles` (`ci.yml` and
   `android.yml` identically). Without that the old key would have kept winning: an exact hit is never
   re-saved, so the incomplete entry would have lived on. Any later change to the script, or to a build
   file, re-keys it the same way.
-- `android.yml` only takes the new key: still restore-only, still online. A release now finds the release
+- **The fix is inert until `main` saves the new key.** A pull request saves under its own ref, which a
+  release cannot read; only the post-merge CI run on `main` (about 20 minutes) writes the entry a
+  release restores. A release cut in that window still restores the old, incomplete one. Each entry is
+  about 2 GB against the repository's 10 GB cache limit, and every pull request that edits the script
+  saves one under its own ref, so many of them evict each other (GitHub evicts the oldest).
+- `android.yml` only takes the new key: still restore-only, still online. A release should now find the release
   classpath in the cache and Gradle does not ask the network for what it holds.
 
 **What the offline pass does not prove**, said plainly: it runs in the job that just filled the cache,

@@ -27,6 +27,7 @@ make_project() {
   cat > "$work/android/gradlew" <<GRADLEW
 #!/usr/bin/env bash
 case " \$* " in *" --offline "*) [ -n "\${FAKE_OFFLINE_FAIL:-}" ] && { echo "Could not resolve (offline)"; exit 1; } ;; esac
+case " \$* " in *" :app:bundleUniversalRelease "*) [ -n "\${FAKE_NO_JAR:-}" ] || { mkdir -p "\$GRADLE_USER_HOME/caches/modules-2/files-2.1/com.google.errorprone/error_prone_annotations/2.0/h"; : > "\$GRADLE_USER_HOME/caches/modules-2/files-2.1/com.google.errorprone/error_prone_annotations/2.0/h/e.jar"; } ;; esac
 case " \$* " in *" :app:help "*) echo "Type"; echo "     \${FAKE_TASKTYPE:-BuildTask} (\${FAKE_TASKTYPE:-BuildTask})"; exit 0 ;; esac
 for t in "\$@"; do
   case "\$t" in :app:*) ;; *) continue ;; esac
@@ -39,6 +40,8 @@ done
 exit 0
 GRADLEW
   chmod +x "$work/android/gradlew"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$work/keytool"; chmod +x "$work/keytool"
+  rm -rf "$work/gh"
   cat > "$work/cargo" <<CARGO
 #!/usr/bin/env bash
 echo "// generated" > "$work/android/tauri.settings.gradle"
@@ -50,7 +53,7 @@ CARGO
 
 run_script() {
   ANDROID_GRADLE_DIR="$work/android" CARGO="$work/cargo" ANDROID_HOME="$work/sdk" \
-    ANDROID_NDK_HOME="$work/ndk" bash "$script" > "$work/out" 2>&1
+    ANDROID_NDK_HOME="$work/ndk" GRADLE_USER_HOME="$work/gh" KEYTOOL="$work/keytool" bash "$script" > "$work/out" 2>&1
 }
 
 expect() { # <name> <wanted exit: 0|nonzero> <text the output must carry>
@@ -90,14 +93,37 @@ make_project
 FAKE_TASKTYPE=DefaultTask expect "an empty DefaultTask" nonzero "is not a BuildTask"
 unset FAKE_TASKTYPE
 
-echo "the release variant is resolved online and then offline:"
+echo "the release chain is run online and then offline:"
 make_project
-expect "both passes ran" 0 "OK the release variant resolved (offline)"
+expect "both passes ran" 0 "OK the release chain ran (offline)"
+expect "the error_prone jar is asked for" 0 "error_prone_annotations is in the Gradle cache"
+if [ ! -e "$work/android/keystore.properties" ] && [ ! -e "$work/android/app/src/main/jniLibs/arm64-v8a/libstub.so" ]; then
+  echo "  ok   the throwaway keystore properties and the stub .so are removed on exit"
+else
+  echo "  FAIL the stubs were left behind"; failures=$((failures + 1))
+fi
 make_project
 FAKE_OFFLINE_FAIL=1 expect "a dependency missing from the cache fails the offline pass" nonzero "failed (offline)"
 unset FAKE_OFFLINE_FAIL
-make_project ":app:checkUniversalReleaseAarMetadata" ""
-expect "a release task that did not run is refused" nonzero "checkUniversalReleaseAarMetadata did not run"
+make_project
+FAKE_NO_JAR=1 expect "a release that downloaded no error_prone jar is refused" nonzero "error_prone_annotations is not in"
+unset FAKE_NO_JAR
+for t in :app:mergeUniversalReleaseNativeLibs :app:minifyUniversalReleaseWithR8 :app:bundleUniversalRelease; do
+  make_project "$t" "NO-SOURCE"
+  expect "$t NO-SOURCE on the online pass" nonzero "$t did not execute (online)"
+  make_project "$t" "SKIPPED"
+  expect "$t SKIPPED on the online pass" nonzero "$t did not execute (online)"
+  make_project "$t" "UP-TO-DATE"
+  expect "$t UP-TO-DATE on the online pass" nonzero "$t did not execute (online)"
+done
+make_project
+echo 'storeFile=real.jks' > "$work/android/keystore.properties"
+expect "a real keystore.properties is never overwritten" nonzero "will not overwrite"
+if [ "$(cat "$work/android/keystore.properties")" = 'storeFile=real.jks' ]; then
+  echo "  ok   and it is left in place"
+else
+  echo "  FAIL the real keystore.properties was removed or changed"; failures=$((failures + 1))
+fi
 
 echo "a real google-services.json is never overwritten:"
 make_project
