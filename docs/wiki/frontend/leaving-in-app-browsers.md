@@ -104,8 +104,10 @@ of them as let through. Threads' token is its code name, as reported; unmeasured
 
 A **top-level page request**: `GET` or `HEAD`, and `Sec-Fetch-Dest: document` when the browser
 sends it, else an `Accept` asking for `text/html`. Never a fetch, an image, a script, a frame, a
-`POST`, `/api/`, `/_app/` or `/.well-known/` (the association files must keep answering). A blocked
-page means its subresources are never asked for.
+`POST`, `/api/`, `/_app/`, `/.well-known/` (the association files must keep answering) or
+`/outpost.goauthentik.io/` (authentik's forward-auth answers its proxy with a STATUS, and a `200` from
+the interstitial there would read as "authenticated"). A blocked page means its subresources are
+never asked for.
 
 ### The interstitial
 
@@ -124,6 +126,8 @@ and one inline script, `prefers-color-scheme`, real links and buttons, a status 
   Safari" / "Ouvrir dans le navigateur"), the app button when the server wrote one into the
   `leave-iab-app` meta (Canari, iOS, a claimed page), the manual way out ("••• puis Ouvrir dans
   Safari", "⋮ puis Ouvrir dans Chrome"), the link in full, and "Copier le lien". No link into the site.
+  Without JavaScript the link field stays empty, so a `<noscript>` line says to copy the address from
+  the address bar (French shown, English in its hidden block).
 - **One automatic attempt, no timer**: on load the script navigates once to the exit URL (Android:
   the intent; iOS 17+: `x-safari-`). If the in-app browser does not let it leave, the page with its
   buttons is the end state. Its `exitFor` mirrors `detect.ts`'s `exitHref`, and the source's test runs
@@ -133,11 +137,20 @@ and one inline script, `prefers-color-scheme`, real links and buttons, a status 
 
 - **`hooks.server.ts`** calls `canariLeaveInAppBrowser` (`lib/server/leaveInAppBrowser.ts`) first,
   before any page head is built. The frontend nginx keeps a `no-store` the SSR declared (the
-  `$ssr_cache_control_declared` map), so the interstitial is never stamped `s-maxage=60`.
-- **`@app_shell`** (nginx's shell while `frontend-ssr` is down) is the one page the server does not
-  write: the root layout draws `LeaveInAppBrowser.svelte` in place of the whole app when
-  `detectMetaInAppBrowser(navigator.userAgent)` answers, and its `onMount` starts nothing else. Same
-  doors, same single attempt; its strings are Paraglide's (`leave_iab_*`).
+  `$ssr_cache_control_declared` map), so the interstitial is never stamped `s-maxage=60`; in `@ssr` it
+  hides the interstitial's own `Referrer-Policy` and `nosniff` and writes its own, so each header is
+  sent once.
+- **The client guard is LOAD-BEARING** (`lib/mobile/inAppBrowserGuard.ts`): it is what stands
+  wherever the server's answer was skipped - `@app_shell` (nginx's shell while `frontend-ssr` is
+  down), and dev's Cloudflare cache until the bypass rule below exists (a page cached for a real
+  browser, or filled by a link-preview fetch, served to an in-app browser). Reaching it accuses that
+  path, so it logs at **warn**. The root `load` asks it FIRST and returns - no silent refresh, no
+  redirect to login - so the address it captures is the one the visitor was sent; the root layout
+  then draws `LeaveInAppBrowser.svelte` in place of the whole app, and every effect that starts
+  something (push, the publish queue, birthdays, the form draft resend, the admin counts, the DND
+  ask, the route-code preload) is off while it holds; `onMount` returns after `markRouterReady`.
+  Same doors, same single attempt; its strings are Paraglide's (`leave_iab_*`). Tests:
+  `inAppBrowserGuard.test.ts`, `routes/layout.inAppBrowser.test.ts`.
 - `frontend/src/lib/leaveInAppBrowser/` is the vendored copy, held to the source by
   `declared-duplicates`; its exports are `ignoreIssues` in `knip.json` ([dead-code](../dead-code.md)).
 - The former banner (`OpenInAppBanner`, `detectInAppBrowser`, `openInAppOffer`) is deleted.
@@ -161,15 +174,29 @@ and one inline script, `prefers-color-scheme`, real links and buttons, a status 
 
 **Rehearsed** by `infrastructure/authentik/test-blueprints.sh`, which boots the real compose file
 under a throwaway project and, after the blueprints, drives every fixture through the real gate in
-front of the real authentik, checks the interstitial's headers, that a fetch, an API path and the
-health path pass, and that a recreated `server` is reached with no gate restart; then `down -v`.
+front of the real authentik, checks the interstitial's headers, that a fetch, an API path and an
+outpost path pass (a Messenger user agent asking `/outpost.goauthentik.io/` as a page included), and
+that a recreated `server` is reached with no gate restart; then `down -v`.
+
+**Its liveness is watched**: `deploy-stack.sh` probes `/-/health/live/` through the FRONT DOOR -
+`AUTHENTIK_PUBLISH`, the address the host's nginx proxies to, which is the gate once it stands and
+authentik's server before - in every `health` and release check and in the morning
+`miconnect-preflight` (which a stable's gate 8 reads). One probe, whichever stands there, so it needs
+no change on the day the gate is put in place.
 
 #### MiConnect in production - the hand step
 
 **The release does not deploy this service**: it moves only the authentik image tag, and the host's
 compose file is MiConnect's own, kept by hand ([authentik](../infrastructure/authentik.md)). Our
-containers are ours to change (owner, 2026-11-19); the host's nginx is not touched. The step, in
-one window, by the lead:
+containers are ours to change (owner, 2026-11-19); the host's nginx is not touched.
+
+**PRECONDITION: every sibling site ships its own gate first** (section 6). A sibling page opened in
+an in-app browser starts its OIDC sign-in THERE (state and PKCE cookies in the in-app browser's
+jar); a gated authorize would send the visitor to Safari, whose callback carries no such cookie, and
+the sign-in fails. Once each sibling refuses the in-app browser itself, no sign-in starts there.
+Canari gates itself in this same pull request.
+
+The step, in one window, by the lead:
 
 1. Copy `infrastructure/authentik/leave-in-app-browser/` beside the stack's compose file on the host.
 2. Add the `gate` service and the `server` publish change of this repository's `compose.yml` to the
@@ -177,10 +204,18 @@ one window, by the lead:
    `AUTHENTIK_DIRECT_PUBLISH`.
 3. Read `AUTHENTIK_LISTEN__TRUSTED_PROXY_CIDRS` in the stack's `.env`: absent (authentik's default
    includes the Docker ranges) or covering the compose network.
-4. `docker compose up -d gate server` (the server is recreated to drop the old publish, the gate
-   takes it), then `deploy-stack.sh health --project <stack>`, a sign-in end to end in a browser,
-   and the page from a Messenger user agent (`curl -A` a fixture) answering the interstitial.
-5. Rollback: the previous compose file and `docker compose up -d server`, `docker compose rm -sf gate`.
+4. `docker compose up -d --no-deps server` (the server is recreated and releases `AUTHENTIK_PUBLISH`),
+   THEN `docker compose up -d gate` (the gate takes it). The gap between the two is the only window
+   in which MiConnect does not answer.
+5. Verify: `deploy-stack.sh health --project <stack>` (its front-door probe asks `/-/health/live/`
+   through `AUTHENTIK_PUBLISH` with an ordinary user agent, and must answer `200`); a sign-in end to
+   end in a browser; the page asked with a Messenger user agent (`curl -A` a fixture,
+   `-H 'Accept: text/html'`) answering the interstitial; `/outpost.goauthentik.io/` asked the same
+   way NOT answering it.
+6. Rollback, in this order: `docker compose rm -sf gate` while the NEW compose file is still in place
+   (the old file no longer names `gate`, so compose could not remove it), then put the previous
+   compose file back, then `docker compose up -d --no-deps server` (it takes `AUTHENTIK_PUBLISH`
+   again), then `deploy-stack.sh health --project <stack>`.
 
 ### Dev's Cloudflare cache - the owner's one-off rule
 
@@ -211,7 +246,9 @@ conversation or a post:
    default browser; never back in the in-app browser;
 5. iOS on a Canari post: "Ouvrir dans l'application" opens the app on that post;
 6. "Copier le lien" puts the link on the clipboard;
-7. the link preview card in the conversation still shows the page's title and image.
+7. the link preview card in the conversation still shows the page's title and image;
+8. after an automatic exit the in-app browser refused, the interstitial is still on screen, whole
+   (nothing blank, nothing half-loaded behind it).
 
 Each answer goes into this page, and an exit Meta refuses (2, 3) becomes the manual instruction's
 job, not a new mechanism.
@@ -233,7 +270,19 @@ job, not a new mechanism.
 
 ## 6. The siblings - Sky, MiGallery, Portail-etu, Le Cercle
 
-Not in Canari's pull request. Each, one pull request in its own repository, through its own release:
+Not in Canari's pull request. Each, one pull request in its own repository, through its own release.
+
+**THE ROLLOUT ORDER IS DECIDED: the siblings first, MiConnect's gate LAST** (decision item 11). A
+gated authorize in front of a site that still runs inside the in-app browser breaks that site's
+sign-in there (the precondition of [the hand step](#miconnect-in-production---the-hand-step)).
+
+**The Reseau console (#4102), an external relying party, is in the same situation and is ACCEPTED,
+not exempted**: it is an operators' supervision tool opened from a desktop browser, never a link
+shared in a Meta app, and an exemption could not be scoped to it anyway - its authorize URL is
+MiConnect's own, the same path every relying party uses. If an operator ever opens it in an in-app
+browser, the interstitial's way out is the answer.
+
+Each sibling pull request:
 
 1. vendor `detect.ts`, `gate.ts` and `interstitial.html` byte-identical, at the site's own path;
 2. call `leaveInAppBrowserResponse` first in `src/hooks.server.ts` (`sequence` where a hook exists),

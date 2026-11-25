@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { ExternalLink, Smartphone, Copy } from '@lucide/svelte';
-  import { exitHref, type MetaInAppBrowser } from '$lib/leaveInAppBrowser/detect';
+  import { exitHref } from '$lib/leaveInAppBrowser/detect';
+  import type { InAppBrowserGuard } from '$lib/mobile/inAppBrowserGuard';
   import { iosAppOpenHref } from '$lib/mobile/openInApp';
   import { Log } from '$lib/utils/Log';
   import Button from '$lib/components/ui/Button.svelte';
@@ -9,27 +10,24 @@
   import { m } from '$lib/paraglide/messages';
 
   /**
-   * THE CLIENT HALF OF THE IN-APP BROWSER GATE, drawn in place of the whole app (owner decision of
-   * 2026-11-25). Every page request from Messenger, Facebook, Instagram or Threads is answered by the
-   * server with the shared interstitial (`$lib/server/leaveInAppBrowser`); this exists for the one
-   * path the server does not write - `@app_shell`, the shell nginx serves while frontend-ssr is down
-   * - so the app never runs there either. Same doors as the interstitial (`exitHref`), same single
-   * attempt on mount with no timer, same buttons; its strings are Paraglide's, as everywhere in the
-   * app. docs/wiki/frontend/leaving-in-app-browsers.md.
+   * THE WAY OUT, drawn in place of the whole app when `inAppBrowserGuard` holds (owner decision of
+   * 2026-11-25; why that guard is load-bearing is in its module). Same doors as the server's
+   * interstitial (`exitHref`), the same single attempt on mount with no timer, the same buttons; its
+   * strings are Paraglide's, as everywhere in the app. The address is the guard's capture, taken
+   * before anything could move the page. docs/wiki/frontend/leaving-in-app-browsers.md.
    */
-  let { browser }: { browser: MetaInAppBrowser } = $props();
+  let { guard }: { guard: InAppBrowserGuard } = $props();
 
-  const href = window.location.href;
+  const browser = $derived(guard.browser);
+  const href = $derived(guard.href);
   const exit = $derived(exitHref(browser, href));
   const appHref = $derived(browser.os === 'ios' ? iosAppOpenHref(new URL(href)) : null);
   let copy = $state<'idle' | 'copied' | 'failed'>('idle');
   const LINK_FIELD_ID = 'leave-iab-link';
 
   onMount(() => {
-    Log.d(
-      'leaveInAppBrowser',
-      `in-app browser on the app shell: app=${browser.app} os=${browser.os} ios=${browser.iosMajor ?? '-'} exit=${exit ? 'attempted' : 'none'}`
-    );
+    // ONE ATTEMPT, NO TIMER: if the in-app browser refuses, this screen is the end state. The guard
+    // already logged the visit at warn.
     if (exit) window.location.href = exit;
   });
 
@@ -51,7 +49,7 @@
   aria-labelledby="leave-iab-title"
 >
   <section class="bg-cn-card border-cn-border w-full max-w-md rounded-2xl border p-6">
-    <p class="text-text-muted mb-2 text-sm break-all">{window.location.host}</p>
+    <p class="text-text-muted mb-2 text-sm break-all">{new URL(href).host}</p>
     <h1 id="leave-iab-title" class="mb-3 text-xl font-bold">{m.leave_iab_title()}</h1>
     <p class="mb-4">{m.leave_iab_text()}</p>
     {#if exit}

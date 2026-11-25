@@ -631,16 +631,18 @@ headers="$(curl -sS --max-time 20 -o /dev/null -D - -A "$messenger" -H 'Sec-Fetc
 for expected in 'HTTP/1.1 200' 'Cache-Control: no-store' 'Vary: User-Agent' 'X-Robots-Tag: noindex, nofollow' "Content-Security-Policy: default-src 'none'; script-src 'sha256-"; do
   grep -qF "$expected" <<<"$headers" || { echo "::error::the interstitial lacks '$expected'"; printf '%s\n' "$headers" >&2; exit 1; }
 done
-# A fetch and an API path from the same in-app browser reach authentik. (A health path asked AS a page
-# is a page: the deploy's probes reach authentik's own port, never through the gate.)
-for probe in "-H Sec-Fetch-Dest:empty $gate/if/flow/default-authentication-flow/" "$gate/api/v3/root/config/"; do
+# A fetch, an API path and an OUTPOST path from the same in-app browser reach authentik - the outpost
+# asked AS a page included: a forward-auth check reads the status, and a 200 from the interstitial there
+# would read as "authenticated". (A health path asked as a page IS a page: the deploy's front-door probe
+# asks it with an ordinary user agent.)
+for probe in "-H Sec-Fetch-Dest:empty $gate/if/flow/default-authentication-flow/" "$gate/api/v3/root/config/" "$gate/outpost.goauthentik.io/auth/nginx"; do
   # shellcheck disable=SC2086 # the probe is a word list on purpose
   probe_body="$(curl -sS --max-time 20 -A "$messenger" -H "Accept: $page_accept" $probe)"
   if grep -qF "$marker" <<<"$probe_body"; then
     echo "::error::the gate answered a request that is not a page: $probe"; exit 1
   fi
 done
-echo "the gate sent $gated in-app browser(s) away and let every other client, fetch and API call through"
+echo "the gate sent $gated in-app browser(s) away and let every other client, fetch, API and outpost call through"
 docker compose -p "$project" --project-directory "$work" -f "$work/compose.yml" up -d --no-deps --force-recreate --wait server >/dev/null
 status="$(curl -sS --max-time 20 -o /dev/null -w '%{http_code}' "$gate/-/health/live/")"
 [ "$status" = 200 ] || { echo "::error::after recreating server, the gate answers $status on /-/health/live/ (stale upstream address?)"; exit 1; }

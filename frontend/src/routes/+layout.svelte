@@ -78,7 +78,7 @@
   import { startFormDraftResend, stopFormDraftResend } from '$lib/forms/draftResend';
   import ConnectionAnnouncer from '$lib/components/shared/ConnectionAnnouncer.svelte';
   import LeaveInAppBrowser from '$lib/components/shared/LeaveInAppBrowser.svelte';
-  import { detectMetaInAppBrowser } from '$lib/leaveInAppBrowser/detect';
+  import { inAppBrowserGuard } from '$lib/mobile/inAppBrowserGuard';
   import AlumniLinkBanner from '$lib/components/shared/AlumniLinkBanner.svelte';
   import { getKeyboardViewport, initKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
   import {
@@ -126,11 +126,13 @@
   // No app chrome on a page a visitor without an account reads: login, the legal pages, and a
   // public form's guest page (`/f/`), whose sidebar and tabs would all lead to a login screen.
   // A META IN-APP BROWSER GETS NOTHING OF THE APP (owner decision of 2026-11-25). The server answers
-  // its page requests with the shared interstitial; this is the same refusal for the one shell the
-  // server does not write (`@app_shell`, frontend-ssr down). The app's own WebView carries no Meta
-  // token, so it never matches. docs/wiki/frontend/leaving-in-app-browsers.md.
-  const metaInAppBrowser =
-    typeof navigator === 'undefined' ? null : detectMetaInAppBrowser(navigator.userAgent);
+  // its page requests with the shared interstitial; this guard is the same refusal wherever that
+  // answer was skipped - `@app_shell` (frontend-ssr down) AND dev's Cloudflare cache until its bypass
+  // rule exists - so it is load-bearing (`$lib/mobile/inAppBrowserGuard`). Captured by the root load
+  // first. While it holds, every effect below that starts something (a session, push, the publish
+  // queue, birthdays, the draft resend, the admin counts) stays off: the app's own WebView carries no
+  // Meta token, so it never matches. docs/wiki/frontend/leaving-in-app-browsers.md.
+  const inAppBrowser = inAppBrowserGuard();
 
   const isLoginPage = $derived(
     pathname === '/login' || pathname.startsWith('/legal') || pathname.startsWith('/f/')
@@ -197,7 +199,7 @@
     // The router exists from here: inputs consumed once (the iOS notification tap) wait for this.
     markRouterReady();
     // Nothing else starts under the in-app browser screen: no queue, no listener, no session.
-    if (metaInAppBrowser) return;
+    if (inAppBrowser) return;
     // A click goes to the component the press began on, never to what a layout change put under it.
     const disposePressedClickGuard = installPressedClickGuard();
     // A GIF committed by the soft keyboard goes to the focused composer, or the member is told it
@@ -316,7 +318,7 @@
   // Once the user is IN - logged in and past the PIN - never on the login screen, once per page load.
   let dndAskDone = false;
   $effect(() => {
-    if (dndAskDone || !isAndroidTauriRuntime() || !globalSession.isLoggedIn) return;
+    if (inAppBrowser || dndAskDone || !isAndroidTauriRuntime() || !globalSession.isLoggedIn) return;
     dndAskDone = true;
     askCallChannelDndIfOwed(window, (message, action, onClose) =>
       showToast(message, 'warning', DND_REGRANT_TOAST_MS, action, onClose)
@@ -329,7 +331,9 @@
   // membership probe retried after a failure) starts following and a lost one stops it; a member is
   // asked nothing. The membership probe is warmed once per account so the BDE tiers get published.
   const adminCountsAccount = $derived(
-    globalSession.isLoggedIn && globalSession.authToken ? globalSession.userId || null : null
+    !inAppBrowser && globalSession.isLoggedIn && globalSession.authToken
+      ? globalSession.userId || null
+      : null
   );
   const followsAdminCounts = $derived(
     !!adminCountsAccount &&
@@ -346,7 +350,12 @@
   // ── Push notification init ───────────────────────────────────────────────────
   $effect(() => {
     // Wait until the session is fully established (logged in + user info + token present).
-    if (globalSession.isLoggedIn && globalSession.userId && globalSession.authToken) {
+    if (
+      !inAppBrowser &&
+      globalSession.isLoggedIn &&
+      globalSession.userId &&
+      globalSession.authToken
+    ) {
       // Small delay lets the Android Activity bind to the UI before the native permission prompt.
       const timer = setTimeout(() => {
         startPushService(
@@ -368,7 +377,7 @@
   // Started once the session is up (its requests need the token), stopped at sign-out; what it holds
   // stays on the device, so the account's next sign-in resumes it (`posts/publishQueue`).
   $effect(() => {
-    const userId = globalSession.isLoggedIn ? globalSession.userId : null;
+    const userId = !inAppBrowser && globalSession.isLoggedIn ? globalSession.userId : null;
     if (userId) startPublishQueue(userId);
     else stopPublishQueue();
   });
@@ -376,14 +385,14 @@
   // -- Today's birthdays: the ring every avatar draws (docs/wiki/birthdays.md) -----------------
   // Asked once the session is up and on every return to the foreground; forgotten at sign-out.
   $effect(() => {
-    const userId = globalSession.isLoggedIn ? globalSession.userId : null;
+    const userId = !inAppBrowser && globalSession.isLoggedIn ? globalSession.userId : null;
     if (userId) return followBirthdaysToday(userId);
   });
 
   // -- The forms' device copies: edits a closed editor left unsent reach the server -------------
   // Once the session is up AND the estate says it stores revisions; again at each `online`.
   $effect(() => {
-    const userId = globalSession.isLoggedIn ? globalSession.userId : null;
+    const userId = !inAppBrowser && globalSession.isLoggedIn ? globalSession.userId : null;
     if (userId && serverFormDrafts() === true) startFormDraftResend(userId);
     else stopFormDraftResend();
   });
@@ -484,7 +493,7 @@
   // swiping fast"). Code only: data is a network call on some tabs (`/posts` lists the feed) and
   // SvelteKit caches one preload, so two neighbours would evict each other - data stays on the lock.
   $effect(() => {
-    if (!swipeNavArmed) return;
+    if (inAppBrowser || !swipeNavArmed) return;
     for (const direction of ['next', 'prev'] as const) {
       const href = swipeNavTargetHref(pathname, direction);
       if (href) {
@@ -814,8 +823,8 @@
 
 <SeoHead />
 
-{#if metaInAppBrowser}
-  <LeaveInAppBrowser browser={metaInAppBrowser} />
+{#if inAppBrowser}
+  <LeaveInAppBrowser guard={inAppBrowser} />
 {:else}
   <a href="#main-content" class="skip-link">{m.layout_skip_to_content()}</a>
 

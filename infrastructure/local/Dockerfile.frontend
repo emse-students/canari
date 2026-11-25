@@ -650,6 +650,11 @@ server {\n\
     # default, and the sitemap's own public max-age passes through the first map unchanged.\n\
     proxy_hide_header Cache-Control;\n\
     add_header Cache-Control $ssr_cache_control always;\n\
+    # ONE DECLARATION OF EACH: the in-app browser interstitial (leaving-in-app-browsers.md) is the one\n\
+    # SSR answer carrying its own Referrer-Policy and nosniff (the shared gate writes them for sites\n\
+    # with no nginx of their own); here nginx writes both, so the upstream copies are hidden.\n\
+    proxy_hide_header Referrer-Policy;\n\
+    proxy_hide_header X-Content-Type-Options;\n\
     add_header Referrer-Policy $capability_referrer_policy always;\n\
     # THE CONTENT-SECURITY-POLICY OF A PAGE IS WRITTEN BY SVELTEKIT (kit.csp, hash mode), passed from the\n\
     # upstream with the hash of each inline script; csp.conf here would be intersected with it and\n\

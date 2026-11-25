@@ -131,7 +131,12 @@ describe('the gate', () => {
   });
 
   it('never an API call, an asset, an association file, a fetch, a frame or a POST', () => {
-    for (const path of ['/api/users/me', '/_app/immutable/x.js', '/.well-known/assetlinks.json']) {
+    for (const path of [
+      '/api/users/me',
+      '/_app/immutable/x.js',
+      '/.well-known/assetlinks.json',
+      '/outpost.goauthentik.io/auth/nginx',
+    ]) {
       expect(gatedInAppBrowser(request(messenger), path)).toBeNull();
     }
     for (const dest of ['empty', 'image', 'script', 'style', 'iframe', 'manifest']) {
@@ -223,6 +228,13 @@ describe('the interstitial', () => {
     expect(html).toContain('Copier le lien');
     expect(html).toContain('Copy the link');
   });
+
+  it('tells a reader without JavaScript where the address is, in both languages', () => {
+    const noscripts = [...html.matchAll(/<noscript\s*>([\s\S]*?)<\/noscript/g)].map((m) => m[1]);
+    expect(noscripts).toHaveLength(2);
+    expect(noscripts[0]).toContain("barre d'adresse");
+    expect(noscripts[1]).toContain('address bar');
+  });
 });
 
 describe('the nginx gate', () => {
@@ -242,6 +254,7 @@ describe('the nginx gate', () => {
     expect(conf).toContain('"~^/api/" 1;');
     expect(conf).toContain('"~^/_app/" 1;');
     expect(conf).toContain('"~^/\\.well-known/" 1;');
+    expect(conf).toContain('"~^/outpost\\.goauthentik\\.io/" 1;');
     expect(conf).toContain('proxy_pass http://$leave_iab_upstream;');
     expect(conf).toContain('resolver 127.0.0.11');
   });

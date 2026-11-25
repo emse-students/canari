@@ -11,10 +11,17 @@ import { detectMetaInAppBrowser, type MetaInAppBrowser } from './detect';
 
 /**
  * Paths never answered with the interstitial, whatever asks for them: the APIs, the build's
- * assets, and the association files (Apple's and Google's fetchers must always read those). Only a
- * top-level document is ever gated anyway (`isTopLevelDocument`); these are the belt to that.
+ * assets, the association files (Apple's and Google's fetchers must always read those), and
+ * authentik's outposts - a forward-auth check answers its proxy with a status, and a 200 from the
+ * interstitial there would read as "authenticated". Only a top-level document is ever gated anyway
+ * (`isTopLevelDocument`); these are the belt to that.
  */
-export const GATE_EXEMPT_PREFIXES: readonly string[] = ['/api/', '/_app/', '/.well-known/'];
+export const GATE_EXEMPT_PREFIXES: readonly string[] = [
+  '/api/',
+  '/_app/',
+  '/.well-known/',
+  '/outpost.goauthentik.io/',
+];
 
 /** The marker the interstitial carries for the app's own link, filled per request or left empty. */
 export const APP_LINK_META = '<meta name="leave-iab-app" content="" />';
