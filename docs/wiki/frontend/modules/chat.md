@@ -3904,7 +3904,7 @@ conversation, ~0.1-0.3 s by the per-operation cost above), so this catch-up goes
 ~5 s. **What remains is per frame and not batched here**: a reaction stores itself and a peer's read
 mark saves the conversation row before its handler returns (~4.2 s of this drain); batching them is
 the next step ([backlog](../../backlog.d/per-frame-store-writes-of-a-catch-up-batched.md)); the
-reading on the Mi 9T is [owed](../../backlog.d/reading-owed-a-catch-up-lands-in-one-render.md).
+reading on the Mi 9T PASSED on `1.8.1-alpha.2` (2026-11-25: 136 frames drained in 2245 ms with the pane at the end; scrolled up, 67 frames in 1985 ms, `scrollTop` unchanged, banner gone with the drain). The unread pill showed no count after it: [backlog](../../backlog.d/p3-the-scroll-to-bottom-arrow-shows-no-unread-count-after-a-catch-up.md).
 
 #### Rows before ratchet: a checkpoint stores the buffered rows first (2026-11-17)
 

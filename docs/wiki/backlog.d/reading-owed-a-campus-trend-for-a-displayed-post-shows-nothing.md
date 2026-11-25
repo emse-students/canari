@@ -18,3 +18,5 @@ _2026-11-25: moved to 1.8.1 when 1.8.0 shipped._
 6. **A post seen on another device is not recognised** (the accepted limit): confirm the trend still shows on a phone that never displayed the post.
 
 **What closes it**: items 1, 2 and 5 pass on the Mi 9T AND the iPhone 12; item 4 is answered. A failure names the surface that did not obey (the service hook, the extension's file read, the App Group copy, or the writer's flush at background).
+
+**2026-11-25, `1.8.1-alpha.2` (Mi 9T): still deferred, it needs a dev trend fixture.** The fixture: a post over the trend threshold, followed likers, a reader under the daily and weekly caps, a control post, and a second account (for the sign-out check).

@@ -28,3 +28,5 @@ change, and reload the public page.
 **2026-11-23, `1.8.0-alpha.3` (Mi 9T): the app half PASS on Android.** The dev form with the image block and two questions (the poster whole with its caption, the questions numbered 1 and 2 with no number on the block) and the form with the text block (a heading, a bold word, a two-item list, the question numbered 1, the counter reading 0 of 1) draw in place in the app. **Left:** only the editor's arrows in a browser.
 
 **2026-11-23, `1.8.0-alpha.3` ([iPhone 12 sitting](../device-verification.md#the-readings-of-2026-11-23-180-alpha3-iphone-12-the-resume-from-settings-the-pushes-name-and-logo-the-banners-the-share-logos-the-ios-27-launch)): the iPhone image block PASS.** A form with an image block and two questions: the poster whole with its caption, the questions numbered 1 and 2, no number on the block, the counter reading 0 of 2. **Left:** only the editor's arrows in a browser.
+
+**2026-11-25, `1.8.1-alpha.2` (Mi 9T): the Mi half PASS.** The poster image block is whole with its caption, the questions are numbered 1 and 2 (not the block), the counter reads 0/2. **Still owed:** the editor's move arrows in a browser.

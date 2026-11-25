@@ -10,13 +10,14 @@
    * or leaves the row. The scroller's vertical padding keeps the pills' 44 px touch target inside
    * it, since a horizontal scroller clips both axes. What a tab tap does is the feed page's.
    *
-   * AT A DOUBLED FONT A LABEL WRAPS BETWEEN WORDS, NEVER INSIDE ONE (Mi 9T, `font_scale` 2.0, S9:
-   * "Campus" left the screen; then a large system font showed "Organisa-tions" hyphenated over two
-   * lines while "Pour toi" and "Campus" had room to spare, 2026-11-22). A tab is `flex-auto` (basis =
-   * its own label), so the long label takes the width the short ones do not need, and shrinks
-   * proportionally only when the row truly cannot hold them; `min-w-min` stops it at its longest word,
-   * so no `overflow-wrap` or `hyphens` is needed. A row whose longest words still do not fit is the
-   * scroller's case (faded edge, selected tab revealed), never a mid-word break. The pill grows in
+   * AT A DOUBLED FONT NO TAB CAN OVERFLOW, WHATEVER THE SCALE (Mi 9T, `font_scale` 2.0, S9: "Campus"
+   * left the right edge; the `min-w-min` fix moved it to "Organisations" at the LEFT, 1.8.1-alpha.2:
+   * the longest word was a floor, the row overflowed, the selected middle tab was centred and the
+   * first tab slid under the start fade as "rganisations"). A tab is `flex-auto` (basis = its own
+   * label, so a short label never takes a third) with `min-w-0`, and its label wraps between words,
+   * then INSIDE a word (`[overflow-wrap:anywhere] break-words hyphens-auto`), exactly as the Thème
+   * control's segment does. The row's width is therefore a ceiling that content cannot exceed, so the
+   * sideways scroll below is a safety net that no font scale reaches, never a state. The pill grows in
    * height (`min-h-11`). The pill is measured from the real tab boxes, so unequal widths are fine.
    *
    * THE THREE LABELS FIT WITHOUT SCROLLING AT 390 PX AND 360 PX (dev tour, `1.6.9-alpha.4`: "Mon
@@ -257,7 +258,7 @@
           use:guideAnchor={`posts.tab.${tab.feed}`}
           onclick={() => onFeed(tab.feed)}
           aria-pressed={feed === tab.feed}
-          class="tap-target focus-visible:ring-accent-icon relative z-1 min-w-min flex-auto rounded-full px-2.5 text-sm leading-tight transition-colors group-data-compact/tabs:px-2 group-data-compact/tabs:text-xs focus-visible:ring-2 focus-visible:outline-none {feed ===
+          class="tap-target focus-visible:ring-accent-icon relative z-1 min-w-0 flex-auto rounded-full px-2.5 text-sm leading-tight [overflow-wrap:anywhere] break-words hyphens-auto transition-colors group-data-compact/tabs:px-2 group-data-compact/tabs:text-xs focus-visible:ring-2 focus-visible:outline-none {feed ===
           tab.feed
             ? settled === tab.feed
               ? 'text-on-accent font-semibold'

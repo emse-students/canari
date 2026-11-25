@@ -194,16 +194,19 @@ it('keeps its labels tight enough for 360-390 px: 10 px padding, one text step d
   expect(tab.className).toContain('group-data-compact/tabs:text-xs');
   expect(tab.className).not.toContain('max-[24rem]');
   expect(tab.className).not.toContain('snap-');
-  // A tab is as wide as its label asks (basis auto) and a label wraps BETWEEN words only: a
-  // hyphenated "Organisa-tions" came from equal thirds plus `overflow-wrap:anywhere` + `hyphens:auto`.
+  // A tab is as wide as its label asks (basis auto, so a short label never takes a third), and it
+  // may shrink to ANY width and break inside a word as the Thème control's segment does (Mi 9T,
+  // `font_scale` 2.0: a min-content floor made the row overflow, the selected middle tab centred and
+  // "Organisations" slid under the start fade as "rganisations"). Nothing overflows, so nothing scrolls.
   const classes = tab.className.split(' ');
   expect(classes).not.toContain('whitespace-nowrap');
   expect(classes).toContain('flex-auto');
   expect(classes).not.toContain('flex-1');
-  expect(classes).toContain('min-w-min');
-  expect(classes).not.toContain('min-w-0');
-  expect(tab.className).not.toContain('overflow-wrap');
-  expect(tab.className).not.toContain('hyphens');
+  expect(classes).toContain('min-w-0');
+  expect(classes).not.toContain('min-w-min');
+  expect(classes).toContain('[overflow-wrap:anywhere]');
+  expect(classes).toContain('break-words');
+  expect(classes).toContain('hyphens-auto');
 });
 
 it('steps the text down only when the row overflows at the normal size, and back when room returns', () => {

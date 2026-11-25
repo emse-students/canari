@@ -34,3 +34,5 @@ a minute - no "Failed" row; the log reads `[video-prep] the encoder stopped whil
 view` and `[PUBLISH-QUEUE] <id> its preparation was interrupted as the app left the view` (both at
 info, no `E` line), then `back in view: preparing it again` and ONE `published`. Rows (2) without the
 early leave and (3) stay as written.
+
+**2026-11-25, `1.8.1-alpha.2` (Mi 9T, battery saver ON): row (1) PASS and row (2) PASS as a regression.** Three leaves within 0.8 s of the SECOND "Publier" (the caption step's), with encodes of 13-26 s, each published ONCE with no error line. **Android does not stop the WebView encoder when the app leaves the view, so the `interrupted` path is not exercised on the Mi** (the `the encoder stopped while the app was out of view` line never appeared): it stays the iPhone's reading, with a long encode. **Not taken:** row (3), "Envoyer a..." with a conversation ticked.
