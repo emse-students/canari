@@ -14,8 +14,8 @@ been live, unpromoted, since 2026-11-23
 
 **MiConnect (blueprints): built, in review** - D45, D46, D43's read, D47, D44, D42-D43's gate, the
 claim `alumni_linked`, and D49's page (live: the source is `POST_AUTO`, read on production 2026-11-23). Both limits are settled
-by the lead (2026-11-23): the link cannot resume the authorization (authentik's Source stage is
-Enterprise; accepted, reversible), and the sign-in handoff answers the gate and the step itself (`alumni_cotisant_required`,
+by the lead (2026-11-23): no Enterprise licence (accepted, reversible; since 2026-11-25 the link
+resumes the authorization through authentik's core token, [sign-in paths](../infrastructure/miconnect-sign-in-paths.md)), and the sign-in handoff answers the gate and the step itself (`alumni_cotisant_required`,
 `alumni_link_required`, lead 2026-11-23), from the case table both sides run
 (`libs/contracts/alumni-access.json`). Readings owed on production, and the
 dev smoke account to clear before the pre-release:
@@ -30,18 +30,18 @@ Owed: a reading once MiConnect emits `alumni_linked`, and the first real merge.
 **GDPR: done with the blueprints** - the register (M1), Canari's privacy policy (`alumni_linked`) and
 the MiConnect terms (page and notice, version `2026-11-24`, so everyone accepts again).
 
-**Measured in the source (2026.8.6):** authentik resumes a flow after a source only through the
-Enterprise Source stage; without it a signed-in link lands on the settings page, and the person signs
-in to the application again. A link made from the settings page writes no property, so `cotisant` is
-first read at the next Alumni sign-in.
+**Measured in the source (2026.8.6):** a link made from the settings page or the link step writes no
+property, so `cotisant` is first read at the next Alumni sign-in; the routing page's link writes it
+(2026-11-25). Every path and what it asks: [sign-in paths](../infrastructure/miconnect-sign-in-paths.md).
 
 **Readings owed for `1.8.0`, on production** (the lead's, with a real Alumni account; the steps are on
 [authentik](../infrastructure/authentik.md#the-alumni-sso-as-built-for-180-d42-d49-owner-2026-11-23)):
 
 1. an account CREATED through the Alumni button (the routing page, "I have none"): `alumni-<af_id>`,
    the Alumni e-mail, a membership read dated today;
-2. a LINK through the CAS (the routing page, "I have a School account"): "Successfully linked" on the
-   CAS account, `alumni_linked` true in Canari;
+2. a LINK through the CAS (the routing page, "I have a School account"): linked with no second
+   Alumnforce sign-in, `alumni_linked` true in Canari (read with the other 2026-11-25 paths,
+   [reading-owed-miconnect-one-sign-in-per-path](reading-owed-miconnect-one-sign-in-per-path.md));
 3. the `cotisant` READ at a later Alumni sign-in: `attributes.alumni.read_on` today, username and name
    unchanged;
 4. the LINK STEP (D44): the reminder once per session, the block after its date;

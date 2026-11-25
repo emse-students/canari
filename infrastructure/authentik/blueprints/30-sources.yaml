@@ -198,6 +198,26 @@ entries:
   # holds because authentik runs a lone policy in the request's process outside a daemon (the
   # `keep-only-the-read` policy relies on the same). test-enrollment-flow.py (step M) drives it.
   # No `execution_logging`: it runs at every Alumni sign-in (see the wiki on the re-evaluation line).
+  # ONE COMPARISON OF TWO NAMES, for the merge (D51) and the link the routing page parks (owner,
+  # 2026-11-25): `names` = [a, b] in the context (`ak_call_policy`), True when both FOLD to the same
+  # non-empty name, folded as core-service's `normalizeName`: ligatures, accents and case, the
+  # typographic apostrophe, and hyphens, dots, apostrophes and spaces to one space.
+  - model: authentik_policies_expression.expressionpolicy
+    identifiers:
+      name: "miconnect-alumni-names-agree"
+    attrs:
+      execution_logging: false
+      expression: |-
+        import re
+        from unicodedata import normalize
+
+        LIGATURES = {"\u0153": "oe", "\u0152": "oe", "\u00e6": "ae", "\u00c6": "ae", "\u00df": "ss", "\u2019": "'"}
+        folded = lambda name: " ".join(re.sub(r"[\s\-'.]+", " ", re.sub("[\u0300-\u036f]", "", normalize("NFKD", "".join(LIGATURES.get(c, c) for c in (name or "")))).lower()).split())
+        names = request.context.get("names") or []
+        if len(names) != 2:
+            return False
+        a, b = (folded(str(name or "")) for name in names)
+        return a != "" and a == b
   - model: authentik_stages_deny.denystage
     identifiers:
       name: "miconnect-alumni-merge-refused"
@@ -209,9 +229,7 @@ entries:
     attrs:
       execution_logging: false
       expression: |-
-        import re
         import uuid
-        from unicodedata import normalize
 
         from django.db import transaction
 
@@ -230,8 +248,6 @@ entries:
         plan = request.context.get("flow_plan")
         prompt = request.context.get("prompt_data") or {}
         asserted = f"{prompt.get('firstname') or ''} {prompt.get('lastname') or ''}"
-        LIGATURES = {"\u0153": "oe", "\u0152": "oe", "\u00e6": "ae", "\u00c6": "ae", "\u00df": "ss", "\u2019": "'"}
-        folded = lambda name: " ".join(re.sub(r"[\s\-'.]+", " ", re.sub("[\u0300-\u036f]", "", normalize("NFKD", "".join(LIGATURES.get(c, c) for c in (name or "")))).lower()).split())
         connection = request.context.get(PLAN_CONTEXT_SOURCES_CONNECTION)
         af_id = getattr(connection, "identifier", None)
         # The Events carry the client's address and the request's context (`from_http` saves them).
@@ -287,7 +303,7 @@ entries:
                         refused.append("the target holds no CAS link")
                     if "alumni" in target_slugs:
                         refused.append("the target already holds an Alumni link")
-                    if folded(asserted) == "" or folded(target.name) != folded(asserted):
+                    if not ak_call_policy("miconnect-alumni-names-agree", names=[asserted, target.name]).passing:
                         refused.append("name_mismatch")
                 if duplicate is not None and str(duplicate.attributes.get("alumni_merge_into") or "") != into:
                     refused.append("mark_changed")
@@ -347,15 +363,52 @@ entries:
   # (`InitiateView`), so the source is `POST_AUTO` below: read on production 2026-11-23, Alumnforce
   # accepts the POSTed request although its metadata names HTTP-Redirect only (the reading is in
   # docs/wiki/infrastructure/authentik.md). The page shows to
-  # every signed-in person, the link step of 45-consent.yaml included: a marker in the URL would be
-  # read at plan time, where authentik CACHES a policy result per session and user, so one visit
-  # from the step would silence the page for the next direct one - the one D49 is about.
+  # every signed-in person EXCEPT one MiConnect itself just sent here to link (owner's D49: "every
+  # link outside the D44 step"): the D44 link step and the D47 routing page's "I have a School
+  # account" (miconnect-sign-in-paths.md). That proposal is a SERVER-SIDE session marker, never a URL
+  # value: `miconnect/alumni-link-proposed` = the account's pk, written by the link flow below only
+  # when an offer of this session preceded it, and consumed here, once, by the re-evaluated binding
+  # (authentik caches no re-evaluation; it is the plan-time result it caches per session and user).
+  #
+  # THE SAME DECISION RESUMES THE SIGN-IN AFTER THE LINK (free edition, no Enterprise Source stage).
+  # authentik's own SourceFlowManager.handle_existing_link (core/sources/flow_manager.py:397-400)
+  # hands a signed-in link to `_prepare_flow(None)` when the session holds a flow token under
+  # SESSION_KEY_OVERRIDE_FLOW_TOKEN: the token's plan is restored, authentik's PostSourceStage is
+  # appended - it saves the connection on the plan's pending user - and the flow ends on the `next`
+  # the person came with (`flow_manager.py:304-339`). For a proposed link this policy plans
+  # `miconnect-alumni-link-done` for the account signed in NOW and puts that token in the session;
+  # the done flow re-checks that the account is still the session's before authentik's stage writes
+  # the link. Without a proposal it removes any such token (a stale one from an abandoned round
+  # trip), so a link from the settings page or a direct visit is authentik's default: the page, then
+  # "Successfully linked" on the settings. A policy that raises shows the page (`failure_result`).
   - model: authentik_policies_expression.expressionpolicy
     identifiers:
       name: "miconnect-alumni-link-unconfirmed"
     attrs:
       execution_logging: false
-      expression: "return bool(request.user.is_authenticated)"
+      expression: |-
+        from uuid import uuid4
+
+        from authentik.core.sources.flow_manager import SESSION_KEY_OVERRIDE_FLOW_TOKEN
+        from authentik.flows.models import Flow, FlowToken
+        from authentik.flows.planner import PLAN_CONTEXT_PENDING_USER, FlowPlanner
+
+        PROPOSED = "miconnect/alumni-link-proposed"
+        user = request.user
+        if not user.is_authenticated or request.http_request is None:
+            return False
+        session = request.http_request.session
+        stale = session.pop(SESSION_KEY_OVERRIDE_FLOW_TOKEN, None)
+        if stale is not None:
+            FlowToken.objects.filter(pk=stale.pk).delete()
+        if session.pop(PROPOSED, None) != user.pk:
+            return True
+        flow = Flow.objects.get(slug="miconnect-alumni-link-done")
+        planner = FlowPlanner(flow)
+        planner.use_cache = False
+        plan = planner.plan(request.http_request, {PLAN_CONTEXT_PENDING_USER: user})
+        session[SESSION_KEY_OVERRIDE_FLOW_TOKEN] = FlowToken.objects.create(user=user, flow=flow, identifier=f"miconnect-alumni-link-{uuid4().hex}", _plan=FlowToken.pickle(plan))
+        return False
   - model: authentik_policies_expression.expressionpolicy
     identifiers:
       name: "miconnect-alumni-link-validate-confirm"
@@ -418,6 +471,316 @@ entries:
       target: !Find [authentik_policies.policybindingmodel, [flowstagebinding__target__slug, "miconnect-alumni-pre-authentication"], [flowstagebinding__stage__name, "miconnect-alumni-link-confirm"], [flowstagebinding__order, 10]]
       policy: !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-alumni-link-unconfirmed"]]
       order: 0
+    attrs:
+      # A policy that raises shows the confirmation, never a link without it.
+      failure_result: true
+  # THE LINK MiConnect PROPOSES (miconnect-sign-in-paths.md): the D44 step's link and the D47 routing
+  # page's return after the CAS both come HERE, with the application's authorization as `next`. The
+  # flow executor stores that `next` in the session, where the Alumni source's entry reads it
+  # (sources/saml/views.py:75-82), and where this flow's own end reads it, so the link ends on the
+  # application instead of the settings page. Its first policy DECIDES, once per run (kept in the
+  # plan, so the page's POST re-reads the same decision), from what the SESSION holds - nothing in
+  # the URL decides:
+  #   - "parked": the routing page's "I have a School account" (20-enrollment.yaml) kept the identity
+  #     Alumnforce asserted in that sign-in, `miconnect/alumni-link-parked`. The owner's decision of
+  #     2026-11-25 (option 1): it is linked HERE, to the account the CAS just signed in, with NO second
+  #     Alumnforce sign-in - at once when the name Alumnforce asserted is the account's name (folded
+  #     by `miconnect-alumni-names-agree`, the merge's comparison), else after a page naming BOTH
+  #     accounts and a tick. The membership read of that assertion is written with it. Honoured only
+  #     when this link names the record's nonce (`parked=`, which only the routing policy's link
+  #     carries); a record this link does not name is DROPPED, logged at warning - someone else's,
+  #     left in a shared browser, never reaches a later sign-in's link;
+  #   - "proposed": the D44 step offered the link to this account (`miconnect/alumni-link-offered` =
+  #     its pk and a nonce, 45-consent.yaml) AND this link names that nonce (`offer=`, only the
+  #     step's page carries it): the pre-authentication flow is told (`miconnect/alumni-link-proposed`),
+  #     skips the D49 page and resumes the sign-in after Alumnforce answers (above). The offer outlives
+  #     its page ("Continuer", a block shown again), so a visit without the nonce meets D49;
+  #   - nothing: a link to this URL from anywhere else - the source as before, D49 page, settings.
+  # The parked record is taken out of the session at once, an offer when its nonce is used. No mode
+  # in an impersonated session, nor with a `next` that is not a path on MiConnect (the flow would
+  # redirect to it). The bindings below: the
+  # naming page (parked, names differ), the write (parked; its deny stage shows a refusal), the
+  # round trip to Alumnforce (not parked). Driven by test-consent-flow.py steps 10-12.
+  - model: authentik_flows.flow
+    identifiers:
+      slug: "miconnect-alumni-link"
+    attrs:
+      name: "miconnect-alumni-link"
+      title: "Lier ton compte Alumni"
+      designation: "stage_configuration"
+      authentication: "require_authenticated"
+  - model: authentik_policies_expression.expressionpolicy
+    identifiers:
+      name: "miconnect-alumni-link-decide"
+    attrs:
+      execution_logging: false
+      expression: |-
+        from hmac import compare_digest
+        from html import escape
+
+        from django.utils.http import url_has_allowed_host_and_scheme
+
+        MODE = "miconnect/alumni-link-mode"
+        PARKED = "miconnect/alumni-link-parked"
+        OFFERED = "miconnect/alumni-link-offered"
+        plan = request.context.get("flow_plan")
+        if plan is None or request.http_request is None:
+            return False
+
+        def named(record, sent):
+            """True when `record` is a dict whose nonce is the one this link carries."""
+            return isinstance(record, dict) and bool(record.get("nonce")) and compare_digest(str(sent or "").encode(), str(record["nonce"]).encode())
+
+        if MODE not in plan.context:
+            session = request.http_request.session
+            query = session.get("authentik/flows/get") or {}
+            user = request.http_request.user
+            parked = session.pop(PARKED, None)
+            if parked is not None and not named(parked, query.get("parked")):
+                ak_logger.warning("miconnect-alumni-link: a parked Alumni identity this link does not name is dropped, nothing is linked from it", user=getattr(user, "username", None))
+                parked = None
+            offered = named(session.get(OFFERED), query.get("offer")) and session[OFFERED].get("pk") == user.pk
+            if offered:
+                del session[OFFERED]
+            back = query.get("next") or ""
+            local = back == "" or (back.startswith("/") and not back.startswith("//") and "\\" not in back and url_has_allowed_host_and_scheme(back, allowed_hosts=None))
+            impersonated = "authentik/impersonate/user" in session
+            mode = None
+            if impersonated or not local or not user.is_authenticated:
+                if parked is not None or offered:
+                    ak_logger.warning("miconnect-alumni-link: an offer this link cannot honour, nothing is skipped", local_next=local, impersonated=impersonated)
+            elif isinstance(parked, dict) and parked.get("identifier"):
+                mode = "parked"
+                asserted = f"{parked.get('firstname') or ''} {parked.get('lastname') or ''}".strip()
+                parked["agree"] = ak_call_policy("miconnect-alumni-names-agree", names=[asserted, user.name]).passing
+                plan.context[PARKED] = parked
+                plan.context.setdefault("prompt_data", {})["alumni_link_parked_notice"] = (
+                    f"<p>Tu viens de te connecter avec le compte <strong>Alumni</strong> de <strong>{escape(asserted or '?')}</strong>, "
+                    f"puis avec le CAS au compte MiConnect <strong>{escape(user.name)}</strong> ({escape(user.username)}). "
+                    "Les deux noms diffèrent : lier ce compte Alumni à ce compte MiConnect ?</p>"
+                    "<p>Si l'un des deux n'est pas le tien, ferme cette page : rien ne sera lié.</p>"
+                )
+            elif offered:
+                mode = "proposed"
+                session["miconnect/alumni-link-proposed"] = user.pk
+            plan.context[MODE] = mode
+        parked = plan.context.get(PARKED) or {}
+        return plan.context[MODE] == "parked" and not parked.get("agree")
+  - model: authentik_policies_expression.expressionpolicy
+    identifiers:
+      name: "miconnect-alumni-link-validate-both"
+    attrs:
+      execution_logging: false
+      expression: |-
+        if request.context.get("prompt_data", {}).get("alumni_link_parked_confirm") is True:
+            return True
+        ak_message("Coche la case pour lier ces deux comptes, ou ferme cette page pour ne rien lier.")
+        return False
+  - model: authentik_stages_prompt.prompt
+    identifiers:
+      name: "miconnect-alumni-link-prompt-both"
+    attrs:
+      field_key: "alumni_link_parked_notice"
+      label: "Lier ton compte Alumni"
+      type: "static"
+      order: 1
+      # The decide policy writes the page (both names) into the plan's prompt data, under this key.
+      initial_value: ""
+  - model: authentik_stages_prompt.prompt
+    identifiers:
+      name: "miconnect-alumni-link-prompt-both-confirm"
+    attrs:
+      field_key: "alumni_link_parked_confirm"
+      label: "Oui, ces deux comptes sont les miens : lier mon compte Alumni à ce compte MiConnect."
+      type: "checkbox"
+      order: 2
+      required: true
+  - model: authentik_stages_prompt.promptstage
+    identifiers:
+      name: "miconnect-alumni-link-confirm-both"
+    attrs:
+      fields:
+        - !Find [authentik_stages_prompt.prompt, [name, "miconnect-alumni-link-prompt-both"]]
+        - !Find [authentik_stages_prompt.prompt, [name, "miconnect-alumni-link-prompt-both-confirm"]]
+      validation_policies:
+        - !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-alumni-link-validate-both"]]
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "miconnect-alumni-link"]]
+      stage: !Find [authentik_stages_prompt.promptstage, [name, "miconnect-alumni-link-confirm-both"]]
+      order: 5
+    attrs:
+      evaluate_on_plan: false
+      re_evaluate_policies: true
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_policies.policybindingmodel, [flowstagebinding__target__slug, "miconnect-alumni-link"], [flowstagebinding__stage__name, "miconnect-alumni-link-confirm-both"], [flowstagebinding__order, 5]]
+      policy: !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-alumni-link-decide"]]
+      order: 0
+    attrs:
+      # A policy that raises shows the naming page, never a silent link.
+      failure_result: true
+  # THE PARKED LINK IS WRITTEN HERE, after the page when it showed. The policy writes the connection
+  # and the membership read itself, in one transaction, and returns False (the deny stage is skipped);
+  # it returns True - the refusal - when the account already holds an Alumni link or the identity is
+  # already linked to an account (a link made meanwhile, another tab). A raise refuses too.
+  - model: authentik_stages_deny.denystage
+    identifiers:
+      name: "miconnect-alumni-link-parked-refused"
+    attrs:
+      deny_message: "Ton compte Alumni n'a pas été lié : ce compte MiConnect est déjà lié à un compte Alumni, ou ce compte Alumni l'est déjà à un autre compte. Rien n'a été modifié : contacte un administrateur si ce n'est pas normal."
+  - model: authentik_policies_expression.expressionpolicy
+    identifiers:
+      name: "miconnect-alumni-link-parked-write"
+    attrs:
+      execution_logging: false
+      expression: |-
+        from django.db import transaction
+
+        from authentik.core.models import User, UserSourceConnection
+        from authentik.events.models import Event, EventAction
+        from authentik.sources.saml.models import SAMLSource, UserSAMLSourceConnection
+
+        plan = request.context.get("flow_plan")
+        if plan is None or plan.context.get("miconnect/alumni-link-mode") != "parked":
+            return False
+        parked = plan.context["miconnect/alumni-link-parked"]
+        http = request.http_request
+        with transaction.atomic():
+            # The source's row first, then the account's: two writes (two tabs, two accounts) of an
+            # identity are serialised, so the checks below cannot both pass.
+            source = SAMLSource.objects.select_for_update().get(slug="alumni")
+            user = User.objects.select_for_update().get(pk=http.user.pk)
+            if UserSourceConnection.objects.filter(source=source).filter(user=user).exists() or UserSourceConnection.objects.filter(source=source, identifier=parked["identifier"]).exists():
+                ak_logger.warning("miconnect-alumni-link: the parked Alumni identity is not linked, a link already exists", user=user.username)
+                return True
+            UserSAMLSourceConnection.objects.create(user=user, source=source, identifier=parked["identifier"])
+            if parked.get("alumni_read"):
+                user.attributes["alumni"] = parked["alumni_read"]
+                user.save(update_fields=["attributes"])
+            # authentik's own journal line for a link (as PostSourceStage writes it), in the same
+            # transaction: no link without its Event.
+            Event.new(EventAction.SOURCE_LINKED, app="miconnect", message="Linked Source", source=source, miconnect_route="routing", names_agree=bool(parked.get("agree"))).from_http(http)
+        plan.context["miconnect/alumni-link-parked"] = {}
+        return False
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "miconnect-alumni-link"]]
+      stage: !Find [authentik_stages_deny.denystage, [name, "miconnect-alumni-link-parked-refused"]]
+      order: 9
+    attrs:
+      evaluate_on_plan: false
+      re_evaluate_policies: true
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_policies.policybindingmodel, [flowstagebinding__target__slug, "miconnect-alumni-link"], [flowstagebinding__stage__name, "miconnect-alumni-link-parked-refused"], [flowstagebinding__order, 9]]
+      policy: !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-alumni-link-parked-write"]]
+      order: 0
+    attrs:
+      failure_result: true
+  - model: authentik_policies_expression.expressionpolicy
+    identifiers:
+      name: "miconnect-alumni-link-round-trip"
+    attrs:
+      execution_logging: false
+      expression: |-
+        plan = request.context.get("flow_plan")
+        return plan is None or plan.context.get("miconnect/alumni-link-mode") != "parked"
+  - model: authentik_stages_redirect.redirectstage
+    identifiers:
+      name: "miconnect-alumni-link-to-source"
+    attrs:
+      mode: "static"
+      target_static: "/source/saml/alumni/"
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "miconnect-alumni-link"]]
+      stage: !Find [authentik_stages_redirect.redirectstage, [name, "miconnect-alumni-link-to-source"]]
+      order: 10
+    attrs:
+      evaluate_on_plan: false
+      re_evaluate_policies: true
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_policies.policybindingmodel, [flowstagebinding__target__slug, "miconnect-alumni-link"], [flowstagebinding__stage__name, "miconnect-alumni-link-to-source"], [flowstagebinding__order, 10]]
+      policy: !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-alumni-link-round-trip"]]
+      order: 0
+  # THE RESUMED SIGN-IN (the flow token above). authentik restores this plan when Alumnforce answers
+  # and appends its PostSourceStage, which attaches the asserted Alumni identity to the plan's pending
+  # user. The ONE stage here runs first and refuses (failure_result: a raise refuses too) unless:
+  #   - the pending user is the account the session holds NOW (no token can outlive its account: a
+  #     sign-out or a sign-in as someone else flushes the session, this proves it again);
+  #   - an Alumni identity, when that account holds no Alumni link yet;
+  #   - the `next` the flow will redirect to is a path on MiConnect.
+  # A token left by an abandoned Alumni round trip can meet a link of ANOTHER source the person
+  # makes later (the CAS from the settings): that is let through, logged at warning - authentik would
+  # link it to the same account (the session's, checked above) without the token; only where it ends
+  # differs. It also takes the token out of the session: one token, one link. Driven by
+  # test-consent-flow.py (steps 10 and 12).
+  - model: authentik_flows.flow
+    identifiers:
+      slug: "miconnect-alumni-link-done"
+    attrs:
+      name: "miconnect-alumni-link-done"
+      title: "Lier ton compte Alumni"
+      designation: "stage_configuration"
+      authentication: "require_authenticated"
+  - model: authentik_stages_deny.denystage
+    identifiers:
+      name: "miconnect-alumni-link-resume-refused"
+    attrs:
+      deny_message: "Ton compte Alumni n'a pas été lié : la connexion a changé pendant l'opération. Rien n'a été modifié. Reconnecte-toi au service, puis lie ton compte Alumni depuis tes paramètres MiConnect."
+  - model: authentik_policies_expression.expressionpolicy
+    identifiers:
+      name: "miconnect-alumni-link-resume-mismatch"
+    attrs:
+      execution_logging: false
+      expression: |-
+        from django.utils.http import url_has_allowed_host_and_scheme
+
+        from authentik.core.models import UserSourceConnection
+        from authentik.core.sources.flow_manager import SESSION_KEY_OVERRIDE_FLOW_TOKEN
+        from authentik.flows.planner import PLAN_CONTEXT_PENDING_USER, PLAN_CONTEXT_REDIRECT, PLAN_CONTEXT_SOURCE
+
+        http = request.http_request
+        if http is None:
+            return True
+        http.session.pop(SESSION_KEY_OVERRIDE_FLOW_TOKEN, None)
+        plan = request.context.get("flow_plan")
+        context = plan.context if plan is not None else {}
+        pending = context.get(PLAN_CONTEXT_PENDING_USER)
+        source = context.get(PLAN_CONTEXT_SOURCE)
+        back = context.get(PLAN_CONTEXT_REDIRECT) or ""
+        refused = []
+        if pending is None or not http.user.is_authenticated or pending.pk != http.user.pk:
+            refused.append("the session's account is not the one the link was proposed to")
+        if getattr(source, "slug", None) != "alumni":
+            ak_logger.warning("miconnect-alumni-link: a resume token left by an abandoned Alumni link met a link of another source, linked as authentik links it, to the session's account", source=getattr(source, "slug", None), pending=getattr(pending, "username", None))
+        elif pending is not None and UserSourceConnection.objects.filter(user=pending, source=source).exists():
+            refused.append("the account already holds an Alumni link")
+        # A path on MiConnect, or authentik's own default when the person came with no `next`.
+        local = isinstance(back, str) and (back == "authentik_core:if-user" or (back.startswith("/") and not back.startswith("//") and "\\" not in back and url_has_allowed_host_and_scheme(back, allowed_hosts=None)))
+        if not local:
+            refused.append("the redirect is not a path on MiConnect")
+        if refused:
+            ak_logger.warning("miconnect-alumni-link: the resumed link is refused, nothing is written", reasons=refused, pending=getattr(pending, "username", None))
+            return True
+        return False
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "miconnect-alumni-link-done"]]
+      stage: !Find [authentik_stages_deny.denystage, [name, "miconnect-alumni-link-resume-refused"]]
+      order: 10
+    attrs:
+      evaluate_on_plan: false
+      re_evaluate_policies: true
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_policies.policybindingmodel, [flowstagebinding__target__slug, "miconnect-alumni-link-done"], [flowstagebinding__stage__name, "miconnect-alumni-link-resume-refused"], [flowstagebinding__order, 10]]
+      policy: !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-alumni-link-resume-mismatch"]]
+      order: 0
+    attrs:
+      failure_result: true
   - model: authentik_sources_saml.samlsource
     identifiers:
       slug: "alumni"

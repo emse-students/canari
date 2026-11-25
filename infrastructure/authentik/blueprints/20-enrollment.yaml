@@ -216,7 +216,8 @@ entries:
   # THE ROUTING PAGE (D47, owner 2026-11-23): an Alumni identity with no MiConnect link first says
   # whether it still has a working School account. "Yes" leaves this enrolment for the CAS sign-in,
   # which comes back to the Alumni source signed in, so authentik LINKS the identity to the School
-  # account instead of creating a second one; "no" goes on to the two usual pages. The CAS never
+  # account instead of creating a second one, and then resumes towards the application; "no" goes on
+  # to the two usual pages. Every path: docs/wiki/infrastructure/miconnect-sign-in-paths.md. The CAS never
   # sees this page: its binding asks for the Alumni source. Driven by test-enrollment-flow.py.
   - model: authentik_policies_expression.expressionpolicy
     identifiers:
@@ -224,12 +225,61 @@ entries:
     attrs:
       execution_logging: true
       expression: "return getattr(context.get(\"source\"), \"slug\", None) == \"alumni\""
+  # "I have a School account" (D47): the CAS sign-in, then the LINK MiConnect proposes
+  # (30-sources.yaml, `miconnect-alumni-link`), then the application the person started from. The
+  # policy writes, when the stage is due:
+  #   - the PARKED identity `miconnect/alumni-link-parked` in the session: the identifier authentik
+  #     took from the VERIFIED assertion of this sign-in (the plan's source connection, not yet saved),
+  #     the two names and the membership read Alumnforce asserted. The link flow links it to the
+  #     account the CAS signs in with no second Alumnforce sign-in (owner, 2026-11-25, option 1): at
+  #     once when the names agree, after a page naming both otherwise. Server-side, single-use (the
+  #     link flow takes it out of the session), and never anything the browser sent. It carries a
+  #     NONCE that only the link built here names (`parked=`): Django's login keeps an anonymous
+  #     session's data, so a record left by someone who walked away must not be honoured by a later
+  #     link of another sign-in (the D44 step's, a direct visit) - the link flow drops it there;
+  #   - the redirect stage's target into the plan (`redirect_stage_target`): the CAS-only sign-in
+  #     `miconnect-auth-cas` (40-authentication.yaml, which goes straight to the CAS: no second click
+  #     on the login page) with `next` = the link flow, whose own `next` is where this sign-in was
+  #     going (the plan's `redirect`, the application's authorization) when that is a path on
+  #     MiConnect. The target_static of the stage below is the same URL without an application or
+  #     nonce (no parked record is honoured through it).
+  # Driven by test-enrollment-flow.py (step G) and test-consent-flow.py (steps 11-12).
   - model: authentik_policies_expression.expressionpolicy
     identifiers:
       name: "miconnect-enrollment-alumni-chose-cas"
     attrs:
       execution_logging: true
-      expression: "return context.get(\"prompt_data\", {}).get(\"alumni_route\") == \"cas\""
+      expression: |-
+        from urllib.parse import quote, urlencode
+        from uuid import uuid4
+
+        from django.utils.http import url_has_allowed_host_and_scheme
+
+        from authentik.core.sources.stage import PLAN_CONTEXT_SOURCES_CONNECTION
+        from authentik.flows.planner import PLAN_CONTEXT_REDIRECT, PLAN_CONTEXT_REDIRECT_STAGE_TARGET
+
+        if context.get("prompt_data", {}).get("alumni_route") != "cas":
+            return False
+        connection = context.get(PLAN_CONTEXT_SOURCES_CONNECTION)
+        params = {}
+        if request.http_request is not None and getattr(getattr(connection, "source", None), "slug", None) == "alumni" and connection.pk is None and connection.identifier:
+            prompt = context.get("prompt_data", {})
+            params["parked"] = uuid4().hex
+            request.http_request.session["miconnect/alumni-link-parked"] = {
+                "nonce": params["parked"],
+                "identifier": str(connection.identifier),
+                "firstname": prompt.get("firstname"),
+                "lastname": prompt.get("lastname"),
+                "alumni_read": prompt.get("alumni_read"),
+            }
+        plan = context.get("flow_plan")
+        back = plan.context.get(PLAN_CONTEXT_REDIRECT) if plan is not None else None
+        if isinstance(back, str) and back.startswith("/") and not back.startswith("//") and "\\" not in back and url_has_allowed_host_and_scheme(back, allowed_hosts=None):
+            params["next"] = back
+        link = "/if/flow/miconnect-alumni-link/" + ("?" + urlencode(params) if params else "")
+        if plan is not None:
+            plan.context[PLAN_CONTEXT_REDIRECT_STAGE_TARGET] = "/if/flow/miconnect-auth-cas/?next=" + quote(link, safe="")
+        return True
   - model: authentik_stages_prompt.prompt
     identifiers:
       name: "miconnect-enrollment-prompt-alumni-route"
@@ -247,14 +297,14 @@ entries:
     attrs:
       fields:
         - !Find [authentik_stages_prompt.prompt, [name, "miconnect-enrollment-prompt-alumni-route"]]
-  # The CAS sign-in of the login flow, sent back to the Alumni source afterwards (`next`): signed in,
-  # the person is linked, not enrolled a second time.
+  # The CAS sign-in, then the link (the policy above sets the target with the application in it):
+  # signed in, the person is linked, not enrolled a second time.
   - model: authentik_stages_redirect.redirectstage
     identifiers:
       name: "miconnect-enrollment-alumni-to-cas"
     attrs:
       mode: "static"
-      target_static: "/if/flow/miconnect-auth/?next=%2Fsource%2Fsaml%2Falumni%2F"
+      target_static: "/if/flow/miconnect-auth-cas/?next=%2Fif%2Fflow%2Fmiconnect-alumni-link%2F"
   - model: authentik_stages_prompt.promptstage
     identifiers:
       name: "miconnect-enrollment-ask-affiliations"
