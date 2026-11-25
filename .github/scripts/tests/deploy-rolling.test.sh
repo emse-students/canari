@@ -448,6 +448,15 @@ if [ "$got" = "$want" ]; then
 else
   fail "transport-reset lines: got '$got', wanted '$want'"
 fi
+# The retired replicas' error lines are printed before `docker rm` deletes them: api's holds the one
+# `Error:` line inside the window (the one before it excluded), the frontend's none.
+got="$(sed -nE 's/^\[RETIRED_ERRORS\] service=([a-z_-]+) container=[0-9a-f]+ count=([0-9a-z]+)$/\1 \2/p' "$TMP/release.log" | sort | tr '\n' '|')"
+want='api 1|frontend 0|'
+if [ "$got" = "$want" ] && grep -qE '^\[RETIRED_ERRORS\] api [0-9a-f]+: Error: socket hang up' "$TMP/release.log"; then
+  ok "each retired replica's error lines are printed before its removal, one inside the window and none outside"
+else
+  fail "retired-error lines: got '$got', wanted '$want' (and api's 'Error: socket hang up' line printed)"
+fi
 if grep -qxF '[TRANSPORT_RESETS] total=2 unknown=0' "$TMP/release.log"; then
   ok "the deploy-wide total counts the retired replica's line and the caller replaced before its peer"
 else
@@ -473,6 +482,11 @@ else
   # What the proxies said, so the failure names its cause in the CI log (2026-11-02: one ECONNRESET
   # in 401 could only be explained by reproducing it; the edge had logged `no live upstreams`).
   dc logs --no-color --timestamps edge frontend api 2>&1 | grep -E '\[(warn|error|crit|alert|emerg)\]|DRAIN' | sed 's/^/    /'
+  # BOTH frontends: the running one above, the retired one from what `retire` printed before
+  # removing it - the 502s of run 39796209603 were written by one of the two, and only the running
+  # one's log survived then.
+  printf '    retired replicas, read before removal:\n'
+  grep -E '^\[RETIRED_ERRORS\]' "$TMP/release.log" | sed 's/^/    /'
 fi
 if [ "$(field release "r.versions.v3 > 0 ? 'yes' : 'no'")" = yes ]; then
   ok "the new release answered during the run"
