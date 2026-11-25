@@ -316,11 +316,7 @@ function createKeyedMessageStore(db: IDBDatabase, name: string): IDBObjectStore 
  * never reachable by any read, every one of which goes through its conversation; it is counted and
  * said at error rather than aborting the upgrade, which would leave the store unopenable.
  */
-export function rekeyMessagesByConversation(
-  db: IDBDatabase,
-  tx: IDBTransaction,
-  then: () => void
-): void {
+function rekeyMessagesByConversation(db: IDBDatabase, tx: IDBTransaction, then: () => void): void {
   const old = tx.objectStore('messages');
   if (Array.isArray(old.keyPath)) {
     then();

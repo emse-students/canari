@@ -140,7 +140,7 @@ function bodyHolder(there: StoredMessage, moving: StoredMessage): StoredMessage 
  * whichever holds one; the original's author proof from either, unless the body is a tombstone,
  * which purges it. Pure; the key (`conversationId`, `id`, `timestamp`) is the destination's.
  */
-export function uniteMovedRow(there: StoredMessage, moving: StoredMessage): StoredMessage {
+function uniteMovedRow(there: StoredMessage, moving: StoredMessage): StoredMessage {
   const body = bodyHolder(there, moving);
   const other = body === there ? moving : there;
   const united: StoredMessage = {
