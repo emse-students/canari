@@ -9,6 +9,10 @@
  * frontend's `ecosystemSites.ts` asserts the same file, so the two sides cannot drift.
  */
 
+import { destIsAllowed } from './handoff-dest';
+
+export { destIsAllowed };
+
 /** One sibling site, as the contract lists it. */
 export interface EcosystemSiteContract {
   id: string;
@@ -26,6 +30,12 @@ export interface EcosystemSiteContract {
   handoff: boolean;
   /** The paths a token may land on; `{uuid}` is one lowercase UUID segment. */
   dests: readonly string[];
+  /**
+   * The site's own MiConnect sign-in entry, and the query parameter it reads a return path from
+   * (null: it reads none). Read by the client only, which opens it when a mint is refused because
+   * MiConnect must show the person a page first; carried here because this copy equals the contract.
+   */
+  signIn: { path: string; returnParam: string | null } | null;
 }
 
 export const ECOSYSTEM_SITES: readonly EcosystemSiteContract[] = [
@@ -36,6 +46,7 @@ export const ECOSYSTEM_SITES: readonly EcosystemSiteContract[] = [
     miconnectApplication: 'migallery',
     handoff: true,
     dests: ['/', '/mes-photos', '/albums/{uuid}'],
+    signIn: { path: '/api/auth/login', returnParam: 'redirectTo' },
   },
   {
     id: 'le-cercle',
@@ -44,6 +55,7 @@ export const ECOSYSTEM_SITES: readonly EcosystemSiteContract[] = [
     miconnectApplication: 'cercle',
     handoff: false,
     dests: ['/'],
+    signIn: { path: '/auth/login', returnParam: null },
   },
   {
     id: 'sky',
@@ -52,6 +64,7 @@ export const ECOSYSTEM_SITES: readonly EcosystemSiteContract[] = [
     miconnectApplication: 'sky',
     handoff: false,
     dests: ['/'],
+    signIn: { path: '/auth/login', returnParam: null },
   },
   {
     id: 'portail-etu',
@@ -60,6 +73,7 @@ export const ECOSYSTEM_SITES: readonly EcosystemSiteContract[] = [
     miconnectApplication: null,
     handoff: false,
     dests: [],
+    signIn: null,
   },
 ];
 
@@ -99,25 +113,6 @@ export const HandoffRefusal = {
 } as const;
 
 export type HandoffRefusalCode = (typeof HandoffRefusal)[keyof typeof HandoffRefusal];
-
-const UUID_SEGMENT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-
-/**
- * Whether `dest` is exactly one of `allowed`, segment by segment, `{uuid}` matching one lowercase
- * UUID. No normalisation: a query, a fragment, a trailing slash, `..` or a doubled slash is simply
- * not on the list.
- */
-export function destIsAllowed(dest: string, allowed: readonly string[]): boolean {
-  if (!dest.startsWith('/')) return false;
-  const parts = dest.split('/');
-  return allowed.some((pattern) => {
-    const want = pattern.split('/');
-    if (want.length !== parts.length) return false;
-    return want.every((seg, i) =>
-      seg === '{uuid}' ? UUID_SEGMENT.test(parts[i]) : seg === parts[i]
-    );
-  });
-}
 
 /** The registry entry a mint may use for `aud`, or the refusal that says why not. */
 export function handoffSite(

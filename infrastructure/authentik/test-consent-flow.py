@@ -24,9 +24,10 @@ What it proves, in order:
   5. a user whose `cgu_version` is an older text is asked again, and FORGED hidden values in the
      POST are ignored for the server's; an IMPERSONATED session is neither shown nor written;
   6. every provider authorizing through this flow ends on a code once the terms are accepted;
-  7. PRODUCTION: exactly the providers in BOUND name this flow (50-providers.yaml declares it, all
-     eight since the hold was lifted on 2026-11-20), and production's provider shows the page to a
-     person who never accepted, writing nothing until the tick;
+  7. PRODUCTION: exactly the providers in BOUND name this flow (50-providers.yaml declares it: every
+     provider since the hold was lifted on 2026-11-20, nine with the Reseau console's), and
+     production's provider shows the page to a person who never accepted, writing nothing until the
+     tick;
   8. THE ALUMNI RULE (D42-D44), every case of libs/contracts/alumni-access.json - the table
      core-service's handoff gate runs too (apps/core-service/src/auth/handoff/alumni-access.spec.ts),
      so the two implementations cannot drift: the link page each person meets through the REAL
@@ -87,9 +88,10 @@ VERSION = "2026-11-24"
 TERMS_URL = "https://canari.emse.fr/legal/miconnect"
 PASSWORD = "consent-test-Password-0123456789"
 PREFIX = "consent-e2e-"
-# The providers that ask for the terms (50-providers.yaml): all eight since the hold of 2026-10-17 was
-# lifted on 2026-11-20. Holding one again is removing it here and in that file, in one pull request.
-BOUND = {"miconnect-archives", "miconnect-canari", "miconnect-canari-dev", "miconnect-canari-local", "miconnect-cercle", "miconnect-migallery", "miconnect-mino-wiki", "miconnect-sky"}
+# The providers that ask for the terms (50-providers.yaml): every one since the hold of 2026-10-17 was
+# lifted on 2026-11-20 (nine since the Reseau console's, 2026-11-25). Holding one again is removing it
+# here and in that file, in one pull request.
+BOUND = {"miconnect-archives", "miconnect-canari", "miconnect-canari-dev", "miconnect-canari-local", "miconnect-cercle", "miconnect-migallery", "miconnect-mino-wiki", "miconnect-reseau", "miconnect-sky"}
 PRODUCTION = "miconnect-canari"
 # What enrolment leaves on an account; the consent write must keep every key of it unchanged.
 # A post, so the cotisant gate of MiGallery and Le Cercle (60-applications.yaml) admits them in step 6; no
@@ -344,7 +346,10 @@ with Tenant.objects.get(ready=True):
         admin.refresh_from_db()
         check("cgu_version" not in admin.attributes, "nor on the administrator")
 
-        # 6 - every application signs the accepted user in.
+        # 6 - every application signs the accepted user in. The Reseau console admits its group alone
+        # (60-applications.yaml), so the user is put in it; a person outside it is refused there, which
+        # test-blueprints.sh drives.
+        user.groups.add(Group.objects.get(name="acces-reseau"))
         for provider in providers:
             if not Application.objects.filter(provider=provider).exists():
                 print(f"  skip {provider.name}: no application", flush=True)

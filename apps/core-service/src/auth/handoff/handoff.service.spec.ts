@@ -114,6 +114,16 @@ describe('HandoffService', () => {
     }
   });
 
+  it('names an album dest by its pattern in the audit line, never by the album id', async () => {
+    const service = new HandoffService(SITES, OPEN);
+    const album = '/albums/0b8e6f9a-1c2d-4e3f-8a9b-0c1d2e3f4a5b';
+    await service.mint('user-a', 'migallery', album);
+    const audit = lines.filter((l) => l.startsWith('[HANDOFF] minted'));
+    expect(audit).toHaveLength(1);
+    expect(audit[0]).toMatch(/dest=\/albums\/\{uuid\}$/);
+    expect(audit[0]).not.toContain('0b8e6f9a');
+  });
+
   it('draws a fresh jti per mint', async () => {
     const service = new HandoffService(SITES, OPEN);
     const mints = await Promise.all(
