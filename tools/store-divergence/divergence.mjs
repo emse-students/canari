@@ -21,7 +21,9 @@
  *   live           the store serves it. Nothing to do.
  *   pending        it is WITH the store - Apple reviews in days. Nothing to do, and saying
  *                  otherwise every morning is how a report teaches its reader to skip it.
- *   not-submitted  it was uploaded and never sent, and NOTHING IS IN THE WAY: re-run the job.
+ *   not-submitted  it was uploaded and never sent, and NOTHING IS IN THE WAY. The App Store
+ *                  catch-up (`submit.mjs --catch-up`, the step before this report) submits the
+ *                  latest stable in exactly this case, so seeing it here means that step did not.
  *   slot-held      it was uploaded and never sent BECAUSE ANOTHER VERSION HOLDS APPLE'S ONE SLOT
  *                  and that version is with Apple. A re-run changes nothing - the errand is a
  *                  decision in App Store Connect, on the version this report names.
@@ -100,19 +102,19 @@ function whyThereIsNoVersion({ wanted, versions }) {
   if (slot.action === 'blocked' || slot.action === 'fail')
     return { state: 'slot-held', why: `${wanted} has no version of its own: ${slot.why}` };
 
-  // THE SLOT HOLDS SOMETHING STILL EDITABLE, so the next iOS run renames it and submits. A re-run
-  // IS the errand here, which is exactly what it is not in the two arms above.
+  // THE SLOT HOLDS SOMETHING STILL EDITABLE, so the catch-up renames it and submits - which is
+  // exactly what nothing may do in the two arms above.
   if (slot.action === 'rename')
     return {
       state: 'not-submitted',
-      why: `the App Store has no version ${wanted} - the slot holds ${slot.from} (${slot.state}), which is still editable, so re-running the iOS job renames it and submits`,
+      why: `the App Store has no version ${wanted} - the slot holds ${slot.from} (${slot.state}), which is still editable, and the App Store catch-up step before this report did not submit it - its log says why`,
     };
 
   // THE SLOT IS EMPTY: nothing was in the way and nothing was created. The original sentence, now
   // said only when it is true.
   return {
     state: 'not-submitted',
-    why: `the App Store has no version ${wanted} at all and nothing occupies the slot - the release uploaded a build to TestFlight and no version was ever created for it`,
+    why: `the App Store has no version ${wanted} at all and nothing occupies the slot, and the App Store catch-up step before this report did not submit it - its log says why`,
   };
 }
 
@@ -139,7 +141,7 @@ export function classifyAppStore({ wanted, versions }) {
   // PREPARE_FOR_SUBMISSION and READY_FOR_REVIEW: created, never sent. This is the deferral.
   return {
     state: 'not-submitted',
-    why: `${wanted} exists and is ${st} - it was prepared and never submitted, which is what an occupied slot leaves behind. Re-run the iOS job once the slot is free`,
+    why: `${wanted} exists and is ${st} - it was prepared and never submitted, which is what an occupied slot leaves behind, and the App Store catch-up step before this report did not submit it - its log says why`,
   };
 }
 
@@ -191,16 +193,59 @@ export function verdict(stores) {
 // Every fetch below can fail, and each failure becomes `unknown` rather than an exception: a report
 // that dies on its first request tells you less than one that says which half it could not read.
 
-/** The newest published, non-draft, non-prerelease release - the only kind that owes both stores. */
-async function latestStable(repo, ghToken) {
-  const r = await fetch(`https://api.github.com/repos/${repo}/releases?per_page=30`, {
+/**
+ * The newest published, non-draft, non-prerelease release - the only kind that owes both stores.
+ *
+ * ONE ANSWER FOR BOTH READERS of the `stores` job: this report, and the App Store catch-up that
+ * runs before it (`--catch-up-target`). That is what makes "a stale missing stable is skipped" a
+ * property rather than a policy: the catch-up is only ever handed THIS release, so once `1.8.2` is
+ * published nothing will ever submit `1.8.1`.
+ *
+ * @param {unknown} rows GitHub's release list, newest first
+ * @returns {{tag: string, version: string, at: string} | null}
+ */
+export function pickLatestStable(rows) {
+  const stable = (Array.isArray(rows) ? rows : []).find((x) => x && !x.draft && !x.prerelease);
+  if (!stable?.tag_name) return null;
+  return {
+    tag: stable.tag_name,
+    version: String(stable.tag_name).replace(/^v/, ''),
+    at: stable.published_at,
+  };
+}
+
+/**
+ * Is a release run still going? If so it OWNS the App Store submission, and the catch-up stands
+ * down for today.
+ *
+ * WHY THIS IS A FACT AND NOT A CLOCK. A stable's release is published BEFORE its iOS arm has built
+ * and uploaded anything - for twenty minutes or more `pickLatestStable` already names a version
+ * whose build does not exist yet, and whose submission the release itself is about to make. A
+ * catch-up acting in that window would fail on the absent build, or race the release's own
+ * `POST /v1/reviewSubmissions`, which Apple does not deduplicate. `release.yml` runs one at a time
+ * (`concurrency: release`), so "no run of it is unfinished" is exactly "nothing else is writing to
+ * the App Store", and the next morning asks again.
+ *
+ * @param {unknown} runs the `workflow_runs` of `release.yml`, newest first
+ * @returns {{id: unknown, status: string} | null} the run still in flight, or null
+ */
+export function releaseInFlight(runs) {
+  const live = (Array.isArray(runs) ? runs : []).find((r) => r && r.status !== 'completed');
+  return live ? { id: live.id, status: String(live.status) } : null;
+}
+
+async function ghJson(path, ghToken) {
+  const r = await fetch(`https://api.github.com${path}`, {
     headers: { authorization: `Bearer ${ghToken}`, accept: 'application/vnd.github+json' },
   });
-  if (!r.ok) throw new Error(`GitHub answered ${r.status} for the release list`);
-  const rows = await r.json();
-  const stable = (Array.isArray(rows) ? rows : []).find((x) => !x.draft && !x.prerelease);
+  if (!r.ok) throw new Error(`GitHub answered ${r.status} for ${path}`);
+  return r.json();
+}
+
+async function latestStable(repo, ghToken) {
+  const stable = pickLatestStable(await ghJson(`/repos/${repo}/releases?per_page=30`, ghToken));
   if (!stable) throw new Error('no published stable release found in the last 30');
-  return { tag: stable.tag_name, version: String(stable.tag_name).replace(/^v/, ''), at: stable.published_at };
+  return stable;
 }
 
 async function appStoreVersions() {
@@ -242,6 +287,25 @@ async function main() {
   }
 
   const rel = await latestStable(repo, ghToken);
+
+  // THE CATCH-UP'S TARGET: the tag on stdout and nothing else, so a shell can capture it - or
+  // nothing, with the reason as a notice, while a release run is in flight and owns the submission.
+  if (process.argv.includes('--catch-up-target')) {
+    const runs = await ghJson(
+      `/repos/${repo}/actions/workflows/release.yml/runs?per_page=20`,
+      ghToken
+    );
+    const live = releaseInFlight(runs?.workflow_runs);
+    if (live) {
+      process.stderr.write(
+        `::notice::App Store catch-up stands down today - release run ${live.id} is ${live.status}, and it owns the App Store submission until it ends\n`
+      );
+      return;
+    }
+    process.stdout.write(rel.tag);
+    return;
+  }
+
   process.stdout.write(`the last stable release is ${rel.tag}, published ${rel.at}\n`);
 
   const safe = async (fn) => {
@@ -280,7 +344,7 @@ async function main() {
         '',
         ok
           ? 'Both stores have it, or are still working on it. Nothing to do.'
-          : `**${acting.join(' and ')} need a human.** The evidence column says which errand: a version that was never submitted is a re-run of the store job; a slot held by an earlier version is a DECISION in App Store Connect that no re-run will touch; a refusal has to be read and fixed.`,
+          : `**${acting.join(' and ')} need attention.** The evidence column says which: a slot held by an earlier version Apple is reviewing completes by itself, because the catch-up step submits the latest stable the first morning the slot is free; a version still unsubmitted after that step ran is that step's log to read; a refusal has to be read and fixed.`,
         '',
       ].join('\n')
     );

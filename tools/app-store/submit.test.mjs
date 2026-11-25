@@ -8,6 +8,12 @@
  * write into a version a human is mid-way through, and release notes that describe the release
  * before last. Every one of those is green until somebody reads a store listing.
  *
+ * ONE FAKE, AND WHAT IT IS FOR. The daily catch-up (`--catch-up`) is a chain of decisions wired to
+ * writes, and its promise is about which writes happen: none while Apple reviews, none for a
+ * version already there or a newer one, exactly the release's chain when one is owed. So the end of
+ * this file runs `submitToAppStore` against an in-memory App Store that refuses any route it does
+ * not know. It proves the wiring and the decisions, never Apple's behaviour.
+ *
  * THE ARM THAT MATTERS MOST IS THE UNKNOWN ONE. Apple adds states; a classifier that treats
  * anything it does not recognise as "keep waiting" holds a macOS runner until the job times out and
  * says nothing about why. So an unknown state is a refusal in both classifiers, and that is
@@ -34,7 +40,12 @@ import {
   exitFor,
   SlotHeldError,
   EXIT_SLOT_HELD,
+  compareVersions,
+  chooseCatchUp,
+  submitToAppStore,
+  VERSION_DONE,
 } from './submit.mjs';
+import { pickLatestStable } from '../store-divergence/divergence.mjs';
 
 let pass = 0;
 let fail = 0;
@@ -655,7 +666,368 @@ process.stdout.write('\nwhich version slot does this release belong in?\n');
 
   // THE ONE THING A LATER EDIT COULD UNDO WITHOUT ANY OTHER ASSERTION NOTICING.
   eq('the two doors are different doors', EXIT_SLOT_HELD !== 1, true);
+
+  // THE TWO SHELLS THAT READ THE DOOR NAME IT AS A NUMBER, so the number is asserted rather than
+  // trusted: the release's iOS arm and the daily catch-up.
+  for (const wf of ['ios.yml', 'scheduled.yml']) {
+    const src = readFileSync(new URL(`../../.github/workflows/${wf}`, import.meta.url), 'utf8');
+    const codes = [...src.matchAll(/"\$code" -eq (\d+)/g)]
+      .map((m) => Number(m[1]))
+      .filter((c) => c);
+    eq(`${wf} reads the held-slot exit code as EXIT_SLOT_HELD`, codes, [EXIT_SLOT_HELD]);
+  }
 }
+
+{
+  process.stdout.write(
+    '\nversions are ordered as numbers, and what cannot be ordered is said so\n'
+  );
+  eq(
+    '1.8.10 is newer than 1.8.2, which a string compare gets wrong',
+    compareVersions('1.8.10', '1.8.2'),
+    1
+  );
+  eq('1.8.1 is older than 1.8.2', compareVersions('1.8.1', '1.8.2'), -1);
+  eq('a missing component reads as 0', compareVersions('1.8', '1.8.0'), 0);
+  eq(
+    'a pre-release suffix is not a store version',
+    compareVersions('1.8.2-alpha.1', '1.8.2'),
+    null
+  );
+  eq('nor is nothing', compareVersions(undefined, '1.8.2'), null);
+}
+
+{
+  process.stdout.write('\nthe daily catch-up decides from the whole version list\n');
+  const V = (versionString, appStoreState, id = `ver-${versionString}`) => ({
+    id,
+    attributes: { versionString, appStoreState },
+  });
+  const decide = (versionString, versions) => chooseCatchUp({ versions, versionString }).action;
+
+  // THE 2026-11-25 STATE: 1.8.0 approved, the slot free, and no 1.8.1 anywhere.
+  eq(
+    'the slot is free and the latest stable is missing: submit',
+    decide('1.8.1', [V('1.8.0', 'READY_FOR_SALE')]),
+    'submit'
+  );
+  eq(
+    'a slot Apple is reviewing: defer, never touch it',
+    decide('1.8.1', [V('1.8.0', 'WAITING_FOR_REVIEW')]),
+    'defer'
+  );
+  eq('IN_REVIEW too', decide('1.8.1', [V('1.8.0', 'IN_REVIEW')]), 'defer');
+  eq(
+    'and an approved version waiting for its developer release',
+    decide('1.8.1', [V('1.8.0', 'PENDING_DEVELOPER_RELEASE')]),
+    'defer'
+  );
+  eq(
+    'the latest stable already in review: nothing',
+    decide('1.8.1', [V('1.8.1', 'WAITING_FOR_REVIEW'), V('1.8.0', 'READY_FOR_SALE')]),
+    'nothing'
+  );
+  eq('or already live: nothing', decide('1.8.1', [V('1.8.1', 'READY_FOR_SALE')]), 'nothing');
+  eq(
+    'a NEWER version in Apple, in any state: nothing - never submit an older one',
+    decide('1.8.1', [V('1.8.2', 'WAITING_FOR_REVIEW'), V('1.8.0', 'READY_FOR_SALE')]),
+    'nothing'
+  );
+  eq(
+    'even a newer one nobody submitted - renaming it down is not ours to do',
+    decide('1.8.1', [V('1.9.0', 'PREPARE_FOR_SUBMISSION')]),
+    'nothing'
+  );
+  eq(
+    'the latest stable REJECTED: nothing - resubmitting it unread is a human decision',
+    decide('1.8.1', [V('1.8.1', 'REJECTED')]),
+    'nothing'
+  );
+  eq(
+    'an older editable version in the slot: submit (it is renamed, as the release would)',
+    decide('1.8.1', [V('1.8.0', 'PREPARE_FOR_SUBMISSION')]),
+    'submit'
+  );
+  eq(
+    'its own prepared-and-never-sent version: submit',
+    decide('1.8.1', [V('1.8.1', 'READY_FOR_REVIEW')]),
+    'submit'
+  );
+  eq(
+    'a version name it cannot order: fail',
+    decide('1.8.1', [V('beta', 'READY_FOR_SALE')]),
+    'fail'
+  );
+  eq('no list: fail', decide('1.8.1', undefined), 'fail');
+  eq('an alpha is not a catch-up target', decide('1.8.1-alpha.2', []), 'fail');
+}
+
+// =================================================================================================
+// THE CATCH-UP END TO END, AGAINST AN IN-MEMORY APP STORE
+//
+// WHAT THIS FAKE PROVES AND WHAT IT DOES NOT. It does not prove Apple behaves like it - nothing off
+// App Store Connect can. It proves the WIRING: given a version list, which writes `submitToAppStore`
+// sends, in which order, and that the arms which must never write send none. That is the half a
+// refactor can break silently. The fake refuses any route it does not know, so a new call surfaces
+// here rather than passing through.
+// =================================================================================================
+
+/**
+ * @param {{versions: Array<{id: string, attributes: {versionString: string, appStoreState: string}}>,
+ *          builds?: Array<{id: string, attributes: {version: string, processingState: string}}>}} seed
+ */
+function fakeAppStore({ versions, builds }) {
+  const st = {
+    versions: versions.map((v) => ({ ...v, attributes: { ...v.attributes } })),
+    builds: builds ?? [
+      { id: 'build-a', attributes: { version: '100800199', processingState: 'VALID' } },
+    ],
+    attached: {},
+    whatsNew: {},
+    submissions: [],
+    items: [],
+    writes: [],
+    n: 0,
+  };
+  const refuse = (method, path, status, detail) => {
+    throw new ApiError({ method, path, status, detail, attempts: 1 });
+  };
+  const api = async (method, path, body) => {
+    const [route, query = ''] = path.split('?');
+    const q = new URLSearchParams(query);
+    if (method !== 'GET') st.writes.push(`${method} ${route}`);
+    let m;
+    if (method === 'GET' && route === '/v1/apps')
+      return { data: [{ id: 'app', attributes: { name: 'Canari' } }] };
+    if (method === 'GET' && route === '/v1/builds')
+      return { data: st.builds.filter((b) => b.attributes.version === q.get('filter[version]')) };
+    if (method === 'GET' && route === '/v1/apps/app/appStoreVersions') return { data: st.versions };
+    if (method === 'POST' && route === '/v1/appStoreVersions') {
+      // Apple's own rule, which the real 409 of v0.16.0 taught: ONE non-terminal version.
+      if (st.versions.some((v) => !VERSION_DONE.has(v.attributes.appStoreState)))
+        refuse(
+          method,
+          route,
+          409,
+          'You cannot create a new version of the App in the current state.'
+        );
+      const v = {
+        id: `ver-new-${++st.n}`,
+        attributes: {
+          versionString: body.data.attributes.versionString,
+          appStoreState: 'PREPARE_FOR_SUBMISSION',
+        },
+      };
+      st.versions.unshift(v);
+      return { data: v };
+    }
+    if ((m = /^\/v1\/appStoreVersions\/([^/]+)$/.exec(route)) && method === 'PATCH') {
+      st.versions.find((v) => v.id === m[1]).attributes.versionString =
+        body.data.attributes.versionString;
+      return { data: {} };
+    }
+    if (
+      (m = /^\/v1\/appStoreVersions\/([^/]+)\/relationships\/build$/.exec(route)) &&
+      method === 'PATCH'
+    ) {
+      st.attached[m[1]] = body.data.id;
+      return null;
+    }
+    if ((m = /^\/v1\/appStoreVersions\/([^/]+)\/appStoreVersionLocalizations$/.exec(route)))
+      return { data: [{ id: `loc-${m[1]}`, attributes: { locale: 'fr-FR' } }] };
+    if ((m = /^\/v1\/appStoreVersionLocalizations\/([^/]+)$/.exec(route)) && method === 'PATCH') {
+      st.whatsNew[m[1]] = body.data.attributes.whatsNew;
+      return { data: {} };
+    }
+    if (
+      /^\/v1\/appStoreVersionLocalizations\/[^/]+\/(appScreenshotSets|appPreviewSets)$/.test(route)
+    )
+      return { data: [] };
+    if (route === '/v1/reviewSubmissions' && method === 'GET')
+      return { data: st.submissions.filter((s) => s.attributes.state === 'READY_FOR_REVIEW') };
+    if (route === '/v1/reviewSubmissions' && method === 'POST') {
+      const s = { id: `sub-${++st.n}`, attributes: { state: 'READY_FOR_REVIEW' } };
+      st.submissions.push(s);
+      return { data: s };
+    }
+    if ((m = /^\/v1\/reviewSubmissions\/([^/]+)\/items$/.exec(route)))
+      return { data: st.items.filter((i) => i.sub === m[1]).map((i) => i.json) };
+    if (route === '/v1/reviewSubmissionItems' && method === 'POST') {
+      const sub = body.data.relationships.reviewSubmission.data.id;
+      const ver = body.data.relationships.appStoreVersion.data.id;
+      st.items.push({
+        sub,
+        ver,
+        json: {
+          id: `item-${++st.n}`,
+          attributes: { state: 'READY_FOR_REVIEW' },
+          relationships: { appStoreVersion: { data: { id: ver } } },
+        },
+      });
+      return { data: {} };
+    }
+    if ((m = /^\/v1\/reviewSubmissions\/([^/]+)$/.exec(route)) && method === 'PATCH') {
+      const s = st.submissions.find((x) => x.id === m[1]);
+      s.attributes.state = 'WAITING_FOR_REVIEW';
+      for (const i of st.items.filter((x) => x.sub === s.id))
+        st.versions.find((v) => v.id === i.ver).attributes.appStoreState = 'WAITING_FOR_REVIEW';
+      return { data: {} };
+    }
+    throw new Error(`the fake App Store has no route for ${method} ${path}`);
+  };
+  return { api, st };
+}
+
+const catchUpDir = mkdtempSync(join(tmpdir(), 'asc-catchup-'));
+const notesFor = (version) => {
+  const f = join(catchUpDir, `whats-new-${version}.txt`);
+  writeFileSync(f, `version: ${version}\nMessages plus fiables.\n`, 'utf8');
+  return f;
+};
+const V = (versionString, appStoreState) => ({
+  id: `ver-${versionString}`,
+  attributes: { versionString, appStoreState },
+});
+const catchUp = async (fake, versionString, extra = {}) => {
+  try {
+    return await submitToAppStore({
+      api: fake.api,
+      bundleId: 'fr.emse.canari',
+      versionString,
+      buildNumber: '100800199',
+      whatsNewFile: notesFor(versionString),
+      catchUp: true,
+      pollMs: 0,
+      ...extra,
+    });
+  } catch (e) {
+    return { thrown: e };
+  }
+};
+const stateOf = (fake, name) =>
+  fake.st.versions.find((v) => v.attributes.versionString === name)?.attributes.appStoreState;
+
+{
+  process.stdout.write('\ncase 1 - the slot is busy: the catch-up defers and writes nothing\n');
+  const fake = fakeAppStore({
+    versions: [V('1.8.0', 'WAITING_FOR_REVIEW'), V('1.7.9', 'READY_FOR_SALE')],
+  });
+  const r = await catchUp(fake, '1.8.1');
+  eq(
+    'it leaves through the held-slot door (exit 75), not as a failure',
+    r.thrown instanceof SlotHeldError,
+    true
+  );
+  eq('naming what holds the slot', String(r.thrown?.message).includes('1.8.0'), true);
+  eq('and it wrote NOTHING - a version Apple is reviewing is never touched', fake.st.writes, []);
+}
+
+{
+  process.stdout.write(
+    '\ncase 2 - the slot is free and the latest stable is missing: the catch-up submits it\n'
+  );
+  const fake = fakeAppStore({ versions: [V('1.8.0', 'READY_FOR_SALE')] });
+  const r = await catchUp(fake, '1.8.1');
+  eq('it reports a submission', r.outcome, 'submitted');
+  eq('1.8.1 is now with Apple', stateOf(fake, '1.8.1'), 'WAITING_FOR_REVIEW');
+  const created = fake.st.versions.find((v) => v.attributes.versionString === '1.8.1');
+  eq('with the stable build attached', fake.st.attached[created.id], 'build-a');
+  eq(
+    'and the notes read from the file it was handed',
+    fake.st.whatsNew[`loc-${created.id}`],
+    'Messages plus fiables.'
+  );
+  eq(
+    "in the release path's own order: create, attach, notes, submission, item, submit",
+    fake.st.writes,
+    [
+      'POST /v1/appStoreVersions',
+      `PATCH /v1/appStoreVersions/${created.id}/relationships/build`,
+      `PATCH /v1/appStoreVersionLocalizations/loc-${created.id}`,
+      'POST /v1/reviewSubmissions',
+      'POST /v1/reviewSubmissionItems',
+      `PATCH /v1/reviewSubmissions/${fake.st.submissions[0].id}`,
+    ]
+  );
+  eq('1.8.0 was left as it was', stateOf(fake, '1.8.0'), 'READY_FOR_SALE');
+
+  // IDEMPOTENT: the next morning finds 1.8.1 in review and does nothing.
+  const again = await catchUp(fake, '1.8.1');
+  eq('run again the next morning, it does nothing', again.outcome, 'nothing');
+  eq('and writes nothing more', fake.st.writes.length, 6);
+
+  const dry = fakeAppStore({ versions: [V('1.8.0', 'READY_FOR_SALE')] });
+  const d = await catchUp(dry, '1.8.1', { dryRun: true });
+  eq('a dry run says what it would do', d.outcome, 'dry-run');
+  eq('and writes nothing', dry.st.writes, []);
+
+  const nobuild = fakeAppStore({ versions: [V('1.8.0', 'READY_FOR_SALE')], builds: [] });
+  const nb = await catchUp(nobuild, '1.8.1');
+  eq(
+    'an absent build is a failure at once, not a 45-minute wait',
+    nb.thrown instanceof SlotHeldError,
+    false
+  );
+  eq('naming the build', String(nb.thrown?.message).includes('100800199'), true);
+  eq('and nothing was written', nobuild.st.writes, []);
+}
+
+{
+  process.stdout.write(
+    '\ncase 3 - the latest stable is already in review: the catch-up does nothing\n'
+  );
+  const fake = fakeAppStore({
+    versions: [V('1.8.1', 'WAITING_FOR_REVIEW'), V('1.8.0', 'READY_FOR_SALE')],
+  });
+  const r = await catchUp(fake, '1.8.1');
+  eq('nothing is owed', r.outcome, 'nothing');
+  eq('and nothing is written', fake.st.writes, []);
+
+  const rejected = fakeAppStore({
+    versions: [V('1.8.1', 'REJECTED'), V('1.8.0', 'READY_FOR_SALE')],
+  });
+  const rr = await catchUp(rejected, '1.8.1');
+  eq('a rejected latest stable is not resubmitted by a clock', rr.outcome, 'nothing');
+  eq('and nothing is written', rejected.st.writes, []);
+}
+
+{
+  process.stdout.write('\ncase 4 - a newer stable exists: only the newest is submitted\n');
+  // 1.8.1 was deferred and never submitted; 1.8.2 has been published since. GitHub lists newest
+  // first, and the target is the first stable - the one implementation the workflow uses.
+  const releases = [
+    { tag_name: 'v1.8.2', prerelease: false, draft: false },
+    { tag_name: 'v1.8.2-alpha.4', prerelease: true, draft: false },
+    { tag_name: 'v1.8.1', prerelease: false, draft: false },
+  ];
+  const target = pickLatestStable(releases)?.version;
+  eq('the catch-up target is 1.8.2, not the stale 1.8.1', target, '1.8.2');
+
+  const fake = fakeAppStore({
+    versions: [V('1.8.0', 'READY_FOR_SALE')],
+    builds: [{ id: 'build-182', attributes: { version: '100800299', processingState: 'VALID' } }],
+  });
+  const r = await catchUp(fake, target, { buildNumber: '100800299' });
+  eq('1.8.2 is submitted', r.outcome, 'submitted');
+  eq('1.8.2 is with Apple', stateOf(fake, '1.8.2'), 'WAITING_FOR_REVIEW');
+  eq('and no 1.8.1 was ever created', stateOf(fake, '1.8.1'), undefined);
+  eq(
+    'exactly one version was created',
+    fake.st.writes.filter((w) => w === 'POST /v1/appStoreVersions').length,
+    1
+  );
+
+  // AND THE GUARD BEHIND THE SELECTION: handed the stale one anyway, the catch-up refuses to put
+  // an older version over a newer one Apple already has.
+  const stale = fakeAppStore({
+    versions: [V('1.8.2', 'WAITING_FOR_REVIEW'), V('1.8.0', 'READY_FOR_SALE')],
+  });
+  const s = await catchUp(stale, '1.8.1');
+  eq('handed 1.8.1 while Apple holds 1.8.2, it does nothing', s.outcome, 'nothing');
+  eq('and writes nothing', stale.st.writes, []);
+}
+
+rmSync(catchUpDir, { recursive: true, force: true });
 
 process.stdout.write('\n');
 if (fail !== 0) {

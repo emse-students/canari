@@ -968,9 +968,9 @@ jobs:
               echo "TestFlight, but it was NOT submitted for review: Apple's single version slot is"
               echo "still held by an earlier version. The message above names it and its state."
               echo
-              echo "**Nothing here needs fixing.** When that version leaves the slot - it ships, or a"
-              echo "human withdraws it in App Store Connect - re-run this job and the submission goes"
-              echo "through. The scheduled store-divergence check will keep saying so until it does."
+              echo "**Nothing here needs doing.** When that version leaves the slot - it ships, or a"
+              echo "human withdraws it in App Store Connect - the daily \`stores\` job of \`scheduled.yml\`"
+              echo "submits the latest stable by itself (\`submit.mjs --catch-up\`) - this one, unless a newer stable is out by then."
             } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi

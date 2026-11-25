@@ -76,7 +76,7 @@ on:
         type: string
         default: ''
       dry_run:
-        description: 'dev-reset and upstream: report what would happen and change nothing'
+        description: 'dev-reset, upstream and stores: report what would happen and change nothing'
         type: boolean
         default: false
 
@@ -870,6 +870,20 @@ jobs:
   # goes with it. What fails this job is a version never submitted, a version a store REFUSED, or a
   # half this report could not read at all. That last one is deliberate: a credential that expires
   # must not turn the whole check into a green light.
+  #
+  # AND SINCE 2026-11-25 IT DOES NOT ONLY REPORT: IT COMPLETES A DEFERRED SUBMISSION. The `1.8.1`
+  # stable's iOS arm deferred on a slot `1.8.0` held in review - correctly - and then nothing ever
+  # asked again: `1.8.0` was approved, the slot freed, the App Store had no `1.8.1` at all, and this
+  # job went red every morning with nobody to act. A deferral completed by a human noticing is a
+  # queue nobody drains. Both facts that decide it are durable - the latest stable release says what
+  # must ship, App Store Connect's version list says what is there - so the first step below asks
+  # them and, when the slot is free and the latest stable is missing, runs THE SAME `submit.mjs`
+  # the release runs (`--catch-up`: `chooseCatchUp` decides first; the build is not waited for).
+  # Only the LATEST stable is ever a target, so a stale missing one is skipped; nothing older than
+  # a version Apple already has is ever submitted; a version Apple is reviewing is never touched;
+  # and while a `release.yml` run is in flight it owns the submission, so the catch-up stands down.
+  # The report then reads the stores AFTER the catch-up, so what it says is what is true now.
+  # Everything is in `tools/app-store/README.md`.
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   stores:
     name: Did the last stable reach both stores?
@@ -878,18 +892,68 @@ jobs:
       (github.event_name == 'workflow_dispatch' &&
       contains(fromJSON('["all", "stores"]'), inputs.job))
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    # The catch-up waits for the store media like the release does (at most 30 minutes, and only
+    # when screenshots were replaced just before); the report itself takes seconds.
+    timeout-minutes: 40
     permissions:
       contents: read
+      # `release.yml`'s runs: one in flight owns the App Store submission (`releaseInFlight`).
+      actions: read
     steps:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: .bun-version
 
+      # THE NOTES COME FROM THE STABLE'S OWN TREE, never from `main`: `main` already carries the
+      # next version's `store/whats-new.txt` (or the same file, unchanged, which `readWhatsNew`
+      # would refuse as naming the wrong version). The build number is the band
+      # `scripts/bump-app-version.sh --code` owns - the one implementation, the number the stable's
+      # bump wrote into the archive - and Apple is then asked for exactly that build, which must
+      # already be VALID: a catch-up never waits for an upload.
+      #
+      #   0   submitted, nothing owed, or a dry run  -> green; the summary says which
+      #   75  the slot is held by a version with Apple -> green; tomorrow asks again
+      #   *   anything else                        -> RED, and the report below still runs
+      - name: Submit the latest stable to the App Store if its submission was deferred
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          ASC_API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
+          APP_BUNDLE_ID: fr.emse.canari
+          DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+        run: |
+          set -euo pipefail
+          tag="$(bun tools/store-divergence/divergence.mjs --catch-up-target)"
+          if [ -z "$tag" ]; then
+            echo "### App Store catch-up: \`stood down\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "A release run is in flight and owns the submission; tomorrow asks again." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          version="${tag#v}"
+          git fetch --no-tags --depth=1 origin "+refs/tags/$tag:refs/tags/$tag"
+          git show "$tag:store/whats-new.txt" > "$RUNNER_TEMP/whats-new.txt"
+          build="$(bash scripts/bump-app-version.sh --code "$version")"
+          echo "the latest stable is $tag: version $version, build $build, notes from its own tree"
+
+          set +e
+          MARKETING_VERSION="$version" BUILD_NUMBER="$build" WHATS_NEW_FILE="$RUNNER_TEMP/whats-new.txt" \
+            bun tools/app-store/submit.mjs --catch-up
+          code=$?
+          set -e
+          if [ "$code" -eq 75 ]; then
+            echo "### App Store catch-up: \`deferred\`" >> "$GITHUB_STEP_SUMMARY"
+            echo "Apple's single version slot is held by a version it is reviewing; the log names it. Nothing was touched, and tomorrow asks again." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          exit "$code"
+
       # The Play library takes its credential from a FILE, and `PLAY_SA_KEY` is the documented
-      # override for exactly this: CI has the JSON as a secret, not as a path.
+      # override for exactly this: CI has the JSON as a secret, not as a path. `!cancelled()` here
+      # and below: a failed catch-up must not also silence the report.
       - name: Put the Play service account where the library looks
+        if: ${{ !cancelled() }}
         env:
           GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
         run: |
@@ -902,6 +966,7 @@ jobs:
           echo "PLAY_SA_KEY=$RUNNER_TEMP/play-sa.json" >> "$GITHUB_ENV"
 
       - name: Ask both stores what they hold
+        if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}

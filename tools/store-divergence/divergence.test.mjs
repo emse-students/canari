@@ -13,7 +13,15 @@
  * Run: bun tools/store-divergence/divergence.test.mjs
  */
 
-import { matchesVersion, classifyAppStore, classifyPlay, verdict, NEEDS_A_HUMAN } from './divergence.mjs';
+import {
+  matchesVersion,
+  classifyAppStore,
+  classifyPlay,
+  verdict,
+  NEEDS_A_HUMAN,
+  pickLatestStable,
+  releaseInFlight,
+} from './divergence.mjs';
 
 let pass = 0;
 let fail = 0;
@@ -81,11 +89,11 @@ const asState = (wanted, versions) => classifyAppStore({ wanted, versions }).sta
   // A RE-RUN IS THE WRONG ERRAND HERE and saying so is the whole point of the new state.
   eq('the errand it states is App Store Connect', held.why.includes('App Store Connect'), true);
 
-  // AN OCCUPANT THAT IS STILL EDITABLE IS THE OTHER CASE: the next iOS run renames it, so the
-  // errand really is a re-run and the state stays `not-submitted`.
+  // AN OCCUPANT THAT IS STILL EDITABLE IS THE OTHER CASE: the catch-up step that runs before this
+  // report renames it and submits, so reading it here means that step did not, and says why.
   const renameable = classifyAppStore({ wanted: '0.16.5', versions: [V('0.16.4', 'PREPARE_FOR_SUBMISSION')] });
   eq('an editable occupant is still not-submitted', renameable.state, 'not-submitted');
-  eq('and the line says a re-run resolves it', renameable.why.includes('re-running'), true);
+  eq('and the line sends the reader to the catch-up step that should have submitted it', renameable.why.includes('catch-up'), true);
 
   // TWO OCCUPANTS CONTRADICT APPLE'S OWN RULE. Nothing here can pick between them, and a re-run
   // will not either, so it reads as a held slot rather than a deferral.
@@ -159,6 +167,35 @@ const asState = (wanted, versions) => classifyAppStore({ wanted, versions }).sta
   // exits 0 is worse than no report - it is a green light nobody asked for.
   eq('and NOT LOOKING is not a pass', both('unknown', 'live').ok, false);
   eq('unknown is in the set that needs a human', NEEDS_A_HUMAN.has('unknown'), true);
+}
+
+{
+  process.stdout.write('\nthe App Store catch-up is handed the LATEST stable, and only while no release is in flight\n');
+  // NEWEST FIRST, as GitHub lists them: the catch-up target is the first stable, so a stale missing
+  // stable (1.8.1) is never handed to it once 1.8.2 is published - the latest stable always wins.
+  const rows = [
+    { tag_name: 'v1.8.3-alpha.1', prerelease: true, draft: false },
+    { tag_name: 'v1.8.2', prerelease: false, draft: false, published_at: 't2' },
+    { tag_name: 'v1.8.2-alpha.4', prerelease: true, draft: false },
+    { tag_name: 'v1.8.1', prerelease: false, draft: false, published_at: 't1' },
+  ];
+  eq('a newer stable wins over the one still missing', pickLatestStable(rows)?.version, '1.8.2');
+  eq('and the tag is carried as GitHub names it', pickLatestStable(rows)?.tag, 'v1.8.2');
+  eq('a draft is not a stable', pickLatestStable([{ tag_name: 'v2.0.0', draft: true }, ...rows])?.version, '1.8.2');
+  eq('no stable at all is null, never a pre-release', pickLatestStable([rows[0], rows[2]]), null);
+  eq('and no list at all is null', pickLatestStable(undefined), null);
+
+  // A STABLE IS PUBLISHED BEFORE ITS BUILD EXISTS. While its release run is unfinished, that run owns
+  // the submission; a catch-up acting then would race its POST /v1/reviewSubmissions.
+  eq('a finished history leaves the catch-up free', releaseInFlight([{ id: 1, status: 'completed' }]), null);
+  eq(
+    'an in-progress release makes it stand down, naming the run',
+    releaseInFlight([{ id: 2, status: 'in_progress' }, { id: 1, status: 'completed' }]),
+    { id: 2, status: 'in_progress' }
+  );
+  eq('so does a queued one', releaseInFlight([{ id: 3, status: 'queued' }])?.status, 'queued');
+  eq('and one waiting on an environment', releaseInFlight([{ id: 4, status: 'waiting' }])?.status, 'waiting');
+  eq('no run at all is nothing in flight', releaseInFlight([]), null);
 }
 
 process.stdout.write('\n');

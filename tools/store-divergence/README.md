@@ -30,7 +30,7 @@ A store not carrying the version has five causes, and a human acts on each diffe
 | --- | --- | --- |
 | `live` | the store serves it | none |
 | `pending` | it is WITH the store - Apple reviews in days | **none**, and saying otherwise daily is how a report teaches its reader to skip it |
-| `not-submitted` | uploaded and never sent, and nothing is in the way | re-run the store job |
+| `not-submitted` | uploaded and never sent, and nothing is in the way | none in the usual case: the catch-up step before this report submits it; if it is still printed, that step said why |
 | `slot-held` | uploaded and never sent **because another version holds Apple's one slot** and is with Apple | a DECISION in App Store Connect on the version named; **a re-run will not touch it** |
 | `rejected` | the store said NO | read what they said, and fix it |
 | `unknown` | the report could not look | fix the credential; **this is never a pass** |
@@ -64,10 +64,14 @@ them in that order is what makes the daily red actionable:
    wait has a subject rather than being an alarm.
 2. Apple releases that occupant, or refuses it - the slot frees. The same stable now reads
    **`not-submitted`**: no version exists for it and nothing is in the way any more.
-3. **That is the morning to re-run the `App Store / Build iOS IPA` job of the last stable.** It
-   creates the version, attaches the build already sitting in TestFlight and submits. A re-run is
-   safe here: `ios.yml` reads Apple's `ITMS-4238 / Redundant Binary Upload` as success precisely so
-   that it is.
+3. **Nobody has to act on that morning any more (2026-11-25).** The `stores` job runs the App
+   Store catch-up BEFORE this report - `submit.mjs --catch-up`, the release's own submission - and
+   it creates the version, attaches the build already in TestFlight and submits, the first morning
+   the slot is free. So the report usually reads `pending` that same morning, and a `not-submitted`
+   it still prints means the catch-up step did not submit: its log and the run summary say why
+   (a release in flight, an absent build, a refusal). Only the LATEST stable is ever submitted; a
+   stale missing one is skipped. Everything is in
+   [the App Store README](../app-store/README.md#a-deferred-submission-completes-itself---catch-up-2026-11-25).
 
 **Step 2 is why `slot-held` stays red.** Demoted to a `pending`-like pass it would be quiet exactly
 while a stable is failing to reach the App Store, and the transition that means *act now* would
@@ -75,8 +79,8 @@ arrive with nothing to notice it against. A red light with no green edge is the 
 reader who cannot tell "wait" from "act" eventually does neither, which is how a wrong sentence
 survived four days here.
 
-*What a re-run CANNOT do is carry a fix* - the tag carries the code, so a re-run replays the old
-commit. It carries the submission, which is the only thing wanted at step 3.
+*What the catch-up CANNOT do is carry a fix* - it submits the build the stable already uploaded,
+which is the only thing wanted at step 3.
 
 ## Running it
 
