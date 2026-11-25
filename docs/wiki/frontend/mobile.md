@@ -505,7 +505,7 @@ every plugin with a JS command surface, and an exemption there is how that test 
 | Storage | IndexedDB `CanariDBLog`, store `chunks`, auto-increment keys (two web tabs never collide), an index on each record's size. The same database on the web and in the Tauri WebView: one implementation, nothing native to verify. |
 | Write | Batched in memory, written as **one new record per batch**: at 32 KiB or 200 lines, when the app leaves the screen (`onAppScreenChange`, which is the only honest signal on Android, plus `pagehide`), and before an export. **Never on a timer.** Nothing already written is rewritten. |
 | Write on events that matter | A process or WebContent kill loses the unwritten batch, exactly the lines that explain it (an iPhone call died in setup and its export had NO line from four minutes before the death until the cold relaunch). So the batch is ALSO written on every ERROR line (a WARN rides along in the next batch) and at `flushAppLogAtMilestone(reason)`, called by `CallService` at call start, accept, the first offer sent (the negotiationneeded path) or received, the first connection and the end (once per call, after `cleanup`'s own lines; each writes a `[APPLOG] milestone: <reason>` line, so a log that stops is read against the last milestone). Bounded by events, never by line volume: L, I and W lines never ask for a write, requests coalesce (one write in flight, at most one queued, which takes everything pending). The ring is bounded by size AND by record count (512), so many small writes cannot grow the (key, size) walk each write does. Still no timer. |
-| Unclean end | A `localStorage` marker (`canari_applog_on_screen`) is set while the app is on screen and cleared at the leave-screen edge (`onAppScreenChange` false, `pagehide`) - synchronously, whether or not the leave-screen flush won its race. A marker still set at boot, on the mobile shells only, the ones with the `canari:foreground` contract (two browser tabs share `localStorage`, and a desktop quit may fire neither `visibilitychange` nor `pagehide`), logs ONE W line: `the previous session ended while on screen (killed or crashed) - last written line at <stamp>`. A kill while backgrounded is normal on iOS and finds the marker cleared, so it is never reported. **Owed a phone reading** (WebKit commits `localStorage` asynchronously): background, wait, kill, relaunch, confirm no false report - [readings](../device-verification.md#the-readings-of-2026-11-23-180-alpha3-iphone-12-the-resume-from-settings-the-pushes-name-and-logo-the-banners-the-share-logos-the-ios-27-launch). |
+| Unclean end | A `localStorage` marker (`canari_applog_on_screen`) is set while the app is on screen (`1`), set to `leaving:<epoch ms>` at the leave-screen edge (`onAppScreenChange` false, `pagehide`), and cleared only once THAT edge's leave-screen write has settled - landed, or cut short by the suspension and kept for the return (said at the time). It used to be cleared synchronously at the edge, so a process killed while the write was on its way lost the session's last lines AND the report of their loss (owner's Android log, 2026-11-25: a session's last minutes vanished with no line at the next boot). A marker still set at boot, on the mobile shells only, the ones with the `canari:foreground` contract (two browser tabs share `localStorage`, and a desktop quit may fire neither `visibilitychange` nor `pagehide`), logs ONE line. `1` is a W, `the previous session ended while on screen (killed or crashed) - last written line at <stamp>`: nothing normal ends a session in front. `leaving:` is an I, `the previous session's leave-screen write never settled (killed while leaving, or suspended and reclaimed in background) - left the screen at <stamp>, last written line at <stamp>`, on every platform: WebKit settles a write it suspended only on RESUME, so a backgrounded iOS app jetsammed mid-write leaves exactly the marker a kill leaves (and Android's cached-app freezer can do the same). The marker cannot tell a fault from a normal reclaim, and a normal reclaim must never be reported as a fault, so the line accuses nothing - it marks where the log may have lost its last lines. A jetsam after the write settled finds the marker cleared and is never reported. **Owed a phone reading** (WebKit commits `localStorage` asynchronously): background, wait, kill, relaunch, confirm no false report - [readings](../device-verification.md#the-readings-of-2026-11-23-180-alpha3-iphone-12-the-resume-from-settings-the-pushes-name-and-logo-the-banners-the-share-logos-the-ios-27-launch). |
 | Bound | After each write, the oldest records are deleted until the total is under **2 MiB** (UTF-16 code units; a redacted line is ASCII). Rotation is by SIZE. The newest record is never evicted. |
 | Failure | No IndexedDB, or a failed write ON screen: persistence stops for the process, said ONCE at `error` (`[APPLOG] the in-app log is no longer written to disk`), lines stay in a 256 KiB memory tail (oldest dropped and counted), and the export header names the state. **The export still reads the ring already on disk** - it read the memory tail alone, 19 KB against 191 KB stored (iPhone 12, 1.2.9-alpha.3). Not a second storage path. |
 | Write cut short off screen | WebKit aborts the IndexedDB transaction in flight when it suspends a backgrounded WebView, so on iOS the leave-screen flush lost that race (`log write failed` 69 ms after `[LIFECYCLE] App in background`, alpha.2 and alpha.3). A write that fails while the app is OFF screen (known from the same `onAppScreenChange` that asked for it) is not a storage failure: its lines go back in front, the connection is dropped, the batch thresholds stop asking until the app is back, and the return writes them. WebKit delivers that abort on RESUME, so the app may already be on screen when it arrives: the hold then applies only while the app is still off screen, and otherwise the lines are written again at once. One `info` line says so. `appLog.test.ts` pins it. |
@@ -880,6 +880,14 @@ Two consequences worth carrying:
 - **This is not platform-specific.** One capability file, one `hooks.client.ts`: iOS was equally
   affected and has never been checked on hardware.
 
+**EVERY LINK WAITS FOR THE ROUTER, IN ONE PLACE** (`processAppLinks`, `$lib/mobile/appLinkRouter.ts`,
+2026-11-25). A cold-start tap delivers its link before SvelteKit's first navigation has settled; a
+`goto` then threw `Cannot read properties of null (reading 'pathname')` (the client's current URL is
+still null) and a tap on the agenda or the moderation queue landed nowhere - the chat branch survived
+only because it publishes a target and lets a mounted effect route it. The router now routes nothing
+before `routerReady`, which the root layout resolves in its first `afterNavigate`: the same wait the
+iOS tap drain makes, for every branch. Test: `appLinkRouter.test.ts`.
+
 The diagnosis is cheap when a cold start misbehaves, because each hop logs separately: the OS prints
 `START ... act=android.intent.action.VIEW dat=fr.emse.canari://chat/...`, the WebView prints
 `[hooks] Deep-link listener registered`, the handoff prints `[hooks] Processing URL`, and the product
@@ -1039,8 +1047,9 @@ delegate no longer `openURL`s its own scheme.
   `processUrls` as a deep link (`$lib/mobile/notificationTapDrain.ts`, wired in `hooks.client.ts`).
   That wiring sits outside the deep-link plugin's import chain, so a failed import cannot take the
   tap down.
-- **NOTHING IS TAKEN BEFORE THE ROUTER IS MOUNTED** (`$lib/navigation/routerReady`, resolved by the
-  root layout's `onMount`; review F4). The take deletes the file, and a page link's `goto`
+- **NOTHING IS TAKEN BEFORE THE ROUTER IS READY** (`$lib/navigation/routerReady`, resolved by the
+  root layout's FIRST `afterNavigate` since 2026-11-25 - its `onMount` runs inside the first
+  navigation, before SvelteKit can take a `goto`; review F4). The take deletes the file, and a page link's `goto`
   (post, form, agenda, proposals) issued before the router exists does nothing. So a cold-start
   tap on one of them used to be read and lost. Waiting keeps ONE path for every link.
 - No clock is involved. The file is written before the event, and the listener is registered before
@@ -1130,7 +1139,9 @@ Notification Center over an open app was lost. The fix:
 - The page (`$lib/mobile/quickReplyDrain.ts`, registered by `ChatBackgroundService` once signed in)
   takes the lines (`read_and_clear_pending_quick_replies`, with its account id) when the native side
   says one waits, when a session registers, and whenever the app comes back to the front
-  (`visibilitychange`, M2). It sends each one through the composer's path (`useMessaging.sendTextTo`
+  (`visibilitychange` or `canari:foreground`, M2 - ONE drain per return, whichever says it first).
+  With no session yet, only the native side's event, which proves a reply waits, says so in the log
+  (it printed four times in 130 ms on one cold start, for replies that were not there). It sends each one through the composer's path (`useMessaging.sendTextTo`
   -> `sendChatMessage`).
 - A line the page cannot queue (for example, its conversation is not loaded yet) is APPENDED BACK,
   sealed again (`return_pending_quick_replies`), and the page shows "your reply is waiting" once
