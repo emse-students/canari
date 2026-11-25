@@ -2201,6 +2201,27 @@ export abstract class BaseMlsService implements IMlsService {
   private releaseCatchUpGate: (() => void) | null = null;
 
   /**
+   * Sends that passed {@link catchUpGate} and have not finished: counted from the instant a send
+   * goes through the gate ({@link passCatchUpGate}) to the end of its frame ({@link sendMessage}'s
+   * `finally`).
+   *
+   * THE HALF OF THE GATE THAT WAS MISSING. The gate stops a send from STARTING while a catch-up is
+   * open; it said nothing about a send that started BEFORE one opened. Such a send is still between
+   * the gate and its encrypt - awaiting `settleBeforeSend`, the epoch barrier, an owed burn - and
+   * its encrypt then lands after the catch-up's snapshot. On web the swap is refused
+   * (`installUnlessOvertaken`), so nothing is rewound, but the catch-up's ratchet advance and its
+   * decrypt work are thrown away: measured 2026-11-24 on a new web device, 17 `state DISCARDED`
+   * lines in one restore. A race that heals cleanly is still a defect, so the overlap is deleted
+   * here: {@link beginCatchUpAfterSends} closes the gate, then waits for this count to reach zero
+   * BEFORE the snapshot. Proven by `BaseMlsService.sendSeam.test.ts` and
+   * `WebMlsService.catchUpSendGate.test.ts`.
+   */
+  private sendsPastGate = 0;
+
+  /** Resolvers of the catch-ups waiting for {@link sendsPastGate} to reach zero. */
+  private sendsPastGateDrained: Array<() => void> = [];
+
+  /**
    * How many times the LIVE MLS client has been mutated by something other than a catch-up.
    *
    * Read at the snapshot and again at the swap: if it moved, the state about to be installed
@@ -2265,14 +2286,68 @@ export abstract class BaseMlsService implements IMlsService {
   /**
    * Resolves when no catch-up session is open.
    *
-   * Awaited by the send path, and safe to await from anywhere a send happens today. The drain holds
-   * the MLS mutex for each message and a catch-up holds it for its whole life, so no catch-up can be
-   * open while a handler runs - a send raised from inside the pipeline therefore never waits here.
-   * The one send raised from inside a replay (`reconcileGroup`, on an unreadable frame) is
-   * fire-and-forget, so it settles after `finish` rather than blocking it.
+   * Awaited by the mailbox barrier; the send path passes the same gate through
+   * {@link passCatchUpGate}, which also counts it. A catch-up closes the gate BEFORE it takes the MLS
+   * mutex ({@link beginCatchUpAfterSends}), so one can be open - waiting for the mutex - while a drain
+   * handler holds it: a send raised from inside the pipeline must therefore never be AWAITED under
+   * the mutex, which it already could not be, since a send may settle a kept commit and settling
+   * takes that mutex (`epochSendBarrier.ts`, "the lock order"). Pipeline sends are deferred past the
+   * frame (`answerAfterMailboxDrained`), and the one raised from inside a replay (`reconcileGroup`,
+   * on an unreadable frame) is fire-and-forget, so it settles after `finish` rather than blocking it.
    */
   async waitForCatchUpIdle(): Promise<void> {
     await this.catchUpGate;
+  }
+
+  /**
+   * Waits until no catch-up is open, then counts this send as past the gate - in the SAME
+   * synchronous step as the last check, which is what makes it a passage rather than a
+   * check-then-act. A single `await` of the gate would not do: it resumes a microtask later, and a
+   * catch-up opened in between would find nothing counted and snapshot under this send. Every call
+   * is paired with one {@link leaveCatchUpGate}, from a `finally`.
+   */
+  private async passCatchUpGate(): Promise<void> {
+    while (this.catchUpGate) await this.catchUpGate;
+    this.sendsPastGate++;
+  }
+
+  /** Ends a {@link passCatchUpGate} passage; the last one out releases the catch-ups waiting on it. */
+  private leaveCatchUpGate(): void {
+    this.sendsPastGate--;
+    if (this.sendsPastGate > 0) return;
+    const waiting = this.sendsPastGateDrained;
+    this.sendsPastGateDrained = [];
+    for (const resolve of waiting) resolve();
+  }
+
+  /**
+   * Opens a catch-up session ({@link beginCatchUp}) and resolves once every send already past the
+   * gate has finished - the point from which a snapshot of the live client can no longer be
+   * overtaken by one of them.
+   *
+   * THE ORDER IS LOAD-BEARING, AND IT IS GATE, SENDS, LOCK, SNAPSHOT. The gate first, so nothing new
+   * joins the sends being waited for, and the count can only fall. The sends before the MLS lock,
+   * because a send in flight may itself need that lock (`settleBeforeSend` resubmits a kept commit
+   * under it), so waiting for one while holding the lock would deadlock. Closing the gate before
+   * the lock adds no cycle in the other direction: a holder of the lock never awaits a send - a send
+   * from the drain is deferred past its frame, since a send can settle a commit and settling takes
+   * the lock (see `epochSendBarrier.ts`, "the lock order") - so no lock holder waits on this gate.
+   * And while any catch-up holds the lock the count is zero and stays zero: that catch-up waited it
+   * out, and the gate it closed stays closed until the last session ends.
+   *
+   * Termination: each counted send ends in a `finally`, and nothing it awaits waits on a catch-up
+   * (the gate is only ever awaited at its entry), so the wait is bounded by the sends themselves -
+   * no clock in it.
+   */
+  protected async beginCatchUpAfterSends(groupId: string): Promise<void> {
+    this.beginCatchUp(groupId);
+    if (this.sendsPastGate === 0) return;
+    // Said, because a wait nobody can see cannot be verified - and it is rare by construction (a
+    // send already between the gate and its frame at the instant a catch-up opens).
+    console.debug(
+      `[MLS] catch-up (${groupId.slice(0, 8)}...) waits for ${this.sendsPastGate} send(s) already past the gate before its snapshot`
+    );
+    await new Promise<void>((resolve) => this.sendsPastGateDrained.push(resolve));
   }
 
   /**
@@ -2310,7 +2385,8 @@ export abstract class BaseMlsService implements IMlsService {
      * FROM INSIDE A CATCH-UP THIS BARRIER CANNOT RESOLVE, SO IT ACCUSES INSTEAD OF HANGING.
      *
      * A catch-up session holds the global MLS mutex for its whole life (`createDecryptSession` ->
-     * {@link beginCatchUp}) and the drain needs that same non-reentrant mutex for every message. A
+     * {@link beginCatchUpAfterSends}, which opens it just before the mutex is taken, once the sends
+     * past the gate have landed) and the drain needs that same non-reentrant mutex for every message. A
      * caller that opens one and then waits for its mailbox waits for a drain that cannot start:
      * both sides stop for good, and nothing in the client recovers without a reload.
      *
@@ -5435,7 +5511,7 @@ export abstract class BaseMlsService implements IMlsService {
     // The sequential path decrypts in place, so it cannot be UNDONE by a swap the way the worker
     // path can - but a send during it is still a send racing a catch-up, and the ordering rule is
     // about the sequence, not about which platform happens to survive breaking it.
-    this.beginCatchUp(groupId);
+    await this.beginCatchUpAfterSends(groupId);
     let session: MlsDecryptSession;
     try {
       session = await createSequentialDecryptSession(this, groupId);
@@ -9430,9 +9506,10 @@ export abstract class BaseMlsService implements IMlsService {
    * CONCRETE, AND SHARED BY BOTH PLATFORMS ON PURPOSE. Three things must happen around every send,
    * and each of them was previously the responsibility of the caller:
    *
-   * - nothing leaves this device while a catch-up is open ({@link waitForCatchUpIdle}), because a
+   * - nothing leaves this device while a catch-up is open ({@link passCatchUpGate}), because a
    *   send advances the ratchet of a client the catch-up is about to replace with a copy taken
-   *   before it;
+   *   before it - and a send already past the gate when a catch-up opens is waited out before its
+   *   snapshot ({@link beginCatchUpAfterSends});
    * - the advance is COUNTED ({@link noteLiveMutation}), which is what lets every state-replacement
    *   seam refuse a candidate that predates it;
    * - the advance is CHECKPOINTED, because the moment the frame is on the wire the peer has consumed
@@ -9478,7 +9555,22 @@ export abstract class BaseMlsService implements IMlsService {
       );
       throw new FollowerTabSendError(groupId, 'follower');
     }
-    await this.waitForCatchUpIdle();
+    // COUNTED FROM HERE TO THE END OF THE FRAME, so a catch-up opening now waits for this send
+    // instead of snapshotting under its encrypt (`beginCatchUpAfterSends`).
+    await this.passCatchUpGate();
+    try {
+      return await this.sendPastGate(groupId, messageBytes, frameDelivery);
+    } finally {
+      this.leaveCatchUpGate();
+    }
+  }
+
+  /** {@link sendMessage} past the catch-up gate: settle, seal and post, under the epoch barrier. */
+  private async sendPastGate(
+    groupId: string,
+    messageBytes: Uint8Array,
+    frameDelivery: FrameDelivery
+  ): Promise<SentFrame> {
     // NOTHING IS SEALED ON TOP OF A COMMIT WHOSE OUTCOME IS UNKNOWN: whether this device is at N or
     // N+1 is exactly what that outcome decides, so it is asked first, by the same resubmission.
     await this.settleBeforeSend(groupId);

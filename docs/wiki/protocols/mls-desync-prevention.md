@@ -228,6 +228,18 @@ Every such seam therefore passes **two** guards, and neither substitutes for the
   burn or DECRYPTED FRAME this device has already made. A generation that moved INSIDE one epoch is
   invisible to the epoch guard, which is why the epoch half alone let this defect run.
 
+**Web catch-up: the guard is an invariant, the ORDER is the fix (2026-11-25).** A history catch-up
+(`WebMlsService.createDecryptSession`) closes the send gate, waits for every send ALREADY PAST it to
+finish (`BaseMlsService.beginCatchUpAfterSends`, a count taken in the same synchronous step as the
+gate check by `passCatchUpGate`), and only then takes the MLS lock and snapshots. It used to take the
+lock first and close the gate after, so a send that had passed the gate a moment earlier - still in
+`settleBeforeSend` or the epoch barrier - encrypted after the snapshot, and the not-overtaken guard
+refused the swap: 17 `catch-up (<group>) state DISCARDED` lines in one restore of a new web device,
+2026-11-24, each one a worker's ratchet advance and decrypt work thrown away. The sends are waited out
+BEFORE the lock because a send in flight may need it (settling a kept commit); the reverse cycle
+cannot form because no lock holder awaits a send (`epochSendBarrier.ts`, "the lock order"). Pinned by
+`BaseMlsService.sendSeam.test.ts` and `WebMlsService.catchUpSendGate.test.ts`.
+
 **Native: the flag lives in the manager and covers receives (2026-10-06, RESUME-B-1).** The guard
 that stood in `TauriMlsService` counted SENDS in the WebView, so a received frame the checkpoint did
 not yet hold was invisible to it - and a frame landing between its check and the swap was

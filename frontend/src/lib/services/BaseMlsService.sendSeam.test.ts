@@ -106,6 +106,10 @@ abstract class SendSeamHarness extends BaseMlsService {
   closeCatchUp(groupId = 'g-seam'): void {
     this.endCatchUp(groupId);
   }
+  /** Opens one the way `createDecryptSession` does: gate closed, sends past it waited out. */
+  openCatchUpAfterSends(groupId = 'g-seam'): Promise<void> {
+    return this.beginCatchUpAfterSends(groupId);
+  }
 }
 
 /**
@@ -306,5 +310,68 @@ describe('BaseMlsService.sendMessage - the lead lost at each await', () => {
       receivedAt: 5,
     });
     expect(error).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A SEND ALREADY PAST THE GATE WHEN A CATCH-UP OPENS (2026-11-24, 17 `state DISCARDED` lines in one
+ * restore of a new web device). The gate stopped a send from STARTING during a catch-up; a send that
+ * passed it just before was still settling, and its encrypt landed after the snapshot. The catch-up
+ * now waits those sends out before it may snapshot - and passing the gate is counted in the same
+ * step as the check, so no catch-up can open between the two.
+ */
+describe('BaseMlsService.sendMessage - the sends already past the catch-up gate', () => {
+  it('a catch-up opening while a send is parked before its encrypt resolves only after that encrypt', async () => {
+    let settle!: (groups: string[]) => void;
+    abstract class Parked extends SendSeamHarness {
+      /** The send asks for kept commits and is held there - past the gate, before the encrypt. */
+      protected groupsWithPendingCommit(): Promise<string[]> {
+        return new Promise((resolve) => (settle = resolve));
+      }
+    }
+    const svc = new (Parked as unknown as new () => SendSeamHarness)();
+    vi.spyOn(console, 'debug').mockImplementation(() => {});
+    const send = svc.sendMessage('g1', new Uint8Array([9]), undefined, DELIVERY.transport);
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+
+    let opened = false;
+    const opening = svc.openCatchUpAfterSends().then(() => {
+      opened = true;
+      svc.trace.push('catch-up open');
+    });
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    // The snapshot point is not reached while the send it would race is still before its encrypt.
+    expect(opened).toBe(false);
+
+    settle([]);
+    await send;
+    await opening;
+    expect(svc.trace).toEqual(['encrypt', 'post', 'catch-up open']);
+    svc.closeCatchUp();
+  });
+
+  it('a catch-up with no send past the gate opens at once', async () => {
+    const svc = new FakeMlsService();
+    let opened = false;
+    void svc.openCatchUpAfterSends().then(() => (opened = true));
+    await Promise.resolve();
+    expect(opened).toBe(true);
+    svc.closeCatchUp();
+  });
+
+  it('a gate closed again in the instant it opened holds the waiting send - the passage is not a check-then-act', async () => {
+    const svc = new FakeMlsService();
+    svc.openCatchUp();
+    const send = svc.sendMessage('g1', new Uint8Array([9]), undefined, DELIVERY.transport);
+    await Promise.resolve();
+    // The first catch-up ends and the next one begins in the same synchronous step - before the
+    // waiting send resumes. It must find the gate closed again rather than run under the second.
+    svc.closeCatchUp();
+    svc.openCatchUp('g-next');
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(svc.encryptCalls).toBe(0);
+    svc.closeCatchUp('g-next');
+    await send;
+    expect(svc.encryptCalls).toBe(1);
   });
 });

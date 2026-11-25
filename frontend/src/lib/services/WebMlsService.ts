@@ -1592,12 +1592,17 @@ export class WebMlsService extends BaseMlsService {
       return super.createDecryptSession(groupId);
     }
 
+    // Closes the gate every send waits on and waits out the sends already past it, THEN takes the
+    // lock - in that order, because a send in flight may need the lock to settle a kept commit
+    // (`beginCatchUpAfterSends` carries the whole argument). Taking the lock first and closing the
+    // gate after it left a send that passed the gate earlier free to encrypt after the snapshot,
+    // and the swap below was refused for it (17 times in one restore, 2026-11-24).
+    await this.beginCatchUpAfterSends(groupId);
     const release = await this.messageScheduler.acquireMlsLock();
 
-    // Closes the gate every send waits on, and remembers where the live client stood. The gate is
-    // the fix; the count below is the proof it held - if it ever differs at the swap, a send got
-    // through and the state about to be installed would undo it.
-    this.beginCatchUp(groupId);
+    // Remembers where the live client stood. The gate is the fix; the count is the proof it held -
+    // if it ever differs at the swap, a send got through and the state about to be installed would
+    // undo it.
     const mutationsAtSnapshot = this.liveMutations;
 
     let workerSession: Awaited<ReturnType<typeof createMlsCryptoWorkerSession>> | null;
@@ -1647,7 +1652,8 @@ export class WebMlsService extends BaseMlsService {
           if (usedWorker) {
             const finalState = await session.finalize();
             /**
-             * The gate in `sendMessage` should make this unreachable, and it is kept anyway: the
+             * The gate in `sendMessage`, with the sends past it waited out before the snapshot
+             * (`beginCatchUpAfterSends`), makes this unreachable, and it is kept anyway: the
              * gate is an ORDERING and this is an INVARIANT. A future send path that forgets to wait
              * must be caught here rather than corrupt a ratchet silently - which is precisely how
              * WP-FALSELOSS-2 survived three sessions of looking straight at it.
