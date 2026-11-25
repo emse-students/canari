@@ -116,6 +116,7 @@
 - [Host WAF body limit](infrastructure/host-waf-body-limit.md) - the school-managed firewall refuses large request bodies; why every upload body stays under 8 MiB
 - [Nginx routing](infrastructure/nginx.md) — Route table (source of truth), auth_request
 - [Authentik (OIDC)](infrastructure/authentik.md) — Identity provider, OIDC flow, deployment
+- [MiConnect sign-in paths](infrastructure/miconnect-sign-in-paths.md) - every way into MiConnect (CAS, Alumni, the routing page, the link step, Settings) on one diagram, what each asks before and after the 2026-11-25 fix, why each change is safe, and what remains
 - [Identity sources](infrastructure/identity-sources.md) — what the CAS (OIDC) and the Alumni SSO (SAML) send, measured, what MiConnect keeps, and the claims applications receive
 - [CAS callback without state](infrastructure/cas-callback-state.md) — school CAS sign-ins that return with no code: pinned cookie, setting, measurements
 - [Mino access](infrastructure/mino-access.md) — Wiki.js and Omeka permissions driven by Authentik groups, the three archive levels
