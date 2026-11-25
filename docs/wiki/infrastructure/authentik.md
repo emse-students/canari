@@ -1024,8 +1024,9 @@ The Rootz association's supervision console of the MDE network, a Python server 
   session ends and the next sign-in passes the binding again.
 - **One strict redirect URI**, `https://reseau.rootz-emse.fr/auth/callback`, no logout URI.
 - **Scopes `openid`, `profile` and `name`** (the mapping `miconnect-claim-name` answers the scope
-  `name`, giving `firstName`/`lastName`; `profile` gives authentik's `name` and `preferred_username`).
-  Nothing of the profile, the cursus, the school status or the e-mail. `sub` is pinned to
+  `name`, giving `firstName`/`lastName`; `profile` gives authentik's `name`, `given_name`,
+  `preferred_username`, `nickname` and `groups` - the person's group names, `acces-reseau` among them).
+  Nothing of the profile, the cursus, the school status or the e-mail (the id_token read in CI). `sub` is pinned to
   `hashed_user_id`, as on the three site providers.
 - **The group `acces-reseau` alone admits**: one policy binding, order 0, no expression policy.
   **No cotisant gate and no Alumni gate**: the D42-D43 gate is a rule about the ecosystem's member

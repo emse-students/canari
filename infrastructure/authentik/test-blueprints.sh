@@ -487,25 +487,33 @@ def listed(u):
     return {a["slug"] for a in listing.json()["results"]}
 
 
-person, _ = User.objects.get_or_create(username="reseau-probe", defaults={"name": "Reseau Probe"})
-person.attributes["profile"] = {"version": 1, "firstName": "Reseau", "lastName": "Probe", "cursus": [], "posts": []}
-person.attributes["cgu_version"] = Prompt.objects.get(name="miconnect-consent-prompt-version").initial_value
-person.save()
-person.groups.clear()
+def probe(username):
+    """A signed-in person who accepted the current terms; no cursus, so no Alumni step."""
+    u, _ = User.objects.get_or_create(username=username, defaults={"name": "Reseau Probe"})
+    u.attributes["profile"] = {"version": 1, "firstName": "Reseau", "lastName": "Probe", "cursus": [], "posts": []}
+    u.attributes["cgu_version"] = Prompt.objects.get(name="miconnect-consent-prompt-version").initial_value
+    u.save()
+    return u
+
+
+# TWO PEOPLE, never one moved into the group: authentik caches a person's application library, so a
+# listing taken before a membership change would be read back after it.
+outsider = probe("reseau-probe-outsider")
+member = probe("reseau-probe-member")
+member.groups.add(group)
 try:
     verifier = b64url(secrets.token_bytes(32))
     challenge = b64url(hashlib.sha256(verifier.encode()).digest())
 
     # Outside the group: no tile, no code.
-    assert "reseau" not in listed(person), "the tile is listed to a person outside acces-reseau"
-    target, body = authorize(person, challenge)
+    assert "reseau" not in listed(outsider), "the tile is listed to a person outside acces-reseau"
+    target, body = authorize(outsider, challenge)
     assert not target.startswith(REDIRECT), f"a person outside acces-reseau got a code: {target}"
     print(f"  outside the group: refused ({(body or {}).get('component')})")
 
     # A member: the tile, a code, and a redeem that needs the verifier.
-    person.groups.add(group)
-    assert "reseau" in listed(person), "the tile is not listed to a member"
-    target, body = authorize(person, challenge)
+    assert "reseau" in listed(member), "the tile is not listed to a member"
+    target, body = authorize(member, challenge)
     assert target.startswith(REDIRECT), f"a member got no code: {json.dumps(body)[:400]}"
     code = parse_qs(urlparse(target).query)["code"][0]
 
@@ -518,7 +526,7 @@ try:
 
     status, answer = redeem({})
     assert status == 400 and answer.get("error") == "invalid_grant", f"a challenged code was redeemed without its verifier: {status} {answer}"
-    target, _ = authorize(person, challenge)
+    target, _ = authorize(member, challenge)
     code = parse_qs(urlparse(target).query)["code"][0]
     status, answer = redeem({"code_verifier": verifier})
     assert status == 200 and answer.get("id_token"), f"the member's code was refused: {status} {answer}"
@@ -527,13 +535,14 @@ try:
     claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
     assert claims["iss"].endswith("/application/o/reseau/"), claims["iss"]
     assert claims["aud"] == provider.client_id, claims["aud"]
-    assert claims["sub"] == person.uid, "the subject is not the hashed user id"
+    assert claims["sub"] == member.uid, "the subject is not the hashed user id"
     assert claims.get("name") == "Reseau Probe", claims.get("name")
     assert (claims.get("firstName"), claims.get("lastName")) == ("Reseau", "Probe"), sorted(claims)
     assert not {"promo", "formation", "profile", "school_status", "email"} & set(claims), sorted(claims)
     print(f"  a member: code redeemed with the verifier, iss {claims['iss']}, claims {sorted(claims)}")
 finally:
-    person.delete()
+    outsider.delete()
+    member.delete()
 print("RESEAU-APP-OK")
 PY
   echo "::error::the Reseau console's provider or its group gate is wrong - read the assertion above"
