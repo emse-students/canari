@@ -1,6 +1,8 @@
 ## P1 - The first publish after a sign-in crashed the feed page once (iPhone 12, 1.8.0-alpha.7)
 
-target: 1.8.0
+target: 1.8.1
+
+_2026-11-25: moved to 1.8.1 when 1.8.0 shipped._
 
 **What was seen.** On the iPhone 12 reading of `1.8.0-alpha.7`, the first post published after a
 sign-in drew SvelteKit's "500" page, 40 ms after the publish queue took the post:

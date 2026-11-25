@@ -1,6 +1,8 @@
 ## Reading owed - a catch-up lands in the open conversation in one render and keeps its end (Mi 9T)
 
-target: 1.8.0
+target: 1.8.1
+
+_2026-11-25: moved to 1.8.1 when 1.8.0 shipped._
 
 Built: a bulk-ingest window now holds an own message decrypted from a frame (this account's other
 device) and a push-preview upgrade, so a drain changes the open conversation once, at its close; the
