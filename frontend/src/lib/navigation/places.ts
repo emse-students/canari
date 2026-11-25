@@ -122,7 +122,7 @@ export const CAMERA_PLACE = { id: 'camera', href: '/camera' } as const satisfies
  * focus trap and history overlay cost frames, and is a page now). The Games page, the tutorial and the
  * rest of `/games` keep the shell.
  */
-export const FULL_SCREEN_GAME_PATHS = ['/games/play', '/games/replay'] as const;
+const FULL_SCREEN_GAME_PATHS = ['/games/play', '/games/replay'] as const;
 
 /**
  * Whether this path draws full screen, with no header and no tab bar: the camera, whose preview IS
