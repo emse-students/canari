@@ -11,7 +11,7 @@
  *
  * GATED ON `CHAT_DELIVERY_IT_DATABASE_URL`, the one name every chat-delivery integration spec reads:
  * skipped without it, and run by the `test-chat-delivery-integration` job in `ci.yml`, which refuses
- * a skip. Works in a throwaway schema.
+ * a skip. Works in a throwaway DATABASE of its own (see `createPrivateDatabase`).
  *
  *   CHAT_DELIVERY_IT_DATABASE_URL=postgres://user:pass@localhost:5432/db bun run test -- 056_dm_groups_self_kind
  */
@@ -51,6 +51,29 @@ import { selfConversationUnawareDevices } from '../utils/self-conversation';
 
 const URL = process.env.CHAT_DELIVERY_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
+
+/**
+ * A DATABASE OF THIS SPEC'S OWN, because migration 056 guards its CHECK with a lookup of
+ * `pg_constraint` by NAME alone: scoped to neither a table nor a schema, it answers "already there"
+ * as soon as ANY schema of the database holds `chk_dm_groups_kind` - which every other integration
+ * spec's throwaway schema does while specs run in parallel (`CREATE SCHEMA` isolates tables, not
+ * the catalogue's names). Production has one `dm_groups`, so only a shared test database sees it.
+ * The migration is not edited (an applied one is never rewritten, `infrastructure/lib/migrations.sh`).
+ * The server is the one `CHAT_DELIVERY_IT_DATABASE_URL` names; `admin` must be allowed CREATEDB.
+ */
+async function createPrivateDatabase(
+  admin: Client,
+  prefix: string
+): Promise<{ url: string; drop: () => Promise<void> }> {
+  const name = `${prefix}_${Date.now()}_${process.pid}`;
+  const url = new globalThis.URL(URL as string);
+  url.pathname = `/${name}`;
+  await admin.query(`CREATE DATABASE ${name}`);
+  return {
+    url: url.toString(),
+    drop: () => admin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`).then(() => undefined),
+  };
+}
 
 const MIGRATION = readFileSync(join(__dirname, '056_dm_groups_self_kind.sql'), 'utf8');
 
@@ -111,22 +134,21 @@ const refusalOf = (call: Promise<unknown>) =>
 
 maybe('migration 056 (dm_groups.kind, one live self conversation) against PostgreSQL', () => {
   jest.setTimeout(60_000);
-  const schema = `self_kind_it_${Date.now()}`;
   let admin: Client;
+  let privateDb: Awaited<ReturnType<typeof createPrivateDatabase>>;
   let ds: DataSource;
-  /** A second pool on the same schema: the other device's request, on another connection. */
+  /** A second pool on the same database: the other device's request, on another connection. */
   let other: DataSource;
 
   const dataSource = () =>
     new DataSource({
       type: 'postgres',
-      url: URL,
+      url: privateDb.url,
       // `KeyPackage` for the capability read: its table is the hand-made one below.
       entities: [Group, KeyPackage],
       synchronize: false,
       uuidExtension: 'pgcrypto',
       installExtensions: false,
-      extra: { options: `-c search_path=${schema}` },
     });
 
   /** The creation route on `source`, its device always addressable and its enrolment landing. */
@@ -161,7 +183,7 @@ maybe('migration 056 (dm_groups.kind, one live self conversation) against Postgr
     jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     admin = new Client({ connectionString: URL });
     await admin.connect();
-    await admin.query(`CREATE SCHEMA ${schema}`);
+    privateDb = await createPrivateDatabase(admin, 'self_kind_it');
     ds = dataSource();
     await ds.initialize();
     await ds.query(PRE_056_TABLE);
@@ -194,7 +216,7 @@ maybe('migration 056 (dm_groups.kind, one live self conversation) against Postgr
     jest.restoreAllMocks();
     await other?.destroy();
     await ds?.destroy();
-    await admin?.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    await privateDb?.drop();
     await admin?.end();
   });
 
@@ -333,8 +355,8 @@ maybe('migration 056 (dm_groups.kind, one live self conversation) against Postgr
  */
 maybe('"Mes notes" gates against PostgreSQL', () => {
   jest.setTimeout(60_000);
-  const schema = `self_gates_it_${Date.now()}`;
   let admin: Client;
+  let privateDb: Awaited<ReturnType<typeof createPrivateDatabase>>;
   let ds: DataSource;
   const pipeline = () => {
     const p = {
@@ -397,10 +419,10 @@ maybe('"Mes notes" gates against PostgreSQL', () => {
     jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     admin = new Client({ connectionString: URL });
     await admin.connect();
-    await admin.query(`CREATE SCHEMA ${schema}`);
+    privateDb = await createPrivateDatabase(admin, 'self_gates_it');
     ds = new DataSource({
       type: 'postgres',
-      url: URL,
+      url: privateDb.url,
       entities: [
         QueuedMessage,
         QueuedPayload,
@@ -429,7 +451,6 @@ maybe('"Mes notes" gates against PostgreSQL', () => {
       synchronize: false,
       uuidExtension: 'pgcrypto',
       installExtensions: false,
-      extra: { options: `-c search_path=${schema}` },
     });
     await ds.initialize();
     await ds.synchronize();
@@ -442,7 +463,7 @@ maybe('"Mes notes" gates against PostgreSQL', () => {
   afterAll(async () => {
     jest.restoreAllMocks();
     await ds?.destroy();
-    await admin?.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    await privateDb?.drop();
     await admin?.end();
   });
 
