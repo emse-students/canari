@@ -87,10 +87,10 @@ describe('MinesweeperModal - the bulb', () => {
     expect(findHint).not.toHaveBeenCalled();
   });
 
-  it('offers the bulb unranked: idle before the first dig, then lights the numbers it names', async () => {
+  it('offers the bulb unranked once dug (the level picker holds its place before), then lights the numbers it names', async () => {
     localStorage.setItem('canari.minesweeper.unranked', '1');
     await open();
-    expect(bulb()!.disabled).toBe(true);
+    expect(bulb()).toBeNull();
     await firstDig();
     findHint.mockReturnValue({ kind: 'numbers', tier: 'single', cells: [0] });
     bulb()!.click();

@@ -10,7 +10,6 @@
     toggleFlag,
     remainingMines,
     DEFAULT_CONFIG,
-    LATEST_GENERATOR_VERSION,
     type MinesweeperBoard,
   } from '$lib/minesweeper/game';
   import {
@@ -33,6 +32,14 @@
   } from '$lib/minesweeper/settings';
   import { EMPTY_CELL_VIEWS, syncCellViews } from '$lib/minesweeper/cellViews';
   import { findHint, type MinesweeperHint } from '$lib/minesweeper/hint';
+  import {
+    LEVEL_SPECS,
+    loadMinesweeperLevel,
+    nextLevel,
+    saveMinesweeperLevel,
+    type LevelSpec,
+    type MinesweeperLevel,
+  } from '$lib/minesweeper/levels';
   import type { TimedMove } from '$lib/minesweeper/replay';
   import MinesweeperCell from './MinesweeperCell.svelte';
   import {
@@ -46,6 +53,7 @@
     DOUBLE_TAP_SCALE,
     MAX_SCALE,
     clampView,
+    fitScaleCap,
     fitView,
     glideStep,
     minScaleFor,
@@ -59,6 +67,7 @@
     ArrowLeft,
     Bomb,
     Flag,
+    Gauge,
     Lightbulb,
     Pickaxe,
     RotateCcw,
@@ -155,6 +164,37 @@
     if (board.minesPlaced || firstClickBusy) return;
     unranked = !unranked;
     saveFlag(UNRANKED_STORAGE_KEY, unranked);
+    // Ranked always plays Expert's board, Libre the chosen level: the blank board follows.
+    installBlankBoard();
+  }
+
+  /** The unranked level (owner, 2026-11-25), per device; ranked always plays `expert`'s board. */
+  let level = $state<MinesweeperLevel>(loadMinesweeperLevel());
+  /** What the next game plays on: the chosen level in Libre, Expert (the ranked board) otherwise. */
+  const playLevel = $derived<MinesweeperLevel>(unranked ? level : 'expert');
+
+  /** The level picker: Libre only, before the first dig, like the ranked / Libre toggle. */
+  function cycleLevel() {
+    if (!unranked || board.minesPlaced || firstClickBusy) return;
+    level = nextLevel(level);
+    saveMinesweeperLevel(level);
+    console.debug('[minesweeper] level chosen', { level });
+    installBlankBoard();
+  }
+
+  /** The label of a level, in the player's language. */
+  function levelLabel(l: MinesweeperLevel): string {
+    return l === 'beginner'
+      ? m.minesweeper_level_beginner()
+      : l === 'intermediate'
+        ? m.minesweeper_level_intermediate()
+        : m.minesweeper_level_expert();
+  }
+
+  /** Puts the blank board of the level about to be played on screen, refitted to its size. */
+  function installBlankBoard() {
+    installBoard(createBoard(LEVEL_SPECS[untrack(() => playLevel)].config, null));
+    void afterBoardChange();
   }
 
   /**
@@ -367,7 +407,7 @@
   function centerView() {
     const g = geometry();
     if (!g) return;
-    const fit = fitView(g.viewport, g.board, FIT_INSETS);
+    const fit = fitView(g.viewport, g.board, FIT_INSETS, fitScaleCap(g.board.width, board.width));
     fitScale = fit.scale;
     scale = fit.scale;
     panX = fit.panX;
@@ -397,7 +437,8 @@
     pendingCell = null;
     lastTap = null;
     elapsedMs = 0;
-    installBoard(createBoard(DEFAULT_CONFIG, null));
+    // Untracked: this runs inside the effect that starts a game, which must not restart on a level change.
+    installBoard(createBoard(LEVEL_SPECS[untrack(() => playLevel)].config, null));
   }
 
   /** Waits for the DOM to settle after a board change, then fits/centers the viewport. */
@@ -424,9 +465,13 @@
    * dig and starts the local timer. Once mines are placed, this just digs directly.
    * Preserves the current pan/zoom (player may have framed a corner before the first dig).
    */
-  /** An unseeded, unranked board: no challenge, nothing to submit. */
-  function startCasualBoard() {
-    installBoard(createBoard(DEFAULT_CONFIG, null, LATEST_GENERATOR_VERSION));
+  /**
+   * An unseeded, unranked board: no challenge, nothing to submit. `spec` is the chosen level in
+   * Libre, and Expert's board when a ranked start fell back (the player tapped on that board).
+   */
+  function startCasualBoard(spec: LevelSpec) {
+    console.debug('[minesweeper] casual board', spec);
+    installBoard(createBoard(spec.config, null, spec.generator));
     challengeId = null;
     rankedMode = false;
     challengeRoundTripMs = undefined;
@@ -458,7 +503,7 @@
       console.debug('[minesweeper] first dig', { unranked });
       if (unranked) {
         // The player chose not to be ranked: no challenge is requested, so there is nothing to refuse.
-        startCasualBoard();
+        startCasualBoard(LEVEL_SPECS[level]);
       } else {
         try {
           const t0 = performance.now();
@@ -486,7 +531,7 @@
             submitError = true;
             submitMessage = m.minesweeper_update_required();
           }
-          startCasualBoard();
+          startCasualBoard(LEVEL_SPECS.expert);
         }
       }
       // Generation is synchronous and blocks the main thread; paint the pressed cell first
@@ -581,7 +626,12 @@
       }
       const g = geometry();
       if (!g) return;
-      fitScale = fitView(g.viewport, g.board, FIT_INSETS).scale;
+      fitScale = fitView(
+        g.viewport,
+        g.board,
+        FIT_INSETS,
+        fitScaleCap(g.board.width, board.width)
+      ).scale;
       applyView({ scale, panX, panY });
     });
     observer.observe(viewportEl);
@@ -1219,7 +1269,27 @@
         <Trophy size={18} strokeWidth={2.5} class={unranked ? 'opacity-40' : ''} />
         {unranked ? m.minesweeper_casual() : m.minesweeper_ranked()}
       </button>
-      {#if hintOffered}
+      {#if unranked && !board.minesPlaced}
+        <!-- The level (Libre only), until the first dig; the bulb takes its place once there is a
+             board to read, so the row holds three chips on a phone. -->
+        <div
+          class="ms-chip pointer-events-auto rounded-full shadow-md backdrop-blur-sm {firstClickBusy
+            ? 'opacity-50'
+            : ''}"
+        >
+          <Button
+            variant="bare"
+            onclick={cycleLevel}
+            disabled={firstClickBusy}
+            aria-label={m.minesweeper_level_label({ level: levelLabel(level) })}
+            title={m.minesweeper_level_hint()}
+            class="text-text-main flex h-12 items-center gap-2 rounded-full px-4 text-sm font-bold"
+          >
+            <Gauge size={18} strokeWidth={2.5} />
+            {levelLabel(level)}
+          </Button>
+        </div>
+      {:else if hintOffered}
         <!-- The bulb (unranked only): lights what justifies the next certain move, never the move.
              The chip is the wrapper because `.ms-chip` is scoped here and cannot reach into `Button`. -->
         <div

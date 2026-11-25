@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
+  MAX_FIT_CELL_PX,
   MAX_SCALE,
   MIN_SCALE,
   clampView,
+  fitScaleCap,
   fitView,
   glideStep,
   minScaleFor,
@@ -134,5 +136,36 @@ describe('flick', () => {
     expect(vx).toBe(0);
     expect(frames).toBeLessThan(1000);
     expect(travelled).toBeGreaterThan(0);
+  });
+});
+
+describe('fitScaleCap (small boards, owner 2026-11-25)', () => {
+  it('stops a fitted cell at MAX_FIT_CELL_PX, so a 9x9 board does not fill a desktop', () => {
+    // 9 cells of 28 px plus 8 gaps of 1 px.
+    const board = { width: 260, height: 260 };
+    const cap = fitScaleCap(board.width, 9);
+    const v = fitView({ width: 1400, height: 1000 }, board, NO_INSETS, cap);
+    expect((board.width / 9) * v.scale).toBeCloseTo(MAX_FIT_CELL_PX);
+  });
+
+  it('still lets a small board fill a phone below the cap, and never caps above MAX_SCALE', () => {
+    const board = { width: 260, height: 260 };
+    const v = fitView(
+      { width: 360, height: 740 },
+      board,
+      { top: 64, right: 8, bottom: 88, left: 8 },
+      fitScaleCap(board.width, 9)
+    );
+    expect(v.scale).toBeCloseTo(344 / 260);
+    expect(fitScaleCap(100, 100)).toBe(MAX_SCALE);
+  });
+
+  it('leaves the ranked board (18 columns) where it was on a phone', () => {
+    const board = { width: 18 * 28 + 17, height: 32 * 28 + 31 };
+    const insets = { top: 64, right: 8, bottom: 88, left: 8 };
+    const viewport = { width: 393, height: 851 };
+    expect(fitView(viewport, board, insets, fitScaleCap(board.width, 18))).toEqual(
+      fitView(viewport, board, insets)
+    );
   });
 });
