@@ -3978,6 +3978,26 @@ two writers and the inflated overflow can produce it; the exported log's INFO li
 with no finger on the pane` would name it if it survives). The reading is
 [backlog](../../backlog.d/reading-owed-a-dm-opens-at-its-end-in-one-render.md).
 
+#### The trace of the passes inside a glide (2026-11-25)
+
+**Why.** iPhone 12, iOS 27.0.1, 1.8.2-alpha.1: an IMAGE arriving at a pinned DM drops the pane
+150-230 px 45-70 ms after the row is added, reach unchanged (Reduce Motion OFF 6 of 6, ON 0 of 2, short
+and 12-line texts 0 of 3 each). The glide and an image row are both necessary; which step lowers
+`scrollTop` is not known: (a) WebKit's native anchoring on the transform cancel, (b) a clamp against a
+transient content size, (c) a stale `held.px` replayed. Code reading does not prove (c): the replay is
+a transform and writes no `scrollTop`. Backlog:
+[the entry](../../backlog.d/an-image-arrival-drops-a-pinned-dm-on-the-iphone.md).
+
+**What is written** (`GlideTrace` in `threadGrowthObserver.ts`, INFO because the exported log records no
+DEBUG): only while a glide runs, never on steady scrolling, never per frame, at most
+`GLIDE_TRACE_MAX_LINES` (8) pass lines per glide, the rest counted. One line per `follow()` pass that
+starts or finds a glide, e.g. `glide pass 2 (box, +55ms): top/height/box before 910/1443/400, suspended
+910/1430/400, pinned 1030/1443/400; held 70px with 53px left; follow-bottom, new travel 0px, replay 70px
+at 55ms`; and ONE `the fall came inside a glide of ...` line from `ChatArea` right after the `left the
+bottom` line, with the numbers now and the last pass (`describeGlideFall`). `top/height/box` is
+`scrollTop/scrollHeight/clientHeight`: a move at `suspended` is (a) or (b) (a shrunk height is (b)), one
+after `pinned` with a replay unlike the layout is (c). Pinned by `threadGlide.test.ts`.
+
 #### Rows before ratchet: a checkpoint stores the buffered rows first (2026-11-17)
 
 **The defect (P1, second review of #3321).** A live drain decrypts each frame and holds its row in

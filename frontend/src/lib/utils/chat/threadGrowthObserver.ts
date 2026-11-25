@@ -24,6 +24,87 @@ export interface ThreadGrowthState {
 /** The rows the anchor is chosen among. */
 export const THREAD_ROW_SELECTOR = '[id^="msg-"]';
 
+/** The three numbers that separate a native anchor, a clamp and a replay: see {@link GlideTrace}. */
+interface Geometry {
+  top: number;
+  height: number;
+  box: number;
+}
+
+const geometryOf = (scroller: HTMLElement): Geometry => ({
+  top: Math.round(scroller.scrollTop),
+  height: Math.round(scroller.scrollHeight),
+  box: Math.round(scroller.clientHeight),
+});
+
+const showGeometry = (g: Geometry | null): string => (g ? `${g.top}/${g.height}/${g.box}` : 'none');
+
+/** One glide writes at most this many pass lines; the rest are counted, never printed. */
+export const GLIDE_TRACE_MAX_LINES = 8;
+
+/**
+ * THE BOUNDED TRACE OF `follow()` PASSES INSIDE A GLIDE (iPhone 12, iOS 27, an IMAGE arriving at a
+ * pinned DM, chat.md). The pane falls 150-230 px 45-70 ms after the arrival with its reach unchanged;
+ * the exported log records no DEBUG, so this is INFO. It writes ONLY while a glide runs (a pass that
+ * finds one, or that starts one), at most {@link GLIDE_TRACE_MAX_LINES} lines per glide, nothing on
+ * steady scrolling and nothing per frame. Each line carries `scrollTop/scrollHeight/clientHeight`
+ * before the glide is suspended, after the suspend (the transforms cancelled: a native anchor or a
+ * clamp moves the pane HERE) and after the pin write, with the held glide - which is what separates
+ * (a) WebKit anchoring on the transform cancel (top moves at `suspended`), (b) a clamp against a
+ * transient content size (top moves with a `suspended` height that shrank) and (c) a stale `held.px`
+ * replayed after the pass measured another height (top untouched, `replay` differs from the layout).
+ */
+class GlideTrace {
+  private passes = 0;
+  private printed = 0;
+  private last: string | null = null;
+
+  /** A pass that finds no glide running opens a new trace; returns this pass's number. */
+  begin(inGlide: boolean): number {
+    if (!inGlide) {
+      this.passes = 0;
+      this.printed = 0;
+      this.last = null;
+    }
+    return ++this.passes;
+  }
+
+  /** Records a pass: always kept as the last one, printed while the cap holds. */
+  record(line: string): void {
+    this.last = line;
+    if (this.printed < GLIDE_TRACE_MAX_LINES) {
+      this.printed++;
+      Log.i('threadGrowth', line);
+    }
+  }
+
+  /** The last pass and how many passes went unprinted, or null before any pass of this glide. */
+  summary(): string | null {
+    if (this.last === null) return null;
+    const unprinted = this.passes - this.printed;
+    return `${this.passes} pass(es) in this glide${unprinted > 0 ? `, ${unprinted} unprinted` : ''}; last: ${this.last}`;
+  }
+}
+
+/** The trace and glide of each followed thread, for {@link describeGlideFall}. */
+const tracesByScroller = new WeakMap<Element, { trace: GlideTrace; glide: ThreadGlide }>();
+
+/**
+ * What a fall detected by the pane's scroll measurement owes the log when it happens INSIDE a glide:
+ * the glide's progress, the pane's numbers now and the last `follow()` pass's. Null when no glide
+ * is running (a fall outside one has no pass to blame), so the caller then writes nothing.
+ */
+export function describeGlideFall(scroller: HTMLElement): string | null {
+  const entry = tracesByScroller.get(scroller);
+  const running = entry?.glide.peek();
+  const summary = entry?.trace.summary();
+  if (!entry || !running || !summary) return null;
+  return (
+    `the fall came inside a glide of ${Math.round(running.px)}px, ${Math.round(running.time)}ms in; ` +
+    `now top/height/box ${showGeometry(geometryOf(scroller))}; ${summary}`
+  );
+}
+
 /**
  * Starts following `scroller`: growth below a reader at the bottom is followed, any change above
  * the row at the top of the viewport is undone. Returns the teardown.
@@ -91,6 +172,25 @@ export function observeThreadGrowth(
   let previousClientHeight = scroller.clientHeight;
   const glide = createThreadGlide(scroller, onGlideEnd);
   glidesByScroller.set(scroller, glide);
+  const trace = new GlideTrace();
+  tracesByScroller.set(scroller, { trace, glide });
+  const recordPass = (
+    pass: number,
+    cause: 'rows' | 'box',
+    atMs: number,
+    before: Geometry | null,
+    suspended: Geometry | null,
+    held: HeldGlide | null,
+    decision: { response: string; travel: number; replayPx: number; replayTime: number }
+  ) => {
+    trace.record(
+      `glide pass ${pass} (${cause}, +${Math.round(atMs)}ms): top/height/box before ${showGeometry(before)}, ` +
+        `suspended ${showGeometry(suspended)}, pinned ${showGeometry(geometryOf(scroller))}; ` +
+        `held ${held ? `${Math.round(held.px)}px with ${Math.round(held.remaining)}px left` : 'none'}; ` +
+        `${decision.response}, new travel ${Math.round(decision.travel)}px, replay ` +
+        `${Math.round(decision.replayPx)}px at ${Math.round(decision.replayTime)}ms`
+    );
+  };
   /**
    * `added`: the elements this change inserted, whose bubbles wait out a glide that makes room for
    * them (`.motion-bubble-in[data-glide-entrance]`) - a bubble that arrives without one fades at once.
@@ -103,7 +203,11 @@ export function observeThreadGrowth(
     // then dropped back when the glide ended. With the transforms removed every number below is the
     // layout's; the glide is then put back exactly where it was drawn (same keyframes, same time
     // into it), so no frame shows the difference. The state is the running animation itself.
+    const inGlide = glide.peek();
+    const passNumber = trace.begin(inGlide !== null);
+    const geometryBefore = inGlide ? geometryOf(scroller) : null;
     const held = glide.suspend();
+    const geometrySuspended = inGlide ? geometryOf(scroller) : null;
     const now = state();
     const scrollTopBefore = scroller.scrollTop;
     const currentReach = threadReach(scroller);
@@ -176,8 +280,25 @@ export function observeThreadGrowth(
           `arrival mid keyboard ride: the glide takes the rows from ${Math.round(ridden)}px`
         );
       }
-      if (glide.play(glideTravel(held, travel) + (ridden ?? 0))) markGlideEntrance(added);
-    } else if (held) glide.play(held.px, held.time);
+      const playedPx = glideTravel(held, travel) + (ridden ?? 0);
+      if (glide.play(playedPx)) {
+        markGlideEntrance(added);
+        recordPass(passNumber, cause, inGlide?.time ?? 0, geometryBefore, geometrySuspended, held, {
+          response,
+          travel,
+          replayPx: playedPx,
+          replayTime: 0,
+        });
+      }
+    } else if (held) {
+      glide.play(held.px, held.time);
+      recordPass(passNumber, cause, held.time, geometryBefore, geometrySuspended, held, {
+        response,
+        travel,
+        replayPx: held.px,
+        replayTime: held.time,
+      });
+    }
     previousClientHeight = scroller.clientHeight;
     captureAnchor();
   };
@@ -217,6 +338,7 @@ export function observeThreadGrowth(
     boxes.disconnect();
     glide.stop();
     glidesByScroller.delete(scroller);
+    tracesByScroller.delete(scroller);
     scroller.style.overflowAnchor = previousAnchoring;
   };
 }
@@ -310,6 +432,11 @@ export interface ThreadGlide {
    * `finish` not delivered yet, which is that glide's END.
    */
   suspend(): HeldGlide | null;
+  /**
+   * The glide drawing the rows right now, without touching it: its distance and how far in it is
+   * (null when none runs, or when it is past its end with its `finish` not delivered yet).
+   */
+  peek(): { px: number; time: number } | null;
   /** Ends a glide in flight for good (the keyboard ride takes the rows); true when one was running. */
   takeOff(): boolean;
   /**
@@ -366,6 +493,13 @@ export function createThreadGlide(scroller: HTMLElement, onEnd?: () => void): Th
     return cancelled?.held ?? null;
   };
 
+  const peek = (): { px: number; time: number } | null => {
+    if (!running) return null;
+    const first = running.animations[0];
+    if ((first.effect?.getComputedTiming().progress ?? null) === null) return null;
+    return { px: running.px, time: Number(first.currentTime ?? 0) };
+  };
+
   const takeOff = (): boolean => {
     const cancelled = cancel();
     if (cancelled) ended();
@@ -406,7 +540,7 @@ export function createThreadGlide(scroller: HTMLElement, onEnd?: () => void): Th
     return true;
   };
 
-  return { suspend, takeOff, play, stop: () => void cancel() };
+  return { suspend, peek, takeOff, play, stop: () => void cancel() };
 }
 
 /**

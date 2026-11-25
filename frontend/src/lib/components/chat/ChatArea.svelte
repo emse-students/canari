@@ -54,7 +54,7 @@
     paneGeometryLine,
     type NewMessageResponse,
   } from '$lib/utils/chat/threadAnchor';
-  import { observeThreadGrowth } from '$lib/utils/chat/threadGrowthObserver';
+  import { describeGlideFall, observeThreadGrowth } from '$lib/utils/chat/threadGrowthObserver';
   import { trackTouchHold, type TouchHold } from '$lib/utils/chat/touchHold';
   import { trackReaderInput, type ReaderInput } from '$lib/utils/chat/readerInput';
   import {
@@ -1071,6 +1071,10 @@
             `${keyboardTransitionMoving() ? ' moving' : ' at rest'})`
         );
       }
+      // INSIDE A GLIDE the fall also carries the last `follow()` pass's numbers (iPhone 12, an image
+      // arriving): which of a native anchor, a clamp or a stale replay moved the pane.
+      const inGlide = describeGlideFall(c);
+      if (inGlide) Log.i('ChatArea', inGlide);
     }
     if (response === 'put-back') {
       spentKeyboardTransition = transitions;

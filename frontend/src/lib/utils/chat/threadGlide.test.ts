@@ -1,7 +1,10 @@
 // @vitest-environment happy-dom
+import { Log } from '$lib/utils/Log';
 import {
   attachThreadRide,
   createThreadGlide,
+  describeGlideFall,
+  GLIDE_TRACE_MAX_LINES,
   glideTravel,
   observeThreadGrowth,
   takeThreadGlideOff,
@@ -437,5 +440,93 @@ describe('createThreadGlide', () => {
   it('a new arrival glides from the held offset plus its own row', () => {
     expect(glideTravel(null, 70)).toBe(70);
     expect(glideTravel({ px: 70, remaining: 35, time: 110 }, 70)).toBe(105);
+  });
+});
+
+/**
+ * THE BOUNDED TRACE OF `follow()` PASSES INSIDE A GLIDE (iPhone 12 image arrival, chat.md): INFO, one
+ * line per pass, only while a glide runs, capped, and a fall inside a glide reads the last pass.
+ */
+describe('observeThreadGrowth - the trace of the passes inside a glide', () => {
+  const passLines = (info: { mock: { calls: unknown[][] } }) =>
+    info.mock.calls.filter(([tag]) => tag === 'threadGrowth').map(([, line]) => String(line));
+
+  it('writes nothing outside a glide: steady changes, a quiet box, a trace read with none running', async () => {
+    const info = vi.spyOn(Log, 'i');
+    const { scroller, layout, layoutReach } = makeThread(Array(20).fill(60), 400);
+    scroller.scrollTop = layoutReach();
+    const stop = observeThreadGrowth(scroller, atBottom);
+    layout.box -= 50; // a box change with no arrival: no glide, no pass line
+    fireResize();
+    fireResize();
+    expect(passLines(info)).toHaveLength(0);
+    expect(describeGlideFall(scroller)).toBeNull();
+    stop();
+    info.mockRestore();
+  });
+
+  it('writes ONE line for the pass that starts a glide and ONE per pass found inside it', async () => {
+    const info = vi.spyOn(Log, 'i');
+    const { scroller, layout, layoutReach, addRow } = makeThread(Array(20).fill(60), 400);
+    scroller.scrollTop = layoutReach();
+    const stop = observeThreadGrowth(scroller, atBottom);
+
+    addRow(70);
+    await flush();
+    expect(passLines(info)).toHaveLength(1);
+    expect(passLines(info)[0]).toMatch(/^glide pass 1 \(rows, \+0ms\)/);
+
+    now = 55;
+    layout.heights[layout.heights.length - 1] += 120; // the image took its size
+    fireResize();
+    const lines = passLines(info);
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toMatch(
+      /^glide pass 2 \(box, \+55ms\): top\/height\/box before \d+\/\d+\/400, /
+    );
+    expect(lines[1]).toMatch(
+      /suspended \d+\/\d+\/400, pinned \d+\/\d+\/400; held 70px with 53px left;/
+    );
+    expect(lines[1]).toMatch(/replay 70px at 55ms$/);
+
+    // A fall inside this glide carries the last pass.
+    const fall = describeGlideFall(scroller) ?? '';
+    expect(fall).toMatch(/^the fall came inside a glide of 70px, 55ms in; now top\/height\/box /);
+    expect(fall).toContain('2 pass(es) in this glide; last: glide pass 2 (box');
+
+    // The glide ends: nothing is written for it, and a fall after it has no pass to blame.
+    now = 400;
+    for (const a of live()) a.finishListeners.forEach((l) => l());
+    expect(passLines(info)).toHaveLength(2);
+    expect(describeGlideFall(scroller)).toBeNull();
+    stop();
+    info.mockRestore();
+  });
+
+  it('prints at most the cap per glide, counts the rest, and a new glide starts over', async () => {
+    const info = vi.spyOn(Log, 'i');
+    const { scroller, layoutReach, addRow } = makeThread(Array(20).fill(60), 400);
+    scroller.scrollTop = layoutReach();
+    const stop = observeThreadGrowth(scroller, atBottom);
+    addRow(70);
+    await flush();
+    const extra = GLIDE_TRACE_MAX_LINES + 4;
+    for (let i = 0; i < extra; i++) {
+      now = 10 + i;
+      fireResize();
+    }
+    expect(passLines(info)).toHaveLength(GLIDE_TRACE_MAX_LINES);
+    expect(describeGlideFall(scroller)).toContain(
+      `${extra + 1} pass(es) in this glide, 5 unprinted`
+    );
+
+    now = 1000;
+    for (const a of live()) a.finishListeners.forEach((l) => l());
+    addRow(70);
+    await flush();
+    expect(passLines(info)).toHaveLength(GLIDE_TRACE_MAX_LINES + 1);
+    expect(passLines(info)[GLIDE_TRACE_MAX_LINES]).toMatch(/^glide pass 1 \(rows/);
+    stop();
+    info.mockRestore();
   });
 });
