@@ -24,6 +24,143 @@ export interface ThreadGrowthState {
 /** The rows the anchor is chosen among. */
 export const THREAD_ROW_SELECTOR = '[id^="msg-"]';
 
+/** The numbers that separate a native anchor, a clamp and a replay: see {@link GlideTrace}. */
+interface Geometry {
+  top: number;
+  height: number;
+  box: number;
+}
+
+const geometryOf = (scroller: HTMLElement): Geometry => ({
+  top: Math.round(scroller.scrollTop),
+  height: Math.round(scroller.scrollHeight),
+  box: Math.round(scroller.clientHeight),
+});
+
+const showGeometry = (g: Geometry | null): string => (g ? `${g.top}/${g.height}/${g.box}` : 'none');
+
+/** One `follow()` pass inside a glide, as the trace keeps it. */
+interface TracedPass {
+  pass: number;
+  cause: 'rows' | 'box';
+  atMs: number;
+  /** The previous pass's end numbers, cached: a move between two passes is a move nobody wrote. */
+  previous: Geometry | null;
+  /** Read where the layout is already clean: transforms cancelled, before any write of this pass. */
+  suspended: Geometry;
+  /** Read right after the pin write and BEFORE the replay; null when this pass pinned nothing. */
+  pinned: Geometry | null;
+  held: HeldGlide | null;
+  response: string;
+  travel: number;
+  replayPx: number;
+  replayTime: number;
+}
+
+/** A `scroll` event that moved the pane after a pass of the running glide. */
+interface TracedScroll {
+  atMs: number;
+  top: number;
+  delta: number;
+}
+
+/** The ring size, for passes and for scroll moves, per glide. */
+export const GLIDE_TRACE_MAX_LINES = 8;
+
+/**
+ * THE BOUNDED, SILENT TRACE OF `follow()` PASSES INSIDE A GLIDE (iPhone 12, iOS 27, an IMAGE
+ * arriving at a pinned DM, chat.md). The pane falls 150-230 px 45-70 ms after the arrival with its
+ * reach unchanged. **NOTHING IS WRITTEN AT PASS TIME**: every ordinary message makes a glide, so a
+ * line per pass would be noise forever. The passes and the scroll moves that follow them wait in two
+ * rings of {@link GLIDE_TRACE_MAX_LINES} (the oldest drop, counted), and
+ * {@link describeGlideFall} prints them, at INFO, only when the pane's own measurement finds a fall
+ * inside the glide. A new glide empties the rings. No read is added in the glide's window: the
+ * numbers are the ones `follow()` reads anyway, taken at points where the layout is clean.
+ *
+ * How to read it: native anchoring (a) moves `top` at `suspended` with the height UNCHANGED; a
+ * clamp (b) moves it with a height that shrank; a scroll move after the last pass (the async case,
+ * 45-70 ms later) with stable pass numbers is (b) or an engine move outside the passes - not "nothing
+ * found". (c), a stale replay, is a visual offset of the rows and cannot move `scrollTop`.
+ */
+class GlideTrace {
+  private passes: TracedPass[] = [];
+  private scrolls: TracedScroll[] = [];
+  private passCount = 0;
+  private scrollCount = 0;
+  /** Where the last pass left the pane, and the scroll position the last scroll event saw. */
+  lastEnd: Geometry | null = null;
+  lastTop = 0;
+
+  /** Records a pass; one that found no glide running opens a new trace. */
+  record(pass: Omit<TracedPass, 'pass' | 'previous'>, startsGlide: boolean): void {
+    if (startsGlide) {
+      this.passes = [];
+      this.scrolls = [];
+      this.passCount = 0;
+      this.scrollCount = 0;
+      this.lastEnd = null;
+    }
+    this.passCount++;
+    this.passes.push({ ...pass, pass: this.passCount, previous: this.lastEnd });
+    if (this.passes.length > GLIDE_TRACE_MAX_LINES) this.passes.shift();
+    this.lastEnd = pass.pinned ?? pass.suspended;
+    this.lastTop = this.lastEnd.top;
+  }
+
+  /** Records a scroll that moved the pane since the last one seen. */
+  recordScroll(atMs: number, top: number): void {
+    const delta = top - this.lastTop;
+    this.lastTop = top;
+    if (delta === 0 || this.passCount === 0) return;
+    this.scrollCount++;
+    this.scrolls.push({ atMs, top, delta });
+    if (this.scrolls.length > GLIDE_TRACE_MAX_LINES) this.scrolls.shift();
+  }
+
+  /** The lines of the fall: a header, the buffered passes, the buffered scroll moves. */
+  lines(): string[] | null {
+    if (this.passCount === 0) return null;
+    const droppedPasses = this.passCount - this.passes.length;
+    const droppedScrolls = this.scrollCount - this.scrolls.length;
+    return [
+      `${this.passCount} follow pass(es)${droppedPasses > 0 ? ` (${droppedPasses} older dropped)` : ''} and ` +
+        `${this.scrollCount} scroll move(s)${droppedScrolls > 0 ? ` (${droppedScrolls} older dropped)` : ''} in this glide`,
+      ...this.passes.map(
+        (p) =>
+          `glide pass ${p.pass} (${p.cause}, +${Math.round(p.atMs)}ms): top/height/box previous end ` +
+          `${showGeometry(p.previous)}, suspended ${showGeometry(p.suspended)}, pinned ` +
+          `${p.pinned ? showGeometry(p.pinned) : 'no pin'}; held ` +
+          `${p.held ? `${Math.round(p.held.px)}px with ${Math.round(p.held.remaining)}px left` : 'none'}; ` +
+          `${p.response}, new travel ${Math.round(p.travel)}px, replay ${Math.round(p.replayPx)}px at ` +
+          `${Math.round(p.replayTime)}ms`
+      ),
+      ...this.scrolls.map(
+        (s) =>
+          `glide scroll move +${Math.round(s.atMs)}ms: top ${s.top} (${s.delta > 0 ? '+' : ''}${s.delta})`
+      ),
+    ];
+  }
+}
+
+/** The trace and glide of each followed thread, for {@link describeGlideFall}. */
+const tracesByScroller = new WeakMap<Element, { trace: GlideTrace; glide: ThreadGlide }>();
+
+/**
+ * What a fall found by the pane's scroll measurement owes the log when it happens INSIDE a glide:
+ * the lines of the buffered trace, to be written at INFO by the caller. Null when no glide is running
+ * (a fall outside one has no pass to blame) or none recorded a pass, so nothing is written then.
+ */
+export function describeGlideFall(scroller: HTMLElement): string[] | null {
+  const entry = tracesByScroller.get(scroller);
+  const running = entry?.glide.peek();
+  const lines = entry?.trace.lines();
+  if (!entry || !running || !lines) return null;
+  return [
+    `the fall came inside a glide of ${Math.round(running.px)}px, ${Math.round(running.time)}ms in; ${lines[0]}`,
+    ...lines.slice(1),
+  ];
+}
+
 /**
  * Starts following `scroller`: growth below a reader at the bottom is followed, any change above
  * the row at the top of the viewport is undone. Returns the teardown.
@@ -89,8 +226,37 @@ export function observeThreadGrowth(
   captureAnchor();
 
   let previousClientHeight = scroller.clientHeight;
-  const glide = createThreadGlide(scroller, onGlideEnd);
+  const trace = new GlideTrace();
+  // THE SCROLL LISTENER IS ARMED FOR THE GLIDE'S DURATION ONLY (see {@link GlideTrace}): it tells a
+  // move made inside a pass from one that came after it (the async case), with no forced layout.
+  const onTraceScroll = () => {
+    const running = glide.peek();
+    if (running) trace.recordScroll(running.time, scroller.scrollTop);
+  };
+  let traceArmed = false;
+  const armTrace = () => {
+    if (traceArmed) return;
+    traceArmed = true;
+    scroller.addEventListener('scroll', onTraceScroll, { passive: true });
+  };
+  const disarmTrace = () => {
+    traceArmed = false;
+    scroller.removeEventListener('scroll', onTraceScroll);
+  };
+  const glide = createThreadGlide(scroller, () => {
+    disarmTrace();
+    onGlideEnd?.();
+  });
   glidesByScroller.set(scroller, glide);
+  tracesByScroller.set(scroller, { trace, glide });
+  // A GLIDE THAT `suspend` CANCELLED AND NO `play` TOOK UP (a new travel under GLIDE_MIN_PX, tokens that
+  // do not resolve) is an END nobody delivers: no `finish` follows and `suspend` of a live glide
+  // tells nothing. The rows are back at their place, so the trace's listener is disarmed and the pane
+  // re-measures, as for every other end.
+  const endUnreplayed = () => {
+    disarmTrace();
+    onGlideEnd?.();
+  };
   /**
    * `added`: the elements this change inserted, whose bubbles wait out a glide that makes room for
    * them (`.motion-bubble-in[data-glide-entrance]`) - a bubble that arrives without one fades at once.
@@ -103,9 +269,14 @@ export function observeThreadGrowth(
     // then dropped back when the glide ended. With the transforms removed every number below is the
     // layout's; the glide is then put back exactly where it was drawn (same keyframes, same time
     // into it), so no frame shows the difference. The state is the running animation itself.
+    const inGlide = glide.peek();
     const held = glide.suspend();
     const now = state();
     const scrollTopBefore = scroller.scrollTop;
+    // The trace's numbers: read here (transforms cancelled, nothing written yet) and right after the
+    // pin below - never with a transform on the rows, which would force a layout inside the window.
+    const suspended = geometryOf(scroller);
+    let pinned: Geometry | null = null;
     const currentReach = threadReach(scroller);
     const response = threadGrowthResponse({
       previousReach,
@@ -136,6 +307,7 @@ export function observeThreadGrowth(
     let travel = 0;
     if (response === 'follow-bottom') {
       scroller.scrollTop = scroller.scrollHeight;
+      pinned = geometryOf(scroller);
       travel = appendGlidePx({
         cause,
         previousScrollTop: scrollTopBefore,
@@ -176,8 +348,43 @@ export function observeThreadGrowth(
           `arrival mid keyboard ride: the glide takes the rows from ${Math.round(ridden)}px`
         );
       }
-      if (glide.play(glideTravel(held, travel) + (ridden ?? 0))) markGlideEntrance(added);
-    } else if (held) glide.play(held.px, held.time);
+      const playedPx = glideTravel(held, travel) + (ridden ?? 0);
+      if (glide.play(playedPx)) {
+        markGlideEntrance(added);
+        trace.record(
+          {
+            cause,
+            atMs: inGlide?.time ?? 0,
+            suspended,
+            pinned,
+            held,
+            response,
+            travel,
+            replayPx: playedPx,
+            replayTime: 0,
+          },
+          inGlide === null
+        );
+        armTrace();
+      } else if (held) endUnreplayed();
+    } else if (held) {
+      if (glide.play(held.px, held.time)) {
+        trace.record(
+          {
+            cause,
+            atMs: held.time,
+            suspended,
+            pinned,
+            held,
+            response,
+            travel,
+            replayPx: held.px,
+            replayTime: held.time,
+          },
+          false
+        );
+      } else endUnreplayed();
+    }
     previousClientHeight = scroller.clientHeight;
     captureAnchor();
   };
@@ -217,6 +424,8 @@ export function observeThreadGrowth(
     boxes.disconnect();
     glide.stop();
     glidesByScroller.delete(scroller);
+    tracesByScroller.delete(scroller);
+    disarmTrace();
     scroller.style.overflowAnchor = previousAnchoring;
   };
 }
@@ -310,6 +519,11 @@ export interface ThreadGlide {
    * `finish` not delivered yet, which is that glide's END.
    */
   suspend(): HeldGlide | null;
+  /**
+   * The glide drawing the rows right now, without touching it: its distance and how far in it is
+   * (null when none runs, or when it is past its end with its `finish` not delivered yet).
+   */
+  peek(): { px: number; time: number } | null;
   /** Ends a glide in flight for good (the keyboard ride takes the rows); true when one was running. */
   takeOff(): boolean;
   /**
@@ -366,6 +580,13 @@ export function createThreadGlide(scroller: HTMLElement, onEnd?: () => void): Th
     return cancelled?.held ?? null;
   };
 
+  const peek = (): { px: number; time: number } | null => {
+    if (!running) return null;
+    const first = running.animations[0];
+    if ((first.effect?.getComputedTiming().progress ?? null) === null) return null;
+    return { px: running.px, time: Number(first.currentTime ?? 0) };
+  };
+
   const takeOff = (): boolean => {
     const cancelled = cancel();
     if (cancelled) ended();
@@ -406,7 +627,7 @@ export function createThreadGlide(scroller: HTMLElement, onEnd?: () => void): Th
     return true;
   };
 
-  return { suspend, takeOff, play, stop: () => void cancel() };
+  return { suspend, peek, takeOff, play, stop: () => void cancel() };
 }
 
 /**
