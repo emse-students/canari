@@ -26,4 +26,24 @@ class PlaceholderRepliesTest {
             PlaceholderReplies.of(newestIsPlaceholder = false),
         )
     }
+
+    private fun line(placeholder: Boolean = false, own: Boolean = false) = PlaceholderReplies.Line(placeholder, own)
+
+    @Test
+    fun `the newest line decides`() {
+        assertEquals(true, PlaceholderReplies.newestIsPlaceholder(listOf(line(), line(placeholder = true))))
+        assertEquals(false, PlaceholderReplies.newestIsPlaceholder(listOf(line(placeholder = true), line())))
+        assertEquals(false, PlaceholderReplies.newestIsPlaceholder(emptyList()))
+    }
+
+    /**
+     * THIS ACCOUNT'S OWN LINES ARE SKIPPED. A pending reply drawn under a placeholder is the newest
+     * line, but the suggestions answer the other side - whose newest line is still the placeholder.
+     */
+    @Test
+    fun `own and pending lines are skipped when looking for the newest line`() {
+        assertEquals(true, PlaceholderReplies.newestIsPlaceholder(listOf(line(placeholder = true), line(own = true))))
+        assertEquals(false, PlaceholderReplies.newestIsPlaceholder(listOf(line(), line(own = true))))
+        assertEquals(false, PlaceholderReplies.newestIsPlaceholder(listOf(line(own = true))))
+    }
 }

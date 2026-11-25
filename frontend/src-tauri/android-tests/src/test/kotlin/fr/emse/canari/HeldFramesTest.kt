@@ -2,6 +2,7 @@ package fr.emse.canari
 
 import fr.emse.canari.push.HeldFrame
 import fr.emse.canari.push.HeldFrames
+import fr.emse.canari.push.HeldFrames.Replay
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -10,9 +11,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The arithmetic of the frames held for the network ([HeldFrames]): one replay job per conversation,
- * a frame held once however often it is pushed, and a replay that ends on durable state - the app in
- * front, or no generic line of the frame left in the shade - with nothing re-posted.
+ * The arithmetic of the frames held for the network or the lock ([HeldFrames]): one replay job per
+ * conversation, a frame held once however often it is pushed, a frame kept for whatever says nothing
+ * about it, and a replay that ends on durable state with nothing re-posted.
  */
 class HeldFramesTest {
 
@@ -27,6 +28,13 @@ class HeldFramesTest {
             "every job name is under the tag the app's takeover cancels",
             HeldFrames.uniqueWorkName("g1").startsWith(HeldFrames.WORK_TAG),
         )
+    }
+
+    /** A push and the move to the front cannot interleave: the hold asks, under the store's lock. */
+    @Test
+    fun `no frame is held while the app is in front`() {
+        assertFalse(HeldFrames.admits(foreground = true))
+        assertTrue(HeldFrames.admits(foreground = false))
     }
 
     @Test
@@ -47,6 +55,27 @@ class HeldFramesTest {
         assertEquals("the same queued id in another conversation is another frame", 3, otherGroup.size)
     }
 
+    /** A run walks its conversation's frames once each, and settling removes exactly one. */
+    @Test
+    fun `a run picks each frame of its conversation once, and settling removes only that frame`() {
+        val held = listOf(frame(key = "q1"), frame(group = "g2", key = "q1"), frame(key = "q2"))
+
+        assertEquals("q1", HeldFrames.next(held, "g1", emptySet())?.frameKey)
+        assertEquals("q2", HeldFrames.next(held, "g1", setOf("q1"))?.frameKey)
+        assertNull(HeldFrames.next(held, "g1", setOf("q1", "q2")))
+
+        val settled = HeldFrames.settle(held, frame(key = "q1"))
+        assertEquals(listOf("g2" to "q1", "g1" to "q2"), settled.map { it.groupId to it.frameKey })
+    }
+
+    /** The move to the background hands every held conversation back to its replay. */
+    @Test
+    fun `every conversation with a held frame is handed back once`() {
+        val held = listOf(frame(key = "q1"), frame(key = "q2"), frame(group = "g2", key = "q3"))
+
+        assertEquals(setOf("g1", "g2"), HeldFrames.groupsHeld(held))
+    }
+
     /**
      * THE LINE WAS READ OR SWIPED: nothing to upgrade, so the replay stops before any MLS work and
      * posts nothing - and says so at debug, because that is the mechanism working.
@@ -55,19 +84,23 @@ class HeldFramesTest {
     fun `a frame whose generic line left the shade is gone, at debug, before any decrypt`() {
         val replay = HeldFrames.before(frame(stamps = setOf(100L)), foreground = false, shownStamps = setOf(999L))
 
-        assertEquals(HeldFrames.Replay.GONE, replay)
-        assertEquals(HeldFrames.Level.DEBUG, HeldFrames.level(HeldFrames.Replay.GONE))
-        assertFalse("a gone frame is not kept", HeldFrames.keeps(HeldFrames.Replay.GONE))
+        assertEquals(Replay.GONE, replay)
+        assertEquals(HeldFrames.Level.DEBUG, HeldFrames.level(Replay.GONE))
+        assertFalse("a gone frame is not kept", HeldFrames.keeps(Replay.GONE))
     }
 
-    /** THE APP OPENED FIRST: its engine owns the state and its drain reads the frame. */
+    /**
+     * THE APP IN FRONT KEEPS THE FRAME, AND DOES NOT RETRY IT. An app opened offline drains nothing,
+     * so the frame is still owed; its move to the background hands the job back.
+     */
     @Test
-    fun `the app in front owns the frame, at debug`() {
+    fun `the app in front keeps the frame without retrying the run, at debug`() {
         val replay = HeldFrames.before(frame(), foreground = true, shownStamps = setOf(100L))
 
-        assertEquals(HeldFrames.Replay.FOREGROUND, replay)
-        assertEquals(HeldFrames.Level.DEBUG, HeldFrames.level(HeldFrames.Replay.FOREGROUND))
-        assertFalse(HeldFrames.keeps(HeldFrames.Replay.FOREGROUND))
+        assertEquals(Replay.FOREGROUND, replay)
+        assertTrue(HeldFrames.keeps(Replay.FOREGROUND))
+        assertEquals(HeldFrames.RunEnd.DONE, HeldFrames.runEnd(listOf(Replay.FOREGROUND)))
+        assertEquals(HeldFrames.Level.DEBUG, HeldFrames.level(Replay.FOREGROUND))
     }
 
     @Test
@@ -78,25 +111,43 @@ class HeldFramesTest {
         assertEquals(setOf(200L), HeldFrames.stillShown(held, setOf(200L, 300L)))
     }
 
+    /**
+     * A LOCK TIMEOUT IS NOT A VERDICT ON THE FRAME. It was read as a refusal, which dropped the frame
+     * and accused it at WARN; it keeps the frame and retries now, like a network still refusing.
+     */
     @Test
-    fun `only a network still refusing keeps the frame and retries the run`() {
-        assertTrue(HeldFrames.keeps(HeldFrames.Replay.STILL_UNREACHABLE))
-        HeldFrames.Replay.values().filter { it != HeldFrames.Replay.STILL_UNREACHABLE }.forEach {
+    fun `a held lock and a network still refusing keep the frame and retry the run, without accusing`() {
+        listOf(Replay.STILL_UNREACHABLE, Replay.STATE_BUSY).forEach {
+            assertTrue(it.name, HeldFrames.keeps(it))
+            assertEquals(it.name, HeldFrames.RunEnd.RETRY, HeldFrames.runEnd(listOf(Replay.UPGRADED, it)))
+            assertNotEquals(it.name, HeldFrames.Level.WARN, HeldFrames.level(it))
+        }
+    }
+
+    @Test
+    fun `every verdict on the frame settles it`() {
+        listOf(Replay.UPGRADED, Replay.GONE, Replay.EMPTY, Replay.CONSUMED, Replay.NOT_READABLE).forEach {
             assertFalse(it.name, HeldFrames.keeps(it))
         }
         assertEquals(
-            HeldFrames.RunEnd.RETRY,
-            HeldFrames.runEnd(listOf(HeldFrames.Replay.UPGRADED, HeldFrames.Replay.STILL_UNREACHABLE)),
-        )
-        assertEquals(
             HeldFrames.RunEnd.DONE,
-            HeldFrames.runEnd(listOf(HeldFrames.Replay.UPGRADED, HeldFrames.Replay.GONE, HeldFrames.Replay.NOT_READABLE)),
+            HeldFrames.runEnd(listOf(Replay.UPGRADED, Replay.GONE, Replay.EMPTY, Replay.CONSUMED, Replay.NOT_READABLE)),
         )
         assertEquals("a run with nothing held is done", HeldFrames.RunEnd.DONE, HeldFrames.runEnd(emptyList()))
     }
 
+    /**
+     * A frame that decrypted to nothing a line can show, and one the app's drain already read, are the
+     * mechanism working: debug. Only a frame that should have opened and did not accuses.
+     */
     @Test
-    fun `a frame that should have opened and did not accuses`() {
-        assertEquals(HeldFrames.Level.WARN, HeldFrames.level(HeldFrames.Replay.NOT_READABLE))
+    fun `only a frame that should have opened and did not accuses`() {
+        assertEquals(HeldFrames.Level.DEBUG, HeldFrames.level(Replay.EMPTY))
+        assertEquals(HeldFrames.Level.DEBUG, HeldFrames.level(Replay.CONSUMED))
+        assertEquals(HeldFrames.Level.WARN, HeldFrames.level(Replay.NOT_READABLE))
+        assertEquals(
+            listOf(Replay.NOT_READABLE),
+            Replay.values().filter { HeldFrames.level(it) == HeldFrames.Level.WARN },
+        )
     }
 }

@@ -25,7 +25,7 @@ class PushDecryptLadderTest {
      * The outcome the fakes pass around. `REFUSED` is the only value the ladder reacts to, which is
      * exactly what it knows about the service's `PushDecrypt` sealed interface.
      */
-    private enum class Outcome { REFUSED, DECRYPTED, CAUGHT_UP, UNREACHABLE, YIELDED }
+    private enum class Outcome { REFUSED, DECRYPTED, CAUGHT_UP, UNREACHABLE, YIELDED, BUSY }
 
     /** A run: what it ended on, and every line the ladder logged, in order. */
     private data class Run(val outcome: Outcome, val log: List<String>)
@@ -44,6 +44,7 @@ class PushDecryptLadderTest {
             locality = locality,
             catchUp = catchUp,
             log = { log.add(it) },
+            busy = Outcome.BUSY,
         )
         return Run(outcome, log)
     }
@@ -157,6 +158,29 @@ class PushDecryptLadderTest {
         )
 
         assertEquals(Outcome.YIELDED, r.outcome)
+    }
+
+    /**
+     * A LOCK TIMEOUT IS NOT A VERDICT (2026-11-25). `groupLocality` answered UNKNOWN when another
+     * thread held the MLS state lock for its whole wait, and the frame stayed `Refused` - which a
+     * replay of a held frame read as "drop it". The lock answers BUSY now, and the ladder hands back
+     * the caller's busy outcome, never the refusal, and runs no recovery.
+     */
+    @Test
+    fun `a locality the lock kept from being read answers busy and runs no recovery`() {
+        val r = ladder(
+            initial = Outcome.REFUSED,
+            locality = { GroupLocality.BUSY },
+        )
+
+        assertEquals(Outcome.BUSY, r.outcome)
+        assertEquals(
+            listOf(
+                "tryDecrypt refused group=abcd1234 locality=BUSY",
+                "locality not read, the MLS state lock was held group=abcd1234 -> state busy",
+            ),
+            r.log,
+        )
     }
 
     @Test
