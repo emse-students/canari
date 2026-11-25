@@ -64,6 +64,22 @@ interface TracedScroll {
   delta: number;
 }
 
+/**
+ * A pin made OUTSIDE `follow()` while the glide ran ({@link pinThreadToEnd}): who wrote, and where
+ * the pane stood right after the write, transforms off.
+ */
+interface TracedWrite {
+  writer: string;
+  atMs: number;
+  placed: Geometry;
+}
+
+/** One line of the merged trace, kept in the order it happened. */
+type TracedEvent =
+  | { kind: 'pass'; seq: number; atMs: number; pass: TracedPass }
+  | { kind: 'write'; seq: number; atMs: number; write: TracedWrite }
+  | { kind: 'scroll'; seq: number; atMs: number; scroll: TracedScroll };
+
 /** The ring size, for passes and for scroll moves, per glide. */
 export const GLIDE_TRACE_MAX_LINES = 8;
 
@@ -71,22 +87,29 @@ export const GLIDE_TRACE_MAX_LINES = 8;
  * THE BOUNDED, SILENT TRACE OF `follow()` PASSES INSIDE A GLIDE (iPhone 12, iOS 27, an IMAGE
  * arriving at a pinned DM, chat.md). The pane falls 150-230 px 45-70 ms after the arrival with its
  * reach unchanged. **NOTHING IS WRITTEN AT PASS TIME**: every ordinary message makes a glide, so a
- * line per pass would be noise forever. The passes and the scroll moves that follow them wait in two
- * rings of {@link GLIDE_TRACE_MAX_LINES} (the oldest drop, counted), and
- * {@link describeGlideFall} prints them, at INFO, only when the pane's own measurement finds a fall
- * inside the glide. A new glide empties the rings. No read is added in the glide's window: the
- * numbers are the ones `follow()` reads anyway, taken at points where the layout is clean.
+ * line per pass would be noise forever. The passes, the pins made outside them
+ * ({@link pinThreadToEnd}) and the scroll moves wait in three rings of {@link GLIDE_TRACE_MAX_LINES}
+ * (the oldest drop, counted), and {@link describeGlideFall} prints them merged in recording order, at
+ * INFO, only when the pane's own measurement finds a fall inside the glide. A new glide empties the
+ * rings. No read is added in the glide's window: the numbers are the ones `follow()` and the pin
+ * read anyway, taken at points where the layout is clean.
  *
  * How to read it: native anchoring (a) moves `top` at `suspended` with the height UNCHANGED; a
  * clamp (b) moves it with a height that shrank; a scroll move after the last pass (the async case,
  * 45-70 ms later) with stable pass numbers is (b) or an engine move outside the passes - not "nothing
- * found". (c), a stale replay, is a visual offset of the rows and cannot move `scrollTop`.
+ * found". (c), a stale replay, is a visual offset of the rows and cannot move `scrollTop`. A
+ * `glide write by` line between two passes is a second writer: its `top` above the next pass's
+ * `suspended` is a pin that read the glide's overflow (the cause found on the iPhone, 2026-11-25).
  */
 class GlideTrace {
-  private passes: TracedPass[] = [];
-  private scrolls: TracedScroll[] = [];
+  private passes: { seq: number; pass: TracedPass }[] = [];
+  private writes: { seq: number; write: TracedWrite }[] = [];
+  private scrolls: { seq: number; scroll: TracedScroll }[] = [];
   private passCount = 0;
+  private writeCount = 0;
   private scrollCount = 0;
+  /** The order of every recorded line: the order they are printed in. */
+  private seq = 0;
   /** Where the last pass left the pane, and the scroll position the last scroll event saw. */
   lastEnd: Geometry | null = null;
   lastTop = 0;
@@ -95,16 +118,34 @@ class GlideTrace {
   record(pass: Omit<TracedPass, 'pass' | 'previous'>, startsGlide: boolean): void {
     if (startsGlide) {
       this.passes = [];
+      this.writes = [];
       this.scrolls = [];
       this.passCount = 0;
+      this.writeCount = 0;
       this.scrollCount = 0;
       this.lastEnd = null;
     }
     this.passCount++;
-    this.passes.push({ ...pass, pass: this.passCount, previous: this.lastEnd });
+    this.passes.push({
+      seq: this.seq++,
+      pass: { ...pass, pass: this.passCount, previous: this.lastEnd },
+    });
     if (this.passes.length > GLIDE_TRACE_MAX_LINES) this.passes.shift();
     this.lastEnd = pass.pinned ?? pass.suspended;
     this.lastTop = this.lastEnd.top;
+  }
+
+  /**
+   * Records a pin made outside `follow()` inside the glide - the second writer the iPhone's fall was
+   * traced to (chat.md). Its own `scroll` event then reads no move: the write is the line.
+   */
+  recordWrite(writer: string, atMs: number, placed: Geometry): void {
+    if (this.passCount === 0) return;
+    this.writeCount++;
+    this.writes.push({ seq: this.seq++, write: { writer, atMs, placed } });
+    if (this.writes.length > GLIDE_TRACE_MAX_LINES) this.writes.shift();
+    this.lastEnd = placed;
+    this.lastTop = placed.top;
   }
 
   /** Records a scroll that moved the pane since the last one seen. */
@@ -113,33 +154,68 @@ class GlideTrace {
     this.lastTop = top;
     if (delta === 0 || this.passCount === 0) return;
     this.scrollCount++;
-    this.scrolls.push({ atMs, top, delta });
+    this.scrolls.push({ seq: this.seq++, scroll: { atMs, top, delta } });
     if (this.scrolls.length > GLIDE_TRACE_MAX_LINES) this.scrolls.shift();
   }
 
-  /** The lines of the fall: a header, the buffered passes, the buffered scroll moves. */
+  /**
+   * The lines of the fall: a header, then the buffered passes, outside writes and scroll moves
+   * MERGED IN THE ORDER THEY WERE RECORDED, which is real time - never by `atMs`, the label: a second
+   * arrival restarts the glide's clock, so its pass reads `+0ms` after lines of `+55ms`. A write that
+   * lands between two passes reads between them, which is what names a second writer.
+   */
   lines(): string[] | null {
     if (this.passCount === 0) return null;
-    const droppedPasses = this.passCount - this.passes.length;
-    const droppedScrolls = this.scrollCount - this.scrolls.length;
+    const dropped = (count: number, kept: number) =>
+      count > kept ? ` (${count - kept} older dropped)` : '';
+    const events: TracedEvent[] = [
+      ...this.passes.map((p): TracedEvent => ({
+        kind: 'pass',
+        seq: p.seq,
+        atMs: p.pass.atMs,
+        pass: p.pass,
+      })),
+      ...this.writes.map((w): TracedEvent => ({
+        kind: 'write',
+        seq: w.seq,
+        atMs: w.write.atMs,
+        write: w.write,
+      })),
+      ...this.scrolls.map((m): TracedEvent => ({
+        kind: 'scroll',
+        seq: m.seq,
+        atMs: m.scroll.atMs,
+        scroll: m.scroll,
+      })),
+    ].sort((a, b) => a.seq - b.seq);
     return [
-      `${this.passCount} follow pass(es)${droppedPasses > 0 ? ` (${droppedPasses} older dropped)` : ''} and ` +
-        `${this.scrollCount} scroll move(s)${droppedScrolls > 0 ? ` (${droppedScrolls} older dropped)` : ''} in this glide`,
-      ...this.passes.map(
-        (p) =>
-          `glide pass ${p.pass} (${p.cause}, +${Math.round(p.atMs)}ms): top/height/box previous end ` +
-          `${showGeometry(p.previous)}, suspended ${showGeometry(p.suspended)}, pinned ` +
-          `${p.pinned ? showGeometry(p.pinned) : 'no pin'}; held ` +
-          `${p.held ? `${Math.round(p.held.px)}px with ${Math.round(p.held.remaining)}px left` : 'none'}; ` +
-          `${p.response}, new travel ${Math.round(p.travel)}px, replay ${Math.round(p.replayPx)}px at ` +
-          `${Math.round(p.replayTime)}ms`
-      ),
-      ...this.scrolls.map(
-        (s) =>
-          `glide scroll move +${Math.round(s.atMs)}ms: top ${s.top} (${s.delta > 0 ? '+' : ''}${s.delta})`
-      ),
+      `${this.passCount} follow pass(es)${dropped(this.passCount, this.passes.length)}, ` +
+        `${this.writeCount} write(s) outside follow${dropped(this.writeCount, this.writes.length)} and ` +
+        `${this.scrollCount} scroll move(s)${dropped(this.scrollCount, this.scrolls.length)} in this glide`,
+      ...events.map(showTracedEvent),
     ];
   }
+}
+
+/** One merged line of the trace, as {@link describeGlideFall} prints it. */
+function showTracedEvent(e: TracedEvent): string {
+  if (e.kind === 'pass') {
+    const p = e.pass;
+    return (
+      `glide pass ${p.pass} (${p.cause}, +${Math.round(p.atMs)}ms): top/height/box previous end ` +
+      `${showGeometry(p.previous)}, suspended ${showGeometry(p.suspended)}, pinned ` +
+      `${p.pinned ? showGeometry(p.pinned) : 'no pin'}; held ` +
+      `${p.held ? `${Math.round(p.held.px)}px with ${Math.round(p.held.remaining)}px left` : 'none'}; ` +
+      `${p.response}, new travel ${Math.round(p.travel)}px, replay ${Math.round(p.replayPx)}px at ` +
+      `${Math.round(p.replayTime)}ms`
+    );
+  }
+  if (e.kind === 'write') {
+    const w = e.write;
+    return `glide write by ${w.writer} (+${Math.round(w.atMs)}ms): top/height/box ${showGeometry(w.placed)}`;
+  }
+  const m = e.scroll;
+  return `glide scroll move +${Math.round(m.atMs)}ms: top ${m.top} (${m.delta > 0 ? '+' : ''}${m.delta})`;
 }
 
 /** The trace and glide of each followed thread, for {@link describeGlideFall}. */
@@ -257,6 +333,19 @@ export function observeThreadGrowth(
     disarmTrace();
     onGlideEnd?.();
   };
+  // THE PANE'S OWN PIN, made as `follow()` makes its own (see {@link pinThreadToEnd}): transforms
+  // off, the write to the layout's end, the glide put back on the same frame.
+  pinsByScroller.set(scroller, (writer) => {
+    const held = glide.suspend();
+    scroller.scrollTop = scroller.scrollHeight;
+    const placed = scroller.scrollTop;
+    if (held) {
+      Log.d('threadGrowth', `${writer} pinned the end mid-glide, ${Math.round(held.time)}ms in`);
+      trace.recordWrite(writer, held.time, geometryOf(scroller));
+      if (!glide.play(held.px, held.time)) endUnreplayed();
+    }
+    return placed;
+  });
   /**
    * `added`: the elements this change inserted, whose bubbles wait out a glide that makes room for
    * them (`.motion-bubble-in[data-glide-entrance]`) - a bubble that arrives without one fades at once.
@@ -425,6 +514,7 @@ export function observeThreadGrowth(
     glide.stop();
     glidesByScroller.delete(scroller);
     tracesByScroller.delete(scroller);
+    pinsByScroller.delete(scroller);
     disarmTrace();
     scroller.style.overflowAnchor = previousAnchoring;
   };
@@ -432,6 +522,34 @@ export function observeThreadGrowth(
 
 /** The glide of every thread `observeThreadGrowth` follows, for {@link takeThreadGlideOff}. */
 const glidesByScroller = new WeakMap<Element, ThreadGlide>();
+
+/** The pin of every thread `observeThreadGrowth` follows, for {@link pinThreadToEnd}. */
+const pinsByScroller = new WeakMap<Element, (writer: string) => number>();
+
+/**
+ * Puts a thread's pane on its LAYOUT end and returns the `scrollTop` it landed on - the only way the
+ * pane's own code writes its end (`ChatArea.scrollToBottom`), so every caller targets the same place.
+ *
+ * **A PIN TAKEN DURING A GLIDE MUST NOT READ THE GLIDE'S OVERFLOW** (iPhone 12, iOS 27, an image
+ * arriving at a pinned DM, chat.md). A transformed row counts in `scrollHeight` by
+ * `max(0, offset - padding-bottom)`, so a plain `scrollTop = scrollHeight` mid-glide wrote past the
+ * real end; the next `follow()` pass took the transforms off, the engine clamped the pane back, and
+ * the pane's measurement read that clamp as a fall below the last placed value and dropped the
+ * reader's flag. So the glide is taken off first, exactly as `follow()` does, the end is written
+ * against the layout, and the glide is played again from the same time and distance - no frame shows
+ * the difference. A replay the engine refuses is the glide's end, told once as every end is. The
+ * write is recorded in the glide's trace under `writer`.
+ *
+ * A thread no observer follows has no glide to take off, so the write is the whole of it - but the pane
+ * always has one, so reaching that branch says the observer is not wired: it is logged as such.
+ */
+export function pinThreadToEnd(scroller: HTMLElement, writer: string): number {
+  const pin = pinsByScroller.get(scroller);
+  if (pin) return pin(writer);
+  Log.w('threadGrowth', `${writer} pinned a pane no growth observer follows`);
+  scroller.scrollTop = scroller.scrollHeight;
+  return scroller.scrollTop;
+}
 
 /**
  * Takes a glide still in flight off a followed thread's rows, for good - the keyboard ride is about to
