@@ -1,6 +1,6 @@
 ## P3 - Android's alerted-messages key lacks the sender: two members in one millisecond are one message (found 2026-11-22)
 
-target: 1.8.0
+target: 1.8.1
 
 `CanariFirebaseMessagingService.alertedKey` is `<notifKey>:<sentAt>`, and the in-shade match beside it
 (`alreadyPosted`) compares the line's timestamp alone. Two members writing in one conversation in the

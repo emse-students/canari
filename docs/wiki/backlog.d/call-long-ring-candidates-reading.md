@@ -1,6 +1,6 @@
 ## P2 - after a 30-55 s ring, does the caller still send ICE candidates? Read on the bench phones, fixed if not
 
-target: 1.8.0
+target: 1.8.1
 
 A 1:1 call answered from the native ring never connected (Android `1.7.2`, 2026-11-22): the
 caller sent its offer and then no ICE candidate at all, and its signalling socket reset 7.7 s later.

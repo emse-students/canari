@@ -1,6 +1,6 @@
 {
   "name": "chat-delivery-service",
-  "version": "1.8.0-alpha.8",
+  "version": "1.8.0-alpha.10",
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "nest build",

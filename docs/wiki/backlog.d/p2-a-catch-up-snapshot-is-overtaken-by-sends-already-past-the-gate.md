@@ -1,6 +1,6 @@
 ## P2 - a history catch-up is thrown away because sends already past the gate land after its snapshot
 
-target: 1.8.0
+target: 1.8.1
 
 **Seen 2026-11-24** (a new web device, prod `1.7.3`, 2 min 20 s of restore): 17 lines
 `[MLS] catch-up (<group>) state DISCARDED: the live client was mutated N time(s) since the snapshot`,

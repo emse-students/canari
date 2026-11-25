@@ -396,18 +396,31 @@ describe('the reveal of a focused field (iPhone 12, v1.2.9-alpha.4)', () => {
   });
 
   it('names a pinned box of the main page a scroll moved off its top, and nothing else', () => {
-    const box = (className: string, top: number) => {
+    const box = (className: string, top: number, overflowY = 'hidden') => {
       const el = document.createElement('div');
       el.className = className;
+      el.style.overflowY = overflowY;
       document.body.appendChild(el);
       el.scrollTop = top;
       return el;
     };
     expect(shiftedPageBox(box('page-scroll-wrap', 39))).toBe('.page-scroll-wrap');
     expect(shiftedPageBox(box('app-layout', 12))).toBe('.app-layout');
+    expect(shiftedPageBox(box('app-layout', 12, 'clip'))).toBe('.app-layout');
     expect(shiftedPageBox(box('app-layout', 0))).toBeNull();
     expect(shiftedPageBox(box('chat-messages-scroll', 500))).toBeNull();
     expect(shiftedPageBox(null)).toBeNull();
+  });
+
+  it('never names the page scroller the reader scrolls (iPhone 12, 1.8.0-alpha.7: eight WARNs on plain scrolling)', () => {
+    // Every ordinary page scrolls in .page-scroll-wrap; only around the chat shell is it pinned.
+    const feed = document.createElement('div');
+    feed.className = 'page-scroll-wrap';
+    feed.style.overflowY = 'auto';
+    document.body.appendChild(feed);
+    feed.scrollTop = 14;
+    expect(shiftedPageBox(feed)).toBeNull();
+    feed.remove();
   });
 
   // WHY A SOURCE TEST (WP-T5: keep). `scroll-margin` is a CSS rule and happy-dom computes no style,

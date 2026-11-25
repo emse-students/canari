@@ -1,6 +1,6 @@
 ## P2 - the question put to a form left open: built, owed its reading and its day-one count
 
-target: 1.8.0
+target: 1.8.1
 
 **What is built** ([forms](../frontend/modules/forms.md#the-question-put-to-a-form-left-open-owner-2026-11-21-migration-180)):
 the closing date offered at publication, and the daily sweep that asks the owner and the `MANAGE_FORMS`

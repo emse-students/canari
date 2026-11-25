@@ -1,6 +1,6 @@
 ## P2 - forms: the per-question results summary is built, and its reading as a manager on dev closes it
 
-target: 1.8.0
+target: 1.8.1
 
 Built (G-RESULTS, owner, 2026-11-21): `GET /forms/:id/results` and the "Résumé" tab, computed by SQL
 aggregates, with an anonymity floor of five answers per question and no cross-tab

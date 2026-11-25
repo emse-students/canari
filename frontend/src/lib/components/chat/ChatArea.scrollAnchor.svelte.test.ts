@@ -19,6 +19,10 @@ import {
 } from '$lib/stores/keyboardTransition';
 import { Log } from '$lib/utils/Log';
 import type { ChatMessage, Conversation } from '$lib/types';
+import { useLoadBounds } from '../../../test/loadBound';
+
+// CPU-bound, never clock-bound: the timers are faked, so a 5 s deadline only measures the machine.
+useLoadBounds();
 
 type Nav = {
   willUnload?: boolean;

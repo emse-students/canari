@@ -86,4 +86,33 @@ describe('progressiveCount', () => {
     });
     cleanup();
   });
+
+  it('a list that comes back starts over too, and a reload of the same list keeps its count', () => {
+    const list = $state({ key: 'a', reload: 0 });
+    const cleanup = $effect.root(() => {
+      const p = progressiveCount({
+        total: () => 6,
+        resetKey: () => {
+          void list.reload;
+          return list.key;
+        },
+        initial: 3,
+        batch: 3,
+      });
+      flushSync();
+      frame();
+      expect(p.count).toBe(6);
+      // A refresh of the same tab: the key's value is unchanged, nothing is unmounted.
+      list.reload++;
+      flushSync();
+      expect(p.count).toBe(6);
+      list.key = 'b';
+      flushSync();
+      frame();
+      list.key = 'a';
+      flushSync();
+      expect(p.count).toBe(3);
+    });
+    cleanup();
+  });
 });

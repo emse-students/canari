@@ -728,7 +728,7 @@ presence were true, but the record says `sent` one write later (`expected undefi
 most frequent victim) - `takeRecordSent` now waits for the state;
 (b) every `vi.waitFor` ran on its 1 s default and every case on the 5 s test deadline, both tighter than
 a starved worker. `src/test/loadBound.ts` gives `waitForEvent` (20 s ceiling) and `useLoadBounds()`
-(30 s test deadline), used by `outbox.reelResume` ONLY - the other files keep the 1 s default, and a
+(30 s test deadline), used by `outbox.reelResume` and, since 2026-11-24, `ChatArea.scrollAnchor` and `PostCard.commentSync` (below) - the other files keep the 1 s default, and a
 per-file timeout elsewhere is still refused (the first reading above). A ceiling is only how long a test
 accepts being told an event never comes - nothing asserts a duration, and a real hang still fails.
 The one case that fakes timers uses `waitForEventNoClock`, since `vi.waitFor` advances a faked clock by
@@ -821,3 +821,5 @@ of the readings above; the probe names them, and each takes the same warm-up whe
 **The probe, to re-measure:** a setup file that writes `{wall, cpu}` per test from `beforeEach`/`afterEach`,
 capturing `performance.now` before any test can fake it (faked timers otherwise report the fake clock),
 joined with the JSON reporter's durations.
+
+**Seventh reading, 2026-11-24** (the "Not fixed" ChatArea case of the sixth, now taken: `ChatArea.scrollAnchor` and `PostCard.commentSync`, red in local push hooks, green alone). Reproduced with N concurrent runs of the two files on 16 cores: 12 runs all passed, **20 runs: 19 failed (21 five-second timeouts)**, 40 runs: all failed. Two causes: (a) `ChatArea.scrollAnchor` is CPU-bound, not clock-bound (its timers are faked; each case mounts a 61-row pane 1-3 times at 0.3-0.5 s a mount, nothing in it waits), so the 5 s deadline only measures the machine - the file takes `useLoadBounds()` since the slot did not cover a concurrent run of two sessions, and the failures that were not timeouts (`expected 2400 to be 1365`) were cascades of a timed-out case still running into the next; (b) `PostCard.commentSync` read the older-comments page after a GUESSED four macrotask turns (`expected 30 to be 31`, the page not yet landed) - it now waits for the rows to land (`waitForEvent`). After: 20 runs, 0 failed; 40 runs, 8 passed and the rest hit the 30 s bound, which a 40-fold oversubscription of 16 cores reaches by CPU alone.

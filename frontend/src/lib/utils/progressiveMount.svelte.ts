@@ -27,18 +27,30 @@ export function progressiveCount(opts: {
   /** Added per animation frame afterwards. */
   batch: number;
 }) {
-  let count = $state(opts.initial);
-  let lastKey = untrack(opts.resetKey);
+  // THE COUNT BELONGS TO THE LIST IT WAS COUNTED FOR, SO A NEW LIST RESETS IT BY DERIVATION, NEVER
+  // BY A WRITE FROM THE EFFECT. The effect used to write `count = initial` on a key change; a write
+  // from an `$effect` re-runs the `{#each}` reading the count EAGERLY, and since Svelte 5.59 that run
+  // registers a commit which re-reads the each's collection when its batch commits - after the page's
+  // own tab-load effect had emptied the list and before the `{#if}` around the each was torn down.
+  // The feed's first tab switch of each process crashed on `null.slice` (iPhone 12, 1.8.0-alpha.7 to
+  // alpha.9; docs/wiki/frontend/architecture.md). Only the frame callback writes, outside any effect.
+  // `key` notifies only when the key's VALUE changes, so a reload of the same list keeps its count.
+  const key = $derived(opts.resetKey());
+  // A writable derived: a new key derives the first screen again, a frame assigns the next count.
+  let count = $derived.by(() => {
+    void key;
+    return opts.initial;
+  });
+  /** The key last announced in the log: a plain local, nothing is drawn from it. */
+  let announced = untrack(() => key);
 
   $effect(() => {
-    const key = opts.resetKey();
     const total = opts.total();
-    if (key !== lastKey) {
-      lastKey = key;
-      console.debug(`[progressive-mount] list replaced - back to ${opts.initial} of ${total}`);
-      untrack(() => (count = opts.initial));
-    }
     const mounted = count;
+    if (key !== announced) {
+      announced = key;
+      console.debug(`[progressive-mount] list replaced - back to ${opts.initial} of ${total}`);
+    }
     if (mounted >= total) return;
     const frame = requestAnimationFrame(() => {
       const next = Math.min(total, mounted + opts.batch);
