@@ -1,5 +1,6 @@
 package fr.emse.canari
 
+import fr.emse.canari.push.AlertedMessage
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -30,7 +31,7 @@ import org.junit.Test
 class ChannelNotificationDedupTest {
 
     /** A line as `MessagingStyle` holds it: the instant is the whole of its identity here. */
-    private data class Line(val timestamp: Long, val body: String)
+    private data class Line(val timestamp: Long, val body: String, val sender: String = "")
 
     /** The shade, plus the set of messages this device has ever announced. */
     private class Shade {
@@ -38,8 +39,9 @@ class ChannelNotificationDedupTest {
         val announced = mutableSetOf<String>()
     }
 
-    /** `alertedKey` - one announced message, by its conversation and its sender's instant. */
-    private fun alertedKey(notifKey: String, sentAt: Long): String = "$notifKey:$sentAt"
+    /** `alertedKey` - one announced message: its conversation, its sender and the sender's instant. */
+    private fun alertedKey(notifKey: String, sender: String, sentAt: Long): String =
+        AlertedMessage.key(notifKey, sender, sentAt)
 
     /**
      * The builder's decision, mirroring `showMessageNotification`.
@@ -52,20 +54,21 @@ class ChannelNotificationDedupTest {
         body: String,
         sentAt: Long,
         supersedes: Long = 0L,
+        sender: String = "",
     ): Long {
         // THE FILTER COMES BEFORE THE BOUND, so superseding a line never costs a real one.
         val existing = shade.lines.filter { supersedes == 0L || it.timestamp != supersedes }
         val stamp = if (sentAt > 0) sentAt else WALL_CLOCK
-        val alreadyPosted = sentAt > 0 && existing.any { it.timestamp == stamp }
-        val alertedKey = if (sentAt > 0) alertedKey(notifKey, sentAt) else null
+        val alreadyPosted = sentAt > 0 && existing.any { it.timestamp == stamp && AlertedMessage.sameSender(it.sender, sender) }
+        val alertedKey = if (sentAt > 0) alertedKey(notifKey, sender, sentAt) else null
         if (alertedKey != null && !alreadyPosted && supersedes == 0L &&
-            shade.announced.contains(alertedKey)
+            shade.announced.any { AlertedMessage.matches(it, alertedKey) }
         ) {
             return 0L
         }
         shade.lines.clear()
         shade.lines.addAll(existing)
-        if (!alreadyPosted) shade.lines.add(Line(stamp, body))
+        if (!alreadyPosted) shade.lines.add(Line(stamp, body, sender))
         alertedKey?.let { shade.announced.add(it) }
         return stamp
     }
@@ -115,6 +118,26 @@ class ChannelNotificationDedupTest {
     }
 
     @Test
+    fun `two senders in one millisecond are two lines and two announcements`() {
+        val shade = Shade()
+        post(shade, salon, "Bonjour", instant, sender = "alice")
+        assertEquals(instant, post(shade, salon, "Salut", instant, sender = "bob"))
+        assertEquals(listOf("Bonjour", "Salut"), shade.lines.map { it.body })
+        // Dismissed, each is still announced once and only once.
+        shade.lines.clear()
+        assertEquals(0L, post(shade, salon, "Bonjour", instant, sender = "alice"))
+        assertEquals(0L, post(shade, salon, "Salut", instant, sender = "bob"))
+    }
+
+    @Test
+    fun `a trigger that knows the sender and one that does not still make one line`() {
+        val shade = Shade()
+        post(shade, salon, "Bonjour", instant, sender = "")
+        post(shade, salon, "Bonjour", instant, sender = "alice")
+        assertEquals(1, shade.lines.size)
+    }
+
+    @Test
     fun `a dismissed message is not announced a second time`() {
         val shade = Shade()
         post(shade, salon, "Bonjour", instant)
@@ -131,7 +154,7 @@ class ChannelNotificationDedupTest {
         // instant it carries is what the redraw supersedes.
         val generic = post(shade, salon, "nouveau message dans #general", instant)
         assertEquals(instant, generic)
-        assertTrue(shade.announced.contains(alertedKey(salon, instant)))
+        assertTrue(shade.announced.contains(alertedKey(salon, "", instant)))
 
         // The seed lands. WITHOUT the supersede exemption this post is refused - the set already
         // holds this message - and the reader keeps "nouveau message" for ever.

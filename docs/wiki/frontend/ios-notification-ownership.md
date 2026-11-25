@@ -46,9 +46,12 @@ A key is `<conversation>:<sender>:<instant>` - the sender lowercased, the sender
 message, the server `createdAt` for a salon, all three carried unchanged by the push and by the
 socket frame (the push's `senderId` and the frame's are the server's one account id). The sender is
 in it so two members writing in the same millisecond are two messages; a message with no sender or
-no instant is not keyed, and not claimed. Android's alerted ledger (`alertedKey`) still keys on the
-instant alone: [backlog, 1.8.0](../backlog.d/p3-android-alerted-key-lacks-the-sender.md). No text is
-written. Bounded at 512 keys, oldest dropped.
+no instant is not keyed, and not claimed. Android's alerted ledger has keyed the same triple since
+1.8.2 (`push/AlertedMessage.kt`, shared by the set and by the shade's line match, the sender kept
+in a `MessagingStyle.Message` extra): a trigger that does NOT know the sender (a blind salon push)
+matches any sender, so a push and a frame of one message stay one, and keys of the older two-part
+format never match (read as unknown, aged out of the 128-key bound: at worst one message announced
+again). No text is written. Bounded at 512 keys, oldest dropped.
 
 Three writers, and their transitions (`mobile/announced.rs`, every one asserted there):
 

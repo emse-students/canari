@@ -39,6 +39,7 @@ import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicBoolean
 import fr.emse.canari.call.RingClosed
+import fr.emse.canari.push.AlertedMessage
 import fr.emse.canari.push.AwaitedReplies
 import fr.emse.canari.push.BackgroundWelcomeAnswer
 import fr.emse.canari.push.BlindBannerReport
@@ -503,6 +504,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * survives the process, unlike anything held in memory here.
          */
         const val LINE_SENT_AT = "canari.line.sentAt"
+        /** The sender's id on a line, so the in-shade match tells two senders of one instant apart ([AlertedMessage]). */
+        const val LINE_SENDER_ID = "canari.line.senderId"
         const val LINE_SERVER_AT = "canari.line.serverAt"
 
         /**
@@ -1329,9 +1332,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * new message from anyone whose clock runs behind. The question being asked is "have I
          * announced THIS message", and only a set answers it.
          *
-         * IT IS THE SAME PREDICATE THE SHADE IS ASKED, deliberately: `sentAt` plus the body, exactly
-         * what [showMessageNotification] matches against `style.messages`. One rule, two stores - the
-         * live post while it is there, and this once it is gone.
+         * IT IS THE SAME PREDICATE THE SHADE IS ASKED, deliberately: the sender and `sentAt`
+         * ([AlertedMessage]), exactly what [showMessageNotification] matches against `style.messages`.
+         * One rule, two stores - the live post while it is there, and this once it is gone.
          */
         private const val ALERTED_PREFS = "canari_alerted_messages"
         private const val ALERTED_KEY = "keys"
@@ -1349,14 +1352,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * for everything else, so a key holding one could never match the other - exactly where a
          * duplicate is most visible.
          *
-         * `groupId` + the sender's `sentAt` is what both triggers carry unchanged. Two messages can
-         * only collide in one conversation within one millisecond, which one sender cannot do at all
-         * and two can only by coincidence; the cost of that coincidence is one notification not
-         * sounding, against a cross-language string equality that is wrong by construction.
+         * `groupId` + the sender + the sender's `sentAt` is what both triggers carry unchanged. The
+         * sender is part of it since 2026-11-25: two members writing in one millisecond are two
+         * messages ([AlertedMessage]); a trigger that does not know the sender (a blind salon push)
+         * matches any, so the two triggers of one message are still one.
          *
          * It also means no message text is written outside the encrypted database.
          */
-        private fun alertedKey(notifKey: String, sentAt: Long): String = "$notifKey:$sentAt"
+        private fun alertedKey(notifKey: String, senderId: String, sentAt: Long): String =
+            AlertedMessage.key(notifKey, senderId, sentAt)
 
         /** Whether this exact message has already raised a notification on this device. */
         private fun Context.hasAlreadyAlerted(key: String): Boolean = synchronized(ALERTED_LOCK) {
@@ -1364,7 +1368,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 .getString(ALERTED_KEY, "")
                 .orEmpty()
                 .splitToSequence('\n')
-                .any { it == key }
+                .any { AlertedMessage.matches(it, key) }
         }
 
         /**
@@ -3428,6 +3432,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                             senderName = salonLine?.personName ?: senderName,
                             groupName = salonLine?.conversationTitle ?: groupName,
                             senderKey = salonLine?.personKey,
+                            senderId = senderId,
                             body = body,
                             largeIcon = avatar ?: generateInitialsBitmap(
                                 salonAuthor?.let { ChannelBannerAuthor.initialsSource(it) } ?: senderName
@@ -3572,6 +3577,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     channel = CHANNEL_REACTIONS,
                     quickActions = false,
                     sentAt = reactionAt,
+                    senderId = actorId,
                     suppressInForeground = suppressInForeground,
                 )
             }
@@ -4126,6 +4132,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
              * merge by name, which a DM or an MLS group has always had.
              */
             senderKey: String? = null,
+            /**
+             * The sender's user id when the trigger knows it, empty when it does not (a blind salon
+             * push): part of the announced identity so two members in one millisecond are two
+             * messages ([AlertedMessage]).
+             */
+            senderId: String = "",
         ): Long {
             if (suppressInForeground && MainActivity.isInForeground) {
                 Log.d(TAG, "showMessageNotification: app in foreground -> suppressed (groupId=${ConversationRef.of(groupId)})")
@@ -4247,12 +4259,18 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // which quietly required the two triggers to RENDER a message identically - and they do
                 // not: see [alertedKey]. Any message that is not plain prose failed the match and was
                 // added a second time.
-                val alreadyPosted = sentAt > 0 && style.messages.any { it.timestamp == stamp }
+                //
+                // AND THE SENDER, since 2026-11-25: two members writing in one millisecond are two
+                // lines ([AlertedMessage.sameSender]; an unknown sender matches any).
+                val alreadyPosted = sentAt > 0 && style.messages.any {
+                    it.timestamp == stamp && AlertedMessage.sameSender(it.extras.getString(LINE_SENDER_ID).orEmpty(), senderId)
+                }
                 val newMessage = NotificationCompat.MessagingStyle.Message(body, stamp, senderPerson)
                 // Re-injected with the line on every later post (`extractMessagingStyleFromNotification`
                 // carries a message's extras), so each line keeps its own instants for as long as it shows.
                 newMessage.extras.putLong(LINE_SENT_AT, sentAt)
                 newMessage.extras.putLong(LINE_SERVER_AT, serverAt)
+                newMessage.extras.putString(LINE_SENDER_ID, senderId)
                 if (mediaUri != null && mediaMime != null) {
                     newMessage.setData(mediaMime, mediaUri)
                 }
@@ -4268,6 +4286,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                                 it.extras.putLong(LINE_SENT_AT, sentAt)
                                 it.extras.putLong(LINE_SERVER_AT, serverAt)
                             }
+                    }
+                    // A line first drawn by a trigger that did not know the sender learns it here.
+                    if (senderId.isNotEmpty()) {
+                        style.messages
+                            .filter { it.timestamp == stamp && it.extras.getString(LINE_SENDER_ID).isNullOrEmpty() }
+                            .forEach { it.extras.putString(LINE_SENDER_ID, senderId) }
                     }
                 } else {
                     style.addMessage(newMessage)
@@ -4289,7 +4313,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // re-post of something already announced - the generic "nouveau message" banner whose
                 // seed has just landed - so this question is already answered `true` for it, and asking
                 // it would drop the decrypted redraw and leave the generic line standing for ever.
-                val alertedKey = if (sentAt > 0) alertedKey(notifKey, sentAt) else null
+                val alertedKey = if (sentAt > 0) alertedKey(notifKey, senderId, sentAt) else null
                 if (alertedKey != null && !alreadyPosted && supersedes == 0L && hasAlreadyAlerted(alertedKey)) {
                     Log.d(TAG, "showMessageNotification: already announced and dismissed -> nothing posted (groupId=${ConversationRef.of(groupId)} sentAt=$sentAt)")
                     ended = PushShowOutcome.Outcome.SUPPRESSED_ALREADY_ALERTED
@@ -5389,6 +5413,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 val stamp = showMessageNotification(
                     shownName, groupName, body, largeIcon, groupId, media?.first, media?.second,
                     channel, sentAt = decrypted?.sentAt ?: 0L, serverAt = pushServerAt,
+                    senderId = senderId,
                     namesEachSender = true,
                     // The payload's own discriminator: an unnamed group is still a group.
                     declaredGroup = isGroup,
@@ -8153,6 +8178,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             senderName = line.personName,
             groupName  = line.conversationTitle,
             senderKey  = line.personKey,
+            senderId   = attribution.authorId.orEmpty(),
             body       = shown,
             largeIcon  = largeIcon,
             groupId    = conversationId,
