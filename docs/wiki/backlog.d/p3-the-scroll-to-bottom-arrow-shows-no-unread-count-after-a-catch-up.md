@@ -12,3 +12,7 @@ without moving the reader's read point (so the count is genuinely 0 by its own d
 count is read before the drain closes. Measure with a catch-up into a scrolled-up thread.
 **It closes when** a test pins the count after a bulk-ingest window ended, and a Mi 9T catch-up into a
 scrolled-up thread shows the number.
+
+**Not the same defect:** the arrow left drawn AT the end after a DM open (owner, 1.8.0, 2026-11-25) was
+a stick-to-bottom flag decided mid-glide; its fix and reading are
+[reading-owed-a-dm-opens-at-its-end-in-one-render](reading-owed-a-dm-opens-at-its-end-in-one-render.md).

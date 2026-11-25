@@ -105,19 +105,26 @@ function makeThread(heights: number[], box: number) {
     },
   });
   scroller.getBoundingClientRect = () => ({ top: 0 }) as DOMRect;
-  const addRow = (height: number, inner = '') => {
-    const i = layout.heights.length;
-    layout.heights.push(height);
+  // A row's place is read from where it stands NOW in the scroller, so a prepend moves every row.
+  let made = 0;
+  const addRow = (height: number, inner = '', at: 'end' | 'start' = 'end') => {
     const row = document.createElement('div');
-    row.id = `msg-${i}`;
+    row.id = `msg-${made++}`;
     row.innerHTML = inner;
+    const index = () => Array.prototype.indexOf.call(scroller.children, row) as number;
     Object.defineProperty(row, 'offsetTop', {
-      get: () => layout.heights.slice(0, i).reduce((s, h) => s + h, 0),
+      get: () => layout.heights.slice(0, index()).reduce((s, h) => s + h, 0),
     });
     row.getBoundingClientRect = () =>
-      ({ bottom: row.offsetTop + layout.heights[i] - layout.scrollTop }) as DOMRect;
+      ({ bottom: row.offsetTop + layout.heights[index()] - layout.scrollTop }) as DOMRect;
     (row as unknown as { animate: typeof fakeAnimate }).animate = fakeAnimate;
-    scroller.appendChild(row);
+    if (at === 'start') {
+      layout.heights.unshift(height);
+      scroller.prepend(row);
+    } else {
+      layout.heights.push(height);
+      scroller.appendChild(row);
+    }
     return row;
   };
   for (const h of heights) addRow(h);
@@ -278,6 +285,94 @@ describe('observeThreadGrowth - the glide of an arrival', () => {
     expect(animations.length).toBe(count);
     expect(scroller.scrollTop).toBe(layoutReach());
     stop();
+  });
+});
+
+describe('observeThreadGrowth - a change above a reader at the end (owner, 1.8.0, 2026-11-25)', () => {
+  it('the entry widen mounting older rows pins the end and plays no glide', async () => {
+    // Ten 60 px rows per widen step, under a reader at the end of a 400 px pane: before the fix each
+    // step glided 200 px of history across the screen, and the steps chained into one descent.
+    const { scroller, layoutReach, addRow } = makeThread(Array(20).fill(60), 400);
+    scroller.scrollTop = layoutReach();
+    const stop = observeThreadGrowth(scroller, atBottom);
+    for (let step = 0; step < 3; step++) {
+      for (let i = 0; i < 10; i++) addRow(20, '', 'start');
+      await flush();
+      expect(scroller.scrollTop).toBe(layoutReach());
+    }
+    expect(animations).toHaveLength(0);
+    stop();
+  });
+
+  it('an arrival after it still glides, by its own height only', async () => {
+    const { scroller, layoutReach, addRow } = makeThread(Array(20).fill(60), 400);
+    scroller.scrollTop = layoutReach();
+    const stop = observeThreadGrowth(scroller, atBottom);
+    addRow(20, '', 'start');
+    addRow(70);
+    await flush();
+    expect(scroller.scrollTop).toBe(layoutReach());
+    expect(new Set(live().map((a) => a.px))).toEqual(new Set([70]));
+    stop();
+  });
+
+  it('a glide that ends tells the caller once; one replaced mid-way does not', async () => {
+    const { scroller, layoutReach, addRow } = makeThread(Array(20).fill(60), 400);
+    scroller.scrollTop = layoutReach();
+    let ends = 0;
+    const stop = observeThreadGrowth(scroller, atBottom, null, undefined, () => ends++);
+    addRow(70);
+    await flush();
+    const first = live();
+    now = 100;
+    addRow(70); // replaces the first glide: its rows are taken on by the second
+    await flush();
+    for (const a of first) for (const listener of a.finishListeners) listener();
+    await flush();
+    expect(ends).toBe(0);
+    now = 100 + DURATION;
+    for (const a of live()) for (const listener of a.finishListeners) listener();
+    await flush();
+    expect(ends).toBe(1);
+    stop();
+  });
+
+  it('a glide the keyboard ride takes off is an end: told once, after the task', async () => {
+    const { scroller, layoutReach, addRow } = makeThread(Array(20).fill(60), 400);
+    scroller.scrollTop = layoutReach();
+    let ends = 0;
+    const stop = observeThreadGrowth(scroller, atBottom, null, undefined, () => ends++);
+    addRow(70);
+    await flush();
+    now = 50;
+    expect(takeThreadGlideOff(scroller)).toBe(true);
+    expect(ends).toBe(0); // not inside the ride's own task
+    await flush();
+    expect(ends).toBe(1);
+    expect(takeThreadGlideOff(scroller)).toBe(false);
+    await flush();
+    expect(ends).toBe(1);
+    stop();
+  });
+
+  it('a glide found past its end by a change is an end; a teardown tells nothing', async () => {
+    const { scroller, layout, layoutReach, addRow } = makeThread(Array(20).fill(60), 400);
+    scroller.scrollTop = layoutReach();
+    let ends = 0;
+    const stop = observeThreadGrowth(scroller, atBottom, null, undefined, () => ends++);
+    addRow(70);
+    await flush();
+    now = DURATION + 10; // past its end, `finish` not delivered yet
+    layout.box -= 50;
+    fireResize();
+    await flush();
+    expect(ends).toBe(1);
+
+    addRow(70);
+    await flush();
+    stop(); // teardown mid-glide
+    await flush();
+    expect(ends).toBe(1);
   });
 });
 

@@ -39,12 +39,20 @@ export const THREAD_ROW_SELECTOR = '[id^="msg-"]';
  * `scrollTop` after every write this observer makes, a pin included - which is also where a browser
  * clamp that a shrinking thread caused ends up, since the pin follows it in the same frame. See
  * `stickToBottomAfterScroll`.
+ *
+ * **`onGlideEnd` SAYS THE ROWS ARE BACK AT THEIR LAYOUT PLACE** (owner's Android, 1.8.0, 2026-11-25).
+ * A glide's transform counts in the scroller's overflow and in every row's box, so a scroll
+ * measurement taken during one reads a `scrollHeight` past the real end and separators drawn lower than
+ * they stand: the stick-to-bottom flag and the day pill decided then outlive the glide, because its end
+ * moves nothing and fires no `scroll`. Called on the glide's own `finish` event - never a clock - so
+ * the caller re-takes what it measured mid-glide.
  */
 export function observeThreadGrowth(
   scroller: HTMLElement,
   state: () => ThreadGrowthState,
   composerBand?: HTMLElement | null,
-  onPlaced?: (scrollTop: number) => void
+  onPlaced?: (scrollTop: number) => void,
+  onGlideEnd?: () => void
 ): () => void {
   // THIS IS THE ONLY ANCHOR, IN EVERY ENGINE - so the browser's own is switched off. Chromium (and
   // Safari from 27) anchor a scroller natively: measured on the media-frame bench, 2026-10-02, an old
@@ -81,7 +89,7 @@ export function observeThreadGrowth(
   captureAnchor();
 
   let previousClientHeight = scroller.clientHeight;
-  const glide = createThreadGlide(scroller);
+  const glide = createThreadGlide(scroller, onGlideEnd);
   glidesByScroller.set(scroller, glide);
   /**
    * `added`: the elements this change inserted, whose bubbles wait out a glide that makes room for
@@ -107,6 +115,13 @@ export function observeThreadGrowth(
       boxChanged: scroller.clientHeight !== previousClientHeight,
       isEntering: now.isEntering,
     });
+    // How far the reader's top row moved in layout: what changed ABOVE what they see. No anchor (an
+    // empty thread) moved nothing; one that left the document cannot say (`null`).
+    const anchorMovedPx = !anchor
+      ? 0
+      : anchor.row.isConnected
+        ? anchor.row.offsetTop - anchor.top
+        : null;
     // THE ROW ANCHOR IS FOR A READER IN HISTORY ONLY: for one at the bottom, keeping the top row in
     // place is what scrolled the thread up when a `svh`-capped photo shrank under the keyboard.
     const shift =
@@ -129,7 +144,14 @@ export function observeThreadGrowth(
         currentClientHeight: scroller.clientHeight,
         isEntering: now.isEntering,
         reducedMotion: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false,
+        anchorMovedPx,
       });
+      if (cause === 'rows' && travel === 0 && anchorMovedPx !== 0 && !now.isEntering) {
+        Log.d(
+          'threadGrowth',
+          `pinned without a glide: ${anchorMovedPx === null ? 'the top row left the thread' : `${Math.round(anchorMovedPx)}px changed above the viewport`}`
+        );
+      }
     }
     // A PREPEND - the window step or the store's page in `loadOlderGroups` - is kept HERE and only
     // here: nothing else writes `scrollTop` for it (2026-11-14).
@@ -209,7 +231,7 @@ const glidesByScroller = new WeakMap<Element, ThreadGlide>();
  * finds no glide to resume. True when one was running.
  */
 export function takeThreadGlideOff(scroller: Element): boolean {
-  return glidesByScroller.get(scroller)?.suspend() != null;
+  return glidesByScroller.get(scroller)?.takeOff() ?? false;
 }
 
 /** A keyboard ride on a followed thread's rows: the offset it started from and its animations. */
@@ -282,14 +304,20 @@ const GLIDE_MIN_PX = 0.5;
 
 /** The thread's glide, as the durable state `follow` reads: see {@link createThreadGlide}. */
 export interface ThreadGlide {
-  /** Removes the glide's transforms so the layout can be measured; null when none was running. */
+  /**
+   * Removes the glide's transforms so the layout can be measured, to be played again from where it
+   * was (`play`); null when none was running - or when the one running was past its end with its
+   * `finish` not delivered yet, which is that glide's END.
+   */
   suspend(): HeldGlide | null;
+  /** Ends a glide in flight for good (the keyboard ride takes the rows); true when one was running. */
+  takeOff(): boolean;
   /**
    * Plays the rows from `px` below their place (above for a negative `px`, a keyboard fall's rows
    * taken on mid-ride) back to it, `time` ms in; false if nothing ran.
    */
   play(px: number, time?: number): boolean;
-  /** Ends any glide (teardown). */
+  /** Ends any glide at teardown: nothing is told, the pane is going. */
   stop(): void;
 }
 
@@ -300,11 +328,25 @@ export interface ThreadGlide {
  * running animations ARE the state: `suspend` reads where they drew the rows from their own
  * computed timing (the eased progress) and cancels them; `play` starts them again. A glide that
  * ends clears itself on its `finish` event - no clock anywhere.
+ *
+ * **EVERY END OF A GLIDE THAT DREW THE ROWS OFF THEIR PLACE TELLS `onEnd`, ONCE** (review of #4095):
+ * its `finish`, a suspend that finds it past its end before that `finish` was delivered, and a
+ * `takeOff` for the keyboard ride. A suspend to measure and replay is not an end, nor the teardown.
+ * The notice waits for the task that ended the glide to finish (a microtask, not a clock) and is
+ * dropped when that task started another glide: what it measured is then that glide's, whose own
+ * end tells it again.
  */
-export function createThreadGlide(scroller: HTMLElement): ThreadGlide {
+export function createThreadGlide(scroller: HTMLElement, onEnd?: () => void): ThreadGlide {
   let running: { px: number; animations: Animation[] } | null = null;
 
-  const suspend = (): HeldGlide | null => {
+  const ended = () => {
+    queueMicrotask(() => {
+      if (running === null) onEnd?.();
+    });
+  };
+
+  /** Cancels the running glide; `held` is where it drew the rows, `null` when past its end. */
+  const cancel = (): { held: HeldGlide | null } | null => {
     const current = running;
     if (!current) return null;
     running = null;
@@ -314,8 +356,20 @@ export function createThreadGlide(scroller: HTMLElement): ThreadGlide {
     for (const animation of current.animations) animation.cancel();
     // A null progress is a glide past its end whose `finish` has not been delivered yet: nothing is
     // left to draw, and nothing to resume.
-    if (progress === null) return null;
-    return { px: current.px, remaining: current.px * (1 - progress), time };
+    if (progress === null) return { held: null };
+    return { held: { px: current.px, remaining: current.px * (1 - progress), time } };
+  };
+
+  const suspend = (): HeldGlide | null => {
+    const cancelled = cancel();
+    if (cancelled && cancelled.held === null) ended();
+    return cancelled?.held ?? null;
+  };
+
+  const takeOff = (): boolean => {
+    const cancelled = cancel();
+    if (cancelled) ended();
+    return cancelled?.held != null;
   };
 
   const play = (px: number, time = 0): boolean => {
@@ -341,7 +395,10 @@ export function createThreadGlide(scroller: HTMLElement): ThreadGlide {
     const run = { px, animations };
     running = run;
     animations[0].addEventListener('finish', () => {
-      if (running === run) running = null;
+      // Only the glide still drawing the rows ends them: one cancelled to be replaced is not an end.
+      if (running !== run) return;
+      running = null;
+      ended();
     });
     if (time === 0) {
       Log.d('threadGrowth', `arrival: thread glides ${Math.round(px)}px over ${duration}ms`);
@@ -349,7 +406,7 @@ export function createThreadGlide(scroller: HTMLElement): ThreadGlide {
     return true;
   };
 
-  return { suspend, play, stop: () => void suspend() };
+  return { suspend, takeOff, play, stop: () => void cancel() };
 }
 
 /**
