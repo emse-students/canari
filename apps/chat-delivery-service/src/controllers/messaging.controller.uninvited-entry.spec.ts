@@ -320,4 +320,83 @@ describe('MessagingController - POST mls/uninvited-entry', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('entrant=unstated'));
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('epoch=unstated'));
   });
+
+  // Slice 1 of the admission fix-forward: the entrant's own word, paired with its members' rows.
+  it("counts the entrant's own word under the caller's identity, never the body's", async () => {
+    await expect(
+      controller.reportUninvitedEntry('bob', 'dev2', {
+        groupId: 'g-1234',
+        entrant: 'mallory:dev9',
+        epoch: 7,
+        kind: 'entrant-no-device-row',
+      })
+    ).resolves.toEqual({ recorded: true });
+
+    expect(warn).toHaveBeenCalledWith(
+      '[UNINVITED_ENTRY] kind=entrant-no-device-row reporter=bob:dev2 group=g-1234 entrant=bob:dev2 epoch=7 key=unstated watched_from=-'
+    );
+    expect(claimUninvitedEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ entrantUserDevice: 'bob:dev2', kind: 'entrant-no-device-row' })
+    );
+  });
+
+  it("keys the entrant's row on the same (group, entrant, epoch) as a member's report of it", async () => {
+    await controller.reportUninvitedEntry('alice', 'web-alice-1', {
+      groupId: 'g-1234',
+      entrant: 'bob:dev2',
+      epoch: 7,
+      kind: 'new-person',
+      watchedFromEpoch: 2,
+    });
+    await controller.reportUninvitedEntry('bob', 'dev2', {
+      groupId: 'g-1234',
+      entrant: 'bob:dev2',
+      epoch: 7,
+      kind: 'entrant-unhonoured-seat',
+    });
+
+    expect(table).toEqual(
+      new Set(['g-1234|bob:dev2|7|new-person', 'g-1234|bob:dev2|7|entrant-unhonoured-seat'])
+    );
+  });
+
+  it('pairs an entrant and a member report whatever case either carries the user in', async () => {
+    await controller.reportUninvitedEntry('alice', 'web-alice-1', {
+      groupId: 'g-1234',
+      entrant: 'BOB:dev2',
+      epoch: 7,
+      kind: 'new-person',
+      watchedFromEpoch: 2,
+    });
+    await controller.reportUninvitedEntry(' BoB ', 'dev2', {
+      groupId: 'g-1234',
+      epoch: 7,
+      kind: 'entrant-no-device-row',
+    });
+
+    expect(table).toEqual(
+      new Set(['g-1234|bob:dev2|7|new-person', 'g-1234|bob:dev2|7|entrant-no-device-row'])
+    );
+  });
+
+  it('takes each of the four entrant kinds and no other entrant word', async () => {
+    for (const [i, kind] of [
+      'entrant-direct-peer',
+      'entrant-unhonoured-seat',
+      'entrant-not-pending',
+      'entrant-no-device-row',
+      'entrant-anything-else',
+    ].entries()) {
+      await controller.reportUninvitedEntry('bob', 'dev2', { groupId: 'g-1', epoch: i, kind });
+    }
+
+    const kinds = warn.mock.calls.map((c) => /kind=(\S+)/.exec(c[0] as string)?.[1]);
+    expect(kinds).toEqual([
+      'entrant-direct-peer',
+      'entrant-unhonoured-seat',
+      'entrant-not-pending',
+      'entrant-no-device-row',
+      'invalid',
+    ]);
+  });
 });

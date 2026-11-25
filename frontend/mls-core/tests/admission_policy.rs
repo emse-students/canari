@@ -23,7 +23,9 @@
 //! The one case this policy cannot name is a device FORGED under an existing member's identity:
 //! a `BasicCredential` binds nothing, so only a device endorsement signed by one of that user's
 //! leaves can tell it apart. It is the `#[ignore]`d test at the end.
-use mls_core::{AdmissionPolicy, AdmissionVerdict, MlsManager, judge_external_commit};
+use mls_core::{
+    AdmissionPolicy, AdmissionVerdict, ExternalJoinStanding, MlsManager, judge_external_commit,
+};
 
 fn make_device(user_id: &str, device_id: &str) -> MlsManager {
     MlsManager::load_or_create(user_id, device_id, None)
@@ -194,7 +196,9 @@ fn a_device_rejoining_after_losing_its_state_is_accepted() {
 //
 // One named test each. Every one is the commit #2815 refused and froze on; each must be MERGED, the
 // group must stay converged, and the verdict still names it (the `[UNINVITED_ENTRY]` count the
-// fix-forward is read on).
+// fix-forward is read on). And the ENTRANT names it too, before it builds: its standing on the very
+// GroupInfo it commits on is `NoLeafOfUser` - the fact its own report (`entrant-*` kinds) and, at the
+// emission side, its ask instead of a commit are decided on (slice 1 of the fix-forward).
 
 /// `entrant` lets itself into `gid` from `alice`'s base; alice (and `others`) merge the commit, and
 /// the entrant can read what alice sends next.
@@ -205,6 +209,12 @@ fn merged_and_converged(
     entrant_id: &str,
     gid: &str,
 ) {
+    let info = alice.export_group_info(gid).expect("group info");
+    assert_eq!(
+        entrant.external_join_standing(&info).expect("standing"),
+        ExternalJoinStanding::NoLeafOfUser,
+        "the entrant states the class its members will judge, before it builds"
+    );
     let commit = external_commit_from(alice, gid, entrant);
     assert_eq!(
         verdict_on(alice, gid, entrant_id),

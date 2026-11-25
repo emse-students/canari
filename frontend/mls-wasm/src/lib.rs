@@ -1200,15 +1200,13 @@ impl WasmMlsClient {
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
-    /// Whether an external commit built on this GroupInfo would bring this device in as a FURTHER
-    /// DEVICE OF A MEMBER (`MlsManager::external_join_is_a_further_device`).
+    /// What an external commit built on this GroupInfo would bring in - `own-leaf`,
+    /// `further-device` or `no-leaf-of-user` (`MlsManager::external_join_standing`).
     #[wasm_bindgen]
-    pub fn external_join_is_a_further_device(
-        &self,
-        group_info_bytes: Vec<u8>,
-    ) -> Result<bool, JsValue> {
+    pub fn external_join_standing(&self, group_info_bytes: Vec<u8>) -> Result<String, JsValue> {
         self.manager
-            .external_join_is_a_further_device(&group_info_bytes)
+            .external_join_standing(&group_info_bytes)
+            .map(|standing| standing.as_str().to_string())
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 

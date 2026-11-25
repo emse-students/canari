@@ -80,6 +80,8 @@ function makeCtx(overrides: Record<string, unknown> = {}): any {
     // And it releases the socket through the platform half, which a prototype has no body for.
     pausePlatformSocket: vi.fn(),
     distributionGroupInfo: null,
+    // The door read off the served tree: a conversation join reads it on every attempt.
+    externalJoinStandingIn: vi.fn().mockResolvedValue('own-leaf'),
     joinByExternalCommit: vi.fn().mockResolvedValue({ groupId: 'g', commit: new Uint8Array([9]) }),
     getEpoch: vi.fn(() => 6),
     exportGroupInfo: vi.fn().mockResolvedValue(new Uint8Array([7, 7])),

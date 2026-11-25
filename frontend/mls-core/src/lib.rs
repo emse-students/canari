@@ -36,6 +36,7 @@ pub use self_update::StagedSelfUpdateResult;
 pub use state::DatedKeyPackage;
 pub use state::MlsManager;
 pub use state::PersistedState;
+pub use welcome::ExternalJoinStanding;
 
 // Re-export keystore types for convenience.
 pub use keystore::DeviceKeyStore;
