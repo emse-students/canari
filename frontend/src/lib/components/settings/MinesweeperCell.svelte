@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Bomb, Flag } from '@lucide/svelte';
   import type { Cell } from '$lib/minesweeper/game';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     /** The view object of this cell: replaced (never mutated) when what is drawn changes. */
@@ -50,6 +51,27 @@
           ? 'bg-red-600'
           : 'bg-cn-surface dark:bg-cn-bg'
   );
+  /**
+   * ONE ring per cell: the bulb's highlight wins over the replay's `marked` ring, so a cell lit by both
+   * reads as the hint and never as two rings stacked on each other.
+   */
+  const ring = $derived(
+    highlight === 'hint'
+      ? 'ms-hint ring-accent ring-2 ring-inset'
+      : highlight === 'wrong'
+        ? 'ms-hint ms-hint-wrong ring-red-err ring-2 ring-inset'
+        : marked
+          ? 'ring-accent ring-2 ring-inset'
+          : ''
+  );
+  /** What a screen reader hears for a lit cell: the ring alone says nothing to it. */
+  const hintLabel = $derived(
+    highlight === 'hint'
+      ? m.minesweeper_hint_cell({ n: String(cell.adjacent) })
+      : highlight === 'wrong'
+        ? m.minesweeper_hint_wrong_cell()
+        : undefined
+  );
   const numberColor = $derived(
     cell.state === 'revealed' && !cell.mine && cell.adjacent > 0 ? NUMBER_COLORS[cell.adjacent] : ''
   );
@@ -58,14 +80,9 @@
 <button
   type="button"
   data-cell={index}
-  class="box-border flex h-[length:var(--ms-cell)] w-[length:var(--ms-cell)] shrink-0 touch-manipulation items-center justify-center rounded-md font-mono text-xs font-bold select-none sm:text-sm {tone} {numberColor} {marked
-    ? 'ring-accent ring-2 ring-inset'
-    : ''} {highlight === 'hint'
-    ? 'ms-hint ring-accent ring-2 ring-inset'
-    : highlight === 'wrong'
-      ? 'ms-hint ms-hint-wrong ring-red-err ring-2 ring-inset'
-      : ''}"
+  class="box-border flex h-[length:var(--ms-cell)] w-[length:var(--ms-cell)] shrink-0 touch-manipulation items-center justify-center rounded-md font-mono text-xs font-bold select-none sm:text-sm {tone} {numberColor} {ring}"
   data-hint={highlight ?? undefined}
+  aria-label={hintLabel}
 >
   {#if cell.state === 'flagged'}
     <Flag size={14} class="dark:text-accent-icon text-accent-text" />
@@ -111,7 +128,7 @@
    */
   @keyframes ms-hint-glow {
     50% {
-      filter: drop-shadow(0 0 0.375rem var(--ms-glow));
+      filter: drop-shadow(0 0 calc(var(--spacing) * 1.5) var(--ms-glow));
     }
   }
 

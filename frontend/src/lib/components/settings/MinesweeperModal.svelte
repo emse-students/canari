@@ -151,7 +151,8 @@
 
   /** Only offered before the first dig: a game's ranking is decided when its board is generated. */
   function toggleUnranked() {
-    if (board.minesPlaced) return;
+    // Also locked while the first dig's challenge request is in flight: the mode is being decided.
+    if (board.minesPlaced || firstClickBusy) return;
     unranked = !unranked;
     saveFlag(UNRANKED_STORAGE_KEY, unranked);
   }
@@ -1119,6 +1120,9 @@
           >
             <Bomb size={16} class="text-cn-dark" />
             {remainingMines(board)}
+            {#if hint?.kind === 'counter'}
+              <span class="sr-only">{m.minesweeper_hint_counter_cue()}</span>
+            {/if}
           </span>
           <span class="text-text-muted flex items-center gap-1 font-mono leading-none tabular-nums">
             <Timer size={15} />
@@ -1173,17 +1177,15 @@
       </p>
     {/if}
 
-    {#if hintMessage}
-      <p
-        role="status"
-        class="ms-chip pointer-events-none absolute inset-x-3 bottom-20 z-20 mx-auto w-fit max-w-full rounded-full px-3 py-1 text-center text-xs font-semibold shadow-sm {hint?.kind ===
-        'wrong-flag'
-          ? 'text-red-err'
-          : 'text-text-main'}"
-      >
-        {hintMessage}
-      </p>
-    {/if}
+    <!-- Always mounted, so a screen reader announces the line when it fills (a live region must exist first). -->
+    <p
+      role="status"
+      class={hintMessage === null
+        ? 'sr-only'
+        : `ms-chip pointer-events-none absolute inset-x-3 bottom-20 z-20 mx-auto w-fit max-w-full rounded-full px-3 py-1 text-center text-xs font-semibold shadow-sm ${hint?.kind === 'wrong-flag' ? 'text-red-err' : 'text-text-main'}`}
+    >
+      {hintMessage ?? ''}
+    </p>
 
     <!-- Mode button, within thumb reach: what a short press does (a long press does the other). -->
     <div class="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-center gap-2 p-3">
@@ -1207,7 +1209,7 @@
       <button
         type="button"
         onclick={toggleUnranked}
-        disabled={board.minesPlaced}
+        disabled={board.minesPlaced || firstClickBusy}
         aria-pressed={unranked}
         title={m.minesweeper_unranked_hint()}
         class="pointer-events-auto flex h-12 items-center gap-2 rounded-full px-4 text-sm font-bold shadow-md backdrop-blur-sm transition-colors disabled:opacity-50 {unranked

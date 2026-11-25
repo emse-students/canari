@@ -72,7 +72,7 @@ indiquer une des cases chiffrees qui donne le prochain coup ? Sans donner la rep
 (owner). A `Lightbulb` chip beside the mode button; a press lights WHAT JUSTIFIES the next certain move, never
 the move, with one line saying what is lit. The next move (or a new board) clears it.
 
-**The owner's four decisions (2026-11-25):**
+**The owner's four decisions (2026-11-25, [decisions](../../decisions/owner-decisions-of-2026-11-25.md)):**
 
 1. **The numbers that justify the deduction, as few as suffice**: ONE number when it settles its neighbours alone
    (a chord), the TWO of a pair pattern, else the smallest group found. Never the cell to play.
@@ -114,7 +114,7 @@ it can change a board, a replay or a fingerprint.
 **The render.** A lit cell gets a ring in a token colour (`accent`, `red-err` for a wrong flag) and a glow that
 breathes at `--ms-anim` - a `filter`, since Tailwind draws the ring with `box-shadow`; at "Aucune" only the ring
 stays. Each cell reads `highlight` as a primitive, so a hint re-renders the few cells it lights, as `pending`
-does, and the 576 views are untouched.
+does, and the 576 views are untouched. One ring per cell: the hint wins over the replay viewer's `marked` ring. For a screen reader a lit cell is labelled ("2, indice", "Drapeau mal place" through Paraglide), the ringed counter carries a hidden "(indice)", and the message line is a `role="status"` region that stays mounted, empty, so its first message is announced. **Fixed on the way:** the Classe / Libre toggle was still live while the first dig waited for its challenge; it is locked then too.
 
 **Charter.** Principle 3 (your attention is not for sale): the bulb is asked for, never offered by a prompt, and
 it explains itself in one line. Principle 7 (simple): one control, in the mode nothing ranks.

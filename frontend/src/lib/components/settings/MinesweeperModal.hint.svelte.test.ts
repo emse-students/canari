@@ -115,12 +115,45 @@ describe('MinesweeperModal - the bulb', () => {
     expect(document.body.textContent).not.toContain('Lisez ces chiffres ensemble');
   });
 
+  it('keeps the status line mounted, empty, so its first message is announced', async () => {
+    await openUnrankedAndDig();
+    const status = document.querySelector('p[role="status"]')!;
+    expect(status).not.toBeNull();
+    expect(status.textContent?.trim()).toBe('');
+    findHint.mockReturnValue({ kind: 'none', complete: true });
+    bulb()!.click();
+    flushSync();
+    expect(document.querySelector('p[role="status"]')).toBe(status);
+    expect(status.textContent).toContain("Aucun coup sûr n'a été trouvé.");
+  });
+
+  it('locks the ranked/Libre toggle while the first dig waits for its challenge', async () => {
+    let answer: (value: unknown) => void = () => {};
+    startChallenge.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    await open();
+    const toggle = [...document.querySelectorAll<HTMLButtonElement>('button')].find(
+      (b) => b.textContent?.trim() === 'Classé'
+    )!;
+    expect(toggle.disabled).toBe(false);
+    cell(0).click();
+    flushSync();
+    await tick();
+    expect(startChallenge).toHaveBeenCalledOnce();
+    expect(toggle.disabled).toBe(true);
+    toggle.click();
+    flushSync();
+    expect(localStorage.getItem('canari.minesweeper.unranked')).toBeNull();
+    answer({ challengeId: 'c1', seed: '8601e326fcef5ef936a1c69d6ab6ac41', generatorVersion: 2 });
+    await firstDig();
+  });
+
   it('rings the mines-left counter when only the total decides', async () => {
     await openUnrankedAndDig();
     findHint.mockReturnValue({ kind: 'counter' });
     bulb()!.click();
     flushSync();
     expect(lit().map((el) => el.dataset.hint)).toEqual(['counter']);
+    expect(lit()[0].textContent).toContain('(indice)');
     expect(document.body.textContent).toContain('Le nombre de mines restantes donne un coup sûr.');
   });
 
