@@ -1,6 +1,8 @@
 ## A capped form may hold a seat for 10 minutes behind a "Réserver ma place" button (owner, 2026-11-17: "Plus tard (1.8.0)")
 
-target: 1.8.1
+target: 1.8.2
+
+_2026-11-25: moved to 1.8.2 when 1.8.1 shipped._
 
 **Today.** A seat of a capped form is counted at submit, under the form's lock: the submission's
 transaction counts the rows that hold a seat (`seatHoldingWhere`, `apps/social-service/src/forms/seat-hold.ts`

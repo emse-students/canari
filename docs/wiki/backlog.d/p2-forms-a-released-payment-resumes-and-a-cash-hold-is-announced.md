@@ -1,6 +1,8 @@
 ## P2 - a released form payment resumes on the same answer, and a cash hold is announced before it expires (owner, 2026-11-21)
 
-target: 1.8.1
+target: 1.8.2
+
+_2026-11-25: moved to 1.8.2 when 1.8.1 shipped._
 
 **Why.** Production, 2026-11-21 (read-only): of 120 answers that involved a payment, 24 were
 cancelled or expired (20%, on three forms), with no way for the member to pay the same answer again;

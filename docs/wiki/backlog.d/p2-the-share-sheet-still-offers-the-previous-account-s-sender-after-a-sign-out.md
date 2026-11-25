@@ -1,6 +1,8 @@
 ## P2 - the iOS share sheet still offers the previous account's sender as a person after a sign-out (2026-11-24)
 
-target: 1.8.1
+target: 1.8.2
+
+_2026-11-25: moved to 1.8.2 when 1.8.1 shipped._
 
 **Seen on the iPhone 12, `1.8.0-alpha.6`** ([sitting](../device-verification.md#the-readings-of-2026-11-24-180-alpha6-iphone-12-the-dm-thread-again-the-composer-the-ios-27-sdk-build-the-broadcasters-column-the-voice-note-the-sign-out-row)), reading row 6 of [iPhone message banners as communication notifications](ios-communication-notifications.md). Not fixed here.
 

@@ -1,6 +1,8 @@
 ## P3 - authentik's admin says that a hand edit is overwritten at the next stable
 
-target: 1.8.1
+target: 1.8.2
+
+_2026-11-25: moved to 1.8.2 when 1.8.1 shipped._
 
 The owner asked on 2026-11-23 for something visible INSIDE authentik's admin saying that any hand
 edit to MiConnect's configuration is overwritten at the next stable: the stable re-applies the
