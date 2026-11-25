@@ -96,14 +96,17 @@ fails and falls back to a casual game keeps the ranked board's size: the player 
 
 **Stored per device** (`canari.minesweeper.level`, validated on read; a value that is not a level is logged and
 ignored). With none stored, a player who already chose ranked or Libre on this device (`canari.minesweeper.unranked`
-is set) starts on Expert, the board they knew; a newcomer starts on Debutant.
+is set) starts on Expert, the board they knew; a newcomer starts on Debutant. **The default is answered ONCE and
+stored** the moment it is resolved: asked again on a later open, it would read the Libre choice the newcomer
+has just made and turn their Debutant into Expert (review of #4091; pinned across two modal mounts).
 
 **Losing stays as it is**: no undo after a mine (owner's answer).
 
 **The view.** The fit used to scale a board up to 3x, which on a desktop turns a 9x9 board into tiles. The fit is
-now capped where a cell reaches 48 px (`MAX_FIT_CELL_PX`, the touch target Android recommends; `fitScaleCap`);
+now capped, for the two small levels only, where a cell reaches 48 px (`MAX_FIT_CELL_PX`, the touch target Android recommends; `fitScaleCap`);
 a pinch can still zoom past it. On a phone the cap does not bind (a 9x9 board fits at about 40 px cells), and the
-ranked board's fit is unchanged. The mines counter, the clamp and the bulb read whatever board is installed.
+ranked board is never capped (`levelFitCap`: Expert fits exactly as it always did, even on a stage tall enough
+for the cap to bind - a 4K-sized stage is the test). The mines counter, the clamp and the bulb read whatever board is installed.
 
 **Pinned:** `levels.test.ts` (the specs; eight fixed seeds per small level, each board of the right size and mine
 count and cleared by the solver from the first click; the cycle; the default and a bad stored value),

@@ -11,6 +11,8 @@ import {
   releaseVelocity,
   zoomAt,
 } from './view';
+import { CHALLENGE } from './game';
+import { LEVEL_SPECS, levelFitCap } from './levels';
 
 const NO_INSETS = { top: 0, right: 0, bottom: 0, left: 0 };
 
@@ -136,6 +138,26 @@ describe('flick', () => {
     expect(vx).toBe(0);
     expect(frames).toBeLessThan(1000);
     expect(travelled).toBeGreaterThan(0);
+  });
+});
+
+describe('levelFitCap: the ranked board is never capped', () => {
+  it('fits the ranked board exactly as before on a 4K-sized stage, and caps a small board there', () => {
+    const viewport = { width: 2160, height: 3840 };
+    const insets = { top: 64, right: 8, bottom: 88, left: 8 };
+    const ranked = { width: 18 * 32 + 17, height: 32 * 32 + 31 };
+    const capped = fitView(viewport, ranked, insets, levelFitCap(CHALLENGE, ranked.width));
+    expect(capped).toEqual(fitView(viewport, ranked, insets));
+    // Uncapped there, a ranked cell is far past the small levels' cap: the exemption is real.
+    expect((ranked.width / 18) * capped.scale).toBeGreaterThan(MAX_FIT_CELL_PX);
+    const small = { width: 9 * 32 + 8, height: 9 * 32 + 8 };
+    const beginner = fitView(
+      viewport,
+      small,
+      insets,
+      levelFitCap(LEVEL_SPECS.beginner.config, small.width)
+    );
+    expect((small.width / 9) * beginner.scale).toBeCloseTo(MAX_FIT_CELL_PX);
   });
 });
 

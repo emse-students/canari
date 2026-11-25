@@ -34,6 +34,7 @@
   import { findHint, type MinesweeperHint } from '$lib/minesweeper/hint';
   import {
     LEVEL_SPECS,
+    levelFitCap,
     loadMinesweeperLevel,
     nextLevel,
     saveMinesweeperLevel,
@@ -53,7 +54,6 @@
     DOUBLE_TAP_SCALE,
     MAX_SCALE,
     clampView,
-    fitScaleCap,
     fitView,
     glideStep,
     minScaleFor,
@@ -407,7 +407,7 @@
   function centerView() {
     const g = geometry();
     if (!g) return;
-    const fit = fitView(g.viewport, g.board, FIT_INSETS, fitScaleCap(g.board.width, board.width));
+    const fit = fitView(g.viewport, g.board, FIT_INSETS, levelFitCap(board, g.board.width));
     fitScale = fit.scale;
     scale = fit.scale;
     panX = fit.panX;
@@ -626,12 +626,7 @@
       }
       const g = geometry();
       if (!g) return;
-      fitScale = fitView(
-        g.viewport,
-        g.board,
-        FIT_INSETS,
-        fitScaleCap(g.board.width, board.width)
-      ).scale;
+      fitScale = fitView(g.viewport, g.board, FIT_INSETS, levelFitCap(board, g.board.width)).scale;
       applyView({ scale, panX, panY });
     });
     observer.observe(viewportEl);

@@ -65,8 +65,17 @@ describe('the level picker and its stored choice', () => {
 
   it('starts a newcomer on Debutant, and keeps Expert for a player who already chose a mode', () => {
     expect(loadMinesweeperLevel()).toBe('beginner');
+    localStorage.clear();
     localStorage.setItem('canari.minesweeper.unranked', '0');
     expect(loadMinesweeperLevel()).toBe('expert');
+  });
+
+  it('answers the default once and stores it: a later mode choice cannot flip it', () => {
+    expect(loadMinesweeperLevel()).toBe('beginner');
+    expect(localStorage.getItem(LEVEL_STORAGE_KEY)).toBe('beginner');
+    // The newcomer then switches to Libre, which writes the mode key the default reads.
+    localStorage.setItem('canari.minesweeper.unranked', '1');
+    expect(loadMinesweeperLevel()).toBe('beginner');
   });
 
   it('reads back what was stored, and logs a value that is not a level', () => {

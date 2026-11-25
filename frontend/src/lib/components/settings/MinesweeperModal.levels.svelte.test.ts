@@ -87,6 +87,20 @@ describe('MinesweeperModal - unranked levels', () => {
     expect(cells()).toBe(18 * 32);
   });
 
+  it('keeps a newcomer on Debutant across sessions after they switch to Libre', async () => {
+    // No key at all: a newcomer. The first open resolves (and stores) Debutant.
+    await open();
+    byText('Classé')!.click();
+    flushSync();
+    expect(cells()).toBe(81);
+    while (mounted.length) mounted.pop()!();
+    document.body.innerHTML = '';
+    // The next session: the Libre key now exists, and must not turn the newcomer into an Expert.
+    await open();
+    expect(picker()!.getAttribute('aria-label')).toBe('Niveau : Débutant');
+    expect(cells()).toBe(81);
+  });
+
   it('resizes the blank board when the player switches between ranked and Libre', async () => {
     localStorage.setItem('canari.minesweeper.level', 'beginner');
     await open();

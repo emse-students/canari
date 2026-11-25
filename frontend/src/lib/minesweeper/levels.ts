@@ -1,3 +1,4 @@
+import { MAX_SCALE, fitScaleCap } from './view';
 import {
   CHALLENGE,
   LATEST_GENERATOR_VERSION,
@@ -54,13 +55,31 @@ export function loadMinesweeperLevel(): MinesweeperLevel {
       if (LEVELS.includes(stored as MinesweeperLevel)) return stored as MinesweeperLevel;
       console.warn('[minesweeper] stored level unreadable, using the default', { stored });
     }
+    // Answered ONCE and stored: asked again on a later open, the question would read the ranked / Libre
+    // choice this very session wrote, and a newcomer's Debutant would turn into Expert.
     const playedBefore = localStorage.getItem(UNRANKED_STORAGE_KEY) !== null;
-    console.debug('[minesweeper] no stored level', { playedBefore });
-    return playedBefore ? 'expert' : 'beginner';
+    const resolved: MinesweeperLevel = playedBefore ? 'expert' : 'beginner';
+    console.debug('[minesweeper] no stored level, resolved once', { playedBefore, resolved });
+    saveMinesweeperLevel(resolved);
+    return resolved;
   } catch (err) {
     console.warn('[minesweeper] could not read the stored level, using the default', err);
     return 'beginner';
   }
+}
+
+/**
+ * The highest scale the fit may use for a board of `config` drawn `boardWidthPx` wide. The small
+ * levels are capped so their cells stay a thumb's size ({@link fitScaleCap}); the ranked board
+ * (Expert) is NOT, so it fits exactly as it always did, on every screen.
+ */
+export function levelFitCap(config: MinesweeperConfig, boardWidthPx: number): number {
+  const expert = LEVEL_SPECS.expert.config;
+  const isExpert =
+    config.width === expert.width &&
+    config.height === expert.height &&
+    config.mineCount === expert.mineCount;
+  return isExpert ? MAX_SCALE : fitScaleCap(boardWidthPx, config.width);
 }
 
 /** Persists the level; a storage that refuses is logged, never fatal. */
