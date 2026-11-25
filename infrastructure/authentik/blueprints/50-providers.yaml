@@ -199,9 +199,11 @@ entries:
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-name"]]
         - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-openid"]]
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-profile"]]
+      # NO REFRESH GRANT (1.8.1): this application carries the D43 gate (60-applications.yaml), and
+      # authentik 2026.8.6's refresh_token grant evaluates no application binding, so a refresh token
+      # would outlive the gate. The site never refreshes; test-blueprints.sh asserts this closed.
       grant_types:
         - "authorization_code"
-        - "refresh_token"
       client_id: "7s6QrKeD12XeAreOp4DV0L8vfOs6vHx4v22MPdYA"
       # PINNED (owner 2026-11-23): the `sub` this site keys its accounts by, and the subject a Canari
       # handoff names. authentik's default is the same value (2026.8.6 `OAuth2Provider.sub_mode`), and
@@ -236,9 +238,11 @@ entries:
         - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-openid"]]
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-profile"]]
         - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-profile"]]
+      # NO REFRESH GRANT (1.8.1): this application carries the D43 gate (60-applications.yaml), and
+      # authentik 2026.8.6's refresh_token grant evaluates no application binding, so a refresh token
+      # would outlive the gate. The site never refreshes; test-blueprints.sh asserts this closed.
       grant_types:
         - "authorization_code"
-        - "refresh_token"
       client_id: "GMU5F3Dnq4reety8ve9k9CReNt9wYnO6EIJdKP0H"
       # PINNED (owner 2026-11-23): the `sub` this site keys its accounts by, and the subject a Canari
       # handoff names. authentik's default is the same value (2026.8.6 `OAuth2Provider.sub_mode`), and
