@@ -4257,6 +4257,7 @@
   "notif_event_pending_text": "changed the dates of your event, which is awaiting approval again:",
   "notif_event_pending_coorganiser_text": "accepted to co-organise your event, which is awaiting approval again:",
   "notif_event_pending_coorganiser_validators_text": "accepted to co-organise an event, which needs approval again:",
+  "notif_event_coorganiser_accepted_text": "accepted to co-organise your event, which is still awaiting approval:",
   "notif_lydia_payments_active_text": "Lydia payments for {name} are active",
   "notif_lydia_payments_paused_text": "Lydia payments for {name} are paused: Lydia refused a payment request",
   "notif_lydia_bridge_switched_back_text": "Lydia refused a payment request on {name}'s new Lydia Business: the historical account collects again and the payment was re-issued on it",
