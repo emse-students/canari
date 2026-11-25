@@ -5119,18 +5119,19 @@ export abstract class BaseMlsService implements IMlsService {
    * on it would be worse in one place: right after a fresh start's purge, the static fallback must be
    * republished or peers are served a stale one (`NoMatchingKeyPackage`). So the round goes on with
    * none, said ONCE here; if the publication then fails too, that is its own line. A deadline is not
-   * caught: it fails the round, as before.
+   * caught: it fails the round, as before. `counted` says which of the two a `needed` of 0 is - a
+   * full pool, or no count - so a line after it never claims the pool is full when nobody said so.
    */
-  protected async oneTimePackagesNeeded(): Promise<number> {
+  protected async oneTimePackagesNeeded(): Promise<{ needed: number; counted: boolean }> {
     try {
       const existing = await this.delivery.fetchPrekeyCount();
-      return Math.max(0, BaseMlsService.ONE_TIME_POOL_SIZE - existing);
+      return { needed: Math.max(0, BaseMlsService.ONE_TIME_POOL_SIZE - existing), counted: true };
     } catch (e) {
       if (!(e instanceof PrekeyCountUnreadableError)) throw e;
       console.warn(
         `[MLS] ${e.message} - this round mints no one-time package and refreshes only the fallback; the next round counts again`
       );
-      return 0;
+      return { needed: 0, counted: false };
     }
   }
 

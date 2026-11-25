@@ -764,15 +764,16 @@
     snapSwipeBack();
   }
 
+  // The first navigation has settled: the router takes a `goto` from here, so the inputs that wait
+  // for it (a deep link, the iOS notification tap) may be routed (`routerReady.ts`).
+  readyOnFirstNavigation(afterNavigate);
+
   /**
    * The entrance the app keeps where view transitions do not exist, played from `afterNavigate`
    * rather than from an effect keyed on the pathname. The effect it replaces fired the moment
    * `swipeEnterClass` was written - which `onNavigate` does BEFORE the route changes, so the class
    * landed on the page being left and had to be re-added when the path caught up.
    */
-  // The first navigation has settled: the router takes a `goto` from here, so the inputs that wait
-  // for it (a deep link, the iOS notification tap) may be routed (`routerReady.ts`).
-  readyOnFirstNavigation(afterNavigate);
   afterNavigate((nav) => {
     const { shallow, type } = nav;
     // The entry remembers where it came from (Back arrow) and where it was left (offset); the hook

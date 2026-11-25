@@ -84,7 +84,9 @@ function makeCtx(opts: { poolOnServer: number | Error; held?: Uint8Array }) {
       },
       // The real count step, shared by both platforms' rounds.
       oneTimePackagesNeeded: (
-        BaseMlsService.prototype as unknown as { oneTimePackagesNeeded: () => Promise<number> }
+        BaseMlsService.prototype as unknown as {
+          oneTimePackagesNeeded: () => Promise<{ needed: number; counted: boolean }>;
+        }
       ).oneTimePackagesNeeded,
       publishKeyPackage,
       publishKeyPackages,
@@ -108,6 +110,7 @@ describe('a count nobody gave mints no one-time package and still refreshes the 
 
   it('publishes the held fallback and no pool, said once (owner log, 2026-11-25)', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
     const { ctx, client, publishKeyPackage, publishKeyPackages } = makeCtx({
       poolOnServer: new PrekeyCountUnreadableError('transport', null, new Error('dns')),
       held: HELD,
@@ -118,7 +121,12 @@ describe('a count nobody gave mints no one-time package and still refreshes the 
     expect(publishKeyPackage).toHaveBeenCalledWith({ bytes: HELD, notAfterSecs: NOT_AFTER });
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0][0]).toContain('mints no one-time package');
+    // The line after it says what is known: no count, never "pool full".
+    const said = log.mock.calls.flat().join(' ');
+    expect(said).toContain('no count, last-resort valid');
+    expect(said).not.toContain('pool full');
     warn.mockRestore();
+    log.mockRestore();
   });
 
   it('after a fresh start (no held fallback) still mints and publishes a NEW fallback', async () => {

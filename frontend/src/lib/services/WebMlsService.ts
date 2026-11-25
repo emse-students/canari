@@ -1158,7 +1158,7 @@ export class WebMlsService extends BaseMlsService {
     // of those rounds orphans the previous 50 locally for ever. What bounds it is
     // `MlsManager::prune_expired_key_packages`, which runs once per load in `load_or_create` and so
     // covers this path, the web one and the background FCM one alike.
-    const needed = await this.oneTimePackagesNeeded();
+    const { needed, counted } = await this.oneTimePackagesNeeded();
 
     // A ROUND THAT MINTS NOTHING OWES THE DISK NOTHING, AND THAT IS THE ORDINARY ROUND.
     //
@@ -1185,7 +1185,11 @@ export class WebMlsService extends BaseMlsService {
     // private half.
     const alreadyHeld = needed === 0 ? heldLastResortKeyPackage(this.client) : undefined;
     if (alreadyHeld) {
-      console.log('[MLS] key package round: pool full and last-resort valid - nothing to mint');
+      console.log(
+        counted
+          ? '[MLS] key package round: pool full and last-resort valid - nothing to mint'
+          : '[MLS] key package round: no count, last-resort valid - only the fallback is republished'
+      );
       await this.publishKeyPackage(alreadyHeld);
       return alreadyHeld;
     }
