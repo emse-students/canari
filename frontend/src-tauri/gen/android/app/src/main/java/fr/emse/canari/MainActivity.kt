@@ -976,6 +976,18 @@ class MainActivity : TauriActivity() {
         }
         MlsBackgroundWorker.resetFailureFlag(this)
         OutboxRetryWorker.resetFailureFlag(this)
+        // No replay of a held frame runs beside the app's engine ([HeldFrameWorker]): its jobs are
+        // cancelled, its frames KEPT (an app opened offline drains nothing) and handed back at onPause.
+        // Off the main thread (a file read and a WorkManager call), AFTER `isInForeground = true`
+        // above, so a push holding a frame meanwhile sees the app in front.
+        val appContext = applicationContext
+        Thread({
+            try {
+                HeldFrameWorker.takenOverByApp(appContext)
+            } catch (e: Exception) {
+                Log.e("MainActivity", "onResume: the held-frame replays were not cancelled: ${e.javaClass.simpleName}")
+            }
+        }, "canari-held-frames-takeover").start()
         // Opening the app does NOT clear message, mention or reaction banners (owner, 2026-11-21):
         // each goes with its conversation, when it is read or ended. What the open app takes over
         // - the rings, the wake notice - is retired here.
@@ -1019,6 +1031,12 @@ class MainActivity : TauriActivity() {
                 OutboxRetryWorker.enqueueIfMirrorHolds(appContext)
             } catch (e: Exception) {
                 Log.e("MainActivity", "onPause: the outbox retry was not handed back - the next push or boot drains it: ${e.javaClass.simpleName}")
+            }
+            // The frames held for the network go back to their replays, as the outbox does.
+            try {
+                HeldFrameWorker.handBack(appContext)
+            } catch (e: Exception) {
+                Log.e("MainActivity", "onPause: the held frames were not handed back - the next push of each conversation re-enqueues it: ${e.javaClass.simpleName}")
             }
         }, "canari-outbox-handback").start()
         abandonTurn(TurnAbandon.PAUSED)
