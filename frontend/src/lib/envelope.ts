@@ -17,7 +17,7 @@ import type { MessageReference } from '$lib/types';
 import { formatMentionsForPreview } from '$lib/utils/mentions.parse';
 import { extractFirstUrl, gifPreviewUrl } from '$lib/utils/chat/messageDisplay';
 import { m } from '$lib/paraglide/messages';
-import { noticeDisplayText } from '$lib/utils/chat/noticeText';
+import { noticePreviewText } from '$lib/utils/chat/noticeText';
 import type { CallEndReason } from '$lib/proto/codec';
 
 // ---------------------------------------------------------------------------
@@ -229,12 +229,12 @@ export function previewForMedia(ref: MediaRef, caption?: string): string {
  *
  * A NOTICE ROW (member added, renamed, left...) is drawn in the READER'S language from its ids, as
  * the bubble does: its stored sentence was written in the writer's language and a stored string is
- * never redrawn. `knownName` answers without fetching (`null` = not known yet, the stored sentence
- * then stands in); a caller that passes none keeps the stored sentence.
+ * never redrawn. Names come from the shared display-name cache (`knownName` overrides it in a test);
+ * one not known yet falls back to the stored sentence, logged (`noticePreviewText`).
  */
 export function getPreviewText(
   env: MessageEnvelope,
-  knownName: (userId: string) => string | null = () => null
+  knownName?: (userId: string) => string | null
 ): string {
   switch (env.kind) {
     case 'text':
@@ -246,7 +246,7 @@ export function getPreviewText(
       );
     case 'system':
       return formatMentionsForPreview(
-        env.notice ? noticeDisplayText(env.notice, env.text, knownName) : env.text
+        env.notice ? noticePreviewText(env.notice, env.text, knownName) : env.text
       );
     case 'poll':
       return `${m.chat_preview_poll()} ${env.question}`;

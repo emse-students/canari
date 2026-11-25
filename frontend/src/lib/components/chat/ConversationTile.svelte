@@ -7,11 +7,7 @@
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import { presenceMap, watchUsers, unwatchUsers } from '$lib/stores/presenceStore';
   import { extractMentionUserIds } from '$lib/utils/mentions';
-  import {
-    getUserDisplayNameSync,
-    peekUserDisplayName,
-    resolveUserDisplayName,
-  } from '$lib/utils/users/displayName';
+  import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { noticeUserIds } from '$lib/utils/chat/noticeText';
   import { visibleNickname } from '$lib/utils/users/conversationNicknames.svelte';
   import { isCanonicalDirectKey } from '$lib/utils/chat/conversations';
@@ -165,7 +161,7 @@
       return;
     }
     const env = parseEnvelope(raw);
-    previewText = getPreviewText(env, peekUserDisplayName);
+    previewText = getPreviewText(env);
 
     const source = env.kind === 'text' ? env.text : env.kind === 'media' ? (env.caption ?? '') : '';
     // A notice row names its people by id: they are resolved like a mention, then it is redrawn.
@@ -175,7 +171,7 @@
 
     void Promise.all(nameIds.map((id) => resolveUserDisplayName(id))).then(() => {
       if (lastMessage !== raw) return;
-      previewText = getPreviewText(parseEnvelope(raw), peekUserDisplayName);
+      previewText = getPreviewText(parseEnvelope(raw));
     });
   });
 </script>
