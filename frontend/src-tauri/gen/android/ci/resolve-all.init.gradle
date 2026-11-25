@@ -7,6 +7,8 @@
 // resolved there. A release restored the cache (a key HIT), still found
 // `error_prone_annotations-2.26.0.jar` missing, and went to Maven Central, which answered 429.
 //
+// (Iterated over a copy: resolving a configuration can register others, and a live iteration threw
+// ConcurrentModificationException.)
 // The variant classpaths are resolved STRICTLY (a failure fails the task: those are what the
 // release links). Every other resolvable configuration is resolved best-effort, to warm the cache
 // with tooling artifacts; one that cannot resolve on its own is logged and skipped.
@@ -15,7 +17,7 @@ allprojects { project ->
     task.notCompatibleWithConfigurationCache('resolves configurations at execution time')
     task.doLast {
       int strictCount = 0
-      project.configurations.each { c ->
+      new ArrayList(project.configurations).each { c ->
         if (!c.canBeResolved) return
         if (c.name ==~ /.*(Release|Debug)(Runtime|Compile)Classpath/) {
           int files = c.incoming.files.files.size()
