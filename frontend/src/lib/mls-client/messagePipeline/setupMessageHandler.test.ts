@@ -953,6 +953,23 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     );
   });
 
+  it('forwards the history rule a workspace.updated carries, so the admin card keeps what was saved', async () => {
+    const onWorkspaceUpdated = vi.fn();
+    const deps = baseDeps({ onWorkspaceUpdated });
+    setupMessageHandler(deps as any);
+    const mls = deps.mlsService as any;
+    await mls.onChannelEvent({
+      type: 'workspace.updated',
+      data: { workspaceId: 'w1', historyVisibility: 'shared' },
+    });
+    await mls.onChannelEvent({ type: 'workspace.updated', data: { workspaceId: 'w1' } });
+    expect(onWorkspaceUpdated).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ workspaceId: 'w1', historyVisibility: 'shared' })
+    );
+    expect(onWorkspaceUpdated.mock.calls[1][0].historyVisibility).toBeUndefined();
+  });
+
   it('propagates workspace.deleted so members drop a community an admin removed', async () => {
     const onWorkspaceDeleted = vi.fn();
     const deps = baseDeps({ onWorkspaceDeleted });

@@ -6036,6 +6036,15 @@ before they await the store delete: a listing answered during that await used to
 conversation back. `ChatBackgroundService.svelte`'s handlers are held to these entrances by a source
 guard in the same test file.
 
+**Fields, since 2026-11-25.** The same ledger is keyed per (row, field): `fieldHeard` /
+`fieldHeardSince`. A rename, a write verdict or policy (`channel.updated`, a role change, a refused
+post), a role change (`workspace.role.changed`) and a cover or history change (`workspace.updated`)
+record the field at the tick they were heard, and `upsertChannelRow` / `upsertWorkspaceFromDto`,
+called by the listing with the tick it asked at, leave that field alone - the older answer cannot give
+a demoted administrator their controls back. The history rule of a `workspace.updated` frame is
+forwarded from `channelEventHandler.ts` through `deps.ts`, so the admin card keeps what was saved
+instead of resetting to the old rule.
+
 A listing then:
 
 1. **Does not draw back** a community or salon learned `gone` after its request

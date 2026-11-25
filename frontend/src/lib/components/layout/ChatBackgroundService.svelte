@@ -1484,21 +1484,7 @@
         // view reads to decide whether to offer a composer at all, so this is the whole difference
         // between learning of a new rule now and learning of it on the next full load.
         if (event.name || typeof event.viewerCanWrite === 'boolean') {
-          globalChannels.channelWorkspaces = globalChannels.channelWorkspaces.map((ws) => ({
-            ...ws,
-            channels: ws.channels.map((ch) =>
-              ch.id === channelConversationId
-                ? {
-                    ...ch,
-                    ...(event.name ? { name: event.name } : {}),
-                    ...(typeof event.viewerCanWrite === 'boolean'
-                      ? { canWrite: event.viewerCanWrite }
-                      : {}),
-                    ...(event.writePolicy ? { writePolicy: event.writePolicy } : {}),
-                  }
-                : ch
-            ),
-          }));
+          globalChannels.handleChannelUpdated(event);
           appendLog(
             `[CHANNEL] #${event.name ?? event.channelId} updated - canWrite=${String(event.viewerCanWrite ?? 'unchanged')} writePolicy=${event.writePolicy ?? 'unchanged'}`
           );
@@ -1538,6 +1524,7 @@
         workspaceId: string;
         imageMediaId?: string;
         channelsReordered?: boolean;
+        historyVisibility?: string;
       }) => {
         globalChannels.handleWorkspaceUpdated(event);
         if (event.channelsReordered) {
