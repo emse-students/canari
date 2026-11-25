@@ -119,7 +119,7 @@ describe('a queued frame - one delivery, two routes', () => {
           // The shared seat lock a send's write takes; the seats it re-reads are the roster's. A
           // Welcome's delivery claims its row first (`claimQueuedDelivery`): no delivery of it ran.
           query: jest.fn(async (sql: string) =>
-            sql.includes('"deliveryRan" = true') ? [[], 1] : []
+            sql.includes('"deliveryRan" FROM queued_message') ? [{ deliveryRan: false }] : []
           ),
           getRepository: (entity: unknown) =>
             entity === Group

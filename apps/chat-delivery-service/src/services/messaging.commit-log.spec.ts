@@ -267,7 +267,11 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
             ...emptyRepo(),
             manager: {
               transaction: async (cb: (m: unknown) => Promise<unknown>) =>
-                cb({ query: jest.fn().mockResolvedValue([[], 1]) }),
+                cb({
+                  query: jest.fn(async (sql: string) =>
+                    sql.includes('FOR UPDATE') ? [{ deliveryRan: false }] : []
+                  ),
+                }),
             },
           },
         },

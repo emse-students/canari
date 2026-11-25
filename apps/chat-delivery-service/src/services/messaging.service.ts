@@ -5510,36 +5510,60 @@ export class MessagingService {
    * published into a socket nobody was reading was followed by nothing: the device stayed unjoined
    * until its next foreground pull.
    *
-   * ONE DELIVERY PER ROW, WHOEVER HANDS IT IN. The same row reaches here from the request that stored
-   * it and from every re-send of the same bytes (`[WELCOME] DUPLICATE`), and those can overlap: a
-   * sender that did not read its answer re-sends while the first request is still publishing. The
+   * ONE LIVE PUBLISH PER ROW, WHOEVER HANDS IT IN. The same row reaches here from the request that
+   * stored it and from every re-send of the same bytes (`[WELCOME] DUPLICATE`), and those can overlap:
+   * a sender that did not read its answer re-sends while the first request is still publishing. The
    * publish therefore runs inside the transaction that CLAIMS it ({@link claimQueuedDelivery}): the
    * claim holds the row lock until the publish committed, so a second delivery waits and then finds
-   * it ran; a delivery that threw or died rolled back, and the next re-send delivers. Returns whether
-   * this call published (or pushed) the row.
+   * it ran; a delivery that threw or died rolled back, and the next re-send delivers.
+   *
+   * A row whose publish ALREADY RAN and is still queued is not published again, but its deferred push
+   * is re-armed: the first request's own fallback timer lived in its process, and a deploy that killed
+   * it left a frozen-but-online Android with nothing to wake it but this re-send. `runDeferredPush`
+   * re-reads the row, so a device that acknowledged it meanwhile is pushed nothing. A row GONE is
+   * acknowledged (or swept) and owes nothing.
+   *
+   * NOTHING BUT THE PUBLISH RUNS UNDER THE ROW LOCK: presence is read before the transaction. The
+   * publish itself is bounded the way every Redis command of this service is - by the client's own
+   * per-request retry limit (`ioredis` `maxRetriesPerRequest`, its default, no timer of ours); past
+   * it the command rejects, the claim rolls back and the row stays deliverable. While it waits, the
+   * lock delays only another delivery of this one row and its device's acknowledgement of it.
+   *
+   * @returns whether this call published (or pushed) the row
    */
   private async deliverWelcome(queued: QueuedMessage, traceId: string): Promise<boolean> {
-    return this.queuedMessageRepo.manager.transaction(async (m) => {
-      if (!(await claimQueuedDelivery(m, queued.id))) {
-        this.logger.log(
-          `[WELCOME][${traceId}] DELIVERY_ALREADY_RAN id=${queued.id} ` +
-            `recipient=${queued.recipientId}:${queued.deviceId} group=${queued.groupId ?? ''} - ` +
-            `an earlier request published this row, or its device acknowledged it: nothing published again`
-        );
-        return false;
-      }
-      const isOnline = await this.redis.exists(
-        devicePresenceKey(queued.recipientId, queued.deviceId)
-      );
+    const online = !!(await this.redis.exists(
+      devicePresenceKey(queued.recipientId, queued.deviceId)
+    ));
+    const claim = await this.queuedMessageRepo.manager.transaction(async (m) => {
+      const found = await claimQueuedDelivery(m, queued.id);
+      if (found !== 'claimed') return found;
       await this.deliverQueuedFrame(queued, {
         tag: 'WELCOME',
         traceId,
-        online: !!isOnline,
+        online,
         silent: true,
         pushable: true,
       });
-      return true;
+      return found;
     });
+    const who = `id=${queued.id} recipient=${queued.recipientId}:${queued.deviceId} group=${queued.groupId ?? ''}`;
+    if (claim === 'gone') {
+      this.logger.log(
+        `[WELCOME][${traceId}] DELIVERY_ROW_GONE ${who} - its device acknowledged it (or it was swept) ` +
+          `before this delivery: nothing published, nothing pushed`
+      );
+      return false;
+    }
+    if (claim === 'already_ran') {
+      this.logger.log(
+        `[WELCOME][${traceId}] DELIVERY_ALREADY_RAN ${who} - an earlier request published this row ` +
+          `and it is still unacknowledged: not published again, its deferred push re-armed`
+      );
+      this.scheduleDeferredPush(queued, traceId, queued.groupId ?? '', queued.senderId ?? '', true);
+      return false;
+    }
+    return true;
   }
 
   /**

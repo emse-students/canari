@@ -98,27 +98,35 @@ describe('MessagingService - sendWelcome does not touch membership status or the
   const rowLocks = new Map<string, Promise<void>>();
   /** Every delivery claim, in the order it was ASKED - before it waits on a row lock. */
   const claimsAsked: string[] = [];
+  /** Rows acknowledged by their device (deleted) before a delivery claims them. */
+  const goneRows = new Set<string>();
   const transaction = jest.fn(async (cb: (m: unknown) => Promise<unknown>) => {
-    const held: { id: string; release: () => void }[] = [];
+    const held: { id: string; marked: boolean; release: () => void }[] = [];
     const end = (committed: boolean) => {
       for (const h of held) {
-        if (committed) deliveryRan.set(h.id, true);
+        if (committed && h.marked) deliveryRan.set(h.id, true);
         rowLocks.delete(h.id);
         h.release();
       }
     };
-    /** `claimQueuedDelivery`: waits on the row lock, then flips the flag for one caller. */
-    const claim = async (id: string): Promise<[unknown[], number]> => {
+    /** `SELECT ... FOR UPDATE`: waits on the row lock, takes it, reads the committed row. */
+    const lock = async (id: string): Promise<{ deliveryRan: boolean }[]> => {
       claimsAsked.push(id);
-      for (let lock = rowLocks.get(id); lock; lock = rowLocks.get(id)) await lock;
-      if (deliveryRan.get(id) === true) return [[], 0];
+      for (let l = rowLocks.get(id); l; l = rowLocks.get(id)) await l;
+      if (goneRows.has(id)) return [];
       let release = () => {};
       rowLocks.set(id, new Promise<void>((r) => (release = r)));
-      held.push({ id, release });
-      return [[], 1];
+      held.push({ id, marked: false, release });
+      return [{ deliveryRan: deliveryRan.get(id) === true }];
+    };
+    /** The UPDATE under that lock: committed with the transaction, lost with a rollback. */
+    const mark = (id: string) => {
+      const h = held.find((x) => x.id === id);
+      if (h) h.marked = true;
+      return [];
     };
     try {
-      const out = await cb(txManager(claim));
+      const out = await cb(txManager(lock, mark));
       end(true);
       return out;
     } catch (e) {
@@ -126,10 +134,14 @@ describe('MessagingService - sendWelcome does not touch membership status or the
       throw e;
     }
   });
-  const txManager = (claim: (id: string) => Promise<[unknown[], number]>) => ({
+  const txManager = (
+    lock: (id: string) => Promise<{ deliveryRan: boolean }[]>,
+    mark: (id: string) => unknown[]
+  ) => ({
     // The seat lock, and the eviction row a key-group target's claim is checked against.
     query: jest.fn(async (sql: string, params?: unknown[]) => {
-      if (sql.includes('"deliveryRan" = true')) return claim(String(params?.[0]));
+      if (sql.includes('"deliveryRan" FROM queued_message')) return lock(String(params?.[0]));
+      if (sql.includes('SET "deliveryRan" = true')) return mark(String(params?.[0]));
       if (sql.includes('pg_advisory_xact_lock')) {
         const welcomeStore = String(params?.[0] ?? '').startsWith('welcome-store:');
         txReads.push(
@@ -255,6 +267,7 @@ describe('MessagingService - sendWelcome does not touch membership status or the
     deliveryRan.clear();
     rowLocks.clear();
     claimsAsked.length = 0;
+    goneRows.clear();
     txSeat.mockResolvedValue({ id: 'm-u2' });
     txAsks.mockResolvedValue([]);
     txLift.mockResolvedValue({ affected: 0 });
@@ -538,14 +551,21 @@ describe('MessagingService - sendWelcome does not touch membership status or the
       createdAt: new Date(),
     };
     /**
-     * Lets every pending continuation run, a FIXED number of turns (no clock): what is still
-     * pending after it is parked on something this test holds - the presence read, or a row lock.
+     * Lets pending continuations run until `reached` holds - the state the test is about to assert -
+     * giving up after a fixed number of turns (no clock) so a defect fails the assertion, never hangs.
      */
-    const drain = async () => {
-      for (let i = 0; i < 50; i++) await new Promise((r) => setImmediate(r));
+    const until = async (reached: () => boolean) => {
+      for (let i = 0; i < 1000 && !reached(); i++) await new Promise((r) => setImmediate(r));
     };
     const published = () =>
       redis.publish.mock.calls.filter(([channel]) => channel === 'chat:messages').length;
+    const deferredPushes = () =>
+      jest.spyOn(
+        service as unknown as { scheduleDeferredPush: (...a: unknown[]) => void },
+        'scheduleDeferredPush'
+      );
+    const logged = (spy: jest.SpyInstance) =>
+      spy.mock.calls.map(([line]: unknown[]) => String(line)).join(' | ');
 
     it('stores nothing, and delivers THAT row when no delivery of it ran - the first request died before it', async () => {
       queuedCopy = firstRow;
@@ -564,10 +584,11 @@ describe('MessagingService - sendWelcome does not touch membership status or the
       expect(deliveryRan.get('q-first')).toBe(true);
     });
 
-    it('publishes nothing when the first request already delivered the row - a re-send after a lost answer', async () => {
+    it('publishes nothing when the first request already delivered the row, and re-arms its deferred push - the row is still queued', async () => {
       queuedCopy = firstRow;
       deliveryRan.set('q-first', true);
       const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+      const deferred = deferredPushes().mockImplementation(() => undefined);
 
       await expect(service.sendWelcome(undefined, body)).resolves.toMatchObject({
         status: 'queued',
@@ -575,30 +596,48 @@ describe('MessagingService - sendWelcome does not touch membership status or the
 
       expect(txReads).not.toContain('save');
       expect(published()).toBe(0);
-      expect(redis.exists).not.toHaveBeenCalledWith('user:online:u2:d2');
-      expect(log.mock.calls.map(([line]) => String(line)).join(' | ')).toContain(
-        'DELIVERY_ALREADY_RAN id=q-first'
-      );
+      expect(logged(log)).toContain('DELIVERY_ALREADY_RAN id=q-first');
+      // A deploy may have killed the first request's own fallback timer: a frozen-but-online
+      // Android has nothing else to wake it.
+      expect(deferred).toHaveBeenCalledTimes(1);
+      expect(deferred.mock.calls[0][0]).toMatchObject({ id: 'q-first' });
+      log.mockRestore();
+    });
+
+    it('publishes nothing and pushes nothing for a row its device already acknowledged', async () => {
+      queuedCopy = firstRow;
+      goneRows.add('q-first');
+      const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+      const deferred = deferredPushes().mockImplementation(() => undefined);
+
+      await expect(service.sendWelcome(undefined, body)).resolves.toMatchObject({
+        status: 'queued',
+      });
+
+      expect(published()).toBe(0);
+      expect(deferred).not.toHaveBeenCalled();
+      expect(logged(log)).toContain('DELIVERY_ROW_GONE id=q-first');
       log.mockRestore();
     });
 
     it('a re-send arriving WHILE the first request is publishing waits for it, then publishes nothing (prod 1.7.3, 2026-11-24)', async () => {
-      // The first request is parked inside its delivery, between its claim and its publish.
-      let openPresence = () => {};
-      const presence = new Promise<number>((r) => (openPresence = () => r(1)));
-      redis.exists.mockImplementationOnce(() => presence);
+      const deferred = deferredPushes();
+      // The first request is parked INSIDE its claim: its publish has not returned.
+      let openPublish = () => {};
+      const publishing = new Promise<number>((r) => (openPublish = () => r(1)));
+      redis.publish.mockImplementationOnce(() => publishing);
       const first = service.sendWelcome(undefined, body);
-      await drain();
-      expect(redis.exists).toHaveBeenCalledWith('user:online:u2:d2');
+      await until(() => published() === 1);
+      expect(published()).toBe(1);
 
       // The re-send finds the first request's row still queued and hands it to the delivery.
       queuedCopy = { ...firstRow, id: 'q1' };
       const again = service.sendWelcome(undefined, body);
-      await drain();
+      await until(() => claimsAsked.length === 2);
       expect(claimsAsked).toEqual(['q1', 'q1']);
-      expect(published()).toBe(0);
+      expect(published()).toBe(1);
 
-      openPresence();
+      openPublish();
       await expect(Promise.all([first, again])).resolves.toEqual([
         expect.objectContaining({ status: 'queued' }),
         expect.objectContaining({ status: 'queued' }),
@@ -607,6 +646,8 @@ describe('MessagingService - sendWelcome does not touch membership status or the
       // ONE publish of the row, by the request that claimed it first.
       expect(published()).toBe(1);
       expect(String(redis.publish.mock.calls[0][1])).toContain('q1');
+      // Two arms of the deferred push (the first request's, the re-send's): each re-reads the row.
+      expect(deferred).toHaveBeenCalledTimes(2);
     });
 
     it('a delivery that THREW leaves the row deliverable, and the next re-send delivers it', async () => {

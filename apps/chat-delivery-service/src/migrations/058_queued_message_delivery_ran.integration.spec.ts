@@ -19,7 +19,11 @@ import { Client } from 'pg';
 import { DataSource } from 'typeorm';
 import { settledFlag } from '../testing/lockWait';
 import { untilBlockedBehind } from '../testing/lockBehind';
-import { CLAIM_QUEUED_DELIVERY_SQL, claimQueuedDelivery } from '../utils/queued-delivery-claim';
+import {
+  LOCK_QUEUED_DELIVERY_SQL,
+  MARK_QUEUED_DELIVERY_SQL,
+  claimQueuedDelivery,
+} from '../utils/queued-delivery-claim';
 
 const URL = process.env.CHAT_DELIVERY_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -59,8 +63,9 @@ maybe('migration 058 (queued_message.deliveryRan) against PostgreSQL', () => {
   const holdClaim = async (id: string) => {
     const holder = await connect();
     await holder.query('BEGIN');
-    const answered = await holder.query(CLAIM_QUEUED_DELIVERY_SQL, [id]);
-    expect(answered.rowCount).toBe(1);
+    const locked = await holder.query(LOCK_QUEUED_DELIVERY_SQL, [id]);
+    expect(locked.rows).toEqual([{ deliveryRan: false }]);
+    await holder.query(MARK_QUEUED_DELIVERY_SQL, [id]);
     return holder;
   };
 
@@ -98,15 +103,15 @@ maybe('migration 058 (queued_message.deliveryRan) against PostgreSQL', () => {
     await expect(ran(before)).resolves.toBe(false);
   });
 
-  it('hands a row to one delivery, and answers every later one false', async () => {
+  it('hands a row to one delivery, and answers every later one already_ran', async () => {
     const id = await queue();
 
-    await expect(claim(id)).resolves.toBe(true);
-    await expect(claim(id)).resolves.toBe(false);
+    await expect(claim(id)).resolves.toBe('claimed');
+    await expect(claim(id)).resolves.toBe('already_ran');
     await expect(ran(id)).resolves.toBe(true);
   });
 
-  it('a claim of a row whose delivery is RUNNING waits for it, then answers false once it committed', async () => {
+  it('a claim of a row whose delivery is RUNNING waits for it, then answers already_ran once it committed', async () => {
     const id = await queue();
     const holder = await holdClaim(id);
     try {
@@ -117,13 +122,13 @@ maybe('migration 058 (queued_message.deliveryRan) against PostgreSQL', () => {
       });
       await holder.query('COMMIT');
 
-      await expect(second).resolves.toBe(false);
+      await expect(second).resolves.toBe('already_ran');
     } finally {
       await holder.end();
     }
   });
 
-  it('a claim of a row whose delivery ROLLED BACK (threw, or its process died) answers true', async () => {
+  it('a claim of a row whose delivery ROLLED BACK (threw, or its process died) is claimed', async () => {
     const id = await queue();
     const holder = await holdClaim(id);
     try {
@@ -134,17 +139,36 @@ maybe('migration 058 (queued_message.deliveryRan) against PostgreSQL', () => {
       });
       await holder.query('ROLLBACK');
 
-      await expect(second).resolves.toBe(true);
+      await expect(second).resolves.toBe('claimed');
       await expect(ran(id)).resolves.toBe(true);
     } finally {
       await holder.end();
     }
   });
 
-  it('answers false for a row already acknowledged - nothing is left to deliver', async () => {
+  it('answers gone for a row already acknowledged - nothing is left to deliver', async () => {
     const id = await queue();
     await ds.query(`DELETE FROM queued_message WHERE id = $1`, [id]);
 
-    await expect(claim(id)).resolves.toBe(false);
+    await expect(claim(id)).resolves.toBe('gone');
+  });
+
+  it('a claim waiting on a delivery whose row is then ACKNOWLEDGED answers gone', async () => {
+    const id = await queue();
+    const holder = await connect();
+    try {
+      await holder.query('BEGIN');
+      await holder.query(`DELETE FROM queued_message WHERE id = $1`, [id]);
+      const second = claim(id);
+      await untilBlockedBehind(admin, holder, {
+        what: 'the delivery claim',
+        settled: settledFlag(second),
+      });
+      await holder.query('COMMIT');
+
+      await expect(second).resolves.toBe('gone');
+    } finally {
+      await holder.end();
+    }
   });
 });

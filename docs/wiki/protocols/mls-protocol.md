@@ -2353,19 +2353,38 @@ Pinned by `add-enrolment.integration.spec.ts`.
 request may have died between its store and its delivery and the re-send is then the only thing left
 to arm the live publish and the push. It used to publish it unconditionally, so a re-send arriving
 while the first request was still publishing - or after it had - published the same row a second
-time: prod `1.7.3`, 2026-11-24, a new web device received one Welcome row live twice, 160 ms apart,
-and logged `THE SERVER PUBLISHED THE SAME ROW TWICE`. The store's lock ends with the store's
+time. Seen on prod `1.7.3`, 2026-11-24: a new web device received one Welcome row live twice, 160 ms
+apart, and logged `THE SERVER PUBLISHED THE SAME ROW TWICE`; the server log of that day was gone
+before it was read, so the trigger is established from the code (a reading is owed, [backlog](../backlog.d/p2-a-repeated-send-republishes-the-rows-its-first-copy-is-still-delivering.md)). The store's lock ends with the store's
 transaction, before the publish, and the row could not say whether its delivery had run, was
 running or had died. It says so now: `queued_message."deliveryRan"` (migration 058), claimed by the
 transaction that publishes (`claimQueuedDelivery`, `utils/queued-delivery-claim.ts`;
 `deliverWelcome` for all three Welcome doors - the store, its re-send, a commit carrying it):
 
-- the claim (`UPDATE ... SET "deliveryRan" = true WHERE id = $1 AND "deliveryRan" = false`) holds
-  the row lock until the publish committed, so a second delivery of the row WAITS on it, then reads
-  it true and publishes nothing (`[WELCOME] DELIVERY_ALREADY_RAN`);
+- the claim reads the row `FOR UPDATE` and, if `deliveryRan` is false, sets it; the row lock is held
+  until the publish committed, so a second delivery of the row WAITS on it, then reads it true and
+  publishes nothing (`[WELCOME] DELIVERY_ALREADY_RAN`) - but RE-ARMS the deferred push, because the
+  first request's own fallback timer lived in its process, and a deploy that killed it left a
+  frozen-but-online Android nothing else to wake it (`runDeferredPush` re-reads the row first);
 - a delivery that threw, or whose process died, rolled back with its transaction - PostgreSQL ends a
   dead session's locks with it - so the flag is still false and the next re-send delivers. No clock;
-- a row already acknowledged is gone, and its claim answers false: nothing is left to deliver.
+- a row already acknowledged is gone: the claim answers `gone` (`DELIVERY_ROW_GONE`), nothing is
+  published and nothing pushed. The three outcomes are a type (`QueuedDeliveryClaim`), never a count.
+
+**The residual window, not closed:** a publish that succeeded followed by a COMMIT that failed (or a
+process that died between the two) leaves the flag false, so the next re-send publishes the row once
+more. Telling "published, not recorded" from "never published" would need a write with the same
+window; the receiving client drops the second copy by its queued id (acknowledged, not decrypted
+again), so it costs a frame, never a message.
+
+**What the row lock is held across, and why that is bounded.** Presence is read BEFORE the
+transaction; only the publish runs under the lock, on one pooled connection. That publish is bounded
+the way every Redis command of the service is - by `ioredis`'s per-request retry limit
+(`maxRetriesPerRequest`, the client default; no timer of ours): past it the command rejects, the
+claim rolls back and the row stays deliverable. If that bound were wrong (Redis hanging without
+failing), one connection and one row would stay held: another delivery of that row and its device's
+acknowledgement of it would wait, nothing else - the alternative (commit the claim, then publish) would
+lose the dead-process recovery, which is the reason the re-send delivers at all.
 
 The named application frame has its own mechanism for the same question (the receipt's `settled` and
 the send's session lock, [chat-delivery](../services/chat-delivery.md)); a Welcome names no
