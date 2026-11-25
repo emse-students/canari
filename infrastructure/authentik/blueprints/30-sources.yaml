@@ -529,7 +529,7 @@ entries:
 
         def named(record, sent):
             """True when `record` is a dict whose nonce is the one this link carries."""
-            return isinstance(record, dict) and bool(record.get("nonce")) and compare_digest(str(sent or ""), str(record["nonce"]))
+            return isinstance(record, dict) and bool(record.get("nonce")) and compare_digest(str(sent or "").encode(), str(record["nonce"]).encode())
 
         if MODE not in plan.context:
             session = request.http_request.session

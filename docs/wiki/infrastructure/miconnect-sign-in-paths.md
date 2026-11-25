@@ -161,7 +161,11 @@ skipped for the link step.
   different name meets the page naming BOTH accounts, which that person refuses or closes; **a
   homonym is linked with no page - the residual risk the owner accepted** (2026-11-25). Before this
   change the second Alumnforce sign-in proved the identity again; the owner traded it for the fluid
-  path.
+  path. **The same residual, by a lure:** the record stays in the session until the next visit to
+  the link flow, so X, who copied the `parked=` URL, could later lure V - signed in on the SAME shared
+  browser and session - to it. V then meets the page naming both accounts, or is linked silently
+  only if V is X's homonym: inside the owner's accepted risk. A nonce is compared as bytes, so a
+  crafted one (non-ASCII included) is a mismatch, never an error.
 - **Through the resume token.** It is created only for the account the session holds at that moment;
   a sign-in as ANOTHER account flushes an authenticated session (Django's `login()`), and the done
   flow checks again before authentik writes: the session's account is the token's, an Alumni identity

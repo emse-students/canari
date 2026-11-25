@@ -587,6 +587,17 @@ with Tenant.objects.get(ready=True):
         store = session_of(stranger_client)
         store.pop("authentik/impersonate/user", None)
         store.save()
+        # A crafted NON-ASCII nonce is a mismatch like any other, never an error: the D49 page, not a
+        # blank naming page; the offer stays for the page's own link, the parked record is dropped.
+        for crafted in ("offer=%C3%A9", "parked=%C3%A9"):
+            offer(stranger.pk, "miconnect/alumni-link-parked", {"nonce": "p4rked", "identifier": "99111", "firstname": "Consent", "lastname": "Test"})
+            page = go(stranger_client, f"/if/flow/miconnect-alumni-link/?{crafted}")
+            check(page.get("component") == "ak-stage-prompt" and "alumni_link_confirm" in fields(page), f"a non-ASCII nonce ({crafted}) is a mismatch: the D49 confirmation ({page.get('component')}, {list(fields(page))})")
+            check(isinstance(session_of(stranger_client).get("miconnect/alumni-link-offered"), dict) and "miconnect/alumni-link-parked" not in session_of(stranger_client), f"({crafted}) the offer is kept for its own link, the unnamed parked record is dropped")
+        check(not UserSourceConnection.objects.filter(source=alumni, identifier="99111").exists(), "and nothing is linked from it")
+        store = session_of(stranger_client)
+        store.pop("miconnect/alumni-link-offered", None)
+        store.save()
         # A resume token planted for ANOTHER account (a stale or foreign plan) never links: the done flow refuses.
         done_flow = Flow.objects.get(slug="miconnect-alumni-link-done")
 
