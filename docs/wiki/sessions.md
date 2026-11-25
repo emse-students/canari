@@ -841,7 +841,7 @@ which also holds **the contract a site implements**. This section is what Canari
   LIVE access token (`requireAccessToken`, [the session's liveness](#an-access-token-is-only-as-alive-as-its-session-2026-10-25)
   included), so an ended Canari session mints nothing, and neither does a sid-less token, which names no
   session at all; the subject is the token's, never the body's. Throttled per account (20 a minute). One audit line per mint,
-  `[HANDOFF] minted aud=<site> user=<sub> jti=<jti> dest=<path>`, and **the token itself is never
+  `[HANDOFF] minted aud=<site> user=<sub> jti=<jti> dest=<pattern>`, and **the token itself is never
   logged**.
 - **The token.** A compact JWS, `ES256`, header `typ: canari-handoff+jwt` and `kid` (RFC 7638),
   payload `iss` (the origin of `FRONTEND_URL`'s first entry), `aud` (the site id), `sub` (the
@@ -901,7 +901,8 @@ which also holds **the contract a site implements**. This section is what Canari
   (`<origin>/auth/handoff#<token>`), so the route is no open redirect. `dest` must equal one path
   of the site's allowlist exactly (`{uuid}` one lowercase UUID segment; no query, no fragment, no
   normalisation) - one rule in two byte-identical files, `handoff-dest.ts` here and the client's `handoffDest.ts`
-  (a declared duplicate), its cases in `libs/contracts/handoff-dest.cases.json`.
+  (a declared duplicate), its cases in `libs/contracts/handoff-dest.cases.json`, run by both sides' specs.
+  The audit line names the dest by its allowlist pattern (`/albums/{uuid}`), never by an album id.
   Each MiConnect site also declares its own sign-in entry, `signIn: { path, returnParam }`
   (MiGallery `/api/auth/login` reading `redirectTo`; Sky and Le Cercle `/auth/login`, reading no
   return path). A site is minted for only while its `handoff` flag is true; **MiGallery's is true since 2026-11-14, every other flag ships
@@ -934,7 +935,7 @@ which also holds **the contract a site implements**. This section is what Canari
   refused or failed mint opens the site plainly and says so at `warn` with its class** (the code and
   status, or the error's name): the primary path failed. **A refusal that is a page MiConnect must
   show the person first** (`HANDOFF_TERMS_NOT_ACCEPTED`, `HANDOFF_ALUMNI_LINK_REQUIRED`,
-  `HANDOFF_ALUMNI_COTISANT_REQUIRED`, `SETTLED_AT_MICONNECT`) **opens the site's sign-in entry
+  `HANDOFF_ALUMNI_COTISANT_REQUIRED`) **opens the site's sign-in entry
   instead** (`signInSiteUrl`), with the destination as the return path only when the site reads
   one, it is not the home, and it is on the site's `dests`: the person sees MiConnect's page once
   and lands signed in where they were going (owner, 2026-11-25; before, 21 of 27 production mints

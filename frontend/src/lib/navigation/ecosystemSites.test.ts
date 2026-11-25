@@ -7,6 +7,7 @@ import {
   ecosystemSiteLink,
   type EcosystemSite,
 } from '$lib/navigation/ecosystemSites';
+import { destIsAllowed } from '$lib/navigation/handoffDest';
 import { locales, overwriteGetLocale, getLocale } from '$lib/paraglide/runtime';
 
 /**
@@ -93,6 +94,24 @@ describe('the app launcher', () => {
 });
 
 /**
+ * THE SAME CASES AS CORE-SERVICE'S COPY (`handoff-sites.spec.ts`): the client hands a link off, or
+ * passes a return path to a sign-in, only for a path the server would accept.
+ */
+describe('destIsAllowed', () => {
+  const cases = JSON.parse(
+    readFileSync(resolve('..', 'libs', 'contracts', 'handoff-dest.cases.json'), 'utf8')
+  ) as { allowlist: string[]; allowed: string[]; refused: string[] };
+
+  it.each(cases.allowed)('allows %s', (dest) => {
+    expect(destIsAllowed(dest, cases.allowlist)).toBe(true);
+  });
+
+  it.each(cases.refused)('refuses %j', (dest) => {
+    expect(destIsAllowed(dest, cases.allowlist)).toBe(false);
+  });
+});
+
+/**
  * A LINK SOMEONE ELSE WROTE, ABOUT TO OPEN THE READER'S OWN SESSION. It is handed off only for a
  * flagged site's exact origin and an allowlisted path with nothing else on it; anything else opens
  * as any external link does.
@@ -120,6 +139,8 @@ describe('ecosystemSiteLink', () => {
     ['https://on.example', '/'],
     ['https://on.example/', '/'],
     ['https://on.example/mes-photos', '/mes-photos'],
+    // A host is case-insensitive: the URL parser lowercases it to the registered origin.
+    ['https://ON.EXAMPLE/mes-photos', '/mes-photos'],
     [`https://on.example${album}`, album],
   ])('hands off %s, landing on %s', (href, dest) => {
     expect(ecosystemSiteLink(href, sites)).toEqual({ site: sites[0], dest });
@@ -131,6 +152,11 @@ describe('ecosystemSiteLink', () => {
     'http://on.example/mes-photos',
     'https://on.example:8443/mes-photos',
     'https://on.example.evil.example/mes-photos',
+    // A trailing-dot host is another origin string than the registered one.
+    'https://on.example./mes-photos',
+    // An encoded dot segment: the parser resolves it, so it climbs to a path off the list.
+    'https://on.example/albums/%2e%2e/admin',
+    'https://on.example/mes-photos/%2e%2e/admin',
     'https://evil.example/mes-photos',
     // A path outside the allowlist: a state-changing page, a sub-page, a non-UUID album.
     'https://on.example/mes-photos/confirmer',

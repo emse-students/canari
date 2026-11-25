@@ -5,6 +5,7 @@ import { isTauriRuntime } from '$lib/utils/tauriRuntime';
 import { MOBILE_APP_PROTOCOL } from '$lib/mobile/appSiteAssociation';
 import { handlePlaceLinkClick } from '$lib/navigation/scrollToTop';
 import { BACK_LINK_ATTRIBUTE, backLinkTaken } from '$lib/navigation/backToOrigin';
+import { openEcosystemSiteLink } from '$lib/navigation/openEcosystemSite';
 
 export { isTauriRuntime };
 
@@ -14,7 +15,7 @@ const EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:', 'tel:', 'webca
  * Marks an anchor whose click `openEcosystemSite` owns (the app launcher). {@link handleAppLinkClick}
  * leaves such an anchor to its own `onclick`: otherwise, on the native shells, this capture-phase
  * handler would open the bare address before the sign-in handoff could be minted. Declared here,
- * not beside the opener, so this module imports nothing of the authenticated fetch.
+ * beside the one handler that reads it.
  */
 export const ECOSYSTEM_SITE_ATTRIBUTE = 'data-ecosystem-site';
 
@@ -129,9 +130,7 @@ export async function openExternal(url: string): Promise<void> {
   if (!proceed) return;
 
   // A link to a sibling site whose handoff is on, at a path of its allowlist, opens the reader
-  // signed in (owner, 2026-11-25) - AFTER the gate above, which no link skips. Imported on demand:
-  // the opener carries the authenticated fetch, and this module is imported by half the app.
-  const { openEcosystemSiteLink } = await import('$lib/navigation/openEcosystemSite');
+  // signed in (owner, 2026-11-25) - AFTER the gate above, which no link skips.
   if (openEcosystemSiteLink(url)) return;
 
   if (isTauriRuntime()) {
