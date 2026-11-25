@@ -21,9 +21,6 @@ vi.mock('$lib/minesweeper/api', async (importOriginal) => ({
   fetchMinesweeperStats: api.stats,
 }));
 vi.mock('$lib/stores/user', () => ({ currentUserId: () => 'u-1' }));
-vi.mock('$lib/components/settings/MinesweeperModal.svelte', () => ({
-  default: () => {},
-}));
 vi.mock('svelte/transition', () => ({
   fade: () => ({ duration: 0 }),
   fly: () => ({ duration: 0 }),
@@ -87,6 +84,11 @@ describe('the games page', () => {
     component = mount(Page, { target: document.body });
     await settle();
     expect(document.body.textContent).toContain(m.games_play());
+    // "Jouer" is a link to the game's own page, not a button opening a modal.
+    const play = [...document.querySelectorAll<HTMLAnchorElement>('a')].find(
+      (a) => a.textContent?.trim() === m.games_play()
+    );
+    expect(play?.getAttribute('href')).toContain('/games/play');
     expect(document.querySelector('[data-testid="games-best"]')?.textContent).toContain('#3');
     expect(document.querySelectorAll('[data-testid="games-ranking"] li')).toHaveLength(2);
     expect(api.board).toHaveBeenCalledWith(25, 0, undefined);

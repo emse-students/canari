@@ -39,10 +39,7 @@ afterEach(() => {
 });
 
 async function open() {
-  const app = mount(MinesweeperModal, {
-    target: document.body,
-    props: { open: true, onClose: vi.fn() },
-  });
+  const app = mount(MinesweeperModal, { target: document.body });
   mounted.push(() => unmount(app, { outro: false }));
   flushSync();
   await tick();

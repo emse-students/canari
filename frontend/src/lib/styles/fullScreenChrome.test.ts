@@ -52,6 +52,15 @@ describe('the root layout on a full-screen place', () => {
     expect(isFullScreenPlace('/chat')).toBe(false);
   });
 
+  it('knows the Minesweeper board and replay as full-screen places, and nothing else of /games', () => {
+    expect(isFullScreenPlace('/games/play')).toBe(true);
+    expect(isFullScreenPlace('/games/replay/abc')).toBe(true);
+    expect(isFullScreenPlace('/games')).toBe(false);
+    expect(isFullScreenPlace('/games/tutorial')).toBe(false);
+    // A prefix of a name is not the name: `/games/playground` is not the board.
+    expect(isFullScreenPlace('/games/playground')).toBe(false);
+  });
+
   it.each(['AppSidebar', 'Navbar', 'MobileHeader', 'BottomNav'])(
     '%s is not rendered there, whatever the width',
     (piece) => {
