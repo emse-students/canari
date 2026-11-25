@@ -33,7 +33,6 @@
   import { findHint, type MinesweeperHint } from '$lib/minesweeper/hint';
   import {
     LEVEL_SPECS,
-    levelFitCap,
     loadMinesweeperLevel,
     nextLevel,
     saveMinesweeperLevel,
@@ -154,14 +153,14 @@
     if (board.minesPlaced || firstClickBusy) return;
     unranked = !unranked;
     saveFlag(UNRANKED_STORAGE_KEY, unranked);
-    // Ranked always plays Expert's board, Libre the chosen level: the blank board follows.
-    installBlankBoard();
   }
 
-  /** The unranked level (owner, 2026-11-25), per device; ranked always plays `expert`'s board. */
+  /**
+   * The unranked level (owner, 2026-11-25), per device. A level is a GENERATION (the reasoning score the
+   * generator climbs to), never a size: the blank board is the same whatever it is, so choosing one
+   * redraws nothing. Ranked always plays `expert`'s target.
+   */
   let level = $state<MinesweeperLevel>(loadMinesweeperLevel());
-  /** What the next game plays on: the chosen level in Libre, Expert (the ranked board) otherwise. */
-  const playLevel = $derived<MinesweeperLevel>(unranked ? level : 'expert');
 
   /** The level picker: Libre only, before the first dig, like the ranked / Libre toggle. */
   function cycleLevel() {
@@ -169,7 +168,6 @@
     level = nextLevel(level);
     saveMinesweeperLevel(level);
     console.debug('[minesweeper] level chosen', { level });
-    installBlankBoard();
   }
 
   /** The label of a level, in the player's language. */
@@ -179,12 +177,6 @@
       : l === 'intermediate'
         ? m.minesweeper_level_intermediate()
         : m.minesweeper_level_expert();
-  }
-
-  /** Puts the blank board of the level about to be played on screen, refitted to its size. */
-  function installBlankBoard() {
-    installBoard(createBoard(LEVEL_SPECS[untrack(() => playLevel)].config, null));
-    void afterBoardChange();
   }
 
   /**
@@ -387,7 +379,7 @@
   function centerView() {
     const g = geometry();
     if (!g) return;
-    const fit = fitView(g.viewport, g.board, FIT_INSETS, levelFitCap(board, g.board.width));
+    const fit = fitView(g.viewport, g.board, FIT_INSETS);
     fitScale = fit.scale;
     scale = fit.scale;
     panX = fit.panX;
@@ -417,8 +409,7 @@
     pendingCell = null;
     lastTap = null;
     elapsedMs = 0;
-    // Untracked: this runs inside the effect that starts a game, which must not restart on a level change.
-    installBoard(createBoard(LEVEL_SPECS[untrack(() => playLevel)].config, null));
+    installBoard(createBoard(DEFAULT_CONFIG));
   }
 
   /** Waits for the DOM to settle after a board change, then fits/centers the viewport. */
@@ -447,11 +438,11 @@
    */
   /**
    * An unseeded, unranked board: no challenge, nothing to submit. `spec` is the chosen level in
-   * Libre, and Expert's board when a ranked start fell back (the player tapped on that board).
+   * Libre, and Expert's when a ranked start fell back (the player tapped on that board).
    */
   function startCasualBoard(spec: LevelSpec) {
     console.debug('[minesweeper] casual board', spec);
-    installBoard(createBoard(spec.config, null, spec.generator));
+    installBoard(createBoard(spec.config, null, spec.generator, spec.targetScore));
     challengeId = null;
     rankedMode = false;
     challengeRoundTripMs = undefined;
@@ -609,7 +600,7 @@
       }
       const g = geometry();
       if (!g) return;
-      fitScale = fitView(g.viewport, g.board, FIT_INSETS, levelFitCap(board, g.board.width)).scale;
+      fitScale = fitView(g.viewport, g.board, FIT_INSETS).scale;
       applyView({ scale, panX, panY });
     });
     observer.observe(viewportEl);

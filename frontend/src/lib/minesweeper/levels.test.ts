@@ -1,16 +1,17 @@
 // @vitest-environment happy-dom
 /**
- * THE UNRANKED LEVELS (owner, 2026-11-25): Debutant 9x9 / 10, Intermediaire 16x16 / 40 on generator 1
- * (guess-free, simple deductions), Expert the ranked board. Pinned: the specs, that each level's board
- * has its size and mines and is cleared by the solver from the first click (fixed seeds, so the work is
- * reproducible), the picker's cycle, and the stored choice with its default.
+ * THE UNRANKED LEVELS (owner, 2026-11-25), BY GENERATION AND NOT BY SIZE: every level plays the ranked
+ * board's size on generator 2 and differs only by the reasoning score the generator climbs to; Expert IS
+ * the ranked board. Pinned: the specs, that each level's board has the ranked size and mines and names
+ * its own target (fixed seeds, so the work is reproducible), that a higher level really is a harder
+ * board, the picker's cycle, and the stored choice with its default.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CHALLENGE,
   LATEST_GENERATOR_VERSION,
+  V2_TARGET_SCORE,
   createBoard,
-  isSolvableWithoutGuessing,
   revealCell,
 } from './game';
 import {
@@ -29,33 +30,41 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe('LEVEL_SPECS', () => {
-  it('plays the two small levels on generator 1 and Expert on the ranked board', () => {
-    expect(LEVEL_SPECS.beginner).toEqual({
-      config: { width: 9, height: 9, mineCount: 10 },
-      generator: 1,
-    });
-    expect(LEVEL_SPECS.intermediate).toEqual({
-      config: { width: 16, height: 16, mineCount: 40 },
-      generator: 1,
-    });
-    expect(LEVEL_SPECS.expert).toEqual({ config: CHALLENGE, generator: LATEST_GENERATOR_VERSION });
+  it('plays every level on the ranked size and generator, and Expert on the ranked target', () => {
+    for (const level of LEVELS) {
+      expect(LEVEL_SPECS[level].config).toEqual(CHALLENGE);
+      expect(LEVEL_SPECS[level].generator).toBe(LATEST_GENERATOR_VERSION);
+    }
+    expect(LEVEL_SPECS.expert.targetScore).toBe(V2_TARGET_SCORE);
   });
 
-  for (const level of ['beginner', 'intermediate'] as const) {
-    it(`generates ${level} boards of the right size and mines, guess-free from the first click`, () => {
-      const { config, generator } = LEVEL_SPECS[level];
-      for (let s = 0; s < 8; s++) {
-        const board = createBoard(config, `${level}-fixture-${s}`, generator);
-        const x = Math.floor(config.width / 2);
-        const y = Math.floor(config.height / 2);
-        revealCell(board, x, y);
-        expect(board.cells).toHaveLength(config.width * config.height);
+  it('asks a higher level for a higher target, easiest first', () => {
+    const targets = LEVELS.map((level) => LEVEL_SPECS[level].targetScore);
+    expect(targets).toEqual([...targets].sort((a, b) => a - b));
+    expect(new Set(targets).size).toBe(LEVELS.length);
+  });
+
+  it('generates boards of the ranked size and mines, each naming its level target, harder upward', () => {
+    const mean: Record<string, number> = {};
+    for (const level of LEVELS) {
+      const { config, generator, targetScore } = LEVEL_SPECS[level];
+      let total = 0;
+      for (let s = 0; s < 3; s++) {
+        const board = createBoard(config, `${level}-fixture-${s}`, generator, targetScore);
+        revealCell(board, Math.floor(config.width / 2), Math.floor(config.height / 2));
         expect(board.cells.filter((c) => c.mine)).toHaveLength(config.mineCount);
         expect(board.status).toBe('playing');
-        expect(isSolvableWithoutGuessing(board, y * config.width + x)).toBe(true);
+        const report = board.generationReport!;
+        expect(report.targetScore).toBe(targetScore);
+        // Guess-free is the generator's contract at every level, not a property of the hard ones.
+        expect(report.fellBack).toBe(false);
+        total += report.score;
       }
-    });
-  }
+      mean[level] = total / 3;
+    }
+    expect(mean.beginner).toBeLessThan(mean.intermediate);
+    expect(mean.intermediate).toBeLessThan(mean.expert);
+  });
 });
 
 describe('the level picker and its stored choice', () => {
