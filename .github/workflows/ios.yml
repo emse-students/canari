@@ -968,9 +968,11 @@ jobs:
               echo "TestFlight, but it was NOT submitted for review: Apple's single version slot is"
               echo "still held by an earlier version. The message above names it and its state."
               echo
-              echo "**Nothing here needs fixing.** When that version leaves the slot - it ships, or a"
-              echo "human withdraws it in App Store Connect - re-run this job and the submission goes"
-              echo "through. The scheduled store-divergence check will keep saying so until it does."
+              echo "**Nothing here needs doing while that version is in review.** The daily \`stores\` job of"
+              echo "\`scheduled.yml\` reports this stable as \`queued\` (a pass) and, the first morning the slot"
+              echo "frees, submits the latest stable by itself (\`submit.mjs --catch-up\`) - this one, unless a"
+              echo "newer stable is out by then. If the occupant is approved and WAITING FOR ITS DEVELOPER"
+              echo "RELEASE, no clock frees it: that report stays red (\`slot-held\`) until a human releases it."
             } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
