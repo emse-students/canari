@@ -560,6 +560,27 @@ describe('observeThreadGrowth - the trace of the passes inside a glide', () => {
     stop();
   });
 
+  it('a glide cancelled and not replayed is an end: the listener is disarmed and onGlideEnd fires once', async () => {
+    const { scroller, addRow, layoutReach } = makeThread(Array(20).fill(60), 400);
+    scroller.scrollTop = layoutReach();
+    const ended = vi.fn();
+    const stop = observeThreadGrowth(scroller, atBottom, null, undefined, ended);
+    addRow(70);
+    await flush();
+    expect(ended).not.toHaveBeenCalled();
+    document.documentElement.style.removeProperty('--motion-thread-glide');
+    const warn = vi.spyOn(Log, 'w').mockImplementation(() => {});
+    now = 30;
+    fireResize(); // suspend cancels the glide, play is refused
+    warn.mockRestore();
+    expect(ended).toHaveBeenCalledTimes(1);
+    // Disarmed: a scroll after the end records nothing, and there is no glide to blame anyway.
+    scroller.scrollTop = 0;
+    scroller.dispatchEvent(new Event('scroll'));
+    expect(describeGlideFall(scroller)).toBeNull();
+    stop();
+  });
+
   it('peek reads the running glide without touching it', async () => {
     const { scroller, layoutReach, addRow } = makeThread(Array(20).fill(60), 400);
     scroller.scrollTop = layoutReach();

@@ -31,7 +31,7 @@ write; `pinned`: right after the pin and BEFORE the replay), never with a transf
 Reading it: (a) native anchoring moves `top` at `suspended` with the height UNCHANGED; (b) a clamp
 moves it with a height that shrank; stable in-pass numbers followed by a scroll move 45-70 ms later
 are (b) or an engine move outside the passes (the async case), NOT "nothing found"; (c) a stale
-replay is only a visual offset of the rows and cannot be a `scrollTop` cause. See
+replay is only a visual offset of the rows and cannot be a `scrollTop` cause. The fall line carries no "now top/height/box": the scroll-move lines carry the top. See
 [chat](../frontend/modules/chat.md#the-trace-of-the-passes-inside-a-glide-2026-11-25).
 
 **Reading owed (iPhone 12, Reduce Motion OFF, the first alpha carrying the trace):** with a DM open and

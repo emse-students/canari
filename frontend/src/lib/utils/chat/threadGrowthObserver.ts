@@ -249,6 +249,14 @@ export function observeThreadGrowth(
   });
   glidesByScroller.set(scroller, glide);
   tracesByScroller.set(scroller, { trace, glide });
+  // A GLIDE THAT `suspend` CANCELLED AND NO `play` TOOK UP (a new travel under GLIDE_MIN_PX, tokens that
+  // do not resolve) is an END nobody delivers: no `finish` follows and `suspend` of a live glide
+  // tells nothing. The rows are back at their place, so the trace's listener is disarmed and the pane
+  // re-measures, as for every other end.
+  const endUnreplayed = () => {
+    disarmTrace();
+    onGlideEnd?.();
+  };
   /**
    * `added`: the elements this change inserted, whose bubbles wait out a glide that makes room for
    * them (`.motion-bubble-in[data-glide-entrance]`) - a bubble that arrives without one fades at once.
@@ -358,7 +366,7 @@ export function observeThreadGrowth(
           inGlide === null
         );
         armTrace();
-      }
+      } else if (held) endUnreplayed();
     } else if (held) {
       if (glide.play(held.px, held.time)) {
         trace.record(
@@ -375,7 +383,7 @@ export function observeThreadGrowth(
           },
           false
         );
-      }
+      } else endUnreplayed();
     }
     previousClientHeight = scroller.clientHeight;
     captureAnchor();

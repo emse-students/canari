@@ -4000,7 +4000,7 @@ replay 70px at 55ms`. `top/height/box` is `scrollTop/scrollHeight/clientHeight`,
 layout is clean (`suspended`, after the transforms are cancelled; `pinned`, after the pin and before
 the replay). Native anchoring (a) moves `top` at `suspended` with the height unchanged; a clamp (b)
 with a shrunk height; stable pass numbers and a later scroll move are (b) or an engine move outside
-the passes - not "nothing found"; (c) is only a visual offset. Pinned by `threadGlide.test.ts`.
+the passes - not "nothing found"; (c) is only a visual offset. The fall line carries NO "now top/height/box": the scroll-move lines carry the top. A glide cancelled by a pass whose replay is refused is an end too (`endUnreplayed`: the trace listener is disarmed and `onGlideEnd` fires). Pinned by `threadGlide.test.ts`.
 
 #### Rows before ratchet: a checkpoint stores the buffered rows first (2026-11-17)
 
