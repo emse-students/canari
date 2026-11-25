@@ -137,17 +137,19 @@ fi
 # A CHECK NEVER SEEN RED PROVES NOTHING. Each of these, planted and then removed, must turn it red: a
 # grant the applier would not revoke (an object permission on one user), a write through another path
 # (a deletion recorded as the account's), a PATCH of a user made after the older path closed (a write
-# whose path was once expected, past its cutoff), a second token for the account, and a second
-# policy binding on the write flow.
+# whose path was once expected, past its cutoff), a second token for the account, a second
+# policy binding on the write flow, and on a gated provider the refresh grant or an offline_access
+# mapping (part 4, the read-only form of test-refresh-gate.py's check).
 # It tests the DETECTOR, which an upgrade does not change, so it runs on a fresh instance only (the
 # CI job's fresh leg); the upgraded leg runs the cutoff's own checks below.
 if [ -z "${PREVIOUS_REF:-}" ]; then
-for plant in grant write patch token binding; do
+for plant in grant write patch token binding refresh offline; do
   run_ak_shell "$worker" >/dev/null 2>&1 <<PY
 from authentik.core.models import Token, TokenIntents, User
 from authentik.events.models import Event
 from authentik.flows.models import Flow
 from authentik.policies.models import PolicyBinding
+from authentik.providers.oauth2.models import OAuth2Provider, ScopeMapping
 editor = User.objects.get(username="miconnect-canari-editor")
 other = User.objects.exclude(pk=editor.pk).exclude(type="internal_service_account").first()
 def planted(method, path, action):
@@ -160,6 +162,12 @@ elif "$plant" == "patch":
     planted("PATCH", "/api/v3/core/users/1/", "model_updated")
 elif "$plant" == "token":
     Token.objects.create(identifier="editor-reach-planted", user=editor, intent=TokenIntents.INTENT_API, expiring=False)
+elif "$plant" == "refresh":
+    provider = OAuth2Provider.objects.get(name="miconnect-migallery")
+    provider.grant_types = [*provider.grant_types, "refresh_token"]
+    provider.save()
+elif "$plant" == "offline":
+    OAuth2Provider.objects.get(name="miconnect-migallery").property_mappings.add(ScopeMapping.objects.get(managed="goauthentik.io/providers/oauth2/scope-offline_access"))
 else:
     PolicyBinding.objects.create(target=Flow.objects.get(slug="miconnect-profile-write"), user=other, order=99)
 PY
@@ -178,6 +186,11 @@ if role is not None:
 Event.objects.filter(app="test", user__username=editor.username).delete()
 Token.objects.filter(identifier="editor-reach-planted").delete()
 PolicyBinding.objects.filter(target__flow__slug="miconnect-profile-write", order=99).delete()
+from authentik.providers.oauth2.models import OAuth2Provider, ScopeMapping
+provider = OAuth2Provider.objects.get(name="miconnect-migallery")
+provider.grant_types = [g for g in provider.grant_types if g != "refresh_token"]
+provider.save()
+provider.property_mappings.remove(*ScopeMapping.objects.filter(scope_name="offline_access"))
 PY
 done
 if ! bash "$here/editor-reach.sh" "$here/blueprints/80-profile-editor.yaml" "$worker" >/dev/null 2>&1; then

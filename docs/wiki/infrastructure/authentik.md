@@ -774,6 +774,13 @@ with the grant type put back for one request, refreshes - the hole the rule clos
 token's own scope carries `offline_access` past the missing mapping. Binding a policy to another
 application turns its provider red here until its refresh grant is closed too.
 
+**And on production, daily, read-only.** Part 4 of `editor-reach.py` (the `drift` job of
+`scheduled.yml`, through `editor-reach.sh`, which reads the released tree's `50-providers.yaml` beside the
+`80-profile-editor.yaml` it is given) reports a `FINDING` for any provider of an application with a policy
+binding that carries an `offline_access` mapping, or - once the released file closes the D43 providers,
+i.e. from the stable carrying this - the `refresh_token` grant. A grant or mapping added in the admin
+turns the daily job red, by name. `test-blueprints.sh` plants each (`refresh`, `offline`) and requires it red.
+
 **The known design, for the day a site needs a refresh.** A scope mapping can make the refresh re-read
 the bindings: as the provider's ONLY `offline_access` mapping, it is evaluated at every refresh that can
 mint (`views/token.py:180-184` require `offline_access`, and `IDToken.new` evaluates the token's scope
