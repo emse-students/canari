@@ -2072,6 +2072,16 @@ async function upsertConversation(
       // batch) are routed to the new one by this fact, never dropped as removed (review of #4054).
       recordConversationMove(newConvoKey, joinedGroupId);
       conversations.delete(newConvoKey);
+      // The reactions drawn for its messages are keyed by conversation as their rows are: they
+      // follow the thread onto the joined group, or the screen would draw it bare.
+      const carried = deps.messageReactions.move(
+        newConvoKey,
+        joinedGroupId,
+        (existing.messages ?? []).map((m) => m.id)
+      );
+      deps.log(
+        `[WELCOME] ${oldId.slice(0, 8)}… re-keyed in memory onto ${joinedGroupId.slice(0, 8)}…, ${carried} message(s)' reactions carried`
+      );
       newConvoKey = joinedGroupId;
       conversations.set(newConvoKey, updated);
       // The rows move only once the joined group's row is on disk: moved under a conversation the

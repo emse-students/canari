@@ -1,5 +1,6 @@
 import { handleSystemEvent } from './systemMessageHandler';
 import { m } from '$lib/paraglide/messages';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 /**
  * A deletion reaches its target wherever the target is - shown, stored but not shown, or not here
@@ -50,7 +51,7 @@ function makeCtx(rows: Record<string, any>, senderNorm = PEER) {
     userId: 'me',
     deviceKey: () => 'device-key',
     conversations,
-    messageReactions: new Map(),
+    messageReactions: new ReactionsByConversation(),
     addMessageToChat: vi.fn(),
     batchAddMessages: vi.fn(),
     deleteConversation: vi.fn(),

@@ -6,6 +6,7 @@
  * (`reactionFrame.unstoredWrite.test.ts`).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 const keepPendingMutation = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock('$lib/utils/chat/pendingMutationStore', async (original) => ({
@@ -42,7 +43,7 @@ function makeCtx(mergeMessages: ReturnType<typeof vi.fn>) {
     userId: 'me',
     deviceKey: () => 'device-key',
     conversations,
-    messageReactions: new Map(),
+    messageReactions: new ReactionsByConversation(),
     addMessageToChat: vi.fn(),
     batchAddMessages: vi.fn(),
     deleteConversation: vi.fn(),

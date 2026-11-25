@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { canari } from '$lib/proto/canari.js';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 // A replayed notice resolves its actor's name: offline here, so the replay never reaches the network.
 vi.mock('$lib/utils/users/displayName', () => ({
@@ -109,7 +110,7 @@ async function replayFrame(
     setConversation: (_name, next) => {
       convo = next;
     },
-    messageReactions: new Map(),
+    messageReactions: new ReactionsByConversation(),
     reactionUpdates: sinks.reactionUpdates,
     rowPatches: sinks.rowPatches,
     pendingById: sinks.pendingById,

@@ -7,8 +7,8 @@
  * reaction it reads to the parked decision - only that row, only once - and every other reaction on
  * the page stays silent (Mi 9T, 1.7.0-alpha.10, 2026-11-18).
  */
-import { SvelteMap } from 'svelte/reactivity';
 import type { Conversation } from '$lib/types';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 const listMessages = vi.hoisted(() => vi.fn());
 const listReadMarks = vi.hoisted(() => vi.fn());
@@ -71,7 +71,7 @@ function makeCtx() {
     userId: 'me',
     deviceKeyB64: 'k',
     historyBaseUrl: '',
-    messageReactions: new SvelteMap(),
+    messageReactions: new ReactionsByConversation(),
     log: vi.fn(),
     addMessageToChat: vi.fn(),
   } as never;

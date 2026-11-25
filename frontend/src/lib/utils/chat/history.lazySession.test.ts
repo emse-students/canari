@@ -15,6 +15,7 @@
 import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceStub';
 import { toBase64 } from '$lib/utils/hex';
 import { replayConversationHistory, resetSeenCipherCacheForTests } from './history';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 const USER = 'user-1';
 const GROUP = 'group-1';
@@ -62,7 +63,7 @@ const replay = async (rows: ReturnType<typeof rowFrom>[]) => {
     storage: null,
     getConversation: () => undefined,
     setConversation: () => undefined,
-    messageReactions: new Map(),
+    messageReactions: new ReactionsByConversation(),
     log: () => undefined,
     primedFirstPage: { rows },
   });

@@ -7,6 +7,7 @@ import { envelopeBodyText, mkTextEnvelope, parseEnvelope, serializeEnvelope } fr
 import type { RecordedAuthorship } from '$lib/crypto/messageAuthorship';
 import { keySource } from '$lib/crypto/messageAuthorship.testKit';
 import { readMarkTarget } from './readState';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 /** A signature as mls-core left it on a replayed frame - opaque here, only carried. */
 const SIGNED: RecordedAuthorship = { body: 'Ym9keQ==', proof: 'cHJvb2Y=', group: 'group-1' };
@@ -105,7 +106,7 @@ async function replay(
     setConversation: (_name, next) => {
       convo = next;
     },
-    messageReactions: new Map(),
+    messageReactions: new ReactionsByConversation(),
     reactionUpdates: sinks.reactionUpdates,
     authorKeys: keySource({}),
     nicknameRoster: {

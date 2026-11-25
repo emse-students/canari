@@ -177,7 +177,11 @@ function makeStorage(seed: OutboxEntry[] = []) {
     saveMessage: storageSink,
     // The stored message rows - only what a test seeds; the flusher reads them to keep their proofs.
     _messages: rows,
-    getMessage: vi.fn(async (id: string) => rows.get(id) ?? null),
+    getMessage: vi.fn(async (_conversationId: string, id: string) => rows.get(id) ?? null),
+    findMessageConversations: vi.fn(async (id: string) => {
+      const row = rows.get(id);
+      return row ? [row.conversationId] : [];
+    }),
     // A compare-and-set over the seeded rows (a seed with no conversation stands in any): the
     // merged row lands in `saveMessage`, the one sink the assertions read; an absent row is not
     // written, as in the real stores.
@@ -572,6 +576,35 @@ describe('outbox flusher', () => {
 
     expect(storage._messages.get('m1')).toMatchObject({
       reactions: [bob],
+      serverTimestamp: 1_700_000_000_000,
+    });
+  });
+
+  it('an echo already stored under the live conversation keeps what it holds: its tombstone, reactions and recorded 410 survive the send', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const bob = { userId: 'bob', emoji: 'x', at: 5 };
+    // Another tab deleted it and a peer reacted while the frame was in flight; a reel's 410 was
+    // recorded on it. The send is folded onto that row, never written over it from the screen.
+    storage._messages.set('m1', {
+      id: 'm1',
+      conversationId: 'g1',
+      senderId: 'me',
+      content: '',
+      timestamp: 100,
+      isDeleted: true,
+      reactions: [bob],
+      mediaPurgedAt: 42,
+    } as StoredMessage);
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['m1'])]]);
+    const outbox = createOutbox(makeDeps({ mlsService: makeMls(), storage, conversations }));
+
+    await outbox.flush();
+
+    expect(storage._messages.get('m1')).toMatchObject({
+      isDeleted: true,
+      content: '',
+      reactions: [bob],
+      mediaPurgedAt: 42,
       serverTimestamp: 1_700_000_000_000,
     });
   });

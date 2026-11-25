@@ -15,6 +15,7 @@ import type { LoginErrorCode } from './loginErrors';
 import type { PinIntent } from './pinUnlock';
 import type { HardwareKeyRefusal } from '$lib/crypto/hardwareHeldKey';
 import type { AddMessageToChatOptions, Conversation, MessageBatchOrigin } from '$lib/types';
+import type { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 /**
  * The conditions the MLS fatal-error banner can state. `restore_shortfall` is the startup restore
@@ -137,7 +138,7 @@ export interface ChatSessionCallbacks extends Pick<
    * out and redirect straight to /login rather than surface a message in the modal. */
   onSessionExpired?: (outcome?: SessionExpiredOutcome) => void;
   log: (msg: string) => void;
-  messageReactions: SvelteMap<string, any[]>;
+  messageReactions: ReactionsByConversation;
   getSelectedContact: () => string | null;
   setSelectedContact: (v: string | null) => void;
   onLoadHistoryForConversation: (contactName: string, groupId: string) => Promise<void>;

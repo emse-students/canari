@@ -6,8 +6,8 @@
  * indistinguishable from one that genuinely had no history - reported from a real phone as
  * "no history when opening via a notification".
  */
-import { SvelteMap } from 'svelte/reactivity';
 import type { Conversation } from '$lib/types';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 const replayConversationHistory = vi.hoisted(() => vi.fn());
 const readHistoryStreamCursor = vi.hoisted(() => vi.fn());
@@ -52,7 +52,7 @@ function makeCtx() {
       ensureMls: () => mls,
       userId: 'u1',
       deviceKeyB64: 'k',
-      messageReactions: new SvelteMap(),
+      messageReactions: new ReactionsByConversation(),
       log,
       addMessageToChat: vi.fn(),
     } as never,

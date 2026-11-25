@@ -7,9 +7,9 @@
  * failure to reach anybody is reported rather than swallowed, because "nobody was online" is the one
  * outcome the reader has to be told about.
  */
-import { SvelteMap } from 'svelte/reactivity';
 import type { Conversation } from '$lib/types';
 import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 const historyRangeStartFor = vi.hoisted(() => vi.fn());
 const sendHistoryRangeRequest = vi.hoisted(() => vi.fn());
@@ -75,7 +75,7 @@ function makeCtx(over: { storage?: unknown; election?: unknown } = {}) {
       userId: 'u1',
       deviceKeyB64: 'k',
       historyBaseUrl: 'https://example.test',
-      messageReactions: new SvelteMap(),
+      messageReactions: new ReactionsByConversation(),
       log: vi.fn(),
       addMessageToChat: vi.fn(),
     } as never,

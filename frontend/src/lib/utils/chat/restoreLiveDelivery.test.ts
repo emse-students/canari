@@ -12,6 +12,7 @@
  */
 import { SvelteMap } from 'svelte/reactivity';
 import type { Conversation, ChatMessage } from '$lib/types';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   globalMessaging: { isMessageCatchupActive: false, resetMessageCatchupState: vi.fn() },
@@ -85,7 +86,7 @@ function restore(
     storage: store,
     mlsService,
     conversations,
-    messageReactions: new SvelteMap(),
+    messageReactions: new ReactionsByConversation(),
     userId: 'u1',
     deviceKeyB64: 'k',
     archivedConversationIds: [],

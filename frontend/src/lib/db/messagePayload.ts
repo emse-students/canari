@@ -162,3 +162,15 @@ export function fromMessagePayload(
     isFcmPreview: payload.isFcmPreview === true ? true : undefined,
   };
 }
+
+/**
+ * The one conversation of a batch handed to `saveMessagesIfAbsent`, which answers in message ids and
+ * so is asked about ONE conversation per call: the same id may stand in two.
+ */
+export function singleConversationOf(msgs: readonly StoredMessage[]): string {
+  const ids = new Set(msgs.map((m) => m.conversationId));
+  if (ids.size !== 1) {
+    throw new Error(`saveMessagesIfAbsent takes one conversation per call, got ${ids.size}`);
+  }
+  return msgs[0].conversationId;
+}

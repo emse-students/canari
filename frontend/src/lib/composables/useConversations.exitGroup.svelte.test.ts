@@ -14,11 +14,11 @@
  * asserting the final state passes on the broken code too, because the row does get purged in the
  * end. The window is where the two paths overlapped, so the window is where the assertion belongs.
  */
-import { SvelteMap } from 'svelte/reactivity';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import type { Conversation } from '$lib/types';
 import { GroupExitRefusedError } from '$lib/mls-client/mlsDeliveryApi';
 import { owedDmReadMarks, recordDmReadMark } from '$lib/utils/chat/salonReadMarkQueue';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 const isGroupActiveOnServer = vi.hoisted(() => vi.fn());
 const leaveGroupAndBroadcast = vi.hoisted(() => vi.fn());
@@ -107,7 +107,7 @@ function makeCtx(storage: ReturnType<typeof makeExitStorage> | null = null) {
       ensureMls: () => mls,
       userId: 'u1',
       deviceKeyB64: 'k',
-      messageReactions: new SvelteMap(),
+      messageReactions: new ReactionsByConversation(),
       log,
       addMessageToChat: vi.fn(),
     } as never,

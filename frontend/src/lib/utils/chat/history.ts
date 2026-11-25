@@ -52,6 +52,7 @@ import {
   type DeferredMutation,
   type PendingMutationDeps,
 } from './pendingMutationStore';
+import type { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 /**
  * The newest time THE SERVER stamped on a page of its history log (`timestamp` is the `receivedAt`
@@ -719,7 +720,7 @@ export async function replayConversationHistory(params: {
   setConversation: (contactName: string, next: Conversation) => void;
   /** Persists the conversation's metadata row - which is where the read watermarks live. */
   saveConversation?: (contactName: string) => Promise<void>;
-  messageReactions: Map<string, MessageReaction[]>;
+  messageReactions: ReactionsByConversation;
   log: (msg: string) => void;
   /** First page already fetched (e.g. login batch history) — skipped on the first loop iteration. */
   primedFirstPage?: HistoryPage;
@@ -1199,7 +1200,7 @@ export async function replayConversationHistory(params: {
           } else if (parsed?.reaction) {
             const messageId = parsed.reaction.messageId ?? '';
             const senderNorm = canonicalUserId(msg.sender_id);
-            const reactions = messageReactions.get(messageId) || [];
+            const reactions = messageReactions.get(id, messageId) || [];
             const emoji = parsed.reaction.emoji ?? '';
             const shown = getConversation(contactName)?.messages.some((m) => m.id === messageId);
             if (messageId && emoji && !shown) {
@@ -1232,7 +1233,7 @@ export async function replayConversationHistory(params: {
               authorship
             );
             if (!updated) continue; // already held something at least as recent - no-op
-            messageReactions.set(messageId, updated);
+            messageReactions.set(id, messageId, updated);
             reactionUpdates.set(messageId, updated);
             mlsUpdated = true;
             continue;

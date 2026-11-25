@@ -13,7 +13,7 @@
  * older state of the same pair. Each entry is removed only at the rank it was read at
  * (`deletePendingMutations`), so a newer one kept meanwhile survives the removal of an older.
  */
-import type { Conversation, ChatMessage, MessageReaction } from '$lib/types';
+import type { Conversation, ChatMessage } from '$lib/types';
 import type { IStorage, PendingMutation, StoredMessagePatch, StoredRowsById } from '$lib/db/types';
 import { mergeStoredMessage } from '$lib/db/messagePayload';
 import { classifyRowWriteFailure } from '$lib/db/rowWriteFailure';
@@ -25,6 +25,7 @@ import {
   type Settlement,
   type SettleTarget,
 } from './pendingMutations';
+import type { ReactionsByConversation } from './reactionsByConversation';
 
 /** A keyed slot read and written whole - a `SvelteMap`, or the archive replay's accessors. */
 export interface KeyedSlots<V> {
@@ -37,8 +38,8 @@ export interface PendingMutationDeps {
   storage: IStorage | null;
   deviceKey: () => string;
   conversations: KeyedSlots<Conversation>;
-  /** What the screen draws a message's reactions from. */
-  messageReactions: KeyedSlots<MessageReaction[]>;
+  /** What the screen draws a message's reactions from, by conversation and message. */
+  messageReactions: Pick<ReactionsByConversation, 'get' | 'set'>;
   log: (msg: string) => void;
 }
 
@@ -593,7 +594,7 @@ function showSettled(
   id: string,
   fields: SettledFields
 ): void {
-  if (fields.reactions) deps.messageReactions.set(id, fields.reactions);
+  if (fields.reactions) deps.messageReactions.set(conversationId, id, fields.reactions);
   const c = deps.conversations.get(conversationId);
   if (!c || !c.messages.some((row) => row.id === id)) return;
   deps.conversations.set(conversationId, {

@@ -32,8 +32,9 @@ import type { ChatReelHoldAnswer, MediaRef } from '$lib/media';
 import type { MediaLoudness } from '$lib/video/loudnessMeter';
 import type { ReleaseAnswer } from './uploadReleaseMarks';
 import type { PublishedReelUpload } from '$lib/reels/publishReel';
-import { recordOwnAuthorship, type RecordedAuthorship } from '$lib/crypto/messageAuthorship';
+import { recordOwnAuthorship } from '$lib/crypto/messageAuthorship';
 import { canonicalUserId } from '$lib/mls-client/leafIdentity';
+import { ownStoredMessage } from '$lib/utils/chat/ownStoredMessage';
 import {
   decodeAppMessage,
   encodeAppMessage,
@@ -435,14 +436,6 @@ export function isLocalAttachmentFailure(e: unknown): boolean {
 }
 
 const textEncoder = new TextEncoder();
-
-/** The author proofs a stored row carries, which only the stored row holds. */
-interface StoredProofs {
-  authorship?: RecordedAuthorship;
-  editProof?: RecordedAuthorship;
-  deleteProof?: RecordedAuthorship;
-  restoredUnverified?: boolean;
-}
 
 /**
  * The body a sent message is stored with: the copy on screen, unless the STORED row holds a later
@@ -1714,7 +1707,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     }
     try {
       await storage.updateMessage(conversationId, messageId, { unsentReason: reason }, deviceKey());
-      const back = await storage.getMessage(messageId, deviceKey());
+      const back = await storage.getMessage(conversationId, messageId, deviceKey());
       if (!back) lost('its row is absent or undecryptable');
       else if (back.unsentReason !== reason) lost('the row read back does not carry it');
     } catch (e) {
@@ -1722,11 +1715,16 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     }
   }
 
-  /** See {@link OutboxController.storedUnsentReason}. */
+  /**
+   * See {@link OutboxController.storedUnsentReason}. The bubble knows only its own message's id, so
+   * the row is the one THIS ACCOUNT authored under it (`ownStoredMessage`).
+   */
   async function storedUnsentReason(messageId: string): Promise<UnsentReason | null> {
     if (!storage) return null;
     try {
-      return (await storage.getMessage(messageId, deviceKey()))?.unsentReason ?? null;
+      return (
+        (await ownStoredMessage(storage, messageId, deps.userId, deviceKey()))?.unsentReason ?? null
+      );
     } catch (e) {
       log(
         `[OUTBOX] storedUnsentReason ${messageId.slice(0, 8)}…: reading the row failed: ${String(e)}`
@@ -1810,31 +1808,13 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   }
 
   /**
-   * The author proofs the stored row already holds, so the full-row write below keeps them. A read
-   * failure is logged and answers none: the row it would have kept is unreadable anyway.
-   */
-  async function storedProofs(messageId: string): Promise<StoredProofs> {
-    if (!storage) return {};
-    const row = await storage.getMessage(messageId, deviceKey()).catch((e: unknown) => {
-      log(
-        `[OUTBOX] ${messageId.slice(0, 8)}… stored row unreadable - its author proofs are not carried: ${String(e)}`
-      );
-      return null;
-    });
-    if (!row) return {};
-    return {
-      authorship: row.authorship ?? undefined,
-      editProof: row.editProof ?? undefined,
-      deleteProof: row.deleteProof ?? undefined,
-      restoredUnverified: row.restoredUnverified,
-    };
-  }
-
-  /**
    * Persist the sent message to the encrypted messages store under the live conversation key, with
    * THIS DEVICE'S OWN SIGNATURE on what it just sent (`own`): the message's proof for a message, the
    * edit's or the deletion's for a control frame, the reaction's on the reaction it set - so a
-   * history bundle this device writes later proves its own words too.
+   * history bundle this device writes later proves its own words too. The send is addressed to the
+   * conversation its entry names (`terminalId` is `entry.conversationId`), which is where its row
+   * was written at the tap: a thread re-keyed since is the Welcome's and the boot merge's move
+   * (`moveMessages`), never this one's.
    */
   async function persistSent(
     liveConvId: string,
@@ -1879,9 +1859,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // (a queued attachment's real envelope) unless the row is a tombstone, the server's time, and
     // the signature above - folded onto the row as it stands, so a reaction or a deletion stored
     // since the send began is kept, never written over from the copy on screen.
-    let written: Set<string>;
-    try {
-      written = await storage.mergeMessages(
+    const foldSend = () =>
+      storage.mergeMessages(
         liveConvId,
         [messageId],
         (current) =>
@@ -1893,19 +1872,18 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           }),
         deviceKey()
       );
+    try {
+      if ((await foldSend()).has(messageId)) return;
     } catch (e) {
       log(`[OUTBOX] Persist sent ${messageId.slice(0, 8)}… failed: ${String(e)}`);
       return;
     }
-    if (written.has(messageId)) return;
-    // NO ROW UNDER `liveConvId`: the group was re-keyed mid-send, so the optimistic row stands under
-    // the key it was written with, and a scoped compare-and-set cannot move it. This is a MOVE, and
-    // the one whole-row write left here: built from the stored proofs and the copy on screen, which
-    // is all the sending device holds of its own message; said, because it is rare.
+    // NO ROW UNDER `liveConvId`: the one whole-row write left here, built from the copy on screen and this send's own signature - all the sending device
+    // holds of its own message; said, because it is rare.
     log(
-      `[OUTBOX] ${messageId.slice(0, 8)}… has no row under ${liveConvId.slice(0, 8)}… - written there whole (re-keyed mid-send)`
+      `[OUTBOX] ${messageId.slice(0, 8)}… has no stored row under ${liveConvId.slice(0, 8)}… - written there whole`
     );
-    const proofs = { ...(await storedProofs(messageId)), ...own_ };
+    const proofs = { ...own_ };
     const reactions = reactionSigned ? reactionSigned(m.reactions) : m.reactions;
     // ASKED AND REGISTERED IN ONE STEP, after the awaits above (`conversationRowWrites.ts`, review
     // of #3992): a whole-row write is an INSERT where no row stands, and a removal of the group's
@@ -1974,15 +1952,19 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     conversations.set(found.key, { ...found.convo, messages });
   }
 
-  /** This device's copy of the quoted message - in memory, else the store - or `null` if it holds none. */
+  /**
+   * This device's copy of the quoted message - in memory, else the store, read in the reply's own
+   * conversation (a quote names a message of the conversation it is sent in) - or `null` if it holds
+   * none.
+   */
   async function quotedCopy(
-    messageId: string,
-    conversationId: string
+    conversationId: string,
+    messageId: string
   ): Promise<PlaceableMessage | null> {
     const found = findMessage(messageId, conversationId, false);
     if (found) return found.convo.messages[found.idx];
     if (!storage) return null;
-    return storage.getMessage(messageId, deviceKey()).catch((e: unknown) => {
+    return storage.getMessage(conversationId, messageId, deviceKey()).catch((e: unknown) => {
       // Unreadable is not absent: rethrown so the reply waits rather than losing its quote.
       log(`[OUTBOX] quoted ${messageId.slice(0, 8)}… unreadable from the store: ${String(e)}`);
       throw e;
@@ -2017,7 +1999,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     const kept = { entry, commit: async () => {} };
     // A reply is a text reply OR a file sent as one (a `media` entry carrying its quote).
     if ((entry.kind !== 'reply' && entry.kind !== 'media') || !entry.replyTo?.preview) return kept;
-    const quoted = await quotedCopy(entry.replyTo.id, entry.conversationId);
+    const quoted = await quotedCopy(entry.conversationId, entry.replyTo.id);
     let entitled: boolean;
     try {
       entitled = await quotePreviewEntitled(entry.conversationId, quoted, { mlsService, log });
@@ -2854,7 +2836,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     if (!holder) return;
     let stored: Awaited<ReturnType<IStorage['getMessage']>>;
     try {
-      stored = await storage.getMessage(entry.id, deviceKey());
+      stored = await storage.getMessage(entry.conversationId, entry.id, deviceKey());
     } catch (e) {
       log(`[OUTBOX] ${entry.id.slice(0, 8)}… queued row not read back: ${String(e)}`);
       return;
@@ -4921,7 +4903,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         }
         for (const send of record.take?.sends ?? []) {
           if (!send.sent || send.deleted) continue;
-          const message = await storage.getMessage(send.id, deviceKey());
+          // THE ROW WHERE IT STANDS NOW, not where the press queued it: a 1:1 re-key (the Welcome)
+          // or a thread merged since (the boot merge) moved its row to another conversation. It is
+          // this account's own message under an id this device minted (`ownStoredMessage`).
+          const message = await ownStoredMessage(storage, send.id, deps.userId, deviceKey());
           if (!message?.isDeleted) continue;
           await reelSendDeletedHere(send.id);
           rederived++;

@@ -9,6 +9,7 @@ import {
   resetHistoryDigestRendezvousForTests,
 } from '$lib/utils/chat/historyDigestRendezvous';
 import { flushMacrotask } from '../../../test/flush';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 /**
  * A HISTORY ASK WITH NO `requestId` IS MALFORMED, NEVER AN OLDER CLIENT (D211).
@@ -63,7 +64,7 @@ function makeCtx() {
     userId: ME,
     deviceKey: () => 'device-key',
     conversations,
-    messageReactions: new Map(),
+    messageReactions: new ReactionsByConversation(),
     addMessageToChat: vi.fn(),
     batchAddMessages: vi.fn(),
     deleteConversation: vi.fn(),

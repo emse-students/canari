@@ -5,6 +5,7 @@ import {
   resetHistoryDigestRendezvousForTests,
 } from '$lib/utils/chat/historyDigestRendezvous';
 import { flushMacrotask } from '../../../test/flush';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 /**
  * A DIGEST THAT ARRIVES AFTER THE RESPONDER STOPPED WAITING FOR IT.
@@ -56,7 +57,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     userId: ME,
     deviceKey: () => 'device-key',
     conversations,
-    messageReactions: new Map(),
+    messageReactions: new ReactionsByConversation(),
     addMessageToChat: vi.fn(),
     batchAddMessages: vi.fn(),
     deleteConversation: vi.fn(),

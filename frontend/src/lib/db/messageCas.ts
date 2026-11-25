@@ -42,19 +42,17 @@ export interface RevisedWrite {
 /** What a backend provides for {@link casMergeMessages}. */
 export interface RevisedRowStore {
   /**
-   * The rows under `ids` with their revision - scoped to `conversationId` when one is given (a row of
-   * another conversation reads as absent, said at warn unless `foreignExpected`). An absent or
-   * unreadable row is simply not in the map.
+   * The rows of `conversationId` under `ids` with their revision, read by their key
+   * `(conversationId, id)`. An absent or unreadable row is simply not in the map.
    */
   read(
-    conversationId: string | null,
+    conversationId: string,
     ids: readonly string[],
-    deviceKeyB64: string,
-    foreignExpected: boolean
+    deviceKeyB64: string
   ): Promise<{ rows: Map<string, RevisedRow> }>;
   /** Writes each row only while its token is still `rev` and `stamp`; resolves with the ids written. */
   writeIfUnchanged(
-    conversationId: string | null,
+    conversationId: string,
     writes: ReadonlyArray<RevisedWrite>,
     deviceKeyB64: string
   ): Promise<Set<string>>;
@@ -67,17 +65,16 @@ export interface RevisedRowStore {
  */
 export async function casMergeMessages(
   store: RevisedRowStore,
-  conversationId: string | null,
+  conversationId: string,
   ids: readonly string[],
   merge: StoredMessageMerge,
-  deviceKeyB64: string,
-  foreignExpected = false
+  deviceKeyB64: string
 ): Promise<Set<string>> {
   const written = new Set<string>();
   let pending = [...new Set(ids)];
   let round = 0;
   while (pending.length > 0) {
-    const { rows } = await store.read(conversationId, pending, deviceKeyB64, foreignExpected);
+    const { rows } = await store.read(conversationId, pending, deviceKeyB64);
     const writes: RevisedWrite[] = [];
     for (const id of pending) {
       const current = rows.get(id);

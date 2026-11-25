@@ -48,6 +48,9 @@ export const MESSAGE_ROWS_PER_STATEMENT = Math.floor(MAX_BOUND_PARAMETERS / MESS
  * revision (`rev`). The upsert raises it instead, so a compare-and-set that read the row before this
  * write cannot write over it (`messageCas.ts`).
  *
+ * THE CONFLICT IS ON THE ROW'S KEY, `(conversation_id, id)` (v23): a row of one conversation is never
+ * the target of a write for another, and a write never moves a row - a move is `moveMessages`.
+ *
  * The placeholders are numbered across the whole statement (`$1…$6`, `$7…$12`, …) because that is
  * what the plugin's SQLite binding expects; a repeated `$1` per tuple would bind every row to the
  * first message.
@@ -74,7 +77,7 @@ export function messageInsertSql(
   return (
     `INSERT INTO ${columns} VALUES ` +
     tuples.join(', ') +
-    ' ON CONFLICT(id) DO UPDATE SET conversation_id = excluded.conversation_id, timestamp = excluded.timestamp, ' +
+    ' ON CONFLICT(conversation_id, id) DO UPDATE SET timestamp = excluded.timestamp, ' +
     'iv = excluded.iv, cipher_text = excluded.cipher_text, order_at = excluded.order_at, ' +
     'order_pending = excluded.order_pending, rev = messages.rev + 1'
   );
@@ -142,8 +145,11 @@ export function sealedStoreTable(store: SealedStore): { table: string; key: stri
   return SEALED_STORE_TABLES[store];
 }
 
-/** Parameters bound per row in {@link sealedSwapSql}: id+iv, id+cipher, id+expected cipher. */
-export const SEALED_SWAP_COLUMNS = 6;
+/**
+ * Parameters bound per row in {@link sealedSwapStatement}, at most: key+iv, key+cipher, key+expected
+ * cipher, a key being a message row's conversation and id.
+ */
+export const SEALED_SWAP_COLUMNS = 9;
 
 /** Rows per compare-and-swap statement: the largest batch that cannot exceed the parameter ceiling. */
 export const SEALED_SWAP_ROWS_PER_STATEMENT = Math.floor(
@@ -153,6 +159,8 @@ export const SEALED_SWAP_ROWS_PER_STATEMENT = Math.floor(
 /** One row of a sealed swap with its columns already in their TEXT form (base64). */
 export interface SealedSwapText {
   id: string;
+  /** A message row's conversation, the other half of its key; absent for the other stores. */
+  conversationId?: string;
   expected: string;
   iv: string;
   cipherText: string;
@@ -178,17 +186,27 @@ export function sealedSwapStatement(
     params.push(value);
     return `$${params.length}`;
   };
-  const ivCase = swaps.map((s) => `WHEN ${next(s.id)} THEN ${next(s.iv)}`).join(' ');
-  const cipherCase = swaps.map((s) => `WHEN ${next(s.id)} THEN ${next(s.cipherText)}`).join(' ');
+  // A MESSAGE ROW IS NAMED BY ITS CONVERSATION AND ITS ID (v23): the same id may stand in two
+  // conversations, and a `CASE id` would hand both rows the first one's payload.
+  const scoped = store === 'messages';
+  const rowIs = (s: SealedSwapText): string => {
+    if (!scoped) return `${key} = ${next(s.id)}`;
+    if (s.conversationId === undefined) {
+      throw new Error('sealedSwapStatement: a message row is named by its conversation and its id');
+    }
+    return `(conversation_id = ${next(s.conversationId)} AND ${key} = ${next(s.id)})`;
+  };
+  const ivCase = swaps.map((s) => `WHEN ${rowIs(s)} THEN ${next(s.iv)}`).join(' ');
+  const cipherCase = swaps.map((s) => `WHEN ${rowIs(s)} THEN ${next(s.cipherText)}`).join(' ');
   const where = swaps
-    .map((s) => `(${key} = ${next(s.id)} AND cipher_text = ${next(s.expected)})`)
+    .map((s) => `(${rowIs(s)} AND cipher_text = ${next(s.expected)})`)
     .join(' OR ');
   // A message re-sealed is a new revision: a compare-and-set that read it before must retry.
-  const revision = store === 'messages' ? ', rev = rev + 1' : '';
+  const revision = scoped ? ', rev = rev + 1' : '';
   return {
     sql:
-      `UPDATE ${table} SET iv = CASE ${key} ${ivCase} END, ` +
-      `cipher_text = CASE ${key} ${cipherCase} END${revision} WHERE ${where}`,
+      `UPDATE ${table} SET iv = CASE ${ivCase} END, ` +
+      `cipher_text = CASE ${cipherCase} END${revision} WHERE ${where}`,
     params,
   };
 }
@@ -196,9 +214,12 @@ export function sealedSwapStatement(
 /** Parameters bound per row in {@link orderAtFillStatement}: id+key in the CASE, id in the IN list. */
 export const ORDER_AT_FILL_COLUMNS = 3;
 
-/** Rows per order-key fill statement: the largest batch that cannot exceed the parameter ceiling. */
+/**
+ * Rows per order-key fill statement: the largest batch that cannot exceed the parameter ceiling,
+ * beside the one parameter that names the conversation.
+ */
 export const ORDER_AT_FILL_ROWS_PER_STATEMENT = Math.floor(
-  MAX_BOUND_PARAMETERS / ORDER_AT_FILL_COLUMNS
+  (MAX_BOUND_PARAMETERS - 1) / ORDER_AT_FILL_COLUMNS
 );
 
 /**
@@ -208,7 +229,10 @@ export const ORDER_AT_FILL_ROWS_PER_STATEMENT = Math.floor(
  * value with the one it derived from the older ciphertext. Placeholders numbered in the order they
  * appear, like {@link sealedSwapStatement}.
  */
-export function orderAtFillStatement(rows: ReadonlyArray<{ id: string; orderAt: number }>): {
+export function orderAtFillStatement(
+  conversationId: string,
+  rows: ReadonlyArray<{ id: string; orderAt: number }>
+): {
   sql: string;
   params: Array<string | number>;
 } {
@@ -220,8 +244,10 @@ export function orderAtFillStatement(rows: ReadonlyArray<{ id: string; orderAt: 
   };
   const cases = rows.map((r) => `WHEN ${next(r.id)} THEN ${next(r.orderAt)}`).join(' ');
   const ids = rows.map((r) => next(r.id)).join(', ');
+  // Scoped to the conversation the rows were read from: the same id may stand in another (v23).
+  const conversation = next(conversationId);
   return {
-    sql: `UPDATE messages SET order_at = CASE id ${cases} END, order_pending = NULL WHERE order_pending = 1 AND id IN (${ids})`,
+    sql: `UPDATE messages SET order_at = CASE id ${cases} END, order_pending = NULL WHERE conversation_id = ${conversation} AND order_pending = 1 AND id IN (${ids})`,
     params,
   };
 }

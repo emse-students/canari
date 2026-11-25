@@ -5,13 +5,13 @@
  * loads it - after a reload, the only look there is.
  */
 import 'fake-indexeddb/auto';
-import { SvelteMap } from 'svelte/reactivity';
 import { IndexedDbStorage } from '$lib/db/indexeddb';
 import { mapStoredMessagesToChatMessages } from '$lib/utils/chat/messageUtils';
 import { PENDING_MUTATION_LIMITS } from '$lib/utils/chat/pendingMutations';
 import { envelopeBodyText, mkTextEnvelope, serializeEnvelope } from '$lib/envelope';
 import type { StoredMessage } from '$lib/db/types';
 import type { Conversation } from '$lib/types';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   globalSession: {},
@@ -75,7 +75,7 @@ it('an edit parked against a stored row lands when an older page loads that row'
     storage,
     userId: 'me',
     deviceKeyB64: KEY,
-    messageReactions: new SvelteMap(),
+    messageReactions: new ReactionsByConversation(),
     log: vi.fn(),
   } as never;
 

@@ -23,6 +23,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SvelteMap } from 'svelte/reactivity';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 // The sender lookup an arrival's notification waits on answers from the cache, offline.
 vi.mock('$lib/utils/users/displayName', async (importOriginal) => {
@@ -55,7 +56,7 @@ const { readMarkTarget, readWatermarkFrameData, readersOf, watermarkFor } =
 const { noteServerTime, serverTimeSeen, resetServerClockForTests } =
   await import('$lib/utils/chat/serverClock');
 type MessagingContext = import('./useMessaging.svelte').MessagingContext;
-import type { ChatMessage, Conversation, MessageReaction } from '$lib/types';
+import type { ChatMessage, Conversation } from '$lib/types';
 
 const A = 'user-a';
 const B = 'user-b';
@@ -86,7 +87,7 @@ interface Device {
   userId: string;
   ctx: MessagingContext;
   messaging: ReturnType<typeof useMessaging>;
-  reactions: Map<string, MessageReaction[]>;
+  reactions: ReactionsByConversation;
 }
 
 function device(userId: string): Device {
@@ -132,7 +133,7 @@ function device(userId: string): Device {
     userId,
     ctx,
     messaging: useMessaging(),
-    reactions: new Map<string, MessageReaction[]>(),
+    reactions: new ReactionsByConversation(),
   };
 }
 
@@ -185,7 +186,7 @@ async function react(d: Device, by: string, target: string, emoji: string, at: n
       storage: null,
       deviceKey: () => 'k',
       conversations: d.ctx.conversations,
-      messageReactions: d.reactions as never,
+      messageReactions: d.reactions,
       log: vi.fn(),
     } as never,
     CONVO,

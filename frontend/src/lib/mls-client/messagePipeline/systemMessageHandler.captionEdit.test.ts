@@ -1,5 +1,6 @@
 import { handleSystemEvent } from './systemMessageHandler';
 import { mkMediaEnvelope, mkTextEnvelope, parseEnvelope, serializeEnvelope } from '$lib/envelope';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 /**
  * A MEDIA MESSAGE'S EDIT IS A CAPTION EDIT (owner, 2026-11-11).
@@ -44,7 +45,7 @@ function makeCtx(content: string) {
     userId: 'me',
     deviceKey: () => 'device-key',
     conversations,
-    messageReactions: new Map(),
+    messageReactions: new ReactionsByConversation(),
     addMessageToChat: vi.fn(),
     batchAddMessages: vi.fn(),
     deleteConversation: vi.fn(),
