@@ -70,6 +70,11 @@ const authentikPage = (stageInputs) => {
   return root([stage, ...autofill()]);
 };
 
+/** A page of the flow at `pathname`: the stage's inputs, its submit, and `document.location`. */
+const flowPage = (pathname, stageInputs) => ({ ...authentikPage(stageInputs), location: { pathname } });
+const reminderPage = () =>
+  flowPage('/if/flow/miconnect-authorization/', [el({ tag: 'p', name: 'alumni_link_reminder' })]);
+
 const shapeOf = (doc) => classifyIdpForm((sel) => deepVisible(sel, doc), doc);
 
 /** Runs the exact string `login.mjs` evaluates, against a fake `document`. */
@@ -89,6 +94,12 @@ ok('the CAS page is still CAS', shapeOf(casPage()) === 'cas');
 ok('the hidden autofill trio alone is no stage', shapeOf(root(autofill())) === null);
 ok('the string the page runs agrees on the terms page', evaluateInPage(FORM_SHAPE, termsPage()) === 'authentik-terms');
 ok('the string the page runs agrees on the password page', evaluateInPage(FORM_SHAPE, passwordPage()) === 'authentik-password');
+
+ok('the Alumni reminder (no input, a submit) is the continue stage', shapeOf(reminderPage()) === 'authentik-continue');
+ok('a submit-only page of another flow is no stage', shapeOf(flowPage('/if/flow/other/', [])) === null);
+ok('the string the page runs agrees on the reminder', evaluateInPage(FORM_SHAPE, reminderPage()) === 'authentik-continue');
+const cont = stageTable({ username: 'u', password: 'p' })['authentik-continue'];
+ok('the continue stage types and ticks nothing, then presses submit', cont.fields.length === 0 && cont.ticks.length === 0 && cont.submit === 'button[type=submit]');
 
 console.log('[idpform] what answers the terms page');
 const terms = stageTable({ username: 'u', password: 'p' })['authentik-terms'];
