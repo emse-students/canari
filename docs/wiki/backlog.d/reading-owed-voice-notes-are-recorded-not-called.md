@@ -1,6 +1,8 @@
 ## Reading owed - voice notes are recorded, not captured as a phone call (both phones)
 
-target: 1.8.0
+target: 1.8.1
+
+_2026-11-25: moved to 1.8.1 when 1.8.0 shipped._
 
 _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
