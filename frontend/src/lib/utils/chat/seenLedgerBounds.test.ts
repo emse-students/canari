@@ -21,6 +21,7 @@ import {
   utf8Bytes,
 } from './seenLedgerBounds';
 import {
+  makeRoomToKeepFrame,
   markHistoryFrameConsumed,
   resetSeenCipherCacheForTests,
   stagePendingHistoryMarks,
@@ -33,6 +34,13 @@ import {
   STATE_LEDGER,
   takeStagedStateLedgers,
 } from '$lib/mls-client/stateLedgers';
+import {
+  KEPT_FRAME_MAX_BYTES,
+  KEPT_FRAMES_BYTE_BUDGET,
+  keptFrameKey,
+  keptFrameNeeds,
+  keptFrameValue,
+} from '$lib/mls-client/keptKeyGroupFrames';
 
 const USER = 'user-bounds';
 
@@ -253,6 +261,34 @@ describe('the byte budget of every ledger the MLS state carries', () => {
     land();
     expect(evicted[0]).toBe(groupId(0));
     expect(cborBytes(disk)).toBeLessThanOrEqual(BUDGET);
+  });
+
+  it('gives way to the key-group frames kept until handled, and to the one about to be kept', () => {
+    // Seen ledgers that fit the whole budget on their own (mls-desync-prevention section 11).
+    const full = JSON.stringify(boundSeenEntries(fullLedger()));
+    const opened: Record<string, string> = {};
+    const index: string[] = [];
+    for (let g = 0; g < 4; g++) {
+      opened[STATE_LEDGER.seen(groupId(g))] = full;
+      index.push(groupId(g));
+    }
+    opened[STATE_LEDGER.seenIndex] = JSON.stringify(index);
+    // One group keeps a frame of a whole share, as a handler failing for good leaves it.
+    const plaintext = new Uint8Array(Math.floor(((KEPT_FRAME_MAX_BYTES - 1024) * 3) / 4));
+    opened[keptFrameKey('g-a', '1:a')] = keptFrameValue('p:d', plaintext);
+    hydrateStateLedgers(USER, opened);
+    disk = new Map(Object.entries(opened));
+
+    // A second group's largest frame is about to be decrypted and kept: room is made BEFORE it.
+    const needs = keptFrameNeeds(plaintext.length);
+    expect(needs).toBeLessThanOrEqual(KEPT_FRAMES_BYTE_BUDGET - KEPT_FRAME_MAX_BYTES);
+    makeRoomToKeepFrame(USER, needs);
+    land();
+
+    expect(cborBytes(disk) + needs).toBeLessThanOrEqual(BUDGET);
+    // The least recently written seen ledger went; the kept frame did not.
+    expect(disk.has(STATE_LEDGER.seen(groupId(0)))).toBe(false);
+    expect(disk.has(keptFrameKey('g-a', '1:a'))).toBe(true);
   });
 
   it('counts bytes as an encoder writes them', () => {

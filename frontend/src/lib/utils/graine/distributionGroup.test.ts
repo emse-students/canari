@@ -336,7 +336,8 @@ describe('ensureCommunityDistributionGroup - a held group the server routes noth
     // would forget nothing and leave the join to early-return on the tree it left standing.
     expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith(
       'g-1',
-      expect.stringMatching(/key group/)
+      expect.stringMatching(/key group/),
+      { rejoining: true }
     );
     expect(mls.ensureDistributionGroup).toHaveBeenCalledWith(workspaceScope('ws-1'), {
       groupId: 'g-1',
@@ -371,7 +372,8 @@ describe('ensureCommunityDistributionGroup - a held group the server routes noth
     expect(await run(mls, channels)).toBe(true);
     expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith(
       'g-1',
-      expect.stringMatching(/key group/)
+      expect.stringMatching(/key group/),
+      { rejoining: true }
     );
   });
 
@@ -441,7 +443,8 @@ describe('ensureCommunityDistributionGroup - a held group the server routes noth
     expect(await run(mls, heldButUnrouted())).toBe(true);
     expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith(
       'g-1',
-      expect.stringMatching(/key group/)
+      expect.stringMatching(/key group/),
+      { rejoining: true }
     );
     expect(mls.ensureDistributionGroup).toHaveBeenCalled();
   });
@@ -592,7 +595,8 @@ describe('ensureCommunityDistributionGroup - a tree that moved is written to dis
     // caller is told the join failed, so the next load finds no group held and asks again.
     expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith(
       'g-1',
-      expect.stringMatching(/key group/)
+      expect.stringMatching(/key group/),
+      { rejoining: true }
     );
     expect(mls.persistCheckpoint).toHaveBeenCalledTimes(1);
     expect(mls.persistCheckpoint).toHaveBeenCalledWith();
@@ -1066,7 +1070,8 @@ describe('a held key group and the epoch the server names', () => {
 
     expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith(
       'g-1',
-      expect.stringContaining('key group behind its server')
+      expect.stringContaining('key group behind its server'),
+      { rejoining: true }
     );
     expect(mls.ensureDistributionGroup).toHaveBeenCalledTimes(1);
     expect(mls.forgetDistributionGroupById.mock.invocationCallOrder[0]).toBeLessThan(
@@ -1138,7 +1143,8 @@ describe('a held key group whose own leaf is gone', () => {
 
     expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith(
       'g-1',
-      expect.stringMatching(/key group/)
+      expect.stringMatching(/key group/),
+      { rejoining: true }
     );
     expect(mls.ensureDistributionGroup).toHaveBeenCalledTimes(1);
     expect(mls.verifyDistributionEpoch).not.toHaveBeenCalled();
@@ -1158,7 +1164,8 @@ describe('a held key group whose own leaf is gone', () => {
     expect(await run(mls, seated())).toBe(false);
     expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith(
       'g-1',
-      expect.stringMatching(/key group/)
+      expect.stringMatching(/key group/),
+      { rejoining: true }
     );
     expect(mls.ensureDistributionGroup).toHaveBeenCalledTimes(1);
     expect(mls.getDeviceMemberships).not.toHaveBeenCalled();
@@ -1189,7 +1196,8 @@ describe('a held key group whose own leaf is gone', () => {
     await vi.waitFor(() => expect(mls.ensureDistributionGroup).toHaveBeenCalledTimes(1));
     expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith(
       'g-1',
-      expect.stringContaining('key group behind its server')
+      expect.stringContaining('key group behind its server'),
+      { rejoining: true }
     );
   });
 });

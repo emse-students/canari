@@ -341,7 +341,8 @@ async function joinDistributionGroup(
       ref.groupId,
       evictedLocally
         ? 'own leaf removed from the key group'
-        : 'no roster row for this device in the key group'
+        : 'no roster row for this device in the key group',
+      { rejoining: true }
     );
   }
 
@@ -554,7 +555,9 @@ export async function rejoinBehindDistributionGroup(
   log(
     `[GRAINE] ${scopeLabel(scope)}: key group ${groupId.slice(0, 8)}... is behind its server and ${why} - re-joining at the current epoch`
   );
-  await mlsService.forgetDistributionGroupById(groupId, `key group behind its server: ${why}`);
+  await mlsService.forgetDistributionGroupById(groupId, `key group behind its server: ${why}`, {
+    rejoining: true,
+  });
   const joined = await ensureDistributionGroupFor(mlsService, channelService, scope, log);
   if (joined) {
     releaseRequestsHeldForKeyGroup(

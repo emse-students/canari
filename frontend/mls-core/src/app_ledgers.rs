@@ -26,7 +26,23 @@
 
 use std::collections::HashMap;
 
-use crate::{MlsError, MlsManager};
+use base64::Engine;
+
+use crate::{IncomingApplication, MlsError, MlsManager};
+
+/// The prefix of every key a KEPT key-group frame is stored under. The app owns the rest of the key
+/// (`keptKeyGroupFrames.ts`: the group and the frame's fingerprint); this crate only refuses a key
+/// outside the namespace, so a kept frame can never overwrite another ledger.
+pub const KEPT_FRAME_PREFIX: &str = "kept-frame:";
+
+/// What a kept frame holds: the sender MLS verified (`userId:deviceId`, `None` when the credential
+/// was unreadable) and the plaintext, base64 (standard, padded). Serialised in this field order with
+/// no whitespace - `keptKeyGroupFrames.ts` builds the identical string for its own view.
+#[derive(serde::Serialize)]
+struct KeptFrame<'a> {
+    sender: Option<&'a str>,
+    plaintext: String,
+}
 
 /// The most the app's ledgers may weigh in this state, in bytes: each key and value plus the five
 /// bytes of its CBOR text header. The app enforces it (`seenLedgerBounds.ts`, against
@@ -76,6 +92,58 @@ impl MlsManager {
                 MlsError::InvalidData
             })?;
         Ok(self.apply_app_ledgers(changes))
+    }
+
+    /// Decrypts one frame and, when it is an application message, KEEPS its plaintext in the
+    /// ledgers under `keep_as` - in the same call, so no export of this state can hold the spent
+    /// generation without the plaintext it produced.
+    ///
+    /// WHY HERE AND NOT IN THE APP (mls-desync-prevention section 11). A key-group frame's generation
+    /// is spent at decrypt, and the app's handler (the seed store) runs after it. A handler that threw
+    /// left a frame whose redelivery MLS refuses (`SecretReuseError`), so the seed was lost. Kept by
+    /// the app after the decrypt returned, a checkpoint could export between the two (on native it
+    /// runs under the same manager lock, between this call and the IPC answer) and a kill then lost
+    /// the frame again. Kept here, the plaintext and the ratchet advance are one mutation of one
+    /// document: every export holds both or neither.
+    ///
+    /// A commit or a proposal (`Ok(None)`) keeps nothing - there is no payload to hand anyone.
+    ///
+    /// @returns what [`Self::process_incoming_message_with_sender`] returns; `InvalidData` before any
+    ///   decrypt for a `keep_as` outside [`KEPT_FRAME_PREFIX`]
+    pub fn process_incoming_message_kept(
+        &mut self,
+        group_id: &str,
+        message_bytes: &[u8],
+        keep_as: &str,
+    ) -> Result<Option<IncomingApplication>, MlsError> {
+        if !keep_as.starts_with(KEPT_FRAME_PREFIX) || keep_as.len() == KEPT_FRAME_PREFIX.len() {
+            // The key is not printed: it names a group, and a native log line carries no identifier
+            // it does not need (`nativeLogContent.test.ts`). Its length tells a reader which case.
+            log::error!(
+                "process_incoming_message_kept: refused a key outside '{KEPT_FRAME_PREFIX}' ({} bytes) - nothing decrypted",
+                keep_as.len()
+            );
+            return Err(MlsError::InvalidData);
+        }
+        let app = self.process_incoming_message_with_sender(group_id, message_bytes)?;
+        if let Some(app) = &app {
+            let kept = KeptFrame {
+                sender: app.sender_identity.as_deref(),
+                plaintext: base64::engine::general_purpose::STANDARD.encode(&app.plaintext),
+            };
+            // A struct of a string and an optional string cannot fail to serialise; an error is a
+            // serde_json bug. The generation is already spent, so it is said at ERROR and the frame
+            // is still returned - the app handles it now, and only a kill before that loses it.
+            match serde_json::to_string(&kept) {
+                Ok(value) => {
+                    self.apply_app_ledgers([(keep_as.to_string(), Some(value))]);
+                }
+                Err(e) => log::error!(
+                    "process_incoming_message_kept: the frame decrypted but could not be kept ({e})"
+                ),
+            }
+        }
+        Ok(app)
     }
 
     /// Every ledger this state carries, by key.
@@ -134,7 +202,20 @@ impl MlsManager {
 
 #[cfg(test)]
 mod tests {
+    use super::KeptFrame;
     use crate::MlsManager;
+
+    /// A frame whose credential could not be read keeps `sender: null`, and `keptFrameValue(null, ..)`
+    /// in `keptKeyGroupFrames.ts` builds this very string - the two must weigh the same.
+    #[test]
+    fn a_kept_frame_with_no_sender_serialises_as_null() {
+        let value = serde_json::to_string(&KeptFrame {
+            sender: None,
+            plaintext: "BAI=".to_string(),
+        })
+        .unwrap();
+        assert_eq!(value, r#"{"sender":null,"plaintext":"BAI="}"#);
+    }
 
     fn manager(tag: &str) -> MlsManager {
         MlsManager::load_or_create(&format!("{tag}-user"), "d1", None).unwrap()

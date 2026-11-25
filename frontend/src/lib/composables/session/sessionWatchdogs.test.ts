@@ -20,6 +20,7 @@ const enumerateNotReadyGroups = vi.fn<() => string[]>(() => []);
 /** A real registry, small enough to keep honest: a cleared gap must actually stop being armed. */
 const gaps = new Map<string, number>();
 const isDistributionGroup = vi.fn((_id: string) => false);
+const keyGroupWaitsOnKeptFrame = vi.fn((_id: string) => false);
 const externalJoin = vi.fn(async (_id: string) => ({ joined: true }) as Record<string, unknown>);
 const persistCheckpoint = vi.fn(async () => {});
 const dropGroupState = vi.fn(async () => {});
@@ -58,7 +59,13 @@ vi.mock('$lib/utils/chat/dropGroupState', () => ({
 vi.mock('./sessionAuth', () => ({
   makeRecoveryDeps: () => ({
     userId: 'u1',
-    mlsService: { getLocalGroups, isDistributionGroup, externalJoin, persistCheckpoint },
+    mlsService: {
+      getLocalGroups,
+      isDistributionGroup,
+      keyGroupWaitsOnKeptFrame,
+      externalJoin,
+      persistCheckpoint,
+    },
   }),
 }));
 
@@ -88,6 +95,7 @@ describe('startSyncWatchdogImpl - what a quiet tab costs', () => {
     isReAddDue.mockReturnValue(true);
     gaps.clear();
     isDistributionGroup.mockReturnValue(false);
+    keyGroupWaitsOnKeptFrame.mockReturnValue(false);
     externalJoin.mockResolvedValue({ joined: true });
     enumerateNotReadyGroups.mockReturnValue([]);
     resetCommitRateLimit();
@@ -315,6 +323,26 @@ describe('startSyncWatchdogImpl - what a quiet tab costs', () => {
 
     expect(recoverForkedGroup).not.toHaveBeenCalled();
     expect(gaps.has('g1')).toBe(true);
+  });
+
+  it('leaves alone a key group whose gap holds frames back behind a kept frame', async () => {
+    // The gap is armed BY DESIGN while the group waits on its kept frame (mls-desync-prevention
+    // section 11): escalating it would re-join past the frames it holds, and the kept frame the
+    // re-join keeps would hold it again - one external commit per tick.
+    const { ctx, cb } = harness([]);
+    getLocalGroups.mockReturnValue(['dg1']);
+    isDistributionGroup.mockReturnValue(true);
+    keyGroupWaitsOnKeptFrame.mockReturnValue(true);
+    gaps.set('dg1', Date.now() - 46_000);
+    startSyncWatchdogImpl(ctx, cb);
+
+    vi.advanceTimersByTime(TICK_MS * 3);
+    await Promise.resolve();
+
+    expect(rejoinBehindDistributionGroup).not.toHaveBeenCalled();
+    expect(dropGroupState).not.toHaveBeenCalled();
+    expect(externalJoin).not.toHaveBeenCalled();
+    expect(gaps.has('dg1')).toBe(true);
   });
 
   it('does nothing at all when this tab is not the leader', () => {

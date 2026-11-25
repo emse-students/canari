@@ -876,6 +876,32 @@ impl WasmMlsClient {
         })
     }
 
+    /// [`Self::process_incoming_message_with_sender`] for a KEY-GROUP frame: an application
+    /// message's plaintext is kept in the state's ledgers under `keep_as` in the same call that
+    /// spends its generation (`MlsManager::process_incoming_message_kept`, mls-desync-prevention
+    /// section 11). Same answer shape.
+    #[wasm_bindgen]
+    pub fn process_incoming_message_kept(
+        &mut self,
+        group_id: String,
+        message_bytes: Vec<u8>,
+        keep_as: String,
+    ) -> Result<JsValue, JsValue> {
+        log::debug!(
+            "process_incoming_message_kept for group: {} ({} bytes)",
+            group_id,
+            message_bytes.len()
+        );
+        let app = self
+            .manager
+            .process_incoming_message_kept(&group_id, &message_bytes, &keep_as)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        Ok(match app {
+            Some(app) => application_to_js(&app),
+            None => JsValue::NULL,
+        })
+    }
+
     /// Decrypts a batch of MLS ciphertexts for one group in ratchet order, in a single
     /// JS<->WASM crossing. Per-message failures are captured instead of aborting the whole
     /// batch, so the caller can map each outcome independently (history catch-up path).

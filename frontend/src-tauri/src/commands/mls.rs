@@ -1744,6 +1744,7 @@ pub(crate) fn rejoindre_par_commit_externe(
 pub(crate) async fn recevoir_message_bytes(
     group_id: String,
     message_bytes: Vec<u8>,
+    keep_as: Option<String>,
     state: tauri::State<'_, AppState>,
     pending_db: tauri::State<'_, PendingDb>,
 ) -> Result<Option<DecryptedFrame>, String> {
@@ -1808,7 +1809,13 @@ pub(crate) async fn recevoir_message_bytes(
             .lock()
             .map_err(|_| "Failed to lock state")?;
         let manager = crate::state::live_manager_mut(&mut lock)?;
-        manager.process_incoming_message_with_sender(&group_id, &message_bytes)
+        // A KEY-GROUP frame keeps its plaintext UNDER THIS LOCK, in the same mutation that spends
+        // its generation: a checkpoint takes the same lock, so no export can hold the advance
+        // without the plaintext (mls-desync-prevention section 11).
+        match keep_as.as_deref() {
+            Some(key) => manager.process_incoming_message_kept(&group_id, &message_bytes, key),
+            None => manager.process_incoming_message_with_sender(&group_id, &message_bytes),
+        }
     };
 
     match result {

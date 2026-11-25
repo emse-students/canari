@@ -67,6 +67,7 @@ import { pushOutcomeForReport, reconcilePushRegistration } from './PushNotificat
 import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { toBase64, toHex, type MlsStateWriteLatch } from '$lib/utils/hex';
 import type { StateLedgerChanges } from '$lib/mls-client/stateLedgers';
+import { noteFrameKept } from '$lib/mls-client/keptKeyGroupFrames';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { getLocale } from '$lib/i18n';
 import {
@@ -1878,21 +1879,32 @@ export class TauriMlsService extends BaseMlsService {
   async processIncomingMessage(
     groupId: string,
     messageBytes: Uint8Array,
-    envelope?: EnvelopeSender
+    envelope?: EnvelopeSender,
+    keepAs?: string
   ): Promise<DecryptedApplication | null> {
+    // `keepAs`: the native command keeps a key-group frame's plaintext under the same manager lock
+    // that spends its generation (mls-desync-prevention section 11).
     const res = await invoke<{
       data: number[];
       sender: string | null;
       author: AuthorVerdict;
-    } | null>('recevoir_message_bytes', { groupId, messageBytes: Array.from(messageBytes) });
+    } | null>('recevoir_message_bytes', {
+      groupId,
+      messageBytes: Array.from(messageBytes),
+      keepAs: keepAs ?? null,
+    });
     // Null is a commit or a proposal - the one result that may have moved the epoch, and the
     // commit replay reads `getEpoch` on the very next line (see `refreshEpochCache`).
     if (!res) {
       await this.refreshEpochCache(groupId);
       return null;
     }
+    const plaintext = Uint8Array.from(res.data);
+    if (keepAs !== undefined) {
+      noteFrameKept(this.userId, keepAs, res.sender, plaintext);
+    }
     assertVerifiedSender(groupId, envelope, res.sender);
-    return { plaintext: Uint8Array.from(res.data), author: res.author };
+    return { plaintext, author: res.author };
   }
 
   /** Single IPC crossing for an ordered page of ciphertexts (history catch-up on native MLS). */

@@ -1,4 +1,5 @@
 import type { DistributionFrame } from '$lib/mls-client/IMlsService';
+import { UnhandleableFrameError } from '$lib/mls-client/keptKeyGroupFrames';
 import type { IStorage, StoredGraineSession } from '$lib/db/types';
 import type { canari } from '$lib/proto/canari';
 import { canari as canariRuntime } from '$lib/proto/canari';
@@ -440,10 +441,12 @@ function nowHeld<O extends 'stored' | 'already-held'>(sessionId: string, outcome
 export async function handleDistributionFrame(frame: DistributionFrame): Promise<void> {
   const msg = decodeAppMessage(frame.plaintext);
   if (!msg) {
-    console.warn(
-      `[GRAINE] undecodable frame on the distribution group of ${frame.workspaceId.slice(0, 8)} from ${frame.sender}`
+    // THROWN AS ITS OWN KIND: no attempt will ever decode these bytes, so the route forgets the kept
+    // plaintext, acknowledges the frame and says it once at error - never as a network loss
+    // (mls-desync-prevention section 11).
+    throw new UnhandleableFrameError(
+      `undecodable payload on the distribution group of ${frame.workspaceId.slice(0, 8)}`
     );
-    return;
   }
 
   if (msg.graine) {

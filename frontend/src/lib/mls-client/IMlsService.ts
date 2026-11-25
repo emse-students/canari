@@ -1257,11 +1257,17 @@ export interface IMlsService {
    * against the sender OpenMLS verified, and a disagreement throws a `SenderMismatchError`: the
    * frame is decrypted and consumed, and nothing of it is shown (channel-encryption section 21.1,
    * WP-G2-1b).
+   *
+   * `keepAs` (a `kept-frame:` ledger key, `keptKeyGroupFrames.ts`) keeps an application message's
+   * plaintext in the MLS state IN THE SAME MUTATION that spends its generation, and mirrors it into
+   * the document's ledger view - the key-group route's crash guarantee (mls-desync-prevention
+   * section 11). A sender mismatch throws after the plaintext was kept; the caller forgets it.
    */
   processIncomingMessage(
     groupId: string,
     messageBytes: Uint8Array,
-    envelope?: EnvelopeSender
+    envelope?: EnvelopeSender,
+    keepAs?: string
   ): Promise<DecryptedApplication | null>;
   /**
    * Decrypts a page of ciphertexts in ratchet order with a single WASM crossing when available.
@@ -1579,8 +1585,16 @@ export interface IMlsService {
    * registration, so it can only forget what that registration already names - and the state worth
    * forgetting is precisely one where the two have drifted apart. The server names the group; this
    * takes that name. `reason` is printed by the drop's log line and is the CALLER's to state.
+   *
+   * The group's key-group frames kept unhandled (mls-desync-prevention section 11) go with it -
+   * unless `rejoining`: a drop to re-join the same group keeps them for the re-joined registration,
+   * since their seeds are still the community's.
    */
-  forgetDistributionGroupById(groupId: string, reason: string): Promise<boolean>;
+  forgetDistributionGroupById(
+    groupId: string,
+    reason: string,
+    options?: { rejoining?: boolean }
+  ): Promise<boolean>;
   /** The distribution group registered for `scope`, or null when none is. */
   distributionGroupFor(scope: DistributionScope): string | null;
   /** Every scope this device currently holds a distribution group for. */
@@ -1629,12 +1643,20 @@ export interface IMlsService {
    * which is what keeps a seed or a request from being sealed at the stale epoch
    * (`distributionEpochFor`). The outcome reaches {@link onDistributionGapVerdict}.
    *
-   * @returns `current` when the group was not behind, else the verdict.
+   * @returns `current` when the group was not behind, `deferred` when it holds frames back behind a
+   *   kept key-group frame (its gap is armed and the check runs again once they are released), else
+   *   the verdict.
    */
   verifyDistributionEpoch(
     groupId: string,
     activeEpoch: number
-  ): Promise<'current' | DistributionGapVerdict>;
+  ): Promise<'current' | 'deferred' | DistributionGapVerdict>;
+  /**
+   * Whether key group `groupId` holds its frames back behind a kept frame - its own, unhandled, or
+   * room to keep one (mls-desync-prevention section 11). Its epoch is not to be judged, nor its gap
+   * escalated, meanwhile: the frames it holds back are still queued on the server.
+   */
+  keyGroupWaitsOnKeptFrame(groupId: string): boolean;
   /**
    * Resolves once nothing about `groupId`'s epoch is still being established: the initial drain has
    * settled and any {@link verifyDistributionEpoch} in flight for it has answered. What a request

@@ -4374,8 +4374,9 @@ gateway forwards on every live frame and refuses at ERROR when its type is unexp
 (`apps/chat-gateway/src/subscribers.rs`), and a pull carries it from the same row - so the branch
 names a defect upstream, where it is said, rather than an ordinary path.
 
-**Left outside the ledger, filed** (review of #3851): a community key frame's seed
-([entry](../../backlog.d/p2-rows-before-ratchet-community-key-frames.md)), the Tauri resume's
+**Left outside the ledger, filed** (review of #3851): a community key frame's seed (closed
+2026-11-25 by keeping the plaintext in the decrypt's own mutation, no owed-row mark needed:
+[mls-desync-prevention section 11](../../protocols/mls-desync-prevention.md#11-client---a-key-group-frame-is-kept-until-its-handler-succeeds-2026-11-25)), the Tauri resume's
 live-ahead persist ([entry](../../backlog.d/p2-rows-before-ratchet-tauri-resume-live-ahead-persist.md)),
 `changeDeviceKey` ([entry](../../backlog.d/p2-rows-before-ratchet-change-device-key.md)) and the history
 catch-up decrypt sessions ([entry](../../backlog.d/p2-rows-before-ratchet-history-catch-up-decrypt.md)).
