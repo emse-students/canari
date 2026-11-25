@@ -678,7 +678,7 @@ listed at the end.
 | D43 the membership read | the same mapping, `miconnect-alumni-authentication` | the mapping carries `alumni_read = {cotisant, read_on}` (Paris date) under a key of its own, because the enrolment's cursus page REPLACES the prompt's `attributes`; the enrolment stores it as `attributes.alumni`; the Alumni source's OWN sign-in flow (`miconnect-alumni-authentication`: a user write, then the login) stores it at every later sign-in, its policy `miconnect-alumni-keep-only-the-read` reducing the prompt data to that one key IN PLACE, so a CAS account is never renamed. A `cotisant` other than `"1"`/`"0"` writes nothing and logs at warning: the last read keeps its date and expires with its year |
 | D47 routing page | `20-enrollment.yaml`, order 5-6 | `miconnect-enrollment-alumni-route`, bound on `miconnect-enrollment-from-alumni` (the plan's source is `alumni`): "I have a working School account" -> the redirect stage `miconnect-enrollment-alumni-to-cas` to `/if/flow/miconnect-auth/?next=/source/saml/alumni/` (the CAS sign-in, then back to the source SIGNED IN, which links); "I have none" -> the two usual pages. The CAS never sees it |
 | D44 link step | `45-consent.yaml`, `miconnect-authorization` order 30 and 40 | see below |
-| D42-D43 cotisant gate | `60-applications.yaml` | policy `miconnect-access-window-post-or-cotisant` + group `acces-<app>` on `migallery` and `cercle`, `policy_engine_mode: any` - the shape WP5 describes (D15), for these two apps only; WP5 extends it, it does not replace it. Re-read at every token refresh by the providers' gated `offline_access` mapping ([below](#the-gate-is-re-read-at-a-token-refresh-181)) |
+| D42-D43 cotisant gate | `60-applications.yaml` | policy `miconnect-access-window-post-or-cotisant` + group `acces-<app>` on `migallery` and `cercle`, `policy_engine_mode: any` - the shape WP5 describes (D15), for these two apps only; WP5 extends it, it does not replace it. Their providers offer no refresh grant, which would bypass it ([below](#the-refresh-grant-is-closed-on-gated-providers-181)) |
 | claim `alumni_linked` | `10-mappings.yaml`, Canari's three providers | `miconnect-claim-alumni-linked`, scope `profile`: a boolean, true when the account holds a `UserSourceConnection` to `alumni`. Only Canari receives it (banner); the name is shared with core-service |
 | D49 link confirmation | `30-sources.yaml` | LIVE since the source is `POST_AUTO` (read 2026-11-23): see below |
 | D48 the merge, at sign-in | `30-sources.yaml`, `miconnect-alumni-authentication` order 1 | deny stage `miconnect-alumni-merge-refused` behind policy `miconnect-alumni-merge-or-refuse` (re-evaluated, `failure_result: true`): no mark on the pending user -> skipped; a mark Canari wrote (`attributes.alumni_merge_into`) that holds -> the Alumni connection moves onto the target and the duplicate is deleted in one transaction, the plan's pending user becomes the target, the person lands signed in as it; moved only if the target holds a CAS link, its name is the name Alumnforce asserts at THIS sign-in (folded as core-service's `normalizeName`), and the duplicate still carries the mark the sign-in began with (owner, 2026-11-24, D51), journalled as an Event `custom_alumni_merge`; a mark that does not hold -> nothing changes, `[ALUMNI_MERGE]` at error, an Event `custom_alumni_merge_refused`, the deny page ("contacte un administrateur"); a mark whose target no longer exists -> cleared, an ordinary sign-in. What must hold is in the blueprint's comment; `test-enrollment-flow.py` step M drives the merge, a hyphenated name, eleven refusals, a changed mark (`mark_changed`), the orphan and an orphan whose mark changed (kept) |
@@ -738,65 +738,58 @@ The reader gained ONE global permission, `view_usersourceconnection` (to read th
 it authentik silently lists the caller's own connections), proven in `test-handoff-reader.py` by use,
 with its writes refused. See [sessions](../sessions.md#the-sign-in-handoff-to-the-miconnect-sites-2026-11-08).
 
-#### The gate is re-read at a token refresh (1.8.1)
+#### The refresh grant is closed on gated providers (1.8.1)
 
-**What authentik does NOT do (read in 2026.8.6's source, 2026-11-24).** An application's policies decide
-at `/application/o/authorize/` (the policy access check before the flow is planned). The token endpoint
-re-runs them only for the `client_credentials`, `password` and token-exchange grants
-(`check_policy_access` in `authentik/providers/oauth2/token/base.py`); the `refresh_token` grant
-(`token/refresh_token.py`, `TokenView.create_refresh_response` in `views/token.py`) checks the token's
-provider, expiry, revocation, DPoP binding and scopes, and mints new tokens WITHOUT evaluating any
-binding. A client holding a refresh token would keep its access past the day the D43 gate closes.
+**Why.** An application's policies decide at `/application/o/authorize/` (the policy access check
+before the flow is planned). authentik 2026.8.6's token endpoint re-runs them only for the
+`client_credentials`, `password` and token-exchange grants (`check_policy_access` in
+`authentik/providers/oauth2/token/base.py`); the `refresh_token` grant (`token/refresh_token.py`,
+`TokenView.create_refresh_response` in `views/token.py`) checks the token's provider, expiry,
+revocation, DPoP binding and scopes, and mints new tokens WITHOUT evaluating any binding. A refresh
+token on MiGallery or Le Cercle would therefore outlive the D43 gate - until it expires, and a
+`RefreshToken`'s `session` is `SET_DEFAULT`, so it also outlives the sign-out, for authentik's default
+validity of 30 days.
 
-**What was true before the fix (2026-11-25): no refresh token existed for these two providers.** A scope
+**What was true before (read 2026-11-25): no refresh token could be minted, by an absence.** A scope
 survives only if one of the provider's scope mappings carries its name (`check_scope` in
-`views/authorize.py`, `check_scopes` in `token/base.py`), and neither `miconnect-migallery` nor
-`miconnect-cercle` carried an `offline_access` mapping: the scope was stripped at the authorization, no
-refresh token was issued at the code exchange (`views/token.py:151`), and a refresh would have been
-refused `invalid_scope` (`views/token.py:183`). Neither site's sign-in asks for `offline_access` today.
-The gate held by an absence nobody had written down, and binding authentik's managed `offline_access`
-mapping - one line of a provider - would have opened it.
+`views/authorize.py`, `check_scopes` in `token/base.py`), and neither provider carried an
+`offline_access` mapping, so no code exchange issued one (`views/token.py:151`). But both providers
+listed `refresh_token` in `grant_types`, and binding authentik's managed `offline_access` mapping - one
+line - would have opened it. Neither site refreshes: MiGallery, Le Cercle and Sky redeem the
+authorization code (`grant_type: 'authorization_code'`) and never send a refresh grant (read in their
+sources on 2026-11-25).
 
-**The fix: the providers' `offline_access` is a mapping that runs the application's access check.**
-`miconnect-offline-access-gated` (`10-mappings.yaml`) is the ONLY `offline_access` mapping of the two
-providers (`50-providers.yaml`, with `include_claims_in_id_token: true` pinned). Why it holds, line by line
-in 2026.8.6:
+**The rule: a provider whose application carries a policy binding offers no refresh.** `miconnect-migallery`
+and `miconnect-cercle` list `authorization_code` alone (`50-providers.yaml`), and carry no
+`offline_access` mapping. The grant type is refused first, at the parse, before the token is even looked
+up (`token/base.py:74-76`, `invalid_grant` with the cause `grant_type_not_configured`), so a refresh token
+that exists - planted, or minted under an older configuration - is refused too. A site that needs a
+longer session signs in again through the authorization, where the gate decides.
 
-1. A refresh is refused unless `offline_access` is in the requested scope, itself a subset of the refresh
-   token's scope (`views/token.py:180-184`); the new access token takes the refresh token's scope
-   (`:192`). So every refresh that can mint carries `offline_access`.
-2. The new access token's id_token is built by `IDToken.new` BEFORE anything is saved
-   (`views/token.py:196-203`), and it evaluates every mapping of the token's scopes through
-   `UserInfoView.get_claims` while `include_claims_in_id_token` is true (`id_token.py:124-129`).
-3. `get_claims` turns a failing mapping into a configuration-error Event and skips it, but
-   `PropertyMapping.evaluate` re-raises a `ControlFlowException` untouched (`core/models.py:1262`), the
-   evaluator logs none (`lib/expression/evaluator.py:372`), and `TokenView.post` answers any `TokenError`
-   as `400 {"error": ...}` (`views/token.py:101`). The mapping's refusal is a class that is both, raised
-   as `invalid_grant` - what the client gets for a revoked refresh token.
-4. The decision is authentik's own: the application's `PolicyEngine`, uncached, with the default-access
-   flag, as `check_policy_access` runs it. The rule lives once, in the bindings (the policy OR
-   `acces-<app>`, mode `any`), and every input - the date, a post, the Alumni read, the group - is read
-   at the refresh itself.
+**Guarded by `test-refresh-gate.py`** (run by `test-blueprints.sh`, after the apply, on the instance
+itself): every application with a policy binding (expired ones included) has a provider with no
+`refresh_token` grant type and no `offline_access` mapping, MiGallery and Le Cercle among them; a refresh
+token planted on each is refused `400 invalid_grant` with nothing minted; and the control, the same token
+with the grant type put back for one request, refreshes - the hole the rule closes, since the planted
+token's own scope carries `offline_access` past the missing mapping. Binding a policy to another
+application turns its provider red here until its refresh grant is closed too.
 
-**Why not the other two ways.** *Revoking the refresh tokens when the gate's input changes* cannot cover
-the input that changes with no event: the date (31 August P+5, and the calendar year of an Alumni read),
-so it needs a scheduled sweep - a clock whose lag is the exposure. *A short refresh validity* is that
-clock with nothing behind it. Both were refused for the mapping, which re-reads at the one moment a
-refresh asks.
+**The known design, for the day a site needs a refresh.** A scope mapping can make the refresh re-read
+the bindings: as the provider's ONLY `offline_access` mapping, it is evaluated at every refresh that can
+mint (`views/token.py:180-184` require `offline_access`, and `IDToken.new` evaluates the token's scope
+mappings before anything is saved, `:196-203`, while `include_claims_in_id_token` is true), and it can
+run the application's `PolicyEngine` as `check_policy_access` does and raise a class that is both a
+`ControlFlowException` (re-raised by `PropertyMapping.evaluate`, `core/models.py:1262`) and a
+`TokenError("invalid_grant")` (answered 400 by `TokenView.post`, `views/token.py:101`). It was built,
+proven in the rig and withdrawn (review of #4087) for two caveats that must be solved first:
 
-**Its boundaries.** It decides at the `refresh_token` grant only (`grant_type` read from the token
-request): the code exchange follows an authorization the bindings just admitted, and the userinfo
-endpoint must not answer a 500 for a five-minute access token. A refusal revokes nothing: a person
-admitted again (a cotisation read, a group granted) refreshes again. What MiConnect cannot end is a
-site's OWN session, opened at the authorization and kept by the site: that lifetime is the site's.
-The refusal logs at info (`refresh refused by the application's bindings`, with the slug and the
-account's pk); an admitted refresh at debug.
-
-**Proven in CI** by `test-refresh-gate.py` (run by `test-blueprints.sh`, on both providers): the two
-facts above asserted on the instance; a person admitted through `acces-<app>` gets a refresh token and
-refreshes; the group taken away, the SAME refresh token is refused `400 invalid_grant` and nothing is
-minted or revoked; userinfo with the earlier access token still answers 200; the group given back, the
-same refresh token refreshes.
+1. **It fails OPEN.** `get_claims` swallows every other exception as a configuration-error Event and the
+   refresh succeeds, so any fault in the mapping (an import, a missing application) admits. The whole
+   body must be wrapped so that ANY failure raises the refusal, and the reliance on
+   `include_claims_in_id_token` and on the claims-before-save order asserted by the guard on the
+   instance.
+2. **A refresh validity must be pinned on the provider**, since the token outlives the sign-out
+   (`SET_DEFAULT`) and authentik's default is 30 days.
 
 **The link confirmation (D49) is live.** The owner, signed in through the CAS, reached the Alumni
 entry and was linked with no page. authentik runs a SAML source's pre-authentication flow only for

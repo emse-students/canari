@@ -1,6 +1,6 @@
-### Fixed - MiGallery's and Le Cercle's access policy is re-read at every token refresh
+### Fixed - MiGallery and Le Cercle offer no refresh grant, which would bypass their access policy
 
-authentik's `refresh_token` grant evaluates no application binding, so a refresh token would have
-outlived the cotisant gate (D43). The two providers' `offline_access` scope is now one mapping that runs
-the application's own access check at each refresh and answers `invalid_grant` to a person it refuses,
-driven in CI by `test-refresh-gate.py` ([authentik](docs/wiki/infrastructure/authentik.md#the-gate-is-re-read-at-a-token-refresh-181)).
+authentik's `refresh_token` grant evaluates no application binding, so a refresh token would outlive the
+cotisant gate (D43). Neither site refreshes; their providers now list `authorization_code` alone, and
+`test-refresh-gate.py` asserts every provider of a gated application closed and probes its token endpoint
+([authentik](docs/wiki/infrastructure/authentik.md#the-refresh-grant-is-closed-on-gated-providers-181)).
