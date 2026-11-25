@@ -513,6 +513,42 @@ ordering is the guarantee.
   network; a borrower may see the barrier raised but never awaits a send, so the order holds
   ([mls-protocol](mls-protocol.md#a-commit-waiting-on-the-network-lends-the-mls-lock-to-other-groups-frames)).
 
+### 10. Client - the drain awaits no send (the seed-answer freeze, 2026-11-25)
+
+- **A frame handler never awaits `sendMessage`.** The drain holds the MLS mutex across
+  `processMessage` - its own, or one a commit of another group lends it (`lendMlsLockWhile`). A send
+  may need that mutex: a group holding a kept commit of unknown outcome is settled before anything is
+  sealed on it (`settleBeforeSend` -> `settleUnresolvedCommits` -> `runUnderMlsLock`), and the mutex
+  is not reentrant. A frame awaiting such a send waits for its own release, for good: every frame of
+  every conversation stops behind it until a reload, and the only trace is a repeating
+  `[QUEUE] STUCK in processMessage`. Under a loan the commit's reclaim joins the cycle.
+- **What shipped it.** The answer to a seed request (`answerSeedRequest`,
+  [`frameHandler.ts`](../../../frontend/src/lib/utils/graine/frameHandler.ts)) was awaited inside the
+  key-group frame that carried the ask. Trigger: a kept unresolved commit on a community key group,
+  and a seed request addressed to this device drained before the connection-time settle.
+- **The rule, and its one shape.** A send a frame owes is SCHEDULED past the frame and the frame
+  returns: `answerAfterMailboxDrained` (the history answers, and since this fix `deferSeedAnswer`), a
+  parked ask (`parkedAsks.ts`), or a `void` chain (`noteMissingSeed` -> `flushRepairs`,
+  `noteHistoryHeldNothing` -> `requestCommunityHistory`, `onCallSignal`). The frame is acknowledged
+  once its answer is scheduled - a request is transport, and an unanswered requester asks again at its
+  next start. A failed deferred answer is logged by class (`isTransportFailure` warns, anything else
+  accuses at error), since nothing redelivers it.
+- **Why the invariant is asserted by tests and not by a runtime throw.** The browser has no async
+  context propagation (no `AsyncLocalStorage`; TC39 `AsyncContext` has not shipped), so neither the
+  scheduler nor `sendMessage` can tell the drain's own continuation from a user's send that happens to
+  run while the drain holds the mutex - a throw keyed on "a frame is being applied" would refuse
+  legitimate sends on any busy account. The rows in `frameHandler.test.ts` ("no send is awaited under
+  the drain mutex") run a REAL `MlsPerGroupScheduler` whose `sendMessage` settles under the mutex, own
+  and lent; each one times out if a frame awaits the send.
+- **The audit (2026-11-25), every send reachable from a frame:** the seed answer (fixed here); the
+  repair asks `requestSeedsForChannel` and `askCommunityHistory` (`repair.ts`), reached from a frame
+  only through `void` chains that also wait for `whenGroupDrained`; the history legs of
+  `systemMessageHandler.ts` and `sessionAuth.ts` (all behind `answerAfterMailboxDrained` or `void`);
+  `retryOverheardPull` (behind `answerAfterMailboxDrained`); call signals (`onCallSignal` returns
+  `void`). Seed distribution (`distributeGraineSeed`) and visible notices are sent from gestures and
+  seals, never from the pipeline. A new `await` in the frame path is read against this list.
+
+
 ## Verification
 
 | Tactic | What must hold | How we check |

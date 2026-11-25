@@ -18,9 +18,10 @@ import { communityKeyGroupOf } from './admissionGate';
  * Two waits, one queue (channel-encryption sections 25 and "the floor is the member's"):
  *
  * - **the community's key group to DRAIN** ({@link parkAsk}). The admission gate observes a voucher
- *   only on a drained key group, and an ask that arrives ON the key group is that group's current
- *   work - so the gate run inside it can never see the group drained, and a newcomer who asks the
- *   moment they join would meet `unobserved` every time;
+ *   only on a drained key group - its frames applied and the mailbox listed on this link. The answer
+ *   runs once the ask's own frame is done (`deferSeedAnswer`: no send is awaited under the drain's
+ *   mutex), and the listing may still be owed then, so a newcomer who asks the moment they join can
+ *   meet `unobserved`;
  * - **the community's history RULE to be known** ({@link parkAskUntilRuleKnown}). This session has
  *   not learned whether the community shares its past, and a floor drawn under a guessed `joined`
  *   would lose a `shared` past for good. The answer waits for the listing that states the rule

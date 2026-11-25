@@ -28,12 +28,26 @@ import {
 } from '$lib/crypto/graineAdmission';
 import type { DeviceSignatureKeys } from '$lib/mls-client/deviceKeyPackage';
 import { MailboxListingIncompleteError } from '$lib/mls-client/IMlsService';
-import { handleDistributionFrame, resetAnswerDecisionsSaid } from './frameHandler';
+import {
+  deferredSeedAnswersSettled,
+  handleDistributionFrame as handleFrame,
+  resetAnswerDecisionsSaid,
+} from './frameHandler';
+
+/**
+ * The handler, then every seed answer it deferred past its frame: an ask is answered AFTER the frame
+ * that carried it (no send is awaited under the drain's mutex), so a row asserting on that answer
+ * reads it once it has run.
+ */
+async function handleDistributionFrame(frame: Parameters<typeof handleFrame>[0]): Promise<void> {
+  await handleFrame(frame);
+  await deferredSeedAnswersSettled();
+}
 import { clearParkedAsks, MAX_PARKED_ASKS, parkedAskCount } from './parkedAsks';
 import { GRAINE_HISTORY_BUNDLE_MAX_SEEDS } from '$lib/crypto/graineConstants';
 import { HISTORY_FLOOR_QUERY_CONCURRENCY } from './historyBoundary';
 import { BaseMlsService } from '$lib/services/BaseMlsService';
-import type { MlsPerGroupScheduler } from '$lib/mls-client/mlsPerGroupScheduler';
+import { MlsPerGroupScheduler } from '$lib/mls-client/mlsPerGroupScheduler';
 import { incompleteHistoryPages, noteHistoryAsked } from './pagedHistoryAnswer';
 import {
   announceGraineRepair,
@@ -220,6 +234,7 @@ function graineMls(extra: Record<string, unknown> = {}) {
     // Every group drained: a held commit is admissionGate.test.ts's row.
     isGroupDrained: () => true,
     whenGroupDrained: async () => undefined,
+    waitForGroupQueueIdle: async () => undefined,
     pinnedSignatureKeys: async () => null,
     removalEpochs: async (groupId: string, userId: string) =>
       departuresByGroup.get(groupId)?.get(userId) ?? [],
@@ -828,6 +843,139 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
     // Every member of the community receives the frame and every member but one must ignore it:
     // answering anyway is how a salon of three hundred pays three hundred bundles for one seed.
     expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  describe('no send is awaited under the drain mutex (the frame-drain freeze of 2026-11-25)', () => {
+    let log: ReturnType<typeof vi.spyOn>;
+    beforeEach(() => {
+      log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    });
+    afterEach(() => log.mockRestore());
+
+    /** A promise opened by hand: the network answer a pending commit request waits for. */
+    function gate() {
+      let open!: () => void;
+      const promise = new Promise<void>((resolve) => (open = resolve));
+      return { promise, open };
+    }
+
+    /**
+     * A real drain over the key group, whose `sendMessage` does what `settleBeforeSend` does when
+     * the key group holds a kept commit of unknown outcome: it settles it UNDER THE MLS MUTEX before
+     * sealing anything. The mutex is not reentrant, so a frame that awaited this send waited for its
+     * own release - for good.
+     */
+    function drainWithKeptCommit(order: string[]) {
+      const scheduler = new MlsPerGroupScheduler('web');
+      const sendMessage = vi.fn(async () => {
+        await scheduler.runUnderMlsLock(async () => {
+          order.push('kept commit settled');
+        });
+        order.push('answer sent');
+      });
+      const { storage } = fakeStorage([heldSeed('sess-1', 12)]);
+      setGraineRuntime({
+        storage,
+        deviceKey: () => 'device-key',
+        userId: 'alice',
+        mlsService: graineMls({
+          sendMessage,
+          waitForGroupQueueIdle: (_caller: string, groupId: string) =>
+            scheduler.waitUntilGroupIdle(groupId),
+        }),
+      });
+      scheduler.enqueue({
+        senderId: 'bob',
+        ciphertext: new Uint8Array([1]),
+        groupId: 'g-1',
+        isWelcome: false,
+        isCommit: false,
+      });
+      const drain = () =>
+        scheduler.drain(async () => {
+          await handleFrame(
+            requestFrame({
+              workspaceId: 'ws-1',
+              kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_SESSIONS,
+              sessionIds: ['sess-1'],
+              answererUserId: 'alice',
+              requestId: 'r-kept',
+            })
+          );
+          order.push('frame done');
+        });
+      return { scheduler, sendMessage, drain };
+    }
+
+    it('a frame answering a seed ask on a key group holding a kept commit completes, and the answer follows it', async () => {
+      const order: string[] = [];
+      const { sendMessage, drain } = drainWithKeptCommit(order);
+
+      await drain();
+      await deferredSeedAnswersSettled();
+
+      expect(order).toEqual(['frame done', 'kept commit settled', 'answer sent']);
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it("the same frame applied under ANOTHER group's commit loan completes, and the commit merges", async () => {
+      const order: string[] = [];
+      const { scheduler, sendMessage, drain } = drainWithKeptCommit(order);
+      const lent = gate();
+      const answer = gate();
+      const commit = scheduler.runCommitUnderMlsLock('g-other', async () => {
+        await scheduler.lendMlsLockWhile('g-other', async () => {
+          lent.open();
+          await answer.promise;
+        });
+        order.push('g-other merged');
+      });
+      await lent.promise;
+
+      // The frame borrows the commit's mutex. Awaiting the answer there, the settle waited for the
+      // commit, and the commit's reclaim for the frame.
+      await drain();
+      expect(order).toEqual(['frame done']);
+
+      answer.open();
+      await commit;
+      await deferredSeedAnswersSettled();
+      expect(order).toEqual(['frame done', 'g-other merged', 'kept commit settled', 'answer sent']);
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('an answer whose send fails is said at a level that accuses, and leaves the frame handled', async () => {
+      const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const { storage } = fakeStorage([heldSeed('sess-1', 12)]);
+      setGraineRuntime({
+        storage,
+        deviceKey: () => 'device-key',
+        userId: 'alice',
+        mlsService: graineMls({
+          sendMessage: vi.fn().mockRejectedValue(new Error('sealed nothing')),
+        }),
+      });
+
+      await expect(
+        handleFrame(
+          requestFrame({
+            workspaceId: 'ws-1',
+            kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_SESSIONS,
+            sessionIds: ['sess-1'],
+            answererUserId: 'alice',
+            requestId: 'r-fail',
+          })
+        )
+      ).resolves.toBeUndefined();
+      await deferredSeedAnswersSettled();
+
+      expect(error.mock.calls.map((c) => String(c[0])).join(' | ')).toMatch(
+        /the answer to bob:bob-phone's request r-fail in community ws-1 was not sent/
+      );
+      error.mockRestore();
+      warn.mockRestore();
+    });
   });
 
   it('relays a v2 session with its endorsement untouched, and never its secret', async () => {
