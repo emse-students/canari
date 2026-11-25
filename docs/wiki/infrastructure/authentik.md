@@ -550,11 +550,16 @@ group). Anything but the first is `ProfileEditUpstreamError`.
 (`writeRefusalOf`, the error's `refusal`) and never reads from the prose: `malformed` and
 `not_editor` are faults (logged at error), `no_account`, `not_a_person`, `superuser` and
 `mark_not_alumni` are answers the account's own state explains (logged at warning).
-`profile-write.contract.spec.ts` holds the codes and the name limit of both sides together.
+`profile-write.contract.spec.ts` holds the codes, the name limit, the byte cap and the control
+characters of both sides together; core-service's own validation (`validateProfileEdit`: names
+without a control character, at most `CURSUS_MAX` = 20 cursus entries) refuses an admin's bad input
+as a `400` field problem before MiConnect would call it malformed, and the spec proves the biggest
+edit it accepts fits the cap.
 
 **The allowlist, decided inside one transaction under the target's row lock**: `changes` is at most
-16 KiB of strict JSON (no `NaN` or `Infinity`) and names only `name` (one line, no control character,
-at most 201 characters - two names of `NAME_MAX` = 100 and a space) and `attributes`; `attributes`
+16 KiB of UTF-8, strict JSON (no `NaN` or `Infinity`, no nesting deep enough to exhaust the parser),
+and names only `name` (no control character - C0, DEL, C1, U+2028, U+2029 - at most 201 characters:
+two names of `NAME_MAX` = 100 and a space) and `attributes`; `attributes`
 names only `profile` (an object whose known keys keep the types every reader relies on: `campus` a
 string or null, `cursus` a list of objects, `posts` a list of strings, the names strings, `version` an
 integer; unknown keys of a future version pass) and the merge mark's three keys (a string, or `null`
@@ -569,17 +574,23 @@ written, never the values.
 **Detection** (`editor-reach.sh`, daily in the `drift` job with the RELEASED file, and in CI after the
 token test): the account is the service account, not a superuser, in `miconnect-profile-editors`
 alone, holding exactly its one token; every role reaching it holds no global permission beyond the
-file's list and no object permission at all; the write flow is bound exactly as declared (one group
-binding, one stage, one validation policy, mode `all`); and every authentik Event the account authored
+file's list and no object permission at all; the write flow, when the given file declares it (the
+released file before 1.8.1 does not, and production has no flow until then), is bound exactly as
+declared (one group binding, one stage, one validation policy, mode `all`); and every authentik Event the account authored
 that records a write is a `model_updated` of a user through the write flow, or through `PATCH
 /api/v3/core/users/<pk>/` - the older path - only while the role still holds the user-change
-permission or when the Event predates the first `custom_role_permission_revoked` Event for it: a
-cutoff read from MiConnect's own durable state, never a clock. Anything else is a `FINDING` (event
+permission or when the Event predates the FIRST `custom_role_permission_revoked` Event for it: a
+cutoff read from MiConnect's own durable state, never a clock. The first, so a hand re-grant and a
+later re-revocation make every PATCH in between a finding (the safe direction). And no legitimate
+PATCH can follow the revocation: the stable deploys the new core-service, which no longer PATCHes,
+BEFORE it applies the blueprints that revoke. Paths in a finding show `<id>` for a pk or a uuid. Anything else is a `FINDING` (event
 id, action, model kind, path; never a value) until its id is entered in `editor-reach-known.txt` with
 what it was. **What the log cannot say**: which fields an older PATCH changed - authentik records the
 diff only under its enterprise licence. CI proves the check red on a planted object permission, a
 planted deletion, a planted PATCH past the cutoff, a second token and a second binding on the flow,
-and green once they are removed.
+and green once they are removed; on the upgrade run, green with the PREVIOUS blueprint on the previous
+instance (production's daily check until 1.8.1), exactly one revocation Event recorded, and green
+with a PATCH dated before it.
 
 **The rollout window, measured from the deploy order**: `serve-prod.yml` deploys the estate (the new
 core-service, writing through the flow) BEFORE it applies the blueprints (which create the flow). For

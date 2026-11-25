@@ -147,12 +147,16 @@ try:
         ({"attributes": {"profile": {"campus": 3}}}, "a profile whose campus is not a string"),
         ({"attributes": {"profile": {"version": "1"}}}, "a profile whose version is not an integer"),
         ({"attributes": {"profile": {"cursus": [], "pad": "x" * 17000}}}, "a change longer than 16 KiB"),
+        (json.dumps({"attributes": {"profile": {"cursus": [], "pad": chr(0x20AC) * 6000}}}, ensure_ascii=False), "a change of ~6000 characters but over 16 KiB of UTF-8"),
         ({"name": ""}, "an empty name"),
         ({"name": "x" * 202}, "a name of 202 characters"),
         ({"name": "Probe" + chr(10) + "Injected"}, "a name holding a newline"),
+        ({"name": "Probe" + chr(0x85) + "C1"}, "a name holding a C1 control (U+0085)"),
+        ({"name": "Probe" + chr(0x2028) + "Sep"}, "a name holding a line separator (U+2028)"),
         ({}, "an empty change"),
         ("not json", "a change that is not JSON"),
         ('{"name": NaN}', "a change holding NaN"),
+        ("{\"name\": " + "[" * 5000 + "]" * 5000 + "}", "a change nested too deep to parse"),
     ):
         check(refused(write(probe.uuid, changes)), f"the flow refuses {label}")
     check(refused(write(probe.uuid, {"attributes": {"alumni_merge_into": str(probe.uuid)}}), "mark_not_alumni"), "the flow refuses a merge mark on an account that is not alumni-")

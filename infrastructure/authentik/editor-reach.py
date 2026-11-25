@@ -11,7 +11,8 @@ THREE PARTS (docs/wiki/infrastructure/authentik.md, "The profile editor's one wr
      reaching it - the group's, its own, a managed one - holds no global permission beyond the
      blueprint role's list and no object permission at all. A grant made by hand that the applier
      does not revoke (an object permission, another group, a direct role) is found here.
-  2. THE WRITE PATH. The flow `miconnect-profile-write` is bound exactly as the blueprint declares:
+  2. THE WRITE PATH, when the given blueprint declares it (a released file older than the flow does
+     not, and its production has no flow yet). The flow `miconnect-profile-write` is bound as declared:
      policy engine mode `all`, ONE policy binding (the editors' group, enabled, not negated), ONE
      stage (the prompt `miconnect-profile-write`, no binding on it), whose ONE validation policy is
      `miconnect-profile-write`. A binding added by hand that widened who may run it is found here.
@@ -27,6 +28,7 @@ THREE PARTS (docs/wiki/infrastructure/authentik.md, "The profile editor's one wr
 The log is PUBLIC (the scheduled job's): a finding names an event id, its action, the model kind and
 the request path - never a person, a value or an address.
 """
+import re
 import sys
 
 from guardian.models import RoleModelPermission, RoleObjectPermission
@@ -64,9 +66,14 @@ def perms_of(role):
 
 # The role's list, read from the blueprint as the applier reads it.
 allowed = None
+# Whether the given blueprint declares the write flow: the RELEASED file before the stable that
+# brought it does not, and production has no such flow yet - nothing to check, not a finding.
+flow_declared = False
 for entry in Importer.from_string(BLUEPRINT).blueprint.iter_entries():  # noqa: F821 - prefixed
     if entry.model == "authentik_rbac.role" and entry.identifiers.get("name") == ROLE:
         allowed = set(entry.attrs["permissions"])
+    if entry.model == "authentik_flows.flow" and entry.identifiers.get("slug") == WRITE_FLOW:
+        flow_declared = True
 if allowed is None:
     print(f"ERROR the blueprint given names no role {ROLE}", flush=True)
     sys.exit(2)
@@ -103,10 +110,13 @@ for role in editor.all_roles():
     if role.name != ROLE and held:
         finding(f"role {role.name} reaches the account beside {ROLE}")
 
-# 2. THE WRITE PATH, bound as declared.
-flow = Flow.objects.filter(slug=WRITE_FLOW).first()
-if flow is None:
-    finding(f"the write flow {WRITE_FLOW} does not exist")
+# 2. THE WRITE PATH, bound as declared - when the given blueprint declares it.
+flow = Flow.objects.filter(slug=WRITE_FLOW).first() if flow_declared else None
+print(f"the write flow is {'declared' if flow_declared else 'not declared'} by the blueprint given", flush=True)
+if not flow_declared:
+    pass
+elif flow is None:
+    finding(f"the write flow {WRITE_FLOW} is declared and does not exist")
 else:
     if flow.policy_engine_mode != "all":
         finding(f"the write flow's policy engine mode is {flow.policy_engine_mode}, not all")
@@ -167,7 +177,9 @@ for event in Event.objects.filter(user__username=EDITOR, action__in=WRITES).orde
     )
     if expected or str(event.pk) in known:
         continue
-    finding(f"event {event.pk}: {event.action} of {kind} through {method or '?'} {path or '?'}")
+    # The log is public: an account's pk or uuid in the path becomes <id>.
+    shown = re.sub(r"/([0-9]+|[0-9a-fA-F-]{32,36})(?=/|$)", "/<id>", path) or "?"
+    finding(f"event {event.pk}: {event.action} of {kind} through {method or '?'} {shown}")
 print(f"{counted} write event(s) authored by the account examined", flush=True)
 
 if findings:

@@ -37,6 +37,9 @@ interface AuthentikPage<T> {
 /** The most pages one listing walks: 100 users each, far above the estate (~1k accounts). */
 const MAX_LIST_PAGES = 50;
 
+/** The most UTF-8 bytes one write's `changes` may carry (80-profile-editor.yaml, `CHANGES_MAX`). */
+export const WRITE_CHANGES_MAX = 16384;
+
 /** The slug of MiConnect's write flow, the editor token's only write path (80-profile-editor.yaml). */
 export const WRITE_FLOW = 'miconnect-profile-write';
 

@@ -121,7 +121,11 @@ entries:
         # 2 x NAME_MAX (apps/core-service/src/users/miconnect-profile.ts) + the space between the two
         # names: core-service's profile-write.contract.spec.ts holds the two numbers together.
         NAME_MAX = 201
+        # The UTF-8 size of `changes`; the biggest profile core-service validates fits (the spec too).
         CHANGES_MAX = 16384
+        # A control character: C0, DEL, C1 (U+0085 among them) and the two Unicode line separators.
+        # core-service's CONTROL_CHARACTERS is the same set (the contract spec pins both spellings).
+        is_control = lambda c: ord(c) < 0x20 or 0x7F <= ord(c) <= 0x9F or ord(c) in (0x2028, 0x2029)
 
         # A refusal carries a STABLE CODE, `refused:<code>: <reason>`, which core-service types
         # (miconnect-editor.client.ts, WRITE_REFUSALS): never a message to branch on.
@@ -142,11 +146,11 @@ entries:
         except ValueError:
             return refuse("malformed", "target is not a uuid")
         raw = str(prompt.get("changes") or "")
-        if len(raw) > CHANGES_MAX:
-            return refuse("malformed", f"changes is longer than {CHANGES_MAX} characters")
+        if len(raw.encode("utf-8")) > CHANGES_MAX:
+            return refuse("malformed", f"changes is longer than {CHANGES_MAX} bytes")
         try:
             changes = json.loads(raw, parse_constant=no_constant)
-        except ValueError:
+        except (ValueError, RecursionError):
             return refuse("malformed", "changes is not JSON")
         if not isinstance(changes, dict) or not changes:
             return refuse("malformed", "changes is not a non-empty object")
@@ -157,7 +161,7 @@ entries:
         if "name" in changes:
             if not isinstance(name, str) or not name.strip() or len(name) > NAME_MAX:
                 return refuse("malformed", f"name is not a non-empty string of at most {NAME_MAX} characters")
-            if any(ord(c) < 32 or ord(c) == 127 for c in name):
+            if any(is_control(c) for c in name):
                 return refuse("malformed", "name holds a control character")
         attributes = changes.get("attributes", {})
         if not isinstance(attributes, dict):

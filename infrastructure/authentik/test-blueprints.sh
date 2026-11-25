@@ -66,6 +66,16 @@ if [ -n "${PREVIOUS_REF:-}" ]; then
   fi
   echo "previous apply: builds the instance from $PREVIOUS_REF's blueprints"
   BLUEPRINTS_DIR="$work/previous/blueprints" bash "$here/apply-blueprints.sh" apply "$worker"
+  # PRODUCTION'S DAILY CHECK BEFORE THE STABLE THAT BRINGS THE WRITE FLOW: main's editor-reach.sh with
+  # the RELEASED (here: previous) blueprint, on an instance built from it, must be green - a released
+  # file that declares no write flow is not a finding, or the drift job would be red from the merge on.
+  if [ -f "$work/previous/blueprints/80-profile-editor.yaml" ]; then
+    echo "profile editor: the reach check, with the previous blueprint, on the previous instance"
+    if ! bash "$here/editor-reach.sh" "$work/previous/blueprints/80-profile-editor.yaml" "$worker"; then
+      echo "::error::editor-reach.sh is red on an instance built from $PREVIOUS_REF with its own blueprint - production's daily check would be red until the stable"
+      exit 1
+    fi
+  fi
   echo "first apply: upgrades it to these blueprints"
 else
   echo "first apply: builds everything"
@@ -169,6 +179,36 @@ if ! bash "$here/editor-reach.sh" "$here/blueprints/80-profile-editor.yaml" "$wo
   exit 1
 fi
 echo "the profile editor holds exactly its grant, and the check sees each planted fault"
+# THE CUTOFF, PROVEN ON THE UPGRADE: the applier recorded exactly one revocation of the old user-change
+# permission on the editor role, and a PATCH Event dated before it is accepted (an older write on the
+# path that was open then) - the green half of the `patch` plant above. Only on an upgrade FROM a
+# blueprint that still granted it: once main carries this file, there is nothing left to revoke.
+if [ -n "${PREVIOUS_REF:-}" ] && grep -q 'authentik_core.change_user' "$work/previous/blueprints/80-profile-editor.yaml" 2>/dev/null; then
+  if ! run_ak_shell "$worker" 2>&1 <<'PY' | grep -x 'CUTOFF-PLANTED' >/dev/null; then
+from datetime import timedelta
+from authentik.core.models import User
+from authentik.events.models import Event
+editor = User.objects.get(username="miconnect-canari-editor")
+revoked = list(Event.objects.filter(action="custom_role_permission_revoked", context__role="miconnect-profile-editor", context__permission="authentik_core.change_user"))
+if len(revoked) != 1:
+    raise SystemExit(f"{len(revoked)} revocation Event(s), not exactly one")
+older = Event.objects.create(action="model_updated", app="test", user={"pk": editor.pk, "username": editor.username}, context={"model": {"app": "authentik_core", "model_name": "user"}, "http_request": {"path": "/api/v3/core/users/1/", "method": "PATCH"}}, client_ip="127.0.0.1")
+Event.objects.filter(pk=older.pk).update(created=revoked[0].created - timedelta(seconds=1))
+print("CUTOFF-PLANTED")
+PY
+    echo "::error::the upgrade did not record exactly one revocation Event, or the pre-cutoff PATCH could not be planted"
+    exit 1
+  fi
+  if ! bash "$here/editor-reach.sh" "$here/blueprints/80-profile-editor.yaml" "$worker"; then
+    echo "::error::editor-reach.sh reports a PATCH made before the recorded revocation - the cutoff is not honoured"
+    exit 1
+  fi
+  run_ak_shell "$worker" >/dev/null 2>&1 <<'PY'
+from authentik.events.models import Event
+Event.objects.filter(app="test").delete()
+PY
+  echo "the upgrade recorded its revocation once, and a PATCH older than it is accepted"
+fi
 
 # THE HANDOFF READER, USED. What core-service's mint reads (a user by uuid, the three handoff
 # applications, their bindings, the default-access flag) and nothing else: no other application, no

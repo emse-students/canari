@@ -214,6 +214,24 @@ const PROMO_MAX = 2100;
 /** The longest first or last name an edit accepts; MiConnect's write flow allows two and a space. */
 export const NAME_MAX = 100;
 
+/** The most cursus entries an edit accepts, so the biggest valid edit fits MiConnect's write cap. */
+export const CURSUS_MAX = 20;
+
+/**
+ * Whether `value` holds a control character, as MiConnect's write policy defines one (80-profile-editor.yaml,
+ * `is_control`): C0, DEL, C1 and the two Unicode line separators. A name holding one is refused
+ * HERE, as a field problem, rather than by MiConnect as a malformed write.
+ */
+export function hasControlCharacter(value: string): boolean {
+  for (const ch of value) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code < 0x20 || (code >= 0x7f && code <= 0x9f) || code === 0x2028 || code === 0x2029) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * The version-1 profile as authentik stores it in `attributes.profile` and as an edit records it
  * before and after: the five facts an admin may set, with the explicit names (D10).
@@ -256,6 +274,8 @@ export function validateProfileEdit(
   const cursus: CursusEntry[] = [];
   if (!Array.isArray(body.cursus)) {
     problems.push({ field: 'cursus', reason: 'not a list' });
+  } else if (body.cursus.length > CURSUS_MAX) {
+    problems.push({ field: 'cursus', reason: `at most ${CURSUS_MAX} entries` });
   } else {
     for (const entry of body.cursus as unknown[]) {
       const e = entry as Partial<CursusEntry> | null;
@@ -295,6 +315,8 @@ export function validateProfileEdit(
     const value = typeof body[key] === 'string' ? (body[key] as string).trim() : '';
     if (!value || value.length > NAME_MAX) {
       problems.push({ field: key, reason: `required, at most ${NAME_MAX} characters` });
+    } else if (hasControlCharacter(value)) {
+      problems.push({ field: key, reason: 'holds a control character or a line break' });
     }
     names[key] = value;
   }
