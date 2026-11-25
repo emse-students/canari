@@ -207,6 +207,9 @@ export async function startBrowser(which, url = `${SITE}/chat`, extraArgs = []) 
       `--remote-debugging-port=${port}`,
       `--user-data-dir=${profile}`,
       "--no-first-run",
+      // EVERY SEAT BOOTS IN FRENCH: the rig's tools click French labels (Gerer, Supprimer l'appareil), and a
+      // profile booting in English (W4, 2026-11-25) showed "Manage". One flag here, not a locale write per tool.
+      "--lang=fr",
       "--no-default-browser-check",
       "--disable-backgrounding-occluded-windows",
       "--disable-renderer-backgrounding",

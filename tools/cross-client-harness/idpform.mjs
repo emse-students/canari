@@ -54,13 +54,21 @@ export function deepVisible(sel, root) {
  * Runs in the page.
  * @param {(sel: string) => any} q a visible-match lookup bound to the page
  * @param {{ querySelector(sel: string): any }} doc
- * @returns {'cas' | 'authentik-terms' | 'authentik-uid' | 'authentik-password' | null}
+ * `authentik-continue` is the D44 Alumni-link REMINDER (blueprint `45-consent.yaml`, stage
+ * `miconnect-alumni-link-remind`, binding order 30 of `miconnect-authorization`): a static notice with NO
+ * input and a lone submit ("Continuer"), shown once per IdP session to an account with a cursus in the
+ * reminder window and no Alumni link. It is tested LAST, because every other authentik stage also has a
+ * submit button and the absence of any input is what names it; the path guard keeps a blank page of
+ * another flow from being "continued".
+ * @returns {'cas' | 'authentik-terms' | 'authentik-uid' | 'authentik-password' | 'authentik-continue' | null}
  */
 export function classifyIdpForm(q, doc) {
   if (doc.querySelector('#username')) return 'cas';
   if (q('input[name=cgu_accept]')) return 'authentik-terms';
   if (q('input[name=uidField]')) return 'authentik-uid';
   if (q('input[type=password]')) return 'authentik-password';
+  if (q('button[type=submit]') && String(doc.location?.pathname ?? '').startsWith('/if/flow/miconnect-authorization'))
+    return 'authentik-continue';
   return null;
 }
 
@@ -84,6 +92,7 @@ export function stageTable(creds) {
     'authentik-uid': { fields: [['input[name=uidField]', creds.username]], ticks: [], submit: 'button[type=submit]' },
     'authentik-password': { fields: [['input[type=password]', creds.password]], ticks: [], submit: 'button[type=submit]' },
     'authentik-terms': { fields: [], ticks: ['input[name=cgu_accept]'], submit: 'button[type=submit]' },
+    'authentik-continue': { fields: [], ticks: [], submit: 'button[type=submit]' },
   };
 }
 

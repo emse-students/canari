@@ -146,6 +146,10 @@ stage(`attached on ${port}`);
 // route. `/settings` has been a hub of route sections since #1699, and the device card lives on
 // `/settings/security` alone: this tool kept opening the hub, found no "Gérer", and every DEV revoke
 // exited 1 before touching the panel (DEV-2, 2026-10-25).
+// EVERY LABEL THIS TOOL CLICKS OR READS IS FRENCH (Gerer, Supprimer l'appareil, the count caption), and a seat
+// whose profile boots in English (W4, 2026-11-25: "Manage") died on `text=Gérer`. The locale is one
+// localStorage key, so it is set to fr before the navigation rather than teaching every selector two languages.
+await evaluate(cx, `localStorage.setItem('PARAGLIDE_LOCALE', 'fr')`);
 await evaluate(cx, `location.href = '/settings/security'`);
 await sleep(6_000);
 await until(cx, `location.pathname === '/settings/security'`, 30_000);

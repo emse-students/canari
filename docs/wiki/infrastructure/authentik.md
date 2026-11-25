@@ -794,7 +794,7 @@ where it is removed.
    link completes ("Successfully linked"). The POST itself was read on 2026-11-23 (above).
 
 **Before the first pre-release carrying this, the DEV smoke account and the store review accounts must not meet the link
-step**: `smoke-login.mjs` answers the terms prompt and nothing else, so an account with a cursus
+step**: `smoke-login.mjs` answers the terms prompt and nothing else (the cross-client rig's `login.mjs` also passes the reminder since 2026-11-25), so an account with a cursus
 whose promo has reached September P+1 fails the dev deploy (the reminder is a prompt it does not
 answer), and a reviewer whose cursus has reached 1 February P+2 (never before 2027-02-01) is held on
 the block. The accounts: the dev smoke account (`DEV_SMOKE_USERNAME`, `development` environment) and
@@ -1515,7 +1515,7 @@ collection of name and first name, as one required tick, for new AND existing ac
 > A dev account that ticks the box has accepted the same text production will show, so it is not
 > asked again there. **The automated dev sign-ins answer it too**: `serve-dev.yml`'s smoke account
 > ticks it once per version ([cicd](../cicd.md#the-smoke-sign-in-wp-smoke-login-decided-2026-10-18)),
-> the cross-client rig's accounts tick it in `tools/cross-client-harness/idpform.mjs`, and
+> the cross-client rig's accounts tick it in `tools/cross-client-harness/idpform.mjs` (which also passes the D44 Alumni-link REMINDER, the input-less "Continuer" stage `authentik-continue`; from 2027-02-01 it is a block for an unlinked account and `login.mjs` ends with a named error), and
 > `test-pkce.py` gives its probe user the current version. The page `/legal/miconnect` is published on both estates.
 >
 > **MEASURED IN PRODUCTION, 2026-11-22 (read-only, 26 h after the `1.7.2` stable's apply):** all eight providers
