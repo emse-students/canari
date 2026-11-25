@@ -298,4 +298,13 @@ export const ACKNOWLEDGED_IDIOMS = [
       'apps/core-service/src/platform/lydia-contract.ts',
     ],
   },
+  {
+    what: 'adding one group of possible mine counts to the sums reached so far (Minesweeper, the mines-left reasoning)',
+    why: 'the engine (`game.ts` and its server twin) is frozen per generator and imports nothing, so it cannot share a function with the client-only bulb (`hint.ts`, owner 2026-11-25). A divergence would only change what the bulb lights in an unranked game, never a board or a replay, and `hint.test.ts` pins the bulb on its own; docs/wiki/frontend/modules/minesweeper.md, "The bulb".',
+    files: [
+      'frontend/src/lib/minesweeper/game.ts',
+      'frontend/src/lib/minesweeper/hint.ts',
+      'apps/social-service/src/minesweeper/engine/game.ts',
+    ],
+  },
 ];

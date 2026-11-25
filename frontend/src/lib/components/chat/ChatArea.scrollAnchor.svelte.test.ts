@@ -18,6 +18,7 @@ import {
   noteKeyboardTransition,
 } from '$lib/stores/keyboardTransition';
 import { Log } from '$lib/utils/Log';
+import { takeThreadGlideOff } from '$lib/utils/chat/threadGrowthObserver';
 import type { ChatMessage, Conversation } from '$lib/types';
 import { useLoadBounds } from '../../../test/loadBound';
 
@@ -73,6 +74,16 @@ function modelGeometry() {
     },
   });
   Object.defineProperty(proto, 'clientHeight', { configurable: true, get: () => PANE_PX });
+  // A row's layout place, which the thread observer anchors on: its place in the mounted list.
+  const offsetTop = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetTop');
+  Object.defineProperty(HTMLElement.prototype, 'offsetTop', {
+    configurable: true,
+    get(this: HTMLElement) {
+      if (!this.matches(ROW_SELECTOR)) return offsetTop?.get?.call(this) ?? 0;
+      const scroller = this.closest<HTMLElement>('[class*="overflow-y"]');
+      return [...(scroller?.querySelectorAll(ROW_SELECTOR) ?? [])].indexOf(this) * ROW_PX;
+    },
+  });
   const rect = Object.getOwnPropertyDescriptor(Element.prototype, 'getBoundingClientRect');
   Object.defineProperty(Element.prototype, 'getBoundingClientRect', {
     configurable: true,
@@ -96,6 +107,7 @@ function modelGeometry() {
   restore.push(() => {
     delete (proto as unknown as Record<string, unknown>).scrollHeight;
     delete (proto as unknown as Record<string, unknown>).clientHeight;
+    if (offsetTop) Object.defineProperty(HTMLElement.prototype, 'offsetTop', offsetTop);
     if (rect) Object.defineProperty(Element.prototype, 'getBoundingClientRect', rect);
   });
 }
@@ -119,10 +131,11 @@ function conversationOf(count: number, id = 'g1'): Conversation {
   } as Conversation;
 }
 
-function mountArea(id = 'g1', count = THREAD) {
+function mountArea(id = 'g1', count = THREAD, extra: Record<string, unknown> = {}) {
   const target = document.createElement('div');
   document.body.appendChild(target);
   const props = $state({
+    ...extra,
     conversation: conversationOf(count, id),
     messageText: '',
     onMessageChange: () => {},
@@ -536,5 +549,150 @@ describe('ChatArea and a move of the pane no reader made', () => {
     expect(lines[0]).toMatch(/starts \(its frame\): .* moving$/);
     expect(lines[1]).toMatch(/at rest \(its frame\): .* at rest$/);
     expect(area.target).toBeTruthy();
+  });
+});
+
+/**
+ * A browser clamps `scrollTop` to the reach; happy-dom keeps any number, which puts every row above
+ * the viewport after a pin to `scrollHeight` - a pane where the thread's top row cannot be read.
+ */
+function clampScrollTop() {
+  const scrollTop = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop')!;
+  Object.defineProperty(Element.prototype, 'scrollTop', {
+    configurable: true,
+    get(this: Element) {
+      return scrollTop.get!.call(this);
+    },
+    set(this: HTMLElement, value: number) {
+      const reach = this.matches('.chat-messages-scroll')
+        ? this.scrollHeight - this.clientHeight
+        : Infinity;
+      scrollTop.set!.call(this, Math.min(Math.max(0, value), reach));
+    },
+  });
+  restore.push(() => Object.defineProperty(Element.prototype, 'scrollTop', scrollTop));
+}
+
+/**
+ * A GLIDE'S END RE-TAKES WHAT WAS MEASURED DURING IT (owner's Android, production 1.8.0, 2026-11-25:
+ * at rest on the end of a DM, the round arrow still drawn and a day pill naming a date from far up).
+ * A glide's transform counts in the overflow and in every row's box, so a scroll measured mid-glide
+ * reads a pane that is not where it stands - and the glide's end fires no `scroll`, so nothing re-read
+ * it. The glide is modelled by a fake `animate`; its `finish` is fired by hand.
+ */
+describe('ChatArea at the end of a glide', () => {
+  // Inside the 60-group window, so an arrival adds a row and trims none.
+  const ROWS = 40;
+  const reach = () => (ROWS + 1) * ROW_PX - PANE_PX;
+  const arrowShown = (target: HTMLElement) =>
+    target.querySelector('.chat-scroll-bottom-button') !== null;
+  let finishes: (() => void)[] = [];
+
+  beforeEach(() => {
+    noteKeyboardAtRest('test start');
+    clampScrollTop();
+    finishes = [];
+    document.documentElement.style.setProperty('--motion-thread-glide', '220ms');
+    document.documentElement.style.setProperty('--motion-ease-in-out', 'ease-in-out');
+    const proto = HTMLElement.prototype as unknown as Record<string, unknown>;
+    proto.animate = function () {
+      return {
+        currentTime: 0,
+        effect: { getComputedTiming: () => ({ progress: 0 }) },
+        cancel: () => {},
+        addEventListener: (type: string, listener: () => void) => {
+          if (type === 'finish') finishes.push(listener);
+        },
+      };
+    };
+    restore.push(() => {
+      delete proto.animate;
+      document.documentElement.style.removeProperty('--motion-thread-glide');
+      document.documentElement.style.removeProperty('--motion-ease-in-out');
+    });
+  });
+
+  it('withdraws the arrow a mid-glide measurement raised', async () => {
+    const area = mountArea('g1', ROWS);
+    await settleEntry();
+    const scroller = scrollerOf(area.target);
+    expect(finishes).toHaveLength(0); // the entry and its widen glide nothing
+
+    // A peer's message arrives under the reader at the end: the thread glides for it.
+    area.props.conversation = conversationOf(ROWS + 1);
+    flushSync();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(finishes.length).toBeGreaterThan(0);
+    expect(scroller.scrollTop).toBe(reach());
+
+    // Mid-glide, a measurement reads the pane short of its end: the flag falls, the arrow shows.
+    scroller.scrollTop = reach() - 375;
+    scroller.dispatchEvent(new Event('scroll'));
+    await vi.advanceTimersByTimeAsync(50);
+    flushSync();
+    expect(arrowShown(area.target)).toBe(true);
+
+    // The rows come back to their place - no `scroll` fires - and the glide ends.
+    scroller.scrollTop = reach();
+    for (const finish of finishes.splice(0)) finish();
+    await vi.advanceTimersByTimeAsync(0);
+    flushSync();
+    expect(arrowShown(area.target)).toBe(false);
+  });
+
+  it('withdraws it too when the keyboard ride takes the glide off', async () => {
+    const area = mountArea('g1', ROWS);
+    await settleEntry();
+    const scroller = scrollerOf(area.target);
+    area.props.conversation = conversationOf(ROWS + 1);
+    flushSync();
+    await vi.advanceTimersByTimeAsync(0);
+    scroller.scrollTop = reach() - 375;
+    scroller.dispatchEvent(new Event('scroll'));
+    await vi.advanceTimersByTimeAsync(50);
+    flushSync();
+    expect(arrowShown(area.target)).toBe(true);
+
+    scroller.scrollTop = reach();
+    expect(takeThreadGlideOff(scroller)).toBe(true);
+    await vi.advanceTimersByTimeAsync(0);
+    flushSync();
+    expect(arrowShown(area.target)).toBe(false);
+  });
+
+  it('asks for no older history at a glide end, whatever the pane reads', async () => {
+    const load = vi.fn(async () => true);
+    const area = mountArea('g1', ROWS, { onLoadOlderMessages: load });
+    await settleEntry();
+    const scroller = scrollerOf(area.target);
+    area.props.conversation = conversationOf(ROWS + 1);
+    flushSync();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(finishes.length).toBeGreaterThan(0);
+    load.mockClear();
+    scroller.scrollTop = 0; // inside the older-history trigger, with no `scroll` fired
+    for (const finish of finishes.splice(0)) finish();
+    await vi.advanceTimersByTimeAsync(0);
+    flushSync();
+    expect(load).not.toHaveBeenCalled();
+    // A reader's scroll to the same place does ask: the guard is the origin, not the place.
+    await scrollTo(scroller, 0);
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
+  it('raises no day pill at the end of an arrival glide nobody scrolled through', async () => {
+    const area = mountArea('g1', ROWS);
+    await settleEntry();
+    await vi.advanceTimersByTimeAsync(2000); // any pill of the entry is gone
+    expect(area.target.querySelector('.chat-sticky-date-indicator')).toBeNull();
+    area.props.conversation = conversationOf(ROWS + 1);
+    flushSync();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(finishes.length).toBeGreaterThan(0);
+    for (const finish of finishes.splice(0)) finish();
+    await vi.advanceTimersByTimeAsync(0);
+    flushSync();
+    expect(area.target.querySelector('.chat-sticky-date-indicator')).toBeNull();
+    expect(arrowShown(area.target)).toBe(false);
   });
 });
