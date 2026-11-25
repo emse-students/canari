@@ -27,3 +27,9 @@ scroll` line; the detach line read `scroll view inset bottom 0.0`, no `detached 
 mid-rise showed the "+" level with the composer and the web layer painted (a stream was not captured, so a
 sub-100 ms jump is not excluded). **Still owed:** the field-reveal rows (a field low in a scrollable form,
 the PIN change dialog, a comment box and a field in a modal, a field in an `.app-layout` sheet sliding in).
+
+**2026-11-25, `1.8.1-alpha.2` part 2 (iPhone 12): the field-reveal rows PASS.** The PIN change dialog, a
+comment box, a field low in a form and a field in the new-discussion modal each ended visible above the
+keyboard: overlap 301 (328 for a secure field), never 602, settled inset 0.0, no document-scroll
+compensation. **Still owed, alone:** a field focused in an `.app-layout` sheet while it is still sliding in
+- the main page does not shift and no `the main page shifted` WARN is logged. Then this entry is deleted.
