@@ -405,6 +405,50 @@ describe('a known absence', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(3);
   });
 
+  it('warns once for a face failing for ever while other faces answer', async () => {
+    const [bad, good] = [nextUser(), nextUser()];
+    const fetchSpy = vi.fn(async (url: string) =>
+      String(url).includes(bad)
+        ? new Response(null, { status: 500 })
+        : new Response(null, { status: 404 })
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    for (let i = 0; i < 5; i++) {
+      await resolveUserAvatarDisplay(bad);
+      // Each answer for another face clears the ledger, so the bad face asks again - silently.
+      await resolveUserAvatarDisplay(`${good}-${i}`);
+    }
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
+  it('is not ended by a 403 - that is core-service auth, not the gallery answering', async () => {
+    const [down, refused] = [nextUser(), nextUser()];
+    const fetchSpy = vi.fn(
+      async (url: string) => new Response(null, { status: String(url).includes(down) ? 502 : 403 })
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await resolveUserAvatarDisplay(down);
+    await resolveUserAvatarDisplay(refused);
+    await resolveUserAvatarDisplay(down);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('ends the outage when the app returns to the foreground', async () => {
+    const user = nextUser();
+    const fetchSpy = vi.fn(async () => new Response(null, { status: 502 }));
+    vi.stubGlobal('fetch', fetchSpy);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await resolveUserAvatarDisplay(user);
+    await resolveUserAvatarDisplay(user);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    document.dispatchEvent(new Event('visibilitychange'));
+    await resolveUserAvatarDisplay(user);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
   it('ends the outage on the online event and on the reader changing', async () => {
     const { forgetReaderCaches } = await import('./sharedCache');
     const user = nextUser();

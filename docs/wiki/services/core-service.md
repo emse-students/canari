@@ -749,9 +749,14 @@ and `userAvatarCache.ts` forgot `none` with the mount.
   one client sent ~446 requests in a minute during a 6 s gallery outage: 95 faces, ~4.7 asks each, all 502).
   The ledger (`unavailableUsers`) makes every later mount draw the fallback without asking. It ends on an
   EVENT: any avatar the source answered (photo, 404 or 403, from any user), the browser's `online`, the app
-  returning to the foreground, a navigation boundary (root layout), or the reader changing. One `warn` per
-  outage, one `Log.d` when it ends. **What would make it wrong**: a face stuck on initials after the source
-  is back with no event firing - bounded by the next navigation. Guarded by `userAvatarCache.test.ts`.
+  returning to the foreground, a navigation boundary (root layout), or the reader changing. **Only a 200 or
+  a 404 counts as the source answering** (a 401/403 is core-service's own auth). One `warn` per outage: ids
+  already warned for are kept across the clear (`warnedUsers`), emptied per id by that id's own 200/404, so a
+  face failing for ever beside answering faces warns once. **What would make it wrong**: a page that stays
+  visible with no navigation, `online`, foreground event or other answering face keeps the initials of a
+  ledgered face. A probe on every remount would lift it and IS the defect, so it is refused; the test that
+  would lift it is a live gallery-health signal (the presence answer is cached per id and cannot serve).
+  A conversation switch inside `/chat` is page-local state, not a navigation. Guarded by `userAvatarCache.test.ts`.
 - **Group photos came late for another reason**: `ConversationMeta` did not hold `imageMediaId`, so a
   restored sidebar row had no photo id until the server's group list arrived after the connection (the
   per-group `GET /api/mls/groups/:id` is NOT what feeds it). The id is now persisted (IndexedDB row, SQLite

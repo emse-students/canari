@@ -90,7 +90,23 @@ registerPerReaderCache(() => absentUsers.clear());
  * one of them fires, each face asked for itself at most once.
  */
 const unavailableUsers = new Set<string>();
-registerPerReaderCache(() => unavailableUsers.clear());
+/**
+ * The ids the outage warn has been said for, KEPT ACROSS {@link forgetAvatarOutage}: one face failing
+ * for ever while the others answer would otherwise clear the ledger at each answer and warn again at
+ * every remount. An id leaves it only when the source answers FOR THAT ID (a photo or a 404), and a
+ * new warn is said only when it is empty - so a total outage warns once, however many faces fail.
+ *
+ * WHAT IS NOT DONE, ON PURPOSE: a ledgered face is not probed again on every remount. That is the
+ * defect (~4.7 asks per face in 6 s). A page that stays visible with no navigation, no `online`, no
+ * foreground event and no other face answering therefore keeps the initials; the test that would lift
+ * it is a gallery-health signal the client already receives for free (none exists today: the presence
+ * answer is cached per id and cannot tell a live answer from a held one).
+ */
+const warnedUsers = new Set<string>();
+registerPerReaderCache(() => {
+  unavailableUsers.clear();
+  warnedUsers.clear();
+});
 
 /**
  * Ends the outage: every face may be asked for again. Called on each event that says the source may
@@ -144,7 +160,12 @@ async function loadAvatar(userId: string): Promise<AvatarDisplay> {
     // the same server the same question and receive the same refusal, at the cost of a second
     // request and a second console line.
     // THE SOURCE ANSWERED (any status below 500): whatever it said, it is up again.
-    if (fetched.status < 500) forgetAvatarOutage('the source answered');
+    // ONLY A 200 OR A 404 PROVES THE GALLERY ANSWERED ABOUT A PHOTO: a 401/403 is core-service's own
+    // auth talking, and says nothing of the source behind it.
+    if (fetched.status === 200 || fetched.status === 404) {
+      warnedUsers.delete(userId);
+      forgetAvatarOutage('the source answered');
+    }
     if (!fetched.ok) {
       // ONLY A 404 IS AN ANSWER ABOUT THE PHOTO. A 502 `unavailable` says nothing about whether there
       // is one, so remembering it would turn an outage into minutes of initials.
@@ -154,11 +175,12 @@ async function loadAvatar(userId: string): Promise<AvatarDisplay> {
       } else if (fetched.status >= 500) {
         // THE SOURCE IS DOWN: remembered per user until an event ends the outage, and said ONCE per
         // outage, at warn (a gallery outage is never expected), not once per face.
-        if (unavailableUsers.size === 0) {
+        if (warnedUsers.size === 0) {
           console.warn(
             `[AvatarCache] ${fetched.status} for ${who}: avatar source unavailable - faces fall back until it answers`
           );
         }
+        warnedUsers.add(userId);
         unavailableUsers.add(userId);
         return { kind: 'none' };
       } else if (fetched.status === 403) {
