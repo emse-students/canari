@@ -3,7 +3,7 @@ import {
   ecosystemSiteLink,
   type EcosystemSite,
 } from '$lib/navigation/ecosystemSites';
-import { destIsAllowed } from '$lib/navigation/handoffDest';
+import { destIsAllowed, destPattern } from '$lib/navigation/handoffDest';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { refusalFromResponse, ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { coreUrl } from '$lib/utils/apiUrl';
@@ -44,6 +44,14 @@ class HandoffUrlMismatchError extends Error {
 /** Said once per app run: an estate without the handoff opens every site plainly by design. */
 let notOfferedSaid = false;
 
+/**
+ * `dest` as a log line may name it: its allowlist pattern (`/albums/{uuid}`, never the album id a
+ * link in a message carried), as core-service's audit line does; `off-list` for any other path.
+ */
+function loggedDest(site: EcosystemSite, dest: string): string {
+  return destPattern(dest, site.dests) ?? 'off-list';
+}
+
 /** The plain address of `dest` on `site`: today's behaviour, and what a site without the flag gets. */
 export function plainSiteUrl(site: EcosystemSite, dest: string): string {
   return dest === '/' ? site.href : `${site.href}${dest}`;
@@ -71,7 +79,7 @@ export function signInSiteUrl(site: EcosystemSite, dest: string): string {
  * because this is the one place a credential is about to leave the app.
  */
 async function mintSiteHandoff(site: EcosystemSite, dest: string): Promise<string> {
-  Log.d('ecosystemSite.mint', { site: site.id, dest });
+  Log.d('ecosystemSite.mint', { site: site.id, dest: loggedDest(site, dest) });
   const res = await apiFetch(`${coreUrl()}/api/auth/handoff`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -167,7 +175,10 @@ export function openEcosystemSite(id: EcosystemSite['id'], dest = '/'): void {
     return;
   }
   const plain = plainSiteUrl(site, dest);
-  Log.i('ecosystemSite', `opening ${site.id} ${dest} handoff=${site.handoff ? 'on' : 'off'}`);
+  Log.i(
+    'ecosystemSite',
+    `opening ${site.id} ${loggedDest(site, dest)} handoff=${site.handoff ? 'on' : 'off'}`
+  );
 
   if (isTauriRuntime()) {
     if (!site.handoff) {
@@ -226,7 +237,7 @@ export function openEcosystemSiteLink(href: string): boolean {
   }
   Log.i(
     'ecosystemSite',
-    `a link in content opens ${link.site.id} ${link.dest} through the handoff`
+    `a link in content opens ${link.site.id} ${loggedDest(link.site, link.dest)} through the handoff`
   );
   openEcosystemSite(link.site.id, link.dest);
   return true;

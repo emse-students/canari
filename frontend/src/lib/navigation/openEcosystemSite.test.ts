@@ -268,6 +268,18 @@ describe('openEcosystemSite', () => {
       expect(openUrl).toHaveBeenCalledWith(MINTED);
     });
 
+    it('names an album by its pattern in every log line, never by its id', async () => {
+      apiFetch.mockResolvedValue(json(200, { url: MINTED }));
+      const album = '/albums/0b8e6f9a-1c2d-4e3f-8a9b-0c1d2e3f4a5b';
+      expect(openEcosystemSiteLink(`https://gallery.mitv.fr${album}`)).toBe(true);
+      await settle();
+      const [, init] = apiFetch.mock.calls[0] as [string, RequestInit];
+      expect(JSON.parse(String(init.body))).toEqual({ aud: 'migallery', dest: album });
+      const said = JSON.stringify([vi.mocked(Log.i).mock.calls, vi.mocked(Log.d).mock.calls]);
+      expect(said).toContain('/albums/{uuid}');
+      expect(said).not.toContain('0b8e6f9a');
+    });
+
     it.each([
       'https://gallery.mitv.fr/mes-photos/confirmer',
       'https://gallery.mitv.fr/mes-photos?x=1',
