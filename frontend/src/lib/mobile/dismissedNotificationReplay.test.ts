@@ -284,7 +284,8 @@ describe('the builder records what it posted and keeps the stamps current', () =
     }
     expect(posters.sort()).toEqual([
       'rebuildBanner',
-      'repostReplyPending',
+      // The re-post shared by the pending reply and the held frame's removed placeholder.
+      'repostBanner',
       'showMessageNotification',
     ]);
     expect(source).toContain('putExtra(EXTRA_BANNER_NOTIF_ID, notifId)');

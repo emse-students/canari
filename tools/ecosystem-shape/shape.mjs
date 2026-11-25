@@ -23,6 +23,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
+import { HANDOFF_VENDORED, LEAVE_IAB_VENDORED } from './vendored.mjs';
 
 /** The parent directory holding all four checkouts. Two levels up from this file by default. */
 const ROOT = process.env.CANARI_ECOSYSTEM_ROOT
@@ -356,16 +357,16 @@ for (const [shared, why] of SHARED_BY_SIBLINGS) compare(shared, SIBLINGS, `  [Ca
 // site joins this list in the pull request that vendors it (MiGallery first, WP-H4; Sky with WP-H6).
 // Le Cercle is on the school's GitLab, outside this tool's four checkouts: its copy is held only by
 // its own vector test.
-const HANDOFF_VENDORED = [
-  ['libs/handoff/handoff-verify.ts', { MiGallery: 'src/lib/server/handoff/handoff-verify.ts' }],
-  ['libs/handoff/handoff-landing.ts', { MiGallery: 'src/lib/handoff/handoff-landing.ts' }],
-  ['libs/contracts/handoff-token.cases.json', { MiGallery: 'tests/fixtures/handoff-token.cases.json' }],
-];
-for (const [source, sites] of HANDOFF_VENDORED) {
-  const dirOf = Object.fromEntries(REPOS);
-  const copies = [['Canari', join(dirOf.Canari, source)]];
-  for (const [label, path] of Object.entries(sites)) copies.push([label, join(dirOf[label], path)]);
-  compareCopies(source, copies, '  [the sign-in handoff, vendored]');
+for (const [note, table] of [
+  ['the sign-in handoff, vendored', HANDOFF_VENDORED],
+  ['the Meta in-app browser gate, vendored', LEAVE_IAB_VENDORED],
+]) {
+  for (const [source, sites] of table) {
+    const dirOf = Object.fromEntries(REPOS);
+    const copies = [['Canari', join(dirOf.Canari, source)]];
+    for (const [label, path] of Object.entries(sites)) copies.push([label, join(dirOf[label], path)]);
+    compareCopies(source, copies, `  [${note}]`);
+  }
 }
 
 console.log(`\n${'='.repeat(72)}`);
