@@ -240,6 +240,8 @@ the not-overtaken guard refused the swap: 17 `catch-up (<group>) state DISCARDED
 restore of a new web device, 2026-11-24, each one a worker's ratchet advance and decrypt work thrown
 away.
 
+**Read on dev `1.8.1-alpha.2` (2026-11-25).** A fresh web device restored the bench account while a peer web client sent about 472 messages over about 4 minutes into shared conversations (history applied in about 27 s, 31 external joins): 0 `state DISCARDED` lines against the 17 in 2 min 20 s of the 2026-11-24 sighting, and no `waits for N send(s) already past the gate` line, so the window itself was not hit in that run (the rig captures debug lines, probed afterwards). The fix is pinned by the tests below; no row owes a further reading.
+
 - **Why the lock comes first.** The drain awaits no send ([section 10](#10-client---the-drain-awaits-no-send-the-seed-answer-freeze-2026-11-25));
   when #4083 was written it still awaited a key group's seed answer under the mutex, and a catch-up
   that closed the gate BEFORE the lock (its first version, refused in review) waited for the mutex
