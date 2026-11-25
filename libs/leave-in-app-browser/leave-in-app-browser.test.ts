@@ -35,6 +35,19 @@ const { cases } = JSON.parse(readFileSync(join(here, 'fixtures.json'), 'utf8')) 
   cases: Case[];
 };
 const html = readFileSync(join(here, 'interstitial.html'), 'utf8');
+
+/**
+ * The text between the first `<tag>` and the next `</tag>` of our own interstitial - a plain slice,
+ * not a regex: the file is ours and holds each element once (asserted below), and a tag-matching
+ * regex is what CodeQL's js/bad-tag-filter flags.
+ */
+function inner(tag: string): string {
+  const open = `<${tag}>`;
+  const start = html.indexOf(open);
+  const end = html.indexOf(`</${tag}>`, start);
+  if (start < 0 || end < 0) throw new Error(`the interstitial holds no <${tag}> element`);
+  return html.slice(start + open.length, end);
+}
 const inApp = cases.filter((c) => c.expect !== null);
 
 /** A request as a browser sends a page navigation, with `overrides` on top. */
@@ -94,7 +107,7 @@ describe('exitHref', () => {
   });
 
   it("the interstitial's own script computes the same door as detect.ts, for every in-app case", () => {
-    const script = /<script>([\s\S]*?)<\/script>/.exec(html)![1];
+    const script = inner('script');
     // `document` undefined: the script defines exitFor and does not run its page half.
     const exitFor = new Function('document', `${script}\nreturn exitFor;`)(undefined) as (
       ua: string,
@@ -202,8 +215,8 @@ describe('the gate', () => {
 
 describe('the interstitial', () => {
   it('holds one script and one style, both hashed into its CSP, and the app link marker once', () => {
-    const script = /<script>([\s\S]*?)<\/script>/.exec(html)![1];
-    const style = /<style>([\s\S]*?)<\/style>/.exec(html)![1];
+    const script = inner('script');
+    const style = inner('style');
     const hash = (text: string) => createHash('sha256').update(text, 'utf8').digest('base64');
     expect(interstitialCsp(html)).toBe(
       `default-src 'none'; script-src 'sha256-${hash(script)}'; style-src 'sha256-${hash(style)}'; ` +
