@@ -96,7 +96,7 @@ describe('the thread follows its own bottom from four triggers', () => {
     expect(read(CHAT_AREA)).toContain('      placedAt,\n');
     // A glide's end re-takes what was measured while the rows were drawn off their place (owner's
     // Android, 1.8.0, 2026-11-25).
-    expect(read(CHAT_AREA)).toContain('measureScroll({ raisePill: false });');
+    expect(read(CHAT_AREA)).toContain("measureScroll('glide-end');");
     const wiring = read(GROWTH);
     // A box change is never an arrival, so it never glides (keyboard-and-send-motion.md).
     expect(wiring).toContain("const boxes = new ResizeObserver(() => follow('box'));");
@@ -120,7 +120,7 @@ describe('the thread follows its own bottom from four triggers', () => {
     const body = read(CHAT_AREA);
     // One writer, one shared predicate - `scrollMeasurementResponse` over `isPinnedToBottom`, which
     // only a reader's input lets lower the flag (2026-11-23).
-    expect(body).toContain('const response = scrollMeasurementResponse({');
+    expect(body).toContain('const measured = scrollMeasurementResponse({');
     expect(body).toContain("isNearBottom = response !== 'in-history';");
     expect(body).toContain('pinned: isPinnedToBottom(chatContainer),');
     expect(body).toContain('readerMoving: readerInput?.moving ?? true,');

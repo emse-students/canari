@@ -18,6 +18,7 @@ import {
   noteKeyboardTransition,
 } from '$lib/stores/keyboardTransition';
 import { Log } from '$lib/utils/Log';
+import { takeThreadGlideOff } from '$lib/utils/chat/threadGrowthObserver';
 import type { ChatMessage, Conversation } from '$lib/types';
 import { useLoadBounds } from '../../../test/loadBound';
 
@@ -130,10 +131,11 @@ function conversationOf(count: number, id = 'g1'): Conversation {
   } as Conversation;
 }
 
-function mountArea(id = 'g1', count = THREAD) {
+function mountArea(id = 'g1', count = THREAD, extra: Record<string, unknown> = {}) {
   const target = document.createElement('div');
   document.body.appendChild(target);
   const props = $state({
+    ...extra,
     conversation: conversationOf(count, id),
     messageText: '',
     onMessageChange: () => {},
@@ -633,8 +635,49 @@ describe('ChatArea at the end of a glide', () => {
     // The rows come back to their place - no `scroll` fires - and the glide ends.
     scroller.scrollTop = reach();
     for (const finish of finishes.splice(0)) finish();
+    await vi.advanceTimersByTimeAsync(0);
     flushSync();
     expect(arrowShown(area.target)).toBe(false);
+  });
+
+  it('withdraws it too when the keyboard ride takes the glide off', async () => {
+    const area = mountArea('g1', ROWS);
+    await settleEntry();
+    const scroller = scrollerOf(area.target);
+    area.props.conversation = conversationOf(ROWS + 1);
+    flushSync();
+    await vi.advanceTimersByTimeAsync(0);
+    scroller.scrollTop = reach() - 375;
+    scroller.dispatchEvent(new Event('scroll'));
+    await vi.advanceTimersByTimeAsync(50);
+    flushSync();
+    expect(arrowShown(area.target)).toBe(true);
+
+    scroller.scrollTop = reach();
+    expect(takeThreadGlideOff(scroller)).toBe(true);
+    await vi.advanceTimersByTimeAsync(0);
+    flushSync();
+    expect(arrowShown(area.target)).toBe(false);
+  });
+
+  it('asks for no older history at a glide end, whatever the pane reads', async () => {
+    const load = vi.fn(async () => true);
+    const area = mountArea('g1', ROWS, { onLoadOlderMessages: load });
+    await settleEntry();
+    const scroller = scrollerOf(area.target);
+    area.props.conversation = conversationOf(ROWS + 1);
+    flushSync();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(finishes.length).toBeGreaterThan(0);
+    load.mockClear();
+    scroller.scrollTop = 0; // inside the older-history trigger, with no `scroll` fired
+    for (const finish of finishes.splice(0)) finish();
+    await vi.advanceTimersByTimeAsync(0);
+    flushSync();
+    expect(load).not.toHaveBeenCalled();
+    // A reader's scroll to the same place does ask: the guard is the origin, not the place.
+    await scrollTo(scroller, 0);
+    expect(load).toHaveBeenCalledTimes(1);
   });
 
   it('raises no day pill at the end of an arrival glide nobody scrolled through', async () => {
@@ -647,6 +690,7 @@ describe('ChatArea at the end of a glide', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(finishes.length).toBeGreaterThan(0);
     for (const finish of finishes.splice(0)) finish();
+    await vi.advanceTimersByTimeAsync(0);
     flushSync();
     expect(area.target.querySelector('.chat-sticky-date-indicator')).toBeNull();
     expect(arrowShown(area.target)).toBe(false);

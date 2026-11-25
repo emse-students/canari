@@ -475,6 +475,16 @@ export interface AppendGlide {
 const GLIDE_MAX_SHARE_OF_PANE = 0.5;
 
 /**
+ * THE ROUNDING A TRAVEL CARRIES, in CSS px (review of #4095). `anchorMovedPx` is the difference of two
+ * `offsetTop` reads, each an INTEGER rounded from the layout's fractional position (up to 0.5 px off),
+ * while `scrollTop` is fractional - so a change with nothing arriving can show up to 1 px of travel
+ * (two roundings of at most 0.5 each). A travel at or below that bound cannot be told from zero, so it
+ * is not an arrival: it jumps, which at that size draws nothing (the smallest row is ~20 px). The
+ * bound is the measurement's, not a taste: it is what one integer read on each side can be off by.
+ */
+const ANCHOR_ROUNDING_PX = 1;
+
+/**
  * HOW FAR THE THREAD GLIDES INTO ITS NEW BOTTOM, in px, or 0 to leave the pin as a jump.
  *
  * **ONLY WHAT GREW BELOW THE READER'S TOP ROW GLIDES** (owner's Android, production 1.8.0,
@@ -502,7 +512,9 @@ export function appendGlidePx(g: AppendGlide): number {
   if (Math.abs(g.currentClientHeight - g.previousClientHeight) > 1) return 0;
   if (g.anchorMovedPx === null) return 0;
   const travel = g.currentScrollTop - g.previousScrollTop - g.anchorMovedPx;
-  if (travel <= 0 || travel > g.currentClientHeight * GLIDE_MAX_SHARE_OF_PANE) return 0;
+  if (travel <= ANCHOR_ROUNDING_PX || travel > g.currentClientHeight * GLIDE_MAX_SHARE_OF_PANE) {
+    return 0;
+  }
   return travel;
 }
 

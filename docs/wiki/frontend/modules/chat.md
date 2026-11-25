@@ -3946,14 +3946,30 @@ kept by the observer "and only here"; the widen was the copy that predated it.
   measurement taken mid-glide reads a `scrollHeight` past the real end and separators drawn lower than
   they stand, and the end of a glide fires no `scroll`, so the flag behind the arrow and the day pill
   decided then outlived it. The re-measure corrects or withdraws a pill a scroll raised, and never
-  raises one (`measureScroll({ raisePill: false })`).
+  raises one (`measureScroll('glide-end')`).
+
+**The review of #4095 closed three edges:**
+
+- **every end of a glide is an end**: its `finish`, a suspend that finds it past its end before that
+  `finish` arrived, and the keyboard ride taking it off (`takeThreadGlideOff`) each tell `onGlideEnd`
+  once. A suspend to measure and replay is not an end, nor the teardown. The notice waits for the
+  task that ended the glide (a microtask) and is dropped if that task started another glide, whose
+  own end tells it;
+- **a glide's end is not a scroll**: `measureScroll('glide-end')` revises the flag and the pill and
+  nothing else - it never asks for older history (the `OLDER_TRIGGER_PX` branch answers a scroll),
+  never raises a pill, and never puts the pane back for the engine's keyboard move (that move's own
+  `scroll` does);
+- **no glide from rounding**: `anchorMovedPx` is two integer `offsetTop` reads against a fractional
+  `scrollTop`, so up to 1 px of travel is measurement, not motion (`ANCHOR_ROUNDING_PX`): a travel at
+  or below it jumps.
 
 **Pinned by** `threadAppendGlide.test.ts` (a change above the viewport, an arrival with a trim, a lost
 anchor), `threadGlide.test.ts` (three widen steps under a reader at the end play no glide; an arrival
 after a prepend glides its own height; `onGlideEnd` once per glide that ends, never for one replaced),
 `ChatArea.entryWindow.svelte.test.ts` (one `scrollTop` write per widen step, the observer's) and
 `ChatArea.scrollAnchor.svelte.test.ts` (the entry glides nothing; a glide's end withdraws an arrow a
-mid-glide measurement raised; it raises no pill).
+mid-glide measurement raised, and so does the keyboard ride taking it off; it raises no pill and
+asks for no history).
 
 **What only a phone proves** - happy-dom lays nothing out, so the tests prove the decisions, not the
 frames: that no frame above the end is drawn at an open, and that the arrow and the stale pill are

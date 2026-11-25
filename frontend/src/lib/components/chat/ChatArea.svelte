@@ -1011,10 +1011,13 @@
   }
 
   /**
-   * @param raisePill false for a re-measure the READER did not cause (a glide's end): the day pill
-   * shown by a scroll is corrected or withdrawn, never raised by it.
+   * @param origin `scroll` for a scroll event, the reader's or the engine's; `glide-end` for the
+   * re-measure a glide's end owes (`observeThreadGrowth`'s `onGlideEnd`), which nobody asked for: it
+   * revises the stick-to-bottom flag and corrects or withdraws a day pill a scroll raised, and never
+   * raises a pill nor asks for older history - both are answers to a scroll.
    */
-  function measureScroll({ raisePill = true }: { raisePill?: boolean } = {}) {
+  function measureScroll(origin: 'scroll' | 'glide-end' = 'scroll') {
+    const byScroll = origin === 'scroll';
     if (!chatContainer) return;
     // THE ONLY WRITER of the thread's stick-to-bottom flag. A scroll is the only thing that can
     // express the reader's intent to leave the live end, so it is the only thing that revises it.
@@ -1025,7 +1028,7 @@
     const c = chatContainer;
     const transitions = keyboardTransitionCount();
     const reach = threadReach(c);
-    const response = scrollMeasurementResponse({
+    const measured = scrollMeasurementResponse({
       pinned: isPinnedToBottom(c),
       scrollTop: c.scrollTop,
       wasNearBottom,
@@ -1037,6 +1040,9 @@
         transitions > Math.max(readerInput.lastInputTransition, spentKeyboardTransition),
       reachUnchanged: lastMeasuredReach !== null && Math.abs(reach - lastMeasuredReach) < 1,
     });
+    // A glide's end writes nothing: the engine's keyboard move it may find is put back by the scroll
+    // that move fires, so here it only holds the flag (`put-back` holds it by definition).
+    const response = !byScroll && measured === 'put-back' ? 'at-end' : measured;
     if (wasNearBottom && response !== 'at-end' && !readerInput?.moving) {
       // A FALL WITH NO READER INPUT, the evidence the iPhone's photo DM was diagnosed from
       // (1.7.3-alpha.4 to 1.8.0-alpha.1, every opening: `scrollTop 5813 (last placed 6188), 375 px
@@ -1049,7 +1055,7 @@
       const where =
         `left the bottom with no finger on the pane: scrollTop ${Math.round(c.scrollTop)} (last ` +
         `placed ${lastMeasuredScrollTop === null ? 'none' : Math.round(lastMeasuredScrollTop)}), ` +
-        `${Math.round(reach - c.scrollTop)} px from the end - `;
+        `${Math.round(reach - c.scrollTop)} px from the end${byScroll ? '' : ' (measured at a glide end)'} - `;
       if (response === 'put-back') {
         Log.i(
           'ChatArea',
@@ -1075,7 +1081,8 @@
     lastMeasuredScrollTop = c.scrollTop;
     lastMeasuredReach = threadReach(c);
     lastVisibleAnchor = measureLastVisibleAnchor();
-    updateStickyDateIndicator(raisePill);
+    updateStickyDateIndicator(byScroll);
+    if (!byScroll) return;
     // A pane its thread does not fill cannot be scrolled by the reader: a scroll event there is a box
     // changing (the keyboard), and its past is the silent entry fill's to bring.
     if (
@@ -1966,7 +1973,7 @@
       // drawn off their place (the flag behind the arrow, the day pill) is re-taken at rest.
       () => {
         Log.d('ChatArea', 'glide ended: the pane is measured at rest');
-        measureScroll({ raisePill: false });
+        measureScroll('glide-end');
       }
     );
   });

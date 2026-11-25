@@ -328,11 +328,51 @@ describe('observeThreadGrowth - a change above a reader at the end (owner, 1.8.0
     addRow(70); // replaces the first glide: its rows are taken on by the second
     await flush();
     for (const a of first) for (const listener of a.finishListeners) listener();
+    await flush();
     expect(ends).toBe(0);
     now = 100 + DURATION;
     for (const a of live()) for (const listener of a.finishListeners) listener();
+    await flush();
     expect(ends).toBe(1);
     stop();
+  });
+
+  it('a glide the keyboard ride takes off is an end: told once, after the task', async () => {
+    const { scroller, layoutReach, addRow } = makeThread(Array(20).fill(60), 400);
+    scroller.scrollTop = layoutReach();
+    let ends = 0;
+    const stop = observeThreadGrowth(scroller, atBottom, null, undefined, () => ends++);
+    addRow(70);
+    await flush();
+    now = 50;
+    expect(takeThreadGlideOff(scroller)).toBe(true);
+    expect(ends).toBe(0); // not inside the ride's own task
+    await flush();
+    expect(ends).toBe(1);
+    expect(takeThreadGlideOff(scroller)).toBe(false);
+    await flush();
+    expect(ends).toBe(1);
+    stop();
+  });
+
+  it('a glide found past its end by a change is an end; a teardown tells nothing', async () => {
+    const { scroller, layout, layoutReach, addRow } = makeThread(Array(20).fill(60), 400);
+    scroller.scrollTop = layoutReach();
+    let ends = 0;
+    const stop = observeThreadGrowth(scroller, atBottom, null, undefined, () => ends++);
+    addRow(70);
+    await flush();
+    now = DURATION + 10; // past its end, `finish` not delivered yet
+    layout.box -= 50;
+    fireResize();
+    await flush();
+    expect(ends).toBe(1);
+
+    addRow(70);
+    await flush();
+    stop(); // teardown mid-glide
+    await flush();
+    expect(ends).toBe(1);
   });
 });
 

@@ -52,6 +52,14 @@ describe('appendGlidePx', () => {
     expect(appendGlidePx(arrival({ currentScrollTop: 1030, anchorMovedPx: -40 }))).toBe(70);
   });
 
+  it('never glides the rounding of an integer offsetTop against a fractional scrollTop', () => {
+    // 40 px above the viewport, read as 40 by `offsetTop` while the pin moved 40.8: no arrival.
+    expect(appendGlidePx(arrival({ currentScrollTop: 1040.8, anchorMovedPx: 40 }))).toBe(0);
+    expect(appendGlidePx(arrival({ currentScrollTop: 1001, anchorMovedPx: 0 }))).toBe(0);
+    // Past what two roundings can be off by, it is motion.
+    expect(appendGlidePx(arrival({ currentScrollTop: 1041.5, anchorMovedPx: 40 }))).toBe(1.5);
+  });
+
   it('jumps when the top row left the document: where the change happened is unknown', () => {
     expect(appendGlidePx(arrival({ anchorMovedPx: null }))).toBe(0);
   });
