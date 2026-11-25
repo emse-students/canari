@@ -616,8 +616,8 @@ catch-up work on the same conversation happens before `sent`:
 The KeyPackage line lands in the same second only because it is in that same second of the login.
 
 **That wait is owed, and the code says why.** `sendMessage` passes the catch-up gate
-(`passCatchUpGate`) before it encrypts, and a catch-up opening waits for the sends already past it
-before its snapshot ([mls-desync-prevention](../protocols/mls-desync-prevention.md)). A catch-up applies the conversation's commits, so a message encrypted before it ends would
+(`passCatchUpGate`, at the top of the frame) before it encrypts, and a catch-up opening waits for the
+sends between the gate and their encrypt before its snapshot ([mls-desync-prevention](../protocols/mls-desync-prevention.md)). A catch-up applies the conversation's commits, so a message encrypted before it ends would
 carry an epoch the server and every member have moved past. On native the sequential decrypt session
 holds the MLS mutex for its whole life, so the encrypt would wait on that mutex anyway. On web a send
 inside the window was measured lost to the state swap (`beginCatchUp`'s doc, MSG-1b).

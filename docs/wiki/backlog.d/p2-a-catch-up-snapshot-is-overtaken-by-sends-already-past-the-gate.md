@@ -7,8 +7,9 @@ target: 1.8.1
 N from 1 to 14.
 
 **Built (2026-11-25).** The catch-up took the MLS lock, closed the send gate and snapshotted, while a
-send that had passed the gate just before was still settling and encrypted after the snapshot. It now
-closes the gate, waits out the sends already past it, then takes the lock and snapshots
+send that had passed the gate just before had not encrypted yet and encrypted after the snapshot. The
+gate now sits just before the encrypt, and the catch-up takes the lock, closes the gate, waits out the
+sends between the gate and their encrypt (local work only), then snapshots
 ([mls-desync-prevention](../protocols/mls-desync-prevention.md)). Pinned by
 `BaseMlsService.sendSeam.test.ts` and `WebMlsService.catchUpSendGate.test.ts`.
 

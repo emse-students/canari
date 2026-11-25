@@ -229,16 +229,30 @@ Every such seam therefore passes **two** guards, and neither substitutes for the
   invisible to the epoch guard, which is why the epoch half alone let this defect run.
 
 **Web catch-up: the guard is an invariant, the ORDER is the fix (2026-11-25).** A history catch-up
-(`WebMlsService.createDecryptSession`) closes the send gate, waits for every send ALREADY PAST it to
-finish (`BaseMlsService.beginCatchUpAfterSends`, a count taken in the same synchronous step as the
-gate check by `passCatchUpGate`), and only then takes the MLS lock and snapshots. It used to take the
-lock first and close the gate after, so a send that had passed the gate a moment earlier - still in
-`settleBeforeSend` or the epoch barrier - encrypted after the snapshot, and the not-overtaken guard
-refused the swap: 17 `catch-up (<group>) state DISCARDED` lines in one restore of a new web device,
-2026-11-24, each one a worker's ratchet advance and decrypt work thrown away. The sends are waited out
-BEFORE the lock because a send in flight may need it (settling a kept commit); the reverse cycle
-cannot form because no lock holder awaits a send (`epochSendBarrier.ts`, "the lock order"). Pinned by
-`BaseMlsService.sendSeam.test.ts` and `WebMlsService.catchUpSendGate.test.ts`.
+(`WebMlsService.createDecryptSession`) takes the MLS lock, closes the send gate, waits for every send
+already between the gate and its ENCRYPT (`BaseMlsService.beginCatchUpAfterSends`; the passage is
+counted in the same synchronous step as the gate check, `passCatchUpGate`), and only then snapshots.
+The gate sits at the top of `emitFrame`, after the settle of a kept commit and the epoch barrier,
+and the counted window ends at the counted advance (`noteLiveMutation`), so only LOCAL work is ever
+waited for - an owed burn and an encrypt, both direct client calls - never the mutex, the network or
+the post. Before, a send that had passed the gate a moment earlier encrypted after the snapshot and
+the not-overtaken guard refused the swap: 17 `catch-up (<group>) state DISCARDED` lines in one
+restore of a new web device, 2026-11-24, each one a worker's ratchet advance and decrypt work thrown
+away.
+
+- **Why the lock comes first.** The drain awaits sends under the mutex (a key group's seed answer,
+  `frameHandler.ts` `answerSeedRequest`). A catch-up that closed the gate BEFORE the lock (the first
+  version of #4083, refused in review) waited for the mutex while the frame holding it waited at the
+  gate: a permanent deadlock. With the lock first, no mutex holder ever finds a web catch-up's gate
+  closed. On the sequential path (Tauri, web without the crypto worker) the session takes no JS mutex
+  at all, so a frame waiting at its gate waits for a session that needs nothing it holds.
+- **What the global gate costs.** The gate is global: while any catch-up is open, every send in every
+  group waits at its encrypt, and a boot that catches up N conversations holds sends for the sum of
+  those sessions. The wait this fix ADDS is bounded by local work only - one burn and one encrypt per
+  send already inside the window - so it costs microseconds per catch-up, not a round trip.
+
+Pinned by `BaseMlsService.sendSeam.test.ts` and `WebMlsService.catchUpSendGate.test.ts` (the
+deadlock above included).
 
 **Native: the flag lives in the manager and covers receives (2026-10-06, RESUME-B-1).** The guard
 that stood in `TauriMlsService` counted SENDS in the WebView, so a received frame the checkpoint did

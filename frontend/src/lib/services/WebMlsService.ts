@@ -1592,13 +1592,22 @@ export class WebMlsService extends BaseMlsService {
       return super.createDecryptSession(groupId);
     }
 
-    // Closes the gate every send waits on and waits out the sends already past it, THEN takes the
-    // lock - in that order, because a send in flight may need the lock to settle a kept commit
-    // (`beginCatchUpAfterSends` carries the whole argument). Taking the lock first and closing the
-    // gate after it left a send that passed the gate earlier free to encrypt after the snapshot,
-    // and the swap below was refused for it (17 times in one restore, 2026-11-24).
-    await this.beginCatchUpAfterSends(groupId);
+    // The lock FIRST, then the gate, then the sends already past it, then the snapshot
+    // (`beginCatchUpAfterSends` carries the whole argument). Without the wait, a send that passed the
+    // gate just before it closed encrypted after the snapshot and the swap below was refused for it
+    // (17 times in one restore, 2026-11-24). The gate is never closed before the lock: the drain
+    // awaits sends under the lock, and would then wait on a catch-up that waits on it.
     const release = await this.messageScheduler.acquireMlsLock();
+    try {
+      await this.beginCatchUpAfterSends(groupId);
+    } catch (e) {
+      // Nothing in the wait rejects today; a future one that does must not leave the gate closed
+      // and the lock held for ever.
+      console.error(`[MLS] catch-up (${groupId.slice(0, 8)}...) could not open:`, e);
+      this.endCatchUp(groupId);
+      release();
+      throw e;
+    }
 
     // Remembers where the live client stood. The gate is the fix; the count is the proof it held -
     // if it ever differs at the swap, a send got through and the state about to be installed would
