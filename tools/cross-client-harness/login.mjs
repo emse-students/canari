@@ -551,7 +551,11 @@ const freshFormCx = async () => {
 // into a stage that had already accepted it, then a throw about a login one keystroke from done.
 // So the wait ends on a DIFFERENT shape, on leaving the IdP, or on neither - and those are three
 // outcomes with three messages, never one silence.
-const MAX_STAGES = 4;
+// FIVE: identifier, password, terms, then the D44 Alumni-link reminder (`authentik-continue`). From
+// 2027-02-01 the reminder becomes a BLOCK for an unlinked account: it has the same shape, the loop then
+// runs out of stages and ends with the named "still on a ... form" error, which is the right outcome
+// (the account must be linked, or carry no cursus).
+const MAX_STAGES = 5;
 let answered = null;
 for (let n = 0; n <= MAX_STAGES; n++) {
   let cxNow = null;
