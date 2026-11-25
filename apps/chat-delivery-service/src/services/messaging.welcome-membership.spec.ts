@@ -86,84 +86,119 @@ describe('MessagingService - sendWelcome does not touch membership status or the
   let txKeyPackage: boolean;
   /** The row of the same Welcome already queued, as the store finds it under its lock. */
   let queuedCopy: unknown;
-  const transaction = jest.fn(async (cb: (m: unknown) => Promise<unknown>) =>
-    cb({
-      // The seat lock, and the eviction row a key-group target's claim is checked against.
-      query: jest.fn(async (sql: string, params?: unknown[]) => {
-        if (sql.includes('pg_advisory_xact_lock')) {
-          const welcomeStore = String(params?.[0] ?? '').startsWith('welcome-store:');
-          txReads.push(
-            welcomeStore
-              ? 'welcome-lock'
-              : sql.includes('_shared')
-                ? 'seat-lock-shared'
-                : 'seat-lock'
-          );
-          return [];
-        }
-        if (sql.includes('FROM dm_seat_evictions')) {
-          txReads.push('claim');
-          return txEvictionRow ? [txEvictionRow] : [];
-        }
+  /**
+   * `queued_message."deliveryRan"` as COMMITTED, per row id (migration 058): a row absent here reads
+   * false. Written only when the transaction that claimed it ends without throwing.
+   */
+  const deliveryRan = new Map<string, boolean>();
+  /**
+   * The row lock a delivery claim holds until its transaction ends, as PostgreSQL holds it: a second
+   * claim of the same row waits for it, then re-reads the committed flag.
+   */
+  const rowLocks = new Map<string, Promise<void>>();
+  /** Every delivery claim, in the order it was ASKED - before it waits on a row lock. */
+  const claimsAsked: string[] = [];
+  const transaction = jest.fn(async (cb: (m: unknown) => Promise<unknown>) => {
+    const held: { id: string; release: () => void }[] = [];
+    const end = (committed: boolean) => {
+      for (const h of held) {
+        if (committed) deliveryRan.set(h.id, true);
+        rowLocks.delete(h.id);
+        h.release();
+      }
+    };
+    /** `claimQueuedDelivery`: waits on the row lock, then flips the flag for one caller. */
+    const claim = async (id: string): Promise<[unknown[], number]> => {
+      claimsAsked.push(id);
+      for (let lock = rowLocks.get(id); lock; lock = rowLocks.get(id)) await lock;
+      if (deliveryRan.get(id) === true) return [[], 0];
+      let release = () => {};
+      rowLocks.set(id, new Promise<void>((r) => (release = r)));
+      held.push({ id, release });
+      return [[], 1];
+    };
+    try {
+      const out = await cb(txManager(claim));
+      end(true);
+      return out;
+    } catch (e) {
+      end(false);
+      throw e;
+    }
+  });
+  const txManager = (claim: (id: string) => Promise<[unknown[], number]>) => ({
+    // The seat lock, and the eviction row a key-group target's claim is checked against.
+    query: jest.fn(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('"deliveryRan" = true')) return claim(String(params?.[0]));
+      if (sql.includes('pg_advisory_xact_lock')) {
+        const welcomeStore = String(params?.[0] ?? '').startsWith('welcome-store:');
+        txReads.push(
+          welcomeStore ? 'welcome-lock' : sql.includes('_shared') ? 'seat-lock-shared' : 'seat-lock'
+        );
         return [];
-      }),
-      getRepository: (entity: unknown) => {
-        if (entity === Group) {
-          return {
-            find: jest.fn(async () => {
-              txReads.push('group');
-              return [{ id: 'g1', deletedAt: null }];
-            }),
-          };
-        }
-        if (entity === GroupMember) {
-          return {
-            findOne: jest.fn(async (q: unknown) => {
-              txReads.push('seat');
-              return txSeat(q);
-            }),
-            // The store lifts the invitation-link ask its Welcome answers: who awaits, then the lift.
-            find: jest.fn(async (q: unknown) => {
-              txReads.push('lift');
-              return txAsks(q);
-            }),
-            update: jest.fn(async (where: unknown, set: unknown) => {
-              txReads.push('lift-write');
-              return txLift(where, set);
-            }),
-          };
-        }
-        if (entity === DeviceGroupMembership) {
-          return {
-            createQueryBuilder: jest.fn(() => {
-              txReads.push('pending-row');
-              return insertBuilder;
-            }),
-          };
-        }
-        // The target's key package, read FOR SHARE before its pending row is inserted.
-        if (entity === KeyPackage) {
-          return {
-            find: jest.fn(async () => {
-              txReads.push('key-package');
-              return txKeyPackage ? [{ userId: 'u2', deviceId: 'd2' }] : [];
-            }),
-          };
-        }
+      }
+      if (sql.includes('FROM dm_seat_evictions')) {
+        txReads.push('claim');
+        return txEvictionRow ? [txEvictionRow] : [];
+      }
+      return [];
+    }),
+    getRepository: (entity: unknown) => {
+      if (entity === Group) {
         return {
-          // A copy of the same Welcome already queued (`findQueuedWelcome`) - none unless a case says.
-          findOne: jest.fn(async () => {
-            txReads.push('queued-copy');
-            return queuedCopy;
-          }),
-          save: jest.fn(async (rows: unknown) => {
-            txReads.push('save');
-            return queuedSave(rows);
+          find: jest.fn(async () => {
+            txReads.push('group');
+            return [{ id: 'g1', deletedAt: null }];
           }),
         };
-      },
-    })
-  );
+      }
+      if (entity === GroupMember) {
+        return {
+          findOne: jest.fn(async (q: unknown) => {
+            txReads.push('seat');
+            return txSeat(q);
+          }),
+          // The store lifts the invitation-link ask its Welcome answers: who awaits, then the lift.
+          find: jest.fn(async (q: unknown) => {
+            txReads.push('lift');
+            return txAsks(q);
+          }),
+          update: jest.fn(async (where: unknown, set: unknown) => {
+            txReads.push('lift-write');
+            return txLift(where, set);
+          }),
+        };
+      }
+      if (entity === DeviceGroupMembership) {
+        return {
+          createQueryBuilder: jest.fn(() => {
+            txReads.push('pending-row');
+            return insertBuilder;
+          }),
+        };
+      }
+      // The target's key package, read FOR SHARE before its pending row is inserted.
+      if (entity === KeyPackage) {
+        return {
+          find: jest.fn(async () => {
+            txReads.push('key-package');
+            return txKeyPackage ? [{ userId: 'u2', deviceId: 'd2' }] : [];
+          }),
+        };
+      }
+      return {
+        // A copy of the same Welcome already queued (`findQueuedWelcome`) - none unless a case says.
+        findOne: jest.fn(async () => {
+          txReads.push('queued-copy');
+          return queuedCopy;
+        }),
+        save: jest.fn(async (rows: unknown) => {
+          txReads.push('save');
+          return queuedSave(rows);
+        }),
+      };
+    },
+  });
   const queuedMessageRepo = {
     find: jest.fn().mockResolvedValue([]),
     findOne: jest.fn().mockResolvedValue(null),
@@ -217,6 +252,9 @@ describe('MessagingService - sendWelcome does not touch membership status or the
   beforeEach(async () => {
     jest.clearAllMocks();
     txReads.length = 0;
+    deliveryRan.clear();
+    rowLocks.clear();
+    claimsAsked.length = 0;
     txSeat.mockResolvedValue({ id: 'm-u2' });
     txAsks.mockResolvedValue([]);
     txLift.mockResolvedValue({ affected: 0 });
@@ -488,8 +526,9 @@ describe('MessagingService - sendWelcome does not touch membership status or the
     });
   });
 
-  it('stores nothing when the same Welcome is already queued, and delivers THAT row again - a re-send after a lost answer', async () => {
-    queuedCopy = {
+  describe('the same Welcome sent again - one delivery per row, whoever hands it in', () => {
+    /** The row of the first request, as a re-send finds it still queued. */
+    const firstRow = {
       id: 'q-first',
       recipientId: 'u2',
       deviceId: 'd2',
@@ -498,17 +537,90 @@ describe('MessagingService - sendWelcome does not touch membership status or the
       proto: body.welcomePayload,
       createdAt: new Date(),
     };
+    /**
+     * Lets every pending continuation run, a FIXED number of turns (no clock): what is still
+     * pending after it is parked on something this test holds - the presence read, or a row lock.
+     */
+    const drain = async () => {
+      for (let i = 0; i < 50; i++) await new Promise((r) => setImmediate(r));
+    };
+    const published = () =>
+      redis.publish.mock.calls.filter(([channel]) => channel === 'chat:messages').length;
 
-    await expect(service.sendWelcome(undefined, body)).resolves.toMatchObject({ status: 'queued' });
+    it('stores nothing, and delivers THAT row when no delivery of it ran - the first request died before it', async () => {
+      queuedCopy = firstRow;
 
-    expect(txReads).toContain('welcome-lock');
-    expect(txReads).not.toContain('save');
-    // The first request may have died between its store and its delivery: the re-send arms it.
-    expect(redis.publish).toHaveBeenCalledTimes(1);
-    const envelope = String(redis.publish.mock.calls[0][1]);
-    expect(JSON.parse(envelope)).toMatchObject({ isWelcome: true });
-    // THE queued row, by its id - never a second row.
-    expect(envelope).toContain('q-first');
+      await expect(service.sendWelcome(undefined, body)).resolves.toMatchObject({
+        status: 'queued',
+      });
+
+      expect(txReads).toContain('welcome-lock');
+      expect(txReads).not.toContain('save');
+      expect(published()).toBe(1);
+      const envelope = String(redis.publish.mock.calls[0][1]);
+      expect(JSON.parse(envelope)).toMatchObject({ isWelcome: true });
+      // THE queued row, by its id - never a second row.
+      expect(envelope).toContain('q-first');
+      expect(deliveryRan.get('q-first')).toBe(true);
+    });
+
+    it('publishes nothing when the first request already delivered the row - a re-send after a lost answer', async () => {
+      queuedCopy = firstRow;
+      deliveryRan.set('q-first', true);
+      const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+
+      await expect(service.sendWelcome(undefined, body)).resolves.toMatchObject({
+        status: 'queued',
+      });
+
+      expect(txReads).not.toContain('save');
+      expect(published()).toBe(0);
+      expect(redis.exists).not.toHaveBeenCalledWith('user:online:u2:d2');
+      expect(log.mock.calls.map(([line]) => String(line)).join(' | ')).toContain(
+        'DELIVERY_ALREADY_RAN id=q-first'
+      );
+      log.mockRestore();
+    });
+
+    it('a re-send arriving WHILE the first request is publishing waits for it, then publishes nothing (prod 1.7.3, 2026-11-24)', async () => {
+      // The first request is parked inside its delivery, between its claim and its publish.
+      let openPresence = () => {};
+      const presence = new Promise<number>((r) => (openPresence = () => r(1)));
+      redis.exists.mockImplementationOnce(() => presence);
+      const first = service.sendWelcome(undefined, body);
+      await drain();
+      expect(redis.exists).toHaveBeenCalledWith('user:online:u2:d2');
+
+      // The re-send finds the first request's row still queued and hands it to the delivery.
+      queuedCopy = { ...firstRow, id: 'q1' };
+      const again = service.sendWelcome(undefined, body);
+      await drain();
+      expect(claimsAsked).toEqual(['q1', 'q1']);
+      expect(published()).toBe(0);
+
+      openPresence();
+      await expect(Promise.all([first, again])).resolves.toEqual([
+        expect.objectContaining({ status: 'queued' }),
+        expect.objectContaining({ status: 'queued' }),
+      ]);
+
+      // ONE publish of the row, by the request that claimed it first.
+      expect(published()).toBe(1);
+      expect(String(redis.publish.mock.calls[0][1])).toContain('q1');
+    });
+
+    it('a delivery that THREW leaves the row deliverable, and the next re-send delivers it', async () => {
+      redis.publish.mockRejectedValueOnce(new Error('redis gone'));
+      await expect(service.sendWelcome(undefined, body)).rejects.toThrow('redis gone');
+      expect(deliveryRan.get('q1')).not.toBe(true);
+
+      queuedCopy = { ...firstRow, id: 'q1' };
+      await expect(service.sendWelcome(undefined, body)).resolves.toMatchObject({
+        status: 'queued',
+      });
+      expect(deliveryRan.get('q1')).toBe(true);
+      expect(redis.publish).toHaveBeenCalledTimes(2);
+    });
   });
 
   it('refuses a target device that does not exist with a typed 404, never a 500', async () => {

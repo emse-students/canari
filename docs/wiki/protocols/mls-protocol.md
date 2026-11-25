@@ -2345,12 +2345,33 @@ said at WARN. Tests: `messaging.commit-log.spec.ts`, `add-enrolment.integration.
 **The same Welcome stored twice is stored once.** A re-send after a lost answer is the same bytes,
 and the first request may have been stored. `MessagingService.sendWelcome` looks, under a lock that
 serialises every store of a Welcome for that device in that group, for a row still queued with that
-payload, and answers `queued` without storing again (`[WELCOME] DUPLICATE`); it hands THAT row to
-the delivery again, since the first request may have died between its store and its delivery and
-the re-send is then the only thing left to arm the live publish and the push - the same row, so
-nothing new is queued, and a device that already joined from it takes the copy as a redelivery. A copy
-arriving after the joiner consumed the first meets a device holding the group, which takes it as a
-redelivery. Pinned by `add-enrolment.integration.spec.ts`.
+payload, and answers `queued` without storing again (`[WELCOME] DUPLICATE`). A copy arriving after
+the joiner consumed the first meets a device holding the group, which takes it as a redelivery.
+Pinned by `add-enrolment.integration.spec.ts`.
+
+**...and delivered once (2026-11-25).** The re-send hands THAT row to the delivery, because the first
+request may have died between its store and its delivery and the re-send is then the only thing left
+to arm the live publish and the push. It used to publish it unconditionally, so a re-send arriving
+while the first request was still publishing - or after it had - published the same row a second
+time: prod `1.7.3`, 2026-11-24, a new web device received one Welcome row live twice, 160 ms apart,
+and logged `THE SERVER PUBLISHED THE SAME ROW TWICE`. The store's lock ends with the store's
+transaction, before the publish, and the row could not say whether its delivery had run, was
+running or had died. It says so now: `queued_message."deliveryRan"` (migration 058), claimed by the
+transaction that publishes (`claimQueuedDelivery`, `utils/queued-delivery-claim.ts`;
+`deliverWelcome` for all three Welcome doors - the store, its re-send, a commit carrying it):
+
+- the claim (`UPDATE ... SET "deliveryRan" = true WHERE id = $1 AND "deliveryRan" = false`) holds
+  the row lock until the publish committed, so a second delivery of the row WAITS on it, then reads
+  it true and publishes nothing (`[WELCOME] DELIVERY_ALREADY_RAN`);
+- a delivery that threw, or whose process died, rolled back with its transaction - PostgreSQL ends a
+  dead session's locks with it - so the flag is still false and the next re-send delivers. No clock;
+- a row already acknowledged is gone, and its claim answers false: nothing is left to deliver.
+
+The named application frame has its own mechanism for the same question (the receipt's `settled` and
+the send's session lock, [chat-delivery](../services/chat-delivery.md)); a Welcome names no
+`messageId`, so it never reached it. Tests: `messaging.welcome-membership.spec.ts` (a re-send parked
+behind a first request mid-publish publishes nothing), `058_queued_message_delivery_ran.integration.spec.ts`
+(the wait and both outcomes against PostgreSQL).
 
 **What is left.** A commit-log row pruned before the resubmission reads as a refusal: rows are kept
 365 days and the last 20 000 epochs of each group (`COMMIT_LOG_RETENTION_MS`,

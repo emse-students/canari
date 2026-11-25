@@ -99,6 +99,7 @@ import {
 } from '../utils/group-membership';
 import { RepeatCounter, cutDeviceId, cutUserId } from '../utils/log-repeat';
 import { selfConversationUnawareDevices } from '../utils/self-conversation';
+import { claimQueuedDelivery } from '../utils/queued-delivery-claim';
 import {
   claimSentFrameReceipt,
   markSentFrameSettled,
@@ -5508,17 +5509,36 @@ export class MessagingService {
    * `pushable` also arms the deferred fallback. A frozen Android app reads as online, so a Welcome
    * published into a socket nobody was reading was followed by nothing: the device stayed unjoined
    * until its next foreground pull.
+   *
+   * ONE DELIVERY PER ROW, WHOEVER HANDS IT IN. The same row reaches here from the request that stored
+   * it and from every re-send of the same bytes (`[WELCOME] DUPLICATE`), and those can overlap: a
+   * sender that did not read its answer re-sends while the first request is still publishing. The
+   * publish therefore runs inside the transaction that CLAIMS it ({@link claimQueuedDelivery}): the
+   * claim holds the row lock until the publish committed, so a second delivery waits and then finds
+   * it ran; a delivery that threw or died rolled back, and the next re-send delivers. Returns whether
+   * this call published (or pushed) the row.
    */
-  private async deliverWelcome(queued: QueuedMessage, traceId: string): Promise<void> {
-    const isOnline = await this.redis.exists(
-      devicePresenceKey(queued.recipientId, queued.deviceId)
-    );
-    await this.deliverQueuedFrame(queued, {
-      tag: 'WELCOME',
-      traceId,
-      online: !!isOnline,
-      silent: true,
-      pushable: true,
+  private async deliverWelcome(queued: QueuedMessage, traceId: string): Promise<boolean> {
+    return this.queuedMessageRepo.manager.transaction(async (m) => {
+      if (!(await claimQueuedDelivery(m, queued.id))) {
+        this.logger.log(
+          `[WELCOME][${traceId}] DELIVERY_ALREADY_RAN id=${queued.id} ` +
+            `recipient=${queued.recipientId}:${queued.deviceId} group=${queued.groupId ?? ''} - ` +
+            `an earlier request published this row, or its device acknowledged it: nothing published again`
+        );
+        return false;
+      }
+      const isOnline = await this.redis.exists(
+        devicePresenceKey(queued.recipientId, queued.deviceId)
+      );
+      await this.deliverQueuedFrame(queued, {
+        tag: 'WELCOME',
+        traceId,
+        online: !!isOnline,
+        silent: true,
+        pushable: true,
+      });
+      return true;
     });
   }
 
@@ -5751,13 +5771,13 @@ export class MessagingService {
     );
     if (stored && stored !== queuedWelcome) {
       // A RE-SEND OF THE SAME BYTES, already queued: nothing is stored a second time. The queued
-      // row is handed to the delivery again - the same row, so nothing new is queued, and a device
-      // that already joined from it takes the copy as a redelivery (`setupMessageHandler`) - because
-      // the first request may have died between its store and its delivery, and a re-send is the
-      // only thing left to arm the live publish and the push.
+      // row is handed to the delivery, because the first request may have died between its store
+      // and its delivery and a re-send is then the only thing left to arm the live publish and the
+      // push - and the delivery publishes it only if no delivery of it ran ({@link deliverWelcome}):
+      // a first request still publishing, or done, is not published over.
       this.logger.log(
         `[WELCOME][${traceId}] DUPLICATE id=${stored.id} recipient=${deviceInfo.userId}:${targetDeviceId} ` +
-          `group=${safeGroupId} - the same Welcome is already queued, nothing stored again; its row is delivered again`
+          `group=${safeGroupId} - the same Welcome is already queued, nothing stored again; its row is delivered unless a delivery of it ran`
       );
       await this.deliverWelcome(stored, traceId);
       return this.welcomeAnswer(group, deviceInfo.userId, targetDeviceId, safeGroupId, traceId);

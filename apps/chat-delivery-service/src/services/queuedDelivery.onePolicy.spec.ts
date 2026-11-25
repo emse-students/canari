@@ -116,8 +116,11 @@ describe('a queued frame - one delivery, two routes', () => {
     manager: {
       transaction: jest.fn(async (cb: (m: unknown) => Promise<unknown>) =>
         cb({
-          // The shared seat lock a send's write takes; the seats it re-reads are the roster's.
-          query: jest.fn().mockResolvedValue([]),
+          // The shared seat lock a send's write takes; the seats it re-reads are the roster's. A
+          // Welcome's delivery claims its row first (`claimQueuedDelivery`): no delivery of it ran.
+          query: jest.fn(async (sql: string) =>
+            sql.includes('"deliveryRan" = true') ? [[], 1] : []
+          ),
           getRepository: (entity: unknown) =>
             entity === Group
               ? { find: jest.fn().mockResolvedValue([{ id: GROUP, deletedAt: null }]) }
@@ -307,8 +310,10 @@ describe('a queued frame - one delivery, two routes', () => {
 
       // The delivery is best-effort at every step; the row is what survives a crash, a restart or
       // a device that never ACKs, and every case above rests on it existing first.
-      expect(queuedMessageRepo.manager.transaction).toHaveBeenCalledTimes(1);
       expect(queuedSave).toHaveBeenCalledTimes(1);
+      expect(queuedSave.mock.invocationCallOrder[0]).toBeLessThan(
+        redis.publish.mock.invocationCallOrder[0]
+      );
     });
   });
 
