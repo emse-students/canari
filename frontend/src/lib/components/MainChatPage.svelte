@@ -622,7 +622,7 @@
         }
       },
       onSelectConversation: handleSelectConversation,
-      // "Mes notes", pinned at the top of the list: opened, or created the first time. A refusal
+      // "Mes notes", in the recency-sorted list: opened, or created the first time. A refusal
       // (another device's copy still on its way, a follower tab the leader could not serve) is said.
       // Absent before the session: the logged-out preview has no account to hold notes (F1).
       onOpenSelfConversation: session.isLoggedIn
