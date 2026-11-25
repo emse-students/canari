@@ -350,6 +350,8 @@ test-ci-scripts: lint-ci-scripts
 	@bun test ./tools/dev-seed/
 	@bun test ./tools/play-vitals/
 	@cd libs/handoff && bun install --frozen-lockfile --silent && bun test
+	@cd libs/leave-in-app-browser && bun test
+	@bun libs/leave-in-app-browser/generate.ts --check
 	@bash .github/scripts/tests/dev-gap.test.sh
 	@bash .github/scripts/tests/deploy-env.test.sh
 	@bash .github/scripts/tests/env-from-prod.test.sh

@@ -107,7 +107,7 @@ describe('MinesweeperCell highlight', () => {
     document.body.innerHTML = '';
   });
 
-  function cellWith(props: { marked?: boolean; highlight?: 'hint' | 'wrong' | null }) {
+  function cellWith(props: { marked?: boolean; highlight?: 'hint' | 'wrong' | 'group' | null }) {
     const app = mount(MinesweeperCell, {
       target: document.body,
       props: {
@@ -140,5 +140,13 @@ describe('MinesweeperCell highlight', () => {
     expect(cellWith({ highlight: 'hint' }).getAttribute('aria-label')).toBe('2, indice');
     document.body.innerHTML = '';
     expect(cellWith({ highlight: 'wrong' }).getAttribute('aria-label')).toBe('Drapeau mal placé');
+  });
+
+  it('rings a tutorial group softer than a lit number: no glow, the number is what the eye finds first', () => {
+    const group = cellWith({ highlight: 'group' });
+    expect(group.className).toContain('ring-accent/70');
+    expect(group.className).not.toContain('ms-hint');
+    expect(group.getAttribute('data-hint')).toBe('group');
+    expect(group.getAttribute('aria-label')).toBe("Case concernée par l'indice");
   });
 });

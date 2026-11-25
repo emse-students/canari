@@ -24,7 +24,9 @@
     "src/lib/forms/answerText.ts": ["exports", "types"],
     "src/lib/forms/formOptionRules.ts": ["exports", "types"],
     "src/lib/forms/productGridContract.ts": ["exports", "types"],
-    "src/lib/carte/publish.ts": ["types"]
+    "src/lib/carte/publish.ts": ["types"],
+    "src/lib/leaveInAppBrowser/detect.ts": ["exports", "types"],
+    "src/lib/leaveInAppBrowser/gate.ts": ["exports", "types"]
   },
   "ignoreDependencies": ["emoji-picker-element-data"],
   "ignoreBinaries": ["wasm-pack"]

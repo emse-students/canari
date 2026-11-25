@@ -1,9 +1,10 @@
 // @vitest-environment happy-dom
 /**
- * THE UNRANKED LEVELS ON SCREEN (owner, 2026-11-25). Pinned: the level picker exists in Libre only,
- * resizes the blank board, is remembered, and is gone once the first cell is dug (the game keeps its
- * level); a ranked game plays the ranked board and asks for its challenge exactly as before, whatever
- * level Libre last used.
+ * THE UNRANKED LEVELS ON SCREEN (owner, 2026-11-25), BY GENERATION AND NOT BY SIZE. Pinned: the level
+ * picker exists in Libre only, never redraws the board (every level is the ranked size), is remembered,
+ * and is gone once the first cell is dug (the game keeps its level); each level generates its board with
+ * its own target score; a ranked game plays the ranked board and asks for its challenge exactly as
+ * before, whatever level Libre last used.
  */
 import { describe, it, expect, afterAll, afterEach, beforeEach, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
@@ -60,6 +61,14 @@ async function digFirst() {
   }
 }
 
+/** The target score the board of the first dig was generated with, read from the generation log. */
+function generatedTarget(): number | undefined {
+  const call = vi
+    .mocked(console.debug)
+    .mock.calls.find(([message]) => message === '[minesweeper] board generated');
+  return (call?.[1] as { targetScore?: number } | undefined)?.targetScore;
+}
+
 describe('MinesweeperModal - unranked levels', () => {
   it('shows no level picker in a ranked game, and plays the ranked board', async () => {
     await open();
@@ -67,20 +76,21 @@ describe('MinesweeperModal - unranked levels', () => {
     expect(cells()).toBe(18 * 32);
   });
 
-  it('starts a newcomer in Libre on Debutant, and cycles the board through the levels', async () => {
+  it('starts a newcomer in Libre on Debutant, and cycles the level without redrawing the board', async () => {
     localStorage.setItem('canari.minesweeper.level', 'beginner');
     localStorage.setItem('canari.minesweeper.unranked', '1');
     await open();
     expect(picker()!.getAttribute('aria-label')).toBe('Niveau : Débutant');
-    expect(cells()).toBe(81);
+    expect(cells()).toBe(18 * 32);
     picker()!.click();
     flushSync();
     await tick();
     expect(picker()!.getAttribute('aria-label')).toBe('Niveau : Intermédiaire');
-    expect(cells()).toBe(256);
     expect(localStorage.getItem('canari.minesweeper.level')).toBe('intermediate');
     picker()!.click();
     flushSync();
+    expect(picker()!.getAttribute('aria-label')).toBe('Niveau : Expert');
+    // A level is a generation: the grid is the ranked one at every step.
     expect(cells()).toBe(18 * 32);
   });
 
@@ -89,38 +99,52 @@ describe('MinesweeperModal - unranked levels', () => {
     await open();
     byText('Classé')!.click();
     flushSync();
-    expect(cells()).toBe(81);
     while (mounted.length) mounted.pop()!();
     document.body.innerHTML = '';
     // The next session: the Libre key now exists, and must not turn the newcomer into an Expert.
     await open();
     expect(picker()!.getAttribute('aria-label')).toBe('Niveau : Débutant');
-    expect(cells()).toBe(81);
   });
 
-  it('resizes the blank board when the player switches between ranked and Libre', async () => {
+  it('offers the picker in Libre only, ranked or not on the same grid', async () => {
     localStorage.setItem('canari.minesweeper.level', 'beginner');
     await open();
-    expect(cells()).toBe(18 * 32);
+    expect(picker()).toBeNull();
     byText('Classé')!.click();
     flushSync();
-    expect(cells()).toBe(81);
     expect(picker()).not.toBeNull();
+    expect(cells()).toBe(18 * 32);
   });
 
-  it('locks the level once the first cell is dug: the picker goes, the game keeps its size', async () => {
+  it.each([
+    ['beginner', 0],
+    ['intermediate', 30],
+    ['expert', 60],
+  ])(
+    'generates a %s game with its own target score (%i)',
+    async (level, target) => {
+      localStorage.setItem('canari.minesweeper.level', level);
+      localStorage.setItem('canari.minesweeper.unranked', '1');
+      await open();
+      await digFirst();
+      expect(startChallenge).not.toHaveBeenCalled();
+      expect(generatedTarget()).toBe(target);
+    },
+    30_000
+  );
+
+  it('locks the level once the first cell is dug: the picker goes, the game keeps its board', async () => {
     localStorage.setItem('canari.minesweeper.level', 'beginner');
     localStorage.setItem('canari.minesweeper.unranked', '1');
     await open();
     await digFirst();
-    expect(startChallenge).not.toHaveBeenCalled();
     expect(picker()).toBeNull();
-    expect(cells()).toBe(81);
-    // The mines counter reads this board: 10 mines, none flagged yet.
-    expect(document.body.textContent).toContain('10');
+    expect(cells()).toBe(18 * 32);
+    // The mines counter reads the ranked board's 150 mines, none flagged yet.
+    expect(document.body.textContent).toContain('150');
   });
 
-  it('leaves ranked untouched whatever level Libre last used: same challenge, ranked board', async () => {
+  it('leaves ranked untouched whatever level Libre last used: same challenge, ranked board and target', async () => {
     localStorage.setItem('canari.minesweeper.level', 'beginner');
     localStorage.setItem('canari.minesweeper.unranked', '0');
     startChallenge.mockResolvedValue({
@@ -133,5 +157,6 @@ describe('MinesweeperModal - unranked levels', () => {
     expect(startChallenge).toHaveBeenCalledOnce();
     expect(startChallenge).toHaveBeenCalledWith();
     expect(cells()).toBe(18 * 32);
-  });
+    expect(generatedTarget()).toBe(60);
+  }, 30_000);
 });
