@@ -3,6 +3,7 @@
   import { fade, scale as scaleTransition } from 'svelte/transition';
   import { backOut } from 'svelte/easing';
   import Modal from '$lib/components/shared/Modal.svelte';
+  import Button from '$lib/components/ui/Button.svelte';
   import {
     createBoard,
     revealCell,
@@ -31,6 +32,7 @@
     type MinesweeperSettings,
   } from '$lib/minesweeper/settings';
   import { EMPTY_CELL_VIEWS, syncCellViews } from '$lib/minesweeper/cellViews';
+  import { findHint, type MinesweeperHint } from '$lib/minesweeper/hint';
   import type { TimedMove } from '$lib/minesweeper/replay';
   import MinesweeperCell from './MinesweeperCell.svelte';
   import {
@@ -57,6 +59,7 @@
     ArrowLeft,
     Bomb,
     Flag,
+    Lightbulb,
     Pickaxe,
     RotateCcw,
     Settings,
@@ -166,6 +169,49 @@
   let elapsedMs = $state(0);
   let startTimeMs = 0;
   let timerHandle: ReturnType<typeof setInterval> | null = null;
+  /**
+   * What the bulb shows (`hint.ts`), null when nothing is lit. Cleared by the next move and by a new
+   * board, so a highlight never outlives the state it was read from.
+   */
+  let hint = $state<MinesweeperHint | null>(null);
+  /**
+   * The bulb exists only in a game nothing will rank (owner, 2026-11-25): chosen unranked before the
+   * first dig, or a started game that holds no challenge. A ranked game draws no bulb at all.
+   */
+  const hintOffered = $derived(board.minesPlaced ? !rankedMode : unranked);
+  /** The bulb answers only during a game: before the first dig there is nothing to read. */
+  const hintReady = $derived(board.minesPlaced && board.status === 'playing');
+  /** The cells the bulb lights, read per cell by the grid: a handful of indices, never a copy of the board. */
+  const hintCells = $derived(
+    hint?.kind === 'numbers' ? hint.cells : hint?.kind === 'wrong-flag' ? [hint.cell] : []
+  );
+  const hintMessage = $derived(
+    hint === null
+      ? null
+      : hint.kind === 'numbers'
+        ? hint.cells.length === 1
+          ? m.minesweeper_hint_single()
+          : m.minesweeper_hint_numbers()
+        : hint.kind === 'counter'
+          ? m.minesweeper_hint_counter()
+          : hint.kind === 'wrong-flag'
+            ? m.minesweeper_hint_wrong_flag()
+            : m.minesweeper_hint_none()
+  );
+
+  /** The bulb: reads the visible board for what justifies the next certain move. Never in a ranked game. */
+  function showHint() {
+    if (!hintOffered) {
+      console.warn('[minesweeper] hint asked outside an unranked game; refused', { rankedMode });
+      return;
+    }
+    if (!hintReady) {
+      console.debug('[minesweeper] hint: no game in progress');
+      return;
+    }
+    hint = findHint(board);
+  }
+
   /** Measured RTT of POST /challenges; sent on submit to size network credit. */
   let challengeRoundTripMs = $state<number | undefined>(undefined);
   /** True while the first-dig challenge request is in flight, to guard against double-taps. */
@@ -544,6 +590,7 @@
   /** Puts a freshly created board on screen; a board of hidden cells replaces hidden views without allocating. */
   function installBoard(next: MinesweeperBoard) {
     board = next;
+    hint = null;
     // Untracked: this runs inside the effect that starts a game, which must not depend on what it writes.
     cellViews = syncCellViews(
       next.cells,
@@ -558,6 +605,8 @@
    */
   function commit() {
     board = { ...board };
+    // The next move clears the bulb: what it lit was read from the board before it.
+    hint = null;
     cellViews = syncCellViews(board.cells, cellViews).next;
   }
 
@@ -934,7 +983,16 @@
           onpointerdown={handleGridPointerDown}
         >
           {#each cellViews.views as cell, i (i)}
-            <MinesweeperCell {cell} index={i} pending={pendingCell === i} />
+            <MinesweeperCell
+              {cell}
+              index={i}
+              pending={pendingCell === i}
+              highlight={hintCells.includes(i)
+                ? hint?.kind === 'wrong-flag'
+                  ? 'wrong'
+                  : 'hint'
+                : null}
+            />
           {/each}
         </div>
       </div>
@@ -1052,7 +1110,13 @@
         <div
           class="ms-chip text-text-main pointer-events-auto flex h-11 items-center gap-3 rounded-full pl-3.5 text-sm font-bold shadow-sm backdrop-blur-sm md:h-[2.375rem]"
         >
-          <span class="flex items-center gap-1.5 leading-none">
+          <span
+            class="-mx-1.5 flex items-center gap-1.5 rounded-full px-1.5 py-1 leading-none {hint?.kind ===
+            'counter'
+              ? 'ring-accent ring-2'
+              : ''}"
+            data-hint={hint?.kind === 'counter' ? 'counter' : undefined}
+          >
             <Bomb size={16} class="text-cn-dark" />
             {remainingMines(board)}
           </span>
@@ -1109,6 +1173,18 @@
       </p>
     {/if}
 
+    {#if hintMessage}
+      <p
+        role="status"
+        class="ms-chip pointer-events-none absolute inset-x-3 bottom-20 z-20 mx-auto w-fit max-w-full rounded-full px-3 py-1 text-center text-xs font-semibold shadow-sm {hint?.kind ===
+        'wrong-flag'
+          ? 'text-red-err'
+          : 'text-text-main'}"
+      >
+        {hintMessage}
+      </p>
+    {/if}
+
     <!-- Mode button, within thumb reach: what a short press does (a long press does the other). -->
     <div class="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex justify-center gap-2 p-3">
       <button
@@ -1141,6 +1217,26 @@
         <Trophy size={18} strokeWidth={2.5} class={unranked ? 'opacity-40' : ''} />
         {unranked ? m.minesweeper_casual() : m.minesweeper_ranked()}
       </button>
+      {#if hintOffered}
+        <!-- The bulb (unranked only): lights what justifies the next certain move, never the move.
+             The chip is the wrapper because `.ms-chip` is scoped here and cannot reach into `Button`. -->
+        <div
+          class="ms-chip pointer-events-auto rounded-full shadow-md backdrop-blur-sm {hintReady
+            ? ''
+            : 'opacity-50'}"
+        >
+          <Button
+            variant="bare"
+            onclick={showHint}
+            disabled={!hintReady}
+            aria-label={m.minesweeper_hint()}
+            title={m.minesweeper_hint()}
+            class="text-text-main flex h-12 w-12 items-center justify-center rounded-full"
+          >
+            <Lightbulb size={18} strokeWidth={2.5} />
+          </Button>
+        </div>
+      {/if}
     </div>
 
     {#if showSettings}

@@ -11,9 +11,14 @@
     pending: boolean;
     /** Ringed: the cell the last action of a replay landed on. */
     marked?: boolean;
+    /**
+     * Lit by the bulb of an unranked game: `hint` a number to read, `wrong` a misplaced flag
+     * (`hint.ts`). Null otherwise; a primitive, so only the cells whose value changed re-render.
+     */
+    highlight?: 'hint' | 'wrong' | null;
   }
 
-  let { cell, index, pending, marked = false }: Props = $props();
+  let { cell, index, pending, marked = false, highlight = null }: Props = $props();
 
   /**
    * Revealed-number colours: a deep shade on the light board, a bright one on the black board (the
@@ -55,7 +60,12 @@
   data-cell={index}
   class="box-border flex h-[length:var(--ms-cell)] w-[length:var(--ms-cell)] shrink-0 touch-manipulation items-center justify-center rounded-md font-mono text-xs font-bold select-none sm:text-sm {tone} {numberColor} {marked
     ? 'ring-accent ring-2 ring-inset'
-    : ''}"
+    : ''} {highlight === 'hint'
+    ? 'ms-hint ring-accent ring-2 ring-inset'
+    : highlight === 'wrong'
+      ? 'ms-hint ms-hint-wrong ring-red-err ring-2 ring-inset'
+      : ''}"
+  data-hint={highlight ?? undefined}
 >
   {#if cell.state === 'flagged'}
     <Flag size={14} class="dark:text-accent-icon text-accent-text" />
@@ -90,6 +100,30 @@
 
   .ms-pending {
     animation: ms-pending-pulse calc(2s * var(--ms-anim, 1)) cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  /*
+   * The bulb's highlight: the ring stays, and a glow in the ring's own colour breathes around it so
+   * the eye finds the cell on a board of 576. Scaled by `--ms-anim` like the rest; at "none" the
+   * duration is zero, the animation ends at once and only the ring is left. The glow is a `filter`, not
+   * a `box-shadow`: Tailwind draws the ring WITH box-shadow, which the glow would erase. Lifted above
+   * its neighbours, which the grid paints after it.
+   */
+  @keyframes ms-hint-glow {
+    50% {
+      filter: drop-shadow(0 0 0.375rem var(--ms-glow));
+    }
+  }
+
+  .ms-hint {
+    --ms-glow: color-mix(in srgb, var(--accent) 70%, transparent);
+    position: relative;
+    z-index: 1;
+    animation: ms-hint-glow calc(1.6s * var(--ms-anim, 1)) ease-in-out infinite;
+  }
+
+  .ms-hint-wrong {
+    --ms-glow: color-mix(in srgb, var(--red-err) 70%, transparent);
   }
 
   /* Hidden tile: the board colour pulled 14% toward the text colour, 22% on hover and 30% pressed. */

@@ -13,6 +13,7 @@ it can be cleared without guessing, with a ranked leaderboard checked by server-
 | Vibration patterns | `frontend/src/lib/minesweeper/haptics.ts` |
 | Player settings (per device) | `frontend/src/lib/minesweeper/settings.ts` |
 | Per-cell diff behind the render | `frontend/src/lib/minesweeper/cellViews.ts`, `MinesweeperCell.svelte` |
+| The bulb of an unranked game (client only) | `frontend/src/lib/minesweeper/hint.ts` |
 | Challenge issue, replay, scores | `apps/social-service/src/minesweeper/minesweeper.service.ts` |
 
 ## The screen is the board (2026-10-07)
@@ -28,6 +29,7 @@ over the board:
 | Leaderboard | top right, trophy icon only | closes the game and goes to the Games page (`/games`), THE one leaderboard since 2026-11-13; the game has no sheet of its own |
 | Ranked / unranked | bottom, beside the mode | **"Libre" = no challenge is requested at the first dig**, so nothing is submitted; stored in `canari.minesweeper.unranked`; locked once the first cell is dug, since a game's ranking is decided when its board is generated |
 | Mode (dig / flag) | bottom centre, thumb reach | what a SHORT press does; a long press does the other. Same stored setting as the old "flags first" |
+| Hint (bulb) | bottom, after the mode | **unranked games only** ([below](#the-bulb-a-hint-in-an-unranked-game-owner-2026-11-25)) |
 
 **No zoom buttons.** Pinch, wheel (proportional to the delta, so a trackpad pinch is smooth), and a
 double-tap. The double-tap zooms in on the tapped point and out to the fit; it only counts when the first
@@ -62,6 +64,67 @@ per row and the banned list with unban, each behind a confirmation. The settings
 game (it is about input, not ranking). Pinned by `page.svelte.test.ts`, `page.moderation.svelte.test.ts`,
 `MinesweeperStats.svelte.test.ts`, `MinesweeperModal.chrome.svelte.test.ts`. The two sections below
 describe the stats and paging mechanics, now on the page (page size 25, "Voir plus").
+
+## The bulb: a hint in an unranked game (owner, 2026-11-25)
+
+*"En mode non classe (libre), j'aimerais bien qu'on puisse avoir un peu de didacticiel pour s'entrainer ...
+indiquer une des cases chiffrees qui donne le prochain coup ? Sans donner la reponse, cela oriente le regard."*
+(owner). A `Lightbulb` chip beside the mode button; a press lights WHAT JUSTIFIES the next certain move, never
+the move, with one line saying what is lit. The next move (or a new board) clears it.
+
+**The owner's four decisions (2026-11-25):**
+
+1. **The numbers that justify the deduction, as few as suffice**: ONE number when it settles its neighbours alone
+   (a chord), the TWO of a pair pattern, else the smallest group found. Never the cell to play.
+2. **A wrong flag comes first**: a flag on a cell with no mine is ringed in red and said to be misplaced.
+3. **When only the total decides**, the mines-left counter in the HUD is ringed.
+4. **Unranked only.** A ranked game draws no bulb, and `showHint()` refuses (a `warn`) outside one; nothing
+   enters the move log, so nothing the server replays changes. The bulb is offered when the player chose
+   "Libre" before the first dig, or when a started game holds no challenge (a ranked start that failed).
+
+**How it finds the hint** (`findHint`, pure, read-only). It reads what the PLAYER sees - revealed numbers,
+flags, the mine total - so what it points at is a deduction a player could make. The hidden layout is read for
+one question only: is a flag on a mine (decision 2). No visible state can prove that, and once every flag is
+known right, every count the numbers still need is exact - a "contradictory visible state" can only come from a
+wrong flag, so it is caught there. Then the cheapest explanation, in a fixed order (same state, same hint):
+
+| Tier | Lights | What it is |
+| --- | --- | --- |
+| wrong flag | that flag (the first in reading order) | decision 2 |
+| single | one number | its hidden neighbours are all safe, or all mines |
+| pair | two numbers sharing a hidden neighbour | they settle a cell together (1-2, 1-2-1 and their kin; the generator's *subset* tier is a special case) |
+| group | the fewest numbers found | one group of linked numbers settles a cell, ignoring the total |
+| counter | the HUD's mines left | only the total settles a cell (the generator's *global* tier) |
+| none | nothing; "no certain move was found" | logged: a `warn` when the search was complete (a no-guess board never gets there), an `info` when it ran out of budget |
+
+Within a tier, a deduction that OPENS a cell is preferred to one that flags a mine. **The group is minimal, not
+minimum**: rings of numbers grow around the settled cell until they settle it (adding a number never unsettles a
+cell), then every number the deduction holds without is dropped in reading order. Finding the true minimum means
+trying every subset; this gives a set where no number can be removed, cheaply, and every set it keeps is a valid
+hint - so a budget spent midway leaves a true hint, only a larger one. Bounded by COUNTED search nodes (200 000
+per enumeration, 2 million per hint), never a clock.
+
+**Why it does not call the engine's solver.** `game.ts` is held identical to the server's copy and frozen per
+generator; its helpers are private, and its tiers MUTATE the board they solve (they flag and open as they go).
+Exporting them would be an edit of a frozen file for no gain. So `hint.ts` re-expresses the same enumeration
+over the visible state (a depth-first search that cuts a branch as soon as one number cannot be met, the counts
+combined across groups and "the sea" exactly as `globalTier` does) and imports only the board's TYPE. Nothing in
+it can change a board, a replay or a fingerprint.
+
+**The render.** A lit cell gets a ring in a token colour (`accent`, `red-err` for a wrong flag) and a glow that
+breathes at `--ms-anim` - a `filter`, since Tailwind draws the ring with `box-shadow`; at "Aucune" only the ring
+stays. Each cell reads `highlight` as a primitive, so a hint re-renders the few cells it lights, as `pending`
+does, and the 576 views are untouched.
+
+**Charter.** Principle 3 (your attention is not for sale): the bulb is asked for, never offered by a prompt, and
+it explains itself in one line. Principle 7 (simple): one control, in the mode nothing ranks.
+
+**Measured** (a throwaway script, 20 generated boards played through by revealing around each lit number, 5 537
+hints on a workstation): 0.03 ms on average, 1.6 ms at most; never "none". **Pinned:** `hint.test.ts` (each
+tier on a hand-drawn board, safe preferred, the wrong flag first, nothing on a 50/50, determinism, the board
+untouched, a real generator-2 board), `MinesweeperModal.hint.svelte.test.ts` (no bulb ranked, the cells and the
+counter lit, the highlight cleared by the next move). **Owed:** one reading on a phone
+([reading](../../backlog.d/reading-owed-the-minesweeper-hint.md)).
 
 ## Stats, paging, settings and the cell diff (2026-11-04)
 
