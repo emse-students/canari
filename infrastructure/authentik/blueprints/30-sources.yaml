@@ -13,7 +13,8 @@ entries:
     identifiers:
       slug: "cas-emse"
     attrs:
-      name: "Cas EMSE"
+      # The login button reads "Continue with <name>"; the slug is the identity, so a rename is in place.
+      name: "CAS EMSE"
       promoted: true
       authentication_flow: !Find [authentik_flows.flow, [slug, "default-source-authentication"]]
       enrollment_flow: !Find [authentik_flows.flow, [slug, "miconnect-enrollment"]]

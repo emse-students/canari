@@ -28,12 +28,20 @@ entries:
       slug: "canari-dev"
     attrs:
       name: "Canari (dev)"
+      # HIDDEN FROM THE DASHBOARD, NOT GATED (2026-11-25): `meta_hide` only drops the tile from a person's
+      # application library. No policy binding on purpose - a binding would also gate AUTHORIZATION, and the
+      # test accounts and every pre-release build sign in to this provider.
+      meta_hide: true
       provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "miconnect-canari-dev"]]
   - model: authentik_core.application
     identifiers:
       slug: "canari-local"
     attrs:
       name: "Canari Local"
+      # HIDDEN FROM THE DASHBOARD, NOT GATED (2026-11-25): `meta_hide` only drops the tile from a person's
+      # application library. No policy binding on purpose - a binding would also gate AUTHORIZATION, and the
+      # test accounts and every pre-release build sign in to this provider.
+      meta_hide: true
       provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "miconnect-canari-local"]]
   - model: authentik_core.application
     identifiers:
