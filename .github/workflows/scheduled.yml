@@ -899,6 +899,9 @@ jobs:
     # So a release published just after the check cannot reach the App Store while the catch-up is
     # still writing. This timeout makes the bound a fact rather than an estimate: the job is killed
     # at 10 minutes, half the shortest time any stable has ever taken to its submit.
+    # THE ONE WRITER THIS DOES NOT SEE: `ios.yml` dispatched BY HAND with `publish: true` and
+    # `prerelease: 'false'` submits too, and is no `release.yml` run, so `releaseInFlight` cannot
+    # see it. That input is documented "Leave OFF"; whoever turns it on owns the overlap.
     timeout-minutes: 10
     # One catch-up at a time (a hand dispatch landing on the 09:00 slot). Deliberately NOT shared
     # with `release.yml`'s group: a pending run in a shared group is CANCELLED by the next one to
@@ -967,7 +970,7 @@ jobs:
           set -e
           if [ "$code" -eq 75 ]; then
             echo "### App Store catch-up: \`deferred\`" >> "$GITHUB_STEP_SUMMARY"
-            echo "Apple's single version slot is held by a version it is reviewing; the log names it. Nothing was touched, and tomorrow asks again." >> "$GITHUB_STEP_SUMMARY"
+            echo "Apple's single version slot is held by another version - in review, or approved and waiting for its developer release (PENDING_DEVELOPER_RELEASE, which only a human frees); the log names it and its state. Nothing was touched, and tomorrow asks again." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           exit "$code"

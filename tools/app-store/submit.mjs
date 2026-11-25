@@ -875,7 +875,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  *
  * @param {(m: string, p: string) => Promise<any>} api
  * @param {string} path the first page
- * @returns {Promise<any[]>}
+ * @returns {Promise<any[] | null>} null when a page answered without a `data` list: "Apple said
+ *   nothing" is not "Apple has no versions", and every reader treats it as unknown
  */
 export async function listAll(api, path) {
   const rows = [];
@@ -883,7 +884,8 @@ export async function listAll(api, path) {
   for (let page = 1; next; page++) {
     if (page > 100) throw new Error(`${path} still had a next page after 100 pages`);
     const res = await api('GET', next);
-    rows.push(...(res?.data ?? []));
+    if (!Array.isArray(res?.data)) return null;
+    rows.push(...res.data);
     const link = res?.links?.next;
     if (!link) break;
     if (!link.startsWith(`${API}/`))
@@ -959,7 +961,7 @@ async function addVersionToSubmission(api, submissionId, versionId) {
  * @param {string} ref a tag or commit the checkout has fetched
  * @returns {string} the path of the extracted copy
  */
-function notesFromRef(ref) {
+export function notesFromRef(ref) {
   const out = Bun.spawnSync(['git', 'show', `${ref}:store/whats-new.txt`]);
   if (out.exitCode !== 0)
     throw new Error(`git show ${ref}:store/whats-new.txt failed: ${out.stderr.toString().trim()}`);
@@ -1150,7 +1152,7 @@ export async function submitToAppStore({
   );
   const slot = chooseVersionSlot({ versions: all, versionString });
 
-  for (const v of all) {
+  for (const v of all ?? []) {
     const st = v?.attributes?.appStoreState;
     if (st && !VERSION_DONE.has(st)) log(`  version slot: ${v?.attributes?.versionString} (${st})`);
   }

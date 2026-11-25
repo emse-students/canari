@@ -44,6 +44,7 @@ import {
   chooseCatchUp,
   submitToAppStore,
   listAll,
+  notesFromRef,
   VERSION_DONE,
 } from './submit.mjs';
 import { pickLatestStable } from '../store-divergence/divergence.mjs';
@@ -1170,6 +1171,59 @@ const stateOf = (fake, name) =>
     'an unprocessed asset fails a catch-up at once',
     /if \(catchUp\)\s*throw new Error\(\s*`\$\{verdict\.pending\} store asset/.test(src),
     true
+  );
+}
+
+{
+  process.stdout.write('\nthe catch-up reads the notes from a ref, not from the checkout\n');
+  // HEAD is the one ref every checkout has, CI's depth-1 clone included; the catch-up hands a
+  // stable's tag the same way. What comes back must be byte for byte what that tree holds.
+  const shown = Bun.spawnSync(['git', 'show', 'HEAD:store/whats-new.txt']);
+  const path = notesFromRef('HEAD');
+  eq(
+    'the copy is what the ref holds, byte for byte',
+    readFileSync(path, 'utf8'),
+    shown.stdout.toString()
+  );
+  eq('and it is a file outside the checkout', path.includes('whats-new-'), true);
+  rmSync(path, { force: true });
+
+  // A ref the checkout does not have (the tag was not fetched) is a refusal naming it, never a
+  // silent fallback to `main`'s notes.
+  let threw = null;
+  try {
+    notesFromRef('v0.0.0-no-such-tag');
+  } catch (e) {
+    threw = e;
+  }
+  eq('an unknown ref is refused', threw instanceof Error, true);
+  eq('and the refusal names it', String(threw?.message).includes('v0.0.0-no-such-tag'), true);
+}
+
+{
+  process.stdout.write('\na list Apple answered without data is unknown, never empty\n');
+  // "Apple said nothing" read as "Apple has no versions" would make the slot look free.
+  eq('a 200 with no data is null', await listAll(async () => ({}), '/v1/x'), null);
+  eq(
+    'even on a later page',
+    await listAll(
+      async (_m, p) =>
+        p === '/v1/x'
+          ? { data: [{ id: 'a' }], links: { next: 'https://api.appstoreconnect.apple.com/v1/x2' } }
+          : { errors: [] },
+      '/v1/x'
+    ),
+    null
+  );
+  eq(
+    'an empty list is still an empty list',
+    await listAll(async () => ({ data: [] }), '/v1/x'),
+    []
+  );
+  eq(
+    'and the catch-up refuses on it rather than seeing a free slot',
+    chooseCatchUp({ versions: null, versionString: '1.8.1' }).action,
+    'fail'
   );
 }
 
