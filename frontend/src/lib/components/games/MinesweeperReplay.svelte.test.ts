@@ -61,7 +61,7 @@ const settle = async () => {
 async function open() {
   const app = mount(MinesweeperReplay, {
     target: document.body,
-    props: { scoreId: 's1', onClose: () => {} },
+    props: { scoreId: 's1' },
   });
   mounted.push(() => unmount(app, { outro: false }));
   flushSync();
