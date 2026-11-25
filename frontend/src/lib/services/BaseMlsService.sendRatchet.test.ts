@@ -161,6 +161,8 @@ function session(model: RatchetModel, peer: Peer, disk: Disk) {
     owedBurnInFlight: new Map(),
     unresolvedGroups: new Set<string>(),
     catchUpGate: null,
+    sendsPastGate: 0,
+    sendsPastGateDrained: [],
     getLocalGroups: () => [G],
     freshEpoch: vi.fn(async () => model.state.epoch),
     getEpoch: () => model.state.epoch,

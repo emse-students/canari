@@ -1592,12 +1592,27 @@ export class WebMlsService extends BaseMlsService {
       return super.createDecryptSession(groupId);
     }
 
-    const release = await this.messageScheduler.acquireMlsLock();
+    // The lock FIRST, then the gate, then the sends already past it, then the snapshot
+    // (`beginCatchUpAfterSends` carries the whole argument). Without the wait, a send that passed the
+    // gate just before it closed encrypted after the snapshot and the swap below was refused for it
+    // (17 times in one restore, 2026-11-24). The gate is never closed before the lock: a holder of
+    // the lock that awaited a send would then wait on a catch-up that waits on it (the drain awaits
+    // no send since mls-desync-prevention section 10; the order keeps any holder safe).
+    const release = await this.messageScheduler.acquireMlsLock(this.catchUpMutexHolder(groupId));
+    try {
+      await this.beginCatchUpAfterSends(groupId, true);
+    } catch (e) {
+      // Nothing in the wait rejects today; a future one that does must not leave the gate closed
+      // and the lock held for ever.
+      console.error(`[MLS] catch-up (${groupId.slice(0, 8)}...) could not open:`, e);
+      this.endCatchUp(groupId);
+      release();
+      throw e;
+    }
 
-    // Closes the gate every send waits on, and remembers where the live client stood. The gate is
-    // the fix; the count below is the proof it held - if it ever differs at the swap, a send got
-    // through and the state about to be installed would undo it.
-    this.beginCatchUp(groupId);
+    // Remembers where the live client stood. The gate is the fix; the count is the proof it held -
+    // if it ever differs at the swap, a send got through and the state about to be installed would
+    // undo it.
     const mutationsAtSnapshot = this.liveMutations;
 
     let workerSession: Awaited<ReturnType<typeof createMlsCryptoWorkerSession>> | null;
@@ -1647,7 +1662,8 @@ export class WebMlsService extends BaseMlsService {
           if (usedWorker) {
             const finalState = await session.finalize();
             /**
-             * The gate in `sendMessage` should make this unreachable, and it is kept anyway: the
+             * The gate in `sendMessage`, with the sends past it waited out before the snapshot
+             * (`beginCatchUpAfterSends`), makes this unreachable, and it is kept anyway: the
              * gate is an ORDERING and this is an INVARIANT. A future send path that forgets to wait
              * must be caught here rather than corrupt a ratchet silently - which is precisely how
              * WP-FALSELOSS-2 survived three sessions of looking straight at it.

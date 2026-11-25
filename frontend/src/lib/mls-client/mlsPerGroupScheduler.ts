@@ -84,6 +84,8 @@ interface MlsLockWaiter {
   readonly frameKey: string | null;
   /** The group whose commit this acquirer runs, set as the mutex is GRANTED - see `committingGroup`. */
   readonly commitGroup: string | null;
+  /** What a plain acquirer names itself as while it holds the mutex - see `holderLabel`. */
+  readonly holder?: string;
   readonly grant: (release: () => void) => void;
   /**
    * Ends a frame-scoped acquisition WITHOUT the mutex, because the commit now holding it holds that
@@ -207,6 +209,13 @@ export class MlsPerGroupScheduler {
   private committingGroup: string | null = null;
   /** The loan currently open, or `null`. At most one: only the commit holding the mutex lends it. */
   private loan: MlsLockLoan | null = null;
+  /**
+   * Who holds the mutex right now - `commit in <group>`, `frame of <bucket>`, or the label a plain
+   * acquirer passed ({@link acquireMlsLock}) - or `null` when nobody does. Set at the grant, cleared
+   * at the release. It is what turns an ARGUED lock order into a CHECKED one: the catch-up gate reads
+   * it to accuse the one state its ordering makes impossible (`BaseMlsService.passCatchUpGate`).
+   */
+  private holderLabel: string | null = null;
 
   /**
    * How long any ONE await inside {@link drain} may take before it is reported as stuck, and how
@@ -408,8 +417,13 @@ export class MlsPerGroupScheduler {
    * drain via a fire-and-forget onWelcomeProcessed callback, so it queues behind the drain
    * here rather than re-entering; never re-acquire while already holding the lock.
    */
-  acquireMlsLock(): Promise<() => void> {
-    return this.acquireExclusive(null);
+  acquireMlsLock(holder = 'MLS mutex'): Promise<() => void> {
+    return this.acquireExclusive(null, holder);
+  }
+
+  /** Who holds the mutex right now, or `null` - see {@link holderLabel}. */
+  get mutexHolder(): string | null {
+    return this.holderLabel;
   }
 
   /**
@@ -541,9 +555,9 @@ export class MlsPerGroupScheduler {
   }
 
   /** An acquirer exclusive of everything, a commit of `commitGroup` when it is not `null`. */
-  private acquireExclusive(commitGroup: string | null): Promise<() => void> {
+  private acquireExclusive(commitGroup: string | null, holder?: string): Promise<() => void> {
     return new Promise((resolve) => {
-      this.enqueueWaiter({ frameKey: null, commitGroup, grant: resolve, bounce: null });
+      this.enqueueWaiter({ frameKey: null, commitGroup, holder, grant: resolve, bounce: null });
     });
   }
 
@@ -588,13 +602,14 @@ export class MlsPerGroupScheduler {
     // lead up only once that change and the checkpoints it awaits inside have settled. Taken at the
     // grant, never at the request: a wait for the mutex holds nothing. A borrower of a commit's loan
     // runs inside that commit's hold.
-    const releaseLead = takeLeadHold(
+    const holder =
       waiter.commitGroup !== null
         ? `commit in ${waiter.commitGroup.slice(0, 8)}`
         : waiter.frameKey !== null
           ? `frame of ${waiter.frameKey.slice(0, 8)}`
-          : 'MLS mutex'
-    );
+          : (waiter.holder ?? 'MLS mutex');
+    this.holderLabel = holder;
+    const releaseLead = takeLeadHold(holder);
     if (this.committingGroup !== null) {
       // THE FRAMES PICKED BEFORE THIS COMMIT WAS GRANTED and queued behind it: the ones it holds back
       // would hold the drain for the whole commit, so they go back to their buckets now.
@@ -618,6 +633,7 @@ export class MlsPerGroupScheduler {
       }
       this.committingGroup = null;
       this.lockHeld = false;
+      this.holderLabel = null;
       const next = this.lockWaiters.shift();
       if (next) this.grantMain(next);
       // After the next grant: a queued holder takes its own hold first, so the count never touches
