@@ -456,9 +456,12 @@
 
   let filteredConversationEntries = $derived.by(() =>
     conversationRows
-      .filter(({ convo, resolved }) =>
+      // The held Notes row is told apart by its MAP KEY (the group id), never by `convo.name`: a
+      // self conversation keeps no name of its own (`selfConversationIdentity`), so comparing the
+      // two filtered the real row out while `selfRow` still suppressed the placeholder.
+      .filter(({ name, convo, resolved }) =>
         convo.conversationType === 'self'
-          ? Boolean(onOpenSelfConversation) && convo.name === selfRow?.name && matchesSelfRow(convo)
+          ? Boolean(onOpenSelfConversation) && name === selfRow?.name && matchesSelfRow(convo)
           : conversationMatchesQuery(
               resolved.displayName,
               previewContentOf(convo.messages) ?? '',
