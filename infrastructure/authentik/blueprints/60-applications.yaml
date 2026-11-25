@@ -1,4 +1,4 @@
-# The application each provider is attached to, its launch URL, and who may enter MiGallery and Le Cercle (D42-D43).
+# The application each provider is attached to, its launch URL, and who may enter MiGallery and Le Cercle (D42-D43) and the Reseau console.
 #
 # Applied by infrastructure/authentik/apply-blueprints.py, never by the worker's own discovery
 # (instantiate: false) - see infrastructure/authentik/README.md. Every reference is a !Find on a
@@ -76,6 +76,20 @@ entries:
       name: "MinoWiki"
       provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "miconnect-mino-wiki"]]
       meta_launch_url: "https://mino.emse.fr"
+  - model: authentik_core.application
+    identifiers:
+      slug: "reseau"
+    attrs:
+      name: "Réseau MDE"
+      # GROUP ONLY (owner, 2026-11-25): the one binding below, the group `acces-reseau`. No cotisant
+      # gate - the console is the Rootz association's tool, not a service of the ecosystem's members -
+      # and so no expression policy. A person outside the group is refused at authorization, and
+      # authentik's application library does not list the tile to them.
+      # `all`, not `any`: with one binding they agree, but under `all` a binding added later can only
+      # NARROW who enters, never widen it.
+      policy_engine_mode: "all"
+      provider: !Find [authentik_providers_oauth2.oauth2provider, [name, "miconnect-reseau"]]
+      meta_launch_url: "https://reseau.rootz-emse.fr/"
   - model: authentik_core.application
     identifiers:
       slug: "sky"
@@ -164,3 +178,19 @@ entries:
       target: !Find [authentik_policies.policybindingmodel, [application__slug, "cercle"]]
       group: !Find [authentik_core.group, [name, "acces-cercle"]]
       order: 1
+  # THE RESEAU CONSOLE (owner, 2026-11-25): the group alone admits. Its members are the population, not
+  # the configuration: an authentik administrator adds them by hand, and no apply touches the list.
+  - model: authentik_core.group
+    identifiers:
+      name: "acces-reseau"
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_policies.policybindingmodel, [application__slug, "reseau"]]
+      group: !Find [authentik_core.group, [name, "acces-reseau"]]
+      order: 0
+    # NAMED, though both are authentik's defaults: an application with no enabled binding admits every
+    # account, so a binding disabled or negated by hand must read as drift in the daily dry run, and
+    # be written back by the next stable - an attribute no entry names is one neither ever looks at.
+    attrs:
+      enabled: true
+      negate: false

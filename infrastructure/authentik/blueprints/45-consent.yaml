@@ -13,7 +13,7 @@
 #
 # WHICH PROVIDERS NAME IT IS DECLARED IN 50-providers.yaml, one `authorization_flow` per provider, and
 # nowhere else (2026-11-18). This file only BUILDS the flow; a flow no provider names is inert. Since
-# the hold of 2026-10-17 was lifted (2026-11-20) all eight providers name it, production's included
+# the hold of 2026-10-17 was lifted (2026-11-20) every provider names it, production's included
 # (docs/wiki/infrastructure/authentik.md#the-terms-of-use-are-a-stage-of-the-authorization-flow-2026-10-16).
 # The answer is stored on the
 # account: `cgu_version` (which text) and `cgu_accepted_at` (when). THE VERSION IS WRITTEN IN TWO

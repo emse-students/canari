@@ -156,6 +156,23 @@ entries:
         return {"minoGroups": out}
       scope_name: "profile"
       description: "MinoWiki 3 : groupes mino-*, statut, promo, formation"
+  # The Reseau console's `profile` claims (owner, 2026-11-25), in place of authentik's managed
+  # `profile` mapping, which sends the name of EVERY group the person belongs to. The console needs
+  # who signed in and that they hold its access group - nothing about their other memberships.
+  - model: authentik_providers_oauth2.scopemapping
+    identifiers:
+      name: "miconnect-claim-reseau-profile"
+    attrs:
+      expression: |-
+        rel = getattr(request.user, "ak_groups", None) or request.user.groups
+        return {
+            "name": request.user.name,
+            "given_name": request.user.name,
+            "preferred_username": request.user.username,
+            "groups": ["acces-reseau"] if rel.filter(name="acces-reseau").exists() else [],
+        }
+      scope_name: "profile"
+      description: "Gives the name, the username and the acces-reseau group only"
   # The account's stable identifier, on Canari's providers only: Canari is the editor of the profile
   # (WP4), and the key it writes back through authentik's API is this uuid, never the `sub`.
   - model: authentik_providers_oauth2.scopemapping
