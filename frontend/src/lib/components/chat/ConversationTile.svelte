@@ -7,7 +7,12 @@
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import { presenceMap, watchUsers, unwatchUsers } from '$lib/stores/presenceStore';
   import { extractMentionUserIds } from '$lib/utils/mentions';
-  import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
+  import {
+    getUserDisplayNameSync,
+    peekUserDisplayName,
+    resolveUserDisplayName,
+  } from '$lib/utils/users/displayName';
+  import { noticeUserIds } from '$lib/utils/chat/noticeText';
   import { visibleNickname } from '$lib/utils/users/conversationNicknames.svelte';
   import { isCanonicalDirectKey } from '$lib/utils/chat/conversations';
   import { m } from '$lib/paraglide/messages';
@@ -160,15 +165,17 @@
       return;
     }
     const env = parseEnvelope(raw);
-    previewText = getPreviewText(env);
+    previewText = getPreviewText(env, peekUserDisplayName);
 
     const source = env.kind === 'text' ? env.text : env.kind === 'media' ? (env.caption ?? '') : '';
-    const mentionIds = extractMentionUserIds(source);
-    if (mentionIds.length === 0) return;
+    // A notice row names its people by id: they are resolved like a mention, then it is redrawn.
+    const noticeIds = env.kind === 'system' && env.notice ? noticeUserIds(env.notice) : [];
+    const nameIds = [...extractMentionUserIds(source), ...noticeIds];
+    if (nameIds.length === 0) return;
 
-    void Promise.all(mentionIds.map((id) => resolveUserDisplayName(id))).then(() => {
+    void Promise.all(nameIds.map((id) => resolveUserDisplayName(id))).then(() => {
       if (lastMessage !== raw) return;
-      previewText = getPreviewText(parseEnvelope(raw));
+      previewText = getPreviewText(parseEnvelope(raw), peekUserDisplayName);
     });
   });
 </script>
