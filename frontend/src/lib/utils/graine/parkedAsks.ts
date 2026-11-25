@@ -15,7 +15,7 @@ import { communityKeyGroupOf } from './admissionGate';
 /**
  * SEED ASKS THIS DEVICE CANNOT DECIDE YET, waiting for the one event that lets it.
  *
- * Two waits, one queue (channel-encryption sections 25 and "the floor is the member's"):
+ * Three waits, one queue (channel-encryption sections 25 and "the floor is the member's"):
  *
  * - **the community's key group to DRAIN** ({@link parkAsk}). The admission gate observes a voucher
  *   only on a drained key group - its frames applied and the mailbox listed on this link. The answer
@@ -25,7 +25,12 @@ import { communityKeyGroupOf } from './admissionGate';
  * - **the community's history RULE to be known** ({@link parkAskUntilRuleKnown}). This session has
  *   not learned whether the community shares its past, and a floor drawn under a guessed `joined`
  *   would lose a `shared` past for good. The answer waits for the listing that states the rule
- *   (`whenHistoryRuleKnown`), instead of a silence re-asked only at the requester's next start.
+ *   (`whenHistoryRuleKnown`), instead of a silence re-asked only at the requester's next start;
+ * - **the NEXT CONNECTION** ({@link parkAskUntilNextLink}). The answer was ready and its send got no
+ *   answer from the server (a transport failure): nothing was refused, and the ask's frame is
+ *   acknowledged already, so nothing would answer it before the requester's next start. It waits
+ *   for the next connection's catch-up pull ({@link releaseAsksAwaitingLink}) - an event, never a
+ *   clock.
  *
  * Neither is a refusal. The ask is parked here, in memory, and decided again by the event:
  *
@@ -49,7 +54,10 @@ export type AskAnswerer = (
 ) => Promise<void>;
 
 /** The event a parked ask waits for. */
-type AskWait = { kind: 'drain'; keyGroupId: string } | { kind: 'rule'; workspaceId: string };
+type AskWait =
+  | { kind: 'drain'; keyGroupId: string }
+  | { kind: 'rule'; workspaceId: string }
+  | { kind: 'link' };
 
 interface ParkedAsk {
   frame: DistributionFrame;
@@ -159,6 +167,37 @@ export function parkAskUntilRuleKnown(
   );
 }
 
+/**
+ * Parks `frame`'s ask until the next connection of this session has caught up, then answers it again
+ * with `answer`. For an answer whose send got no answer from the server: see the module doc.
+ */
+export function parkAskUntilNextLink(
+  frame: DistributionFrame,
+  request: canari.GraineRequestMsg.$Properties,
+  answer: AskAnswerer
+): void {
+  const session = requireGraineRuntime('cannot park a seed ask');
+  if (!enqueue(frame, request, answer, session, { kind: 'link' })) return;
+  console.info(
+    `[GRAINE] parked ${frame.sender}:${frame.senderDeviceId}'s ask in community ${frame.workspaceId.slice(0, 8)} ` +
+      `until the next connection has caught up (${parked.size} parked)`
+  );
+}
+
+/**
+ * The connection of this session has caught up (its post-connect pull is done, on an open socket):
+ * answers again every ask parked for the next link. Called by the session's `onConnectionCaughtUp`,
+ * once per connection and not awaited there (it never rejects: each answer runs in its own `try`); a
+ * no-op, silently, when no ask waits for it - the routine case.
+ */
+export async function releaseAsksAwaitingLink(): Promise<void> {
+  if (!isGraineReady()) return;
+  const session = requireGraineRuntime('cannot answer a parked ask');
+  const due = (wait: AskWait) => wait.kind === 'link';
+  if (![...parked.values()].some((ask) => due(ask.wait) && ask.session === session)) return;
+  await releaseParked(due, session);
+}
+
 function keyOf(frame: DistributionFrame, request: canari.GraineRequestMsg.$Properties): string {
   // BY KIND TOO: a HISTORY ask and a SESSIONS repair from one device are two questions, and the
   // later one must not erase the earlier.
@@ -239,9 +278,11 @@ async function releaseParked(
 }
 
 function describeWait(wait: AskWait): string {
-  return wait.kind === 'drain'
-    ? `the wait for key group ${wait.keyGroupId.slice(0, 8)} to drain`
-    : `the wait for community ${wait.workspaceId.slice(0, 8)}'s history rule`;
+  if (wait.kind === 'drain')
+    return `the wait for key group ${wait.keyGroupId.slice(0, 8)} to drain`;
+  if (wait.kind === 'rule')
+    return `the wait for community ${wait.workspaceId.slice(0, 8)}'s history rule`;
+  return 'the wait for the next connection';
 }
 
 /** How many asks are parked now. */

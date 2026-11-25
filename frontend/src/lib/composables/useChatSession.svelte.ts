@@ -26,6 +26,7 @@ import {
   setSessionCaughtUp,
 } from '$lib/stores/pendingCallAccept';
 import { isTauriRuntime } from '$lib/utils/openExternal';
+import { releaseAsksAwaitingLink } from '$lib/utils/graine/parkedAsks';
 
 import type { MlsFatalErrorKind, SessionContext } from './session/sessionTypes';
 import type { PinIntent } from './session/pinUnlock';
@@ -240,7 +241,12 @@ export function useChatSession() {
       // A socket that closed has nothing caught up: a native answer waits for the next catch-up.
       if (!v) setSessionCaughtUp(false);
     },
-    onConnectionCaughtUp: () => markConnectionCaughtUp(isWsConnected),
+    onConnectionCaughtUp: () => {
+      markConnectionCaughtUp(isWsConnected);
+      // A seed answer whose send got no answer from the server waits for exactly this: a link that
+      // is up and caught up (`parkAskUntilNextLink`).
+      if (isWsConnected) void releaseAsksAwaitingLink();
+    },
     getLoginError: () => loginError,
     setLoginError: (v) => {
       loginError = v;

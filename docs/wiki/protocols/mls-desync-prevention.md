@@ -531,8 +531,15 @@ ordering is the guarantee.
   parked ask (`parkedAsks.ts`), or a `void` chain (`noteMissingSeed` -> `flushRepairs`,
   `noteHistoryHeldNothing` -> `requestCommunityHistory`, `onCallSignal`). The frame is acknowledged
   once its answer is scheduled - a request is transport, and an unanswered requester asks again at its
-  next start. A failed deferred answer is logged by class (`isTransportFailure` warns, anything else
-  accuses at error), since nothing redelivers it.
+  next start. A failed deferred answer is said ONCE, by class (`answerSeedAsk`): a transport failure
+  (the server got no answer) warns and PARKS the ask until the next connection's catch-up pull
+  (`parkAskUntilNextLink`, released by `releaseAsksAwaitingLink` from `onConnectionCaughtUp`, an event
+  and never a clock, bounded by `MAX_PARKED_ASKS` and dropped with the session); anything else accuses
+  at error and is left to the requester's next start.
+- **The frame is not where a lost answer is recovered.** A key-group frame's generation is spent at
+  decrypt, before its handler runs, so a handler throw left unacknowledged is refused as `secret-reuse`
+  on redelivery and counted as a key-group frame loss. Recovering a failed seed STORE that way is
+  the open item [a-key-group-frame-whose-handler-threw-is-lost](../backlog.d/a-key-group-frame-whose-handler-threw-is-lost.md).
 - **Why the invariant is asserted by tests and not by a runtime throw.** The browser has no async
   context propagation (no `AsyncLocalStorage`; TC39 `AsyncContext` has not shipped), so neither the
   scheduler nor `sendMessage` can tell the drain's own continuation from a user's send that happens to
@@ -545,7 +552,9 @@ ordering is the guarantee.
   only through `void` chains that also wait for `whenGroupDrained`; the history legs of
   `systemMessageHandler.ts` and `sessionAuth.ts` (all behind `answerAfterMailboxDrained` or `void`);
   `retryOverheardPull` (behind `answerAfterMailboxDrained`); call signals (`onCallSignal` returns
-  `void`). Seed distribution (`distributeGraineSeed`) and visible notices are sent from gestures and
+  `void`); `republishKeyMaterial` in the Welcome recovery (`setupMessageHandler.ts`), awaited in the
+  drain but after the Welcome's own lock section, so under NO mutex - network I/O only, and its failure
+  is logged. Seed distribution (`distributeGraineSeed`) and visible notices are sent from gestures and
   seals, never from the pipeline. A new `await` in the frame path is read against this list.
 
 

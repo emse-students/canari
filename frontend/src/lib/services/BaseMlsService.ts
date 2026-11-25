@@ -8123,10 +8123,14 @@ export abstract class BaseMlsService implements IMlsService {
         ...(senderDeviceId ? { senderDeviceId } : {}),
       });
     } catch (e) {
-      // NOT acknowledged, on purpose: the handler is what STORES a seed, so a throw here means the
-      // seed did not land, and acknowledging would drop key material nobody can ask for again.
-      // Redelivery is exactly the right outcome - including after a logout, where the session this
-      // handler needs is gone by construction.
+      // NOT acknowledged: the handler is what STORES a seed, so a throw here means the seed did not
+      // land. BUT REDELIVERY DOES NOT RECOVER IT, whatever this comment once claimed: the frame was
+      // DECRYPTED above (`openDistributionFrame`), its generation spent and recorded
+      // (`noteFrameConsumed`), so the redelivered bytes are refused as `secret-reuse` and counted
+      // as a key-group frame LOSS (`noteKeyGroupFrameLost`) - the seed then comes back only through
+      // a seed request. Keeping the decrypted plaintext until its handler succeeds is the open item
+      // `backlog.d/a-key-group-frame-whose-handler-threw-is-lost.md`. A seed ASK no longer throws
+      // here at all: its answer runs past the frame (mls-desync-prevention section 10).
       //
       // BY CLASS: a handler that could not REACH the server (it asks the delivery service, which got
       // no answer - `DeliveryUnreachableError`) refused nothing about the frame. That is the expected

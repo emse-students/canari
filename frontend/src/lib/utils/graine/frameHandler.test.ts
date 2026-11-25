@@ -43,7 +43,13 @@ async function handleDistributionFrame(frame: Parameters<typeof handleFrame>[0])
   await handleFrame(frame);
   await deferredSeedAnswersSettled();
 }
-import { clearParkedAsks, MAX_PARKED_ASKS, parkedAskCount } from './parkedAsks';
+import {
+  clearParkedAsks,
+  MAX_PARKED_ASKS,
+  parkedAskCount,
+  releaseAsksAwaitingLink,
+} from './parkedAsks';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 import { GRAINE_HISTORY_BUNDLE_MAX_SEEDS } from '$lib/crypto/graineConstants';
 import { HISTORY_FLOOR_QUERY_CONCURRENCY } from './historyBoundary';
 import { BaseMlsService } from '$lib/services/BaseMlsService';
@@ -944,6 +950,101 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
       expect(sendMessage).toHaveBeenCalledTimes(1);
     });
 
+    /** The ask these rows send, addressed to `answerer`. */
+    const askFor = (answerer: string, requestId: string) =>
+      requestFrame({
+        workspaceId: 'ws-1',
+        kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_SESSIONS,
+        sessionIds: ['sess-1'],
+        answererUserId: answerer,
+        requestId,
+      });
+
+    it('an answer the server got no answer for warns ONCE, is parked, and is sent exactly once on the next connection', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+      const sendMessage = vi
+        .fn()
+        .mockRejectedValueOnce(new TransportFailureError(new TypeError('Failed to fetch')))
+        .mockResolvedValue(undefined);
+      const { storage } = fakeStorage([heldSeed('sess-1', 12)]);
+      setGraineRuntime({
+        storage,
+        deviceKey: () => 'device-key',
+        userId: 'alice',
+        mlsService: graineMls({ sendMessage }),
+      });
+
+      await handleFrame(askFor('alice', 'r-link'));
+      await deferredSeedAnswersSettled();
+
+      const lost = warn.mock.calls
+        .map((c) => String(c[0]))
+        .filter((l) => l.includes("the answer to bob:bob-phone's request r-link"));
+      expect(lost).toHaveLength(1);
+      expect(lost[0]).toMatch(/parked for the next connection/);
+      expect(parkedAskCount()).toBe(1);
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+
+      // The next connection's catch-up: answered once, and a second catch-up sends nothing more.
+      await releaseAsksAwaitingLink();
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(parkedAskCount()).toBe(0);
+      await releaseAsksAwaitingLink();
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+      warn.mockRestore();
+      info.mockRestore();
+    });
+
+    it('a session that ended before the frame drained answers nothing, and says so', async () => {
+      const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+      const idle = gate();
+      const sendMessage = vi.fn().mockResolvedValue(undefined);
+      const { storage } = fakeStorage([heldSeed('sess-1', 12)]);
+      setGraineRuntime({
+        storage,
+        deviceKey: () => 'device-key',
+        userId: 'alice',
+        mlsService: graineMls({ sendMessage, waitForGroupQueueIdle: () => idle.promise }),
+      });
+
+      await handleFrame(askFor('alice', 'r-gone'));
+      // The next account's runtime replaces it before the key group goes idle.
+      setGraineRuntime({
+        storage,
+        deviceKey: () => 'device-key',
+        userId: 'alice',
+        mlsService: graineMls({ sendMessage }),
+      });
+      idle.open();
+      await deferredSeedAnswersSettled();
+
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(info.mock.calls.map((c) => String(c[0])).join(' | ')).toMatch(
+        /not answering bob:bob-phone's request r-gone .* ended before its frame drained/
+      );
+      info.mockRestore();
+    });
+
+    it('an ask addressed to another member schedules nothing', async () => {
+      const waitForGroupQueueIdle = vi.fn().mockResolvedValue(undefined);
+      const sendMessage = vi.fn().mockResolvedValue(undefined);
+      const { storage } = fakeStorage([heldSeed('sess-1', 12)]);
+      setGraineRuntime({
+        storage,
+        deviceKey: () => 'device-key',
+        userId: 'alice',
+        mlsService: graineMls({ sendMessage, waitForGroupQueueIdle }),
+      });
+
+      await handleFrame(askFor('carol', 'r-carol'));
+      await deferredSeedAnswersSettled();
+
+      expect(waitForGroupQueueIdle).not.toHaveBeenCalled();
+      expect(sendMessage).not.toHaveBeenCalled();
+      expect(parkedAskCount()).toBe(0);
+    });
+
     it('an answer whose send fails is said at a level that accuses, and leaves the frame handled', async () => {
       const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -973,6 +1074,8 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
       expect(error.mock.calls.map((c) => String(c[0])).join(' | ')).toMatch(
         /the answer to bob:bob-phone's request r-fail in community ws-1 was not sent/
       );
+      // Not a transport failure: accused, and NOT parked for a next connection.
+      expect(parkedAskCount()).toBe(0);
       error.mockRestore();
       warn.mockRestore();
     });
