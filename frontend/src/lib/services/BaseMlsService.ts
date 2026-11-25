@@ -754,6 +754,13 @@ export abstract class BaseMlsService implements IMlsService {
    */
   private keptFramesFullWarned = false;
 
+  /**
+   * How many times this session a run met each kept frame (by ledger key) whose group was dropped to
+   * be re-joined and is not registered again yet - the first is the expected window, a repeat is a
+   * re-join that is not landing ({@link runKeptDistributionFrame}). Bounded by the kept frames.
+   */
+  private readonly keptFramesAwaitingRejoin = new Map<string, number>();
+
   /** Set once per session; see {@link setDistributionGroupStore}. */
   private distributionGroupStore: DistributionGroupStore | null = null;
 
@@ -8197,6 +8204,10 @@ export abstract class BaseMlsService implements IMlsService {
       this.keyGroupsHeldInOrder.delete(groupId);
       takeGroupAwaiting('kept-frames-full', groupId);
       takeGroupAwaiting('kept-frame-unhandled', groupId);
+      const keptOfGroup = keptFrameKey(groupId, '');
+      for (const key of this.keptFramesAwaitingRejoin.keys()) {
+        if (key.startsWith(keptOfGroup)) this.keptFramesAwaitingRejoin.delete(key);
+      }
       const forgotten = forgetKeptFramesOfGroup(this.userId, groupId);
       if (forgotten > 0) {
         console.info(
@@ -8503,10 +8514,23 @@ export abstract class BaseMlsService implements IMlsService {
       // group, so it is acknowledged; a drop to RE-JOIN kept it, and the registration that names the
       // group again runs it.
       const keptForRejoin = readKeptFrame(this.userId, groupId, fingerprint) !== null;
-      console.info(
-        `[GRAINE] kept frame on key group ${groupId.slice(0, 8)}... not handled on ${occasion}: its key group was ${keptForRejoin ? 'dropped to be re-joined - kept for the re-join' : 'left - forgotten with it'}`
+      if (!keptForRejoin) {
+        console.info(
+          `[GRAINE] kept frame on key group ${groupId.slice(0, 8)}... not handled on ${occasion}: its key group was left - forgotten with it`
+        );
+        return true;
+      }
+      // EXPECTED ONCE, ACCUSED AFTER: a re-join lands in seconds, so meeting the same kept frame
+      // still waiting for it a second time this session is a re-join that is not landing - while the
+      // frame holds its group's room. Counted per frame in memory (a count of occurrences, no clock).
+      const key = keptFrameKey(groupId, fingerprint);
+      const seen = (this.keptFramesAwaitingRejoin.get(key) ?? 0) + 1;
+      this.keptFramesAwaitingRejoin.set(key, seen);
+      const say = seen === 1 ? console.info : console.warn;
+      say(
+        `[GRAINE] kept frame on key group ${groupId.slice(0, 8)}... not handled on ${occasion}: its key group was dropped to be re-joined - kept for the re-join (met ${seen} time(s) this session; key group keeps ${describeKeptFrames(this.userId, groupId)})`
       );
-      return !keptForRejoin;
+      return false;
     }
     const { workspaceId } = scope;
     const handler = this.distributionFrameHandler;
@@ -8596,6 +8620,7 @@ export abstract class BaseMlsService implements IMlsService {
    * are fetched again ({@link releaseFramesWaitingOnKept}).
    */
   private forgetKeptDistributionFrame(groupId: string, fingerprint: string): void {
+    this.keptFramesAwaitingRejoin.delete(keptFrameKey(groupId, fingerprint));
     markHistoryFrameConsumed(this.userId, groupId, fingerprint);
     forgetKeptFrame(this.userId, groupId, fingerprint);
     this.releaseFramesWaitingOnKept(groupId, 'a kept key-group frame was handled');

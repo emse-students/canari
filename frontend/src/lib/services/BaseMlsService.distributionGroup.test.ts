@@ -257,6 +257,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     keyGroupsWaitingForRoom: new Set<string>(),
     keyGroupsHeldInOrder: new Set<string>(),
     epochChecksHeldByKept: new Map<string, number>(),
+    keptFramesAwaitingRejoin: new Map<string, number>(),
     keptFramesFullWarned: false,
     keyGroupWaitsOnKeptFrame: proto.keyGroupWaitsOnKeptFrame,
     deferDistributionEpochCheck: proto.deferDistributionEpochCheck,
@@ -2213,6 +2214,32 @@ describe('a key-group frame whose handler threw (section 11)', () => {
     );
     expect(keptFrameIds('u')).toHaveLength(2);
   });
+  it('says a kept frame waiting for its re-join at info once, and accuses it at warn when met again', async () => {
+    // The group was dropped to be re-joined (its kept frame stays) and is not registered again yet.
+    noteStateLedgerHeldByState('u', keptFrameKey('g-9', '1:a'), keptFrameValue('p:d', SEED));
+    const ctx = makeCtx();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    expect(await proto.runKeptDistributionFrame.call(ctx, 'g-9', '1:a', 'the start-up sweep')).toBe(
+      false
+    );
+    expect(info).toHaveBeenCalledWith(
+      expect.stringContaining('kept for the re-join (met 1 time(s)')
+    );
+    expect(warn).not.toHaveBeenCalled();
+
+    expect(await proto.runKeptDistributionFrame.call(ctx, 'g-9', '1:a', 'its redelivery')).toBe(
+      false
+    );
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /kept for the re-join \(met 2 time\(s\) this session; key group keeps 1 frame\(s\), 0 failed run\(s\), \d+ bytes\)/
+      )
+    );
+    expect(keptFrameIds('u')).toHaveLength(1);
+  });
+
   describe('the epoch check of a key group held behind a kept frame', () => {
     /** A group at `epoch`, its server ahead with commits in the log, a kept frame of its own. */
     function heldBehind(epoch: number, serverEpoch: number) {
