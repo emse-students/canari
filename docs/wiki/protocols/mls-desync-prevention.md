@@ -570,9 +570,10 @@ ordering is the guarantee.
   (`parkAskUntilNextLink`, released by `releaseAsksAwaitingLink` from BOTH link events: a connection's
   catch-up, `onConnectionCaughtUp`, and the server reachable again, `connectivity.onReconnect`, for a
   send that failed on an open socket). Events, never a clock; bounded by `MAX_PARKED_ASKS` and dropped
-  with the session. A park made AFTER the event it waits for is not made: every release bumps a link
-  generation, the answer records it before its send, and an answer whose send hung across a
-  reconnect is sent again at once. Anything else accuses at error and is left to the requester's
+  with the session. A park made AFTER the event it waits for is not made: the link generation counts
+  every catch-up AND every `connectivity` return (`reconnectCount`, counted whether or not an ask
+  waited), the answer records it before its send, and an answer whose send hung across either event is
+  sent again at once. Anything else accuses at error and is left to the requester's
   next start.
 - **A leg whose client ended ends too.** `destroy` rejects the scheduler's pending group-idle waits
   (`abandonGroupIdleWaiters`, `GroupDrainAbandonedError`), so `answerAfterMailboxDrained` says the

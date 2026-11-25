@@ -1039,6 +1039,37 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
       for (const spy of quiet) spy.mockRestore();
     });
 
+    it('a server that came back WHILE the send hung, with nothing parked yet, is not waited for again', async () => {
+      const quiet = [
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined),
+        vi.spyOn(console, 'info').mockImplementation(() => undefined),
+        vi.spyOn(console, 'log').mockImplementation(() => undefined),
+      ];
+      const hung = gate();
+      const sendMessage = vi
+        .fn()
+        .mockImplementationOnce(async () => {
+          await hung.promise;
+          throw noAnswer();
+        })
+        .mockResolvedValue(undefined);
+      wireSend(sendMessage);
+
+      await handleFrame(askFor('alice', 'r-reachable-race'));
+      await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
+      // The socket stays open; the server is lost and found again while the send hangs, and no ask
+      // is parked yet, so nothing listens to that return.
+      connectivity.notifyServerUnreachable('test: a refused request');
+      connectivity.notifyServerReachable();
+      hung.open();
+      await deferredSeedAnswersSettled();
+
+      expect(sendMessage).toHaveBeenCalledTimes(2);
+      expect(parkedAskCount()).toBe(0);
+      connectivity.reset();
+      for (const spy of quiet) spy.mockRestore();
+    });
+
     it('a release that meets a second transport failure parks again, and the next release answers', async () => {
       const quiet = [
         vi.spyOn(console, 'warn').mockImplementation(() => undefined),
