@@ -279,7 +279,7 @@ fi
 echo "no gated provider refreshes a token, and the probe is seen red with the grant put back"
 
 # THE TERMS OF USE, DRIVEN. 45-consent.yaml builds the flow on every instance; which providers ask
-# for it is declared in 50-providers.yaml: all eight since the hold on production was lifted
+# for it is declared in 50-providers.yaml: all nine since the hold on production was lifted
 # (2026-11-20). The driven test asserts that exact set, walks the page on a bound provider, and
 # proves production's provider stops a person who never accepted on it (test-consent-flow.py).
 echo "terms of use: driving the stage, and asserting which providers ask for it"
@@ -413,3 +413,130 @@ PY
   exit 1
 fi
 echo "the CAS button reads CAS EMSE and the dev tiles are hidden, not gated"
+
+# THE RESEAU CONSOLE (owner, 2026-11-25): the Rootz association's supervision console of the MDE
+# network. The configuration as declared - a confidential client with the code grant only (the group
+# gate would be outlived by a refresh), one strict redirect, the name and identity scopes, the terms
+# flow, a pinned subject - and ONE binding, the group `acces-reseau`. Then BEHAVIOUR: a person outside
+# the group neither sees the tile nor gets a code; a member sees it, gets a code with an S256 challenge,
+# and redeems it with the secret and the verifier only, into an id_token whose issuer is the
+# application's and whose subject is the hashed user id.
+echo "reseau console: its provider, its one group binding, and who gets a code"
+if ! run_ak_shell "$worker" 2>&1 <<'PY' | tee >(cat >&2) | grep -x 'RESEAU-APP-OK' >/dev/null; then
+import base64, hashlib, json, secrets
+from urllib.parse import parse_qs, urlencode, urlparse
+
+from django.conf import settings
+from django.test import Client
+
+from authentik.core.models import Application, Group, User
+from authentik.policies.models import PolicyBinding
+from authentik.providers.oauth2.models import OAuth2Provider, ScopeMapping
+from authentik.root.middleware import SessionMiddleware
+from authentik.stages.prompt.models import Prompt
+
+REDIRECT = "https://reseau.rootz-emse.fr/auth/callback"
+provider = OAuth2Provider.objects.get(name="miconnect-reseau")
+assert provider.client_type == "confidential", provider.client_type
+assert provider.client_secret, "no client secret was generated"
+assert provider.grant_types == ["authorization_code"], provider.grant_types
+assert provider.sub_mode == "hashed_user_id", provider.sub_mode
+assert provider.authorization_flow.slug == "miconnect-authorization", provider.authorization_flow.slug
+value = lambda v: str(getattr(v, "value", v))
+uris = [(value(u.matching_mode), u.url, value(u.redirect_uri_type)) for u in provider.redirect_uris]
+assert uris == [("strict", REDIRECT, "authorization")], uris
+scopes = sorted(ScopeMapping.objects.filter(provider=provider).values_list("scope_name", flat=True))
+assert scopes == ["name", "openid", "profile"], scopes
+
+app = Application.objects.get(slug="reseau")
+assert app.provider_id == provider.pk and app.name == "Réseau MDE", (app.provider_id, app.name)
+assert app.meta_launch_url == "https://reseau.rootz-emse.fr/", app.meta_launch_url
+bindings = list(PolicyBinding.objects.including_expired().filter(target=app))
+assert [(b.group.name if b.group else None, b.policy_id, b.user_id, b.order, b.enabled, b.negate) for b in bindings] == [("acces-reseau", None, None, 0, True, False)], bindings
+group = Group.objects.get(name="acces-reseau")
+
+
+def b64url(raw):
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+def client_for(u):
+    c = Client(HTTP_HOST="localhost")
+    c.force_login(u)
+    c.cookies[settings.SESSION_COOKIE_NAME] = SessionMiddleware.encode_session(c.session.session_key, u)
+    return c
+
+
+def authorize(u, challenge):
+    """The target the authorization ends on, followed through the flow executor."""
+    c = client_for(u)
+    query = urlencode({"client_id": provider.client_id, "redirect_uri": REDIRECT, "response_type": "code",
+                       "scope": "openid profile name", "state": "reseau-probe",
+                       "code_challenge": challenge, "code_challenge_method": "S256"})
+    resp = c.get(f"/application/o/authorize/?{query}")
+    target = resp.get("Location", "") if resp.status_code in (301, 302) else ""
+    if target.startswith(REDIRECT):
+        return target, None
+    body = c.get(f"/api/v3/flows/executor/{provider.authorization_flow.slug}/?{urlencode({'query': query})}").json()
+    return body.get("to", ""), body
+
+
+def listed(u):
+    listing = client_for(u).get("/api/v3/core/applications/?page_size=200")
+    assert listing.status_code == 200, listing.status_code
+    return {a["slug"] for a in listing.json()["results"]}
+
+
+person, _ = User.objects.get_or_create(username="reseau-probe", defaults={"name": "Reseau Probe"})
+person.attributes["profile"] = {"version": 1, "firstName": "Reseau", "lastName": "Probe", "cursus": [], "posts": []}
+person.attributes["cgu_version"] = Prompt.objects.get(name="miconnect-consent-prompt-version").initial_value
+person.save()
+person.groups.clear()
+try:
+    verifier = b64url(secrets.token_bytes(32))
+    challenge = b64url(hashlib.sha256(verifier.encode()).digest())
+
+    # Outside the group: no tile, no code.
+    assert "reseau" not in listed(person), "the tile is listed to a person outside acces-reseau"
+    target, body = authorize(person, challenge)
+    assert not target.startswith(REDIRECT), f"a person outside acces-reseau got a code: {target}"
+    print(f"  outside the group: refused ({(body or {}).get('component')})")
+
+    # A member: the tile, a code, and a redeem that needs the verifier.
+    person.groups.add(group)
+    assert "reseau" in listed(person), "the tile is not listed to a member"
+    target, body = authorize(person, challenge)
+    assert target.startswith(REDIRECT), f"a member got no code: {json.dumps(body)[:400]}"
+    code = parse_qs(urlparse(target).query)["code"][0]
+
+    def redeem(extra):
+        form = {"grant_type": "authorization_code", "code": code, "redirect_uri": REDIRECT,
+                "client_id": provider.client_id, "client_secret": provider.client_secret, **extra}
+        r = Client(HTTP_HOST="localhost").post("/application/o/token/", data=urlencode(form),
+                                               content_type="application/x-www-form-urlencoded")
+        return r.status_code, r.json()
+
+    status, answer = redeem({})
+    assert status == 400 and answer.get("error") == "invalid_grant", f"a challenged code was redeemed without its verifier: {status} {answer}"
+    target, _ = authorize(person, challenge)
+    code = parse_qs(urlparse(target).query)["code"][0]
+    status, answer = redeem({"code_verifier": verifier})
+    assert status == 200 and answer.get("id_token"), f"the member's code was refused: {status} {answer}"
+    assert "refresh_token" not in answer, "a refresh token was minted"
+    payload = answer["id_token"].split(".")[1]
+    claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    assert claims["iss"].endswith("/application/o/reseau/"), claims["iss"]
+    assert claims["aud"] == provider.client_id, claims["aud"]
+    assert claims["sub"] == person.uid, "the subject is not the hashed user id"
+    assert claims.get("name") == "Reseau Probe", claims.get("name")
+    assert (claims.get("firstName"), claims.get("lastName")) == ("Reseau", "Probe"), sorted(claims)
+    assert not {"promo", "formation", "profile", "school_status", "email"} & set(claims), sorted(claims)
+    print(f"  a member: code redeemed with the verifier, iss {claims['iss']}, claims {sorted(claims)}")
+finally:
+    person.delete()
+print("RESEAU-APP-OK")
+PY
+  echo "::error::the Reseau console's provider or its group gate is wrong - read the assertion above"
+  exit 1
+fi
+echo "the Reseau console admits acces-reseau only, by a confidential code grant with PKCE"

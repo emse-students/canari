@@ -768,7 +768,8 @@ longer session signs in again through the authorization, where the gate decides.
 
 **Guarded by `test-refresh-gate.py`** (run by `test-blueprints.sh`, after the apply, on the instance
 itself): every application with a policy binding (expired ones included) has a provider with no
-`refresh_token` grant type and no `offline_access` mapping, MiGallery and Le Cercle among them; a refresh
+`refresh_token` grant type and no `offline_access` mapping, MiGallery and Le Cercle among them (and the
+Reseau console, gated by its group since 2026-11-25); a refresh
 token planted on each is refused `400 invalid_grant` with nothing minted; and the control, the same token
 with the grant type put back for one request, refreshes - the hole the rule closes, since the planted
 token's own scope carries `offline_access` past the missing mapping. Binding a policy to another
@@ -988,6 +989,64 @@ Every provider, application, redirect URI and scope mapping is in
 `infrastructure/authentik/blueprints/` since 2026-09-30, and a change to one is a pull request
 there, never an edit in the admin UI ([above](#the-configuration-is-code-infrastructureauthentikblueprints-2026-09-30)).
 Users are managed in Authentik and synced to Canari's `users` table at each sign-in.
+
+### The applications, and who may enter each
+
+One application per provider (`60-applications.yaml`, `50-providers.yaml`, both sorted by name). Every
+provider authorizes through `miconnect-authorization` (the terms, [below](#the-terms-of-use-are-a-stage-of-the-authorization-flow-2026-10-16)),
+and every issuer is `https://miconnect.emse.fr/application/o/<slug>/` (authentik's per-provider issuer,
+read from the host a client asks: the old name `auth.canari-emse.fr` still answers, with ITS name in
+`iss`, so a client configures the `miconnect.emse.fr` form only).
+
+| Application (slug) | Provider | `client_id` | Who may enter | Refresh grant |
+|---|---|---|---|---|
+| Archives MINO (`archives`) | `miconnect-archives` | `SJ8aeGmN...` | anybody signed in | yes |
+| Canari (`canari`, `canari-dev`, `canari-local`) | `miconnect-canari`, `-canari-dev`, `-canari-local` | [below](#the-three-canari-providers-and-what-each-one-lets-a-client-come-back-to) | anybody signed in (dev and local: hidden tiles, not gated) | yes |
+| Cercle (`cercle`) | `miconnect-cercle` | `7s6QrKeD...` | the cotisant gate OR `acces-cercle` (D43) | no |
+| MiGallery (`migallery`) | `miconnect-migallery` | `GMU5F3Dn...` | the cotisant gate OR `acces-migallery` (D43) | no |
+| MinoWiki (`mino-wiki`) | `miconnect-mino-wiki` | `nep2XHic...` | anybody signed in | yes |
+| Réseau MDE (`reseau`) | `miconnect-reseau` | `muAU7MIl71ksswikfWz1cu5EuITYSMdTuUguyt0Y` | the group `acces-reseau` ONLY | no |
+| Sky (`sky`) | `miconnect-sky` | `JJqZZbhI...` | anybody signed in | yes |
+
+A `client_id` is not a secret (it travels in every authorization URL); the client SECRETS are in no
+file ([below](#the-configuration-is-code-infrastructureauthentikblueprints-2026-09-30)).
+
+#### The Reseau console of the MDE network (owner, 2026-11-25)
+
+The Rootz association's supervision console of the MDE network, a Python server at
+`https://reseau.rootz-emse.fr/`, signs its operators in through MiConnect. What was decided, and why:
+
+- **A confidential client with PKCE.** The console is a server: it holds the client secret and also
+  sends an S256 challenge, which authentik then enforces (a challenged code is refused without its
+  verifier). The client type is authentik's default, as for MiGallery.
+- **The code grant only.** The application is gated by a binding, and a refresh token would outlive a
+  removal from the group ([below](#the-refresh-grant-is-closed-on-gated-providers-181)); the console's
+  session ends and the next sign-in passes the binding again.
+- **One strict redirect URI**, `https://reseau.rootz-emse.fr/auth/callback`, no logout URI.
+- **Scopes `openid`, `profile` and `name`** (the mapping `miconnect-claim-name` answers the scope
+  `name`, giving `firstName`/`lastName`; `profile` gives authentik's `name` and `preferred_username`).
+  Nothing of the profile, the cursus, the school status or the e-mail. `sub` is pinned to
+  `hashed_user_id`, as on the three site providers.
+- **The group `acces-reseau` alone admits**: one policy binding, order 0, no expression policy.
+  **No cotisant gate and no Alumni gate**: the D42-D43 gate is a rule about the ecosystem's member
+  services (MiGallery, Le Cercle) and WP5 extends the SHAPE (a group `acces-<app>` per application),
+  not the cotisant rule, to the others; an association's operator console is admitted by its operators'
+  names alone. A person outside the group is refused at the authorization and is not shown the tile.
+- **The group is in the blueprint, its members are not.** An authentik administrator adds each Rootz
+  operator to `acces-reseau` by hand (Directory > Groups > `acces-reseau` > Users); no apply touches the
+  membership, and removing someone takes effect at their next sign-in.
+- **The terms flow, like every provider.** The notice of `45-consent.yaml` lists the services it names
+  by example and does not name this one; adding it is a new terms version, which asks every account
+  again, so it is the owner's call and was not taken here.
+- **Its client secret** is generated by authentik when the first stable that carries the provider
+  applies the blueprints, lives in MiConnect's database only, and reaches the console's host by a
+  pipe, never a message ([MIGRATION](../../../infrastructure/MIGRATION.md#3-github-secrets), the row "MiConnect client of the Reseau console").
+
+`test-blueprints.sh` asserts all of it on a built instance (`RESEAU-APP-OK`): the fields, the one
+binding, and, driven, a person outside the group refused and not listed, a member listed and given a
+code redeemed with the secret and the verifier only, into an id_token whose issuer ends in
+`/application/o/reseau/` and whose `sub` is the hashed user id. `test-refresh-gate.py` probes its
+closed refresh grant like the other gated providers'.
 
 ### The three Canari providers, and what each one lets a client come back to
 
@@ -1520,9 +1579,9 @@ collection of name and first name, as one required tick, for new AND existing ac
 
 > **THE HOLD ON PRODUCTION WAS LIFTED ON 2026-11-20** (it was held 2026-10-17 to 2026-11-20, and per
 > provider since 2026-11-18). `blueprints/45-consent.yaml` builds the flow on every instance, and
-> `50-providers.yaml` names it as the authorization flow of **all eight providers**
-> (`miconnect-archives`, `-canari`, `-canari-dev`, `-canari-local`, `-cercle`, `-migallery`,
-> `-mino-wiki`, `-sky`), so the next stable's `apply-blueprints.sh apply` makes production ask: **a
+> `50-providers.yaml` names it as the authorization flow of **every provider** (eight then, nine with
+> `miconnect-reseau` since 2026-11-25: `miconnect-archives`, `-canari`, `-canari-dev`, `-canari-local`,
+> `-cercle`, `-migallery`, `-mino-wiki`, `-reseau`, `-sky`), so the next stable's `apply-blueprints.sh apply` makes production ask: **a
 > person sees the terms page ONCE, at their next MiConnect authorization, whichever service starts
 > it, and never again for that version.** The lift came after the web reading (2026-11-17), the
 > iPhone half (S9) and the Mi 9T half (S15), in the app, signed in. **The notice names every service

@@ -295,6 +295,37 @@ entries:
       logout_uri: "https://mino.emse.fr/logout"
   - model: authentik_providers_oauth2.oauth2provider
     identifiers:
+      name: "miconnect-reseau"
+    attrs:
+      authentication_flow: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, "miconnect-authorization"]]
+      invalidation_flow: !Find [authentik_flows.flow, [slug, "default-provider-invalidation-flow"]]
+      # The Rootz association's supervision console of the MDE network (owner, 2026-11-25): a name and
+      # an identity, nothing of the profile, the school status or the promo.
+      property_mappings:
+        - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-name"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-openid"]]
+        - !Find [authentik_providers_oauth2.scopemapping, [managed, "goauthentik.io/providers/oauth2/scope-profile"]]
+      # NO REFRESH GRANT: the application admits the group `acces-reseau` only (60-applications.yaml),
+      # and authentik 2026.8.6's refresh_token grant evaluates no application binding, so a refresh token
+      # would outlive a removal from the group. The console never refreshes: its session ends, and the
+      # next sign-in passes the binding again. test-blueprints.sh asserts this closed.
+      grant_types:
+        - "authorization_code"
+      # CONFIDENTIAL (authentik's default client type, as MiGallery): the console is a server that holds
+      # the client secret and also sends an S256 PKCE challenge, which authentik then enforces.
+      client_id: "muAU7MIl71ksswikfWz1cu5EuITYSMdTuUguyt0Y"
+      # PINNED like the three site providers: the `sub` the console keys its users by never changes with
+      # authentik's default or a click in the admin.
+      sub_mode: "hashed_user_id"
+      access_token_validity: "minutes=5"
+      signing_key: !Find [authentik_crypto.certificatekeypair, [name, "authentik Self-signed Certificate"]]
+      redirect_uris:
+        - matching_mode: "strict"
+          url: "https://reseau.rootz-emse.fr/auth/callback"
+          redirect_uri_type: "authorization"
+  - model: authentik_providers_oauth2.oauth2provider
+    identifiers:
       name: "miconnect-sky"
     attrs:
       authentication_flow: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
