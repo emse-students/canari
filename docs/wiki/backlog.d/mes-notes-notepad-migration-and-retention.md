@@ -1,6 +1,8 @@
 ## P2 - "Mes notes": move the old notepads in, state the retention, offer a delete
 
-target: 1.9.0
+target: 1.8.2
+
+*2026-11-25: moved forward from `1.9.0` to `1.8.2` by the owner ([decisions](../decisions/owner-decisions-of-2026-11-25.md), item 3).*
 
 The conversation itself is built: the server kind `self` (chat-delivery migration 056), the pinned
 row, the header, the refusals, the capability that keeps it from older builds, and the single-device

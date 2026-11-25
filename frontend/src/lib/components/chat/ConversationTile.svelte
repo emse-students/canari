@@ -1,6 +1,6 @@
 <script lang="ts">
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
-  import { Bookmark, Hash } from '@lucide/svelte';
+  import { Hash } from '@lucide/svelte';
   import type { ConversationType } from '$lib/types';
   import Avatar from '../shared/Avatar.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
@@ -227,11 +227,8 @@
         <Hash size={22} strokeWidth={2.5} />
       </div>
     {:else if conversationType === 'self'}
-      <div
-        class="bg-accent/15 text-accent-icon flex h-14 w-14 items-center justify-center rounded-full"
-        data-self-conversation-icon
-      >
-        <Bookmark size={24} strokeWidth={2.25} />
+      <div data-self-conversation-icon>
+        <Avatar userId={contactName} size="xl" fallbackLabel={displayName} />
       </div>
     {:else}
       <GroupAvatar id={conversationId} {imageMediaId} name={displayName} size="xl" />

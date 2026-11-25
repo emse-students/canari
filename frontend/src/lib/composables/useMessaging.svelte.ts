@@ -1676,7 +1676,8 @@ export function useMessaging() {
               convo.conversationType,
               convo.contactName,
               convo.name,
-              notificationGroupTitle(convo, ctx.userId)
+              notificationGroupTitle(convo, ctx.userId),
+              ctx.userId
             ),
             isGroup: notificationIsGroup(convo.conversationType),
             body: notificationBody,

@@ -11,7 +11,6 @@
     Images,
     Hash,
     Ellipsis,
-    Bookmark,
   } from '@lucide/svelte';
   import GlassMenuButton, {
     type GlassMenuItem,
@@ -21,6 +20,7 @@
   import Avatar from '../shared/Avatar.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
   import { presenceMap, watchUsers, unwatchUsers } from '$lib/stores/presenceStore';
+  import { selfConversationTitle } from '$lib/utils/chat/conversations';
   import { userDisplayName } from '$lib/utils/users/displayNames.svelte';
   import { openProfile } from '$lib/utils/users/profileHref';
   import { isAbsentUser } from '$lib/utils/users/absentUsers';
@@ -237,8 +237,15 @@
     () => groupId
   );
 
+  /** "Mes notes" is titled with the own name, read reactively like a peer's (late or renamed). */
+  const ownName = userDisplayName(() => (isSelfConversation ? currentUserId : ''));
+
   const effectiveDisplayName = $derived(
-    !isGroupConversation && !isChannel && !isSelfConversation ? peerName.current : displayName
+    isSelfConversation
+      ? selfConversationTitle(ownName.current, currentUserId)
+      : !isGroupConversation && !isChannel
+        ? peerName.current
+        : displayName
   );
 
   const pillLabel = $derived(
@@ -313,11 +320,8 @@
             <Hash size={18} strokeWidth={2.5} />
           </span>
         {:else if isSelfConversation}
-          <span
-            data-glass-avatar
-            class="bg-accent/15 text-accent-icon flex h-8 w-8 shrink-0 items-center justify-center rounded-full"
-          >
-            <Bookmark size={16} strokeWidth={2.25} />
+          <span data-glass-avatar class="flex h-8 w-8 shrink-0 items-center justify-center">
+            <Avatar userId={currentUserId} size="md" fallbackLabel={displayName} />
           </span>
         {:else if isGroupConversation}
           <span data-glass-avatar class="flex h-8 w-8 shrink-0 items-center justify-center">
@@ -387,10 +391,8 @@
       <Hash size={22} strokeWidth={2.5} />
     </div>
   {:else if isSelfConversation}
-    <div
-      class="bg-accent/15 text-accent-icon flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
-    >
-      <Bookmark size={20} strokeWidth={2.25} />
+    <div class="flex h-10 w-10 shrink-0 items-center justify-center">
+      <Avatar userId={currentUserId} fill fallbackLabel={displayName} />
     </div>
   {:else if isGroupConversation}
     <div class="flex h-10 w-10 shrink-0 items-center justify-center">
