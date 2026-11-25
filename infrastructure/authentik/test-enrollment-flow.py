@@ -17,7 +17,8 @@ Two traps met writing it, both about the TEST and not the flow:
 """
 import json
 from datetime import date
-from urllib.parse import urlencode, urlparse
+from importlib import import_module
+from urllib.parse import quote, urlencode, urlparse
 
 from django.conf import settings
 from django.contrib.auth.models import AnonymousUser
@@ -281,9 +282,31 @@ with Tenant.objects.get(ready=True):
         client = start_alumni("90001")
         route = step(client)
         check(route.get("component") == "ak-stage-prompt" and field_keys(route) == ["alumni_route"], f"an Alumni identity is asked whether it has a School account first ({field_keys(route)})")
-        # ...and "I have one" leaves for the CAS sign-in, which returns to the Alumni source signed in.
+        # ...and "I have one" leaves for the CAS-only sign-in, then the link MiConnect proposes; with no
+        # application in the plan, the link flow has no `next` (test-consent-flow.py step 11 drives the
+        # path from an application back to it).
         left = step(client, {"alumni_route": "cas"})
-        check(left.get("component") == "xak-flow-redirect" and left.get("to") == "/if/flow/miconnect-auth/?next=%2Fsource%2Fsaml%2Falumni%2F", f"'I have a School account' sends to the CAS, then back to the Alumni source ({left})")
+        check(left.get("component") == "xak-flow-redirect" and left.get("to") == "/if/flow/miconnect-auth-cas/?next=%2Fif%2Fflow%2Fmiconnect-alumni-link%2F", f"'I have a School account' sends to the CAS, then to the link ({left})")
+        check(import_module(settings.SESSION_ENGINE).SessionStore(SessionMiddleware.decode_session_key(client.cookies[settings.SESSION_COOKIE_NAME].value)).get("miconnect/alumni-link-parked", {}).get("identifier") == "90001", "and keeps the identity Alumnforce asserted in the session, for the link after the CAS")
+        # The plan's application comes along: the link flow's `next` is where the sign-in was going.
+        client = seed(SLUG, {
+            PLAN_CONTEXT_PROMPT: alumni_properties("90008"),
+            PLAN_CONTEXT_SOURCE: SAMLSource.objects.get(slug="alumni"),
+            PLAN_CONTEXT_SOURCES_CONNECTION: UserSAMLSourceConnection(source=SAMLSource.objects.get(slug="alumni"), identifier="90008"),
+            "redirect": "/application/o/authorize/?client_id=x&state=y",
+        })
+        step(client)
+        left = step(client, {"alumni_route": "cas"})
+        check(left.get("to") == "/if/flow/miconnect-auth-cas/?next=" + quote("/if/flow/miconnect-alumni-link/?next=" + quote("/application/o/authorize/?client_id=x&state=y", safe=""), safe=""), f"...with the application's authorization as the link's `next` ({left.get('to')})")
+        client = seed(SLUG, {
+            PLAN_CONTEXT_PROMPT: alumni_properties("90009"),
+            PLAN_CONTEXT_SOURCE: SAMLSource.objects.get(slug="alumni"),
+            PLAN_CONTEXT_SOURCES_CONNECTION: UserSAMLSourceConnection(source=SAMLSource.objects.get(slug="alumni"), identifier="90009"),
+            "redirect": "https://evil.example/",
+        })
+        step(client)
+        left = step(client, {"alumni_route": "cas"})
+        check(left.get("to") == "/if/flow/miconnect-auth-cas/?next=%2Fif%2Fflow%2Fmiconnect-alumni-link%2F", f"...and never a `next` that leaves MiConnect ({left.get('to')})")
         check(not User.objects.filter(username="alumni-90001").exists(), "and creates no account")
 
         # H - "I have none" creates the account (D46): `alumni-<af_id>`, the Alumni e-mail, the two names

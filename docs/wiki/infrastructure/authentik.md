@@ -676,7 +676,7 @@ listed at the end.
 | D45 both ways in | `30-sources.yaml`, `40-authentication.yaml` | `promoted: true`, and the Alumni source is in `miconnect-identification`'s sources beside the CAS |
 | D46 account created through Alumni | mapping `miconnect-alumni-identity` | `username = alumni-<NameID>` (the NameID IS `af_id`, measured), `name` from the two names; the base property `email` is written by the enrolment and sent by no claim. The profile's `firstName`/`lastName` are taken as sent (`miconnect-enrollment-merge-status`), not split by capitals |
 | D43 the membership read | the same mapping, `miconnect-alumni-authentication` | the mapping carries `alumni_read = {cotisant, read_on}` (Paris date) under a key of its own, because the enrolment's cursus page REPLACES the prompt's `attributes`; the enrolment stores it as `attributes.alumni`; the Alumni source's OWN sign-in flow (`miconnect-alumni-authentication`: a user write, then the login) stores it at every later sign-in, its policy `miconnect-alumni-keep-only-the-read` reducing the prompt data to that one key IN PLACE, so a CAS account is never renamed. A `cotisant` other than `"1"`/`"0"` writes nothing and logs at warning: the last read keeps its date and expires with its year |
-| D47 routing page | `20-enrollment.yaml`, order 5-6 | `miconnect-enrollment-alumni-route`, bound on `miconnect-enrollment-from-alumni` (the plan's source is `alumni`): "I have a working School account" -> the redirect stage `miconnect-enrollment-alumni-to-cas` to `/if/flow/miconnect-auth/?next=/source/saml/alumni/` (the CAS sign-in, then back to the source SIGNED IN, which links); "I have none" -> the two usual pages. The CAS never sees it |
+| D47 routing page | `20-enrollment.yaml`, order 5-6 | `miconnect-enrollment-alumni-route`, bound on `miconnect-enrollment-from-alumni` (the plan's source is `alumni`): "I have a working School account" -> the redirect stage `miconnect-enrollment-alumni-to-cas` to the CAS-only sign-in `miconnect-auth-cas` (`40-authentication.yaml`), then the link flow `miconnect-alumni-link` with the authorization as `next`; the identity Alumnforce asserted is parked in the session and linked after the CAS with no second Alumnforce sign-in (owner, 2026-11-25, [sign-in paths](miconnect-sign-in-paths.md)); "I have none" -> the two usual pages. The CAS never sees it |
 | D44 link step | `45-consent.yaml`, `miconnect-authorization` order 30 and 40 | see below |
 | D42-D43 cotisant gate | `60-applications.yaml` | policy `miconnect-access-window-post-or-cotisant` + group `acces-<app>` on `migallery` and `cercle`, `policy_engine_mode: any` - the shape WP5 describes (D15), for these two apps only; WP5 extends it, it does not replace it. Their providers offer no refresh grant, which would bypass it ([below](#the-refresh-grant-is-closed-on-gated-providers-181)) |
 | claim `alumni_linked` | `10-mappings.yaml`, Canari's three providers | `miconnect-claim-alumni-linked`, scope `profile`: a boolean, true when the account holds a `UserSourceConnection` to `alumni`. Only Canari receives it (banner); the name is shared with core-service |
@@ -701,21 +701,21 @@ and drop the page under the person's click. No clock and no account attribute: a
 browser, a sign-out) reminds again. The blocking page has no marker and shows at every
 authorization. `test-consent-flow.py` (step 9) drives the three.
 
-**What the link step cannot do: resume the authorization.** authentik resumes a flow after a source
-only through the Source stage (`SESSION_KEY_OVERRIDE_FLOW_TOKEN` is set by
-`authentik/enterprise/stages/source/stage.py` and nothing else, read in 2026.8.6), and that stage is
-ENTERPRISE: its serializer refuses to create one without a licence, so a blueprint cannot build it on
-MiConnect. Without it, a signed-in person reaching the source is linked at once and sent to their
-settings page ("Successfully linked"); they then sign in to the application again, where the step no
-longer shows. The blocking page also goes on if the link was made in another tab (its validation
-re-reads the link). Written in the step's text.
+**The link step resumes the authorization (2026-11-25).** authentik's Source stage, which resumes a
+flow after a source, is ENTERPRISE (its serializer refuses to create one without a licence). Until
+2026-11-25 a signed-in person reaching the source was therefore linked and sent to their settings
+page, then signed in to the application again. The mechanism that stage relies on is in authentik's
+CORE, though: `handle_existing_link` hands a signed-in link to `_prepare_flow(None)` when the session
+holds a flow token under `SESSION_KEY_OVERRIDE_FLOW_TOKEN`. The D49 policy now plans the small flow
+`miconnect-alumni-link-done` for the account signed in and stores its token there when the link
+step proposed the link, so authentik writes the link and ends on the authorization the person
+started. How, the boundary and the counts per path are on
+[miconnect-sign-in-paths](miconnect-sign-in-paths.md), the only copy. The blocking page also goes on
+if the link was made in another tab (its validation re-reads the link).
 
-> **DECISION (lead, 2026-11-23, REVERSIBLE): no Enterprise licence; the person lands on Settings
-> after the link and signs in to the application again.** Accepted as the cost of the free edition.
-> **The upgrade path, if a licence ever appears:** put an Enterprise **Source stage** (pointing at
-> the `alumni` source) in place of the link in the reminder and block pages of
-> `miconnect-authorization`; authentik then runs the source inside the flow and resumes the
-> authorization after it, so the person lands on the application. Nothing else changes: the
+> **DECISION (lead, 2026-11-23, REVERSIBLE): no Enterprise licence.** Since 2026-11-25 it costs no
+> second sign-in to the application. **If a licence ever appears**, an Enterprise **Source stage**
+> could replace the core token in the reminder and block pages of `miconnect-authorization`; the
 > policies, the allowlist of the handoff gate (it recognises the bindings, not the stage type, but a
 > renamed stage must follow in `CONSENT_FLOW_ALLOWLIST`) and the case table stay.
 
@@ -804,10 +804,13 @@ the POST bindings (`InitiateView`); with `REDIRECT` it redirects straight to the
 `binding_type: POST_AUTO`, and `miconnect-alumni-pre-authentication` - a page naming the signed-in
 account ("Lier ton compte Alumni au compte MiConnect <name> ?") with a box its validation policy
 requires, shown only to a signed-in person - runs before the auto-submitted request. It shows on
-every signed-in way to the source: the Settings > Sources "Connect" button, the direct URL, the link
-step's link and the routing page's return (a marker for "the link step sent them" would be read when
-the flow is planned, where authentik caches a policy result per session and user, so it would
-silence the next direct visit). `test-enrollment-flow.py` drives it through `/source/saml/alumni/`:
+every signed-in way to the source: the Settings > Sources "Connect" button and the direct URL. A
+marker in a URL ("the link step sent them") would be read when the flow is planned, where authentik
+caches a policy result per session and user, so it would silence the next direct visit. **Since
+2026-11-25 the link step's link skips it**: the D44 policies
+write a server-side OFFER when their page is due and the link flow turns it into a single-use
+PROPOSAL; the routing page no longer goes through the source at all
+([sign-in paths](miconnect-sign-in-paths.md#the-security-boundary-a-change-to-how-a-source-connection-is-created)). `test-enrollment-flow.py` drives it through `/source/saml/alumni/`:
 signed in, the page names the account, refuses without the tick and then hands over to the
 auto-submit towards the SSO URL; signed out, the auto-submit comes at once.
 
@@ -833,8 +836,9 @@ where it is removed.
    sign in with the Alumni button -> the routing page; choose "I have none" -> the two pages -> an
    account `alumni-<af_id>` whose e-mail is the Alumni one and whose `attributes.alumni` holds a
    read dated today. Delete that test account afterwards.
-2. *Routing to the CAS*: same, choose "I have a School account" -> the CAS -> back to the Alumni
-   source -> "Successfully linked" on the CAS account; `alumni_linked` true in Canari's claims.
+2. *Routing to the CAS*: same, choose "I have a School account" -> the CAS -> linked with no second
+   Alumnforce sign-in, on the application. Owed with the rest of the 2026-11-25 paths in
+   [reading-owed-miconnect-one-sign-in-per-path](../backlog.d/reading-owed-miconnect-one-sign-in-per-path.md).
 3. *The read at sign-in*: sign out, sign in with the Alumni button on a linked account ->
    `attributes.alumni.read_on` is today, the username and name unchanged.
 4. *D49 after the stable*: signed in through the CAS on an account with no Alumni link, open

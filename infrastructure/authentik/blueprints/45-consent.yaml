@@ -165,11 +165,14 @@ entries:
   # reaches the source. In the CAS source's own flow the page would sit after the login, where a
   # person refusing the block is already signed in and walks past it at the next authorization.
   #
-  # WHAT IT CANNOT DO: resume the authorization after the link. authentik resumes a flow after a
-  # source only through its Source stage, which is an ENTERPRISE stage (a licence MiConnect does not
-  # hold); so the page links to the source, authentik links and shows the account's settings with
-  # "Successfully linked", and the person signs in to the application again - where this step, now
-  # satisfied, no longer shows. Under the reminder, "Continuer" goes on without linking.
+  # THE LINK COMES BACK TO THE APPLICATION (2026-11-25, miconnect-sign-in-paths.md). The page's link
+  # is the link flow of 30-sources.yaml with THIS authorization as `next`, and the policy that shows
+  # the page writes the OFFER (`miconnect/alumni-link-offered` = the account's pk) the link flow
+  # honours: no D49 confirmation (D49 is "every link outside the D44 step"), Alumnforce, the link,
+  # then authentik restores the done flow from the session's flow token and the authorization runs
+  # again - signed in, linked, so this step no longer shows and the application gets its code. No
+  # Enterprise Source stage: authentik's own `handle_existing_link` resumes a session flow token.
+  # Under the reminder, "Continuer" goes on without linking.
   #
   # THE SIGN-IN HANDOFF ANSWERS THESE TWO BINDINGS ITSELF (lead, 2026-11-23): core-service's gate
   # allowlists them by policy and stage names; the reminder never stops a mint (it is skippable),
@@ -193,6 +196,7 @@ entries:
         from authentik.core.models import UserSourceConnection
 
         REMINDED = "miconnect/alumni-link-reminded"
+        OFFERED = "miconnect/alumni-link-offered"
 
         session = request.http_request.session if request.http_request else {}
         if "authentik/impersonate/user" in session:
@@ -224,6 +228,9 @@ entries:
             return False
         if request.http_request is not None:
             session[REMINDED] = user.pk
+            # The OFFER the link flow honours (30-sources.yaml): MiConnect proposes the link to THIS
+            # account, so the D49 confirmation is not shown and the link resumes this sign-in.
+            session[OFFERED] = user.pk
             if plan is not None:
                 plan.context[REMINDED] = user.pk
         return True
@@ -252,7 +259,11 @@ entries:
         if not promos or UserSourceConnection.objects.filter(user=user, source__slug="alumni").exists():
             return False
         first = min(promos)
-        return today >= max(date(first + 2, 2, 1), date(2027, 2, 1))
+        due = today >= max(date(first + 2, 2, 1), date(2027, 2, 1))
+        if due and request.http_request is not None:
+            # The OFFER the link flow honours (30-sources.yaml), as the reminder's.
+            session["miconnect/alumni-link-offered"] = user.pk
+        return due
   # The blocking page cannot be submitted until the link exists (a person who linked in another tab
   # goes on from here).
   - model: authentik_policies_expression.expressionpolicy
@@ -265,7 +276,7 @@ entries:
 
         if UserSourceConnection.objects.filter(user=request.user, source__slug="alumni").exists():
             return True
-        ak_message("Lie d'abord ton compte Alumni avec le lien ci-dessus, puis reconnecte-toi au service.")
+        ak_message("Lie d'abord ton compte Alumni avec le lien ci-dessus.")
         return False
   - model: authentik_stages_prompt.prompt
     identifiers:
@@ -275,7 +286,21 @@ entries:
       label: "Ton compte Alumni"
       type: "static"
       order: 1
-      initial_value: "<p>Ton compte MiConnect n'est pas encore lié à ton compte <strong>Alumni</strong> (le réseau des anciens des Mines de Saint-Étienne, où tu as un compte depuis ton entrée à l'École). Lie-le maintenant : quand ton compte de l'École disparaîtra, à la fin de tes études, c'est lui qui te connectera, avec le même profil.</p><p><a href=\"/source/saml/alumni/\">Lier mon compte Alumni</a></p><p>Le lien sera obligatoire au milieu de ta deuxième année. Pour l'instant, tu peux continuer sans.</p>"
+      initial_value_expression: true
+      initial_value: |-
+        from html import escape
+        from urllib.parse import quote
+
+        # The link goes through the link flow with THIS authorization as `next` (30-sources.yaml), so
+        # the person lands on the application once linked. The authorization's query is what the
+        # flow executor stored in the session for this flow (the authorize view's parameters).
+        query = http_request.session.get("authentik/flows/get") if http_request is not None else None
+        link = "/if/flow/miconnect-alumni-link/"
+        if query is not None and query.get("client_id"):
+            link += "?next=" + quote("/application/o/authorize/?" + query.urlencode(), safe="")
+        else:
+            ak_logger.warning("miconnect-alumni-link: an authorization with no client_id, the link will not come back to an application")
+        return f"<p>Ton compte MiConnect n'est pas encore lié à ton compte <strong>Alumni</strong> (le réseau des anciens des Mines de Saint-Étienne, où tu as un compte depuis ton entrée à l'École). Lie-le maintenant : quand ton compte de l'École disparaîtra, à la fin de tes études, c'est lui qui te connectera, avec le même profil.</p><p><a href=\"{escape(link)}\">Lier mon compte Alumni</a> (tu reviens ensuite directement au service)</p><p>Le lien sera obligatoire au milieu de ta deuxième année. Pour l'instant, tu peux continuer sans.</p>"
   - model: authentik_stages_prompt.prompt
     identifiers:
       name: "miconnect-alumni-link-prompt-required"
@@ -284,7 +309,19 @@ entries:
       label: "Ton compte Alumni"
       type: "static"
       order: 1
-      initial_value: "<p>Pour continuer, lie ton compte MiConnect à ton compte <strong>Alumni</strong> (le réseau des anciens des Mines de Saint-Étienne, où tu as un compte depuis ton entrée à l'École). Quand ton compte de l'École disparaîtra, c'est lui qui te connectera, avec le même profil.</p><p><a href=\"/source/saml/alumni/\">Lier mon compte Alumni</a></p><p>Une fois le lien fait, reconnecte-toi au service.</p>"
+      initial_value_expression: true
+      initial_value: |-
+        from html import escape
+        from urllib.parse import quote
+
+        # As the reminder's link: through the link flow, back to THIS authorization once linked.
+        query = http_request.session.get("authentik/flows/get") if http_request is not None else None
+        link = "/if/flow/miconnect-alumni-link/"
+        if query is not None and query.get("client_id"):
+            link += "?next=" + quote("/application/o/authorize/?" + query.urlencode(), safe="")
+        else:
+            ak_logger.warning("miconnect-alumni-link: an authorization with no client_id, the link will not come back to an application")
+        return f"<p>Pour continuer, lie ton compte MiConnect à ton compte <strong>Alumni</strong> (le réseau des anciens des Mines de Saint-Étienne, où tu as un compte depuis ton entrée à l'École). Quand ton compte de l'École disparaîtra, c'est lui qui te connectera, avec le même profil.</p><p><a href=\"{escape(link)}\">Lier mon compte Alumni</a></p><p>Une fois le lien fait, tu arrives directement sur le service.</p>"
   - model: authentik_stages_prompt.promptstage
     identifiers:
       name: "miconnect-alumni-link-remind"

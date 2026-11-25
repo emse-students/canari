@@ -38,6 +38,23 @@ entries:
       designation: "authentication"
       background: "no_background.png"
       denied_action: "continue"
+  # THE CAS AND NOTHING ELSE (miconnect-sign-in-paths.md): where the D47 routing page sends a person
+  # who chose "I have a School account". Its identification stage lists ONE source and no field, which
+  # is the rule on which authentik's login page sends the browser to that source by itself
+  # (web/src/flow/stages/identification/controllers/AutoRedirectController.ts in 2026.8.6: one
+  # source, no user field, no passwordless flow), so the person does not meet the login page a second
+  # time and cannot pick the Alumni button again. Its `next` (the link flow) is stored by the flow
+  # executor where the CAS source's return reads it (core/sources/flow_manager.py:304). Signed in
+  # already, the executor skips straight to `next` (flows/views/executor.py, authentication flows).
+  - model: authentik_flows.flow
+    identifiers:
+      slug: "miconnect-auth-cas"
+    attrs:
+      name: "miconnect-auth-cas"
+      title: "Connexion avec le CAS de l'École"
+      designation: "authentication"
+      authentication: "require_unauthenticated"
+      background: "no_background.png"
   - model: authentik_flows.flow
     identifiers:
       slug: "miconnect-auth-fallback"
@@ -83,6 +100,14 @@ entries:
         - !Find [authentik_sources_oauth.oauthsource, [slug, "cas-emse"]]
         - !Find [authentik_sources_saml.samlsource, [slug, "alumni"]]
       show_source_labels: true
+  - model: authentik_stages_identification.identificationstage
+    identifiers:
+      name: "miconnect-identification-cas"
+    attrs:
+      user_fields: []
+      sources:
+        - !Find [authentik_sources_oauth.oauthsource, [slug, "cas-emse"]]
+      show_source_labels: true
   - model: authentik_stages_deny.denystage
     identifiers:
       name: "miconnect-auth-failed"
@@ -104,6 +129,11 @@ entries:
       target: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
       stage: !Find [authentik_stages_user_login.userloginstage, [name, "miconnect-login"]]
       order: 40
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "miconnect-auth-cas"]]
+      stage: !Find [authentik_stages_identification.identificationstage, [name, "miconnect-identification-cas"]]
+      order: 10
   - model: authentik_flows.flowstagebinding
     identifiers:
       target: !Find [authentik_flows.flow, [slug, "miconnect-auth-fallback"]]
