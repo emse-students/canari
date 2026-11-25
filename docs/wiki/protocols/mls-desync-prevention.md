@@ -240,10 +240,11 @@ the not-overtaken guard refused the swap: 17 `catch-up (<group>) state DISCARDED
 restore of a new web device, 2026-11-24, each one a worker's ratchet advance and decrypt work thrown
 away.
 
-- **Why the lock comes first.** The drain awaits sends under the mutex (a key group's seed answer,
-  `frameHandler.ts` `answerSeedRequest`). A catch-up that closed the gate BEFORE the lock (the first
-  version of #4083, refused in review) waited for the mutex while the frame holding it waited at the
-  gate: a permanent deadlock. With the lock first, no mutex holder ever finds a web catch-up's gate
+- **Why the lock comes first.** The drain awaits no send ([section 10](#10-client---the-drain-awaits-no-send-the-seed-answer-freeze-2026-11-25));
+  when #4083 was written it still awaited a key group's seed answer under the mutex, and a catch-up
+  that closed the gate BEFORE the lock (its first version, refused in review) waited for the mutex
+  while the frame holding it waited at the gate: a permanent deadlock. The lock-first order keeps any
+  mutex holder that ever awaits a send safe. With the lock first, no mutex holder ever finds a web catch-up's gate
   closed. On the sequential path (Tauri, web without the crypto worker) the session takes no JS mutex
   at all, so a frame waiting at its gate waits for a session that needs nothing it holds.
 - **Why the gate is passed BEFORE registering with the epoch barrier.** A send registered and then
@@ -545,6 +546,60 @@ ordering is the guarantee.
   inside it, reintroduces the cycle. A commit LENDS the mutex to the drain while its request is on the
   network; a borrower may see the barrier raised but never awaits a send, so the order holds
   ([mls-protocol](mls-protocol.md#a-commit-waiting-on-the-network-lends-the-mls-lock-to-other-groups-frames)).
+
+### 10. Client - the drain awaits no send (the seed-answer freeze, 2026-11-25)
+
+- **A frame handler never awaits `sendMessage`.** The drain holds the MLS mutex across
+  `processMessage` - its own, or one a commit of another group lends it (`lendMlsLockWhile`). A send
+  may need that mutex: a group holding a kept commit of unknown outcome is settled before anything is
+  sealed on it (`settleBeforeSend` -> `settleUnresolvedCommits` -> `runUnderMlsLock`), and the mutex
+  is not reentrant. A frame awaiting such a send waits for its own release, for good: every frame of
+  every conversation stops behind it until a reload, and the only trace is a repeating
+  `[QUEUE] STUCK in processMessage`. Under a loan the commit's reclaim joins the cycle.
+- **What shipped it.** The answer to a seed request (`answerSeedRequest`,
+  [`frameHandler.ts`](../../../frontend/src/lib/utils/graine/frameHandler.ts)) was awaited inside the
+  key-group frame that carried the ask. Trigger: a kept unresolved commit on a community key group,
+  and a seed request addressed to this device drained before the connection-time settle.
+- **The rule, and its one shape.** A send a frame owes is SCHEDULED past the frame and the frame
+  returns: `answerAfterMailboxDrained` (the history answers, and since this fix `deferSeedAnswer`), a
+  parked ask (`parkedAsks.ts`), or a `void` chain (`noteMissingSeed` -> `flushRepairs`,
+  `noteHistoryHeldNothing` -> `requestCommunityHistory`, `onCallSignal`). The frame is acknowledged
+  once its answer is scheduled - a request is transport, and an unanswered requester asks again at its
+  next start. A failed deferred answer is said ONCE, by class (`answerSeedAsk`): a transport failure
+  (the server got no answer) warns and PARKS the ask until the link comes back
+  (`parkAskUntilNextLink`, released by `releaseAsksAwaitingLink` from BOTH link events: a connection's
+  catch-up, `onConnectionCaughtUp`, and the server reachable again, `connectivity.onReconnect`, for a
+  send that failed on an open socket). Events, never a clock; bounded by `MAX_PARKED_ASKS` and dropped
+  with the session. A park made AFTER the event it waits for is not made: the link generation counts
+  every catch-up AND every `connectivity` return (`reconnectCount`, counted whether or not an ask
+  waited), the answer records it before its send, and an answer whose send hung across either event is
+  sent again at once. Anything else accuses at error and is left to the requester's
+  next start.
+- **A leg whose client ended ends too.** `destroy` rejects the scheduler's pending group-idle waits
+  (`abandonGroupIdleWaiters`, `GroupDrainAbandonedError`), so `answerAfterMailboxDrained` says the
+  answer is not sent and its leg ends; before, a wait on a group with frames still queued hung until
+  a reload.
+- **The frame is not where a lost answer is recovered.** A key-group frame's generation is spent at
+  decrypt, before its handler runs, so a handler throw left unacknowledged is refused as `secret-reuse`
+  on redelivery and counted as a key-group frame loss. Recovering a failed seed STORE that way is
+  the open item [a-key-group-frame-whose-handler-threw-is-lost](../backlog.d/a-key-group-frame-whose-handler-threw-is-lost.md).
+- **Why the invariant is asserted by tests and not by a runtime throw.** The browser has no async
+  context propagation (no `AsyncLocalStorage`; TC39 `AsyncContext` has not shipped), so neither the
+  scheduler nor `sendMessage` can tell the drain's own continuation from a user's send that happens to
+  run while the drain holds the mutex - a throw keyed on "a frame is being applied" would refuse
+  legitimate sends on any busy account. The rows in `frameHandler.test.ts` ("no send is awaited under
+  the drain mutex") run a REAL `MlsPerGroupScheduler` whose `sendMessage` settles under the mutex, own
+  and lent; each one times out if a frame awaits the send.
+- **The audit (2026-11-25), every send reachable from a frame:** the seed answer (fixed here); the
+  repair asks `requestSeedsForChannel` and `askCommunityHistory` (`repair.ts`), reached from a frame
+  only through `void` chains that also wait for `whenGroupDrained`; the history legs of
+  `systemMessageHandler.ts` and `sessionAuth.ts` (all behind `answerAfterMailboxDrained` or `void`);
+  `retryOverheardPull` (behind `answerAfterMailboxDrained`); call signals (`onCallSignal` returns
+  `void`); `republishKeyMaterial` in the Welcome recovery (`setupMessageHandler.ts`), awaited in the
+  drain but after the Welcome's own lock section, so under NO mutex - network I/O only, and its failure
+  is logged. Seed distribution (`distributeGraineSeed`) and visible notices are sent from gestures and
+  seals, never from the pipeline. A new `await` in the frame path is read against this list.
+
 
 ## Verification
 

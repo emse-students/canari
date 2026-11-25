@@ -4,6 +4,8 @@ import type { canari } from '$lib/proto/canari';
 import { canari as canariRuntime } from '$lib/proto/canari';
 import { decodeAppMessage, encodeAppMessage, mkGraineBundle } from '$lib/proto/codec';
 import { addressedKeyMaterial } from '$lib/mls-client/frameDelivery';
+import { answerAfterMailboxDrained } from '$lib/utils/chat/historyReconcile';
+import { isTransportFailure } from '$lib/utils/transportFailure';
 import { GRAINE_HISTORY_BUNDLE_MAX_SEEDS } from '$lib/crypto/graineConstants';
 import { toBase64 } from '$lib/utils/hex';
 import { DecisionLog } from '$lib/utils/decisionLog';
@@ -13,6 +15,7 @@ import {
   cachedGraineSession,
   awaitSalonListing,
   isCommunityListed,
+  isGraineReady,
   assertGraineRuntimeUnchanged,
   knownHistoryVisibility,
   rawChannelId,
@@ -23,7 +26,12 @@ import {
 import { sameScope, scopeLabel, type DistributionScope } from '$lib/mls-client/distributionScope';
 import { applyHistoryFloors, historyFloorsFor } from './historyBoundary';
 import { pastPolicyFor } from './admissionGate';
-import { parkAsk, parkAskUntilRuleKnown } from './parkedAsks';
+import {
+  linkGenerationNow,
+  parkAsk,
+  parkAskUntilNextLink,
+  parkAskUntilRuleKnown,
+} from './parkedAsks';
 import { mirrorGraineSeed } from './graineMirror';
 import {
   forgetAskedSession,
@@ -502,7 +510,7 @@ export async function handleDistributionFrame(frame: DistributionFrame): Promise
   }
 
   if (msg.graineRequest) {
-    await answerSeedRequest(frame, msg.graineRequest);
+    deferSeedAnswer(frame, msg.graineRequest);
     return;
   }
 
@@ -518,6 +526,109 @@ export async function handleDistributionFrame(frame: DistributionFrame): Promise
   );
 }
 
+/** Seed answers scheduled past their frame and not yet run - see {@link deferSeedAnswer}. */
+const deferredAnswers = new Set<Promise<void>>();
+
+/**
+ * Schedules the answer to a seed request PAST THE FRAME THAT CARRIED IT, and returns at once.
+ *
+ * **NO SEND IS AWAITED UNDER THE DRAIN'S MUTEX** (mls-desync-prevention, "the drain awaits no
+ * send"). This handler runs inside `processMessage`, which the drain calls holding the MLS client
+ * mutex - its own, or one lent by a commit of another group (`lendMlsLockWhile`). `sendMessage`
+ * may need that very mutex: a key group holding a kept commit of unknown outcome is settled before
+ * anything is sealed on it (`settleBeforeSend` -> `settleUnresolvedCommits` -> `runUnderMlsLock`),
+ * and the mutex is not reentrant. Awaited here, the answer waited for the drain and the drain for
+ * the answer, FOR GOOD: every frame of every conversation stopped behind it until a reload, the
+ * only trace a repeating `[QUEUE] STUCK in processMessage`. Under a loan the commit's reclaim joined
+ * the cycle. The history answers already ran this way (`answerAfterMailboxDrained`), and so does
+ * this one now: the frame is acknowledged once its answer is SCHEDULED, which costs nothing a
+ * request did not already risk - it is transport, and an unanswered requester asks again at its
+ * next start.
+ *
+ * Only an ask addressed to this user is scheduled: every member of the community receives the
+ * frame, and three hundred deferred no-ops per ask would be the waste the addressing exists to end.
+ * The rest of the address (the named devices) is decided by {@link answerSeedRequest}.
+ */
+function deferSeedAnswer(
+  frame: DistributionFrame,
+  request: canari.GraineRequestMsg.$Properties
+): void {
+  const session = requireGraineRuntime('cannot answer a seed request');
+  if (String(request.answererUserId ?? '').toLowerCase() !== session.userId) return;
+  // Its END is tracked, not only its answer: a client destroyed before the frame drained runs no
+  // answer at all (`answerAfterMailboxDrained` says so), and the leg still ends.
+  const ran = answerAfterMailboxDrained(session.mlsService, frame.groupId, async () => {
+    // The session that received the ask is the one that answers it, never the next account's.
+    if (!isGraineReady() || requireGraineRuntime('cannot answer a seed request') !== session) {
+      console.info(
+        `[GRAINE] not answering ${requesterOf(frame)}'s request ${String(request.requestId ?? '')} in community ` +
+          `${frame.workspaceId.slice(0, 8)}: the session that received it ended before its frame drained`
+      );
+      return;
+    }
+    await answerSeedAsk(frame, request);
+  });
+  deferredAnswers.add(ran);
+  void ran.then(() => deferredAnswers.delete(ran));
+}
+
+/** The device that asked, as every answer line names it. */
+function requesterOf(frame: DistributionFrame): string {
+  return `${frame.sender}:${frame.senderDeviceId ?? '(no device)'}`;
+}
+
+/** How far a paged answer got: the pages sent before a failure, of how many. */
+interface AnswerProgress {
+  sent: number;
+  pages: number;
+}
+
+/**
+ * Answers a seed ask, and never throws: what a failed send leaves is said ONCE, here, by class.
+ *
+ * The frame that carried the ask is acknowledged already, so nothing redelivers it. A server that
+ * got NO ANSWER (`isTransportFailure`) refused nothing: the ask is parked until the link comes back - a
+ * connection's catch-up pull, or the server reachable again ({@link parkAskUntilNextLink}) - an event,
+ * never a clock - and answered then; at once if the link came back while the send hung. Any
+ * other failure is a defect and accuses; the requester asks again at its next start. Every parked
+ * ask is answered again through this same function, so a second failure is classified the same way.
+ */
+async function answerSeedAsk(
+  frame: DistributionFrame,
+  request: canari.GraineRequestMsg.$Properties
+): Promise<void> {
+  const progress: AnswerProgress = { sent: 0, pages: 0 };
+  // Recorded BEFORE the send: a link that comes back while it hangs must not be missed by its park.
+  const startedAt = linkGenerationNow();
+  try {
+    await answerSeedRequest(frame, request, progress);
+  } catch (e) {
+    const pages =
+      progress.pages > 1
+        ? ` at page ${progress.sent + 1}/${progress.pages} (${progress.sent} page(s) went before it)`
+        : '';
+    const line =
+      `[GRAINE] the answer to ${requesterOf(frame)}'s request ${String(request.requestId ?? '')} in community ` +
+      `${frame.workspaceId.slice(0, 8)} was not sent${pages}`;
+    if (isTransportFailure(e)) {
+      console.warn(`${line} - the server got no answer; it waits for the link: ${String(e)}`);
+      if (!parkAskUntilNextLink(frame, request, answerSeedAsk, startedAt)) {
+        await answerSeedAsk(frame, request);
+      }
+      return;
+    }
+    console.error(`${line} - the requester asks again at its next start: ${String(e)}`);
+  }
+}
+
+/**
+ * Resolves once every seed answer deferred so far ({@link deferSeedAnswer}), and any it scheduled
+ * meanwhile, has run. For tests: the frame handler no longer awaits the answer by design.
+ */
+export async function deferredSeedAnswersSettled(): Promise<void> {
+  while (deferredAnswers.size > 0) await Promise.all(deferredAnswers);
+}
+
 /**
  * Answers a seed request - but only the one addressed to THIS device's user.
  *
@@ -528,7 +639,8 @@ export async function handleDistributionFrame(frame: DistributionFrame): Promise
  */
 async function answerSeedRequest(
   frame: DistributionFrame,
-  request: canari.GraineRequestMsg.$Properties
+  request: canari.GraineRequestMsg.$Properties,
+  progress: AnswerProgress
 ): Promise<void> {
   const { storage, deviceKey, userId, mlsService } = requireGraineRuntime(
     'cannot answer a seed request'
@@ -578,17 +690,18 @@ async function answerSeedRequest(
       ? await gatherCommunityHistory(frame, storage, deviceKey())
       : await gatherNamedSessions(frame, request, storage, deviceKey());
   // `unobserved` is not a refusal (section 25): the asker's voucher waits for the community's key
-  // group to drain on this device, and this ask may be that group's current frame - so it is parked,
-  // never awaited here, and decided again by the drain.
+  // group to drain on this device - its frames applied AND the mailbox listed on this link, which an
+  // answer run once this ask's own frame is done ({@link deferSeedAnswer}) may still be short of - so
+  // it is parked, never awaited here, and decided again by the drain.
   if (gathered === UNOBSERVED) {
-    parkAsk(frame, request, answerSeedRequest);
+    parkAsk(frame, request, answerSeedAsk);
     return;
   }
   // Nor is an unknown history rule: this session's listing has not stated it yet, and a floor drawn
   // under a guess would cost a `shared` past for good - so the ask waits for the rule, parked the
   // same way, and is decided again when the listing states it.
   if (gathered === RULE_UNKNOWN) {
-    parkAskUntilRuleKnown(frame, request, answerSeedRequest);
+    parkAskUntilRuleKnown(frame, request, answerSeedAsk);
     return;
   }
   // A refusal (`null`: the asker's floor could not be placed) is the only case answered by silence
@@ -648,24 +761,20 @@ async function answerSeedRequest(
   // Still durable for the requester - the COMM-18 reason above holds for it - and kept out of the
   // group's shared log, which every member reads.
   //
-  // EVERY PAGE TRAVELS THE SAME WAY, in order, one after the other. A page that fails to send is
-  // said with how many went before it and the failure propagates exactly as a one-message answer's
-  // did; the pages already sent are stored at the other end, and what the rest carried is asked for
-  // there one session at a time.
-  for (const [index, page] of pages.entries()) {
-    try {
-      await mlsService.sendMessage(
-        frame.groupId,
-        encodeAppMessage(mkGraineBundle(page)),
-        undefined,
-        addressedKeyMaterial(requester)
-      );
-    } catch (e) {
-      console.warn(
-        `[GRAINE] page ${index + 1}/${pages.length} of the answer to ${requester} (request ${String(request.requestId ?? '')}) was not sent - ${index} page(s) went before it: ${String(e)}`
-      );
-      throw e;
-    }
+  // EVERY PAGE TRAVELS THE SAME WAY, in order, one after the other. A page that fails to send ends
+  // the answer, said with how many went before it; the pages already sent are stored at the other
+  // end, and an answer sent again after a transport failure repeats them harmlessly (`bundlePages.ts`).
+  // The count is kept in `progress` and said ONCE, by the caller that classifies the failure
+  // (`answerSeedAsk`): a line here and another there was two lines for one lost answer.
+  progress.pages = pages.length;
+  for (const page of pages) {
+    await mlsService.sendMessage(
+      frame.groupId,
+      encodeAppMessage(mkGraineBundle(page)),
+      undefined,
+      addressedKeyMaterial(requester)
+    );
+    progress.sent += 1;
   }
   // An EMPTY answer ("I hold nothing of the community", no decline) is the routine outcome of every
   // join into a community with no history: it said nothing a reader could act on and came once per

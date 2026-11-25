@@ -48,12 +48,11 @@
  *
  * **A LOAN DOES NOT CHANGE THE ORDER.** While its request is on the network the commit lends the
  * mutex to the drain, one frame of ANOTHER group at a time (`MlsPerGroupScheduler.lendMlsLockWhile`),
- * so a borrower can now observe this group's barrier raised. It never waits on it: a borrower applies
- * a frame of ANOTHER group, and a send it awaits inline (a key group's seed answer,
- * `frameHandler.ts` `answerSeedRequest`) is for that frame's group, never the lender's. Most sends
- * from the pipeline are deferred past the frame anyway (the history answers run after the mailbox
- * drained). The catch-up gate a send meets is ordered separately: see
- * `BaseMlsService.beginCatchUpAfterSends`.
+ * so a borrower can now observe this group's barrier raised. It never waits on it: the drain awaits
+ * no send (mls-desync-prevention section 10) - a send a frame owes is deferred past the frame (the
+ * seed and history answers run after the mailbox drained), which it has to be, since a send can
+ * settle a commit and settling takes the mutex the drain holds. The catch-up gate a send meets is
+ * ordered separately: see `BaseMlsService.beginCatchUpAfterSends`.
  */
 
 /** Groups whose epoch a local commit is currently moving; the promise resolves at the merge. */

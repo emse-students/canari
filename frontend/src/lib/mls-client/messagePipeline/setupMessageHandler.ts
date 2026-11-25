@@ -1059,7 +1059,14 @@ async function handleWelcome(args: WelcomeArgs): Promise<boolean> {
         log(
           `[WELCOME] NoMatchingKeyPackage for ${rec.target.slice(0, 8)}… - republish, then requestReAdd (the membership row picks the door)`
         );
-        await mlsService.republishKeyMaterial(deps.deviceKey()).catch(() => {});
+        // Network I/O awaited in the drain, but under NO mutex (this recovery runs after the frame's
+        // lock section): mls-desync-prevention section 10. Best-effort, and said when it fails:
+        // `requestReAdd` below still runs, against whatever package the server already holds.
+        await mlsService.republishKeyMaterial(deps.deviceKey()).catch((e: unknown) => {
+          log(
+            `[WARN] [WELCOME] republishing key material for ${rec.target.slice(0, 8)}… failed (${e instanceof Error ? e.name : typeof e}) - requestReAdd proceeds on the package the server holds: ${String(e)}`
+          );
+        });
       } else {
         log(
           `[WELCOME] NoMatchingKeyPackage #${rec.failures} for ${rec.target.slice(0, 8)}… - requestReAdd (the membership row picks the door)`
