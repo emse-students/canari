@@ -1,10 +1,6 @@
 ## Reading owed - a DM opens at its end in one render: no yank, no arrow at the end, one day pill
 
-target: 1.8.1
-
-_Planned on the earliest tier the plan still lists (`1.8.1`, already shipped): it moves to `1.8.2`
-with every other reading when the plan is replanned after the `1.8.1` stable. The fix ships in the
-first `1.8.2` alpha._
+target: 1.8.2
 
 Built 2026-11-25 (`fix/thread-open-lands-once`): the entry's widen no longer glides nor writes
 `scrollTop`, only an arrival glides, and a glide's end re-measures the pane
