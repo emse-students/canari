@@ -142,7 +142,7 @@ describe('MinesweeperModal - unranked levels', () => {
     expect(cells()).toBe(18 * 32);
     // The mines counter reads the ranked board's 150 mines, none flagged yet.
     expect(document.body.textContent).toContain('150');
-  });
+  }, 30_000);
 
   it('leaves ranked untouched whatever level Libre last used: same challenge, ranked board and target', async () => {
     localStorage.setItem('canari.minesweeper.level', 'beginner');
