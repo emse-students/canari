@@ -9,6 +9,15 @@ import androidx.work.ForegroundInfo
 import androidx.work.Worker
 import androidx.work.WorkerParameters
 
+/**
+ * The pending-DB sweep a refused push frame enqueues (`nativeProcessBackgroundTasks` ->
+ * `background.rs` `cleanup_pending_db`).
+ *
+ * **IT DOES NOT RETRY THE FRAME**: it never fetches, decrypts or re-posts, so the generic line a
+ * refused push drew stays until the app's drain reads the message. Step 6 of the background ladder
+ * said otherwise until 2026-11-25. A frame the server could not be reached for is replayed by
+ * [HeldFrameWorker] instead.
+ */
 class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
     Worker(context, workerParams) {
 
