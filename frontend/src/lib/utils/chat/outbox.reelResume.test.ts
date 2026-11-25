@@ -746,6 +746,12 @@ describe.each([1, 3])(
         await waitForEvent(() => expect(uploadViewOf(VIEW)?.phase).toBe('queued'));
         expect(w.server.sent).toEqual([]);
         expect(sends(l)).toBe(0);
+        // A RECONNECT WHILE HELD AND OUT OF VIEW prepares nothing: the view edge is the only release.
+        connectivity.notifyServerUnreachable('test');
+        connectivity.notifyServerReachable();
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        expect(calls).toBe(1);
+        expect(uploadViewOf(VIEW)?.phase).toBe('queued');
         setActive(true);
         await expectDeliveredOnce(w, l, N);
         expect(calls).toBe(2);

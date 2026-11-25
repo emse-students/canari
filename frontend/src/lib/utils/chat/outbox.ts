@@ -2820,6 +2820,20 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     return 'parked';
   }
 
+  /**
+   * Consumes `id`'s resume arming - except for a take {@link holdForView} keeps while the app is
+   * still out of view: a reconnect's arming there would only start an encode the system stops again.
+   * The arming is dropped, not kept: the back-in-view edge arms it again, and is its only release.
+   */
+  function takeResume(id: string): boolean {
+    const armed = resuming.delete(id);
+    if (armed && viewHeld.has(id) && !isAppInView()) {
+      log(`[OUTBOX] ${id.slice(0, 8)}… resume skipped: its take waits for the app back in view`);
+      return false;
+    }
+    return armed;
+  }
+
   /** The app is back in view: every take {@link holdForView} kept is prepared again, once. */
   function resumeViewHeld(): void {
     if (viewHeld.size === 0) return;
@@ -2842,6 +2856,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     console.error(line);
     log(line);
     parked.add(entry.id);
+    viewHeld.delete(entry.id);
     transportHeld.delete(entry.id);
     repairHeld.delete(entry.id);
     unexpected.delete(entry.id);
@@ -3098,7 +3113,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         await settleFailure(entry, entry.conversationId, task.settled.error)
       );
     }
-    const resumed = resuming.delete(entry.id);
+    const resumed = takeResume(entry.id);
     // A manual retry (or a reconnect's resume) is a fresh start for the no-answer count.
     if (resumed) {
       noAnswer.delete(entry.id);
@@ -4588,7 +4603,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       console.error(`[OUTBOX] take ${short}… has no sends recorded - a malformed row, left as is`);
       return;
     }
-    const resumed = resuming.delete(id);
+    const resumed = takeResume(id);
     if (!resumed && take.nextAttemptAt && take.nextAttemptAt > Date.now()) return;
     if (state === 'releasing') {
       await driveReleasing(id);
@@ -5193,6 +5208,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // the other tabs' snapshots (a leader draining on our behalf).
     cancelled.set(messageId, reason);
     parked.delete(messageId);
+    viewHeld.delete(messageId);
     unclaimed.delete(messageId);
     serverFailed.delete(messageId);
     noAnswer.delete(messageId);
@@ -5540,6 +5556,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // transfer is on the wire and stalled, abandon it: the flush then restarts it at once.
       resuming.add(messageId);
       parked.delete(messageId);
+      viewHeld.delete(messageId);
       // A 403-parked entry used to ignore this button for the controller's whole life.
       forbiddenParked.delete(messageId);
       const running = uploads.get(messageId);

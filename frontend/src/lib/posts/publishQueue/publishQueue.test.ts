@@ -44,6 +44,7 @@ import { UploadAbortedError } from '$lib/utils/uploadXhr';
 import type { MediaRef } from '$lib/media';
 import { REEL_MEDIA_EXPIRED } from '$lib/reels/reelMediaExpired';
 import { VideoPrepareError } from '$lib/video/prepareVideoForUpload';
+import { PublishScreenHold, publishHoldsTheScreen } from './publishScreenHold';
 
 /** An in-memory stand-in for `PublishQueueStore`, cloning like IndexedDB does. */
 function memoryStore() {
@@ -167,7 +168,9 @@ interface Rig {
 
 function rig(
   store = memoryStore(),
-  lock: <T>(fn: () => Promise<T>) => Promise<T> = (fn) => fn()
+  lock: <T>(fn: () => Promise<T>) => Promise<T> = (fn) => fn(),
+  /** What the runner hands its own screen hold (`publishQueue.svelte.ts`): its rows, its pass ends. */
+  hooks: { views?: (views: PublishView[]) => void; ended?: () => void } = {}
 ): Rig {
   const r = {
     store,
@@ -301,9 +304,11 @@ function rig(
     onViews: (v, fromRunner) => {
       r.views = v;
       r.viewSources.push(fromRunner);
+      if (fromRunner) hooks.views?.(v);
     },
     onPublished: (p) => r.published.push(p.id),
     passEnded: () => {
+      hooks.ended?.();
       r.passesEnded += 1;
       for (const resolve of r.passEndWaiters.splice(0)) resolve();
     },
@@ -1311,6 +1316,58 @@ describe('a preparation the app leaving the view stopped (iPhone 12, 1.8.1-alpha
     expect(r.calls.filter((c) => c.startsWith('prepare:'))).toHaveLength(2);
     expect(r.created.map((c) => c.id)).toEqual(['p1']);
     expect(r.published).toEqual(['p1']);
+  });
+
+  it('with a SYNCHRONOUS lock, the pass run again never has its screen released by the end of the last', async () => {
+    let hook: (() => void) | null = null;
+    const screen: string[] = [];
+    let working = false;
+    const hold = new PublishScreenHold(
+      {
+        hold: async () => {
+          screen.push('hold');
+        },
+        release: () => {
+          // A release while the runner's rows say a row is worked on is the defect.
+          screen.push(working ? 'release WHILE WORKING' : 'release');
+        },
+      },
+      () => true,
+      () => undefined
+    );
+    const r = rig(
+      memoryStore(),
+      async (fn) => {
+        const value = await fn();
+        const fire = hook;
+        hook = null;
+        fire?.();
+        return value;
+      },
+      {
+        views: (views) => {
+          working = publishHoldsTheScreen(views);
+          hold.rows(views);
+        },
+        ended: () => hold.passEnded(),
+      }
+    );
+    queuePost(r.store, 'p1', 1);
+    r.inView = false;
+    r.preparePlan.push(interrupted);
+    hook = () => {
+      r.inView = true;
+      r.queue.backInView();
+    };
+    const published = new Promise<void>((resolve) => {
+      const check = () => (r.published.length > 0 ? resolve() : r.passEndWaiters.push(check));
+      r.passEndWaiters.push(check);
+    });
+    void r.queue.drain();
+    await published;
+    expect(r.published).toEqual(['p1']);
+    expect(screen).not.toContain('release WHILE WORKING');
+    expect(screen.at(-1)).toBe('release');
   });
 
   it('terminates: interrupted, then prepared in view and failing there, ends failed - no loop', async () => {

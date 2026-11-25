@@ -379,17 +379,19 @@ export class PublishQueue {
       )
       .finally(() => {
         this.draining = null;
+        // THIS PASS'S END IS SAID FIRST: said after the next pass started, it would release what
+        // that pass holds (the screen) while it works on a row.
+        try {
+          this.deps.passEnded();
+        } catch (e) {
+          console.error('[PUBLISH-QUEUE] the end of a pass could not be handled:', e);
+        }
         // AN EDGE THAT LANDED AFTER THE LOOP'S LAST LOOK, while the lock was still settling (a Web
         // Lock resolves on a later task), asked for another pass and found this one still
         // `draining`: it is run now, or it is lost - a `backInView`, a resume, a nudge alike.
         if (this.again && !this.stopped) {
           this.deps.log('[PUBLISH-QUEUE] asked again as the pass ended: one more pass');
           void this.drain();
-        }
-        try {
-          this.deps.passEnded();
-        } catch (e) {
-          console.error('[PUBLISH-QUEUE] the end of a pass could not be handled:', e);
         }
       });
     return this.draining;
