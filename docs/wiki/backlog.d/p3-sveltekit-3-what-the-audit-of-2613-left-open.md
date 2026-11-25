@@ -8,20 +8,7 @@ An audit of the SvelteKit 3 upgrade (#2613) read kit 3.1.0 against 2.70.3. Its t
 2. **The history-state format changed** (`sveltekit:metadata`): one Back after a deploy onto an entry written by the OLD build changes the URL and not the page (read, not reproduced). **Closes** with one reproduction on dev across a pre-release, then either nothing (it heals on the next navigation) or a reload on an entry without the new metadata.
 3. **`reset: false` replaced `noScroll`/`keepFocus`** and changes where Back leaves focus and scroll on the `/posts` tabs - moot today, the feed scrolls in its own container. **Closes** if a page ever scrolls the document.
 4. **adapter-node 6 derives the origin from `https` + `Host`**; no SSR code reads `url.origin` today ([architecture](../frontend/architecture.md#sveltekit-3-and-adapter-node-6-2026-10-27)). **Closes** the day something does: verify the derived origin behind nginx first.
-5. **The SSR build is never BOOTED in CI.** CI builds the web target and never starts it; the audit booted it by hand (`/login`, `/posts`, `/`, `/associations/x`, `/post/x`, `/profile/x`, `/c/join/x`, `/sitemap.xml`, `/robots.txt`, `/app-shell`, `/_app/version.json` answered 200, an unknown path 404). **Smallest gate:** after the web build, start `build/index.js` on a free port and assert that status table (plus the SEO marker substituted in `/login`'s head), in the job that already built it - one step, no browser. Not built.
+5. ~~**The SSR build is never BOOTED in CI.**~~ **Built 2026-11-25**: `checks.sh frontend-build` now boots `build/index.js` and asserts the status table and `/login`'s substituted head (`boot-frontend-ssr.mjs`, [cicd](../cicd.md#package-1-opening-a-pull-request-ciyml)); every row answers with no backend reachable, so no route is listed as an exception.
 6. **A shallow `goto` replaced `replaceState`**, and it is async, runs `beforeNavigate` / `onNavigate` / `afterNavigate`, and can abort a navigation in flight. Guarded: the root layout (x3), `AppSidebar`, `CameraScreen`, `ChatBackgroundService`, `unsavedChanges`. NOT guarded: `reels/ReelCapture.svelte`'s `afterNavigate` (a shallow update resets `leaving`), `calendar/+page.svelte`'s `afterNavigate` (re-reads `?association=` on a shallow update), and the shop's `onMount` shallow `goto` (can abort the navigation that is landing). **Closes** with each guarded on `nav.shallow` or shown harmless by a test.
 7. **The checkout return still learns from failure** (`navigate` in `hooks.client.ts` assigns `window.location.href` when `goto` fails). Its targets are `AppPath` now, so a missing route is not what it catches; what is left is a navigation failing for another reason on the payment return, never observed. **Closes** with one payment return read on a device, then `gotoAppPath` without the catch.
 8. **Kit 3.1.0 names no route for a crash before the first client navigation** (`initialize` builds the event from the state before assigning it), worked around in #2656 by matching `event.url`. **Closes** when an upstream fix lands - worth reporting to sveltejs/kit. Kit also leaves `page.status` at 500 after a crashed page recovers through a same-address navigation; only `+error.svelte` reads it.
-
-**Brief for item 5, the SSR boot gate (batch 16, 2026-11-12; Sonnet, one PR born `--draft`).** It
-cannot be built or run on a workstation without the generated WASM, so it is a CI change verified by
-its own run. In `.github/workflows/ci.yml`, job `test-frontend`, right after "Assert what the build
-carries" and under the same `if`: one step running a new `.github/scripts/boot-frontend-ssr.mjs`
-(bun, no browser) that starts `frontend/build/index.js` with `PORT` on a free port, waits for the
-FIRST answer or the process's exit (an exit fails the step with its stderr; the wait is bounded only
-as a ceiling on a hang, nothing asserts a duration), then asserts the status table above - each path
-200, an unknown path 404 - and the SEO marker substituted in `/login`'s head, and stops the server.
-Read first what the SSR hooks fetch with no backend reachable: a route that answers 500 in CI for
-that reason is listed with the reason, not dropped. A test under `.github/scripts/tests/` drives the
-script against a stub server (a 500 and an early exit both fail). Write the gate into
-[cicd](../cicd.md) and strike item 5 here.

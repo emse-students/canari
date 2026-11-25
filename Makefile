@@ -369,6 +369,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/changes-outputs.test.mjs
 	@bun .github/scripts/tests/ci-passed-gate.test.mjs
 	@bun .github/scripts/tests/smoke-login.test.mjs
+	@bun .github/scripts/tests/boot-frontend-ssr.test.mjs
 	@bash .github/scripts/tests/dependabot-cargo-reach.test.sh
 	@bash .github/scripts/tests/cargo-blocked-update-report.test.sh
 	@bash .github/scripts/tests/cargo-lock-refresh.test.sh

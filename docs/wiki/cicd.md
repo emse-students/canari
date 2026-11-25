@@ -266,7 +266,17 @@ the suite lints, type-checks and tests but built nothing, so the build-id defect
 `test-frontend` job runs `BUILD_WEB=1 bun run build` on `push` only - pull requests skip it for cost -
 then `.github/scripts/assert-frontend-build.mjs` checks the stamp names THIS commit and that the wasm
 and protobuf module are in; `assert-frontend-build.test.mjs` pins each refusal and that `ci.yml`
-calls it. The release does not reuse the artefact: each estate bakes its own `VITE_*` origins in
+calls it. **The built server is then BOOTED (2026-11-25)**, because a build that compiles and a
+server that answers are two facts and only the first was gated (audit of #2613, item 5):
+`.github/scripts/boot-frontend-ssr.mjs` starts `frontend/build/index.js` on a free loopback port (bun,
+no browser; production runs the same `build/` on node 24), waits for its first answer or its exit (an
+exit fails with its output; the only bound is a ceiling on a hang), and asks `/login`, `/posts`, `/`,
+`/associations/x`, `/post/x`, `/profile/x`, `/c/join/x`, `/sitemap.xml`, `/robots.txt`, `/app-shell`
+and `/_app/version.json` for a `200`, an unknown path for a `404`, and `/login` for a head whose SEO
+marker was substituted. No backend is reachable, on purpose: the enriched pages must answer `200` with
+the generic head (`serverSeo.ts`), since a page that answers `500` without a backend breaks whenever one
+is down. `boot-frontend-ssr.test.mjs` drives it against stub servers (a `500`, an unsubstituted head,
+an early exit, a missing build, a server that never listens each fail). The release does not reuse the artefact: each estate bakes its own `VITE_*` origins in
 (`build.yml`), which `main`'s build has none of. **Nothing here deploys**, so a red run on `main` is a statement about the
 repository and never about production, which is still serving the last release.
 

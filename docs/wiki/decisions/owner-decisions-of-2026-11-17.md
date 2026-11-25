@@ -96,7 +96,7 @@ the counts.
 - **(lead, reversible, #3784)** A mention in the sender's own bubble takes the own-bubble variant
   (`currentColor`, no tint); incoming bubbles keep the accent.
 - **Noise filed** (P3, `1.7.1`, none of them a regression shown since `1.6.12`):
-  [a CSP refusal on every dev page load](../backlog.d/p3-dev-logs-a-csp-inline-script-error-on-every-page-load.md),
+  [a CSP refusal on every dev page load](../backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks),
   a dropped 1:1 logged as a key group (fixed in `1.7.1`, entry deleted),
   and [the iPhone's landscape close circle clipped](../device-verification.md).
 - **Seat counting for capped forms stays at submit, under the form's lock, for now.** A hold taken

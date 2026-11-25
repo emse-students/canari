@@ -215,6 +215,9 @@ check_frontend_build() {
   [ -n "$sha" ] || die "frontend-build: pass the commit sha the build is stamped with"
   (cd frontend && BUILD_WEB=1 bun run build)
   bun .github/scripts/assert-frontend-build.mjs frontend "$sha"
+  # The build compiles; this proves it SERVES: `build/index.js` started, each kind of page asked
+  # (boot-frontend-ssr.mjs, docs/wiki/cicd.md).
+  bun .github/scripts/boot-frontend-ssr.mjs frontend/build
 }
 
 # `-D warnings` here and not in `package.json`'s `wasm:build`: this is the gate, that is the
