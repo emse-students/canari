@@ -31,7 +31,8 @@ A store not carrying the version has five causes, and a human acts on each diffe
 | `live` | the store serves it | none |
 | `pending` | it is WITH the store - Apple reviews in days | **none**, and saying otherwise daily is how a report teaches its reader to skip it |
 | `not-submitted` | uploaded and never sent, and nothing is in the way | none in the usual case: the catch-up step before this report submits it; if it is still printed, that step said why |
-| `slot-held` | uploaded and never sent **because another version holds Apple's one slot** and is with Apple | a DECISION in App Store Connect on the version named; **a re-run will not touch it** |
+| `queued` | uploaded and never sent because an earlier version holds Apple's one slot **in review** (`WAITING_FOR_REVIEW`, `IN_REVIEW`) | **none**: the review frees the slot by itself and the catch-up submits the first morning it does - so it passes |
+| `slot-held` | uploaded and never sent because another version holds the slot **and no clock frees it** - `PENDING_DEVELOPER_RELEASE`, or several occupants at once | a DECISION in App Store Connect on the version named; **a re-run will not touch it** |
 | `rejected` | the store said NO | read what they said, and fix it |
 | `unknown` | the report could not look | fix the credential; **this is never a pass** |
 
@@ -56,10 +57,9 @@ one are equally writable. One list, spread into both readers, so they cannot dri
 
 ## The two App Store verdicts are a SEQUENCE, not a choice
 
-`slot-held` and `not-submitted` are the same release seen before and after Apple moves, and reading
-them in that order is what makes the daily red actionable:
+`queued` and `not-submitted` are the same release seen before and after Apple moves:
 
-1. a stable is released while an earlier version holds the slot and is with Apple - **`slot-held`**.
+1. a stable is released while an earlier version holds the slot and is in review - **`queued`**.
    Nothing to do, and nothing anybody here CAN do. The line names the occupant and its state, so the
    wait has a subject rather than being an alarm.
 2. Apple releases that occupant, or refuses it - the slot frees. The same stable now reads
@@ -73,11 +73,15 @@ them in that order is what makes the daily red actionable:
    stale missing one is skipped. Everything is in
    [the App Store README](../app-store/README.md#a-deferred-submission-completes-itself---catch-up-2026-11-25).
 
-**Step 2 is why `slot-held` stays red.** Demoted to a `pending`-like pass it would be quiet exactly
-while a stable is failing to reach the App Store, and the transition that means *act now* would
-arrive with nothing to notice it against. A red light with no green edge is the other failure: a
-reader who cannot tell "wait" from "act" eventually does neither, which is how a wrong sentence
-survived four days here.
+**Why a review queue is GREEN since 2026-11-25, and was red before.** `slot-held` used to cover
+every occupant, and stayed red on purpose: the transition that meant *act now* (step 2) had to
+arrive against something a reader was already watching. The catch-up removed that errand - step 3
+is a machine's now - so a red line every morning of a multi-day review asked for nothing, which is
+the noise a reader learns to skip. So the occupant's TYPED state splits it (`chooseVersionSlot`
+returns it): a review queue frees by itself and reads `queued`, a pass; `PENDING_DEVELOPER_RELEASE`
+waits for a human to press release and several occupants contradict Apple's rule - both stay
+`slot-held`, red, because no clock will move them. And an older version App Review REFUSED, still in
+the slot, reads `rejected`: the catch-up will not write over a refusal nobody has read.
 
 *What the catch-up CANNOT do is carry a fix* - it submits the build the stable already uploaded,
 which is the only thing wanted at step 3.

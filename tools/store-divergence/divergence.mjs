@@ -24,8 +24,12 @@
  *   not-submitted  it was uploaded and never sent, and NOTHING IS IN THE WAY. The App Store
  *                  catch-up (`submit.mjs --catch-up`, the step before this report) submits the
  *                  latest stable in exactly this case, so seeing it here means that step did not.
+ *   queued         it was uploaded and never sent because an earlier version holds Apple's one slot
+ *                  IN REVIEW (`WAITING_FOR_REVIEW`, `IN_REVIEW`). That frees by itself and the
+ *                  catch-up then submits: nothing to do, so it passes.
  *   slot-held      it was uploaded and never sent BECAUSE ANOTHER VERSION HOLDS APPLE'S ONE SLOT
- *                  and that version is with Apple. A re-run changes nothing - the errand is a
+ *                  and no clock will free it - `PENDING_DEVELOPER_RELEASE` waits for a human to
+ *                  press release, and several occupants contradict Apple's rule. The errand is a
  *                  decision in App Store Connect, on the version this report names.
  *   rejected       the store said NO. Somebody must read what they said and fix it.
  *   unknown        THE REPORT COULD NOT LOOK. Never silently a pass: a credential that expired
@@ -44,7 +48,9 @@ import {
   VERSION_DONE,
   VERSION_IN_REVIEW,
   VERSION_REJECTED,
+  VERSION_REVIEW_REJECTED,
   chooseVersionSlot,
+  listAll,
   mintToken,
 } from '../app-store/submit.mjs';
 
@@ -99,11 +105,31 @@ function whyThereIsNoVersion({ wanted, versions }) {
   // decision in App Store Connect, so they share an arm rather than inventing a sixth state.
   // `slot.why` already names the occupant, its state and what is owed: it is the sentence the
   // submission itself refuses with.
+  //
+  // EXCEPT A REVIEW QUEUE, split on Apple's typed state (2026-11-25). An occupant that is
+  // `WAITING_FOR_REVIEW` or `IN_REVIEW` frees the slot BY ITSELF, and the catch-up submits this
+  // version the first morning it does - nobody has an errand, so a red line every morning of a
+  // multi-day review would be the noise a reader learns to skip. `queued` passes. An occupant that
+  // is `PENDING_DEVELOPER_RELEASE` waits for a human to press release, and several occupants
+  // contradict Apple's own rule: both stay `slot-held`, red.
+  if (slot.action === 'blocked' && (slot.state === 'WAITING_FOR_REVIEW' || slot.state === 'IN_REVIEW'))
+    return {
+      state: 'queued',
+      why: `${wanted} is queued behind ${slot.occupant} (${slot.state}) - the catch-up submits it the first morning the slot frees`,
+    };
   if (slot.action === 'blocked' || slot.action === 'fail')
     return { state: 'slot-held', why: `${wanted} has no version of its own: ${slot.why}` };
 
+  // AN OLDER VERSION APP REVIEW REFUSED, still in the slot. The catch-up will not write over it
+  // (`chooseCatchUp`): a refusal is read by a human, so the report names it as one.
+  if (slot.action === 'rename' && VERSION_REVIEW_REJECTED.has(slot.state))
+    return {
+      state: 'rejected',
+      why: `the App Store has no version ${wanted} - the slot holds ${slot.from}, which App Review refused (${slot.state}). Somebody has to read what Apple said; the catch-up will not write over a refusal`,
+    };
+
   // THE SLOT HOLDS SOMETHING STILL EDITABLE, so the catch-up renames it and submits - which is
-  // exactly what nothing may do in the two arms above.
+  // exactly what nothing may do in the arms above.
   if (slot.action === 'rename')
     return {
       state: 'not-submitted',
@@ -226,13 +252,26 @@ export function pickLatestStable(rows) {
  * (`concurrency: release`), so "no run of it is unfinished" is exactly "nothing else is writing to
  * the App Store", and the next morning asks again.
  *
- * @param {unknown} runs the `workflow_runs` of `release.yml`, newest first
- * @returns {{id: unknown, status: string} | null} the run still in flight, or null
+ * ASKED BY STATUS, NOT BY RECENCY. The newest twenty runs are not "every run that is unfinished": a
+ * hand re-run of an old release run is in flight while twenty newer pre-releases sit above it. So
+ * the caller asks GitHub once per unfinished status (`UNFINISHED_RUN_STATUSES`) and hands the union
+ * here. A run on an `-alpha.N` tag is ignored: a pre-release goes to TestFlight and never touches an
+ * App Store version, so it cannot race the catch-up and must not stand it down every day there is
+ * one. A run whose tag is unknown (`head_branch` missing) counts as in flight - unknown is never
+ * read as harmless.
+ *
+ * @param {unknown} runs `release.yml` runs, any order
+ * @returns {{id: unknown, status: string, tag: string} | null} a run still in flight, or null
  */
 export function releaseInFlight(runs) {
-  const live = (Array.isArray(runs) ? runs : []).find((r) => r && r.status !== 'completed');
-  return live ? { id: live.id, status: String(live.status) } : null;
+  const live = (Array.isArray(runs) ? runs : []).find(
+    (r) => r && r.status !== 'completed' && !/-alpha\.\d+$/.test(String(r.head_branch ?? ''))
+  );
+  return live ? { id: live.id, status: String(live.status), tag: String(live.head_branch ?? '') } : null;
 }
+
+/** Every status GitHub gives a workflow run that has not finished. */
+export const UNFINISHED_RUN_STATUSES = ['queued', 'in_progress', 'waiting', 'requested', 'pending', 'action_required'];
 
 async function ghJson(path, ghToken) {
   const r = await fetch(`https://api.github.com${path}`, {
@@ -266,8 +305,8 @@ async function appStoreVersions() {
   const apps = await get(`/v1/apps?filter[bundleId]=${encodeURIComponent(bundleId)}&limit=1`);
   const app = apps?.data?.[0];
   if (!app) throw new Error(`no app with bundle id ${bundleId}`);
-  const all = await get(`/v1/apps/${app.id}/appStoreVersions?filter[platform]=IOS&limit=50`);
-  return all?.data ?? null;
+  // EVERY PAGE: the verdict below is drawn from the whole list, the same one the catch-up reads.
+  return listAll((_m, path) => get(path), `/v1/apps/${app.id}/appStoreVersions?filter[platform]=IOS&limit=50`);
 }
 
 /** Imported HERE and not at the top: `../play-vitals/lib.mjs` reaches for a credential on use. */
@@ -291,14 +330,18 @@ async function main() {
   // THE CATCH-UP'S TARGET: the tag on stdout and nothing else, so a shell can capture it - or
   // nothing, with the reason as a notice, while a release run is in flight and owns the submission.
   if (process.argv.includes('--catch-up-target')) {
-    const runs = await ghJson(
-      `/repos/${repo}/actions/workflows/release.yml/runs?per_page=20`,
-      ghToken
-    );
-    const live = releaseInFlight(runs?.workflow_runs);
+    const runs = [];
+    for (const status of UNFINISHED_RUN_STATUSES) {
+      const page = await ghJson(
+        `/repos/${repo}/actions/workflows/release.yml/runs?status=${status}&per_page=100`,
+        ghToken
+      );
+      runs.push(...(page?.workflow_runs ?? []));
+    }
+    const live = releaseInFlight(runs);
     if (live) {
       process.stderr.write(
-        `::notice::App Store catch-up stands down today - release run ${live.id} is ${live.status}, and it owns the App Store submission until it ends\n`
+        `::notice::App Store catch-up stands down today - release run ${live.id} (${live.tag || 'tag unknown'}) is ${live.status}, and it owns the App Store submission until it ends\n`
       );
       return;
     }
@@ -344,7 +387,7 @@ async function main() {
         '',
         ok
           ? 'Both stores have it, or are still working on it. Nothing to do.'
-          : `**${acting.join(' and ')} need attention.** The evidence column says which: a slot held by an earlier version Apple is reviewing completes by itself, because the catch-up step submits the latest stable the first morning the slot is free; a version still unsubmitted after that step ran is that step's log to read; a refusal has to be read and fixed.`,
+          : `**${acting.join(' and ')} need attention.** The evidence column says which: a slot held by a version waiting for its developer release, or by several versions, is a decision in App Store Connect; a version still unsubmitted after that step ran is that step's log to read; a refusal has to be read and fixed.`,
         '',
       ].join('\n')
     );

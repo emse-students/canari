@@ -1278,8 +1278,11 @@ stable's iOS arm finds Apple's single version slot held by a version in review, 
 green). Until 2026-11-25 nothing ever retried: `1.8.1` deferred on `1.8.0`, the slot freed, and the
 App Store had no `1.8.1` while Play did. The daily `stores` job of `scheduled.yml` now runs
 `submit.mjs --catch-up` before its report - the latest stable only (a stale missing one is skipped),
-never older than a version Apple holds, never over a version Apple is reviewing, and never while a
-`release.yml` run is in flight - with the notes read from the stable's own tag. The rules, the
+never older than a version Apple holds, never over a version Apple is reviewing or one App Review
+refused, and never while a stable's `release.yml` run is in flight - with the notes read from the
+stable's own tag, the App Store credential in the one step that submits, and no wait anywhere, so a
+10-minute timeout bounds its writes far below any stable's time to its own submit. A stable queued
+behind a version in review now reads `queued` in the store report, a pass. The rules, the
 interaction with the next stable and the tests are in
 [the App Store README](../../tools/app-store/README.md#a-deferred-submission-completes-itself---catch-up-2026-11-25).
 

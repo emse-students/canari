@@ -892,9 +892,21 @@ jobs:
       (github.event_name == 'workflow_dispatch' &&
       contains(fromJSON('["all", "stores"]'), inputs.job))
     runs-on: ubuntu-24.04
-    # The catch-up waits for the store media like the release does (at most 30 minutes, and only
-    # when screenshots were replaced just before); the report itself takes seconds.
-    timeout-minutes: 40
+    # THE BOUND THE RACE ARGUMENT RESTS ON. The catch-up writes only after finding no stable
+    # release run in flight, and it never waits - not for the build, not for store media - so its
+    # writes are a handful of requests: seconds, a few minutes at the retry ceiling. Any stable
+    # needs twenty minutes and more from publication to its OWN submit (the iOS build comes first).
+    # So a release published just after the check cannot reach the App Store while the catch-up is
+    # still writing. This timeout makes the bound a fact rather than an estimate: the job is killed
+    # at 10 minutes, half the shortest time any stable has ever taken to its submit.
+    timeout-minutes: 10
+    # One catch-up at a time (a hand dispatch landing on the 09:00 slot). Deliberately NOT shared
+    # with `release.yml`'s group: a pending run in a shared group is CANCELLED by the next one to
+    # join, so a catch-up could silently cancel a queued release. The release is guarded instead by
+    # `releaseInFlight` and the bound above.
+    concurrency:
+      group: app-store-catch-up
+      cancel-in-progress: false
     permissions:
       contents: read
       # `release.yml`'s runs: one in flight owns the App Store submission (`releaseInFlight`).
@@ -905,41 +917,52 @@ jobs:
         with:
           bun-version-file: .bun-version
 
-      # THE NOTES COME FROM THE STABLE'S OWN TREE, never from `main`: `main` already carries the
-      # next version's `store/whats-new.txt` (or the same file, unchanged, which `readWhatsNew`
-      # would refuse as naming the wrong version). The build number is the band
-      # `scripts/bump-app-version.sh --code` owns - the one implementation, the number the stable's
-      # bump wrote into the archive - and Apple is then asked for exactly that build, which must
-      # already be VALID: a catch-up never waits for an upload.
-      #
-      #   0   submitted, nothing owed, or a dry run  -> green; the summary says which
-      #   75  the slot is held by a version with Apple -> green; tomorrow asks again
-      #   *   anything else                        -> RED, and the report below still runs
-      - name: Submit the latest stable to the App Store if its submission was deferred
+      # WHICH STABLE, AND WITH WHICH BUILD - with no App Store credential in reach. The target is
+      # the latest stable (a stale missing one is skipped), or nothing while a stable's release run
+      # is in flight. The build number is the band `scripts/bump-app-version.sh --code` owns - the
+      # number the stable's bump wrote into the archive - and the stable's tag is fetched so the
+      # notes can be read from ITS tree (`WHATS_NEW_REF` below; `main` carries the next version's).
+      - name: Find the stable the App Store catch-up would submit
+        id: target
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
-          ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-          ASC_API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
-          APP_BUNDLE_ID: fr.emse.canari
-          DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
         run: |
           set -euo pipefail
           tag="$(bun tools/store-divergence/divergence.mjs --catch-up-target)"
           if [ -z "$tag" ]; then
             echo "### App Store catch-up: \`stood down\`" >> "$GITHUB_STEP_SUMMARY"
-            echo "A release run is in flight and owns the submission; tomorrow asks again." >> "$GITHUB_STEP_SUMMARY"
+            echo "A stable's release run is in flight and owns the submission; tomorrow asks again." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           version="${tag#v}"
           git fetch --no-tags --depth=1 origin "+refs/tags/$tag:refs/tags/$tag"
-          git show "$tag:store/whats-new.txt" > "$RUNNER_TEMP/whats-new.txt"
           build="$(bash scripts/bump-app-version.sh --code "$version")"
           echo "the latest stable is $tag: version $version, build $build, notes from its own tree"
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "build=$build"
+          } >> "$GITHUB_OUTPUT"
 
+      # THE APP STORE CREDENTIAL IS IN THIS STEP ONLY, and the step runs one command: `submit.mjs`.
+      #
+      #   0   submitted, nothing owed, or a dry run  -> green; the summary says which
+      #   75  the slot is held by a version with Apple -> green; tomorrow asks again
+      #   *   anything else                        -> RED, and the report below still runs
+      - name: Submit the latest stable to the App Store if its submission was deferred
+        if: steps.target.outputs.tag != ''
+        env:
+          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          ASC_API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
+          APP_BUNDLE_ID: fr.emse.canari
+          MARKETING_VERSION: ${{ steps.target.outputs.version }}
+          BUILD_NUMBER: ${{ steps.target.outputs.build }}
+          WHATS_NEW_REF: ${{ steps.target.outputs.tag }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+        run: |
           set +e
-          MARKETING_VERSION="$version" BUILD_NUMBER="$build" WHATS_NEW_FILE="$RUNNER_TEMP/whats-new.txt" \
-            bun tools/app-store/submit.mjs --catch-up
+          bun tools/app-store/submit.mjs --catch-up
           code=$?
           set -e
           if [ "$code" -eq 75 ]; then

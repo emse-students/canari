@@ -43,6 +43,7 @@ import {
   compareVersions,
   chooseCatchUp,
   submitToAppStore,
+  listAll,
   VERSION_DONE,
 } from './submit.mjs';
 import { pickLatestStable } from '../store-divergence/divergence.mjs';
@@ -774,9 +775,12 @@ process.stdout.write('\nwhich version slot does this release belong in?\n');
 
 /**
  * @param {{versions: Array<{id: string, attributes: {versionString: string, appStoreState: string}}>,
- *          builds?: Array<{id: string, attributes: {version: string, processingState: string}}>}} seed
+ *          builds?: Array<{id: string, attributes: {version: string, processingState: string}}>,
+ *          pageSize?: number, buildAfterPolls?: number}} seed  `pageSize` pages the version list
+ *   through `links.next` as Apple does; `buildAfterPolls` hides the build from that many reads, as
+ *   a fresh upload is hidden while Apple processes it
  */
-function fakeAppStore({ versions, builds }) {
+function fakeAppStore({ versions, builds, pageSize = 0, buildAfterPolls = 0 }) {
   const st = {
     versions: versions.map((v) => ({ ...v, attributes: { ...v.attributes } })),
     builds: builds ?? [
@@ -788,6 +792,7 @@ function fakeAppStore({ versions, builds }) {
     items: [],
     writes: [],
     n: 0,
+    buildPolls: 0,
   };
   const refuse = (method, path, status, detail) => {
     throw new ApiError({ method, path, status, detail, attempts: 1 });
@@ -799,9 +804,25 @@ function fakeAppStore({ versions, builds }) {
     let m;
     if (method === 'GET' && route === '/v1/apps')
       return { data: [{ id: 'app', attributes: { name: 'Canari' } }] };
-    if (method === 'GET' && route === '/v1/builds')
+    if (method === 'GET' && route === '/v1/builds') {
+      if (++st.buildPolls <= buildAfterPolls) return { data: [] };
       return { data: st.builds.filter((b) => b.attributes.version === q.get('filter[version]')) };
-    if (method === 'GET' && route === '/v1/apps/app/appStoreVersions') return { data: st.versions };
+    }
+    if (method === 'GET' && route === '/v1/apps/app/appStoreVersions') {
+      if (!pageSize) return { data: st.versions };
+      const at = Number(q.get('cursor') ?? 0);
+      const more = at + pageSize < st.versions.length;
+      return {
+        data: st.versions.slice(at, at + pageSize),
+        ...(more
+          ? {
+              links: {
+                next: `https://api.appstoreconnect.apple.com/v1/apps/app/appStoreVersions?cursor=${at + pageSize}`,
+              },
+            }
+          : {}),
+      };
+    }
     if (method === 'POST' && route === '/v1/appStoreVersions') {
       // Apple's own rule, which the real 409 of v0.16.0 taught: ONE non-terminal version.
       if (st.versions.some((v) => !VERSION_DONE.has(v.attributes.appStoreState)))
@@ -1025,6 +1046,131 @@ const stateOf = (fake, name) =>
   const s = await catchUp(stale, '1.8.1');
   eq('handed 1.8.1 while Apple holds 1.8.2, it does nothing', s.outcome, 'nothing');
   eq('and writes nothing', stale.st.writes, []);
+}
+
+{
+  process.stdout.write(
+    '\ncase 5 - an older version App Review refused holds the slot: the catch-up leaves it\n'
+  );
+  for (const st of ['REJECTED', 'METADATA_REJECTED', 'INVALID_BINARY']) {
+    const fake = fakeAppStore({ versions: [V('1.8.0', st), V('1.7.9', 'READY_FOR_SALE')] });
+    const r = await catchUp(fake, '1.8.1');
+    eq(`an older ${st} occupant: nothing`, r.outcome, 'nothing');
+    eq(`and nothing written over the refusal (${st})`, fake.st.writes, []);
+  }
+  eq(
+    'the decision says why',
+    chooseCatchUp({ versions: [V('1.8.0', 'REJECTED')], versionString: '1.8.1' }).why.includes(
+      'App Review refused'
+    ),
+    true
+  );
+  // A HUMAN WITHDRAWING ITS OWN VERSION is not App Review refusing it.
+  const own = chooseCatchUp({
+    versions: [V('1.8.1', 'DEVELOPER_REJECTED')],
+    versionString: '1.8.1',
+  });
+  eq('the latest stable withdrawn by a human: nothing', own.action, 'nothing');
+  eq(
+    'and the message says withdrawn, not refused',
+    own.why.includes('withdrew') && !own.why.includes('App Review refused'),
+    true
+  );
+}
+
+{
+  process.stdout.write('\ncase 6 - the catch-up renames an older editable occupant, end to end\n');
+  for (const st of ['PREPARE_FOR_SUBMISSION', 'DEVELOPER_REJECTED']) {
+    const fake = fakeAppStore({ versions: [V('1.8.0', st), V('1.7.9', 'READY_FOR_SALE')] });
+    const r = await catchUp(fake, '1.8.1');
+    eq(`an older ${st} occupant: submitted`, r.outcome, 'submitted');
+    eq(
+      `it was renamed, never created (${st})`,
+      fake.st.writes[0],
+      'PATCH /v1/appStoreVersions/ver-1.8.0'
+    );
+    eq(
+      `no second version was created (${st})`,
+      fake.st.writes.includes('POST /v1/appStoreVersions'),
+      false
+    );
+    eq(
+      `1.8.1 is with Apple on that same record (${st})`,
+      stateOf(fake, '1.8.1'),
+      'WAITING_FOR_REVIEW'
+    );
+    eq(`and 1.8.0 no longer exists by that name (${st})`, stateOf(fake, '1.8.0'), undefined);
+    eq(`with the stable build attached (${st})`, fake.st.attached['ver-1.8.0'], 'build-a');
+  }
+}
+
+{
+  process.stdout.write('\ncase 7 - the version list is read to its last page\n');
+  // The guard against submitting an older version is only as good as the list it reads: a newer
+  // version on page two must still stop the catch-up.
+  const versions = [
+    ...Array.from({ length: 5 }, (_, i) => V(`1.7.${i}`, 'READY_FOR_SALE')),
+    V('1.9.0', 'WAITING_FOR_REVIEW'),
+  ];
+  const fake = fakeAppStore({ versions, pageSize: 2 });
+  const r = await catchUp(fake, '1.8.1');
+  eq('a newer version on the LAST page still means nothing', r.outcome, 'nothing');
+  eq('and nothing is written', fake.st.writes, []);
+  eq('the reason names it', String(r.why).includes('1.9.0'), true);
+
+  const free = fakeAppStore({ versions: versions.slice(0, 5), pageSize: 2 });
+  const f = await catchUp(free, '1.8.1');
+  eq('a free slot across three pages: submitted', f.outcome, 'submitted');
+
+  // A NEXT LINK OFF APPLE'S ORIGIN IS NOT FOLLOWED WITH OUR TOKEN.
+  let threw = null;
+  try {
+    await listAll(
+      async () => ({ data: [], links: { next: 'https://evil.example/v1/x' } }),
+      '/v1/x'
+    );
+  } catch (e) {
+    threw = e;
+  }
+  eq('a next page off api.appstoreconnect.apple.com is refused', threw instanceof Error, true);
+}
+
+{
+  process.stdout.write('\ncase 8 - the release path (not a catch-up) through the same fake\n');
+  // THE BUILD WAIT: a fresh upload is invisible for a while; the release polls (pollMs) and goes on.
+  const fake = fakeAppStore({ versions: [V('1.8.0', 'READY_FOR_SALE')], buildAfterPolls: 2 });
+  const r = await catchUp(fake, '1.8.1', { catchUp: false });
+  eq('the release waits for its build and submits', r.outcome, 'submitted');
+  eq('after polling for it three times', fake.st.buildPolls, 3);
+  eq('1.8.1 is with Apple', stateOf(fake, '1.8.1'), 'WAITING_FOR_REVIEW');
+
+  // AND THE DEFERRAL: a version with Apple holds the slot, so the release leaves through 75.
+  const held = fakeAppStore({ versions: [V('1.8.0', 'IN_REVIEW')] });
+  const h = await catchUp(held, '1.8.1', { catchUp: false });
+  eq('a release blocked by a version in review defers', h.thrown instanceof SlotHeldError, true);
+  eq('and touches nothing', held.st.writes, []);
+
+  // THE ONE ARM WHERE THE TWO PATHS DIFFER ON PURPOSE: a release IS an answer to App Review, so it
+  // renames an older refused version and resubmits; the catch-up (case 5) does not.
+  const refused = fakeAppStore({ versions: [V('1.8.0', 'REJECTED')] });
+  const rf = await catchUp(refused, '1.8.1', { catchUp: false });
+  eq(
+    'the release renames over an older refusal - a new release answers it',
+    rf.outcome,
+    'submitted'
+  );
+}
+
+{
+  process.stdout.write('\nthe catch-up never waits for store media\n');
+  // Asserted on the source because the fake serves no media: the wait is what would stretch the
+  // catch-up's write window toward a release's, and the bound is that it has none.
+  const src = readFileSync(new URL('./submit.mjs', import.meta.url), 'utf8');
+  eq(
+    'an unprocessed asset fails a catch-up at once',
+    /if \(catchUp\)\s*throw new Error\(\s*`\$\{verdict\.pending\} store asset/.test(src),
+    true
+  );
 }
 
 rmSync(catchUpDir, { recursive: true, force: true });

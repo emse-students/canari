@@ -125,11 +125,35 @@ if has 'divergence.mjs --catch-up-target'; then
 else
   fail 'the catch-up target is no longer divergence.mjs --catch-up-target - a stale stable could be submitted, or a release raced'
 fi
-# shellcheck disable=SC2016 # the literal workflow text, not an expansion
-if has 'git show "$tag:store/whats-new.txt"'; then
-  pass "the notes are read from the stable's own tree, as the release reads them"
+# shellcheck disable=SC2016 # `${{ }}` is GitHub Actions syntax and is matched literally
+if has 'WHATS_NEW_REF: ${{ steps.target.outputs.tag }}'; then
+  pass "the notes are read from the stable's own tag, by submit.mjs itself"
 else
-  fail "the catch-up no longer reads store/whats-new.txt from the stable's tag - main carries the next version's notes"
+  fail "the catch-up no longer hands submit.mjs the stable's tag (WHATS_NEW_REF) - main carries the next version's notes"
+fi
+
+# THE APP STORE CREDENTIAL LIVES IN ONE STEP OF THE CATCH-UP, the one that runs submit.mjs. The
+# report step reads App Store Connect too and has its own; the target step must have none.
+TARGET_STEP="$(sed -n '/name: Find the stable the App Store catch-up would submit/,/- name:/p' <<<"$STORES")"
+if [ -n "$TARGET_STEP" ] && ! grep -q 'ASC_' <<<"$TARGET_STEP"; then
+  pass 'the step choosing the target holds no App Store credential'
+else
+  fail 'the App Store credential reaches the target step (or the step is gone) - it belongs to the submit.mjs step only'
+fi
+
+# ONE CATCH-UP AT A TIME, AND NEVER IN THE RELEASE'S GROUP: a pending run in a shared group is
+# cancelled by the next to join, so sharing `release` could cancel a queued release.
+if has 'group: app-store-catch-up' && ! has 'group: release'; then
+  pass 'the catch-up has its own concurrency group, not the release one'
+else
+  fail "the stores job's concurrency group is not app-store-catch-up alone - two catch-ups could race, or a queued release be cancelled"
+fi
+# THE BOUND: no wait anywhere in a catch-up, and a timeout far under a stable's time to its submit.
+TIMEOUT="$(awk '/^    timeout-minutes: [0-9]+$/ && !seen { print $2; seen = 1 }' <<<"$STORES")"
+if [ -n "$TIMEOUT" ] && [ "$TIMEOUT" -le 10 ]; then
+  pass "the job is killed at ${TIMEOUT} minutes, under any stable's time to its own submit"
+else
+  fail "the stores job timeout is ${TIMEOUT:-unset} - the catch-up's write window is no longer bounded below a release's"
 fi
 if has 'scripts/bump-app-version.sh --code'; then
   pass 'the build number is the band the bump owns, not a second formula'
