@@ -395,8 +395,8 @@ phone-sized web visit, never in the native app. `/login` is not a path the app c
 target is the page behind `returnTo` when claimed, else `/chat` (the app's home, which asks for a
 sign-in itself). Android: the `intent://` URL on the https App Link filter (Play listing as
 fallback); iOS: `fr.emse.canari://open?url=...` (nothing happens without the app - the badges sit
-right below). Hosts outside `MOBILE_APP_LINK_HOSTS` (dev) get no link. Same builder as the in-app
-browser banner ([mobile](../mobile.md#leaving-an-in-app-browser-for-the-app)). The English-badge
+right below). Hosts outside `MOBILE_APP_LINK_HOSTS` (dev) get no link. Same builder as the iOS app
+button of the in-app browser gate ([mobile](../mobile.md#leaving-an-in-app-browser-for-the-app)). The English-badge
 half of that audit entry had already shipped on 2026-10-01 (above). **Owed: one tap on each phone
 with the app installed** - measured only as the rendered link in a headless Chrome with an Android
 user agent (local host temporarily whitelisted), never followed into the app.

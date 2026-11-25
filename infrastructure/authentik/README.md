@@ -149,6 +149,15 @@ autres estates.
 porte l ADRESSE entiere, pas seulement le port, pour qu un demenagement la lie a
 `127.0.0.1:9000` sans toucher au `compose.yml`.
 
+**Depuis le 2026-11-25, `AUTHENTIK_PUBLISH` est l adresse du service `gate`**, un nginx genere depuis
+`libs/leave-in-app-browser/` qui repond a une page demandee depuis le navigateur integre de
+Messenger, Facebook, Instagram ou Threads par une page qui renvoie vers le vrai navigateur, et
+transmet tout le reste a authentik sans rien changer. Le serveur ne publie plus que
+`AUTHENTIK_DIRECT_PUBLISH` (un port ephemere de la loopback par defaut), la porte des sondes de
+`deploy-stack.sh`. La release ne deploie PAS ce service : sa mise en place en production est un geste
+a la main, decrit dans
+[leaving-in-app-browsers](../../docs/wiki/frontend/leaving-in-app-browsers.md#miconnect-in-production---the-hand-step).
+
 **Les deux registres servent la MEME image**, verifie par digest de manifeste et
 non par le champ `Id`, qui est le digest de configuration local et differe d une
 machine a l autre : `sha256:7421753c...` des deux cotes pour `2026.8.0`.
