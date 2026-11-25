@@ -547,7 +547,8 @@ filters.
 
 - **The account is code**: `infrastructure/authentik/blueprints/80-profile-editor.yaml` builds the
   service account `miconnect-canari-editor`, the role `miconnect-profile-editor` (global permissions
-  `view_user` and `change_user`, nothing else), the group `miconnect-profile-editors` that carries the
+  `view_user` and `change_user`, nothing else - since 1.8.1 `view_user` and ONE write flow instead of
+  `change_user`, [authentik](infrastructure/authentik.md#the-profile-editors-one-write-path-181)), the group `miconnect-profile-editors` that carries the
   role to the account, and its API token (`expiring: false`). The token key is `!Env
   MICONNECT_EDITOR_TOKEN` from the stack's environment file, declared with `:?` in the stack's `compose.yml`,
   so a `.env` that forgets it fails the start and the applier refuses an unresolved `!Env` before it
@@ -562,7 +563,8 @@ filters.
 - **`PUT /users/:id/profile`** (global admin, `ProfileEditService`): validates the whole profile
   (campus, cursus entries of ICM / ISMIN / FSSS / Autre with a plausible year, posts, both names;
   D11 enforced), reads the authentik user by the person's `miconnectUuid`, writes
-  `attributes.profile` as a read-modify-write of the WHOLE `attributes` (authentik's PATCH replaces it)
+  `attributes.profile` as a read-modify-write of the WHOLE `attributes` (authentik's PATCH replaces it;
+  since 1.8.1 the profile key alone, merged by MiConnect's write flow under the account's row lock)
   plus the user's `name`, then in ONE transaction Canari's row (the four columns, `promo` and
   `formation` derived from the first cursus, the names, `displayName`) and the audit row
   `profile_changes(userId, actorId, before, after, at)` (migration `009`). `before` is what authentik
@@ -1040,10 +1042,9 @@ claim and calls the editor account.
   promo (a homonym makes the match ambiguous), and holds no Alumni link (`ALUMNI_MERGE_NO_MATCH`);
   counts what the duplicate holds; writes the trace row REQUESTED (`INSERT ... ON CONFLICT DO NOTHING
   RETURNING id`: a request that inserted nothing lost a race and stops, `ALUMNI_MERGE_IN_PROGRESS`);
-  re-reads the duplicate just before it writes the mark through `change_user` (authentik's PATCH
-  replaces the whole attribute bag, so the bag written is the freshest one; authentik has no
-  conditional PATCH, so a concurrent edit landing between that read and the write is the one window
-  left); turns the row MARKED. Called again on an open row into the same target, it resumes: the mark
+  re-reads the duplicate just before it writes the mark through MiConnect's write flow (the mark's
+  three keys only, MERGED by MiConnect under the account's row lock, so no other key is written and no
+  concurrent edit is lost); turns the row MARKED. Called again on an open row into the same target, it resumes: the mark
   is idempotent. **Nothing is erased at the mark** (owner, 2026-11-24): the duplicate's Canari
   account is erased through `AccountErasureService.requestErasure`, the ONE erasure path
   ([account-erasure](account-erasure.md)), when the open-merges list sees the duplicate gone from
@@ -1089,15 +1090,17 @@ claim and calls the editor account.
   blanked (`[deleted]`), listed until an admin cancels it; the acting admin's erasure blanks `actorId`
   (`CORE_ERASURE_STATEMENTS`), as for `profile_changes`
   ([register](compliance/register-of-processing.md), M1).
-- **The editor role** (`80-profile-editor.yaml`): `view_user`, `change_user` and
-  `view_usersourceconnection`. Canari uses the token to read users and their links and to write a
-  profile and the mark; no `delete_user`, the merge being authentik's own at sign-in. `change_user` is
-  a GLOBAL permission, broader than that use; narrowing it is planned
-  ([the-miconnect-editor-token-reach](backlog.d/the-miconnect-editor-token-reach.md)).
-  `test-profile-editor.py` USES the token: it lists a user's connections and writes the mark, and is
-  refused creating a user, deleting the duplicate or the target, changing, adding or deleting a
+- **The editor role** (`80-profile-editor.yaml`): `view_user` and `view_usersourceconnection`, and
+  ONE write path, the flow `miconnect-profile-write` (since 1.8.1; the broader write right it
+  replaces reached far beyond that use). Canari reads users and their links and writes a
+  profile, a name and the mark through it ([authentik](infrastructure/authentik.md#the-profile-editors-one-write-path-181));
+  no `delete_user`, the merge being authentik's own at sign-in.
+  `test-profile-editor.py` USES the token: it writes a profile, a name, the mark and its removal
+  through the flow, and is refused any PATCH of a user, a field or attribute outside the allowlist, a
+  mark on an account that is not `alumni-`, a superuser or service account, the flow for any other
+  caller, creating a user, deleting the duplicate or the target, changing, adding or deleting a
   connection, changing the Alumni source, changing a flow, putting anyone (itself included) in a
-  superuser group, and assigning a role. The applier makes a blueprint role's global permissions EXACTLY
+  group, and assigning a role. The applier makes a blueprint role's global permissions EXACTLY
   its list (`apply-blueprints.py`, `exact_role_permissions`), because authentik's own apply only adds:
   an instance that once held `delete_user` loses it at the next apply, which CI proves by upgrading
   from the previous `main` before the token test. The token itself is unchanged (no new secret).
