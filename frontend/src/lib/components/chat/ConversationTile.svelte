@@ -7,7 +7,13 @@
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import { presenceMap, watchUsers, unwatchUsers } from '$lib/stores/presenceStore';
   import { extractMentionUserIds } from '$lib/utils/mentions';
-  import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
+  import {
+    getUserDisplayNameSync,
+    peekUserDisplayName,
+    resolveUserDisplayName,
+  } from '$lib/utils/users/displayName';
+  import { Log } from '$lib/utils/Log';
+  import { noticeUserIds } from '$lib/utils/chat/noticeText';
   import { visibleNickname } from '$lib/utils/users/conversationNicknames.svelte';
   import { isCanonicalDirectKey } from '$lib/utils/chat/conversations';
   import { m } from '$lib/paraglide/messages';
@@ -163,12 +169,22 @@
     previewText = getPreviewText(env);
 
     const source = env.kind === 'text' ? env.text : env.kind === 'media' ? (env.caption ?? '') : '';
-    const mentionIds = extractMentionUserIds(source);
-    if (mentionIds.length === 0) return;
+    // A notice row names its people by id: they are resolved like a mention, then it is redrawn.
+    const noticeIds = env.kind === 'system' && env.notice ? noticeUserIds(env.notice) : [];
+    const nameIds = [...extractMentionUserIds(source), ...noticeIds];
+    if (nameIds.length === 0) return;
 
-    void Promise.all(mentionIds.map((id) => resolveUserDisplayName(id))).then(() => {
+    void Promise.all(nameIds.map((id) => resolveUserDisplayName(id))).then(() => {
       if (lastMessage !== raw) return;
       previewText = getPreviewText(parseEnvelope(raw));
+      // Resolution is over and a notice still has a name unknown: it failed, and the row keeps
+      // the writer-language stored sentence - the one case worth a line.
+      if (noticeIds.some((id) => peekUserDisplayName(id) === null)) {
+        Log.w(
+          'NOTICE_PREVIEW',
+          `list preview of a notice kept its stored sentence: a name did not resolve (${conversationId})`
+        );
+      }
     });
   });
 </script>

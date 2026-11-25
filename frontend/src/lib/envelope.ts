@@ -17,6 +17,8 @@ import type { MessageReference } from '$lib/types';
 import { formatMentionsForPreview } from '$lib/utils/mentions.parse';
 import { extractFirstUrl, gifPreviewUrl } from '$lib/utils/chat/messageDisplay';
 import { m } from '$lib/paraglide/messages';
+import { noticeDisplayText } from '$lib/utils/chat/noticeText';
+import { peekUserDisplayName } from '$lib/utils/users/displayName';
 import type { CallEndReason } from '$lib/proto/codec';
 
 // ---------------------------------------------------------------------------
@@ -225,8 +227,19 @@ export function previewForMedia(ref: MediaRef, caption?: string): string {
 
 /**
  * Returns a short preview string suitable for lists or reply contexts.
+ *
+ * A NOTICE ROW (member added, renamed, left...) is drawn in the READER'S language from its ids, as
+ * the bubble does: its stored sentence was written in the writer's language and a stored string is
+ * never redrawn. It is a PURE draw: names come from the shared display-name cache (`knownName`
+ * overrides it in a test), nothing is fetched and nothing is logged, so a search loop over many
+ * notices costs no network. A name the cache does not hold yet leaves the stored sentence, and the
+ * cache is not reactive: a quote, reply or notification line keeps that sentence until its next
+ * draw. Only the conversation list resolves the missing names and redraws (`ConversationTile`).
  */
-export function getPreviewText(env: MessageEnvelope): string {
+export function getPreviewText(
+  env: MessageEnvelope,
+  knownName?: (userId: string) => string | null
+): string {
   switch (env.kind) {
     case 'text':
       return previewForTextMessage(env.text);
@@ -236,7 +249,11 @@ export function getPreviewText(env: MessageEnvelope): string {
         env.caption ? formatMentionsForPreview(env.caption) : undefined
       );
     case 'system':
-      return formatMentionsForPreview(env.text);
+      return formatMentionsForPreview(
+        env.notice
+          ? noticeDisplayText(env.notice, env.text, knownName ?? peekUserDisplayName)
+          : env.text
+      );
     case 'poll':
       return `${m.chat_preview_poll()} ${env.question}`;
   }

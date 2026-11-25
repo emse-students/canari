@@ -97,13 +97,7 @@ export class PosterDto {
  * Every setting of a space the organiser writes (D35). Each is optional: a PATCH sends what changed.
  * `null` clears a nullable setting, `undefined` (absent) leaves it.
  */
-export class SpaceSettingsDto {
-  @IsOptional()
-  @IsString()
-  @IsNotEmpty()
-  @MaxLength(120)
-  name?: string;
-
+export class SpaceFieldsDto {
   @IsOptional()
   @ValidateIf((_, v) => v !== null)
   @IsString()
@@ -245,14 +239,23 @@ export class SpaceSettingsDto {
   poster?: PosterDto | null;
 }
 
-/** A resource's own fields (D10, D32). */
-export class ResourceDto {
+/**
+ * `PATCH bookings/spaces/:id`: every setting, the name included, optional. The name is NOT on
+ * {@link SpaceFieldsDto} because class-validator composes a subclass's decorators with the base's,
+ * and a base `@IsOptional()` skips every other validator of the property when it is absent: a
+ * `CreateSpaceDto` redeclaring `name` as required would still accept an empty body, which then
+ * reached the database as a NOT NULL violation (a 500).
+ */
+export class SpaceSettingsDto extends SpaceFieldsDto {
   @IsOptional()
   @IsString()
   @IsNotEmpty()
   @MaxLength(120)
   name?: string;
+}
 
+/** A resource's own fields (D10, D32), without the name (see {@link SpaceFieldsDto}). */
+export class ResourceFieldsDto {
   @IsOptional()
   @ValidateIf((_, v) => v !== null)
   @IsString()
@@ -279,12 +282,21 @@ export class ResourceDto {
   position?: number;
 }
 
-/** `POST bookings/spaces/:id/resources`: a name is required. */
-export class CreateResourceDto extends ResourceDto {
+/** `PATCH`: every field optional, the name included. */
+export class ResourceDto extends ResourceFieldsDto {
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
   @MaxLength(120)
-  declare name: string;
+  name?: string;
+}
+
+/** `POST bookings/spaces/:id/resources`: a name is required. */
+export class CreateResourceDto extends ResourceFieldsDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  name!: string;
 }
 
 /** One availability line: weekly (`weekday` 1 = Monday .. 7) or dated (`onDate`), never both. */
@@ -337,11 +349,11 @@ export class AvailabilityDto {
  * Declared after {@link AvailabilityDto} because it names it as a property type, whose decorator
  * metadata is read when this class is defined.
  */
-export class CreateSpaceDto extends SpaceSettingsDto {
+export class CreateSpaceDto extends SpaceFieldsDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(120)
-  declare name: string;
+  name!: string;
 
   /** The owning association, list or institution; absent = a personal space. */
   @IsOptional()
