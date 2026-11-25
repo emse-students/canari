@@ -1,14 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { resolve } from '$app/paths';
   import { Ban, Gamepad2, Play, Trash2, Undo2 } from '@lucide/svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Select from '$lib/components/ui/Select.svelte';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
-  import MinesweeperReplay from '$lib/components/games/MinesweeperReplay.svelte';
   import MinesweeperStats from '$lib/components/games/MinesweeperStats.svelte';
-  import MinesweeperModal from '$lib/components/settings/MinesweeperModal.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
   import {
     banMinesweeperUser,
@@ -45,7 +44,6 @@
 
   type Tab = 'general' | 'promo' | 'stats';
 
-  let playing = $state(false);
   let tab = $state<Tab>('general');
   let standing = $state<MinesweeperStanding | null>(null);
   let promos = $state<MinesweeperPromo[]>([]);
@@ -65,8 +63,6 @@
   let bans = $state<MinesweeperBan[]>([]);
   /** An admin action failed - said on the tab, never swallowed. */
   let moderationFailed = $state(false);
-  /** The score whose replay is open (anyone's "watch this game"); null when none is. */
-  let replayScoreId = $state<string | null>(null);
   const promoOptions = $derived<PickerOption[]>(
     promos.map((p) => ({
       value: String(p.promo),
@@ -232,7 +228,12 @@
           </p>
         </div>
       </div>
-      <Button onclick={() => (playing = true)} class="shrink-0">{m.games_play()}</Button>
+      <div class="flex shrink-0 items-center gap-2">
+        <Button href={resolve('/games/tutorial')} variant="ghost">
+          {m.minesweeper_tutorial_open()}
+        </Button>
+        <Button href={resolve('/games/play')}>{m.games_play()}</Button>
+      </div>
     </section>
 
     <section class="space-y-3">
@@ -308,7 +309,7 @@
                   variant="ghost"
                   aria-label={m.minesweeper_replay_open()}
                   title={m.minesweeper_replay_open()}
-                  onclick={() => (replayScoreId = entry.scoreId)}
+                  href={resolve('/games/replay/[id]', { id: entry.scoreId })}
                 >
                   <Play size={14} strokeWidth={2.25} />
                 </Button>
@@ -388,21 +389,3 @@
     </section>
   </div>
 </PageContainer>
-
-{#if replayScoreId}
-  <MinesweeperReplay scoreId={replayScoreId} onClose={() => (replayScoreId = null)} />
-{/if}
-
-{#if playing}
-  <MinesweeperModal
-    open={true}
-    onClose={() => {
-      playing = false;
-      // A ranked win changes the record and the board: read both again on the way back.
-      void fetchMinesweeperMe()
-        .then((s) => (standing = s))
-        .catch((e) => Log.d('games', `record refresh failed: ${String(e)}`));
-      void loadBoard();
-    }}
-  />
-{/if}

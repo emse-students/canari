@@ -1,7 +1,7 @@
-import { MAX_SCALE, fitScaleCap } from './view';
 import {
   CHALLENGE,
   LATEST_GENERATOR_VERSION,
+  V2_TARGET_SCORE,
   type GeneratorVersion,
   type MinesweeperConfig,
 } from './game';
@@ -10,11 +10,14 @@ import {
  * The levels of an UNRANKED game (owner, 2026-11-25: *"le demineur est vraiment super dur, la barriere
  * a l'entree est terrifiante ... sans remettre en cause le niveau du classe"*).
  *
- * Expert IS the ranked board - same size, same generator - so a player who trained on it meets
- * nothing new in a ranked game. The two smaller levels use generator 1: it stops at the FIRST layout
- * its solver clears, so the board is guess-free with simple deductions, where generator 2 climbs to a
- * reasoning score on purpose. Both generators are called as they are; nothing here changes either.
- * A casual game is never submitted, so its generator choice is the client's alone.
+ * **A LEVEL IS A GENERATION, NOT A SIZE** (owner, 2026-11-25: *"priorise les difficultes par generation
+ * et pas par taille"*): every level plays the ranked board's size and generator 2, and differs only by
+ * the reasoning score that generator climbs to (`targetScore`). The player never sees the number. Expert
+ * IS the ranked board - same size, same target - so a player who trained on it meets nothing new in a
+ * ranked game. Beginner's target is 0: the generator stops at the first layout its solver clears, so
+ * the board is guess-free with simple deductions; Intermediate asks for some subset and local
+ * reasoning on top. Nothing here changes a published generator: the target is a parameter of the
+ * board, and ranked never passes one. A casual game is never submitted, so its target is the client's.
  */
 export type MinesweeperLevel = 'beginner' | 'intermediate' | 'expert';
 
@@ -24,13 +27,15 @@ export const LEVELS: readonly MinesweeperLevel[] = ['beginner', 'intermediate', 
 export interface LevelSpec {
   config: MinesweeperConfig;
   generator: GeneratorVersion;
+  /** The reasoning score generator 2 climbs to (see `V2_SCORE_WEIGHTS` in the engine). */
+  targetScore: number;
 }
 
 /** The board each level plays on. The ranked game always plays `expert`'s board. */
 export const LEVEL_SPECS: Readonly<Record<MinesweeperLevel, LevelSpec>> = {
-  beginner: { config: { width: 9, height: 9, mineCount: 10 }, generator: 1 },
-  intermediate: { config: { width: 16, height: 16, mineCount: 40 }, generator: 1 },
-  expert: { config: CHALLENGE, generator: LATEST_GENERATOR_VERSION },
+  beginner: { config: CHALLENGE, generator: LATEST_GENERATOR_VERSION, targetScore: 0 },
+  intermediate: { config: CHALLENGE, generator: LATEST_GENERATOR_VERSION, targetScore: 30 },
+  expert: { config: CHALLENGE, generator: LATEST_GENERATOR_VERSION, targetScore: V2_TARGET_SCORE },
 };
 
 export const LEVEL_STORAGE_KEY = 'canari.minesweeper.level';
@@ -66,20 +71,6 @@ export function loadMinesweeperLevel(): MinesweeperLevel {
     console.warn('[minesweeper] could not read the stored level, using the default', err);
     return 'beginner';
   }
-}
-
-/**
- * The highest scale the fit may use for a board of `config` drawn `boardWidthPx` wide. The small
- * levels are capped so their cells stay a thumb's size ({@link fitScaleCap}); the ranked board
- * (Expert) is NOT, so it fits exactly as it always did, on every screen.
- */
-export function levelFitCap(config: MinesweeperConfig, boardWidthPx: number): number {
-  const expert = LEVEL_SPECS.expert.config;
-  const isExpert =
-    config.width === expert.width &&
-    config.height === expert.height &&
-    config.mineCount === expert.mineCount;
-  return isExpert ? MAX_SCALE : fitScaleCap(boardWidthPx, config.width);
 }
 
 /** Persists the level; a storage that refuses is logged, never fatal. */

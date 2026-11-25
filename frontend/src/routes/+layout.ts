@@ -17,10 +17,16 @@ import {
 } from '$lib/utils/internalPath';
 import { guestPathForMemberLink, memberFormIdOfPath } from '$lib/forms/shareLink';
 import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
+import { inAppBrowserGuard } from '$lib/mobile/inAppBrowserGuard';
 // See: https://v2.tauri.app/start/frontend/sveltekit/ for more info
 export const ssr = false;
 
 export const load = async (event: LoadEvent) => {
+  // A META IN-APP BROWSER RUNS NOTHING (owner decision of 2026-11-25): no refresh, no redirect to
+  // login, no session. Asked FIRST, so the address it captures is the one the visitor was sent; the
+  // layout then draws only the way out (`$lib/mobile/inAppBrowserGuard`).
+  if (typeof window !== 'undefined' && inAppBrowserGuard()) return;
+
   // Get user ID from local store and validate it against the server.
 
   // `/f/` is a PUBLIC form's guest page: answered without an account, so a visitor with no

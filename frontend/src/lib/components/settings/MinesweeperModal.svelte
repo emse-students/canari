@@ -1,8 +1,7 @@
 <script lang="ts">
-  import { tick, untrack } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { fade, scale as scaleTransition } from 'svelte/transition';
   import { backOut } from 'svelte/easing';
-  import Modal from '$lib/components/shared/Modal.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import {
     createBoard,
@@ -34,7 +33,6 @@
   import { findHint, type MinesweeperHint } from '$lib/minesweeper/hint';
   import {
     LEVEL_SPECS,
-    levelFitCap,
     loadMinesweeperLevel,
     nextLevel,
     saveMinesweeperLevel,
@@ -76,19 +74,10 @@
     Trophy,
     X,
   } from '@lucide/svelte';
-  import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
+  import { sideSafePadding } from '$lib/utils/sideSafeArea';
   import { m } from '$lib/paraglide/messages';
   import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
-
-  interface Props {
-    /** Whether the modal is visible; becoming true starts a fresh game. */
-    open?: boolean;
-    /** Called when the modal should be dismissed. */
-    onClose: () => void;
-  }
-
-  let { open = false, onClose }: Props = $props();
 
   /** The settings sheet, opened from the gear beside the leaderboard button. */
   let showSettings = $state(false);
@@ -164,14 +153,14 @@
     if (board.minesPlaced || firstClickBusy) return;
     unranked = !unranked;
     saveFlag(UNRANKED_STORAGE_KEY, unranked);
-    // Ranked always plays Expert's board, Libre the chosen level: the blank board follows.
-    installBlankBoard();
   }
 
-  /** The unranked level (owner, 2026-11-25), per device; ranked always plays `expert`'s board. */
+  /**
+   * The unranked level (owner, 2026-11-25), per device. A level is a GENERATION (the reasoning score the
+   * generator climbs to), never a size: the blank board is the same whatever it is, so choosing one
+   * redraws nothing. Ranked always plays `expert`'s target.
+   */
   let level = $state<MinesweeperLevel>(loadMinesweeperLevel());
-  /** What the next game plays on: the chosen level in Libre, Expert (the ranked board) otherwise. */
-  const playLevel = $derived<MinesweeperLevel>(unranked ? level : 'expert');
 
   /** The level picker: Libre only, before the first dig, like the ranked / Libre toggle. */
   function cycleLevel() {
@@ -179,7 +168,6 @@
     level = nextLevel(level);
     saveMinesweeperLevel(level);
     console.debug('[minesweeper] level chosen', { level });
-    installBlankBoard();
   }
 
   /** The label of a level, in the player's language. */
@@ -189,12 +177,6 @@
       : l === 'intermediate'
         ? m.minesweeper_level_intermediate()
         : m.minesweeper_level_expert();
-  }
-
-  /** Puts the blank board of the level about to be played on screen, refitted to its size. */
-  function installBlankBoard() {
-    installBoard(createBoard(LEVEL_SPECS[untrack(() => playLevel)].config, null));
-    void afterBoardChange();
   }
 
   /**
@@ -344,16 +326,6 @@
         : m.minesweeper_anim_off();
   }
 
-  /**
-   * The trophy: the ranking is the Games page, the one leaderboard (owner, 2026-11-13). Closes the
-   * game and goes there; from the Games page itself it only closes, and the page reads again.
-   */
-  function openLeaderboard() {
-    console.debug('[minesweeper] trophy: closing the game for the Games page');
-    onClose();
-    void goto(resolve('/games'));
-  }
-
   // --- View: fit, bounds, animation ----------------------------------------
 
   /** Viewport and board sizes in CSS px; the board's is its natural (untransformed) size. */
@@ -407,7 +379,7 @@
   function centerView() {
     const g = geometry();
     if (!g) return;
-    const fit = fitView(g.viewport, g.board, FIT_INSETS, levelFitCap(board, g.board.width));
+    const fit = fitView(g.viewport, g.board, FIT_INSETS);
     fitScale = fit.scale;
     scale = fit.scale;
     panX = fit.panX;
@@ -437,8 +409,7 @@
     pendingCell = null;
     lastTap = null;
     elapsedMs = 0;
-    // Untracked: this runs inside the effect that starts a game, which must not restart on a level change.
-    installBoard(createBoard(LEVEL_SPECS[untrack(() => playLevel)].config, null));
+    installBoard(createBoard(DEFAULT_CONFIG));
   }
 
   /** Waits for the DOM to settle after a board change, then fits/centers the viewport. */
@@ -467,11 +438,11 @@
    */
   /**
    * An unseeded, unranked board: no challenge, nothing to submit. `spec` is the chosen level in
-   * Libre, and Expert's board when a ranked start fell back (the player tapped on that board).
+   * Libre, and Expert's when a ranked start fell back (the player tapped on that board).
    */
   function startCasualBoard(spec: LevelSpec) {
     console.debug('[minesweeper] casual board', spec);
-    installBoard(createBoard(spec.config, null, spec.generator));
+    installBoard(createBoard(spec.config, null, spec.generator, spec.targetScore));
     challengeId = null;
     rankedMode = false;
     challengeRoundTripMs = undefined;
@@ -603,9 +574,12 @@
     }
   }
 
-  $effect(() => {
-    if (!open) return;
-    showSettings = false;
+  /**
+   * THE PAGE IS THE GAME: mounting it starts a fresh one and leaving it ends whatever runs. It was an
+   * effect on the modal's `open` flag, which stayed mounted behind a portal; a route is mounted once
+   * per visit, so the reset is the mount.
+   */
+  onMount(() => {
     startGame();
     void afterBoardChange();
     return () => {
@@ -626,7 +600,7 @@
       }
       const g = geometry();
       if (!g) return;
-      fitScale = fitView(g.viewport, g.board, FIT_INSETS, levelFitCap(board, g.board.width)).scale;
+      fitScale = fitView(g.viewport, g.board, FIT_INSETS).scale;
       applyView({ scale, panX, panY });
     });
     observer.observe(viewportEl);
@@ -985,14 +959,14 @@
   }
 </script>
 
-<Modal
-  {open}
-  title={m.minesweeper_title()}
-  {onClose}
-  phoneFullScreen={true}
-  showTitleBar={false}
-  maxWidth="max-w-none sm:max-w-[min(96vw,90rem)]"
-  panelClass="sm:h-[min(96dvh,100%)]! sm:overflow-hidden"
+<!--
+  A FULL-SCREEN PLACE (`isFullScreenPlace`): the shell draws no chrome and gives the status-bar and
+  side padding back, so THIS wrapper pads by the safe area - the board then fits what is left, and the
+  floating controls need no inset of their own. The page is the board; there is no title bar.
+-->
+<div
+  class="bg-cn-bg flex h-full min-h-0 flex-col"
+  style="padding-top: var(--safe-area-inset-top, 0px); padding-bottom: var(--safe-area-inset-bottom, 0px); {sideSafePadding()}"
 >
   <div
     class="relative min-h-0 flex-1 overflow-hidden"
@@ -1145,14 +1119,15 @@
       class="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between gap-2 p-2"
     >
       <div class="flex min-w-0 items-center gap-2">
-        <button
-          type="button"
-          onclick={onClose}
+        <!-- A link, not a button: Back goes to the page the player came from (`data-back-link`). -->
+        <a
+          href={resolve('/games')}
+          data-back-link
           aria-label={m.minesweeper_close()}
           class="ui-icon-button ms-chip text-text-main pointer-events-auto rounded-full shadow-sm backdrop-blur-sm"
         >
           <X size={18} />
-        </button>
+        </a>
         <div
           class="ms-chip text-text-main pointer-events-auto flex h-11 items-center gap-3 rounded-full pl-3.5 text-sm font-bold shadow-sm backdrop-blur-sm md:h-[2.375rem]"
         >
@@ -1199,15 +1174,16 @@
         >
           <Settings size={18} />
         </button>
-        <button
-          type="button"
-          onclick={openLeaderboard}
+        <!-- The ranking is the Games page, the one leaderboard (owner, 2026-11-13). -->
+        <a
+          href={resolve('/games')}
+          data-back-link
           aria-label={m.minesweeper_leaderboard()}
           title={m.minesweeper_leaderboard()}
           class="ui-icon-button bg-accent text-on-accent hover:bg-accent-hover pointer-events-auto rounded-full shadow-sm transition-colors"
         >
           <Trophy size={20} strokeWidth={2.5} />
-        </button>
+        </a>
       </div>
     </div>
 
@@ -1324,6 +1300,13 @@
           <h2 class="text-cn-dark text-base font-semibold">{m.minesweeper_settings()}</h2>
         </div>
         <div class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3 sm:p-4">
+          <!-- The tutorial is a page: leaving for it ends this game, like the close button does. -->
+          <a
+            href={resolve('/games/tutorial')}
+            class="ms-tile text-text-main rounded-lg px-3 py-3 text-sm font-semibold"
+          >
+            {m.minesweeper_tutorial_open()}
+          </a>
           <button
             type="button"
             role="switch"
@@ -1414,7 +1397,7 @@
       </div>
     {/if}
   </div>
-</Modal>
+</div>
 
 <style>
   /* FLAT TONAL, like the cells (user's pick, 2026-11-04): no borders anywhere in the section. A tile is

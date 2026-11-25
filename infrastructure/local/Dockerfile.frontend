@@ -282,9 +282,12 @@ limit_conn_zone $binary_remote_addr zone=lives_posters_conn:1m;\n\
 #    prerender=false, so it is served through @ssr, and its 1 h is a budget it set for itself.\n\
 #    An SSR page declares none (adapter-node sets no Cache-Control), so it takes the default:\n\
 #    shared-cacheable for 60 s (see @ssr).\n\
+#    And a response that declared `no-store` keeps it: the in-app browser interstitial\n\
+#    (lib/server/leaveInAppBrowser.ts) must never be held by a cache and served to a real browser.\n\
 map $upstream_http_cache_control $ssr_cache_control_declared {\n\
     default "public, max-age=0, s-maxage=60";\n\
     "~^public, max-age=[0-9]+$" $upstream_http_cache_control;\n\
+    "no-store" "no-store";\n\
 }\n\
 # 2. EXCEPT a response the SSR itself marked degraded (`X-Canari-Degraded`, any value), which is\n\
 #    `no-store` whatever it declared.\n\
@@ -647,6 +650,11 @@ server {\n\
     # default, and the sitemap's own public max-age passes through the first map unchanged.\n\
     proxy_hide_header Cache-Control;\n\
     add_header Cache-Control $ssr_cache_control always;\n\
+    # ONE DECLARATION OF EACH: the in-app browser interstitial (leaving-in-app-browsers.md) is the one\n\
+    # SSR answer carrying its own Referrer-Policy and nosniff (the shared gate writes them for sites\n\
+    # with no nginx of their own); here nginx writes both, so the upstream copies are hidden.\n\
+    proxy_hide_header Referrer-Policy;\n\
+    proxy_hide_header X-Content-Type-Options;\n\
     add_header Referrer-Policy $capability_referrer_policy always;\n\
     # THE CONTENT-SECURITY-POLICY OF A PAGE IS WRITTEN BY SVELTEKIT (kit.csp, hash mode), passed from the\n\
     # upstream with the hash of each inline script; csp.conf here would be intersected with it and\n\

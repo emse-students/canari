@@ -10,13 +10,6 @@
 export const MIN_SCALE = 0.4;
 export const MAX_SCALE = 3;
 
-/**
- * The largest a FITTED cell grows, in CSS px: a comfortable thumb target (48, the touch target
- * Android recommends) and no more. A 9x9 board on a desktop would otherwise fit at three times its
- * size, cells the size of a tile; a pinch can still zoom past it, up to `MAX_SCALE`.
- */
-export const MAX_FIT_CELL_PX = 48;
-
 /** Factor over the fit scale a double-tap zooms to, before clamping. */
 export const DOUBLE_TAP_SCALE = 2;
 
@@ -46,29 +39,14 @@ export function minScaleFor(fitScale: number): number {
 }
 
 /**
- * The highest scale a fit may use for a board of `columns` cells drawn `boardWidth` px wide (gaps
- * included): the one at which a cell reaches {@link MAX_FIT_CELL_PX}, never above `MAX_SCALE`.
+ * The whole board, as large as the padded viewport allows (up to `MAX_SCALE`), centred in the
+ * padded area. Unlike the old fit this may SCALE UP past 1x, so a small board fills a big screen.
  */
-export function fitScaleCap(boardWidth: number, columns: number): number {
-  if (boardWidth <= 0 || columns <= 0) return MAX_SCALE;
-  return Math.min(MAX_SCALE, MAX_FIT_CELL_PX / (boardWidth / columns));
-}
-
-/**
- * The whole board, as large as the padded viewport allows (up to `maxScale`), centred in the
- * padded area. Unlike the old fit this may SCALE UP past 1x, so a small board fills a big screen -
- * up to the cap the caller passes ({@link fitScaleCap}), so its cells stay a sensible size.
- */
-export function fitView(
-  viewport: Size,
-  board: Size,
-  insets: Insets,
-  maxScale: number = MAX_SCALE
-): View {
+export function fitView(viewport: Size, board: Size, insets: Insets): View {
   if (board.width <= 0 || board.height <= 0) return { scale: 1, panX: 0, panY: 0 };
   const availW = Math.max(1, viewport.width - insets.left - insets.right);
   const availH = Math.max(1, viewport.height - insets.top - insets.bottom);
-  const scale = Math.min(availW / board.width, availH / board.height, maxScale);
+  const scale = Math.min(availW / board.width, availH / board.height, MAX_SCALE);
   return {
     scale,
     panX: insets.left + (availW - board.width * scale) / 2,

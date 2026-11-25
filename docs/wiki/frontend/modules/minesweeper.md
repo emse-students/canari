@@ -7,7 +7,7 @@ it can be cleared without guessing, with a ranked leaderboard checked by server-
 | --- | --- |
 | Engine (generation, solver, play, replay) | `frontend/src/lib/minesweeper/game.ts` |
 | Server copy of the engine | `apps/social-service/src/minesweeper/engine/game.ts` |
-| Screen | `frontend/src/lib/components/settings/MinesweeperModal.svelte` |
+| Screen (a full-screen PAGE at `/games/play`; the file keeps its historical `Modal` name and path, see below) | `frontend/src/lib/components/settings/MinesweeperModal.svelte`, `frontend/src/routes/games/play/+page.svelte` |
 | THE leaderboard (ranking, promo, Stats, moderation) | `frontend/src/routes/games/+page.svelte`, `frontend/src/lib/components/games/MinesweeperStats.svelte` |
 | View geometry (fit, bounds, zoom, flick) | `frontend/src/lib/minesweeper/view.ts` |
 | Vibration patterns | `frontend/src/lib/minesweeper/haptics.ts` |
@@ -15,14 +15,20 @@ it can be cleared without guessing, with a ranked leaderboard checked by server-
 | Per-cell diff behind the render | `frontend/src/lib/minesweeper/cellViews.ts`, `MinesweeperCell.svelte` |
 | The bulb of an unranked game (client only) | `frontend/src/lib/minesweeper/hint.ts` |
 | The unranked levels (client only) | `frontend/src/lib/minesweeper/levels.ts` |
+| The tutorial (page, lessons, mini-grid) | `frontend/src/routes/games/tutorial/+page.svelte`, `frontend/src/lib/minesweeper/tutorial/`, `frontend/src/lib/components/games/MinesweeperMiniGrid.svelte` |
 | Challenge issue, replay, scores | `apps/social-service/src/minesweeper/minesweeper.service.ts` |
 
 ## The screen is the board (2026-10-07)
 
 *"affichage plein ecran, avec juste un bouton classement qui flotte en haut a droite"* and *"amelioration de
-la fluidite et de la facilite de controle"* (user). The modal has no title bar and no tabs: on a phone it
-fills the screen (`phoneFullScreen`), on a desktop it stays a 96vw/96dvh dialog. Everything else floats
-over the board:
+la fluidite et de la facilite de controle"* (user). The game has no title bar and no tabs. **It is a page, not a modal
+(owner, 2026-11-25: the modal's portal, focus trap and history overlay cost frames a 576-cell board cannot
+spare):** `/games/play` is a full-screen place (`isFullScreenPlace` in `lib/navigation/places.ts`, like the
+camera), so the shell draws no header or bar and the page pads itself by the safe area. Leaving it is
+navigation: the close and the trophy are `<a href="/games" data-back-link>`, so Back returns to the page the
+player came from, and the game starts on mount and stops on destroy (it was an effect on an `open` flag).
+**The component kept its name and path**: the raw-controls ratchet reads a moved file as a NEW entry, so a
+rename of a file that carries raw controls cannot pass it. Everything else floats over the board:
 
 | Control | Where | Notes |
 | --- | --- | --- |
@@ -30,7 +36,7 @@ over the board:
 | Leaderboard | top right, trophy icon only | closes the game and goes to the Games page (`/games`), THE one leaderboard since 2026-11-13; the game has no sheet of its own |
 | Ranked / unranked | bottom, beside the mode | **"Libre" = no challenge is requested at the first dig**, so nothing is submitted; stored in `canari.minesweeper.unranked`; locked once the first cell is dug, since a game's ranking is decided when its board is generated |
 | Mode (dig / flag) | bottom centre, thumb reach | what a SHORT press does; a long press does the other. Same stored setting as the old "flags first" |
-| Level (Debutant / Intermediaire / Expert) | bottom, after the mode, until the first dig | **unranked games only** ([below](#three-levels-in-an-unranked-game-owner-2026-11-25)) |
+| Level (Debutant / Intermediaire / Expert: a generation target, never a size) | bottom, after the mode, until the first dig | **unranked games only** ([below](#three-levels-in-an-unranked-game-owner-2026-11-25)) |
 | Hint (bulb) | bottom, after the mode, once dug | **unranked games only** ([below](#the-bulb-a-hint-in-an-unranked-game-owner-2026-11-25)) |
 
 **No zoom buttons.** Pinch, wheel (proportional to the delta, so a trackpad pinch is smooth), and a
@@ -70,29 +76,34 @@ describe the stats and paging mechanics, now on the page (page size 25, "Voir pl
 ## Three levels in an unranked game (owner, 2026-11-25)
 
 *"le demineur est vraiment super dur, la barriere a l'entree est terrifiante ... sans remettre en cause le niveau
-du classe"* (owner). Libre offers three levels; **ranked is exactly as before** - the board, the generator, the
-challenge, the replay and the ranking ([decisions](../../decisions/owner-decisions-of-2026-11-25.md)).
+du classe"* (owner), then *"priorise les difficultes par generation et pas par taille"*. Libre offers three
+levels; **ranked is exactly as before** - the board, the generator, the challenge, the replay and the ranking
+([decisions](../../decisions/owner-decisions-of-2026-11-25.md)).
 
-| Level | Board | Generator |
+**A LEVEL IS A GENERATION, NOT A SIZE.** Every level plays the ranked board (18x32, 150 mines) on generator 2 and
+differs only by the reasoning score that generator climbs to (`targetScore`, [the climb](#generator-v2-owner-2026-11-13)).
+The player never sees the number.
+
+| Level | Target score | What the board is |
 | --- | --- | --- |
-| Debutant | 9x9, 10 mines | 1 |
-| Intermediaire | 16x16, 40 mines | 1 |
-| Expert | the ranked board, 18x32, 150 mines | 2 (the latest) |
+| Debutant | 0 | the first layout the solver clears: guess-free, simple deductions (generator 1's scores were median 11) |
+| Intermediaire | 30 | some subset and local reasoning on top (the owner called 26 "interesting") |
+| Expert | 60 (`V2_TARGET_SCORE`) | the ranked board's target |
 
-**Why generator 1 for the small levels.** The owner asked for boards still guess-free but with SIMPLE
-deductions. Generator 1 stops at the FIRST layout its solver clears, so its boards are as easy as that solver
-lets them be; generator 2 climbs on purpose to a reasoning score of 60. Both are called through the existing
-`createBoard(config, null, generator)`: no line of either generator, no fingerprint and nothing on the server
-changes. A casual game is never submitted, so which generator it uses is the client's alone. The engine already
-generated these sizes ([the 2026-09-24 measurement](#what-the-first-dig-costs-2026-09-24) covers 200 beginner and
-100 intermediate boards).
+**How the target travels.** `MinesweeperBoard.targetScore` (default `V2_TARGET_SCORE`) is read by
+`placeMinesV2` in place of the constant; `createBoard(config, seed, generator, targetScore)` sets it. **Ranked
+never passes one**, and the server's `verifySolve` builds its board with the default, so a ranked board is the
+one the server replays: pinned by "an explicit ranked target and the default are the same board" and by the
+untouched fingerprints. The engine and its server copy changed together (the duplicate gate). A casual game
+is never submitted, so its target is the client's alone. A higher target costs more climbing on the main
+thread (bounded by the existing swap and node budgets; the worker stays the
+[backlog entry](../../backlog.d/p3-minesweeper-generation-off-the-main-thread.md)).
 
 **The picker** (`levels.ts`, `LEVEL_SPECS`) is a chip that cycles Debutant -> Intermediaire -> Expert, in Libre
 only and only until the first dig - then the bulb takes its place, since the bulb has nothing to read before
-that dig and three chips is what the row holds on a phone (the level stays visible as the board's size).
-While the first dig is being prepared it is disabled, like the ranked / Libre toggle. Changing the level, or
-switching between ranked and Libre, installs the blank board of the new size and refits it. A ranked start that
-fails and falls back to a casual game keeps the ranked board's size: the player tapped on it.
+that dig and three chips is what the row holds on a phone. While the first dig is being prepared it is
+disabled, like the ranked / Libre toggle. **The grid is the same at every level, so choosing one redraws
+nothing.** A ranked start that fails and falls back to a casual game plays Expert's target.
 
 **Stored per device** (`canari.minesweeper.level`, validated on read; a value that is not a level is logged and
 ignored). With none stored, a player who already chose ranked or Libre on this device (`canari.minesweeper.unranked`
@@ -102,19 +113,56 @@ has just made and turn their Debutant into Expert (review of #4091; pinned acros
 
 **Losing stays as it is**: no undo after a mine (owner's answer).
 
-**The view.** The fit used to scale a board up to 3x, which on a desktop turns a 9x9 board into tiles. The fit is
-now capped, for the two small levels only, where a cell reaches 48 px (`MAX_FIT_CELL_PX`, the touch target Android recommends; `fitScaleCap`);
-a pinch can still zoom past it. On a phone the cap does not bind (a 9x9 board fits at about 40 px cells), and the
-ranked board is never capped (`levelFitCap`: Expert fits exactly as it always did, even on a stage tall enough
-for the cap to bind - a 4K-sized stage is the test). The mines counter, the clamp and the bulb read whatever board is installed.
+**Pinned:** `levels.test.ts` (every level on the ranked size and generator, Expert on the ranked target, targets
+rising; three fixed seeds per level, each board naming its own target and guess-free, the mean score rising
+from Debutant to Expert; the cycle; the default and a bad stored value), `game.test.ts` (an explicit ranked
+target equals the default, cell for cell; target 0 stops before any swap),
+`MinesweeperModal.levels.svelte.test.ts` (no picker ranked; the cycle redraws nothing and is stored; each
+level generates with its own target; the picker gone after the first dig; a ranked game asks for its
+challenge as before and generates with the ranked target whatever Libre last used). **Owed:** the phone
+reading ([reading](../../backlog.d/reading-owed-the-minesweeper-hint.md)), and the first-dig time of Expert on
+a phone, unchanged from ranked.
 
-**Pinned:** `levels.test.ts` (the specs; eight fixed seeds per small level, each board of the right size and mine
-count and cleared by the solver from the first click; the cycle; the default and a bad stored value),
-`view.test.ts` (the cap on a desktop, no cap on a phone, the ranked board unchanged),
-`MinesweeperModal.levels.svelte.test.ts` (no picker ranked; the cycle resizes the board and is stored; the
-ranked / Libre switch resizes it; the picker gone and the size kept after the first dig; a ranked game asks
-for its challenge as before and plays 18x32 whatever Libre last used). **Owed:** the phone reading
-([reading](../../backlog.d/reading-owed-the-minesweeper-hint.md)).
+## The tutorial (owner, 2026-11-25)
+
+*"une section tutoriel qui explique le fonctionnement du demineur avec des mini-grilles ... les regles, les
+mecaniques de base, miner, poser un drapeau, mais aussi une partie plus avancee qui explique le chording, et
+les patterns les plus courants (1-2-1, 1-2-2-1 etc.)"*, and *"un bouton d'indications (entourer en jaune des
+groupes de cases ...) fais quelque chose de vraiment explicatif, mais en montrant"* (owner). `/games/tutorial`
+is an ordinary page (it keeps the shell), reached from the Games page and from the game's settings sheet.
+
+**It is the real game in small.** A lesson's grid is a PICTURE in text (`tutorial/layout.ts`: `#` hidden mine,
+`.` hidden safe, `F` a flag that is a premise, `0`-`8` a revealed number); `boardFromLayout` builds the engine's
+own `MinesweeperBoard` with its mines placed, so the mini-grid plays on `revealCell`, `toggleFlag` and the chord
+and draws with the game's own `MinesweeperCell` - what the tutorial teaches is what the game does. **A digit that
+lies about its neighbours throws**, so a wrong picture cannot reach a player.
+
+| Lesson | Teaches | Picture |
+| --- | --- | --- |
+| Reveal | open a cell, what a number and a 0 mean (a gesture: the target is lit from the start) | 5x4, hidden |
+| Flag | a 1 with one hidden neighbour; Drapeau mode, right-click | 3x3 |
+| Chording | a number with all its flags opens the rest in one tap (the flags are the premise) | 3x3 |
+| 1-1 | two neighbouring 1s share cells: the extra one is safe | 4x2 against the edge |
+| 1-2-1 | the middle is safe, both sides are mines | 3x2 |
+| 1-2-2-1 | the two middle cells are mines, the ends are safe | 4x2 |
+
+**The "Indice" button** walks the lesson's authored steps (`HintStep`): each rings the NUMBER(S) the reasoning
+reads (`highlight: 'hint'`, the bulb's own ring) and tints the hidden cells they speak about (`highlight:
+'group'`, a softer ring with no glow, added to `MinesweeperCell`), and the sentence under the grid says what to
+conclude. It cycles step 1, 2, 3, then hides. It is authored, not computed: a step explains a pattern, and the
+order a person reads it in is a teaching choice (the in-game bulb, `hint.ts`, computes the next certain move on
+a real board instead).
+
+**Every lesson is PROVED** (`tutorial/lessons.test.ts`), not read: the test enumerates every arrangement of the
+hidden cells that the visible numbers allow and requires that **the cells a lesson asks to open are safe in all
+of them, the cells it asks to flag are mines in all of them, and that nothing the numbers force is left
+unasked** - the goal IS what the picture forces. A hint step must read a revealed number and speak about cells
+that number touches. `lessonDone` also refuses a lucky flag beside the right ones: the point is the deduction.
+
+**Pinned:** `layout.test.ts`, `lessons.test.ts`, `MinesweeperMiniGrid.svelte.test.ts` (tap, flag, right-click, a
+chord in either mode, a mine ends the lesson, solved ONCE, what a hint lights), `routes/games/tutorial/page.svelte.test.ts`
+(the lessons chain to a closing screen that leads to a game, the hint cycle, restart, Back to `/games`).
+**Owed:** the phone reading ([reading](../../backlog.d/reading-owed-the-minesweeper-hint.md), items 11 and 12).
 
 ## The bulb: a hint in an unranked game (owner, 2026-11-25)
 
@@ -237,8 +285,7 @@ feel - owed on the Mi 9T and the iPhone (`device-verification.md`).
 ## The Games page and the per-promo ranking (owner, 2026-11-10)
 
 `/games` (`routes/games/+page.svelte`, a row of the dashboard's Explorer, open to every signed-in
-account; the 5 taps on the settings title still open the game) carries **"Jouer"** (opens the same
-`MinesweeperModal`), the reader's own record (`GET minesweeper/me`) and the ranking in two tabs: overall
+account; the 5 taps on the settings title still open the game) carries **"Jouer"** (a link to `/games/play`), the reader's own record (`GET minesweeper/me`) and the ranking in two tabs: overall
 and **per promo**. Moderation of scores is on this page for global admins (see the one-leaderboard section above).
 
 - **Server**: `GET minesweeper/leaderboard?promo=<year>` narrows the board to one entry year, ranks
@@ -461,10 +508,11 @@ own; a score the ranking hides - a banned player's, the other side of the review
 controller of this service does) sees every score, because judging a cheat means opening a banned player's
 game or an earlier win. A member's read is logged at `debug` (routine traffic); **an admin's at `log`**, since
 it can reach what the ranking hides and the trace must survive in production. On the Games page every ranking row has a
-"Revoir cette partie" button (admins also keep remove and ban); it opens `MinesweeperReplay.svelte`.
+"Revoir cette partie" button (admins also keep remove and ban); it is a link to `/games/replay/<scoreId>`, a full-screen page like the game (`MinesweeperReplay.svelte`).
 
 THE SCREEN IS THE BOARD (owner, 2026-11-18: the first window was too small for the grid on a phone): the
-viewer is a full-screen sheet on a phone (`phoneFullScreen`), a tall dialog on a larger screen. The stage
+viewer is a full-screen PAGE (`/games/replay/[id]`, since 2026-11-25; it was a modal), with a header
+whose arrow is a Back link. The stage
 takes every pixel the controls leave and **the whole grid is fitted to it** - `fitCellSize` picks the cell
 size from the stage's measured room, re-fitted by a `ResizeObserver` on every resize or rotation, clamped
 to 14-44 px (below 14 the cell's 12 px digit no longer fits) - so the grid is on screen whole. Its

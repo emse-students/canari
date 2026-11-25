@@ -18,7 +18,6 @@ const api = vi.hoisted(() => ({
   unban: vi.fn(),
 }));
 const admin = vi.hoisted(() => ({ value: true }));
-const replayOpened = vi.hoisted(() => [] as string[]);
 const confirmAnswer = vi.hoisted(() => ({ value: true, asked: [] as string[] }));
 
 vi.mock('$lib/minesweeper/api', async (importOriginal) => ({
@@ -33,13 +32,6 @@ vi.mock('$lib/minesweeper/api', async (importOriginal) => ({
   formatDurationMs: (ms: number) => `${ms}ms`,
 }));
 vi.mock('$lib/stores/user', () => ({ currentUserId: () => 'u-1' }));
-vi.mock('$lib/components/settings/MinesweeperModal.svelte', () => ({ default: () => {} }));
-// The replay viewer has its own test; here only WHICH score it is opened on matters.
-vi.mock('$lib/components/games/MinesweeperReplay.svelte', () => ({
-  default: (_anchor: unknown, props: { scoreId: string }) => {
-    replayOpened.push(props.scoreId);
-  },
-}));
 vi.mock('$lib/stores/userState.svelte', () => ({ globalAdminState: () => admin.value }));
 vi.mock('$lib/stores/confirm.svelte', () => ({
   showConfirm: async (message: string) => {
@@ -85,7 +77,6 @@ beforeEach(() => {
   admin.value = true;
   confirmAnswer.value = true;
   confirmAnswer.asked = [];
-  replayOpened.length = 0;
   api.leaderboard.mockResolvedValue({ entries: ENTRIES, total: ENTRIES.length });
   api.bans.mockResolvedValue(BANS);
   api.me.mockResolvedValue({ personalBestMs: null, rank: null });
@@ -112,6 +103,11 @@ async function openLeaderboard() {
   }
 }
 
+/** The replay of a row is a LINK to its own page (`/games/replay/<id>`), since 2026-11-25. */
+const replayLinks = () =>
+  [...document.querySelectorAll<HTMLAnchorElement>('a')].filter(
+    (a) => a.getAttribute('aria-label') === 'Revoir cette partie'
+  );
 const button = (label: string) =>
   [...document.querySelectorAll<HTMLButtonElement>('button')].filter(
     (b) => b.getAttribute('aria-label') === label
@@ -128,7 +124,7 @@ describe('Games page - moderation', () => {
     await openLeaderboard();
     expect(button('Retirer ce score')).toHaveLength(2);
     expect(button('Bannir ce joueur')).toHaveLength(2);
-    expect(button('Revoir cette partie')).toHaveLength(2);
+    expect(replayLinks()).toHaveLength(2);
     expect(document.body.textContent).toContain('Mallory');
     expect(button('Débannir')).toHaveLength(1);
   });
@@ -151,21 +147,19 @@ describe('Games page - moderation', () => {
     expect(api.leaderboard).toHaveBeenCalled();
   });
 
-  it('lets any member watch a game: the replay button is on every row for a non-admin too', async () => {
+  it('lets any member watch a game: the replay link is on every row for a non-admin too', async () => {
     admin.value = false;
     await openLeaderboard();
-    expect(button('Revoir cette partie')).toHaveLength(2);
-    button('Revoir cette partie')[0].click();
-    await settle();
-    expect(replayOpened).toEqual(['s1']);
+    expect(replayLinks()).toHaveLength(2);
+    expect(replayLinks()[0].getAttribute('href')).toContain('/games/replay/s1');
   });
 
-  it('opens the replay of the row it was pressed on, without asking anything', async () => {
+  it('points the replay of each row at its own score, without asking anything', async () => {
     await openLeaderboard();
-    expect(replayOpened).toEqual([]);
-    button('Revoir cette partie')[1].click();
-    await settle();
-    expect(replayOpened).toEqual(['s2']);
+    expect(replayLinks().map((a) => a.getAttribute('href'))).toEqual([
+      expect.stringContaining('/games/replay/s1'),
+      expect.stringContaining('/games/replay/s2'),
+    ]);
     expect(confirmAnswer.asked).toEqual([]);
   });
 
