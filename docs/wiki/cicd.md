@@ -1299,6 +1299,59 @@ cache, not a retry or a longer timeout: `actions/cache/restore` of `~/.gradle/ca
   downloads as before.
 - `test-android` and `compile-android-app` already cached these paths with `actions/cache`.
 
+### The Android release build resolves from a cache CI completes and proves offline (2026-11-25)
+
+Twice on 2026-11-25 (the `1.8.1` stable, run 45606794415, and `1.8.2-alpha.1`, run 45628311408) the
+Android build died on Maven Central `429 Too Many Requests` for `error_prone_annotations-2.26.0.jar`,
+resolving `:app:universalReleaseRuntimeClasspath`. **The restore above had HIT its exact key**
+(`Cache restored from key: gradle-app-Linux-...`, 1956 MB): the cache was restored and incomplete.
+`compile-android-app` only runs DEBUG tasks (`compileArm64DebugKotlin` and three more), so no release
+classpath was ever resolved there, and nothing in the cache named the jars only a release links.
+
+The fix is in what CI saves, not in a retry:
+
+- `android-app-compile.sh` also runs the REAL release chain minus rust: `checkUniversalReleaseAarMetadata`,
+  `checkUniversalReleaseDuplicateClasses`, `processUniversalReleaseMainManifest`,
+  `mergeUniversalReleaseNativeLibs` (the android-jni transform that failed), `minifyUniversalReleaseWithR8`,
+  `assembleUniversalRelease` and `bundleUniversalRelease` (R8, the resource shrinker,
+  packaging, bundletool, signing). The three `rustBuild*Release` tasks are excluded (native code this
+  gate does not need). Two things are made in the job and never committed: a STUB `libstub.so` under
+  `jniLibs` (without an input, `mergeUniversalReleaseNativeLibs` is NO-SOURCE and resolves nothing: the
+  first version of this gate ran it that way and proved little), and a THROWAWAY keystore plus
+  `keystore.properties` from `keytool` (the release signing config needs a store; no secret is used).
+  Both are removed on exit, and a real `keystore.properties` or stub is never overwritten.
+- **It runs twice**, and every one of those tasks must EXECUTE both times (NO-SOURCE, SKIPPED and
+  UP-TO-DATE are refused): online (fills `~/.gradle`) and `--offline`, which reaches no network and
+  fails on a `> Could not` line. **Between the two, `app/build` is deleted** (the Gradle caches stay):
+  without that the offline pass is all UP-TO-DATE and proves only that inputs can be fingerprinted,
+  not that the task actions run from the cache. It then asserts an `error_prone_annotations` jar (any
+  version) is in `modules-2/files-2.1`. The self-test covers each refusal. (An earlier attempt resolved
+  configurations from an init script; AGP's flavored configurations do not resolve outside AGP's own tasks.)
+- **The cache key moves**: `android-app-compile.sh` is now part of the key's `hashFiles` (`ci.yml` and
+  `android.yml` identically). Without that the old key would have kept winning: an exact hit is never
+  re-saved, so the incomplete entry would have lived on. Any later change to the script, or to a build
+  file, re-keys it the same way.
+- **The fix is inert until `main` saves the new key.** A pull request saves under its own ref, which a
+  release cannot read; only the post-merge CI run on `main` (about 20 minutes) writes the entry a
+  release restores. A release cut in that window still restores the old, incomplete one. Each entry is
+  about 2 GB against the repository's 10 GB cache limit, and every pull request that edits the script
+  saves one under its own ref, so many of them evict each other (GitHub evicts the oldest).
+- `android.yml` only takes the new key: still restore-only, still online. A release should now find the release
+  classpath in the cache and Gradle does not ask the network for what it holds.
+
+**What the offline pass does not prove**, said plainly: it runs in the job that just filled the cache,
+so it shows that the resolution needs nothing outside `~/.gradle`, not that a later restore holds it
+(the restore and the save are two jobs). That last link is the next `main` run saving under the new
+key and the next release restoring it; the release log's `Cache restored from key` plus no `Download`
+lines from `repo.maven.apache.org` is the reading. **A cold cache** (nothing saved yet on `main`, or
+evicted after 7 days) still downloads as before and can still meet a `429`; the answer is a rerun of
+the failed job, written into `CHANGELOG.md`, never a skipped gate. Dependency locking was not added:
+the versions are already pinned by the build files and the Gradle wrapper, and a lockfile would not
+have kept a missing jar out of the cache.
+
+**iOS has no twin of this defect**: `compile-ios-app` builds the whole app (not a debug subset) before
+saving SwiftPM's cache, so the release resolves the same packages.
+
 ### The iOS release build restores SwiftPM, it never saves it (2026-11-09)
 
 The Android twin above, for the Swift packages: `compile-ios-app` (`ci.yml`) saves

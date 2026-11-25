@@ -104,6 +104,76 @@ for t in "${tasks[@]}"; do
 done
 echo "OK ${tasks[*]} ran and succeeded"
 
+# THE RELEASE'S DEPENDENCIES MUST BE IN THE CACHE THIS JOB SAVES (2026-11-25). The tasks above are
+# all DEBUG, so the cache they fill lacked what only a release links, and a release that restored it
+# (a key hit) still went to Maven Central for `error_prone_annotations` and met a 429 - in
+# `mergeUniversalReleaseNativeLibs`, the android-jni transform over the release runtime classpath.
+# So run the REAL release chain minus rust: `assembleUniversalRelease` and `bundleUniversalRelease`
+# (R8, the resource shrinker, packaging, bundletool, signing), then again `--offline`,
+# which reaches no network and fails if any of it needs something not in ~/.gradle. A task that is
+# up to date still resolves its inputs, so the offline pass is a real resolution. What it cannot see
+# is a restore (the job just filled the cache it reads): it proves the chain needs nothing the cache
+# does not hold.
+#   - `-x rustBuild*Release`: they build native code this gate does not need.
+#   - A STUB `libstub.so` in `jniLibs`, so the native-libs merge has an input and its transform runs
+#     (it is NO-SOURCE, and resolves nothing, without one). Never committed, removed on exit.
+#   - A THROWAWAY keystore and `keystore.properties` (made here by `keytool`, no secret): the release
+#     signing config needs a store, and signing is part of what a release runs. A real
+#     `keystore.properties` is never overwritten, like the real `google-services.json` above.
+# cicd.md#the-android-release-build-resolves-from-a-cache-ci-completes-and-proves-offline-2026-11-25
+props="$android/keystore.properties"
+stub_dir="$android/app/src/main/jniLibs/arm64-v8a"
+stub_so="$stub_dir/libstub.so"
+if [ -e "$props" ] || [ -e "$stub_so" ]; then
+  echo "::error::$props or $stub_so already exists - this script will not overwrite what may be real. Move it aside and run again."
+  exit 1
+fi
+ks_dir="$(mktemp -d)"
+cleanup_release_stubs() { rm -rf "$ks_dir" "$props" "$stub_so"; rmdir "$stub_dir" "$android/app/src/main/jniLibs" 2>/dev/null || true; }
+trap cleanup_release_stubs EXIT
+"${KEYTOOL:-keytool}" -genkeypair -keystore "$ks_dir/throwaway.jks" -storepass ci-throwaway -keypass ci-throwaway \
+  -alias ci -keyalg RSA -keysize 2048 -validity 2 -dname "CN=ci throwaway" > /dev/null 2>&1 \
+  || { echo "::error::keytool could not make the throwaway keystore"; exit 1; }
+printf 'keyAlias=ci\nkeyPassword=ci-throwaway\nstorePassword=ci-throwaway\nstoreFile=%s\n' "$ks_dir/throwaway.jks" > "$props"
+mkdir -p "$stub_dir"
+printf 'stub' > "$stub_so"
+
+# Resolve-and-run tasks: each must EXECUTE on the online pass (NO-SOURCE, SKIPPED, UP-TO-DATE mean
+# nothing was resolved by THIS run) and must at least appear on the offline pass.
+release_tasks=(
+  :app:checkUniversalReleaseAarMetadata :app:checkUniversalReleaseDuplicateClasses
+  :app:processUniversalReleaseMainManifest :app:mergeUniversalReleaseNativeLibs
+  :app:minifyUniversalReleaseWithR8 :app:assembleUniversalRelease :app:bundleUniversalRelease
+)
+skip_rust=(-x rustBuildUniversalRelease -x rustBuildArmRelease -x rustBuildArm64Release)
+for mode in online offline; do
+  flag=()
+  if [ "$mode" = offline ]; then
+    # THE OUTPUTS GO, THE GRADLE CACHES STAY: otherwise every task is UP-TO-DATE and only its inputs are
+    # fingerprinted. Removing the app build dir makes each task ACTION run again, from ~/.gradle alone.
+    rm -rf "$android/app/build"
+    flag=(--offline)
+  fi
+  echo "== 4. run the release chain (${mode}): ${release_tasks[*]}"
+  (cd "$android" && ./gradlew --no-daemon --console=plain "${flag[@]}" "${skip_rust[@]}" "${release_tasks[@]}") 2>&1 | tee "$log" \
+    || { echo "::error::the release chain failed ($mode)"; exit 1; }
+  if grep -qE "^[[:space:]]*> Could not " "$log"; then
+    echo "::error::Gradle reported a resolution problem ($mode)"; exit 1
+  fi
+  for t in "${release_tasks[@]}"; do
+    grep -qE "^> Task ${t}$" "$log" \
+      || { echo "::error::${t} did not execute ($mode) - a green build that did not run it resolved nothing"; exit 1; }
+  done
+  echo "OK the release chain ran ($mode)"
+done
+# THE JAR THAT FAILED A RELEASE, ASKED FOR BY NAME: any version, so a dependency bump does not break this.
+gradle_home="${GRADLE_USER_HOME:-$HOME/.gradle}"
+if ! compgen -G "$gradle_home/caches/modules-2/files-2.1/com.google.errorprone/error_prone_annotations/*/*/*.jar" > /dev/null; then
+  echo "::error::error_prone_annotations is not in $gradle_home - the release runtime classpath was not downloaded"
+  exit 1
+fi
+echo "OK error_prone_annotations is in the Gradle cache"
+
 # THE RUST TASKS MUST BE REAL. The tauri CLI compiles only the FIRST target itself; every other ABI
 # is built by Gradle's `rustBuild<Arch><Profile>` task, which must be a `BuildTask` that runs
 # `tauri android android-studio-script`. They were empty `DefaultTask`s from 2026-04 to 2026-11 and
