@@ -240,12 +240,13 @@ describe('a tap reaches the page through durable state', () => {
     expect(libRs.match(new RegExp(`\\b${TAKE_NOTIFICATION_TAP_COMMAND}\\b`, 'g'))).toHaveLength(2);
   });
 
-  it('is taken outside the deep-link plugin chain, once the router is mounted', () => {
+  it('is taken outside the deep-link plugin chain, once the router has settled', () => {
     const listen = hooks.indexOf('listenForNativeNotificationTaps((link) => processUrls([link]))');
     expect(listen).toBeGreaterThan(-1);
     // Registered before the plugin import, so a failed import cannot take it down.
     expect(listen).toBeLessThan(hooks.indexOf("import('@tauri-apps/plugin-deep-link')"));
-    expect(layout).toContain('markRouterReady();');
+    // Once the FIRST NAVIGATION HAS SETTLED, not at mount: the root mounts inside that navigation.
+    expect(layout).toMatch(/afterNavigate\(\(nav\) => \{[\s\S]{0,400}markRouterReady\(\);/);
   });
 });
 

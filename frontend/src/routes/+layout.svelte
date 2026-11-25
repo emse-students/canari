@@ -186,8 +186,6 @@
     // The bundle parsed and the layout is up: tell the old-WebView guard of app.html: it stops watching and
     // removes its update screen if one was drawn (mobile.md, the old Android System WebView section).
     window.__canariWebViewGuard?.mounted();
-    // The router exists from here: inputs consumed once (the iOS notification tap) wait for this.
-    markRouterReady();
     // A click goes to the component the press began on, never to what a layout change put under it.
     const disposePressedClickGuard = installPressedClickGuard();
     // A GIF committed by the soft keyboard goes to the focused composer, or the member is told it
@@ -754,6 +752,9 @@
    * landed on the page being left and had to be re-added when the path caught up.
    */
   afterNavigate((nav) => {
+    // The first navigation has settled: the router takes a `goto` from here, so the inputs that wait
+    // for it (a deep link, the iOS notification tap) may be routed (`routerReady.ts`). Idempotent.
+    markRouterReady();
     const { shallow, type } = nav;
     // The entry remembers where it came from (Back arrow) and where it was left (offset); the hook
     // ignores a shallow navigation of any type itself.

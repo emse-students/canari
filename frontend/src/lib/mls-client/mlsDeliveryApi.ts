@@ -616,6 +616,36 @@ class PendingResendDidNotArrive extends Error {
 }
 
 /**
+ * The device's one-time prekey count could not be read, so the key package round must not mint:
+ * `transport` (no answer - DNS, no route, a reset socket), `status` (the service answered a non-2xx,
+ * kept in {@link status}) or `malformed` (a 2xx without a numeric `count`). A deadline is the
+ * separate {@link DeliveryDeadlineError}.
+ *
+ * TYPED AT THE THROW, never read back from its message: the round's callers see one type and its
+ * `reason`. Reading any of the three as `0` was a heal - fifty new bundles against a count nobody
+ * gave.
+ */
+export class PrekeyCountUnreadableError extends Error {
+  constructor(
+    readonly reason: 'transport' | 'status' | 'malformed',
+    readonly status: number | null = null,
+    cause?: unknown
+  ) {
+    super(
+      `prekey count unreadable (${
+        reason === 'status'
+          ? `the service answered ${status}`
+          : reason === 'transport'
+            ? `no answer: ${cause instanceof Error ? transportFailureEvidence(cause) : typeof cause}`
+            : 'an answer without a count'
+      })`,
+      { cause }
+    );
+    this.name = 'PrekeyCountUnreadableError';
+  }
+}
+
+/**
  * A request of the key package round was ABANDONED because it exceeded its deadline. Not
  * {@link DeliveryUnreachableError} (the service WAS asked, it never answered) and not a status
  * code: nothing is established about the device, so the caller must not act on it.
@@ -1842,6 +1872,15 @@ export class MlsDeliveryApi {
       ) {
         throw e;
       }
+      // NO ANSWER IS NOT A DEFECT OF THIS CALL: a phone whose resolver failed for a moment filed it
+      // at ERROR beside real faults (owner's Android log, 2026-11-25). Narrated at WARN by its class,
+      // tolerated like every other outcome here; anything else is a defect and keeps its stack.
+      if (isTransportFailure(e)) {
+        console.warn(
+          `[MLS] registerMember got no answer for group ${groupId.slice(0, 8)} - the seats are not written (${e instanceof Error ? `${e.name}, ${transportFailureEvidence(e)}` : typeof e})`
+        );
+        return;
+      }
       console.error('Failed to register member', e);
     }
   }
@@ -2463,23 +2502,38 @@ export class MlsDeliveryApi {
    * A request that EXCEEDED ITS DEADLINE IS NOT A ZERO: it throws {@link DeliveryDeadlineError} and
    * fails the round, because reading it as `0` made both platforms mint and publish a full pool of
    * fifty against a server that never answered - the deadline would have become a heal.
+   *
+   * NOR IS ANY OTHER COUNT NOBODY GAVE: a request with no answer (a DNS failure), a refusal (non-2xx)
+   * or an answer without a number throws {@link PrekeyCountUnreadableError}, typed at the throw with
+   * which of the three it was, and fails the round the same way. Each was read as `0` until
+   * 2026-11-25, and a phone whose resolver failed for a moment minted fifty bundles it could not even
+   * publish (owner's Android log).
    */
   async fetchPrekeyCount(): Promise<number> {
+    let failure: PrekeyCountUnreadableError;
     try {
       return await this.underDeadline('prekey-count', async (signal) => {
         const res = await this.f(
           `${this.historyUrl}/api/mls/devices/${this.userId}/${this.deviceId}/prekeys/count`,
           { headers: await this.auth(), signal }
         );
-        if (!res.ok) return 0;
-        const data = await res.json();
-        return typeof data.count === 'number' ? data.count : 0;
+        if (!res.ok) throw new PrekeyCountUnreadableError('status', res.status);
+        const data = (await res.json().catch(() => null)) as { count?: unknown } | null;
+        if (typeof data?.count !== 'number') throw new PrekeyCountUnreadableError('malformed');
+        return data.count;
       });
     } catch (e) {
       if (e instanceof DeliveryDeadlineError) throw e;
-      console.warn('[MLS] prekey count unreadable - read as 0:', String(e).slice(0, 200));
-      return 0;
+      if (e instanceof PrekeyCountUnreadableError) failure = e;
+      else if (isTransportFailure(e))
+        failure = new PrekeyCountUnreadableError('transport', null, e);
+      else throw e;
     }
+    // ACCUSED, AND THE ROUND STOPS HERE: nothing is minted against a count nobody gave.
+    console.warn(
+      `[MLS] ${failure.message} - the key package round is skipped, nothing minted; the next connection's round asks again`
+    );
+    throw failure;
   }
 
   /**

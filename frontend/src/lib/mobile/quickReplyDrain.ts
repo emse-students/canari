@@ -296,11 +296,21 @@ function take(accountId: string): Promise<string[]> {
 /**
  * Takes every waiting reply of the signed-in account and sends it; a reply not queued is put back.
  * Nothing is taken while no sender is registered: the file waits for the session.
+ *
+ * @param why What asked for the drain, for the log.
+ * @param announced True when the native side said a reply waits - the one trigger that KNOWS the
+ *   file holds one, and so the only one that says the replies wait when no session can take them.
  */
-export async function drainNativeQuickReplies(why: string): Promise<void> {
+export async function drainNativeQuickReplies(why: string, announced = false): Promise<void> {
   const current = sender;
   if (!current) {
-    appendLog(`[QuickReply] ${why}: no signed-in session yet - the replies wait in their file`);
+    // SAID ONLY WHEN A REPLY IS KNOWN TO WAIT: the native side's event (`announced`) is that fact.
+    // A front edge or a registration knows nothing of the file, and the line it printed named
+    // replies that were not there - four times in 130 ms on one cold start (owner's Android log,
+    // 2026-11-25). The registration drains in any case, so nothing waits on the line.
+    if (announced) {
+      appendLog(`[QuickReply] ${why}: no signed-in session yet - the replies wait in their file`);
+    }
     return;
   }
   let lines: string[];
@@ -504,15 +514,20 @@ export async function settleNativeQuickRepliesAtSignOut(
  * WebView never changes visibility). Returns the unsubscribe.
  */
 export function listenForNativeQuickReplies(): () => void {
-  const onReply = () => void drainNativeQuickReplies('the native side says a reply waits');
-  const onVisible = () => {
-    if (document.visibilityState === 'visible') void drainNativeQuickReplies('the app is in front');
+  const onReply = () => void drainNativeQuickReplies('the native side says a reply waits', true);
+  // ONE DRAIN PER RETURN TO THE FRONT, whichever signal says it first: the page's visibility and the
+  // shell's `canari:foreground` both announce the same edge, and each drained it. The state is the
+  // last edge seen (null before any), so only a change to "in front" drains.
+  let inFront: boolean | null = null;
+  const front = (now: boolean) => {
+    const was = inFront;
+    inFront = now;
+    if (now && was !== true) void drainNativeQuickReplies('the app is in front');
   };
+  const onVisible = () => front(document.visibilityState === 'visible');
   window.addEventListener(NATIVE_QUICK_REPLY_EVENT, onReply);
   document.addEventListener('visibilitychange', onVisible);
-  const stopForeground = onAppForegroundChange((foreground) => {
-    if (foreground) void drainNativeQuickReplies('the app is in front');
-  });
+  const stopForeground = onAppForegroundChange((foreground) => front(foreground));
   return () => {
     window.removeEventListener(NATIVE_QUICK_REPLY_EVENT, onReply);
     document.removeEventListener('visibilitychange', onVisible);

@@ -38,10 +38,11 @@
  *
  * AN UNCLEAN END IS REPORTED AT THE NEXT BOOT. A durable marker (`canari_applog_on_screen`, in
  * `localStorage`: a synchronous write that needs no flush and no open database) is set while the
- * app is on screen and cleared the moment it leaves, so a marker still set at boot means the
- * previous session ended ON screen: killed or crashed, never "backgrounded then jetsammed" (on iOS
- * that is normal, and the marker was cleared at the background edge, whether or not the
- * leave-screen flush won its race). It is kept on the mobile shells only, the ones that speak the
+ * app is on screen, set to `leaving` at the leave-screen edge, and cleared once the leave-screen
+ * write has settled, so a marker still set at boot means the previous session ended ON screen, or
+ * was killed before its last lines reached disk - never "backgrounded then jetsammed" (on iOS that
+ * is normal, and the marker is cleared once the leave-screen flush settles, whether or not it won
+ * its race). It is kept on the mobile shells only, the ones that speak the
  * `canari:foreground` contract: two browser tabs share `localStorage` (a second tab would read the
  * first one's marker as a crash), and a desktop window close or quit may fire neither
  * `visibilitychange` nor `pagehide`. The report is ONE W line naming the last line that reached
@@ -114,6 +115,11 @@ let offScreen = false;
 let holdingForScreen = false;
 /** An event-driven flush is queued and has not started: another request would only add a write. */
 let eventFlushQueued = false;
+/**
+ * Counts the screen edges (each leave, each return), so a leave-screen write that settles after a
+ * later edge does not clear the marker that edge set ({@link leaveScreen}).
+ */
+let screenEdges = 0;
 /** The marker could not be read or written: said once, not at every screen edge. */
 let markerFailureSaid = false;
 
@@ -441,23 +447,34 @@ function sayMarkerFailure(error: unknown): void {
   );
 }
 
+/**
+ * What the marker says of the session that wrote it: on screen, leaving it (the leave-screen write
+ * has not landed yet), or nothing (cleared once that write landed).
+ */
+type MarkerState = 'on-screen' | 'leaving' | null;
+
+/** The stored value of each state; `'1'` is what every build before `leaving` wrote for on screen. */
+const MARKER_VALUE = { 'on-screen': '1', leaving: 'leaving' } as const;
+
 /** Sets or clears the on-screen marker. Never throws. */
-function writeOnScreenMarker(onScreen: boolean): void {
+function writeOnScreenMarker(state: MarkerState): void {
   try {
-    if (onScreen) localStorage.setItem(ON_SCREEN_KEY, '1');
+    if (state) localStorage.setItem(ON_SCREEN_KEY, MARKER_VALUE[state]);
     else localStorage.removeItem(ON_SCREEN_KEY);
   } catch (error) {
     sayMarkerFailure(error);
   }
 }
 
-/** Whether the previous session left the marker set. A storage that cannot be read reports false. */
-function readOnScreenMarker(): boolean {
+/** What the previous session left in the marker. A storage that cannot be read reports null. */
+function readOnScreenMarker(): MarkerState {
   try {
-    return localStorage.getItem(ON_SCREEN_KEY) !== null;
+    const value = localStorage.getItem(ON_SCREEN_KEY);
+    if (value === null) return null;
+    return value === MARKER_VALUE.leaving ? 'leaving' : 'on-screen';
   } catch (error) {
     sayMarkerFailure(error);
-    return false;
+    return null;
   }
 }
 
@@ -482,11 +499,36 @@ async function lastWrittenStamp(): Promise<string> {
  * At boot, once: a marker still set means the previous session ended on screen (see the module
  * doc). One W line, written with the next batch.
  */
-async function reportPreviousSessionEnd(): Promise<void> {
+async function reportPreviousSessionEnd(state: Exclude<MarkerState, null>): Promise<void> {
   const last = await lastWrittenStamp();
   console.warn(
-    `[APPLOG] the previous session ended while on screen (killed or crashed) - last written line at ${last}`
+    state === 'on-screen'
+      ? `[APPLOG] the previous session ended while on screen (killed or crashed) - last written line at ${last}`
+      : `[APPLOG] the previous session ended as it left the screen, before its last lines reached disk (killed) - last written line at ${last}`
   );
+}
+
+/**
+ * The app leaves the screen: writes the batch, and clears the marker ONLY ONCE THAT WRITE HAS
+ * SETTLED. Clearing it first - synchronously, while the write was still on its way - meant a process
+ * killed in between lost the lines AND the report that they were lost: a session's last minutes
+ * vanished with no line at the next boot (owner's Android log, 2026-11-25). Until the write settles
+ * the marker says `leaving`, so such a kill is reported as what it is.
+ *
+ * A write cut short by the suspension also settles it: its lines are kept for the return and that
+ * loss is said at the time ({@link flushAppLog}), and a jetsam of a backgrounded app is normal (see
+ * the module doc). Back on screen before the write settled, the marker stays as the screen edge set it.
+ */
+function leaveScreen(keepMarker: boolean): void {
+  offScreen = true;
+  const edge = ++screenEdges;
+  if (keepMarker) writeOnScreenMarker('leaving');
+  const written = flushAppLog();
+  if (!keepMarker) return;
+  // Cleared by THIS edge's write only: a return and a second leave meanwhile own the marker now.
+  void written.then(() => {
+    if (edge === screenEdges) writeOnScreenMarker(null);
+  });
 }
 
 /**
@@ -501,24 +543,22 @@ export function installAppLogFlushTriggers(): void {
   lifecycleInstalled = true;
   // Read BEFORE this session sets its own marker.
   const keepMarker = isMobileTauriRuntime();
-  if (keepMarker && readOnScreenMarker()) void reportPreviousSessionEnd();
-  if (keepMarker && isAppInForeground()) writeOnScreenMarker(true);
+  const previous = keepMarker ? readOnScreenMarker() : null;
+  if (previous) void reportPreviousSessionEnd(previous);
+  if (keepMarker && isAppInForeground()) writeOnScreenMarker('on-screen');
   onAppScreenChange((onScreen) => {
-    offScreen = !onScreen;
-    if (keepMarker) writeOnScreenMarker(onScreen);
     if (!onScreen) {
-      void flushAppLog();
+      leaveScreen(keepMarker);
       return;
     }
+    offScreen = false;
+    screenEdges++;
+    if (keepMarker) writeOnScreenMarker('on-screen');
     // Back on screen: what a cut-short write kept is written now.
     if (holdingForScreen) {
       holdingForScreen = false;
       void flushAppLog();
     }
   });
-  window.addEventListener('pagehide', () => {
-    offScreen = true;
-    if (keepMarker) writeOnScreenMarker(false);
-    void flushAppLog();
-  });
+  window.addEventListener('pagehide', () => leaveScreen(keepMarker));
 }

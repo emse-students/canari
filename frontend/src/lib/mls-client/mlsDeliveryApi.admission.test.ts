@@ -5,6 +5,7 @@ import {
   ReviewCohortBoundaryError,
   UserBlockedError,
 } from './mlsDeliveryApi';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 
 /**
  * WHO ADMITS A NEW PERSON, AS THE CLIENT READS IT (ADM-3). The member-add call enrols nobody any
@@ -53,6 +54,27 @@ describe('registerMember - the refusals a caller acts on', () => {
     await expect(api(answer(500, {})).registerMember('g1', 'joe')).resolves.toBeUndefined();
     expect(err.mock.calls[0][0]).toContain('status=500');
     err.mockRestore();
+  });
+
+  it('narrates a request that got no answer at WARN by its class - never an ERROR', async () => {
+    // A phone whose resolver failed for a moment filed this at ERROR (owner's log, 2026-11-25).
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const unreachable = new MlsDeliveryApi({
+      historyUrl: 'https://example.test',
+      getToken: async () => 'token',
+      fetchImpl: vi
+        .fn()
+        .mockRejectedValue(
+          new TransportFailureError('error sending request')
+        ) as unknown as typeof fetch,
+    });
+    await expect(unreachable.registerMember('g1', 'joe')).resolves.toBeUndefined();
+    expect(err).not.toHaveBeenCalled();
+    expect(warn.mock.calls[0][0]).toContain('got no answer');
+    expect(warn.mock.calls[0][0]).toContain('transport failure: string');
+    err.mockRestore();
+    warn.mockRestore();
   });
 });
 

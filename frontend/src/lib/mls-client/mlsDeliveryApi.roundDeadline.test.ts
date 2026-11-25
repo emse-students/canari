@@ -2,8 +2,10 @@ import {
   DeliveryDeadlineError,
   KEY_PACKAGE_REQUEST_DEADLINE_MS,
   MlsDeliveryApi,
+  PrekeyCountUnreadableError,
   raceDeadline,
 } from './mlsDeliveryApi';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 import { keyPackagePublication } from './deviceKeyPackage';
 
 /**
@@ -82,13 +84,63 @@ describe('the key package round has a per-request deadline', () => {
     expect(error.mock.calls.flat().join(' ')).toContain('prekey purge');
   });
 
-  it('still reads a refused count as 0 (an answer, not a hang), and says so', async () => {
+  /** A count read through `fetchImpl`, and what it threw (or `null` when it answered). */
+  const countThrough = async (fetchImpl: typeof fetch) => {
     const api = new MlsDeliveryApi({
       historyUrl: 'https://example.test',
       getToken: async () => 'token',
-      fetchImpl: vi
+      fetchImpl,
+    });
+    return api.fetchPrekeyCount().then(
+      () => null,
+      (e: unknown) => e
+    );
+  };
+
+  // NOTHING A SERVER DID NOT SAY IS A ZERO (owner's Android log, 2026-11-25): a resolver failure was
+  // read as an empty pool, and the phone minted fifty bundles it could not publish.
+  it('FAILS the round on a count that got no answer, typed `transport` at the throw', async () => {
+    const warn = vi.mocked(console.warn);
+    const e = await countThrough(
+      vi
         .fn()
-        .mockResolvedValue(new Response('{}', { status: 500 })) as unknown as typeof fetch,
+        .mockRejectedValue(
+          new TransportFailureError('error sending request')
+        ) as unknown as typeof fetch
+    );
+    expect(e).toBeInstanceOf(PrekeyCountUnreadableError);
+    expect((e as PrekeyCountUnreadableError).reason).toBe('transport');
+    expect(warn.mock.calls.flat().join(' ')).toContain('the key package round is skipped');
+  });
+
+  it('FAILS the round on a refused count, typed `status` with the status it answered', async () => {
+    const e = await countThrough(
+      vi.fn().mockResolvedValue(new Response('{}', { status: 500 })) as unknown as typeof fetch
+    );
+    expect(e).toBeInstanceOf(PrekeyCountUnreadableError);
+    expect((e as PrekeyCountUnreadableError).reason).toBe('status');
+    expect((e as PrekeyCountUnreadableError).status).toBe(500);
+  });
+
+  it('FAILS the round on an answer without a count, typed `malformed`', async () => {
+    const e = await countThrough(
+      vi.fn().mockResolvedValue(new Response('{"pool":3}')) as unknown as typeof fetch
+    );
+    expect(e).toBeInstanceOf(PrekeyCountUnreadableError);
+    expect((e as PrekeyCountUnreadableError).reason).toBe('malformed');
+  });
+
+  it('lets a defect of its own through as itself, never as a count', async () => {
+    const bug = new RangeError('a bug of ours');
+    const e = await countThrough(vi.fn().mockRejectedValue(bug) as unknown as typeof fetch);
+    expect(e).toBe(bug);
+  });
+
+  it('reads an answered zero as zero - the one case a round mints a full pool', async () => {
+    const api = new MlsDeliveryApi({
+      historyUrl: 'https://example.test',
+      getToken: async () => 'token',
+      fetchImpl: vi.fn().mockResolvedValue(new Response('{"count":0}')) as unknown as typeof fetch,
     });
     expect(await api.fetchPrekeyCount()).toBe(0);
   });

@@ -542,6 +542,52 @@ describe('an unclean end is reported at the next boot', () => {
     expect(localStorage.getItem(ON_SCREEN_KEY)).not.toBeNull();
   });
 
+  it('the marker outlives the leave-screen write until it lands - cleared only then (owner log, 2026-11-25)', async () => {
+    tauri();
+    appLog.installAppLogFlushTriggers();
+    appLog.captureConsoleLine('log', ['[A] the last minutes']);
+    screen.change(false);
+    // Synchronously after the edge, the write is still on its way: the marker says so.
+    expect(localStorage.getItem(ON_SCREEN_KEY)).toBe('leaving');
+    await appLog.flushAppLog();
+    expect(localStorage.getItem(ON_SCREEN_KEY)).toBeNull();
+    expect((await records()).map((r) => r.text).join(' ')).toContain('[A] the last minutes');
+  });
+
+  it('a session killed DURING the leave-screen write is reported at the next boot, as such', async () => {
+    tauri();
+    appLog.installAppLogFlushTriggers();
+    // The database never answers: the process is killed before the leave-screen write lands.
+    const open = vi
+      .spyOn(indexedDB, 'open')
+      .mockImplementation(() => ({}) as unknown as IDBOpenDBRequest);
+    appLog.captureConsoleLine('log', ['[A] lost with the kill']);
+    screen.change(false);
+    await Promise.resolve();
+    expect(localStorage.getItem(ON_SCREEN_KEY)).toBe('leaving');
+    open.mockRestore();
+    await nextProcess();
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    appLog.installAppLogFlushTriggers();
+    await vi.waitFor(() => expect(warn).toHaveBeenCalledTimes(1));
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /^\[APPLOG\] the previous session ended as it left the screen, before its last lines reached disk \(killed\) - last written line at /
+      )
+    );
+  });
+
+  it('a return to the screen during the leave-screen write keeps the marker the return set', async () => {
+    tauri();
+    appLog.installAppLogFlushTriggers();
+    appLog.captureConsoleLine('log', ['[A] pending']);
+    screen.change(false);
+    screen.change(true);
+    await appLog.flushAppLog();
+    expect(localStorage.getItem(ON_SCREEN_KEY)).toBe('1');
+  });
+
   it('a boot while the app is off screen sets no marker', async () => {
     tauri();
     screen.on = false;

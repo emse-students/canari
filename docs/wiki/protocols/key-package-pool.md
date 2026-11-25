@@ -865,3 +865,14 @@ The line is then written only when an adder claims (creation, admission, the swe
 **A NEW 404 REASON MUST SHIP IN A CLIENT FLOOR FIRST.** A deployed client keeps the invitation on a
 reason it does not know, so a new reason that should retire anything does so only once
 `minClientVersion` admits only builds that know it. The rule is also written at the server's throw.
+
+## A COUNT NOBODY GAVE IS NOT A ZERO (2026-11-25)
+
+`MlsDeliveryApi.fetchPrekeyCount` read a request with no answer, a non-2xx and a 2xx without a
+numeric `count` as `0`, so the round minted `50 - 0` bundles. Read in the owner's Android log: a
+resolver failure of a few seconds, `prekey count unreadable - read as 0`, then `needed=50`, then the
+publication itself failed on the same resolver - fifty bundles minted for nothing. A deadline already
+threw `DeliveryDeadlineError`; the three other cases now throw `PrekeyCountUnreadableError`, typed at
+the throw with its `reason` (`transport` / `status` / `malformed`), logged once at WARN, and the round
+fails exactly as on a deadline - nothing is minted, the next connection's round asks again. Only an
+ANSWERED number is a count. Tests: `mlsDeliveryApi.roundDeadline.test.ts`.
