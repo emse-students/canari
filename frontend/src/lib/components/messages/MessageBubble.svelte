@@ -1047,10 +1047,15 @@
   });
 </script>
 
+<!-- EVERY ROW HAS EXACTLY ONE `msg-<id>` ELEMENT, decided HERE by the one `effectiveSystem` (a system
+     envelope with `isSystem` false is a system row too): the last-visible measure, the scroll
+     anchors and the growth observer look rows up by it. A system row without one hid every row after
+     it from the measure (Mi 9T, 2026-11-25). -->
 {#if effectiveSystem}
   {#if channelInvite}
     <!-- Channel invite card with Join button -->
     <div
+      id={`msg-${messageId}`}
       class="border-accent/20 bg-accent/5 inline-flex max-w-xs flex-col gap-2.5 rounded-2xl border px-4 py-3 shadow-sm {shouldAnimate
         ? 'animate-rise-in'
         : ''}"
@@ -1095,6 +1100,7 @@
     </div>
   {:else}
     <div
+      id={`msg-${messageId}`}
       class="text-text-muted max-w-md text-center text-xs {shouldAnimate ? 'animate-rise-in' : ''}"
     >
       <span><EmojiText text={textContent} /></span>

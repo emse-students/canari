@@ -258,10 +258,7 @@
         !msg.isOwn && !isDirect && groupPosition !== 'middle' && groupPosition !== 'end'}
 
       {#if msg.isSystem}
-        <!-- The system row's wrapper carries the row id like a bubble does: every message row has ONE
-             addressable box, which the last-visible measure, the scroll anchors and the growth
-             observer all look up by `msg-<id>`. -->
-        <div id={`msg-${msg.id}`} class="my-3 flex justify-center">
+        <div class="my-3 flex justify-center">
           <MessageBubble
             messageId={msg.id}
             {nicknameScope}

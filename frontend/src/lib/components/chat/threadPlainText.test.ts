@@ -33,10 +33,19 @@ describe('system line', () => {
 });
 
 describe('system row box', () => {
-  it('carries the msg- id of its row, like a bubble: every row has one box to measure', () => {
-    const i = groups.indexOf('{#if msg.isSystem}');
-    expect(i).toBeGreaterThan(0);
-    expect(groups.slice(i, i + 700)).toContain('id={`msg-${msg.id}`}');
+  // The id is decided in MessageBubble by its own `effectiveSystem` (isSystem OR a system envelope),
+  // so a row the wrapper does not call system still gets exactly one `msg-` element.
+  it('both system roots of MessageBubble carry the msg- id, like the bubble', () => {
+    const start = bubble.indexOf('{#if effectiveSystem}');
+    const end = bubble.indexOf('bind:this={bubbleAnchor}');
+    expect(start).toBeGreaterThan(0);
+    expect(end).toBeGreaterThan(start);
+    const system = bubble.slice(start, end);
+    expect(system.split('id={`msg-${messageId}`}').length - 1).toBe(2);
+    expect(bubble.split('id={`msg-${messageId}`}').length - 1).toBe(3);
+  });
+  it('the wrapper adds none: a second element with the same id would shadow the first', () => {
+    expect(groups).not.toContain('id={`msg-');
   });
 });
 
