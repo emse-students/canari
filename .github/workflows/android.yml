@@ -132,14 +132,16 @@ jobs:
       # release reads, and a save from it would be a write a release can never reuse. What a release
       # restores is therefore only what `main` wrote (code that already passed review and CI), never
       # a pull request's cache (`refs/pull/N/merge`, unreadable from here). A miss downloads exactly
-      # as before. docs/wiki/cicd.md#the-android-release-build-restores-gradle-it-never-saves-it-2026-11-09
+      # as before. The saved cache is COMPLETED by `android-app-compile.sh` (it resolves the release
+      # classpath too; a debug-only fill let `error_prone_annotations` 429 on a key HIT):
+      # docs/wiki/cicd.md#the-android-release-build-resolves-from-a-cache-ci-completes-and-proves-offline-2026-11-25
       - name: Restore Gradle downloads (written by main)
         uses: actions/cache/restore@v6
         with:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-app-${{ runner.os }}-${{ hashFiles('frontend/src-tauri/gen/android/**/*.gradle*', 'frontend/src-tauri/gen/android/**/*.kts', 'frontend/src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties') }}
+          key: gradle-app-${{ runner.os }}-${{ hashFiles('frontend/src-tauri/gen/android/**/*.gradle*', 'frontend/src-tauri/gen/android/**/*.kts', 'frontend/src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties', '.github/scripts/android-app-compile.sh') }}
           restore-keys: gradle-app-${{ runner.os }}-
 
       - name: Setup Bun
