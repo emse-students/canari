@@ -106,23 +106,25 @@ echo "OK ${tasks[*]} ran and succeeded"
 
 # THE RELEASE'S DEPENDENCIES MUST BE IN THE CACHE THIS JOB SAVES (2026-11-25). The tasks above are
 # all DEBUG, so the cache they fill lacked the release classpath, and a release that restored it
-# (a key hit) still went to Maven Central for `error_prone_annotations` and met a 429. Resolve every
-# variant classpath online (this is what fills the cache), then again with `--offline`: that second
-# run reaches no network, so it fails if anything the release links is not in ~/.gradle. It cannot
-# see a restore (the job just filled the cache it reads); what it proves is that the resolution
-# needs nothing the cache does not hold. cicd.md#the-android-release-build-resolves-from-a-cache-ci-completes-and-proves-offline-2026-11-25
-init="$android/ci/resolve-all.init.gradle"
+# (a key hit) still went to Maven Central for `error_prone_annotations` and met a 429. So run the
+# RELEASE variant's dependency-resolving tasks too (what fills the cache), then run them again with
+# `--offline`: that pass reaches no network, so it fails if resolving them needs anything not in
+# ~/.gradle (a task up to date still resolves its inputs, so it is a real resolution). It cannot see a
+# restore (the job just filled the cache it reads); it proves the resolution needs nothing the cache
+# does not hold. The rust tasks are excluded: they build the native libraries, which this gate does
+# not need and which the release job builds. cicd.md#the-android-release-build-resolves-from-a-cache-ci-completes-and-proves-offline-2026-11-25
+release_tasks=(:app:checkUniversalReleaseAarMetadata :app:checkUniversalReleaseDuplicateClasses :app:processUniversalReleaseMainManifest :app:mergeUniversalReleaseNativeLibs)
+skip_rust=(-x rustBuildUniversalRelease -x rustBuildArmRelease -x rustBuildArm64Release)
 for mode in online offline; do
   flag=(); [ "$mode" = offline ] && flag=(--offline)
-  echo "== 4. resolve every variant classpath ($mode)"
-  (cd "$android" && ./gradlew --no-daemon --console=plain "${flag[@]}" -I "$init" resolveAllArtifacts) 2>&1 | tee "$log" \
-    || { echo "::error::resolving the variant classpaths failed ($mode)"; exit 1; }
-  n="$(awk '/^CLASSPATHS /{s+=$3} END{print s+0}' "$log")"
-  if [ "$n" -lt 1 ]; then
-    echo "::error::no variant classpath was resolved ($mode) - a green run that resolved nothing is not a gate"
-    exit 1
-  fi
-  echo "OK $n variant classpaths resolved ($mode)"
+  echo "== 4. resolve the release variant (${mode}): ${release_tasks[*]}"
+  (cd "$android" && ./gradlew --no-daemon --console=plain "${flag[@]}" "${skip_rust[@]}" "${release_tasks[@]}") 2>&1 | tee "$log" \
+    || { echo "::error::resolving the release variant failed ($mode)"; exit 1; }
+  for t in "${release_tasks[@]}"; do
+    grep -qE "^> Task ${t}( |$)" "$log" \
+      || { echo "::error::${t} did not run ($mode) - a green build that did not run it is not a gate"; exit 1; }
+  done
+  echo "OK the release variant resolved ($mode)"
 done
 
 # THE RUST TASKS MUST BE REAL. The tauri CLI compiles only the FIRST target itself; every other ABI

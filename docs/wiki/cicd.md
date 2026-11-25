@@ -1310,18 +1310,20 @@ classpath was ever resolved there, and nothing in the cache named the jars only 
 
 The fix is in what CI saves, not in a retry:
 
-- `gen/android/ci/resolve-all.init.gradle` (an init script, passed with `-I`) adds a task
-  `resolveAllArtifacts` that downloads every variant classpath (`*Release|Debug*Runtime|CompileClasspath`)
-  strictly, and every other resolvable configuration best-effort (tooling artifacts; one that cannot
-  resolve alone is logged and skipped).
-- `android-app-compile.sh` runs it online (this is what fills `~/.gradle`) and then with `--offline`,
-  which reaches no network and fails if the resolution needs anything the cache does not hold. It also
-  refuses a run that resolved no classpath. Its self-test covers both refusals.
-- **The cache key moves by itself**: the init script sits under `gen/android/`, which the key's
-  `hashFiles` already covers (`ci.yml` and `android.yml` identically). Without that the old key would
-  have kept winning: an exact hit is never re-saved, so the incomplete entry would have lived on.
-  Any later change to the script, or to a build file, re-keys it the same way.
-- `android.yml` is unchanged: still restore-only, still online. A release now finds the release
+- `android-app-compile.sh` also runs the RELEASE variant's dependency-resolving tasks
+  (`checkUniversalReleaseAarMetadata`, `checkUniversalReleaseDuplicateClasses`,
+  `processUniversalReleaseMainManifest`, `mergeUniversalReleaseNativeLibs`, with the three
+  `rustBuild*Release` tasks excluded: they build native code the gate does not need). That is what
+  fills `~/.gradle` with the release classpath. It then runs them again with `--offline`, which
+  reaches no network and fails if resolving them needs anything the cache does not hold (a task up to
+  date still resolves its inputs). Its self-test covers a failing offline pass and a task that did not run.
+  (A first attempt resolved configurations directly from an init script; AGP's flavored configurations
+  do not resolve outside AGP's own tasks, so the real tasks are the honest probe.)
+- **The cache key moves**: `android-app-compile.sh` is now part of the key's `hashFiles` (`ci.yml` and
+  `android.yml` identically). Without that the old key would have kept winning: an exact hit is never
+  re-saved, so the incomplete entry would have lived on. Any later change to the script, or to a build
+  file, re-keys it the same way.
+- `android.yml` only takes the new key: still restore-only, still online. A release now finds the release
   classpath in the cache and Gradle does not ask the network for what it holds.
 
 **What the offline pass does not prove**, said plainly: it runs in the job that just filled the cache,

@@ -141,7 +141,7 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-app-${{ runner.os }}-${{ hashFiles('frontend/src-tauri/gen/android/**/*.gradle*', 'frontend/src-tauri/gen/android/**/*.kts', 'frontend/src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties') }}
+          key: gradle-app-${{ runner.os }}-${{ hashFiles('frontend/src-tauri/gen/android/**/*.gradle*', 'frontend/src-tauri/gen/android/**/*.kts', 'frontend/src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties', '.github/scripts/android-app-compile.sh') }}
           restore-keys: gradle-app-${{ runner.os }}-
 
       - name: Setup Bun

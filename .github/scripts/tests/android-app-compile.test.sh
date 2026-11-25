@@ -26,9 +26,7 @@ make_project() {
   cp "$real_stub" "$work/android/ci/"
   cat > "$work/android/gradlew" <<GRADLEW
 #!/usr/bin/env bash
-case " \$* " in *" resolveAllArtifacts "*)
-  case " \$* " in *" --offline "*) [ -n "\${FAKE_OFFLINE_FAIL:-}" ] && { echo "Could not resolve (offline)"; exit 1; } ;; esac
-  echo "CLASSPATHS :app \${FAKE_CLASSPATHS:-3}"; exit 0 ;; esac
+case " \$* " in *" --offline "*) [ -n "\${FAKE_OFFLINE_FAIL:-}" ] && { echo "Could not resolve (offline)"; exit 1; } ;; esac
 case " \$* " in *" :app:help "*) echo "Type"; echo "     \${FAKE_TASKTYPE:-BuildTask} (\${FAKE_TASKTYPE:-BuildTask})"; exit 0 ;; esac
 for t in "\$@"; do
   case "\$t" in :app:*) ;; *) continue ;; esac
@@ -92,15 +90,14 @@ make_project
 FAKE_TASKTYPE=DefaultTask expect "an empty DefaultTask" nonzero "is not a BuildTask"
 unset FAKE_TASKTYPE
 
-echo "the release classpaths are resolved online and then offline:"
+echo "the release variant is resolved online and then offline:"
 make_project
-expect "both passes ran" 0 "OK 3 variant classpaths resolved (offline)"
+expect "both passes ran" 0 "OK the release variant resolved (offline)"
 make_project
-FAKE_OFFLINE_FAIL=1 expect "a classpath missing from the cache fails the offline pass" nonzero "failed (offline)"
+FAKE_OFFLINE_FAIL=1 expect "a dependency missing from the cache fails the offline pass" nonzero "failed (offline)"
 unset FAKE_OFFLINE_FAIL
-make_project
-FAKE_CLASSPATHS=0 expect "a run that resolved no classpath is refused" nonzero "no variant classpath was resolved"
-unset FAKE_CLASSPATHS
+make_project ":app:checkUniversalReleaseAarMetadata" ""
+expect "a release task that did not run is refused" nonzero "checkUniversalReleaseAarMetadata did not run"
 
 echo "a real google-services.json is never overwritten:"
 make_project
