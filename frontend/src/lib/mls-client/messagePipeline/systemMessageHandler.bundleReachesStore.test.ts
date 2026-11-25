@@ -15,6 +15,7 @@ import { historyStateKey } from '$lib/utils/chat/historyStateKey';
 import { m } from '$lib/paraglide/messages';
 import { historySealAad, mintHistoryAnswerKey, sealHistoryContent } from '$lib/crypto/historySeal';
 import { fakeHistorySealEngine } from '$lib/mls-client/test/fixtures/fakeHistorySealEngine';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 /**
  * A `history_bundle` reaches the rows memory does not show, and carries a deletion onto a row this
@@ -72,7 +73,7 @@ function makeCtx(senderNorm: string, rows: Record<string, any>, shown: any[] = [
     userId: ME,
     deviceKey: () => 'device-key',
     conversations,
-    messageReactions: new Map(),
+    messageReactions: new ReactionsByConversation(),
     addMessageToChat: vi.fn(),
     batchAddMessages: vi.fn(),
     deleteConversation: vi.fn(),

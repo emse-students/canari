@@ -8,6 +8,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SvelteMap } from 'svelte/reactivity';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   appendLog: () => {},
@@ -34,7 +35,7 @@ import {
   placement,
   storedRow,
 } from '$lib/mls-client/test/fixtures/messageRowStore';
-import type { Conversation, MessageReaction } from '$lib/types';
+import type { Conversation } from '$lib/types';
 import type { IStorage } from '$lib/db';
 
 type MessagingContext = import('./useMessaging.svelte').MessagingContext;
@@ -112,7 +113,7 @@ describe('an own act on a message whose row is still moving', () => {
         storage: store as unknown as IStorage,
         deviceKey: () => 'k',
         conversations,
-        messageReactions: new SvelteMap<string, MessageReaction[]>(),
+        messageReactions: new ReactionsByConversation(),
         log,
       },
       JOINED,
@@ -207,10 +208,9 @@ describe('an own act on a message whose row is still moving', () => {
     expect(store.pending.size).toBe(0);
   });
 
-  it.each([
-    ['left under the old group by the move', OLD],
-    ['sealed under the shown conversation', JOINED],
-  ])(
+  // A row left under the OLD group is no row of the shown one (a row is keyed by its conversation):
+  // that case is the first test's, kept until the move. Only a row under the shown key stands here.
+  it.each([['sealed under the shown conversation', JOINED]])(
     'a row that stands and does not open (%s) keeps the act, as for a peer, and says why once',
     async (_c, conv) => {
       const store = messageRowStore([

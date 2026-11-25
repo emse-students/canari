@@ -6,8 +6,8 @@
  * merges it; A finishes AFTER B. A page is authoritative for its window, and R lies inside A's - so
  * A's merge used to REMOVE R. Before #1761 a redundant refetch usually put it back, which hid this.
  */
-import { SvelteMap } from 'svelte/reactivity';
 import type { Conversation } from '$lib/types';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 const listMessages = vi.hoisted(() => vi.fn());
 const listReadMarks = vi.hoisted(() => vi.fn());
@@ -69,7 +69,7 @@ function makeCtx() {
     userId: 'u1',
     deviceKeyB64: 'k',
     historyBaseUrl: '',
-    messageReactions: new SvelteMap(),
+    messageReactions: new ReactionsByConversation(),
     log: vi.fn(),
     addMessageToChat: vi.fn(),
   } as never;

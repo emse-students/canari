@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { canari } from '$lib/proto/canari.js';
 import type { Conversation, ReadWatermarks } from '$lib/types';
 import { applyReplaySystemEvent } from './historySystemEvents';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 /** A replayed system frame whose `data` is not JSON (a legacy channel sentence, a corrupt row). */
 async function replay(event: string, data: string) {
@@ -22,7 +23,7 @@ async function replay(event: string, data: string) {
     nicknameRoster: { getGroupMemberIdentities: async () => [] },
     getConversation: () => convo,
     setConversation,
-    messageReactions: new Map(),
+    messageReactions: new ReactionsByConversation(),
     reactionUpdates: new Map(),
     rowPatches: new Map(),
     pendingById: new Map(),

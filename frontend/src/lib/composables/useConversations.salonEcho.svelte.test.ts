@@ -6,8 +6,8 @@
  * holding it must re-key the echo to the server's row - one row, never two - and forget the text the
  * unsent ledger kept for it, or the next page life hands a DELIVERED message back to the composer.
  */
-import { SvelteMap } from 'svelte/reactivity';
 import type { ChatMessage, Conversation } from '$lib/types';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 const listMessages = vi.hoisted(() => vi.fn());
 const listReadMarks = vi.hoisted(() => vi.fn());
@@ -74,7 +74,7 @@ function makeCtx() {
     userId: 'u1',
     deviceKeyB64: 'k',
     historyBaseUrl: '',
-    messageReactions: new SvelteMap(),
+    messageReactions: new ReactionsByConversation(),
     log: vi.fn(),
     addMessageToChat: vi.fn(),
   } as never;

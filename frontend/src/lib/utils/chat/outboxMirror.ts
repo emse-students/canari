@@ -532,7 +532,7 @@ export async function adoptOrphanedMirrorEntries(
     // native, and one whose send landed after the page's last mirror write is still in the file. The
     // row the send dated (`serverTimestamp`, `authorship`) is the durable proof - never the server's
     // dedup. A control frame has no row: it is adopted, and its receiver applies it idempotently.
-    const stored = await storage.getMessage(orphan.id, deviceKeyB64).catch((e) => {
+    const stored = await storage.getMessage(orphan.groupId, orphan.id, deviceKeyB64).catch((e) => {
       appendLog(
         `[OUTBOX_MIRROR] Orphan ${orphan.id.slice(0, 8)}… row not read - adopted on the line alone: ${String(e)}`
       );

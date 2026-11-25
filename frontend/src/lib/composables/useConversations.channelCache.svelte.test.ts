@@ -6,9 +6,9 @@
  * push only, and the open salon did not show it after resume until that clock ran out, because
  * nothing re-fetched it. These pin the replacement: a clock never expires a copy, a stream gap does.
  */
-import { SvelteMap } from 'svelte/reactivity';
 import type { Conversation } from '$lib/types';
 import { flushMacrotask } from '../../test/flush';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 const listMessages = vi.hoisted(() => vi.fn());
 const listReadMarks = vi.hoisted(() => vi.fn());
@@ -74,7 +74,7 @@ function makeCtx() {
     userId: 'u1',
     deviceKeyB64: 'k',
     historyBaseUrl: '',
-    messageReactions: new SvelteMap(),
+    messageReactions: new ReactionsByConversation(),
     log: vi.fn(),
     addMessageToChat: vi.fn(),
   } as never;

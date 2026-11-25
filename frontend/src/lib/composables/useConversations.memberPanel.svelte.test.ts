@@ -15,8 +15,8 @@
  * (`registerMember`), and the device rows the commit writes `pending` and only the invitee's own
  * client promotes. One invitee activates during the Add, the other is offline - the second sighting.
  */
-import { SvelteMap } from 'svelte/reactivity';
 import type { Conversation } from '$lib/types';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 vi.mock('$lib/users/blocks', () => ({ isBlockedWith: vi.fn(async () => false) }));
 vi.mock('$lib/utils/users/displayName', async (importOriginal) => ({
@@ -108,7 +108,7 @@ function makeCtx(mls: ReturnType<typeof makeServer>['mls']) {
     userId: 'u1',
     deviceKeyB64: 'k',
     historyBaseUrl: 'https://example.invalid',
-    messageReactions: new SvelteMap(),
+    messageReactions: new ReactionsByConversation(),
     log: vi.fn(),
     addMessageToChat: vi.fn(async () => {}),
   } as never;

@@ -223,7 +223,7 @@ describe('a late-held preview takes the body WITH what waited for it (re-review 
     expect(shown.id).toBe('p1');
     expect(shown.isDeleted).toBe(true);
     expect(shown.content).not.toContain('the real body');
-    expect((await d.storage.getMessage('p1', KEY))?.isDeleted).toBe(true);
+    expect((await d.storage.getMessage(CONVO, 'p1', KEY))?.isDeleted).toBe(true);
   });
 
   it('THE BATCH PATH, an edit before the body: the preview shows the edit, as stored', async () => {
@@ -343,7 +343,7 @@ describe('the last gaps (final check of #3988)', () => {
 
     // What the bubble reads: the map first, the row's own reactions otherwise.
     const [shown] = d.shown();
-    const bubble = d.messaging.messageReactions.get('p1') ?? shown.reactions ?? [];
+    const bubble = d.messaging.messageReactions.get(CONVO, 'p1') ?? shown.reactions ?? [];
     expect(bubble.map((r) => r.emoji).sort()).toEqual(['heart', 'plus-one']);
   });
 
@@ -381,8 +381,8 @@ describe('the last gaps (final check of #3988)', () => {
     release();
 
     expect(d.conversations.has(CONVO)).toBe(false);
-    expect(await d.storage.getMessage('p1', KEY)).toBeFalsy();
-    expect(await d.storage.getMessage('m2', KEY)).toBeFalsy();
+    expect(await d.storage.getMessage(CONVO, 'p1', KEY)).toBeFalsy();
+    expect(await d.storage.getMessage(CONVO, 'm2', KEY)).toBeFalsy();
     expect(warn.mock.calls.some(([line]) => String(line).includes('not inserted'))).toBe(true);
   });
 });
@@ -431,7 +431,7 @@ describe('a removal racing a batch write that already asked the map (follow-up o
     await adding;
     await purging;
 
-    expect(await storage.getMessage('m1', KEY)).toBeFalsy();
+    expect(await storage.getMessage(CONVO, 'm1', KEY)).toBeFalsy();
   });
 });
 
@@ -483,7 +483,7 @@ describe('an own send racing a removal (review of #3992)', () => {
     // The pair landed BEFORE the clear (the purge waited for it), so the clear took its row. Its
     // outbox entry is in the state of any entry queued a moment before a removal: the exit's drain or
     // the outbox's own retire settles it, not the purge (chat wiki, "known limits").
-    expect(await storage.getMessage('own-1', KEY)).toBeFalsy();
+    expect(await storage.getMessage(CONVO, 'own-1', KEY)).toBeFalsy();
     expect(d.conversations.has(CONVO)).toBe(false);
   });
 
@@ -508,7 +508,7 @@ describe('an own send racing a removal (review of #3992)', () => {
     ).rejects.toMatchObject({ name: 'ConversationGoneError', messageId: 'own-2' });
 
     expect(pair).not.toHaveBeenCalled();
-    expect(await storage.getMessage('own-2', KEY)).toBeFalsy();
+    expect(await storage.getMessage(CONVO, 'own-2', KEY)).toBeFalsy();
     expect(await storage.getOutboxEntry('own-2', KEY)).toBeFalsy();
   });
 });

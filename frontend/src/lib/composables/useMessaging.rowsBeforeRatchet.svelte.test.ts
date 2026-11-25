@@ -12,6 +12,7 @@
  */
 import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { SvelteMap } from 'svelte/reactivity';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 /**
  * The sender lookup a notification waits on is a profile read (`/api/users/batch`) nothing here is
@@ -1177,7 +1178,7 @@ describe('a mutation parked against a stored row (rows before ratchet)', () => {
       storage: ctx.storage,
       deviceKey: () => 'device-key',
       conversations: ctx.conversations,
-      messageReactions: new SvelteMap(),
+      messageReactions: new ReactionsByConversation(),
       log: () => {},
     };
     return { ctx, entries, written, state, deps };

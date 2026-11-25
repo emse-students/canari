@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi, type Mock } from 'vitest';
 import { SvelteMap } from 'svelte/reactivity';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   globalMessaging: { isMessageCatchupActive: false, resetMessageCatchupState: vi.fn() },
@@ -548,7 +549,7 @@ describe('the archive replay draws the photo notice too', () => {
       conversationId: GROUP,
       getConversation: () => ({ id: GROUP, messages: [] }),
       setConversation: vi.fn(),
-      messageReactions: new Map(),
+      messageReactions: new ReactionsByConversation(),
       reactionUpdates: new Map(),
       deletedMessages: new Map(),
       editedMessages: new Map(),
@@ -573,7 +574,7 @@ async function memberRowIdFor(frame: NonNullable<ReturnType<typeof decodeAppMess
     userId: 'bob',
     deviceKey: () => 'device-key',
     conversations: new Map([[GROUP, convo]]),
-    messageReactions: new Map(),
+    messageReactions: new ReactionsByConversation(),
     addMessageToChat,
     batchAddMessages: vi.fn(),
     deleteConversation: vi.fn(),
@@ -646,7 +647,7 @@ describe('every copy of a notice is ordered by the server acceptance of its fram
       conversationId: GROUP,
       getConversation: () => ({ id: GROUP, messages: [] }),
       setConversation: vi.fn(),
-      messageReactions: new Map(),
+      messageReactions: new ReactionsByConversation(),
       reactionUpdates: new Map(),
       deletedMessages: new Map(),
       editedMessages: new Map(),

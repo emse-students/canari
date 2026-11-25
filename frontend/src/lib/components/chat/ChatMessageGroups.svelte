@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { ConversationReactions } from '$lib/utils/chat/reactionsByConversation';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import Avatar from '../shared/Avatar.svelte';
@@ -6,7 +7,7 @@
   import { profileHref } from '$lib/utils/users/profileHref';
   import MessageBubble from '../messages/MessageBubble.svelte';
   import SeenByHeads from '../messages/SeenByHeads.svelte';
-  import type { ChatMessage, MessageReaction, ReadWatermarks } from '$lib/types';
+  import type { ChatMessage, ReadWatermarks } from '$lib/types';
   import { readersOf } from '$lib/utils/chat/readState';
   import { messageDate, messageTime } from '$lib/utils/chat/messageOrder';
   import {
@@ -33,8 +34,8 @@
     isLoadingOlder?: boolean;
     /** Active search term used to highlight matching text in messages. */
     searchQuery?: string;
-    /** Map of emoji reactions keyed by message ID. */
-    messageReactions?: Record<string, MessageReaction[]> | Map<string, MessageReaction[]>;
+    /** The reactions of the shown conversation's messages, by message id (`ReactionsByConversation.of`). */
+    messageReactions?: Pick<ConversationReactions, 'get'>;
     /** Callback fired when the user chooses to reply to a message. */
     onReply?: (message: ChatMessage) => void;
     /** Callback fired when the user chooses to forward a message to another conversation. */
@@ -228,10 +229,7 @@
       <!-- Message -->
     {:else if group?.type === 'message' && group.message}
       {@const msg = group.message}
-      {@const reactions =
-        messageReactions instanceof Map
-          ? messageReactions.get(msg.id) || []
-          : messageReactions?.[msg.id] || []}
+      {@const reactions = messageReactions?.get(msg.id) || []}
       {@const prevGroup = index > 0 ? visibleMessageGroups[index - 1] : null}
       {@const prevMsg = prevGroup?.type === 'message' ? prevGroup.message : null}
       {@const nextGroup =

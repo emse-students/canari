@@ -1804,11 +1804,10 @@ the old conversation, through the boot merge's own move, and logs the count eith
   - **The key is lowercased in `persistLocalMutation`, once**: the edit and delete paths hand the
     shown key as they hold it, and an entry kept under another case waited for a look - always
     under the lowercased id - that never came.
-  - **Write first, look second.** The scoped compare-and-set is tried first, told that a row of
-    another conversation is expected (`mergeMessages(..., { foreignExpected: true })`, so the store
-    does not warn about a row still moving). Only when it wrote nothing does one unscoped look
-    (`IStorage.getMessageStanding`) say why, and every outcome but a written row keeps the act, then
-    looks once more: a row that left between the write and the look is kept, never lost.
+  - **Write first, look second.** The compare-and-set on the row's key is tried first. Only when it
+    wrote nothing does one look at the same key (`IStorage.getMessageStanding(conversationId, id)`)
+    say why, and every outcome but a written row keeps the act, then looks once more: a row that
+    left between the write and the look is kept, never lost.
   - **A row that stands and does not open keeps the act too, as a peer's act is kept**
     (`keepPendingMutationForUnreadable`, the same bounds, said once with that reason): a key change in
     flight - a PIN reseal - may open the row again, and an act dropped there would be gone for good.
@@ -1885,15 +1884,47 @@ server (no member device has undelivered frames for it, nobody has posted in it 
 survivor), never by a clock. The cost is an alias-aware reader everywhere a conversation is read by
 id. What is left: [backlog](../backlog.d/p2-a-crossed-dm-pair-what-the-convergent-merge-left.md).
 
-#### A lookup by id is scoped to its conversation (review of #2936, P1, security)
+#### A stored message is keyed by its conversation (review of #2936; the key itself, 2026-11-24)
 
-A message id is global in the store. `getMessagesByIds(conversationId, ids)` - and `mergeMessages` -
-read a row of ANOTHER conversation as absent and say so at warn, on both backends. Every caller that
+A stored message is the pair `(conversationId, id)` - the primary key of SQLite's `messages` since
+v23 and the key path of IndexedDB's `messages` since v15. A message id is chosen by the frame that
+carries it, so two conversations may each hold a row under the same id, and each keeps its own:
+every read, write and delete names the conversation (`getMessage`, `getMessageStanding`,
+`getMessagesByIds`, `mergeMessages`, `updateMessage`, `deleteMessage`, the order-key fill, the
+device-key re-seal), the upsert (`saveMessages`) conflicts on the pair and never moves a row, and
+the one way a row changes conversation is `moveMessages` (the Welcome's 1:1 re-key, the boot merge):
+its old key deleted and its new one written in one atomic step. A row the destination already holds
+under the same id is the same message seen twice (a bundle or a replayed copy stored first during a
+1:1 re-key): the source is UNITED onto it through the compare-and-set
+(`messageMove.ts`, `uniteMovedRow` - a tombstone wins and purges, the later edit wins, every
+reaction of both, the proofs of the kept bytes, the first recorded 410, an unsent reason) and only
+then deleted, while it is still the row that was read; a pair one side of which does not open is
+left as it is. A caller that knows only an id it minted (a quick reply, an own bubble) asks
+`findMessageConversations` and keeps the row THIS account authored (`ownStoredMessage`). What the
+screen draws follows the same key: the in-memory reactions are a `ReactionsByConversation`
+(`utils/chat/reactionsByConversation.ts`), every read and write naming the conversation, the bubble
+reading one conversation's view (`.of`), and a thread re-keyed in memory carrying its own (`move`).
+
+THE MIGRATIONS KEEP EVERY ROW AND RESUME FROM THE FILE. IndexedDB copies the store into a staging
+store with the new key path inside the versionchange transaction, deletes the old one and renames
+the staging store - atomic, so an interrupted upgrade leaves v14 whole and the next open runs it
+again. SQLite cannot hold a `BEGIN`/`COMMIT` across its pooled connections (`sqliteBatch.ts`), so
+`messageRekeySteps` reads what is owed from the file at EVERY open - the staging table
+(`messages_rekey`) present or not, the key already the pair or not - copies with `INSERT OR IGNORE`,
+PROVES by a count that the staging table holds every row of `messages` before it drops anything,
+then drops, renames and makes the indexes again (with a new one on the id alone). The new table has
+no foreign key onto `conversations`: it cascaded nothing, and a copy failing on an orphaned row
+would leave a store that cannot open. Pinned on both backends, interruptions included, by
+`messageKeyByConversation.test.ts`.
+
+`getMessagesByIds(conversationId, ids)` - and `mergeMessages` - therefore never meet a row of
+ANOTHER conversation, on both backends. Every caller that
 answers a frame passes the frame's conversation: the deletion and edit lookups (`storedTarget`), the
 reaction lookup (`reactionFrame.ts`), the settlement (`settlePendingFor`), the bundle's stored rows
 (`storedRowsForBundle`) and its merges, and the arriving-body verdicts (`storedRowsFor`). A member of
 A therefore cannot delete, edit, react to or relay over a row of B through a frame sent in A
-(`useMessaging.mutationsReachTargets.svelte.test.ts`). The window read is aligned too:
+(`useMessaging.mutationsReachTargets.svelte.test.ts`), and the same id in two conversations is two
+rows, each stored in its own. The window read is aligned too:
 `getMessagesSince` applies ONE rule on both backends (`storedTimeInWindow`) - a timestamp an older
 build stored as text is read and dated on IndexedDB as SQLite always did.
 

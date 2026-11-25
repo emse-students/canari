@@ -13,6 +13,7 @@ import {
   recordedIntegrityFindings,
   resetIntegrityFindings,
 } from '$lib/mls-client/integrityFindings';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 /**
  * A `history_bundle` from MALLORY, a member, about ALICE's messages: what the receiving device takes
@@ -52,7 +53,7 @@ function makeCtx(alice: TestAuthor, mallory: TestAuthor, held: Record<string, un
     userId: ME,
     deviceKey: () => 'device-key',
     conversations,
-    messageReactions: new Map(),
+    messageReactions: new ReactionsByConversation(),
     addMessageToChat: vi.fn(),
     batchAddMessages: vi.fn(),
     deleteConversation: vi.fn(),
@@ -544,6 +545,6 @@ describe('history_bundle - restored history carries its author signature', () =>
       ctx as any
     );
 
-    expect(ctx.messageReactions.get('m1')?.map((r: any) => r.emoji)).toEqual(['🔥']);
+    expect(ctx.messageReactions.get(GROUP, 'm1')?.map((r: any) => r.emoji)).toEqual(['🔥']);
   });
 });

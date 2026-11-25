@@ -32,6 +32,7 @@ import {
   resetSeenCipherCacheForTests,
   stagePendingHistoryMarks,
 } from './history';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 const USER = 'user-1';
 const GROUP = 'group-1';
@@ -216,7 +217,7 @@ describe('a frame the archive replay consumed', () => {
       storage: null,
       getConversation: () => undefined,
       setConversation: () => undefined,
-      messageReactions: new Map(),
+      messageReactions: new ReactionsByConversation(),
       log,
       primedFirstPage: { rows },
     });
@@ -377,7 +378,7 @@ describe('a frame the archive replay consumed', () => {
       storage: null,
       getConversation: () => undefined,
       setConversation: () => undefined,
-      messageReactions: new Map(),
+      messageReactions: new ReactionsByConversation(),
       log: () => undefined,
       primedFirstPage: { rows: [row] },
     });
@@ -547,7 +548,7 @@ describe('the mailbox barrier', () => {
       storage: null,
       getConversation: () => undefined,
       setConversation: () => undefined,
-      messageReactions: new Map(),
+      messageReactions: new ReactionsByConversation(),
       log: () => undefined,
       primedFirstPage: { rows: [row], head: '9-0' },
     });
@@ -682,7 +683,7 @@ describe('the walk is bounded by the head observed at its start', () => {
       storage: null,
       getConversation: () => undefined,
       setConversation: () => undefined,
-      messageReactions: new Map(),
+      messageReactions: new ReactionsByConversation(),
       log: () => undefined,
       primedFirstPage,
     });
@@ -750,7 +751,7 @@ describe("this device's own rows in the shared archive", () => {
       storage: null,
       getConversation: () => undefined,
       setConversation: () => undefined,
-      messageReactions: new Map(),
+      messageReactions: new ReactionsByConversation(),
       log: () => undefined,
       primedFirstPage: { rows },
     });
@@ -868,7 +869,7 @@ describe('an archive row whose sender does not match MLS', () => {
       } as never,
       getConversation: () => undefined,
       setConversation: () => undefined,
-      messageReactions: new Map(),
+      messageReactions: new ReactionsByConversation(),
       log: () => undefined,
       primedFirstPage: {
         rows: [

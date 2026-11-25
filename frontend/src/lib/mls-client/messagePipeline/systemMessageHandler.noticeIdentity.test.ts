@@ -6,6 +6,7 @@ vi.mock('$lib/utils/users/displayName', () => ({
 import { handleSystemEvent } from './systemMessageHandler';
 import { applyReplaySystemEvent } from '$lib/utils/chat/historySystemEvents';
 import { decodeAppMessage, encodeAppMessage, mkSystem, mkVisibleSystem } from '$lib/proto/codec';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 /**
  * A VISIBLE SYSTEM NOTICE IS WRITTEN BY TWO PATHS THAT NEVER MEET, AND COPIED BY A THIRD.
@@ -50,7 +51,7 @@ describe('a visible system notice carries the sender’s id', () => {
       userId: 'alice',
       deviceKey: () => 'device-key',
       conversations,
-      messageReactions: new Map(),
+      messageReactions: new ReactionsByConversation(),
       addMessageToChat: vi.fn().mockResolvedValue(undefined),
       batchAddMessages: vi.fn(),
       deleteConversation: vi.fn().mockResolvedValue(undefined),
@@ -114,7 +115,7 @@ describe('a visible system notice carries the sender’s id', () => {
       conversationId: 'g1',
       getConversation: () => ({ id: 'g1', messages: [] }),
       setConversation: vi.fn(),
-      messageReactions: new Map(),
+      messageReactions: new ReactionsByConversation(),
       reactionUpdates: new Map(),
       deletedMessages: new Map(),
       editedMessages: new Map(),

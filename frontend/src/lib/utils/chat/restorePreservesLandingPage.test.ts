@@ -10,6 +10,7 @@
  */
 import { SvelteMap } from 'svelte/reactivity';
 import type { Conversation } from '$lib/types';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   globalMessaging: {},
@@ -59,7 +60,7 @@ function run(preserveMessagesOf: string | null) {
     storage,
     mlsService,
     conversations,
-    messageReactions: new SvelteMap(),
+    messageReactions: new ReactionsByConversation(),
     userId: 'u1',
     deviceKeyB64: 'k',
     historyBaseUrl: 'https://example.invalid',

@@ -633,7 +633,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       // The joined group's row was saved BEFORE the move; the duplicate's row is KEPT - which of
       // the two survives is the boot merge's decision.
       expect(store.saveConversation.mock.invocationCallOrder[0]).toBeLessThan(
-        store.saveMessages.mock.invocationCallOrder[0]
+        store.moveMessages.mock.invocationCallOrder[0]
       );
       expect(store.conversations.has(dmGroup)).toBe(true);
       expect(store.conversations.has(olderDmGroup)).toBe(true);

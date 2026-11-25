@@ -21,6 +21,7 @@
 import type { Conversation } from '$lib/types';
 import type { EvictionEvidence } from './eviction';
 import type { ServerInstant } from '$lib/mls-client/serverInstant';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 // ---------------------------------------------------------------- module stubs
 // The union of what the five sites need to load at all. Every one of them spreads the real module
@@ -197,7 +198,7 @@ function pipelineWorld(over: Record<string, unknown> = {}) {
     deviceKey: () => 'device-key',
     historyBaseUrl: 'https://hist',
     conversations,
-    messageReactions: new SvelteMap(),
+    messageReactions: new ReactionsByConversation(),
     recoveryTimers: new Map(),
     getSelectedContact: () => null,
     setSelectedContact: vi.fn(),
@@ -318,7 +319,7 @@ async function runSelectionCheck(opts: {
     userId: 'me',
     deviceKeyB64: 'k',
     historyBaseUrl: 'https://hist',
-    messageReactions: new SvelteMap(),
+    messageReactions: new ReactionsByConversation(),
     log: r.log,
     addMessageToChat: r.addMessageToChat,
   } as never;
@@ -400,7 +401,7 @@ const sites: { name: string; evidence: EvictionEvidence; run: () => Promise<Site
         userId: 'me',
         deviceKey: () => 'device-key',
         conversations,
-        messageReactions: new Map(),
+        messageReactions: new ReactionsByConversation(),
         addMessageToChat: r.addMessageToChat,
         deleteConversation: vi.fn().mockResolvedValue(undefined),
         saveConversation: r.saveConversation,

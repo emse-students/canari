@@ -1,4 +1,5 @@
 import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 /**
  * The frame that advances the HEAL-repair walk: a member we asked while holding frames we cannot
@@ -30,7 +31,7 @@ function makeCtx() {
     userId: ME,
     deviceKey: () => 'device-key',
     conversations,
-    messageReactions: new Map(),
+    messageReactions: new ReactionsByConversation(),
     addMessageToChat: vi.fn(),
     batchAddMessages: vi.fn(),
     deleteConversation: vi.fn(),

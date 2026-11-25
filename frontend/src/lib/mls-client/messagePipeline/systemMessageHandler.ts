@@ -2185,11 +2185,11 @@ export async function handleSystemEvent(
               vetted.entry,
               vetted.decision,
               senderNorm,
-              messageReactions.get(existing.id)
+              messageReactions.get(convoKey, existing.id)
             );
             if (!merged.changed) return existing;
             changedIds.add(existing.id);
-            if (merged.reactions) messageReactions.set(existing.id, merged.reactions);
+            if (merged.reactions) messageReactions.set(convoKey, existing.id, merged.reactions);
             if (merged.bodyEdited) bodyEditedIds.add(existing.id);
             if (merged.editProof) editProofs.set(existing.id, merged.editProof);
             if (merged.deleteProof) deleteProofs.set(existing.id, merged.deleteProof);
@@ -2230,7 +2230,7 @@ export async function handleSystemEvent(
                   // (a relayed copy naming it), and that row is never this bundle's to rewrite.
                   const patch = mergedRowPatch(
                     msg,
-                    messageReactions.get(msg.id),
+                    messageReactions.get(convoKey, msg.id),
                     bodyEditedIds.has(msg.id),
                     editProofs.get(msg.id),
                     deleteProofs.get(msg.id)

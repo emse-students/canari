@@ -8,9 +8,9 @@
  * drawn at once (offline too - charter principle 2), and only a row whose seed is missing waits for
  * the drain proof, unwarned, then reads with the seed the drain brought or is reported truly missing.
  */
-import { SvelteMap } from 'svelte/reactivity';
 import type { Conversation } from '$lib/types';
 import { flushMacrotask } from '../../test/flush';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 const listMessages = vi.hoisted(() => vi.fn());
 const listReadMarks = vi.hoisted(() => vi.fn());
@@ -107,7 +107,7 @@ function makeCtx() {
     userId: 'u1',
     deviceKeyB64: 'k',
     historyBaseUrl: '',
-    messageReactions: new SvelteMap(),
+    messageReactions: new ReactionsByConversation(),
     log: vi.fn(),
     addMessageToChat: vi.fn(),
   } as never;

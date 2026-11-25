@@ -68,6 +68,7 @@ import {
   type MergeableRow,
   type MergedRow,
 } from './bundleVetting';
+import type { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 /**
  * System events that are live negotiation only and must never be acted on during a replay.
@@ -115,7 +116,7 @@ export interface ReplaySystemEventCtx {
   conversationId: string;
   getConversation: (contactName: string) => Conversation | undefined;
   setConversation: (contactName: string, next: Conversation) => void;
-  messageReactions: Map<string, MessageReaction[]>;
+  messageReactions: ReactionsByConversation;
   /** msgId -> final reaction list, applied to DB after the batch save. */
   reactionUpdates: Map<string, MessageReaction[]>;
   /** The keys this device trusts for an author (the MLS service): what a bundle's proofs verify under. */
@@ -586,14 +587,14 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
       // `removed` set; this only ever sees log entries written before that change. Dated with the
       // entry's own time, so it orders after the placements that precede it in the log.
       const updated = applyReaction(
-        messageReactions.get(data.messageId) || [],
+        messageReactions.get(conversationId, data.messageId) || [],
         msg.sender_id,
         String(data.emoji),
         parseServerTimestampMs(msg.timestamp) ?? 0,
         true
       );
       if (updated) {
-        messageReactions.set(data.messageId, updated);
+        messageReactions.set(conversationId, data.messageId, updated);
         reactionUpdates.set(data.messageId, updated);
       }
     } else if (parsed.system.event === 'history_bundle') {
@@ -768,11 +769,11 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
             d.entry,
             d.decision,
             senderNorm,
-            messageReactions.get(id)
+            messageReactions.get(conversationId, id)
           );
           if (!merged.changed) continue;
           writeMergedPending(pm, merged);
-          if (merged.reactions) messageReactions.set(id, merged.reactions);
+          if (merged.reactions) messageReactions.set(conversationId, id, merged.reactions);
         }
 
         // What each entry may change on a row memory holds, merged by the one merge and written at
@@ -820,12 +821,12 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
               d.entry,
               d.decision,
               senderNorm,
-              messageReactions.get(existing.id)
+              messageReactions.get(conversationId, existing.id)
             );
             if (!merged.changed) return existing;
             mergedAny = true;
             if (merged.reactions) {
-              messageReactions.set(existing.id, merged.reactions);
+              messageReactions.set(conversationId, existing.id, merged.reactions);
               reactionUpdates.set(existing.id, merged.reactions);
             }
             const next = merged.next;
@@ -878,9 +879,9 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
             undefined
           );
           const row = merged.next;
-          if (merged.reactions && !messageReactions.has(m.id)) {
+          if (merged.reactions && !messageReactions.has(conversationId, m.id)) {
             // Seeded so later reaction stream events apply on top of it, not onto an empty array.
-            messageReactions.set(m.id, merged.reactions);
+            messageReactions.set(conversationId, m.id, merged.reactions);
           }
           const pm: Omit<PendingHistoryMessage, 'ingestSequence'> = {
             senderId: row.senderId ?? canonicalUserId(m.senderId),

@@ -39,7 +39,7 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   appendLog: vi.fn(),
 }));
 
-const { SvelteMap } = await import('svelte/reactivity');
+const { ReactionsByConversation } = await import('$lib/utils/chat/reactionsByConversation');
 const { useConversations } = await import('./useConversations.svelte');
 const { notifNav } = await import('$lib/stores/notifNav.svelte');
 const { readLandingPreview } = await import('$lib/utils/chat/landingPreview');
@@ -73,7 +73,7 @@ function previewInput(storage: never, sessionUp = false) {
     storage,
     deviceKeyB64: 'a2V5',
     userId: USER,
-    messageReactions: new SvelteMap() as never,
+    messageReactions: new ReactionsByConversation(),
     isSessionUp: () => sessionUp,
     log: vi.fn(),
   };
@@ -170,11 +170,11 @@ describe('the landing preview in the conversation store', () => {
   it('removes everything it drew when the login does not finish', async () => {
     const convs = useConversations();
     const { storage } = fakeStorage();
-    const reactions = new SvelteMap<string, never>();
+    const reactions = new ReactionsByConversation();
     notifNav.navigate(GROUP_ID);
     await convs.previewLandingTarget(previewInput(storage));
     convs.previewSelect(GROUP_ID);
-    convs.discardLandingPreview('device revoked', reactions as never, vi.fn());
+    convs.discardLandingPreview('device revoked', reactions, vi.fn());
     expect(convs.conversations.has(GROUP_ID)).toBe(false);
     expect(convs.selectedContact).toBeNull();
     expect(convs.landingPreviewKey).toBeNull();
@@ -198,9 +198,9 @@ describe('the landing preview in the conversation store', () => {
     const { storage } = fakeStorage();
     notifNav.navigate(GROUP_ID);
     await convs.previewLandingTarget({ ...previewInput(storage), owner: 2, isCurrent: () => true });
-    convs.discardLandingPreview('session expired', new SvelteMap() as never, vi.fn(), 1);
+    convs.discardLandingPreview('session expired', new ReactionsByConversation(), vi.fn(), 1);
     expect(convs.landingPreviewKey).toBe(GROUP_ID);
-    convs.discardLandingPreview('session expired', new SvelteMap() as never, vi.fn(), 2);
+    convs.discardLandingPreview('session expired', new ReactionsByConversation(), vi.fn(), 2);
     expect(convs.landingPreviewKey).toBeNull();
     expect(convs.conversations.has(GROUP_ID)).toBe(false);
   });
@@ -211,7 +211,7 @@ describe('the landing preview in the conversation store', () => {
     notifNav.navigate(GROUP_ID);
     await convs.previewLandingTarget(previewInput(storage));
     convs.endLandingPreview();
-    convs.discardLandingPreview('late', new SvelteMap() as never, vi.fn());
+    convs.discardLandingPreview('late', new ReactionsByConversation(), vi.fn());
     expect(convs.conversations.has(GROUP_ID)).toBe(true);
   });
 });

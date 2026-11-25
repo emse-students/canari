@@ -5,6 +5,7 @@ vi.mock('$lib/utils/users/displayName', () => ({
 
 import { handleSystemEvent } from './systemMessageHandler';
 import { applyReplaySystemEvent } from '$lib/utils/chat/historySystemEvents';
+import { ReactionsByConversation } from '$lib/utils/chat/reactionsByConversation';
 
 /**
  * A MEMBER LEAVING WAS ANNOUNCED BY ONE PATH AND RENDERED BY THE OTHER.
@@ -30,7 +31,7 @@ describe('memberLeft, live', () => {
       userId: 'alice',
       deviceKey: () => 'device-key',
       conversations,
-      messageReactions: new Map(),
+      messageReactions: new ReactionsByConversation(),
       addMessageToChat: vi.fn().mockResolvedValue(undefined),
       batchAddMessages: vi.fn(),
       deleteConversation: vi.fn().mockResolvedValue(undefined),
@@ -109,7 +110,7 @@ describe('memberLeft, replay', () => {
       conversationId: 'g1',
       getConversation: () => ({ id: 'g1', messages: [] }),
       setConversation: vi.fn(),
-      messageReactions: new Map(),
+      messageReactions: new ReactionsByConversation(),
       reactionUpdates: new Map(),
       deletedMessages: new Set(),
       editedMessages: new Map(),
