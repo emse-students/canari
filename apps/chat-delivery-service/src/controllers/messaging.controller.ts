@@ -25,6 +25,7 @@ import {
   ValidateCommitBody,
 } from '../services/messaging.service';
 import {
+  canonicalLeafIdentity,
   canonicalUserId,
   sanitizeDevicePairLogValue,
   sanitizeEpoch,
@@ -60,6 +61,18 @@ export const REACTION_AT_MAX_AHEAD_MS = 24 * 60 * 60 * 1000;
  */
 export const MLS_COMMIT_LIMIT_PER_MINUTE = 600;
 
+/**
+ * The classes the ENTRANT names its own entry no member made as (`EntrantEntryKind` on the client;
+ * slice 1 of the admission fix-forward, docs/wiki/protocols/admission-fix-forward.md). Their
+ * `entrant` is the authenticated caller, never the body: a device can only speak for itself.
+ */
+const ENTRANT_UNINVITED_ENTRY_KINDS: readonly string[] = [
+  'entrant-direct-peer',
+  'entrant-unhonoured-seat',
+  'entrant-not-pending',
+  'entrant-no-device-row',
+];
+
 /** The classes a client may name an uninvited entry as (`UninvitedEntryKind` on the client). */
 const UNINVITED_ENTRY_KINDS: readonly string[] = [
   'new-person',
@@ -67,6 +80,7 @@ const UNINVITED_ENTRY_KINDS: readonly string[] = [
   'direct-peer',
   // A never-seen device of a member that entered a conversation by its own commit (2026-10-27).
   'unvouched-device',
+  ...ENTRANT_UNINVITED_ENTRY_KINDS,
 ];
 
 /** The kinds a device decides from its own record of the group, so their line prints `watched_from`. */
@@ -367,6 +381,13 @@ export class MessagingController {
    * and is already accused here. Only a database failure reaches that branch: every value is
    * classified to fit its column before the INSERT ({@link uninvitedEntryEpochField}).
    *
+   * THE ENTRANT SPEAKS TOO (slice 1 of the admission fix-forward): a device whose own external
+   * commit was accepted on a tree holding no leaf of its account reports it under an `entrant-*`
+   * kind - the path it took, classified where it decided to commit. Same table, same
+   * `(group, entrant, epoch)`, so each member's `new-person` row pairs with the entrant's own row,
+   * and an unpaired one is an entry no client at that build made. Its `entrant` is the reporter
+   * itself, read from the authenticated headers: the body cannot name anyone else.
+   *
    * The reporter is the authenticated user and device and a MEMBER of the group (anyone else is
    * refused, 403, as `mls/integrity-finding`). Every field goes through `sanitizeLogValue`.
    */
@@ -402,7 +423,6 @@ export class MessagingController {
     }
     // The numeric fields, printed as their digits; anything else is `invalid` like every field.
     const epoch = uninvitedEntryEpochField(body.epoch);
-    const entrant = sanitizeLeafLogValue(body.entrant);
     const group = sanitizeLogValue(groupId);
     const kind =
       body.kind === undefined || body.kind === null
@@ -410,6 +430,17 @@ export class MessagingController {
         : UNINVITED_ENTRY_KINDS.includes(body.kind as string)
           ? (body.kind as string)
           : 'invalid';
+    // An entrant's own word names the caller, whatever the body says. BOTH sides are keyed in the
+    // canonical form (`canonicalDeviceKey`: the user half trimmed and lowercased) before the cut, so
+    // an entrant's row and a member's report of the same entry pair whatever case either carried -
+    // never on the client's own canonicalisation.
+    const memberSaid =
+      typeof body.entrant === 'string'
+        ? (canonicalLeafIdentity(body.entrant.trim()) ?? body.entrant)
+        : body.entrant;
+    const entrant = ENTRANT_UNINVITED_ENTRY_KINDS.includes(kind)
+      ? sanitizeDevicePairLogValue(authUserId.trim().toLowerCase(), reporterDeviceId)
+      : sanitizeLeafLogValue(memberSaid);
     // `none` is the device's own answer (it holds no record of the group); `unstated` is a build
     // that does not send it; `-` is a kind the device decides without its record.
     const watchedFrom = !EVIDENCED_UNINVITED_ENTRY_KINDS.includes(kind)

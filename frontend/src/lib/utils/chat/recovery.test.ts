@@ -23,6 +23,10 @@ import { purgeLocalConversationRecord } from './groupActions';
 import { enumerateNotReadyGroups } from './notReadyRegistry';
 import { retireIfEvicted } from './eviction';
 import { isUnopenableHere, resetNoHolderReadings } from './noHolder.svelte';
+import {
+  resetReportedUninvitedEntries,
+  setUninvitedEntryReporter,
+} from '$lib/mls-client/uninvitedEntry';
 
 beforeEach(() => {
   vi.mocked(saveMlsState).mockClear();
@@ -248,6 +252,44 @@ describe('requestReAdd', () => {
     await requestReAdd('g1', deps);
 
     expect(onGroupReady).toHaveBeenCalledWith('g1');
+  });
+
+  describe("the entrant's own word for an entry no member made (admission fix-forward, slice 1)", () => {
+    const sent = vi.fn().mockResolvedValue(undefined);
+    beforeEach(() => {
+      sent.mockClear();
+      resetReportedUninvitedEntries();
+      setUninvitedEntryReporter(sent);
+    });
+    afterEach(() => setUninvitedEntryReporter(null));
+
+    it('reports a group entry by the seat reading that opened the door', async () => {
+      const deps = makeDeps();
+      deps.mlsService.getDeviceMemberships = vi
+        .fn()
+        .mockResolvedValue([membership('g1', 'active')]);
+      deps.mlsService.externalJoin = vi
+        .fn()
+        .mockResolvedValue({ joined: true, enteredWithNoLeafAtEpoch: 8 });
+
+      await requestReAdd('g1', deps);
+
+      expect(sent).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'entrant-not-pending', groupId: 'g1', epoch: 8 })
+      );
+    });
+
+    it('reports nothing for a join that entered on a leaf of its own account', async () => {
+      const deps = makeDeps();
+      deps.mlsService.getDeviceMemberships = vi
+        .fn()
+        .mockResolvedValue([membership('g1', 'active')]);
+      deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
+
+      await requestReAdd('g1', deps);
+
+      expect(sent).not.toHaveBeenCalled();
+    });
   });
 
   it('a join that does not land raises no group-ready', async () => {
@@ -578,6 +620,30 @@ describe('requestReAdd', () => {
         expect(deps.log).toHaveBeenCalledWith(
           expect.stringContaining('joining by itself in this pass (D1)')
         );
+      });
+
+      it("reports the entrant's own word when the D1 self-join lands on a tree with no leaf of the account", async () => {
+        // The account's other leaf went between the two bases: the self-join is then an entry no
+        // member made, and its members write `new-person` - so the entrant must say so too, or the
+        // admission gate would read zero on a legitimate producer (review of #4078).
+        // This pins the SEAM (an accepted join carrying the epoch is reported); it passes on the code
+        // before the fix too. The regression itself - the D1 join not reading the standing - is
+        // caught in `BaseMlsService.externalJoin.test.ts`.
+        const sent = vi.fn().mockResolvedValue(undefined);
+        resetReportedUninvitedEntries();
+        setUninvitedEntryReporter(sent);
+        try {
+          const deps = furtherThen(
+            { status: 'stored', selfJoin: true },
+            { joined: true, enteredWithNoLeafAtEpoch: 11 }
+          );
+          await requestReAdd('g1', deps);
+          expect(sent).toHaveBeenCalledWith(
+            expect.objectContaining({ kind: 'entrant-unhonoured-seat', groupId: 'g1', epoch: 11 })
+          );
+        } finally {
+          setUninvitedEntryReporter(null);
+        }
       });
 
       it('does not join when the ask was forwarded: the member online is the door', async () => {

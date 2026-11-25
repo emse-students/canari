@@ -107,6 +107,7 @@ import type {
   IncomingDeliveryMeta,
   OneDeviceAddResult,
 } from '$lib/mls-client/IMlsService';
+import type { ExternalJoinStanding } from '$lib/mls-client/externalJoinStanding';
 import type { SkippedDevice, SkippedKeyPackage } from '$lib/mls-client/skippedKeyPackage';
 import {
   DeviceTrustRefusedError,
@@ -6242,9 +6243,11 @@ export abstract class BaseMlsService implements IMlsService {
   protected abstract joinByExternalCommit(
     groupInfoBytes: Uint8Array
   ): Promise<{ groupId: string; commit: Uint8Array }>;
-  /** Whether an external commit on this GroupInfo would bring this device in as a FURTHER DEVICE
-   *  OF A MEMBER: its tree holds a leaf of this user and none of this device's own. */
-  protected abstract isFurtherDeviceIn(groupInfoBytes: Uint8Array): Promise<boolean>;
+  /** What an external commit on this GroupInfo would bring in, read off its tree: this device's
+   *  own leaf, a FURTHER DEVICE OF A MEMBER, or a user holding no leaf ({@link ExternalJoinStanding}). */
+  protected abstract externalJoinStandingIn(
+    groupInfoBytes: Uint8Array
+  ): Promise<ExternalJoinStanding>;
 
   /**
    * Runs one staged commit transaction under the MLS lock: stage (no merge) -> validate the epoch
@@ -8518,21 +8521,38 @@ export abstract class BaseMlsService implements IMlsService {
         // on THIS GroupInfo's tree - the one the commit would be built on and every member's verdict
         // reads - so an honest device never makes the entry a member says as nobody's. Read again on
         // every attempt: each one fetched a fresh base.
-        if (opts.asAFurtherDevice === 'ask') {
-          let further: boolean;
+        //
+        // THE SAME READ NAMES AN ENTRY NO MEMBER MADE (slice 1 of the admission fix-forward,
+        // docs/wiki/protocols/admission-fix-forward.md): a tree holding no leaf of this account is the
+        // commit every member's verdict calls `Uninvited`. It is read on EVERY conversation join,
+        // whatever the caller asked - the D1 further-device self-join included, whose fresh base may
+        // no longer hold the account's other leaf - so no call site can forget it, and a caller that
+        // shares another's flight gets it too. A key group is exempt: an external commit is how every
+        // member enters one. Nothing changes about the join - the standing travels to the caller with
+        // the accepted outcome, which reports it with what only the caller knows (the conversation's
+        // kind, the seat it read) as the entrant's own word.
+        let enteringWithNoLeaf = false;
+        if (opts.asAFurtherDevice === 'ask' || !this.isDistributionGroup(groupId)) {
+          let standing: ExternalJoinStanding;
           try {
-            further = await this.isFurtherDeviceIn(fromBase64(gi.groupInfo));
+            standing = await this.externalJoinStandingIn(fromBase64(gi.groupInfo));
           } catch (e) {
             console.warn(
               `[MLS] externalJoin ${short}... the served tree could not be read for the door: ${String(e).slice(0, 120)}`
             );
             return { joined: false, reason: 'build_failed' };
           }
-          if (further) {
+          if (standing === 'further-device' && opts.asAFurtherDevice === 'ask') {
             console.log(
               `[MLS] externalJoin ${short}... the tree holds this account's other device and not this one - not built, a member's Add is its door`
             );
             return { joined: false, reason: 'further_device' };
+          }
+          if (standing === 'no-leaf-of-user') {
+            console.log(
+              `[MLS] externalJoin ${short}... the served tree holds no leaf of this account - an entry no member made; will join as before, reported by the caller if accepted (admission fix-forward, slice 1)`
+            );
+            enteringWithNoLeaf = true;
           }
         }
 
@@ -8750,7 +8770,9 @@ export abstract class BaseMlsService implements IMlsService {
               `[MLS] externalJoin succeeded for ${joined.groupId.slice(0, 8)}... (base epoch ${gi.baseEpoch},` +
                 ` base for ${gi.baseEpoch + 1} stored with the commit)`
             );
-            return { joined: true };
+            return enteringWithNoLeaf
+              ? { joined: true, enteredWithNoLeafAtEpoch: gi.baseEpoch + 1 }
+              : { joined: true };
           }
 
           // REFUSED, and the server said WHY - both fields used to be dropped and the line called every

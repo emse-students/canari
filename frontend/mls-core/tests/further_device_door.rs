@@ -1,9 +1,9 @@
 //! The door an external join takes, and the member's notice of the commit it makes, read off ONE
-//! tree (2026-10-27): `external_join_is_a_further_device` on the joiner, and
+//! tree (2026-10-27): `external_join_standing` on the joiner, and
 //! `DeviceEvent::announces_new_device` on a member merging the commit. A further device of a member
 //! entering by its own commit is announced exactly like one a member added (owner, 2026-10-31): a
 //! first-sight new device, the owner's other devices alerted - never anything else.
-use mls_core::{DeviceEvent, LeafTrust, MlsManager};
+use mls_core::{DeviceEvent, ExternalJoinStanding, LeafTrust, MlsManager};
 
 fn device(user: &str, dev: &str) -> MlsManager {
     MlsManager::load_or_create(user, dev, None).unwrap_or_else(|e| panic!("{user}:{dev}: {e}"))
@@ -30,11 +30,9 @@ fn door_and_notice(
     alice: &mut MlsManager,
     joiner: &mut MlsManager,
     gid: &str,
-) -> (bool, Option<DeviceEvent>) {
+) -> (ExternalJoinStanding, Option<DeviceEvent>) {
     let info = alice.export_group_info(gid).expect("group info");
-    let further = joiner
-        .external_join_is_a_further_device(&info)
-        .expect("door");
+    let standing = joiner.external_join_standing(&info).expect("door");
     let (_g, commit) = joiner
         .join_by_external_commit(&info)
         .expect("external join");
@@ -45,15 +43,19 @@ fn door_and_notice(
         .take_device_events()
         .into_iter()
         .find(DeviceEvent::announces_new_device);
-    (further, announced)
+    (standing, announced)
 }
 
 #[test]
 fn a_further_device_of_a_member_is_announced_like_an_added_one() {
     let (mut alice, _bob) = conversation("g-further");
     let mut phone = device("bob", "dev2");
-    let (further, notice) = door_and_notice(&mut alice, &mut phone, "g-further");
-    assert!(further, "the door sees a further device");
+    let (standing, notice) = door_and_notice(&mut alice, &mut phone, "g-further");
+    assert_eq!(
+        standing,
+        ExternalJoinStanding::FurtherDevice,
+        "the door sees a further device"
+    );
     let notice = notice.expect("the entry is announced");
     assert_eq!(notice.trust, LeafTrust::FirstSight);
     assert!(notice.member_already_present);
@@ -77,8 +79,8 @@ fn a_device_whose_own_leaf_is_in_the_tree_takes_its_own_door() {
     // the changed key it is, as it always was.
     let (mut alice, _bob) = conversation("g-back");
     let mut bob_again = device("bob", "dev1");
-    let (further, notice) = door_and_notice(&mut alice, &mut bob_again, "g-back");
-    assert!(!further);
+    let (standing, notice) = door_and_notice(&mut alice, &mut bob_again, "g-back");
+    assert_eq!(standing, ExternalJoinStanding::OwnLeaf);
     assert_eq!(notice.map(|e| e.trust), Some(LeafTrust::KeyChanged));
 }
 
@@ -86,8 +88,12 @@ fn a_device_whose_own_leaf_is_in_the_tree_takes_its_own_door() {
 fn a_user_with_no_leaf_is_not_a_further_device_and_is_never_announced_as_one() {
     let (mut alice, _bob) = conversation("g-person");
     let mut carol = device("carol", "dev1");
-    let (further, notice) = door_and_notice(&mut alice, &mut carol, "g-person");
-    assert!(!further);
+    let (standing, notice) = door_and_notice(&mut alice, &mut carol, "g-person");
+    assert_eq!(
+        standing,
+        ExternalJoinStanding::NoLeafOfUser,
+        "the joiner names, before it builds, the entry its members will judge"
+    );
     assert!(
         notice.is_none(),
         "a new person is the uninvited-entry rule's"
@@ -114,8 +120,8 @@ fn a_device_that_left_is_a_further_device_again() {
         .expect("merge removal");
     alice.take_device_events();
     let mut dev2_again = device("bob", "dev2");
-    let (further, notice) = door_and_notice(&mut alice, &mut dev2_again, "g-left");
-    assert!(further);
+    let (standing, notice) = door_and_notice(&mut alice, &mut dev2_again, "g-left");
+    assert_eq!(standing, ExternalJoinStanding::FurtherDevice);
     assert_eq!(notice.map(|e| e.trust), Some(LeafTrust::KeyChanged));
 }
 
@@ -124,8 +130,8 @@ fn a_further_device_spelling_its_user_in_another_case_is_still_a_further_device(
     // The user half of an identity compares ignoring ASCII case, on both sides.
     let (mut alice, _bob) = conversation("g-case");
     let mut phone = device("BOB", "dev2");
-    let (further, notice) = door_and_notice(&mut alice, &mut phone, "g-case");
-    assert!(further);
+    let (standing, notice) = door_and_notice(&mut alice, &mut phone, "g-case");
+    assert_eq!(standing, ExternalJoinStanding::FurtherDevice);
     assert_eq!(notice.map(|e| e.trust), Some(LeafTrust::FirstSight));
 }
 

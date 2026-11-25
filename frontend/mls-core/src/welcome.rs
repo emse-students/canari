@@ -24,24 +24,29 @@ impl MlsManager {
             .map_err(|e| MlsError::OpenMls(e.to_string()))
     }
 
-    /// Whether an external commit built on this served GroupInfo would bring THIS device in as a
-    /// FURTHER DEVICE OF A MEMBER: its tree holds a leaf of this device's user, and none of this
-    /// device's own (2026-10-27).
+    /// What an external commit built on this served GroupInfo would bring in, read off its tree
+    /// (2026-10-27; three answers since 2026-11-25, the admission fix-forward's slice 1):
+    ///
+    /// - [`ExternalJoinStanding::OwnLeaf`]: the tree holds THIS device's own leaf - the commit
+    ///   replaces it (a device rejoining after losing its state);
+    /// - [`ExternalJoinStanding::FurtherDevice`]: a leaf of this device's USER and none of its own -
+    ///   a FURTHER DEVICE OF A MEMBER;
+    /// - [`ExternalJoinStanding::NoLeafOfUser`]: no leaf of the user at all - the entry no member
+    ///   made, which every member's `judge_external_commit` names `Uninvited`.
     ///
     /// THE SAME FACT A MEMBER'S `observe_merged_commit` READS, from the same tree (its
-    /// `member_already_present`): such a self-entry is announced there exactly like a device a
-    /// member added (`DeviceEvent::announces_new_device`, owner 2026-10-31). The further-device door
-    /// asks a member first, and joins by its own commit only when the server says no member device
-    /// is online. A device whose own leaf is in the tree replaces it (the observer sees the identity
-    /// in `before`), and a user with no leaf there enters as a person, which is the link's ask. Read
-    /// off the unverified tree: the commit built on it is verified by OpenMLS, and a tree that lies
-    /// would only make this device ask instead of join.
+    /// `member_already_present`): a further device entering by itself is announced there exactly
+    /// like a device a member added (`DeviceEvent::announces_new_device`, owner 2026-10-31), and a
+    /// user with no leaf is the entry the admission rule judges. So the joiner states, BEFORE it
+    /// builds, the very class its members will put the commit in - the discriminator carried to
+    /// where the decision is made. Read off the unverified tree: the commit built on it is verified
+    /// by OpenMLS, and a tree that lies only changes which door an honest device takes.
     ///
     /// Decided again on every attempt, since every retry fetches a fresh GroupInfo.
-    pub fn external_join_is_a_further_device(
+    pub fn external_join_standing(
         &self,
         group_info_bytes: &[u8],
-    ) -> Result<bool, MlsError> {
+    ) -> Result<ExternalJoinStanding, MlsError> {
         let info = match MlsMessageIn::tls_deserialize(&mut &group_info_bytes[..]) {
             Ok(msg_in) => match msg_in.extract() {
                 MlsMessageBodyIn::GroupInfo(gi) => gi,
@@ -62,11 +67,16 @@ impl MlsManager {
                 continue;
             };
             if crate::device_trust::same_identity(&identity, &own) {
-                return Ok(false);
+                return Ok(ExternalJoinStanding::OwnLeaf);
             }
             sibling |= crate::device_trust::same_user(&identity, &own);
         }
-        Ok(sibling)
+        // Said by the caller, which logs the standing with the group it is for (`externalJoin`).
+        Ok(if sibling {
+            ExternalJoinStanding::FurtherDevice
+        } else {
+            ExternalJoinStanding::NoLeafOfUser
+        })
     }
 
     /// Join a group via an external commit, using a GroupInfo served by the delivery service. Builds
@@ -376,5 +386,31 @@ impl MlsManager {
         self.mark_state_dirty();
 
         Ok(group_id)
+    }
+}
+
+/// What an external commit would bring into a group, read off the tree of the GroupInfo it is built
+/// on ([`MlsManager::external_join_standing`]): the joiner's own statement of the class every
+/// member's admission verdict will put the commit in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExternalJoinStanding {
+    /// The tree holds this device's own leaf: the commit replaces it.
+    OwnLeaf,
+    /// The tree holds a leaf of this device's user and none of its own: a further device of a
+    /// member.
+    FurtherDevice,
+    /// The tree holds no leaf of this device's user: an entry no member made.
+    NoLeafOfUser,
+}
+
+impl ExternalJoinStanding {
+    /// The wire word the WASM and Tauri bindings hand the TypeScript client
+    /// (`ExternalJoinStanding` in `IMlsService.ts`, read by `parseExternalJoinStanding`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::OwnLeaf => "own-leaf",
+            Self::FurtherDevice => "further-device",
+            Self::NoLeafOfUser => "no-leaf-of-user",
+        }
     }
 }
