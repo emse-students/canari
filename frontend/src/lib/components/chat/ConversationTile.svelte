@@ -7,7 +7,12 @@
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import { presenceMap, watchUsers, unwatchUsers } from '$lib/stores/presenceStore';
   import { extractMentionUserIds } from '$lib/utils/mentions';
-  import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
+  import {
+    getUserDisplayNameSync,
+    peekUserDisplayName,
+    resolveUserDisplayName,
+  } from '$lib/utils/users/displayName';
+  import { Log } from '$lib/utils/Log';
   import { noticeUserIds } from '$lib/utils/chat/noticeText';
   import { visibleNickname } from '$lib/utils/users/conversationNicknames.svelte';
   import { isCanonicalDirectKey } from '$lib/utils/chat/conversations';
@@ -172,6 +177,14 @@
     void Promise.all(nameIds.map((id) => resolveUserDisplayName(id))).then(() => {
       if (lastMessage !== raw) return;
       previewText = getPreviewText(parseEnvelope(raw));
+      // Resolution is over and a notice still has a name unknown: it failed, and the row keeps
+      // the writer-language stored sentence - the one case worth a line.
+      if (noticeIds.some((id) => peekUserDisplayName(id) === null)) {
+        Log.w(
+          'NOTICE_PREVIEW',
+          `list preview of a notice kept its stored sentence: a name did not resolve (${conversationId})`
+        );
+      }
     });
   });
 </script>

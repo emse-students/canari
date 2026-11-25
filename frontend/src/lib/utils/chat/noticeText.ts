@@ -11,8 +11,6 @@
  */
 import { m } from '$lib/paraglide/messages';
 import type { NoticeSpec } from '$lib/envelope';
-import { Log } from '$lib/utils/Log';
-import { peekUserDisplayName, resolveUserDisplayName } from '$lib/utils/users/displayName';
 
 /** Every user id the sentence names, in the order it names them. */
 export function noticeUserIds(spec: NoticeSpec): string[] {
@@ -66,37 +64,4 @@ export function noticeDisplayText(
     names.set(id, name);
   }
   return noticeText(spec, (id) => names.get(id) ?? '');
-}
-
-/** Notices whose preview already fell back to the stored sentence, so each is accused once a session. */
-const accusedPreviews = new Set<string>();
-
-/**
- * The sentence a notice shows in a LIST, QUOTE, SEARCH or NOTIFICATION line, from the one shared
- * name cache by default so no caller can forget to draw it in the reader's language (the chat list
- * read French on an English device while the bubble was drawn from the ids).
- *
- * When a person it names is not in the cache yet, the STORED sentence stands in, exactly as
- * {@link noticeDisplayText} does for the bubble (the writer drew it with the names it held, so a
- * cold cache never turns it into "Utilisateur inconnu"). That branch is a signal, not a path: it is
- * logged at warning level once per notice and session, and the missing names are resolved so the
- * next draw is localized.
- */
-export function noticePreviewText(
-  spec: NoticeSpec,
-  stored: string,
-  knownName: (userId: string) => string | null = peekUserDisplayName
-): string {
-  const unknown = noticeUserIds(spec).filter((id) => knownName(id) === null);
-  if (unknown.length === 0) return noticeDisplayText(spec, stored, knownName);
-  const key = `${spec.event}|${noticeUserIds(spec).join(',')}`;
-  if (!accusedPreviews.has(key)) {
-    accusedPreviews.add(key);
-    Log.w(
-      'NOTICE_PREVIEW',
-      `stored sentence shown for a ${spec.event} notice: ${unknown.length} name(s) not resolved yet`
-    );
-  }
-  for (const id of unknown) void resolveUserDisplayName(id).catch(() => undefined);
-  return stored;
 }

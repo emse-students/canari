@@ -7,9 +7,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 
+const unresolvable = vi.hoisted(() => new Set<string>());
 vi.mock('$lib/utils/users/displayName', () => ({
   getUserDisplayNameSync: (id: string) => `Name(${id})`,
-  peekUserDisplayName: (id: string) => `Name(${id})`,
+  peekUserDisplayName: (id: string) => (unresolvable.has(id) ? null : `Name(${id})`),
   resolveUserDisplayName: async (id: string) => `Name(${id})`,
 }));
 
@@ -22,6 +23,7 @@ import {
 } from '$lib/utils/chat/listPreview';
 import { m } from '$lib/paraglide/messages';
 import { setLocale } from '$lib/paraglide/runtime';
+import { Log } from '$lib/utils/Log';
 import { mkNoticeEnvelope, serializeEnvelope } from '$lib/envelope';
 
 let target: HTMLElement;
@@ -104,5 +106,25 @@ describe('previewContentOf - a device notice is never the preview', () => {
     } finally {
       setLocale('fr', { reload: false });
     }
+  });
+
+  it('logs a notice preview only when its names still do not resolve after resolution', async () => {
+    const warn = vi.spyOn(Log, 'w').mockImplementation(() => undefined);
+    const notice = (target: string) =>
+      serializeEnvelope(
+        mkNoticeEnvelope('stored', { event: 'memberAdded', actor: 'u-a', targets: [target] })
+      );
+    render(notice('u-ok'));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(warn).not.toHaveBeenCalled();
+    unmount(app!);
+    app = null;
+    unresolvable.add('u-lost');
+    render(notice('u-lost'));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(warn).toHaveBeenCalledTimes(1);
+    unresolvable.clear();
   });
 });

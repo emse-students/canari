@@ -27,12 +27,13 @@ describe('the preview of a notice row, whichever caller asks', () => {
     expect(getPreviewText(env)).toBe('Ana added Ben to the group');
   });
 
-  it('keeps the stored sentence for an unknown name, accuses it once, and resolves the name', () => {
+  it('is a PURE draw: many notices with unknown ids cost no fetch and no log', () => {
     const warn = vi.spyOn(Log, 'w').mockImplementation(() => undefined);
-    const env = mkNoticeEnvelope('stored', { ...spec, targets: ['u-new'] });
-    expect(getPreviewText(env)).toBe('stored');
-    expect(getPreviewText(env)).toBe('stored');
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(resolve).toHaveBeenCalledWith('u-new');
+    for (let n = 0; n < 200; n++) {
+      const env = mkNoticeEnvelope(`stored ${n}`, { ...spec, targets: [`u-new-${n}`] });
+      expect(getPreviewText(env)).toBe(`stored ${n}`);
+    }
+    expect(resolve).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
   });
 });
