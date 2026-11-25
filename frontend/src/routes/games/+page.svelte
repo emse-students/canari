@@ -228,7 +228,12 @@
           </p>
         </div>
       </div>
-      <Button href={resolve('/games/play')} class="shrink-0">{m.games_play()}</Button>
+      <div class="flex shrink-0 items-center gap-2">
+        <Button href={resolve('/games/tutorial')} variant="ghost">
+          {m.minesweeper_tutorial_open()}
+        </Button>
+        <Button href={resolve('/games/play')}>{m.games_play()}</Button>
+      </div>
     </section>
 
     <section class="space-y-3">

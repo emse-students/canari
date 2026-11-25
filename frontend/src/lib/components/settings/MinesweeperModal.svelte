@@ -1300,6 +1300,13 @@
           <h2 class="text-cn-dark text-base font-semibold">{m.minesweeper_settings()}</h2>
         </div>
         <div class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3 sm:p-4">
+          <!-- The tutorial is a page: leaving for it ends this game, like the close button does. -->
+          <a
+            href={resolve('/games/tutorial')}
+            class="ms-tile text-text-main rounded-lg px-3 py-3 text-sm font-semibold"
+          >
+            {m.minesweeper_tutorial_open()}
+          </a>
           <button
             type="button"
             role="switch"

@@ -15,6 +15,7 @@ it can be cleared without guessing, with a ranked leaderboard checked by server-
 | Per-cell diff behind the render | `frontend/src/lib/minesweeper/cellViews.ts`, `MinesweeperCell.svelte` |
 | The bulb of an unranked game (client only) | `frontend/src/lib/minesweeper/hint.ts` |
 | The unranked levels (client only) | `frontend/src/lib/minesweeper/levels.ts` |
+| The tutorial (page, lessons, mini-grid) | `frontend/src/routes/games/tutorial/+page.svelte`, `frontend/src/lib/minesweeper/tutorial/`, `frontend/src/lib/components/games/MinesweeperMiniGrid.svelte` |
 | Challenge issue, replay, scores | `apps/social-service/src/minesweeper/minesweeper.service.ts` |
 
 ## The screen is the board (2026-10-07)
@@ -121,6 +122,47 @@ level generates with its own target; the picker gone after the first dig; a rank
 challenge as before and generates with the ranked target whatever Libre last used). **Owed:** the phone
 reading ([reading](../../backlog.d/reading-owed-the-minesweeper-hint.md)), and the first-dig time of Expert on
 a phone, unchanged from ranked.
+
+## The tutorial (owner, 2026-11-25)
+
+*"une section tutoriel qui explique le fonctionnement du demineur avec des mini-grilles ... les regles, les
+mecaniques de base, miner, poser un drapeau, mais aussi une partie plus avancee qui explique le chording, et
+les patterns les plus courants (1-2-1, 1-2-2-1 etc.)"*, and *"un bouton d'indications (entourer en jaune des
+groupes de cases ...) fais quelque chose de vraiment explicatif, mais en montrant"* (owner). `/games/tutorial`
+is an ordinary page (it keeps the shell), reached from the Games page and from the game's settings sheet.
+
+**It is the real game in small.** A lesson's grid is a PICTURE in text (`tutorial/layout.ts`: `#` hidden mine,
+`.` hidden safe, `F` a flag that is a premise, `0`-`8` a revealed number); `boardFromLayout` builds the engine's
+own `MinesweeperBoard` with its mines placed, so the mini-grid plays on `revealCell`, `toggleFlag` and the chord
+and draws with the game's own `MinesweeperCell` - what the tutorial teaches is what the game does. **A digit that
+lies about its neighbours throws**, so a wrong picture cannot reach a player.
+
+| Lesson | Teaches | Picture |
+| --- | --- | --- |
+| Reveal | open a cell, what a number and a 0 mean (a gesture: the target is lit from the start) | 5x4, hidden |
+| Flag | a 1 with one hidden neighbour; Drapeau mode, right-click | 3x3 |
+| Chording | a number with all its flags opens the rest in one tap (the flags are the premise) | 3x3 |
+| 1-1 | two neighbouring 1s share cells: the extra one is safe | 4x2 against the edge |
+| 1-2-1 | the middle is safe, both sides are mines | 3x2 |
+| 1-2-2-1 | the two middle cells are mines, the ends are safe | 4x2 |
+
+**The "Indice" button** walks the lesson's authored steps (`HintStep`): each rings the NUMBER(S) the reasoning
+reads (`highlight: 'hint'`, the bulb's own ring) and tints the hidden cells they speak about (`highlight:
+'group'`, a softer ring with no glow, added to `MinesweeperCell`), and the sentence under the grid says what to
+conclude. It cycles step 1, 2, 3, then hides. It is authored, not computed: a step explains a pattern, and the
+order a person reads it in is a teaching choice (the in-game bulb, `hint.ts`, computes the next certain move on
+a real board instead).
+
+**Every lesson is PROVED** (`tutorial/lessons.test.ts`), not read: the test enumerates every arrangement of the
+hidden cells that the visible numbers allow and requires that **the cells a lesson asks to open are safe in all
+of them, the cells it asks to flag are mines in all of them, and that nothing the numbers force is left
+unasked** - the goal IS what the picture forces. A hint step must read a revealed number and speak about cells
+that number touches. `lessonDone` also refuses a lucky flag beside the right ones: the point is the deduction.
+
+**Pinned:** `layout.test.ts`, `lessons.test.ts`, `MinesweeperMiniGrid.svelte.test.ts` (tap, flag, right-click, a
+chord in either mode, a mine ends the lesson, solved ONCE, what a hint lights), `routes/games/tutorial/page.svelte.test.ts`
+(the lessons chain to a closing screen that leads to a game, the hint cycle, restart, Back to `/games`).
+**Owed:** the phone reading ([reading](../../backlog.d/reading-owed-the-minesweeper-hint.md), items 11 and 12).
 
 ## The bulb: a hint in an unranked game (owner, 2026-11-25)
 
