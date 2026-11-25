@@ -3978,6 +3978,30 @@ two writers and the inflated overflow can produce it; the exported log's INFO li
 with no finger on the pane` would name it if it survives). The reading is
 [backlog](../../backlog.d/reading-owed-a-dm-opens-at-its-end-in-one-render.md).
 
+#### The trace of the passes inside a glide (2026-11-25)
+
+**Why.** iPhone 12, iOS 27.0.1, 1.8.2-alpha.1: an IMAGE arriving at a pinned DM drops the pane
+150-230 px 45-70 ms after the row is added, reach unchanged (Reduce Motion OFF 6 of 6, ON 0 of 2, short
+and 12-line texts 0 of 3 each). The glide and an image row are both necessary; which step lowers
+`scrollTop` is not known: (a) WebKit's native anchoring on the transform cancel, (b) a clamp against a
+transient content size, (c) a stale `held.px` replayed. Code reading does not prove (c): the replay is
+a transform and writes no `scrollTop`. Backlog:
+[the entry](../../backlog.d/an-image-arrival-drops-a-pinned-dm-on-the-iphone.md).
+
+**What is written** (`GlideTrace` in `threadGrowthObserver.ts`): **INFO only with the fall line, nothing at
+pass time** - every ordinary message makes a glide, so a line per pass would be noise forever. The
+`follow()` passes that start or find a glide wait in a ring of `GLIDE_TRACE_MAX_LINES` (8, older ones
+counted), with the `scroll` moves after the last pass (a passive listener armed for the glide only:
+ms into the glide and `scrollTop` delta, the async case, no forced layout). When the pane's
+measurement finds a fall inside a glide, `ChatArea` prints them right after the `left the bottom`
+line (`describeGlideFall`), e.g. `glide pass 2 (box, +55ms): top/height/box previous end 910/1310/400,
+suspended 910/1430/400, pinned 1030/1430/400; held 70px with 53px left; follow-bottom, new travel 0px,
+replay 70px at 55ms`. `top/height/box` is `scrollTop/scrollHeight/clientHeight`, read only where the
+layout is clean (`suspended`, after the transforms are cancelled; `pinned`, after the pin and before
+the replay). Native anchoring (a) moves `top` at `suspended` with the height unchanged; a clamp (b)
+with a shrunk height; stable pass numbers and a later scroll move are (b) or an engine move outside
+the passes - not "nothing found"; (c) is only a visual offset. The fall line carries NO "now top/height/box": the scroll-move lines carry the top. A glide cancelled by a pass whose replay is refused is an end too (`endUnreplayed`: the trace listener is disarmed and `onGlideEnd` fires). Pinned by `threadGlide.test.ts`.
+
 #### Rows before ratchet: a checkpoint stores the buffered rows first (2026-11-17)
 
 **The defect (P1, second review of #3321).** A live drain decrypts each frame and holds its row in
@@ -8170,9 +8194,18 @@ person's AND the aliases `conversation_self_search_aliases` ("notes", "mes notes
 `matchesSelfConversationAlias`, `selfConversationMatchesQuery`, and the picker filter). No avatar
 means the usual initials. The own name is read REACTIVELY like a DM peer's (`userDisplayName` in the row and the header; the pickers ask for it through `missingPeerNameIds` and `peerNames`), so a late or renamed profile repaints them without a reload. Tests: `selfConversationName.test.ts`.
 
-**The list.** `Sidebar` pins one row at the top (own avatar and name, see above)
-and the subtitle "Visible uniquement sur vos appareils". It is drawn even before the group exists;
-a tap opens the held row or calls `openSelfConversation`. A row of a self group built while its kind
+**The list (owner, 2026-11-25).** The row (own avatar and name, see above, and the subtitle "Visible
+uniquement sur vos appareils") is NOT pinned: it sits in the one recency-sorted list
+(`compareConversationRecency`, the same search filter) like every other conversation, so a newer DM
+is above it and an older one below. **A device that holds no Notes conversation yet** draws one
+placeholder entry AFTER the list (it has no recency; the first tap creates it, `openSelfConversation`),
+so it stays discoverable without jumping above real activity; it is searchable by the same aliases.
+A tap on a held row opens it. The earlier pin at the top was wrongly attributed to the owner (see
+[the decision](../../decisions/owner-decisions-of-2026-11-25.md)). Covered by
+`Sidebar.selfRow.svelte.test.ts`. The share-destination pickers (`shareDestinations.ts`) never
+pinned it: they rank by their own recency, unchanged. Only ONE self row is drawn (the first held,
+non-removed one), and the "no discussion found" message is not shown beside the placeholder of a
+search. A row of a self group built while its kind
 could not be read (a Welcome whose group read failed makes a `group` row) is re-typed by the next
 listing (`retaggedAsSelf` in the `known` branch of `ensureConversationForServerGroup`). The share
 pickers draw it the same way (`ConversationPickList`).

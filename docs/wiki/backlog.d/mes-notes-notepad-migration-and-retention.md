@@ -4,7 +4,7 @@ target: 1.8.2
 
 *2026-11-25: moved forward from `1.9.0` to `1.8.2` by the owner ([decisions](../decisions/owner-decisions-of-2026-11-25.md), item 3).*
 
-The conversation itself is built: the server kind `self` (chat-delivery migration 056), the pinned
+The conversation itself is built: the server kind `self` (chat-delivery migration 056), the
 row, the header, the refusals, the capability that keeps it from older builds, and the single-device
 loss notice ([chat](../frontend/modules/chat.md#mes-notes---the-conversation-with-oneself-2026-11-22)).
 What the owner decided on 2026-11-22 ([decisions](../decisions/owner-decisions-of-2026-11-22.md)) and is NOT built:

@@ -1,7 +1,10 @@
 // @vitest-environment happy-dom
+import { Log } from '$lib/utils/Log';
 import {
   attachThreadRide,
   createThreadGlide,
+  describeGlideFall,
+  GLIDE_TRACE_MAX_LINES,
   glideTravel,
   observeThreadGrowth,
   takeThreadGlideOff,
@@ -437,5 +440,161 @@ describe('createThreadGlide', () => {
   it('a new arrival glides from the held offset plus its own row', () => {
     expect(glideTravel(null, 70)).toBe(70);
     expect(glideTravel({ px: 70, remaining: 35, time: 110 }, 70)).toBe(105);
+  });
+});
+
+/**
+ * THE SILENT, BOUNDED TRACE OF `follow()` PASSES INSIDE A GLIDE (iPhone 12 image arrival, chat.md):
+ * nothing is written at pass time; a fall inside a glide reads the buffered passes and scroll moves.
+ */
+describe('observeThreadGrowth - the trace of the passes inside a glide', () => {
+  const traceLogs = (spies: ReturnType<typeof vi.spyOn>[]) =>
+    spies.flatMap((s) => s.mock.calls.filter((call: unknown[]) => call[0] === 'threadGrowth'));
+  const spyAll = () => [vi.spyOn(Log, 'i'), vi.spyOn(Log, 'w')];
+
+  it('writes NOTHING at pass time, whatever the passes: arrival, second pass, end of the glide', async () => {
+    const spies = spyAll();
+    const { scroller, layout, layoutReach, addRow } = makeThread(Array(20).fill(60), 400);
+    scroller.scrollTop = layoutReach();
+    const stop = observeThreadGrowth(scroller, atBottom);
+    expect(describeGlideFall(scroller)).toBeNull(); // no glide, no pass
+    addRow(70);
+    await flush();
+    now = 55;
+    layout.heights[layout.heights.length - 1] += 120;
+    fireResize();
+    now = 400;
+    for (const a of live()) a.finishListeners.forEach((l) => l());
+    expect(traceLogs(spies)).toHaveLength(0);
+    expect(spies[0]).not.toHaveBeenCalled();
+    expect(describeGlideFall(scroller)).toBeNull(); // the glide ended: no fall to blame on it
+    stop();
+    spies.forEach((s) => s.mockRestore());
+  });
+
+  it('a fall inside the glide gets the buffered passes, read at clean points, with the cached previous end', async () => {
+    const { scroller, layout, layoutReach, addRow } = makeThread(Array(20).fill(60), 400);
+    scroller.scrollTop = layoutReach();
+    const stop = observeThreadGrowth(scroller, atBottom);
+    addRow(70);
+    await flush();
+    now = 55;
+    layout.heights[layout.heights.length - 1] += 120; // the image took its size
+    fireResize();
+    const lines = describeGlideFall(scroller) ?? [];
+    expect(lines).toHaveLength(3);
+    expect(lines[0]).toMatch(
+      /^the fall came inside a glide of 70px, 55ms in; 2 follow pass\(es\) and 0 scroll move\(s\)/
+    );
+    expect(lines[1]).toMatch(
+      /^glide pass 1 \(rows, \+0ms\): top\/height\/box previous end none, suspended \d+\/\d+\/400, pinned \d+\/\d+\/400; held none;/
+    );
+    expect(lines[2]).toMatch(
+      /^glide pass 2 \(box, \+55ms\): .*previous end 910\/1310\/400, suspended 910\/1430\/400, pinned 1030\/1430\/400; held 70px with 53px left; .*replay 70px at 55ms$/
+    );
+    stop();
+  });
+
+  it("a scroll move after the last pass (the async case) is buffered with its delta; the pin's own is not", async () => {
+    const { scroller, layoutReach, addRow } = makeThread(Array(20).fill(60), 400);
+    scroller.scrollTop = layoutReach();
+    const stop = observeThreadGrowth(scroller, atBottom);
+    addRow(70);
+    await flush();
+    now = 20;
+    scroller.dispatchEvent(new Event('scroll')); // the pin's own event: top is where the pass left it
+    now = 60;
+    scroller.scrollTop = layoutReach() - 180;
+    scroller.dispatchEvent(new Event('scroll'));
+    const lines = describeGlideFall(scroller) ?? [];
+    expect(lines[0]).toContain('1 follow pass(es) and 1 scroll move(s)');
+    expect(lines[lines.length - 1]).toMatch(/^glide scroll move \+60ms: top \d+ \(-180\)$/);
+    // The listener is armed for the glide only: once it ends a scroll records nothing.
+    now = 400;
+    for (const a of live()) a.finishListeners.forEach((l) => l());
+    await flush();
+    scroller.scrollTop = 0;
+    scroller.dispatchEvent(new Event('scroll'));
+    expect(describeGlideFall(scroller)).toBeNull();
+    stop();
+  });
+
+  it('keeps the last passes in a ring of the cap, counts the dropped ones exactly, and a new glide starts over', async () => {
+    const { scroller, layoutReach, addRow } = makeThread(Array(20).fill(60), 400);
+    scroller.scrollTop = layoutReach();
+    const stop = observeThreadGrowth(scroller, atBottom);
+    addRow(70);
+    await flush();
+    const extra = GLIDE_TRACE_MAX_LINES + 4;
+    for (let i = 0; i < extra; i++) {
+      now = 10 + i;
+      fireResize();
+    }
+    const lines = describeGlideFall(scroller) ?? [];
+    expect(lines).toHaveLength(1 + GLIDE_TRACE_MAX_LINES);
+    expect(lines[0]).toContain(`${extra + 1} follow pass(es) (5 older dropped)`);
+    expect(lines[1]).toMatch(/^glide pass 6 /);
+
+    now = 1000;
+    for (const a of live()) a.finishListeners.forEach((l) => l());
+    addRow(70);
+    await flush();
+    const again = describeGlideFall(scroller) ?? [];
+    expect(again[0]).toContain('1 follow pass(es) and 0 scroll move(s)');
+    stop();
+  });
+
+  it('counts only the passes it recorded: a refused replay is not a pass', async () => {
+    const { scroller, addRow, layoutReach } = makeThread(Array(20).fill(60), 400);
+    scroller.scrollTop = layoutReach();
+    const stop = observeThreadGrowth(scroller, atBottom);
+    addRow(70);
+    await flush();
+    // The motion tokens stop resolving: the replay of the next pass is refused (play false).
+    document.documentElement.style.removeProperty('--motion-thread-glide');
+    now = 30;
+    const warn = vi.spyOn(Log, 'w').mockImplementation(() => {});
+    fireResize();
+    warn.mockRestore();
+    expect(describeGlideFall(scroller)).toBeNull(); // the glide was cancelled and not replayed
+    stop();
+  });
+
+  it('a glide cancelled and not replayed is an end: the listener is disarmed and onGlideEnd fires once', async () => {
+    const { scroller, addRow, layoutReach } = makeThread(Array(20).fill(60), 400);
+    scroller.scrollTop = layoutReach();
+    const ended = vi.fn();
+    const stop = observeThreadGrowth(scroller, atBottom, null, undefined, ended);
+    addRow(70);
+    await flush();
+    expect(ended).not.toHaveBeenCalled();
+    document.documentElement.style.removeProperty('--motion-thread-glide');
+    const warn = vi.spyOn(Log, 'w').mockImplementation(() => {});
+    now = 30;
+    fireResize(); // suspend cancels the glide, play is refused
+    warn.mockRestore();
+    expect(ended).toHaveBeenCalledTimes(1);
+    // Disarmed: a scroll after the end records nothing, and there is no glide to blame anyway.
+    scroller.scrollTop = 0;
+    scroller.dispatchEvent(new Event('scroll'));
+    expect(describeGlideFall(scroller)).toBeNull();
+    stop();
+  });
+
+  it('peek reads the running glide without touching it', async () => {
+    const { scroller, layoutReach, addRow } = makeThread(Array(20).fill(60), 400);
+    scroller.scrollTop = layoutReach();
+    const glide = createThreadGlide(scroller);
+    expect(glide.peek()).toBeNull();
+    glide.play(80);
+    now = 44;
+    const before = live().length;
+    expect(glide.peek()).toEqual({ px: 80, time: 44 });
+    expect(glide.peek()).toEqual({ px: 80, time: 44 });
+    expect(live()).toHaveLength(before);
+    expect(animations.every((a) => !a.cancelled)).toBe(true);
+    now = 300; // past its end with no finish delivered: nothing is drawn
+    expect(glide.peek()).toBeNull();
+    void addRow;
   });
 });

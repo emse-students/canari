@@ -54,7 +54,7 @@
     paneGeometryLine,
     type NewMessageResponse,
   } from '$lib/utils/chat/threadAnchor';
-  import { observeThreadGrowth } from '$lib/utils/chat/threadGrowthObserver';
+  import { describeGlideFall, observeThreadGrowth } from '$lib/utils/chat/threadGrowthObserver';
   import { trackTouchHold, type TouchHold } from '$lib/utils/chat/touchHold';
   import { trackReaderInput, type ReaderInput } from '$lib/utils/chat/readerInput';
   import {
@@ -1071,6 +1071,9 @@
             `${keyboardTransitionMoving() ? ' moving' : ' at rest'})`
         );
       }
+      // INSIDE A GLIDE the fall also prints the glide's buffered `follow()` passes and scroll moves
+      // (iPhone 12, an image arriving): the only INFO lines of that trace, so an ordinary arrival writes none.
+      for (const line of describeGlideFall(c) ?? []) Log.i('ChatArea', line);
     }
     if (response === 'put-back') {
       spentKeyboardTransition = transitions;
