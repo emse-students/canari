@@ -1,6 +1,8 @@
 ## Reading owed - a DM thread keeps its end after a return to the app with the keyboard up: ten iPhone returns (2026-11-23)
 
-target: 1.8.0
+target: 1.8.1
+
+_2026-11-25: moved to 1.8.1 when 1.8.0 shipped._
 
 **Fixed in code ([chat](../frontend/modules/chat.md#the-keyboard-comes-back-with-the-app-2026-11-23)); what is owed is the reading that closes it: ten home-button returns on the iPhone 12, below.** The history the fix was read from follows.
 

@@ -1,0 +1,5 @@
+## The owner's decisions of 2026-11-25
+
+Recorded so no question answered here is asked again.
+
+1. **"@tous" mentions every member of a group or a community salon, in `1.8.2`** (owner, 2026-11-25, the day `1.8.0` shipped). Today a mention names one person (one `@[uuid]` token per member); there was no way to call a whole conversation. Where: groups AND community salons. Who may write it: in a group every member (everyone in a group is equal); in a community salon admins and moderators only (a member must not wake a whole year group). Notification: it counts as a mention - a member at "Mentions" is notified, "Aucune" still silences everything. The server sees nothing: the device recognises the reserved token after decrypting, so the restriction is enforced on both ends (the composer, and every receiving device against the roster it holds). Charter principle 1, *your messages are yours* ([principes](../../principes.md)): the server learns nothing new. Where: [the entry](../backlog.d/mention-everyone-in-groups-and-salons.md).

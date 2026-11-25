@@ -1,6 +1,8 @@
 ## Reading owed - the "update Android System WebView" screen on an old engine (owner, 2026-11-21)
 
-target: 1.8.0
+target: 1.8.1
+
+_2026-11-25: moved to 1.8.1 when 1.8.0 shipped._
 
 _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 

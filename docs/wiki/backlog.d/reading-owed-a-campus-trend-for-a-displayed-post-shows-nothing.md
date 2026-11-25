@@ -1,6 +1,8 @@
 ## Reading owed - a campus trend for a post this device already displayed shows nothing, on both phones (2026-11-24)
 
-target: 1.8.0
+target: 1.8.1
+
+_2026-11-25: moved to 1.8.1 when 1.8.0 shipped._
 
 **Built and compiled, never run on a device** ([engagement](../engagement.md#a-campus-trend-for-a-post-this-device-already-displayed-shows-nothing-2026-11-24); owner decision of 2026-11-24, [decisions](../decisions/owner-decisions-of-2026-11-24.md); charter principles 1 and 3). The web and the bell are covered by tests; the Rust writer and the Kotlin rule run their tests in CI; **the Kotlin service hook, the iOS extension, `canari_push.mm` and the iOS App Group copy are verified by COMPILING only, which proves nothing about running.** What is owed is the reading below on BOTH bench phones, on a build carrying this change.
 
