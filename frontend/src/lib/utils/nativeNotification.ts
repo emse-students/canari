@@ -30,6 +30,7 @@
 import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion';
 import type { ConversationType } from '$lib/types';
 import { selfConversationTitle } from '$lib/utils/chat/conversations';
+import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 import type { AnnouncedMessage } from '$lib/utils/chat/announcedMessages';
 
 /**
@@ -394,7 +395,7 @@ export function notificationGroupName(
   if (conversationType === 'direct') return '';
   if (conversationType === 'channel') return name || contactName;
   // "Mes notes" is titled with the reader's own name and a localized suffix.
-  if (conversationType === 'self') return selfConversationTitle(selfUserId);
+  if (conversationType === 'self') return selfConversationTitle(getUserDisplayNameSync(selfUserId));
   return groupTitle || contactName || name;
 }
 

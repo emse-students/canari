@@ -20,6 +20,7 @@
   import Avatar from '../shared/Avatar.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
   import { presenceMap, watchUsers, unwatchUsers } from '$lib/stores/presenceStore';
+  import { selfConversationTitle } from '$lib/utils/chat/conversations';
   import { userDisplayName } from '$lib/utils/users/displayNames.svelte';
   import { openProfile } from '$lib/utils/users/profileHref';
   import { isAbsentUser } from '$lib/utils/users/absentUsers';
@@ -236,8 +237,15 @@
     () => groupId
   );
 
+  /** "Mes notes" is titled with the own name, read reactively like a peer's (late or renamed). */
+  const ownName = userDisplayName(() => (isSelfConversation ? currentUserId : ''));
+
   const effectiveDisplayName = $derived(
-    !isGroupConversation && !isChannel && !isSelfConversation ? peerName.current : displayName
+    isSelfConversation
+      ? selfConversationTitle(ownName.current || displayName)
+      : !isGroupConversation && !isChannel
+        ? peerName.current
+        : displayName
   );
 
   const pillLabel = $derived(

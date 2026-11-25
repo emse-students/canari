@@ -382,6 +382,7 @@
 
   <ConversationPickList
     bind:query
+    currentUserId={host.userId()}
     class="flex min-h-0 flex-1 flex-col gap-2 px-3 pt-3"
     listClass="-mx-1 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain px-1 pb-3"
     searchPlaceholder={m.reel_sendto_search()}

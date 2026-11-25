@@ -6,6 +6,21 @@
  */
 import { describe, it, expect, afterEach, afterAll, vi } from 'vitest';
 
+// The own profile name, which a test makes arrive AFTER the first render.
+const ownProfile = vi.hoisted(() => ({ resolve: (_name: string) => {} }));
+vi.mock('$lib/utils/users/displayName', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('$lib/utils/users/displayName')>();
+  return {
+    ...actual,
+    resolveUserDisplayName: (id: string) =>
+      id === 'me'
+        ? new Promise<string>((resolve) => {
+            ownProfile.resolve = resolve;
+          })
+        : actual.resolveUserDisplayName(id),
+  };
+});
+
 // Same import-cycle break as `Sidebar.creationRefusal.svelte.test.ts`.
 vi.mock('$lib/stores/globalChatSingleton.svelte', async () => ({
   appendLog: () => {},
@@ -63,6 +78,15 @@ describe('the "Mes notes" row', () => {
     expect(selfRow()?.textContent).toContain('(Notes)');
     expect(selfRow()?.textContent).not.toContain('Mes notes');
     expect(selfRow()?.querySelector('svg.lucide-bookmark')).toBeNull();
+  });
+
+  it('repaints when the own profile name arrives after the first render', async () => {
+    mountSidebar(vi.fn());
+    expect(selfRow()?.textContent).not.toContain('Camille DUPONT');
+    ownProfile.resolve('Camille DUPONT');
+    await new Promise((r) => setTimeout(r, 0));
+    flushSync();
+    expect(selfRow()?.textContent).toContain('Camille DUPONT (Notes)');
   });
 
   it('is not drawn without the handler - the logged-out preview', () => {

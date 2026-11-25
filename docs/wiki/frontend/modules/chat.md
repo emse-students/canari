@@ -8055,10 +8055,10 @@ same), so the server's `kind` is carried to every place a row is born - `ensureC
 **The name (owner, 2026-11-25, `1.8.1`).** The row no longer says "Mes notes" with a Bookmark: it is
 the account's OWN avatar and "Prenom NOM (Notes)" (`selfConversationTitle`, the name from the one
 resolver, the suffix `conversation_self_named` in fr/en), in the row, the header, the share pickers
-and the notification (`notificationGroupName`'s `selfUserId`). The search matches the own name like a
+and the notification (`notificationGroupName`, `selfUserId`). The search matches the own name like a
 person's AND the aliases `conversation_self_search_aliases` ("notes", "mes notes", "my notes";
 `matchesSelfConversationAlias`, `selfConversationMatchesQuery`, and the picker filter). No avatar
-means the usual initials. Tests: `selfConversationName.test.ts`.
+means the usual initials. The own name is read REACTIVELY like a DM peer's (`userDisplayName` in the row and the header; the pickers ask for it through `missingPeerNameIds` and `peerNames`), so a late or renamed profile repaints them without a reload. Tests: `selfConversationName.test.ts`.
 
 **The list.** `Sidebar` pins one row at the top (own avatar and name, see above)
 and the subtitle "Visible uniquement sur vos appareils". It is drawn even before the group exists;

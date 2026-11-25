@@ -21,7 +21,6 @@
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Input from '$lib/components/ui/Input.svelte';
-  import { currentUserId } from '$lib/stores/user';
   import type { PickerSection, ShareCandidate } from '$lib/sharing/shareDestinations';
 
   /**
@@ -37,6 +36,8 @@
     searchLabel: string;
     /** Extra attributes on the search field (a test hook). */
     searchAttrs?: Record<string, string>;
+    /** The signed-in account, whose avatar draws "Mes notes". */
+    currentUserId: string;
     sections: PickerSection[];
     /** Said in place of the sections when they hold no row. */
     emptyText: string;
@@ -69,6 +70,7 @@
     searchPlaceholder,
     searchLabel,
     searchAttrs = {},
+    currentUserId,
     sections,
     emptyText,
     emptyAttrs = {},
@@ -137,7 +139,7 @@
               />
             {:else if cand.conversation.conversationType === 'self'}
               <div data-self-conversation-icon>
-                <Avatar userId={currentUserId() ?? ''} size="md" fallbackLabel={cand.label} />
+                <Avatar userId={currentUserId} size="md" fallbackLabel={cand.label} />
               </div>
             {:else if cand.conversation.conversationType === 'channel'}
               <div class="text-text-muted flex h-8 w-8 shrink-0 items-center justify-center">

@@ -31,6 +31,7 @@ import {
   selfConversationTitle,
   toConversationMeta,
 } from './conversations';
+import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 import { ensureConversationForServerGroup } from './serverGroupConversation';
 import { createSelfConversation, devicesKnowingSelf } from './groupCreation';
 import { readSelfConversationDeviceCover } from './selfConversationLossNotice';
@@ -84,7 +85,7 @@ describe('the row of "Mes notes"', () => {
     expect(pres).toEqual({
       conversationType: 'self',
       contactId: SELF_GROUP,
-      displayName: selfConversationTitle(ME),
+      displayName: selfConversationTitle(getUserDisplayNameSync(ME)),
       displayNameResolved: true,
     });
   });

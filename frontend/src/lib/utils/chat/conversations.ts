@@ -126,10 +126,11 @@ export function toConversationMeta(
 
 /**
  * The title of "Mes notes": the account's OWN name followed by a localized suffix, "Prenom NOM
- * (Notes)" (owner, 2026-11-25). The name is the one resolver's, the one a DM peer gets.
+ * (Notes)" (owner, 2026-11-25). `ownName` is the one resolver's, the one a DM peer gets: a caller that
+ * redraws reads it reactively (`userDisplayName`) so a late or renamed profile repaints the title.
  */
-export function selfConversationTitle(userId: string): string {
-  return m.conversation_self_named({ name: getUserDisplayNameSync(userId) });
+export function selfConversationTitle(ownName: string): string {
+  return m.conversation_self_named({ name: ownName });
 }
 
 /**
@@ -724,7 +725,7 @@ export function resolveConversationListPresentation(
     return {
       conversationType: 'self',
       contactId: input.id,
-      displayName: selfConversationTitle(userId),
+      displayName: selfConversationTitle(getUserDisplayNameSync(userId)),
       displayNameResolved: true,
     };
   }

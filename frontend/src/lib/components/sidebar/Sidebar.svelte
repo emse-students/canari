@@ -1,5 +1,6 @@
 <script lang="ts">
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
+  import { userDisplayName } from '$lib/utils/users/displayNames.svelte';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { previewContentOf } from '$lib/utils/chat/listPreview';
   import { untrack } from 'svelte';
@@ -437,7 +438,9 @@
       ({ convo }) => convo.conversationType === 'self' && convo.lifecycle !== 'removed'
     ) ?? null
   );
-  const selfTitle = $derived(selfConversationTitle(currentUserId));
+  /** The own name is read reactively like a DM peer's, so a late or renamed profile repaints the row. */
+  const ownName = userDisplayName(() => (onOpenSelfConversation ? currentUserId : ''));
+  const selfTitle = $derived(selfConversationTitle(ownName.current));
   const selfRowShown = $derived(
     Boolean(onOpenSelfConversation) &&
       selfConversationMatchesQuery(
