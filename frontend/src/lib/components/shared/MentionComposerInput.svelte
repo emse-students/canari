@@ -527,12 +527,14 @@
   /**
    * @public - Force-clears the editor's DOM immediately without waiting for reactive prop propagation.
    *
-   * It NEVER WRITES `value`. A write here made the field's text a local override of the parent's
-   * prop, and the next text the parent loaded was lost to it: after a send, "Modifier" put the
-   * banner up with an EMPTY field (owner, 2026-11-25, web; measured on dev - an edit begun after a
-   * send showed nothing, one begun after typing anything else, or after cancelling, showed the
-   * text). The parent clears its own text when it sends, so the prop is the one writer; the DOM
-   * follows it through the effect above.
+   * It NEVER WRITES `value`. Measured on Svelte 5.59.1: when the parent's text is a `$derived` over
+   * a SvelteMap (`messaging.draftFor`) and this write lands AFTER the parent's own clear (`submit`
+   * sends, which deletes the draft, and only then clears the field), the override survives and the
+   * next text the parent loads is lost to it - "Modifier" right after a send showed the banner over
+   * an empty field (owner, 2026-11-25, web; measured on dev). Plain `$state`, a `$derived` of
+   * `$state` and a proxy release it, which is why only the map-backed parent shows it. The parent
+   * clears its own text when it sends, so the prop is the one writer; the DOM follows it through
+   * the effect above.
    */
   export function clearEditor() {
     if (!editorEl) return;
