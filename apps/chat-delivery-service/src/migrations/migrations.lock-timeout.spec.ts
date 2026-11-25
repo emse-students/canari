@@ -21,18 +21,19 @@ const LOCKS_QUEUE =
   /^\s*(ALTER\s+TABLE\s+queued_message|CREATE\s+(UNIQUE\s+)?INDEX[^;]*\bON\s+queued_message\b|DROP\s+INDEX)/im;
 
 describe('a migration that locks queued_message', () => {
-  it.each(['034_queued_payload.sql', '035_queued_message_addressed.sql'])(
-    '%s sets a lock_timeout before it locks the table',
-    (name) => {
-      const sql = read(name);
-      const timeout = sql.search(/^\s*SET\s+lock_timeout\s*=\s*'\d+s'\s*;/im);
-      const lock = sql.search(LOCKS_QUEUE);
+  it.each([
+    '034_queued_payload.sql',
+    '035_queued_message_addressed.sql',
+    '058_queued_message_delivery_ran.sql',
+  ])('%s sets a lock_timeout before it locks the table', (name) => {
+    const sql = read(name);
+    const timeout = sql.search(/^\s*SET\s+lock_timeout\s*=\s*'\d+s'\s*;/im);
+    const lock = sql.search(LOCKS_QUEUE);
 
-      expect(lock).toBeGreaterThanOrEqual(0);
-      expect(timeout).toBeGreaterThanOrEqual(0);
-      expect(timeout).toBeLessThan(lock);
-    }
-  );
+    expect(lock).toBeGreaterThanOrEqual(0);
+    expect(timeout).toBeGreaterThanOrEqual(0);
+    expect(timeout).toBeLessThan(lock);
+  });
 
   it('034 builds its queued_message index CONCURRENTLY, partial, after dropping an INVALID leftover', () => {
     const sql = read('034_queued_payload.sql');

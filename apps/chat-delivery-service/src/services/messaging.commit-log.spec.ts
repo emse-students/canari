@@ -259,7 +259,22 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         MessagingService,
-        { provide: getRepositoryToken(QueuedMessage), useValue: emptyRepo() },
+        {
+          provide: getRepositoryToken(QueuedMessage),
+          // A carried Welcome's delivery claims its stored row first (`claimQueuedDelivery`), in a
+          // transaction of its own: no delivery of it ran yet.
+          useValue: {
+            ...emptyRepo(),
+            manager: {
+              transaction: async (cb: (m: unknown) => Promise<unknown>) =>
+                cb({
+                  query: jest.fn(async (sql: string) =>
+                    sql.includes('FOR UPDATE') ? [{ deliveryRan: false }] : []
+                  ),
+                }),
+            },
+          },
+        },
         { provide: getRepositoryToken(GroupMember), useValue: groupMemberRepo },
         { provide: getRepositoryToken(Group), useValue: groupRepo },
         { provide: getRepositoryToken(KeyPackage), useValue: keyPackageRepo },
