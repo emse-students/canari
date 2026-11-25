@@ -100,6 +100,15 @@ export class QueuedMessage {
   @Column({ type: 'boolean', default: false })
   addressed: boolean;
 
+  /**
+   * Whether a delivery of this row (its live publish, or its push) RAN and committed - claimed by
+   * the transaction that publishes it, so a second delivery of the same row waits for the first and
+   * then publishes nothing (`claimQueuedDelivery`, migration 058). Only a Welcome's delivery reads
+   * and writes it: a re-send of the same Welcome finds the row still queued.
+   */
+  @Column({ type: 'boolean', default: false })
+  deliveryRan: boolean;
+
   @CreateDateColumn()
   createdAt: Date;
 }
