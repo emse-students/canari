@@ -2508,9 +2508,9 @@ export function useConversations() {
   }
 
   /**
-   * Opens "Mes notes", creating it the first time (`createSelfConversation`). The row is pinned at
-   * the top of the list whether or not this device holds it yet, so this is the one gesture behind
-   * it. Forwards the outcome: `self-conversation-arriving` is said to the reader, not swallowed.
+   * Opens "Mes notes", creating it the first time (`createSelfConversation`). The row is drawn in
+   * the list whether or not this device holds it yet, so this is the one gesture behind it.
+   * Forwards the outcome: `self-conversation-arriving` is said to the reader, not swallowed.
    */
   async function openSelfConversation(ctx: ConversationContext): Promise<ConversationOutcome> {
     ctx.log('[SELF] open requested');
