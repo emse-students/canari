@@ -47,3 +47,13 @@ with a longer video, whose encode takes over 2 s, so that Home lands inside the 
 `interrupted` lines, then `back in view: preparing it again` and ONE `published`, are read.
 
 **2026-11-25, `1.8.1-alpha.2` part 2 (iPhone 12): row (2) PASS 4/4 on the interrupted path - row (2) is closed on both phones.** A 24.6 s clip (encode 2.6-2.8 s), Home 0.8-1.05 s after the second "Publier": each run logged `[video-prep] the encoder stopped while the app was out of view: interrupted, not failed` and `[PUBLISH-QUEUE] ... interrupted as the app left the view: kept`, was prepared again on return, and published ONCE. **Still owed:** row (3), "Envoyer a..." with a conversation ticked, on the Mi.
+
+**2026-11-25, `1.8.1-alpha.3` (Mi 9T): row (3) NOT yet read as written - the sitting took the send-only
+path.** "Envoyer a..." with only a conversation ticked, Home 1 s after the send, back after ~75 s: the
+take was prepared while hidden, its upload stalled (`UploadStalledError`, session kept), resumed in the
+same session on return, and ONE `[OUTBOX] ... sent` - the send-only path survives a leave. But row (3) is
+the feed AND chats path (15.5): "Publier" with a conversation ticked, where the publish step uploads the
+file and the chat take ADOPTS it (`ReelCapture.svelte`'s `chatTake`). The `adopts` named above is that
+mechanism, not a literal log line. **Still owed, Mi 9T:** "Publier" with one conversation ticked, Home
+mid-upload, back after a minute: ONE upload (the `[PUBLISH-QUEUE]` one; the `[OUTBOX]` take starts no
+upload of its own), ONE card in the feed, ONE bubble that plays.
