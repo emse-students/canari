@@ -171,10 +171,25 @@ elif "$plant" == "offline":
 else:
     PolicyBinding.objects.create(target=Flow.objects.get(slug="miconnect-profile-write"), user=other, order=99)
 PY
-  if bash "$here/editor-reach.sh" "$here/blueprints/80-profile-editor.yaml" "$worker" >/dev/null 2>&1; then
-    echo "::error::editor-reach.sh did not report a planted $plant - the daily check would miss one"
+  # RED FOR THE RIGHT REASON: the plant's own FINDING line, never a bare non-zero exit, which a crash
+  # (a no-verdict) would also give.
+  case "$plant" in
+    grant) expected='FINDING  role .* holds the object permission authentik_core.change_user on one object' ;;
+    write) expected='FINDING  event .*: model_deleted of authentik_core.user through DELETE ' ;;
+    patch) expected='FINDING  event .*: model_updated of authentik_core.user through PATCH ' ;;
+    token) expected='FINDING  the account holds 2 token\(s\), not exactly its own one' ;;
+    binding) expected='FINDING  the write flow carries 2 policy binding\(s\), not exactly the editors. group' ;;
+    refresh) expected='FINDING  provider miconnect-migallery of gated application migallery allows the refresh_token grant' ;;
+    offline) expected='FINDING  provider miconnect-migallery of gated application migallery carries an offline_access scope mapping' ;;
+  esac
+  reach_status=0
+  reach_output="$(bash "$here/editor-reach.sh" "$here/blueprints/80-profile-editor.yaml" "$worker" 2>&1)" || reach_status=$?
+  if [ "$reach_status" -eq 0 ] || ! grep -Eq "$expected" <<<"$reach_output"; then
+    printf '%s\n' "$reach_output"
+    echo "::error::editor-reach.sh did not report a planted $plant by its own FINDING (exit $reach_status) - the daily check would miss one"
     exit 1
   fi
+  echo "planted $plant: reported ($(grep -Eo -m 1 "$expected" <<<"$reach_output"))"
   run_ak_shell "$worker" >/dev/null 2>&1 <<PY
 from authentik.core.models import Token, User
 from authentik.events.models import Event
