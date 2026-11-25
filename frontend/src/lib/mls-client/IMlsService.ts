@@ -197,7 +197,17 @@ export type ExternalJoinOutcome =
    * the MLS lock was taken - a Welcome installed it while the caller's recovery was on its way - so
    * the caller stands down: the path that installed it owns everything after (review of #2466).
    */
-  | { joined: true; alreadyHeld?: true }
+  | {
+      joined: true;
+      alreadyHeld?: true;
+      /**
+       * Set only when THIS call's commit was accepted and the tree it was built on held no leaf of
+       * this account (`no-leaf-of-user`, read under `asAFurtherDevice: 'ask'`): the epoch that
+       * commit created - the entry every member reports as `[UNINVITED_ENTRY]`, which the caller
+       * reports too, as the entrant (`reportOwnUninvitedEntry`).
+       */
+      enteredWithNoLeafAtEpoch?: number;
+    }
   /** No base has been published on the group yet - nobody has initialised its MLS group. */
   | { joined: false; reason: 'no_base_published' }
   /**

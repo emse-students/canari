@@ -27,6 +27,10 @@ import type {
   GraineRunReading,
   MlsBatchProcessResult,
 } from '$lib/mls-client/IMlsService';
+import {
+  parseExternalJoinStanding,
+  type ExternalJoinStanding,
+} from '$lib/mls-client/externalJoinStanding';
 import type { AuthorVerdict } from '$lib/crypto/messageAuthorship';
 import {
   loadAndInitWasm,
@@ -1506,9 +1510,11 @@ export class WebMlsService extends BaseMlsService {
     return this.client.export_group_info(groupId) as Uint8Array;
   }
 
-  /** WASM client wrapper - `external_join_is_a_further_device`. */
-  protected async isFurtherDeviceIn(groupInfoBytes: Uint8Array): Promise<boolean> {
-    return this.client.external_join_is_a_further_device(groupInfoBytes);
+  /** WASM client wrapper - `external_join_standing`. */
+  protected async externalJoinStandingIn(
+    groupInfoBytes: Uint8Array
+  ): Promise<ExternalJoinStanding> {
+    return parseExternalJoinStanding(this.client.external_join_standing(groupInfoBytes));
   }
 
   /** WASM client wrapper - builds an external commit from a served GroupInfo and stages it. Returns

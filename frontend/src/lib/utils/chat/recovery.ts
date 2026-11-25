@@ -27,6 +27,7 @@ import { dropGroupState } from './dropGroupState';
 import { holdsGroupState } from './groupUsability';
 import { readWelcomeOwedFromRow, type WelcomeOwedReading } from './welcomeOwed';
 import { getTabLeadership } from '$lib/mls-client/tabLeader';
+import { classifyOwnUninvitedEntry, reportOwnUninvitedEntry } from '$lib/mls-client/uninvitedEntry';
 import { isNeverAdmitted } from './admissionState';
 import { readGroupSweepSnapshot } from './groupSweep';
 import { noteNoHolderReading, readNoHolder, releaseHiddenOnceActive } from './noHolder.svelte';
@@ -902,6 +903,18 @@ export async function requestReAdd(
   if (outcome.joined) {
     ownKeyPackageLogged.delete(groupId);
     deps.log(`[READD] ${groupId.slice(0, 8)}... rejoined via external commit (self-service)`);
+    // AN ENTRY NO MEMBER MADE, SAID BY THE ENTRANT (slice 1 of the admission fix-forward,
+    // docs/wiki/protocols/admission-fix-forward.md). The join read the served tree and found no leaf
+    // of this account; only this seam knows which legitimate path brought it here - the
+    // conversation's kind and the seat reading that opened the door - so it says so, once.
+    if (outcome.enteredWithNoLeafAtEpoch !== undefined) {
+      reportOwnUninvitedEntry(
+        groupId,
+        `${deps.userId}:${deps.mlsService.getDeviceId()}`,
+        outcome.enteredWithNoLeafAtEpoch,
+        classifyOwnUninvitedEntry(meta.isGroup, reading)
+      );
+    }
     clearGroupNotReady(deps.userId, groupId);
     cancelReAdd(groupId);
     // THE ROSTER SEAT IS A WORK ITEM, AND JOINING BY OURSELVES DOES NOT CLEAR IT. `pending` is what

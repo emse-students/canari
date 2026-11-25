@@ -23,6 +23,10 @@ import { purgeLocalConversationRecord } from './groupActions';
 import { enumerateNotReadyGroups } from './notReadyRegistry';
 import { retireIfEvicted } from './eviction';
 import { isUnopenableHere, resetNoHolderReadings } from './noHolder.svelte';
+import {
+  resetReportedUninvitedEntries,
+  setUninvitedEntryReporter,
+} from '$lib/mls-client/uninvitedEntry';
 
 beforeEach(() => {
   vi.mocked(saveMlsState).mockClear();
@@ -248,6 +252,44 @@ describe('requestReAdd', () => {
     await requestReAdd('g1', deps);
 
     expect(onGroupReady).toHaveBeenCalledWith('g1');
+  });
+
+  describe("the entrant's own word for an entry no member made (admission fix-forward, slice 1)", () => {
+    const sent = vi.fn().mockResolvedValue(undefined);
+    beforeEach(() => {
+      sent.mockClear();
+      resetReportedUninvitedEntries();
+      setUninvitedEntryReporter(sent);
+    });
+    afterEach(() => setUninvitedEntryReporter(null));
+
+    it('reports a group entry by the seat reading that opened the door', async () => {
+      const deps = makeDeps();
+      deps.mlsService.getDeviceMemberships = vi
+        .fn()
+        .mockResolvedValue([membership('g1', 'active')]);
+      deps.mlsService.externalJoin = vi
+        .fn()
+        .mockResolvedValue({ joined: true, enteredWithNoLeafAtEpoch: 8 });
+
+      await requestReAdd('g1', deps);
+
+      expect(sent).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'entrant-not-pending', groupId: 'g1', epoch: 8 })
+      );
+    });
+
+    it('reports nothing for a join that entered on a leaf of its own account', async () => {
+      const deps = makeDeps();
+      deps.mlsService.getDeviceMemberships = vi
+        .fn()
+        .mockResolvedValue([membership('g1', 'active')]);
+      deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
+
+      await requestReAdd('g1', deps);
+
+      expect(sent).not.toHaveBeenCalled();
+    });
   });
 
   it('a join that does not land raises no group-ready', async () => {

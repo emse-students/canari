@@ -1698,20 +1698,21 @@ pub(crate) fn exporter_group_info(
         .map_err(|e| e.to_string())
 }
 
-/// Whether an external commit built on this GroupInfo would bring this device in as a FURTHER
-/// DEVICE OF A MEMBER (`MlsManager::external_join_is_a_further_device`).
+/// What an external commit built on this GroupInfo would bring in - `own-leaf`, `further-device`
+/// or `no-leaf-of-user` (`MlsManager::external_join_standing`).
 #[tauri::command]
-pub(crate) async fn mls_external_join_is_a_further_device(
+pub(crate) async fn mls_external_join_standing(
     group_info_bytes: Vec<u8>,
     state: tauri::State<'_, AppState>,
-) -> Result<bool, String> {
+) -> Result<String, String> {
     let lock = state
         .mls_manager
         .lock()
         .map_err(|_| "Failed to lock state")?;
     let manager = lock.as_ref().ok_or("MLS Manager not initialized")?;
     manager
-        .external_join_is_a_further_device(&group_info_bytes)
+        .external_join_standing(&group_info_bytes)
+        .map(|standing| standing.as_str().to_string())
         .map_err(|e| e.to_string())
 }
 

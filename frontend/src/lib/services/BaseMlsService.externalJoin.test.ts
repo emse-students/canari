@@ -80,7 +80,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     refreshGroupInfo: vi.fn().mockResolvedValue(null),
     forgetGroup: vi.fn(),
     // The door read off the served tree; asked only by a join passing `asAFurtherDevice: 'ask'`.
-    isFurtherDeviceIn: vi.fn().mockResolvedValue(false),
+    externalJoinStandingIn: vi.fn().mockResolvedValue('own-leaf'),
     ...keyPackageWaitFields(),
     ...overrides,
   };
@@ -430,7 +430,7 @@ describe('BaseMlsService.externalJoin', () => {
     ).call(ctx, groupId, askOpts);
 
   it('asks a member instead of joining when the served tree holds another device of the user', async () => {
-    const ctx = makeCtx({ isFurtherDeviceIn: vi.fn().mockResolvedValue(true) });
+    const ctx = makeCtx({ externalJoinStandingIn: vi.fn().mockResolvedValue('further-device') });
     ctx.delivery.fetchGroupInfo.mockResolvedValue({
       groupInfo: 'AA==',
       baseEpoch: 5,
@@ -438,14 +438,17 @@ describe('BaseMlsService.externalJoin', () => {
     });
 
     expect(await joinAsking(ctx, 'g')).toEqual({ joined: false, reason: 'further_device' });
-    expect(ctx.isFurtherDeviceIn).toHaveBeenCalledWith(new Uint8Array([0]));
+    expect(ctx.externalJoinStandingIn).toHaveBeenCalledWith(new Uint8Array([0]));
     expect(ctx.joinByExternalCommit).not.toHaveBeenCalled();
     expect(ctx.delivery.submitCommit).not.toHaveBeenCalled();
   });
 
   it('decides the door again on a retry, against the fresh GroupInfo', async () => {
-    const isFurtherDeviceIn = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
-    const ctx = makeCtx({ isFurtherDeviceIn });
+    const externalJoinStandingIn = vi
+      .fn()
+      .mockResolvedValueOnce('own-leaf')
+      .mockResolvedValueOnce('further-device');
+    const ctx = makeCtx({ externalJoinStandingIn });
     ctx.delivery.fetchGroupInfo
       .mockResolvedValueOnce({ groupInfo: 'AA==', baseEpoch: 5, activeEpoch: 5 })
       .mockResolvedValueOnce({ groupInfo: 'AQ==', baseEpoch: 6, activeEpoch: 6 });
@@ -456,13 +459,15 @@ describe('BaseMlsService.externalJoin', () => {
     });
 
     expect(await joinAsking(ctx, 'g')).toEqual({ joined: false, reason: 'further_device' });
-    expect(isFurtherDeviceIn).toHaveBeenNthCalledWith(2, new Uint8Array([1]));
+    expect(externalJoinStandingIn).toHaveBeenNthCalledWith(2, new Uint8Array([1]));
     expect(ctx.joinByExternalCommit).toHaveBeenCalledTimes(1);
   });
 
   it('reports a build failure, without joining, when the served tree cannot be read', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const ctx = makeCtx({ isFurtherDeviceIn: vi.fn().mockRejectedValue(new Error('no tree')) });
+    const ctx = makeCtx({
+      externalJoinStandingIn: vi.fn().mockRejectedValue(new Error('no tree')),
+    });
     ctx.delivery.fetchGroupInfo.mockResolvedValue({
       groupInfo: 'AA==',
       baseEpoch: 5,
@@ -475,7 +480,7 @@ describe('BaseMlsService.externalJoin', () => {
   });
 
   it('does not read the door for a join that did not ask (a key group)', async () => {
-    const ctx = makeCtx({ isFurtherDeviceIn: vi.fn().mockResolvedValue(true) });
+    const ctx = makeCtx({ externalJoinStandingIn: vi.fn().mockResolvedValue('further-device') });
     ctx.delivery.fetchGroupInfo.mockResolvedValue({
       groupInfo: 'AA==',
       baseEpoch: 5,
@@ -484,7 +489,51 @@ describe('BaseMlsService.externalJoin', () => {
     ctx.delivery.submitCommit.mockResolvedValue({ accepted: true, newEpoch: 6 });
 
     expect(await externalJoin(ctx, 'g')).toEqual({ joined: true });
-    expect(ctx.isFurtherDeviceIn).not.toHaveBeenCalled();
+    expect(ctx.externalJoinStandingIn).not.toHaveBeenCalled();
+  });
+
+  // Slice 1 of the admission fix-forward: the entrant names its own entry no member made, at the
+  // throw, and NOTHING about the join changes.
+  it('joins as before on a tree holding no leaf of the account, and names the epoch its entry created', async () => {
+    const ctx = makeCtx({ externalJoinStandingIn: vi.fn().mockResolvedValue('no-leaf-of-user') });
+    ctx.delivery.fetchGroupInfo.mockResolvedValue({
+      groupInfo: 'AA==',
+      baseEpoch: 5,
+      activeEpoch: 5,
+    });
+    ctx.delivery.submitCommit.mockResolvedValue({ accepted: true, newEpoch: 6 });
+
+    expect(await joinAsking(ctx, 'g')).toEqual({ joined: true, enteredWithNoLeafAtEpoch: 6 });
+    expect(ctx.joinByExternalCommit).toHaveBeenCalledTimes(1);
+    expect(ctx.delivery.submitCommit).toHaveBeenCalledTimes(1);
+  });
+
+  it('names no entry when the commit carrying it was refused', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const ctx = makeCtx({ externalJoinStandingIn: vi.fn().mockResolvedValue('no-leaf-of-user') });
+    ctx.delivery.fetchGroupInfo.mockResolvedValue({
+      groupInfo: 'AA==',
+      baseEpoch: 5,
+      activeEpoch: 5,
+    });
+    ctx.delivery.submitCommit.mockResolvedValue({ accepted: false, reason: 'not_a_member' });
+
+    const outcome = await joinAsking(ctx, 'g');
+    expect(outcome.joined).toBe(false);
+    expect(outcome).not.toHaveProperty('enteredWithNoLeafAtEpoch');
+    vi.restoreAllMocks();
+  });
+
+  it('names no entry for a device whose own leaf is in the tree', async () => {
+    const ctx = makeCtx();
+    ctx.delivery.fetchGroupInfo.mockResolvedValue({
+      groupInfo: 'AA==',
+      baseEpoch: 5,
+      activeEpoch: 5,
+    });
+    ctx.delivery.submitCommit.mockResolvedValue({ accepted: true, newEpoch: 6 });
+
+    expect(await joinAsking(ctx, 'g')).toEqual({ joined: true });
   });
 
   it('reports a build failure separately from an absent base', async () => {

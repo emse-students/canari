@@ -34,16 +34,46 @@ import type { DeviceEvent, MembershipEvidence } from './deviceTrust';
  */
 export type UninvitedEntryKind = 'new-person' | 'returning' | 'direct-peer' | 'unvouched-device';
 
+/**
+ * The ENTRANT'S OWN WORD for an entry no member made (slice 1 of the admission fix-forward,
+ * `docs/wiki/protocols/admission-fix-forward.md`): what the device that let itself in - its tree
+ * holding no leaf of its account (`no-leaf-of-user`) - knew when it decided to commit. Classified at
+ * the throw, from facts only that device holds, so the count can say WHICH legitimate path produced
+ * each entry its members report, and the gate that re-arms the refusal can be read off it.
+ *
+ * The group classes are the seat reading that opened the door (`requestReAdd`), named as it is -
+ * a fact, not a guess at the path; the wiki page maps each to the producers it can be.
+ *
+ * - `entrant-direct-peer`: a 1:1 conversation - the peer whose KeyPackage was skipped at creation,
+ *   or whose only device went. The emission side never asks there: the 1:1 IS that peer.
+ * - `entrant-unhonoured-seat`: a group conversation, this device's row `pending` with nobody owing
+ *   it a Welcome - a seat whose KeyPackage was skipped by the Add that wrote it, a seat written
+ *   before migration 038, a device row demoted out of `active`.
+ * - `entrant-not-pending`: a group conversation, this device's row `active` - a device that was IN
+ *   the group and lost its only leaf while its row stood (the evicted-only-leaf path).
+ * - `entrant-no-device-row`: a group conversation, the ACCOUNT seated and this device holding no row
+ *   - a new device of a user whose every leaf went (the revoked-and-swept path).
+ */
+export type EntrantEntryKind =
+  | 'entrant-direct-peer'
+  | 'entrant-unhonoured-seat'
+  | 'entrant-not-pending'
+  | 'entrant-no-device-row';
+
 export interface UninvitedEntryReport {
-  /** Sent as the server's `kind=` field, so the count separates the three. */
-  kind: UninvitedEntryKind;
+  /**
+   * Sent as the server's `kind=` field, so the count separates the classes. A member's
+   * {@link UninvitedEntryKind}, or the entrant's own {@link EntrantEntryKind} - whose `entrant` the
+   * server takes from the authenticated caller, never from the body.
+   */
+  kind: UninvitedEntryKind | EntrantEntryKind;
   groupId: string;
   /** The admitted leaf, `userId:deviceId` - the user half canonical. */
   entrant: string;
   /** The epoch the entering commit created. */
   epoch: number;
-  /** Which key entered (`DeviceEvent.keyFingerprint`). */
-  keyFingerprint: string;
+  /** Which key entered (`DeviceEvent.keyFingerprint`); absent from the entrant's own report. */
+  keyFingerprint?: string;
   /**
    * For `returning` and `new-person`: the first epoch this device's record of the group covers
    * (`MembershipEvidence.watchedFromEpoch`), `null` when it holds none. The evidence separating a
@@ -113,5 +143,52 @@ export function reportUninvitedEntry(
   }
   void reporter(report).catch((e: unknown) => {
     console.warn(`[MLS] UNINVITED ENTRY report failed: ${String(e)}`);
+  });
+}
+
+/**
+ * The entrant's class of its own entry, from the two facts it decided the join on. PURE.
+ *
+ * @param isGroup the conversation row's `isGroup` (a 1:1 is `false`), read, never defaulted.
+ * @param seat the reading of this device's seat that opened the self-service door: only these
+ *   three ever reach an external join (`requestReAdd`).
+ */
+export function classifyOwnUninvitedEntry(
+  isGroup: boolean,
+  seat: 'unhonoured-seat' | 'not-pending' | 'no-device-row'
+): EntrantEntryKind {
+  if (!isGroup) return 'entrant-direct-peer';
+  return `entrant-${seat}`;
+}
+
+/**
+ * Reports THIS DEVICE'S OWN entry no member made, once per app session: its external commit into a
+ * conversation was ACCEPTED on a tree holding no leaf of its account
+ * (`ExternalJoinOutcome.enteredWithNoLeafAtEpoch`). Same table, same key as its members' reports -
+ * `(group, entrant, epoch)` - so each `[UNINVITED_ENTRY] kind=new-person` row pairs with the
+ * entrant's own `entrant-*` row for the same entry, and an unpaired one is an entry no client at
+ * this build made (an older build, a lost report, or a client that is not ours).
+ *
+ * Logged as what it is - a legitimate path today, counted - never at a level that accuses: the
+ * members' reports accuse, and this one explains.
+ */
+export function reportOwnUninvitedEntry(
+  groupId: string,
+  self: string,
+  epoch: number,
+  kind: EntrantEntryKind
+): void {
+  console.log(
+    `[MLS] own entry with no leaf of this account group=${groupId.slice(0, 8)} epoch=${epoch} kind=${kind} - reported for the admission fix-forward's count`
+  );
+  const key = `${groupId}|${self}|${epoch}|own`;
+  if (reported.has(key)) return;
+  reported.add(key);
+  if (!reporter) {
+    console.warn('[MLS] own uninvited entry not reported: no reporter is wired');
+    return;
+  }
+  void reporter({ kind, groupId, entrant: self, epoch }).catch((e: unknown) => {
+    console.warn(`[MLS] own uninvited entry report failed: ${String(e)}`);
   });
 }
