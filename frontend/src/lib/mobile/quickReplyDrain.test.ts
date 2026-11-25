@@ -114,6 +114,16 @@ describe('a quick reply handed to the page is never lost, never sent twice, neve
     expect(store.file()).toHaveLength(1);
   });
 
+  it('says the replies wait only when the native side announced one (owner log, 2026-11-25)', async () => {
+    vi.mocked(appendLog).mockClear();
+    // A front edge knows nothing of the file: no line naming replies that may not be there.
+    await drainNativeQuickReplies('the app is in front');
+    expect(vi.mocked(appendLog)).not.toHaveBeenCalled();
+    await drainNativeQuickReplies('the native side says a reply waits', true);
+    expect(vi.mocked(appendLog)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(appendLog).mock.calls[0][0]).toContain('the replies wait in their file');
+  });
+
   it('takes only the signed-in account replies (A2)', async () => {
     setNativeQuickReplySender(as(async () => 'sent'));
     await settle();
@@ -359,6 +369,23 @@ describe('Android: the banner follows the page, and a dead page is settled befor
     await settle();
     await drainNativeQuickReplies('event');
     expect(store.take).not.toHaveBeenCalled();
+  });
+
+  it('drains ONCE per return to the front, whichever of its two signals comes first', async () => {
+    setNativeQuickReplySender(as(async () => 'sent'));
+    await settle();
+    const stop = listenForNativeQuickReplies();
+    const before = vi.mocked(store.take).mock.calls.length;
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+    window.dispatchEvent(new CustomEvent('canari:foreground', { detail: { foreground: false } }));
+    // One edge back to the front, announced by both the page and the shell.
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+    window.dispatchEvent(new CustomEvent('canari:foreground', { detail: { foreground: true } }));
+    await settle();
+    stop();
+    expect(vi.mocked(store.take).mock.calls.length - before).toBe(1);
   });
 
   it('drains a put-back reply on the activity coming back to the front (canari:foreground)', async () => {
