@@ -64,7 +64,9 @@ describe('LEVEL_SPECS', () => {
     }
     expect(mean.beginner).toBeLessThan(mean.intermediate);
     expect(mean.intermediate).toBeLessThan(mean.expert);
-  });
+    // Nine generations, three of them the ranked board's climb: seconds on a slow machine or a loaded
+    // commit hook, so the budget is as generous as the other generation tests of this module.
+  }, 60_000);
 });
 
 describe('the level picker and its stored choice', () => {
