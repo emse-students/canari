@@ -1,8 +1,8 @@
 ## Reading owed - the Minesweeper levels and bulb read well on a phone (2026-11-25)
 
-target: 1.8.1
+target: 1.8.2
 
-_The bulb ships in 1.8.2 (owner, 2026-11-25); a reading names the earliest planned version, so this moves to 1.8.2 with the others when 1.8.1 ships._
+_The bulb and the levels ship in 1.8.2 (owner, 2026-11-25); moved to 1.8.2 when 1.8.1 shipped._
 
 **Built and tested in jsdom, never seen on a device** ([bulb](../frontend/modules/minesweeper.md#the-bulb-a-hint-in-an-unranked-game-owner-2026-11-25), [levels](../frontend/modules/minesweeper.md#three-levels-in-an-unranked-game-owner-2026-11-25); owner decisions of 2026-11-25, items 6 and 7). What the hint DEDUCES is pinned by `hint.test.ts`; what no gate here sees is how the highlight reads on a real board.
 
