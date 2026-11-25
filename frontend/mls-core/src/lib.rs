@@ -28,6 +28,7 @@ mod external_join_pending_tests;
 
 // Re-export MlsManager at crate root so that `mls_core::MlsManager` continues to work.
 pub use admission::{AdmissionPolicy, AdmissionVerdict, judge_external_commit};
+pub use app_ledgers::KEPT_FRAME_PREFIX;
 pub use device_trust::{DeviceEvent, LeafTrust};
 pub use graine_run::{CommitSummary, GraineRun, GraineRunReading};
 pub use member_sightings::MembershipEvidence;

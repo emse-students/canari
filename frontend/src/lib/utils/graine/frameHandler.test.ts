@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import protobuf from 'protobufjs';
 import type { IStorage, StoredGraineSession } from '$lib/db/types';
+import { UnhandleableFrameError } from '$lib/mls-client/keptKeyGroupFrames';
 import { canari } from '$lib/proto/canari';
 import { addressedKeyMaterial } from '$lib/mls-client/frameDelivery';
 import {
@@ -2625,26 +2626,19 @@ describe('a bundle answering our own request (WP-33)', () => {
 });
 
 /**
- * WHAT AN UNDECODABLE FRAME DOES, AND THE ANSWER IS CARRIED BY RETURNING RATHER THAN BY A VALUE.
+ * WHAT AN UNDECODABLE FRAME DOES: IT IS UNHANDLEABLE FOR GOOD, AND SAYS SO BY ITS TYPE.
  *
- * This handler answers `void`, so the ACK is decided one layer up: {@link BaseMlsService} treats a
- * normal return as acknowledged and a THROW as "not acknowledged, redeliver" - deliberately, because
- * a throw means the seed did not land and key material nobody can ask for again must not be dropped.
- *
- * The consequence is that the two outcomes are one `throw` apart, and nothing here said which one an
- * undecodable frame took. A frame that is not acknowledged is re-fetched on every reconnect for the
- * ninety days of the retention window - and bytes that would not decode once will not decode on the
- * hundredth delivery either, so that loop has no exit but the retention sweep.
- *
- * It acknowledges today. These tests are what keep it that way: the failure they catch is a future
- * `throw` added to this path, which would turn one bad frame into a permanent redelivery loop with
- * no symptom beyond a backlog that never shrinks.
+ * Bytes that would not decode once will not decode on the hundredth delivery either. A plain throw
+ * would leave the frame kept and unacknowledged - re-run on every redelivery for the ninety days of
+ * the retention window - and a plain return would hide it among the frames that were handled. So it
+ * throws `UnhandleableFrameError`, which the route classifies at the throw: the kept plaintext is
+ * forgotten, the frame acknowledged, one line at error, and no network loss counted
+ * (`BaseMlsService.distributionGroup.test.ts`, mls-desync-prevention section 11).
  */
 describe('a frame whose payload will not decode', () => {
-  it('is acknowledged - it returns rather than throwing, which is how the ACK is expressed', async () => {
+  it('throws the terminal kind, and stores nothing', async () => {
     const { storage, saved } = fakeStorage();
     wire(storage);
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
     // Not a truncated AppMessage and not an empty one: bytes that are not protobuf at all, which is
     // what a corrupted frame or a future wire format looks like arriving at today's decoder.
@@ -2656,29 +2650,9 @@ describe('a frame whose payload will not decode', () => {
         sender: 'bob',
         plaintext: new Uint8Array([0xff, 0xff, 0xff, 0xff]),
       })
-    ).resolves.toBeUndefined();
+    ).rejects.toBeInstanceOf(UnhandleableFrameError);
 
-    // Nothing was stored, which is the whole reason acknowledging has to be a DECISION rather than
-    // an accident: the frame is dropped, and it is dropped because no redelivery could ever help.
     expect(saved).toHaveLength(0);
-    warn.mockRestore();
-  });
-
-  it('says so, because a seed silently dropped surfaces weeks later as an unreadable salon', async () => {
-    const { storage } = fakeStorage();
-    wire(storage);
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-
-    await handleDistributionFrame({
-      scope: workspaceScope('ws-1'),
-      workspaceId: 'ws-1',
-      groupId: 'g-1',
-      sender: 'bob',
-      plaintext: new Uint8Array([0xff, 0xff, 0xff, 0xff]),
-    });
-
-    expect(warn.mock.calls.flat().join(' ')).toContain('undecodable frame');
-    warn.mockRestore();
   });
 });
 

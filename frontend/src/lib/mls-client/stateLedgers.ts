@@ -43,6 +43,15 @@ export const STATE_LEDGER = {
   seenIndex: 'seen-index',
   /** What each send ratchet's advance this state holds, by `group@epoch` (`sendRatchetLedger.ts`). */
   sendPersisted: 'send-persisted',
+  /**
+   * A key-group frame decrypted and not handled yet (`keptKeyGroupFrames.ts`). WRITTEN BY THE STATE,
+   * not staged: `mls-core` keeps it in the call that spends the frame's generation
+   * (`KEPT_FRAME_PREFIX`, which this prefix must equal), and the app only removes it.
+   */
+  keptFrame: (groupId: string, fingerprint: string): string =>
+    `kept-frame:${groupId}:${fingerprint}`,
+  /** The prefix every {@link STATE_LEDGER.keptFrame} key starts with. */
+  keptFramePrefix: 'kept-frame:',
 } as const;
 
 /**
@@ -119,6 +128,25 @@ export function stateLedgerKeys(userId: string, prefix: string): string[] {
   const view = views.get(userId);
   if (!view) return [];
   return [...view.keys()].filter((k) => k.startsWith(prefix));
+}
+
+/**
+ * Records in this document's view a value THE STATE ITSELF already holds - a ledger the live client
+ * wrote in the same mutation as a ratchet advance (`process_incoming_message_kept`). Nothing is
+ * staged: the client has it, and every checkpoint from now on exports it.
+ *
+ * Said and dropped before the state opened, like {@link stageStateLedger}: the opening's hydration
+ * reads what the client holds anyway.
+ */
+export function noteStateLedgerHeldByState(userId: string, key: string, value: string): void {
+  const view = views.get(userId);
+  if (!view) {
+    console.error(
+      `[LEDGER] ${key} noted for ${userId.slice(0, 8)}... before the MLS state opened - the opening reads it from the state`
+    );
+    return;
+  }
+  view.set(key, value);
 }
 
 /**

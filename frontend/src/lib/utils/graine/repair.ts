@@ -34,6 +34,7 @@ import { distributionEpochFor, GraineDistributionUnavailableError } from './seed
 import { isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { canonicalUserId, deviceIdOfLeaf, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import { describeKeyGroupFrameLosses } from '$lib/mls-client/keyGroupFrameLosses';
+import { describeKeptFrames } from '$lib/mls-client/keptKeyGroupFrames';
 import {
   forgetHistoryHeldNothing,
   answeredDevice,
@@ -982,7 +983,7 @@ async function requestSeedsForChannel(
     console.info(
       `[GRAINE] asked ${answerer} (${describeNamedDevices(answererDevices)}) for ${sessionIds.length} ` +
         `seed(s) in community ${workspaceId.slice(0, 8)} at epoch ${sealedAt} - ` +
-        describeAskReasons(sessionIds, sessions, groupId)
+        describeAskReasons(sessionIds, sessions, groupId, userId)
     );
   }
 }
@@ -990,14 +991,17 @@ async function requestSeedsForChannel(
 /**
  * WHY these sessions are asked for, as one log fragment (F3 of the 2026-10-12 queue audit): the
  * reasons tallied, how old the newest row naming them is, and what this device lost on the key group
- * this session. Read together they separate the candidate causes of a request: a seed frame lost on
- * arrival (losses beside a young row), a session missing since before this start (an old row, no
- * losses), or a walk down the roster (`declined`, `epoch-left`).
+ * this session, and what it still KEEPS there unhandled (mls-desync-prevention section 11). Read
+ * together they separate the candidate causes of a request: a seed frame lost on arrival (losses
+ * beside a young row), a seed read here whose handler keeps failing (a kept frame, its failed runs
+ * counted), a session missing since before this start (an old row, no losses), or a walk down the
+ * roster (`declined`, `epoch-left`).
  */
 function describeAskReasons(
   sessionIds: readonly string[],
   sessions: ReadonlyMap<string, MissingSeed>,
-  groupId: string
+  groupId: string,
+  userId: string
 ): string {
   const tally = new Map<AskReason, number>();
   const ages: number[] = [];
@@ -1016,7 +1020,7 @@ function describeAskReasons(
     ages.length === 0
       ? 'undated'
       : `${formatAge(Math.min(...ages))}..${formatAge(Math.max(...ages))}`;
-  return `reasons ${reasons || 'none'}, newest row ${rowAge} old, key group lost ${describeKeyGroupFrameLosses(groupId)} this session`;
+  return `reasons ${reasons || 'none'}, newest row ${rowAge} old, key group lost ${describeKeyGroupFrameLosses(groupId)} this session, keeps unhandled ${describeKeptFrames(userId, groupId)}`;
 }
 
 /** A duration as the one coarse unit a log reader needs: seconds, minutes, hours or days. */
@@ -1569,7 +1573,8 @@ async function askCommunityHistory(
     `[GRAINE] asked ${answerer} (${describeNamedDevices(answererDevices)}) for the history of community ` +
       `${workspaceId.slice(0, 8)} at epoch ${mlsService.getEpoch(groupId)} - reason ` +
       `${evenIfSeedsHeld ? 'key-group-rejoined' : widening !== 'none' ? 'visibility-widened' : 'no-seed-held'}, key group lost ` +
-      `${describeKeyGroupFrameLosses(groupId)} this session`
+      `${describeKeyGroupFrameLosses(groupId)} this session, keeps unhandled ` +
+      `${describeKeptFrames(userId, groupId)}`
   );
 }
 

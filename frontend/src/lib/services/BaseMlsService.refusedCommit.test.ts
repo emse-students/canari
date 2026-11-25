@@ -614,10 +614,11 @@ describe('BaseMlsService - a commit ACCEPTED and then not merged here', () => {
 describe('BaseMlsService - a key group commit refused before the mailbox was listed on this link', () => {
   beforeEach(() => resetEpochGapRegistry());
 
-  function keyGroupCtx(listed: boolean) {
+  function keyGroupCtx(listed: boolean, heldBehindKeptFrame = false) {
     const ctx = makeCtx({
       isDistributionGroup: vi.fn(() => true),
       mailboxListedOnThisLink: vi.fn(() => listed),
+      keyGroupWaitsOnKeptFrame: vi.fn(() => heldBehindKeptFrame),
     });
     ctx.delivery.submitCommit.mockResolvedValue({
       accepted: false,
@@ -641,6 +642,20 @@ describe('BaseMlsService - a key group commit refused before the mailbox was lis
 
     expect(ctx.fetchCommitsSince).not.toHaveBeenCalled();
     expect(ctx.processIncomingMessage).not.toHaveBeenCalled();
+    expect(ctx.state.epoch).toBe(195);
+    expect(ctx.verifyDistributionEpoch).toHaveBeenCalledWith('g', 198);
+    log.mockRestore();
+  });
+
+  it('replays nothing either while the group holds frames back behind a kept frame', async () => {
+    // Listed, but the frames it refused behind its kept frame (mls-desync-prevention section 11) are
+    // still queued on the server: a replay past them loses their seeds.
+    const ctx = keyGroupCtx(true, true);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    await expect(runCommit(ctx, 'g')).rejects.toThrow('Staged commit rejected: epoch_mismatch');
+
+    expect(ctx.fetchCommitsSince).not.toHaveBeenCalled();
     expect(ctx.state.epoch).toBe(195);
     expect(ctx.verifyDistributionEpoch).toHaveBeenCalledWith('g', 198);
     log.mockRestore();

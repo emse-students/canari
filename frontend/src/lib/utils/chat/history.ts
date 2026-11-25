@@ -42,7 +42,7 @@ import { applyReaction, mergeReactions } from '$lib/utils/chat/messageReactions'
 import { mergeReadWatermarks } from '$lib/utils/chat/readState';
 import { mergeHistoryFloor } from '$lib/utils/chat/historyWindow';
 import { holdsGroupState } from './groupUsability';
-import { boundSeenEntries, noteLedgerWritten } from './seenLedgerBounds';
+import { boundSeenEntries, enforceSeenLedgerBudget, noteLedgerWritten } from './seenLedgerBounds';
 import { readStateLedger, stageStateLedger, STATE_LEDGER } from '$lib/mls-client/stateLedgers';
 import { ADDRESSABLE_HALF, canonicalUserId } from '$lib/mls-client/leafIdentity';
 import { editSupersedes } from './editPrecedence';
@@ -221,9 +221,26 @@ function stageSeenCipherHashes(userId: string, groupId: string, hashes: Set<stri
   stageStateLedger(userId, STATE_LEDGER.seen(groupId), JSON.stringify(boundSeenEntries(hashes)));
   for (const evicted of noteLedgerWritten(userId, groupId)) {
     stageStateLedger(userId, STATE_LEDGER.seen(evicted), null);
-    const evictedKey = seenHistoryKey(userId, evicted);
-    seenCache.delete(evictedKey);
-    pendingCheckpointMarks.delete(evictedKey);
+    forgetEvictedSeenLedger(userId, evicted);
+  }
+}
+
+/** Drops this document's copy of a ledger the bound evicted, so no later write puts it back. */
+function forgetEvictedSeenLedger(userId: string, groupId: string): void {
+  const evictedKey = seenHistoryKey(userId, groupId);
+  seenCache.delete(evictedKey);
+  pendingCheckpointMarks.delete(evictedKey);
+}
+
+/**
+ * Makes room in the MLS state for a key-group frame about to be decrypted and KEPT
+ * (mls-desync-prevention section 11): the seen ledgers are brought within what the kept frames, this
+ * one's `reserve` included, leave them - BEFORE the decrypt spends its generation, so the state the
+ * next checkpoint exports holds both within `APP_LEDGERS_BYTE_BUDGET`.
+ */
+export function makeRoomToKeepFrame(userId: string, reserve: number): void {
+  for (const evicted of enforceSeenLedgerBudget(userId, reserve)) {
+    forgetEvictedSeenLedger(userId, evicted);
   }
 }
 
