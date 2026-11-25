@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { linkableEventPickerOptions } from './time';
+import { linkableEventPickerOptions, shortDate } from './time';
+
+describe('shortDate', () => {
+  it('writes DD/MM/YY in local time, zero-padded', () => {
+    expect(shortDate(new Date(2026, 10, 25, 12).toISOString())).toBe('25/11/26');
+    expect(shortDate(new Date(2027, 0, 3, 12).toISOString())).toBe('03/01/27');
+  });
+});
 
 describe('linkableEventPickerOptions', () => {
   const ev = (id: string, startsAt: string) => ({ id, startsAt, title: id });
