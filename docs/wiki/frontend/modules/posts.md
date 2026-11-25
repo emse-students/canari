@@ -519,6 +519,7 @@ the post on the `SyntaxError` of `json()`.
 | A transport failure; an EDGE page (the host's proxy, a non-JSON answer) with no refusal cause - from an upload or the post API alike (`ApiRefusalError.origin`, as `MediaUploadError` carries it) | `wait` | waits on the ladder (`PUBLISH_RETRY_LADDER_MS`, 2 s to 60 s), cut short by any wake: a reconnect, `online`, the page visible, the app foreground |
 | The APP's `5xx`, `408`, `425`, `429`; a resumable session it lost and could not reopen (`sessionLost`) | `busy` | asked again over the ladder ONCE (a counter no wake resets), then stops with a Retry |
 | A `401`; `SessionExpiredError`; a token of another account (`PublishAccountMismatchError`, `TokenAccountChangedError`, `IdentitySplitError`) | `halt` | the pass ends, nothing recorded: the app's auth is the one authority on a 401, the queue never spins on one |
+| A `VideoPrepareError` with the `interrupted` fault: the encoder stopped while the app was out of view | `interrupted` | logged at info; the post is KEPT as it was and the pass ends - no ladder; the app back in view (`onAppViewChange` -> `backInView`) prepares it again. Already back in view when the outcome lands, it goes again at once |
 | Anything else: moderation, a `4xx`, a `410` (a deleted id), a video that cannot be prepared, a refused media | `failed` | stops the post with its sentence, logged by `console.error`; only Retry, Pause or Delete moves it |
 
 **A post that stopped is left out of the pass, whatever it was doing.** That includes a withdrawal
@@ -571,6 +572,36 @@ delete) or ends its wait (retry) instead of acting at its next rung. A tab still
 queue starts with the session (`globalSession.isLoggedIn`), never before. Read on the local estate on
 2026-11-06: a second tab, unlocked, drew the first tab's row at 4 %, its pause stopped the first
 tab's transfer at once, and its Resume finished the post from the recorded sessions - one create.
+
+**A video whose encoder the system stopped is kept (1.8.1-alpha.1 reading, iPhone 12).** Home pressed
+about 1 s after "Publier", while the take was being prepared: WebKit's hardware encoder session
+(VideoToolbox, in the GPU process) was torn down right after `applicationWillResignActive`, the
+conversion rejected, and the queue logged `refused at mediaPrepare VideoPrepareError: video: the
+encoder failed` - 47 ms BEFORE `[LIFECYCLE] App in background`, which iOS sends at
+`didEnterBackground`, about 0.8 s after it resigned. The row said "Failed" with a Retry, which
+published the reel once. A leave 2.5 s after the press, or once the encode was done, passed: only
+the PREPARE step dies with the view; an upload simply resumes. The fix classifies at the throw, from
+facts the page already has, never from the error's text: `prepareVideoForUpload` latches, for the
+length of the conversion, whether the app left the view (`watchViewLoss`: the shell's
+`canari:active` edge from `willResignActive`, `canari:foreground`, or `visibilitychange` - each
+written before the system acts on it, so the cause is never read after its effect), and an encoder
+failure with that latch set is the `interrupted` fault, logged at info. The queue keeps the post
+(nothing prepared was recorded), ends the pass, and prepares it again on the edge that brings the app
+back in view - on iOS `didBecomeActive`, on Android `onResume`, on the web `visibilitychange`. An
+encoder failure with the app in view throughout stays `encode`: a failure with its Retry. Android
+runs the same code (its shell writes `canari:foreground` from `onPause`/`onResume`); the encoder
+dying there with the app has not been observed. **The chat outbox's take is kept the same way:**
+`prepareQueuedChatReel` types the fault as `OutboxPrepareInterruptedError` at the throw, and the
+outbox holds the take (`holdForView`: drawn `queued`, logged at info, never the `error` park and its
+Retry) until `onAppViewChange` says the app is back in view, then prepares it again once; an encoder
+failure in view there is `OutboxPrepareError`, parked as a failure. **Two holes closed in review:**
+an edge that landed after the pass's last look but before the Web Lock settled set `again` on a pass
+that would not look again - `drain` now runs one more pass when it ends with `again` set (a
+`backInView`, a resume, a nudge alike); and a foreground edge that comes before the app is in view
+(iOS: `willEnterForeground` before `didBecomeActive`) leaves an interrupted post to the view edge
+instead of starting an encode doomed to be interrupted again. An `encode` failure's line names the
+view facts as they stood (`foreground`, `active`, `visibility`), so a rejection that beat its edge is
+named on the reading.
 
 **Backgrounding, without native code.** A native shell emits `canari:foreground` when the app comes
 back; the queue then ABORTS the transfer in flight (it was frozen with the webview and its socket is

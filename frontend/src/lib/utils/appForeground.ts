@@ -160,3 +160,89 @@ export function onAppScreenChange(onChange: (onScreen: boolean) => void): () => 
     offForeground();
   };
 }
+
+/**
+ * Whether the app is IN VIEW by every signal the runtime gives: in the foreground, active (iOS), and
+ * its page not hidden (web, desktop). What a piece of work the system stops when the app leaves the
+ * screen - a hardware video encoder - needs to know, since any one of the three going off may be the
+ * one that stopped it on its platform.
+ */
+export function isAppInView(): boolean {
+  if (typeof document === 'undefined') return isAppInFront();
+  return isAppInFront() && document.visibilityState !== 'hidden';
+}
+
+/**
+ * Calls `onChange(inView)` on every change of {@link isAppInView}, from whichever signal reports it
+ * (`visibilitychange`, `canari:foreground`, `canari:active`). One edge per change: on iOS the three
+ * speak for one trip to the home screen. Returns the unsubscribe.
+ */
+export function onAppViewChange(onChange: (inView: boolean) => void): () => void {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return () => {};
+  let last = isAppInView();
+  const report = () => {
+    const inView = isAppInView();
+    if (inView === last) return;
+    last = inView;
+    onChange(inView);
+  };
+  document.addEventListener('visibilitychange', report);
+  const offForeground = onAppForegroundChange(report);
+  const offActive = onAppActiveChange(report);
+  return () => {
+    document.removeEventListener('visibilitychange', report);
+    offForeground();
+    offActive();
+  };
+}
+
+/** What {@link watchViewLoss} answers. */
+export interface ViewLossWatch {
+  /** True when the app was out of view at the start, left it since, or is out of it now. */
+  readonly lost: boolean;
+  /** Stops listening. The answer is frozen as it stood at the stop. */
+  stop(): void;
+}
+
+/**
+ * LATCHES whether the app left the view at any moment since the call - the fact that tells a piece
+ * of work the SYSTEM stopped (an encoder torn down as the app resigned) from one that failed on its
+ * own. A latch, not a read at the end: the app may already be back by the time the failure reaches
+ * the page, and the edge each signal reports is written BEFORE the system acts on it (iOS publishes
+ * `willResignActive`, and the encoder is torn down after it), so the cause is never read late.
+ */
+export function watchViewLoss(): ViewLossWatch {
+  let lost = !isAppInView();
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return {
+      get lost() {
+        return lost;
+      },
+      stop() {},
+    };
+  }
+  const onVisibility = () => {
+    if (document.visibilityState === 'hidden') lost = true;
+  };
+  document.addEventListener('visibilitychange', onVisibility);
+  const offForeground = onAppForegroundChange((foreground) => {
+    if (!foreground) lost = true;
+  });
+  const offActive = onAppActiveChange((active) => {
+    if (!active) lost = true;
+  });
+  let stopped = false;
+  return {
+    get lost() {
+      return lost || (!stopped && !isAppInView());
+    },
+    stop() {
+      if (stopped) return;
+      lost ||= !isAppInView();
+      stopped = true;
+      document.removeEventListener('visibilitychange', onVisibility);
+      offForeground();
+      offActive();
+    },
+  };
+}

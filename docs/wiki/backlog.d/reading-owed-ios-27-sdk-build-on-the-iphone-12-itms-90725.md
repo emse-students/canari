@@ -45,22 +45,15 @@ scene lifecycle Apple announced as mandatory after iOS 26 (tao's `TaoSceneDelega
 `applicationIconBadgeNumber` in `canari_push.mm`, sits in the unreachable pre-16 branch of an
 `@available(iOS 16.0, *)` and does not warn at a 16.0 target. No target treats warnings as errors.
 
-**Closes with (no Xcode-27 reading is recorded in [device-verification](../device-verification.md), 2026-11-23; the build is merged and the signed path proved by `ios.yml` run 44278923984, so only this bench reading is owed):** on the next pre-release, read on the iPhone 12 from TestFlight - the install
-itself, then the surfaces the new SDK may change (the glass tab bar; the notification service
-extension, a push decrypted with the app killed; CallKit, a ring and an answer; the share extension,
-a photo shared into a conversation), then one concrete action per Swift plugin, because llvm-objcopy
-now rewrites every plugin's object (cicd.md, the Xcode 27 `@_cdecl` break):
+**What is still owed, and only this** (everything else is read, below): on the iPhone 12, from
+TestFlight, on the next pre-release -
 
-- **biometric** - the app unlocked by Face ID;
-- **customtabs** - a sign-in that opens the identity provider in the in-app browser and returns;
-- **dialog** - the native file picker shown to attach a file, and the save sheet for a downloaded file;
-- **gallery** - a received photo saved to the Photos library;
-- **keystore** - the MLS key unlocked by PIN, and by the device key on a relaunch;
-- **notification** - a notification received with the app in the background, and its tap opening the conversation;
-- **opener** - an ecosystem site (the Portail, MiGallery) opened externally in Safari;
-- **system_components** - the native tab bar switching places, and its unread dot shown.
-
-Then that pre-release's App Store Connect upload carrying no ITMS-90725.
+- **gallery** - a received photo saved to the Photos library. On `1.8.1-alpha.1` no "save to Photos"
+  action was found: the photo viewer's Download opens the Files save sheet (the dialog plugin). The
+  reading first finds which surface calls the gallery plugin's save on iOS; if none does, that is the
+  answer, and this item closes on it;
+- **biometric** - the app unlocked by Face ID (needs a human face at the bench phone);
+- **CallKit** - a ring and an answer (needs a call partner with media).
 
 **Why `1.7.1` and not `1.8.0`** (lead decision, 2026-11-18, reversible): the signed path (keychain,
 archive, export) is proven on `xcode-27` by the dispatched `ios.yml` run 44278923984, so the move
@@ -68,3 +61,12 @@ needs no version of its own - its readings ride the first `1.7.1` pre-release. C
 (durability).
 
 **2026-11-24, `1.8.0-alpha.6` ([iPhone 12 sitting](../device-verification.md#the-readings-of-2026-11-24-180-alpha6-iphone-12-the-dm-thread-again-the-composer-the-ios-27-sdk-build-the-broadcasters-column-the-voice-note-the-sign-out-row)): the upload is READ, PASS; the build is READ in part, PASS so far.** The alpha.6 App Store job built with Xcode 27.2 and `iPhoneOS27.2.sdk` (run 45347022816): `UPLOAD SUCCEEDED with no errors`, build 100800006, no `ITMS-90725` line. On the iPhone 12 the TestFlight update installed and launched; the glass tab bar is drawn and switches places with its unread dots (system_components); the MLS key unlocked on a relaunch with no PIN prompt (keystore); a MiConnect sign-in opened the identity provider in the in-app browser and came back (customtabs); the share sheet lists Canari. **Still owed on the iPhone:** biometric (Face ID), notification (a push decrypted with the app killed, and its tap), dialog (file picker, save sheet), gallery (a received photo saved to Photos), opener (an ecosystem site in Safari), CallKit (a ring and an answer).
+
+**2026-11-25, `1.8.1-alpha.1` (iPhone 12): the upload PASS again, and every surface but three PASS.** The
+App Store job built with Xcode 27.2 and `iPhoneOS27.2.sdk`; `UPLOAD SUCCEEDED with no errors`, no
+`ITMS-90725` anywhere in the run's log. Read on the phone: the glass tab bar drawn, switching places,
+with its unread dots (system_components); a relaunch straight to the feed with no PIN prompt
+(keystore); a DM pushed with the app KILLED, decrypted by the extension, shown with the sender's face,
+and its tap launching the app on that conversation (notification); "Our other sites" opening MiGallery
+in Safari (opener); the native document picker and the native save sheet (dialog). customtabs was read
+on `1.8.0-alpha.6`. Owed: gallery, biometric, CallKit (above).

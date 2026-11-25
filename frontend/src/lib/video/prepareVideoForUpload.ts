@@ -45,6 +45,7 @@ import {
 } from './audioTimeline';
 import { declareMp4Duration } from '$lib/utils/mp4Duration';
 import { LoudnessMeter, type MediaLoudness } from './loudnessMeter';
+import { isAppActive, isAppInForeground, watchViewLoss } from '$lib/utils/appForeground';
 
 /**
  * How far past `maxSeconds` a source may run and still be accepted. A recorder told to stop at 90 s
@@ -66,8 +67,15 @@ export type VideoPrepareFault =
   | 'too-long'
   /** This engine cannot decode the source's codec or encode H.264/AAC - a fact of the engine. */
   | 'unsupported'
-  /** The encoder or the muxer failed while working. */
+  /** The encoder or the muxer failed while working, the app in view throughout. */
   | 'encode'
+  /**
+   * The encoder stopped while the app was OUT OF VIEW (it left the screen, resigned active, or its
+   * page went hidden during the conversion): the system tears a hardware encoder down then (iPhone
+   * 12, 1.8.1-alpha.1: Home pressed 1 s after "Publier"). Not a fact of the video - the same take
+   * prepares in view - so a caller keeps it and prepares it again once the app is back in view.
+   */
+  | 'interrupted'
   /** The output came out over the byte ceiling despite the plan. */
   | 'too-large';
 
@@ -425,6 +433,9 @@ export async function prepareVideoForUpload(
     const measuring = keptAudio
       ? measureLoudness(mb, keptAudio, { start: windowStart, end: windowEnd, signal })
       : Promise.resolve(null);
+    // WHETHER THE APP LEFT THE VIEW WHILE IT ENCODED, latched from the lifecycle edges: the fact that
+    // tells the system stopping the encoder from the encoder failing - never the error's text.
+    const viewLoss = watchViewLoss();
     try {
       await conversion.execute();
     } catch (e) {
@@ -432,8 +443,24 @@ export async function prepareVideoForUpload(
       if (e instanceof mb.ConversionCanceledError || signal?.aborted) {
         throw new VideoPrepareError('aborted', 'video preparation aborted', { cause: e });
       }
-      console.error('[video-prep] the encoder failed', e);
+      if (viewLoss.lost) {
+        console.info(
+          '[video-prep] the encoder stopped while the app was out of view: interrupted, not failed',
+          e
+        );
+        throw new VideoPrepareError('interrupted', 'video: the encoder stopped out of view', {
+          cause: e,
+        });
+      }
+      // THE VIEW FACTS AS THEY STAND, so a missed ordering - the rejection landing before the edge
+      // that would have made it `interrupted` - is named on the reading, not guessed.
+      console.error(
+        `[video-prep] the encoder failed, the app in view throughout (foreground=${isAppInForeground()} active=${isAppActive()} visibility=${typeof document === 'undefined' ? 'none' : document.visibilityState})`,
+        e
+      );
       throw new VideoPrepareError('encode', 'video: the encoder failed', { cause: e });
+    } finally {
+      viewLoss.stop();
     }
     // Awaited before any later refusal, so the input is never disposed under a decode still reading.
     const loudness = await measuring;

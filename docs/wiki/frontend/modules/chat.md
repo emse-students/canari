@@ -6515,8 +6515,7 @@ the screen-update proof, the silent superseded check and the page hook. Read on 
 Home, back 3 to 10 s later): 4 returns of 10 left the thread 65 to 87 pt above its end with the
 "Scroll to bottom" arrow up. The web view was 390 x 543 pt (the keyboard-up size) in passing and
 failing returns alike, and the exported log had no `left the bottom with no finger on the pane` line
-and no `[CHAT_VIEW]` line at any return
-([the entry](../../backlog.d/reading-owed-a-dm-thread-keeps-its-end-after-a-return-with-the-keyboard-up.md)).
+and no `[CHAT_VIEW]` line at any return.
 
 **Why, by reading.** iOS re-presents the keyboard when the app comes back, and WebKit reveals the
 focused field from that presentation's `_keyboardDidShow:` exactly as it does for a rise: it scrolls the
@@ -6571,7 +6570,17 @@ rests; a cancelled show rests on its did-hide; a rise is one transition; a will-
 transition joins it), `iosKeyboardRiseHandoff.test.ts` (the will-show observer, no proof before it),
 `keyboardTransition.test.ts` (one edge per start and per rest, a throwing listener isolated),
 `ChatArea.scrollAnchor.svelte.test.ts` (the reveal put back, the geometry lines read in their frame and
-in order, the assistive fall at INFO), `threadAnchor.test.ts` (the line). **Owed: the iPhone reading of the same gesture, ten cycles.**
+in order, the assistive fall at INFO), `threadAnchor.test.ts` (the line).
+
+**Read and closed (`1.8.1-alpha.1`, iPhone 12, 2026-11-25): 10 of 10.** The same gesture - keyboard up
+at the end of the DM, Home, 3 to 10 s away, relaunch - left the thread at its end every time, the arrow
+never up; every transition logged `at rest` with `fromEnd 0 pinned=true`, and no return logged `left the
+bottom` or `not a keyboard move of the engine, the flag falls`. In the syslog, `WebKit's own keyboard inset
+detached ... (scroll view inset bottom 0.0)` once per launch and no `detached too late`; the owed-rest path
+(`keyboard at rest before rise #N set its frame`) was exercised 13 times and the page's `at rest` followed
+it. **The lesson the entry leaves:** a keyboard the system re-presents at a return is a transition like any
+rise, and a transition is only ever ended by facts - the paired did-show or did-hide, and the frame landed
+([the next section](#a-rest-is-two-facts-the-keyboard-at-rest-and-its-frame-landed-2026-11-24)).
 
 ### A rest is two facts: the keyboard at rest AND its frame landed (2026-11-24)
 

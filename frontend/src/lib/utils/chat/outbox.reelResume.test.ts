@@ -48,6 +48,7 @@ vi.mock('$lib/mls-client/tabMessageSync', async (importOriginal) => ({
 
 import {
   OutboxEnqueueError,
+  OutboxPrepareInterruptedError,
   OutboxPrepareRefusedError,
   ReelTakeTooManySendsError,
   createOutbox,
@@ -451,6 +452,15 @@ async function expectDeliveredOnce(w: World, l: ReturnType<typeof life>, n: numb
   await waitForEvent(async () => expect(await w.blobs.list()).toEqual([]));
 }
 
+/** The iOS shell's active edge, as `CanariPublishActive` writes it. */
+function setActive(active: boolean) {
+  (window as unknown as Record<string, unknown>).__canariActive = active;
+  window.dispatchEvent(new CustomEvent('canari:active', { detail: { active } }));
+}
+function clearActive() {
+  delete (window as unknown as Record<string, unknown>).__canariActive;
+}
+
 const PARTS = Math.ceil((20 + PREPARED.length + 16) / PART);
 
 /**
@@ -710,6 +720,71 @@ describe.each([1, 3])(
       expect(sameBytes(kept.media?.fileBytes, RAW)).toBe(true);
       expect(encoder).not.toHaveBeenCalled();
       expect(w.server.sent).toEqual([]);
+    });
+
+    it('a take whose encoder the app LEAVING THE VIEW stopped is kept, not failed, and prepared again on the edge that brings the app back', async () => {
+      const w = world();
+      let calls = 0;
+      const l = life(w, {
+        prepare: async () => {
+          calls += 1;
+          if (calls === 1) throw new OutboxPrepareInterruptedError(new Error('encoder stopped'));
+          return {
+            bytes: PREPARED,
+            mimeType: 'video/mp4',
+            fileName: 'reel.mp4',
+            width: 720,
+            height: 1280,
+            durationMs: 4200,
+          };
+        },
+      });
+      setActive(false);
+      try {
+        await enqueueTake(l, N);
+        await waitForEvent(() => expect(calls).toBe(1));
+        await waitForEvent(() => expect(uploadViewOf(VIEW)?.phase).toBe('queued'));
+        expect(w.server.sent).toEqual([]);
+        expect(sends(l)).toBe(0);
+        // A RECONNECT WHILE HELD AND OUT OF VIEW prepares nothing: the view edge is the only release.
+        connectivity.notifyServerUnreachable('test');
+        connectivity.notifyServerReachable();
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        expect(calls).toBe(1);
+        expect(uploadViewOf(VIEW)?.phase).toBe('queued');
+        setActive(true);
+        await expectDeliveredOnce(w, l, N);
+        expect(calls).toBe(2);
+      } finally {
+        clearActive();
+      }
+    });
+
+    it('TERMINATES: interrupted out of view, then failing IN view, the take is parked as an error - no loop', async () => {
+      const w = world();
+      let calls = 0;
+      const l = life(w, {
+        prepare: async () => {
+          calls += 1;
+          if (calls === 1) throw new OutboxPrepareInterruptedError(new Error('encoder stopped'));
+          throw new Error('the encoder failed');
+        },
+      });
+      setActive(false);
+      try {
+        await enqueueTake(l, N);
+        await waitForEvent(() => expect(calls).toBe(1));
+        setActive(true);
+        await waitForEvent(() => expect(uploadViewOf(VIEW)?.phase).toBe('error'));
+        expect(calls).toBe(2);
+        // A further edge finds nothing held: nothing prepares again on its own.
+        setActive(false);
+        setActive(true);
+        expect(calls).toBe(2);
+        expect(w.server.sent).toEqual([]);
+      } finally {
+        clearActive();
+      }
     });
 
     it('a take the encoder REFUSES is parked as an error with the take KEPT; Retry prepares it again and sends it', async () => {
@@ -1187,6 +1262,7 @@ describe('one take, several conversations (RC-13)', () => {
       assertAccount: async () => undefined,
       sessionEnded: () => false,
       assertNotMuted: async () => undefined,
+      inView: () => true,
       failureMessage: () => 'refused',
       lock: (fn) => fn(),
       sleep: async () => undefined,

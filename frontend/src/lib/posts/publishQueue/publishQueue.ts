@@ -28,6 +28,12 @@
  * An ANSWER that refuses (a 4xx, moderation, a video the device cannot prepare, a deleted id) stops
  * the post with its sentence and a Retry.
  *
+ * A VIDEO WHOSE ENCODER THE SYSTEM STOPPED IS KEPT, NOT REFUSED (iPhone 12, 1.8.1-alpha.1: Home
+ * pressed 1 s after "Publier" tore the hardware encoder down, and the post stopped at "Failed").
+ * `prepareVideoForUpload` types it `interrupted` at the throw, from the lifecycle edges it latched;
+ * the pass ends with the post kept, and the app coming BACK IN VIEW - an event, never a rung of the
+ * ladder - prepares it again ({@link PublishQueue.backInView}).
+ *
  * WHAT THE MEMBER CAN DO TO A POST. Pause it (the transfer stops, the post stays, "Reprendre" goes
  * on), Retry it, or Delete it. DELETE MEANS THE POST EXISTS NOWHERE: it is marked `withdrawn` and
  * the pass takes it back - ONE server withdrawal (the id is retired, so a create still on its way is
@@ -58,6 +64,7 @@ import { UploadAbortedError, type XhrUploadOptions } from '$lib/utils/uploadXhr'
 import { MediaUploadError, uploadRefusalCause } from '$lib/utils/mediaErrors';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { isTransportFailure } from '$lib/utils/transportFailure';
+import { isVideoPrepareError } from '$lib/video/prepareVideoForUpload';
 import { TokenAccountChangedError } from '$lib/utils/renewOn401';
 import { IdentitySplitError } from '$lib/stores/tokenIdentity.svelte';
 import { REEL_MEDIA_EXPIRED } from '$lib/reels/reelMediaExpired';
@@ -176,6 +183,12 @@ export interface PublishQueueDeps {
    * {@link PublishAccountMismatchError}, or what the session throws when there is none.
    */
   assertAccount: () => Promise<void>;
+  /**
+   * Whether the app is in view now (`isAppInView`). Read when a preparation was interrupted: back in
+   * view already, it goes again at once; out of view, the pass ends and {@link PublishQueue.backInView}
+   * starts the next.
+   */
+  inView: () => boolean;
   /** Whether `error` says the session ENDED (a dead refresh credential) - never a transport failure. */
   sessionEnded: (error: unknown) => boolean;
   assertNotMuted: () => Promise<void>;
@@ -203,8 +216,12 @@ export interface PublishQueueDeps {
 /** What the chat take did with the file it was handed (the outbox's `ReelTakeAdoption`). */
 export type ChatTakeAdoption = 'adopted' | 'declined' | 'forwarded';
 
-/** How one pass over a post ended. `halt`: the session is not the queue's account - the pass ends. */
-type Outcome = 'published' | 'failed' | 'wait' | 'again' | 'gone' | 'halt';
+/**
+ * How one pass over a post ended. `halt`: the session is not the queue's account - the pass ends.
+ * `interrupted`: its preparation was stopped by the app leaving the view - the pass ends, the post
+ * kept, until the app is back in view.
+ */
+type Outcome = 'published' | 'failed' | 'wait' | 'again' | 'gone' | 'halt' | 'interrupted';
 
 /** Why the queue aborted the transfer it was running. */
 type AbortReason = 'resume' | 'deleted' | 'paused' | 'stopped';
@@ -265,7 +282,7 @@ export function retryCannotCure(error: unknown): boolean {
 }
 
 /** What a failure says about this post, read by {@link classifyPublishFailure}. */
-export type PublishFailureVerdict = 'wait' | 'busy' | 'halt' | 'failed';
+export type PublishFailureVerdict = 'wait' | 'busy' | 'halt' | 'interrupted' | 'failed';
 
 /**
  * What a failure says about this post.
@@ -280,6 +297,9 @@ export type PublishFailureVerdict = 'wait' | 'busy' | 'halt' | 'failed';
  *   a token names another account (`apiFetch`'s `IdentitySplitError` guards the create and the
  *   withdrawal the same way), or a `401` reached us anyway. The pass ends, nothing recorded:
  *   the app's auth decides what a 401 means, and the queue never spins on one.
+ * - `interrupted`: the system stopped the video's encoder as the app left the view (the
+ *   `interrupted` fault, typed at the throw from the lifecycle edges). Kept, and prepared again once
+ *   the app is back in view - not a fact of the video, so never the member's Retry to find.
  * - `failed`: an answer about the post - kept until the member acts.
  */
 export function classifyPublishFailure(
@@ -295,6 +315,7 @@ export function classifyPublishFailure(
     return 'halt';
   }
   if (isTransportFailure(error)) return 'wait';
+  if (isVideoPrepareError(error) && error.fault === 'interrupted') return 'interrupted';
   if (error instanceof MediaUploadError) {
     if (uploadRefusalCause(error)) return 'failed';
     if (error.origin === 'edge') return 'wait';
@@ -330,6 +351,8 @@ export class PublishQueue {
    * that lands, a Retry, or the post stopping.
    */
   private busy = 0;
+  /** The post whose preparation the app leaving the view stopped, until the app is back in view. */
+  private interrupted: string | null = null;
 
   constructor(private readonly deps: PublishQueueDeps) {}
 
@@ -356,10 +379,19 @@ export class PublishQueue {
       )
       .finally(() => {
         this.draining = null;
+        // THIS PASS'S END IS SAID FIRST: said after the next pass started, it would release what
+        // that pass holds (the screen) while it works on a row.
         try {
           this.deps.passEnded();
         } catch (e) {
           console.error('[PUBLISH-QUEUE] the end of a pass could not be handled:', e);
+        }
+        // AN EDGE THAT LANDED AFTER THE LOOP'S LAST LOOK, while the lock was still settling (a Web
+        // Lock resolves on a later task), asked for another pass and found this one still
+        // `draining`: it is run now, or it is lost - a `backInView`, a resume, a nudge alike.
+        if (this.again && !this.stopped) {
+          this.deps.log('[PUBLISH-QUEUE] asked again as the pass ended: one more pass');
+          void this.drain();
         }
       });
     return this.draining;
@@ -386,6 +418,28 @@ export class PublishQueue {
       this.current.abort.abort('resume' satisfies AbortReason);
     }
     this.wake('back on screen');
+    // ON iOS THE FOREGROUND EDGE COMES BEFORE `didBecomeActive`: a pass started now would encode an
+    // interrupted post while the app is still inactive, and be interrupted again. Out of view, the
+    // interrupted post is left to `backInView`, whose edge follows.
+    if (this.interrupted && !this.deps.inView()) {
+      this.deps.log(
+        `[PUBLISH-QUEUE] ${this.interrupted} back in the foreground but not yet in view: prepared again when it is`
+      );
+      return;
+    }
+    this.interrupted = null;
+    void this.drain();
+  }
+
+  /**
+   * The app is back in view (any of its signals). A post whose preparation was interrupted by it
+   * leaving is prepared again now; with none, nothing is started - an uploading pass needs no help.
+   */
+  backInView(): void {
+    const id = this.interrupted;
+    if (!id) return;
+    this.interrupted = null;
+    this.deps.log(`[PUBLISH-QUEUE] ${id} back in view: preparing it again`);
     void this.drain();
   }
 
@@ -552,6 +606,10 @@ export class PublishQueue {
         ? await this.withdraw(next)
         : await this.process(next);
       if (outcome === 'halt') return;
+      if (outcome === 'interrupted') {
+        this.setView(next, { phase: 'waiting' });
+        return;
+      }
       if (outcome === 'wait') {
         const ms =
           PUBLISH_RETRY_LADDER_MS[Math.min(this.waits, PUBLISH_RETRY_LADDER_MS.length - 1)];
@@ -958,6 +1016,23 @@ export class PublishQueue {
           error
         );
         return 'halt';
+      }
+      if (verdict === 'interrupted') {
+        // NOT AN ERROR: the system stopped the encoder because the app left the view. The post is
+        // kept as it is (nothing prepared was recorded), and its chat take keeps waiting for it.
+        // Read AFTER the outcome, with no await between the read and the mark: back in view
+        // already, the edge has passed, so it goes again now; otherwise that edge starts it.
+        if (this.deps.inView()) {
+          console.info(
+            `[PUBLISH-QUEUE] ${post.id} its preparation was interrupted out of view, and the app is back: preparing it again`
+          );
+          return 'again';
+        }
+        this.interrupted = post.id;
+        console.info(
+          `[PUBLISH-QUEUE] ${post.id} its preparation was interrupted as the app left the view: kept, prepared again when the app is back in view`
+        );
+        return 'interrupted';
       }
       if (verdict === 'busy') this.busy += 1;
       if (
