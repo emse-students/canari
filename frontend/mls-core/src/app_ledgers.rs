@@ -202,7 +202,20 @@ impl MlsManager {
 
 #[cfg(test)]
 mod tests {
+    use super::KeptFrame;
     use crate::MlsManager;
+
+    /// A frame whose credential could not be read keeps `sender: null`, and `keptFrameValue(null, ..)`
+    /// in `keptKeyGroupFrames.ts` builds this very string - the two must weigh the same.
+    #[test]
+    fn a_kept_frame_with_no_sender_serialises_as_null() {
+        let value = serde_json::to_string(&KeptFrame {
+            sender: None,
+            plaintext: "BAI=".to_string(),
+        })
+        .unwrap();
+        assert_eq!(value, r#"{"sender":null,"plaintext":"BAI="}"#);
+    }
 
     fn manager(tag: &str) -> MlsManager {
         MlsManager::load_or_create(&format!("{tag}-user"), "d1", None).unwrap()

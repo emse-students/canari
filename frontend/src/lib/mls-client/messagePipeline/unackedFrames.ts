@@ -46,9 +46,16 @@ export type UnackedReason =
    * A key-group frame NOT DECRYPTED because the frames kept until handled filled their budget
    * (`keptKeyGroupFrames.ts`, `roomToKeep`): opened, its generation would be spent with nowhere to
    * keep its plaintext. Discharged by a kept frame being forgotten - handled, or found unhandleable -
-   * which is what frees the room (`BaseMlsService.forgetKeptDistributionFrame`).
+   * which is what frees the room (`BaseMlsService.forgetKeptDistributionFrame`). Every later frame of
+   * the same group waits with it, to keep server order.
    */
-  | 'kept-frames-full';
+  | 'kept-frames-full'
+  /**
+   * A key-group frame NOT DECRYPTED because an earlier frame of the SAME group is kept unhandled: let
+   * past it, it would be handled out of server order. Discharged per group, by that kept frame being
+   * forgotten (`BaseMlsService.releaseFramesWaitingOnKept`).
+   */
+  | 'kept-frame-unhandled';
 
 /** The reasons no event re-fetches for: counted in the report, kept off the work list. */
 const NOT_ON_THE_WORK_LIST: ReadonlySet<UnackedReason> = new Set(['dispatch-failed']);

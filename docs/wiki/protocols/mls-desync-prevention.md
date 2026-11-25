@@ -615,7 +615,8 @@ ordering is the guarantee.
   ([`keptKeyGroupFrames.ts`](../../../frontend/src/lib/mls-client/keptKeyGroupFrames.ts)). A ledger
   of the state's `app_ledgers` (the KILL-2 document, [below](#the-ledgers-that-describe-the-state-travel-inside-it-kill-2-2026-10-26)),
   key `kept-frame:<group>:<fingerprint>` (the fingerprint the seen ledgers use), value
-  `{"sender":<the credential MLS verified>,"plaintext":<base64>}`. It is written by
+  `{"sender":<the credential MLS verified>,"plaintext":<base64>}` (plus `"failures":n` once a run of
+  its handler failed, below). It is written by
   `MlsManager::process_incoming_message_kept` (`mls-core/src/app_ledgers.rs`) in the same call that
   spends the generation: on the web one synchronous WASM call
   (`WasmMlsClient.process_incoming_message_kept`), on native one section under the manager lock
@@ -636,9 +637,13 @@ ordering is the guarantee.
      again, which is idempotent (`already-held`);
   4. after the forget is exported and before the acknowledgement reached the server: the redelivery
      meets a generation this device spent ON THESE BYTES (the seen mark, `hasHistoryFrameBeenConsumed`)
-     with nothing kept - handled, so it is acknowledged at debug, never counted as a loss
-     (`dispositionOfUnreadableFrame`). A frame is forgotten only once handled or terminal, which is
-     what makes that inference a proof.
+     with nothing kept - read here, so it is acknowledged and never counted as a loss
+     (`dispositionOfUnreadableFrame`). The line is a WARN and names every way there: handled (this
+     case), refused for good (a sender mismatch, a frame too large, an unhandleable payload - each
+     already said at error when it happened), or read by a build before this one whose handler threw,
+     which is the one real loss it can stand for (its seed comes back through a seed request). A
+     frame is forgotten only once handled, terminal or its group left, which is what makes "read
+     here" a proof.
 
   **Rejected:** a separate sealed store written before the checkpoint. It needs a fence every writer
   of the state honours, and on native a checkpoint takes the manager lock between the decrypt and its
@@ -646,26 +651,67 @@ ordering is the guarantee.
   cannot open after a rollback. The ledger needs neither (`#[serde(default)]` map, no new store), and
   it is sealed, re-sealed by a PIN change and wiped with the state like every ratchet.
 - **Classified at the throw, and none of it is `secret-reuse`.** A handler that could not reach the
-  server (`isTransportFailure`) warns and keeps the frame; any other throw accuses at error and
-  keeps it - both unacknowledged, re-run on the redelivery or the next start. A handler that can NEVER
+  server (`isTransportFailure`) warns and keeps the frame, uncounted (an absent link is expected). Any
+  other throw keeps it and is COUNTED, in the kept value itself (`noteKeptFrameFailed`,
+  `"failures":n`): durable state, so the third failed run is seen as the third across restarts, which
+  no in-memory count could say. Its line carries the count and what the key group keeps
+  (`describeKeptFrames`: frames, failed runs, bytes) and climbs from warn to error at
+  `KEPT_FRAME_FAILURES_ACCUSED` (3) - one or two are a store that hiccupped, a third is a handler
+  that does not succeed on this plaintext. Both stay unacknowledged and re-run on the redelivery or
+  the next start. The seed-request lines (`repair.ts`) print the same description beside the
+  key-group losses, so a request is read against "a seed read here whose handler keeps failing" as
+  well as "a seed lost on the way". A handler that can NEVER
   succeed throws `UnhandleableFrameError` (today: a payload that does not decode, `frameHandler.ts`):
   forgotten, acknowledged, one line at error. So are a kept value that does not parse or names no
-  verified sender, and an application frame too large for an empty kept set (no honest client sends
+  verified sender, and an application frame larger than a group's share (no honest client sends
   one). A frame that large is opened WITHOUT keeping, because it may be a commit (a bulk add carries
   every key package and no plaintext), and a commit acknowledged unread would leave the group behind
   for good. None of them reaches `noteKeyGroupFrameLost`: nothing was lost in transit.
 - **Retention is a proof, not a clock.** An entry exists from the decrypt to the handler's success (or
   a terminal verdict); a frame is acknowledged only once its entry is gone, so every entry names a
   frame the server still queues, or one whose acknowledgement raced a kill, which the start-up run
-  handles. The bytes are bounded BEFORE anything is decrypted: `roomToKeep` admits a frame only while
-  the set plus its plaintext (bounded by the ciphertext) fits `KEPT_FRAMES_BYTE_BUDGET` (384 kB - one
-  full bundle page always fits an empty set, `BaseMlsService.distributionGroup.test.ts`). That budget is carved out
-  of the seen ledgers' (`SEEN_LEDGERS_BYTE_BUDGET` is now 1 MB less 64 kB less 384 kB = 576 kB, still
-  more than twice the busiest measured profile), so the whole stays within `APP_LEDGERS_BYTE_BUDGET`.
-  A full set leaves the frame UNREAD and unacknowledged (`kept-frames-full`, said once per episode),
-  and forgetting a kept frame fetches those groups again - an event, not a timer. **Stated cost:**
-  while a handler keeps failing for good reason (a seed store that refuses every write), the
-  key-group frames behind the full set wait, commits included, in their server order.
+  handles. The bytes are bounded BEFORE anything is decrypted, in two layers:
+  - **one frame per group, in server order.** A group that keeps a frame decrypts nothing more until
+    it is forgotten (`kept-frame-unhandled`, said once per episode and group): a later frame let past
+    it would be handled before it, and a group's seeds and commits mean something in the order the
+    server queued them. Forgetting it fetches that group's waiting frames again, per group. So a
+    group holds at most one kept frame, of at most `KEPT_FRAME_MAX_BYTES` (384 kB, its SHARE - one
+    full bundle page always fits, `BaseMlsService.distributionGroup.test.ts`);
+  - **two shares in all.** `roomToKeep` admits a frame only while the set plus its plaintext (bounded
+    by the ciphertext) fits `KEPT_FRAMES_BYTE_BUDGET` (768 kB). A full set leaves the frame UNREAD
+    and unacknowledged (`kept-frames-full`) and holds EVERY later frame of that group with it, a
+    small one included (the same order rule); forgetting any kept frame fetches those groups again.
+    Events, never a timer.
+
+  **What one failing community costs the others: nothing.** A community whose handler fails for good
+  holds one share; every other group still has a whole share, enough for its largest frame - and its
+  commits, which keep nothing. Pinned ("a handler failing for good on community A does not stop
+  community B"). Only TWO communities failing together can hold back a third group - its frames
+  larger than what the two leave, and with frames near their shares, all of them - until one is
+  handled or left. Honest frames near a share are bundle pages, so that takes two handlers failing
+  for good on history answers at once. **Stated cost:** the failing community's own frames wait, commits included, in
+  their server order, until its handler succeeds; its failed-run count says so at error.
+
+  **The seen ledgers give way.** `SEEN_LEDGERS_BYTE_BUDGET` stays 1 MB less 64 kB, but what they may
+  take NOW is that less the kept frames, less the room of a frame about to be kept
+  (`seenLedgersBudgetNow`, `seenLedgerBounds.ts`): before a keeping decrypt, `makeRoomToKeepFrame`
+  (`history.ts`) evicts the least recently written seen ledgers until both fit, so the state the
+  next checkpoint exports stays within `APP_LEDGERS_BYTE_BUDGET`. The kept frames go first because
+  the losses differ: a dropped seen ledger costs a re-check of its archive (or one false accusation,
+  below), a dropped kept frame is a seed lost. Nothing is kept outside the seconds a handler runs,
+  so a real profile keeps its whole seen budget; even at the kept frames' own budget the seen ledgers
+  keep 192 kB.
+- **Leaving a community forgets them; a re-join keeps them.** `forgetDistributionGroupById` - the
+  leave path (`forgetCommunityGraine` through `forgetDistributionGroup`) and a group the server no
+  longer lists - stages the deletion of every `kept-frame:<group>:` key BEFORE it drops the tree, so
+  the checkpoint the drop awaits writes both; nothing else would ever name that group to run or
+  forget them. A drop to RE-JOIN the same group (`{ rejoining: true }`: a leaf evicted, a roster row
+  missing, a group behind its server) keeps them: the frame was read and verified, its seed is
+  still the community's, and the re-joined registration runs it. At the opening, once the held
+  groups are LISTED (the gate of the row deletion beside it), `hydrateDistributionGroups` drops at
+  error any kept frame whose group the state no longer holds (`dropKeptFramesOfGroupsNotHeld`): no
+  path of this build leaves one, so one found is a leave path that skipped the forget, or a re-join
+  killed between its drop and its join.
 - **A sign-out keeps them; a device wipe deletes them.** A sign-out keeps the account's MLS state for
   its next sign-in, ratchets included, and the kept frames live in it: dropping them there would spend
   the generations for nothing, and the redelivery would then be read as handled (point 4) - a silent
@@ -678,9 +724,18 @@ ordering is the guarantee.
   - The fingerprint is FNV-1a over the bytes plus their length: two frames of one group colliding
     while the first is kept would hand the second the first's plaintext (an idempotent re-store) and
     acknowledge it. One in 2^32 per pair, within the frames kept at one time.
-  - A sender mismatch is kept by the decrypt and forgotten by the check that refuses it; a kill
+  - A sender mismatch is kept by the decrypt and forgotten by the check that refuses it, through the
+    same forget as a handled frame (so the frames waiting for its room are fetched again); a kill
     between the two runs the frame at the next start under the sender MLS VERIFIED (the envelope was
     the lie, never the content).
+  - "Read here" rests on the seen mark, and the seen ledgers are bounded: a redelivery whose group's
+    ledger was evicted in the meantime (least recently written first, `seenLedgerBounds.ts`) meets a
+    spent generation with no mark, and is counted by `noteKeyGroupFrameLost` as a network loss. A FALSE
+    count, never a data loss: the frame was handled (or refused for good) before its kept value was
+    forgotten, and its seed is held. It needs the group to go quiet long enough to be the least
+    recently written while its acknowledgement is lost, or the kept frames to press the seen ledgers.
+  - A re-join killed between its drop and its join leaves a kept frame of a group the next opening
+    does not hold: dropped there at error (above), and its seed comes back through a seed request.
   - A follower tab's kept values die with its copy, like its seen marks.
 - **It also closes** the crash window the rows-before-ratchet review filed for this path (a
   checkpoint exporting a key-group frame's advance before its seed was stored,
@@ -689,14 +744,24 @@ ordering is the guarantee.
   backlog entry is deleted.
 - **Pinned by** `BaseMlsService.distributionGroup.test.ts` ("a key-group frame whose handler threw
   (section 11)": a handler that throws once then succeeds stores the seed on the redelivery and
-  `noteKeyGroupFrameLost` is never called; a kept frame survives a simulated restart and is handled
-  at the next start; a sign-out keeps it for the next sign-in; a wiped state keeps nothing; a
-  permanent failure is terminal, logged and not counted; a full set decrypts nothing and re-fetches
-  once a kept frame is handled; a frame too large to keep applies as a commit and is terminal as an
-  application frame; one full bundle page fits), `keptKeyGroupFrames.test.ts`,
+  `noteKeyGroupFrameLost` is never called; a kept frame survives a restart through the real opening
+  (`openStateLedgers`, `hydrateDistributionGroups`) and is handled at the next start; failed runs are
+  counted in the state across starts and accuse from the third; a sign-out keeps it for the next
+  sign-in on the same service; a wiped state keeps nothing; a permanent failure is terminal, logged
+  and not counted; a later frame of a group waits behind its kept frame and is fetched once it is
+  handled; a handler failing for good on community A does not stop community B's commits or largest
+  frame; a group refused for room decrypts nothing more, a small frame included, and is fetched once
+  a kept frame is handled; a sender mismatch frees its room through the one forget; a frame past a
+  share applies as a commit and is terminal as an application frame; one full bundle page fits a
+  share; leaving a community forgets its kept frames through the leave path, a re-join keeps them;
+  an opening drops at error the kept frames of groups it no longer holds), `keptKeyGroupFrames.test.ts`,
+  `seenLedgerBounds.test.ts` (the seen ledgers give way to the kept frames and the one about to be
+  kept),
   `frameHandler.test.ts` (an undecodable payload throws the terminal kind) and
   `mls-core/tests/kept_key_group_frame.rs` (the value is kept in the call that spends the
-  generation, survives a save and a reload with it, and the redelivered bytes are still refused).
+  generation, survives a save and a reload with it, and the redelivered bytes are still refused) and
+  `app_ledgers.rs` (a frame with no readable sender serialises `"sender":null`, the string
+  `keptFrameValue(null, ..)` builds).
 
 ## Verification
 

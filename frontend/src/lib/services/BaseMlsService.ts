@@ -231,6 +231,7 @@ import { openExternalCommitWindow } from '$lib/utils/chat/externalCommitVerdict'
 import {
   forgetSeenCipherCaches,
   hasHistoryFrameBeenConsumed,
+  makeRoomToKeepFrame,
   markHistoryFrameConsumed,
   noteFrameConsumed,
   stagePendingHistoryMarks,
@@ -238,10 +239,17 @@ import {
 import { frameFingerprint } from '$lib/mls-client/inboundFrameLedger';
 import { deviceIdOfLeaf, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import {
+  KEPT_FRAME_FAILURES_ACCUSED,
   UnhandleableFrameError,
+  describeKeptFrames,
   forgetKeptFrame,
+  forgetKeptFramesOfGroup,
   keptFrameIds,
   keptFrameKey,
+  keptFrameNeeds,
+  keptFramesBytes,
+  keptFramesOfGroup,
+  noteKeptFrameFailed,
   readKeptFrame,
   roomToKeep,
 } from '$lib/mls-client/keptKeyGroupFrames';
@@ -716,10 +724,20 @@ export abstract class BaseMlsService implements IMlsService {
   private readonly keptFrameRuns = new Map<string, Promise<boolean>>();
 
   /**
-   * Whether "the kept frames fill their budget" has been said since the set last had room - said once
-   * per episode, and the frames it left unread are fetched again when a kept one is forgotten.
+   * Key groups whose frames wait unread because the kept frames filled their budget
+   * (`roomToKeep` said `full`). Once a group is here EVERY later frame of it waits too, a small one
+   * included - a frame let past the one before it would be handled out of server order. Emptied, and
+   * their frames fetched again, when a kept frame is forgotten (which is what frees the room).
    */
-  private keptFramesFullSaid = false;
+  private readonly keyGroupsWaitingForRoom = new Set<string>();
+
+  /**
+   * Key groups whose frames wait unread behind a frame of the same group kept unhandled - the second
+   * gate of server order, whose truth is DURABLE (the kept frame itself, `keptFramesOfGroup`). This
+   * set only makes the line say so once per episode; the group leaves it when its kept frame is
+   * forgotten.
+   */
+  private readonly keyGroupsHeldInOrder = new Set<string>();
 
   /** Set once per session; see {@link setDistributionGroupStore}. */
   private distributionGroupStore: DistributionGroupStore | null = null;
@@ -7747,6 +7765,29 @@ export abstract class BaseMlsService implements IMlsService {
     }
   }
 
+  /**
+   * Drops every kept key-group frame whose group the opened state no longer holds - gated, like the
+   * row deletion of {@link hydrateDistributionGroups}, on the held groups having been LISTED.
+   *
+   * AT ERROR, because no path of this build leaves one: a leave forgets its group's kept frames in
+   * the checkpoint that drops the group ({@link forgetDistributionGroupById}). One found here is a
+   * leave path that skipped it, or a re-join killed between its drop and its join; its group's
+   * registration will never run it, and the state would carry it for ever.
+   */
+  private dropKeptFramesOfGroupsNotHeld(): void {
+    const orphans = new Set(
+      keptFrameIds(this.userId)
+        .map(({ groupId }) => groupId)
+        .filter((groupId) => !holdsGroupState(this, groupId))
+    );
+    if (orphans.size === 0) return;
+    let dropped = 0;
+    for (const groupId of orphans) dropped += forgetKeptFramesOfGroup(this.userId, groupId);
+    console.error(
+      `[GRAINE] ${dropped} kept key-group frame(s) of ${orphans.size} group(s) this state no longer holds - dropped; the path that dropped their group did not forget them [${[...orphans].map((g) => g.slice(0, 8)).join(', ')}]`
+    );
+  }
+
   /** Wires the durable half of the key-distribution registry. See `IMlsService`. */
   setDistributionGroupStore(store: DistributionGroupStore | null): void {
     this.distributionGroupStore = store;
@@ -7777,6 +7818,7 @@ export abstract class BaseMlsService implements IMlsService {
     }
     this.heldAtHydration.clear();
     for (const groupId of this.getLocalGroups()) this.heldAtHydration.add(groupId);
+    this.dropKeptFramesOfGroupsNotHeld();
 
     let rows: Awaited<ReturnType<DistributionGroupStore['getDistributionGroups']>>;
     try {
@@ -8098,7 +8140,31 @@ export abstract class BaseMlsService implements IMlsService {
    *
    * @returns whether this device held anything under that id
    */
-  async forgetDistributionGroupById(groupId: string, reason: string): Promise<boolean> {
+  async forgetDistributionGroupById(
+    groupId: string,
+    reason: string,
+    options?: { rejoining?: boolean }
+  ): Promise<boolean> {
+    // ITS KEPT FRAMES GO WITH IT, STAGED BEFORE THE DROP so the checkpoint the drop awaits writes
+    // both: a frame kept for a community this device left would otherwise be held in the state for
+    // ever, with no registration ever naming its group again to run or forget it (section 11). A
+    // drop to RE-JOIN the same group is not a leave: the frame was read and verified, its seed is
+    // still the community's, and the registration of the re-joined group runs it.
+    if (options?.rejoining !== true) {
+      // Its own waiting frames go with it - nothing will route them now - so neither gate nor work
+      // list keeps naming it; the room its frames held is freed for the groups waiting on it.
+      this.keyGroupsWaitingForRoom.delete(groupId);
+      this.keyGroupsHeldInOrder.delete(groupId);
+      takeGroupAwaiting('kept-frames-full', groupId);
+      takeGroupAwaiting('kept-frame-unhandled', groupId);
+      const forgotten = forgetKeptFramesOfGroup(this.userId, groupId);
+      if (forgotten > 0) {
+        console.info(
+          `[GRAINE] ${forgotten} frame(s) kept unhandled on key group ${groupId.slice(0, 8)}... forgotten with it (${reason})`
+        );
+        this.releaseFramesWaitingOnKept(groupId, 'a left key group freed its kept frames');
+      }
+    }
     const held = holdsGroupState(this, groupId) || this.knownDistributionGroups.has(groupId);
     if (!held) return false;
     // The eviction belonged to the state being dropped; the next one, if any, is a new fact.
@@ -8202,23 +8268,44 @@ export abstract class BaseMlsService implements IMlsService {
       return this.handleKeptDistributionFrame(groupId, fingerprint, 'its redelivery');
     }
 
+    // SERVER ORDER, PER GROUP. A frame left unread or unhandled holds back every LATER frame of its
+    // group, commits included: one let past it would be handled before it, and a group's seeds and
+    // commits are meaningful in the order the server queued them. Both gates are per group, so a
+    // community whose handler fails for good holds back its own frames and nobody else's
+    // (mls-desync-prevention section 11).
+    if (this.keyGroupsWaitingForRoom.has(groupId)) {
+      noteUnackedFrame(groupId, 'kept-frames-full');
+      return false;
+    }
+    if (keptFramesOfGroup(this.userId, groupId).length > 0) {
+      if (!this.keyGroupsHeldInOrder.has(groupId)) {
+        this.keyGroupsHeldInOrder.add(groupId);
+        console.warn(
+          `[GRAINE] frames of key group ${groupId.slice(0, 8)}... wait unread behind one of its own kept unhandled (${describeKeptFrames(this.userId, groupId)}) - in server order, until it is handled`
+        );
+      }
+      noteUnackedFrame(groupId, 'kept-frame-unhandled');
+      return false;
+    }
+
     // ROOM BEFORE THE GENERATION IS SPENT: once decrypted, the plaintext must have somewhere to be
-    // kept, so a frame that would pass the budget is not opened while others are kept. One too large
-    // for even an EMPTY set is opened WITHOUT keeping: it may be a commit (a bulk add carries every
+    // kept, so a frame that would pass the budget is not opened while others are kept. One larger
+    // than a group's share is opened WITHOUT keeping: it may be a commit (a bulk add carries every
     // key package, and has no plaintext to keep), and a commit acknowledged unread would leave the
     // group behind for good. An application frame that large is refused after the decrypt, below.
     const room = roomToKeep(this.userId, ciphertext.length);
     const keep = room !== 'too-large';
     if (room === 'full') {
-      if (!this.keptFramesFullSaid) {
-        this.keptFramesFullSaid = true;
-        console.warn(
-          `[GRAINE] the key-group frames kept until handled fill their budget - frames of key group ${groupId.slice(0, 8)}... wait unread until a kept one is handled`
-        );
-      }
+      this.keyGroupsWaitingForRoom.add(groupId);
+      console.warn(
+        `[GRAINE] the key-group frames kept until handled fill their budget (${keptFramesBytes(this.userId)} bytes held) - frames of key group ${groupId.slice(0, 8)}... wait unread, in server order, until a kept one is handled`
+      );
       noteUnackedFrame(groupId, 'kept-frames-full');
       return false;
     }
+    // And room in the STATE: the seen ledgers give way to the frame about to be kept, before its
+    // generation is spent (`seenLedgerBounds.ts`).
+    if (keep) makeRoomToKeepFrame(this.userId, keptFrameNeeds(ciphertext.length));
 
     const keepFingerprint = keep ? fingerprint : undefined;
     let plaintext: Uint8Array | null;
@@ -8360,12 +8447,15 @@ export abstract class BaseMlsService implements IMlsService {
   ): Promise<boolean> {
     const scope = this.distributionScopeByGroup.get(groupId);
     if (scope === undefined) {
-      // Every caller checks the scope first; a forget in between leaves the frame kept, and the
-      // registration that names the group again runs it.
-      console.warn(
-        `[GRAINE] kept frame on key group ${groupId.slice(0, 8)}... not handled on ${occasion}: its roster is no longer named - kept for its registration`
+      // Every caller checks the scope first, and only {@link forgetDistributionGroupById} removes one:
+      // the group was dropped between that check and this run. A LEAVE forgot this frame with its
+      // group, so it is acknowledged; a drop to RE-JOIN kept it, and the registration that names the
+      // group again runs it.
+      const keptForRejoin = readKeptFrame(this.userId, groupId, fingerprint) !== null;
+      console.info(
+        `[GRAINE] kept frame on key group ${groupId.slice(0, 8)}... not handled on ${occasion}: its key group was ${keptForRejoin ? 'dropped to be re-joined - kept for the re-join' : 'left - forgotten with it'}`
       );
-      return false;
+      return !keptForRejoin;
     }
     const { workspaceId } = scope;
     const handler = this.distributionFrameHandler;
@@ -8430,10 +8520,14 @@ export abstract class BaseMlsService implements IMlsService {
         );
         return false;
       }
-      // Anything else is a defect and accuses - but loses nothing: the plaintext stays kept, the
-      // frame unacknowledged, and its redelivery (or the next start) runs the handler again.
-      console.error(
-        `[GRAINE] handler refused a frame from ${frame.sender.slice(0, 8)} on community ${workspaceId.slice(0, 8)} (${occasion}) - its plaintext is kept and the frame unacknowledged:`,
+      // Anything else loses nothing: the plaintext stays kept, the frame unacknowledged, and its
+      // redelivery (or the next start) runs the handler again. COUNTED IN THE KEPT VALUE, so the
+      // count survives a restart: a handler that keeps failing on the same plaintext is a defect,
+      // and its line climbs from warn to error as the count does.
+      const failures = noteKeptFrameFailed(this.userId, groupId, fingerprint);
+      const say = failures >= KEPT_FRAME_FAILURES_ACCUSED ? console.error : console.warn;
+      say(
+        `[GRAINE] handler refused a frame from ${frame.sender.slice(0, 8)} on community ${workspaceId.slice(0, 8)} (${occasion}; failed run ${failures}, key group keeps ${describeKeptFrames(this.userId, groupId)}) - its plaintext is kept and the frame unacknowledged; later frames of this key group wait behind it:`,
         String(e)
       );
       return false;
@@ -8447,14 +8541,28 @@ export abstract class BaseMlsService implements IMlsService {
    * beside, so a redelivery of them is known as handled rather than lost
    * ({@link dispositionOfUnreadableFrame}). Both reach the state in the next checkpoint.
    *
-   * It frees room in the kept set, so the frames left unread for lack of it are fetched again.
+   * It frees room in the kept set and opens its group's order, so the frames left unread for either
+   * are fetched again ({@link releaseFramesWaitingOnKept}).
    */
   private forgetKeptDistributionFrame(groupId: string, fingerprint: string): void {
     markHistoryFrameConsumed(this.userId, groupId, fingerprint);
     forgetKeptFrame(this.userId, groupId, fingerprint);
-    if (this.keptFramesFullSaid) {
-      this.keptFramesFullSaid = false;
-      this.refetchFramesLeftBehind('kept-frames-full', 'a kept key-group frame was handled');
+    this.releaseFramesWaitingOnKept(groupId, 'a kept key-group frame was handled');
+  }
+
+  /**
+   * A kept frame of `groupId` is gone: the frames of that group waiting behind it, and the frames of
+   * every group waiting for room, are fetched again - in server order, since the server lists them
+   * as it queued them. Each event is per its gate: only that group's order opened, all the room did.
+   */
+  private releaseFramesWaitingOnKept(groupId: string, trigger: string): void {
+    if (keptFramesOfGroup(this.userId, groupId).length === 0) {
+      this.keyGroupsHeldInOrder.delete(groupId);
+      this.refetchFramesLeftBehind('kept-frame-unhandled', trigger, groupId);
+    }
+    if (this.keyGroupsWaitingForRoom.size > 0) {
+      this.keyGroupsWaitingForRoom.clear();
+      this.refetchFramesLeftBehind('kept-frames-full', trigger);
     }
   }
 
@@ -8527,11 +8635,13 @@ export abstract class BaseMlsService implements IMlsService {
     } catch (e) {
       // REFUSED FOR ITS SENDER, BUT DECRYPTED: the generation is spent all the same (WP-G2-1b). The
       // decrypt kept the plaintext before the check refused it; it is handed to nobody, so it is
-      // forgotten.
+      // forgotten - through the one forget, so the frames waiting on its room are fetched again.
       if (e instanceof SenderMismatchError) {
         noteFrameConsumed(this.userId, groupId, ciphertext);
         noteInboundMlsFrame(false);
-        if (keepFingerprint !== undefined) forgetKeptFrame(this.userId, groupId, keepFingerprint);
+        if (keepFingerprint !== undefined) {
+          this.forgetKeptDistributionFrame(groupId, keepFingerprint);
+        }
       }
       throw e;
     }
@@ -8573,16 +8683,21 @@ export abstract class BaseMlsService implements IMlsService {
     // a second, wrong, account of it.
     if (kind === 'sender-mismatch') return true;
     // A GENERATION THIS DEVICE SPENT ON THESE VERY BYTES, whose plaintext it no longer keeps, was
-    // HANDLED (or found unhandleable): a kept frame is forgotten only then, and the kept set is read
-    // before anything is decrypted (`routeDistributionFrame`). So this is a redelivery whose
-    // acknowledgement was lost, not a loss, and it is never counted as one.
+    // READ HERE: the kept set is read before anything is decrypted (`routeDistributionFrame`), so
+    // this is a redelivery, never a loss in transit, and it is never counted as one. What happened to
+    // it after the read, this line cannot tell, so it names every possibility: handled (and its
+    // acknowledgement lost), refused for good (a sender mismatch, a frame too large, a payload no
+    // handler can use - each already said at error when it happened), or - read by a build before
+    // 2026-11-25, which kept nothing - a frame whose handler threw, LOST then. A warn, because the
+    // last is a loss this device cannot repair by itself (its seed comes back through a seed
+    // request); a reader matching it against an older build's `handler refused` line knows which.
     if (
       kind === 'secret-reuse' &&
       fingerprint !== undefined &&
       hasHistoryFrameBeenConsumed(this.userId, groupId, fingerprint)
     ) {
-      console.debug(
-        `[GRAINE] frame on ${groupId.slice(0, 8)}... was already handled here (its generation spent on these bytes, nothing kept) - acknowledged`
+      console.warn(
+        `[GRAINE] frame on ${groupId.slice(0, 8)}... was already read here (its generation spent on these bytes) and nothing is kept for it: handled, refused for good, or lost to a handler that threw under a build before 2026-11-25 - acknowledged, not counted as a network loss`
       );
       return true;
     }

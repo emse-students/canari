@@ -21,7 +21,7 @@ import {
 } from '$lib/mls-client/keyGroupFrameLosses';
 import { frameFingerprint } from '$lib/mls-client/inboundFrameLedger';
 import {
-  KEPT_FRAMES_BYTE_BUDGET,
+  KEPT_FRAME_MAX_BYTES,
   UnhandleableFrameError,
   keptFrameIds,
   keptFrameKey,
@@ -50,7 +50,9 @@ import {
 import { flushMacrotask } from '../../test/flush';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { leadHoldsInFlight, resetLeadHoldsForTests } from '$lib/mls-client/leadHolds';
+import { SenderMismatchError } from '$lib/mls-client/verifiedSender';
 import {
+  closeStateLedgers,
   hydrateStateLedgers,
   noteStateLedgerHeldByState,
   readStateLedger,
@@ -106,7 +108,13 @@ const proto = BaseMlsService.prototype as unknown as {
     aheadOfMailbox?: boolean
   ): Promise<boolean>;
   noteDistributionGroup(groupId: string): void;
-  forgetDistributionGroupById(groupId: string, reason: string): Promise<boolean>;
+  forgetDistributionGroupById(
+    groupId: string,
+    reason: string,
+    options?: { rejoining?: boolean }
+  ): Promise<boolean>;
+  forgetDistributionGroup(scope: DistributionScope): Promise<string | null>;
+  openStateLedgers(): Promise<void>;
   hydrateDistributionGroups(): Promise<void>;
   refetchFramesLeftBehind(
     reasons: UnackedReason | readonly UnackedReason[],
@@ -139,6 +147,8 @@ const proto = BaseMlsService.prototype as unknown as {
   ): Promise<boolean>;
   forgetKeptDistributionFrame(groupId: string, fingerprint: string): void;
   handleKeptDistributionFrames(onlyGroupId?: string): void;
+  releaseFramesWaitingOnKept(groupId: string, trigger: string): void;
+  dropKeptFramesOfGroupsNotHeld(): void;
   onDistributionFrame(handler: unknown): void;
 };
 
@@ -239,7 +249,12 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     // The kept-frame halves of the route - REAL, since what is kept, handled and forgotten is what
     // the section 11 cases pin.
     keptFrameRuns: new Map<string, Promise<boolean>>(),
-    keptFramesFullSaid: false,
+    keyGroupsWaitingForRoom: new Set<string>(),
+    keyGroupsHeldInOrder: new Set<string>(),
+    releaseFramesWaitingOnKept: proto.releaseFramesWaitingOnKept,
+    dropKeptFramesOfGroupsNotHeld: proto.dropKeptFramesOfGroupsNotHeld,
+    distributionGroupFor: proto.distributionGroupFor,
+    forgetDistributionGroupById: proto.forgetDistributionGroupById,
     handleKeptDistributionFrame: proto.handleKeptDistributionFrame,
     runKeptDistributionFrame: proto.runKeptDistributionFrame,
     forgetKeptDistributionFrame: proto.forgetKeptDistributionFrame,
@@ -807,20 +822,22 @@ describe('routing a frame that arrived on the group', () => {
     warn.mockRestore();
   });
 
-  it('control: a handler that REFUSES a frame for another cause still accuses', async () => {
+  it('control: a handler that REFUSES a frame for another cause is a failed run, not an absent link', async () => {
     const ctx = registered({
       distributionFrameHandler: vi.fn(async () => {
         throw new Error('seed store refused');
       }),
     });
-    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
     expect(await route(ctx, 'g-1', 'peer', new Uint8Array([1]))).toBe(false);
-    expect(error).toHaveBeenCalledWith(
+    // Counted in the kept value and climbing to error from the third run (section 11's cases).
+    expect(warn).toHaveBeenCalledWith(
       expect.stringContaining('handler refused a frame'),
       expect.stringContaining('seed store refused')
     );
-    error.mockRestore();
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('got no answer'));
+    warn.mockRestore();
   });
 
   it('refuses a group it has no community for', async () => {
@@ -1675,15 +1692,26 @@ describe('a key-group frame refused for its sender still spends a counted genera
 describe('a key-group frame whose handler threw (section 11)', () => {
   const SEED = new Uint8Array([4, 2]);
   const FRAME = new Uint8Array([7, 1, 7]);
+  const LATER = new Uint8Array([7, 1, 8]);
 
-  function spendingMls(verifiedSender: string | null = 'peer:peer-phone') {
+  /**
+   * The decrypt as the platforms run it: a generation spent once, and the plaintext kept in the same
+   * call. `plaintextOf` says what each frame decrypts to - null for a commit, which keeps nothing.
+   */
+  function spendingMls(
+    verifiedSender: string | null = 'peer:peer-phone',
+    plaintextOf: (bytes: Uint8Array) => Uint8Array | null = () => SEED
+  ) {
     const spent = new Set<string>();
     return vi.fn(async (_groupId: string, bytes: Uint8Array, _env: unknown, keepAs?: string) => {
       const fp = frameFingerprint(bytes);
       if (spent.has(fp)) throw new Error('SecretReuseError: already-consumed generation');
       spent.add(fp);
-      if (keepAs) noteStateLedgerHeldByState('u', keepAs, keptFrameValue(verifiedSender, SEED));
-      return { plaintext: SEED, author: 'unsigned' };
+      const plaintext = plaintextOf(bytes);
+      if (plaintext === null) return null;
+      if (keepAs)
+        noteStateLedgerHeldByState('u', keepAs, keptFrameValue(verifiedSender, plaintext));
+      return { plaintext, author: 'unsigned' };
     });
   }
 
@@ -1698,9 +1726,25 @@ describe('a key-group frame whose handler threw (section 11)', () => {
     return Object.fromEntries(stateLedgerKeys('u', '').map((k) => [k, readStateLedger('u', k)!]));
   }
 
+  /** No `localStorage` copy of any ledger: the opening's migration finds nothing to move. */
+  const emptyLocalStorage = {
+    length: 0,
+    key: () => null,
+    getItem: () => null,
+    setItem: () => undefined,
+    removeItem: () => undefined,
+  };
+
   beforeEach(() => {
     vi.mocked(noteKeyGroupFrameLost).mockClear();
     resetKeyGroupFrameLosses();
+    resetUnackedFrames();
+    vi.stubGlobal('localStorage', emptyLocalStorage);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   it('runs the handler again on the redelivery, stores the seed, and counts no loss', async () => {
@@ -1710,15 +1754,17 @@ describe('a key-group frame whose handler threw (section 11)', () => {
       .mockRejectedValueOnce(new Error('seed store write failed'))
       .mockResolvedValue(undefined);
     const ctx = registered({ processIncomingMessage, distributionFrameHandler: handler });
-    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
     // The store failed: not acknowledged, and the plaintext is kept beside the spent generation.
     expect(await route(ctx, 'g-1', 'peer', FRAME)).toBe(false);
-    expect(error).toHaveBeenCalledWith(
-      expect.stringContaining('its plaintext is kept'),
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /failed run 1, key group keeps 1 frame\(s\), 1 failed run\(s\).*its plaintext is kept/
+      ),
       expect.stringContaining('seed store write failed')
     );
-    expect(readKeptFrame('u', 'g-1', frameFingerprint(FRAME))).not.toBeNull();
+    expect(readKeptFrame('u', 'g-1', frameFingerprint(FRAME))).toMatchObject({ failures: 1 });
 
     // The redelivery: never decrypted again, handled from the kept plaintext, then forgotten.
     expect(await route(ctx, 'g-1', 'peer', FRAME)).toBe(true);
@@ -1729,31 +1775,44 @@ describe('a key-group frame whose handler threw (section 11)', () => {
     );
     expect(readKeptFrame('u', 'g-1', frameFingerprint(FRAME))).toBeNull();
 
-    // An acknowledgement lost after that: a spent generation on bytes already handled, not a loss.
+    // An acknowledgement lost after that: a spent generation on bytes already read, not a loss -
+    // said at warn, naming what it cannot tell apart.
+    warn.mockClear();
     expect(await route(ctx, 'g-1', 'peer', FRAME)).toBe(true);
     expect(handler).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'already read here (its generation spent on these bytes) and nothing is kept for it: handled, refused for good, or lost'
+      )
+    );
     expect(noteKeyGroupFrameLost).not.toHaveBeenCalled();
     expect(describeKeyGroupFrameLosses('g-1')).toBe('none');
-    error.mockRestore();
   });
 
-  it('survives a restart and is handled at the next start, from the sender MLS verified', async () => {
-    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  it('survives a restart: the opened state carries it, and the next start handles it from the sender MLS verified', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
     const before = registered({
       processIncomingMessage: spendingMls('peer:peer-phone'),
       distributionFrameHandler: vi.fn().mockRejectedValue(new Error('runtime ended')),
     });
     expect(await route(before, 'g-1', 'peer', FRAME)).toBe(false);
 
-    // The kill, and the next start: the state is opened with what it carried, nothing in memory.
+    // The kill, and the next start, through the real opening: the state's ledgers are read back
+    // (`openStateLedgers`), the key-group registry restored from its rows, then the handler wired.
     const disk = stateOnDisk();
     resetStateLedgersForTests();
-    forgetSeenCipherCaches('u');
-    hydrateStateLedgers('u', disk);
-
     const handler = vi.fn().mockResolvedValue(undefined);
-    const after = registered({ distributionFrameHandler: handler });
+    const after = makeCtx({
+      distributionFrameHandler: null,
+      readStateLedgers: vi.fn(async () => disk),
+      getLocalGroups: vi.fn().mockReturnValue(['g-1']),
+      distributionGroupStore: makeStore([{ groupId: 'g-1', workspaceId: 'ws-1', channelId: null }]),
+    });
+    await proto.openStateLedgers.call(after);
+    await proto.hydrateDistributionGroups.call(after);
+    proto.onDistributionFrame.call(after, handler);
     await flushMacrotask();
 
     expect(handler).toHaveBeenCalledWith({
@@ -1767,40 +1826,84 @@ describe('a key-group frame whose handler threw (section 11)', () => {
     expect(readKeptFrame('u', 'g-1', frameFingerprint(FRAME))).toBeNull();
     expect(info).toHaveBeenCalledWith(expect.stringContaining('1 key-group frame(s) kept'));
 
-    // The frame was never acknowledged, so the server redelivers it: handled, so acknowledged.
+    // The frame was never acknowledged, so the server redelivers it: read here, so acknowledged.
     after.processIncomingMessage = vi
       .fn()
       .mockRejectedValue(new Error('SecretReuseError: already-consumed generation'));
     expect(await route(after, 'g-1', 'peer', FRAME)).toBe(true);
     expect(handler).toHaveBeenCalledTimes(1);
     expect(noteKeyGroupFrameLost).not.toHaveBeenCalled();
-    error.mockRestore();
-    info.mockRestore();
+  });
+
+  it('counts the failed runs in the state, across starts, and accuses from the third', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const failing = () => vi.fn().mockRejectedValue(new Error('seed store refused'));
+    const ctx = registered({
+      processIncomingMessage: spendingMls(),
+      distributionFrameHandler: failing(),
+    });
+    expect(await route(ctx, 'g-1', 'peer', FRAME)).toBe(false);
+    expect(await route(ctx, 'g-1', 'peer', FRAME)).toBe(false);
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(error).not.toHaveBeenCalled();
+
+    // A restart: the count is read back from the state, not started again.
+    const disk = stateOnDisk();
+    resetStateLedgersForTests();
+    const next = makeCtx({
+      distributionFrameHandler: null,
+      readStateLedgers: vi.fn(async () => disk),
+    });
+    await proto.openStateLedgers.call(next);
+    proto.registerDistributionGroup.call(next, WS, 'g-1');
+    proto.onDistributionFrame.call(next, failing());
+    await flushMacrotask();
+
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('failed run 3'),
+      expect.stringContaining('seed store refused')
+    );
+    expect(readKeptFrame('u', 'g-1', frameFingerprint(FRAME))).toMatchObject({ failures: 3 });
+    expect(noteKeyGroupFrameLost).not.toHaveBeenCalled();
   });
 
   it('keeps it through a sign-out: the same account signing in again handles it', async () => {
     // A sign-out keeps the account's MLS state on disk for its next sign-in, ratchets included, and
     // the kept frame lives in that state. Dropping it there would spend the generation for nothing:
     // the redelivery would then meet a generation this device spent, and the seed would be lost.
-    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
-    const session = registered({
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const service = registered({
       processIncomingMessage: spendingMls(),
       distributionFrameHandler: vi.fn().mockRejectedValue(new Error('runtime ended')),
     });
-    expect(await route(session, 'g-1', 'peer', FRAME)).toBe(false);
-    // The sign-out unwires the handler: nothing runs the frame, and nothing forgets it.
-    proto.onDistributionFrame.call(session, null);
-    expect(readKeptFrame('u', 'g-1', frameFingerprint(FRAME))).not.toBeNull();
+    expect(await route(service, 'g-1', 'peer', FRAME)).toBe(false);
 
-    // The next sign-in wires a handler, which runs it.
+    // The sign-out: its final checkpoint writes the state, and the next sign-in's `init` closes this
+    // document's view before it loads the state again (`closeStateLedgers`) - nothing is read from
+    // memory across the two.
+    const disk = stateOnDisk();
+    closeStateLedgers('u');
+    expect(readKeptFrame('u', 'g-1', frameFingerprint(FRAME))).toBeNull();
+
+    // The sign-in, on the same service: the state opened, the registry restored, the handler wired.
     const handler = vi.fn().mockResolvedValue(undefined);
-    proto.onDistributionFrame.call(session, handler);
+    Object.assign(service, {
+      readStateLedgers: vi.fn(async () => disk),
+      getLocalGroups: vi.fn().mockReturnValue(['g-1']),
+      distributionGroupStore: makeStore([{ groupId: 'g-1', workspaceId: 'ws-1', channelId: null }]),
+    });
+    await proto.openStateLedgers.call(service);
+    expect(readKeptFrame('u', 'g-1', frameFingerprint(FRAME))).not.toBeNull();
+    await proto.hydrateDistributionGroups.call(service);
+    proto.onDistributionFrame.call(service, handler);
     await flushMacrotask();
     expect(handler).toHaveBeenCalledWith(expect.objectContaining({ plaintext: SEED }));
     expect(readKeptFrame('u', 'g-1', frameFingerprint(FRAME))).toBeNull();
-    error.mockRestore();
-    info.mockRestore();
   });
 
   it('goes with the state when the device is wiped: a state opened empty keeps nothing', () => {
@@ -1827,49 +1930,144 @@ describe('a key-group frame whose handler threw (section 11)', () => {
 
     expect(error).toHaveBeenCalledWith(expect.stringContaining('can never be handled'));
     expect(readKeptFrame('u', 'g-1', frameFingerprint(FRAME))).toBeNull();
-    // Its redelivery is known as handled, and said at no level that accuses.
+    expect(warn).not.toHaveBeenCalled();
+    // Its redelivery is known as read here, and never counted as a network loss.
     expect(await route(ctx, 'g-1', 'peer', FRAME)).toBe(true);
     expect(noteKeyGroupFrameLost).not.toHaveBeenCalled();
-    expect(warn).not.toHaveBeenCalled();
-    error.mockRestore();
-    warn.mockRestore();
   });
 
-  it('decrypts nothing while the kept frames fill their budget, and fetches it again once one is handled', async () => {
-    resetUnackedFrames();
-    // One frame kept from before, taking most of the budget.
-    noteStateLedgerHeldByState(
-      'u',
-      keptFrameKey('g-1', 'k:1'),
-      keptFrameValue('peer:peer-phone', new Uint8Array(Math.floor(KEPT_FRAMES_BYTE_BUDGET * 0.7)))
+  it('holds every later frame of a group behind its own kept frame, and fetches them once it is handled', async () => {
+    const processIncomingMessage = spendingMls();
+    const handler = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('seed store write failed'))
+      .mockResolvedValue(undefined);
+    const ctx = registered({ processIncomingMessage, distributionFrameHandler: handler });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    expect(await route(ctx, 'g-1', 'peer', FRAME)).toBe(false);
+    // In server order: the later frame is not decrypted while the earlier one waits, and the line
+    // says so once, not once per frame.
+    expect(await route(ctx, 'g-1', 'peer', LATER)).toBe(false);
+    expect(await route(ctx, 'g-1', 'peer', LATER)).toBe(false);
+    expect(processIncomingMessage).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes('wait unread behind'))).toHaveLength(
+      1
     );
+
+    // The redelivery handles the kept one, which opens the group's order and asks for what waited.
+    const fetched = vi.fn().mockResolvedValue(undefined);
+    ctx.fetchPendingMessages = fetched;
+    expect(await route(ctx, 'g-1', 'peer', FRAME)).toBe(true);
+    expect(fetched).toHaveBeenCalledWith(['g-1']);
+    expect(await route(ctx, 'g-1', 'peer', LATER)).toBe(true);
+    expect(processIncomingMessage).toHaveBeenCalledTimes(2);
+    expect(handler).toHaveBeenCalledTimes(3);
+  });
+
+  it('a handler failing for good on community A does not stop community B, its commits or its largest frame', async () => {
+    // The largest honest frame, a full bundle page, and a commit as large: the worst A can hold, and
+    // the worst B can ask for.
+    const page = new Uint8Array(GRAINE_BUNDLE_PAGE_MAX_BYTES + 4 * 1024);
+    const pageA = page.slice();
+    pageA[0] = 1;
+    const commitA = new Uint8Array([9, 9, 1]);
+    const commitB = page.slice();
+    commitB[0] = 2;
+    const pageB = page.slice();
+    pageB[0] = 3;
+    const plaintextOf = (bytes: Uint8Array) =>
+      bytes === commitA || bytes === commitB ? null : bytes.subarray(0, bytes.length - 64);
+    const processIncomingMessage = spendingMls('peer:peer-phone', plaintextOf);
+    const handler = vi.fn(async (frame: { workspaceId: string }) => {
+      if (frame.workspaceId === 'ws-a') throw new Error('seed store refuses this community');
+    });
+    const ctx = makeCtx({ processIncomingMessage, distributionFrameHandler: handler });
+    proto.registerDistributionGroup.call(ctx, workspaceScope('ws-a'), 'g-a');
+    proto.registerDistributionGroup.call(ctx, workspaceScope('ws-b'), 'g-b');
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    // A's page is read, its handler fails for good: kept, and A's later frames wait behind it.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      expect(await route(ctx, 'g-a', 'peer', pageA)).toBe(false);
+      expect(await route(ctx, 'g-a', 'peer', commitA)).toBe(false);
+    }
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('failed run 3'),
+      expect.stringContaining('refuses this community')
+    );
+
+    // B goes on: its commit applies and its own largest frame is read and handled.
+    expect(await route(ctx, 'g-b', 'peer', commitB)).toBe(true);
+    expect(await route(ctx, 'g-b', 'peer', pageB)).toBe(true);
+    expect(handler).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 'ws-b' }));
+    expect(processIncomingMessage.mock.calls.map((c) => c[0])).toEqual(['g-a', 'g-b', 'g-b']);
+    expect(keptFrameIds('u')).toEqual([{ groupId: 'g-a', fingerprint: frameFingerprint(pageA) }]);
+    expect(noteKeyGroupFrameLost).not.toHaveBeenCalled();
+  });
+
+  it('decrypts nothing of a group refused for room, a small frame included, and fetches it once a kept one is handled', async () => {
+    // Two other groups each keep a frame near their share: the set is full for anything sizeable.
+    const nearShare = new Uint8Array(Math.floor(((KEPT_FRAME_MAX_BYTES - 1024) * 3) / 4));
+    for (const g of ['g-0', 'g-2']) {
+      noteStateLedgerHeldByState(
+        'u',
+        keptFrameKey(g, 'k:1'),
+        keptFrameValue('peer:peer-phone', nearShare)
+      );
+    }
     const processIncomingMessage = spendingMls();
     const ctx = makeCtx({ processIncomingMessage, distributionFrameHandler: null });
     proto.registerDistributionGroup.call(ctx, WS, 'g-1');
+    proto.registerDistributionGroup.call(ctx, channelScope('ws-1', 'c-0'), 'g-0');
+    proto.registerDistributionGroup.call(ctx, channelScope('ws-1', 'c-2'), 'g-2');
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
-    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    vi.spyOn(console, 'info').mockImplementation(() => undefined);
 
     expect(await route(ctx, 'g-1', 'peer', new Uint8Array(70_000))).toBe(false);
-    expect(await route(ctx, 'g-1', 'peer', new Uint8Array(80_000))).toBe(false);
+    // A small frame after it would fit, and is NOT decrypted: it would be handled out of order.
+    expect(await route(ctx, 'g-1', 'peer', new Uint8Array(40))).toBe(false);
     expect(processIncomingMessage).not.toHaveBeenCalled();
-    // Said once for the episode, not once per frame.
     expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('fill their budget'));
 
-    // The kept one is handled, which frees the room and asks for what waited.
+    // The kept ones are handled, which frees the room and asks for what waited.
     const fetched = vi.fn().mockResolvedValue(undefined);
     ctx.fetchPendingMessages = fetched;
     proto.onDistributionFrame.call(ctx, vi.fn().mockResolvedValue(undefined));
     await flushMacrotask();
     expect(keptFrameIds('u')).toEqual([]);
     expect(fetched).toHaveBeenCalledWith(['g-1']);
-    warn.mockRestore();
-    log.mockRestore();
-    info.mockRestore();
+    expect(await route(ctx, 'g-1', 'peer', new Uint8Array(70_000))).toBe(true);
   });
 
-  it('opens a frame too large to keep WITHOUT keeping: a commit applies, an application frame is terminal', async () => {
-    const huge = new Uint8Array(KEPT_FRAMES_BYTE_BUDGET);
+  it('a frame refused for its sender frees its room through the one forget', async () => {
+    const processIncomingMessage = vi.fn(
+      async (_groupId: string, _bytes: Uint8Array, _env: unknown, keepAs?: string) => {
+        if (keepAs) noteStateLedgerHeldByState('u', keepAs, keptFrameValue('mallory:m', SEED));
+        throw new SenderMismatchError('g-1', 'user');
+      }
+    );
+    const ctx = registered({ processIncomingMessage });
+    proto.registerDistributionGroup.call(ctx, channelScope('ws-1', 'c-2'), 'g-2');
+    ctx.keyGroupsWaitingForRoom.add('g-2');
+    noteUnackedFrame('g-2', 'kept-frames-full');
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const fetched = vi.fn().mockResolvedValue(undefined);
+    ctx.fetchPendingMessages = fetched;
+
+    expect(await route(ctx, 'g-1', 'peer', FRAME)).toBe(true);
+
+    expect(keptFrameIds('u')).toEqual([]);
+    expect(fetched).toHaveBeenCalledWith(['g-2']);
+    expect(ctx.keyGroupsWaitingForRoom.size).toBe(0);
+  });
+
+  it('opens a frame past a group share WITHOUT keeping: a commit applies, an application frame is terminal', async () => {
+    const huge = new Uint8Array(KEPT_FRAME_MAX_BYTES);
     expect(roomToKeep('u', huge.length)).toBe('too-large');
 
     // A bulk add carries every key package and no plaintext: acknowledged unread, the group would
@@ -1891,12 +2089,75 @@ describe('a key-group frame whose handler threw (section 11)', () => {
     expect(error).toHaveBeenCalledWith(expect.stringContaining('can never be handled'));
     expect(keptFrameIds('u')).toEqual([]);
     expect(noteKeyGroupFrameLost).not.toHaveBeenCalled();
-    error.mockRestore();
   });
 
-  it('holds the largest honest frame - one full bundle page - in an empty kept set', () => {
-    // A page budget raised past the kept budget would refuse real answers as `too-large`.
+  it('holds the largest honest frame - one full bundle page - in a group share', () => {
+    // A page budget raised past the share would refuse real answers as `too-large`.
     const page = GRAINE_BUNDLE_PAGE_MAX_BYTES + 4 * 1024;
     expect(roomToKeep('u', page)).toBe('room');
+  });
+
+  it('forgets the kept frames of a community left, through the leave path, and keeps them for a re-join', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    // What each drop's checkpoint exports: the kept frames as they stand when the tree goes.
+    const keptAtDrop: string[][] = [];
+    const ctx = registered({
+      processIncomingMessage: spendingMls(),
+      distributionFrameHandler: vi.fn().mockRejectedValue(new Error('seed store write failed')),
+      getLocalGroups: vi.fn().mockReturnValue(['g-1', 'g-2']),
+      forgetGroup: vi.fn(() => keptAtDrop.push(keptFrameIds('u').map((id) => id.groupId))),
+      persistCheckpoint: vi.fn().mockResolvedValue(undefined),
+    });
+    proto.registerDistributionGroup.call(ctx, SALON, 'g-2');
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    expect(await route(ctx, 'g-1', 'peer', FRAME)).toBe(false);
+    expect(await route(ctx, 'g-2', 'peer', LATER)).toBe(false);
+    expect(keptFrameIds('u')).toHaveLength(2);
+
+    // A re-join of the salon's group keeps its frame: its seed is still the community's.
+    await proto.forgetDistributionGroupById.call(
+      ctx,
+      'g-2',
+      'own leaf removed from the key group',
+      {
+        rejoining: true,
+      }
+    );
+    expect(keptFrameIds('u').map((id) => id.groupId)).toEqual(['g-1', 'g-2']);
+
+    // Leaving the community (`forgetCommunityGraine` asks this for each of its scopes).
+    expect(await proto.forgetDistributionGroup.call(ctx, WS)).toBe('g-1');
+    // Staged BEFORE the drop, so the checkpoint the drop awaits carries the deletion.
+    expect(keptAtDrop).toEqual([['g-1', 'g-2'], ['g-2']]);
+    expect(keptFrameIds('u').map((id) => id.groupId)).toEqual(['g-2']);
+    expect(info).toHaveBeenCalledWith(
+      expect.stringContaining('forgotten with it (distribution group left)')
+    );
+  });
+
+  it('drops at error, once the held groups are listed, a kept frame whose group the state no longer holds', async () => {
+    noteStateLedgerHeldByState('u', keptFrameKey('g-held', '1:a'), keptFrameValue('p:d', SEED));
+    noteStateLedgerHeldByState('u', keptFrameKey('g-gone', '1:b'), keptFrameValue('p:d', SEED));
+    const ctx = makeCtx({
+      getLocalGroups: vi.fn().mockReturnValue(['g-held']),
+      distributionGroupStore: makeStore([]),
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    await proto.hydrateDistributionGroups.call(ctx);
+
+    expect(keptFrameIds('u')).toEqual([{ groupId: 'g-held', fingerprint: '1:a' }]);
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('1 kept key-group frame(s) of 1 group(s) this state no longer holds')
+    );
+
+    // Not judged without the listing: nothing is dropped then.
+    noteStateLedgerHeldByState('u', keptFrameKey('g-gone', '1:b'), keptFrameValue('p:d', SEED));
+    await proto.hydrateDistributionGroups.call(
+      makeCtx({ heldGroupsKnown: () => false, distributionGroupStore: makeStore([]) })
+    );
+    expect(keptFrameIds('u')).toHaveLength(2);
   });
 });

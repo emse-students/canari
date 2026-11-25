@@ -1128,6 +1128,8 @@ acknowledged, so the server redelivers it once the join lands; a dispatched fram
 frame whose handler THREW is not acknowledged either, and its plaintext is kept in the MLS state by
 the decrypt itself, so the redelivery (or the next start) runs the handler again instead of meeting a
 spent generation ([mls-desync-prevention section 11](mls-desync-prevention.md#11-client---a-key-group-frame-is-kept-until-its-handler-succeeds-2026-11-25)).
+Every LATER frame of that key group waits unread behind it, commits included, so a group's frames
+are handled in the order the server queued them; the other key groups go on.
 
 ### Phase 4 - send, receive, repair
 
@@ -4515,13 +4517,16 @@ member before this change, and it takes ALL of that member's online leaves being
 
 `[GRAINE] asked <user> (<device,device... | every device>) for N seed(s) in community X at epoch E - reasons
 unreadable-row=a,declined=b,holder-online=c,epoch-left=d, newest row A..B old, key group lost
-<cause:n | none> this session`. `epoch` is this device's key-group epoch. The reasons say why each
+<cause:n | none> this session, keeps unhandled <n frame(s), f failed run(s), b bytes | none>`. `epoch`
+is this device's key-group epoch. The reasons say why each
 seed was asked for: a row it could not read, a decline from the previous answerer, a holder that
 came online, or a request held while the device left an epoch. The losses are key-group frames this
 device could not open, counted by `noteKeyGroupFrameLost` (`keyGroupFrameLosses.ts`) per
 classification (for example `past-epoch-application`). A frame that WAS opened and whose handler
-failed is never among them: it is kept until handled ([mls-desync-prevention section 11](mls-desync-prevention.md#11-client---a-key-group-frame-is-kept-until-its-handler-succeeds-2026-11-25)). The history request line carries
-`reason key-group-rejoined|no-seed-held` and the same loss count.
+failed is never among them: it is kept until handled ([mls-desync-prevention section 11](mls-desync-prevention.md#11-client---a-key-group-frame-is-kept-until-its-handler-succeeds-2026-11-25)),
+and the `keeps unhandled` fragment counts it with its failed runs - a request beside a kept frame is
+a handler failing here, not a seed lost on the way. The history request line carries
+`reason key-group-rejoined|no-seed-held` and the same two fragments.
 
 ### Old clients (floor 1.0.3), side by side
 

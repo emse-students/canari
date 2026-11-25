@@ -1585,8 +1585,16 @@ export interface IMlsService {
    * registration, so it can only forget what that registration already names - and the state worth
    * forgetting is precisely one where the two have drifted apart. The server names the group; this
    * takes that name. `reason` is printed by the drop's log line and is the CALLER's to state.
+   *
+   * The group's key-group frames kept unhandled (mls-desync-prevention section 11) go with it -
+   * unless `rejoining`: a drop to re-join the same group keeps them for the re-joined registration,
+   * since their seeds are still the community's.
    */
-  forgetDistributionGroupById(groupId: string, reason: string): Promise<boolean>;
+  forgetDistributionGroupById(
+    groupId: string,
+    reason: string,
+    options?: { rejoining?: boolean }
+  ): Promise<boolean>;
   /** The distribution group registered for `scope`, or null when none is. */
   distributionGroupFor(scope: DistributionScope): string | null;
   /** Every scope this device currently holds a distribution group for. */
