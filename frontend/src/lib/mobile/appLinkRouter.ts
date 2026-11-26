@@ -8,6 +8,7 @@ import { noteOpenRoutedNowhere } from '$lib/utils/chat/resumeOpening.svelte';
 import { CHECKOUT_RETURN_HOST } from '$lib/utils/checkoutCallbacks';
 import type { AppPath } from '$lib/utils/internalPath';
 import { describeDeepLink } from '$lib/utils/logSanitize';
+import { routerReady } from '$lib/navigation/routerReady';
 
 /**
  * ROUTES APP LINKS, from whichever source delivered them: the deep-link plugin (`onOpenUrl`, the
@@ -16,9 +17,19 @@ import { describeDeepLink } from '$lib/utils/logSanitize';
  * routes NOWHERE (`noteOpenRoutedNowhere`) - a resume that opened the link holds the conversation
  * it found on screen until one of the three is known (`resumeOpening.svelte.ts`).
  */
-export function processAppLinks(urls: string[]): void {
+export function processAppLinks(urls: string[], ready: Promise<void> = routerReady): void {
   console.log('[hooks] onOpenUrl called with', urls.length, 'URL(s)');
+  // NOTHING IS ROUTED BEFORE THE ROUTER'S FIRST NAVIGATION HAS SETTLED ({@link routerReady}). A
+  // cold-start tap delivers its link before SvelteKit has a current page, and a `goto` then throws
+  // (`Cannot read properties of null (reading 'pathname')`) or aborts the first navigation: a tap on
+  // the agenda or the moderation queue landed nowhere (owner's Android log, 2026-11-25). Waiting here,
+  // once, for every branch - chat, page, checkout, sign-in - is the same wait the iOS tap drain
+  // makes, so there is one implementation of "the router can take a navigation now".
+  void ready.then(() => routeAppLinks(urls));
+}
 
+/** Routes each link once the router is ready; see {@link processAppLinks}. */
+function routeAppLinks(urls: string[]): void {
   for (const url of urls) {
     console.log('[hooks] Processing URL:', describeDeepLink(url));
 
