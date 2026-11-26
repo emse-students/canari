@@ -156,6 +156,25 @@ import {
 import { cheapestCell, type CellValue, type PriceMatrix } from '../pricing/price-matrix';
 import { parsePriceMatrix, type CriteriaContext } from '../pricing/validate';
 
+/**
+ * What one send of a Cercle top-up came to, classified where the answer is read (the HTTP status)
+ * and never by reading a message.
+ *
+ * - `delivered`: the Cercle credited the member (any 2xx but 202).
+ * - `parked`: the Cercle answered 202 - the member has never signed in there, so it keeps the top-up
+ *   durably and credits it at their first sign-in. Accepted, not failed: retrying would only repeat
+ *   the answer, and it is not a failure a human has to settle.
+ * - `failed`: anything else, carrying the error to record. This includes a 404, which now means a
+ *   route or host that is not the receiver - never "the member is not there yet".
+ */
+export type CercleSendOutcome =
+  | { kind: 'delivered' }
+  | { kind: 'parked' }
+  | { kind: 'failed'; error: string };
+
+/** The Cercle's typed "parked" answer: the status is the signal, the body is only for a log. */
+const CERCLE_PARKED_STATUS = 202;
+
 /** Delays used between Cercle webhook delivery attempts (ms). The first one is not waited. */
 const CERCLE_RETRY_DELAYS = [1_000, 5_000, 15_000];
 
@@ -579,7 +598,7 @@ export interface FailedDelivery {
   lastName: string | null;
   amountCents: number;
   paymentIntentId: string;
-  status: 'pending' | 'delivered' | 'failed';
+  status: 'pending' | 'delivered' | 'parked' | 'failed';
   /** Total sends, across the initial dispatch and every retry since. */
   attemptCount: number;
   /** How many automatic retries have run, which is what picks the next backoff step. */
@@ -4769,12 +4788,12 @@ export class ProductsService {
    * product holds NOW. That is what makes fixing a wrong `webhookUrl` or a rotated secret and
    * pressing retry work at all.
    *
-   * @returns null when delivered, otherwise the error to record
+   * @returns what the send came to (`CercleSendOutcome`)
    */
   private async sendCercleWebhook(
     product: AssociationProduct,
     delivery: WebhookDelivery
-  ): Promise<string | null> {
+  ): Promise<CercleSendOutcome> {
     const payload = JSON.stringify({
       productId: product.id,
       userId: delivery.userId,
@@ -4786,7 +4805,7 @@ export class ProductsService {
     const signature = createHmac('sha256', product.webhookSecret).update(payload).digest('hex');
 
     try {
-      await firstValueFrom(
+      const res = await firstValueFrom(
         this.httpService.post(product.webhookUrl, payload, {
           headers: {
             'Content-Type': 'application/json',
@@ -4798,9 +4817,9 @@ export class ProductsService {
         })
       );
 
-      return null;
+      return res?.status === CERCLE_PARKED_STATUS ? { kind: 'parked' } : { kind: 'delivered' };
     } catch (err: unknown) {
-      return err instanceof Error ? err.message : '[unknown error]';
+      return { kind: 'failed', error: err instanceof Error ? err.message : '[unknown error]' };
     }
   }
 
@@ -4816,7 +4835,8 @@ export class ProductsService {
    *
    * `delays[0]` is not waited: the first attempt of any ladder happens immediately.
    *
-   * @returns whether the Cercle accepted it
+   * @returns whether the Cercle accepted it - credited, or parked for a member who has not signed in
+   *          there yet (`CercleSendOutcome`)
    */
   private async runDeliveryAttempts(
     product: AssociationProduct,
@@ -4834,20 +4854,22 @@ export class ProductsService {
       delivery.attemptCount += 1;
       delivery.lastAttemptAt = new Date();
 
-      const error = await this.sendCercleWebhook(product, delivery);
-      if (error === null) {
-        delivery.status = 'delivered';
+      const outcome = await this.sendCercleWebhook(product, delivery);
+      if (outcome.kind !== 'failed') {
+        // `parked` is a state of its own, not `delivered`: the money is NOT on the member's balance
+        // yet, and the daily reading of "what reached the Cercle" must be able to tell the two.
+        delivery.status = outcome.kind;
         delivery.lastError = null;
         delivery.nextAttemptAt = null;
         await this.deliveryRepo.save(delivery);
         this.logger.log(
-          `[CERCLE] webhook delivered: product=${product.id.slice(0, 8)} intent=${delivery.paymentIntentId} attempts=${delivery.attemptCount}`
+          `[CERCLE] webhook ${outcome.kind}${outcome.kind === 'parked' ? ' (member not yet on the Cercle, credited at their first sign-in)' : ''}: product=${product.id.slice(0, 8)} intent=${delivery.paymentIntentId} attempts=${delivery.attemptCount}`
         );
 
         return true;
       }
 
-      lastError = error;
+      lastError = outcome.error;
       this.logger.warn(`[CERCLE] webhook attempt ${delivery.attemptCount} failed: ${lastError}`);
     }
 
