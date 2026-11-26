@@ -20,3 +20,11 @@ both with a face link -> the target's kept, the duplicate's erased and journalle
 on both sides; a replay is `absent`; the last-admin guard cannot be reached (a duplicate is never an
 admin target, asserted); the schema walk over every table naming `id_user`/`user_id`; the token's
 refusals.
+
+**The admin list tells homonyms apart too** (D56, one rule across the ecosystem). MiGallery's
+"Utilisateurs & rôles" showed the real account and the orphan as two identical rows: same name,
+promo and formation, and `users` has no creation or last-login column. The list applies the same
+rule as Canari's pickers: a row whose folded name another shown row shares carries a distinguishing
+detail - the promo, then the formation, then the first 8 characters of `id_user` (an admin page may
+show an opaque id; a picker may not). Test: two rows identical in name, promo and formation render
+with different details.

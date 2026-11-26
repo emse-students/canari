@@ -1148,12 +1148,14 @@ names, subjects and counts are in the private operations notes, never here.
 | Le Cercle | `users.uuid` = the `sub` (a legacy account is renamed to it at its first sign-in, `ON UPDATE CASCADE`) | `balance`, the `ledger` lines (the books, `ON DELETE RESTRICT`), `id_membership`, `role`, `perm_bartenders`, sessions; `till_requests` names it with no foreign key | `deleteOwnAccount`: the row is anonymised and kept for the ledger, the balance leaves through a `cashout` line, sessions deleted |
 | Portail-etu | nothing - the site has no sign-in, no session and no database | an in-process avatar cache keyed by the transitional `userId`, emptied by its TTL | not applicable |
 
-**The subject is the same on every site.** All four MiConnect providers of the sites are pinned to
+**The subject is the same on every site.** The MiConnect providers of Canari, Sky, MiGallery and Le Cercle are pinned to
 `sub_mode: hashed_user_id` (`50-providers.yaml`), which authentik computes as
 `sha256("<user pk>-<install id>")` - the user's `uid`, the same on every provider, and Canari's own
 `users.id`. Measured: the formula gives each account's Canari id. A user's `uid` is in the editor
 API's user record; once the account is deleted, its pk and therefore its `uid` are gone for good -
-so the subject must be CAPTURED while the duplicate exists.
+so the subject must be CAPTURED while the duplicate exists, at the mark (D54): the sites find the
+duplicate's account by that subject alone, since nothing else tells two rows of one name apart
+(MiGallery's `users` has no creation or last-login column).
 
 - **D52 - The duplicate's sibling accounts are transferred, then erased** (owner, item 1). When the
   merge completes, each site that holds an account under the duplicate's subject moves what that
@@ -1272,7 +1274,8 @@ so the subject must be CAPTURED while the duplicate exists.
   (already shown by the directory), and ONE function, `distinguishHomonyms` in
   `frontend/src/lib/utils/users/`, adds the promo - or the formation when the promos are equal - to
   every row whose folded name another shown row shares; two rows still identical after both are
-  logged at warning (`[PICKER] homonyms with nothing to tell apart`), never shown bare. Charter
+  logged at warning (`[PICKER] homonyms with nothing to tell apart`), never shown bare. The same rule
+  holds on the sites' admin lists (MiGallery's "Utilisateurs & rôles" showed two identical rows). Charter
   principle 7.
 - **D57 - The merge's Event survives the duplicate** (a defect of `1.8.0`, P2, found 2026-11-26). No
   `custom_alumni_merge` Event exists in production although a merge completed. Cause, read in
