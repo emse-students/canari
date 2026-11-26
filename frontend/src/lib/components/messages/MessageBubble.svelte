@@ -1211,6 +1211,7 @@
             role="button"
             tabindex="0"
             data-swipe-reply
+            data-message-bubble
             data-swipe-nav-ignore
             use:replySwipeTouchMove
             onclick={handleBubbleClick}
@@ -1245,7 +1246,7 @@
               }
             }}
             class="{isMediaOnly || isLinkOnly || isGifOnly || isPollOnly || isEmojiOnly
-              ? 'p-0'
+              ? 'rounded-bubble p-0'
               : 'px-3 py-2'} {bleedsMedia
               ? 'overflow-hidden'
               : ''} w-fit max-w-full cursor-pointer touch-pan-y transition-shadow duration-200 {isMobile

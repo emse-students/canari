@@ -12,6 +12,7 @@ import ReelSlide from './ReelSlide.svelte';
 import type { PostEntity } from '$lib/posts/api';
 import { clearanceAboveSeekLineRem } from '$lib/components/ui/player/seekLineGeometry';
 import { m } from '$lib/paraglide/messages';
+import { exactDate } from '$lib/utils/time';
 import { fireResize, useResizeObserverStub } from '../../../test/resizeObserverStub';
 
 useResizeObserverStub();
@@ -484,4 +485,14 @@ it('a neighbour reel, never on screen, writes no view line', () => {
   mounted.pop()!();
   expect(reelViewLines(info)).toEqual([]);
   info.mockRestore();
+});
+
+it("dates the reel by when it was PUBLISHED, as the post header does, never by its row's creation", () => {
+  // A scheduled or republished post: the row is older than its publication.
+  const { q } = render(
+    reel({ createdAt: '2026-01-01T00:00:00Z', publishedAt: '2026-10-01T00:00:00Z' })
+  );
+  const stamp = q<HTMLElement>('[data-reel-time-line] [title]')!;
+  expect(stamp.getAttribute('title')).toBe(exactDate('2026-10-01T00:00:00Z'));
+  expect(stamp.getAttribute('title')).not.toBe(exactDate('2026-01-01T00:00:00Z'));
 });

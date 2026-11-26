@@ -127,3 +127,26 @@ it('a change still being read when the card closes and reopens is dropped: the n
   await settle();
   expect(rankedAsked(), 'the reopened viewer reads in Pour toi').toEqual([false, true]);
 });
+
+it('with `reelAlone` (the moderation preview): the opened post only, whatever the infinite switch says', async () => {
+  settings.setInfiniteReelsEnabled(true);
+  const target = document.body.appendChild(document.createElement('div'));
+  const post = {
+    id: 'reported',
+    kind: 'post',
+    markdown: '',
+    media: [video],
+    createdAt: new Date(0).toISOString(),
+  } as never;
+  const app = mount(PostContent, { target, props: { post, authToken: 'tok', reelAlone: true } });
+  mounted.push(() => void unmount(app));
+  flushSync();
+  target.querySelector<HTMLButtonElement>('[data-post-media-open]')!.click();
+  await settle();
+  const viewer = document.querySelector<HTMLElement>('[data-reel-viewer-stub]')!;
+  expect(viewer.getAttribute('data-reel-viewer-stub')).toBe('reported');
+  expect(viewer.hasAttribute('data-order')).toBe(false);
+  viewer.querySelector<HTMLButtonElement>('[data-reel-viewer-load-first]')!.click();
+  await settle();
+  expect(listPosts).not.toHaveBeenCalled();
+});

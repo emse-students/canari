@@ -1030,7 +1030,7 @@ claim and calls the editor account.
   the policy, step for step: ligatures spelled out, accents and case, the typographic apostrophe, and
   hyphens, dots, apostrophes and spaces to one space. The duplicate must also still carry the mark
   the sign-in began with. Every merge is journalled as an authentik Event `custom_alumni_merge` (both
-  pks and usernames, `marked_by`, the `af_id`, the client's IP address), every refusal as
+  pks and usernames, `marked_by`, the `af_id`, the client's IP address; **as built it does not survive the duplicate's deletion**, [D57](#the-alumni-merge-extended-d52-d58-planned-for-183)), every refusal as
   `custom_alumni_merge_refused` with its reasons (`name_mismatch`, `mark_changed`, ...). A mark that does not hold changes nothing, keeps the mark, is logged at error
   (`[ALUMNI_MERGE]`) and shows a deny page telling the person to contact an admin; a merge MiConnect
   refuses is done by hand by a MiConnect admin (the admin page says so). A mark whose target no longer exists (deleted since) is an
@@ -1122,6 +1122,189 @@ attribute keys, once nothing reads them - each removal measured, per
 
 **Dependencies.** WP0 whenever. WPA -> WP1 -> WP2 and WP3; WP3 -> WP4 -> WP5; WP3 -> WP6 -> WP7; WP8 no longer waits
 (the SSO is live, not promoted); WP9 last.
+
+### The Alumni merge, extended (D52-D58, planned for `1.8.3`)
+
+Decided 2026-11-26 ([decisions](decisions/owner-decisions-of-2026-11-26-alumni.md)); designed the
+same day, NOTHING BUILT. One entry per work package, each `target: 1.8.3`:
+[Canari](backlog.d/alumni-merge-canari-side-push-subjects-manual-and-sibling-jobs.md),
+[MiConnect](backlog.d/alumni-merge-miconnect-policy-event-push-and-manual-mark.md),
+[pickers](backlog.d/a-duplicate-waiting-for-its-merge-is-in-no-picker-and-homonyms-are-told-apart.md),
+[Sky](backlog.d/alumni-merge-sky-transfers-then-erases-the-duplicate.md),
+[MiGallery](backlog.d/alumni-merge-migallery-transfers-then-erases-the-duplicate.md),
+[Le Cercle](backlog.d/alumni-merge-le-cercle-transfers-then-erases-the-duplicate.md).
+
+**What was measured first (2026-11-26, read-only).** Of the two merges marked that day, one
+completed at the person's Alumni sign-in within minutes, the other waits. The completed duplicate had
+signed in to MiGallery and left an EMPTY account there, now an orphan; the waiting one signed in to
+MiGallery too and holds a face enrolment there (a consent and its references) while the real account
+has no MiGallery account at all. Neither touched Sky or Le Cercle - where both persons exist only as
+unclaimed legacy accounts WITH a balance, which the first MiConnect account of that name and promo to
+sign in claims (`migrateFromLegacyUser`): a duplicate signing in first would take the balance. The
+names, subjects and counts are in the private operations notes, never here.
+
+**The facts each design rests on, read from the code on each `main`:**
+
+| Site | A user is keyed by | What a user owns there | An erasure exists |
+| --- | --- | --- | --- |
+| Sky | `people.auth_sub` = the OIDC `sub` (a record's `id` is the sub when the login created it, or the `prenom.nom` slug of a placeholder it claimed) | the record's godparent `relationships`, its `associations` rows, `sessions`, `role`; `pending_links` and `handoff_redemptions` name the sub | none for a user; the admin's `unlinkPersonAuth` (record kept, sub cleared) and `mergePeople` (relations moved, one record deleted, `merge_log` row) |
+| MiGallery | `users.id_user` = the `sub` | favourites, photo-access grants (both sides), per-user album grants, the face link (`photos_id`) with its consent, references, negatives, selection, ledgers, matches, `role`, `locale`, sessions, audit-log rows | `deleteUserAccount` (one transaction: face data journalled for Immich, log anonymised, avatar salt rotated, album grants, the row and its cascades) |
+| Le Cercle | `users.uuid` = the `sub` (a legacy account is renamed to it at its first sign-in, `ON UPDATE CASCADE`) | `balance`, the `ledger` lines (the books, `ON DELETE RESTRICT`), `id_membership`, `role`, `perm_bartenders`, sessions; `till_requests` names it with no foreign key | `deleteOwnAccount`: the row is anonymised and kept for the ledger, the balance leaves through a `cashout` line, sessions deleted |
+| Portail-etu | nothing - the site has no sign-in, no session and no database | an in-process avatar cache keyed by the transitional `userId`, emptied by its TTL | not applicable |
+
+**The subject is the same on every site.** The MiConnect providers of Canari, Sky, MiGallery and Le Cercle are pinned to
+`sub_mode: hashed_user_id` (`50-providers.yaml`), which authentik computes as
+`sha256("<user pk>-<install id>")` - the user's `uid`, the same on every provider, and Canari's own
+`users.id`. Measured: the formula gives each account's Canari id. A user's `uid` is in the editor
+API's user record; once the account is deleted, its pk and therefore its `uid` are gone for good -
+so the subject must be CAPTURED while the duplicate exists, at the mark (D54): the sites find the
+duplicate's account by that subject alone, since nothing else tells two rows of one name apart
+(MiGallery's `users` has no creation or last-login column).
+
+- **D52 - The duplicate's sibling accounts are transferred, then erased** (owner, item 1). When the
+  merge completes, each site that holds an account under the duplicate's subject moves what that
+  account owns onto the target's subject and erases what remains, in ONE local transaction, and
+  answers what it did. Nothing a person made there is lost (charter principle 2), and no account is
+  left under a subject that no longer signs in (principle 1: a datum kept is a datum declared and
+  erasable). **What never moves: a privilege.** A role (`admin`, `mitviste`, `cercleux`) belongs to
+  the account it was granted to; it is not carried onto the target when the target already has an
+  account, and the site logs that it dropped one. Canari's own duplicate account stays as D48 says:
+  erased (its holdings named at the confirmation), not transferred - confirmed by the owner on
+  2026-11-26 ([decisions](decisions/owner-decisions-of-2026-11-26-alumni.md), item 8).
+- **D53 - How each site transfers** (the allowlist is these tables and nothing else; every other
+  table is untouched, a test per site enumerates the schema and fails on a table that names a user
+  and is in neither list):
+  - **Sky**: no record under the duplicate's sub -> `absent`. The target has no record -> the
+    duplicate's record takes the target's sub (`auth_sub := target`), its sessions are deleted:
+    `transferred` (the record IS the person, its graph stays). The target has one -> the two records
+    merge through `mergePeople` (relations AND `associations` moved - today's `mergePeople` lets the
+    associations cascade away, which this package fixes), `merge_log` with the reserved actor
+    `alumni-merge`: `merged`. `pending_links` and `handoff_redemptions` naming the duplicate's sub
+    are deleted in the same transaction.
+  - **MiGallery**: no row -> `absent`. Otherwise the target's row is created if missing (name and
+    promo copied from the duplicate; the target's next sign-in overwrites them as every sign-in
+    does), then favourites (`INSERT OR IGNORE`), photo-access grants on both sides (a grant to
+    oneself dropped), per-user album grants, `locale` when the target has none, and the face link
+    with ALL its face rows when the target has none - the owner's decision of 2026-11-26
+    ([decisions](decisions/owner-decisions-of-2026-11-26-alumni.md), item 9): the enrolment and its
+    consent move TOGETHER, the consent row keeping its date, terms version and `source`, because it
+    is the same person's consent; when both have a face link the target's
+    stays and the duplicate's is erased. Then `deleteUserAccount(duplicate)`, which finds no face
+    link left to journal when it moved: `transferred`.
+  - **Le Cercle**: no row -> `absent`. The target has no row -> the duplicate's row is RENAMED to the
+    target's subject, exactly as a legacy account is reclaimed (`ON UPDATE CASCADE` carries the
+    ledger, sessions and bartender rows; `till_requests` is updated by hand, it has no foreign key):
+    `transferred`, the books untouched. The target has a row -> the balance and the membership move
+    through a PAIR of `transfer` ledger lines, one out of the duplicate and one into the target, each
+    naming the other (the owner's decision of 2026-11-26,
+    [decisions](decisions/owner-decisions-of-2026-11-26-alumni.md), item 7) - a new ledger type, so a
+    Le Cercle schema migration; the duplicate is then closed by `deleteOwnAccount`, its balance
+    already zero: `merged`. **Until that migration ships**, and only until then, this case answers
+    `409 ALUMNI_MERGE_BOTH_ACCOUNTS_HOLD`, changes nothing, and is reported (D54).
+  - **Portail-etu**: no package - it keeps no account (read 2026-11-26).
+- **D54 - The completion follows the merge, and the sites follow the completion** (lead, item 5).
+  - **The push.** MiConnect journals the merge as an Event `custom_alumni_merge` (D57 makes it
+    survive), and a Notification Rule bound to an expression policy that passes `custom_alumni_merge`
+    and nothing else sends it once (`send_once`, `destination_event_user`) through a webhook
+    transport to Canari's `POST /api/hooks/miconnect/alumni-merge`. Read in authentik 2026.8.6:
+    every saved Event is dispatched to every rule (`event_post_save_notification` ->
+    `event_trigger_dispatch`), custom actions included, and the rule's policies decide; the body
+    mapping sends `{ duplicateUuid, targetUuid, mergeId }` from the Event's context, the header
+    mapping a shared secret, `MICONNECT_ALUMNI_MERGE_WEBHOOK_SECRET` (both sides,
+    `infrastructure/MIGRATION.md`), compared in constant time.
+  - **The endpoint's allowlist.** It runs the SAME idempotent `complete` for the one open row naming
+    that duplicate, and the body is only a hint: Canari re-reads MiConnect and completes only if the
+    duplicate is GONE and the target holds the Alumni link whose identifier is the duplicate's
+    `af_id`. Anything else answers `409` (`ALUMNI_MERGE_NOT_MERGED`), writes nothing and logs at
+    error - a forged call, even with the secret, can only make Canari look at the truth. An unknown or
+    closed row answers `200 { already: true }`, so a replayed push is a no-op.
+  - **The page's read stays, as the reconciler**: `GET /users/admin/alumni-merges` still calls
+    `complete`, and a row it completes logs at WARNING `[ALUMNI_MERGE] completed by the reconciler,
+    not the push` with the row's age - a dead push is seen the first time an admin opens the page.
+    **The target's next Canari sign-in does NOT run it**: the push and the sign-in arrive within the
+    same seconds, so a third path would only race the push; the reconciler already covers a lost one.
+  - **The sites.** `complete` writes, in the transaction that closes the row, one job per site in
+    `alumni_merge_site_jobs` (`mergeId`, `site` in `sky`, `migallery`, `cercle`, the two subjects,
+    attempts, next attempt, last failure, outcome; one row per merge and site, a unique index). The
+    worker is the account-erasure queue's, factorized rather than copied (`FOR UPDATE SKIP LOCKED`,
+    backoff, the daily report; [account-erasure](account-erasure.md)). Each call is
+    `POST <site>/api/internal/alumni-merge` with a 60-second ES256 token Canari signs with its
+    handoff key, `typ: canari-merge+jwt`, audience the site, claims `dup`, `target`, `jti` = the job
+    id - verified by the site's VENDORED verifier against Canari's JWKS, the file `shape.mjs` already
+    compares. A `2xx` with its outcome completes the job; a `409` with a typed refusal marks it
+    `blocked` (no retry: the state, not the network, refused) and is an ERROR line; anything else is
+    retried. The daily report names every job pending over 24 h and every blocked one, and the admin
+    page shows each closed merge's three site states.
+  - **Idempotence from durable state**: the job row says what is owed, the site's own tables say what
+    is done - a duplicate subject with no account is `absent`, whether it never signed in or the
+    first call already moved it.
+  - **The subjects.** `merge` reads both accounts' `uid` while they exist and stores them on the row
+    (`duplicateSubject`, `targetSubject`); an open row from before `1.8.3` is backfilled at its next
+    reading while the duplicate exists. A merge that completed before `1.8.3` has no subject left in
+    MiConnect: its jobs are written once, by hand, from the subject the private operations notes
+    recovered (a production data repair under [its four conditions](decisions/owner-decisions-of-2026-11-18.md)).
+- **D55 - The manual merge: the admin decides identity, with a written reason** (owner, item 2,
+  amends D51 for this path only). On `/admin/alumni-duplicates`, beside each duplicate, "Rattacher à
+  un autre compte" opens a search of MiConnect accounts (the editor's user search, by name) that lists
+  only ELIGIBLE targets, each with its name, username, promo, e-mail and last sign-in; the admin picks
+  one and writes a reason (required, at least 20 characters after trimming, at most 1000). The
+  request is `POST .../:uuid/merge` with `{ targetUuid, reason }`; `mode` is `auto` when the target is
+  the unique name-and-promo match, `manual` otherwise, and a manual request without a reason is
+  refused (`ALUMNI_MERGE_REASON_REQUIRED`). Every string is Paraglide (`admin_alumni_manual_*`).
+  - **The guards that stop merging two real accounts**, checked by Canari and AGAIN by the policy:
+    the duplicate's username starts with `alumni-` and its links are exactly `['alumni']` (unchanged);
+    the target is active, a person (internal or external), not a superuser, not `alumni-`, holds a CAS
+    link and NO Alumni link, and is not the duplicate; and no other open merge names that target
+    (`ALUMNI_MERGE_TARGET_BUSY`, new for both modes), so two duplicates never race into one account.
+  - **The reason is traced in Canari**, on the row (`reason`, `mode`), shown on the open and closed
+    merges, and erased with the row under the existing rules (M1); it never goes to MiConnect.
+  - **The mark grows four keys**, written through the same write flow, its allowlist extended:
+    `alumni_merge_mode`, `alumni_merge_id` (the row's id), and for a manual mark the two names the
+    admin SAW: `alumni_merge_seen_alumni_name` (the duplicate's) and `alumni_merge_seen_target_name`.
+  - **How the policy accepts a reasoned mark and still refuses a stale one.** For `auto` it is
+    unchanged (asserted name == target's name). For `manual` the name rule becomes two comparisons,
+    folded by the one rule: the name Alumnforce asserts at this sign-in equals the Alumni name the
+    admin saw (`alumni_name_changed`), and the target's name today equals the name the admin saw
+    (`target_changed`); a manual mark missing either name or its id is refused
+    (`manual_mark_incomplete`), an unknown mode too (`mark_mode_unknown`). `mark_changed` and every
+    other check stand. What the admin verified is exactly what is merged, or nothing is.
+- **D56 - The wait has no limit, and it hides the duplicate** (owner, item 3; lead, item 6). A marked
+  merge waits for the next Alumni sign-in for as long as it takes, listed open with "Annuler". From
+  the moment a merge is REQUESTED until it is closed, the duplicate's Canari account is in NO person
+  picker or user search: `UsersService.search` and `UsersService.directory` add one clause,
+  `NOT EXISTS` an open `alumni_merges` row whose `duplicateUuid` is the user's `miconnectUuid`, beside
+  the block clause; a cancel brings it back. The surfaces this covers, all through those two
+  queries: `UserAutocomplete.svelte` and `MultiUserSelector.svelte` (new discussion
+  `SidebarNewChatModal`, community admin `SidebarCommunityAdminPanel`, channel settings
+  `ChannelSettingsPanel`, association members, purchases and cotisations tabs, the access section,
+  entity creation, booking sheet and resource editor, the post actions menu and the post search's
+  person filter), the mention autocomplete (`useMentionAutocomplete`), and the directory
+  (`/api/users/directory`). `GET /users/batch` is not a picker and keeps resolving the id.
+  **Homonyms are told apart**: the search answers carry the earliest promo and formation of each row
+  (already shown by the directory), and ONE function, `distinguishHomonyms` in
+  `frontend/src/lib/utils/users/`, adds the promo - or the formation when the promos are equal - to
+  every row whose folded name another shown row shares; two rows still identical after both are
+  logged at warning (`[PICKER] homonyms with nothing to tell apart`), never shown bare. The same rule
+  holds on the sites' admin lists (MiGallery's "Utilisateurs & rôles" showed two identical rows). Charter
+  principle 7.
+- **D57 - The merge's Event survives the duplicate** (a defect of `1.8.0`, P2, found 2026-11-26). No
+  `custom_alumni_merge` Event exists in production although a merge completed. Cause, read in
+  authentik 2026.8.6: the policy journals through `Event.from_http`, which during a flow sets the
+  Event's user to the plan's PENDING user - the duplicate - and the duplicate's deletion fires
+  `event_user_pre_delete_cleanup`, which, the tenant's `gdpr_compliance` being on, deletes every
+  Event of that user: the merge's own journal line went with the duplicate. Fix: the merge Event is
+  built without `from_http` - its user is the TARGET (`get_user(target)`), its client address read
+  with `ClientIPMiddleware.get_client_ip`, its context adds `duplicate_uuid`, `target_uuid`, `mode`
+  and `merge_id`, then saved once (one save, one dispatch, one push). `gdpr_compliance` stays on.
+  A refusal's Event keeps the duplicate as its user (nothing is deleted then).
+- **D58 - What would make it wrong is reported.** A push Canari refuses (error), a completion by the
+  reconciler (warning), a site job pending over 24 h or blocked (daily report, error), a homonym pair
+  with nothing to tell apart (warning): each names the merge id and the site, never a name.
+
+**The three questions this design raised were answered by the owner on 2026-11-26**, each with the
+recommended option ([decisions](decisions/owner-decisions-of-2026-11-26-alumni.md), items 7-9): Le
+Cercle's `transfer` line pair (D53), Canari's own duplicate erased as D48 says (D52), the MiGallery
+face enrolment transferred with its consent (D53).
 
 ## The access plan - who sees what (decided with the user, 2026-10-04)
 

@@ -151,6 +151,8 @@ that is only a placement of the speaker. The drift risk is in the CONTROLS, hand
 art-direction decision (one table of controls, flat at rest and glass while transient), not by
 merging the shells.
 
+**Owner, 2026-11-26 ([decisions](../../decisions/owner-decisions-of-2026-11-26.md)): the CONTROLS converge, the shell question stands.** Full-screen video controls are the same everywhere - a thin draggable scrubber, tap = play or pause, long press = pause, the time shown while dragging - the conversation viewer included; it stays `MediaLightbox`. A POST, however, opens the CanaReels viewer for every media, a photo or the "+N" too, and stops at the edge (counter and dots); built in `1.9.0` ([entry](../../backlog.d/p2-a-post-s-media-layout-one-to-many-pictures-and-videos.md)).
+
 ## The owner's decisions (2026-11-09, final)
 
 1. **ONE player for every surface** - feed, CanaReels, chat video, lightbox, live viewer - with a

@@ -303,7 +303,11 @@
           {/if}
         {/if}
         {#if comment.media && authToken}
-          <CommentMedia media={comment.media} {authToken} />
+          <CommentMedia
+            media={comment.media}
+            {authToken}
+            info={{ senderName: authorName, sentAt: comment.createdAt }}
+          />
         {/if}
       </div>
     {/if}

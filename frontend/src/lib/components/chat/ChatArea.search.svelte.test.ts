@@ -95,7 +95,9 @@ function setup(matches: string[]) {
     flushSync();
   };
   const highlighted = () =>
-    [...target.querySelectorAll(`.${HIGHLIGHT}`)].map((e) => e.id).join(',');
+    [...target.querySelectorAll(`.${HIGHLIGHT}`)]
+      .map((e) => e.closest('[id^="msg-"]')?.id)
+      .join(',');
   const dispose = () => {
     void unmount(app);
     target.remove();
@@ -127,6 +129,11 @@ describe('in-conversation search', () => {
       const count = () => s.target.querySelector('.chat-search-count')?.textContent?.trim();
       expect(count()).toBe('1/3');
       expect(s.highlighted()).toBe('msg-m3');
+      // The outline is on the bubble element, never on the row that wraps header, quote and bubble.
+      const outlined = s.target.querySelector(`.${HIGHLIGHT}`)!;
+      expect(outlined.hasAttribute('data-message-bubble')).toBe(true);
+      expect(outlined.id).toBe('');
+      expect(s.target.querySelector(`[id^="msg-"].${HIGHLIGHT}`)).toBeNull();
 
       // Shift+Enter (the up arrow) climbs to older matches.
       s.press('Enter', true);

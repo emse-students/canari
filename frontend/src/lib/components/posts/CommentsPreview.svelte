@@ -121,7 +121,12 @@
             </div>
           {/if}
           {#if latest.media && authToken}
-            <CommentMedia media={latest.media} {authToken} compact />
+            <CommentMedia
+              media={latest.media}
+              {authToken}
+              compact
+              info={{ senderName: commentAuthorName(latest), sentAt: latest.createdAt }}
+            />
           {/if}
         </div>
         {#if !readOnly && !pendingCommentIds?.has(latest.id)}

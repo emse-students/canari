@@ -3269,6 +3269,9 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   }
 }
 
+/* Drawn on the BUBBLE element (`data-message-bubble`), whose own radius - the grouped-corner variants
+   included - the box-shadow follows. A bubble with no fill of its own (media, link card, poll, emoji)
+   carries `rounded-bubble` for that purpose. */
 .chat-message-jump-highlight {
   animation: messageJumpHighlight 1.8s ease;
 }

@@ -34,6 +34,7 @@ vi.mock('$lib/associations/api', async (orig) => ({
 }));
 const api = vi.hoisted(() => ({
   status: 'draft' as 'draft' | 'published',
+  required: false,
   checkSubmission: vi.fn(() =>
     Promise.resolve({
       hasSubmitted: false,
@@ -55,7 +56,7 @@ vi.mock('$lib/forms/api', async (orig) => ({
       title: 'Soiree',
       description: '',
       status: api.status,
-      items: [{ id: 'q1', label: 'Nom', required: false, type: 'short_text' }],
+      items: [{ id: 'q1', label: 'Nom', required: api.required, type: 'short_text' }],
       currency: 'eur',
       basePrice: 0,
       allowCashPayment: false,
@@ -74,6 +75,7 @@ afterEach(() => {
   document.body.innerHTML = '';
   vi.clearAllMocks();
   api.revision = { revision: 0, document: null, savedAt: null };
+  api.required = false;
 });
 
 async function open(url: string) {
@@ -137,5 +139,44 @@ describe('the fill page as a preview', () => {
     expect(document.querySelector('[data-testid="form-preview-banner"]')).toBeNull();
     expect(sendButton()).toBeUndefined();
     expect(api.checkSubmission).toHaveBeenCalledTimes(1);
+  });
+
+  describe('the preview test send (owner, 2026-11-17)', () => {
+    const testButton = () =>
+      document.querySelector<HTMLButtonElement>('[data-testid="form-test-send"]');
+    const report = () => document.querySelector('[data-testid="form-test-send-report"]');
+
+    it('is offered in a preview only, never on the live page', async () => {
+      api.status = 'published';
+      await open('https://canari.test/forms/f1');
+      expect(testButton()).toBeNull();
+    });
+
+    it('a complete answer: the test passes, says nothing was saved, and sends nothing', async () => {
+      api.status = 'draft';
+      await open('https://canari.test/forms/f1?preview=1');
+      expect(report()).toBeNull();
+      testButton()!.click();
+      for (let i = 0; i < 4; i++) {
+        await tick();
+        flushSync();
+      }
+      expect(report()?.textContent).toContain(m.form_test_send_ok_free());
+      expect(api.submitForm).not.toHaveBeenCalled();
+      expect(api.checkSubmission).not.toHaveBeenCalled();
+    });
+
+    it('a required question left empty: the test refuses it as the send does, and reports nothing', async () => {
+      api.status = 'draft';
+      api.required = true;
+      await open('https://canari.test/forms/f1?preview=1');
+      testButton()!.click();
+      for (let i = 0; i < 4; i++) {
+        await tick();
+        flushSync();
+      }
+      expect(report()).toBeNull();
+      expect(api.submitForm).not.toHaveBeenCalled();
+    });
   });
 });
