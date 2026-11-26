@@ -297,4 +297,27 @@ describe('fetchUserProfile', () => {
     },
     IMPORT_HEAVY_MS
   );
+
+  it(
+    'the batch line counts an id asked again after the cache expired, never one asked first',
+    async () => {
+      // A restore's `users/batch` chatter has two possible causes - one-turn windows of fresh ids,
+      // or the same ids re-asked past the 30 s cache - and this count is what tells them apart.
+      const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+      const apiFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ users: [{ id: 'a' }, { id: 'b' }], deleted: [] }),
+      });
+      const mod = await load(apiFetch);
+      await Promise.all([mod.fetchUserProfile('a'), mod.fetchUserProfile('b')]);
+      vi.setSystemTime(Date.now() + 31_000);
+      await Promise.all([mod.fetchUserProfile('a'), mod.fetchUserProfile('b')]);
+      const lines = debug.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('batch'));
+      expect(lines).toEqual([
+        '[USER] profile batch: 2 id(s), 0 asked again after the cache expired',
+        '[USER] profile batch: 2 id(s), 2 asked again after the cache expired',
+      ]);
+    },
+    IMPORT_HEAVY_MS
+  );
 });
