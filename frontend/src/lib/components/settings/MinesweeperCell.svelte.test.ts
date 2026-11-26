@@ -107,7 +107,7 @@ describe('MinesweeperCell highlight', () => {
     document.body.innerHTML = '';
   });
 
-  function cellWith(props: { marked?: boolean; highlight?: 'hint' | 'wrong' | 'group' | null }) {
+  function cellWith(props: { marked?: boolean; highlight?: 'hint' | 'wrong' | 'read' | null }) {
     const app = mount(MinesweeperCell, {
       target: document.body,
       props: {
@@ -142,11 +142,12 @@ describe('MinesweeperCell highlight', () => {
     expect(cellWith({ highlight: 'wrong' }).getAttribute('aria-label')).toBe('Drapeau mal placé');
   });
 
-  it('rings a tutorial group softer than a lit number: no glow, the number is what the eye finds first', () => {
-    const group = cellWith({ highlight: 'group' });
-    expect(group.className).toContain('ring-accent/70');
-    expect(group.className).not.toContain('ms-hint');
-    expect(group.getAttribute('data-hint')).toBe('group');
-    expect(group.getAttribute('aria-label')).toBe("Case concernée par l'indice");
+  it('rings the number a tutorial step reads in the text colour, so it is never taken for a yellow group', () => {
+    const read = cellWith({ highlight: 'read' });
+    expect(read.className).toContain('ring-text-main');
+    expect(read.className).not.toContain('ring-accent');
+    expect(read.className).not.toContain('ms-hint');
+    expect(read.getAttribute('data-hint')).toBe('read');
+    expect(read.getAttribute('aria-label')).toBe('Chiffre lu : 2');
   });
 });
