@@ -703,7 +703,7 @@ group the device left), not shown (the page has nowhere to draw it), and said on
 WARN (`not adopted, kept native in the mirror`). The native drain's own notification is the only
 place the member saw it fail.
 
-**DECIDED 2026-11-22 (owner): SHOW it** - the conversation is recreated locally and the reply is shown as failed, with Delete ([decisions](decisions/owner-decisions-of-2026-11-22.md), item 7; [entry](backlog.d/a-shade-reply-to-a-deleted-conversation-is-shown-as-failed.md)). The options below are kept as the record of what was weighed.
+**BUILT 2026-11-26 (draft PR): a deleted conversation is told apart by a durable mark ([mobile](frontend/mobile.md)); a conversation deleted before that build leaves no mark and its line still waits.** **DECIDED 2026-11-22 (owner): SHOW it** - the conversation is recreated locally and the reply is shown as failed, with Delete ([decisions](decisions/owner-decisions-of-2026-11-22.md), item 7; [entry](backlog.d/a-shade-reply-to-a-deleted-conversation-reading.md)). The options below are kept as the record of what was weighed.
 
 - **Show it** (recommended, principle 2: the essential is never lost): restore the conversation as a
   read-only "removed" row holding the failed message, with Delete. This creates a row the member
