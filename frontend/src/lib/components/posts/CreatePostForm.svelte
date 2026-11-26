@@ -93,6 +93,7 @@
   import { m } from '$lib/paraglide/messages';
   import { composerDropZone } from '$lib/utils/composerDropZone';
   import { linkableEventPickerOptions } from '$lib/utils/time';
+  import { linkableEventsForAuthor, unlinkableSelection } from '$lib/posts/postEventLink';
   import { livesAvailable } from '$lib/utils/livesAvailability';
   import { serverLivesMode } from '$lib/stores/appVersionCheck.svelte';
 
@@ -342,8 +343,29 @@
   }
 
   /** The events a post as an association may link to, "no event" first. */
+  function eventNotOfAuthorSentence(): string {
+    return m.post_event_not_of_author_association({
+      association: chosenAssociation?.name ?? m.post_event_author_association_fallback(),
+    });
+  }
+
+  /** What the chosen author may link (`postEventLink.ts`); the list read may predate a change of author. */
+  const offeredCalendarEvents = $derived(
+    linkableEventsForAuthor(
+      linkableCalendarEvents,
+      isAssociationSelected ? selectedAssociationId : null
+    )
+  );
+  /** The picked event the CURRENT author cannot link, flagged inline before sending. */
+  const unlinkableEvent = $derived(
+    unlinkableSelection(
+      linkableCalendarEvents,
+      selectedLinkedCalendarEventId,
+      isAssociationSelected ? selectedAssociationId : null
+    )
+  );
   const linkableEventOptions = $derived(
-    linkableEventPickerOptions(linkableCalendarEvents, loadingLinkableEvents)
+    linkableEventPickerOptions(offeredCalendarEvents, loadingLinkableEvents)
   );
 
   let editorField = $state<MarkdownComposerField | null>(null);
@@ -496,6 +518,8 @@
     loadingLinkableEvents = true;
     listLinkableValidatedCalendarEvents(assoId)
       .then((rows) => {
+        // A list read for an author that is no longer the chosen one is dropped, not shown.
+        if (selectedAssociationId !== assoId) return;
         linkableCalendarEvents = rows;
       })
       .catch((e) => {
@@ -679,6 +703,7 @@
           `publishing to ${reach.spaces.length} space(s), public ${reach.public}`
         );
       }
+      if (unlinkableEvent) throw new LocalizedError(eventNotOfAuthorSentence());
       if (selectedLinkedCalendarEventId.trim()) {
         payload.linkedCalendarEventId = selectedLinkedCalendarEventId.trim();
       }
@@ -741,7 +766,9 @@
           ? isQuotaError(err)
             ? m.publish_queue_enqueue_storage_full()
             : m.publish_queue_enqueue_error()
-          : publishFailureMessage(err, m.post_create_publish_error());
+          : publishFailureMessage(err, m.post_create_publish_error(), {
+              associationName: chosenAssociation?.name,
+            });
     } finally {
       publishing = false;
     }
@@ -808,6 +835,11 @@
           disabled={loadingLinkableEvents}
           variant="field"
         />
+        {#if unlinkableEvent}
+          <p role="alert" class="mt-1.5 text-xs font-semibold text-red-600 dark:text-red-400">
+            {eventNotOfAuthorSentence()}
+          </p>
+        {/if}
       </div>
     {/if}
 
