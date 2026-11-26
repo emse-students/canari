@@ -1,2 +1,2 @@
-version: 1.8.1
-"Mes notes" affiche votre photo et votre nom. Un reel dont la préparation est interrompue quand vous quittez l'application est gardé et repris au retour. Les onglets du fil restent lisibles avec un grand texte. Les dates du classement du Démineur sont plus courtes. Messages de groupe et historique plus fiables, notamment sur un nouvel appareil.
+version: 1.8.2
+« @tous » prévient tous les membres d'un groupe, ou d'un salon quand un modérateur l'écrit. Un formulaire à places limitées vous garde une place 10 minutes, et ses répondants peuvent former un groupe. La recherche de posts filtre par personne et par association. Une mise à jour ne peut plus effacer l'historique de vos messages. Les fichiers choisis dans l'application partent avec tout leur contenu. Moins de fausses alertes de synchronisation, et des aperçus MiGallery plus nets.
