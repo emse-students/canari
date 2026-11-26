@@ -90,10 +90,10 @@ export interface Lesson {
   /**
    * For a CORNER pattern: the number whose reasoning the lesson teaches, and the cell it decides. The test
    * holds the picture to it (owner, 2026-11-26): no number may settle its own neighbours (a 0, or as many
-   * mines as hidden neighbours - a board edge makes that easy), and that cell must be forced WITH the
-   * number and NOT without it, so the pattern cannot be bypassed.
+   * mines as hidden neighbours - a board edge makes that easy), and that cell - AND each of `also`, the ends of the arms - must be forced WITH
+   * the number and NOT without it, so the pattern cannot be bypassed and no guess of the corner is enough.
    */
-  corner?: { number: Coord; cell: Coord };
+  corner?: { number: Coord; cell: Coord; also: readonly Coord[] };
   hints: readonly HintStep[];
 }
 

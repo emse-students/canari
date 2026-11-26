@@ -251,8 +251,8 @@ contourner ce raisonnement"*). A first version drew the corner in a 4x4 grid who
 trivial: a 2 that sees only two hidden cells marks both, so the pattern was never needed. The lessons now sit in a
 6x5 board whose right column is still hidden and touched by no number, and `lessons.test.ts` requires, for a
 lesson that declares a `corner: { number, cell }`: **(1) no number of the picture settles its own neighbours** (a
-0, or as many mines as hidden neighbours); **(2) the corner cell is forced WITH the corner number and unknown
-WITHOUT it**, the mines counter included - the far column is what keeps the counter from standing in for the
+0, or as many mines as hidden neighbours); **(2) the corner cell AND each end of the arms (`corner.also`) are forced WITH the corner number and unknown
+WITHOUT it** (owner, 2026-11-26: the first 2-2-2 left the ends to the neighbouring numbers, so only the corner needed the rule and it could be guessed; the board now comes from a search where the corner 2 alone decides all three), the mines counter included - the far column is what keeps the counter from standing in for the
 reasoning (a closed 5x5 board always gave the answer without the corner number). The boards come from an
 exhaustive solver over the small boards, the symmetric ones (1-3-1 reads 1-1-1-[3]-1-1-1, 2-2-2 is flanked by 1s).
 **What each pattern forces in an open corner** (cells: X and Y at the ends of the arms, A B and D E the two pairs

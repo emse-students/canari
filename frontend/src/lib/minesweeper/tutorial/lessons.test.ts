@@ -201,16 +201,18 @@ describe.each(deductive.map((l) => [l.id, l] as [string, Lesson]))('lesson %s', 
       }
     });
 
-    it('needs the corner number: its cell is forced WITH it, and unknown WITHOUT it', () => {
-      const cellIndex = at(board, corner.cell);
-      const status = (sols: Array<Set<number>>) =>
+    it('needs the corner number: the corner AND the ends of the arms are forced WITH it, and unknown WITHOUT it', () => {
+      const status = (sols: Array<Set<number>>, cellIndex: number) =>
         sols.every((s) => s.has(cellIndex))
           ? 'mine'
           : sols.every((s) => !s.has(cellIndex))
             ? 'safe'
             : '?';
-      expect(status(withCount)).not.toBe('?');
-      expect(status(arrangements(board, !open, at(board, corner.number), open))).toBe('?');
+      const without = arrangements(board, !open, at(board, corner.number), open);
+      for (const c of [corner.cell, ...corner.also]) {
+        expect(status(withCount, at(board, c)), `with the number, ${c}`).not.toBe('?');
+        expect(status(without, at(board, c)), `without the number, ${c}`).toBe('?');
+      }
     });
   }
 
