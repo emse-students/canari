@@ -7288,7 +7288,16 @@
   "admin_alumni_manual_no_result": "No eligible account matches.",
   "admin_alumni_manual_reason_label": "Why are these two accounts the same person?",
   "admin_alumni_manual_reason_placeholder": "For instance: married name, confirmed by e-mail with the person.",
-  "admin_alumni_manual_reason_too_short": "{length} character(s): at least {min} are needed.",
+  "admin_alumni_manual_reason_too_short": [
+    {
+      "declarations": ["input length", "input min", "local lengthPlural = length: plural"],
+      "selectors": ["lengthPlural"],
+      "match": {
+        "lengthPlural=one": "{length} character: at least {min} are needed.",
+        "lengthPlural=other": "{length} characters: at least {min} are needed."
+      }
+    }
+  ],
   "admin_alumni_manual_reason_too_long": "{length} characters: {max} at most.",
   "admin_alumni_manual_reason_count": "{length} / {max} characters",
   "admin_alumni_manual_submit": "Continue",
@@ -7303,7 +7312,16 @@
   "admin_alumni_sites_none": "No site to notify was recorded: the transfer to the other sites is owed by hand.",
   "admin_alumni_site_done": "{site}: {outcome}",
   "admin_alumni_site_blocked": "{site}: blocked ({error}), to settle by hand",
-  "admin_alumni_site_pending": "{site}: pending ({attempts} attempt(s))",
+  "admin_alumni_site_pending": [
+    {
+      "declarations": ["input attempts", "input site", "local attemptsPlural = attempts: plural"],
+      "selectors": ["attemptsPlural"],
+      "match": {
+        "attemptsPlural=one": "{site}: pending ({attempts} attempt)",
+        "attemptsPlural=other": "{site}: pending ({attempts} attempts)"
+      }
+    }
+  ],
   "admin_alumni_site_outcome_absent": "nothing to transfer",
   "admin_alumni_site_outcome_transferred": "transferred",
   "admin_alumni_site_outcome_merged": "merged",

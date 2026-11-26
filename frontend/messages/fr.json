@@ -7297,7 +7297,16 @@
   "admin_alumni_manual_no_result": "Aucun compte éligible ne correspond.",
   "admin_alumni_manual_reason_label": "Pourquoi ces deux comptes sont-ils la même personne ?",
   "admin_alumni_manual_reason_placeholder": "Par exemple : nom d'usage après mariage, confirmé par e-mail avec la personne.",
-  "admin_alumni_manual_reason_too_short": "{length} caractère(s) : il en faut au moins {min}.",
+  "admin_alumni_manual_reason_too_short": [
+    {
+      "declarations": ["input length", "input min", "local lengthPlural = length: plural"],
+      "selectors": ["lengthPlural"],
+      "match": {
+        "lengthPlural=one": "{length} caractère : il en faut au moins {min}.",
+        "lengthPlural=other": "{length} caractères : il en faut au moins {min}."
+      }
+    }
+  ],
   "admin_alumni_manual_reason_too_long": "{length} caractères : {max} au plus.",
   "admin_alumni_manual_reason_count": "{length} / {max} caractères",
   "admin_alumni_manual_submit": "Continuer",
@@ -7312,7 +7321,16 @@
   "admin_alumni_sites_none": "Aucun site à prévenir n'a été enregistré : le transfert vers les autres sites est à faire à la main.",
   "admin_alumni_site_done": "{site} : {outcome}",
   "admin_alumni_site_blocked": "{site} : bloqué ({error}), à régler à la main",
-  "admin_alumni_site_pending": "{site} : en attente ({attempts} essai(s))",
+  "admin_alumni_site_pending": [
+    {
+      "declarations": ["input attempts", "input site", "local attemptsPlural = attempts: plural"],
+      "selectors": ["attemptsPlural"],
+      "match": {
+        "attemptsPlural=one": "{site} : en attente ({attempts} essai)",
+        "attemptsPlural=other": "{site} : en attente ({attempts} essais)"
+      }
+    }
+  ],
   "admin_alumni_site_outcome_absent": "rien à transférer",
   "admin_alumni_site_outcome_transferred": "transféré",
   "admin_alumni_site_outcome_merged": "fusionné",

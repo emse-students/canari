@@ -67,8 +67,12 @@ maybe('account erasure queue against PostgreSQL', () => {
     await ds.query(
       readFileSync(join(__dirname, '..', 'migrations', '012_account_erasure_jobs.sql'), 'utf8')
     );
-    // `alumni_merges` is not in CORE_TABLES' copy: its two migrations build it here.
-    for (const file of ['028_alumni_link_and_merges.sql', '029_alumni_merge_marks.sql']) {
+    // `alumni_merges` is not in CORE_TABLES' copy: its migrations build it here.
+    for (const file of [
+      '028_alumni_link_and_merges.sql',
+      '029_alumni_merge_marks.sql',
+      '030_alumni_merge_extension.sql',
+    ]) {
       await ds.query(readFileSync(join(__dirname, '..', 'migrations', file), 'utf8'));
     }
     jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
