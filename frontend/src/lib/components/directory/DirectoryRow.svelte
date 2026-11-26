@@ -10,9 +10,8 @@
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import FollowChip from '$lib/components/follows/FollowChip.svelte';
   import type { DirectoryUserRow } from '$lib/profile/api';
-  import { campusLabel, postLabel } from '$lib/profile/miconnectProfile';
+  import { directoryUserFacts } from '$lib/directory/userFacts';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
-  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     user: DirectoryUserRow;
@@ -23,11 +22,7 @@
     user.displayName?.trim() || getUserDisplayNameSync(user.id, user.id.slice(0, 8) + '…')
   );
   /** The meta line's pieces, joined by a dot in the markup: cursus entries, posts, campus. */
-  const facts = $derived([
-    ...user.cursus.map((c) => `${c.formation} ${m.directory_user_promo({ year: c.promo })}`),
-    ...user.posts.map((p) => postLabel(p)),
-    ...(user.campus ? [campusLabel(user.campus)] : []),
-  ]);
+  const facts = $derived(directoryUserFacts(user));
 </script>
 
 <li

@@ -8,7 +8,7 @@
 - News feed with three tabs: Organisations (renamed from "Associations", 2026-11-10: the tab mixes associations, lists and institutions), Pour toi (ranked) and Campus (since 1.6.9).
 - Post creation with rich content: Markdown, image, poll, embedded form.
 - Reactions (emoji), comments, post sharing.
-- Search within the feed.
+- Search: the feed's field is the universal search since 2026-11-26 ([universal-search](../universal-search.md)), whose Posts section is `/api/posts/search` with its two filters.
 - Pin/unpin (admin only).
 - Report posts (moderation).
 
@@ -724,7 +724,7 @@ on these numbers):
 
 The phone's app header reaches the feed with a link: `/posts?compose=1` (Publish) or
 `/posts?search=1`. The feed strips the parameter with a `goto(..., { replace: true })`, so no
-history entry carries it, and only then opens the composer or the search field.
+history entry carries it, and only then opens the composer or the search field (the universal search since 2026-11-26, which the phone header's magnifier now links from every tab, [universal-search](../universal-search.md)).
 
 The order is the whole fix. The strip is a navigation, and the root layout's `beforeNavigate`
 closes every open overlay first (`drainHistoryOverlayStack`). Kit 2 kept the arriving navigation
@@ -754,7 +754,7 @@ logs how many overlays a navigation closes, which was silent.
 
 | Component | Role |
 |---|---|
-| `posts/+page.svelte` | Feed page with tabs, search, infinite scroll |
+| `posts/+page.svelte` | Feed page with tabs, the universal search ([universal-search](../universal-search.md)), infinite scroll |
 | `posts/[postId]/+page.svelte` | Single post detail page |
 | `CreatePostForm.svelte` / `EditPostForm.svelte` | Create / edit a post (markdown, media, poll, form, schedule) |
 | `PostComposerBar.svelte` | The shared bottom bar: attachment chips, the formatting row, the action |

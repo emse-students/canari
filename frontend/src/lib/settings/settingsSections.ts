@@ -84,3 +84,60 @@ export function settingsTrail(section: SettingsSection, rootLabel: string): Crum
     { label: ENTRIES[section].label(), href: settingsSectionHref(section) },
   ];
 }
+
+/**
+ * THE SETTINGS AS THE UNIVERSAL SEARCH FINDS THEM: each section's own name, and the names of the
+ * controls its page draws - the labels those pages already print, so the index cannot name a setting
+ * the page calls something else. Static: searched on the device, nothing is asked of a server.
+ * A section's page that gains a control adds its label here (`settingsSections.test.ts` checks that
+ * every section is listed).
+ */
+const SEARCH_TERMS: Record<SettingsSection, (() => string)[]> = {
+  preferences: [
+    m.settings_language_label,
+    m.settings_emoji_style_label,
+    m.settings_video_autoplay_label,
+    m.settings_infinite_reels_label,
+    m.guide_replay_label,
+  ],
+  notifications: [m.settings_bells_heading],
+  security: [
+    m.profile_pin_heading,
+    m.profile_biometric_heading,
+    m.profile_devices_heading,
+    m.profile_stay_signed_in_heading,
+  ],
+  backup: [
+    m.profile_backup_code_title,
+    m.profile_backup_export_label,
+    m.profile_backup_import_label,
+  ],
+  blocked: [],
+  about: [m.settings_about_version_label, m.settings_principles_label],
+  storage: [m.settings_storage_media_cache_label],
+  danger: [],
+};
+
+/** One entry of the settings' search index: a section, or a control inside one. */
+export interface SettingsSearchEntry {
+  section: SettingsSection;
+  /** What the entry is called: the section's name, or the control's. */
+  label: string;
+  /** The section's name; equal to `label` for the section itself. */
+  sectionLabel: string;
+  href: string;
+}
+
+/** Every section, then every control, in hub order. */
+export function settingsSearchIndex(): SettingsSearchEntry[] {
+  const out: SettingsSearchEntry[] = [];
+  for (const section of SETTINGS_SECTIONS) {
+    const sectionLabel = ENTRIES[section].label();
+    const href = settingsSectionHref(section);
+    out.push({ section, label: sectionLabel, sectionLabel, href });
+    for (const term of SEARCH_TERMS[section]) {
+      out.push({ section, label: term(), sectionLabel, href });
+    }
+  }
+  return out;
+}

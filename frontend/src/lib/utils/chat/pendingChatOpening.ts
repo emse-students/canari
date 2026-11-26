@@ -51,6 +51,14 @@ export function requestDirectConversationWith(
   storage.setItem(PENDING_DIRECT_PEER_KEY, JSON.stringify({ owner, peer: peerUserId }));
 }
 
+/**
+ * Asks the chat page to open the conversation under map key `key` (the MLS group id). Written by a
+ * page that is about to navigate to `/chat` - the posts mini panel, the universal search.
+ */
+export function requestConversationOpening(key: string, storage: OpeningStorage): void {
+  storage.setItem(PENDING_CONTACT_KEY, key);
+}
+
 /** The stored person ask, or null when it is absent or not the shape this module writes. */
 function parseDirectAsk(raw: string | null): { owner: string; peer: string } | null {
   if (!raw) return null;

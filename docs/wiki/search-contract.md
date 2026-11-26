@@ -92,6 +92,7 @@ of that shape. Aggregates only; no name leaves the box it is measured on.
 | Repo | Where | Medium |
 | --- | --- | --- |
 | **Canari** | `apps/core-service/src/users/userSearch.ts` | Postgres `word_similarity` (pg_trgm) + `unaccent` |
+| **Canari** (what the device holds) | `frontend/src/lib/utils/tolerantSearch.ts` (the ladder: the emoji picker) and `frontend/src/lib/search/rank.ts` `rankByLabels` (whole-label tiers over it: the universal search's device and list sections, [universal-search](frontend/universal-search.md)) | in-memory, TypeScript, this ladder |
 | **Sky** | `src/lib/utils/format.ts` `personMatchScore` | in-memory, TypeScript |
 | **MiGallery** | `src/lib/fuzzy.ts` `fuzzyScore` / `fuzzySearch` | in-memory, TypeScript |
 | **Le Cercle** | `src/lib/search/fuzzy.ts` `fuzzyScore` / `fuzzyRank` | in-memory, TypeScript |
@@ -127,6 +128,7 @@ executes is a comment:
 - **MiGallery** - `tests/fuzzy.test.ts`
 - **Le Cercle** - `src/lib/search/fuzzy.test.ts`
 - **Portail-etu** - `tests/fuzzy.test.ts`
+- **Canari** (device side) - `frontend/src/lib/utils/tolerantSearch.test.ts`
 
 Each asserts the same three things: a transposition costs one edit, a token of 3 characters or fewer
 tolerates none, and the rungs sit at 4 and 8.

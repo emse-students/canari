@@ -4,6 +4,7 @@
  * rule (`apps/social-service/src/posts/post-search-filters.ts`); this file is the wire shape and the
  * pure helpers the picker and the page share.
  */
+import { foldForSearch } from '$lib/utils/textFold';
 
 /** A filter once chosen: the id the server filters on, and the name the chip shows. */
 export interface PostSearchPick {
@@ -36,14 +37,6 @@ export function searchQueryString(
   return p.toString();
 }
 
-/** Lower-cases and strips accents, so "ecole" finds "École". */
-function fold(text: string): string {
-  return text
-    .normalize('NFD')
-    .replace(/\p{Diacritic}/gu, '')
-    .toLowerCase();
-}
-
 /**
  * The associations whose name contains what was typed, accent- and case-insensitively, in the
  * order given and capped at `limit` (the whole directory is never drawn as a list). An empty query
@@ -54,9 +47,9 @@ export function matchAssociations<T extends { name: string }>(
   query: string,
   limit = 30
 ): T[] {
-  const needle = fold(query.trim());
+  const needle = foldForSearch(query.trim());
   const hits = needle
-    ? associations.filter((a) => fold(a.name).includes(needle))
+    ? associations.filter((a) => foldForSearch(a.name).includes(needle))
     : [...associations];
   return hits.slice(0, limit);
 }

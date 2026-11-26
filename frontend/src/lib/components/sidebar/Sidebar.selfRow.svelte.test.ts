@@ -106,14 +106,6 @@ function mountSidebar(
   return target;
 }
 
-/** Types `value` into the sidebar's search box. */
-function search(target: HTMLElement, value: string) {
-  const input = target.querySelector('input') as HTMLInputElement;
-  input.value = value;
-  input.dispatchEvent(new Event('input', { bubbles: true }));
-  flushSync();
-}
-
 /** The ids of the drawn rows, top to bottom: the self row reads "self", a held one by its tile. */
 const order = (target: HTMLElement) =>
   [...target.querySelectorAll('[data-conversation-tile]')].map((el) =>
@@ -167,18 +159,14 @@ describe('the "Mes notes" row', () => {
       expect(order(t)).toEqual(['alice', 'bob', 'self']);
     });
 
-    it('is found by "notes", held or not, and hidden by a query that is not its own', () => {
+    it('has no filter field: the universal search finds it, by its name and by "notes"', () => {
       const held = mountSidebar(vi.fn(), [row('notes', 'self', 100), row('alice', 'direct', 200)]);
-      const search = held.querySelector('input') as HTMLInputElement;
-      search.value = 'notes';
-      search.dispatchEvent(new Event('input', { bubbles: true }));
-      flushSync();
-      expect(order(held)).toEqual(['self']);
-      search.value = 'zzz';
-      search.dispatchEvent(new Event('input', { bubbles: true }));
-      flushSync();
-      expect(order(held)).toEqual([]);
+      expect(held.querySelector('input')).toBeNull();
+      expect(held.querySelector('[data-sidebar-search-link]')?.getAttribute('href')).toBe(
+        '/posts?search=1'
+      );
     });
+
     it('draws a RESTORED held row, keyed by its group id and nameless, in its recency place', () => {
       const notes = row('e4c1f0aa-0000-4000-8000-00000000005e', 'self', 300);
       expect(notes.name).toBe('');
@@ -189,9 +177,6 @@ describe('the "Mes notes" row', () => {
       ]);
       expect(order(t)).toEqual(['bob', 'self', 'alice']);
       expect(t.querySelectorAll('[data-self-conversation-row]')).toHaveLength(1);
-      search(t, 'notes');
-      expect(order(t)).toEqual(['self']);
-      expect(t.textContent).not.toContain(m.chat_no_discussion_found());
     });
 
     it('replaces the placeholder when the row is created late, with no duplicate', () => {
@@ -215,20 +200,10 @@ describe('the "Mes notes" row', () => {
       expect(t.querySelectorAll('[data-self-conversation-row]')).toHaveLength(1);
     });
 
-    it('hides the placeholder for a query that is not its own', () => {
-      const t = mountSidebar(vi.fn());
-      search(t, 'zzz');
-      expect(order(t)).toEqual([]);
-    });
-
-    it('says "no discussion found" for a miss, but not beside the placeholder of "notes"', () => {
+    it('says there is no conversation yet, beside the placeholder', () => {
       const t = mountSidebar(vi.fn());
       expect(t.textContent).toContain(m.sidebar_no_conversations_title());
-      search(t, 'notes');
       expect(order(t)).toEqual(['self']);
-      expect(t.textContent).not.toContain(m.chat_no_discussion_found());
-      search(t, 'zzz');
-      expect(t.textContent).toContain(m.chat_no_discussion_found());
     });
   });
 });

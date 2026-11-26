@@ -160,6 +160,15 @@ export function matchesSelfConversationAlias(query: string): boolean {
 }
 
 /**
+ * Every label "Mes notes" answers to in a search: its title (the own name and the suffix), then the
+ * words it has always answered to ("notes", "mes notes", "my notes"). The universal search's
+ * Discussions section ranks the row against these (`search/wiring.ts`).
+ */
+export function selfConversationLabels(title: string): string[] {
+  return [title, ...m.conversation_self_search_aliases().split('|')];
+}
+
+/**
  * The identity of "Mes notes", the account's conversation with itself (server `kind: 'self'`). No
  * `directPeerId`, ever: every peer path keys on it and has nothing to find here. The label is the
  * reader's own language, drawn at render (`resolveConversationListPresentation`), so the row keeps
@@ -1769,44 +1778,6 @@ export function compareConversationRecency(
   b: RecencyFields & Pick<Conversation, 'id'>
 ): number {
   return conversationRecency(b) - conversationRecency(a) || a.id.localeCompare(b.id);
-}
-
-/**
- * Does a conversation row match what was typed into the sidebar's filter?
- *
- * THE NAME PASSED HERE MUST BE THE ONE THE ROW DISPLAYS, and that is the whole reason this is a
- * named function rather than two `includes` inline in the component. The sidebar filtered on
- * `convo.name`, which for a DM is the persisted key (`userId::peerId`) and not a human name - so
- * typing the name printed on the row removed the row. Found by the cross-client campaign's SEARCH-6
- * on 2026-08-22: the current last message matched, the conversation's own name did not.
- *
- * A row is kept on an empty query: the filter narrows a list, it does not build one. The fold is
- * {@link foldForSearch}, the same one the in-conversation search uses: two search boxes side by side
- * that disagree about whether "reunion" finds an accented spelling is not a thing anyone can explain.
- *
- * @param displayName the resolved label the row shows - never the persisted conversation key
- * @param lastMessageContent the preview text the row shows beneath the name, '' when there is none
- */
-export function conversationMatchesQuery(
-  displayName: string,
-  lastMessageContent: string,
-  query: string
-): boolean {
-  const q = foldForSearch(query.trim());
-  if (!q) return true;
-  return foldForSearch(displayName).includes(q) || foldForSearch(lastMessageContent).includes(q);
-}
-
-/** {@link conversationMatchesQuery} for "Mes notes": its title (own name), its preview, or an alias. */
-export function selfConversationMatchesQuery(
-  title: string,
-  lastMessageContent: string,
-  query: string
-): boolean {
-  return (
-    conversationMatchesQuery(title, lastMessageContent, query) ||
-    matchesSelfConversationAlias(query)
-  );
 }
 
 /** One person offered by "Nouvelle discussion" before anything is typed. */

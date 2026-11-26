@@ -11,7 +11,6 @@
   import { goto } from '$app/navigation';
   import {
     listPosts,
-    searchPosts,
     getScheduledPostsToEdit,
     type PostEntity,
     type PostFeed,
@@ -55,8 +54,7 @@
   import Modal from '$lib/components/shared/Modal.svelte';
   import LiveOverlay from '$lib/components/live/LiveOverlay.svelte';
   import FeedTabRow from '$lib/components/posts/FeedTabRow.svelte';
-  import PostSearchFilters from '$lib/components/posts/PostSearchFilters.svelte';
-  import { hasSearchCriteria, type PostSearchPick } from '$lib/posts/postSearchFilters';
+  import UniversalSearch from '$lib/components/search/UniversalSearch.svelte';
   import FeedSuggestions from '$lib/components/suggestions/FeedSuggestions.svelte';
   import {
     FEED_CAROUSEL_AFTER_POSTS,
@@ -79,7 +77,7 @@
   import { isTransportFailure } from '$lib/utils/transportFailure';
   import { settings } from '$lib/stores/settingsStore.svelte';
   import { currentUserId } from '$lib/stores/user';
-  import { RefreshCw, SquarePen, Inbox, Search, X, Clock } from '@lucide/svelte';
+  import { RefreshCw, SquarePen, Inbox, Clock } from '@lucide/svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { m } from '$lib/paraglide/messages';
 
@@ -331,11 +329,14 @@
     const params = page.url.searchParams;
     const compose = params.get('compose') === '1';
     const search = params.get('search') === '1';
-    if (!compose && !search) return;
+    // `?q=` is the site's declared search URL (`seo/jsonLd.ts`, `SearchAction`): the bar opens on it.
+    const words = params.get('q')?.trim() ?? '';
+    if (!compose && !search && !words) return;
 
     const u = new URL(page.url.href);
     u.searchParams.delete('compose');
     u.searchParams.delete('search');
+    u.searchParams.delete('q');
     // THE STRIP FIRST, THE COMMAND ONCE IT HAS LANDED. The strip is a navigation, and the root
     // layout closes every open overlay before one (`drainHistoryOverlayStack`). SvelteKit 2 kept
     // the arriving navigation open through two ticks after its commit, and skipped every hook
@@ -345,11 +346,9 @@
     // That a replace would also overwrite an overlay's own history entry is the second reason.
     const perform = () => {
       if (compose) showCreateModal = true;
-      if (search) {
-        searchOpen = true;
-        // The glyph's whole purpose is to reach the field, so arriving there is part of the gesture.
-        queueMicrotask(() => searchInput?.focus());
-      }
+      // The glyph's whole purpose is to reach the field: the bar takes the focus as it opens.
+      if (search || words) searchOpen = true;
+      if (words) searchInitialQuery = words;
     };
     // Whether the strip landed is read off the page, never off the error: kit rejects an overtaken
     // navigation with an untyped `Error`, and the feed still on screen is the fact that decides.
@@ -379,30 +378,18 @@
    * tap from the top of this page and it is one tap from the top of every page.
    */
   let searchOpen = $state(false);
-  let searchInput = $state<HTMLInputElement | null>(null);
-
-  /** Closes the field and drops whatever it was filtering by, which are one gesture. */
-  function closeSearch() {
-    searchOpen = false;
-    clearSearch();
-  }
-
-  let searchQuery = $state('');
-  /** The search's two filters (owner, 2026-11-19): a person and an association. */
-  let searchAuthor = $state<PostSearchPick | null>(null);
-  let searchAssociation = $state<PostSearchPick | null>(null);
-  /** A search replaces the feed while it has words or a filter: ONE definition for every place that asks. */
-  const searchActive = $derived(!!searchQuery || !!searchAuthor || !!searchAssociation);
+  /** The words a `?q=` link arrived with, handed to the bar once. */
+  let searchInitialQuery = $state('');
+  /**
+   * Whether the universal search replaces the feed (owner, 2026-11-26: ONE search for the whole app,
+   * its bar here). The bar owns the search; the page only hides the feed's chrome while it answers.
+   */
+  let searchActive = $state(false);
   /**
    * The tab row is slid out only when the scroll says so, no search replaces the feed, and nothing
    * in it holds focus.
    */
   const tabsHidden = $derived(!tabsShown && !searchActive && !tabsFocused);
-  let searchResults = $state<PostEntity[] | null>(null);
-  let searching = $state(false);
-  let searchDebounce: ReturnType<typeof setTimeout> | null = null;
-  /** Counts the searches issued: only the latest one's answer may land (a filter changes faster than a read). */
-  let searchEpoch = 0;
 
   /** The scheduled posts the reader may edit, soonest first: the strip above the feed, on every tab. */
   let scheduledPosts = $state<PostEntity[]>([]);
@@ -435,7 +422,7 @@
       }
       Log.d('POSTS', `scheduled post(s) due: ${scheduledPosts.length - remaining.length}`);
       scheduledPosts = remaining;
-      if (!searchResults) void refreshPosts();
+      if (!searchActive) void refreshPosts();
     }, delay);
     return () => clearTimeout(timer);
   });
@@ -449,62 +436,12 @@
     const out = applyScheduledEdit(scheduledPosts, edited, Date.now());
     Log.d('POSTS', `scheduled post  edited, published=${out.published}`);
     scheduledPosts = out.posts;
-    if (out.published && !searchResults) void refreshPosts();
+    if (out.published && !searchActive) void refreshPosts();
   }
 
   /** A scheduled post was deleted from its card (the card confirmed and deleted it). */
   function onScheduledDeleted(id: string) {
     scheduledPosts = scheduledPosts.filter((p) => p.id !== id);
-  }
-
-  /** Runs the search the words and the filters name now; the latest one's answer is the only one kept. */
-  async function runSearch() {
-    const criteria = {
-      q: searchQuery,
-      authorId: searchAuthor?.id,
-      associationId: searchAssociation?.id,
-    };
-    if (!hasSearchCriteria(criteria)) {
-      searchEpoch += 1;
-      searchResults = null;
-      searching = false;
-      return;
-    }
-    const epoch = ++searchEpoch;
-    searching = true;
-    try {
-      const rows = await searchPosts(criteria, { limit: 20 });
-      if (epoch === searchEpoch) searchResults = rows;
-    } finally {
-      if (epoch === searchEpoch) searching = false;
-    }
-  }
-
-  function onSearchInput(e: Event) {
-    searchQuery = (e.target as HTMLInputElement).value;
-    if (searchDebounce) clearTimeout(searchDebounce);
-    // The words are debounced (a keystroke is not a question); a filter is a deliberate pick, run at once.
-    searchDebounce = setTimeout(() => void runSearch(), 400);
-  }
-
-  function pickSearchAuthor(pick: PostSearchPick | null) {
-    searchAuthor = pick;
-    void runSearch();
-  }
-
-  function pickSearchAssociation(pick: PostSearchPick | null) {
-    searchAssociation = pick;
-    void runSearch();
-  }
-
-  function clearSearch() {
-    if (searchDebounce) clearTimeout(searchDebounce);
-    searchQuery = '';
-    searchAuthor = null;
-    searchAssociation = null;
-    searchEpoch += 1;
-    searchResults = null;
-    searching = false;
   }
 
   // Sentinel element for IntersectionObserver
@@ -930,6 +867,10 @@
   (`attachedFormsLoader`); this keeps the next one to its own card and NAMES the post in the log,
   which the layout's line could not - a production Svelte error carries only its code.
 -->
+{#snippet searchPostCard(post: PostEntity, onRemoved: () => void)}
+  {@render guardedCard(post, onRemoved)}
+{/snippet}
+
 {#snippet guardedCard(
   post: PostEntity,
   onDelete: () => void,
@@ -1022,43 +963,18 @@
     </PageHeader>
   </div>
 
-  <!-- Barre de recherche - masquee derriere la loupe sur telephone, toujours visible des `md`. -->
-  <div id="posts-search" class="relative mb-5 {searchOpen ? '' : 'hidden md:block'}">
-    <Search
-      size={16}
-      class="text-text-muted pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2"
-    />
-    <input
-      bind:this={searchInput}
-      type="search"
-      value={searchQuery}
-      oninput={onSearchInput}
-      placeholder={m.posts_search_placeholder()}
-      class="ui-search-own-clear border-cn-border text-text-main placeholder:text-text-muted/70 bg-cn-surface focus:border-accent/50 focus:ring-accent/20 w-full rounded-2xl border py-2.5 pr-10 pl-10 text-sm font-medium transition-all outline-none focus:ring-2"
-    />
-    <!--
-      ONE BUTTON FOR TWO WIDTHS, because the two gestures are the same gesture. From `md` up the
-      field is permanent, so this appears with a query and clears it. Below `md` the field only
-      exists while it is open, so it is always there and closes it - and closing drops the query,
-      since a hidden field still filtering the feed is a filter with no visible cause.
-    -->
-    {#if searchActive || searchOpen}
-      <button
-        type="button"
-        onclick={closeSearch}
-        class="tap-target text-text-muted hover:text-text-main absolute top-1/2 right-3 -translate-y-1/2 transition-colors"
-        aria-label={m.common_clear_aria()}
-      >
-        <X size={16} />
-      </button>
-    {/if}
-    <PostSearchFilters
-      author={searchAuthor}
-      association={searchAssociation}
-      onAuthor={pickSearchAuthor}
-      onAssociation={pickSearchAssociation}
-    />
-  </div>
+  <!-- THE ONE SEARCH OF THE APP (owner, 2026-11-26): its bar lives here, behind the magnifier on a
+       phone and always shown from `md` up; while it answers, its sections replace the feed. -->
+  <UniversalSearch
+    open={searchOpen}
+    initialQuery={searchInitialQuery}
+    bind:active={searchActive}
+    onClose={() => {
+      searchOpen = false;
+      searchInitialQuery = '';
+    }}
+    post={searchPostCard}
+  />
 
   <!-- ONE ROW: the three tabs and the CanaReels entry (user, 2026-10-16). Its content hides while a
        search replaces the feed; its margin stays, as it always did. -->
@@ -1165,28 +1081,7 @@
   {/if}
 
   <section>
-    {#if searchActive}
-      <!-- Search results -->
-      {#if searching}
-        {@render skeletonCards()}
-      {:else if searchResults !== null}
-        {#if searchResults.length === 0}
-          <div class="text-text-muted py-12 text-center text-sm">
-            {searchQuery.trim()
-              ? m.posts_no_results({ query: searchQuery })
-              : m.posts_no_results_filtered()}
-          </div>
-        {:else}
-          <div class="space-y-5">
-            {#each searchResults as post (post.id)}
-              {@render guardedCard(post, () => {
-                searchResults = (searchResults ?? []).filter((p) => p.id !== post.id);
-              })}
-            {/each}
-          </div>
-        {/if}
-      {/if}
-    {:else}
+    {#if !searchActive}
       {#if errorMessage}
         <div
           class="bg-red-err/10 text-red-err border-red-err/20 mb-6 flex items-center gap-3 rounded-2xl border p-4 text-sm"

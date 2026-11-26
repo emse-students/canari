@@ -35,8 +35,6 @@
   import { conversationRefusalMessage } from '$lib/utils/chat/conversationRefusalMessage';
   import {
     compareConversationRecency,
-    conversationMatchesQuery,
-    selfConversationMatchesQuery,
     selfConversationTitle,
     conversationRecency,
     recentDirectPeers,
@@ -287,7 +285,6 @@
   let communityName = $state('');
 
   let selectedCommunityWorkspaceId = $state('');
-  let searchQuery = $state('');
   const selectedCommunityWorkspace = $derived(
     channelWorkspaces.find((w) => w.id === selectedCommunityWorkspaceId)
   );
@@ -445,32 +442,21 @@
   /** The own name is read reactively like a DM peer's, so a late or renamed profile repaints the row. */
   const ownName = userDisplayName(() => (onOpenSelfConversation ? currentUserId : ''));
   const selfTitle = $derived(selfConversationTitle(ownName.current, currentUserId));
-  /** The row's search label: its own title and aliases, never the resolver's name for the group. */
-  const matchesSelfRow = (convo: Conversation) =>
-    selfConversationMatchesQuery(selfTitle, previewContentOf(convo.messages) ?? '', searchQuery);
   /**
    * This device holds no Notes conversation yet (the first tap creates it): it has no recency, so
    * its entry is drawn AFTER the list - discoverable, never jumping above real activity.
    */
-  const selfPlaceholderShown = $derived(
-    Boolean(onOpenSelfConversation) &&
-      selfRow === null &&
-      selfConversationMatchesQuery(selfTitle, '', searchQuery)
-  );
+  const selfPlaceholderShown = $derived(Boolean(onOpenSelfConversation) && selfRow === null);
 
   let filteredConversationEntries = $derived.by(() =>
     conversationRows
       // The held Notes row is told apart by its MAP KEY (the group id), never by `convo.name`: a
       // self conversation keeps no name of its own (`selfConversationIdentity`), so comparing the
       // two filtered the real row out while `selfRow` still suppressed the placeholder.
-      .filter(({ name, convo, resolved }) =>
-        convo.conversationType === 'self'
-          ? Boolean(onOpenSelfConversation) && name === selfRow?.name && matchesSelfRow(convo)
-          : conversationMatchesQuery(
-              resolved.displayName,
-              previewContentOf(convo.messages) ?? '',
-              searchQuery
-            )
+      .filter(
+        ({ name, convo }) =>
+          convo.conversationType !== 'self' ||
+          (Boolean(onOpenSelfConversation) && name === selfRow?.name)
       )
       .sort((a, b) => compareConversationRecency(a.convo, b.convo))
   );
@@ -735,12 +721,8 @@
     {#if viewMode === 'chat'}
       <SidebarHeaderControls
         {activeSidebarTab}
-        {searchQuery}
         {drawerMode}
         {onCloseDrawer}
-        onSearchQueryChange={(value) => {
-          searchQuery = value;
-        }}
         onOpenNewChat={() => openNewChatModal('discussion')}
       />
     {:else}
@@ -854,28 +836,24 @@
           </div>
         {/if}
 
-        {#if filteredConversationEntries.length === 0 && !(searchQuery.trim() && selfPlaceholderShown)}
+        {#if filteredConversationEntries.length === 0}
           <div class="text-text-muted px-6 py-12 text-center">
             <div class="mb-4 flex justify-center">
               <div class="rounded-2xl bg-black/5 p-4 dark:bg-white/5">
                 <MessageSquarePlus size={36} class="opacity-40" />
               </div>
             </div>
-            {#if searchQuery.trim()}
-              <p class="text-sm font-medium">{m.chat_no_discussion_found()}</p>
-            {:else}
-              <p class="text-text-main mb-1 text-sm font-bold">
-                {m.sidebar_no_conversations_title()}
-              </p>
-              <p class="mb-4 text-xs">{m.sidebar_start_writing()}</p>
-              <button
-                type="button"
-                onclick={() => openNewChatModal('discussion')}
-                class="text-on-accent bg-accent rounded-xl px-4 py-2 text-xs font-semibold transition-all active:scale-95"
-              >
-                {m.chat_new_discussion_label()}
-              </button>
-            {/if}
+            <p class="text-text-main mb-1 text-sm font-bold">
+              {m.sidebar_no_conversations_title()}
+            </p>
+            <p class="mb-4 text-xs">{m.sidebar_start_writing()}</p>
+            <button
+              type="button"
+              onclick={() => openNewChatModal('discussion')}
+              class="text-on-accent bg-accent rounded-xl px-4 py-2 text-xs font-semibold transition-all active:scale-95"
+            >
+              {m.chat_new_discussion_label()}
+            </button>
           </div>
         {/if}
       {:else}
