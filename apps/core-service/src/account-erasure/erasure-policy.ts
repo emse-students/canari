@@ -102,7 +102,7 @@ export const CORE_ERASURE_STATEMENTS: readonly {
   },
   {
     label: 'alumni_merges_open',
-    sql: `UPDATE alumni_merges SET "targetUserId" = NULL, "targetUuid" = $2 WHERE "completedAt" IS NULL
+    sql: `UPDATE alumni_merges SET "targetUserId" = NULL, "targetUuid" = $2, "targetSubject" = NULL WHERE "completedAt" IS NULL
             AND ("targetUserId" = $1 OR "targetUuid" = (SELECT "miconnectUuid" FROM users WHERE id = $1))`,
     replacement: DELETED_ACCOUNT,
   },

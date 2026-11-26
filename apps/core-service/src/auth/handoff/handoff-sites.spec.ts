@@ -87,7 +87,10 @@ describe('the handoff registry', () => {
   it('gives every MiConnect site a sign-in entry, and no other site one', () => {
     for (const site of ECOSYSTEM_SITES) {
       expect([site.id, site.miconnect === (site.signIn !== null)]).toEqual([site.id, true]);
-      if (site.signIn) expect([site.id, site.signIn.path.startsWith('/')]).toEqual([site.id, true]);
+      expect([site.id, site.signIn === null || site.signIn.path.startsWith('/')]).toEqual([
+        site.id,
+        true,
+      ]);
     }
   });
 });

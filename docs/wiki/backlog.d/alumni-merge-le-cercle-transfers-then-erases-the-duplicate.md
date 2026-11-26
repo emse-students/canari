@@ -9,7 +9,7 @@ legacy accounts with a balance, which the FIRST account of that name and promo t
 so a duplicate that signs in first takes it, and this transfer is what gives it back.
 
 What it builds: `POST /api/internal/alumni-merge`, the `canari-merge+jwt` verified by the vendored
-verifier (audience `cercle`), then ONE transaction: no row -> `absent`; the target has no row -> the
+verifier (audience `le-cercle`, the `ECOSYSTEM_SITES` id), then ONE transaction: no row -> `absent`; the target has no row -> the
 duplicate's row renamed to the target's subject (as `migrateFromLegacyUser` does; `till_requests`
 updated by hand), sessions deleted -> `transferred`. **Both rows exist -> a pair of `transfer` ledger
 lines** (the owner's decision of 2026-11-26, [item 7](../decisions/owner-decisions-of-2026-11-26-alumni.md)):

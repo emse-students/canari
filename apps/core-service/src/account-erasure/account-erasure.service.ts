@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { DataSource, EntityManager } from 'typeorm';
 import axios from 'axios';
+import { DurableQueueRunner } from '../common/durable-queue';
 import { ACCESS_TOKEN_TTL_SECONDS, CREDENTIAL_SKEW_SECONDS } from '../auth/token-lifetimes';
 import {
   CORE_ERASURE_STATEMENTS,
@@ -84,28 +85,25 @@ export type ErasureState = 'none' | 'pending' | 'blocked';
 export class AccountErasureService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AccountErasureService.name);
   private readonly internalSecret = process.env.INTERNAL_SECRET ?? '';
-  private drainTimer: NodeJS.Timeout | null = null;
-  private reportTimer: NodeJS.Timeout | null = null;
-  private firstReport: NodeJS.Timeout | null = null;
-  /** The drain in flight, so overlapping triggers share it instead of racing it. */
-  private draining: Promise<void> | null = null;
+  /** The drain, the single flight and the report: the runner core-service's durable queues share. */
+  private readonly runner = new DurableQueueRunner({
+    tag: '[ERASURE]',
+    logger: this.logger,
+    drainOnce: () => this.drainOnce(),
+    report: () => this.report(),
+    drainIntervalMs: DRAIN_INTERVAL_MS,
+    reportIntervalMs: REPORT_INTERVAL_MS,
+    firstReportDelayMs: FIRST_REPORT_DELAY_MS,
+  });
 
   constructor(private readonly dataSource: DataSource) {}
 
   onModuleInit(): void {
-    this.drainTimer = setInterval(() => void this.drain(), DRAIN_INTERVAL_MS);
-    this.reportTimer = setInterval(() => void this.report(), REPORT_INTERVAL_MS);
-    this.firstReport = setTimeout(() => void this.report(), FIRST_REPORT_DELAY_MS);
-    // Housekeeping must never hold the process open on shutdown.
-    this.drainTimer.unref?.();
-    this.reportTimer.unref?.();
-    this.firstReport.unref?.();
+    this.runner.start();
   }
 
   onModuleDestroy(): void {
-    for (const t of [this.drainTimer, this.reportTimer]) if (t) clearInterval(t);
-    if (this.firstReport) clearTimeout(this.firstReport);
-    this.drainTimer = this.reportTimer = this.firstReport = null;
+    this.runner.stop();
   }
 
   /**
@@ -282,17 +280,7 @@ export class AccountErasureService implements OnModuleInit, OnModuleDestroy {
    * `FOR UPDATE SKIP LOCKED` that pushes the job's due time forward by a lease.
    */
   drain(): Promise<void> {
-    if (!this.draining) {
-      this.draining = this.drainOnce()
-        .catch((err: unknown) => {
-          // The queue survives in the database; the next tick picks it up again.
-          this.logger.error(`[ERASURE] drain failed: ${describeFailure(err)} ${String(err)}`);
-        })
-        .finally(() => {
-          this.draining = null;
-        });
-    }
-    return this.draining;
+    return this.runner.drain();
   }
 
   private async drainOnce(): Promise<void> {

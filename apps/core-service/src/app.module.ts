@@ -11,6 +11,7 @@ import { User } from './users/entities/user.entity';
 import { UserBlock } from './users/entities/user-block.entity';
 import { ProfileChange } from './users/entities/profile-change.entity';
 import { AlumniMerge } from './users/entities/alumni-merge.entity';
+import { AlumniMergeSiteJob } from './users/entities/alumni-merge-site-job.entity';
 import { ProfileCorrectionRequest } from './users/entities/profile-correction-request.entity';
 import { AuthSession } from './auth/entities/auth-session.entity';
 import { RestoreChallengeSpent, RestoreCredential } from './auth/restore/restore-credential.entity';
@@ -57,6 +58,7 @@ import { ROUTE_PARAMS_GUARD } from './common/route-params';
           ProfileChange,
           ProfileCorrectionRequest,
           AlumniMerge,
+          AlumniMergeSiteJob,
           AuthSession,
           RestoreCredential,
           RestoreChallengeSpent,

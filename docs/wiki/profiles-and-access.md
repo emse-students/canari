@@ -1122,9 +1122,10 @@ attribute keys, once nothing reads them - each removal measured, per
 ### The Alumni merge, extended (D52-D58, planned for `1.8.3`)
 
 Decided 2026-11-26 ([decisions](decisions/owner-decisions-of-2026-11-26-alumni.md)); designed the
-same day, NOTHING BUILT. One entry per work package, each `target: 1.8.3`:
-[Canari](backlog.d/alumni-merge-canari-side-push-subjects-manual-and-sibling-jobs.md),
-[MiConnect](backlog.d/alumni-merge-miconnect-policy-event-push-and-manual-mark.md),
+same day. **The Canari and MiConnect halves (D54, D55, D57) are BUILT** - see "As built" at the end
+of this section; what they still owe is in
+[Canari](backlog.d/alumni-merge-canari-side-push-subjects-manual-and-sibling-jobs.md). The other
+entries, each `target: 1.8.3`:
 [pickers](backlog.d/a-duplicate-waiting-for-its-merge-is-in-no-picker-and-homonyms-are-told-apart.md),
 [Sky](backlog.d/alumni-merge-sky-transfers-then-erases-the-duplicate.md),
 [MiGallery](backlog.d/alumni-merge-migallery-transfers-then-erases-the-duplicate.md),
@@ -1220,7 +1221,8 @@ duplicate's account by that subject alone, since nothing else tells two rows of 
     **The target's next Canari sign-in does NOT run it**: the push and the sign-in arrive within the
     same seconds, so a third path would only race the push; the reconciler already covers a lost one.
   - **The sites.** `complete` writes, in the transaction that closes the row, one job per site in
-    `alumni_merge_site_jobs` (`mergeId`, `site` in `sky`, `migallery`, `cercle`, the two subjects,
+    `alumni_merge_site_jobs` (`mergeId`, `site` in `sky`, `migallery`, `le-cercle` - the ids of the
+    `ECOSYSTEM_SITES` registry, from which the list is derived - the two subjects,
     attempts, next attempt, last failure, outcome; one row per merge and site, a unique index). The
     worker is the account-erasure queue's, factorized rather than copied (`FOR UPDATE SKIP LOCKED`,
     backoff, the daily report; [account-erasure](account-erasure.md)). Each call is
@@ -1296,6 +1298,44 @@ duplicate's account by that subject alone, since nothing else tells two rows of 
 - **D58 - What would make it wrong is reported.** A push Canari refuses (error), a completion by the
   reconciler (warning), a site job pending over 24 h or blocked (daily report, error), a homonym pair
   with nothing to tell apart (warning): each names the merge id and the site, never a name.
+
+**As built (1.8.3, the Canari and MiConnect halves).** Where each part lives, and the choices the
+build made:
+
+- **The policy** (`30-sources.yaml`, `miconnect-alumni-merge-or-refuse`) reads the seven mark keys;
+  a mark with no mode is `auto` (a mark written before 1.8.3). The manual names are compared through
+  the SAME `miconnect-alumni-names-agree` policy as the automatic rule. The merge Event is
+  `Event.new("alumni_merge", ...)`, `set_user(target)`, the client address from
+  `ClientIPMiddleware.get_client_ip`, ONE `save()`. Refusals keep `from_http` (nothing is deleted).
+- **The push** is `85-alumni-merge-push.yaml`: the policy `miconnect-alumni-merge-is-the-event`, the
+  two webhook mappings, the transport (`send_once`) and the rule. The header mapping reads the secret
+  from the WORKER's environment (`os.environ`, not `!Env`: the blueprint would otherwise store it in
+  the database) and raises when it is unset, so a missing secret is a failed notification task, never
+  an unsigned call. The URL is production's: dev and production share ONE MiConnect, and dev holds no
+  editor token, so dev never marks a merge and has no secret to receive one (`compose-wiring`'s
+  `DEV_ABSENT_KEYS`). Step M of `test-enrollment-flow.py` proves the rule passes the merge
+  Events and nothing else, then DELIVERS each push synchronously, as `notification_transport` does,
+  to a loopback stub: on a fresh instance the worker drains thousands of dispatch tasks and was
+  measured still queued two minutes after the sign-in, so awaiting it would have been a timer. The
+  stored transport points at the stub for the whole run and never gets its production URL back.
+- **The endpoint** (`alumni-merge-hook.controller.ts`) is routed by the edge as its own
+  `location =`, `client_max_body_size 4k`, every trust header stripped, no `auth_request`
+  (`Dockerfile.frontend`). The secret is checked before the body is read; an unset secret refuses
+  everything, at error.
+- **The busy target** is enforced by a transaction-scoped advisory lock on the target's uuid and a
+  check of the open rows, not a unique index: an index would have failed the migration on any data
+  that already broke the rule, and the lock serializes the only writer.
+- **The subjects** are read from the editor API's `uid`; `listOpenMerges` backfills an open row that
+  has none. A row completed with no subject says so at ERROR, `owed BY HAND`, and writes no job.
+- **The site jobs** (`alumni-merge-site-jobs.service.ts`) and the account erasure share ONE runner,
+  `src/common/durable-queue.ts` (timers, single-flight drain, logged failures); each keeps its own
+  claim, because the two tables differ. A `2xx` must name `absent`, `transferred` or `merged`, else it
+  is retried as `SITE_ANSWER_MALFORMED`; a `404` (a site that has not shipped its endpoint) is
+  retried, never blocked, and is accused by the daily report after 24 h.
+- **The admin page** lists every Alumni-created account not in an open merge: the flagged ones with
+  their targets, then those that match nobody, which only "Rattacher à un autre compte"
+  (`AlumniManualMerge.svelte`) can attach. The open merges show their mode and reason, the closed
+  ones their three site states and whether the reconciler completed them.
 
 **The three questions this design raised were answered by the owner on 2026-11-26**, each with the
 recommended option ([decisions](decisions/owner-decisions-of-2026-11-26-alumni.md), items 7-9): Le

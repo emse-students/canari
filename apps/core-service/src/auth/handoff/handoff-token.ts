@@ -129,7 +129,51 @@ export function signHandoffToken(
   claims: HandoffClaims | Record<string, unknown>,
   header: Record<string, unknown> = {}
 ): string {
-  const input = `${b64url({ alg: HANDOFF_TOKEN_ALG, typ: HANDOFF_TOKEN_TYPE, kid, ...header })}.${b64url(claims)}`;
+  return signCompactEs256(privateKey, { typ: HANDOFF_TOKEN_TYPE, kid, ...header }, claims);
+}
+
+/**
+ * The `typ` of the token core-service signs for one sibling-site call of an Alumni merge (D54,
+ * `POST <site>/api/internal/alumni-merge`). Same key and same JWKS as the handoff, its OWN type, so a
+ * site's verifier never takes one for the other (RFC 8725).
+ */
+export const ALUMNI_MERGE_TOKEN_TYPE = 'canari-merge+jwt';
+
+/** The claims of an Alumni merge call token. */
+export interface AlumniMergeCallClaims {
+  iss: string;
+  /** The site's id in `libs/contracts/ecosystem-sites.json`. */
+  aud: string;
+  /** The duplicate's subject on that site. */
+  dup: string;
+  /** The target's subject, onto which the site moves what the duplicate owns. */
+  target: string;
+  /** The job's id: the site's idempotence key. */
+  jti: string;
+  iat: number;
+  /** `iat` + {@link HANDOFF_TOKEN_LIFETIME_SECONDS}. */
+  exp: number;
+}
+
+/** Signs an Alumni merge call token ({@link ALUMNI_MERGE_TOKEN_TYPE}) with the handoff key. */
+export function signAlumniMergeCallToken(
+  privateKey: KeyObject,
+  kid: string,
+  claims: AlumniMergeCallClaims
+): string {
+  return signCompactEs256(privateKey, { typ: ALUMNI_MERGE_TOKEN_TYPE, kid }, claims);
+}
+
+/**
+ * Signs `claims` as a compact JWS under `header` (`alg` is always ES256). The signature is the raw
+ * `r || s` pair (IEEE P1363) that JWS ES256 requires, not DER.
+ */
+function signCompactEs256(
+  privateKey: KeyObject,
+  header: Record<string, unknown>,
+  claims: object
+): string {
+  const input = `${b64url({ alg: HANDOFF_TOKEN_ALG, ...header })}.${b64url(claims)}`;
   const signature = sign('sha256', Buffer.from(input, 'utf8'), {
     key: privateKey,
     dsaEncoding: 'ieee-p1363',

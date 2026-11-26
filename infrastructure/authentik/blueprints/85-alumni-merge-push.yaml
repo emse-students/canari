@@ -1,0 +1,88 @@
+# THE ALUMNI MERGE, PUSHED TO CANARI (D54, docs/wiki/profiles-and-access.md, "The Alumni merge,
+# extended"). When the merge policy of 30-sources.yaml merges a duplicate at its Alumni sign-in, it
+# saves ONE Event `custom_alumni_merge` whose user is the TARGET (D57). authentik dispatches every saved
+# Event to every Notification Rule (`event_post_save_notification` -> `event_trigger_dispatch`, read in
+# 2026.8.6), and the rule's policies decide: the one below passes that action and nothing else, so the
+# rule sends it ONCE (`send_once`, to the event's user - the target, who exists) through a webhook
+# transport to Canari's `POST /api/hooks/miconnect/alumni-merge`. Canari completes the merge on it at
+# once, instead of at the next reading of its admin page; that reading stays as the reconciler of a
+# push that was lost, and says so at warning (alumni-merge.service.ts).
+#
+# THE BODY IS ONLY A HINT: Canari re-reads MiConnect and completes only when the duplicate is gone and
+# the target holds that Alumni link, so a forged call, even one carrying the secret, can only make it
+# look at the truth.
+#
+# THE SECRET is read from the WORKER's environment when the header is built
+# (`MICONNECT_ALUMNI_MERGE_WEBHOOK_SECRET`, the same value core-service holds;
+# infrastructure/MIGRATION.md), never written here: the file is public, and an `!Env` would store it
+# in the mapping's expression, readable in the admin interface. A worker without it fails the send
+# loudly (the task's error, logged by authentik) and Canari's reconciler completes the merge.
+#
+# THE URL is production's: production MiConnect serves production Canari (dev shares that MiConnect
+# and is never pushed to). The test stack points the transport at a stub receiver for its run
+# (test-enrollment-flow.py, step M).
+#
+# Applied by infrastructure/authentik/apply-blueprints.py, never by the worker's own discovery
+# (instantiate: false) - see infrastructure/authentik/README.md.
+version: 1
+metadata:
+  name: miconnect-alumni-merge-push
+  labels:
+    blueprints.goauthentik.io/instantiate: "false"
+entries:
+  - model: authentik_policies_expression.expressionpolicy
+    identifiers:
+      name: "miconnect-alumni-merge-is-the-event"
+    attrs:
+      execution_logging: false
+      expression: |-
+        # The merge's own Event and nothing else - a refusal (`custom_alumni_merge_refused`) is never pushed.
+        event = request.context.get("event")
+        return event is not None and event.action == "custom_alumni_merge"
+  - model: authentik_events.notificationwebhookmapping
+    identifiers:
+      name: "miconnect-alumni-merge-push-body"
+    attrs:
+      expression: |-
+        # What Canari reads: which duplicate, into which account, and Canari's own merge id (empty on a
+        # mark written before 1.8.3). Nothing nominative.
+        context = notification.event.context if notification.event else {}
+        return {
+            "duplicateUuid": str(context.get("duplicate_uuid") or ""),
+            "targetUuid": str(context.get("target_uuid") or ""),
+            "mergeId": str(context.get("merge_id") or ""),
+        }
+  - model: authentik_events.notificationwebhookmapping
+    identifiers:
+      name: "miconnect-alumni-merge-push-headers"
+    attrs:
+      expression: |-
+        import os
+
+        secret = os.environ.get("MICONNECT_ALUMNI_MERGE_WEBHOOK_SECRET", "").strip()
+        if not secret:
+            raise ValueError("MICONNECT_ALUMNI_MERGE_WEBHOOK_SECRET is unset on the worker: the merge is not pushed, Canari's reconciler completes it")
+        return {"X-MiConnect-Alumni-Merge-Secret": secret}
+  - model: authentik_events.notificationtransport
+    identifiers:
+      name: "miconnect-alumni-merge-push"
+    attrs:
+      mode: "webhook"
+      webhook_url: "https://canari.emse.fr/api/hooks/miconnect/alumni-merge"
+      send_once: true
+      webhook_mapping_body: !Find [authentik_events.notificationwebhookmapping, [name, "miconnect-alumni-merge-push-body"]]
+      webhook_mapping_headers: !Find [authentik_events.notificationwebhookmapping, [name, "miconnect-alumni-merge-push-headers"]]
+  - model: authentik_events.notificationrule
+    identifiers:
+      name: "miconnect-alumni-merge-push"
+    attrs:
+      severity: "notice"
+      # The event's user is the merge's TARGET (D57): it exists, so the one notification is built.
+      destination_event_user: true
+      transports:
+        - !Find [authentik_events.notificationtransport, [name, "miconnect-alumni-merge-push"]]
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_policies.policybindingmodel, [notificationrule__name, "miconnect-alumni-merge-push"]]
+      policy: !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-alumni-merge-is-the-event"]]
+      order: 0
