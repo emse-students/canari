@@ -193,7 +193,10 @@ no change on the day the gate is put in place.
 #### MiConnect in production - the hand step
 
 **The release does not deploy this service**: it moves only the authentik image tag, and the host's
-compose file is MiConnect's own, kept by hand ([authentik](../infrastructure/authentik.md)). Our
+compose file is MiConnect's own, kept by hand ([authentik](../infrastructure/authentik.md)). Until the
+step, the daily `drift` job reads `gate` as pinned and not running on each stack, a dated `KNOWN ...
+absent` warning (`infrastructure/deploy/image-drift-known.txt`, until 2026-12-31): the step removes
+that stack's row in the same pull request that records it. Our
 containers are ours to change (owner, 2026-11-19); the host's nginx is not touched.
 
 **PRECONDITION: every sibling site ships its own gate first** (section 6). A sibling page opened in

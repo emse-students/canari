@@ -359,12 +359,15 @@ read-only reports that run independently, and one write:
   **A drift with a known cause is a warning until its date, and red after it**: each one is a row of
   `infrastructure/deploy/image-drift-known.txt` (project, service, the EXACT running image, an expiry
   date, the backlog entry), printed at the top of every report and as a `KNOWN ... until <date>`
-  warning. Only that image of that service passes; anything else about it is still a `DRIFT`. The
-  rows today:
+  warning. Only that image of that service passes; anything else about it is still a `DRIFT`. **A
+  service pinned and deliberately not running yet** is a row with `absent` in place of the running
+  image (2026-11-26): it holds only while nothing of that service runs - once it runs it is compared
+  like any other - and reads `KNOWN <service> absent ... until <date>`. The rows today:
 
   | Project | Service | Running | Until | Why |
   | --- | --- | --- | --- | --- |
   | `miconnect-test` | `postgresql` | `postgres:16-alpine` | 2026-12-31 | the test stack is not on PostgreSQL 18 yet ([backlog](../backlog.d/miconnect-compose-file-is-not-deployed.md)) |
+  | `miconnect-test`, `miconnect` | `gate` | `absent` | 2026-12-31 | the in-app browser gate (#4103) is pinned in `compose.yml` but put in by hand, and only once every sibling site gates itself - the rollout order the owner decided ([hand step](../frontend/leaving-in-app-browsers.md#miconnect-in-production---the-hand-step), [backlog](../backlog.d/p1-meta-in-app-browsers-are-left-not-used.md)) |
 - **Blueprints** (`infrastructure/authentik/blueprint-drift.sh`): the `prod-released` tree's
   `apply-blueprints.sh dry-run` against production - one transaction, rolled back, the very call every
   pre-release makes - red on any change. The worker is found by its compose labels (project

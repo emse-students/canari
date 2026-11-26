@@ -227,6 +227,33 @@ eq "  another project's same drift: red" "$?" 1
 printf 'postgres postgres:15-alpine\ngarage dxflrs/garage:v2.5.0\nserver ghcr.io/goauthentik/server:2026.8.5\n' >"$tmp/run-other"
 drift_compare "$tmp/pins" "$tmp/run-other" stack "$tmp/known" 2026-12-01 >/dev/null
 eq "  another running image of the same service: red" "$?" 1
+
+echo "a pinned service deliberately not running yet, with a date, is a warning until that date:"
+printf 'stack server absent 2026-12-31 backlog/gate.md
+' >"$tmp/known-absent"
+printf 'postgres postgres:18-alpine@sha256:aa
+garage dxflrs/garage:v2.5.0
+' >"$tmp/run-absent"
+out="$(drift_compare "$tmp/pins" "$tmp/run-absent" stack "$tmp/known-absent" 2026-12-31)"
+eq "  on its last day: passes" "$?" 0
+eq "  printed KNOWN absent with its date and its reason" "$(grep -c '^KNOWN server absent pinned=ghcr.io/goauthentik/server:2026.8.5 until 2026-12-31 (backlog/gate.md)$' <<<"$out")" 1
+out="$(drift_compare "$tmp/pins" "$tmp/run-absent" stack "$tmp/known-absent" 2027-01-01)"
+eq "  the day after: red" "$?" 1
+eq "  saying the exemption expired" "$(grep -c '^ABSENT server .*has expired' <<<"$out")" 1
+drift_compare "$tmp/pins" "$tmp/run-absent" other-stack "$tmp/known-absent" 2026-12-01 >/dev/null
+eq "  another project's same absence: red" "$?" 1
+printf 'postgres postgres:18-alpine@sha256:aa
+garage dxflrs/garage:v2.5.0
+server ghcr.io/goauthentik/server:2026.8.4
+' >"$tmp/run-absent-wrong"
+drift_compare "$tmp/pins" "$tmp/run-absent-wrong" stack "$tmp/known-absent" 2026-12-01 >/dev/null
+eq "  once the service runs, it is compared again: a wrong image is red" "$?" 1
+printf 'postgres postgres:18-alpine@sha256:aa
+garage dxflrs/garage:v2.5.0
+server ghcr.io/goauthentik/server:2026.8.5
+' >"$tmp/run-absent-ok"
+drift_compare "$tmp/pins" "$tmp/run-absent-ok" stack "$tmp/known-absent" 2026-12-01 >/dev/null
+eq "  once it runs its pin: ok" "$?" 0
 eq "  the repository's own exemption file names a date on every row" \
   "$(grep -vE '^[[:space:]]*(#|$)' infrastructure/deploy/image-drift-known.txt | awk '$4 !~ /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/ || NF < 5' | wc -l | tr -d ' ')" 0
 
