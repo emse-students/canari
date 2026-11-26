@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { getDeviceStorageUsage, clearMediaCache, formatStorageBytes } from './deviceStorage';
-import { CIPHER_CACHE_NAME } from './mediaBlobCache';
+import { CIPHER_CACHE_NAME, LEDGER_CACHE_NAME } from './mediaCacheLedger';
 import { CACHE_NAME as ASSOCIATION_LOGO_CACHE_NAME } from './associationLogoCache';
 
 /** The retired avatar bucket. Present here to assert this panel does NOT count it any more. */
@@ -141,7 +141,7 @@ describe('deviceStorage', () => {
   });
 
   describe('clearMediaCache', () => {
-    it('deletes exactly the media and logo buckets, never anything else', async () => {
+    it('deletes exactly the media and logo buckets and the ledger beside them, never anything else', async () => {
       const fakeCaches = installFakeCaches({
         [CIPHER_CACHE_NAME]: [1],
         [ASSOCIATION_LOGO_CACHE_NAME]: [1],
@@ -152,7 +152,8 @@ describe('deviceStorage', () => {
 
       expect(deleteSpy).toHaveBeenCalledWith(CIPHER_CACHE_NAME);
       expect(deleteSpy).toHaveBeenCalledWith(ASSOCIATION_LOGO_CACHE_NAME);
-      expect(deleteSpy).toHaveBeenCalledTimes(2);
+      expect(deleteSpy).toHaveBeenCalledWith(LEDGER_CACHE_NAME);
+      expect(deleteSpy).toHaveBeenCalledTimes(3);
     });
   });
 

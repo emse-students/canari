@@ -15,6 +15,7 @@ vi.mock('$lib/stores/auth', () => ({ getToken: async () => 'token' }));
 vi.mock('./mediaTouch', () => ({ noteMediaCacheHit: () => {} }));
 
 import { acquireDecryptedMediaBlobUrl, releaseDecryptedMediaBlobUrl } from './mediaBlobCache';
+import { CIPHER_CACHE_NAME } from './mediaCacheLedger';
 import { mediaRequestGate } from './requestGate';
 import { encryptMediaBuffer } from '$lib/mediaCrypto';
 import type { MediaRef } from '$lib/media';
@@ -61,6 +62,14 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
+
+/** The ledger bucket (`mediaCacheLedger.ts`): these cases count the CIPHERTEXT bucket's writes. */
+const ledgerStub = {
+  keys: async () => [],
+  match: async () => undefined,
+  put: async () => undefined,
+  delete: async () => false,
+};
 
 describe('a download shared by several rows', () => {
   it('still reaches a row that joined it, when the row that started it is torn down while queued', async () => {
@@ -227,14 +236,17 @@ describe('a download shared by several rows', () => {
     const put = vi.fn();
     const store = new Map<string, Response>();
     vi.stubGlobal('caches', {
-      open: async () => ({
-        match: async (k: string) => store.get(k)?.clone(),
-        put: async (k: string, r: Response) => {
-          put(k);
-          store.set(k, r);
-        },
-        delete: async (k: string) => store.delete(k),
-      }),
+      open: async (name: string) =>
+        name !== CIPHER_CACHE_NAME
+          ? ledgerStub
+          : {
+              match: async (k: string) => store.get(k)?.clone(),
+              put: async (k: string, r: Response) => {
+                put(k);
+                store.set(k, r);
+              },
+              delete: async (k: string) => store.delete(k),
+            },
     });
     // The first answer's BODY stalls after its headers, then honours the abort.
     let first = true;
@@ -278,14 +290,17 @@ describe('a download shared by several rows', () => {
     const put = vi.fn();
     const store = new Map<string, Response>();
     vi.stubGlobal('caches', {
-      open: async () => ({
-        match: async (k: string) => store.get(k)?.clone(),
-        put: async (k: string, r: Response) => {
-          put((await r.clone().arrayBuffer()).byteLength);
-          store.set(k, r);
-        },
-        delete: async (k: string) => store.delete(k),
-      }),
+      open: async (name: string) =>
+        name !== CIPHER_CACHE_NAME
+          ? ledgerStub
+          : {
+              match: async (k: string) => store.get(k)?.clone(),
+              put: async (k: string, r: Response) => {
+                put((await r.clone().arrayBuffer()).byteLength);
+                store.set(k, r);
+              },
+              delete: async (k: string) => store.delete(k),
+            },
     });
     let first = true;
     let firstBodyStopped = false;
