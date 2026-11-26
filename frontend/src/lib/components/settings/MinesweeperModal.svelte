@@ -34,11 +34,16 @@
   import {
     LEVEL_SPECS,
     loadMinesweeperLevel,
-    nextLevel,
+    loadMinesweeperUnranked,
+    playModeOf,
     saveMinesweeperLevel,
+    saveMinesweeperUnranked,
     type LevelSpec,
     type MinesweeperLevel,
+    type PlayMode,
   } from '$lib/minesweeper/levels';
+  import { playModeIcon, playModeLabel, playModeShortLabel } from '$lib/minesweeper/modeLabels';
+  import MinesweeperModeSheet from '../games/MinesweeperModeSheet.svelte';
   import type { TimedMove } from '$lib/minesweeper/replay';
   import MinesweeperCell from './MinesweeperCell.svelte';
   import {
@@ -64,8 +69,8 @@
   import {
     ArrowLeft,
     Bomb,
+    ChevronUp,
     Flag,
-    Gauge,
     Lightbulb,
     Pickaxe,
     RotateCcw,
@@ -126,7 +131,6 @@
   let pressRing = $state<{ x: number; y: number } | null>(null);
 
   const FLAG_PRIMARY_STORAGE_KEY = 'canari.minesweeper.flagPrimary';
-  const UNRANKED_STORAGE_KEY = 'canari.minesweeper.unranked';
 
   function loadFlag(key: string): boolean {
     if (typeof localStorage === 'undefined') return false;
@@ -139,20 +143,15 @@
 
   /** Control-inversion setting: when true, short press/left click flags (dig on revealed cells) and long press/right click digs. */
   let flagPrimary = $state(loadFlag(FLAG_PRIMARY_STORAGE_KEY));
-  /** Play-unranked setting: when true, the first dig asks the server for NO challenge, so nothing is submitted. */
-  let unranked = $state(loadFlag(UNRANKED_STORAGE_KEY));
+  /**
+   * Play-unranked setting: when true, the first dig asks the server for NO challenge, so nothing is
+   * submitted. A newcomer plays unranked (owner, 2026-11-26): the ranked board is the barrier to entry.
+   */
+  let unranked = $state(loadMinesweeperUnranked());
 
   function toggleFlagPrimary() {
     flagPrimary = !flagPrimary;
     saveFlag(FLAG_PRIMARY_STORAGE_KEY, flagPrimary);
-  }
-
-  /** Only offered before the first dig: a game's ranking is decided when its board is generated. */
-  function toggleUnranked() {
-    // Also locked while the first dig's challenge request is in flight: the mode is being decided.
-    if (board.minesPlaced || firstClickBusy) return;
-    unranked = !unranked;
-    saveFlag(UNRANKED_STORAGE_KEY, unranked);
   }
 
   /**
@@ -162,21 +161,26 @@
    */
   let level = $state<MinesweeperLevel>(loadMinesweeperLevel());
 
-  /** The level picker: Libre only, before the first dig, like the ranked / Libre toggle. */
-  function cycleLevel() {
-    if (!unranked || board.minesPlaced || firstClickBusy) return;
-    level = nextLevel(level);
-    saveMinesweeperLevel(level);
-    console.debug('[minesweeper] level chosen', { level });
-  }
+  /** The mode of the game about to start: ranked, or the unranked level. */
+  const mode = $derived<PlayMode>(playModeOf(unranked, level));
 
-  /** The label of a level, in the player's language. */
-  function levelLabel(l: MinesweeperLevel): string {
-    return l === 'beginner'
-      ? m.minesweeper_level_beginner()
-      : l === 'intermediate'
-        ? m.minesweeper_level_intermediate()
-        : m.minesweeper_level_expert();
+  /** The glyph of the pastille: the trophy for ranked, a plant that grows with the level. */
+  const ModeGlyph = $derived(playModeIcon(mode));
+
+  /** The mode sheet, opened from the pastille: only before the first dig. */
+  let showModeSheet = $state(false);
+
+  /** A pick in the mode sheet: the ranked game, or an unranked one at a level. The grid is the same. */
+  function chooseMode(picked: PlayMode) {
+    showModeSheet = false;
+    if (modeLocked) return;
+    unranked = picked !== 'ranked';
+    saveMinesweeperUnranked(unranked);
+    if (picked !== 'ranked') {
+      level = picked;
+      saveMinesweeperLevel(level);
+    }
+    console.debug('[minesweeper] mode chosen', { mode: picked });
   }
 
   /**
@@ -239,6 +243,9 @@
   let challengeRoundTripMs = $state<number | undefined>(undefined);
   /** True while the first-dig challenge request is in flight, to guard against double-taps. */
   let firstClickBusy = $state(false);
+
+  /** A mode is decided when the board is generated: not after it, nor while its challenge is asked. */
+  const modeLocked = $derived(board.minesPlaced || firstClickBusy);
   /** Index of the cell whose first dig is being prepared (challenge fetch + generation), shown pressed meanwhile. */
   let pendingCell = $state<number | null>(null);
 
@@ -1227,40 +1234,24 @@
           {m.minesweeper_mode_dig()}
         {/if}
       </button>
+      <!-- ONE pastille for the mode (owner, 2026-11-26): the current mode, a tap opens the sheet of the four.
+           After the first dig it only reminds (the board was generated for it), so it loses its chevron. -->
       <button
         type="button"
-        onclick={toggleUnranked}
-        disabled={board.minesPlaced || firstClickBusy}
-        aria-pressed={unranked}
-        title={m.minesweeper_unranked_hint()}
-        class="pointer-events-auto flex h-12 items-center gap-2 rounded-full px-4 text-sm font-bold shadow-md backdrop-blur-sm transition-colors disabled:opacity-50 {unranked
-          ? 'bg-accent text-on-accent'
-          : 'ms-chip text-text-main'}"
+        onclick={() => (showModeSheet = true)}
+        disabled={modeLocked}
+        aria-haspopup="dialog"
+        aria-label={modeLocked
+          ? m.minesweeper_mode_pill_locked({ mode: playModeLabel(mode) })
+          : m.minesweeper_mode_pill({ mode: playModeLabel(mode) })}
+        title={m.minesweeper_mode_sheet_title()}
+        class="ms-chip text-text-main pointer-events-auto flex h-12 items-center gap-2 rounded-full px-4 text-sm font-bold shadow-md backdrop-blur-sm transition-colors disabled:opacity-50"
       >
-        <Trophy size={18} strokeWidth={2.5} class={unranked ? 'opacity-40' : ''} />
-        {unranked ? m.minesweeper_casual() : m.minesweeper_ranked()}
+        <ModeGlyph size={18} strokeWidth={2.5} />
+        {playModeShortLabel(mode)}
+        {#if !modeLocked}<ChevronUp size={16} strokeWidth={2.5} />{/if}
       </button>
-      {#if unranked && !board.minesPlaced}
-        <!-- The level (Libre only), until the first dig; the bulb takes its place once there is a
-             board to read, so the row holds three chips on a phone. -->
-        <div
-          class="ms-chip pointer-events-auto rounded-full shadow-md backdrop-blur-sm {firstClickBusy
-            ? 'opacity-50'
-            : ''}"
-        >
-          <Button
-            variant="bare"
-            onclick={cycleLevel}
-            disabled={firstClickBusy}
-            aria-label={m.minesweeper_level_label({ level: levelLabel(level) })}
-            title={m.minesweeper_level_hint()}
-            class="text-text-main flex h-12 items-center gap-2 rounded-full px-4 text-sm font-bold"
-          >
-            <Gauge size={18} strokeWidth={2.5} />
-            {levelLabel(level)}
-          </Button>
-        </div>
-      {:else if hintOffered}
+      {#if hintOffered}
         <!-- The bulb (unranked only): lights what justifies the next certain move, never the move.
              The chip is the wrapper because `.ms-chip` is scoped here and cannot reach into `Button`. -->
         <div
@@ -1395,6 +1386,15 @@
           </div>
         </div>
       </div>
+    {/if}
+
+    {#if showModeSheet}
+      <MinesweeperModeSheet
+        current={mode}
+        onChoose={chooseMode}
+        onClose={() => (showModeSheet = false)}
+        durationMs={animationMs(180, settings.animations)}
+      />
     {/if}
   </div>
 </div>
