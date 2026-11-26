@@ -2588,8 +2588,8 @@ export class SqliteStorage implements IStorage {
   // -- Misc ----------------------------------------------------------------
 
   /**
-   * Delete every row from the messages, conversations, outbox, graine, owed-exit, distribution and
-   * feed-page tables, then the outbox blob store (account reset / testing). Rejects with
+   * Delete every row from the messages, conversations, outbox, graine, owed-exit, distribution,
+   * feed-page, pending-mutation and deleted-conversation tables, then the outbox blob store (account reset / testing). Rejects with
    * `OutboxBlobClearError` when only the blob store failed - every table is empty by then.
    */
   async clear(): Promise<void> {
@@ -2607,6 +2607,9 @@ export class SqliteStorage implements IStorage {
     await this.db.execute('DELETE FROM feed_pages');
     // A mutation waiting for a message of the account goes with the account.
     await this.db.execute('DELETE FROM pending_mutations');
+    // So do the conversations it deleted: a mark left behind would fail the next account's shade
+    // reply to a conversation it shares with this one, before that conversation's row is written.
+    await this.db.execute('DELETE FROM deleted_conversations');
     // LAST, and only once every row above is gone: a separate database that may refuse to open
     // must not be able to skip the deletes of the seeds (see `clearOutboxBlobsLast`).
     await clearOutboxBlobsLast(this.blobs);
