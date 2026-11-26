@@ -342,6 +342,20 @@ contract, because no ride can hide a WebView resize (above).
 - The insets are passed on UNTOUCHED, the navigation bar's included (review D2, below). Kept:
   `canariTheme.setGround` still paints the page's ground under the transparent WebView (no band opens
   any more; the readings say whether a transparent strip ever shows it).
+- **The ground follows the bottom surface, not the last keyboard rise (2026-11-26).** It was posted
+  once per rise, with the colour where the keyboard would sit, and never reset - "never on a theme
+  apply at boot", to keep the read out of the boot. A ground posted for one surface outlives it: on a
+  device whose WebView leaves the bottom inset uncovered (the owner's Pixel 6a, gesture navigation;
+  never seen on the Mi 9T) a conversation's grey stayed under the feed's white tab bar until a cold
+  restart. `nativeGround.ts` (`syncNativeGround`) is now the one function: it hit-tests the bottom row
+  of the window and walks up to the first opaque background (`groundOf`, so a glass composer is
+  looked through), and posts it only when it differs from the last post, with a debug line naming
+  its source. The root layout calls it when the route has settled (`afterNavigate`), the theme is
+  applied (once the 180 ms background crossfade `nav` and `body` carry has landed - read at once, the
+  bar still computes the old colour: `syncNativeGroundAfterTransitions` waits on the transitions'
+  `finished`, no timer), the web tab bar mounts or unmounts, the boot gate lifts and the splash is dismissed;
+  `takeImeTarget` still calls it on a rise, first among its reads. No timer: each call is a change
+  of what is drawn at the bottom edge.
 
 **The page's half: ONE module owns every keyboard variable, and writes it to TWO targets** (the leaf
 channel, below) (`keyboardViewport.svelte.ts`, with the
@@ -422,7 +436,7 @@ main thread, 28-33 ms of it forced style and layout. `innerWidth`, `innerHeight`
 and two of them ran AFTER the keyboard's `:root` variables were written - `rememberKeyboardHeight`'s
 orientation (rises) and the baseline's `Math.max(..., innerHeight)` (falls) - each forcing a
 whole-document style pass. Now `takeImeTarget` reads in order: the arrival time, the ground under the
-keyboard (`postGroundToNative`: a hit test and computed colours), the window (`readWindow`, one
+keyboard (`syncNativeGround`: a hit test and computed colours), the window (`readWindow`, one
 `WindowReading`), and every riding piece's drawn top (`captureKeyboardRide` only reads); then writes:
 ends the running ride, takes a glide off (`releaseThreadGlides`), writes the variables (`update(reading)`,
 which reads nothing after). `startKeyboardRide` reads every probe before its first `animate`. What

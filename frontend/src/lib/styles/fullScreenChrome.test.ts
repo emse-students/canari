@@ -45,6 +45,16 @@ function guardsOf(name: string): string[] | null {
   return found;
 }
 
+/**
+ * A guard that is one name of the layout's own `$derived` (`showBottomNav`, which the native-ground
+ * sync reads too) stands for that derived's expression; any other guard is returned as written.
+ */
+function expandDerived(test: string): string {
+  if (!/^\w+$/.test(test.trim())) return test;
+  const derived = new RegExp(`const ${test.trim()} = \\$derived\\(([\\s\\S]*?)\\);`).exec(source);
+  return derived ? derived[1] : test;
+}
+
 describe('the root layout on a full-screen place', () => {
   it('knows the camera as one, with its sub-routes', () => {
     expect(isFullScreenPlace('/camera')).toBe(true);
@@ -66,7 +76,7 @@ describe('the root layout on a full-screen place', () => {
     (piece) => {
       const guards = guardsOf(piece);
       expect(guards, `${piece} is in the layout`).not.toBeNull();
-      expect(guards!.some((test) => test.includes('!isFullScreen'))).toBe(true);
+      expect(guards!.map(expandDerived).some((test) => test.includes('!isFullScreen'))).toBe(true);
     }
   );
 

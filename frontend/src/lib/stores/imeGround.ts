@@ -1,6 +1,6 @@
 /**
- * The page's ground under the keyboard's band, for the Android shell (`keyboardViewport`,
- * `postGroundToNative`; keyboard-and-send-motion.md). Pure apart from the colour conversion, which
+ * The page's ground at the bottom edge, for the Android shell (`keyboardViewport`,
+ * `nativeGround.ts`; keyboard-and-send-motion.md). Pure apart from the colour conversion, which
  * needs a canvas and is passed in.
  */
 
