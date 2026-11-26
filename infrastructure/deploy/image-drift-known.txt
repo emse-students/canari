@@ -3,4 +3,8 @@
 # Until its date the line is a warning; the day after, it is red again. Only that exact image of that
 # service passes. An entry leaves this file in the pull request that removes its cause; a date is moved
 # only with a reason written into the entry it points at. docs/wiki/infrastructure/authentik.md.
+# `absent` in place of the running image: the service is pinned and deliberately not running yet, and
+# the row holds only while nothing of it runs.
 miconnect-test postgresql postgres:16-alpine 2026-12-31 docs/wiki/backlog.d/miconnect-compose-file-is-not-deployed.md
+miconnect-test gate absent 2026-12-31 docs/wiki/backlog.d/p1-meta-in-app-browsers-are-left-not-used.md
+miconnect gate absent 2026-12-31 docs/wiki/backlog.d/p1-meta-in-app-browsers-are-left-not-used.md

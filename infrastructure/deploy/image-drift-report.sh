@@ -20,6 +20,10 @@
 # entry), and the line reads `KNOWN ... until <date>` as a `::warning::`. Only that exact image of that
 # service passes; anything else about it is still a DRIFT, and the day after its date it is red again.
 # Every exemption is printed at the top of the report, so none is forgotten in a file.
+# A SERVICE PINNED AND DELIBERATELY NOT RUNNING YET is named the same way, with the word `absent` in
+# place of the running image (MiConnect's `gate`, put in by hand only once every sibling site gates
+# itself): it passes only while NOTHING of that service runs - once it runs, it is compared like any
+# other, so the row cannot hide a wrong image.
 #
 # Output: one line per service, `ok`, `KNOWN`, `DRIFT` (running vs pinned) or `ABSENT` (pinned, not
 # running); each failure also as `::error::`. Exit: 0 all ok or known; 1 any drift or absence; 64 usage.
@@ -56,6 +60,13 @@ drift_known() {
   ' "$1"
 }
 
+# exemption_holds <exemption> <today YYYY-MM-DD> - true when drift_known found a row whose date is one
+# and is not past. An absent row, or one whose date is not a date, never holds.
+exemption_holds() {
+  local expires="${1%% *}"
+  [ -n "$1" ] && [[ "$expires" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && ! [[ "$2" > "$expires" ]]
+}
+
 # drift_compare <pins-file> <running-file> [<project> <known-file> <today YYYY-MM-DD>] - both
 # `service image` lines; prints the verdicts and returns 1 when any service drifted (unexempted, or
 # past its exemption's date) or is absent. Pure: the files and the date are the whole input.
@@ -65,14 +76,20 @@ drift_compare() {
     [ -n "$service" ] || continue
     seen="$(awk -v s="$service" '$1 == s { print $2 }' "$running" | sort -u)"
     if [ -z "$seen" ]; then
-      echo "ABSENT $service pinned=$image"
-      bad=1
+      exemption="$(drift_known "$known" "$project" "$service" absent)"
+      expires="${exemption%% *}"
+      if exemption_holds "$exemption" "$today"; then
+        echo "KNOWN $service absent pinned=$image until $expires (${exemption#* })"
+      else
+        echo "ABSENT $service pinned=$image${exemption:+ (its exemption has expired or its date is not one: $expires)}"
+        bad=1
+      fi
     elif [ "$seen" = "$image" ]; then
       echo "ok $service $image"
     else
       exemption="$(drift_known "$known" "$project" "$service" "$seen")"
       expires="${exemption%% *}"
-      if [ -n "$exemption" ] && [[ "$expires" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && ! [[ "$today" > "$expires" ]]; then
+      if exemption_holds "$exemption" "$today"; then
         echo "KNOWN $service running=$seen pinned=$image until $expires (${exemption#* })"
       else
         echo "DRIFT $service running=$(tr '\n' ' ' <<<"$seen" | sed 's/ $//') pinned=$image${exemption:+ (its exemption has expired or its date is not one: $expires)}"

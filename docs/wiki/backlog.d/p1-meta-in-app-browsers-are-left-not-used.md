@@ -17,4 +17,4 @@ and app-shell guard, MiConnect's generated `gate` service, rehearsed on a throwa
 1. The owner's one-off Cloudflare Cache Rule for dev ([the exact rule](../frontend/leaving-in-app-browsers.md#devs-cloudflare-cache---the-owners-one-off-rule)).
 2. The owner's readings on the `1.8.2` pre-release ([the list](../frontend/leaving-in-app-browsers.md#4-what-the-owner-reads-on-his-phone)).
 3. Sky, MiGallery, Portail-etu and Le Cercle, one pull request each ([the plan](../frontend/leaving-in-app-browsers.md#6-the-siblings---sky-migallery-portail-etu-le-cercle)).
-4. MiConnect's `gate` on production, a hand step by the lead, ONLY once all four have shipped ([the step](../frontend/leaving-in-app-browsers.md#miconnect-in-production---the-hand-step)).
+4. MiConnect's `gate` on production, a hand step by the lead, ONLY once all four have shipped ([the step](../frontend/leaving-in-app-browsers.md#miconnect-in-production---the-hand-step)) Each stack's `gate absent` row of `infrastructure/deploy/image-drift-known.txt` (until 2026-12-31) leaves when that stack runs it; the date moves only with a reason written here.
