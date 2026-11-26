@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Check, X } from '@lucide/svelte';
+  import { untrack } from 'svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
@@ -25,6 +26,11 @@
      * single character is typed.
      */
     recentPeers?: RecentDirectPeer[];
+    /**
+     * People a page already chose (a form's respondents): every opening starts with them chosen,
+     * so the member only names the group. Read when the panel opens, never while it is open.
+     */
+    initialMembers?: { id: string; name: string }[];
     /**
      * The refusal to show, already localized, or `''` for none.
      *
@@ -56,6 +62,7 @@
     open,
     currentUserId = '',
     recentPeers = [],
+    initialMembers = [],
     error = '',
     busy = false,
     onClose,
@@ -84,7 +91,7 @@
    */
   $effect(() => {
     if (!open) return;
-    chosen = [];
+    chosen = untrack(() => [...initialMembers]);
     naming = false;
     groupName = '';
   });
