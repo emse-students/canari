@@ -8,6 +8,7 @@ import {
   errorCause,
   extractIconUrl,
   buildLinkPreviewPayload,
+  decodeHtmlEntity,
   extractOEmbedEndpoint,
   mergeOEmbedIntoPayload,
 } from './url-guard';
@@ -338,5 +339,41 @@ describe('mergeOEmbedIntoPayload', () => {
     const bare = { ...base, siteName: page.hostname };
     expect(mergeOEmbedIntoPayload(bare, { providerName: 'Vimeo' }, page).siteName).toBe('Vimeo');
     expect(mergeOEmbedIntoPayload(base, { providerName: 'Other' }, page).siteName).toBe('Vimeo');
+  });
+});
+
+describe('link-preview entity decoding', () => {
+  const url = new URL('https://www.deezer.com/track/1');
+  const preview = (html: string) => buildLinkPreviewPayload(html, url);
+
+  it('decodes named and numeric references in og:title, description and site name', () => {
+    const html = [
+      '<meta property="og:title" content="C&rsquo;est la vie &eacute; &#8217; &#x2019;">',
+      '<meta property="og:description" content="Caf&eacute; &amp; cr&egrave;me">',
+      '<meta property="og:site_name" content="Deezer&nbsp;&rsquo;s">',
+    ].join('');
+    const p = preview(html);
+    expect(p.title).toBe('C’est la vie é ’ ’');
+    expect(p.description).toBe('Café & crème');
+    expect(p.siteName).toBe('Deezer ’s');
+  });
+
+  it('decodes a <title> fallback too', () => {
+    expect(preview('<title>C&rsquo;est la vie</title>').title).toBe('C’est la vie');
+  });
+
+  it('decodes exactly once: &amp;rsquo; becomes the literal &rsquo;', () => {
+    expect(decodeHtmlEntity('&amp;rsquo;')).toBe('&rsquo;');
+    expect(decodeHtmlEntity('&amp;lt;')).toBe('&lt;');
+  });
+
+  it('turns &lt;script&gt; into inert text, never markup', () => {
+    expect(decodeHtmlEntity('&lt;script&gt;alert(1)&lt;/script&gt;')).toBe(
+      '<script>alert(1)</script>'
+    );
+  });
+
+  it('leaves an unknown entity as written', () => {
+    expect(decodeHtmlEntity('a &notanentity; b')).toBe('a &notanentity; b');
   });
 });
