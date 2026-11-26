@@ -60,7 +60,9 @@ export function distinguishHomonyms(rows: readonly HomonymCandidate[]): Map<stri
         details.set(row.id, row.formation!.trim());
         continue;
       }
-      undistinguished += 1;
+      // Only a TWIN - another row with this promo AND this formation - is nothing tells apart. A row
+      // missing a promo or a formation that every other homonym has is told apart by theirs.
+      if (samePromo.some((o) => formationKey(o.formation) === formation)) undistinguished += 1;
       const fallback = promoLabel ?? (row.formation?.trim() || null);
       if (fallback) details.set(row.id, fallback);
     }

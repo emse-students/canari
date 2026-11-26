@@ -60,6 +60,20 @@ describe('distinguishHomonyms', () => {
     expect(String(warn.mock.calls[0][0])).not.toContain('Camille');
   });
 
+  it('does not accuse a row told apart by the details its homonyms carry', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const details = distinguishHomonyms([
+      row('a', 'Camille Durand', null, null),
+      row('b', 'Camille Durand', 2020, 'ICM'),
+      row('c', 'Léa Martin', 2020, null),
+      row('d', 'Léa Martin', 2020, 'ISMIN'),
+    ]);
+    expect(details.get('b')).toBe(m.picker_homonym_detail({ promo: 2020 }));
+    expect(details.has('a')).toBe(false);
+    expect(details.get('d')).toBe('ISMIN');
+    expect(warn).not.toHaveBeenCalled();
+  });
+
   it('folds accents, case, hyphens and apostrophes', () => {
     const details = distinguishHomonyms([
       row('a', 'Jean-Marie DUPONT', 2018, null),
