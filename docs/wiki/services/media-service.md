@@ -104,13 +104,16 @@ confirmed longer ago, never confirmed (a copy an older build wrote has a record 
 **even above the cap**: the log says how far over (`[MEDIA_CAP]`). A hit's recency is stored once a
 day, like the touch, so the order is exact to the day after a reload.
 
-**The limit, stated.** The server's idle window is an admin setting (1-3650 days, 90 by default,
-[retention-settings](../retention-settings.md)) and the client cannot read it; 30 days is a declared
-constant well under the default, and an admin who sets the window below it makes the guess wrong in
-the unsafe direction. The follow-up is the touch answer naming the window per object
-([entry](../backlog.d/the-touch-answer-names-the-servers-idle-window.md)). `mediaCacheCap.test.ts`
-pins the order, that a sole copy stays and the window; `mediaCacheLedger.test.ts` the same through a
-fake Cache Storage, a legacy copy included.
+**The window is the server's to name (1.8.3).** The idle window is an admin setting (1-3650 days, 90 by
+default, [retention-settings](../retention-settings.md)) the client cannot read, so `POST /api/media/touch`
+answers `{ refreshed, windows }`: per live object, how long the server keeps it from now - the idle window
+it was stamped with (`idleRetentionMs`, else the default), the time left to a chat hold or a pending TTL
+(reading does not move those), or `null` when no sweep ever takes it (`MediaService.holdWindows`). The ledger
+records it beside `confirmedAt` (`holdWindowMs`, header `x-canari-window`) and `isHeldByServer` compares
+against it. The 30-day constant remains only for a record with no answer: a copy a download confirmed
+(a download names no window) or a server that predates the field. `mediaCacheCap.test.ts` pins the order, that
+a sole copy stays and the answered window against the constant; `mediaCacheLedger.test.ts` the same through a
+fake Cache Storage, a legacy copy included; `media.service.touch.spec.ts` the answers.
 
 ## Routes
 

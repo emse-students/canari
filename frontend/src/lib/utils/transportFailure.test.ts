@@ -3,6 +3,7 @@ import {
   conformNativeFetch,
   conformPluginFetch,
   isTransportFailure,
+  stackOfAnswer,
   transportFailureEvidence,
   TransportFailureError,
 } from '$lib/utils/transportFailure';
@@ -145,6 +146,29 @@ describe('conformNativeFetch - the browser fetch rejection is typed at the throw
     await expect(conformNativeFetch(vi.fn().mockResolvedValue(res))('https://x')).resolves.toBe(
       res
     );
+  });
+});
+
+describe('the stack is recorded where the routing knows it', () => {
+  it('tags a plugin failure and a plugin answer as the plugin, a WebView one as the webview', async () => {
+    const pluginFailure = await conformPluginFetch(vi.fn().mockRejectedValue(REQWEST))(
+      'https://x/a'
+    ).catch((e: unknown) => e);
+    expect((pluginFailure as TransportFailureError).stack).toBe('plugin');
+    const webviewFailure = await conformNativeFetch(
+      vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))
+    )('https://x/a').catch((e: unknown) => e);
+    expect((webviewFailure as TransportFailureError).stack).toBe('webview');
+
+    const viaPlugin = await conformPluginFetch(vi.fn().mockResolvedValue(new Response('{}')))(
+      'https://x/a'
+    );
+    const viaWebview = await conformNativeFetch(vi.fn().mockResolvedValue(new Response('{}')))(
+      'https://x/a'
+    );
+    expect(stackOfAnswer(viaPlugin)).toBe('plugin');
+    expect(stackOfAnswer(viaWebview)).toBe('webview');
+    expect(stackOfAnswer(new Response('{}'))).toBeUndefined();
   });
 });
 

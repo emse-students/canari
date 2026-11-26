@@ -36,6 +36,8 @@ export const LEDGER_CACHE_NAME = 'canari-media-ledger-v1';
 const H_BYTES = 'x-canari-bytes';
 const H_USED = 'x-canari-used';
 const H_CONFIRMED = 'x-canari-confirmed';
+/** The window the server named, in ms; `none` = no sweep takes the object; absent = none named. */
+const H_WINDOW = 'x-canari-window';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** The key a ciphertext is cached under; the ledger uses the same one. */
@@ -63,6 +65,9 @@ function toResponse(record: LedgerRecord): Response {
       [H_BYTES]: String(record.bytes),
       [H_USED]: String(record.lastUsed),
       [H_CONFIRMED]: String(record.confirmedAt),
+      ...(record.holdWindowMs === undefined
+        ? {}
+        : { [H_WINDOW]: record.holdWindowMs === null ? 'none' : String(record.holdWindowMs) }),
     },
   });
 }
@@ -72,7 +77,14 @@ function fromResponse(res: Response): LedgerRecord | null {
   const lastUsed = Number(res.headers.get(H_USED));
   const confirmedAt = Number(res.headers.get(H_CONFIRMED));
   if (![bytes, lastUsed, confirmedAt].every(Number.isFinite)) return null;
-  return { bytes, lastUsed, confirmedAt };
+  const window = res.headers.get(H_WINDOW);
+  if (window === null) return { bytes, lastUsed, confirmedAt };
+  if (window === 'none') return { bytes, lastUsed, confirmedAt, holdWindowMs: null };
+  const holdWindowMs = Number(window);
+  // An unreadable window is the same as none named: the constant holds, the safe direction.
+  return Number.isFinite(holdWindowMs)
+    ? { bytes, lastUsed, confirmedAt, holdWindowMs }
+    : { bytes, lastUsed, confirmedAt };
 }
 
 /** Writes one record to the bucket; a failure is said and costs only that record's persistence. */
@@ -159,12 +171,14 @@ export async function recordCipherUsed(key: string, now = Date.now()): Promise<v
 
 /**
  * The server acknowledged a touch for these objects (`mediaTouch.ts`): it holds them, so their
- * copies are evictable for `SERVER_HOLD_WINDOW_MS`. An object with no record is skipped: it is not
- * in the cache, or is reconciled before the next enforcement.
+ * copies are evictable for the window it named for each (`windows`: ms, or `null` for an object no
+ * sweep takes), or for `SERVER_HOLD_WINDOW_MS` when it named none (an older server). An object with
+ * no record is skipped: it is not in the cache, or is reconciled before the next enforcement.
  */
 export async function recordServerConfirmed(
   baseUrl: string,
   mediaIds: readonly string[],
+  windows: Readonly<Record<string, number | null>> = {},
   now = Date.now()
 ): Promise<void> {
   if (typeof caches === 'undefined') return;
@@ -174,6 +188,8 @@ export async function recordServerConfirmed(
     const record = records.get(key);
     if (!record) continue;
     record.confirmedAt = now;
+    if (Object.hasOwn(windows, mediaId)) record.holdWindowMs = windows[mediaId];
+    else delete record.holdWindowMs;
     await persist(key, record);
   }
 }

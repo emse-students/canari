@@ -524,3 +524,60 @@ describe('prompt resume: the store asks the server instead of waiting to be told
     expect(probe).not.toHaveBeenCalled();
   });
 });
+
+describe('two HTTP stacks, one verdict (Android log of 2026-11-25)', () => {
+  beforeEach(() => {
+    connectivity.reset();
+    vi.useFakeTimers();
+  });
+  afterEach(() => vi.useRealTimers());
+
+  const answerOn = (stack: 'webview' | 'plugin') => {
+    const tracked = connectivity.trackRequest();
+    tracked.answered(true, stack);
+  };
+
+  it('a read the WebView answers does not lift a verdict the plugin earned, and no flush follows', () => {
+    const listener = vi.fn();
+    connectivity.onReconnect(listener);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const send = connectivity.trackRequest();
+    send.failed(new TransportFailureError('error sending request', undefined, 'plugin'));
+    expect(connectivity.isOffline).toBe(true);
+
+    answerOn('webview');
+    answerOn('webview');
+    expect(connectivity.isOffline).toBe(true);
+    expect(listener).not.toHaveBeenCalled();
+
+    // The plugin's own answer lifts it, ONCE, and the closing line counts what did not.
+    answerOn('plugin');
+    expect(connectivity.isOffline).toBe(false);
+    expect(listener).toHaveBeenCalledTimes(1);
+    const lines = log.mock.calls.map((c) => String(c[0]));
+    expect(lines.filter((l) => l.includes('server unreachable'))).toHaveLength(1);
+    expect(lines.find((l) => l.includes('server reachable again'))).toContain(
+      '2 answer(s) from the webview stack did not lift it'
+    );
+    log.mockRestore();
+  });
+
+  it('probes THROUGH the stack that earned the verdict', async () => {
+    const probe = vi.fn(async (stack?: 'webview' | 'plugin') => {
+      answerOn(stack ?? 'webview');
+      return true;
+    });
+    connectivity.setReachabilityProbe(probe);
+    connectivity.trackRequest().failed(new TransportFailureError('refused', undefined, 'plugin'));
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(probe).toHaveBeenCalledWith('plugin');
+    expect(connectivity.isOffline).toBe(false);
+  });
+
+  it('an answer with no stack (the web build, one stack) lifts as it always did', () => {
+    connectivity.trackRequest().failed(new TransportFailureError('refused'));
+    connectivity.trackRequest().answered();
+    expect(connectivity.isOffline).toBe(false);
+  });
+});

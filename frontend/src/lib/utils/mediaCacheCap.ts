@@ -16,11 +16,15 @@
  * within {@link SERVER_HOLD_WINDOW_MS} is one the server still holds for certain, so evicting it
  * costs a re-download and nothing else. Every other copy - confirmed longer ago, or never (a copy
  * an older build wrote, or one whose ledger record was lost) - may be the ONLY one left, and stays,
- * whatever the cap says: a cache above its cap is a smaller harm than a lost photograph. The window
- * is a declared constant, deliberately well under the 90-day default, and an admin who shortens the
- * retention below it makes the guess wrong in the unsafe direction - which is why the server
- * naming the window in its touch answer is the open follow-up (backlog entry
- * "the-touch-answer-names-the-servers-idle-window").
+ * whatever the cap says: a cache above its cap is a smaller harm than a lost photograph.
+ *
+ * THE WINDOW IS THE SERVER'S TO NAME. `POST /api/media/touch` answers, per object, how long the
+ * server keeps it from the touch (`windows`: the idle window it was stamped with, the time left to
+ * a chat hold, or `null` when no sweep ever takes it), and the ledger records it beside
+ * `confirmedAt` as `holdWindowMs`. {@link SERVER_HOLD_WINDOW_MS} is only what a record WITHOUT an
+ * answer is held to - a copy a download confirmed (a download names no window), or an answer from a
+ * server that predates the field - so an admin who shortens the retention below it can no longer
+ * make the guess wrong in the unsafe direction for a copy the server has described.
  */
 
 /** The choices the member is offered, in bytes; `null` is "unlimited". */
@@ -35,8 +39,9 @@ export const MEDIA_CACHE_CAP_CHOICES: readonly (number | null)[] = [
 export const DEFAULT_MEDIA_CACHE_CAP_BYTES = 500 * 1024 * 1024;
 
 /**
- * How long a server confirmation keeps a copy EVICTABLE: inside it, the server still holds the
- * object for sure. 30 days, a third of the default idle window (see the module comment).
+ * How long a server confirmation keeps a copy EVICTABLE when the server named no window for it:
+ * inside it, the server still holds the object for sure. 30 days, a third of the default idle
+ * window (see the module comment).
  */
 export const SERVER_HOLD_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -52,6 +57,18 @@ export interface LedgerRecord {
   lastUsed: number;
   /** The last time the server confirmed holding the object; 0 = never. */
   confirmedAt: number;
+  /**
+   * How long from `confirmedAt` the server said it keeps the object: a number of ms, `null` when no
+   * sweep ever takes it, `undefined` when it named none ({@link SERVER_HOLD_WINDOW_MS} then holds).
+   */
+  holdWindowMs?: number | null;
+}
+
+/** Whether the server still holds the copy for certain at `now`: the evictable test of one record. */
+export function isHeldByServer(record: LedgerRecord, now: number): boolean {
+  if (record.confirmedAt <= 0) return false;
+  if (record.holdWindowMs === null) return true;
+  return now - record.confirmedAt < (record.holdWindowMs ?? SERVER_HOLD_WINDOW_MS);
 }
 
 /** What {@link planEviction} decided. */
@@ -97,7 +114,7 @@ export function writeMediaCacheCap(cap: number | null): void {
 
 /**
  * Which copies to delete so the cache fits `capBytes`: least recently used first, among the copies
- * the server confirmed within {@link SERVER_HOLD_WINDOW_MS} of `now`, and nothing else. A cache
+ * the server still holds for certain at `now` ({@link isHeldByServer}), and nothing else. A cache
  * whose only candidates are exhausted stays over the cap and says so in `overCapBytes`. `capBytes`
  * `null` plans nothing.
  */
@@ -113,7 +130,7 @@ export function planEviction(
 
   const candidates: [string, LedgerRecord][] = [];
   for (const entry of records) {
-    if (now - entry[1].confirmedAt < SERVER_HOLD_WINDOW_MS && entry[1].confirmedAt > 0) {
+    if (isHeldByServer(entry[1], now)) {
       candidates.push(entry);
     } else {
       plan.keptSole += 1;
