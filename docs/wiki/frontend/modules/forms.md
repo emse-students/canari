@@ -4122,6 +4122,13 @@ that writes its bell rows, so two replicas or a re-run cannot ask a form twice a
 loses no question) and the read both the card and the bell row's gate
 use (`staleOpenAskedSql`, so they clear together).
 
+**Neither stamp is part of a draft's fingerprint** (migration 185, 2026-11-25). `FORM_FINGERPRINT_SQL`
+excludes both: the job and "Garder ouvert" write them, never an edit, and while they were hashed a stamp
+landing under an open edit draft made it read "the form changed since" (409 `FORM_CHANGED_SINCE_REVISION`)
+with no content changed. The migration is data only: a draft whose base is the OLD-rule fingerprint, with
+each stamp either as it is or as NULL (the four combinations), takes the new one; a draft whose content
+really moved stays reported. `form-draft-revision.integration.spec.ts` proves both.
+
 - **Asked once.** A form with `staleAskedAt` set is never asked again by the passing of time.
 - **"Keep open" silences it until a new answer arrives** (decided: "for good" would silence a form that
   later dies, a timer would re-ask what was just answered). It is re-armed ONLY by an answer on or after
