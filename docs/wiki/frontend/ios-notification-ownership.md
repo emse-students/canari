@@ -1,6 +1,6 @@
 # iOS: one notification per message, whichever process draws it
 
-Decided 2026-11-22 for `1.7.3` ([backlog entry](../backlog.d/p2-an-iphone-re-announces-what-its-extension-showed-after-a-cold-start.md)).
+Decided 2026-11-22 for `1.7.3` (the backlog entry, closed by [its reading on `1.8.2`](../device-verification.md#the-iphone-12-readings-of-2026-11-26-evening-182-build-100800209-five-iphone-entries-and-a-read-withheld-until-the-first-touch)).
 Principle 2 ("the essential is never lost") and the standing directive ("deterministic, reproducible,
 explicable") are the constraints: no message may go unannounced, and no message may be announced
 twice, whatever the order in which two processes see it.
@@ -137,9 +137,9 @@ with the extension's.
 - app: `[CanariPush] [ANNOUNCED] push in front: ...` (presented, claim given back, the app's banner announces it, its key left the ledger, or the ERROR of a ledger that could not settle)
 - removal: `[CanariPush] cancelConversationNotification group=<id> removed=N` (unchanged).
 
-## Owed on the iPhone
+## Read on the iPhone
 
-The backlog entry's readings: a killed-app push then a cold launch leaves ONE row with its time
-unchanged; the same after a background push and a warm resume; a group deleted while the app runs
-takes every one of its banners (`removed=` equals what it held); a foreground message for another
-conversation still raises the page's banner.
+Every row read on the iPhone 12, `1.8.2` ([the sitting](../device-verification.md#the-iphone-12-readings-of-2026-11-26-evening-182-build-100800209-five-iphone-entries-and-a-read-withheld-until-the-first-touch)): a killed-app
+push then a cold launch, and a background push then a warm resume, each left ONE row with its time
+unchanged; a group's three rows (one of them the page's banner) went with it (`removed=3`); a
+foreground group message raised the page's banner, titled by the group.

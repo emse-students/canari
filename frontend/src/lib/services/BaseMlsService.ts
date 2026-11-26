@@ -3,6 +3,12 @@ import type { HistorySealEngine } from '$lib/crypto/historySeal';
 import { DeliveryRefusal } from '$lib/mls-client/mlsDeliveryHttp';
 import { reportMlsSessionLost } from '$lib/mls-client/mlsSessionLoss';
 import { cachedCommitInstants, type ServerInstant } from '$lib/mls-client/serverInstant';
+import {
+  describeCommitHold,
+  markCommitGranted,
+  startCommitHoldTiming,
+  timeCommitStep,
+} from '$lib/mls-client/commitHoldTiming';
 import type {
   IMlsService,
   DismissedGroupsRead,
@@ -6533,6 +6539,8 @@ export abstract class BaseMlsService implements IMlsService {
       );
       throw new FollowerTabCommitError(groupId);
     }
+    // Where this commit's time goes, for the acceptance line (`commitHoldTiming.ts`).
+    const timing = startCommitHoldTiming();
     const out = await this.runCommitUnderMlsLock(groupId, async () =>
       // RAISED UNDER THE MLS MUTEX, WHICH IS WHAT MAKES IT DEADLOCK-FREE: a send that sees this
       // barrier provably does not hold the mutex, so it blocks nothing the drain inside waits for.
@@ -6564,8 +6572,10 @@ export abstract class BaseMlsService implements IMlsService {
         // ONE BUDGET FOR THE WHOLE HOLD, settlement and rebuilds included (`COMMIT_LOCK_HOLD_BUDGET_MS`):
         // the lock this runs under guards every exclusive MLS section (the drain borrows it only
         // while a request is on the network - `submitRecorded`), and this group's own frames.
+        markCommitGranted(timing);
         const holdEndsAt = commitLockHoldEndsAt();
         for (let attempt = 1; ; attempt++) {
+          timing.attempts = attempt;
           // NOT STAGED AT ALL while the server still refuses this account's commits: the answer is
           // already known (`commitRateLimit.ts`), and nothing is left to roll back.
           const waitMs = commitRateLimitRemainingMs();
@@ -6643,7 +6653,9 @@ export abstract class BaseMlsService implements IMlsService {
           //  - anything else may have thrown after its write landed, so the stage may be on disk and
           //    a clear reported as "failed" would be contradicted by the next reload. It is KEPT,
           //    exactly like an unanswered one, and the settle decides - after its own checkpoint.
-          const unsaved = await this.checkpointStageBeforeSend(groupId, baseEpoch);
+          const unsaved = await timeCommitStep(timing, 'checkpointMs', () =>
+            this.checkpointStageBeforeSend(groupId, baseEpoch)
+          );
           if (unsaved !== null && checkpointWroteNothing(unsaved)) {
             try {
               await this.clearPendingCommit(groupId);
@@ -6702,7 +6714,9 @@ export abstract class BaseMlsService implements IMlsService {
           // (checkpointed above), and the resubmission at the next connection merges it. [[C7]]
           let validation: Awaited<ReturnType<typeof this.delivery.submitCommit>>;
           try {
-            validation = await this.submitRecorded(submission);
+            validation = await timeCommitStep(timing, 'requestMs', () =>
+              this.submitRecorded(submission)
+            );
           } catch (e) {
             // A 429 ON THE FIRST REQUEST IS A REFUSAL, NOT A SILENCE: the per-user limit on
             // `POST /mls/commit` answers before the epoch gate, and no earlier request of these
@@ -6745,7 +6759,9 @@ export abstract class BaseMlsService implements IMlsService {
               `[COMMIT] ${groupId.slice(0, 8)}... no answer to the commit from epoch ${baseEpoch} ` +
                 `(${String(e).slice(0, 120)}) - resubmitting the same commit`
             );
-            const answer = await this.resubmitUnresolved(submission, holdEndsAt);
+            const answer = await timeCommitStep(timing, 'requestMs', () =>
+              this.resubmitUnresolved(submission, holdEndsAt)
+            );
             if (answer.verdict === 'unknown') {
               // KEPT: the staged commit and its record stay in the state - already on disk, by the
               // checkpoint before the first request - and a later resubmission decides. Never
@@ -6816,6 +6832,11 @@ export abstract class BaseMlsService implements IMlsService {
             throw new AcceptedCommitNotMergedError(groupId, baseEpoch, mergeError);
           }
           const ratchetTree = opts.exportTree ? await this.exportRatchetTree(groupId) : undefined;
+          // ONE LINE PER ACCEPTED COMMIT, and it is the line that says where its time went: a
+          // restore's Adds are paced by this hold, group after group (`commitHoldTiming.ts`).
+          console.log(
+            `[COMMIT] ${groupId.slice(0, 8)}... accepted at epoch ${baseEpoch + 1} - ${describeCommitHold(timing)}`
+          );
           return {
             welcome: staged.welcome,
             ratchetTree,

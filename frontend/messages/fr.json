@@ -1779,6 +1779,7 @@
   "admin_cercle_webhook_retries_exhausted": "Tentatives automatiques épuisées - à traiter à la main",
   "admin_cercle_webhook_unknown_member": "Compte inconnu ({id})",
   "admin_cercle_webhook_retry_delivered": "Livraison passée. Le solde du membre est crédité.",
+  "admin_cercle_webhook_retry_parked": "Livraison acceptée. Le membre ne s'est pas encore connecté au Cercle : la recharge y est gardée et créditée à sa première connexion.",
   "admin_cercle_webhook_retry_failed": "La livraison a de nouveau échoué.",
   "admin_cercle_delivery_delete_confirm": "Supprimer définitivement cette livraison échouée de {amount} € ? À ne faire que si la recharge a été traitée autrement.",
   "admin_status_unknown_error": "Erreur inconnue",

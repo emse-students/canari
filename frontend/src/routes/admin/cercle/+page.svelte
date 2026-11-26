@@ -212,10 +212,12 @@
       retryOutcome =
         updated.status === 'delivered'
           ? { delivered: true, message: m.admin_cercle_webhook_retry_delivered() }
-          : {
-              delivered: false,
-              message: updated.lastError ?? m.admin_cercle_webhook_retry_failed(),
-            };
+          : updated.status === 'parked'
+            ? { delivered: true, message: m.admin_cercle_webhook_retry_parked() }
+            : {
+                delivered: false,
+                message: updated.lastError ?? m.admin_cercle_webhook_retry_failed(),
+              };
       webhookFailures = await listWebhookFailures(asso.id);
     } catch (e) {
       console.error('[ADMIN][CERCLE] failed to retry webhook delivery', e);
