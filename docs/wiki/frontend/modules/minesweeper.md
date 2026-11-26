@@ -156,41 +156,64 @@ locked while the challenge is awaited). **Owed:** the phone reading
 
 *"une section tutoriel qui explique le fonctionnement du demineur avec des mini-grilles ... les regles, les
 mecaniques de base, miner, poser un drapeau, mais aussi une partie plus avancee qui explique le chording, et
-les patterns les plus courants (1-2-1, 1-2-2-1 etc.)"*, and *"un bouton d'indications (entourer en jaune des
-groupes de cases ...) fais quelque chose de vraiment explicatif, mais en montrant"* (owner). `/games/tutorial`
-is an ordinary page (it keeps the shell), reached from the Games page and from the game's settings sheet.
+les patterns les plus courants (1-2-1, 1-2-2-1 etc.)"*, and *"un bouton d'indications ... fais quelque chose de
+vraiment explicatif, mais en montrant"* (owner). `/games/tutorial` is an ordinary page (it keeps the shell),
+reached from the Games page and from the game's settings sheet.
 
 **It is the real game in small.** A lesson's grid is a PICTURE in text (`tutorial/layout.ts`: `#` hidden mine,
 `.` hidden safe, `F` a flag that is a premise, `0`-`8` a revealed number); `boardFromLayout` builds the engine's
 own `MinesweeperBoard` with its mines placed, so the mini-grid plays on `revealCell`, `toggleFlag` and the chord
 and draws with the game's own `MinesweeperCell` - what the tutorial teaches is what the game does. **A digit that
-lies about its neighbours throws**, so a wrong picture cannot reach a player.
+lies about its neighbours throws**, so a wrong picture cannot reach a player. Each grid shows **the mines counter**
+as the game's HUD does (the mines minus the flags), so the lessons can teach it.
 
-| Lesson | Teaches | Picture |
+| # | Lesson | Teaches | Picture |
+| --- | --- | --- | --- |
+| 1 | Reveal | open a cell, what a number and a 0 mean (a gesture: the target is outlined in green from the start) | 5x4, hidden |
+| 2 | Flag | a 1 with one hidden neighbour; Drapeau mode, right-click; the counter drops by one per flag and is **not** a proof | 3x3 |
+| 3 | Automatic flags | a number whose mines left equal its hidden neighbours: **one tap flags them all** (the engine's chord does this before it opens) | 3x3 |
+| 4 | Chording | a number with all its flags opens the rest in one tap (the flags are the premise) | 3x3 |
+| 5 | The mines counter | a column of three 1s: the middle cell is the mine; **the counter then reads 0, so every other hidden cell is safe, the ones no number touches included** | 4x3 |
+| 6 | 1-1 | two neighbouring 1s share cells: the extra one is safe | 4x2 against the edge |
+| 7 | 1-2-1 | the middle is safe, both sides are mines | 3x2 |
+| 8 | 1-2-2-1 | the two middle cells are mines, the ends are safe | 4x2 |
+| 9 | 1-3-1 at a corner | the corner of an open area: a 3 seeing five cells between two 1s - the outermost corner cell is a mine | 4x4 |
+| 10 | 2-2-2 at a corner | the 2s at the ends see only two cells each (so, mines, and the automatic flags again); the corner 2 is then done | 4x4 |
+
+**The highlights say what they are** (owner, 2026-11-26: *"surligne en rouge pour bombe sure, jaune pour groupe
+de bombes (avec un seul rectangle qui englobe plusieurs cases) et vert pour safe"*). A step of the "Indice"
+button rings the NUMBER(S) it reads (`highlight: 'read'` on `MinesweeperCell`, a dark ring, so it is never taken
+for the yellow) and draws its marks as **one outline per rectangle over the grid, never a ring per cell**
+(`MinesweeperMiniGrid.svelte`, placed in cells with `calc` on the shared `--ms-cell`, no measuring):
+
+| Colour | Means | Badge |
 | --- | --- | --- |
-| Reveal | open a cell, what a number and a 0 mean (a gesture: the target is lit from the start) | 5x4, hidden |
-| Flag | a 1 with one hidden neighbour; Drapeau mode, right-click | 3x3 |
-| Chording | a number with all its flags opens the rest in one tap (the flags are the premise) | 3x3 |
-| 1-1 | two neighbouring 1s share cells: the extra one is safe | 4x2 against the edge |
-| 1-2-1 | the middle is safe, both sides are mines | 3x2 |
-| 1-2-2-1 | the two middle cells are mines, the ends are safe | 4x2 |
+| red | a mine that is certain | none |
+| yellow | a group of cells holding mines | the exact number of mines, when the numbers fix it |
+| green | a cell that is certain to be safe | none |
 
-**The "Indice" button** walks the lesson's authored steps (`HintStep`): each rings the NUMBER(S) the reasoning
-reads (`highlight: 'hint'`, the bulb's own ring) and tints the hidden cells they speak about (`highlight:
-'group'`, a softer ring with no glow, added to `MinesweeperCell`), and the sentence under the grid says what to
-conclude. It cycles step 1, 2, 3, then hides. It is authored, not computed: a step explains a pattern, and the
-order a person reads it in is a teaching choice (the in-game bulb, `hint.ts`, computes the next certain move on
-a real board instead).
+A mark whose cells are not a rectangle (the five cells a corner number sees) is several rectangles with one
+colour and ONE badge. A legend of the three colours shows with the hint. The step texts are authored, not
+computed: a step explains a pattern, and the order a person reads it in is a teaching choice (the in-game bulb,
+`hint.ts`, computes the next certain move on a real board instead).
 
-**Every lesson is PROVED** (`tutorial/lessons.test.ts`), not read: the test enumerates every arrangement of the
-hidden cells that the visible numbers allow and requires that **the cells a lesson asks to open are safe in all
-of them, the cells it asks to flag are mines in all of them, and that nothing the numbers force is left
-unasked** - the goal IS what the picture forces. A hint step must read a revealed number and speak about cells
-that number touches. `lessonDone` also refuses a lucky flag beside the right ones: the point is the deduction.
+**Every lesson AND every highlight is PROVED** (`tutorial/lessons.test.ts`), not read. The test enumerates every
+arrangement of the hidden cells that the visible numbers allow, **with the mines counter's total**, and requires:
+the cells a lesson asks to open are safe in all of them, the cells it asks to flag are mines in all of them, and
+nothing the numbers force is left unasked - the goal IS what the picture forces. **A lesson that does not teach
+the counter must not need it** (same answer with and without); the counter lesson must (the numbers alone force
+strictly less). A red mark is a mine in every arrangement, a green mark is safe in every arrangement, a yellow
+mark holds exactly the mines its badge says and is outlined because a lit number touches it, and no mark hides an
+open cell. `lessonDone` also refuses a lucky flag beside the right ones: the point is the deduction.
+
+**The corner patterns were searched, not guessed** (an exhaustive solver over the small boards): the open area is
+a 3x3 block in the top-left of a 4x4 grid, the hidden cells the L around it, and the retained boards are the
+symmetric ones with a unique solution (1-3-1: three mines; 2-2-2: four).
 
 **Pinned:** `layout.test.ts`, `lessons.test.ts`, `MinesweeperMiniGrid.svelte.test.ts` (tap, flag, right-click, a
-chord in either mode, a mine ends the lesson, solved ONCE, what a hint lights), `routes/games/tutorial/page.svelte.test.ts`
-(the lessons chain to a closing screen that leads to a game, the hint cycle, restart, Back to `/games`).
+chord in either mode, the automatic flags, the counter, a mine ends the lesson, solved ONCE, one outline per
+rectangle and its colour and badge), `routes/games/tutorial/page.svelte.test.ts` (the lessons chain to a closing
+screen that leads to a game, the hint cycle with its legend, restart, Back to `/games`).
 **Owed:** the phone reading ([reading](../../backlog.d/reading-owed-the-minesweeper-hint.md), items 11 and 12).
 
 ## The bulb: a hint in an unranked game (owner, 2026-11-25)
