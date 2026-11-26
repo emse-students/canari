@@ -815,6 +815,35 @@ describe('AlumniMergeService', () => {
       }
     });
 
+    it('resumes an interrupted manual merge with no reason sent: the row keeps its own', async () => {
+      const { service, editor, rows } = make({
+        accounts: manualWorld(),
+        rows: [{ mode: 'manual', reason: REASON }],
+      });
+      const out = await service.merge(DUP_UUID, TARGET_UUID, 'admin-1');
+      expect(out.mode).toBe('manual');
+      expect(rows[0]).toEqual(expect.objectContaining({ mode: 'manual', reason: REASON }));
+      expect(rows[0].markedAt).not.toBeNull();
+      expect(editor.writeUser).toHaveBeenCalledWith(DUP_UUID, {
+        attributes: expect.objectContaining({
+          [MERGE_MARK.mode]: 'manual',
+          [MERGE_MARK.seenTargetName]: 'Camille MARTIN',
+        }),
+      });
+    });
+
+    it('refuses to resume an automatic merge whose target is no longer the unique match', async () => {
+      const { service, editor, rows } = make({
+        accounts: manualWorld(),
+        rows: [{ mode: 'auto', reason: null }],
+      });
+      await expect(service.merge(DUP_UUID, TARGET_UUID, 'a', REASON)).rejects.toBeInstanceOf(
+        AlumniMergeNoMatchError
+      );
+      expect(editor.writeUser).not.toHaveBeenCalled();
+      expect(rows[0].markedAt).toBeNull();
+    });
+
     it('refuses a busy target in a manual merge too', async () => {
       const { service, editor } = make({
         accounts: manualWorld(),

@@ -1050,7 +1050,8 @@ claim and calls the editor account.
   re-reads the duplicate just before it writes the mark through MiConnect's write flow (the mark's
   three keys only, MERGED by MiConnect under the account's row lock, so no other key is written and no
   concurrent edit is lost); turns the row MARKED. Called again on an open row into the same target, it resumes: the mark
-  is idempotent. **Nothing is erased at the mark** (owner, 2026-11-24): the duplicate's Canari
+  is idempotent, and it keeps the ROW's mode and reason ("Reprendre" sends none, D55); an `auto` row
+  whose target is no longer the unique match is refused rather than marked `auto`. **Nothing is erased at the mark** (owner, 2026-11-24): the duplicate's Canari
   account is erased through `AccountErasureService.requestErasure`, the ONE erasure path
   ([account-erasure](account-erasure.md)), when the open-merges list sees the duplicate gone from
   MiConnect - after the merge, never before it (`complete`: the erasure requested, then the row

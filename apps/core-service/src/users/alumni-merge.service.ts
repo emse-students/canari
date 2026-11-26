@@ -523,15 +523,15 @@ export class AlumniMergeService {
       throw new AlumniMergeNotFoundError();
     }
     const { target, mode } = await this.assertMergeable(dup, targetUuid, tag);
-    let text: string | null;
-    try {
-      text = checkMergeReason(reason, mode);
-    } catch (err) {
-      this.logger.warn(`[ALUMNI_MERGE] refused ${tag} mode=${mode}: ${(err as Error).message}`);
-      throw err;
-    }
 
     if (!open) {
+      let text: string | null;
+      try {
+        text = checkMergeReason(reason, mode);
+      } catch (err) {
+        this.logger.warn(`[ALUMNI_MERGE] refused ${tag} mode=${mode}: ${(err as Error).message}`);
+        throw err;
+      }
       const held = await this.holdings(duplicateUuid);
       const targetUserId = (await this.canariIdsOf([targetUuid])).get(targetUuid) ?? null;
       const id = await this.openMerge(tag, {
@@ -552,6 +552,18 @@ export class AlumniMergeService {
       this.logger.log(
         `[ALUMNI_MERGE] resuming ${tag}: its row is open, ${open.markedAt ? 'marked' : 'requested'}`
       );
+      // A RESUME KEEPS THE ROW'S MODE AND REASON: "Reprendre" sends no reason, and a manual row already
+      // holds the one its admin wrote. An automatic row whose target is no longer the unique match
+      // would otherwise be marked `auto` on an identity no admin vouched for: refused, as before D55 -
+      // cancelled, it is attached again by hand, with a reason.
+      if (open.mode === 'auto' && mode === 'manual') {
+        this.logger.warn(
+          `[ALUMNI_MERGE] refused ${tag}: an automatic merge whose target is no longer the unique match`
+        );
+        throw new AlumniMergeNoMatchError(
+          'the target is no longer the unique name-and-promo match: cancel, then attach by hand'
+        );
+      }
       if (await this.targetBusy(targetUuid, duplicateUuid)) {
         this.logger.warn(`[ALUMNI_MERGE] refused ${tag}: another open merge names the target`);
         throw new AlumniMergeTargetBusyError();
