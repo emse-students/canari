@@ -19,8 +19,12 @@
 //! things that ever cross between the versions are BYTES - a key package, a welcome, a ratchet
 //! tree, a frame. Exactly what crosses between two phones.
 //!
-//! State files never cross versions: each side loads only what it wrote. That direction is the
-//! backward test's subject, and mixing the two would make one failure report answer for both.
+//! In the FRAME legs, state files never cross versions: each side loads only what it wrote, so a
+//! failure there is about bytes on the wire and nothing else. The STATE leg (2026-11-25) is the one
+//! place a state crosses, on purpose and in its own conversation: the build a rollback lands on (the
+//! newest stable) opens a state today's code wrote, reads a frame in it and writes it back, and
+//! today's code then reopens what that write left. Until this leg "an older build ignores a field
+//! it predates and drops it" was a reading of `#[serde(default)]`, not a measured fact.
 
 use mls_core::MlsManager;
 use std::path::Path;
@@ -166,6 +170,54 @@ fn main() {
                 .get_epoch(&rest[0])
                 .unwrap_or_else(|e| fail(&format!("get_epoch failed: {e:?}")));
             println!("{epoch}");
+        }
+        // TODAY ONLY: writes the fields the old tag predates, as the app would, and saves: the
+        // three ledgers the app keeps in the state (`stateLedgers.ts`: the format marker, a group's
+        // seen marks, the send ledger's persisted counts) and the group's admission policy. Built
+        // here rather than passed as JSON, so no shell quoting stands between the leg and its data.
+        #[cfg(feature = "today")]
+        "seed-new-fields" => {
+            let mut mgr = open(state, user);
+            let gid = &rest[0];
+            let changed = mgr.apply_app_ledgers([
+                ("ledger-format".to_string(), Some("1".to_string())),
+                (
+                    format!("seen:{gid}"),
+                    Some("[\"cross-version\"]".to_string()),
+                ),
+                (
+                    "send-persisted".to_string(),
+                    Some(format!("{{\"{gid}@1\":1}}")),
+                ),
+            ]);
+            if changed != 3 {
+                fail(&format!("the ledgers changed {changed} key(s) of 3 - the leg would not prove what it says"));
+            }
+            // `Open`: a `closed` classification is dropped at every load (`drop_closed_admission_policies`),
+            // so only `open` is a value a state written today still carries when the old build reads it.
+            mgr.set_admission_policy(gid, mls_core::AdmissionPolicy::Open);
+            save(&mgr, state);
+        }
+        // TODAY ONLY: prints the ledgers (JSON) and the group's admission policy, one line each,
+        // after a load - what a state written by the other version left of them.
+        #[cfg(feature = "today")]
+        "new-fields" => {
+            let mgr = open(state, user);
+            // SORTED BY KEY: the ledgers are a HashMap, whose order differs between two loads of the
+            // same state, and the script compares this line byte for byte across a round trip.
+            let sorted: std::collections::BTreeMap<_, _> = mgr.app_ledgers().iter().collect();
+            let line = sorted
+                .iter()
+                .map(|(k, v)| format!("{k:?}={v:?}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            println!("{{{line}}}");
+            println!(
+                "{}",
+                mgr.admission_policy(&rest[0])
+                    .map(|p| p.as_str())
+                    .unwrap_or("none")
+            );
         }
         other => fail(&format!("unknown command {other:?}")),
     }

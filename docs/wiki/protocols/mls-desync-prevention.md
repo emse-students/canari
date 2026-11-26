@@ -1165,8 +1165,11 @@ value is never ahead of the state it moves into. Shim recorded in
 - Each send waits for one IndexedDB transaction before it posts. Its durability is IndexedDB's
   default (relaxed on Chromium): committed to the OS when `complete` fires, so a PROCESS kill keeps
   it; a power loss or OS crash inside the next flush is not covered, as it is not for the state.
-- That an older build reads and writes back a state carrying the ledgers is not gated:
-  [P2](../backlog.d/p2-no-gate-proves-an-older-build-reads-the-mls-state-this-build-writes.md).
+- That an older build reads and writes back a state carrying the ledgers is GATED since 2026-11-25:
+  `mls-forward-compat.sh`'s state leg has the newest stable (the build a rollback lands on) load a
+  state today wrote, read a frame and save it, and today reopen it - each ledger carried unchanged or
+  dropped whole; measured against `v1.6.12`, which predates the field, the ledgers came back empty
+  and the group whole ([cicd](../cicd.md#what-it-refuses-and-why-it-is-not-a-semver-rule)).
 - The web catch-up session stages marks before its state is installed in the live client - the same
   window the old design had, filed as
   [P2](../backlog.d/p2-web-catch-up-marks-frames-seen-before-its-state-is-live.md).
