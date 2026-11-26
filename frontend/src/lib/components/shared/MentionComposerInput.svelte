@@ -45,6 +45,11 @@
     editorClass?: string;
     /** The conversation's members, suggested locally by the @mention picker. */
     mentionRoster?: MentionRosterMember[];
+    /**
+     * Names what the composer writes to (a conversation id). When it changes the @mention picker is
+     * closed and any search on its way is dropped: its rows belong to the previous target.
+     */
+    mentionScope?: string | null;
     /** Narrows a name search to who a mention may reach (see `useMentionAutocomplete`). */
     mentionAudienceFilter?: (users: MentionUser[]) => Promise<MentionUser[]>;
     onchange?: (text: string) => void;
@@ -73,6 +78,7 @@
     class: className = '',
     editorClass = '',
     mentionRoster,
+    mentionScope,
     mentionAudienceFilter,
     onchange,
     onkeydown,
@@ -116,6 +122,17 @@
   $effect(() => {
     void mentionRoster;
     mention.refreshRoster();
+  });
+
+  // THE PICKER DOES NOT OUTLIVE ITS CONVERSATION: it used to close only on input, so a list opened
+  // in A stayed over B's composer after a switch until the next keystroke. The first run (mount)
+  // finds nothing open and does nothing.
+  let lastScope: string | null | undefined = mentionScope;
+  $effect(() => {
+    const scope = mentionScope;
+    if (scope === lastScope) return;
+    lastScope = scope;
+    mention.dismiss('the composer now writes to another conversation');
   });
 
   // A search or a name batch still on its way when the composer goes is dropped, never applied.

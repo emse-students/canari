@@ -226,6 +226,18 @@
   // The PIN lock sits under the call's rung: while it is up, a call is the banner it covers.
   $effect(() => callView.setLocked(showPinModal));
 
+  // A CONVERSATION THAT LEAVES THE LIST TAKES ITS DRAFT WITH IT (left, deleted, removed from): the
+  // entry used to stay until sign-out, and a conversation joined again showed the old text. Here and
+  // not in the chat page, because the page unmounts on a route change while removals keep arriving.
+  let listedKeys: ReadonlySet<string> = new Set();
+  $effect(() => {
+    const now = new Set(globalConvs.conversations.keys());
+    untrack(() => {
+      globalMessaging.forgetDraftsOfLeft(listedKeys, now);
+      listedKeys = now;
+    });
+  });
+
   // A CONVERSATION THAT ENDED TAKES ITS NOTIFICATIONS WITH IT. Opening the app clears no banner any
   // more (owner, 2026-11-21), so a conversation deleted, left, excluded from, or whose salon or
   // community is gone would keep its banner for good. Observed on the list every ending writes to,

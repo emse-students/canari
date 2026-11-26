@@ -146,6 +146,11 @@
     onMessageChange: (value: string) => void;
     /** A writer bound to the draft of the conversation open now (an edit gives its draft back there). */
     bindDraftWriter: () => (text: string) => void;
+    /**
+     * The key the open conversation's draft is stored under (not always its id: a DM's is its map
+     * key). An edit registers under it, so a text restored for that draft finds the edit.
+     */
+    draftKey?: string | null;
     /** Callback to submit the composed message. */
     onSend: () => void;
     /** Optional callback emitting throttled typing start/stop signals. */
@@ -332,6 +337,7 @@
     isChannel = false,
     onMessageChange,
     bindDraftWriter,
+    draftKey = null,
     onSend,
     onTyping,
     onSendGif,
@@ -1634,6 +1640,7 @@
     getText: () => messageText,
     setText: (text) => onMessageChange(text),
     bindDraftWriter: () => bindDraftWriter(),
+    conversationKey: () => draftKey,
     save: (messageId, text) => onEdit?.(messageId, text),
   });
 
@@ -2638,6 +2645,7 @@
         <ChatComposer
           {messageText}
           {mentionRoster}
+          {conversationId}
           {onMessageChange}
           {onTyping}
           {onSendGif}

@@ -7783,6 +7783,19 @@ Two consequences of the drafts outliving the page (review of #2614, 2026-10-27):
   left the edited message's text as the draft, with no banner, for Send to post twice. Test:
   `ChatArea.editUnmount.svelte.test.ts`; `MainChatPage.draft.test.ts` pins that the page's text is
   derived and its late writers gated - and created BEFORE the await or callback they outlive.
+- **Loose ends closed 2026-11-25.** (a) A text restored while an edit is open (`holdRestoredText`,
+  `editSession.svelte.ts`) joins the edit's SAVED draft, found by the conversation's draft key
+  (`ChatArea`'s `draftKey`), instead of the composer that holds the edited message: `cancel`,
+  `confirm` and `reset` give it back, and `confirm` never saves it into the edited message.
+  `MainChatPage.restoreText` is the one entrance for the four restores. (b) **The salon ledger detour
+  stays on purpose**: a salon text resumed after the member left goes back to the ledger
+  (`recordUnsentSalonText`), which is persisted, while drafts are memory only; revisit only when
+  drafts outlive the page. (c) The @mention picker closes when the composer's conversation changes
+  (`MentionComposerInput`'s `mentionScope` -> `dismiss()`, whose generation bump drops a late search
+  answer). (d) A conversation that leaves the list (left, deleted, removed) drops its draft
+  (`forgetDraftsOfLeft`, driven by an effect on the list's keys in `ChatBackgroundService`, which
+  outlives the chat page). Tests: `editSession.svelte.test.ts`, `useMessaging.draft.svelte.test.ts`,
+  `useMentionAutocomplete.svelte.test.ts`.
 - **Two keys, one risk.** Drafts are keyed by `convs.selectedContact`, which for a DM is the map key
   (its display name), while the edit's reset follows `conversation.id`. A DM whose map key changes
   under an open conversation (a name resolved late, a rename) strands the draft under the old key:
