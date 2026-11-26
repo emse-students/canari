@@ -277,6 +277,38 @@
     };
   });
 
+  /**
+   * THE HERO BANNER DRAWS THE WIDE COVER, NOT THE SQUARE ONE (owner, 2026-11-26: a MiGallery card
+   * was visibly pixelated).
+   *
+   * The square cover is 400x400 and is right for the tile. The hero banner is about 640 CSS px wide
+   * (1300 device px at 2x) and cropped to 1.91:1, so it was stretching the middle 400x209 band of
+   * that square about three times. The preview payload carries the site's own 1200x630 cover as
+   * `image` - and OMITS it for a private album, whose card keeps the square it always had - so
+   * the banner draws it when it is there and PROVEN to decode, and the square otherwise.
+   */
+  const wideCoverUrl = $derived(coverCard ? proxiedPreviewImageUrl(externalPreview?.image) : '');
+  let wideCoverLoads = $state(false);
+  $effect(() => {
+    const src = wideCoverUrl;
+    wideCoverLoads = false;
+    if (!src) return;
+    let cancelled = false;
+    void loadsAsImage(src).then((ok) => {
+      if (cancelled) return;
+      wideCoverLoads = ok;
+      if (!ok)
+        Log.d('LINK_PREVIEW', `wide cover did not decode, banner keeps the square: ${parsed.host}`);
+    });
+    return () => {
+      cancelled = true;
+    };
+  });
+  /** What the hero banner draws: the wide cover when proven, else the square, else the OG image. */
+  const bannerUrl = $derived(
+    coverCard ? (wideCoverLoads ? wideCoverUrl : coverUrl) : previewImageUrl
+  );
+
   /** Whether the post preview carries its own photo, decrypted for this reader. */
   const hasPostImage = $derived(
     isInApp && Boolean(canariPreview?.postImage && postImageAuthToken && PostMedia)
@@ -427,7 +459,7 @@
     </div>
   {:else}
     <img
-      src={coverCard ? coverUrl : previewImageUrl}
+      src={bannerUrl}
       alt=""
       class="aspect-[1.91/1] w-full bg-black/5 object-cover dark:bg-white/5"
       loading="lazy"

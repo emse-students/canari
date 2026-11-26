@@ -713,6 +713,25 @@ const GALLERY_HOST = 'gallery.mitv.fr';
 const GALLERY_ALBUM_RE = /^\/albums\/([0-9a-f-]+)\/?$/i;
 
 /**
+ * The wide (1200x630) cover a card may draw large, or '' when the album is private.
+ *
+ * The hero banner is about 640 CSS px wide, so the 400px square cover that fills the tile is
+ * upscaled about three times there (the visibly pixelated card of 2026-11-26). The wide cover is
+ * the sharp one, but a PRIVATE album's reach is not widened by a resolution change made here: its
+ * card keeps the square it always had, and this returns '' so the client does not ask for more.
+ * An unknown visibility is treated as private - `/info` always states one, so an absent field is
+ * something to be careful about, never a reason to publish.
+ */
+export function galleryWideCoverFor(
+  visibility: string | undefined,
+  origin: string,
+  albumId: string
+): string {
+  if (!visibility || visibility.toLowerCase() === 'private') return '';
+  return `${origin}/api/albums/${albumId}/og-cover`;
+}
+
+/**
  * Fetches a link-preview payload for a MiGallery album URL.
  *
  * Uses `MIGALLERY_API_URL` / `MIGALLERY_API_KEY` from the environment to call the
@@ -767,7 +786,12 @@ export async function fetchMiGalleryPreview(targetUrl: URL): Promise<{
     if (!res.ok) return null;
 
     const data = (await res.json()) as {
-      album?: { name?: string; date?: string | null; location?: string | null };
+      album?: {
+        name?: string;
+        date?: string | null;
+        location?: string | null;
+        visibility?: string;
+      };
     };
 
     const album = data.album;
@@ -794,7 +818,7 @@ export async function fetchMiGalleryPreview(targetUrl: URL): Promise<{
       url: targetUrl.toString(),
       title: album.name.slice(0, 180),
       description: descParts.join(' · '),
-      image: `${targetUrl.origin}/api/albums/${albumId}/og-cover`,
+      image: galleryWideCoverFor(album.visibility, targetUrl.origin, albumId),
       siteName: 'MiGallery',
     };
   } catch {
