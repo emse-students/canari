@@ -5,6 +5,7 @@ import { SvelteMap } from 'svelte/reactivity';
 import { processAppLinks } from '$lib/mobile/appLinkRouter';
 import { MOBILE_APP_PROTOCOL } from '$lib/mobile/appSiteAssociation';
 import { listenForNativeNotificationTaps } from '$lib/mobile/notificationTapDrain';
+import { markRouterReady } from '$lib/navigation/routerReady';
 import { notifNav } from '$lib/stores/notifNav.svelte';
 import type { Conversation } from '$lib/types';
 import { APP_FOREGROUND_EVENT } from '$lib/utils/appForeground';
@@ -22,6 +23,9 @@ import {
 
 const goto = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 vi.mock('$app/navigation', () => ({ goto }));
+
+// The router's first navigation has settled: every link below is routed, as on a warm app.
+markRouterReady();
 
 /**
  * A RESUME FROM A NOTIFICATION FOR Y DOES NOT READ X, THE CONVERSATION LEFT OPEN (owner, 2026-11-02).
@@ -299,14 +303,16 @@ describe('a resume that opens a link to anything else', () => {
 describe('the REAL router and tap drain report a link that routes nowhere', () => {
   const unclaimed = `${MOBILE_APP_PROTOCOL}//open?url=https%3A%2F%2Fexample.org`;
 
-  it('processAppLinks on an unclaimed open?url releases X (no hand-called outcome)', () => {
+  it('processAppLinks on an unclaimed open?url releases X (no hand-called outcome)', async () => {
     const r = open(X.key);
     announce(false);
     announce(true, unclaimed);
     expect(r.marked).toEqual([X.key]);
     processAppLinks([unclaimed]);
-    flushSync();
-    expect(r.marked).toEqual([X.key, X.key]);
+    await vi.waitFor(() => {
+      flushSync();
+      expect(r.marked).toEqual([X.key, X.key]);
+    });
   });
 
   it('processAppLinks on a CLAIMED link whose navigation fails releases X', async () => {
@@ -328,7 +334,7 @@ describe('the REAL router and tap drain report a link that routes nowhere', () =
     }
   });
 
-  it('processAppLinks on a checkout return to no known page releases X', () => {
+  it('processAppLinks on a checkout return to no known page releases X', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const unknown = `${MOBILE_APP_PROTOCOL}//payment/elsewhere`;
     try {
@@ -336,20 +342,24 @@ describe('the REAL router and tap drain report a link that routes nowhere', () =
       announce(false);
       announce(true, unknown);
       processAppLinks([unknown]);
-      flushSync();
-      expect(r.marked).toEqual([X.key, X.key]);
+      await vi.waitFor(() => {
+        flushSync();
+        expect(r.marked).toEqual([X.key, X.key]);
+      });
     } finally {
       warn.mockRestore();
     }
   });
 
-  it('processAppLinks on a link that is not ours releases X', () => {
+  it('processAppLinks on a link that is not ours releases X', async () => {
     const r = open(X.key);
     announce(false);
     announce(true, 'mailto:someone@example.org');
     processAppLinks(['mailto:someone@example.org']);
-    flushSync();
-    expect(r.marked).toEqual([X.key, X.key]);
+    await vi.waitFor(() => {
+      flushSync();
+      expect(r.marked).toEqual([X.key, X.key]);
+    });
   });
 
   it('the native tap drain, its record not JSON, releases X through its own wiring', async () => {
@@ -398,8 +408,10 @@ describe('the REAL router and tap drain report a link that routes nowhere', () =
     );
     try {
       await done;
-      flushSync();
-      expect(r.marked).toEqual([X.key, X.key]);
+      await vi.waitFor(() => {
+        flushSync();
+        expect(r.marked).toEqual([X.key, X.key]);
+      });
     } finally {
       stop();
       warn.mockRestore();
