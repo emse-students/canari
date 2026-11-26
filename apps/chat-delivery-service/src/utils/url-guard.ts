@@ -2,6 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import { lookup } from 'node:dns/promises';
 import { lookup as dnsLookup, type LookupAddress, type LookupOptions } from 'node:dns';
 import { isIP } from 'node:net';
+import { decode as decodeEntities } from 'html-entities';
 import {
   Agent,
   fetch as undiciFetch,
@@ -321,30 +322,20 @@ export function ssrfSafeFetch(
 }
 
 /**
- * Decodes a safe subset of HTML entities (`&amp;`, `&quot;`, `&apos;`, `&#39;`, `&#x27;`)
- * found in link-preview metadata fields. Intentionally excludes `&lt;` and `&gt;` to
- * prevent double-unescape attacks (CWE-116) where `&amp;lt;` would otherwise become `<`.
+ * The ONE place a page's markup text becomes plain text: decodes the full HTML5 named-entity set
+ * and decimal / hex numeric references, exactly once (so `&amp;rsquo;` yields the literal
+ * `&rsquo;`, never `'`). An unknown entity stays as written. The result is plain text: the card
+ * renders it as text, so a decoded `&lt;script&gt;` is shown and never executed.
+ *
+ * @param scope - `attribute` for a tag attribute (browser rule: a legacy entity without its `;`
+ * is left alone when followed by `=` or an alphanumeric), `body` for element text.
  */
-export function decodeHtmlEntity(value: unknown): string {
+export function decodeHtmlEntity(
+  value: unknown,
+  scope: 'attribute' | 'body' = 'attribute'
+): string {
   const normalized = typeof value === 'string' ? value : '';
-  // Plain-text link preview fields: decode a small set once. Omit &lt; / &gt; so one pass cannot
-  // turn &amp;lt;… into angle brackets (CWE-116 / double-unescape patterns).
-  return normalized.replace(/&(amp|quot|apos);|&#39;|&#x27;/gi, (full, named?: string) => {
-    if (named !== undefined)
-      switch (named.toLowerCase()) {
-        case 'amp':
-          return '&';
-        case 'quot':
-          return '"';
-        case 'apos':
-          return "'";
-        default:
-          return full;
-      }
-    const low = full.toLowerCase();
-    if (low === '&#39;' || low === '&#x27;') return "'";
-    return full;
-  });
+  return decodeEntities(normalized, { level: 'html5', scope });
 }
 
 /** Parses all `<meta>` tags from an HTML string and returns their attributes as key/value maps. */
@@ -379,7 +370,7 @@ export function extractMetaContent(html: string, key: string): string | null {
 /** Extracts and trims the text content of the first `<title>` element, or returns `null` if absent. */
 export function extractTitle(html: string): string | null {
   const match = html.match(/<title[^>]*>([^<]+)<\/title>/i);
-  return match ? decodeHtmlEntity(match[1].trim()) : null;
+  return match ? decodeHtmlEntity(match[1].trim(), 'body') : null;
 }
 
 /** Parses all `<link>` tags from an HTML string and returns their attributes as key/value maps. */
