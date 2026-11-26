@@ -88,6 +88,24 @@
           >
             {lesson.hints[hintStep].text()}
           </p>
+          <!-- What the three outlines mean: the colour is the whole message, so it is said once. -->
+          <ul
+            class="text-text-muted mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs"
+            data-testid="tutorial-legend"
+          >
+            <li class="flex items-center gap-1.5">
+              <span class="border-red-err bg-red-err/15 size-3 rounded border-2"></span>
+              {m.minesweeper_tutorial_legend_mine()}
+            </li>
+            <li class="flex items-center gap-1.5">
+              <span class="border-accent bg-accent/20 size-3 rounded border-2"></span>
+              {m.minesweeper_tutorial_legend_group()}
+            </li>
+            <li class="flex items-center gap-1.5">
+              <span class="border-green-ok bg-green-ok/15 size-3 rounded border-2"></span>
+              {m.minesweeper_tutorial_legend_safe()}
+            </li>
+          </ul>
         {/if}
       </div>
 

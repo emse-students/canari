@@ -39,12 +39,47 @@ export const LEVEL_SPECS: Readonly<Record<MinesweeperLevel, LevelSpec>> = {
 };
 
 export const LEVEL_STORAGE_KEY = 'canari.minesweeper.level';
-/** The ranked / unranked choice, stored by the modal; read here only to pick the default level. */
+/** The ranked / unranked choice, `'1'` for unranked: its presence also says a player chose on this device. */
 const UNRANKED_STORAGE_KEY = 'canari.minesweeper.unranked';
 
-/** The next level of the picker's cycle, back to the first after the last. */
-export function nextLevel(level: MinesweeperLevel): MinesweeperLevel {
-  return LEVELS[(LEVELS.indexOf(level) + 1) % LEVELS.length];
+/**
+ * WHAT A PLAYER PICKS BEFORE A GAME, in ONE list (owner, 2026-11-26: the Classe / Libre toggle and the level
+ * chip were two controls for what is one choice): the ranked game, or an unranked one at a level.
+ */
+export type PlayMode = 'ranked' | MinesweeperLevel;
+
+/** In the order the mode sheet lists them: the ranked game, then the unranked levels, easiest first. */
+export const PLAY_MODES: readonly PlayMode[] = ['ranked', ...LEVELS];
+
+/** The mode a stored pair of choices amounts to: ranked, or the unranked level. */
+export function playModeOf(unranked: boolean, level: MinesweeperLevel): PlayMode {
+  return unranked ? level : 'ranked';
+}
+
+/**
+ * Whether the next game is unranked. A stored choice wins, always; with none, a NEWCOMER plays unranked
+ * (owner, 2026-11-25: the ranked board, 150 mines at a reasoning score of 60, is a barrier to entry), and
+ * ranked is one pick away in the mode sheet. Not stored here: the first pick the player makes writes it.
+ */
+export function loadMinesweeperUnranked(): boolean {
+  if (typeof localStorage === 'undefined') return true;
+  try {
+    const stored = localStorage.getItem(UNRANKED_STORAGE_KEY);
+    return stored === null ? true : stored === '1';
+  } catch (err) {
+    console.warn('[minesweeper] could not read the stored mode, playing unranked', err);
+    return true;
+  }
+}
+
+/** Persists the ranked / unranked choice; a storage that refuses is logged, never fatal. */
+export function saveMinesweeperUnranked(unranked: boolean): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(UNRANKED_STORAGE_KEY, unranked ? '1' : '0');
+  } catch (err) {
+    console.warn('[minesweeper] could not store the mode', err);
+  }
 }
 
 /**

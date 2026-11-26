@@ -1,8 +1,10 @@
 // @vitest-environment happy-dom
 /**
  * THE TUTORIAL'S MINI-GRID (owner, 2026-11-25): the real game in small. Pinned: a tap does what it does in
- * the game (open, flag, chord a number), a mine ends the lesson and says so, the goal ends it and says so
- * ONCE, and the hint lights the numbers it reads and the cells they speak about.
+ * the game (open, flag, chord a number, flag automatically when the count is certain), the mines counter
+ * follows the flags, a mine ends the lesson and says so, the goal ends it and says so ONCE, and the hint
+ * rings the number it reads and outlines its marks - ONE outline per rectangle, red, yellow or green
+ * (owner, 2026-11-26).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
@@ -34,6 +36,11 @@ function open(id: string, hintStep: number | null = null) {
 }
 
 const cell = (i: number) => document.querySelector<HTMLButtonElement>(`[data-cell="${i}"]`)!;
+const marks = (kind?: string) => [
+  ...document.querySelectorAll<HTMLElement>(kind ? `[data-mark="${kind}"]` : '[data-mark]'),
+];
+const counter = () =>
+  document.querySelector('[data-testid="tutorial-counter"]')!.textContent?.trim();
 const byText = (text: string) =>
   [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) =>
     b.textContent?.trim().startsWith(text)
@@ -84,17 +91,80 @@ describe('MinesweeperMiniGrid', () => {
     expect(onSolved).toHaveBeenCalledOnce();
   });
 
-  it('lights the numbers a hint reads and the cells they speak about, and only then', async () => {
+  it('rings the number a hint reads and outlines its group ONCE, with the mines it holds', async () => {
     open('one_two_one', 0);
     await tick();
-    // Step 1: the 2 (ringed) and the three hidden cells under the numbers (tinted).
-    expect(cell(1).getAttribute('data-hint')).toBe('hint');
-    for (const i of [3, 4, 5]) expect(cell(i).getAttribute('data-hint')).toBe('group');
-    expect(cell(0).getAttribute('data-hint')).toBeNull();
+    expect(cell(1).getAttribute('data-hint')).toBe('read');
+    expect(cell(1).getAttribute('aria-label')).toBe('Chiffre lu : 2');
+    // The three hidden cells are ONE yellow outline, not three rings; its badge says two mines.
+    expect(marks()).toHaveLength(1);
+    expect(marks('group')).toHaveLength(1);
+    expect(document.querySelector('[data-mark-count]')?.getAttribute('data-mark-count')).toBe('2');
+    expect(cell(3).getAttribute('data-hint')).toBeNull();
   });
 
-  it('shows the gesture target of the guided lesson from the start, without any hint', () => {
+  it('draws red for a certain mine, green for a certain safe cell, from the last step of a pattern', async () => {
+    open('one_two_one', 3);
+    await tick();
+    expect(marks('mine')).toHaveLength(2);
+    expect(marks('safe')).toHaveLength(1);
+    expect(marks('group')).toHaveLength(0);
+  });
+
+  it('outlines a mark of several rectangles as separate shapes with ONE badge', async () => {
+    open('angle_one_three_one', 0);
+    await tick();
+    // The five cells a corner 3 sees are not a rectangle: two outlines, one yellow group, one badge.
+    expect(marks('group')).toHaveLength(2);
+    expect(document.querySelectorAll('[data-mark-count]')).toHaveLength(1);
+    expect(document.querySelector('[data-mark-count]')?.getAttribute('data-mark-count')).toBe('3');
+  });
+
+  it('draws no outline before a hint, except the target of a gesture lesson', async () => {
+    open('flag');
+    await tick();
+    expect(marks()).toHaveLength(0);
+  });
+
+  it('shows the mines counter and lowers it by one per flag, raising it back when a flag is lifted', async () => {
+    open('flag');
+    expect(counter()).toBe('1');
+    byText('Drapeau').click();
+    flushSync();
+    cell(8).click();
+    flushSync();
+    expect(counter()).toBe('0');
+  });
+
+  it('flags every certain mine at once when the number is tapped: the automatic flags', () => {
+    const { onSolved } = open('autoflag');
+    expect(counter()).toBe('2');
+    cell(4).click(); // the 2, in dig mode
+    flushSync();
+    expect(counter()).toBe('0');
+    expect(onSolved).toHaveBeenCalledOnce();
+  });
+
+  it('teaches the counter: flag the mine, and the rest opens with a single tap on a zero', () => {
+    const { onSolved } = open('counter');
+    expect(counter()).toBe('1');
+    byText('Drapeau').click();
+    flushSync();
+    cell(5).click(); // (1,1), the mine
+    flushSync();
+    expect(counter()).toBe('0');
+    byText('Miner').click();
+    flushSync();
+    cell(7).click(); // (3,1): a zero, the two right columns open
+    cell(1).click(); // (1,0)
+    cell(9).click(); // (1,2)
+    flushSync();
+    expect(onSolved).toHaveBeenCalledOnce();
+  });
+
+  it('shows the gesture target of the guided lesson from the start, in green, without any hint', () => {
     open('reveal');
-    expect(cell(0).getAttribute('data-hint')).toBe('group');
+    expect(marks('safe')).toHaveLength(1);
+    expect(cell(0).getAttribute('data-hint')).toBeNull();
   });
 });
