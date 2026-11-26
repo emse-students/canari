@@ -103,7 +103,7 @@ the counts.
   when the form is opened is refused (every browser that opens it blocks a seat, and a script can hold
   every seat of a public form); a 10-minute hold behind an explicit "Réserver ma place" button, one per
   signed-in person with a countdown, is the design kept: *"Plus tard (1.8.0)"*
-  ([entry](../backlog.d/a-capped-form-holds-a-seat-behind-a-reserve-button.md)).
+  ([entry](../frontend/modules/forms.md#a-capped-form-may-hold-a-seat-for-10-minutes-behind-reserver-ma-place-owner-2026-11-17-migration-186)).
 - **An organiser's test no longer notifies the people who asked** (seen on production that day: an
   opening moved to "now" for a test sent the opening reminder to everyone who had pressed the bell).
   *"A + B + affichage, en 1.7.1"*: (A) a "Tester l'envoi" in the preview, a test submission counted

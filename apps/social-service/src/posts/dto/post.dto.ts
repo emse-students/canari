@@ -387,6 +387,17 @@ export class SearchPostsQueryDto extends PostPageQueryDto {
   @IsOptional()
   @IsString()
   q?: string;
+
+  /** Only this person's personal, non-anonymous posts (owner, 2026-11-19). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(128)
+  authorId?: string;
+
+  /** Only the posts published as this association (owner, 2026-11-19). */
+  @IsOptional()
+  @IsUUID()
+  associationId?: string;
 }
 
 export class ListPostsQueryDto extends PostPageQueryDto {

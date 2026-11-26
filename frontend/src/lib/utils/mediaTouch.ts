@@ -31,6 +31,7 @@
  * sooner".
  */
 import { appendLog } from './sessionLog';
+import { recordServerConfirmed } from './mediaCacheLedger';
 
 /** Where the per-day dedup marker lives. Not sensitive: opaque ids and a date. */
 const STORAGE_KEY = 'canari-media-touched';
@@ -123,6 +124,9 @@ async function flush(): Promise<void> {
       const record = readTouched();
       writeTouched({ day: record.day, ids: [...new Set([...record.ids, ...mediaIds])] });
       appendLog(`[MEDIA_TOUCH] ${mediaIds.length} cached media reported as used`);
+      // The server acknowledged: it holds these objects, so their copies are evictable under the
+      // cap for a while (`mediaCacheCap.ts`, what a sole copy is).
+      void recordServerConfirmed(baseUrl, mediaIds);
     } catch (e) {
       appendLog(`[MEDIA_TOUCH] report failed: ${String(e)}`);
       for (const id of mediaIds) seenThisSession.delete(id);
