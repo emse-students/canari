@@ -183,10 +183,9 @@ fn offers_nothing(manifest: &Map<String, Value>) -> bool {
 /// Writes the manifest whole or not at all (a temporary file renamed into place): the page may drain
 /// at any moment, and a reader catching half a file would drop the share as corrupt.
 ///
-/// KEPT OUT OF BACKUPS, per file and after every write, by the native caches' own helper
-/// (`native_cache::exclude_from_backup`, and for its reason: the rename is a new inode, which does
-/// not carry the flag). The manifest carries the shared TEXT, and the app data directory is backed
-/// up on iOS.
+/// KEPT OUT OF BACKUPS by its DIRECTORY, not per file: the launch pass flags the App Group store
+/// this lands in (`backup_exclusion.rs`), and a rename keeps a file under its parent's flag. The
+/// manifest carries the shared TEXT.
 ///
 /// LOCKED WITH THE DEVICE: the staging file is given Data Protection's `Complete` class while it is
 /// still EMPTY, so no byte of the text is ever written under a weaker key, and the rename keeps the
@@ -202,7 +201,6 @@ fn write_pending(dir: &Path, manifest: &Map<String, Value>) -> std::io::Result<(
         remove_staging(&staging);
         return Err(e);
     }
-    crate::native_cache::exclude_from_backup(&target);
     Ok(())
 }
 

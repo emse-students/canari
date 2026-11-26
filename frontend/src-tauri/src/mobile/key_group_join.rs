@@ -46,7 +46,7 @@ use crate::concurrency::{
     background_write_mls_bin_if_unchanged_and_cold, foreground_is_active, live_manager_in_process,
     mls_bin_digest,
 };
-use crate::native_cache::{exclude_from_backup, open_file, seal_file, CacheKey, Opened, Purpose};
+use crate::native_cache::{open_file, seal_file, CacheKey, Opened, Purpose};
 
 /// The ledger of joins attempted from a push, in the app data directory. SEALED at rest under the
 /// install's native cache key ([`Purpose::KeyGroupJoinLedger`]): it names key groups, their state and
@@ -183,8 +183,6 @@ fn with_ledger<R>(
         let tmp = data_dir.join(format!("{LEDGER_FILE}.tmp"));
         std::fs::write(&tmp, sealed).map_err(|e| e.to_string())?;
         std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
-        // A new inode: the backup exclusion does not travel with the name.
-        exclude_from_backup(&path);
     }
     Ok(Some(result))
 }
