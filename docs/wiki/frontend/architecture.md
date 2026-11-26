@@ -32,6 +32,31 @@ Nginx serves the assets and proxies HTML navigations to the `frontend-ssr` conta
 container is down it falls back to the prerendered `app-shell.html`, so the SPA still boots — see
 [../infrastructure/nginx.md](../infrastructure/nginx.md).
 
+### The server half imports no package (2026-11-26)
+
+`Dockerfile.frontend-ssr` copies `frontend/build` and runs `node index.js` with **no
+`node_modules`**, and adapter-node leaves every `dependencies` entry of `package.json` external. So a
+module the server reaches (`hooks.server.ts`, `$lib/server/`, and everything THEY import) may import
+only a relative path or a node builtin: a package import builds green and the server dies at start
+with `ERR_MODULE_NOT_FOUND`. That is what the `v1.8.2-alpha.5` dev deploy did: the in-app browser
+gate imported `$lib/mobile/openInApp`, which took the store URLs from `$lib/utils/appVersion`, which
+imports `@tauri-apps/plugin-os`. The new replica restarted unhealthy, the old one kept serving, and
+production was never touched. The store URLs now live in `$lib/mobile/storeUrls.ts`, which imports
+nothing outside `$lib/mobile/`. **A module meant for the server keeps its imports to dependency-free
+modules; when it needs a constant from a module that imports a package, the constant moves out.**
+
+The gate is `ssrStartProblems` in `.github/scripts/assert-frontend-build.mjs`, a MEASUREMENT rather
+than a reading of the chunks (with `ssr = false` most server chunks are never imported, and a scan
+for package specifiers flagged dozens of them, plus prose in string literals): the build is copied to
+a temporary directory with no `node_modules` above it, started with `node index.js` (bun would
+auto-install a missing package and hide the defect), and must print adapter-node's `Listening on`
+line and answer `/login` - the image's own healthcheck - with 200. It ends on events (the ready line,
+or the process exiting first), never on a clock; the CI step's `timeout-minutes` is only a ceiling on a
+server that does neither, since `test-frontend` has no timeout of its own. It runs with the production build (`checks.sh
+frontend-build`, on node 24 like the image), so `main`'s CI is red on such a commit and the release
+preflight (`CI passed` on the commit) refuses to cut it ([cicd](../cicd.md)). On `origin/main` at
+`v1.8.2-alpha.5` it fails with the very `ERR_MODULE_NOT_FOUND` of the deploy.
+
 ### A tab open across a deploy: its lazy modules are gone, and a reload is OFFERED
 
 Every `import()` asks for a hashed chunk of the build the tab booted on, and a deploy deletes them.
