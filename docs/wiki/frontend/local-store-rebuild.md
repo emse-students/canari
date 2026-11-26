@@ -205,5 +205,16 @@ rows. What the fix leaves as a measurement: the error line `the messages table w
 that is not new` cannot fire for a 1.8.1 loss (the empty table was made again then), so the
 reliable signal is the generation-2 audit itself - a device whose first `1.8.2` connection pulls
 many rows (`[HISTORY_REQ] ... diff with ...: N to send` on the PEERS' side, `history_bundle` rows on
-the device's) is a device that had lost them. A phone reading of an upgraded v22 store is owed
-([backlog](../backlog.d/reading-owed-v23-rebuild-keeps-every-row-on-the-mi9t.md)).
+the device's) is a device that had lost them. **Read on the Mi 9T, `1.8.2-alpha.8` (2026-11-26):** a
+v22 store of 2768 rows upgraded with `install -r` was keyed, proved and released in one run with the
+same 2768 rows in every conversation, no copy left set aside, no second rebuild after a cold start, and
+one sweep on the first connection only
+([sitting](../device-verification.md#the-readings-of-2026-11-26-182-alpha8-mi-9t-the-v22-store-upgraded-a-picked-file-sent-the-person-filter-tous-in-a-salon)).
+The Mi's ring carried the sweep's cause (`the local message store is not the one the last connection
+saw`) and its store holds `store_meta`, which answers the two gaps the iPhone 12 sitting of the same
+build left (the cause line missing from its pulled ring, the silent incarnation mint). The iPhone had
+no v22 store (it was already on v23), so it read only the open over a v23 store - no rebuild, rows
+identical, one pass, no second sweep
+([sitting](../device-verification.md#the-readings-of-2026-11-26-182-alpha8-iphone-12-the-first-open-of-the-store-fix-tous-in-french-a-picked-photo-and-file)).
+The rebuild runs only on a v22 file, which the iPhone cannot produce without an older build, so the
+Mi 9T reading closes the entry.

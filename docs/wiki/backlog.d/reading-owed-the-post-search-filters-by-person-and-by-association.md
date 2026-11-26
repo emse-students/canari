@@ -18,3 +18,5 @@ alone, each with a word, and both together; remove each chip. **Passes when** ev
 reader sees in the feed, a person never lists an association's post, and the chips clear the filter.
 
 **Read on the Mi 9T, 1.8.2-alpha.7 (2026-11-26):** the association filter PASSES (chip, narrowing, clear). DEFECT (P3, cosmetic): in the search field the magnifier icon and the clear button sit at the wrong height, floating below the field over the picker list. The person filter is still unread.
+
+**Read on the Mi 9T, `1.8.2-alpha.8` (2026-11-26, [sitting](../device-verification.md#the-readings-of-2026-11-26-182-alpha8-mi-9t-the-v22-store-upgraded-a-picked-file-sent-the-person-filter-tous-in-a-salon)): the phone reading PASSES whole.** A person alone lists only that person's personal posts (none of the posts they wrote as an association), a word narrows it, a person and an association together list nothing, and each chip removed widens the result back. **Still owed:** the dev measurement and the PostgreSQL run above, and the P3 icon defect, which on `alpha.8` also sets the association field's magnifier over the typed text.
