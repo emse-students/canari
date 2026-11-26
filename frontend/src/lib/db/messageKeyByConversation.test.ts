@@ -12,6 +12,7 @@ import { IndexedDbStorage } from './indexeddb';
 import { SqliteStorage } from './sqlite';
 import { messageRekeySteps, MESSAGES_REKEY_STAGING, SCHEMA_VERSION } from './sqliteMigrations';
 import type { IStorage, StoredMessage } from './types';
+import { retainedName } from './sqliteRetained';
 import { encryptData } from '../encryption';
 import { toMessagePayload } from './messagePayload';
 import { resealDeviceKeyStores } from '$lib/utils/chat/pinChange';
@@ -30,6 +31,12 @@ function sqliteEngine() {
   const positional = (sql: string) => sql.replace(/\$(\d+)/g, '?$1');
   const db = {
     execute: async (sql: string, params: unknown[] = []) => {
+      // Several statements in one call run like sqlx runs them: one after the other, stopping at
+      // the first error (`prepare` would run the first alone).
+      if (params.length === 0 && sql.includes(';\n')) {
+        engine.exec(sql);
+        return { rowsAffected: 0 };
+      }
       const result = engine.prepare(positional(sql)).run(...(params as never[]));
       return { rowsAffected: Number(result.changes) };
     },
@@ -440,6 +447,10 @@ describe('SQLite v22 -> v23: the messages table re-keyed by its conversation', (
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
         .all(MESSAGES_REKEY_STAGING)
     ).toEqual([]);
+    // The old table was set aside, proved and released: no copy outlives a rebuild that kept every row.
+    expect(
+      engine.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'retained%'").all()
+    ).toEqual([]);
     expect(engine.prepare('SELECT COUNT(*) AS n FROM messages').get()).toEqual({ n: rows });
     for (let i = 0; i < rows; i++) {
       const conversationId = i % 2 === 0 ? A : B;
@@ -492,6 +503,7 @@ describe('SQLite v22 -> v23: the messages table re-keyed by its conversation', (
         'order_pending',
         'rev',
       ],
+      indexes: [],
     });
     engine.exec(steps.copy[0]);
     engine.exec(
@@ -516,6 +528,7 @@ describe('SQLite v22 -> v23: the messages table re-keyed by its conversation', (
         'order_pending',
         'rev',
       ],
+      indexes: [],
     });
     for (const statement of steps.copy) engine.exec(statement);
     await expectEveryRow(engine, db, 40);
@@ -537,27 +550,249 @@ describe('SQLite v22 -> v23: the messages table re-keyed by its conversation', (
         'order_pending',
         'rev',
       ],
+      indexes: [],
     });
     for (const statement of steps.copy) engine.exec(statement);
-    engine.exec(steps.drop[0]);
+    // 1.8.1 ran its drop and its rename as two statements, and could stop between them.
+    engine.exec('DROP TABLE messages');
     // The next open's own `CREATE TABLE IF NOT EXISTS messages` makes an empty keyed table first.
     await expectEveryRow(engine, db, 40);
   });
 
   it('owes nothing on a file already keyed, and nothing twice', () => {
-    expect(messageRekeySteps({ keyed: true, staging: false, columns: [] })).toEqual({
+    expect(messageRekeySteps({ keyed: true, staging: false, columns: [], indexes: [] })).toEqual({
       copy: [],
-      drop: [],
+      swap: null,
     });
     const resumed = messageRekeySteps({
       keyed: true,
       staging: true,
       columns: ['id', 'conversation_id'],
+      indexes: [],
     });
     expect(resumed.copy).toEqual([
       `INSERT OR IGNORE INTO ${MESSAGES_REKEY_STAGING} (id, conversation_id) SELECT id, conversation_id FROM messages`,
     ]);
-    expect(resumed.drop[0]).toBe('DROP TABLE messages');
+    expect(resumed.swap).toContain('BEGIN IMMEDIATE');
+  });
+});
+
+/**
+ * THE REBUILD AGAINST THE PLUGIN'S REAL SHAPE: a POOL of connections on one file, each caching the
+ * schema it last saw, every `execute`/`select` handed to the next one - and several `init`s at once.
+ * 1.8.1 lost a user's whole history on exactly this (2026-11-25,
+ * `docs/wiki/frontend/local-store-rebuild.md`): its rename was parsed on a connection that had not
+ * seen the drop and refused, and the opens every failed caller then started side by side dropped
+ * the table one of them had just filled.
+ */
+describe('SQLite v22 -> v23 on a pool of connections, opened concurrently', () => {
+  const V22_MESSAGES = `
+    CREATE TABLE messages (
+      id              TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      timestamp       INTEGER,
+      iv              TEXT,
+      cipher_text     TEXT,
+      order_at        INTEGER,
+      order_pending   INTEGER,
+      rev             INTEGER NOT NULL DEFAULT 0
+    )`;
+
+  /**
+   * `size` `node:sqlite` connections on one fresh file, round-robin like sqlx's pool. A call with no
+   * parameters and several statements runs with `exec`, which prepares each statement after the
+   * previous one ran and stops at the first error - what sqlx's `VirtualStatement` does.
+   */
+  function pooledFile(size: number) {
+    const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
+    const path = process.getBuiltinModule('node:path');
+    const os = process.getBuiltinModule('node:os');
+    const file = path.join(os.tmpdir(), `canari-pool-${process.pid}-${Date.now()}-${n++}.db`);
+    const connections = Array.from({ length: size }, () => new DatabaseSync(file, { timeout: 0 }));
+    connections[0].exec('PRAGMA journal_mode=WAL');
+    let next = 0;
+    const take = () => connections[next++ % size];
+    const positional = (sql: string) => sql.replace(/\$(\d+)/g, '?$1');
+    const db = {
+      execute: async (sql: string, params: unknown[] = []) => {
+        const conn = take();
+        if (params.length === 0 && sql.includes(';\n')) {
+          conn.exec(sql);
+          return { rowsAffected: 0 };
+        }
+        const result = conn.prepare(positional(sql)).run(...(params as never[]));
+        return { rowsAffected: Number(result.changes) };
+      },
+      select: async (sql: string, params: unknown[] = []) =>
+        take()
+          .prepare(positional(sql))
+          .all(...(params as never[])),
+      close: async () => undefined,
+    };
+    // Every test reads the file through a connection of its own, outside the pool.
+    const probe = new DatabaseSync(file);
+    return { db, probe, connections };
+  }
+
+  /** A v22 file of `rows` rows over two conversations, every pooled connection's cache warm. */
+  async function v22Pool(rows: number, size = 3) {
+    const pool = pooledFile(size);
+    const { probe, connections } = pool;
+    probe.exec(
+      "CREATE TABLE conversations (id TEXT PRIMARY KEY, name TEXT NOT NULL, lifecycle TEXT DEFAULT 'pending', updated_at INTEGER DEFAULT 0)"
+    );
+    probe.exec(V22_MESSAGES);
+    const insert = probe.prepare(
+      'INSERT INTO messages (id, conversation_id, timestamp, iv, cipher_text, order_at, order_pending, rev) VALUES (?, ?, ?, ?, ?, ?, NULL, 0)'
+    );
+    for (let i = 0; i < rows; i++) {
+      const conversationId = i % 2 === 0 ? A : B;
+      const sealed = await encryptData(
+        toMessagePayload(row(conversationId, `body ${i}`, { id: `m${i}` })),
+        KEY
+      );
+      insert.run(
+        `m${i}`,
+        conversationId,
+        1_000 + i,
+        btoa(String.fromCharCode(...sealed.iv)),
+        btoa(String.fromCharCode(...sealed.cipherText)),
+        1_000 + i
+      );
+    }
+    probe.exec('PRAGMA user_version = 22');
+    // Each connection has read the schema as it is now - the cache a later drop leaves stale.
+    for (const c of connections) c.prepare('SELECT COUNT(*) AS n FROM messages').get();
+    return pool;
+  }
+
+  const count = (probe: any, table: string) =>
+    (probe.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+
+  it('a stale connection cannot refuse the rename: one open keeps every row', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    const { db, probe } = await v22Pool(40);
+    vi.doMock('@tauri-apps/plugin-sql', () => ({ default: { load: async () => db } }));
+    await new SqliteStorage(`pool-${n++}`).init();
+    expect(count(probe, 'messages')).toBe(40);
+    expect(
+      probe.prepare("SELECT name FROM sqlite_master WHERE name = 'messages_rekey'").all()
+    ).toEqual([]);
+  });
+
+  it('five opens of the same file at once: one rebuild, every row kept, every open resolves', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { db, probe } = await v22Pool(40);
+    const userId = `pool-${n++}`;
+    vi.doMock('@tauri-apps/plugin-sql', () => ({ default: { load: async () => db } }));
+    const opens = Array.from({ length: 5 }, () => new SqliteStorage(userId));
+    await Promise.all(opens.map((s) => s.init()));
+    expect(count(probe, 'messages')).toBe(40);
+    for (let i = 0; i < 40; i++) {
+      expect(await opens[4].getMessage(i % 2 === 0 ? A : B, `m${i}`, KEY)).toMatchObject({
+        content: `body ${i}`,
+      });
+    }
+    // The four that waited are said, not silent.
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes('second schema run'))).toHaveLength(
+      4
+    );
+  });
+
+  it('the swap refuses a drop it cannot prove, leaving both tables and no open transaction', async () => {
+    const { db, probe, connections } = await v22Pool(10);
+    probe.exec(
+      messageRekeySteps({ keyed: false, staging: false, columns: ['id'], indexes: [] }).copy[0]
+    );
+    probe.exec(
+      `INSERT INTO ${MESSAGES_REKEY_STAGING} (id, conversation_id) SELECT id, conversation_id FROM messages WHERE id <> 'm7'`
+    );
+    const swap = messageRekeySteps({
+      keyed: false,
+      staging: true,
+      columns: ['id'],
+      indexes: [],
+    }).swap!;
+    await expect(db.execute(swap)).rejects.toThrow(/CHECK constraint failed/);
+    expect(count(probe, 'messages')).toBe(10);
+    expect(count(probe, MESSAGES_REKEY_STAGING)).toBe(9);
+    // No connection is left inside a transaction: every one of them can still write.
+    for (const c of connections) c.exec('PRAGMA user_version = 22');
+  });
+
+  it('THE INCARNATION: minted with the table, kept across opens and the rebuild, new when the table is lost', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { db, probe } = await v22Pool(10);
+    vi.doMock('@tauri-apps/plugin-sql', () => ({ default: { load: async () => db } }));
+    const userId = `pool-${n++}`;
+    const first = new SqliteStorage(userId);
+    await first.init();
+    const minted = await first.messageStoreIncarnation();
+    expect(minted).toMatch(/^[0-9a-f-]{36}$/);
+    const again = new SqliteStorage(userId);
+    await again.init();
+    expect(await again.messageStoreIncarnation()).toBe(minted);
+    expect(error).not.toHaveBeenCalled();
+
+    // The table is lost: the next open makes it again, says so at error, and names a new lifetime.
+    probe.exec('DROP TABLE messages');
+    const lost = new SqliteStorage(userId);
+    await lost.init();
+    expect(await lost.messageStoreIncarnation()).not.toBe(minted);
+    expect(
+      error.mock.calls.filter((c) => String(c[0]).includes('messages table was ABSENT'))
+    ).toHaveLength(1);
+  });
+
+  it('the swap refuses when the staging table is gone - the drop never runs', async () => {
+    const { db, probe } = await v22Pool(10);
+    const swap = messageRekeySteps({
+      keyed: false,
+      staging: true,
+      columns: ['id'],
+      indexes: [],
+    }).swap!;
+    await expect(db.execute(swap)).rejects.toThrow(/CHECK constraint failed/);
+    expect(count(probe, 'messages')).toBe(10);
+  });
+
+  it('the swap refuses while an earlier copy is still set aside - it never overwrites one', async () => {
+    const { db, probe } = await v22Pool(10);
+    const steps = messageRekeySteps({
+      keyed: false,
+      staging: false,
+      columns: ['id', 'conversation_id'],
+      indexes: [],
+    });
+    for (const statement of steps.copy) probe.exec(statement);
+    probe.exec(`CREATE TABLE ${retainedName('messages')} (id TEXT, conversation_id TEXT)`);
+    await expect(db.execute(steps.swap!)).rejects.toThrow(/CHECK constraint failed/);
+    expect(count(probe, 'messages')).toBe(10);
+    expect(count(probe, MESSAGES_REKEY_STAGING)).toBe(10);
+  });
+
+  it('A COPY THAT IS NOT WHOLE IN THE NEW TABLE IS RESTORED FROM AT THE NEXT OPEN, THEN RELEASED', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { db, probe } = await v22Pool(40);
+    vi.doMock('@tauri-apps/plugin-sql', () => ({ default: { load: async () => db } }));
+    const userId = `pool-${n++}`;
+    await new SqliteStorage(userId).init();
+    // A defect the next migration may carry: the new table lost rows, the copy still holds them.
+    probe.exec(`CREATE TABLE ${retainedName('messages')} AS SELECT * FROM messages`);
+    probe.exec("DELETE FROM messages WHERE id IN ('m1', 'm2', 'm3')");
+    const reopened = new SqliteStorage(userId);
+    await reopened.init();
+    expect(count(probe, 'messages')).toBe(40);
+    expect(await reopened.getMessage(B, 'm3', KEY)).toMatchObject({ content: 'body 3' });
+    expect(
+      probe.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'retained%'").all()
+    ).toEqual([]);
+    expect(
+      error.mock.calls.filter((c) => String(c[0]).includes('3 of 40 row(s) set aside'))
+    ).toHaveLength(1);
   });
 });
 
@@ -669,7 +904,10 @@ describe('IndexedDB v14 -> v15: the messages store re-keyed by its conversation'
     );
     expect(await storage.findMessageConversations('m0')).toEqual([A, B]);
     const db = (storage as unknown as { ensureDb(): IDBDatabase }).ensureDb();
-    expect(db.version).toBe(15);
+    expect(db.version).toBe(16);
+    // The re-key carries every row, so the store's first incarnation is minted once and kept.
+    const incarnation = await storage.messageStoreIncarnation();
+    expect(incarnation).toMatch(/^[0-9a-f-]{36}$/);
     expect(db.transaction('messages', 'readonly').objectStore('messages').keyPath).toEqual([
       'conversationId',
       'id',

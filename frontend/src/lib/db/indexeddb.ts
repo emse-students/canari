@@ -81,6 +81,7 @@ import {
   toMessagePayload,
 } from './messagePayload';
 import { readStoredTimestampMs, storedTimeInWindow } from '$lib/utils/dates';
+import { MESSAGES_INCARNATION_KEY, newStoreIncarnation } from './storeIncarnation';
 import {
   deriveOrderKeysInChunks,
   OrderKeyDerivations,
@@ -92,7 +93,10 @@ import {
 // ---------------------------------------------------------------------------
 
 /** The schema version `init` opens; every branch of its upgrade handler is written against it. */
-const IDB_SCHEMA_VERSION = 15;
+const IDB_SCHEMA_VERSION = 16;
+
+/** The key/value store the message store's incarnation lives in (v16, `storeIncarnation.ts`). */
+const STORE_META = 'storeMeta';
 
 /**
  * THE `messages` STORE IS KEYED BY ITS CONVERSATION (v15): a stored message is the pair
@@ -298,6 +302,26 @@ function createKeyedMessageStore(db: IDBDatabase, name: string): IDBObjectStore 
     unique: false,
   });
   return store;
+}
+
+/**
+ * Writes the message store's incarnation inside the upgrade transaction (`storeIncarnation.ts`): a
+ * new one when the store is new (`fresh`), otherwise one only if the database never had any - a
+ * database older than v16 gets its first, once. Atomic with the upgrade, like everything in it.
+ */
+function recordMessageStoreIncarnation(db: IDBDatabase, tx: IDBTransaction, fresh: boolean): void {
+  if (!db.objectStoreNames.contains(STORE_META))
+    db.createObjectStore(STORE_META, { keyPath: 'key' });
+  const meta = tx.objectStore(STORE_META);
+  const record = { key: MESSAGES_INCARNATION_KEY, value: newStoreIncarnation() };
+  if (fresh) {
+    meta.put(record);
+    return;
+  }
+  const held = meta.get(MESSAGES_INCARNATION_KEY);
+  held.onsuccess = () => {
+    if (!held.result) meta.put(record);
+  };
 }
 
 /**
@@ -655,6 +679,10 @@ export class IndexedDbStorage implements IStorage {
         const db = (event.target as IDBOpenDBRequest).result;
         const oldVersion = event.oldVersion;
         const tx = (event.target as IDBOpenDBRequest).transaction!;
+        // Read BEFORE any branch: below v6 every branch recreates `messages`, and a database with no
+        // `messages` store at all is new - in both cases the store this upgrade leaves is a new
+        // lifetime, and it gets a new incarnation (`recordMessageStoreIncarnation`).
+        const messagesAreNew = !db.objectStoreNames.contains('messages') || oldVersion < 6;
 
         if (oldVersion < 2) {
           // Drop legacy v1 messages store (no conversation support)
@@ -799,6 +827,11 @@ export class IndexedDbStorage implements IStorage {
             );
           }
         }
+
+        // v15 -> v16: the message store's incarnation (`IStorage.messageStoreIncarnation`). The
+        // v15 re-key below carries every row, so it keeps the incarnation; only a store this upgrade
+        // made anew mints one. A future branch that recreates `messages` must set `messagesAreNew`.
+        recordMessageStoreIncarnation(db, tx, messagesAreNew);
 
         // v14 -> v15 FIRST (`rekeyMessagesByConversation`): the store is replaced, so every walk
         // below runs after it, on the store that now bears the name.
@@ -1844,6 +1877,19 @@ export class IndexedDbStorage implements IStorage {
         reject(tx.error ?? new DOMException('IndexedDB transaction aborted', 'AbortError'));
     });
     return report;
+  }
+
+  /** See {@link IStorage.messageStoreIncarnation}. */
+  async messageStoreIncarnation(): Promise<string | null> {
+    const db = this.ensureDb();
+    return new Promise((resolve, reject) => {
+      const req = db
+        .transaction(STORE_META, 'readonly')
+        .objectStore(STORE_META)
+        .get(MESSAGES_INCARNATION_KEY);
+      req.onsuccess = () => resolve((req.result as { value?: string } | undefined)?.value ?? null);
+      req.onerror = () => reject(req.error);
+    });
   }
 
   /** Rows held for `conversationId`, counted on the index - nothing is read or decrypted. */

@@ -1085,6 +1085,19 @@ export interface IStorage {
    */
   countMessages(conversationId: string): Promise<number>;
   /**
+   * The INCARNATION of the message table: a value minted when the table holding this device's
+   * messages is created, and kept for as long as that table lives.
+   *
+   * It answers "is this the store the history records were written against", which neither of them
+   * can: the connection record and the audit record (`historyReconcile.ts`) say "have I already
+   * asked", live outside the store, and SURVIVED the table loss of 2026-11-25 - so a device whose
+   * messages were gone looked whole to both and asked nobody. Each record now carries the incarnation
+   * it was written under, and a different one makes the next connection compare every group
+   * (`docs/wiki/frontend/local-store-rebuild.md`). `null` when the store cannot say, which the
+   * caller treats as a new store.
+   */
+  messageStoreIncarnation(): Promise<string | null>;
+  /**
    * The ids of the conversations that hold at least one stored message and start with `prefix`,
    * decrypting nothing.
    *
