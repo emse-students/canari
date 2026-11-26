@@ -148,8 +148,8 @@ as the game's HUD does (the mines minus the flags), so the lessons can teach it.
 | 6 | 1-1 | two neighbouring 1s share cells: the extra one is safe | 4x2 against the edge |
 | 7 | 1-2-1 | the middle is safe, both sides are mines | 3x2 |
 | 8 | 1-2-2-1 | the two middle cells are mines, the ends are safe | 4x2 |
-| 9 | 1-3-1 at a corner | the corner of an open area: a 3 seeing five cells between two 1s - the outermost corner cell is a mine | 4x4 |
-| 10 | 2-2-2 at a corner | the 2s at the ends see only two cells each (so, mines, and the automatic flags again); the corner 2 is then done | 4x4 |
+| 9 | 1-3-1 at an OPEN corner | a 3 seeing five cells between two 1s: **the outermost corner cell is always a mine**, and the two cells at the ends of the arms are safe | 6x5, the right column hidden |
+| 10 | 2-2-2 at an OPEN corner | three 2s: **the outermost corner cell is always safe**, the two cells at the ends of the arms are mines, one mine in each pair | 6x5, the right column hidden |
 
 **The highlights say what they are** (owner, 2026-11-26: *"surligne en rouge pour bombe sure, jaune pour groupe
 de bombes (avec un seul rectangle qui englobe plusieurs cases) et vert pour safe"*). A step of the "Indice"
@@ -177,9 +177,18 @@ strictly less). A red mark is a mine in every arrangement, a green mark is safe 
 mark holds exactly the mines its badge says and is outlined because a lit number touches it, and no mark hides an
 open cell. `lessonDone` also refuses a lucky flag beside the right ones: the point is the deduction.
 
-**The corner patterns were searched, not guessed** (an exhaustive solver over the small boards): the open area is
-a 3x3 block in the top-left of a 4x4 grid, the hidden cells the L around it, and the retained boards are the
-symmetric ones with a unique solution (1-3-1: three mines; 2-2-2: four).
+**The corner lessons are OPEN, and a test holds them to it** (owner, 2026-11-26: *"la presence de bords permet de
+contourner ce raisonnement"*). A first version drew the corner in a 4x4 grid whose edges made the ends of the arms
+trivial: a 2 that sees only two hidden cells marks both, so the pattern was never needed. The lessons now sit in a
+6x5 board whose right column is still hidden and touched by no number, and `lessons.test.ts` requires, for a
+lesson that declares a `corner: { number, cell }`: **(1) no number of the picture settles its own neighbours** (a
+0, or as many mines as hidden neighbours); **(2) the corner cell is forced WITH the corner number and unknown
+WITHOUT it**, the mines counter included - the far column is what keeps the counter from standing in for the
+reasoning (a closed 5x5 board always gave the answer without the corner number). The boards come from an
+exhaustive solver over the small boards, the symmetric ones (1-3-1 reads 1-1-1-[3]-1-1-1, 2-2-2 is flanked by 1s).
+**What each pattern forces in an open corner** (cells: X and Y at the ends of the arms, A B and D E the two pairs
+shared with the corner number, C the outermost corner): 1-3-1 forces C a mine and X, Y safe; 2-2-2 forces C safe
+and X, Y mines, and both leave one mine in each pair for the other numbers to place. Neither needs the counter.
 
 **Pinned:** `layout.test.ts`, `lessons.test.ts`, `MinesweeperMiniGrid.svelte.test.ts` (tap, flag, right-click, a
 chord in either mode, the automatic flags, the counter, a mine ends the lesson, solved ONCE, one outline per

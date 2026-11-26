@@ -13,7 +13,10 @@ import { LESSONS, lessonDone, markCells, type Coord, type Lesson } from './lesso
  * - **with the mines counter**, which a player always reads: a lesson that does not teach the counter
  *   must not NEED it (same answer with and without), and the one that teaches it must need it;
  * - every highlight says something true: a red mark is a mine in every arrangement, a green one is safe
- *   in every arrangement, a yellow one holds exactly the mines its badge says.
+ *   in every arrangement, a yellow one holds exactly the mines its badge says;
+ * - **a corner pattern cannot be bypassed** (owner, 2026-11-26: a board edge made the ends of the arms
+ *   trivial and let the lesson skip the corner reasoning): no number of the picture settles its own
+ *   neighbours, and the corner cell is decided WITH the corner number and NOT without it.
  *
  * A layout cannot be edited into a position that needs a guess, or a highlight into a claim the numbers
  * do not make, without this file failing.
@@ -40,7 +43,12 @@ function neighbours(board: MinesweeperBoard, i: number): number[] {
  * Every set of mines consistent with the revealed numbers; flags are premises, hidden cells are free.
  * `withCount` also requires the total the mines counter announces.
  */
-function arrangements(board: MinesweeperBoard, withCount: boolean): Array<Set<number>> {
+function arrangements(
+  board: MinesweeperBoard,
+  withCount: boolean,
+  /** A revealed number to leave out of the constraints, as if the player had not opened it. */
+  ignore?: number
+): Array<Set<number>> {
   const free: number[] = [];
   const fixed = new Set<number>();
   board.cells.forEach((cell, i) => {
@@ -58,6 +66,7 @@ function arrangements(board: MinesweeperBoard, withCount: boolean): Array<Set<nu
     const consistent = board.cells.every(
       (cell, i) =>
         cell.state !== 'revealed' ||
+        i === ignore ||
         neighbours(board, i).filter((n) => mines.has(n)).length === cell.adjacent
     );
     if (consistent) out.push(mines);
@@ -133,6 +142,35 @@ describe.each(deductive.map((l) => [l.id, l] as [string, Lesson]))('lesson %s', 
     expect(f.safe).toEqual(goalSafe);
     expect(f.mine).toEqual(goalMine);
   });
+
+  if (lesson.corner) {
+    const corner = lesson.corner;
+    it('is OPEN: no number settles its own neighbours, so no board edge bypasses the pattern', () => {
+      for (const [i, cell] of board.cells.entries()) {
+        if (cell.state !== 'revealed') continue;
+        const hidden = neighbours(board, i).filter((n) => board.cells[n].state !== 'revealed');
+        if (hidden.length === 0) continue;
+        // A 0 clears its neighbours, and a number equal to its hidden neighbours marks them all: either
+        // concludes without any pattern.
+        expect(cell.adjacent, `number at ${i} touches ${hidden.length} hidden cells`).not.toBe(0);
+        expect(cell.adjacent, `number at ${i} touches ${hidden.length} hidden cells`).not.toBe(
+          hidden.length
+        );
+      }
+    });
+
+    it('needs the corner number: its cell is forced WITH it, and unknown WITHOUT it', () => {
+      const cellIndex = at(board, corner.cell);
+      const status = (sols: Array<Set<number>>) =>
+        sols.every((s) => s.has(cellIndex))
+          ? 'mine'
+          : sols.every((s) => !s.has(cellIndex))
+            ? 'safe'
+            : '?';
+      expect(status(withCount)).not.toBe('?');
+      expect(status(arrangements(board, true, at(board, corner.number)))).toBe('?');
+    });
+  }
 
   if (id === COUNTER_LESSON) {
     it('NEEDS the counter: the numbers alone force strictly less', () => {
