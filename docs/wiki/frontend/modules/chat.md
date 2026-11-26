@@ -3251,6 +3251,15 @@ lose the conversation anyway, because leaving de-registers the USER and `verifyM
 retires the row on every device. Telling that device "you left the group" first would write a notice
 into a conversation about to disappear.
 
+### "Envoyer l'historique des messages" under a member's addition (owner, 2026-11-25)
+
+Under a `memberAdded` notice of a ready private group, `MessageBubble` draws one button per added user
+the caller offers (`offerHistoryTo` = `useConversations.canSendHistoryTo` = `canOfferHistoryTo`: still
+on the roster, not the viewer). It opens `HistoryGrantDialog` (24 h, 7 days, 30 days, everything, or
+a past date), whose send is `grantHistoryToNewcomer`; a `historyGranted` notice carries an "En savoir
+plus" disclosure. The mechanism, its checks and its settled design points:
+[history-reconciliation](../../protocols/history-reconciliation.md#a-member-may-send-their-history-to-a-newcomer-owner-2026-11-25).
+
 ### A visible system notice needs an identity the SENDER minted
 
 A notice the members are meant to SEE - a member added or removed, a rename, a new photo, a deleted

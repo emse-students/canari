@@ -31,6 +31,8 @@ import { canonicalUserId, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import { UNDATED_SKEW_MARGIN_MS } from '$lib/utils/chat/historyEntitlement';
 import { selectEntryIdsForPrefixes } from '$lib/utils/chat/historyManifest';
 import { isWithinHistoryRange } from '$lib/utils/chat/historyWindow';
+import type { GrantedAsk } from '$lib/utils/chat/historyGrant';
+import { sameDeviceIdentity } from '$lib/mls-client/leafIdentity';
 
 /**
  * What one ask stated, and therefore everything its answer may carry. `askedAt` is this device's
@@ -46,6 +48,11 @@ export type HistoryAsk =
        * hand over the register, the pins, the floor and the read marks, as the join push does.
        */
       register?: boolean;
+      /**
+       * The digest was sent under a HISTORY GRANT (`historyGrant.ts`): only the granting device may
+       * answer it, and its answer is checked against our windows lifted from the grant's date.
+       */
+      grant?: GrantedAsk;
     }
   | {
       kind: 'pull';
@@ -111,9 +118,16 @@ type TakenAsk = { ask: HistoryAsk; keyed: boolean };
  *   of one answer, which is what one device elected twice for one ask produced (2026-11-24);
  * - `not-the-inviter`: a join push from a device of a user other than the one the Welcome came from;
  * - `answerers-full`: a device beyond the first {@link MAX_ANSWERERS_PER_ASK}, which nothing honest
- *   produces.
+ *   produces;
+ * - `not-the-granter`: an answer to a grant ask from any device but the one that granted - the
+ *   grant lifts our pre-arrival drop for that device's answer alone.
  */
-type AskRefusal = 'no-open-ask' | 'answered-already' | 'not-the-inviter' | 'answerers-full';
+type AskRefusal =
+  | 'no-open-ask'
+  | 'answered-already'
+  | 'not-the-inviter'
+  | 'answerers-full'
+  | 'not-the-granter';
 
 /** What {@link takeAddressedAsk} decided: the ask taken, or the named reason it was refused. */
 type TakeAskResult = { taken: TakenAsk; refused?: never } | { taken?: never; refused: AskRefusal };
@@ -221,6 +235,14 @@ export function takeAddressedAsk(
   // THE PUSH IS THE INVITER'S: a join ask takes no device of another member, whatever slot is free.
   if (open.ask.kind === 'join' && userIdOfLeaf(answerer) !== open.ask.inviter) {
     return { refused: 'not-the-inviter' };
+  }
+  // A GRANT ASK IS THE GRANTER'S: no other device's answer is taken under it, whatever slot is free.
+  if (
+    open.ask.kind === 'digest' &&
+    open.ask.grant !== undefined &&
+    !sameDeviceIdentity(answerer, open.ask.grant.granter)
+  ) {
+    return { refused: 'not-the-granter' };
   }
   if (!open.answerers.has(answerer)) {
     if (open.answerers.size >= MAX_ANSWERERS_PER_ASK) return { refused: 'answerers-full' };

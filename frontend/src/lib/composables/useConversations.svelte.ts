@@ -67,7 +67,9 @@ import {
   purgeOrphanGroup,
   historyRangeStartFor,
   sendHistoryRangeRequest,
+  grantHistoryToNewcomer,
 } from '$lib/utils/chat/groupActions';
+import { canOfferHistoryTo } from '$lib/utils/chat/historyGrant';
 import {
   clearPendingGroupExit,
   classifyExitFailure,
@@ -2951,6 +2953,43 @@ export function useConversations() {
     if (current) conversations.set(key, { ...current, ...patch });
   }
 
+  /**
+   * Whether the selected conversation's `memberAdded` notice offers "Envoyer l'historique des
+   * messages" for `userId` - the newcomer predicate (`canOfferHistoryTo`), read against the roster
+   * this composable holds for the selected group.
+   */
+  function canSendHistoryTo(userId: string, selfId: string): boolean {
+    const key = selectedContact;
+    return canOfferHistoryTo({
+      conversation: key ? conversations.get(key) : null,
+      target: userId,
+      self: selfId,
+      members: groupMembers,
+    });
+  }
+
+  /**
+   * Grants `newcomer` the history THIS device holds in the selected group from `since` (owner,
+   * 2026-11-25, `historyGrant.ts`): the visible notice every member reads, this device's own row
+   * included. Throws when it could not be sent, so the dialog says so.
+   */
+  async function handleSendHistory(newcomer: string, since: number, ctx: ConversationContext) {
+    const key = selectedContact;
+    const convo = key ? conversations.get(key) : undefined;
+    if (!key || !convo || !canSendHistoryTo(newcomer, ctx.userId)) {
+      ctx.log(`[HISTORY_GRANT] no grant to ${newcomer.slice(0, 8)} from here - not offered`);
+      return;
+    }
+    await grantHistoryToNewcomer({
+      mlsService: ctx.ensureMls(),
+      groupId: convo.id,
+      userId: ctx.userId,
+      newcomer,
+      since,
+      own: { contactName: key, actor: ctx.userId, addMessageToChat: ctx.addMessageToChat },
+    });
+  }
+
   /** Renames the currently selected group on the server, broadcasts the change via MLS, and writes this device's own notice under the frame's id. No-op for DMs and channels. */
   async function handleRenameGroup(name: string, ctx: ConversationContext) {
     const key = selectedContact;
@@ -3437,6 +3476,8 @@ export function useConversations() {
     startNewConversation,
     /** Renames the currently selected group and broadcasts the change. */
     handleRenameGroup,
+    canSendHistoryTo,
+    handleSendHistory,
     /** Sets the currently selected group's avatar and broadcasts the change. */
     handleSetGroupImage,
     /** Deletes the currently selected group and clears the UI. */

@@ -105,6 +105,8 @@
   import ChatArea from './chat/ChatArea.svelte';
   import MessagingSyncOverlay from './chat/MessagingSyncOverlay.svelte';
   import ForwardMessageModal from './chat/ForwardMessageModal.svelte';
+  import HistoryGrantDialog from './chat/HistoryGrantDialog.svelte';
+  import { peekUserDisplayName } from '$lib/utils/users/displayName';
   import {
     callsAvailable,
     callVideoAvailable,
@@ -374,6 +376,23 @@
 
   /** Message pending forwarding (opens ForwardMessageModal when non-null). */
   let forwardingMessage = $state<ChatMessage | null>(null);
+
+  /**
+   * The newcomer "Envoyer l'historique des messages" was pressed for (opens `HistoryGrantDialog` when
+   * non-null) - owner, 2026-11-25, `historyGrant.ts`.
+   */
+  let historyGrantTarget = $state<string | null>(null);
+
+  /** Sends the grant the dialog confirmed; throws to the dialog when it could not be sent. */
+  async function sendHistoryGrant(target: string, since: number) {
+    log(`[HISTORY_GRANT] grant to ${target.slice(0, 8)} confirmed`);
+    await convs.handleSendHistory(target, since, convCtx());
+    historyGrantTarget = null;
+    showToast(
+      m.chat_history_grant_sent({ name: peekUserDisplayName(target) ?? target.slice(0, 8) }),
+      'info'
+    );
+  }
   // READ FROM THE DOCUMENT, NOT ASSUMED: the receipt effect is declared above the `onMount` that
   // listens, so its first run saw `true`/`true` and a page mounted in a hidden or unfocused window
   // with a conversation already selected could mark it (read-receipt-privacy, 2026-11-11).
@@ -1799,6 +1818,8 @@
           onCallBack={canStartAudioCall
             ? () => void startCallForCurrentConversation(false)
             : undefined}
+          offerHistoryTo={(userId) => convs.canSendHistoryTo(userId, session.userId ?? '')}
+          onSendHistory={(userId) => (historyGrantTarget = userId)}
           isLoadingHistory={convs.isLoadingHistory}
           isCatchingUpMessages={messaging.isMessageCatchupActive}
           isCatchupAnnounced={messaging.isCatchupOverlayVisible}
@@ -1992,6 +2013,15 @@
         onClose={() => (forwardingMessage = null)}
         onSelect={doForward}
       />
+
+      {#if historyGrantTarget}
+        {@const target = historyGrantTarget}
+        <HistoryGrantDialog
+          name={peekUserDisplayName(target) ?? target.slice(0, 8)}
+          onClose={() => (historyGrantTarget = null)}
+          onSend={(since) => sendHistoryGrant(target, since)}
+        />
+      {/if}
     </main>
   {:else}
     <main class="main-content" aria-hidden="true"></main>
