@@ -73,7 +73,10 @@ const DEVICE_CONTEXT_KEYS: [&str; 3] = ["userId", "deviceId", "locale"];
 ///
 /// Every step is attempted whatever an earlier one did - a mark that could not be written must not
 /// keep the bearer token on disk - and the first error is returned once all of them ran.
-#[cfg_attr(not(any(target_os = "android", target_os = "ios")), allow(dead_code))]
+///
+/// Only the tests call this form - the sign-out runs [`end_push_registration_files_then`] - so it is
+/// compiled for them alone; the old `allow(dead_code)` named the desktop and left a warning on Android.
+#[cfg(test)]
 pub(crate) fn end_push_registration_files(
     data_dir: &std::path::Path,
     extension_dir: Option<&std::path::Path>,
@@ -86,6 +89,7 @@ pub(crate) fn end_push_registration_files(
 /// can land in, which a test fills with one. Also answers the ERASE TICKET: the count this sign-out
 /// wrote into [`NOTIFICATION_ERASE_OWED_FILE`], `None` when that write failed - the page's erase
 /// carries it, and only a ticket proves which mark a later "nothing owed" is about.
+#[cfg_attr(not(any(target_os = "android", target_os = "ios")), allow(dead_code))]
 fn end_push_registration_files_then(
     data_dir: &std::path::Path,
     extension_dir: Option<&std::path::Path>,

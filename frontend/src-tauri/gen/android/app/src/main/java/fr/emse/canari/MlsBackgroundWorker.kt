@@ -8,6 +8,7 @@ import androidx.core.app.NotificationCompat
 import androidx.work.ForegroundInfo
 import androidx.work.Worker
 import androidx.work.WorkerParameters
+import fr.emse.canari.push.SweepFailureLedger
 
 /**
  * The pending-DB sweep a refused push frame enqueues (`nativeProcessBackgroundTasks` ->
@@ -25,20 +26,24 @@ class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
         const val TAG = "CanariWorker"
         /** ID of the foreground notification shown when the worker runs in expedited mode. */
         private const val FOREGROUND_NOTIF_ID = fr.emse.canari.push.FixedNotifIds.WORKER_FOREGROUND
-        /** ID of the "open the app" notification shown after 3 consecutive failures. */
+        /** ID of the "open the app" notification shown after [SweepFailureLedger.GIVE_UP_AFTER] consecutive REAL failures. */
         private const val FAILURE_NOTIF_ID = fr.emse.canari.push.FixedNotifIds.BACKGROUND_FAILURE
 
         const val PREFS_WORKER = "canari_worker_prefs"
+        /** Set when a streak of real failures gave up; read by `enqueueWorkerIfHealthy`, which then enqueues nothing. */
         const val KEY_FAILED   = "mls_bg_failed"
+        /** The streak of consecutive REAL sweep failures [SweepFailureLedger] folds, across work requests. */
+        const val KEY_CONSECUTIVE_FAILURES = "mls_bg_consecutive_failures"
 
         /**
-         * Resets the persistent failure flag - to be called from [MainActivity.onResume]
-         * as soon as the user opens the app, so that the next FCM messages enqueue again.
+         * Resets the persistent failure flag and the failure streak - to be called from
+         * [MainActivity.onResume] as soon as the user opens the app, so that the next FCM messages
+         * enqueue again and a new streak starts from zero.
          */
         fun resetFailureFlag(context: Context) {
             context.getSharedPreferences(PREFS_WORKER, Context.MODE_PRIVATE)
-                .edit().putBoolean(KEY_FAILED, false).apply()
-            Log.d(TAG, "resetFailureFlag: flag reset")
+                .edit().putBoolean(KEY_FAILED, false).putInt(KEY_CONSECUTIVE_FAILURES, 0).apply()
+            Log.d(TAG, "resetFailureFlag: flag and failure streak reset")
         }
 
         /** Shows a notification inviting the user to open the app to unblock the sync. */
@@ -64,8 +69,12 @@ class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
         }
     }
 
-    // Dedicated JNI bridge for queue processing (Welcome, etc.)
-    external fun nativeProcessBackgroundTasks(filesDir: String, stateBytes: ByteArray, pin: String, userId: String, deviceId: String): Boolean
+    /**
+     * Prunes `mls_pending.db` under [filesDir] (`background.rs` `cleanup_pending_db`), the same call
+     * as iOS's `canari_native_cleanup_pending_db`. It reads neither `mls.bin` nor the push context,
+     * so it is handed neither. True when the sweep completed.
+     */
+    external fun nativeProcessBackgroundTasks(filesDir: String): Boolean
 
     /**
      * Required for expedited workers: provides the foreground notification shown
@@ -86,69 +95,46 @@ class MlsBackgroundWorker(context: Context, workerParams: WorkerParameters) :
     }
 
     override fun doWork(): Result {
-        if (runAttemptCount >= 3) {
-            Log.e(TAG, "doWork: max retries reached, giving up")
-            applicationContext.getSharedPreferences(PREFS_WORKER, Context.MODE_PRIVATE)
-                .edit().putBoolean(KEY_FAILED, true).apply()
-            showWorkerFailureNotification(applicationContext)
-            return Result.failure()
-        }
         Log.d(TAG, "doWork: starting (attempt $runAttemptCount)")
-
-        // Foreground guard: if the app came back to the foreground since the enqueue, the Tauri
-        // MLS engine is already processing via WebSocket and writing mls.bin. Processing here in
-        // parallel would clobber the state (lost KeyPackages, epoch gaps). We defer: on the next
-        // retry the app will likely be in the background again, otherwise the foreground handled it.
-        if (MainActivity.isInForeground) {
-            Log.d(TAG, "doWork: app in foreground -> MLS handled by the foreground, retry deferred")
-            return Result.retry()
-        }
-
-        val read = MlsContextLoader.readPushContext(applicationContext)
-        val ctx = read.context
-        if (ctx == null) {
-            Log.e(TAG, "doWork: push_context.json ${read.verdict.describe()} -> failure")
-            return Result.failure()
-        }
         val filesDir = MlsContextLoader.tauriDataDir(applicationContext).also { it.mkdirs() }.absolutePath
-
-        // Acquire lock BEFORE reading mls.bin: FCM threads write mls.bin concurrently
-        // (nativeDecryptMessage). Reading outside the lock risks JNI-processing stale state.
-        // tryLock throws InterruptedException under Android memory pressure - must be caught.
-        val lockAcquired = try {
-            MlsStateLock.LOCK.tryLock(15, java.util.concurrent.TimeUnit.SECONDS)
-        } catch (e: InterruptedException) {
-            Thread.currentThread().interrupt()
-            Log.e(TAG, "doWork: thread interrupted during tryLock: ${e.message}") // log-safe: message of a system or native call (InterruptedException); this try parses and names no user input
-            return Result.retry()
-        }
-        if (!lockAcquired) {
-            Log.w(TAG, "doWork: MlsStateLock not acquired after 15s -> retry")
-            return Result.retry()
-        }
-        return try {
-            val stateBytes = MlsContextLoader.loadMlsState(applicationContext)
-            if (stateBytes == null) {
-                Log.e(TAG, "doWork: mls.bin absent -> failure")
-                return Result.failure()
-            }
-            Log.d(TAG, "doWork: MLS state=${stateBytes.size} bytes, filesDir=$filesDir")
-            val success = nativeProcessBackgroundTasks(filesDir, stateBytes, "", ctx.userId, ctx.deviceId)
-            if (success) {
-                Log.d(TAG, "doWork: background cleanup completed")
-                Result.success()
+        // THE SWEEP TOUCHES `mls_pending.db` ALONE, through SQLite's own locking (WAL, busy timeout),
+        // so nothing here waits for the foreground or for `MlsStateLock`: neither guards a file this
+        // work reads. Both used to return `Result.retry()`, and three of those raised the "open the
+        // app" notice with the app open ([SweepFailureLedger]).
+        val outcome: SweepFailureLedger.Outcome = try {
+            if (nativeProcessBackgroundTasks(filesDir)) {
+                SweepFailureLedger.Outcome.Swept
             } else {
-                Log.w(TAG, "doWork: nativeProcessBackgroundTasks -> false, retry")
-                Result.retry()
+                SweepFailureLedger.Outcome.Failed("native sweep answered false")
             }
         } catch (e: UnsatisfiedLinkError) {
-            Log.e(TAG, "doWork: native library not loaded -> retry: ${e.message}") // log-safe: message of a system or native call (UnsatisfiedLinkError); this try parses and names no user input
-            Result.retry()
+            Log.e(TAG, "doWork: native library not loaded: ${e.message}") // log-safe: message of a system or native call (UnsatisfiedLinkError); this try parses and names no user input
+            SweepFailureLedger.Outcome.Failed("native library not loaded")
         } catch (e: Exception) {
-            Log.e(TAG, "doWork: unexpected exception -> failure: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
-            Result.failure()
-        } finally {
-            MlsStateLock.LOCK.unlock()
+            Log.e(TAG, "doWork: sweep threw ${e.javaClass.simpleName}: ${e.message}") // log-safe: message of a system or native call (Exception); this try parses and names no user input
+            SweepFailureLedger.Outcome.Failed("sweep threw")
+        }
+
+        val prefs = applicationContext.getSharedPreferences(PREFS_WORKER, Context.MODE_PRIVATE)
+        val decision = SweepFailureLedger.next(prefs.getInt(KEY_CONSECUTIVE_FAILURES, 0), outcome)
+        prefs.edit().putInt(KEY_CONSECUTIVE_FAILURES, decision.consecutiveFailures).apply()
+        val cause = (outcome as? SweepFailureLedger.Outcome.Failed)?.cause
+        val streak = decision.consecutiveFailures
+        return when (decision.verdict) {
+            SweepFailureLedger.Verdict.DONE -> {
+                Log.d(TAG, "doWork: pending DB swept")
+                Result.success()
+            }
+            SweepFailureLedger.Verdict.RETRY -> {
+                Log.e(TAG, "doWork: $cause -> retry (consecutive failures=$streak/${SweepFailureLedger.GIVE_UP_AFTER})")
+                Result.retry()
+            }
+            SweepFailureLedger.Verdict.GIVE_UP -> {
+                Log.e(TAG, "doWork: $cause -> giving up (consecutive failures=$streak)")
+                prefs.edit().putBoolean(KEY_FAILED, true).apply()
+                if (decision.raisesNotice) showWorkerFailureNotification(applicationContext)
+                Result.failure()
+            }
         }
     }
 

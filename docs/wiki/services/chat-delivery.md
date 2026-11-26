@@ -2435,7 +2435,7 @@ The iOS `aps-environment` entitlement is `production` for TestFlight/App Store b
 
 #### iOS background execution
 
-Android drains the pending MLS state from an expedited `MlsBackgroundWorker` (WorkManager). The
+Android prunes the pending MLS database from an expedited `MlsBackgroundWorker` (WorkManager). The
 iOS peer is a **`BGProcessingTask`** (`fr.emse.canari.cleanup`, listed in
 `BGTaskSchedulerPermittedIdentifiers`): its launch handler is registered in `canari_ios_bootstrap`
 (before `UIApplicationMain`, as `BGTaskScheduler` demands) and runs

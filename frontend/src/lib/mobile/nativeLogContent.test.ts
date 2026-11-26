@@ -288,6 +288,8 @@ const REVIEWED_GROUPS: [string, string[]][] = [
     [
       // `OutboxRetry.Prospect` and its Rust token (`SendProspect::token`): an enum's name.
       'CanariFirebaseMessagingService.kt|prospect',
+      // `SweepFailureLedger.Outcome.Failed.cause`: a fixed word the worker spells at the failure.
+      '2x MlsBackgroundWorker.kt|cause',
       'background.rs|prospect.token()',
       'admission.rs|previous.map_or("unclassified", AdmissionPolicy::as_str)',
       'owed_welcome.rs|match other { PendingSubmissionRead::None => "no record", PendingSubmissionRead::Unreadable => "unre',
@@ -393,6 +395,7 @@ const REVIEWED_GROUPS: [string, string[]][] = [
     'a counter, a size, a position, a pixel measure or a duration',
     [
       '3x CallForegroundService.kt|wanted',
+      '2x MlsBackgroundWorker.kt|streak',
       'CanariFirebaseMessagingService.kt|(now - absent.lastModified()) / 1_000',
       '2x CanariFirebaseMessagingService.kt|bounds.outHeight',
       '2x CanariFirebaseMessagingService.kt|bounds.outWidth',
@@ -441,7 +444,6 @@ const REVIEWED_GROUPS: [string, string[]][] = [
     [
       'CanariFirebaseMessagingService.kt|key',
       '2x CanariFirebaseMessagingService.kt|name',
-      'MlsBackgroundWorker.kt|filesDir',
       'KeyboardMediaBridge.mm|name',
       'canari_ios.mm|CanariTauriDataDir()',
       'canari_push.mm|key',
