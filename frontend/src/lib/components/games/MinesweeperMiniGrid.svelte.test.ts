@@ -9,9 +9,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import { LESSONS } from '$lib/minesweeper/tutorial/lessons';
+import { PATTERNS } from '$lib/minesweeper/tutorial/patterns';
 import MinesweeperMiniGrid from './MinesweeperMiniGrid.svelte';
 
-const lessonOf = (id: string) => LESSONS.find((l) => l.id === id)!;
+const lessonOf = (id: string) => [...LESSONS, ...PATTERNS].find((l) => l.id === id)!;
 const mounted: Array<() => void> = [];
 
 beforeEach(() => {
@@ -160,6 +161,42 @@ describe('MinesweeperMiniGrid', () => {
     cell(9).click(); // (1,2)
     flushSync();
     expect(onSolved).toHaveBeenCalledOnce();
+  });
+
+  it('draws an OPEN grid as a window: unimportant cells dotted and not playable, the counter reads "?"', () => {
+    const { onLost } = open('one_two');
+    expect(counter()).toBe('?');
+    expect(
+      document.querySelector('[data-testid="tutorial-counter"]')?.getAttribute('aria-label')
+    ).toBe('Nombre de mines inconnu');
+    // Column 0 touches no number: it is the picture's continuation, and its (0,0) is a mine.
+    for (const i of [0, 3, 6, 9]) expect(cell(i).getAttribute('data-hint')).toBe('far');
+    cell(0).click();
+    flushSync();
+    expect(onLost).not.toHaveBeenCalled();
+    expect(cell(0).getAttribute('data-hint')).toBe('far');
+    // The cells next to a number are the pattern, and stay playable.
+    expect(cell(1).getAttribute('data-hint')).toBeNull();
+  });
+
+  it('keeps a closed lesson closed: its counter is a number and every cell is playable', () => {
+    open('flag');
+    expect(counter()).toBe('1');
+    expect(document.querySelectorAll('[data-hint="far"]')).toHaveLength(0);
+  });
+
+  it('draws what is left of a number once its flags are taken off, and only on the step that reads it', async () => {
+    open('reduction_intro', 0);
+    await tick();
+    const pills = [...document.querySelectorAll<HTMLElement>('[data-reduced]')];
+    expect(pills.map((p) => p.dataset.reduced)).toEqual(['1', '1']);
+    expect(pills[0].textContent?.trim()).toBe('→ 1');
+  });
+
+  it('shows no reduction label before a hint', async () => {
+    open('reduction_intro');
+    await tick();
+    expect(document.querySelectorAll('[data-reduced]')).toHaveLength(0);
   });
 
   it('shows the gesture target of the guided lesson from the start, in green, without any hint', () => {

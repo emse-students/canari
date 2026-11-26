@@ -3,6 +3,7 @@ import type { MinesweeperBoard } from '../game';
 import { revealCell, toggleFlag } from '../game';
 import { boardFromLayout } from './layout';
 import { LESSONS, lessonDone, markCells, type Coord, type Lesson } from './lessons';
+import { PATTERNS } from './patterns';
 
 /**
  * EVERY LESSON IS PROVED, NOT READ. A tutorial that teaches a pattern wrong is worse than none, so each
@@ -85,8 +86,17 @@ function forced(board: MinesweeperBoard, sols: Array<Set<number>>) {
   };
 }
 
-const deductive = LESSONS.filter((l) => l.guide === undefined);
-const COUNTER_LESSON = 'counter';
+/**
+ * Every lesson of the tutorial AND every entry of the pattern catalogue (its annex). A catalogue entry that is
+ * a tutorial lesson listed under a family is the SAME lesson, proved once.
+ */
+const ALL: readonly Lesson[] = [
+  ...LESSONS,
+  ...PATTERNS.filter((p) => !LESSONS.some((l) => l.id === p.id)),
+];
+const deductive = ALL.filter((l) => l.guide === undefined);
+/** The lessons that teach the counter, so are allowed (and required) to need it. */
+const COUNTER_LESSONS = new Set(['counter', 'combinations']);
 
 describe('the lessons are well formed', () => {
   it('has distinct ids, each with a title, a body and at least one hint', () => {
@@ -116,7 +126,8 @@ describe('the lessons are well formed', () => {
 
 describe.each(deductive.map((l) => [l.id, l] as [string, Lesson]))('lesson %s', (id, lesson) => {
   const board = boardFromLayout(lesson.rows);
-  const withCount = arrangements(board, true);
+  // An open grid is a window: its counter reads "?", so the proof leaves the total out.
+  const withCount = arrangements(board, !lesson.open);
   const withoutCount = arrangements(board, false);
   const mineIn = (c: Coord) => withCount.map((s) => s.has(at(board, c)));
   const goalSafe = lesson.goal.reveal.map((c) => at(board, c)).sort(numeric);
@@ -172,11 +183,13 @@ describe.each(deductive.map((l) => [l.id, l] as [string, Lesson]))('lesson %s', 
     });
   }
 
-  if (id === COUNTER_LESSON) {
+  if (COUNTER_LESSONS.has(id)) {
     it('NEEDS the counter: the numbers alone force strictly less', () => {
       const f = forced(board, withoutCount);
-      expect(f.safe.length).toBeLessThan(goalSafe.length);
-      expect(f.mine).toEqual(goalMine);
+      // Whatever they force is part of the goal, and something of the goal is out of their reach.
+      expect(f.safe.every((i) => goalSafe.includes(i))).toBe(true);
+      expect(f.mine.every((i) => goalMine.includes(i))).toBe(true);
+      expect(f.safe.length + f.mine.length).toBeLessThan(goalSafe.length + goalMine.length);
     });
   } else {
     it('does not need the counter: it forces exactly the same without it', () => {
@@ -200,7 +213,7 @@ describe('the guided lesson', () => {
 });
 
 describe('the highlights say something true', () => {
-  for (const lesson of LESSONS) {
+  for (const lesson of ALL) {
     describe(`lesson ${lesson.id}`, () => {
       const board = boardFromLayout(lesson.rows);
       const sols = lesson.guide ? [] : arrangements(board, true);
@@ -245,6 +258,95 @@ describe('the highlights say something true', () => {
           }
         });
       });
+    });
+  }
+});
+
+describe('the pattern catalogue (the tutorial annex)', () => {
+  it('lists every named pattern of the reference catalogue, once', () => {
+    const ids = PATTERNS.map((p) => p.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).toEqual(
+      expect.arrayContaining([
+        'autoflag', // B1
+        'chord', // B2
+        'one_one',
+        'one_one_plus',
+        'one_two',
+        'one_two_plus',
+        'one_two_c',
+        'one_two_c_plus',
+        'one_two_one',
+        'one_two_two_one',
+        'reduction_intro',
+        'reduced_one_one',
+        'reduced_one_two',
+        'reduced_one_two_one',
+        'hole_1',
+        'hole_2',
+        'hole_3',
+        'triangle_1',
+        'triangle_2',
+        'triangle_3',
+        'triangle_4',
+        'triangle_5',
+        'angle_one_three_one',
+        'angle_two_two_two',
+        'gt_two_lt',
+        't_pattern',
+        'chain',
+        'counter',
+        'combinations',
+      ])
+    );
+  });
+
+  it('puts every entry under a family, with a title, a body and a text per step', () => {
+    for (const p of PATTERNS) {
+      expect(p.section, p.id).toBeDefined();
+      expect(p.section!().length).toBeGreaterThan(0);
+      expect(p.title().length).toBeGreaterThan(0);
+      expect(p.body().length).toBeGreaterThan(0);
+      expect(p.hints.length).toBeGreaterThan(0);
+      for (const step of p.hints) expect(step.text().length).toBeGreaterThan(0);
+    }
+  });
+
+  it('keeps the families together, so the jump list groups them', () => {
+    const sections = PATTERNS.map((p) => p.section!());
+    const seen = new Set<string>();
+    let previous = '';
+    for (const s of sections) {
+      if (s !== previous) expect(seen.has(s), `family '${s}' is split`).toBe(false);
+      seen.add(s);
+      previous = s;
+    }
+  });
+});
+
+describe('a reduced number is the number minus the flags it touches', () => {
+  const withReduction = ALL.flatMap((l) =>
+    l.hints.flatMap((step, k) => (step.reduced ? [[l, step, k] as const] : []))
+  );
+
+  it('is taught by at least the introduction and the three reduction patterns', () => {
+    expect(new Set(withReduction.map(([l]) => l.id))).toEqual(
+      new Set(['reduction_intro', 'reduced_one_one', 'reduced_one_two', 'reduced_one_two_one'])
+    );
+  });
+
+  for (const [lesson, step, k] of withReduction) {
+    it(`${lesson.id}, step ${k + 1}: every label is the digit minus the flags around it`, () => {
+      const board = boardFromLayout(lesson.rows);
+      for (const { cell, value } of step.reduced!) {
+        const i = at(board, cell);
+        expect(board.cells[i].state).toBe('revealed');
+        const flags = neighbours(board, i).filter((n) => board.cells[n].state === 'flagged').length;
+        expect(flags).toBeGreaterThan(0);
+        expect(value).toBe(board.cells[i].adjacent - flags);
+        // A reduced number is one the step is reading.
+        expect(step.numbers.some(([x, y]) => at(board, [x, y]) === i)).toBe(true);
+      }
     });
   }
 });

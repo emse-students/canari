@@ -107,14 +107,19 @@ describe('MinesweeperCell highlight', () => {
     document.body.innerHTML = '';
   });
 
-  function cellWith(props: { marked?: boolean; highlight?: 'hint' | 'wrong' | 'read' | null }) {
+  function cellWith(props: {
+    marked?: boolean;
+    highlight?: 'hint' | 'wrong' | 'read' | 'far' | null;
+    state?: 'hidden' | 'revealed';
+  }) {
     const app = mount(MinesweeperCell, {
       target: document.body,
       props: {
-        cell: { mine: false, adjacent: 2, state: 'revealed' },
+        cell: { mine: false, adjacent: 2, state: props.state ?? 'revealed' },
         index: 0,
         pending: false,
-        ...props,
+        marked: props.marked,
+        highlight: props.highlight,
       },
     });
     cleanups.push(() => unmount(app));
@@ -140,6 +145,15 @@ describe('MinesweeperCell highlight', () => {
     expect(cellWith({ highlight: 'hint' }).getAttribute('aria-label')).toBe('2, indice');
     document.body.innerHTML = '';
     expect(cellWith({ highlight: 'wrong' }).getAttribute('aria-label')).toBe('Drapeau mal placé');
+  });
+
+  it('draws a cell the picture only suggests dotted and faded, with no background', () => {
+    const far = cellWith({ highlight: 'far', state: 'hidden' });
+    expect(far.className).toContain('border-dashed');
+    expect(far.className).toContain('opacity-60');
+    expect(far.className).toContain('bg-transparent');
+    expect(far.className).not.toContain('ms-hidden');
+    expect(far.getAttribute('data-hint')).toBe('far');
   });
 
   it('rings the number a tutorial step reads in the text colour, so it is never taken for a yellow group', () => {

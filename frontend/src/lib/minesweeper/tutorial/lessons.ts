@@ -14,7 +14,7 @@ import type { MinesweeperBoard } from '../game';
 export type Coord = readonly [number, number];
 
 /** A rectangle of cells: `[x, y, width, height]`. */
-type Rect = readonly [number, number, number, number];
+export type Rect = readonly [number, number, number, number];
 
 /** What a lesson asks: cells to open (all safe) and cells to flag (all mines). */
 export interface LessonGoal {
@@ -48,16 +48,32 @@ export interface HintMark {
 interface HintStep {
   numbers: readonly Coord[];
   marks: readonly HintMark[];
+  /**
+   * REDUCTION (owner, 2026-11-26): numbers drawn with what is left of them once the flags they touch are
+   * taken off - `2 -> 1` for a 2 beside one flag. The test holds `value` to the board: the number minus
+   * its flagged neighbours, so a label cannot teach a wrong subtraction.
+   */
+  reduced?: readonly { cell: Coord; value: number }[];
   text: () => string;
 }
 
 export interface Lesson {
   id: string;
+  /** The group a catalogue entry belongs to (the annex lists patterns by family); absent in the tutorial. */
+  section?: () => string;
   title: () => string;
   body: () => string;
   /** The picture, see `layout.ts`. */
   rows: readonly string[];
   goal: LessonGoal;
+  /**
+   * AN OPEN GRID (owner, 2026-11-26: *"une continuite avec des cases non importantes, un nombre inconnu de
+   * mines et des pointilles qui continuent la grille"*): the picture is a window on a larger board. The
+   * hidden cells no number touches are drawn dotted and cannot be played, the mines counter reads "?",
+   * and the proof leaves the counter out - so a pattern is taught on what the numbers say, never on a
+   * total the picture happens to carry.
+   */
+  open?: boolean;
   /**
    * Marks shown from the start, before any hint: a lesson that teaches a GESTURE (open a cell) shows
    * where. Such a lesson has no deduction to verify, only a safe target.
@@ -73,9 +89,12 @@ export interface Lesson {
   hints: readonly HintStep[];
 }
 
-const mine = (...rects: Rect[]): HintMark => ({ kind: 'mine', rects });
-const safe = (...rects: Rect[]): HintMark => ({ kind: 'safe', rects });
-const group = (count: number | undefined, ...rects: Rect[]): HintMark => ({
+/** A mark of certain mines, drawn as one red outline per rectangle. */
+export const mine = (...rects: Rect[]): HintMark => ({ kind: 'mine', rects });
+/** A mark of certain safe cells, in green. */
+export const safe = (...rects: Rect[]): HintMark => ({ kind: 'safe', rects });
+/** A group of cells holding `count` mines (exact), or an unspecified number when `count` is undefined. */
+export const group = (count: number | undefined, ...rects: Rect[]): HintMark => ({
   kind: 'group',
   rects,
   count,

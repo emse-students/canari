@@ -23,4 +23,6 @@ _The bulb and the levels ship in 1.8.2 (owner, 2026-11-25); moved to 1.8.2 when 
 
 13. **The mode sheet reads**: on both phones the sheet rises from the bottom without covering the home bar, its four rows are tall enough for a thumb and legible on both themes, each line says what the mode is, the pastille is not clipped on a 360 px screen with "Intermediaire", and the sheet closes on the scrim, on "Fermer" and on the Android Back gesture without leaving the game.
 
-**What closes it**: items 1, 2, 4, 6, 7, 8, 9, 11 and 13 pass on both phones, item 3 holds on at least five presses, and items 10 and 12 pass on at least one. A failure names the item.
+14. **The pattern catalogue reads** (`/games/tutorial/patterns`, from the tutorial's header): the jump list opens and groups the 29 entries by family; an open grid shows its dotted continuation and a "?" counter, and a tap on a dotted cell does nothing; the reduction entries draw their `-> n` pills on the right numbers; the wide ones (the dependency chain, eight cells) fit a phone width.
+
+**What closes it**: items 1, 2, 4, 6, 7, 8, 9, 11, 13 and 14 pass on both phones, item 3 holds on at least five presses, and items 10 and 12 pass on at least one. A failure names the item.

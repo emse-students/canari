@@ -15,10 +15,11 @@
     /**
      * Lit by the bulb of an unranked game: `hint` a number to read, `wrong` a misplaced flag
      * (`hint.ts`); by the tutorial, `read` the number its explanation is reading (a dark ring, so the
-     * yellow of a group of cells is never confused with it). Null otherwise; a primitive, so only the
+     * yellow of a group of cells is never confused with it), `far` a cell the picture only suggests (an open
+     * grid's unimportant cells: dotted, faded, not playable). Null otherwise; a primitive, so only the
      * cells whose value changed re-render.
      */
-    highlight?: 'hint' | 'wrong' | 'read' | null;
+    highlight?: 'hint' | 'wrong' | 'read' | 'far' | null;
   }
 
   let { cell, index, pending, marked = false, highlight = null }: Props = $props();
@@ -48,7 +49,9 @@
     pending
       ? 'bg-cn-bg ms-pending'
       : cell.state !== 'revealed'
-        ? 'ms-hidden'
+        ? highlight === 'far'
+          ? 'bg-transparent'
+          : 'ms-hidden'
         : cell.mine
           ? 'bg-red-600'
           : 'bg-cn-surface dark:bg-cn-bg'
@@ -64,9 +67,11 @@
         ? 'ms-hint ms-hint-wrong ring-red-err ring-2 ring-inset'
         : highlight === 'read'
           ? 'ring-text-main ring-2 ring-inset'
-          : marked
-            ? 'ring-accent ring-2 ring-inset'
-            : ''
+          : highlight === 'far'
+            ? 'border-text-muted/60 border border-dashed opacity-60'
+            : marked
+              ? 'ring-accent ring-2 ring-inset'
+              : ''
   );
   /** What a screen reader hears for a lit cell: the ring alone says nothing to it. */
   const hintLabel = $derived(
@@ -76,7 +81,9 @@
         ? m.minesweeper_hint_wrong_cell()
         : highlight === 'read'
           ? m.minesweeper_tutorial_read_cell({ n: String(cell.adjacent) })
-          : undefined
+          : highlight === 'far'
+            ? m.minesweeper_tutorial_far_cell()
+            : undefined
   );
   const numberColor = $derived(
     cell.state === 'revealed' && !cell.mine && cell.adjacent > 0 ? NUMBER_COLORS[cell.adjacent] : ''

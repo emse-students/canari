@@ -15,7 +15,8 @@ it can be cleared without guessing, with a ranked leaderboard checked by server-
 | Per-cell diff behind the render | `frontend/src/lib/minesweeper/cellViews.ts`, `MinesweeperCell.svelte` |
 | The bulb of an unranked game (client only) | `frontend/src/lib/minesweeper/hint.ts` |
 | The unranked levels (client only) | `frontend/src/lib/minesweeper/levels.ts` |
-| The tutorial (page, lessons, mini-grid) | `frontend/src/routes/games/tutorial/+page.svelte`, `frontend/src/lib/minesweeper/tutorial/`, `frontend/src/lib/components/games/MinesweeperMiniGrid.svelte` |
+| The tutorial (page, lessons, mini-grid, shared reader) | `frontend/src/routes/games/tutorial/+page.svelte`, `frontend/src/lib/minesweeper/tutorial/lessons.ts`, `frontend/src/lib/components/games/MinesweeperMiniGrid.svelte`, `frontend/src/lib/components/games/MinesweeperLessonRunner.svelte` |
+| The pattern catalogue, the tutorial's annex | `frontend/src/routes/games/tutorial/patterns/+page.svelte`, `frontend/src/lib/minesweeper/tutorial/patterns.ts` |
 | Challenge issue, replay, scores | `apps/social-service/src/minesweeper/minesweeper.service.ts` |
 
 ## The screen is the board (2026-10-07)
@@ -224,6 +225,50 @@ chord in either mode, the automatic flags, the counter, a mine ends the lesson, 
 rectangle and its colour and badge), `routes/games/tutorial/page.svelte.test.ts` (the lessons chain to a closing
 screen that leads to a game, the hint cycle with its legend, restart, Back to `/games`).
 **Owed:** the phone reading ([reading](../../backlog.d/reading-owed-the-minesweeper-hint.md), items 11 and 12).
+
+## The pattern catalogue, the tutorial's annex (owner, 2026-11-26)
+
+*"reprend leurs explications pour tous les patterns dans un tutoriel annexe"* (owner), after asking for an
+introduction to REDUCED patterns *"sur les patterns de minesweeper.online"*. `/games/tutorial/patterns` lists
+**every named pattern of that reference catalogue**, one playable board each, by family, reached from the
+tutorial's header and closing screen. It shares the tutorial's reader (`MinesweeperLessonRunner.svelte`, which
+the tutorial page also uses), with a jump list grouped by family.
+
+**The source, and what is ours.** The reference states what each pattern concludes and draws it as a picture.
+**The words are ours** (French and English, written from the statement, never copied) and **the boards are
+ours**: each one was found by an exhaustive or sampled search for a board where the stated numbers are present
+and the conclusion is true, then **proved** by `lessons.test.ts` like every lesson. Where the reference gives a
+name but not a shape (the holes H1-H3, the T pattern, the dependency chain, the three T variants), the board is
+our reading of its statement, and says so here.
+
+| Family | Entries (a name already taught in the tutorial is the SAME lesson, listed under its family) |
+| --- | --- |
+| Basics | B1 (the automatic flags), B2 (the chord), 1-1, 1-1+, 1-2, 1-2+, 1-2C, 1-2C+ |
+| Combined 1-2 patterns | 1-2-1, 1-2-2-1 |
+| Reduction | the introduction, 1-1R (3-4-3), 1-2R (2-3-3), 1-2-1R (2-3-2) |
+| Holes | H1, H2, H3 |
+| Triangles | T1, T2, T3, T4, T5 |
+| Complex patterns | 1-3-1 and 2-2-2 at an open corner, 1>2<1, the T pattern, the dependency chain |
+| Endgame | mine counting (the counter lesson), combinations |
+
+**Reduction** (the owner's request): a number minus the flags it touches is what is left to find among the
+hidden cells WITHOUT a flag, so the classic pattern applies as it is (a 2 beside one flag is a 1, a 4 beside
+three is a 1). A hint step can carry `reduced: [{ cell, value }]`, drawn as a `-> n` pill on the number, and
+the test holds each label to the board: **the digit minus its flagged neighbours, on a number the step is
+reading**. The introduction reduces to the B1 pattern, then the three entries reduce to 1-1, 1-2 and 1-2-1.
+
+**Open grids** (owner, 2026-11-26: *"une continuite avec des cases non importantes, un nombre inconnu de mines
+et des pointilles qui continuent la grille"*): a pattern is local, and a small picture carries a mines total that
+can decide cells the pattern does not, so a lesson with `open: true` is a WINDOW on a larger board. Its hidden
+cells that no revealed number touches are the continuation: drawn dotted and faded (`MinesweeperCell`
+`highlight: 'far'`), not playable (a tap on one is ignored, it could be a mine), the counter reads "?", and the
+proof leaves the total out. The counter lessons (the counter, combinations) stay closed: the total is their
+subject. This replaced a search for boards on which the counter never decides.
+
+**Pinned:** `lessons.test.ts` (the whole catalogue, with the tutorial: goals, highlights, the counter's role,
+the reduction labels, the list of reference names, the families kept together), `MinesweeperMiniGrid.svelte.test.ts`
+(an open grid, a reduction label), `routes/games/tutorial/patterns/page.svelte.test.ts`. **Owed:** the phone
+reading ([reading](../../backlog.d/reading-owed-the-minesweeper-hint.md), item 14).
 
 ## The bulb: a hint in an unranked game (owner, 2026-11-25)
 
