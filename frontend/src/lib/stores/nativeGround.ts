@@ -39,7 +39,7 @@ let posted: string | null = null;
  * row hits (the tab bar, a composer, a full-bleed screen) and, through a translucent one, what shows
  * through it - so the ground always equals what is drawn there. Null when nothing there is opaque.
  */
-export function readBottomGround(): string | null {
+function readBottomGround(): string | null {
   const start = document.elementFromPoint(window.innerWidth / 2, window.innerHeight - 1);
   return groundOf(start, (el) => getComputedStyle(el).backgroundColor, cssColorToHex);
 }
