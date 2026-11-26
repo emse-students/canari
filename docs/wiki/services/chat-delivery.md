@@ -2982,6 +2982,14 @@ for every visibility, since an external site embeds one from an `<img>` tag, whi
 They go through the ordinary `/api/mls/link-preview/image` proxy like any other preview image -
 which is also the only path with the SSRF guard and the content-type check.
 
+**Which cover a card draws (2026-11-26).** The tile takes the square (400x400, built from the URL alone).
+The hero banner, about 640 CSS px wide, takes the wide one (1200x630) from the payload's `image`: it used to
+stretch the square about three times, which is what made the card look pixelated. `/info` states the album's
+visibility, and `galleryWideCoverFor` returns `''` for a private album (or an unstated one), so a private
+album's card keeps exactly the square it always had; the client proves the wide cover decodes before drawing it
+and falls back to the square otherwise. MiGallery's own `og:image` is already the same 1200x630 WebP, declared
+with its width and height, so nothing was lost on that side.
+
 A second, key-carrying `/api/mls/gallery-cover/:albumId` proxy existed until then, from when covers
 were gated. Deleting it is what makes the rule true rather than aspirational: with two doors to one
 site, which credential applied depended on which field of the payload the client happened to read.

@@ -11,6 +11,8 @@ import {
   decodeHtmlEntity,
   extractOEmbedEndpoint,
   mergeOEmbedIntoPayload,
+  galleryWideCoverFor,
+  fetchMiGalleryPreview,
 } from './url-guard';
 
 describe('isPrivateIpAddress', () => {
@@ -375,5 +377,64 @@ describe('link-preview entity decoding', () => {
 
   it('leaves an unknown entity as written', () => {
     expect(decodeHtmlEntity('a &notanentity; b')).toBe('a &notanentity; b');
+  });
+});
+
+describe('MiGallery album cover', () => {
+  const ORIGIN = 'https://gallery.mitv.fr';
+  const ID = '0b1c2d3e-4f50-4a6b-8c7d-9e0f1a2b3c4d';
+
+  it('offers the wide 1200x630 cover for every visibility but private', () => {
+    for (const visibility of ['unlisted', 'authenticated', 'UNLISTED']) {
+      expect(galleryWideCoverFor(visibility, ORIGIN, ID)).toBe(
+        `${ORIGIN}/api/albums/${ID}/og-cover`
+      );
+    }
+  });
+
+  it('offers nothing for a private album, or for a visibility that is not stated', () => {
+    expect(galleryWideCoverFor('private', ORIGIN, ID)).toBe('');
+    expect(galleryWideCoverFor('Private', ORIGIN, ID)).toBe('');
+    expect(galleryWideCoverFor(undefined, ORIGIN, ID)).toBe('');
+    expect(galleryWideCoverFor('', ORIGIN, ID)).toBe('');
+  });
+
+  describe('fetchMiGalleryPreview', () => {
+    const realFetch = global.fetch;
+    const realKey = process.env.MIGALLERY_API_KEY;
+    const realBase = process.env.MIGALLERY_API_URL;
+
+    beforeEach(() => {
+      process.env.MIGALLERY_API_KEY = 'test-key';
+      delete process.env.MIGALLERY_API_URL;
+    });
+    afterEach(() => {
+      global.fetch = realFetch;
+      if (realKey === undefined) delete process.env.MIGALLERY_API_KEY;
+      else process.env.MIGALLERY_API_KEY = realKey;
+      if (realBase === undefined) delete process.env.MIGALLERY_API_URL;
+      else process.env.MIGALLERY_API_URL = realBase;
+    });
+
+    function answerWith(visibility: string | undefined) {
+      global.fetch = jest.fn(async () => ({
+        ok: true,
+        json: async () => ({ album: { name: 'Gala', date: '2026-05-15', visibility } }),
+      })) as unknown as typeof fetch;
+    }
+
+    it('carries the wide cover for an unlisted album', async () => {
+      answerWith('unlisted');
+      const payload = await fetchMiGalleryPreview(new URL(`${ORIGIN}/albums/${ID}`));
+      expect(payload?.image).toBe(`${ORIGIN}/api/albums/${ID}/og-cover`);
+      expect(payload?.title).toBe('Gala');
+    });
+
+    it('carries no image for a private album, so its card keeps the square cover only', async () => {
+      answerWith('private');
+      const payload = await fetchMiGalleryPreview(new URL(`${ORIGIN}/albums/${ID}`));
+      expect(payload?.image).toBe('');
+      expect(payload?.title).toBe('Gala');
+    });
   });
 });
