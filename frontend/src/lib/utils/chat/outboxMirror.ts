@@ -53,6 +53,7 @@ import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
 import type { Conversation } from '$lib/types';
 import { replaceMessageOrdered } from './messageOrder';
+import { deletedConversationStub } from './conversations';
 import { noteServerTime } from './serverClock';
 
 /** One line of `outbox_pending.ndjson`, consumed natively. `proto` is base64(plaintext AppMessage). */
@@ -590,12 +591,9 @@ export async function adoptOrphanedMirrorEntries(
         }
         if (deleted) {
           try {
-            await storage.mergeConversation({
-              id: orphan.groupId,
-              name: m.chat_deleted_conversation_name(),
-              lifecycle: 'removed',
-              updatedAt: orphan.sentAt || Date.now(),
-            });
+            await storage.mergeConversation(
+              deletedConversationStub(orphan.groupId, orphan.sentAt || Date.now())
+            );
           } catch (e) {
             appendLog(
               `[OUTBOX_MIRROR] Orphan ${orphan.id.slice(0, 8)}… its deleted conversation could not be recreated - the line stays native for the next pass: ${String(e)}`
