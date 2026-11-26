@@ -34,10 +34,9 @@ rename of a file that carries raw controls cannot pass it. Everything else float
 | --- | --- | --- |
 | Close, mines left, timer, restart | top left | the close is the only way out on iOS, which has no back gesture |
 | Leaderboard | top right, trophy icon only | closes the game and goes to the Games page (`/games`), THE one leaderboard since 2026-11-13; the game has no sheet of its own |
-| Ranked / unranked | bottom, beside the mode | **"Libre" = no challenge is requested at the first dig**, so nothing is submitted; stored in `canari.minesweeper.unranked`; locked once the first cell is dug, since a game's ranking is decided when its board is generated |
+| Game mode (ranked, or unranked at a level) | bottom, the pastille after dig / flag; a tap opens [the mode sheet](#the-mode-sheet-owner-2026-11-26) | **ONE choice of four** (owner, 2026-11-26): Classe, or Libre at Debutant / Intermediaire / Expert. **"Libre" = no challenge is requested at the first dig**, so nothing is submitted; stored in `canari.minesweeper.unranked` and `canari.minesweeper.level`; **locked once the first cell is dug** (the pastille then only reminds, without its chevron), since a game's ranking is decided when its board is generated |
 | Mode (dig / flag) | bottom centre, thumb reach | what a SHORT press does; a long press does the other. Same stored setting as the old "flags first" |
-| Level (Debutant / Intermediaire / Expert: a generation target, never a size) | bottom, after the mode, until the first dig | **unranked games only** ([below](#three-levels-in-an-unranked-game-owner-2026-11-25)) |
-| Hint (bulb) | bottom, after the mode, once dug | **unranked games only** ([below](#the-bulb-a-hint-in-an-unranked-game-owner-2026-11-25)) |
+| Hint (bulb) | bottom, after the pastille; dimmed until the first dig, which gives it a board to read | **unranked games only** ([below](#the-bulb-a-hint-in-an-unranked-game-owner-2026-11-25)) |
 
 **No zoom buttons.** Pinch, wheel (proportional to the delta, so a trackpad pinch is smooth), and a
 double-tap. The double-tap zooms in on the tapped point and out to the fit; it only counts when the first
@@ -99,11 +98,9 @@ is never submitted, so its target is the client's alone. A higher target costs m
 thread (bounded by the existing swap and node budgets; the worker stays the
 [backlog entry](../../backlog.d/p3-minesweeper-generation-off-the-main-thread.md)).
 
-**The picker** (`levels.ts`, `LEVEL_SPECS`) is a chip that cycles Debutant -> Intermediaire -> Expert, in Libre
-only and only until the first dig - then the bulb takes its place, since the bulb has nothing to read before
-that dig and three chips is what the row holds on a phone. While the first dig is being prepared it is
-disabled, like the ranked / Libre toggle. **The grid is the same at every level, so choosing one redraws
-nothing.** A ranked start that fails and falls back to a casual game plays Expert's target.
+**The levels are three of the four modes of [the mode sheet](#the-mode-sheet-owner-2026-11-26)** (`levels.ts`:
+`PLAY_MODES`, `LEVEL_SPECS`). **The grid is the same at every level, so choosing one redraws nothing.** A ranked
+start that fails and falls back to a casual game plays Expert's target.
 
 **Stored per device** (`canari.minesweeper.level`, validated on read; a value that is not a level is logged and
 ignored). With none stored, a player who already chose ranked or Libre on this device (`canari.minesweeper.unranked`
@@ -115,13 +112,45 @@ has just made and turn their Debutant into Expert (review of #4091; pinned acros
 
 **Pinned:** `levels.test.ts` (every level on the ranked size and generator, Expert on the ranked target, targets
 rising; three fixed seeds per level, each board naming its own target and guess-free, the mean score rising
-from Debutant to Expert; the cycle; the default and a bad stored value), `game.test.ts` (an explicit ranked
-target equals the default, cell for cell; target 0 stops before any swap),
-`MinesweeperModal.levels.svelte.test.ts` (no picker ranked; the cycle redraws nothing and is stored; each
-level generates with its own target; the picker gone after the first dig; a ranked game asks for its
-challenge as before and generates with the ranked target whatever Libre last used). **Owed:** the phone
+from Debutant to Expert; the four modes and their order; a newcomer unranked, a stored choice kept; the level
+default and a bad stored value), `game.test.ts` (an explicit ranked target equals the default, cell for cell;
+target 0 stops before any swap), `MinesweeperModal.levels.svelte.test.ts` (a newcomer in Libre on Debutant;
+a level pick redraws nothing and is stored; the mode locked after the first dig; each level generates with its
+own target; a ranked game asks for its challenge as before and generates with the ranked target whatever Libre
+last used). **Owed:** the phone
 reading ([reading](../../backlog.d/reading-owed-the-minesweeper-hint.md)), and the first-dig time of Expert on
 a phone, unchanged from ranked.
+
+## The mode sheet (owner, 2026-11-26)
+
+*"change le bouton de mode libre/classe ... propose moi des designs"* - four designs were proposed (a pastille
+opening a sheet, a start screen on the grid, a four-segment bar, two stages) and the owner picked **the pastille
+that opens a sheet**. The Classe / Libre toggle and the level chip that cycled without showing what it cycled
+through were two controls for what is ONE choice, and a newcomer landed on the ranked board, the barrier to entry.
+
+**The pastille** (the bottom bar, after dig / flag) wears the current mode: the trophy and "Classe", or a plant
+that grows with the level (Debutant, Intermediaire, Expert) and its name, with a chevron while it can be opened.
+**A tap opens the sheet** (`MinesweeperModeSheet.svelte`): a radio group of the four modes, each with a line on
+what it is, the current one checked, a way to the tutorial, and Escape, the scrim or "Fermer" to leave. A pick is
+stored (`canari.minesweeper.unranked`, and the level when it is a level) and the sheet closes. The names and lines
+are `modeLabels.ts`, the list and the stored choices `levels.ts`.
+
+**A newcomer plays Libre on Debutant** (owner, 2026-11-25: *"Libre + Debutant tant qu'aucune victoire"*): with no
+stored choice `loadMinesweeperUnranked()` answers unranked, and ranked is one pick away - no hard lock. Nothing is
+written until the player picks. **A player who always played ranked without ever touching the old toggle has no
+stored choice either, so their first game after this change is Libre; one pick in the sheet brings back Classe
+and is kept.**
+
+**Locked after the first dig, as before**: the pastille is disabled once the board exists or while the first dig
+waits for its challenge (the mode is being decided), and the sheet cannot be opened then. The bulb sits beside it
+from the start in Libre, dimmed until there is a board to read.
+
+**Pinned:** `MinesweeperModeSheet.svelte.test.ts` (the four modes in order, the current one checked, a pick
+reaches the caller, the three ways out, the tutorial link), `MinesweeperModal.chrome.svelte.test.ts` (a newcomer in
+Libre on Debutant and the mode locked after the first dig, the sheet and a remembered pick, a ranked pick asks for
+its challenge), `MinesweeperModal.levels.svelte.test.ts`, `MinesweeperModal.hint.svelte.test.ts` (the pastille is
+locked while the challenge is awaited). **Owed:** the phone reading
+([reading](../../backlog.d/reading-owed-the-minesweeper-hint.md), items 7 and 13).
 
 ## The tutorial (owner, 2026-11-25)
 
