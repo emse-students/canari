@@ -7273,6 +7273,8 @@
   "alumni_merge_error_in_progress": "A merge of this account is already open: nothing was changed.",
   "alumni_merge_error_already_merged": "MiConnect already merged this account: there is nothing left to cancel.",
   "form_question_duplicates_identity": "This field is already sent with every answer ({field}). You can delete this question.",
+  "mention_everyone_word": "everyone",
+  "mention_everyone_hint": "Notifies every member",
   "form_seat_hold_title": "Spots are limited",
   "form_seat_hold_note": "Reserve your spot: we keep it for 10 minutes while you fill in the form.",
   "form_seat_hold_button": "Reserve my spot",

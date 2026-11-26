@@ -164,6 +164,8 @@
     videoPreparation?: VideoPreparationState;
     /** The conversation's members, suggested locally by the @mention picker. */
     mentionRoster?: MentionRosterMember[];
+    /** Whether the picker offers `@tous` here (`ChatArea`'s `mentionEveryone`). */
+    mentionEveryone?: boolean;
     /**
      * A line ABOUT the send (its refusal, or what it waits for), drawn at the top of the composer
      * stack. Inside the footer on purpose: the footer's measured height is the thread's
@@ -198,6 +200,7 @@
     onRemovePendingFile,
     videoPreparation,
     mentionRoster,
+    mentionEveryone = false,
     notice,
     nicknameScope = null,
   }: Props = $props();
@@ -1342,6 +1345,7 @@
           bind:this={mentionComposer}
           value={messageText}
           {mentionRoster}
+          {mentionEveryone}
           mentionScope={conversationId}
           onchange={handleMessageChange}
           class="min-w-0 flex-1"

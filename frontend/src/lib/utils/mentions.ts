@@ -42,3 +42,26 @@ export function formatMentionToken(userId: string): string {
 export function mentionTokenInTextRegex(): RegExp {
   return new RegExp(`(?<![[\\w@./&#(])@\\[(${MENTION_USER_ID_PATTERN})\\]`, 'gi');
 }
+
+/**
+ * THE CALL TO EVERY MEMBER IS A MENTION LIKE ANY OTHER (owner, 2026-11-26: "comme les autres
+ * mentions"). A member is mentioned only when picked from the list, which writes the `@[<id>]` token;
+ * a name typed out by hand stays text and rings nobody. `@tous` follows the same rule: picking the
+ * row writes this token, drawn as a chip reading "@tous" / "@everyone"; the word typed by hand is
+ * text. The id is no account id (those are 64 hex), so it can never name a member. The SAME token
+ * is read by Android's `NotificationLevelGate` and the iOS extension and push handler, pinned for
+ * all three by `libs/contracts/mention-decision.cases.json`. See docs/wiki/services/chat-delivery.md,
+ * "@tous".
+ */
+export const MENTION_EVERYONE_ID = 'everyone';
+
+/** The token a picked `@tous` writes: `@[everyone]`. */
+export const MENTION_EVERYONE_TOKEN = `@[${MENTION_EVERYONE_ID}]`;
+
+/** {@link MENTION_EVERYONE_TOKEN} as a regex source, for the parsers that cut tokens out of text. */
+export const MENTION_EVERYONE_PATTERN = `@\\[${MENTION_EVERYONE_ID}\\]`;
+
+/** Whether `text` calls every member of its conversation: it holds {@link MENTION_EVERYONE_TOKEN}. */
+export function mentionsEveryone(text: string): boolean {
+  return text.toLowerCase().includes(MENTION_EVERYONE_TOKEN);
+}

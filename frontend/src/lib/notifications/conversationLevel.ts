@@ -9,7 +9,11 @@
  * `levelDecision` in the iOS extension. The rule they share is in docs/wiki/services/chat-delivery.md.
  */
 import type { ChannelNotificationLevel } from '$lib/services/ChannelService';
-import { extractMentionUserIds, normalizeMentionUserId } from '$lib/utils/mentions';
+import {
+  extractMentionUserIds,
+  mentionsEveryone,
+  normalizeMentionUserId,
+} from '$lib/utils/mentions';
 
 /** The same three levels as a salon, so one type and one control serve both. */
 export type ConversationNotificationLevel = ChannelNotificationLevel;
@@ -22,11 +26,33 @@ export function isConversationNotificationLevel(
 }
 
 /**
- * Whether a message's raw text names `userId`: the inline `@[<id>]` token, case-insensitive - the same
- * reading as the native paths (`NotificationLevelGate`, `levelDecision`), pinned for all three by
+ * Whether a `@tous` in a message may count as a mention of its reader.
+ *
+ * `honoured` in a private conversation, where every member may call everyone (owner, 2026-11-25),
+ * and in a salon message the SERVER vouched for (`mentionsEveryone` on its row: the sender holds the
+ * moderation grant there). `ignored` for any other salon message - a member's `@tous` stays text.
+ */
+export type EveryoneMention = 'honoured' | 'ignored';
+
+/**
+ * The {@link EveryoneMention} of one message: a private conversation honours every `@tous`, a salon
+ * only one its row says the server vouched for.
+ *
+ * @param isSalon - the message belongs to a community salon (`channel_<id>`).
+ * @param vouched - the salon row's `mentionsEveryone`, set by the server after its role check.
+ */
+export function everyoneMentionOf(isSalon: boolean, vouched: boolean): EveryoneMention {
+  return !isSalon || vouched ? 'honoured' : 'ignored';
+}
+
+/**
+ * Whether a message's raw text names `userId`: the inline `@[<id>]` token, case-insensitive, or a
+ * `@tous` / `@everyone` the conversation honours - the same reading as the native paths
+ * (`NotificationLevelGate`, `levelDecision`), pinned for all three by
  * `libs/contracts/mention-decision.cases.json`.
  */
-export function mentionsUser(content: string, userId: string): boolean {
+export function mentionsUser(content: string, userId: string, everyone: EveryoneMention): boolean {
+  if (everyone === 'honoured' && mentionsEveryone(content)) return true;
   return extractMentionUserIds(content).includes(normalizeMentionUserId(userId));
 }
 

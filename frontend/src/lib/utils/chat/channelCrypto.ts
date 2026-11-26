@@ -471,6 +471,8 @@ export async function sendEncryptedChannelMessage(
      * that adopts it from a reloaded page posts it itself (`tabCommitDelegation.onAdoption`).
      */
     resentByQueue?: boolean;
+    /** The text calls every member (`@tous`) - see `SalonPost.mentionsEveryone`. */
+    mentionsEveryone?: boolean;
   }
 ): Promise<ChannelRowAck | null> {
   const channel = rawChannelId(channelId);
@@ -479,6 +481,7 @@ export async function sendEncryptedChannelMessage(
     ...(poll ? { poll } : {}),
     ...(mentionedUserIds && mentionedUserIds.length ? { mentionedUserIds } : {}),
     ...(options?.silent ? { silent: true } : {}),
+    ...(options?.mentionsEveryone ? { mentionsEveryone: true } : {}),
   };
   const sealed = await sealChannelMessage(
     channel,

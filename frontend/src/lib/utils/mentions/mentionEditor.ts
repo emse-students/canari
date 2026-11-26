@@ -1,4 +1,9 @@
-import { formatMentionToken, MENTION_UUID_TOKEN_RE } from '$lib/utils/mentions';
+import {
+  formatMentionToken,
+  MENTION_EVERYONE_ID,
+  MENTION_EVERYONE_PATTERN,
+  MENTION_UUID_TOKEN_RE,
+} from '$lib/utils/mentions';
 import { emojiDisplayParts } from '$lib/utils/emojiStyle';
 import { splitTextWithMentions } from '$lib/utils/mentions.parse';
 import {
@@ -198,6 +203,19 @@ function createMentionChip(userId: string, label: string): HTMLSpanElement {
   return span;
 }
 
+/**
+ * The chip of a picked `@tous` (`@[everyone]`): a mention chip like a member's, so it serializes,
+ * measures and deletes the same way, but its label is the call's word and nothing is resolved for it.
+ */
+function createEveryoneChip(label: string): HTMLSpanElement {
+  const span = document.createElement('span');
+  span.className = MENTION_CHIP_CLASS;
+  span.contentEditable = 'false';
+  span.dataset.mentionId = MENTION_EVERYONE_ID;
+  setTextWithEmoji(span, label);
+  return span;
+}
+
 function appendTextWithBreaks(parent: HTMLElement, text: string, drawEmoji = true): void {
   const lines = text.split('\n');
   for (let i = 0; i < lines.length; i++) {
@@ -369,7 +387,8 @@ function appendComposerText(parent: HTMLElement, text: string, markdownPreview: 
 }
 
 export function countMentionTokens(text: string): number {
-  const re = new RegExp(MENTION_UUID_TOKEN_RE.source, MENTION_UUID_TOKEN_RE.flags);
+  // A picked `@tous` is a chip too, so it counts like a member's token.
+  const re = new RegExp(`${MENTION_UUID_TOKEN_RE.source}|${MENTION_EVERYONE_PATTERN}`, 'gi');
   return [...text.matchAll(re)].length;
 }
 
@@ -443,6 +462,8 @@ export function renderPlainTextToMentionEditor(
   for (const part of parts) {
     if (part.type === 'text') {
       appendComposerText(root, part.value, markdownPreview);
+    } else if (part.type === 'everyone') {
+      root.appendChild(createEveryoneChip(part.value));
     } else if (part.type === 'mention') {
       root.appendChild(createMentionChip(part.userId, part.label));
     } else if (part.type === 'hashtag') {
@@ -720,5 +741,7 @@ export function stepOverFillerBesideCaret(
 export function getMentionChipFromEventTarget(target: EventTarget | null): string | null {
   if (!(target instanceof HTMLElement)) return null;
   const chip = target.closest(MENTION_CHIP_SELECTOR);
-  return chip instanceof HTMLElement ? (chip.dataset.mentionId ?? null) : null;
+  const id = chip instanceof HTMLElement ? (chip.dataset.mentionId ?? null) : null;
+  // The `@tous` chip names nobody: it opens no profile.
+  return id === MENTION_EVERYONE_ID ? null : id;
 }

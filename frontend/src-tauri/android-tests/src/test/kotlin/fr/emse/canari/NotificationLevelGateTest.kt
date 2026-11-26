@@ -49,6 +49,20 @@ class NotificationLevelGateTest {
         assertEquals(Decision.Alert(true), NotificationLevelGate.decide("mentions", ids, me))
     }
 
+    @Test
+    fun `a picked call to everyone mentions me at mentions, even with my id unknown`() {
+        val ids = NotificationLevelGate.mentionedUserIds("rdv 18h @[everyone]!")
+        assertEquals(setOf(NotificationLevelGate.EVERYONE), ids)
+        assertEquals(Decision.Alert(true), NotificationLevelGate.decide("mentions", ids, me))
+        assertEquals(Decision.Alert(true), NotificationLevelGate.decide("mentions", ids, null))
+        assertEquals(Decision.Alert(true), NotificationLevelGate.decide(null, NotificationLevelGate.mentionedUserIds("@[EVERYONE]"), me))
+    }
+
+    @Test
+    fun `the word typed by hand is text, like a name typed by hand`() {
+        assertEquals(emptySet<String>(), NotificationLevelGate.mentionedUserIds("merci @tous @everyone"))
+    }
+
     /**
      * The shared contract (`libs/contracts/mention-decision.cases.json`), also read by the client's
      * `conversationLevel.contract.test.ts` and the iOS `MentionDecisionContractTests`. A visible
@@ -65,6 +79,8 @@ class NotificationLevelGateTest {
             val c = cases.getJSONObject(i)
             val level = if (c.isNull("level")) null else c.getString("level")
             if (level == "none") continue
+            // A salon row the server did not vouch for: the native salon path is told, never reads it.
+            if (c.has("everyone")) continue
             val text = if (c.isNull("text")) null else c.getString("text")
             val me = if (c.isNull("me")) null else c.getString("me").let { if (it == "self") self else it }
             val decision = NotificationLevelGate.decide(level, text?.let { NotificationLevelGate.mentionedUserIds(it) }, me)

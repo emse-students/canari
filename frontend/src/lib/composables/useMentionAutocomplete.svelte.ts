@@ -2,7 +2,8 @@ import { tick } from 'svelte';
 import { SvelteSet } from 'svelte/reactivity';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { coreUrl } from '$lib/utils/apiUrl';
-import { formatMentionToken } from '$lib/utils/mentions';
+import { formatMentionToken, MENTION_EVERYONE_TOKEN } from '$lib/utils/mentions';
+import { m } from '$lib/paraglide/messages';
 import { currentUserId } from '$lib/stores/userState.svelte';
 import { filterUserSuggestions } from '$lib/utils/users/suggestionFilter';
 import {
@@ -23,6 +24,30 @@ import { listBlockedUsers } from '$lib/users/blocks';
 import { Log } from '$lib/utils/Log';
 
 export type MentionUser = { id: string; displayName: string | null };
+
+/**
+ * The picker row that calls every member (`@tous`). Its id is no account id (those are 64 hex), so
+ * it can never collide with a member, and `select` inserts `MENTION_EVERYONE_TOKEN` (`utils/mentions.ts`).
+ */
+export const MENTION_EVERYONE_ROW_ID = '@everyone';
+
+/** The words a query may be typing towards the call to everyone: the reader's, and both spellings. */
+function everyoneWords(): string[] {
+  return [m.mention_everyone_word(), 'tous', 'everyone'];
+}
+
+/**
+ * Adds the `@tous` row to a roster's suggestions when `query` may be typing it: FIRST once a letter
+ * of it is typed, LAST on a bare `@` - a member is the likelier aim there, and the call wakes
+ * everyone. Exported for its test.
+ */
+export function withEveryoneRow(rows: MentionUser[], query: string, limit: number): MentionUser[] {
+  const q = query.trim().toLowerCase();
+  if (!everyoneWords().some((w) => w.startsWith(q))) return rows;
+  const row: MentionUser = { id: MENTION_EVERYONE_ROW_ID, displayName: m.mention_everyone_word() };
+  if (q.length > 0) return [row, ...rows].slice(0, limit);
+  return [...rows.slice(0, limit - 1), row];
+}
 
 /** One name search: `search` fills the list (no roster), `more` tops a roster's rows up (a live). */
 type SearchRequest = { q: string; kind: 'search' | 'more'; generation: number };
@@ -93,6 +118,11 @@ export function useMentionAutocomplete(opts: {
    * from that search, once a name is being typed. Absent: the search is unfiltered, as before.
    */
   audienceFilter?: (users: MentionUser[]) => Promise<MentionUser[]>;
+  /**
+   * Whether this conversation offers `@tous`: a group (every member may), or a salon whose reader
+   * holds the moderation grant (owner, 2026-11-25). Offered from a roster only - a conversation.
+   */
+  everyone?: boolean;
 }) {
   let query = $state('');
   let suggestions = $state<MentionUser[]>([]);
@@ -341,7 +371,8 @@ export function useMentionAutocomplete(opts: {
       const id = u.id.toLowerCase();
       return topUpIds.includes(id) && !isOffered(id) && !blocked.includes(id);
     });
-    const rows = [...offered, ...kept].slice(0, MENTION_MAX_ROWS);
+    const members = [...offered, ...kept].slice(0, MENTION_MAX_ROWS);
+    const rows = opts.everyone ? withEveryoneRow(members, query, MENTION_MAX_ROWS) : members;
     suggestions = rows;
     open = rows.length > 0;
     selectedIdx = selectedId ? rows.findIndex((u) => u.id.toLowerCase() === selectedId) : -1;
@@ -545,8 +576,12 @@ export function useMentionAutocomplete(opts: {
     // painted whatever the cache had for a user it had never looked up, which was visibly not the
     // name for as long as the round trip took. Never learn by failing what a fact could have told
     // you - and this fact is already in hand.
-    if (user.displayName?.trim()) seedUserDisplayName(user.id, user.displayName.trim());
-    const token = formatMentionToken(user.id);
+    const everyone = user.id === MENTION_EVERYONE_ROW_ID;
+    if (!everyone && user.displayName?.trim()) {
+      seedUserDisplayName(user.id, user.displayName.trim());
+    }
+    const token = everyone ? MENTION_EVERYONE_TOKEN : formatMentionToken(user.id);
+    Log.d('mention', everyone ? 'the call to everyone inserted' : 'a member mention inserted');
     const text = opts.getText();
     const before = text.slice(0, start);
     const after = text.slice(start + 1 + query.length);

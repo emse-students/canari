@@ -207,6 +207,11 @@ export interface SendChannelMessageDto {
    * notification level without decrypting. Exposes WHO is mentioned (never the content).
    */
   mentionedUserIds?: string[];
+  /**
+   * The text calls every member (`@tous`). The server vouches for it - and rings every member at
+   * `mentions` - only when the sender holds the moderation grant; otherwise it stays text.
+   */
+  mentionsEveryone?: boolean;
   /** True for a message that must never notify - a reaction. The server pushes nothing for it. */
   silent?: boolean;
   /**

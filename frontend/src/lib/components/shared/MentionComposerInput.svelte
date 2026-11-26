@@ -1,7 +1,7 @@
 <script lang="ts">
   import { resolve } from '$app/paths';
   import { goto } from '$app/navigation';
-  import { onDestroy } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import MentionDropdown from './MentionDropdown.svelte';
   import { useMentionAutocomplete } from '$lib/composables/useMentionAutocomplete.svelte';
   import {
@@ -45,6 +45,8 @@
     editorClass?: string;
     /** The conversation's members, suggested locally by the @mention picker. */
     mentionRoster?: MentionRosterMember[];
+    /** Whether the picker offers `@tous` here (see `useMentionAutocomplete`'s `everyone`). */
+    mentionEveryone?: boolean;
     /**
      * Names what the composer writes to (a conversation id). When it changes the @mention picker is
      * closed and any search on its way is dropped: its rows belong to the previous target.
@@ -78,6 +80,7 @@
     class: className = '',
     editorClass = '',
     mentionRoster,
+    mentionEveryone = false,
     mentionScope,
     mentionAudienceFilter,
     onchange,
@@ -115,6 +118,9 @@
     get audienceFilter() {
       return mentionAudienceFilter;
     },
+    get everyone() {
+      return mentionEveryone;
+    },
   });
 
   // An open picker follows the roster prop (a member list that finished loading, a conversation
@@ -127,7 +133,8 @@
   // THE PICKER DOES NOT OUTLIVE ITS CONVERSATION: it used to close only on input, so a list opened
   // in A stayed over B's composer after a switch until the next keystroke. The first run (mount)
   // finds nothing open and does nothing.
-  let lastScope: string | null | undefined = mentionScope;
+  // The scope at mount, read once on purpose: the effect below compares every later one to it.
+  let lastScope: string | null | undefined = untrack(() => mentionScope);
   $effect(() => {
     const scope = mentionScope;
     if (scope === lastScope) return;

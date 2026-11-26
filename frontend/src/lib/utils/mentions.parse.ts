@@ -1,12 +1,25 @@
-import { MENTION_USER_ID_PATTERN, normalizeMentionUserId } from '$lib/utils/mentions';
+import {
+  MENTION_EVERYONE_PATTERN,
+  MENTION_USER_ID_PATTERN,
+  normalizeMentionUserId,
+} from '$lib/utils/mentions';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
+import { m } from '$lib/paraglide/messages';
 
 export type TextMentionPart =
   | { type: 'text'; value: string }
   | { type: 'mention'; userId: string; label: string }
-  | { type: 'hashtag'; value: string };
+  | { type: 'hashtag'; value: string }
+  /**
+   * A call to every member: the `@[everyone]` token a picked `@tous` writes, drawn in the reader's
+   * language. `value` is that label, `@` included ("@tous" / "@everyone").
+   */
+  | { type: 'everyone'; value: string };
 
-const MENTION_TOKEN_RE = new RegExp(`@\\[(${MENTION_USER_ID_PATTERN})\\]|#([\\wÀ-ž]{2,50})`, 'gi');
+const MENTION_TOKEN_RE = new RegExp(
+  `@\\[(${MENTION_USER_ID_PATTERN})\\]|#([\\wÀ-ž]{2,50})|(${MENTION_EVERYONE_PATTERN})`,
+  'gi'
+);
 
 /** Splits plain text into `@[uuid]` mention and hashtag segments (chat bodies, previews). */
 export function splitTextWithMentions(text: string): TextMentionPart[] {
@@ -19,7 +32,7 @@ export function splitTextWithMentions(text: string): TextMentionPart[] {
     if (match.index > lastIdx) {
       parts.push({ type: 'text', value: text.slice(lastIdx, match.index) });
     }
-    const [token, uuid, hashtag] = match;
+    const [token, uuid, hashtag, everyone] = match;
     if (uuid) {
       const userId = normalizeMentionUserId(uuid);
       parts.push({
@@ -35,6 +48,8 @@ export function splitTextWithMentions(text: string): TextMentionPart[] {
       });
     } else if (hashtag) {
       parts.push({ type: 'hashtag', value: hashtag });
+    } else if (everyone) {
+      parts.push({ type: 'everyone', value: `@${m.mention_everyone_word()}` });
     } else {
       parts.push({ type: 'text', value: token });
     }

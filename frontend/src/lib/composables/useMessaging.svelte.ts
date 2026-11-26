@@ -204,6 +204,7 @@ import { videoPrepareFailureMessage } from '$lib/video/videoPrepareMessages';
 import { categoryOfConversation } from '$lib/notifications/categories';
 import {
   conversationLevelRefusal,
+  everyoneMentionOf,
   mentionsUser,
   type ConversationNotificationLevel,
 } from '$lib/notifications/conversationLevel';
@@ -2667,6 +2668,12 @@ export function useMessaging() {
       }
     });
 
+    // Whether a `@tous` in this message may count as a mention of the reader (`everyoneMentionOf`).
+    const everyone = everyoneMentionOf(
+      isChannelConversationId(normalized),
+      options.everyoneVouched === true
+    );
+
     // A TONE ONLY WHERE THE MESSAGE CAN BE SEEN LANDING. Unconditional, it was a ghost: a sound on
     // a phone whose screen shows another conversation, or none, tells the reader something happened
     // and gives them nothing to look at. Where this is false the OS notification is raised instead
@@ -2682,7 +2689,7 @@ export function useMessaging() {
         arrival.seen
       ) {
         if (ctx.playReceiveTone) {
-          ctx.playReceiveTone(mentionsUser(content, ctx.userId));
+          ctx.playReceiveTone(mentionsUser(content, ctx.userId, everyone));
         } else {
           ctx.playNotificationTone();
         }
@@ -2698,7 +2705,7 @@ export function useMessaging() {
           rowNow,
           senderId,
           content,
-          mentionsUser(content, ctx.userId),
+          mentionsUser(content, ctx.userId, everyone),
           isSystem,
           isOwn,
           resolvedTimestamp.getTime(),
@@ -3035,6 +3042,8 @@ export function useMessaging() {
     // The rows whose open proved their author (a salon's v2 session), for the banner - see
     // `AddMessageToChatOptions.authorProven`. A buffered live frame keeps its options here.
     const authorProvenIds = new SvelteSet<string>();
+    // The salon rows whose `@tous` the server vouched for - see `AddMessageToChatOptions.everyoneVouched`.
+    const everyoneVouchedIds = new SvelteSet<string>();
 
     let processedCount = 0;
     for (const pm of messages) {
@@ -3171,6 +3180,7 @@ export function useMessaging() {
       consumedById.set(id, settled.consumed);
       brandNew.push(newMsg);
       if (pm.authorProven === true) authorProvenIds.add(id);
+      if (pm.everyoneVouched === true) everyoneVouchedIds.add(id);
       // The index is also the dedup set: a batch carrying the same id twice must add it once.
       byId.set(id, newMsg);
 
@@ -3390,7 +3400,13 @@ export function useMessaging() {
           lastInbound.content,
           // ANY message of the flush, not the last one: at `mentions` a catch-up whose mention is not
           // its final line is still a mention, and the one banner must say so.
-          inbound.some((msg) => mentionsUser(msg.content, ctx.userId)),
+          inbound.some((msg) =>
+            mentionsUser(
+              msg.content,
+              ctx.userId,
+              everyoneMentionOf(isChannelConversationId(normalized), everyoneVouchedIds.has(msg.id))
+            )
+          ),
           false,
           false,
           lastInbound.timestamp.getTime(),

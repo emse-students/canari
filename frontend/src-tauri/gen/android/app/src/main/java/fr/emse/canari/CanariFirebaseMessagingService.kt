@@ -714,14 +714,15 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         private const val DRAIN_CHECKPOINT_EVERY = 25
 
         /**
-         * The inline mention token a decrypted body carries: `@[` + 64 lowercase hex + `]`.
+         * The inline mention token a decrypted body carries: `@[` + 64 lowercase hex + `]`, or the
+         * `@[everyone]` a picked `@tous` writes (`NotificationLevelGate.EVERYONE_TOKEN`).
          *
          * Spelt once and used twice - to decide whether a message names ME (which chooses the
          * notification channel) and to render the tokens for a reader. It used to be spelt only as
          * the literal `"@[" + myUserId + "]"`, which answers the first question and cannot answer
          * the second at all.
          */
-        private val MENTION_TOKEN = Regex("@\\[([0-9a-fA-F]{64})\\]")
+        private val MENTION_TOKEN = Regex("@\\[([0-9a-fA-F]{64}|everyone)\\]", RegexOption.IGNORE_CASE)
 
         /** Maximum number of messages stacked in a per-conversation MessagingStyle notification. */
         private const val MAX_NOTIF_MESSAGES = 6
@@ -8846,7 +8847,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         var unknown = 0
         val rendered = MENTION_TOKEN.replace(text) { m ->
             val id = m.groupValues[1].lowercase()
-            val label = if (me != null && id == me) {
+            val label = if (id == NotificationLevelGate.EVERYONE) {
+                // A picked `@tous` (`@[everyone]`): the call's word, never a name.
+                res.getString(R.string.notif_mention_everyone)
+            } else if (me != null && id == me) {
                 res.getString(R.string.notif_mention_you)
             } else {
                 names?.optString(id)?.takeIf { it.isNotBlank() }?.also { named++ }

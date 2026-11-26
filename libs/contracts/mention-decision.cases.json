@@ -17,7 +17,16 @@
     "",
     "WHO READS WHICH CASE. The native paths never receive `none` as a visible frame (the server sends it",
     "silent), so they skip `level: \"none\"`. The client always holds the plaintext and its own id, so it",
-    "skips `text: null` and `me: null` - the undecidable cases only a push can meet."
+    "skips `text: null` and `me: null` - the undecidable cases only a push can meet.",
+    "",
+    "@TOUS (owner, 2026-11-25; aligned 2026-11-26: \"comme les autres mentions\"). It is a mention like any",
+    "other: picking the `@tous` row writes the token `@[everyone]`, which names every member - the reader",
+    "included, whatever its id. The word `@tous` or `@everyone` typed by hand is text, exactly as a name",
+    "typed by hand is. A private conversation honours the token from anyone. A SALON honours it only when",
+    "the server vouched for it (the sender holds the moderation grant): the native salon paths are TOLD",
+    "(`mentioned`) and never read this file; the client reads the row's `mentionsEveryone`. A case with",
+    "`everyone: \"ignored\"` is a salon row the server did not vouch for - the client's alone, skipped by",
+    "the native paths."
   ],
   "me": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "cases": [
@@ -34,6 +43,16 @@
     { "name": "mentions, unreadable: the stated rule", "level": "mentions", "text": null, "me": "self", "expected": "withhold" },
     { "name": "mentions, own id unknown: the stated rule", "level": "mentions", "text": "hey @[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]", "me": null, "expected": "withhold" },
     { "name": "none, even a mention", "level": "none", "text": "hey @[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]", "me": "self", "expected": "withhold" },
-    { "name": "none, no mention", "level": "none", "text": "hello", "me": "self", "expected": "withhold" }
+    { "name": "none, no mention", "level": "none", "text": "hello", "me": "self", "expected": "withhold" },
+    { "name": "ordinary frame calling everyone", "level": null, "text": "@[everyone] on se retrouve a 18h", "me": "self", "expected": "alert-mention" },
+    { "name": "mentions, a picked @tous", "level": "mentions", "text": "rdv a 18h @[everyone]", "me": "self", "expected": "alert-mention" },
+    { "name": "mentions, the token in any case", "level": "mentions", "text": "Salut @[EVERYONE]!", "me": "self", "expected": "alert-mention" },
+    { "name": "mentions, a picked @tous needs no own id", "level": "mentions", "text": "@[everyone]", "me": null, "expected": "alert-mention" },
+    { "name": "mentions, @tous typed by hand is text, like a typed name", "level": "mentions", "text": "merci @tous", "me": "self", "expected": "withhold" },
+    { "name": "mentions, @everyone typed by hand is text", "level": "mentions", "text": "@everyone look", "me": "self", "expected": "withhold" },
+    { "name": "all, @tous typed by hand alerts as a plain message", "level": null, "text": "merci @tous", "me": "self", "expected": "alert" },
+    { "name": "none, even a picked @tous", "level": "none", "text": "@[everyone]", "me": "self", "expected": "withhold" },
+    { "name": "salon, an unvouched @tous stays text", "level": "mentions", "text": "@[everyone]", "me": "self", "everyone": "ignored", "expected": "withhold" },
+    { "name": "salon, an unvouched @tous at all alerts as a plain message", "level": null, "text": "@[everyone]", "me": "self", "everyone": "ignored", "expected": "alert" }
   ]
 }

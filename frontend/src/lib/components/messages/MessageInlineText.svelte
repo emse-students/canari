@@ -36,6 +36,15 @@
 {#each splitTextWithMentions(text) as part, index (`${index}-${part.type}-${'userId' in part ? part.userId : part.value}`)}
   {#if part.type === 'mention'}
     <MessageMentionChip userId={part.userId} {onOwnBubble} />
+  {:else if part.type === 'everyone'}
+    <!-- A CALL TO EVERY MEMBER (a picked `@[everyone]`), drawn like a mention but pointing at
+         nobody: the reader's word for it, in the mention's weight and colour (the bubble's own on
+         the sender's accent fill). -->
+    <span
+      data-mention-everyone
+      class="{onOwnBubble ? '' : 'text-accent-text'} align-baseline text-[0.9em] font-semibold"
+      >{part.value}</span
+    >
   {:else if part.type === 'hashtag'}
     <!-- IT TAKES THE BUBBLE'S OWN COLOUR, because the bubble is the only thing that knows what it
          is filled with. `text-accent-text` was 1.68:1 on the outgoing

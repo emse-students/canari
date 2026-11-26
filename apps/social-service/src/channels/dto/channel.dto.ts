@@ -254,6 +254,15 @@ export interface SendChannelMessageDto {
    */
   mentionedUserIds?: string[];
   /**
+   * The sender's text calls every member (`@tous` / `@everyone`). DECLARED, never trusted: the
+   * server vouches for it only when the sender holds the moderation grant in this community
+   * ({@link vouchedEveryoneMention}), and only a vouched call reaches anyone - every member at
+   * `mentions` is then pushed, and the row says so (`mentionsEveryone`) so a client deciding from
+   * the socket frame honours it. An unvouched one is logged and stays text. See
+   * docs/wiki/services/chat-delivery.md, "@tous".
+   */
+  mentionsEveryone?: boolean;
+  /**
    * True for a message that must never notify - a reaction (WP-40).
    *
    * Told rather than inferred: the server cannot read the body and must not have to guess whether
