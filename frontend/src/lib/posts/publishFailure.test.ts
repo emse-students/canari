@@ -19,6 +19,7 @@ import { m } from '$lib/paraglide/messages';
 import { VideoPrepareError } from '$lib/video/prepareVideoForUpload';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
+import { POST_EVENT_NOT_OF_AUTHOR_ASSOCIATION } from '$lib/posts/postEventLink';
 import { MediaUploadError, overDailyLimitSentence } from '$lib/utils/mediaErrors';
 
 const FALLBACK = m.post_create_publish_error();
@@ -144,5 +145,33 @@ describe("publishFailureMessage - the member's daily upload bound", () => {
   it('says a post not published yet takes no comment, from the typed 409 code', () => {
     const refusal = new ApiRefusalError(409, 'COMMENT_POST_NOT_PUBLISHED', 'server prose');
     expect(publishFailureMessage(refusal, FALLBACK)).toBe(m.post_comment_not_published_refusal());
+  });
+});
+
+describe('publishFailureMessage - an event of another association', () => {
+  const refusal = (code: string | null) =>
+    new ApiRefusalError(400, code, 'An agenda event can be linked only to ...');
+
+  it('words the stable code, naming the association the post is written as', () => {
+    const shown = publishFailureMessage(refusal(POST_EVENT_NOT_OF_AUTHOR_ASSOCIATION), FALLBACK, {
+      associationName: 'BDE',
+    });
+    expect(shown).toBe(m.post_event_not_of_author_association({ association: 'BDE' }));
+    expect(shown).toContain('BDE');
+    // The server's English is never what a reader sees.
+    expect(shown).not.toContain('agenda event can be linked');
+  });
+
+  it('still words it when the screen knows no association name', () => {
+    const shown = publishFailureMessage(refusal(POST_EVENT_NOT_OF_AUTHOR_ASSOCIATION), FALLBACK);
+    expect(shown).toBe(
+      m.post_event_not_of_author_association({
+        association: m.post_event_author_association_fallback(),
+      })
+    );
+  });
+
+  it('leaves a bare 400 on the fallback: the sentence follows the code, never the prose', () => {
+    expect(publishFailureMessage(refusal(null), FALLBACK)).toBe(FALLBACK);
   });
 });

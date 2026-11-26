@@ -159,6 +159,7 @@ import {
   type PresentableEventRow,
 } from './event-presentation';
 import { AssociationCalendarEventCoOwner } from './entities/association-calendar-event-co-owner.entity';
+import { POST_EVENT_NOT_OF_AUTHOR_ASSOCIATION } from './post-event-link';
 import { deriveCotisationTag } from './cotisation-tag.util';
 import {
   RESERVED_SLUGS,
@@ -2666,8 +2667,8 @@ export class AssociationsService {
   }
 
   /**
-   * Ensures a post may reference a validated agenda event (same association).
-   * Returns the event id or null when omitted.
+   * Ensures a post may reference a validated agenda event: one its association ORGANISES or
+   * CO-ORGANISES (`post-event-link.ts`). Returns the event id or null when omitted.
    *
    * With `manager` (the post write's transaction, `PostsService.saveWithEventLink`) the event row is
    * read `FOR SHARE`, which conflicts with the `FOR NO KEY UPDATE` a presentation switch holds
@@ -2685,17 +2686,29 @@ export class AssociationsService {
     }
     const repo = manager?.getRepository(AssociationCalendarEvent) ?? this.calendarRepo;
     const ev = await repo.findOne({
-      where: {
-        id: eventId.trim(),
-        associationId: associationId.trim(),
-        status: AssociationCalendarEventStatus.Validated,
-      },
+      where: { id: eventId.trim(), status: AssociationCalendarEventStatus.Validated },
       ...(manager ? { lock: { mode: 'pessimistic_read' as const } } : {}),
     });
     if (!ev) {
-      throw new BadRequestException(
-        'Agenda event not found, not validated yet, or belongs to another association'
-      );
+      throw new BadRequestException('Agenda event not found or not validated yet');
+    }
+    if (ev.associationId !== associationId.trim()) {
+      const coOrganiser = await (
+        manager?.getRepository(AssociationCalendarEventCoOwner) ?? this.coOwnerRepo
+      ).findOne({
+        where: { eventId: ev.id, associationId: associationId.trim() },
+        select: { id: true },
+      });
+      if (!coOrganiser) {
+        this.logger.log(
+          `[AGENDA] post link refused: event ${sanitizeLog(ev.id.slice(0, 8))} is neither organised nor co-organised by ${sanitizeLog(associationId.trim().slice(0, 8))}`
+        );
+        throw new BadRequestException({
+          code: POST_EVENT_NOT_OF_AUTHOR_ASSOCIATION,
+          message:
+            'An agenda event can be linked only to a post of the association that organises it or of one that co-organises it',
+        });
+      }
     }
     // A post is published in its association's name, so linking a neutral event would name the
     // owner the presentation hides (event-presentation.ts). Typed, for the composer's sentence.

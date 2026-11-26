@@ -32,7 +32,7 @@ import {
   noteKeyboardWillShow,
 } from './keyboardTransition';
 import { isTauriRuntime } from '$lib/utils/tauriRuntime';
-import { cssColorToHex, groundOf } from './imeGround';
+import { syncNativeGround } from './nativeGround';
 import { parseImeTarget, resolveImeTarget, type ImeAnimation, type ImeTarget } from './imeTarget';
 import {
   afterLayoutReactions,
@@ -830,27 +830,6 @@ export function keyboardRevealOnUpdate(u: {
 }
 
 /**
- * The colour under the keyboard's band to the Android shell (`canariTheme.setGround`), which paints
- * it under the transparent WebView: the strip a keyboard's resize opens below the page is then the
- * page's own ground - read where the keyboard will sit, so a full-bleed black screen (CanaReels,
- * live, camera) gets black and a conversation its grey (keyboard-and-send-motion.md). Read once per
- * rise, when the layout is about to change anyway - never on a theme apply at boot. Absent in the
- * browser and on iOS, where this is a no-op by design, not a fallback.
- */
-function postGroundToNative(): void {
-  const bridge = (window as unknown as { canariTheme?: { setGround?: (c: string) => void } })
-    .canariTheme;
-  if (!bridge?.setGround) return;
-  const start = document.elementFromPoint(window.innerWidth / 2, window.innerHeight - 1);
-  const ground = groundOf(start, (el) => getComputedStyle(el).backgroundColor, cssColorToHex);
-  if (!ground) {
-    Log.w('keyboardViewport', 'no opaque ground under the keyboard band - the native one is kept');
-    return;
-  }
-  bridge.setGround(ground);
-}
-
-/**
  * Whether a refused announcement carried an animation (`durationMs` or `curve`): the part of the
  * contract that can break while the height itself is sound.
  */
@@ -1216,8 +1195,11 @@ export function initKeyboardViewport(seams: KeyboardViewportSeams = {}): () => v
     }
     // Android's ride is phased on the announcement's arrival: taken before anything else costs time.
     const announcedAt = now();
-    // A read (a hit test, computed colours): before anything below writes.
-    if (target.px > 0) postGroundToNative();
+    // A read (a hit test, computed colours): before anything below writes. The ground under the
+    // keyboard is the screen's own (a full-bleed screen's black, a conversation's grey), and it is
+    // re-read on every other change of the bottom surface too (`nativeGround.ts`): a ground posted
+    // for one surface outlived it, grey under the feed's tab bar (2026-11-26).
+    if (target.px > 0) syncNativeGround('keyboard-rise');
     if (target.kind === 'handoff') {
       Log.d('keyboardViewport', `keyboard target ${target.px} announced ahead of the resize`);
       // A rise ends any fall still waiting for its resize, and any ride still running: the rise's

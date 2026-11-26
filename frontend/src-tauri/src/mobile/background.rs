@@ -1534,27 +1534,42 @@ pub fn cleanup_pending_db(files_dir: &Path) -> Result<(), String> {
             .await
             .map_err(|e| e.to_string())?;
 
+        // The app's startup creates the table (`lib.rs`); a sweep that runs before any start on this
+        // install has nothing to prune, which is a fact to read, not a DELETE to watch fail.
+        let has_table: Option<i64> = sqlx::query_scalar(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'pending_mls_messages'",
+        )
+        .fetch_optional(&pool)
+        .await
+        .map_err(|e| format!("schema read: {e}"))?;
+        if has_table.is_none() {
+            log::debug!("cleanup_pending_db: no pending table yet - nothing to prune");
+            return Ok(());
+        }
+
         let cutoff_attempt_ns: i64 = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos() as i64
             - 3_600_000_000_000i64;
-        let _ = sqlx::query(
-            "DELETE FROM pending_mls_messages WHERE attempt_count >= 3 AND created_at < ?",
-        )
-        .bind(cutoff_attempt_ns)
-        .execute(&pool)
-        .await;
+        // A failed DELETE is the sweep failing, and says so: it was swallowed until 2026-11-26, so
+        // the worker's "is the sweep broken" count could never see the one failure it exists for.
+        sqlx::query("DELETE FROM pending_mls_messages WHERE attempt_count >= 3 AND created_at < ?")
+            .bind(cutoff_attempt_ns)
+            .execute(&pool)
+            .await
+            .map_err(|e| format!("exhausted-row prune: {e}"))?;
 
         let cutoff_ns: i64 = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_nanos() as i64
             - 7i64 * 24 * 60 * 60 * 1_000_000_000;
-        let _ = sqlx::query("DELETE FROM pending_mls_messages WHERE created_at < ?")
+        sqlx::query("DELETE FROM pending_mls_messages WHERE created_at < ?")
             .bind(cutoff_ns)
             .execute(&pool)
-            .await;
+            .await
+            .map_err(|e| format!("expired-row prune: {e}"))?;
 
         Ok::<(), String>(())
     })
@@ -4358,5 +4373,76 @@ mod tests {
             .unwrap()
             .starts_with(&format!("{tag}-alice:dev-laptop|")));
         assert_ne!(std::fs::read(dir.join("mls.bin")).unwrap(), state, "staged");
+    }
+
+    /// A SWEEP BEFORE ANY APP START HAS NOTHING TO PRUNE, AND THAT IS A SUCCESS: the table is read
+    /// from the schema, so `MlsBackgroundWorker` never counts a missing table as a failure.
+    #[test]
+    fn a_sweep_without_the_pending_table_succeeds() {
+        let dir = temp_dir("sweep-no-table");
+        let _ = std::fs::remove_file(dir.join("mls_pending.db"));
+        cleanup_pending_db(&dir).expect("nothing to prune is not a failure");
+    }
+
+    /// The sweep prunes the exhausted and the expired rows and keeps a young one - and a DELETE
+    /// that fails now reaches the caller instead of being swallowed.
+    #[test]
+    fn a_sweep_prunes_exhausted_and_expired_rows_only() {
+        let dir = temp_dir("sweep-rows");
+        let _ = std::fs::remove_file(dir.join("mls_pending.db"));
+        let now_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as i64;
+        let hour_ns = 3_600_000_000_000i64;
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect_with(
+                    sqlx::sqlite::SqliteConnectOptions::new()
+                        .filename(dir.join("mls_pending.db"))
+                        .create_if_missing(true),
+                )
+                .await
+                .unwrap();
+            sqlx::query(
+                "CREATE TABLE pending_mls_messages (id TEXT PRIMARY KEY, created_at INTEGER NOT NULL, attempt_count INTEGER NOT NULL DEFAULT 0)",
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+            for (id, at, attempts) in [
+                ("young", now_ns, 5),
+                ("exhausted", now_ns - 2 * hour_ns, 3),
+                ("expired", now_ns - 8 * 24 * hour_ns, 0),
+                ("waiting", now_ns - 2 * hour_ns, 1),
+            ] {
+                sqlx::query("INSERT INTO pending_mls_messages (id, created_at, attempt_count) VALUES (?, ?, ?)")
+                    .bind(id)
+                    .bind(at)
+                    .bind(attempts)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+            pool.close().await;
+        });
+
+        cleanup_pending_db(&dir).expect("the sweep");
+
+        let left: Vec<String> = tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect_with(
+                    sqlx::sqlite::SqliteConnectOptions::new().filename(dir.join("mls_pending.db")),
+                )
+                .await
+                .unwrap();
+            sqlx::query_scalar("SELECT id FROM pending_mls_messages ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+        });
+        assert_eq!(left, vec!["waiting".to_string(), "young".to_string()]);
     }
 }

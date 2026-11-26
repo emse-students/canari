@@ -440,3 +440,19 @@ Sky shows a list only until 1 August of its `promo` (`isPastCampaignList`, mirro
 `frontend/src/lib/associations/campaign.ts`), never in its former section, and matches a past
 mandate against a current one by `slug`.
 Pinned by `apps/social-service/src/internal/internal-user-associations.spec.ts`.
+
+## Which agenda event a post may link (2026-11-26)
+
+A post written as association A links an event A **organises** or **co-organises** (an accepted
+`association_calendar_event_co_owners` row); any other is refused 400
+`POST_EVENT_NOT_OF_AUTHOR_ASSOCIATION` (`apps/social-service/src/associations/post-event-link.ts`,
+enforced in `resolvePostCalendarEventLink`, under the event's `FOR SHARE` lock). Before this, the
+server accepted only the organiser, while the composer's picker (the association's agenda) also
+listed co-organised events, and the bare 400 had no sentence: the author could not tell why the post
+would not go out. A co-organiser consented to the event (charter, principle 1), so announcing it is
+within its rights; the rule is reversible by narrowing the one check. A personal post links no event.
+
+The composers apply the same rule before sending (`postEventLink.ts`: the picker lists only what the
+author may link, a stale selection is flagged inline and blocks the publish), and
+`publishFailureMessage` words the code from the Paraglide key `post_event_not_of_author_association`,
+naming the association. A code is never read from the message text.

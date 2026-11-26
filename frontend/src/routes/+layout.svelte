@@ -82,6 +82,7 @@
   import { inAppBrowserGuard } from '$lib/mobile/inAppBrowserGuard';
   import AlumniLinkBanner from '$lib/components/shared/AlumniLinkBanner.svelte';
   import { getKeyboardViewport, initKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
+  import { syncNativeGround, syncNativeGroundAfterTransitions } from '$lib/stores/nativeGround';
   import {
     classifySwipeRelease,
     bindSwipeNavTouchListeners,
@@ -175,6 +176,27 @@
   const keyboardViewport = $derived(getKeyboardViewport());
   const isKeyboardOpen = $derived(keyboardViewport.isOpen);
 
+  /** The web tab bar is mounted (everywhere but the iOS app, whose bar is native). */
+  const showBottomNav = $derived(
+    !isKeyboardOpen && !isLoginPage && !isMobileConvoOpen && !isFullScreen
+  );
+
+  // THE GROUND UNDER THE WEBVIEW FOLLOWS THE BOTTOM SURFACE (`nativeGround.ts`): a ground posted for
+  // one surface outlived it - a conversation's grey under the feed's white bar (2026-11-26). Each
+  // change of what is drawn at the bottom edge re-reads it; an unchanged colour is not re-posted.
+  $effect(() => {
+    void themeStore.isDark;
+    syncNativeGroundAfterTransitions('theme');
+  });
+  $effect(() => {
+    void showBottomNav;
+    syncNativeGround('bottom-bar');
+  });
+  $effect(() => {
+    void bootBlocked;
+    syncNativeGround('boot-gate');
+  });
+
   beforeNavigate(({ from, to, shallow, type }) => {
     // The entry being left keeps its offset for a Back to it (`lib/navigation/navigationMemory.ts`,
     // which ignores a shallow navigation of any type itself).
@@ -228,6 +250,8 @@
       const splash = document.getElementById('canari-splash');
       if (splash) {
         splash.classList.add('done');
+        // `done` lets hits through the fading splash, so the bottom edge reads the page under it.
+        syncNativeGround('splash-done');
         setTimeout(() => splash.remove(), 450);
       }
     });
@@ -777,6 +801,8 @@
    */
   afterNavigate((nav) => {
     const { shallow, type } = nav;
+    // The route has settled: its bottom surface is the one drawn now (`nativeGround.ts`).
+    syncNativeGround('navigation');
     // A navigation boundary ends an avatar outage: faces the source could not serve are asked again.
     forgetAvatarOutage('navigation');
     // The entry remembers where it came from (Back arrow) and where it was left (offset); the hook
@@ -958,7 +984,7 @@
                 !bootBlocked}
             />
           {/if}
-        {:else if !isKeyboardOpen && !isLoginPage && !isMobileConvoOpen && !isFullScreen}
+        {:else if showBottomNav}
           <BottomNav />
         {/if}
       </div>
