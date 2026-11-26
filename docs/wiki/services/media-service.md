@@ -79,6 +79,39 @@ kept it and revoked the second one's URL, which the loader returned anyway. Two 
 joinable (one download); `sharedPooledLoad` returns what `retain` returns, never the URL it revoked.
 The 2026-10-02 fix above covered the QUEUED half of the same teardown; this is the RUNNING half.
 
+### The cached ciphertext has a cap: 500 MB by default, LRU, never a sole copy (1.8.2)
+
+Owner, 2026-11-22 ([decisions](../decisions/owner-decisions-of-2026-11-22.md), items 8 and 9; charter
+principles 2 then 1, [principes](../../principes.md)): `canari-media-ciphertext-v1` was unbounded. The
+member picks 250 MB, **500 MB (default)**, 1 GB or unlimited in Settings, Storage
+(`SettingsStorageSection.svelte`; the pick is per device, `localStorage`). Three files:
+
+- `mediaCacheCap.ts` - the choices, the pick and `planEviction`, PURE: least recently used first,
+  among the copies the server **confirmed within 30 days** (`SERVER_HOLD_WINDOW_MS`), nothing else.
+- `mediaCacheLedger.ts` - what each copy weighs, when it was last used and when the server last
+  confirmed it, in a second bucket `canari-media-ledger-v1` (one body-less response per copy, the
+  facts in headers, same key). Loaded into memory once. `enforceMediaCacheCap` runs after every
+  download (event-driven, coalesced, no timer) and when the member changes the pick.
+- the callers: `mediaBlobCache.ts` records a write, a hit and an eviction; `mediaTouch.ts` records the
+  server's ACKNOWLEDGED touch as a confirmation; `clearMediaCache` deletes the ledger bucket too.
+
+**How the device knows a copy is the sole one.** It does not ask the server (owner: no re-touch before
+an eviction). It knows when the server last CONFIRMED holding the object: the download that wrote the
+copy, or the acknowledged touch a cache hit reports (once per object per day). A copy confirmed within
+the window is held by the server for certain, so evicting it costs a re-download. Every other copy -
+confirmed longer ago, never confirmed (a copy an older build wrote has a record with `confirmedAt`
+0 until its first acknowledged touch), or whose record was lost - may be the ONLY one left and stays,
+**even above the cap**: the log says how far over (`[MEDIA_CAP]`). A hit's recency is stored once a
+day, like the touch, so the order is exact to the day after a reload.
+
+**The limit, stated.** The server's idle window is an admin setting (1-3650 days, 90 by default,
+[retention-settings](../retention-settings.md)) and the client cannot read it; 30 days is a declared
+constant well under the default, and an admin who sets the window below it makes the guess wrong in
+the unsafe direction. The follow-up is the touch answer naming the window per object
+([entry](../backlog.d/the-touch-answer-names-the-servers-idle-window.md)). `mediaCacheCap.test.ts`
+pins the order, that a sole copy stays and the window; `mediaCacheLedger.test.ts` the same through a
+fake Cache Storage, a legacy copy included.
+
 ## Routes
 
 | Method | Path                                   | Auth              | Description                                                                                                                                                                      |

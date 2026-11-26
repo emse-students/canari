@@ -20,9 +20,15 @@ import { noteMediaCacheHit } from './mediaTouch';
 import { GateRank, mediaRequestGate, type GateLane } from './requestGate';
 import { declareMp4Duration, isMp4Type } from './mp4Duration';
 import { joinMediaHead, readAfterHead } from './mediaHeadStore';
+import {
+  CIPHER_CACHE_NAME,
+  cipherCacheKey,
+  forgetCipher,
+  recordCipherUsed,
+  recordCipherWritten,
+} from './mediaCacheLedger';
 
-/** Exported so `deviceStorage.ts` can measure/clear it without duplicating the literal. */
-export const CIPHER_CACHE_NAME = 'canari-media-ciphertext-v1';
+export { CIPHER_CACHE_NAME };
 
 const decryptedPool = new BlobUrlPool();
 const rawPool = new BlobUrlPool();
@@ -177,10 +183,6 @@ function decryptedKey(ref: MediaRef): string {
   return `${ref.mediaId}:${ref.key}:${ref.iv}`;
 }
 
-function cipherCacheKey(baseUrl: string, mediaId: string): string {
-  return `${baseUrl.replace(/\/$/, '')}/__cached__/media/${encodeURIComponent(mediaId)}`;
-}
-
 /**
  * GETs one media object through `mediaRequestGate` and TYPES every way it can fail, at the throw.
  *
@@ -240,6 +242,7 @@ async function evictCiphertext(mediaId: string, baseUrl: string): Promise<void> 
   try {
     const cache = await caches.open(CIPHER_CACHE_NAME);
     await cache.delete(cipherCacheKey(baseUrl, mediaId));
+    await forgetCipher(cipherCacheKey(baseUrl, mediaId));
   } catch (err) {
     console.warn('[mediaBlobCache] could not evict an undecryptable ciphertext', mediaId, err);
   }
@@ -259,6 +262,7 @@ export async function evictCachedReelCiphertext(mediaId: string, baseUrl: string
     if (await cache.delete(cipherCacheKey(baseUrl, mediaId))) {
       console.debug(`[mediaBlobCache] ${mediaId}: a gone reel's cached ciphertext dropped`);
     }
+    await forgetCipher(cipherCacheKey(baseUrl, mediaId));
   } catch (err) {
     console.warn("[mediaBlobCache] could not drop a gone reel's cached ciphertext", mediaId, err);
   }
@@ -294,6 +298,7 @@ async function fetchCiphertext(
           // precisely the case where there is none - so without this report an object everyone
           // looks at daily expires on the same schedule as one nobody opens twice.
           noteMediaCacheHit(mediaId, baseUrl);
+          void recordCipherUsed(cacheKey);
           return buf;
         }
       }
@@ -312,8 +317,15 @@ async function fetchCiphertext(
       const cache = await caches.open(CIPHER_CACHE_NAME);
       await cache.put(
         cacheKey,
-        new Response(ciphertext, { headers: { 'Content-Type': 'application/octet-stream' } })
+        new Response(ciphertext, {
+          headers: {
+            'Content-Type': 'application/octet-stream',
+            'Content-Length': String(ciphertext.byteLength),
+          },
+        })
       );
+      // After the copy is stored: the ledger records it, and the cap is enforced (`mediaCacheCap`).
+      await recordCipherWritten(cacheKey, ciphertext.byteLength);
     } catch {
       // Best-effort cache write.
     }
