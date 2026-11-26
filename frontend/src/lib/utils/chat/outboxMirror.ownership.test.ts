@@ -141,7 +141,15 @@ function makeStorage(seed: OutboxEntry[] = []) {
   const rows = new Map<string, StoredMessage>();
   /** The conversation rows the store holds: a message row naming another is refused (SQLite's FK). */
   const conversationRows = new Set(['g1']);
+  /** The conversations the member deleted here (`wasConversationDeleted`). */
+  const deletedConversations = new Set<string>();
   return {
+    _deleted: deletedConversations,
+    wasConversationDeleted: vi.fn(async (id: string) => deletedConversations.has(id)),
+    mergeConversation: vi.fn(async (c: { id: string; lifecycle: string; name: string }) => {
+      conversationRows.add(c.id);
+      return c;
+    }),
     _queue: queue,
     _rows: rows,
     _conversationRows: conversationRows,
@@ -274,6 +282,40 @@ describe('adoptOrphanedMirrorEntries - only the native lines', () => {
       kind: 'text',
       text: 'hello shade',
     });
+  });
+
+  // Owner, 2026-11-22: a reply typed in the shade for a conversation this device DELETED is shown,
+  // never left native for good: the conversation returns as a removed stub, the reply as failed.
+  it('a conversation this device deleted is recreated as removed, and the reply is shown failed', async () => {
+    tauri.mirror = [line('shade', { groupId: 'g3' })];
+    const storage = makeStorage();
+    storage._deleted.add('g3');
+    const held = new Set<string>();
+    const claims = {
+      hold: (id: string) => void held.add(id),
+      release: (id: string) => void held.delete(id),
+    };
+    expect(await adoptOrphanedMirrorEntries(storage, 'key', 'me', claims)).toEqual(['shade']);
+    expect(storage.mergeConversation).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'g3', lifecycle: 'removed' })
+    );
+    expect(storage._queue.get('shade')).toMatchObject({
+      conversationId: 'g3',
+      serverErrors: MAX_CONSECUTIVE_SERVER_ERRORS,
+      nativeRefusal: 'conversation_deleted',
+    });
+    expect(parseEnvelope(storage._rows.get('shade')!.content)).toMatchObject({
+      text: 'hello shade',
+    });
+    expect([...held]).toEqual(['shade']);
+  });
+
+  it('a conversation never stored yet (no deletion mark) keeps waiting', async () => {
+    tauri.mirror = [line('shade', { groupId: 'g4' })];
+    const storage = makeStorage();
+    expect(await adoptOrphanedMirrorEntries(storage, 'key', 'me')).toEqual([]);
+    expect(storage.mergeConversation).not.toHaveBeenCalled();
+    expect(storage._queue.size).toBe(0);
   });
 
   it('a row the store refuses queues no entry, and the claim is released', async () => {

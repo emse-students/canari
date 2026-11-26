@@ -79,6 +79,7 @@ import { fromBase64, toBase64 } from '$lib/utils/hex';
 import {
   SCHEMA_VERSION,
   PENDING_MUTATIONS_ORDER_INDEX_STATEMENT,
+  DELETED_CONVERSATIONS_TABLE_STATEMENT,
   PENDING_MUTATIONS_TABLE_STATEMENT,
   conversationAwaitingAdmissionStatement,
   conversationServerReadWatermarksStatement,
@@ -465,6 +466,11 @@ export class SqliteStorage implements IStorage {
     // yet (a group joined in the same drain), and it names a conversation only to be cleared with it.
     await this.db.execute(PENDING_MUTATIONS_TABLE_STATEMENT);
     await this.db.execute(PENDING_MUTATIONS_ORDER_INDEX_STATEMENT);
+
+    // The conversations this device DELETED (`wasConversationDeleted`): the one durable fact that tells
+    // a native mirror line naming a conversation never stored here yet from one naming a conversation
+    // the member removed. Created by every open, fresh or not, like `feed_pages`; empty until a delete.
+    await this.db.execute(DELETED_CONVERSATIONS_TABLE_STATEMENT);
 
     // A database created by the statements above has no history to migrate. Stamp it at the
     // current version and skip every branch below: they are written against schemas this file
@@ -868,8 +874,30 @@ export class SqliteStorage implements IStorage {
         conv.serverLastMessageAt ?? null,
       ]
     );
+    await this.clearDeletedMark(conv);
     // What waits for this row acts now (a native mirror line naming it, `conversationStored.ts`).
     announceConversationStored(conv.id);
+  }
+
+  /**
+   * A row written for a conversation that is not `removed` ends its "deleted here" mark: the member
+   * is in it again (a Welcome, a discovery, a restore). The `removed` stub the mirror recreates for
+   * a reply to a deleted conversation keeps it - it is the deletion's own trace, not a return.
+   */
+  private async clearDeletedMark(conv: ConversationMeta): Promise<void> {
+    if (conv.lifecycle === 'removed') return;
+    await this.db.execute('DELETE FROM deleted_conversations WHERE conversation_id = $1', [
+      conv.id,
+    ]);
+  }
+
+  /** See {@link IStorage.wasConversationDeleted}. */
+  async wasConversationDeleted(id: string): Promise<boolean> {
+    const rows: any[] = await this.db.select(
+      'SELECT 1 AS hit FROM deleted_conversations WHERE conversation_id = $1 LIMIT 1',
+      [id]
+    );
+    return rows.length > 0;
   }
 
   /**
@@ -941,6 +969,10 @@ export class SqliteStorage implements IStorage {
   async deleteConversation(id: string): Promise<void> {
     await this.deleteMessagesForConversation(id);
     await this.db.execute('DELETE FROM conversations WHERE id = $1', [id]);
+    await this.db.execute(
+      'INSERT OR IGNORE INTO deleted_conversations (conversation_id) VALUES ($1)',
+      [id]
+    );
   }
 
   /** Delete all messages (and the mutations awaiting them) for a conversation; the row is kept. */
@@ -1825,6 +1857,7 @@ export class SqliteStorage implements IStorage {
         conv.serverLastMessageAt ?? null,
       ]
     );
+    await this.clearDeletedMark(conv);
     announceConversationStored(conv.id);
   }
 
