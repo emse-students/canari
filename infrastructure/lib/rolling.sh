@@ -862,6 +862,38 @@ transport_resets_sweep() {
   printf '[TRANSPORT_RESETS] total=%s unknown=%s\n' "$TRANSPORT_RESETS_TOTAL" "$TRANSPORT_RESETS_UNKNOWN"
 }
 
+# THE RETIRED REPLICA'S ERROR LINES, PRINTED BEFORE `docker rm` DELETES THEM (2026-11-25). A release
+# under load once answered two 502s right after the frontend's old replica was retired (run
+# 39796209603), and the one line that names the failing hop - the retired nginx's `[error]` - left
+# with the container, so the cause could not be read. A retired replica's log is the only copy of what
+# it did during its drain; nothing else keeps it. The lines are those of the deploy's window: nginx's
+# error severities, and a service's `ERROR` / `Error:` lines. The pattern is wide on purpose - what is
+# printed is evidence for a reader, never a decision, and a retirement that errs nothing prints one
+# count line and no other.
+RETIRED_ERROR_PATTERN='\[(error|crit|alert|emerg)\]|(^|[^A-Za-z])ERROR([^A-Za-z]|$)|Error:'
+
+# retired_errors_report <service> <container> - prints every error line of a STOPPED replica's log
+# inside the deploy's window, each prefixed so a CI log can be searched for it, then their count.
+# An unreadable log is said to be unreadable, never reported as clean.
+retired_errors_report() {
+  local service="$1" cid="$2" out lines n rc=0
+  if ! out="$($DOCKER_CLI logs --since "${ROLLING_LOG_SINCE:-$ROLLING_STARTED_AT}" "$cid" 2>&1)"; then
+    printf '::warning::[RETIRED_ERRORS] could not read the log of %s - its error lines are UNKNOWN, not none\n' "${cid:0:12}" >&2
+    printf '[RETIRED_ERRORS] service=%s container=%s count=unknown\n' "$service" "${cid:0:12}"
+    return 0
+  fi
+  lines="$(grep -E "$RETIRED_ERROR_PATTERN" <<<"$out")" || rc=$?
+  if [ "$rc" -gt 1 ]; then
+    printf '::warning::[RETIRED_ERRORS] could not search the log of %s - its error lines are UNKNOWN, not none\n' "${cid:0:12}" >&2
+    printf '[RETIRED_ERRORS] service=%s container=%s count=unknown\n' "$service" "${cid:0:12}"
+    return 0
+  fi
+  n=0
+  [ -n "$lines" ] && n="$(grep -c . <<<"$lines")"
+  [ -n "$lines" ] && printf '%s\n' "$lines" | sed "s/^/[RETIRED_ERRORS] ${service} ${cid:0:12}: /"
+  printf '[RETIRED_ERRORS] service=%s container=%s count=%s\n' "$service" "${cid:0:12}" "$n"
+}
+
 # retire <service> <container...> - drains and removes replicas already out of rotation. `docker
 # stop` sends the image's stop signal and waits ROLLING_DRAIN_SECONDS for the process to leave by
 # itself.
@@ -872,9 +904,10 @@ retire() {
     wait_unqueued "$service" "$cid" || return 1
     printf '  %s: retiring %s (drain up to %ss)\n' "$service" "${cid:0:12}" "$ROLLING_DRAIN_SECONDS"
     $DOCKER_CLI stop --time "$ROLLING_DRAIN_SECONDS" "$cid" >/dev/null || return 1
-    # A stopped container's log is still readable, and the drain's own resets are in it: read it
-    # here, BEFORE `docker rm` takes the log with the container.
+    # A stopped container's log is still readable, and the drain's own resets and errors are in it:
+    # read it here, BEFORE `docker rm` takes the log with the container.
     transport_resets_report "$service" retired "$cid"
+    retired_errors_report "$service" "$cid"
     $DOCKER_CLI rm "$cid" >/dev/null || return 1
   done
 }

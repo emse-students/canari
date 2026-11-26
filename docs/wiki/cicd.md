@@ -959,6 +959,17 @@ count=<n>`, then `total=<n> unknown=<k>`; an unreadable log is `unknown` with a 
 `0`. The logs do not name the peer (bun 1.4 says `ECONNRESET` with no host), so the count includes
 external callers and is read against an ordinary day; after the mesh, a rise at deploys is a defect.
 
+**The retired replica's error lines are printed before it is removed (2026-11-25).** A release under
+load once answered two `502`s right after the frontend's old replica was retired (run 39796209603),
+and the retired nginx's `[error]` line, the one that names the failing hop, left with the container.
+So `retire` now also prints, from the same window, every error line of the stopped replica
+(`retired_errors_report`: nginx's `[error|crit|alert|emerg]`, a service's `ERROR` / `Error:`), each as
+`[RETIRED_ERRORS] <service> <id>: <line>`, then `[RETIRED_ERRORS] service=<name> container=<id>
+count=<n>` (`unknown` with a `::warning::` when the log cannot be read). `deploy-rolling.test.sh` case
+1 asserts the exact counts (api 1, frontend 0) and, when a POST fails, prints these lines beside the
+running proxies' logs, so the next failure names its hop. The cause itself is still open:
+[backlog](backlog.d/p2-the-deploy-s-rolling-replace-two-posts-answered-502-across-a-release-cause.md).
+
 **What it does not cover:**
 
 - **The first deploy carrying it**: callers not yet replaced still call by DNS, and the mesh is

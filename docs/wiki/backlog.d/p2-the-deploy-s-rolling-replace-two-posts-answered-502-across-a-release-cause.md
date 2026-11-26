@@ -10,7 +10,7 @@ _2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
 
 _2026-11-17: moved to 1.7.1 by the owner's 2026-11-17 scope cut ([decisions](../decisions/owner-decisions-of-2026-11-17.md))._
 
-Re-read 2026-11-11: nothing new; the retired replica's error log is still deleted with it, so the next occurrence will be as unreadable as the first. Re-read again 2026-12-11.
+Re-read 2026-11-25: step 1 below is built, so the next occurrence is readable; what is left is to catch one (step 2) and fix the order if it drops a request (step 3).
 
 `deploy-rolling.test.sh` (`make test-ci-scripts`, case 1, a release under load) failed ONCE: run 39796209603, attempt 1, head `537b4c736`. Tally `{"200":340,"502":2}`, slowest response 2155 ms, right after the frontend's old replica was retired with a 1 s drain. The rerun passed, and so does every other run read. The logs of attempt 1 are not retrievable: the API serves the passing attempt.
 
@@ -27,7 +27,7 @@ Re-read 2026-11-11: nothing new; the retired replica's error log is still delete
 - Not reproduced locally.
 
 **Owed, in order.**
-1. Make the evidence survive: `retire` prints the retired replica's error lines before `rm`, and the test prints both frontends' logs when a POST fails.
+1. ~~Make the evidence survive~~ - **built 2026-11-25**: `retire` prints the retired replica's error lines (`[RETIRED_ERRORS]`) before `rm`, and case 1 prints them beside the running proxies' logs when a POST fails ([cicd](../cicd.md)).
 2. Re-run case 1 until it fails, and read which hop wrote the 502.
 3. Fix the order in the deploy library if the swap drops a request. A retry or a wider timeout is not the fix.
 
