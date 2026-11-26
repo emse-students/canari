@@ -29,6 +29,7 @@ import {
   MediaNotFoundError,
   MediaPurgedError,
   MediaUnreachableError,
+  readMediaBody,
   resolveMediaCredential,
 } from './mediaErrors';
 import { mediaRequestGate, type GateLane, type GateRank } from './requestGate';
@@ -126,7 +127,7 @@ export function httpRangeSource(
         if (res.ok) throw new MediaRangeUnsupportedError(res.status);
         throw new MediaDownloadError(res.status);
       }
-      const bytes = new Uint8Array(await res.arrayBuffer());
+      const bytes = new Uint8Array(await readMediaBody(() => res.arrayBuffer(), signal));
       observe?.(bytes.byteLength, (clock() - grantedAt) / 1000);
       return bytes;
     },

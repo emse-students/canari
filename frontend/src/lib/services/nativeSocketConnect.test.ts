@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { isTransportFailure } from '../utils/transportFailure';
 import { connectNativeSocket } from './nativeSocketConnect';
 
 /**
@@ -48,6 +49,22 @@ describe('connectNativeSocket', () => {
     expect(s.disconnect).toHaveBeenCalledTimes(1);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('past the 15000 ms deadline'));
     warn.mockRestore();
+  });
+
+  it('types the plugin connect-phase failure as a transport failure, by its field', async () => {
+    const d = deferred<ReturnType<typeof socket>>();
+    const result = connectNativeSocket(d.promise, 15_000);
+    const settled = expect(result).rejects.toSatisfy(isTransportFailure);
+    d.reject({ kind: 'connect', message: 'no address to connect to' });
+    await settled;
+  });
+
+  it('leaves a handshake a server refused (a plain string) as it is', async () => {
+    const d = deferred<ReturnType<typeof socket>>();
+    const result = connectNativeSocket(d.promise, 15_000);
+    const settled = expect(result).rejects.toBe('HTTP error: 403 Forbidden');
+    d.reject('HTTP error: 403 Forbidden');
+    await settled;
   });
 
   it('passes a failure inside the deadline through', async () => {

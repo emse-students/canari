@@ -84,7 +84,8 @@ tauri-plugin-system-components = { path = "patches/tauri-plugin-system-component
 # (CALL-WS-V6, 2026-10-20). The local patch makes `Builder::new` REQUIRE a TCP connector, through
 # which the app's Happy Eyeballs connect (`src/happy_eyeballs.rs`) runs before the unchanged TLS
 # and WebSocket handshakes, and registers a connection's writer BEFORE answering its id (so a
-# `disconnect()` right after the id cannot miss it) - the `CANARI PATCH` hunks in `src/lib.rs`;
+# `disconnect()` right after the id cannot miss it), and rejects a failed TCP connect as the typed
+# object `{ kind: "connect", message }` so the page never reads a sentence - the `CANARI PATCH` hunks in `src/lib.rs`;
 # everything else is the published crate. A vendored fork: an upstream release is rebased by hand.
 tauri-plugin-websocket = { path = "patches/tauri-plugin-websocket" }
 # wry 0.57.1's Android main pipe (the channel every WebView call crosses to the main thread) can
