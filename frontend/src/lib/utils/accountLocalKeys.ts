@@ -93,6 +93,11 @@ export const ACCOUNT_KEY = {
    */
   registerOwed: (userId: string) => `mls_register_owed:v1:${userId}`,
   /**
+   * `chat/notepadMigration.ts`: the server has said this account holds no notepad (moved, or never
+   * written), so later sessions ask nothing. Wiped with the account: the next sign-in asks once more.
+   */
+  notepadMoved: (userId: string) => `canari.notepad-moved.${userId}`,
+  /**
    * `graine/admissionGate.ts`: what this device recorded by itself about who is admitted - per
    * community the roots and the admissions it verified. Other members' ids, written by this
    * account's device.
@@ -278,6 +283,7 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.historyHeldNothing(userId),
     ACCOUNT_KEY.joinPushesSent(userId),
     ACCOUNT_KEY.registerOwed(userId),
+    ACCOUNT_KEY.notepadMoved(userId),
     ACCOUNT_KEY.admissionLedger(userId),
     ACCOUNT_KEY.historyClosedSeen(userId),
     ACCOUNT_KEY.pagedHistoryAnswer(userId),

@@ -3,6 +3,7 @@ import { coreUrl } from '$lib/utils/apiUrl';
 import { decryptVaultNote } from '$lib/associations/vaultCrypto';
 import type { OutboxSettlement } from '$lib/utils/chat/outbox';
 import { m } from '$lib/paraglide/messages';
+import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
 /**
  * THE PERSONAL NOTEPAD MOVES INTO "MES NOTES" (owner, 2026-11-22, item 12; `1.8.2`, decided
@@ -200,7 +201,7 @@ export async function confirmNotepadMoved(digest: string): Promise<NotepadMoveAn
 
 /** The per-account local mark: the server has said there is nothing (left) to move. */
 export function notepadDoneMark(userId: string): NotepadMigrationDeps['doneMark'] {
-  const key = `canari.notepad-moved.${userId}`;
+  const key = ACCOUNT_KEY.notepadMoved(userId);
   return {
     read: () => {
       try {
