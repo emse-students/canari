@@ -1389,7 +1389,7 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
 
   describe('an acceptance on a validated event returns it to pending (WP-Q2, P13 interim, F7)', () => {
     const V = E(30); // validated: the acceptance reopens it
-    const PEND = E(31); // already pending: nothing to reopen, nothing to announce
+    const PEND = E(31); // already pending: nothing to reopen, the parties are told who joined
     const REJ = E(32); // rejected: stays rejected
     const MOVED = E(33); // validated, partner accepted, then the DATE moves
 
@@ -1481,13 +1481,19 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       );
     });
 
-    it('an event already PENDING is not touched and announces nothing', async () => {
+    it('an event already PENDING is not reopened, and its parties are told who joined (WP-COORG-ACCEPT-NOTICE)', async () => {
       const proposalId = await ask(PEND);
       told.length = 0;
       await proposals.accept(proposalId, 'coPub', false);
       expect(await coOwnersOf(PEND)).toEqual([A3]);
       expect((await stamp(PEND)).status).toBe('pending');
-      expect(told.filter((t) => t.type.startsWith('event_'))).toEqual([]);
+      // The organiser's editor and the partner's other editor; the acceptor is dropped; no
+      // validator notice and no reopening sentence, since nothing returned to the queue.
+      const eventNotices = told.filter((t) => t.type.startsWith('event_'));
+      expect(eventNotices.map((t) => [t.type, t.recipientIds, t.text])).toEqual([
+        ['event_coorganiser_accepted', ['coEd', 'org'], 'Reopen 31'],
+      ]);
+      expect(eventNotices[0].meta).toEqual({ eventId: PEND });
     });
 
     it('a REJECTED event stays rejected', async () => {

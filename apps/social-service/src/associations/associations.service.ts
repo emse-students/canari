@@ -4467,6 +4467,37 @@ ${rejectionReason}`
   }
 
   /**
+   * A partner ACCEPTED to co-organise an event that was already PENDING (WP-COORG-ACCEPT-NOTICE):
+   * nothing returned to the queue, so the validators are told nothing new - only the event's parties
+   * (the `PROPOSE_EVENT` holders of the organiser and of each accepted partner, the acceptor's
+   * included) learn who joined. NEVER REJECTS, like `announceEventReopened`: it runs after a commit
+   * that must stay a success.
+   */
+  async announceCoorganiserAccepted(ev: ReopenedEvent, actorId: string): Promise<void> {
+    try {
+      const partyIds = await this.eventPartyIds(ev);
+      const written = await this.notifications.createNotifications({
+        recipientIds: [...partyIds],
+        type: 'event_coorganiser_accepted',
+        postId: ev.associationId,
+        actorId,
+        text: ev.title,
+        // `eventId`: what the bell re-asks at every read (`BELL_ROW_GATE`, `eventPartySql`).
+        meta: { eventId: ev.id },
+        pushData: { associationId: ev.associationId, action: 'pending' },
+      });
+      this.logger.log(
+        `[COORG_ACCEPTED] ${sanitizeLog(ev.id.slice(0, 8))}: ${written} party notice(s) written (accepted by ${sanitizeLog(actorId.slice(0, 8))})`
+      );
+    } catch (err) {
+      this.logger.warn(
+        `[COORG_ACCEPTED] ${sanitizeLog(ev.id.slice(0, 8))}: the parties were not told`,
+        err instanceof Error ? err.stack : String(err)
+      );
+    }
+  }
+
+  /**
    * Tells the people an event belongs to why it left the public agenda: the `PROPOSE_EVENT` holders
    * of the organiser AND of each ACCEPTED partner (they co-own it, and the one who moved the dates or
    * accepted is rarely the only person counting on it). The notification type carries the reason

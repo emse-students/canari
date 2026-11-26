@@ -1024,6 +1024,11 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     *body = [NSString stringWithFormat:CanariLocalized(@"notif.event.pending_coorganiser.body"), arg];
     return;
   }
+  if ([key isEqualToString:@"event_coorganiser_accepted"]) {
+    *title = CanariLocalized(@"notif.event.coorganiser_accepted.title");
+    *body = [NSString stringWithFormat:CanariLocalized(@"notif.event.coorganiser_accepted.body"), arg];
+    return;
+  }
   NSLog(@"[CanariPush] unknown contentKey=%@ - keeping the server's own wording", key);
 }
 

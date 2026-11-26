@@ -164,6 +164,8 @@ export const BELL_ROW_GATE: Readonly<Record<NotificationType, BellRowGate>> = {
   event_rejected: roleInTarget(AssociationPermissionFlag.PROPOSE_EVENT),
   event_proposed: validatorRowSql,
   event_pending: eventPartySql,
+  // A partner accepted an event still waiting for validation: told to the parties, like a reopening.
+  event_coorganiser_accepted: eventPartySql,
   // Told to the validators (`meta.audience = 'validators'`) and to the parties, under one type.
   event_pending_coorganiser: (row) =>
     `(CASE WHEN ${row.meta}->>'audience' = 'validators'

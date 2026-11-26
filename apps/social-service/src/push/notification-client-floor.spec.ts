@@ -103,11 +103,16 @@ describe('notificationTypesRenderableBy', () => {
 
   it('serves the trend to 1.6.10, a pre-release of it included', () => {
     expect(notificationTypesRenderableBy('1.6.10-alpha.1')).toContain('campus_trend');
-    // The build carrying the highest floor (the cash hold's notice and the question put to a form
-    // left open, 1.8.0) renders every type.
-    expect(notificationTypesRenderableBy('1.8.0')).toHaveLength(
+    // The build carrying the highest floor (the co-organisation accepted on a pending event, 1.8.2)
+    // renders every type.
+    expect(notificationTypesRenderableBy('1.8.2')).toHaveLength(
       Object.keys(NOTIFICATION_TYPE_MIN_CLIENT).length
     );
+  });
+
+  it('serves the accepted co-organisation of a pending event from 1.8.2 only', () => {
+    expect(notificationTypesRenderableBy('1.8.1')).not.toContain('event_coorganiser_accepted');
+    expect(notificationTypesRenderableBy('1.8.2-alpha.1')).toContain('event_coorganiser_accepted');
   });
 
   it("serves the cash hold's notice from 1.8.0 only (owner decision of 2026-11-21)", () => {
