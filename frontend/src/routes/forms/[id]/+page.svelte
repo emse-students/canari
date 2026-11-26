@@ -24,6 +24,8 @@
     getMyEditableAnswers,
     resumeSubmissionPayment,
     leaveWaitlist,
+    holdSeat,
+    releaseSeatHold,
     switchSubmissionToCash,
     type CashSwitchReply,
     type EditableAnswer,
@@ -40,6 +42,13 @@
     waitlistRankText,
     type WaitlistView,
   } from '$lib/forms/waitlist';
+  import {
+    holdCountdownText,
+    holdEndsAt,
+    holdSecondsLeft,
+    seatHoldOffered,
+    type SeatHoldView,
+  } from '$lib/forms/seatHold';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import {
     cursusSlicesOf,
@@ -207,6 +216,16 @@
   /** Which send the payer's e-mail prompt is for: a new answer, or the resume of the released one. */
   let payerPromptFor = $state<'submit' | 'resume'>('submit');
   let formFull = $state(false);
+  /**
+   * The caller's seat hold ("Reserver ma place"): when it ends on the browser's monotonic clock
+   * (`performance.now()`, from the seconds the server answered), or null with none. `holdLapsed` says
+   * a hold this page had ran out, so the card offers it again and warns the seat may be gone.
+   */
+  let holdEndsAtMs = $state<number | null>(null);
+  let holdLapsed = $state(false);
+  let holdBusy = $state(false);
+  /** The monotonic "now" the countdown reads, advanced once a second while a hold is live. */
+  let holdNowMs = $state(0);
   /**
    * This submitter's slices of the pricing grid, from the server: one per distinct cursus (D32), the
    * page showing the cheapest (`fillPriceState`). A slice's `pricing` is null when the form has one
@@ -445,6 +464,8 @@
     cashSwitchable = null;
     payerPromptFor = 'submit';
     formFull = false;
+    holdEndsAtMs = null;
+    holdLapsed = false;
     slices = NO_PRICING_SLICE;
     missingAnswer = null;
     hiddenItemIds = [];
@@ -574,6 +595,7 @@
       submitted = hasSubmitted;
       formFull = full;
       resumable = submission.resumable ?? null;
+      adoptSeatHold(submission.seatHold);
       adoptWaitlist(submission);
       cashSwitchable = submission.cashSwitchable ?? null;
       slices = cursusSlicesOf(submission);
@@ -1022,6 +1044,9 @@
         await navigateExternal(res.checkoutUrl);
       } else {
         submitted = true;
+        // The answer took the seat the hold kept: the server spent the hold with it.
+        holdEndsAtMs = null;
+        holdLapsed = false;
         // The previous request of this answer was found PAID while settling it: no new one.
         successMessage = res.alreadyPaid
           ? m.form_view_submission_already_paid()
@@ -1039,6 +1064,113 @@
       if (refusalCode(e) === FORM_RESPONDENT_FIELDS_CHANGED) await reloadFormKeepingAnswers();
     } finally {
       submitting = false;
+    }
+  }
+
+  /** Adopts the hold the server named (`check.seatHold`): its seconds left, counted on this page's clock. */
+  function adoptSeatHold(hold: SeatHoldView | null | undefined): void {
+    if (hold) {
+      holdNowMs = performance.now();
+      holdEndsAtMs = holdEndsAt(hold.secondsLeft, holdNowMs);
+      holdLapsed = false;
+      Log.d('FormView', `a seat is held for the caller, ${hold.secondsLeft}s left`);
+    } else {
+      holdEndsAtMs = null;
+    }
+  }
+
+  /** Seconds the live hold has left, 0 once it lapsed; null with no hold. */
+  const holdSecondsRemaining = $derived(
+    holdEndsAtMs === null ? null : holdSecondsLeft(holdEndsAtMs, holdNowMs)
+  );
+
+  /**
+   * The countdown: ticks the page's monotonic clock once a second while a hold is live, and turns a
+   * lapsed hold into the "expired" state. Only DRAWS the hold: the server counted the seat free from
+   * the hold's own age, whatever this page shows.
+   */
+  $effect(() => {
+    if (holdEndsAtMs === null) return;
+    const ends = holdEndsAtMs;
+    const tick = setInterval(() => {
+      holdNowMs = performance.now();
+      if (holdSecondsLeft(ends, holdNowMs) <= 0) {
+        Log.d('FormView', 'the seat hold ran out');
+        holdEndsAtMs = null;
+        holdLapsed = true;
+      }
+    }, 1000);
+    return () => clearInterval(tick);
+  });
+
+  /** Whether the card offers "Reserver ma place" (`seatHoldOffered`: the server re-checks each rule). */
+  const holdOffered = $derived(
+    seatHoldOffered({
+      maxSubmissions: form?.maxSubmissions,
+      anonymous: form?.anonymous,
+      signedIn: !!userId,
+      formFull,
+      submitted,
+      editing: !!editing,
+      closed: isClosed,
+      notOpenYet: isNotOpenYet,
+      maySubmit,
+      preview,
+      holding: holdEndsAtMs !== null,
+    })
+  );
+
+  /** "RESERVER MA PLACE": asks the server for the hold and starts its countdown. */
+  async function takeSeatHold(): Promise<void> {
+    if (!form || holdBusy) return;
+    const formShown = form.id;
+    holdBusy = true;
+    try {
+      const hold = await holdSeat(formShown);
+      if (form?.id !== formShown) return;
+      adoptSeatHold(hold);
+    } catch (e: unknown) {
+      const code = refusalCode(e);
+      Log.w(
+        'FormView',
+        `holding a seat refused status=${refusalStatus(e) ?? 'transport'} code=${code}`
+      );
+      showToast(formCodeMessage(code) ?? m.form_seat_hold_failed());
+      try {
+        const check = await checkSubmission(formShown);
+        if (form?.id !== formShown) return;
+        formFull = check.formFull;
+        adoptSeatHold(check.seatHold);
+      } catch (err) {
+        console.warn(
+          `[FormView] re-reading the form after a refused hold failed status=${refusalStatus(err) ?? 'transport'}`,
+          err
+        );
+      }
+    } finally {
+      holdBusy = false;
+    }
+  }
+
+  /** "LIBERER MA PLACE": gives the seat back, so somebody else may take it. */
+  async function giveSeatBack(): Promise<void> {
+    if (!form || holdBusy) return;
+    const formShown = form.id;
+    holdBusy = true;
+    try {
+      await releaseSeatHold(formShown);
+      if (form?.id !== formShown) return;
+      holdEndsAtMs = null;
+      holdLapsed = false;
+      showToast(m.form_seat_hold_released(), 'info');
+    } catch (e: unknown) {
+      Log.w(
+        'FormView',
+        `releasing the seat refused status=${refusalStatus(e) ?? 'transport'} code=${refusalCode(e)}`
+      );
+      showToast(m.form_seat_hold_release_failed());
+    } finally {
+      holdBusy = false;
     }
   }
 
@@ -1725,6 +1857,55 @@
             </p>
           {/if}
         </div>
+      </div>
+    {/if}
+
+    <!-- ── "Reserver ma place": a seat kept for ten minutes, its countdown, and its expiry ── -->
+    {#if holdSecondsRemaining !== null}
+      <div
+        class="border-cn-border mb-4 flex flex-col gap-3 rounded-2xl border bg-(--cn-surface) px-5 py-4 sm:flex-row sm:items-center"
+        role="status"
+        data-testid="form-seat-hold"
+      >
+        <div class="min-w-0 flex-1">
+          <p class="text-text-main font-semibold">
+            {m.form_seat_hold_active({ time: holdCountdownText(holdSecondsRemaining) })}
+          </p>
+          <p class="text-text-muted mt-0.5 text-sm">{m.form_seat_hold_active_note()}</p>
+        </div>
+        <Button
+          variant="secondary"
+          class="shrink-0"
+          disabled={holdBusy}
+          onclick={() => void giveSeatBack()}
+        >
+          {m.form_seat_hold_release_button()}
+        </Button>
+      </div>
+    {:else if holdOffered}
+      <div
+        class="border-cn-border mb-4 flex flex-col gap-3 rounded-2xl border bg-(--cn-surface) px-5 py-4 sm:flex-row sm:items-center"
+        data-testid="form-seat-hold-offer"
+      >
+        <div class="min-w-0 flex-1">
+          {#if holdLapsed}
+            <p class="text-amber-warn-text font-semibold" role="status">
+              {m.form_seat_hold_expired()}
+            </p>
+          {:else}
+            <p class="text-text-main font-semibold">{m.form_seat_hold_title()}</p>
+          {/if}
+          <p class="text-text-muted mt-0.5 text-sm">{m.form_seat_hold_note()}</p>
+        </div>
+        <Button
+          variant="primary"
+          class="shrink-0"
+          disabled={holdBusy}
+          loading={holdBusy}
+          onclick={() => void takeSeatHold()}
+        >
+          {holdLapsed ? m.form_seat_hold_again_button() : m.form_seat_hold_button()}
+        </Button>
       </div>
     {/if}
 

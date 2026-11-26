@@ -97,6 +97,10 @@ maybe('Lydia refunds against PostgreSQL', () => {
     await admin.query(
       readFileSync(join(__dirname, '../../migrations/167_lydia_account_bridge.sql'), 'utf8')
     );
+    // The seat holds a promotion counts beside the answers (migration 186; its foreign key names forms).
+    await admin.query(
+      readFileSync(join(__dirname, '../../migrations/186_form_seat_holds.sql'), 'utf8')
+    );
     await admin.query('RESET lock_timeout');
     await admin.query(
       `INSERT INTO associations (id, name, "lydiaAccountId") VALUES ($1, 'BDE', $2)`,

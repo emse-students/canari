@@ -3,7 +3,7 @@ import type { Logger } from '@nestjs/common';
 import { Form } from './entities/form.entity';
 import { Submission } from './entities/submission.entity';
 import { cashReminderDueAt } from './cash-reminder';
-import { lockFormSeats, seatHoldingWhere } from './seat-hold';
+import { lockFormSeats, countSeatsTaken } from './seat-hold';
 import { acceptsCash, acceptsOnline } from './payment-offer';
 
 /**
@@ -49,6 +49,8 @@ export type WaitlistTrigger =
   | 'cash-cancel'
   | 'cash-expiry'
   | 'online-expiry'
+  | 'hold-expiry'
+  | 'hold-release'
   | 'refund'
   | 'form-edit'
   | 'collection-resumed'
@@ -304,7 +306,7 @@ export async function promoteFromWaitlist(
   }
   let free = waitingCount;
   if (form.maxSubmissions) {
-    const held = await manager.count(Submission, { where: seatHoldingWhere(formId) });
+    const held = await countSeatsTaken(manager, formId);
     free = Math.max(0, form.maxSubmissions - held);
     if (free === 0) {
       logger.debug(

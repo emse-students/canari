@@ -469,6 +469,24 @@ export class FormsController {
     return this.service.hasSubmission(id, xUserId, answers === '1');
   }
 
+  /**
+   * "Reserver ma place": holds one seat of a capped form for the caller for ten minutes
+   * (`FormsService.holdSeat`). A second press answers the same hold. Answers the seconds left.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Post(':id/seat-hold')
+  @HttpCode(200)
+  holdSeat(@Param('id') id: string, @Headers('x-user-id') xUserId: string) {
+    return this.service.holdSeat(id, xUserId);
+  }
+
+  /** "Liberer ma place": gives the caller's seat hold back (idempotent). */
+  @UseGuards(NginxAuthGuard)
+  @Delete(':id/seat-hold')
+  releaseSeatHold(@Param('id') id: string, @Headers('x-user-id') xUserId: string) {
+    return this.service.releaseSeatHold(id, xUserId);
+  }
+
   /** Submits a filled form on behalf of the calling user. */
   @UseGuards(NginxAuthGuard)
   @Post(':id/submit')

@@ -19,6 +19,7 @@ import { Client } from 'pg';
 import { DataSource } from 'typeorm';
 import { Form } from './entities/form.entity';
 import { Submission } from './entities/submission.entity';
+import { FormSeatHold } from './entities/form-seat-hold.entity';
 import { OpeningReminder } from '../openings/entities/opening-reminder.entity';
 import { FormRespondent } from './entities/form-respondent.entity';
 import { PurchaseRecord } from '../users/entities/purchase-record.entity';
@@ -58,7 +59,7 @@ maybe('the association of a form, against PostgreSQL', () => {
     ds = new DataSource({
       type: 'postgres',
       url: URL,
-      entities: [Form, Submission, OpeningReminder, FormRespondent, PurchaseRecord],
+      entities: [Form, Submission, FormSeatHold, OpeningReminder, FormRespondent, PurchaseRecord],
       synchronize: true,
       extra: { options: `-c search_path=${schema},public` },
     });

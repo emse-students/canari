@@ -1,6 +1,7 @@
 import { m } from '$lib/paraglide/messages';
 import { statusLabels } from './paymentStatus';
 import type { WaitlistView } from './waitlist';
+import type { SeatHoldView } from './seatHold';
 import type { AnswerWords } from './answerText';
 import type { PaymentRequestState } from './paymentReturn';
 import type { ProductGridLine, ProductGridPrices, ProductGridView } from './productGridContract';
@@ -676,6 +677,11 @@ export async function checkSubmission(
    */
   cashSwitchable?: ResumableAnswer | null;
   /**
+   * The caller's live seat hold on this capped form ("Reserver ma place", `seatHold.ts`), or null.
+   * Absent from a server older than it: the page then offers no hold.
+   */
+  seatHold?: SeatHoldView | null;
+  /**
    * The caller's own answers, newest first, each with the questions that fixed its price - only
    * when asked (`withAnswers`). Always empty on an anonymous form (its rows name nobody). Absent from
    * a server older than it (2026-11-21): the page then draws what it drew before.
@@ -945,6 +951,27 @@ export async function leaveWaitlist(submissionId: string): Promise<void> {
     { method: 'POST' }
   );
   if (!res.ok) throw await refusal(res, 'Leaving the waiting list failed');
+}
+
+/**
+ * "RESERVER MA PLACE": holds one seat of a capped form for the caller for ten minutes. A second press
+ * answers the same hold. A 400 `FORM_FULL` when no seat is free, `SEAT_HOLD_NOT_AVAILABLE` on a form
+ * that holds none, a 409 `ALREADY_ANSWERED` for a person who answered.
+ */
+export async function holdSeat(formId: string): Promise<SeatHoldView> {
+  const res = await apiFetch(`${socialUrl()}/api/forms/${encodeURIComponent(formId)}/seat-hold`, {
+    method: 'POST',
+  });
+  if (!res.ok) throw await refusal(res, 'Holding a seat failed');
+  return (await res.json()) as SeatHoldView;
+}
+
+/** "LIBERER MA PLACE": gives the caller's seat hold back. Idempotent. */
+export async function releaseSeatHold(formId: string): Promise<void> {
+  const res = await apiFetch(`${socialUrl()}/api/forms/${encodeURIComponent(formId)}/seat-hold`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) throw await refusal(res, 'Releasing a seat failed');
 }
 
 /**
