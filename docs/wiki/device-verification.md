@@ -34,6 +34,21 @@ Owner, 2026-11-23 ([decisions](decisions/owner-decisions-of-2026-11-23.md)): a r
 
 Owner, 2026-11-24 ([decisions](decisions/owner-decisions-of-2026-11-24.md), item 3): two Android call readings need a cellular call, and the bench Mi 9T has no SIM. Both are CLOSED, never queued: a Canari call started during a cellular call (the peer sees the microphone cut), and the microphone coming back by itself when the cellular call ends. The hold and its release are covered by `CallFocusHoldTest` and `CallAudioSlotTest` ([calls](frontend/modules/calls.md)).
 
+## The smoke reading of 2026-11-26 (`1.8.2-alpha.9`, the 1.8.2 stable candidate): both bench phones
+
+Code identical to `alpha.8` (read in full the same day on both phones); only the store notes and docs differ. Dev served `alpha.9` (`/api/version` build `dev.9b0f7c1`). **Builds read:** the Mi 9T's versionCode `100800209` (the release's `app-universal-release.apk`, `adb install -r`, data kept), the iPhone 12's `CFBundleVersion` `100800209` (TestFlight offered it as an update, read back with `apps list`). Mi 9T as `alpha`, iPhone as `gamma`, both with the harness web seat of `beta` as the peer; evidence stays outside the repository.
+
+| Check | Mi 9T | iPhone 12 |
+| --- | --- | --- |
+| Version installed | **PASS** (`1.8.2-alpha.9` in the WS handshake, versionCode `100800209`) | **PASS** (`100800209`) |
+| Cold start: no migration, no error line, no sweep beyond what is owed | **PASS** (no migration line, no error; `[HISTORY_RECONCILE] no sweep - away 0 d ... every group already audited`; `[RESTORE] 43 conversation row(s) seeded`) | **PASS** (no migration line, no error; `reconciliation pass complete - 0/1 group(s) asked`; `retention sweep dropped 0 seed(s)`) |
+| No banner, no locked composer | **PASS** (only the Alumni link banner of the account, not a sync banner) | **PASS** |
+| A DM opens with its history intact, a text sent and delivered to the peer seat | **PASS** (earlier attachments, video and file still drawn; the text reached the `beta` seat, unread count and preview) | **PASS** (earlier texts, read mark and voice notes drawn; `[OUTBOX] ... sent`; reached the `beta` seat) |
+| A small file picked in-app and sent | **PASS** (system picker, 530 KB text; reached the `beta` seat) | **PASS** (Files picker, 19 KB text; `upload ended`, `sent`; reached the `beta` seat) |
+| Background then foreground once: no false "Synchronisation en attente" | **PASS** (a 20 s Home; the process kept; `no sweep` again; no such text in the page) | **PASS** (a 25 s Home; no such text in the tree; the last minutes of the log had not flushed, so the line evidence is the screen) |
+
+**Seen on the way, not new:** the Mi's console printed the pdf.js `Cannot load system font: Helvetica` warning when the DM with a PDF opened; the iPhone logged the known `[LOUDNESS] ... a stream on WebKit is not routed` pair at launch (the feed's video, as in the `alpha.7` sitting). The Mi's own text kept a single check while the `beta` seat already showed it (the seat held another conversation open); the double check was not read and its cause was not chased.
+
 ## The readings of 2026-11-26 (`1.8.2-alpha.8`, Mi 9T): the v22 store upgraded, a picked file sent, the person filter, `@tous` in a salon
 
 Mi 9T on dev, account `alpha`, the release APK of each tag sideloaded (no installer). **The v22 store
