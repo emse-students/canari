@@ -70,6 +70,8 @@
   import {
     countUnreadBelow,
     countingReadPoint,
+    pillCountingPoint,
+    type PillBaseline,
     dmReadAnchorId,
     seenByAnchors,
   } from '$lib/utils/chat/readState';
@@ -146,6 +148,11 @@
     onMessageChange: (value: string) => void;
     /** A writer bound to the draft of the conversation open now (an edit gives its draft back there). */
     bindDraftWriter: () => (text: string) => void;
+    /**
+     * The key the open conversation's draft is stored under (not always its id: a DM's is its map
+     * key). An edit registers under it, so a text restored for that draft finds the edit.
+     */
+    draftKey?: string | null;
     /** Callback to submit the composed message. */
     onSend: () => void;
     /** Optional callback emitting throttled typing start/stop signals. */
@@ -332,6 +339,7 @@
     isChannel = false,
     onMessageChange,
     bindDraftWriter,
+    draftKey = null,
     onSend,
     onTyping,
     onSendGif,
@@ -1362,6 +1370,13 @@
   /** Groups hidden above the render window (older messages). */
   let _hiddenGroupCount = $derived(renderWindow.start);
   /**
+   * THE MARKS AS THEY STOOD WHEN THE READER LEFT THE LIVE END (`pillCountingPoint`). Taken by the
+   * effect below on the first run away from the bottom of a conversation, dropped on the way back
+   * or on another conversation: the open window marks every arrival read, so counting against the
+   * live marks drew an arrow with no number after a catch-up into a scrolled-up thread.
+   */
+  let pillBaseline = $state<PillBaseline | null>(null);
+  /**
    * HOW MANY MESSAGES THE READER HAS NOT READ - the app's own definition, a watermark that advances.
    *
    * The badge used to show `messageGroups.length - windowEnd`, the count of groups the component
@@ -1377,8 +1392,30 @@
     if (isNearBottom) return 0;
     const convo = chatView?.conversation;
     if (!convo) return 0;
-    const mine = countingReadPoint(convo, currentUserId.trim().toLowerCase());
+    const mine = pillCountingPoint(
+      countingReadPoint(convo, currentUserId.trim().toLowerCase()),
+      pillBaseline,
+      convo.id
+    );
     return countUnreadBelow(messageRows, lastVisibleAnchor, mine.stamped, mine.server);
+  });
+  $effect(() => {
+    const conversationId = conversation?.id ?? '';
+    if (isNearBottom || !conversationId) {
+      if (pillBaseline) pillBaseline = null;
+      return;
+    }
+    untrack(() => {
+      if (pillBaseline?.conversationId === conversationId) return;
+      const convo = chatView?.conversation;
+      if (!convo) return;
+      const point = countingReadPoint(convo, currentUserId.trim().toLowerCase());
+      pillBaseline = { conversationId, stamped: point.stamped, server: point.server };
+      Log.d(
+        'CHAT_VIEW',
+        `${conversationId.slice(0, 12)} pill baseline frozen at stamped=${point.stamped} server=${point.server}`
+      );
+    });
   });
   /**
    * Show the loading skeleton ONLY when there is genuinely nothing to render yet (cold
@@ -1641,6 +1678,7 @@
     getText: () => messageText,
     setText: (text) => onMessageChange(text),
     bindDraftWriter: () => bindDraftWriter(),
+    conversationKey: () => draftKey,
     save: (messageId, text) => onEdit?.(messageId, text),
   });
 
@@ -2646,6 +2684,7 @@
           {messageText}
           {mentionRoster}
           {mentionEveryone}
+          {conversationId}
           {onMessageChange}
           {onTyping}
           {onSendGif}

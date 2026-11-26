@@ -545,6 +545,8 @@ export class LivesService implements OnModuleDestroy {
     const keepsReplay =
       wantsReplay && (await readLiveReplaysMode(this.db.manager, this.logger)) === 'on';
     let row: LiveRow;
+    // Its own earlier open live, ended by this start (see below), purged after the commit.
+    let superseded: string | null = null;
     try {
       row = await this.db.transaction(async (tx) => {
         // THE STRIKE LADDER (WP-L8b): a withdrawn or suspended right refuses the start. Read under
@@ -581,6 +583,26 @@ export class LivesService implements OnModuleDestroy {
             HttpStatus.TOO_MANY_REQUESTS
           );
         }
+        // A START ENDS THE BROADCASTER'S OWN OPEN LIVE, from the database and not from a clock: a page
+        // reloaded or a phone crashed mid-live left a row the 60 s absence sweep ended, and the member
+        // could not go live again until it did (measured 2026-11-15, `409 LIVE_ALREADY_OPEN`). One open
+        // live per broadcaster is the invariant, so a new start from the same account is by definition
+        // the end of the old one - the same UPDATE as `end()`, reason `broadcaster`, the replay verdict
+        // frozen the same way. Its uploader's next segment is answered `410` like any ended live. A
+        // concurrent second start finds the row already ended and meets the unique index below.
+        const closed = (await tx.query(
+          `UPDATE lives SET "endedAt" = now(), "endReason" = 'broadcaster',
+                  "keepsReplay" = "keepsReplay" AND ${replayLongEnoughSql('$2')}
+            WHERE "broadcasterId" = $1 AND "endedAt" IS NULL
+            RETURNING id, ${END_FACTS_SQL}`,
+          [broadcasterId, LIVE_REPLAY_MIN_MS]
+        )) as [({ id: string } & Parameters<typeof endFacts>[0])[], number];
+        if (closed[0][0]) {
+          superseded = closed[0][0].id;
+          this.logger.log(
+            `[LIVE] ${superseded} ended by its broadcaster's new start, ${endFacts(closed[0][0])}`
+          );
+        }
         // The id is chosen here, not by the column default: the seal is bound to it.
         const id = randomUUID();
         const sealed = sealLiveKey(id, key);
@@ -607,6 +629,7 @@ export class LivesService implements OnModuleDestroy {
       }
       throw e;
     }
+    if (superseded) await this.purgeBestEffort(superseded, 'after its broadcaster started another');
     // A live nobody was removed from yet.
     await this.openToSeats(row.id, []);
     // The title's length, never its text: a log line is no place for what a member wrote.

@@ -8,6 +8,7 @@
 </script>
 
 <script lang="ts">
+  import { readToneOwed } from '$lib/utils/chat/arrivalRuntime';
   import { inviteLinkName } from '$lib/mls/groupInviteName';
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
   import type { InboundReaction } from '$lib/utils/chat/reactionNotification';
@@ -22,6 +23,7 @@
   import { holdWhileLeaving } from '$lib/utils/backgroundFlush';
   import { recordUnsentSalonText } from '$lib/utils/chat/salonUnsent';
   import { restoreFailedDraft } from '$lib/utils/chat/draftRestore';
+  import { holdRestoredText } from '$lib/utils/chat/editSession.svelte';
   import { createHeldSendQueue } from '$lib/utils/chat/heldSends';
   import { isAppActive, onAppActiveChange, onAppScreenChange } from '$lib/utils/appForeground';
   import { createResumeReadGate } from '$lib/utils/chat/resumeOpening.svelte';
@@ -532,11 +534,10 @@
         convs.sendError = msg;
       },
       onReadStateAdvanced: (e: { conversationKey: string; senderId: string; at: number }) => {
-        // Sound only when someone else reads MY message, in the currently open conversation
-        // on the visible tab (never for my own cross-device reads).
-        if (e.senderId === session.userId) return;
-        if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-        if (e.conversationKey !== convs.selectedContact) return;
+        // Sound only when another user reads MY message in a conversation the reader can see on
+        // screen now (`readToneOwed`), never for my own cross-device reads.
+        if (!readToneOwed(e.senderId, session.userId, e.conversationKey, convs.selectedContact))
+          return;
         notifs.playReadTone();
       },
       onInboundReaction: (reaction: InboundReaction) =>
@@ -755,7 +756,7 @@
         return;
       }
       for (const o of orphans) {
-        restore(restoreFailedDraft(messaging.draftFor(contact), o.text));
+        restoreText(contact, o.text, restore);
         log(
           `[SEND] unanswered salon message ${o.messageId.slice(0, 8)}... of a past session restored to the composer`
         );
@@ -1285,6 +1286,20 @@
   }
 
   /**
+   * Puts a text that comes BACK for `key` (a refused send, a share landing, a taken-back send) where
+   * the member will find it: the saved draft of an edit open there, else the conversation's draft.
+   * `write` is the draft writer to use - a late one when the text arrives after an await.
+   */
+  function restoreText(
+    key: string | null | undefined,
+    failed: string,
+    write: (text: string) => void = (text) => messaging.setDraft(key, text)
+  ) {
+    if (key && holdRestoredText(key, failed)) return;
+    write(restoreFailedDraft(messaging.draftFor(key), failed));
+  }
+
+  /**
    * Sends the open conversation's draft, then clears it - and GIVES THE TEXT BACK if the send was
    * refused with no bubble and no queue entry (a community salon, offline: WP-OFF-1). The text goes
    * back to the draft of the conversation it was written in, whichever one is open by then; the
@@ -1295,7 +1310,7 @@
     const text = messaging.draftFor(contact);
     const restore = messaging.lateDraftWriter(contact, 'refused send');
     sendText(text, () => {
-      restore(restoreFailedDraft(messaging.draftFor(contact), text));
+      restoreText(contact, text, restore);
       log(`[SEND] refused: draft restored to its conversation (${text.length} chars)`);
     });
     messaging.setDraft(contact, '');
@@ -1342,7 +1357,7 @@
         `[SHARE] staged in ${selected.slice(0, 16)}: ${share.text.length} chars, ${share.files.length} file(s)`
       );
       if (share.text) {
-        messaging.setDraft(selected, restoreFailedDraft(messaging.draftFor(selected), share.text));
+        restoreText(selected, share.text);
       }
       if (share.files.length === 0) return;
       // The copies are read HERE, once a destination is on screen, and not when the share arrived -
@@ -1765,6 +1780,7 @@
           onMessageChange={(value) => messaging.setDraft(convs.selectedContact, value)}
           bindDraftWriter={() =>
             messaging.lateDraftWriter(convs.selectedContact, 'draft an edit replaced')}
+          draftKey={convs.selectedContact}
           onSend={handleSendChat}
           onTyping={handleTyping}
           onSendGif={handleSendGif}
@@ -1822,7 +1838,7 @@
             const text = messaging.takeBackSend(msgCtx(), msgId);
             if (text !== null) {
               const contact = convs.selectedContact;
-              messaging.setDraft(contact, restoreFailedDraft(messaging.draftFor(contact), text));
+              restoreText(contact, text);
             }
           }}
           onDelete={isSelectedChannel

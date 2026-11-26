@@ -525,6 +525,20 @@ export function useMentionAutocomplete(opts: {
   }
 
   /**
+   * The composer now writes to ANOTHER conversation: the open list (its rows are the previous
+   * conversation's members), a search on its way and a mention the reader gave up on all go. The
+   * generation bump drops a late answer, so it cannot reopen the list over the new composer.
+   */
+  function dismiss(why: string) {
+    if (disposed) return;
+    if (open || searching || waiting || ended) {
+      Log.d('mention', `picker dismissed: ${why}`);
+    }
+    ended = null;
+    closeMention();
+  }
+
+  /**
    * Call when the composer is destroyed: an answer still on its way (a search, the roster's names)
    * lands on a picker nobody sees, so it is dropped and said so rather than applied.
    */
@@ -631,6 +645,7 @@ export function useMentionAutocomplete(opts: {
     handleInput,
     handleEditorInput,
     refreshRoster,
+    dismiss,
     select,
     handleKeydown,
     dispose,

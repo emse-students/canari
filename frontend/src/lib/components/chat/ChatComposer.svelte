@@ -144,6 +144,8 @@
      * tap (reels-in-chat section 22, path 2); ignored by a photo-only camera.
      */
     cameraTarget?: { id: string; name: string } | null;
+    /** The conversation this composer writes to: the @mention picker closes when it changes. */
+    conversationId?: string | null;
     /**
      * Sends a finished recording immediately, as its own message.
      *
@@ -192,6 +194,7 @@
     onFilesSelected,
     reelMessages = false,
     cameraTarget = null,
+    conversationId = null,
     onSendVoiceNote,
     pendingFiles = [],
     onRemovePendingFile,
@@ -1343,6 +1346,7 @@
           value={messageText}
           {mentionRoster}
           {mentionEveryone}
+          mentionScope={conversationId}
           onchange={handleMessageChange}
           class="min-w-0 flex-1"
           editorClass="chat-composer-textarea"

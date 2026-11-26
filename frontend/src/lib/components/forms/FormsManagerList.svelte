@@ -63,6 +63,7 @@
   import { formViewHref, isDraftForm } from '$lib/forms/publish';
   import { FORM_CLOSING_DATE_NOT_OPEN, isClosedForm, opensLater } from '$lib/forms/formWindow';
   import Button from '$lib/components/ui/Button.svelte';
+  import { formatAmount } from '$lib/forms/fillAnswers';
   import { markdownToPlainText } from '$lib/seo/text';
 
   interface Props {
@@ -176,7 +177,7 @@
   }
 
   const priceLine = (form: Form) =>
-    form.basePrice > 0 ? `${(form.basePrice / 100).toFixed(2)} €` : m.asso_forms_price_free();
+    form.basePrice > 0 ? formatAmount(form.basePrice) : m.asso_forms_price_free();
 
   async function handleDelete(form: Form) {
     // Guarded from the moment the confirmation OPENS: two quick selections would otherwise queue
@@ -652,9 +653,9 @@
                         {submitterName(sub)}
                       </p>
                       <p class="text-text-muted text-xs">
-                        {(sub.totalPaid / 100).toFixed(2)} € · {new Date(
-                          sub.createdAt
-                        ).toLocaleDateString(intlLocale())}
+                        {formatAmount(sub.totalPaid)} · {new Date(sub.createdAt).toLocaleDateString(
+                          intlLocale()
+                        )}
                       </p>
                     </div>
                     <div class="flex shrink-0 items-center gap-2">

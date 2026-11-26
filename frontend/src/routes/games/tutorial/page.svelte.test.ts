@@ -86,6 +86,16 @@ describe('the tutorial page', () => {
     expect(testId('tutorial-progress')?.textContent).toContain(`1 sur ${LESSONS.length}`);
   });
 
+  it('leads to the pattern catalogue, its annex, from the header and from the closing screen', () => {
+    const links = () =>
+      [...document.querySelectorAll<HTMLAnchorElement>('a')].filter((a) =>
+        a.getAttribute('href')?.includes('/games/tutorial/patterns')
+      );
+    expect(links()).toHaveLength(1);
+    for (let i = 0; i < LESSONS.length; i++) next();
+    expect(links().length).toBe(2);
+  });
+
   it('goes back a lesson', () => {
     next();
     byText('Leçon précédente').click();

@@ -1,6 +1,7 @@
 import { tick } from 'svelte';
 import { m } from '$lib/paraglide/messages';
 import { intlLocale } from '$lib/utils/intlLocale';
+import { formatAmountCents } from '$lib/shop/amountInput';
 import type { FormItem } from './api';
 import { commentKey, otherKey } from './answerText';
 import { hasAnswerFormat, judgeAnswerFormat, type AnswerFormatProblem } from './answerFormat';
@@ -406,8 +407,5 @@ export function selectionsFromAnswers(items: FormItem[], answers: Selections): S
 /** An amount in cents, in the reader's locale. Empty for an undefined amount. */
 export function formatAmount(amountCents: number | undefined, currency = 'eur'): string {
   if (amountCents === undefined) return '';
-  return new Intl.NumberFormat(intlLocale(), {
-    style: 'currency',
-    currency: (currency || 'eur').toUpperCase(),
-  }).format(amountCents / 100);
+  return formatAmountCents(amountCents, currency || 'eur', intlLocale());
 }

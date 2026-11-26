@@ -75,7 +75,8 @@ export type PushContentKey =
   | 'event_updated'
   | 'event_deleted'
   | 'event_pending'
-  | 'event_pending_coorganiser';
+  | 'event_pending_coorganiser'
+  | 'event_coorganiser_accepted';
 
 /**
  * WHERE THE NOTIFICATION'S PICTURE COMES FROM - never a URL, always an id.
@@ -725,6 +726,24 @@ export function eventPendingCoorganiserContent(actorName: string, eventTitle: st
     arg: eventTitle,
     legacyTitle: 'Événement à revalider',
     legacyBody: `« ${eventTitle} » doit être revalidé : une association a accepté de co-organiser`,
+  };
+}
+
+/**
+ * A partner association ACCEPTED to co-organise an event that was ALREADY waiting for validation
+ * (WP-COORG-ACCEPT-NOTICE): nothing went back to the queue, so the sentence must not say "to
+ * revalidate" - the organiser is only told who joined. Its own key, like every reason.
+ */
+export function eventCoorganiserAcceptedContent(
+  actorName: string,
+  eventTitle: string
+): PushContent {
+  return {
+    key: 'event_coorganiser_accepted',
+    actorName,
+    arg: eventTitle,
+    legacyTitle: 'Co-organisation acceptée',
+    legacyBody: `Une association a accepté de co-organiser « ${eventTitle} »`,
   };
 }
 

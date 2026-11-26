@@ -409,6 +409,24 @@ export function useMessaging() {
   }
 
   /**
+   * THE DRAFTS OF CONVERSATIONS THAT LEFT THE LIST are dropped: a conversation left, deleted or
+   * removed from this member kept its entry until sign-out, and one re-joined later showed the old
+   * text. `before` and `now` are the keys the list held at two moments - only a key that WAS there
+   * and no longer is counts, so a draft typed in a conversation the list has not drawn yet is never
+   * touched. Returns how many were dropped.
+   */
+  function forgetDraftsOfLeft(before: ReadonlySet<string>, now: ReadonlySet<string>): number {
+    let dropped = 0;
+    for (const key of before) {
+      if (now.has(key) || !draftByConversation.has(key)) continue;
+      draftByConversation.delete(key);
+      dropped += 1;
+      console.info(`[DRAFT] ${key.slice(0, 16)} left the list - its draft dropped`);
+    }
+    return dropped;
+  }
+
+  /**
    * A writer of `conversationKey`'s draft for text that comes back LATER - an edit's saved draft, a
    * refused send, a salon text resumed after an await. It is bound to the account signed in NOW: a
    * sign-out in between (`signOutGeneration`) makes it drop the text, because {@link forgetAccount}
@@ -5370,6 +5388,8 @@ export function useMessaging() {
     pendingMediaFilesFor,
     /** Forgets every staged file and armed reply of the account that signed out. */
     forgetAccount,
+    /** Drops the drafts of conversations that left the list between two snapshots of its keys. */
+    forgetDraftsOfLeft,
     videoPreparation,
     /** True while the MLS queue is draining after reconnect (catch-up in progress). */
     get isCatchupOverlayVisible() {

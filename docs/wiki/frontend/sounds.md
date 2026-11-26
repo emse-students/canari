@@ -326,11 +326,22 @@ they are taken only if the readings below fail their acceptance. A Bluetooth hea
 narrowband whatever the note asks (cause 2 of the research), which the `device=bluetooth` class of
 the capture line names.
 
+**A voice note plays under its OWN loudness law: -16 LUFS, a raise of at most +12 dB (owner, 2026-11-22, 1.8.2).**
+Charter principle 2 ([principes](../../principes.md)): a heard message is never lost, so a whisper is lifted twice as
+far as a video may be (the video law is -14 LUFS and +6 dB, [loudnessPlayback](../../../frontend/src/lib/video/loudnessPlayback.ts)),
+and never turned into noise: the cap and the -1 dBFS peak clamp both hold. `VOICE_NOTE_LOUDNESS_LAW` is the same shape as
+`VIDEO_LOUDNESS_LAW` with two other numbers, selected by `loudnessAudio.attach(el, { law })`; `VoiceMessagePlayer` passes it.
+**Where the loudness is measured: at the recording, stored with the note** (`recordingLoudness.ts`, `MediaRef.loudness`),
+so nothing is measured at play and a note sent before the measurement existed plays as it always did. Pinned by
+`loudnessPlayback.test.ts` (the numbers, the cap on a whisper 40 dB under the target, the peak clamp, a loud note lowered),
+`recordingLoudness.test.ts` (a quiet and a typical synthetic note through the recording tap and the law) and
+`VoiceMessagePlayer.loudness.svelte.test.ts` (the gain the route is built at).
+
 **What a bench could not read, pinned by tests (2026-11-22, `1.7.3-alpha.6`).** The decrypted file of a real note is
-Opus, 48 kHz, ONE channel (read). The numbers: `recordingLoudness.test.ts` runs a synthetic 48 kHz buffer (1 kHz and
-14 kHz tones) through the recording tap and the one playback law, and **the law lands a note at -14 LUFS, raised by
-at most +6 dB, peak under -1 dBFS - so a note measured near -24 LUFS plays at -18, and a quiet one (tones at -30 dBFS,
--34 LUFS) plays at -28**: the "-18 +/- 2" acceptance is not a property of the law. `monoRecording.test.ts` pins the
+Opus, 48 kHz, ONE channel (read). `recordingLoudness.test.ts` runs a synthetic 48 kHz buffer (1 kHz and
+14 kHz tones) through the recording tap and the playback law. **Under the video law that played a note then (-14 LUFS,
++6 dB) a note measured near -24 LUFS played at -18, and a quiet one (tones at -30 dBFS, -34 LUFS) at -28; under the voice
+law (1.8.2) the same notes play at -16 and -22**. `monoRecording.test.ts` pins the
 destination's configuration (one explicit channel, `speakers` interpretation); the averaging and the 12 kHz cutoff are the
 engine's and the encoder's, read on a phone for the channel count only. `recordingConstraints.test.ts` pins the
 pair: `incall` asks the call's own constraints, `none` asks `RECORDING_AUDIO_CONSTRAINTS`; the page never sets an OS

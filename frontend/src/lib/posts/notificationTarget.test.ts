@@ -73,6 +73,7 @@ describe('notificationHref', () => {
       'event_deleted',
       'event_pending',
       'event_pending_coorganiser',
+      'event_coorganiser_accepted',
     ]) {
       expect(notificationHref({ type, postId: 'assoc-1' }), type).toBe('/calendar');
     }
@@ -110,7 +111,7 @@ describe('notificationHref', () => {
 
   it('gives every known type a destination, bar the two resolved by slug', () => {
     // Compared with a hand-written count so a type removed from the set cannot pass silently.
-    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(56);
+    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(57);
     // The live moderation notices go nowhere: a cut live is deleted when it ends, and a suspension
     // or a withdrawal has no page.
     const liveModeration = ['live_cut', 'live_suspended', 'live_withdrawn', 'live_reinstated'];

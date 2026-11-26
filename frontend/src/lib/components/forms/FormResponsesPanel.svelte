@@ -1,5 +1,15 @@
 <script lang="ts">
-  import { Search } from '@lucide/svelte';
+  import { Search, UsersRound } from '@lucide/svelte';
+  import { goto } from '$app/navigation';
+  import { resolve } from '$app/paths';
+  import { getSavedUserId } from '$lib/stores/user';
+  import { groupDraft } from '$lib/stores/groupDraft.svelte';
+  import {
+    MIN_GROUP_RESPONDENTS,
+    groupDraftFrom,
+    respondentGroupOffered,
+  } from '$lib/forms/respondentGroup';
+  import Button from '$lib/components/ui/Button.svelte';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import Toggle from '$lib/components/ui/Toggle.svelte';
   import RefundDialog from '$lib/components/associations/edit/RefundDialog.svelte';
@@ -9,6 +19,7 @@
   import { registeredOnly, waitingInOrder, waitlistFrozen } from '$lib/forms/waitlist';
   import {
     fileAnswerWords,
+    getFormRespondents,
     validateCashSubmission,
     type Form,
     type Submission,
@@ -215,6 +226,39 @@
     if (form.associationId) await loadRefunds(form.associationId);
   }
 
+  // ── A group made of the respondents (owner, 2026-11-19) ───────────────────────────────────────
+
+  /** Named, internal forms only: the server refuses the others whatever is drawn here. */
+  const groupOffered = $derived(respondentGroupOffered(form) && submissions.length > 0);
+  let makingGroup = $state(false);
+
+  /**
+   * Fills the new-discussion panel with the people who answered, then opens the chat page on it. The
+   * button grants nothing a manual add does not: the panel's own invitation and admission rules apply.
+   * Respondents whose account is gone are SAID and counted, never silently dropped; fewer than two
+   * other people is said too (one is a direct conversation, not a group).
+   */
+  async function makeGroup() {
+    const owner = getSavedUserId();
+    if (makingGroup || !owner) return;
+    makingGroup = true;
+    Log.d('FormResponsesPanel', `group of the respondents of form ${form.id.slice(0, 8)}`);
+    try {
+      const { members, departed } = groupDraftFrom(await getFormRespondents(form.id), owner);
+      if (members.length < MIN_GROUP_RESPONDENTS) {
+        showToast(m.form_responses_group_too_few());
+        return;
+      }
+      if (departed > 0) showToast(m.form_responses_group_departed({ count: departed }));
+      groupDraft.offer(owner, members);
+      await goto(resolve('/chat'));
+    } catch (e) {
+      console.error(`[FORMS] listing the respondents of form ${form.id.slice(0, 8)} failed:`, e);
+      showToast(m.form_responses_group_error());
+    } finally {
+      makingGroup = false;
+    }
+  }
   // ── Cash, marked paid ──────────────────────────────────────────────────────────────────────────
 
   let markingId = $state<string | null>(null);
@@ -360,6 +404,17 @@
             data-testid="responses-search"
           />
         </label>
+        {#if groupOffered}
+          <Button
+            variant="soft"
+            onclick={() => void makeGroup()}
+            disabled={makingGroup}
+            data-testid="responses-make-group"
+          >
+            <UsersRound size={16} aria-hidden="true" />
+            {m.form_responses_group_button()}
+          </Button>
+        {/if}
         {#if identityColumns.includes('cursus') || identityColumns.includes('status')}
           <div
             class="flex flex-wrap gap-2"
