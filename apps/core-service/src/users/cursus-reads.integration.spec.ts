@@ -80,9 +80,9 @@ maybe('every cursus entry is read, against PostgreSQL (D32)', () => {
       { formation: 'ISMIN', promo: 2024 },
     ]);
     await seed('b-ismin', [{ formation: 'ISMIN', promo: 2023 }]);
-    await seed('c-fsss-twice', [
-      { formation: 'FSSS', promo: 2022 },
-      { formation: 'FSSS', promo: 2025 },
+    await seed('c-fisa-twice', [
+      { formation: 'FISA', promo: 2022 },
+      { formation: 'FISA', promo: 2025 },
     ]);
     await seed('d-staff', []);
     // Not backfilled: no cursus, the legacy pair only.
@@ -111,7 +111,7 @@ maybe('every cursus entry is read, against PostgreSQL (D32)', () => {
 
   it('the promo filter finds a person through their SECOND cursus', async () => {
     expect(await ids({ promo: 2024 })).toEqual(['a-icm-then-ismin']);
-    expect(await ids({ promo: 2025 })).toEqual(['c-fsss-twice']);
+    expect(await ids({ promo: 2025 })).toEqual(['c-fisa-twice']);
   });
 
   it('promo and formation are read from the SAME entry', async () => {
@@ -125,7 +125,7 @@ maybe('every cursus entry is read, against PostgreSQL (D32)', () => {
     expect(await internal.formations(SECRET)).toEqual([
       { value: 'ISMIN', count: 2 },
       { value: 'Autre', count: 1 },
-      { value: 'FSSS', count: 1 },
+      { value: 'FISA', count: 1 },
       { value: 'ICM', count: 1 },
     ]);
   });

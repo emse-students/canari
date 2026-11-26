@@ -136,7 +136,7 @@ describe('criteria validation', () => {
     it.each([['a condition', condition] as const, ['a grid dimension', dimension] as const])(
       'accepts every formation a profile may name, on %s',
       (_path, parse) => {
-        expect(parse(['ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre'])).toBeNull();
+        expect(parse(['ICM', 'ISMIN', 'FISA', 'PDIS', 'Autre'])).toBeNull();
       }
     );
 

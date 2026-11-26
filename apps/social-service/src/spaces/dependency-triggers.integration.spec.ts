@@ -52,7 +52,7 @@ const LIST = [
   label: m[5] === 'NULL' ? null : m[5].slice(1, -1),
 }));
 
-const FORMATIONS = ['ICM', 'ISMIN', 'FSSS', 'PDIS', 'Autre'];
+const FORMATIONS = ['ICM', 'ISMIN', 'FISA', 'PDIS', 'Autre'];
 
 /** The minimal shape the three migrations touch - the ORM owns the rest in real life. */
 async function createShape(client: Client, schema: string): Promise<void> {
@@ -142,13 +142,13 @@ maybe('the dependency axis against PostgreSQL (migrations 129-131)', () => {
     await add('minitel', 'association');
     await add('ecole', 'institution');
     await add('club-libre', 'association');
-    // The governors as production holds them: bde 4 spaces, the FSSS BDE 1, MINITEL 1 at gardanne.
+    // The governors as production holds them: bde 4 spaces, the FISA BDE 1, MINITEL 1 at gardanne.
     await client.query(
-      `UPDATE spaces SET "bdeAssociationId" = $1 WHERE campus = 'saint-etienne' AND formation <> 'FSSS'`,
+      `UPDATE spaces SET "bdeAssociationId" = $1 WHERE campus = 'saint-etienne' AND formation <> 'FISA'`,
       [id.get('bde')]
     );
     await client.query(
-      `UPDATE spaces SET "bdeAssociationId" = $1 WHERE campus = 'saint-etienne' AND formation = 'FSSS'`,
+      `UPDATE spaces SET "bdeAssociationId" = $1 WHERE campus = 'saint-etienne' AND formation = 'FISA'`,
       [id.get('bde-bureau-des-eleves')]
     );
     await client.query(
@@ -234,6 +234,7 @@ maybe('the dependency axis against PostgreSQL (migrations 129-131)', () => {
     const { rows: named } = await client.query(
       `SELECT name FROM associations WHERE slug IN ('bde', 'bde-bureau-des-eleves') ORDER BY slug`
     );
+    // 130 is applied and immutable: it wrote the old spelling, which migration 187 respells FISA.
     expect(named.map((r) => r.name)).toEqual(['bde', 'BDE FSSS - Bureau des Élèves']);
     const { rows: gardanne } = await client.query(
       `SELECT DISTINCT "bdeAssociationId" AS g FROM spaces WHERE campus = 'gardanne'`
@@ -381,7 +382,7 @@ maybe('the dependency axis against PostgreSQL (migrations 129-131)', () => {
         // The designation waits on the lock the first trigger holds, then reads its committed row.
         const designation = other
           .query(
-            `UPDATE spaces SET "bdeAssociationId" = $1 WHERE formation = 'FSSS' AND campus = 'gardanne'`,
+            `UPDATE spaces SET "bdeAssociationId" = $1 WHERE formation = 'FISA' AND campus = 'gardanne'`,
             [id.get('club-libre')]
           )
           .then(

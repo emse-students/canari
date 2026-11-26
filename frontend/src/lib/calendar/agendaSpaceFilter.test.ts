@@ -28,7 +28,7 @@ describe('the options come from the spaces the reader reaches', () => {
   it('offers nothing a reader does not reach', () => {
     const values = agendaSpaceOptions([icmSe, ismSe]).map((o) => o.value);
     expect(values).not.toContain('campus:gardanne');
-    expect(values).not.toContain('formation:FSSS');
+    expect(values).not.toContain('formation:FISA');
   });
 
   it('drops an option equivalent to "all": a campus when every space is on it', () => {
