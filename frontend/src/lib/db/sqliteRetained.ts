@@ -27,7 +27,7 @@
 import type { TableInfoRow } from './sqliteMigrations';
 
 /** The prefix of a table a migration has set aside; the rest of the name is the table it replaced. */
-export const RETAINED_PREFIX = 'retained__';
+const RETAINED_PREFIX = 'retained__';
 
 /** The per-connection table the release's guard writes into; its CHECK is what refuses. */
 const RETAINED_GUARD = 'retained_release_guard';
@@ -58,7 +58,7 @@ function keyMatch(key: readonly string[]): string {
 }
 
 /** The rows of the copy of `table` that `table` does not hold under the same `key`. */
-export function retainedMissingCountStatement(table: string, key: readonly string[]): string {
+function retainedMissingCountStatement(table: string, key: readonly string[]): string {
   return (
     `SELECT COUNT(*) AS n FROM main.${retainedName(table)} r ` +
     `WHERE NOT EXISTS (SELECT 1 FROM main.${table} t WHERE ${keyMatch(key)})`
@@ -66,7 +66,7 @@ export function retainedMissingCountStatement(table: string, key: readonly strin
 }
 
 /** The restore: every row of the copy `table` lacks, added - never one replaced. */
-export function retainedRestoreStatement(table: string, columns: readonly string[]): string {
+function retainedRestoreStatement(table: string, columns: readonly string[]): string {
   const list = columns.join(', ');
   return `INSERT OR IGNORE INTO main.${table} (${list}) SELECT ${list} FROM main.${retainedName(table)}`;
 }
@@ -77,7 +77,7 @@ export function retainedRestoreStatement(table: string, columns: readonly string
  * `OR ROLLBACK`, which ends the transaction before the drop and leaves no transaction open on the
  * pooled connection.
  */
-export function retainedReleaseStatement(table: string, key: readonly string[]): string {
+function retainedReleaseStatement(table: string, key: readonly string[]): string {
   return [
     `CREATE TEMP TABLE IF NOT EXISTS ${RETAINED_GUARD} (proven INTEGER NOT NULL CHECK (proven = 1))`,
     'BEGIN IMMEDIATE',

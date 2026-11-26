@@ -455,7 +455,7 @@ export class MessageRekeyRefusedError extends Error {
 }
 
 /** The per-connection table the swap's guards write into; its CHECK is what refuses. */
-export const MESSAGES_REKEY_GUARD = 'messages_rekey_guard';
+const MESSAGES_REKEY_GUARD = 'messages_rekey_guard';
 
 /**
  * THE v22 -> v23 REBUILD, AS STATEMENTS DECIDED FROM DURABLE STATE - NEVER FROM A CLOCK OR A FLAG
@@ -495,7 +495,11 @@ export const MESSAGES_REKEY_GUARD = 'messages_rekey_guard';
  *   carries no open transaction, and the error reaches the caller.
  *
  * The guards make every statement after them stand on a proven precondition, so the only failure left
- * inside the transaction is the file itself (I/O, a full disk), which SQLite rolls back on its own.
+ * inside the transaction is the file itself (I/O, a full disk). SQLite does NOT promise to roll that
+ * back on its own, and sqlx never checks a pooled connection for a transaction raw SQL opened: such a
+ * failure leaves the transaction open, uncommitted, on one pooled connection - nothing committed, so
+ * nothing lost - until the failed open's retry calls `Database.load`, whose new pool replaces the old
+ * one (read in the plugin's source, not measured), or the app restarts.
  */
 export function messageRekeySteps(state: MessageRekeyState): {
   copy: string[];
@@ -517,7 +521,7 @@ export function messageRekeySteps(state: MessageRekeyState): {
  * table is SET ASIDE, never dropped (`sqliteRetained.ts`): the rebuild's own settlement releases it
  * once the file proves every one of its rows is in the new table.
  */
-export function messagesRekeySwapStatement(indexes: readonly string[]): string {
+function messagesRekeySwapStatement(indexes: readonly string[]): string {
   return [
     `CREATE TEMP TABLE IF NOT EXISTS ${MESSAGES_REKEY_GUARD} (proven INTEGER NOT NULL CHECK (proven = 1))`,
     'BEGIN IMMEDIATE',

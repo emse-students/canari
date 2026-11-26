@@ -87,7 +87,15 @@ moment it runs.** No timer, no retry.
   staging. A false guard is a `CHECK` violation under `INSERT OR ROLLBACK`, which ends the transaction
   there: the file is left as it was, the pooled connection carries no open transaction, and the
   caller gets `MessageRekeyRefusedError`. Pinned by the two "the swap refuses" cases, which also write
-  through every pooled connection afterwards to prove none is left inside a transaction.
+  through every pooled connection afterwards to prove none is left inside a transaction. **What the
+  guards do NOT cover** (review of #4155): a failure AFTER them that is not a constraint - an I/O
+  error, a full disk - is not guaranteed to end the transaction (measured with `bun:sqlite`: a failed
+  `ALTER TABLE` leaves it open), and sqlx does not check a pooled connection for a transaction raw SQL
+  opened. Nothing is committed, so nothing is lost; the open fails, and the next open's
+  `Database.load` builds a new pool (`tauri-plugin-sql` 2.6 `load` inserts a fresh one per call)
+  and drops the old one - read in the source, NOT measured: whether that closes the stuck connection
+  at once depends on sqlx's pool teardown, and until it does, writes on the other connections wait
+  out `busy_timeout`. An app restart always ends it.
 
 ## The essential is never lost: a migration sets a table aside, it never drops it (decided 2026-11-26)
 
