@@ -23,6 +23,18 @@ object NotificationLevelGate {
     /** The inline mention token every client writes: `@[<64-hex user id>]`. */
     private val MENTION_TOKEN = Regex("@\\[([0-9a-fA-F]{64})\\]")
 
+    /**
+     * `@tous`, or its alias `@everyone`, as a whole word in any case: a call to every member, the
+     * reader included. The pattern of the client's `MENTION_EVERYONE_PATTERN` (`utils/mentions.ts`),
+     * pinned by `libs/contracts/mention-decision.cases.json`. Read on THIS path only, the MLS one,
+     * where every member may call everyone; a salon's call is vouched for by the server and arrives
+     * as `mentioned` (`handleChannelMessage`).
+     */
+    private val EVERYONE_CALL = Regex("(?<![A-Za-z0-9_@./])@(?:tous|everyone)(?![A-Za-z0-9_-])", RegexOption.IGNORE_CASE)
+
+    /** What [mentionedUserIds] holds for a call to every member - never a user id (64 hex). */
+    const val EVERYONE = "everyone"
+
     /** What the handler does with one visible message. */
     sealed class Decision {
         /** Raise it; [mentionsMe] picks the mentions channel over the messages one. */
@@ -32,9 +44,12 @@ object NotificationLevelGate {
         data class Withhold(val reason: String) : Decision()
     }
 
-    /** Every user id the plaintext mentions, lower-cased. */
-    fun mentionedUserIds(text: String): Set<String> =
-        MENTION_TOKEN.findAll(text).map { it.groupValues[1].lowercase() }.toSet()
+    /** Every user id the plaintext mentions, lower-cased, plus [EVERYONE] when it calls everyone. */
+    fun mentionedUserIds(text: String): Set<String> {
+        val ids = MENTION_TOKEN.findAll(text).map { it.groupValues[1].lowercase() }.toMutableSet()
+        if (EVERYONE_CALL.containsMatchIn(text)) ids.add(EVERYONE)
+        return ids
+    }
 
     /**
      * @param level the push's `notifLevel` field: `"mentions"`, or absent for the ordinary `all`.
@@ -43,9 +58,11 @@ object NotificationLevelGate {
      */
     fun decide(level: String?, mentioned: Set<String>?, myUserId: String?): Decision {
         val me = myUserId?.lowercase()
-        val mentionsMe = me != null && mentioned?.contains(me) == true
+        val calledEveryone = mentioned?.contains(EVERYONE) == true
+        val mentionsMe = calledEveryone || (me != null && mentioned?.contains(me) == true)
         if (level != "mentions") return Decision.Alert(mentionsMe)
         return when {
+            calledEveryone -> Decision.Alert(true)
             mentioned == null -> Decision.Withhold("level=mentions and the message could not be read - a mention is not proven")
             me == null -> Decision.Withhold("level=mentions and this account's id is unknown - a mention is not proven")
             mentionsMe -> Decision.Alert(true)

@@ -143,6 +143,12 @@ export interface AddMessageToChatOptions {
    */
   authorProven?: boolean;
   /**
+   * A salon message whose row says the SERVER vouched for its `@tous` (`mentionsEveryone`: the
+   * sender holds the moderation grant in that community). Read by the notification only - see
+   * `everyoneMentionOf`. Absent is not vouched; a private conversation needs no vouching.
+   */
+  everyoneVouched?: boolean;
+  /**
    * The server queue id (`queuedMessageId`) of the MLS frame this message was decrypted from. Its
    * ack - the server deleting the frame - waits while THIS row is shown and not stored (rows before
    * ratchet, review of #3851): carried with the row into a kept write, so only the frames whose rows

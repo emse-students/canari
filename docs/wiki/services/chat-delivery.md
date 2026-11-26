@@ -3439,7 +3439,7 @@ hand the server a social graph the encryption exists to hide. So:
 |---|---|---|
 | `all` | visible frame, as before | draws it |
 | `none` | the frame is sent `silent` - delivered (it is MLS state), never drawn, exactly like the `messages` category switch | nothing to decide |
-| `mentions` | visible frame carrying `notifLevel=mentions`; on APNs the alert is `interruption-level: passive` with NO sound | decrypts, then draws only if the WHOLE plaintext holds `@[<own user id>]` |
+| `mentions` | visible frame carrying `notifLevel=mentions`; on APNs the alert is `interruption-level: passive` with NO sound | decrypts, then draws only if the WHOLE plaintext holds `@[<own user id>]` or a `@tous` ([below](#tous---a-call-to-every-member-and-who-may-make-it-decided-2026-11-26)) |
 
 A DM or group REACTION (`sendPushToUser`, `reaction: 'true'`) is refused at `mentions` and `none`: a
 reaction is never a mention, and the server knows the group. The level is read only for a group id
@@ -3514,6 +3514,70 @@ neither phone has run it.
 `GET /mls/notification-preferences`, and applied by `CallsService.ringGroup` to the ring push. The
 rule, the default and the client half:
 [calls](../frontend/modules/calls.md#the-call-permission---its-own-setting-per-conversation-decided-2026-10-18).
+
+## @tous - a call to every member, and who may make it (decided 2026-11-26)
+
+Asked by the owner on 2026-11-25 (groups AND salons; in a salon admins and moderators only; it counts
+as a mention, so "Mentions" members are notified and "Aucune" members never are), and pulled into
+`1.8.2` on 2026-11-26.
+
+**The wire form is the WORD, not a token.** `@tous`, or its alias `@everyone`, as a whole word in
+any case: not preceded by a letter, digit, `_`, `@`, `.` or `/` (`mail@tous.fr` is no call), not
+followed by a letter, digit, `_` or `-`. ONE pattern, `MENTION_EVERYONE_PATTERN`
+(`frontend/src/lib/utils/mentions.ts`), spelled again by Android's `NotificationLevelGate` and the
+iOS extension's `mentionedUserIds(in:)`, and pinned for all three by
+`libs/contracts/mention-decision.cases.json`. Plain text rather than a reserved `@[everyone]` token
+because every renderer that predates it - an older app, a native banner, a reply quote, the
+notification centre - then shows what was typed rather than a raw token, and there is nothing to
+migrate. The composer's picker offers it as a row (`withEveryoneRow`, Paraglide
+`mention_everyone_word` / `mention_everyone_hint`) and inserts the reader's word; the sent bubble
+draws it as a chip (`MessageInlineText`, `splitTextWithMentions` part `everyone`). Typing it by hand
+is the same message.
+
+**Where the right to use it is enforced - and why that differs between the two venues.**
+
+| Venue | Who may | Who enforces it | How a receiver knows |
+|---|---|---|---|
+| Private conversation (MLS group or DM) | every member - everyone in a group is equal | nobody needs to: there is no role to check | the device reads the decrypted text: `@tous` counts as a mention of the reader (`mentionsUser(..., 'honoured')`, `NotificationLevelGate.EVERYONE`, `everyoneMention`) |
+| Community salon | holders of the moderation grant (`channel.moderate`: admins and moderators by default) | **the server**, `ChannelService.sendMessage` (`vouchedEveryoneMention`) | the server says so: the row's `metadata.mentionsEveryone`, the live frame's `mentionsEveryone`, and the push's per-recipient `mentioned` |
+
+A private conversation needs no authority, so a device decides from the plaintext alone, exactly as
+it does for `@[<own id>]`. A SALON is different, and that is what makes this sound: a salon message
+already carries its mentions IN CLEAR beside the ciphertext (`mentionedUserIds`) and the server
+already decides the `mentions` push from them. So the sender's client DECLARES the call
+(`mentionsEveryone: true`, from the text it sealed), and the server, which holds the roles,
+VOUCHES for it only when the sender holds the moderation grant. A vouched call is written on the
+row, rings every member at `mentions` (never one at `none`) and is told to every device as
+`mentioned=true`; an unvouched one is logged (`[MENTION_EVERYONE] not vouched`) and stays text -
+the message is never refused, because a member writing "merci @tous" has still written a message.
+The native salon paths never read the text for it (they were already TOLD `mentioned`), and the
+client's socket path honours a salon's `@tous` only on a vouched row (`everyoneMentionOf`). So
+neither a modified client nor a ciphertext that merely contains the word can ring a salon: the only
+thing that rings it is the server's word, given from the server's own roster. Nothing about the
+receivers has to trust the sender, and no device needs the community roster.
+
+The composer offers the row where the server would vouch: in a group always, in a salon when
+`ChatArea`'s `canModerate` (the same `channel.moderate` grant) holds. An offer the server would not
+honour is never shown.
+
+**What it reveals in clear.** In a salon, the one bit "this message calls everyone" - of the same
+nature as `mentionedUserIds`, which already says who is named. In a private conversation, nothing:
+the call is inside the ciphertext.
+
+**How it is bounded (charter, principle 3, "Votre attention n'est pas a vendre").** A call that
+wakes a whole year group is the shape a notification takes when it is used against its readers, so
+it is bounded where the damage would be:
+- in a salon, only the people the community made responsible for it may make one, and the server,
+  not the sender's app, decides that;
+- it is ONE mention, never more: it raises a member at `mentions` exactly as a personal mention
+  would, and a member at `Aucune` is never reached (the server sends that frame silent, and the
+  salon fan-out drops it before looking at mentions);
+- every reader keeps the one-gesture control the charter promises: the conversation's own level;
+- no counter, no streak, no "X called everyone" surface exists to reward using it.
+No rate limit was added: a moderator who abuses it is a community's governance question (they can be
+demoted), and a group is a handful of equals who can each set the group to `Aucune`. A rate would
+also be a clock deciding a notification, which this file refuses elsewhere. Reversible: the grant
+checked by `vouchedEveryoneMention` and the offer in `ChatArea` are one line each.
 
 ## Two lines that report a rate, not an event
 

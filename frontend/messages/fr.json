@@ -7060,5 +7060,7 @@
   "alumni_merges_resumed": "Rattachement repris : le doublon est marqué.",
   "alumni_merge_error_in_progress": "Un rattachement de ce compte est déjà en cours : rien n'a été modifié.",
   "alumni_merge_error_already_merged": "MiConnect a déjà fusionné ce compte : il n'y a plus rien à annuler.",
-  "form_question_duplicates_identity": "Ce champ est déjà transmis avec chaque réponse ({field}). Vous pouvez supprimer cette question."
+  "form_question_duplicates_identity": "Ce champ est déjà transmis avec chaque réponse ({field}). Vous pouvez supprimer cette question.",
+  "mention_everyone_word": "tous",
+  "mention_everyone_hint": "Notifie tous les membres"
 }

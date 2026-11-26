@@ -17,6 +17,8 @@ interface ContractCase {
   level: string | null;
   text: string | null;
   me: string | null;
+  /** `ignored`: a salon row the server did not vouch for (see the contract's header). */
+  everyone?: 'ignored';
   expected: 'alert' | 'alert-mention' | 'withhold';
 }
 
@@ -38,7 +40,11 @@ describe('conversationLevelRefusal follows the shared mention-decision contract'
   it.each(clientCases.map((c) => [c.name, c] as const))('%s', (_name, c) => {
     const level = c.level === null ? 'all' : c.level;
     if (!isConversationNotificationLevel(level)) throw new Error(`bad level in contract: ${level}`);
-    const mentionsMe = mentionsUser(c.text!, c.me === 'self' ? CONTRACT.me : c.me!);
+    const mentionsMe = mentionsUser(
+      c.text!,
+      c.me === 'self' ? CONTRACT.me : c.me!,
+      c.everyone ?? 'honoured'
+    );
     const refusal = conversationLevelRefusal(level, mentionsMe);
     const got = refusal ? 'withhold' : mentionsMe ? 'alert-mention' : 'alert';
     expect(got).toBe(c.expected);

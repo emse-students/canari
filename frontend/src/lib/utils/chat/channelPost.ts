@@ -18,6 +18,8 @@ export interface SalonPost {
   messageId?: string;
   poll?: ChannelPollInput;
   mentionedUserIds?: string[];
+  /** The text calls every member (`@tous`): the server vouches for it only from a moderator. */
+  mentionsEveryone?: boolean;
   /** A silent row (a reaction, an edit): no push, and no seed frame carried. */
   silent?: boolean;
 }
@@ -44,6 +46,7 @@ export function postSealedChannelMessage(
     ...(post.mentionedUserIds && post.mentionedUserIds.length
       ? { mentionedUserIds: post.mentionedUserIds }
       : {}),
+    ...(post.mentionsEveryone ? { mentionsEveryone: true } : {}),
     ...(post.silent
       ? { silent: true }
       : { seedFrame: sealed.seedFrame, seedGroupId: sealed.seedGroupId }),

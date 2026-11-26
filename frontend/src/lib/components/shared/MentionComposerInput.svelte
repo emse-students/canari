@@ -45,6 +45,8 @@
     editorClass?: string;
     /** The conversation's members, suggested locally by the @mention picker. */
     mentionRoster?: MentionRosterMember[];
+    /** Whether the picker offers `@tous` here (see `useMentionAutocomplete`'s `everyone`). */
+    mentionEveryone?: boolean;
     /** Narrows a name search to who a mention may reach (see `useMentionAutocomplete`). */
     mentionAudienceFilter?: (users: MentionUser[]) => Promise<MentionUser[]>;
     onchange?: (text: string) => void;
@@ -73,6 +75,7 @@
     class: className = '',
     editorClass = '',
     mentionRoster,
+    mentionEveryone = false,
     mentionAudienceFilter,
     onchange,
     onkeydown,
@@ -108,6 +111,9 @@
     },
     get audienceFilter() {
       return mentionAudienceFilter;
+    },
+    get everyone() {
+      return mentionEveryone;
     },
   });
 

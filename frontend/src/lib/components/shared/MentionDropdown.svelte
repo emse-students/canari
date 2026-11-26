@@ -1,5 +1,9 @@
 <script lang="ts">
-  import type { MentionUser } from '$lib/composables/useMentionAutocomplete.svelte';
+  import {
+    MENTION_EVERYONE_ROW_ID,
+    type MentionUser,
+  } from '$lib/composables/useMentionAutocomplete.svelte';
+  import { m } from '$lib/paraglide/messages';
 
   interface Props {
     open: boolean;
@@ -40,7 +44,9 @@
         >
           <span class="text-accent-text mr-0.5 font-bold">@</span><span
             class="text-text-main font-medium">{user.displayName || user.id}</span
-          >
+          >{#if user.id === MENTION_EVERYONE_ROW_ID}<span class="text-text-muted ml-2 text-xs"
+              >{m.mention_everyone_hint()}</span
+            >{/if}
         </button>
       </li>
     {/each}

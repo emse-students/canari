@@ -3867,6 +3867,22 @@ static NSString *CanariRenderMentions(NSString *text, NSString *_Nullable myUser
                                              range:NSMakeRange(0, out.length)];
 }
 
+// Whether a decrypted MLS body calls every member: `@tous`, or its alias `@everyone`, as a whole word
+// in any case. The pattern of the client's `MENTION_EVERYONE_PATTERN`, Android's
+// `NotificationLevelGate` and the extension's `everyoneCallPattern`, pinned for all of them by
+// `libs/contracts/mention-decision.cases.json`.
+static BOOL CanariCallsEveryone(NSString *body) {
+  static NSRegularExpression *re;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    re = [NSRegularExpression
+        regularExpressionWithPattern:@"(?<![A-Za-z0-9_@./])@(?:tous|everyone)(?![A-Za-z0-9_-])"
+                             options:NSRegularExpressionCaseInsensitive
+                               error:nil];
+  });
+  return re != nil && [re firstMatchInString:body options:0 range:NSMakeRange(0, body.length)] != nil;
+}
+
 // `mentionedByServer` is the channel path's answer to "does this @ me": a channel message carries a
 // cleartext `mentionedUserIds` from the sender, so the server computes it per recipient. An MLS
 // message has no such list - the server cannot read it - which is why the body scan below exists.
@@ -3931,6 +3947,12 @@ static void CanariShowMessageNotification(NSString *senderName, NSString *groupN
   if (scansBodyForMention && !mentionsMe && ctx != nil && ctx.userId.length > 0 && body.length > 0) {
     NSString *needle = [NSString stringWithFormat:@"@[%@]", ctx.userId];
     mentionsMe = [body rangeOfString:needle options:NSCaseInsensitiveSearch].location != NSNotFound;
+  }
+  // A call to every member (`@tous` / `@everyone`) names this reader too: on the MLS path every
+  // member may make one. Same pattern as the extension's `everyoneCallPattern`.
+  if (scansBodyForMention && !mentionsMe && body.length > 0 && CanariCallsEveryone(body)) {
+    NSLog(@"[CanariPush] [MENTION] the message calls everyone - raised as a mention");
+    mentionsMe = YES;
   }
   // WP-XP-7: per-conversation stacking via threadIdentifier = groupId (Android twin:
   // MessagingStyle with per-conversation notifId). NSE already does this for the killed-app path.

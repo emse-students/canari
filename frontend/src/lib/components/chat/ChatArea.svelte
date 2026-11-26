@@ -1248,6 +1248,13 @@
    */
   const pinStanding = $derived<PinStanding>({ inChannel: isChannel, canModerate });
 
+  /**
+   * Whether the composer offers `@tous` (owner, 2026-11-25): in a group every member may call
+   * everyone; in a salon only a reader with the moderation grant - the same grant the server checks
+   * before it vouches for the call (`ChannelService.sendMessage`), so the offer and the honour agree.
+   */
+  const mentionEveryone = $derived(isChannel ? canModerate : (chatView?.isGroup ?? false));
+
   function pinnedPreview(messageId: string): string | null {
     const msg = chatView?.conversation.messages.find((x) => x.id === messageId);
     if (!msg) return null;
@@ -2638,6 +2645,7 @@
         <ChatComposer
           {messageText}
           {mentionRoster}
+          {mentionEveryone}
           {onMessageChange}
           {onTyping}
           {onSendGif}

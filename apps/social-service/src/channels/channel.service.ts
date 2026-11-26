@@ -382,6 +382,27 @@ export interface ChannelFanoutPayload {
   seedGroupId?: string;
 }
 
+/**
+ * What the server makes of a sender's `@tous` (`SendChannelMessageDto.mentionsEveryone`): `absent`
+ * when none was declared (or the row is silent, which rings nobody anyway), `vouched` when the
+ * sender holds the moderation grant here, `unvouched` otherwise. Pure, so the rule is tested alone.
+ *
+ * @param mayModerate - the sender's moderation grant in this community, read only when a call was
+ *   declared on a row that can ring.
+ */
+export function vouchedEveryoneMention(
+  input: Pick<SendChannelMessageDto, 'mentionsEveryone' | 'silent'>,
+  mayModerate: boolean
+): 'absent' | 'vouched' | 'unvouched' {
+  if (input.mentionsEveryone !== true || input.silent === true) return 'absent';
+  return mayModerate ? 'vouched' : 'unvouched';
+}
+
+/** Whether a stored row carries a vouched `@tous` (`metadata.mentionsEveryone`, see above). */
+export function rowMentionsEveryone(row: Pick<ChannelMessage, 'metadata'>): boolean {
+  return (row.metadata as { mentionsEveryone?: boolean } | null)?.mentionsEveryone === true;
+}
+
 @Injectable()
 export class ChannelService implements OnApplicationBootstrap {
   private readonly logger = new Logger(ChannelService.name);
@@ -5489,6 +5510,21 @@ export class ChannelService implements OnApplicationBootstrap {
     // client is never asked: the same grant `setMessagePinned` reads decides here.
     const pollMeta = input.poll ? this.buildPollMeta(input.poll) : null;
     const autoPin = pollMeta !== null && (await this.memberCanModerateMessages(member));
+    // A CALL TO EVERY MEMBER IS A MODERATOR'S (owner, 2026-11-25: a member must not wake a whole
+    // year group). The server is the one place that knows the role AND decides the push, so the
+    // declaration is vouched for here or not at all - never refused, because the text is still a
+    // message worth sending.
+    const everyone = vouchedEveryoneMention(
+      input,
+      input.mentionsEveryone === true && input.silent !== true
+        ? await this.memberCanModerateMessages(member)
+        : false
+    );
+    if (everyone === 'unvouched') {
+      this.logger.warn(
+        `[MENTION_EVERYONE] not vouched channel=${channelId.slice(0, 8)} sender=${sender}: no moderation grant - the text stays text, nobody extra is pushed`
+      );
+    }
     if (pollMeta && !autoPin) {
       this.logger.log(
         `[POLL] not auto-pinned channel=${channelId} user=${input.senderId.slice(0, 8)}: no moderation grant`
@@ -5509,7 +5545,10 @@ export class ChannelService implements OnApplicationBootstrap {
       clientMessageId,
       reelMediaId,
       silent: input.silent === true,
-      metadata: pollMeta ? { poll: pollMeta } : {},
+      metadata: {
+        ...(pollMeta ? { poll: pollMeta } : {}),
+        ...(everyone === 'vouched' ? { mentionsEveryone: true } : {}),
+      },
       pinned: autoPin,
     });
 
@@ -5617,6 +5656,7 @@ export class ChannelService implements OnApplicationBootstrap {
     payload: ChannelFanoutPayload
   ): Promise<void> {
     const pollMeta = (row.metadata as { poll?: ChannelPollMeta } | null)?.poll ?? null;
+    const everyone = rowMentionsEveryone(row);
     const published = this.channelAudience(channel).then((audience) =>
       this.redis.publishChannelEvent(
         'channel.message.created',
@@ -5634,21 +5674,28 @@ export class ChannelService implements OnApplicationBootstrap {
           // Poll descriptor (no labels) so peers render the card live without refetch.
           poll: this.servedPoll(pollMeta),
           pinned: row.pinned,
+          // The server's word that this `@tous` comes from a moderator: what the client honours.
+          ...(everyone ? { mentionsEveryone: true } : {}),
         },
         audience
       )
     );
     const pushed = row.silent
       ? Promise.resolve()
-      : this.notifyChannelRecipients(channel, row, {
-          senderId: row.authorId,
-          ciphertext: row.content,
-          nonce: row.nonce,
-          senderSessionId: row.senderSessionId ?? '',
-          messageIndex: row.messageIndex ?? 0,
-          ...(row.signature ? { signature: row.signature } : {}),
-          ...payload,
-        } as SendChannelMessageDto);
+      : this.notifyChannelRecipients(
+          channel,
+          row,
+          {
+            senderId: row.authorId,
+            ciphertext: row.content,
+            nonce: row.nonce,
+            senderSessionId: row.senderSessionId ?? '',
+            messageIndex: row.messageIndex ?? 0,
+            ...(row.signature ? { signature: row.signature } : {}),
+            ...payload,
+          } as SendChannelMessageDto,
+          everyone
+        );
     const [frame, push] = await Promise.allSettled([published, pushed]);
     if (frame.status === 'rejected') {
       this.logger.error(
@@ -6039,7 +6086,8 @@ export class ChannelService implements OnApplicationBootstrap {
   private async notifyChannelRecipients(
     channel: Channel,
     message: ChannelMessage,
-    input: SendChannelMessageDto
+    input: SendChannelMessageDto,
+    everyone: boolean
   ): Promise<void> {
     if (!this.internalSecret) {
       this.logger.warn('[CHANNEL_PUSH] INTERNAL_SECRET not set - channel push disabled');
@@ -6047,7 +6095,13 @@ export class ChannelService implements OnApplicationBootstrap {
     }
 
     const members = await this.memberRepo.find({ where: { workspaceId: channel.workspaceId } });
-    const mentioned = new Set((input.mentionedUserIds ?? []).map((id) => id.trim().toLowerCase()));
+    const named = new Set((input.mentionedUserIds ?? []).map((id) => id.trim().toLowerCase()));
+    // A VOUCHED `@tous` names every member - read from the ROW (`rowMentionsEveryone`), never the
+    // request, so a fan-out finished after a crash rings the same phones.
+    const mentioned = {
+      size: everyone ? members.length : named.size,
+      has: (id: string) => everyone || named.has(id),
+    };
 
     // THE CIPHERTEXT AND ITS SEED FRAME RIDE TOGETHER OR NOT AT ALL, and chat-delivery decides
     // which, per device, on the payload it actually sends (`withInlineGroup`). This used to be a

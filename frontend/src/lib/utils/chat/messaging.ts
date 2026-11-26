@@ -22,7 +22,7 @@ import {
   sendEncryptedChannelMessage,
   isChannelConversationId,
 } from '$lib/utils/chat/channelCrypto';
-import { extractMentionUserIds } from '$lib/utils/mentions';
+import { extractMentionUserIds, mentionsEveryone } from '$lib/utils/mentions';
 import { notifyReaction } from '$lib/utils/chat/reactionNotify';
 import { m } from '$lib/paraglide/messages';
 import { cutReplyPreview, gifPreviewUrl } from '$lib/utils/chat/messageDisplay';
@@ -142,6 +142,11 @@ interface SalonSend {
   channelId: string;
   payload: Uint8Array;
   mentionedUserIds: string[];
+  /**
+   * The text calls every member (`@tous`). Declared in clear so the server can vouch for it - only
+   * a sender with the moderation grant is vouched for (`ChannelService.sendMessage`).
+   */
+  mentionsEveryone: boolean;
   /** The echo writer and logger of the last attempt: what a re-send on the reconnect reuses. */
   deps: SendMessageDeps;
   /**
@@ -562,7 +567,7 @@ async function takeSalonTurn(
       undefined,
       send.mentionedUserIds,
       // This queue sends it again after a reload, under the same id: an adopting leader must not.
-      { resentByQueue: true }
+      { resentByQueue: true, ...(send.mentionsEveryone ? { mentionsEveryone: true } : {}) }
     );
     salonSends.delete(messageId);
     endServerHold(messageId);
@@ -729,6 +734,7 @@ export function deliverSalonAttachment(
     channelId: conversationKey.replace(/^channel_/, ''),
     payload,
     mentionedUserIds: [],
+    mentionsEveryone: false,
     deps,
     attachment: true,
   };
@@ -879,6 +885,7 @@ async function queueSalonSend(
     payload: salonTextPayload(entry),
     // Cleartext mention targets let the server route the `mentions` notification level.
     mentionedUserIds: extractMentionUserIds(text),
+    mentionsEveryone: mentionsEveryone(text),
     deps,
   };
   const echoReply: ChatMessage['replyTo'] = replyTo

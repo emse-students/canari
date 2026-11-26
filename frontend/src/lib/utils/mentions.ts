@@ -42,3 +42,19 @@ export function formatMentionToken(userId: string): string {
 export function mentionTokenInTextRegex(): RegExp {
   return new RegExp(`(?<![[\\w@./&#(])@\\[(${MENTION_USER_ID_PATTERN})\\]`, 'gi');
 }
+
+/**
+ * THE CALL TO EVERY MEMBER: `@tous`, or its alias `@everyone`, as a whole word, any case. Plain text
+ * rather than a reserved `@[...]` token, so every renderer that predates it - an older app, a native
+ * banner, a reply quote - shows the word that was typed instead of a raw token. Not preceded by a
+ * word character, `@`, `.` or `/` (so `mail@tous.fr` is no call), and not followed by a word
+ * character or `-`. The SAME pattern is spelled by Android's `NotificationLevelGate` and the iOS
+ * extension, pinned for all three by `libs/contracts/mention-decision.cases.json`.
+ * See docs/wiki/services/chat-delivery.md, "@tous".
+ */
+export const MENTION_EVERYONE_PATTERN = '(?<![A-Za-z0-9_@./])@(?:tous|everyone)(?![A-Za-z0-9_-])';
+
+/** Whether `text` calls every member of its conversation (see {@link MENTION_EVERYONE_PATTERN}). */
+export function mentionsEveryone(text: string): boolean {
+  return new RegExp(MENTION_EVERYONE_PATTERN, 'i').test(text);
+}

@@ -1424,7 +1424,10 @@ class NotificationService: UNNotificationServiceExtension {
     level: String?, mentioned: Set<String>?, myUserId: String?, groupId: String
   ) -> LevelDecision {
     let me = myUserId?.lowercased() ?? ""
-    let mentionsMe = !me.isEmpty && (mentioned?.contains(me) ?? false)
+    // A call to every member (`@tous` / `@everyone`) names the reader whatever its id: on this
+    // MLS path every member may call everyone (a salon's call is vouched for by the server).
+    let calledEveryone = mentioned?.contains(everyoneMention) ?? false
+    let mentionsMe = calledEveryone || (!me.isEmpty && (mentioned?.contains(me) ?? false))
     guard level == "mentions" else {
       return LevelDecision(mentionsMe: mentionsMe, quiet: false)
     }
@@ -3474,13 +3477,27 @@ class NotificationService: UNNotificationServiceExtension {
       hasVideo: (dict["hasVideo"] as? Bool) ?? false, mentionedUserIds: mentioned)
   }
 
-  /// The user ids a plaintext mentions: the `@[<64 hex>]` token every client writes, lower-cased.
+  /// What `mentionedUserIds(in:)` holds for a call to every member - never a user id (64 hex).
+  static let everyoneMention = "everyone"
+
+  /// `@tous`, or its alias `@everyone`, as a whole word in any case. The pattern of the client's
+  /// `MENTION_EVERYONE_PATTERN` and Android's `NotificationLevelGate`, pinned for all three by
+  /// `libs/contracts/mention-decision.cases.json`.
+  static let everyoneCallPattern = "(?<![A-Za-z0-9_@./])@(?:tous|everyone)(?![A-Za-z0-9_-])"
+
+  /// The user ids a plaintext mentions: the `@[<64 hex>]` token every client writes, lower-cased,
+  /// plus `everyoneMention` when it calls every member.
   static func mentionedUserIds(in text: String) -> Set<String> {
     guard let re = try? NSRegularExpression(pattern: "@\\[([0-9a-fA-F]{64})\\]") else { return [] }
     let range = NSRange(text.startIndex..., in: text)
     var ids = Set<String>()
     for match in re.matches(in: text, range: range) {
       if let r = Range(match.range(at: 1), in: text) { ids.insert(text[r].lowercased()) }
+    }
+    if let call = try? NSRegularExpression(pattern: everyoneCallPattern, options: [.caseInsensitive]),
+      call.firstMatch(in: text, range: range) != nil
+    {
+      ids.insert(everyoneMention)
     }
     return ids
   }

@@ -16,6 +16,8 @@ final class MentionDecisionContractTests: XCTestCase {
       let level: String?
       let text: String?
       let me: String?
+      /// `ignored`: a salon row the server did not vouch for - the client's case alone.
+      let everyone: String?
       let expected: String
     }
     let me: String
@@ -29,7 +31,7 @@ final class MentionDecisionContractTests: XCTestCase {
     let contract = try JSONDecoder().decode(Contract.self, from: Data(contentsOf: url))
     var checked = 0
     // A visible frame never carries `none` (the server sends it silent): those cases are the client's.
-    for c in contract.cases where c.level != "none" {
+    for c in contract.cases where c.level != "none" && c.everyone == nil {
       let me = c.me.map { $0 == "self" ? contract.me : $0 }
       let decision = NotificationService.levelDecision(
         level: c.level, mentioned: c.text.map { NotificationService.mentionedUserIds(in: $0) },

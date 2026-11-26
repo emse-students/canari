@@ -441,7 +441,9 @@ export function renderPlainTextToMentionEditor(
 
   const parts = splitTextWithMentions(text);
   for (const part of parts) {
-    if (part.type === 'text') {
+    // `@tous` stays the text typed in the editor: it IS its wire form (`MENTION_EVERYONE_PATTERN`),
+    // and only the sent bubble draws it as a chip (`MessageInlineText`).
+    if (part.type === 'text' || part.type === 'everyone') {
       appendComposerText(root, part.value, markdownPreview);
     } else if (part.type === 'mention') {
       root.appendChild(createMentionChip(part.userId, part.label));

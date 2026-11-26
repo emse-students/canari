@@ -680,6 +680,8 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
         serverTimestamp: channelServerMs,
         skipDbSave: true,
         authorProven,
+        // The server's word that this row's `@tous` comes from a moderator (`everyoneMentionOf`).
+        everyoneVouched: data.mentionsEveryone === true,
         // A follower tab may be the one that composed it: the id lets it settle its echo.
         ...(ownClientId ? { clientMessageId: ownClientId } : {}),
         ...(isSystemNotice ? { isSystem: true } : {}),

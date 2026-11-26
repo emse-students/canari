@@ -1611,7 +1611,9 @@ describe('ChannelService security hardening', () => {
           mentionedUserIds: ['u2'],
           seedFrame: 'ZnJhbWU=',
           seedGroupId: 'g',
-        })
+        }),
+        // No `@tous` on this row: `rowMentionsEveryone` reads its metadata, never the request.
+        false
       );
       expect(entries).toEqual({});
     });
@@ -2417,6 +2419,57 @@ describe('ChannelService security hardening', () => {
       ForbiddenException
     );
     expect(memberRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('notifyChannelRecipients: a vouched @tous names every member at mentions, never one at none', async () => {
+    const prevSecret = process.env.INTERNAL_SECRET;
+    const prevFetch = global.fetch;
+    process.env.INTERNAL_SECRET = 'test-secret';
+    const fetchMock = jest.fn((_url: string, _init: { body: string }) =>
+      Promise.resolve({ ok: true } as Response)
+    );
+    global.fetch = fetchMock as unknown as typeof fetch;
+    try {
+      const { service, memberRepo, workspaceRepo } = makeService();
+      workspaceRepo.findOne.mockResolvedValue({ id: 'ws1', name: 'Campagne de test' });
+      const channel = {
+        id: 'ch1',
+        workspaceId: 'ws1',
+        name: 'general',
+        isPrivate: false,
+        allowedUsers: [] as string[],
+        keyVersion: 1,
+      };
+      memberRepo.find.mockResolvedValue([
+        { userId: 'u1', roleIds: [], notifLevels: {} }, // sender - skipped
+        { userId: 'u2', roleIds: [], notifLevels: {} }, // all -> push
+        { userId: 'u3', roleIds: [], notifLevels: { ch1: 'none' } }, // none -> skip, even now
+        { userId: 'u4', roleIds: [], notifLevels: { ch1: 'mentions' } }, // mentions -> called
+      ]);
+      await (
+        service as unknown as {
+          notifyChannelRecipients: (
+            c: unknown,
+            m: unknown,
+            i: unknown,
+            everyone: boolean
+          ) => Promise<void>;
+        }
+      ).notifyChannelRecipients(
+        channel,
+        { id: 'm1', senderSessionId: 's', messageIndex: 0, createdAt: new Date(1758499191859) },
+        { senderId: 'u1', ciphertext: 'c', nonce: 'n', senderSessionId: 's', messageIndex: 0 },
+        true
+      );
+      const sent = fetchMock.mock.calls
+        .map((call) => JSON.parse(call[1].body) as { userId: string; data: Record<string, string> })
+        .sort((a, b) => a.userId.localeCompare(b.userId));
+      expect(sent.map((s) => s.userId)).toEqual(['u2', 'u4']);
+      expect(sent.map((s) => s.data.mentioned)).toEqual(['true', 'true']);
+    } finally {
+      process.env.INTERNAL_SECRET = prevSecret;
+      global.fetch = prevFetch;
+    }
   });
 
   it('notifyChannelRecipients honours per-channel level and mentions, skipping the sender', async () => {
