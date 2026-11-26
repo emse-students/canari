@@ -24,3 +24,21 @@ nothing. Private groups only (communities keep `shared`/`joined`; a 1:1 has no a
 
 **Open design points, to settle when it is built:** what the notice says when two members both send;
 a size bound for "everything"; what the newcomer sees while the history arrives.
+
+**Read 2026-11-25 - what the design must ride on, so the first slice is not built on the wrong path.**
+The join push carries the conversation's STATE and no message since 2026-11-17: it answers no ask,
+so it cannot be sealed to its reader, and a message in it would be readable by any member a server
+hands it to ([history-reconciliation](../protocols/history-reconciliation.md#a-new-member-receives-nothing-from-before-their-arrival-decided-by-the-user-2026-10-21),
+`sendFullHistoryBundle`). And three layers drop the newcomer's pre-arrival past on purpose: the
+answerer's filter on the reader's `withheld` windows (`readerHistorySelection`), the receiver's own
+(`dropOwnExcludedMessages`), and the server's stream. So the button cannot simply push a bundle.
+The shape that fits all three: the press sends a GRANT (an MLS application message every member
+decrypts - it IS the notice, so the server still sees nothing), naming the newcomer, the granter
+and the start date; the newcomer's device answers a grant addressed to it with its own SEALED
+history ask to the granter, naming the grant; the granter answers that ask filtered from the
+grant's date instead of the newcomer's span; the receiver lifts its own pre-arrival drop for that
+answer only, bound to that grant and that granter. Three pull requests: (a) the grant frame and its
+notice (Paraglide); (b) the sealed ask under a grant, both ends, with the receiver's lift; (c) the
+button and the date picker, which need (a) and (b) to do anything. An older newcomer ignores the
+unknown frame and keeps receiving nothing - the decided default, so no floor is needed.
+
