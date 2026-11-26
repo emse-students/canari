@@ -30,3 +30,24 @@ describe('CommentMedia', () => {
     expect(boxStyle({ type: 'image', mimeType: 'image/gif' })).not.toContain('aspect-ratio');
   });
 });
+
+describe('CommentMedia viewer title', () => {
+  it("hands the media the comment's author and date, so its viewer is titled like the others", () => {
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const app = mount(CommentMedia, {
+      target,
+      props: {
+        media: { type: 'image', mimeType: 'image/gif', mediaId: 'g1' } as never,
+        authToken: 't',
+        info: { senderName: 'Ada L', sentAt: '2026-11-01T10:00:00Z' },
+      },
+    });
+    flushSync();
+    const stub = target.querySelector<HTMLElement>('[data-post-media-open]')!;
+    expect(stub.dataset.infoSender).toBe('Ada L');
+    expect(stub.dataset.infoSent).toBe('2026-11-01T10:00:00Z');
+    unmount(app);
+    target.remove();
+  });
+});

@@ -2,6 +2,7 @@
   import PostMedia from './PostMedia.svelte';
   import { nearViewport } from '$lib/actions/nearViewport';
   import type { PostComment } from '$lib/posts/api';
+  import type { MediaViewerInfo } from '$lib/utils/mediaViewerInfo';
   import { mediaAspectStyle, resolveMediaType, reservesAspectRatio } from '$lib/utils/mediaLayout';
 
   /**
@@ -14,14 +15,19 @@
    * it renders, and without the gate each one fetched and decrypted its latest comment's picture
    * at once, ahead of the page the reader is waiting for. The thread is already on screen, so it
    * is never deferred.
+   *
+   * THE VIEWER IS TITLED LIKE EVERY OTHER ONE (owner inventory, 2026-11-26): `info` carries the
+   * comment's author and date, so the lightbox shows them instead of the bare "Image" or file name.
    */
   interface Props {
     media: NonNullable<PostComment['media']>;
     authToken: string;
     compact?: boolean;
+    /** The comment's author and date, for the viewer's title and information panel. */
+    info?: Pick<MediaViewerInfo, 'senderName' | 'sentAt'>;
   }
 
-  let { media, authToken, compact = false }: Props = $props();
+  let { media, authToken, compact = false, info }: Props = $props();
 
   let near = $state(false);
 
@@ -44,5 +50,5 @@
   style={reserved ? mediaAspectStyle(media.width, media.height) : ''}
   use:nearViewport={{ onnear: () => (near = true) }}
 >
-  <PostMedia {media} {authToken} deferred={compact && !near} />
+  <PostMedia {media} {authToken} deferred={compact && !near} postInfo={info} />
 </div>

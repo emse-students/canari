@@ -33,6 +33,7 @@
   import { SvelteSet } from 'svelte/reactivity';
   import { postGalleryLayout } from '$lib/utils/posts/postGalleryLayout';
   import { Log } from '$lib/utils/Log';
+  import { downloadDecryptedFile } from '$lib/utils/fileDownload';
 
   interface Props {
     /** The post whose markdown content and images are rendered. */
@@ -49,9 +50,23 @@
      * link to a form keeps its own card.
      */
     attachedForms?: { ids: string[]; infos: AttachedFormInfo[] };
+    /**
+     * The CanaReels viewer opened from this card shows THIS post only, whatever the reader's
+     * "Défilement infini" switch says: no stream after it, no order switch (owner, 2026-11-26). Set
+     * by a surface that is not the feed, where a swipe into other people's reels is out of place
+     * (the moderation preview of a reported post).
+     */
+    reelAlone?: boolean;
   }
 
-  let { post, authToken = '', fullContent = false, likerId, attachedForms }: Props = $props();
+  let {
+    post,
+    authToken = '',
+    fullContent = false,
+    likerId,
+    attachedForms,
+    reelAlone = false,
+  }: Props = $props();
 
   onMount(() => {
     ensureHljsTheme();
@@ -111,21 +126,42 @@
 
   function openLightbox(i: number) {
     Log.d('PostContent.openLightbox', { postId: post.id, index: i, of: lightboxMedia.length });
+    showMedia(i);
+  }
+
+  /** Moves the viewer to media `i` (or closes it): the previous file's URL is dropped with it. */
+  function showMedia(i: number | null) {
+    lightboxFile = null;
     lightboxIndex = i;
   }
 
   function closeLightbox() {
-    lightboxIndex = null;
+    showMedia(null);
   }
+
+  /**
+   * The decrypted file of the media the gallery lightbox shows, once the whole of it is in this
+   * device's pool (`PostMedia`'s `onLoaded`), keyed by its media id so a swipe to the next one never
+   * offers the previous one's bytes. It is what makes "Télécharger" available in a grid's viewer as
+   * it is in a single media's (owner inventory, 2026-11-26).
+   */
+  let lightboxFile = $state.raw<{ mediaId: string; url: string } | null>(null);
+  const lightboxDownload = $derived.by(() => {
+    const item = lightboxItem;
+    const file = lightboxFile;
+    if (!item || !file || file.mediaId !== item.mediaId) return undefined;
+    const fallback = resolveMediaType(item) === 'video' ? 'video' : 'image';
+    return () => void downloadDecryptedFile(file.url, item.fileName ?? fallback);
+  });
 
   function prevMedia() {
     if (lightboxIndex === null || lightboxMedia.length === 0) return;
-    lightboxIndex = (lightboxIndex - 1 + lightboxMedia.length) % lightboxMedia.length;
+    showMedia((lightboxIndex - 1 + lightboxMedia.length) % lightboxMedia.length);
   }
 
   function nextMedia() {
     if (lightboxIndex === null || lightboxMedia.length === 0) return;
-    lightboxIndex = (lightboxIndex + 1) % lightboxMedia.length;
+    showMedia((lightboxIndex + 1) % lightboxMedia.length);
   }
 
   /**
@@ -209,7 +245,7 @@
   function openReelViewer(mediaIndex = 0) {
     Log.d('PostContent.openReelViewer', { postId: post.id, page: fullPage, mediaIndex });
     reelStartIndex = mediaIndex;
-    reelContinues = feedReelsContinue();
+    reelContinues = !reelAlone && feedReelsContinue();
     if (reelContinues) (reelStream ??= new ReelStream()).open();
     reelViewerOpen = true;
   }
@@ -454,8 +490,14 @@
     onNext={nextMedia}
     dotCount={lightboxMedia.length}
     dotIndex={lightboxIndex}
-    onDotSelect={(i) => (lightboxIndex = i)}
+    onDotSelect={showMedia}
+    onDownload={lightboxDownload}
   >
-    <PostMedia media={lightboxMedia[lightboxIndex]} {authToken} galleryMode />
+    <PostMedia
+      media={lightboxMedia[lightboxIndex]}
+      {authToken}
+      galleryMode
+      onLoaded={(url) => (lightboxFile = { mediaId: lightboxMedia[lightboxIndex!].mediaId, url })}
+    />
   </MediaLightbox>
 {/if}

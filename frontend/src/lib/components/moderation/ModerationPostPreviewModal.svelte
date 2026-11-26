@@ -85,7 +85,7 @@
       {@const postId = post.id}
       <Card class="border-cn-border/80 overflow-hidden shadow-sm">
         <PostHeader {post} showFollow={false} />
-        <PostContent {post} {authToken} fullContent />
+        <PostContent {post} {authToken} fullContent reelAlone />
       </Card>
       <!--
         SHORTENED AND COPIED, like the list this modal opens from. Rendered whole under `truncate`

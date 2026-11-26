@@ -1,6 +1,5 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { arbitratePlayback } from '$lib/actions/playbackArbiter';
   import { FileText, Download, Image as ImageIcon, LoaderCircle, Mic } from '@lucide/svelte';
   import MediaLoadFailure from '$lib/components/shared/MediaLoadFailure.svelte';
   import { Log } from '$lib/utils/Log';
@@ -34,6 +33,7 @@
   import PdfViewerModal from '$lib/components/shared/PdfViewerModal.svelte';
   import AttachmentCard from '$lib/components/shared/AttachmentCard.svelte';
   import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
+  import VoiceMessagePlayer from '$lib/components/messages/VoiceMessagePlayer.svelte';
   import VideoPlayer from '$lib/components/shared/VideoPlayer.svelte';
   import VideoPoster from '$lib/components/shared/VideoPoster.svelte';
   import MediaSpinner from '$lib/components/shared/MediaSpinner.svelte';
@@ -756,10 +756,19 @@
       />
     {:else if mediaType === 'audio'}
       <!-- ========== AUDIO ========== -->
-      <div class="w-full max-w-md overflow-hidden rounded-3xl bg-black/5 dark:bg-white/5">
-        <!-- svelte-ignore a11y_media_has_caption -->
-        <audio use:arbitratePlayback src={blobUrl} controls preload="metadata" class="h-12 w-full"
-        ></audio>
+      <!-- The voice-note player of the conversations (`VoiceMessagePlayer`, owner inventory 2026-11-26):
+           the same strip, speed control and loudness law for any audio, never the engine's native
+           controls. It is not chat-bound - a source, a type and a loudness are all it takes. -->
+      <div
+        class="w-full max-w-md overflow-hidden rounded-3xl bg-black/5 dark:bg-white/5"
+        data-post-audio
+      >
+        <VoiceMessagePlayer
+          src={blobUrl!}
+          mimeType={media.mimeType}
+          loudness={media.loudness ?? null}
+          onDownload={() => downloadBlob(blobUrl!, media.fileName ?? 'audio')}
+        />
       </div>
     {/if}
     <!-- A file never reaches here: its card is drawn from metadata, first branch above. -->
