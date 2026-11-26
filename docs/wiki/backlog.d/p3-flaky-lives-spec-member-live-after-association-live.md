@@ -1,6 +1,6 @@
 ## P3 - a lives integration spec failed once: the association's live pushed to nobody
 
-target: 1.10.0
+target: 1.9.0
 
 _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
@@ -24,6 +24,15 @@ An empty recipient list on the association's announcement means the follower rea
 association returned nobody at that instant - an ordering between the spec's `setUp()` (the follow,
 the bell) and the announcement, or a row of a previous test of the same block still visible, are the
 first two candidates. Neither is measured.
+
+**Read again 2026-11-26 (no recurrence reproduced).** Twelve runs of the block against a local PostgreSQL
+passed, and the mechanism the first candidates pointed at has a fix in main: until #3598 (2026-11-15)
+the audience query joined the live's ROW, so a live purged by its end before its announcement was
+read answered ZERO recipients - exactly "pushed with recipients `[]`" - and the announcement now
+reads the live and its audience in one REPEATABLE READ snapshot, refusing an ended live. The case of
+2026-11-13 predates that fix. This entry closes when CI shows no recurrence over the next releases;
+a new occurrence reopens it with its run, and the first thing to read is the `[LIVE_ANNOUNCE] ... not
+announced: ended before its announcement was read` line of that run.
 
 **Owed.** Reproduce (run the block in a loop against a local PostgreSQL), name the overlap, and fix
 it at its cause - never a retry or a delay in the spec ([testing-methodology](../testing-methodology.md)).
