@@ -735,12 +735,15 @@ class MainActivity : TauriActivity() {
          * THE PAGE'S GROUND, PAINTED UNDER THE WEBVIEW (2026-11-13, keyboard-and-send-motion.md).
          * The WebView is transparent, so the band the keyboard padding opens below it - visible
          * while the keyboard is still sliding over it - showed the launch background, a dark navy
-         * strip under a light page (owner's recording). The page sends, when it takes a keyboard
-         * target, the opaque colour painted where the keyboard will sit (`keyboardViewport`,
-         * `postGroundToNative`) - a conversation's grey, a full-bleed screen's black. Anything but
-         * `#rrggbb` is logged and ignored. Since 2026-11-14 the content is no longer padded, so no
-         * band opens under the page; the ground is kept for whatever strip the page itself leaves
-         * transparent while the keys move, and the ride's readings say whether one is ever seen.
+         * strip under a light page (owner's recording). The page sends the opaque colour painted at
+         * its bottom edge (`nativeGround.ts`) - a conversation's grey, a full-bleed screen's black,
+         * the tab bar's surface - on a keyboard rise AND on every other change of that surface (a
+         * settled route, a theme apply, the tab bar mounted or unmounted), only when it changed:
+         * posted once per rise, a conversation's grey outlived the conversation and showed under the
+         * feed's white bar wherever the WebView leaves the bottom inset uncovered (2026-11-26).
+         * Anything but `#rrggbb` is logged and ignored. Since 2026-11-14 the content is no longer
+         * padded, so no band opens under the page; the ground is kept for whatever strip the page
+         * itself leaves transparent.
          */
         @JavascriptInterface
         fun setGround(color: String) {
