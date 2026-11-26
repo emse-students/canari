@@ -1,6 +1,8 @@
 ## P2 - the iOS share sheet still offers the previous account's sender as a person after a sign-out (2026-11-24)
 
-target: 1.8.2
+target: 1.8.3
+
+_2026-11-26: moved to 1.8.3 when 1.8.2 shipped, after the reading below._
 
 _2026-11-25: moved to 1.8.2 when 1.8.1 shipped._
 
@@ -17,3 +19,21 @@ _2026-11-25: moved to 1.8.2 when 1.8.1 shipped._
 **Fix (2026-11-24, native verified by compiling only).** The chain was sound: sign-out -> `eraseAccountShortcuts` -> `clear_conversation_shortcuts` -> `ShareSuggestions.clearMessageNotifications`, which awaits `INInteraction.delete(with:)` on the extension's group from the app process (a group delete reaches donations made by the extension: same app). Its success line was `Log.d`, hence invisible, so hypothesis (1) could not be told from (2). Two changes: (a) `clearMessageNotifications` now also awaits `INInteraction.deleteAll` after the group delete, and fails (so the erase stays owed on disk and is retried) if either fails; `deleteAll` is used ONLY here, never by the suggestions' publish or clear, which keep deleting their own group; (b) the web side says `conversation shortcuts erased` / `no ... erase owed` / `cleared n` at INFO (`shareTargetsNative.ts`). The erase is still not awaited by `clearAuth`: it waits on the push registration's network end and is owed on disk, so blocking the sign-out on it would trade a clock for a hang.
 
 **Reading owed (iPhone 12).** After a day of DMs, sign `gamma` out: the share sheet offers no person from the previous account within seconds, and the exported log carries `conversation shortcuts erased, 0 counted (signed out)` (or the `already settled - skipped` line, which then points at hypothesis (1)). If the sender persists with that line present, the system's suggestion cache outlives `deleteAll` and the entry stays open with that evidence.
+
+**2026-11-26, `1.8.2` (iPhone 12): FAIL with the erase proven, hypothesis (1) refuted**
+([sitting](../device-verification.md#the-iphone-12-readings-of-2026-11-26-evening-182-build-100800209-five-iphone-entries-and-a-read-withheld-until-the-first-touch)). Signed out from the dashboard: `[ShareTargets] cleared 5
+(signed out)` and `conversation shortcuts erased, 0 counted (signed out)` at INFO, the native
+`clearMessageNotifications: the donation group and every other donation are deleted`. A fresh share
+sheet 2 and 3.5 min later no longer offered the app's five suggestions, but still offered `delta` and
+`beta`, Canari-badged and faceless. Both deletes answered success from the APP process.
+
+**What is left to tell apart, and the test that does it.** (2a) The leftovers are the notification
+extension's donations, and `INInteraction.delete(with:)` / `deleteAll` reach only what the CALLING
+bundle donated: the extension is another bundle, so nothing the app runs can remove them. (2b) They
+are the system's suggestion cache, which outlives any delete. The discriminator needs a build: have
+the extension delete its own group (`messageNotificationsGroup`) when it starts with no account
+context (`push_context.json` stripped at sign-out), sign out, send one push to the device while it is
+still registered (or sign in as another account and receive one), then read a fresh share sheet. If
+the two senders go, (2a) holds and the extension must be the one to erase; if they stay, (2b) holds
+and the entry needs another answer (for example donating the sender with no suggestion at all). No
+fix is guessed before that reading.

@@ -56,6 +56,28 @@ export interface MlsStatePersister {
 }
 
 /**
+ * What asked for a checkpoint: `applied` is {@link MlsStatePersister.persistNow} (a Welcome or a
+ * commit applied, a join), `replay` the close of a window that is not a live drain (a history
+ * replay, a restore), `drain` the close of a live drain, `flush` an explicit flush (a send, a
+ * commit's stage, background, logout).
+ */
+export type CheckpointAsker = 'applied' | 'replay' | 'drain' | 'flush';
+
+/** The order the askers are printed in, fixed so two lines compare by eye. */
+const ASKER_ORDER: readonly CheckpointAsker[] = ['applied', 'replay', 'drain', 'flush'];
+
+/**
+ * The clause a checkpoint line carries: ` Asked by: applied x3, replay x1.` - empty when nothing
+ * was counted (a checkpoint started by a failure's retry carries its first askers, restored).
+ */
+export function describeAskers(askers: ReadonlyMap<CheckpointAsker, number>): string {
+  const parts = ASKER_ORDER.filter((a) => (askers.get(a) ?? 0) > 0).map(
+    (a) => `${a} x${askers.get(a)}`
+  );
+  return parts.length === 0 ? '' : ` Asked by: ${parts.join(', ')}.`;
+}
+
+/**
  * Creates a coalesced MLS persistence helper used by the inbound message pipeline.
  * Application-message ratchet updates are kept in WASM memory; commits and explicit
  * flush() write a checkpoint to IndexedDB, sealed with the device key.
@@ -83,12 +105,28 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
   let skippedDrainsSinceCheckpoint = 0;
   /** The budget last announced in the log; a change is said once, OFF at birth says nothing. */
   let announcedBudget = 0;
+  /**
+   * WHO ASKED FOR THE NEXT CHECKPOINT, counted per kind ({@link CheckpointAsker}). A restore writes
+   * hundreds of checkpoints, and whether they are paid for the Welcomes or for the history replays
+   * decides what may be deferred (`docs/wiki/backlog.d/` - the new-device restore entry): the line of
+   * the checkpoint names them, so a log separates the two without a second instrument.
+   */
+  let askersSinceCheckpoint = new Map<CheckpointAsker, number>();
+
+  /** Counts one request for durability by `asker`, carried by the next checkpoint's line. */
+  function noteAsker(asker: CheckpointAsker): void {
+    askersSinceCheckpoint.set(asker, (askersSinceCheckpoint.get(asker) ?? 0) + 1);
+  }
 
   /**
    * @param skippedDrains the receive-only drains this checkpoint covers, for its one summary line -
    *   0 while the switch is off, which keeps that line exactly what it always was.
    */
-  async function runSaveEncrypted(skippedDrains: number, frames: number): Promise<void> {
+  async function runSaveEncrypted(
+    skippedDrains: number,
+    frames: number,
+    askers: ReadonlyMap<CheckpointAsker, number>
+  ): Promise<void> {
     await yieldToMainThread();
     const saveStarted = typeof performance !== 'undefined' ? performance.now() : null;
     // ONE CALL, BECAUSE THE PLATFORM OWNS WHAT DURABLE MEANS. This used to be `saveState` followed
@@ -107,7 +145,7 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
         ? ` Covers ${frames} receive generations left by ${skippedDrains} skipped drains.`
         : '';
     log?.(
-      `[MLS] Encrypted state checkpoint persisted.${saveMs === null ? '' : ` (${Math.round(saveMs)} ms)`}${covered}`
+      `[MLS] Encrypted state checkpoint persisted.${saveMs === null ? '' : ` (${Math.round(saveMs)} ms)`}${covered}${describeAskers(askers)}`
     );
   }
 
@@ -120,12 +158,18 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
     const urgentAtStart = urgentSinceCheckpoint;
     const framesAtStart = framesSinceCheckpoint;
     const skippedAtStart = skippedDrainsSinceCheckpoint;
+    const askersAtStart = askersSinceCheckpoint;
+    askersSinceCheckpoint = new Map();
     urgentSinceCheckpoint = false;
     framesSinceCheckpoint = 0;
     skippedDrainsSinceCheckpoint = 0;
     inFlightUrgent = urgentAtStart;
-    inFlightEncrypted = runSaveEncrypted(skippedAtStart, framesAtStart)
+    inFlightEncrypted = runSaveEncrypted(skippedAtStart, framesAtStart, askersAtStart)
       .catch((e) => {
+        // Still owed by the next checkpoint, so its line still names who asked for it.
+        for (const [asker, count] of askersAtStart) {
+          askersSinceCheckpoint.set(asker, (askersSinceCheckpoint.get(asker) ?? 0) + count);
+        }
         urgentSinceCheckpoint = urgentSinceCheckpoint || urgentAtStart;
         framesSinceCheckpoint += framesAtStart;
         skippedDrainsSinceCheckpoint += skippedAtStart;
@@ -189,6 +233,12 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
     return startFlight();
   }
 
+  /** The exported `flush`: counted as an asker only when it has something to write. */
+  function flushOnRequest(): Promise<void> {
+    if (dirtyEncrypted) noteAsker('flush');
+    return flushEncryptedInternal();
+  }
+
   function scheduleDeferred(): void {
     dirtyEncrypted = true;
     framesSinceCheckpoint += 1;
@@ -204,6 +254,7 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
   }
 
   function persistNow(): void {
+    noteAsker('applied');
     dirtyEncrypted = true;
     urgentSinceCheckpoint = true;
     if (bulkIngestDepth > 0) return;
@@ -227,8 +278,8 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
     scheduleDeferred,
     noteReceivedFrame,
     markStructural,
-    flush: flushEncryptedInternal,
-    flushEncrypted: flushEncryptedInternal,
+    flush: flushOnRequest,
+    flushEncrypted: flushOnRequest,
     onBulkIngestStart() {
       bulkIngestDepth += 1;
       log?.(`[MLS] Disk writes deferred (bulk ingest depth=${bulkIngestDepth})`);
@@ -292,6 +343,7 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
         return;
       }
       log?.('[MLS] Bulk ingest done - flushing an encrypted checkpoint if needed.');
+      noteAsker(phase?.bufferUi === true ? 'drain' : 'replay');
       dirtyEncrypted = true;
       void flushEncryptedInternal().catch(() => {
         // Already logged by `flushEncryptedInternal`; swallowed here because an unawaited rejection

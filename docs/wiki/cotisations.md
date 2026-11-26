@@ -1202,6 +1202,21 @@ product's `webhookUrl`:
 - **Retries**: 3 immediate attempts (`CERCLE_RETRY_DELAYS = [1s, 5s, 15s]`), then an automatic
   ladder on a lengthening backoff (`CERCLE_AUTO_RETRY_BACKOFF = [5min, 30min, 2h, 6h, 24h]`) driven
   by `CercleDeliveryScheduler` every 5 minutes, then a manual retry from `/admin/cercle`.
+- **The answer is classified at the read, as a type** (`CercleSendOutcome` in `products.service.ts`):
+  `delivered` (2xx), **`parked`** (HTTP **202**) or `failed` (anything else, with its error). Never
+  by a message.
+- **`parked` (decided 2026-11-26).** A member who has never signed in to Le Cercle has no row there,
+  and a top-up for them used to answer `404`, which sat on the ladder until the retry after their
+  first sign-in (measured: 9.5 minutes in one case, 2 h 48 min in another). That is an expected
+  state, not a failure: Le Cercle now keeps the top-up durably and answers `202`, and credits it at
+  the first sign-in ([Le Cercle side](https://gitlab.emse.fr/rootz/le-cercle) `canari-integration.md`,
+  "A top-up for a member not yet here"). Canari records the row as **`parked`**, a state of its
+  own rather than `delivered`: the money is not yet on the balance, and a reading of "what reached
+  the Cercle" must be able to tell the two apart. It is terminal here - `nextAttemptAt` null, never
+  retried, not in the `/admin/cercle` failure list, swept by the weekly GC like `delivered`. A `404`
+  stays a failure: it now means a route or host that is not the receiver.
+  **Deploy order does not matter**: an old Canari reads the `202` as a 2xx (delivered), and an old
+  Le Cercle keeps answering `404`, which this client still retries.
 
 **One `webhook_deliveries` row per top-up**, updated in place by every later attempt - never one row
 per attempt. That is the shape the whole feature depends on, and getting it wrong is what made the
@@ -1224,7 +1239,7 @@ visible one. Consequences worth knowing:
 - A **manual** retry is exactly ONE attempt: re-running the 3-attempt ladder sleeps 5s then 15s with
   a 10s timeout each, so the admin's request could hang for the better part of a minute and time out
   at the proxy. It also resets `autoRetryCount`, since pressing it means something was fixed.
-- The weekly GC (`purgeDeliveredWebhooks`) only deletes `delivered` rows older than 30 days, so a
+- The weekly GC (`purgeDeliveredWebhooks`) only deletes `delivered` and `parked` rows older than 30 days, so a
   failure is never swept out from under the ladder.
 
 `listWebhookFailures` returns a `FailedDelivery` DTO, not the entity: the row carries two uuids and

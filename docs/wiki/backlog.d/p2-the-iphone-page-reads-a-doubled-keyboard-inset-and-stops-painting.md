@@ -1,6 +1,8 @@
 ## P2 - on the iPhone the page twice read a doubled keyboard inset (602 px) after a rise and stopped painting, the native "+" stranded mid-screen (2026-11-24)
 
-target: 1.8.2
+target: 1.8.3
+
+_2026-11-26: moved to 1.8.3 when 1.8.2 shipped; nothing of it was reachable on the `1.8.2` sitting either._
 
 _2026-11-25: moved to 1.8.2 when 1.8.1 shipped._
 
