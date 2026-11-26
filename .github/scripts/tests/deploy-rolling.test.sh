@@ -449,13 +449,16 @@ else
   fail "transport-reset lines: got '$got', wanted '$want'"
 fi
 # The retired replicas' error lines are printed before `docker rm` deletes them: api's holds the one
-# `Error:` line inside the window (the one before it excluded), the frontend's none.
+# `Error:` line inside the window (the one before it excluded), and the frontend's holds the nginx
+# `[error]` of the same held request (`/api/hold`, proxied through the old frontend, cut when the old api
+# leaves after its drain): the two sides of ONE cut connection, so each is exactly one line.
 got="$(sed -nE 's/^\[RETIRED_ERRORS\] service=([a-z_-]+) container=[0-9a-f]+ count=([0-9a-z]+)$/\1 \2/p' "$TMP/release.log" | sort | tr '\n' '|')"
-want='api 1|frontend 0|'
-if [ "$got" = "$want" ] && grep -qE '^\[RETIRED_ERRORS\] api [0-9a-f]+: Error: socket hang up' "$TMP/release.log"; then
+want='api 1|frontend 1|'
+if [ "$got" = "$want" ] && grep -qE '^\[RETIRED_ERRORS\] api [0-9a-f]+: Error: socket hang up' "$TMP/release.log" \
+  && grep -qE '^\[RETIRED_ERRORS\] frontend [0-9a-f]+: .*\[error\].*upstream prematurely closed connection.*/api/hold' "$TMP/release.log"; then
   ok "each retired replica's error lines are printed before its removal, one inside the window and none outside"
 else
-  fail "retired-error lines: got '$got', wanted '$want' (and api's 'Error: socket hang up' line printed)"
+  fail "retired-error lines: got '$got', wanted '$want' (and api's 'Error: socket hang up' and the frontend's 'upstream prematurely closed' lines printed)"
 fi
 if grep -qxF '[TRANSPORT_RESETS] total=2 unknown=0' "$TMP/release.log"; then
   ok "the deploy-wide total counts the retired replica's line and the caller replaced before its peer"
