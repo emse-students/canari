@@ -1,7 +1,7 @@
 <script lang="ts">
   import PaymentHandedNotice from '$lib/components/payments/PaymentHandedNotice.svelte';
   import { fade, slide } from 'svelte/transition';
-  import { PLAY_STORE_URL, APP_STORE_URL } from '$lib/utils/appVersion';
+  import { PLAY_STORE_URL, APP_STORE_URL } from '$lib/mobile/storeUrls';
   import { TriangleAlert } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 

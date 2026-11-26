@@ -23,8 +23,8 @@
  * screen; anything else re-acquires, and the uploader's next verdict stays the authority. While on
  * air, a `410` from the uploader ends the screen the same way.
  *
- * A REUSED `LIVE_ALREADY_OPEN` is not resumed: a live started by a previous screen (a crash, a kill)
- * is ended by the server's absence rule within its window, and the member is told to wait for it.
+ * A START ENDS THE ACCOUNT'S OWN OPEN LIVE on the server, so a live left by a previous screen (a crash,
+ * a kill) never blocks the next one. `LIVE_ALREADY_OPEN` now means two starts raced, and is not resumed.
  */
 
 import { generateMediaCek } from '$lib/mediaCrypto';

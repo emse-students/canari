@@ -156,11 +156,9 @@ describe('the push key-group join ledger is sealed by Rust alone', () => {
   // stores seal, in a file the push service writes with the app shut (`mobile/key_group_join.rs`).
   const ledgerWriter = between(keyGroupJoinRs, /fn with_ledger</, /\n}\n/);
 
-  it('writes the ledger sealed, and re-excludes it after its atomic write', () => {
+  it('writes the ledger sealed, with no per-file backup flag', () => {
     expect(ledgerWriter).toContain('seal_file(key, Purpose::KeyGroupJoinLedger,');
-    expect(ledgerWriter).toMatch(
-      /fs::rename\(&tmp, &path\)[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*exclude_from_backup\(&path\);/
-    );
+    expect(ledgerWriter).not.toContain('exclude_from_backup');
   });
 
   it('every ledger call takes the cache key, and Kotlin hands it over', () => {
@@ -183,11 +181,9 @@ describe('the iOS announced-messages ledger is sealed by Rust alone', () => {
   // the app shut (`mobile/announced.rs`, docs/wiki/frontend/ios-notification-ownership.md).
   const ledgerWriter = between(announcedRs, /pub fn with_ledger</, /\n}\n/);
 
-  it('writes the ledger sealed, and re-excludes it after its atomic write', () => {
+  it('writes the ledger sealed, with no per-file backup flag', () => {
     expect(ledgerWriter).toContain('seal_file(key, Purpose::AnnouncedLedger, &plain)');
-    expect(ledgerWriter).toMatch(
-      /fs::rename\(&tmp, &path\)[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*exclude_from_backup\(&path\);/
-    );
+    expect(ledgerWriter).not.toContain('exclude_from_backup');
   });
 
   it('every ledger call takes the cache key, and both native halves hand it over', () => {
@@ -200,7 +196,7 @@ describe('the iOS announced-messages ledger is sealed by Rust alone', () => {
   });
 });
 
-describe('iOS keeps every local store out of backups: directories in Rust, the caches per file natively', () => {
+describe('iOS keeps every local store out of backups: directories, in Rust, at every launch', () => {
   it('the launch pass excludes the directories, before the WebView exists', () => {
     // Since 1.7.2 nothing local may travel to another phone (mobile.md, "Nothing local travels to
     // another phone"): the data directory, WebKit's stores and the App Group's store are flagged
@@ -216,56 +212,27 @@ describe('iOS keeps every local store out of backups: directories in Rust, the c
     expect(setup.indexOf('tauri::WebviewWindowBuilder::new(')).toBeGreaterThan(pass);
   });
 
-  it('the native side excludes only the two cache files, never a directory', () => {
-    // A directory flag has ONE writer, the Rust launch pass above; the native per-file pass
-    // predates it and is redundant until the iPhone reading retires it.
-    const perFile = between(
-      pushMm,
-      /void CanariExcludeNativeCacheFilesFromBackup\(NSString/,
-      /\n}\n/
-    );
-    expect(perFile).toContain('NSURLIsExcludedFromBackupKey');
-    expect(perFile).toContain('isEqualToString:kGraineSeedsFileName');
-    expect(perFile).toContain('hasPrefix:@"fcm_message_cache"');
-    expect(perFile).toContain('isDirectory:NO');
-    for (const source of [iosMm, pushMm, swift]) {
-      expect(source).not.toMatch(/isDirectory:YES\][^;]*\n?[^;]*NSURLIsExcludedFromBackupKey/);
+  it('no writer flags a file: the per-file passes are gone', () => {
+    // A directory flag has ONE writer, the Rust launch pass above. The per-file passes it made
+    // redundant (the iPhone reading of 2026-11-22 proved the directory flag holds: 6/6 directories
+    // excluded, a full backup holding no file of ours) were deleted; an atomic write is a new inode
+    // under a flagged parent, which needs nothing re-applied.
+    for (const source of [iosMm, pushMm, swift, pushRs, announcedRs, keyGroupJoinRs]) {
+      expect(source).not.toContain('CanariExcludeNativeCacheFilesFromBackup');
+      expect(source).not.toContain('CanariExcludeNativeCachesFromBackup');
       expect(source).not.toContain('CanariExcludeDirectoryFromBackup');
+      expect(source).not.toMatch(/\bexclude_from_backup\(/);
     }
-    const pass = between(iosMm, /static void CanariExcludeNativeCachesFromBackup\(/, /\n}\n/);
-    expect(pass).toContain('CanariExcludeNativeCacheFilesFromBackup(CanariTauriDataDir())');
-    expect(pass).toContain('CanariExcludeNativeCacheFilesFromBackup(CanariAppGroupPath())');
+    expect(swift).not.toContain('excludeFromBackup');
     expect(iosMm).not.toContain('NSURLIsExcludedFromBackupKey');
+    expect(pushMm).not.toContain('NSURLIsExcludedFromBackupKey');
   });
 
-  it('every writer re-applies it after its atomic write', () => {
-    // An atomic write is a new inode renamed over the old one: the flag does not travel.
-    const append = between(pushMm, /static void CanariAppendFcmCacheEntry\(/, /\n}\n/);
-    const drain = between(pushMm, /void CanariDrainAppGroupFcmCache\(void\) \{/, /\n}\n/);
-    const mirror = between(pushMm, /void CanariMirrorPushStateToAppGroup\(void\) \{/, /\n}\n/);
-    expect(append).toMatch(
-      /writeToFile:path[^\n]*\n\s*CanariExcludeNativeCacheFilesFromBackup\(dir\);/
-    );
-    expect(drain).toMatch(
-      /writeToFile:path[^\n]*\n\s*CanariExcludeNativeCacheFilesFromBackup\(dst\);/
-    );
-    expect(mirror).toContain('CanariExcludeNativeCacheFilesFromBackup(container.path);');
-    const nse = between(swift, /private func writeFcmCache\(/, /\n {2}}\n/);
-    expect(nse).toMatch(
-      /\.completeFileProtectionUntilFirstUserAuthentication\]\)\n\s*Self\.excludeFromBackup\(fileUrl\)/
-    );
-    const rustWriter = between(pushRs, /fn with_graine_mirror_inner</, /\n}\n/);
-    expect(rustWriter).toMatch(
-      /fs::rename\(&tmp, &path\)[^\n]*\n(?:\s*\/\/[^\n]*\n)*\s*crate::native_cache::exclude_from_backup\(&path\);/
-    );
-  });
-
-  it('at bootstrap and at every activation', () => {
+  it('the bootstrap and every activation still ensure the cache key', () => {
     const bootstrap = between(iosMm, /void canari_ios_bootstrap\(void\) \{/, /\n}\n/);
     const active = between(iosMm, /static void CanariOnDidBecomeActive\(/, /\n}\n/);
     for (const body of [bootstrap, active]) {
       expect(body).toContain('CanariEnsureNativeCacheKey();');
-      expect(body).toContain('CanariExcludeNativeCachesFromBackup();');
     }
   });
 });

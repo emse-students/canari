@@ -1,4 +1,6 @@
+import { SvelteMap } from 'svelte/reactivity';
 import { Log } from '$lib/utils/Log';
+import { restoreFailedDraft } from '$lib/utils/chat/draftRestore';
 
 /**
  * EDITING A MESSAGE IN THE COMPOSER (user, 2026-10-02: *"modification des messages -> pas dans la
@@ -22,8 +24,38 @@ export interface EditSessionDeps {
    * reset can give the draft back to THAT conversation after another one has opened.
    */
   bindDraftWriter: () => (text: string) => void;
+  /** The id of the conversation open NOW, read when an edit begins (see {@link holdRestoredText}). */
+  conversationKey: () => string | null;
   /** Saves an edit - called once, on confirmation, with a text that really changed. */
   save: (messageId: string, text: string) => void;
+}
+
+/** One open edit's way to take a text that comes back for its conversation. */
+interface OpenEdit {
+  hold: (text: string) => void;
+}
+
+/**
+ * The edits open NOW, by the conversation they began in. Page memory (no render reads it): it
+ * lets a text restored for a conversation (a refused send, a share landing, a taken-back send) find
+ * the edit that has replaced that conversation's composer text.
+ */
+const openEdits = new SvelteMap<string, OpenEdit>();
+
+/**
+ * Hands a RESTORED text to the edit open in `conversationKey`, if any, and says whether one took it.
+ *
+ * WHY IT IS NOT WRITTEN INTO THE COMPOSER: while an edit is open the composer holds the edited
+ * message, and `cancel`, `confirm` and `reset` put the draft saved at `begin` back over it - so a
+ * text restored into the composer was lost on cancel, or saved as part of the edited message on
+ * confirm (review of #2614, 2026-10-27). It joins the SAVED draft instead, in front of what is
+ * there, exactly as {@link restoreFailedDraft} does for a plain composer, and comes back with it.
+ */
+export function holdRestoredText(conversationKey: string, failed: string): boolean {
+  const open = openEdits.get(conversationKey);
+  if (!open) return false;
+  open.hold(failed);
+  return true;
 }
 
 export function createEditSession(deps: EditSessionDeps) {
@@ -34,7 +66,21 @@ export function createEditSession(deps: EditSessionDeps) {
     emptyAllowed: boolean;
     draft: string;
     giveBack: (text: string) => void;
+    /** The conversation the edit began in, registered in {@link openEdits}. */
+    key: string | null;
   } | null>(null);
+
+  const handle: OpenEdit = {
+    hold(text) {
+      if (!current) return;
+      current.draft = restoreFailedDraft(current.draft, text);
+      Log.d('editSession', `a restored text joined the saved draft (${text.length} chars)`);
+    },
+  };
+  /** Takes the session off the registry; only its own entry, never another composer's. */
+  function unregister(key: string | null) {
+    if (key !== null && openEdits.get(key) === handle) openEdits.delete(key);
+  }
 
   return {
     /** The text of the message being edited, or null - what the composer's banner shows. */
@@ -52,23 +98,29 @@ export function createEditSession(deps: EditSessionDeps) {
      */
     begin(messageId: string, text: string, captionOnly = false) {
       Log.d('editSession', `begun on ${messageId}${captionOnly ? ' (caption)' : ''}`);
-      current = current
-        ? { ...current, messageId, original: text, emptyAllowed: captionOnly }
-        : {
-            messageId,
-            original: text,
-            emptyAllowed: captionOnly,
-            draft: deps.getText(),
-            giveBack: deps.bindDraftWriter(),
-          };
+      if (current) {
+        current = { ...current, messageId, original: text, emptyAllowed: captionOnly };
+      } else {
+        const key = deps.conversationKey();
+        current = {
+          messageId,
+          original: text,
+          emptyAllowed: captionOnly,
+          draft: deps.getText(),
+          giveBack: deps.bindDraftWriter(),
+          key,
+        };
+        if (key !== null) openEdits.set(key, handle);
+      }
       deps.setText(text);
     },
     /** Abandons the edit and gives the draft back. */
     cancel() {
       if (!current) return;
       Log.d('editSession', `cancelled on ${current.messageId}`);
-      const { draft } = current;
+      const { draft, key } = current;
       current = null;
+      unregister(key);
       deps.setText(draft);
     },
     /**
@@ -78,9 +130,10 @@ export function createEditSession(deps: EditSessionDeps) {
      */
     confirm() {
       if (!current) return;
-      const { messageId, original, draft, emptyAllowed } = current;
+      const { messageId, original, draft, emptyAllowed, key } = current;
       const text = deps.getText().trim();
       current = null;
+      unregister(key);
       deps.setText(draft);
       if ((!text && !emptyAllowed) || text === original.trim()) {
         Log.d('editSession', `nothing to save on ${messageId}`);
@@ -98,8 +151,9 @@ export function createEditSession(deps: EditSessionDeps) {
     reset(why = 'the conversation changed') {
       if (!current) return;
       Log.d('editSession', `dropped on ${current.messageId}: ${why}`);
-      const { draft, giveBack } = current;
+      const { draft, giveBack, key } = current;
       current = null;
+      unregister(key);
       giveBack(draft);
     },
   };

@@ -4,6 +4,8 @@ import {
   LOUDNESS_TARGET_LUFS,
   LoudnessAudio,
   MAX_BOOST_DB,
+  VIDEO_LOUDNESS_LAW,
+  VOICE_NOTE_LOUDNESS_LAW,
   dbToGain,
   elementVolumeFor,
   loudnessGainDb,
@@ -52,6 +54,41 @@ describe('loudnessGainDb - the law', () => {
     expect(loudnessGainDb({ integratedLufs: 29, samplePeakDbfs: 30 })).toBe(0);
     // Very loud with a peak 20 dB UNDER its loudness: no signal does that.
     expect(loudnessGainDb({ integratedLufs: -1, samplePeakDbfs: -21 })).toBe(0);
+  });
+});
+
+describe('VOICE_NOTE_LOUDNESS_LAW - a voice note aims at -16 LUFS and is raised by at most +12 dB', () => {
+  const voice = (loudness: { integratedLufs: number; samplePeakDbfs: number }) =>
+    loudnessGainDb(loudness, VOICE_NOTE_LOUDNESS_LAW);
+
+  it('states the owner numbers, and leaves the video law at -14 and +6', () => {
+    expect(VOICE_NOTE_LOUDNESS_LAW).toEqual({ targetLufs: -16, maxBoostDb: 12 });
+    expect(VIDEO_LOUDNESS_LAW).toEqual({
+      targetLufs: LOUDNESS_TARGET_LUFS,
+      maxBoostDb: MAX_BOOST_DB,
+    });
+    // The same measurement, two laws: a video note at -20 LUFS is raised 6 dB, a voice note 4.
+    const measured = { integratedLufs: -20, samplePeakDbfs: -12 };
+    expect(loudnessGainDb(measured)).toBeCloseTo(6);
+    expect(voice(measured)).toBeCloseTo(4);
+  });
+
+  it('lifts a quiet note and caps the lift at +12 dB, however quiet', () => {
+    expect(voice({ integratedLufs: -24, samplePeakDbfs: -14 })).toBeCloseTo(8);
+    expect(voice({ integratedLufs: -28, samplePeakDbfs: -20 })).toBeCloseTo(12);
+    // A whisper 40 dB under the target is lifted by the cap, not turned into noise.
+    expect(voice({ integratedLufs: -56, samplePeakDbfs: -45 })).toBeCloseTo(12);
+  });
+
+  it('lowers a loud note to the target without floor, and never lifts past the peak ceiling', () => {
+    expect(voice({ integratedLufs: -10, samplePeakDbfs: -2 })).toBeCloseTo(-6);
+    // 8 dB wanted, only 3 dB of headroom under -1 dBFS.
+    expect(voice({ integratedLufs: -24, samplePeakDbfs: -4 })).toBeCloseTo(3);
+  });
+
+  it('plays an unmeasured note as it always did', () => {
+    expect(voice(null as never)).toBe(0);
+    expect(loudnessGainDb(undefined, VOICE_NOTE_LOUDNESS_LAW)).toBe(0);
   });
 });
 

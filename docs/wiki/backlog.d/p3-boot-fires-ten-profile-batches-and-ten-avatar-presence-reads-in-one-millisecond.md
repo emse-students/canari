@@ -1,6 +1,6 @@
 ## P3 - At boot the web client sends 10 `GET /api/users/batch` and 10 `GET /api/users/avatar-presence` in the same millisecond (owner's Firefox console, production 1.6.8, 2026-11-09)
 
-target: 1.10.0
+target: 1.9.0
 
 Both are already coalesced, but only within ONE microtask turn: `enqueueProfileFetch`
 (`frontend/src/lib/stores/user.ts`, `queueMicrotask`) and `avatarPhotoPresence`
@@ -14,3 +14,5 @@ coalescers, exactly as the comments there already justify a window ("a window, n
 at most a few ms of latency and turns a same-millisecond burst of tasks into one pair; a burst spread
 over 450 ms (the 2026-09-15 trace in the `stores/user.ts` comment) stays several requests. Measure the
 request count of a cold boot before and after.
+
+_2026-11-25 (batch 10): not built, moved to 1.9.0. The window the entry proposes is a macrotask, which is a clock by another name, and the spread of the ten asks was never read from a trace. What settles it is a cold-boot trace of the ten asks' call sites: if they share one mount, a coalescer is the wrong layer and the surfaces should ask once together; only if they genuinely arrive in separate tasks does a wider window need a justification the event loop can give._

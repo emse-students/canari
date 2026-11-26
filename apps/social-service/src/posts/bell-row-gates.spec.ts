@@ -54,6 +54,7 @@ describe('BELL_ROW_GATE', () => {
         'event_open',
         'event_pending',
         'event_pending_coorganiser',
+        'event_coorganiser_accepted',
         'event_proposed',
         'event_rejected',
         'event_updated',

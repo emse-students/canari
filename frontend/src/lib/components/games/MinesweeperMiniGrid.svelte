@@ -1,12 +1,17 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { Flag, Pickaxe } from '@lucide/svelte';
+  import { Bomb, Flag, Pickaxe } from '@lucide/svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import MinesweeperCell from '$lib/components/settings/MinesweeperCell.svelte';
-  import { revealCell, toggleFlag, type MinesweeperBoard } from '$lib/minesweeper/game';
+  import {
+    remainingMines,
+    revealCell,
+    toggleFlag,
+    type MinesweeperBoard,
+  } from '$lib/minesweeper/game';
   import { EMPTY_CELL_VIEWS, syncCellViews } from '$lib/minesweeper/cellViews';
   import { boardFromLayout } from '$lib/minesweeper/tutorial/layout';
-  import { lessonDone, type Lesson } from '$lib/minesweeper/tutorial/lessons';
+  import { lessonDone, type Lesson, type MarkKind } from '$lib/minesweeper/tutorial/lessons';
   import { m } from '$lib/paraglide/messages';
 
   /**
@@ -19,7 +24,7 @@
    */
   interface Props {
     lesson: Lesson;
-    /** The step of the lesson's hints being shown, or null. It lights the numbers and the cells they read. */
+    /** The step of the lesson's hints being shown, or null. It rings the numbers it reads and outlines its marks. */
     hintStep: number | null;
     /** Called once, when the board satisfies the lesson's goal. */
     onSolved: () => void;
@@ -40,24 +45,80 @@
   let flagMode = $state(false);
   let finished = false;
 
-  /** What lights each cell, by index: `hint` the number being read, `group` a cell it speaks about. */
-  const lit = $derived.by(() => {
-    const marks: Array<'hint' | 'group' | null> = board.cells.map(() => null);
-    const at = ([x, y]: readonly [number, number]) => y * board.width + x;
+  /** The mines counter, as the game's HUD draws it: the mines minus the flags, which is not a proof. */
+  let remaining = $state(untrack(() => remainingMines(board)));
+
+  /**
+   * THE CELLS THE PICTURE ONLY SUGGESTS, in an open grid: hidden, and no revealed number touches them. Read
+   * once from the picture (opening a cell later does not make one of them part of the pattern).
+   */
+  const far = untrack(() =>
+    board.cells.map((cell, i) => {
+      if (!lesson.open || cell.state === 'revealed') return false;
+      const x = i % board.width;
+      const y = Math.floor(i / board.width);
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx;
+          const ny = y + dy;
+          const inside = nx >= 0 && nx < board.width && ny >= 0 && ny < board.height;
+          if ((dx || dy) && inside && board.cells[ny * board.width + nx].state === 'revealed')
+            return false;
+        }
+      }
+      return true;
+    })
+  );
+
+  /** The numbers the shown explanation reads, ringed (`read`). */
+  const reading = $derived.by(() => {
+    const lit: Array<'read' | null> = board.cells.map(() => null);
     const step = hintStep === null ? null : lesson.hints[hintStep];
-    if (step) {
-      for (const c of step.group) marks[at(c)] = 'group';
-      for (const c of step.numbers) marks[at(c)] = 'hint';
-    } else {
-      // A gesture lesson shows where to touch from the start; it is not a hint.
-      for (const c of lesson.guide ?? []) marks[at(c)] = 'group';
-    }
-    return marks;
+    for (const [x, y] of step?.numbers ?? []) lit[y * board.width + x] = 'read';
+    return lit;
   });
+
+  /**
+   * ONE OUTLINE PER RECTANGLE, over the grid and never a ring per cell (owner, 2026-11-26): a group of
+   * several cells reads as a group. Red is a certain mine, yellow a group holding mines (its count in a
+   * badge on the first rectangle), green a certain safe cell. A gesture lesson shows its target from the
+   * start; that is not a hint.
+   */
+  const outlines = $derived.by(() => {
+    const step = hintStep === null ? null : lesson.hints[hintStep];
+    const marks = step ? step.marks : (lesson.guide ?? []);
+    return marks.flatMap((mark) =>
+      mark.rects.map(([x, y, w, h], i) => ({
+        kind: mark.kind as MarkKind,
+        x,
+        y,
+        w,
+        h,
+        badge: i === 0 ? mark.count : undefined,
+      }))
+    );
+  });
+
+  /**
+   * REDUCTION (owner, 2026-11-26): a number shown with what is left of it once the flags it touches are
+   * taken off, as a small `-> n` pill on the number. The test holds each value to the board.
+   */
+  const reductions = $derived.by(() => {
+    const step = hintStep === null ? null : lesson.hints[hintStep];
+    return step?.reduced ?? [];
+  });
+
+  /** Colours of an outline, by what it says. */
+  const OUTLINE: Record<MarkKind, string> = {
+    mine: 'border-red-err bg-red-err/15',
+    group: 'border-accent bg-accent/20',
+    safe: 'border-green-ok bg-green-ok/15',
+  };
 
   /** Publishes what the engine changed, and tells the parent when the lesson is over. */
   function commit() {
     views = syncCellViews(board.cells, views).next;
+    remaining = remainingMines(board);
     if (finished) return;
     if (board.status === 'lost') {
       finished = true;
@@ -71,7 +132,7 @@
   }
 
   function act(index: number, flag: boolean) {
-    if (finished) return;
+    if (finished || far[index]) return;
     const x = index % board.width;
     const y = Math.floor(index / board.width);
     // A number is chorded by a tap whatever the mode: flagging a revealed cell is meaningless.
@@ -98,17 +159,69 @@
 </script>
 
 <div class="flex flex-col items-center gap-3">
-  <div
-    role="presentation"
-    class="grid w-max gap-px [--ms-cell:2.5rem] sm:[--ms-cell:2.75rem]"
-    style="grid-template-columns: repeat({board.width}, var(--ms-cell));"
-    aria-label={m.minesweeper_tutorial_grid_label()}
-    onclick={handleClick}
-    oncontextmenu={handleContextMenu}
+  <span
+    role="img"
+    aria-label={lesson.open
+      ? m.minesweeper_tutorial_counter_unknown()
+      : m.minesweeper_tutorial_counter({ n: String(remaining) })}
+    class="text-text-main flex items-center gap-1.5 text-sm font-bold"
+    data-testid="tutorial-counter"
   >
-    {#each views.views as cell, i (i)}
-      <MinesweeperCell {cell} index={i} pending={false} highlight={lit[i]} />
-    {/each}
+    <Bomb size={16} class="text-cn-dark" />
+    {lesson.open ? '?' : remaining}
+  </span>
+
+  <!-- The two layers share the cell size, so an outline is placed in cells with `calc`, no measuring. -->
+  <div class="relative w-max [--ms-cell:2.5rem] sm:[--ms-cell:2.75rem]">
+    <div
+      role="presentation"
+      class="grid w-max gap-px"
+      style="grid-template-columns: repeat({board.width}, var(--ms-cell));"
+      aria-label={m.minesweeper_tutorial_grid_label()}
+      onclick={handleClick}
+      oncontextmenu={handleContextMenu}
+    >
+      {#each views.views as cell, i (i)}
+        <MinesweeperCell
+          {cell}
+          index={i}
+          pending={false}
+          highlight={reading[i] ?? (far[i] ? 'far' : null)}
+        />
+      {/each}
+    </div>
+
+    <div class="pointer-events-none absolute inset-0" aria-hidden="true">
+      {#each outlines as o, i (i)}
+        <div
+          data-mark={o.kind}
+          class="absolute rounded-lg border-2 {OUTLINE[o.kind]}"
+          style="left: calc({o.x} * (var(--ms-cell) + 1px) - 2px); top: calc({o.y} * (var(--ms-cell) + 1px) - 2px); width: calc({o.w} * var(--ms-cell) + {o.w -
+            1} * 1px + 4px); height: calc({o.h} * var(--ms-cell) + {o.h - 1} * 1px + 4px);"
+        >
+          {#if o.badge !== undefined}
+            <span
+              data-mark-count={o.badge}
+              class="bg-accent text-on-accent absolute -top-3 -right-2 flex items-center gap-0.5 rounded-full px-1.5 text-xs font-bold"
+            >
+              <Bomb size={10} />
+              {o.badge}
+            </span>
+          {/if}
+        </div>
+      {/each}
+      {#each reductions as r (`${r.cell[0]}-${r.cell[1]}`)}
+        <span
+          data-reduced={r.value}
+          class="bg-cn-dark text-cn-surface absolute z-10 rounded-full px-1.5 text-xs font-bold"
+          style="left: calc({r
+            .cell[0]} * (var(--ms-cell) + 1px) + var(--ms-cell) - 1.1rem); top: calc({r
+            .cell[1]} * (var(--ms-cell) + 1px) - 0.55rem);"
+        >
+          → {r.value}
+        </span>
+      {/each}
+    </div>
   </div>
 
   <div class="flex items-center gap-1" role="group" aria-label={m.minesweeper_mode_hint()}>

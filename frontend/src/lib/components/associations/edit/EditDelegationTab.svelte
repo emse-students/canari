@@ -39,6 +39,7 @@
   import { purchaseBuyerName } from '$lib/associations/purchaseBuyer';
   import { SvelteSet } from 'svelte/reactivity';
   import { providerRefusalMessage } from '$lib/associations/paymentRefusal';
+  import { formatAmount } from '$lib/forms/fillAnswers';
 
   interface Props {
     asso: Association;
@@ -409,7 +410,7 @@
                                 {paymentMethodLabel(purchase.paymentMethod)}
                               </td>
                               <td class="px-3 py-2 text-right font-semibold tabular-nums">
-                                {(purchase.amountCents / 100).toFixed(2)} €
+                                {formatAmount(purchase.amountCents)}
                               </td>
                             </tr>
                           {/each}

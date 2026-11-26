@@ -3,7 +3,11 @@
   import { untrack } from 'svelte';
   import { arbitratePlayback } from '$lib/actions/playbackArbiter';
   import { isAppOnScreen } from '$lib/utils/appForeground';
-  import { loudnessAudio, type LoudnessHandle } from '$lib/video/loudnessPlayback';
+  import {
+    loudnessAudio,
+    VOICE_NOTE_LOUDNESS_LAW,
+    type LoudnessHandle,
+  } from '$lib/video/loudnessPlayback';
   import type { MediaLoudness } from '$lib/video/loudnessMeter';
   import { m } from '$lib/paraglide/messages';
   import {
@@ -26,8 +30,8 @@
     mimeType?: string;
     /**
      * The note's sound as its author's device measured it at send (`MediaRef.loudness`,
-     * `recordingLoudness.ts`): brought toward one loudness through the same law and the same route
-     * as a video's (`loudnessPlayback.ts`, owner 2026-11-12). Absent - every note sent before this,
+     * `recordingLoudness.ts`): brought toward one loudness through the voice-note law (-16 LUFS, +12 dB
+     * at most, owner 2026-11-22) and the same route as a video's (`loudnessPlayback.ts`). Absent - every note sent before this,
      * an unmeasurable recording, the composer's own preview - plays exactly as it always did.
      */
     loudness?: MediaLoudness | null;
@@ -126,7 +130,7 @@
   let loudnessHandle: LoudnessHandle | null = null;
   $effect(() => {
     if (!audioEl) return;
-    const handle = loudnessAudio.attach(audioEl, { streamed: false });
+    const handle = loudnessAudio.attach(audioEl, { streamed: false, law: VOICE_NOTE_LOUDNESS_LAW });
     loudnessHandle = handle;
     return () => {
       handle.destroy();

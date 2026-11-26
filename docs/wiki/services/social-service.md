@@ -1720,6 +1720,8 @@ having at least been visible before. The association's own admins get
 ([mobile](../frontend/mobile.md)).
 
 **One announcement, whatever the cause (WP-Q2, 2026-11-03).** The demotion's two notifications now live in `announceEventReopened(event, reason, actorId)`: the validators as for a proposal, and the organiser plus every accepted partner with the reason (`event_pending` for a moved date, `event_pending_coorganiser` when a partner accepted a validated event - [profiles-and-access](../profiles-and-access.md#wp-q2-an-acceptance-on-a-validated-event-reopens-it-2026-11-03)). Both are best effort and run after the write committed.
+
+**An acceptance on a PENDING event (WP-COORG-ACCEPT-NOTICE, 2026-11-25).** Nothing returns to the queue, so no reopening sentence is true; `CoorganisationService.apply` returns `announceCoorganiserAccepted(event, actorId)`, which tells the event's parties (the `PROPOSE_EVENT` holders of the organiser and of each accepted partner, the acceptor dropped by `createNotifications`) under its own type `event_coorganiser_accepted` (bell row + push key, floor `1.8.2`, `meta.eventId`, opens the agenda). Validators are told nothing: the event was already in their queue. A REJECTED event stays silent (the organiser's closed matter; debug log).
 ### A school-wide break is not an association's to declare
 
 `kind` was a free field. `event` renders as a card on the owning association's row; `break` renders

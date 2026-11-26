@@ -1,5 +1,5 @@
 import { coreUrl } from '$lib/utils/apiUrl';
-import { MOBILE_APP_PACKAGE } from '$lib/mobile/appSiteAssociation';
+import { APP_STORE_URL, PLAY_STORE_URL } from '$lib/mobile/storeUrls';
 import { parseRetention, type RetentionDays } from '$lib/legal/retention';
 import { platform } from '@tauri-apps/plugin-os';
 
@@ -10,26 +10,6 @@ export const CANARI_RELEASES_REPO = 'emse-students/canari';
 
 /** Universal APK asset name on GitHub Releases (Android). */
 export const CANARI_RELEASE_APK_FILENAME = 'app-universal-release.apk';
-
-/**
- * Google Play listing URL for the Android build.
- *
- * A public, permanent URL - deliberately a constant rather than build-time config, so
- * an unset variable can never mean "update path silently dead". The `https://` form is
- * used over `market://details?id=...` because the Play Store app intercepts it on
- * device, it stays valid in a desktop browser, and it needs no `opener` ACL change.
- */
-export const PLAY_STORE_URL = `https://play.google.com/store/apps/details?id=${MOBILE_APP_PACKAGE}`;
-
-/**
- * App Store listing URL for the iOS build.
- *
- * Geo-neutral on purpose (no `/us/` path segment): Apple redirects to the viewer's own
- * regional storefront. iOS updates always go through the App Store - there is no
- * sideloadable binary the way Android has its APK - so this is the only meaningful
- * update target on iOS.
- */
-export const APP_STORE_URL = 'https://apps.apple.com/app/id6793060521';
 
 /** Play Store package name of the Google Play installer itself. */
 const PLAY_STORE_INSTALLER_PACKAGE = 'com.android.vending';

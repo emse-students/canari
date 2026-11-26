@@ -366,6 +366,10 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
       workspaceId: String(data.workspaceId || ''),
       imageMediaId: data.imageMediaId,
       channelsReordered: data.channelsReordered === true,
+      // The history rule an admin just saved: without it the frame replaced the sidebar entry with the
+      // old rule a moment after the save and the panel card reset to it.
+      historyVisibility:
+        typeof data.historyVisibility === 'string' ? data.historyVisibility : undefined,
     });
     return;
   }

@@ -113,6 +113,8 @@ export interface MessageHandlerDeps {
     imageMediaId?: string;
     /** The community's salons were rearranged: re-read the order, the event names no salon. */
     channelsReordered?: boolean;
+    /** The community's history rule when this frame moved it. Absent = unchanged. */
+    historyVisibility?: string;
   }) => void;
   /**
    * This account emptied a community's unread ("Marquer tout comme lu") on one of its devices - this

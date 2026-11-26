@@ -876,6 +876,23 @@ export async function getHeldAnswers(formId: string): Promise<{ held: number; ba
   return res.json();
 }
 
+/** The accounts that answered a named, internal form, as `GET /forms/:id/respondents` lists them. */
+export interface FormRespondents {
+  respondents: { id: string; firstName: string | null; lastName: string | null }[];
+  /** Respondents whose account no longer exists: counted, never listed. */
+  departed: number;
+}
+
+/**
+ * Who answered a form, to fill a new group's member picker (manager only). The server refuses an
+ * anonymous form (`FORM_RESPONDENTS_ANONYMOUS`) and a public one (`FORM_RESPONDENTS_PUBLIC`).
+ */
+export async function getFormRespondents(formId: string): Promise<FormRespondents> {
+  const res = await apiFetch(`${socialUrl()}/api/forms/${encodeURIComponent(formId)}/respondents`);
+  if (!res.ok) throw await refusal(res, 'Failed to fetch the respondents');
+  return res.json();
+}
+
 /** The payment state of the caller's own submission, read by the return page after Lydia. */
 export async function getSubmissionPayment(submissionId: string): Promise<{
   id: string;

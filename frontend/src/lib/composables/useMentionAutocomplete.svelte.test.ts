@@ -385,3 +385,59 @@ describe('useMentionAutocomplete - Tab completes the suggestion', () => {
     expect(e.defaultPrevented).toBe(false);
   });
 });
+
+describe('useMentionAutocomplete - dismissed when the composer changes conversation', () => {
+  let text = '';
+  beforeEach(() => {
+    text = '';
+    signedInAs = null;
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+  const make = () =>
+    useMentionAutocomplete({
+      getText: () => text,
+      setText: (t) => {
+        text = t;
+      },
+      getCursor: () => text.length,
+    });
+
+  it('closes an open list, so the previous conversation rows do not stay over the next composer', async () => {
+    globalThis.fetch = makeFetchStub([{ id: 'alice', displayName: 'Alice' }]);
+    const ac = make();
+    ac.handleEditorInput('@a', 2);
+    vi.advanceTimersByTime(250);
+    await tick();
+    expect(ac.open).toBe(true);
+
+    ac.dismiss('switched');
+
+    expect(ac.open).toBe(false);
+    expect(ac.suggestions).toHaveLength(0);
+  });
+
+  it('drops a search that answers after the switch instead of reopening the list', async () => {
+    let answer: (r: Response) => void = () => {};
+    globalThis.fetch = vi.fn().mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          answer = resolve;
+        })
+    );
+    const ac = make();
+    ac.handleEditorInput('@a', 2);
+    vi.advanceTimersByTime(250);
+    await tick();
+
+    ac.dismiss('switched');
+    answer(Response.json([{ id: 'alice', displayName: 'Alice' }]));
+    await tick();
+
+    expect(ac.open).toBe(false);
+    expect(ac.suggestions).toHaveLength(0);
+  });
+});

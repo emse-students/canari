@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createEditSession } from './editSession.svelte';
+import { createEditSession, holdRestoredText } from './editSession.svelte';
 
 /** A composer that holds one string, as `MainChatPage`'s `messageText` does. */
 function harness(initial = '') {
@@ -9,6 +9,7 @@ function harness(initial = '') {
     getText: () => box.text,
     setText: (t) => (box.text = t),
     bindDraftWriter: () => (t) => (box.text = t),
+    conversationKey: () => 'A',
     save,
   });
   return { box, save, session };
@@ -88,6 +89,7 @@ describe('createEditSession', () => {
         const bound = open;
         return (t) => drafts.set(bound, t);
       },
+      conversationKey: () => open,
       save: vi.fn(),
     });
     session.begin('m1', 'bonjour');
@@ -128,5 +130,43 @@ describe('createEditSession', () => {
     unchanged.session.begin('m1', 'old caption', true);
     unchanged.session.confirm();
     expect(unchanged.save).not.toHaveBeenCalled();
+  });
+
+  describe('a text restored while an edit is open', () => {
+    it('joins the saved draft and comes back on cancel, never lost with the edit', () => {
+      const { box, session } = harness('brouillon');
+      session.begin('m1', 'bonjour');
+      expect(holdRestoredText('A', 'refuse')).toBe(true);
+      expect(box.text).toBe('bonjour');
+      session.cancel();
+      expect(box.text).toBe('refuse\nbrouillon');
+    });
+
+    it('is not saved as part of the edited message on confirm', () => {
+      const { box, session, save } = harness('');
+      session.begin('m1', 'bonjour');
+      holdRestoredText('A', 'refuse');
+      box.text = 'bonsoir';
+      session.confirm();
+      expect(save).toHaveBeenCalledExactlyOnceWith('m1', 'bonsoir');
+      expect(box.text).toBe('refuse');
+    });
+
+    it('comes back on reset, through the draft writer of its conversation', () => {
+      const { box, session } = harness('ancien');
+      session.begin('m1', 'bonjour');
+      holdRestoredText('A', 'refuse');
+      session.reset();
+      expect(box.text).toBe('refuse\nancien');
+    });
+
+    it('is refused when no edit is open there: another conversation, or the edit has ended', () => {
+      const { session } = harness('x');
+      expect(holdRestoredText('A', 'refuse')).toBe(false);
+      session.begin('m1', 'bonjour');
+      expect(holdRestoredText('B', 'refuse')).toBe(false);
+      session.cancel();
+      expect(holdRestoredText('A', 'refuse')).toBe(false);
+    });
   });
 });

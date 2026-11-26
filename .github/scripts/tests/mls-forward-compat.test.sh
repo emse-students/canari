@@ -106,6 +106,52 @@ expect_quiet "a documentation change" "docs/wiki/backlog.md"
 # -------------------------------------------------------------------------------------------------
 # The two halves of the cross-version story still agree
 # -------------------------------------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
+# The STATE leg asks the build a rollback lands on, and judges it from facts (2026-11-25)
+# -------------------------------------------------------------------------------------------------
+echo "the state leg's old side is the newest stable, derived from the tags:"
+
+fn=$(sed -n '/^newest_stable() {/,/^}/p' "$gate")
+if [ -z "$fn" ]; then
+  bad "newest_stable() is not a function in the gate - the rollback tag cannot be exercised"
+else
+  eval "$fn"
+  got=$(printf '%s\n' v0.14.14 v1.8.1 v1.8.2-alpha.5 v1.9.3 v1.10.0-alpha.1 v1.2.0-rc v1.8.10 | newest_stable)
+  if [ "$got" = v1.9.3 ]; then
+    ok "the newest stable is picked as a version (v1.9.3 over v1.8.10), never a pre-release (v1.10.0-alpha.1)"
+  else
+    bad "newest_stable picked '$got' from a list whose newest stable is v1.9.3"
+  fi
+  got=$(printf '%s\n' v1.8.2-alpha.5 | newest_stable)
+  if [ -z "$got" ]; then
+    ok "a checkout holding no stable tag yields none (the gate then refuses, naming the fetch)"
+  else
+    bad "newest_stable invented '$got' from pre-releases only"
+  fi
+fi
+
+# shellcheck disable=SC2016 # the pattern is the script's literal text, variables unexpanded
+if grep -qE '^rollback_tag=\$\(git -C "\$repo_root" tag --list' "$gate"; then
+  ok "the rollback tag is read from the checkout's tags, never typed"
+else
+  bad "the gate no longer derives the rollback tag from the tags"
+fi
+
+# shellcheck disable=SC2016 # the pattern is the script's literal text, variables unexpanded
+if grep -q 'git -C "$repo_root" show "$rollback_tag:frontend/mls-core/src/state.rs"' "$gate" &&
+  grep -q "pub app_ledgers:" "$gate" && grep -q "pub admission:" "$gate"; then
+  ok "what the old write must leave is decided from the rollback tag's own PersistedState"
+else
+  bad "the state leg no longer reads which fields the rollback tag declares"
+fi
+
+if grep -q 'pub app_ledgers:' "$repo_root/frontend/mls-core/src/state.rs" &&
+  grep -q 'pub admission:' "$repo_root/frontend/mls-core/src/state.rs"; then
+  ok "today's PersistedState still declares the two fields the leg seeds"
+else
+  bad "today's PersistedState renamed a field the state leg seeds and reads - the leg would match nothing"
+fi
+
 echo "the gate and the table it retired moved together:"
 
 if grep -q 'FIXTURE_VERSION' "$gate"; then
