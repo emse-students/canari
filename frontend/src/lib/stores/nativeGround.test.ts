@@ -19,7 +19,11 @@ vi.mock('./imeGround', async (importOriginal) => {
   };
 });
 
-import { forgetPostedGroundForTest, syncNativeGround } from './nativeGround';
+import {
+  forgetPostedGroundForTest,
+  syncNativeGround,
+  syncNativeGroundAfterTransitions,
+} from './nativeGround';
 
 const GREY = 'rgb(240, 242, 245)';
 const WHITE = 'rgb(255, 255, 255)';
@@ -45,6 +49,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  delete (document as unknown as { getAnimations?: unknown }).getAnimations;
   delete (window as unknown as { canariTheme?: unknown }).canariTheme;
 });
 
@@ -81,10 +86,37 @@ describe('syncNativeGround', () => {
     expect(setGround.mock.calls).toEqual([['#ffffff']]);
   });
 
+  it("waits for the theme's background crossfade before reading", async () => {
+    const bar = bottomSurface(WHITE);
+    syncNativeGround('navigation');
+    // The switch started the bar's 180 ms crossfade: read now, it still computes the old white.
+    let land!: () => void;
+    const finished = new Promise<void>((resolve) => (land = resolve));
+    (document as unknown as { getAnimations: () => unknown[] }).getAnimations = () => [
+      { transitionProperty: 'background-color', finished },
+      { transitionProperty: 'opacity', finished: new Promise(() => {}) },
+    ];
+    syncNativeGroundAfterTransitions('theme');
+    expect(setGround).toHaveBeenCalledTimes(1);
+    bar.style.backgroundColor = DARK;
+    land();
+    await finished;
+    await Promise.resolve();
+    expect(setGround.mock.calls).toEqual([['#ffffff'], ['#18191a']]);
+  });
+
+  it('reads at once when no background transition runs', () => {
+    bottomSurface(WHITE);
+    (document as unknown as { getAnimations: () => unknown[] }).getAnimations = () => [];
+    syncNativeGroundAfterTransitions('theme');
+    expect(setGround.mock.calls).toEqual([['#ffffff']]);
+  });
+
   it('is a no-op without the Android bridge (browser, iOS)', () => {
     delete (window as unknown as { canariTheme?: unknown }).canariTheme;
     const hit = vi.spyOn(document, 'elementFromPoint');
     syncNativeGround('navigation');
+    syncNativeGroundAfterTransitions('theme');
     expect(hit).not.toHaveBeenCalled();
   });
 });

@@ -82,7 +82,7 @@
   import { inAppBrowserGuard } from '$lib/mobile/inAppBrowserGuard';
   import AlumniLinkBanner from '$lib/components/shared/AlumniLinkBanner.svelte';
   import { getKeyboardViewport, initKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
-  import { syncNativeGround } from '$lib/stores/nativeGround';
+  import { syncNativeGround, syncNativeGroundAfterTransitions } from '$lib/stores/nativeGround';
   import {
     classifySwipeRelease,
     bindSwipeNavTouchListeners,
@@ -186,7 +186,7 @@
   // change of what is drawn at the bottom edge re-reads it; an unchanged colour is not re-posted.
   $effect(() => {
     void themeStore.isDark;
-    syncNativeGround('theme');
+    syncNativeGroundAfterTransitions('theme');
   });
   $effect(() => {
     void showBottomNav;

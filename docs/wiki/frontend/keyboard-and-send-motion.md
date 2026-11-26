@@ -351,7 +351,9 @@ contract, because no ride can hide a WebView resize (above).
   of the window and walks up to the first opaque background (`groundOf`, so a glass composer is
   looked through), and posts it only when it differs from the last post, with a debug line naming
   its source. The root layout calls it when the route has settled (`afterNavigate`), the theme is
-  applied, the web tab bar mounts or unmounts, the boot gate lifts and the splash is dismissed;
+  applied (once the 180 ms background crossfade `nav` and `body` carry has landed - read at once, the
+  bar still computes the old colour: `syncNativeGroundAfterTransitions` waits on the transitions'
+  `finished`, no timer), the web tab bar mounts or unmounts, the boot gate lifts and the splash is dismissed;
   `takeImeTarget` still calls it on a rise, first among its reads. No timer: each call is a change
   of what is drawn at the bottom edge.
 

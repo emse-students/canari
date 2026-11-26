@@ -24,6 +24,13 @@ export type GroundSource =
   | 'boot-gate'
   | 'splash-done';
 
+/** The Android shell's `setGround`, or null in the browser and on iOS (no such bridge). */
+function groundBridge(): { setGround: (c: string) => void } | null {
+  const bridge = (window as unknown as { canariTheme?: { setGround?: (c: string) => void } })
+    .canariTheme;
+  return bridge?.setGround ? (bridge as { setGround: (c: string) => void }) : null;
+}
+
 /** The last colour handed to the shell by this document, or null before the first post. */
 let posted: string | null = null;
 
@@ -43,9 +50,8 @@ export function readBottomGround(): string | null {
  * value is not sent. A read with nothing opaque keeps the native ground and says so.
  */
 export function syncNativeGround(source: GroundSource): void {
-  const bridge = (window as unknown as { canariTheme?: { setGround?: (c: string) => void } })
-    .canariTheme;
-  if (!bridge?.setGround) return;
+  const bridge = groundBridge();
+  if (!bridge) return;
   const ground = readBottomGround();
   if (!ground) {
     Log.w(
@@ -58,6 +64,38 @@ export function syncNativeGround(source: GroundSource): void {
   Log.d('nativeGround', `ground ${posted ?? 'none'} -> ${ground} (${source})`);
   posted = ground;
   bridge.setGround(ground);
+}
+
+/**
+ * `syncNativeGround` once the theme's crossfade has landed. `nav`, `body` and `:root` carry a 180 ms
+ * `background-color` transition (app.css, `@layer base`), so read right after a theme switch the
+ * bottom edge still computes the OLD colour - the tab bar's white under a dark theme - which equals
+ * the last post and would be dropped as a repeat. The read waits for the background transitions
+ * running at that moment to end or be cancelled (`finished`, an event, not a timer), then reads
+ * what they landed on. With none running (reduced motion, no theme change) it reads at once.
+ */
+export function syncNativeGroundAfterTransitions(source: GroundSource): void {
+  if (!groundBridge()) return;
+  // `getAnimations` flushes style first, so the transitions the switch just started are listed.
+  const running =
+    typeof document.getAnimations === 'function'
+      ? document
+          .getAnimations()
+          .filter(
+            (a) =>
+              (a as Animation & { transitionProperty?: string }).transitionProperty ===
+              'background-color'
+          )
+      : [];
+  if (running.length === 0) {
+    syncNativeGround(source);
+    return;
+  }
+  Log.d(
+    'nativeGround',
+    `${running.length} background transition(s) running (${source}) - read when they land`
+  );
+  void Promise.allSettled(running.map((a) => a.finished)).then(() => syncNativeGround(source));
 }
 
 /** Forgets the last post, for a test that starts a fresh document. */
