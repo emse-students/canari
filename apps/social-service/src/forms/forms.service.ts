@@ -1547,6 +1547,19 @@ export class FormsService {
     // A person's own hold is their seat: the form is never full to the one who holds it.
     const free = form.maxSubmissions - (await this.countActiveSubmissions(form, holderUserId));
     if (free <= 0) return true;
+    // ...and no waiting answer competes for it: the seat the holder sees free IS their hold, which
+    // the list was promoted around (`holdSeat` promotes before it holds, every promotion counts the
+    // hold as taken). Without this a person who held the last seat read "full" as soon as anybody
+    // joined the list behind them, while their submit still took the seat.
+    if (holderUserId && !form.anonymous) {
+      const held = await this.seatHoldSecondsLeft(form.id, holderUserId);
+      if (held !== null) {
+        this.logger.debug(
+          `[HOLD] ${formTag(form)}: not full to ${holderUserId.slice(0, 8)}, who holds a seat (${held}s left)`
+        );
+        return false;
+      }
+    }
     const waiting = await this.submissionRepo.count({
       where: { formId: form.id, paymentStatus: WAITING },
     });

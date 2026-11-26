@@ -4163,7 +4163,9 @@ refuses it `SEAT_HOLD_NOT_AVAILABLE`, as does an uncapped one), and a guest of a
   (`heldAt` younger than `SEAT_HOLD_SECONDS`, 10 minutes) of everybody but the caller. It is the ONE count the
   capacity checks of a submit, a resume, a switch to cash, a hold and a promotion read, so a hold that expires
   frees its seat with no sweep. A person's hold never counts against themselves; the page's `formFull` and the
-  public count read it the same way (`countActiveSubmissions`). A late payment (`markPaid`) does NOT count holds:
+  public count read it the same way (`countActiveSubmissions`), and a waiting list never makes the form full to
+  a person holding a live hold (`isFormFull`): the seat they see free IS their hold, which every promotion
+  counts as taken, so the answers behind them wait for another one. A late payment (`markPaid`) does NOT count holds:
   a hold is an intention, the money is already received.
 - **One per person and form, a second press is the same hold.** `POST forms/:id/seat-hold` answers
   `{ secondsLeft }` from the database clock and keeps the clock of a live hold (an upsert whose conflict

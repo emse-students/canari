@@ -324,7 +324,11 @@ maybe('a capped form seat hold, against PostgreSQL (migration 186)', () => {
     // Full by the hold: Bob joins the list.
     const bob = (await send(formId, BOB)) as { id?: string; submissionId?: string };
     expect(await rankOf(formId, BOB)).toBe(1);
+    // The holder still reads the form open: Bob waits for a seat that is not Alice's.
+    expect((await service.hasSubmission(formId, ALICE)).formFull).toBe(false);
     await age(formId, ALICE, SEAT_HOLD_SECONDS + 5);
+    // Lapsed, the hold is nobody's seat: Alice now finds the form full like any newcomer.
+    expect((await service.hasSubmission(formId, ALICE)).formFull).toBe(true);
     expect(bob).toBeDefined();
     expect(await service.expireLapsedSeatHolds()).toBe(1);
     // The place the hold freed went to the first in line, in the sweep's own transaction.
