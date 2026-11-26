@@ -1,4 +1,4 @@
-import { APP_STORE_URL, PLAY_STORE_URL } from '$lib/utils/appVersion';
+import { APP_STORE_URL, PLAY_STORE_URL } from './storeUrls';
 import { isPublicAppUrl } from '$lib/utils/publicAppUrl';
 import {
   appDeepLink,
