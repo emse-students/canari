@@ -493,7 +493,7 @@ export class FormReminderScheduler {
   }
 
   /**
-   * Weekly (Sunday 04:00) - deletes successfully delivered webhooks after 30 days.
+   * Weekly (Sunday 04:00) - deletes delivered and parked webhooks after 30 days.
    * Failed deliveries are kept for manual retry.
    */
   @Cron('0 4 * * 0')
@@ -501,7 +501,7 @@ export class FormReminderScheduler {
     try {
       const res: { rowCount?: number } = await this.reminderRepo.manager.query(
         `DELETE FROM webhook_deliveries
-         WHERE status = 'delivered'
+         WHERE status IN ('delivered', 'parked')
            AND "createdAt" < NOW() - make_interval(days => $1)`,
         [GC_WEBHOOK_DELIVERY_DAYS]
       );
