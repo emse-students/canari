@@ -3949,8 +3949,12 @@ static void CanariShowMessageNotification(NSString *senderName, NSString *groupN
     mentionsMe = [body rangeOfString:needle options:NSCaseInsensitiveSearch].location != NSNotFound;
   }
   // A call to every member (`@tous` / `@everyone`) names this reader too: on the MLS path every
-  // member may make one. Same pattern as the extension's `everyoneCallPattern`.
-  if (scansBodyForMention && !mentionsMe && body.length > 0 && CanariCallsEveryone(body)) {
+  // member may make one. Same pattern as the extension's `everyoneCallPattern`. Read from the
+  // DECRYPTED text only, never `body`: an unreadable message's `body` is the fallback line, which
+  // carries the sender's name - a name spelled `@tous` would otherwise call everyone.
+  NSString *plaintext = decrypted.text;
+  if (scansBodyForMention && !mentionsMe && plaintext.length > 0 &&
+      CanariCallsEveryone(plaintext)) {
     NSLog(@"[CanariPush] [MENTION] the message calls everyone - raised as a mention");
     mentionsMe = YES;
   }

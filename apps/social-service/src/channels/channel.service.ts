@@ -5520,8 +5520,10 @@ export class ChannelService implements OnApplicationBootstrap {
         ? await this.memberCanModerateMessages(member)
         : false
     );
+    // An ordinary event, not a fault: the client declares from the text, and a member writing
+    // "merci @tous" by hand is expected - logged at the level of the poll's twin line below.
     if (everyone === 'unvouched') {
-      this.logger.warn(
+      this.logger.log(
         `[MENTION_EVERYONE] not vouched channel=${channelId.slice(0, 8)} sender=${sender}: no moderation grant - the text stays text, nobody extra is pushed`
       );
     }
