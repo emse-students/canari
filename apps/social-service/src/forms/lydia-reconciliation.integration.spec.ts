@@ -21,6 +21,7 @@ import { of, throwError } from 'rxjs';
 import { DataSource } from 'typeorm';
 import { Form } from './entities/form.entity';
 import { Submission } from './entities/submission.entity';
+import { FormSeatHold } from './entities/form-seat-hold.entity';
 import { FormReminder } from './entities/form-reminder.entity';
 import { OpeningReminder } from '../openings/entities/opening-reminder.entity';
 import { FormRespondent } from './entities/form-respondent.entity';
@@ -89,6 +90,7 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
     const entities = [
       Form,
       Submission,
+      FormSeatHold,
       FormReminder,
       OpeningReminder,
       FormRespondent,

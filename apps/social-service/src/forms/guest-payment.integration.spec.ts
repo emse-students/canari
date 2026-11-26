@@ -28,6 +28,7 @@ import {
 } from 'typeorm';
 import { Form } from './entities/form.entity';
 import { Submission } from './entities/submission.entity';
+import { FormSeatHold } from './entities/form-seat-hold.entity';
 import { FormReminder } from './entities/form-reminder.entity';
 import { OpeningReminder } from '../openings/entities/opening-reminder.entity';
 import { FormRespondent } from './entities/form-respondent.entity';
@@ -89,7 +90,15 @@ maybe('a guest who pays, against PostgreSQL (migrations 103, 104 and 105)', () =
     ds = new DataSource({
       type: 'postgres',
       url: URL,
-      entities: [Form, Submission, FormReminder, OpeningReminder, FormRespondent, PurchaseRecord],
+      entities: [
+        Form,
+        Submission,
+        FormSeatHold,
+        FormReminder,
+        OpeningReminder,
+        FormRespondent,
+        PurchaseRecord,
+      ],
       subscribers: [SlowSubmissionInsert],
       synchronize: true,
       extra: { options: `-c search_path=${schema},public` },

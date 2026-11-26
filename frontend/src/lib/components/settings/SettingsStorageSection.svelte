@@ -9,6 +9,13 @@
   } from '$lib/utils/deviceStorage';
   import type { DeviceStorageUsage } from '$lib/utils/deviceStorage';
   import { m } from '$lib/paraglide/messages';
+  import Select from '$lib/components/ui/Select.svelte';
+  import {
+    MEDIA_CACHE_CAP_CHOICES,
+    readMediaCacheCap,
+    writeMediaCacheCap,
+  } from '$lib/utils/mediaCacheCap';
+  import { enforceMediaCacheCap } from '$lib/utils/mediaCacheLedger';
 
   // WP-DEVICESTORAGE-1: shows how much local storage Canari is using, and lets the user
   // reclaim the media cache. Never offers to touch messages or the MLS encryption state -
@@ -16,6 +23,27 @@
   let usage: DeviceStorageUsage | null = $state(null);
   let loading = $state(true);
   let clearing = $state(false);
+  let cap = $state(readMediaCacheCap());
+
+  const CAP_LABELS: Record<string, () => string> = {
+    [String(250 * 1024 * 1024)]: () => m.settings_storage_cap_250mb(),
+    [String(500 * 1024 * 1024)]: () => m.settings_storage_cap_500mb(),
+    [String(1024 * 1024 * 1024)]: () => m.settings_storage_cap_1gb(),
+    unlimited: () => m.settings_storage_cap_unlimited(),
+  };
+
+  /** The option value of a cap: its byte count, or `unlimited`. */
+  function capId(choice: number | null): string {
+    return choice === null ? 'unlimited' : String(choice);
+  }
+
+  /** Stores the member's pick, then brings the cache under it now rather than at the next download. */
+  async function handleCapChange(value: string) {
+    cap = value === 'unlimited' ? null : Number(value);
+    writeMediaCacheCap(cap);
+    await enforceMediaCacheCap();
+    await loadUsage();
+  }
 
   async function loadUsage() {
     loading = true;
@@ -82,6 +110,18 @@
         <span class="text-text-main font-bold">{formatStorageBytes(usage.totalBytes)}</span>
       </div>
     </div>
+
+    <Select
+      class="mt-6"
+      label={m.settings_storage_cap_label()}
+      hint={m.settings_storage_cap_desc()}
+      value={capId(cap)}
+      options={MEDIA_CACHE_CAP_CHOICES.map((choice) => ({
+        value: capId(choice),
+        label: CAP_LABELS[capId(choice)](),
+      }))}
+      onValueChange={handleCapChange}
+    />
 
     <button
       type="button"

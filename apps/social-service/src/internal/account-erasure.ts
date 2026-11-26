@@ -92,6 +92,8 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'user_tags.userId': { action: 'delete' },
   'user_moderation.userId': { action: 'delete' },
   'form_respondents.userId': { action: 'delete' },
+  // A seat held behind "Reserver ma place" (migration 186): an intention with no answer, deleted.
+  'form_seat_holds.userId': { action: 'delete' },
   // The old reminder store, read by nothing since migration 152 copied it - deleted until its held drop.
   'form_reminders.userId': { action: 'delete' },
   // The account's opening reminders (migration 151, engagement WP-4): asked, or written as a follower.
@@ -696,6 +698,7 @@ export const ERASURE_ROW_STATEMENTS: readonly ErasureStatement[] = [
   { label: 'user_tags', sql: `DELETE FROM user_tags WHERE "userId" = $1` },
   { label: 'user_moderation', sql: `DELETE FROM user_moderation WHERE "userId" = $1` },
   { label: 'form_respondents', sql: `DELETE FROM form_respondents WHERE "userId" = $1` },
+  { label: 'form_seat_holds', sql: `DELETE FROM form_seat_holds WHERE "userId" = $1` },
   { label: 'form_reminders', sql: `DELETE FROM form_reminders WHERE "userId" = $1` },
   { label: 'opening_reminders', sql: `DELETE FROM opening_reminders WHERE "userId" = $1` },
   // Before the submissions are anonymised: a file row is found by its uploader.

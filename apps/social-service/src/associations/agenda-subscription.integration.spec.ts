@@ -38,6 +38,7 @@ import { AgendaSubscription } from './entities/agenda-subscription.entity';
 import { createPostNotificationsTable } from '../posts/post-notifications.it-schema';
 import { Form } from '../forms/entities/form.entity';
 import { Submission } from '../forms/entities/submission.entity';
+import { FormSeatHold } from '../forms/entities/form-seat-hold.entity';
 import { signAgendaSelection } from './agenda-signature';
 import { ERASURE_STATEMENTS } from '../internal/account-erasure';
 import { takeLogged } from '../common/testing/integration-log-guard.it-fixture';
@@ -149,6 +150,7 @@ maybe('the agenda subscription link against PostgreSQL (migration 173)', () => {
         AssociationCalendarEventCoOwner,
         Form,
         Submission,
+        FormSeatHold,
       ],
       synchronize: false,
       extra: { options: `-c search_path=${schema},public`, application_name: schema },

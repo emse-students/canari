@@ -53,13 +53,22 @@ describe('the page of a list of posts', () => {
         await read(SearchPostsQueryDto, { q: 'gala', limit: '100000', offset: '3' }),
         'member-1'
       );
-      expect(service.searchPosts).toHaveBeenLastCalledWith('gala', POST_PAGE_MAX, 3, {
-        viewerUserId: 'member-1',
-        isAdmin: false,
-      });
+      expect(service.searchPosts).toHaveBeenLastCalledWith(
+        'gala',
+        POST_PAGE_MAX,
+        3,
+        { viewerUserId: 'member-1', isAdmin: false },
+        { authorId: undefined, associationId: undefined }
+      );
 
       await controller.searchPosts(await read(SearchPostsQueryDto, { q: 'gala' }), 'member-1');
-      expect(service.searchPosts).toHaveBeenLastCalledWith('gala', 20, 0, expect.anything());
+      expect(service.searchPosts).toHaveBeenLastCalledWith(
+        'gala',
+        20,
+        0,
+        expect.anything(),
+        expect.anything()
+      );
     });
 
     it('a feed is served the largest page when more is asked, and 30 rows by default', async () => {

@@ -1035,6 +1035,8 @@ and the user found it (2026-08-23: *"la recherche desactive les filtres ?"*). It
 limit, not a confidentiality one, so its absence was an inconsistency and not a leak. The tab and
 kind chips are a reader's choice and are hidden while a query is typed, so they do not apply.
 
+**Two filters, a person and an association (owner, 2026-11-19; built 2026-11-26).** `GET /api/posts/search` takes `authorId` and `associationId` beside `q`, each alone or combined, and `q` may be empty when one is given (`post-search-filters.ts`, one implementation of the clauses). A filter is one more `AND` beside every exclusion above, so it can only narrow: the audience predicate is unchanged. **A person is their PERSONAL, non-anonymous posts** (`associationId IS NULL AND NOT anonymous`): an association's post stores the officer's id as `authorId`, and filtering on it would name the officer the feed never names. Both columns are indexed. The page (`PostSearchFilters.svelte`) shows a "Personne" and an "Association" button under the field; a person is picked through `UserAutocomplete`, an association from the reader's directory (accent- and case-insensitive match); each becomes a removable chip, and a filter runs at once while the words stay debounced. `searchEpoch` keeps only the latest answer. Reading owed: [backlog](../../backlog.d/reading-owed-the-post-search-filters-by-person-and-by-association.md). Decisions taken here (reversible): the placement under the field, and the person filter excluding association and anonymous posts.
+
 ## A body made of Markdown cannot hold an image, so nothing but text is ever put in it
 
 `MentionComposerInput` is the ONE `contenteditable` in this repository - the post composer, the post

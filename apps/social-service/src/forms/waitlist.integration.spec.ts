@@ -28,6 +28,7 @@ import { Client } from 'pg';
 import { DataSource } from 'typeorm';
 import { Form } from './entities/form.entity';
 import { Submission } from './entities/submission.entity';
+import { FormSeatHold } from './entities/form-seat-hold.entity';
 import { FormReminder } from './entities/form-reminder.entity';
 import { OpeningReminder } from '../openings/entities/opening-reminder.entity';
 import { FormRespondent } from './entities/form-respondent.entity';
@@ -109,6 +110,7 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
       entities: [
         Form,
         Submission,
+        FormSeatHold,
         FormReminder,
         OpeningReminder,
         FormRespondent,

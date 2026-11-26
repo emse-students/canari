@@ -55,6 +55,8 @@
   import Modal from '$lib/components/shared/Modal.svelte';
   import LiveOverlay from '$lib/components/live/LiveOverlay.svelte';
   import FeedTabRow from '$lib/components/posts/FeedTabRow.svelte';
+  import PostSearchFilters from '$lib/components/posts/PostSearchFilters.svelte';
+  import { hasSearchCriteria, type PostSearchPick } from '$lib/posts/postSearchFilters';
   import FeedSuggestions from '$lib/components/suggestions/FeedSuggestions.svelte';
   import {
     FEED_CAROUSEL_AFTER_POSTS,
@@ -386,14 +388,21 @@
   }
 
   let searchQuery = $state('');
+  /** The search's two filters (owner, 2026-11-19): a person and an association. */
+  let searchAuthor = $state<PostSearchPick | null>(null);
+  let searchAssociation = $state<PostSearchPick | null>(null);
+  /** A search replaces the feed while it has words or a filter: ONE definition for every place that asks. */
+  const searchActive = $derived(!!searchQuery || !!searchAuthor || !!searchAssociation);
   /**
    * The tab row is slid out only when the scroll says so, no search replaces the feed, and nothing
    * in it holds focus.
    */
-  const tabsHidden = $derived(!tabsShown && !searchQuery && !tabsFocused);
+  const tabsHidden = $derived(!tabsShown && !searchActive && !tabsFocused);
   let searchResults = $state<PostEntity[] | null>(null);
   let searching = $state(false);
   let searchDebounce: ReturnType<typeof setTimeout> | null = null;
+  /** Counts the searches issued: only the latest one's answer may land (a filter changes faster than a read). */
+  let searchEpoch = 0;
 
   /** The scheduled posts the reader may edit, soonest first: the strip above the feed, on every tab. */
   let scheduledPosts = $state<PostEntity[]>([]);
@@ -448,27 +457,54 @@
     scheduledPosts = scheduledPosts.filter((p) => p.id !== id);
   }
 
-  function onSearchInput(e: Event) {
-    const q = (e.target as HTMLInputElement).value;
-    searchQuery = q;
-    if (searchDebounce) clearTimeout(searchDebounce);
-    if (!q.trim()) {
+  /** Runs the search the words and the filters name now; the latest one's answer is the only one kept. */
+  async function runSearch() {
+    const criteria = {
+      q: searchQuery,
+      authorId: searchAuthor?.id,
+      associationId: searchAssociation?.id,
+    };
+    if (!hasSearchCriteria(criteria)) {
+      searchEpoch += 1;
       searchResults = null;
+      searching = false;
       return;
     }
-    searchDebounce = setTimeout(async () => {
-      searching = true;
-      try {
-        searchResults = await searchPosts(q.trim(), { limit: 20 });
-      } finally {
-        searching = false;
-      }
-    }, 400);
+    const epoch = ++searchEpoch;
+    searching = true;
+    try {
+      const rows = await searchPosts(criteria, { limit: 20 });
+      if (epoch === searchEpoch) searchResults = rows;
+    } finally {
+      if (epoch === searchEpoch) searching = false;
+    }
+  }
+
+  function onSearchInput(e: Event) {
+    searchQuery = (e.target as HTMLInputElement).value;
+    if (searchDebounce) clearTimeout(searchDebounce);
+    // The words are debounced (a keystroke is not a question); a filter is a deliberate pick, run at once.
+    searchDebounce = setTimeout(() => void runSearch(), 400);
+  }
+
+  function pickSearchAuthor(pick: PostSearchPick | null) {
+    searchAuthor = pick;
+    void runSearch();
+  }
+
+  function pickSearchAssociation(pick: PostSearchPick | null) {
+    searchAssociation = pick;
+    void runSearch();
   }
 
   function clearSearch() {
+    if (searchDebounce) clearTimeout(searchDebounce);
     searchQuery = '';
+    searchAuthor = null;
+    searchAssociation = null;
+    searchEpoch += 1;
     searchResults = null;
+    searching = false;
   }
 
   // Sentinel element for IntersectionObserver
@@ -1006,7 +1042,7 @@
       exists while it is open, so it is always there and closes it - and closing drops the query,
       since a hidden field still filtering the feed is a filter with no visible cause.
     -->
-    {#if searchQuery || searchOpen}
+    {#if searchActive || searchOpen}
       <button
         type="button"
         onclick={closeSearch}
@@ -1016,6 +1052,12 @@
         <X size={16} />
       </button>
     {/if}
+    <PostSearchFilters
+      author={searchAuthor}
+      association={searchAssociation}
+      onAuthor={pickSearchAuthor}
+      onAssociation={pickSearchAssociation}
+    />
   </div>
 
   <!-- ONE ROW: the three tabs and the CanaReels entry (user, 2026-10-16). Its content hides while a
@@ -1033,7 +1075,7 @@
        an opaque header - the empty band of the 2026-11-22 report from an iPhone without Liquid Glass;
        a raw `-mt-6` equal to today's token would bring that band back on the day the token moves. -->
   <div
-    class="pointer-events-none mb-1 transition-transform duration-200 ease-out motion-reduce:transition-none [&_button]:pointer-events-auto {searchQuery
+    class="pointer-events-none mb-1 transition-transform duration-200 ease-out motion-reduce:transition-none [&_button]:pointer-events-auto {searchActive
       ? ''
       : 'sticky top-0 z-10 -mt-(--page-column-top) pt-2 pb-3 md:mt-0'} {tabsHidden
       ? '-translate-y-full'
@@ -1046,7 +1088,7 @@
     }}
     data-feed-tabs-collapsible
   >
-    <div class:hidden={!!searchQuery}>
+    <div class:hidden={searchActive}>
       <FeedTabRow feed={activeFeed} onFeed={navigateFeed} {authToken} />
     </div>
   </div>
@@ -1054,7 +1096,7 @@
   <!-- THE LIVE CARD, at the top of the feed and following the tab (L5; owner, 2026-11-19: "Organisations"
        lists association lives only, the other tabs every live the reader may watch); hidden while a search replaces
        the feed, like the tab row. Only where `livesShown` (the build AND the server's switch). -->
-  {#if livesShown && userId && !searchQuery}
+  {#if livesShown && userId && !searchActive}
     <LiveFeedCard
       refreshKey={liveRefresh}
       feed={activeFeed}
@@ -1066,13 +1108,13 @@
     />
   {/if}
   <!-- THE BIRTHDAY CARD: quiet, dismissed once for good, only while the own birthday is empty. -->
-  {#if userId && !searchQuery}
+  {#if userId && !searchActive}
     <BirthdayFeedCard />
   {/if}
   <!-- THE SCHEDULED POSTS, above the first post of EVERY tab (owner, 2026-11-13), only for those who may
        edit them (the server hands nobody else one): the same cards, dimmed and dashed like a proposed
        event, until the post is due. Hidden while a search replaces the feed. -->
-  {#if scheduledPosts.length > 0 && !searchQuery}
+  {#if scheduledPosts.length > 0 && !searchActive}
     <section
       class="mb-4"
       aria-label={m.post_scheduled_strip_title({ count: scheduledPosts.length })}
@@ -1123,14 +1165,16 @@
   {/if}
 
   <section>
-    {#if searchQuery}
+    {#if searchActive}
       <!-- Search results -->
       {#if searching}
         {@render skeletonCards()}
       {:else if searchResults !== null}
         {#if searchResults.length === 0}
           <div class="text-text-muted py-12 text-center text-sm">
-            {m.posts_no_results({ query: searchQuery })}
+            {searchQuery.trim()
+              ? m.posts_no_results({ query: searchQuery })
+              : m.posts_no_results_filtered()}
           </div>
         {:else}
           <div class="space-y-5">

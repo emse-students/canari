@@ -382,6 +382,14 @@ export class FormReminderScheduler {
           this.logger.warn('[PENDING] Error expiring stale online payments', e);
         }
       }
+      // The seat holds past their ten minutes ("Reserver ma place"): deleted, and the waiting list
+      // promoted into the places they freed. Not load-bearing for capacity (every count reads the
+      // hold's age). Its own `try`.
+      try {
+        await this.formsService.expireLapsedSeatHolds();
+      } catch (e) {
+        this.logger.error('[HOLD] lapsed seat holds could not be expired', e);
+      }
       // THE WAITING LIST'S NOTICES OWED (`waitlist.ts`): a NOTICE, never a promotion, is retried here
       // - every event that frees a place promotes in its own transaction, and tells right after its
       // commit; this tells a promotion whose notice could not be written then. Its own `try`.
