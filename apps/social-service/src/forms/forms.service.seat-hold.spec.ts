@@ -268,6 +268,8 @@ describe('FormsService - the seat a pending payment holds', () => {
     const submissionRepo: any = {
       // The expiry's first read: the forms whose rows are due, each then expired under its lock.
       query: jest.fn(async (sql: string, params: unknown[]) => {
+        // The live "Reserver ma place" holds of a capped form (`countLiveSeatHolds`): none here.
+        if (sql.includes('FROM form_seat_holds')) return [{ n: 0 }];
         await roundTrip();
         expect(sql.startsWith('SELECT DISTINCT "formId" FROM submissions WHERE')).toBe(true);
         return [...new Set(onlineDue(sql, params[0] as Date).map((r) => r.formId))].map(
@@ -351,6 +353,8 @@ describe('FormsService - the seat a pending payment holds', () => {
               // The association's archive, read FOR SHARE before the seat lock: never archived
               // here (the archive itself is proven on PostgreSQL, answer-edit.integration).
               if (sql.includes('FROM associations')) return [];
+              // The live seat holds of the other people (`countLiveSeatHolds`): none here.
+              if (sql.includes('FROM form_seat_holds')) return [{ n: 0 }];
               // A late payment takes its payer's WAITING answer off the line (`markPaid`).
               if (sql.startsWith('DELETE FROM submissions WHERE "formId" = $1 AND "userId" = $2')) {
                 await roundTrip();

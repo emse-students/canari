@@ -56,6 +56,8 @@ describe('FormsService - public forms', () => {
     };
     const submissionRepo: any = {
       count: jest.fn(() => Promise.resolve(0)),
+      // The live "Reserver ma place" holds of a capped form (`countLiveSeatHolds`): none here.
+      query: jest.fn(() => Promise.resolve([{ n: 0 }])),
       manager: {
         transaction: jest.fn((_l: string, fn: any) => fn(manager)),
         // The release after an anonymous submit counts what waits (`heldAnswerCount`): below a batch.

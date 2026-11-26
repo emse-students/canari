@@ -30,6 +30,7 @@ import { AssociationCalendarEvent } from '../associations/entities/association-c
 import { AssociationCalendarEventCoOwner } from '../associations/entities/association-calendar-event-co-owner.entity';
 import { Form } from '../forms/entities/form.entity';
 import { Submission } from '../forms/entities/submission.entity';
+import { FormSeatHold } from '../forms/entities/form-seat-hold.entity';
 import {
   NotificationPushFailedError,
   type PostNotificationsService,
@@ -154,6 +155,7 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
         // What an association delete retires with it (`retireForms`).
         Form,
         Submission,
+        FormSeatHold,
       ],
       synchronize: false,
       extra: { options: `-c search_path=${schema},public`, application_name: schema },

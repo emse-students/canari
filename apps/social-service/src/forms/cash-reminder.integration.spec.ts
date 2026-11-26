@@ -17,6 +17,7 @@ import { Client } from 'pg';
 import { DataSource } from 'typeorm';
 import { Form } from './entities/form.entity';
 import { Submission } from './entities/submission.entity';
+import { FormSeatHold } from './entities/form-seat-hold.entity';
 import { FormsService } from './forms.service';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
@@ -67,7 +68,7 @@ maybe('the cash hold notice against PostgreSQL (migration 179)', () => {
     ds = new DataSource({
       type: 'postgres',
       url: URL,
-      entities: [Form, Submission],
+      entities: [Form, Submission, FormSeatHold],
       synchronize: true,
       extra: { options: `-c search_path=${schema},public` },
     });

@@ -7060,5 +7060,16 @@
   "alumni_merges_resumed": "Rattachement repris : le doublon est marqué.",
   "alumni_merge_error_in_progress": "Un rattachement de ce compte est déjà en cours : rien n'a été modifié.",
   "alumni_merge_error_already_merged": "MiConnect a déjà fusionné ce compte : il n'y a plus rien à annuler.",
-  "form_question_duplicates_identity": "Ce champ est déjà transmis avec chaque réponse ({field}). Vous pouvez supprimer cette question."
+  "form_question_duplicates_identity": "Ce champ est déjà transmis avec chaque réponse ({field}). Vous pouvez supprimer cette question.",
+  "form_seat_hold_title": "Les places sont limitées",
+  "form_seat_hold_note": "Réservez votre place : nous la gardons 10 minutes, le temps de remplir le formulaire.",
+  "form_seat_hold_button": "Réserver ma place",
+  "form_seat_hold_again_button": "Réserver à nouveau",
+  "form_seat_hold_active": "Place réservée pour vous : {time}",
+  "form_seat_hold_active_note": "Envoyez votre réponse avant la fin du compte à rebours : passé ce délai, la place est rendue aux autres.",
+  "form_seat_hold_release_button": "Libérer ma place",
+  "form_seat_hold_released": "Place libérée.",
+  "form_seat_hold_expired": "Votre réservation a expiré : la place a peut-être été prise.",
+  "form_seat_hold_failed": "Impossible de réserver une place pour le moment.",
+  "form_seat_hold_release_failed": "Impossible de libérer la place pour le moment."
 }

@@ -7051,5 +7051,16 @@
   "alumni_merges_resumed": "Merge resumed: the duplicate is marked.",
   "alumni_merge_error_in_progress": "A merge of this account is already open: nothing was changed.",
   "alumni_merge_error_already_merged": "MiConnect already merged this account: there is nothing left to cancel.",
-  "form_question_duplicates_identity": "This field is already sent with every answer ({field}). You can delete this question."
+  "form_question_duplicates_identity": "This field is already sent with every answer ({field}). You can delete this question.",
+  "form_seat_hold_title": "Spots are limited",
+  "form_seat_hold_note": "Reserve your spot: we keep it for 10 minutes while you fill in the form.",
+  "form_seat_hold_button": "Reserve my spot",
+  "form_seat_hold_again_button": "Reserve again",
+  "form_seat_hold_active": "Spot reserved for you: {time}",
+  "form_seat_hold_active_note": "Send your answer before the countdown ends: after that, the spot goes back to everybody else.",
+  "form_seat_hold_release_button": "Release my spot",
+  "form_seat_hold_released": "Spot released.",
+  "form_seat_hold_expired": "Your reservation has expired: the spot may have been taken.",
+  "form_seat_hold_failed": "Could not reserve a spot right now.",
+  "form_seat_hold_release_failed": "Could not release the spot right now."
 }

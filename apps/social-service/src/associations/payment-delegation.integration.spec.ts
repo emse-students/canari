@@ -24,6 +24,7 @@ import { Space } from '../spaces/space.entity';
 import { PostNotification } from '../posts/entities/post-notification.entity';
 import { Form } from '../forms/entities/form.entity';
 import { Submission } from '../forms/entities/submission.entity';
+import { FormSeatHold } from '../forms/entities/form-seat-hold.entity';
 import { AssociationsService } from './associations.service';
 import { ProductsService } from './products.service';
 import { ACTIVITY_DUMP_SQL, settledFlag, untilWaiting } from '../common/lock-wait.it-fixture';
@@ -63,6 +64,7 @@ maybe('a list collects through an accepted payment delegation (PostgreSQL)', () 
       PostNotification,
       Form,
       Submission,
+      FormSeatHold,
     ],
     synchronize,
     uuidExtension: 'pgcrypto' as const,

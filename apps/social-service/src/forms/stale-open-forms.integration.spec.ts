@@ -19,6 +19,7 @@ import { Client } from 'pg';
 import { DataSource } from 'typeorm';
 import { Form } from './entities/form.entity';
 import { Submission } from './entities/submission.entity';
+import { FormSeatHold } from './entities/form-seat-hold.entity';
 import { PostNotification } from '../posts/entities/post-notification.entity';
 import { AssociationMember } from '../associations/entities/association-member.entity';
 import { BELL_ROW_GATE, type BellRowRefs } from '../posts/bell-row-gates';
@@ -84,7 +85,7 @@ maybe('the question put to a form left open against PostgreSQL (migration 180)',
     ds = new DataSource({
       type: 'postgres',
       url: URL,
-      entities: [Form, Submission, PostNotification, AssociationMember],
+      entities: [Form, Submission, FormSeatHold, PostNotification, AssociationMember],
       synchronize: false,
       extra: { options: `-c search_path=${schema},public -c timezone=UTC` },
     });

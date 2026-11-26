@@ -1,5 +1,5 @@
 import { Raw, type EntityManager, type FindOptionsWhere } from 'typeorm';
-import type { Submission } from './entities/submission.entity';
+import { Submission } from './entities/submission.entity';
 
 /**
  * HOW LONG AN ONLINE-PAYMENT `pending` SUBMISSION HOLDS ITS SEAT, from its own `paymentRequestedAt`
@@ -269,4 +269,49 @@ export function overCapacityFirst<T extends { paymentStatus: string }>(rows: T[]
     ...rows.filter((row) => row.paymentStatus === 'paid_over_capacity'),
     ...rows.filter((row) => row.paymentStatus !== 'paid_over_capacity'),
   ];
+}
+
+/**
+ * HOW LONG A "RESERVER MA PLACE" HOLD KEEPS ITS SEAT (owner, 2026-11-17: ten minutes, like the online
+ * payment's hold in spirit but shorter - a person filling a form, not paying). Counted from the row's
+ * own `heldAt` by every seat count (`countSeatsTaken`), so an expired hold frees its seat with no
+ * sweep; the sweep (`expireLapsedSeatHolds`) only deletes the dead rows and promotes the waiting list.
+ */
+export const SEAT_HOLD_SECONDS = 10 * 60;
+
+/** The SQL predicate "this hold is still live", on the same `now()` the other hold counts read. */
+export const LIVE_SEAT_HOLD_SQL = `"heldAt" > now() - make_interval(secs => ${SEAT_HOLD_SECONDS})`;
+
+/** The `code` of the 409 refusing a hold on a form that cannot hold one (anonymous, not capped). */
+export const SEAT_HOLD_NOT_AVAILABLE = 'SEAT_HOLD_NOT_AVAILABLE';
+
+/**
+ * The seats other people hold behind the button: the live holds of the form, never `exceptUserId`'s
+ * own (a person's hold is their own seat, not one they compete with).
+ */
+export async function countLiveSeatHolds(
+  manager: Pick<EntityManager, 'query'>,
+  formId: string,
+  exceptUserId?: string | null
+): Promise<number> {
+  const rows = (await manager.query(
+    `SELECT count(*)::int AS n FROM form_seat_holds
+      WHERE "formId" = $1 AND ${LIVE_SEAT_HOLD_SQL} AND ($2::text IS NULL OR "userId" <> $2)`,
+    [formId, exceptUserId ?? null]
+  )) as Array<{ n: number }>;
+  return rows[0]?.n ?? 0;
+}
+
+/**
+ * Every seat taken on a form as a newcomer counts them: the rows that hold one (`seatHoldingWhere`)
+ * plus the live holds of everybody but `exceptUserId`. The ONE count the capacity checks of a submit, a
+ * resume, a switch to cash and a promotion read, so a hold is honoured the same way by all of them.
+ */
+export async function countSeatsTaken(
+  manager: EntityManager,
+  formId: string,
+  exceptUserId?: string | null
+): Promise<number> {
+  const answers = await manager.count(Submission, { where: seatHoldingWhere(formId) });
+  return answers + (await countLiveSeatHolds(manager, formId, exceptUserId));
 }

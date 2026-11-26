@@ -86,6 +86,11 @@ import {
   lockFormSeats,
   overCapacityFirst,
   seatHoldingWhere,
+  countSeatsTaken,
+  countLiveSeatHolds,
+  SEAT_HOLD_SECONDS,
+  SEAT_HOLD_NOT_AVAILABLE,
+  LIVE_SEAT_HOLD_SQL,
   toRequestState,
   type RequestState,
 } from './seat-hold';
@@ -1509,8 +1514,18 @@ export class FormsService {
    * `pending` only while it is younger than the hold (`seatHoldingWhere`) - and the anonymous answers
    * waiting for their batch (`anonymous-answer-batches.ts`), which are answers like the others.
    */
-  private async countActiveSubmissions(form: Pick<Form, 'id' | 'anonymous'>): Promise<number> {
-    if (!form.anonymous) return this.submissionRepo.count({ where: seatHoldingWhere(form.id) });
+  private async countActiveSubmissions(
+    form: Pick<Form, 'id' | 'anonymous' | 'maxSubmissions'>,
+    exceptUserId?: string | null
+  ): Promise<number> {
+    // The live "Reserver ma place" holds of the other people are seats taken as well - on a capped
+    // form only (an uncapped one holds none), and never an anonymous one (`holdSeat` refuses it).
+    if (!form.anonymous) {
+      const answers = await this.submissionRepo.count({ where: seatHoldingWhere(form.id) });
+      return form.maxSubmissions
+        ? answers + (await countLiveSeatHolds(this.submissionRepo, form.id, exceptUserId))
+        : answers;
+    }
     // Both counts from ONE snapshot: a release between two reads would count its batch twice (held
     // in the first, stored in the second) or not at all.
     return this.submissionRepo.manager.transaction('REPEATABLE READ', async (m) => {
@@ -1525,10 +1540,12 @@ export class FormsService {
    * them, `waitlist.ts`), never a newcomer's; with nobody waiting it is the plain seat count.
    */
   private async isFormFull(
-    form: Pick<Form, 'id' | 'anonymous' | 'maxSubmissions'>
+    form: Pick<Form, 'id' | 'anonymous' | 'maxSubmissions'>,
+    holderUserId?: string | null
   ): Promise<boolean> {
     if (!form.maxSubmissions) return false;
-    const free = form.maxSubmissions - (await this.countActiveSubmissions(form));
+    // A person's own hold is their seat: the form is never full to the one who holds it.
+    const free = form.maxSubmissions - (await this.countActiveSubmissions(form, holderUserId));
     if (free <= 0) return true;
     const waiting = await this.submissionRepo.count({
       where: { formId: form.id, paymentStatus: WAITING },
@@ -2865,6 +2882,12 @@ export class FormsService {
      * older than it, which the page reads as "not served" and draws what it drew before.
      */
     myAnswers?: OwnAnswerView[];
+    /**
+     * The caller's live seat hold on this capped form ("Reserver ma place", migration 186): the
+     * seconds it has left, read from the database clock, or null when they hold none. Absent from a
+     * server older than it, which the page reads as "no hold offered".
+     */
+    seatHold?: { secondsLeft: number } | null;
   }> {
     const form = await this.formRepo.findOne({ where: respondentFormWhere(formId) });
     if (!form)
@@ -2882,8 +2905,8 @@ export class FormsService {
         ...(withAnswers ? { myAnswers: [] } : {}),
       };
 
-    // Check global capacity independently of per-user state
-    const formFull = await this.isFormFull(form);
+    // Check global capacity independently of per-user state (but for the caller's own hold)
+    const formFull = await this.isFormFull(form, userId);
 
     const facts = await this.factsFor(form, userId);
     // Every distinct cursus slice goes to the page, which totals each live (D32, `form-quote.ts`);
@@ -2918,6 +2941,7 @@ export class FormsService {
         cursusSlices,
         resumable: null,
         cashSwitchable: null,
+        seatHold: await this.seatHoldOf(form, userId),
         ...(withAnswers
           ? {
               myAnswers: form.anonymous
@@ -3003,6 +3027,7 @@ export class FormsService {
       cursusSlices,
       resumable: released.resumable,
       cashSwitchable: released.cashSwitchable,
+      seatHold: await this.seatHoldOf(form, userId),
       ...(withAnswers ? { myAnswers: this.ownAnswerViews(form, ownRows) } : {}),
     };
   }
@@ -3422,8 +3447,9 @@ export class FormsService {
 
         if (form.maxSubmissions && !holdsSeat) {
           // An anonymous answer waiting for its batch holds its place like a stored one.
+          // The live holds of OTHER people count as taken; this person's own is their seat.
           const count =
-            (await manager.count(Submission, { where: seatHoldingWhere(id) })) +
+            (await countSeatsTaken(manager, id, input.userId)) +
             (form.anonymous ? await heldAnswerCount(manager, id) : 0);
           if (count >= form.maxSubmissions) {
             if (!mayWait) throw formRefusal(FORM_FULL, 'Form is full');
@@ -3432,6 +3458,14 @@ export class FormsService {
               `[WAITLIST] submit on ${formTag(form)}: full (${count}/${form.maxSubmissions}) - the answer joins the waiting list`
             );
           }
+        }
+        // The person's own seat hold is spent by their answer, in this transaction: the answer takes
+        // the seat the hold kept (a refusal below rolls the delete back with it).
+        if (input.userId && !guest && !form.anonymous && form.maxSubmissions) {
+          await manager.query(`DELETE FROM form_seat_holds WHERE "formId" = $1 AND "userId" = $2`, [
+            id,
+            input.userId,
+          ]);
         }
         // PP5, under the form lock like the capacity count: two submits from one visitor queue here,
         // so the fourth sees the three before it. Counted from the rows that still WAIT - an online
@@ -3868,7 +3902,7 @@ export class FormsService {
         // The capacity, as a fresh submit counts it: this row holds no seat, so it needs one free -
         // unless it is a promoted answer within its hold, whose seat is its own.
         if (form.maxSubmissions && !ownSeat) {
-          const count = await manager.count(Submission, { where: seatHoldingWhere(form.id) });
+          const count = await countSeatsTaken(manager, form.id, callerId);
           if (count >= form.maxSubmissions) {
             this.logger.log(
               `[Forms] resumePayment ${submissionId} refused: ${formTag(form)} is full (${count}/${form.maxSubmissions})`
@@ -4234,7 +4268,7 @@ export class FormsService {
             this.onlineCollects
           );
           // The capacity, as a fresh submit counts it: this row holds no seat, so it needs one free.
-          const count = await manager.count(Submission, { where: seatHoldingWhere(form.id) });
+          const count = await countSeatsTaken(manager, form.id, who.userId);
           if (count >= form.maxSubmissions) {
             this.logger.log(
               `[Forms] switchToCash ${submissionId} refused: ${formTag(form)} is full (${count}/${form.maxSubmissions})`
@@ -6413,6 +6447,168 @@ export class FormsService {
     }
     this.logger.log(`[WAITLIST] ${submissionId.slice(0, 8)} left the waiting list by its member`);
     return { ok: true };
+  }
+
+  /**
+   * THE CALLER'S SEAT HOLD ("Reserver ma place", owner 2026-11-17, migration 186): takes - or finds,
+   * a second press answers the SAME hold, its clock unrestarted - a seat of a capped form for
+   * `SEAT_HOLD_SECONDS`, so a person filling a long form does not lose the last seat to a faster
+   * submitter. One per account and form. The seat is counted under the form's lock like every
+   * capacity decision (`countSeatsTaken`, the person's own hold excepted), after the waiting list took
+   * the places free to it; a full form refuses `FORM_FULL`. A form that holds none (uncapped, or
+   * anonymous: a hold names its holder, which an anonymous form refuses to keep) is a typed 400
+   * `SEAT_HOLD_NOT_AVAILABLE`; one the person already answers is `ALREADY_ANSWERED`. Answers the
+   * seconds left, read from the database clock: the page counts down from it, never from a wall clock.
+   */
+  async holdSeat(formId: string, userId: string): Promise<{ secondsLeft: number }> {
+    const form = await this.formRepo.findOne({ where: respondentFormWhere(formId) });
+    if (!form) throw new NotFoundException('Form not found');
+    if (!form.maxSubmissions || form.anonymous) {
+      this.logger.debug(
+        `[HOLD] hold refused on ${formTag(form)}: capped=${!!form.maxSubmissions} anonymous=${form.anonymous}`
+      );
+      throw formRefusal(SEAT_HOLD_NOT_AVAILABLE, 'This form holds no seat.');
+    }
+    assertFormOpen(form);
+    this.assertMaySubmit(form, await this.factsFor(form, userId));
+    await this.assertRespondentReach(form, userId);
+    const capacity = form.maxSubmissions;
+    let promotedHere: PromotedAnswer[] = [];
+    const secondsLeft = await this.submissionRepo.manager.transaction(
+      'READ COMMITTED',
+      async (manager) => {
+        await this.assertAssociationLiveUnderLock(manager, form, 'submit');
+        await lockFormSeats(manager, formId);
+        // The places free to the waiting list go to it BEFORE a hold counts one, as a submit does.
+        promotedHere = await promoteFromWaitlist(
+          manager,
+          formId,
+          'submit',
+          this.logger,
+          this.onlineCollects
+        );
+        if (!form.allowMultipleSubmissions) {
+          await this.assertNoOtherAnswer(manager, formId, userId, undefined);
+        }
+        const taken = await countSeatsTaken(manager, formId, userId);
+        if (taken >= capacity) {
+          this.logger.log(`[HOLD] hold refused on ${formTag(form)}: full (${taken}/${capacity})`);
+          throw formRefusal(FORM_FULL, 'Form is full');
+        }
+        // A live hold keeps its clock (a second press is the same hold); a lapsed one restarts.
+        const [row] = (await manager.query(
+          `INSERT INTO form_seat_holds ("formId", "userId") VALUES ($1, $2)
+           ON CONFLICT ("formId", "userId") DO UPDATE
+              SET "heldAt" = CASE WHEN form_seat_holds.${LIVE_SEAT_HOLD_SQL}
+                                  THEN form_seat_holds."heldAt" ELSE clock_timestamp() END
+           RETURNING ceil(extract(epoch FROM "heldAt" + make_interval(secs => ${SEAT_HOLD_SECONDS}) - clock_timestamp()))::int AS "secondsLeft"`,
+          [formId, userId]
+        )) as Array<{ secondsLeft: number }>;
+        this.logger.log(
+          `[HOLD] ${formTag(form)}: seat held for ${userId.slice(0, 8)} (${taken + 1}/${capacity}, ${row.secondsLeft}s left)`
+        );
+        return Math.max(0, row.secondsLeft);
+      }
+    );
+    await this.tellPromoted(promotedHere);
+    return { secondsLeft };
+  }
+
+  /**
+   * The caller gives their seat hold back ("Liberer ma place"). Idempotent: no hold is a no-op. A seat
+   * given back frees a place, so the first in line is promoted into it under the same lock.
+   */
+  async releaseSeatHold(formId: string, userId: string): Promise<{ ok: true }> {
+    let promoted: PromotedAnswer[] = [];
+    await this.submissionRepo.manager.transaction('READ COMMITTED', async (manager) => {
+      await lockFormSeats(manager, formId);
+      const [gone] = (await manager.query(
+        `DELETE FROM form_seat_holds WHERE "formId" = $1 AND "userId" = $2 RETURNING "formId"`,
+        [formId, userId]
+      )) as [unknown[], number];
+      if (gone.length === 0) return;
+      this.logger.log(
+        `[HOLD] form ${formId.slice(0, 8)}: ${userId.slice(0, 8)} released their seat`
+      );
+      promoted = await promoteFromWaitlist(
+        manager,
+        formId,
+        'hold-release',
+        this.logger,
+        this.onlineCollects
+      );
+    });
+    await this.tellPromoted(promoted);
+    return { ok: true };
+  }
+
+  /** The caller's live hold on a capped, named form as the page reads it, or null. */
+  private async seatHoldOf(
+    form: Pick<Form, 'id' | 'maxSubmissions' | 'anonymous'>,
+    userId: string
+  ): Promise<{ secondsLeft: number } | null> {
+    if (!form.maxSubmissions || form.anonymous) return null;
+    const secondsLeft = await this.seatHoldSecondsLeft(form.id, userId);
+    return secondsLeft === null ? null : { secondsLeft };
+  }
+
+  /** The seconds the caller's live hold has left on the form, or null when they hold no seat. */
+  private async seatHoldSecondsLeft(formId: string, userId: string): Promise<number | null> {
+    const rows = (await this.submissionRepo.query(
+      `SELECT ceil(extract(epoch FROM "heldAt" + make_interval(secs => ${SEAT_HOLD_SECONDS}) - now()))::int AS "secondsLeft"
+         FROM form_seat_holds WHERE "formId" = $1 AND "userId" = $2 AND ${LIVE_SEAT_HOLD_SQL}`,
+      [formId, userId]
+    )) as Array<{ secondsLeft: number }>;
+    return rows[0] ? Math.max(0, rows[0].secondsLeft) : null;
+  }
+
+  /**
+   * Deletes the seat holds past their ten minutes and promotes the waiting list into the places they
+   * freed, ONE FORM AT A TIME under its seat lock (a failure on one form is logged and leaves its
+   * rows for the next run). NOT LOAD-BEARING FOR CAPACITY: every count reads a hold's own age, so a
+   * late run only delays a promotion and tidies dead rows. Idempotent from the rows.
+   */
+  async expireLapsedSeatHolds(): Promise<number> {
+    const forms = (await this.submissionRepo.query(
+      `SELECT DISTINCT "formId" FROM form_seat_holds WHERE NOT (${LIVE_SEAT_HOLD_SQL})`
+    )) as Array<{ formId: string }>;
+    let expired = 0;
+    for (const { formId } of forms) {
+      try {
+        const { deleted, promoted } = await this.submissionRepo.manager.transaction(
+          'READ COMMITTED',
+          async (manager) => {
+            await lockFormSeats(manager, formId);
+            const [rows] = (await manager.query(
+              `DELETE FROM form_seat_holds WHERE "formId" = $1 AND NOT (${LIVE_SEAT_HOLD_SQL}) RETURNING "userId"`,
+              [formId]
+            )) as [unknown[], number];
+            return {
+              deleted: rows.length,
+              promoted:
+                rows.length > 0
+                  ? await promoteFromWaitlist(
+                      manager,
+                      formId,
+                      'hold-expiry',
+                      this.logger,
+                      this.onlineCollects
+                    )
+                  : [],
+            };
+          }
+        );
+        expired += deleted;
+        await this.tellPromoted(promoted);
+      } catch (e: unknown) {
+        this.logger.error(
+          `[HOLD] expiry on form ${formId.slice(0, 8)} FAILED - its holds stay for the next run`,
+          e
+        );
+      }
+    }
+    if (expired > 0) this.logger.log(`[HOLD] Deleted ${expired} lapsed seat hold(s)`);
+    return expired;
   }
 
   /**
