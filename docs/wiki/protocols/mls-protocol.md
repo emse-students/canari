@@ -2172,6 +2172,13 @@ network wait taken under the mutex outside a commit - a frame waits for those as
 A's answer is held; A's own frame applied only after its merge; a kept-unknown commit settled after
 three loans).
 
+**Every accepted commit says where its hold went** (2026-11-26, `commitHoldTiming.ts`):
+`[COMMIT] <group>... accepted at epoch N - waited W ms for the MLS mutex, held H ms (checkpoint C ms,
+request R ms, A attempts)`. A commit is never lent to another COMMIT, so commits of different groups
+queue: W is that queue, C the whole-state checkpoint before the first request (it grows with the
+number of groups the device holds), R the gate's round trip. It is the line that measures a new
+device's restore on the answering side ([the entry](../backlog.d/p2-a-new-device-restore-is-paced-by-one-device-adding-it-group-by-group.md)).
+
 **The server's commit lock lives 5 s; the client waits 30 s - so a resubmission can overlap its own
 first request.** The Redis lock (`EX 5`, `messaging.service.ts`) expires while a first request
 stalled inside its transaction (waiting on the seat lock, say) is still running. The resubmission
