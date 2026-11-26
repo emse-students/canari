@@ -345,6 +345,17 @@ export const PENDING_MUTATIONS_ORDER_INDEX_STATEMENT =
   'CREATE INDEX IF NOT EXISTS idx_pending_mutations_sender_tier_at ON pending_mutations(conversation_id, sender_tag, tier, at)';
 
 /**
+ * The conversations this device deleted, by id (`wasConversationDeleted`). No foreign key and no
+ * content: an id is all the fact needs, and it is cleared when the member is in the conversation
+ * again. Created by every open, fresh or not.
+ */
+export const DELETED_CONVERSATIONS_TABLE_STATEMENT = `
+            CREATE TABLE IF NOT EXISTS deleted_conversations (
+                conversation_id TEXT PRIMARY KEY
+            )
+        `;
+
+/**
  * The v18 column of `messages`: `rev`, the row's revision, raised by EVERY write - the compare half
  * of the compare-and-set every rewrite goes through (`messageCas.ts`). An existing row starts at 0.
  * Returns `null` when the column is there (a fresh file has it from `CREATE TABLE`), so the step is a

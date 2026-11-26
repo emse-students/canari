@@ -132,6 +132,7 @@
   "nav_logout_label": "Sign out",
   "chat_new_channel_title": "New channel",
   "chat_new_discussion_title": "New discussion",
+  "chat_deleted_conversation_name": "Deleted conversation",
   "chat_outbox_queue_unreadable": "Messages waiting to be sent cannot be read on this device right now: they are kept and sent once they can be read again.",
   "chat_outbox_native_queue_unreachable": "Replies sent from your notifications cannot be read right now: they are held and shown as not sent, with a retry. Messages you send from the app still go.",
   "chat_outbox_lines_unreadable": [
