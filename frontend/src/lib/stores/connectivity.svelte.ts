@@ -163,6 +163,8 @@ class ConnectivityStore {
   private unreachableStack: NetworkStack | null = null;
   /** Answers from the other stack since the verdict, reported once when the spell closes. */
   private answersFromOtherStack = 0;
+  /** Whether a spent probe run was already said at warn in the current unreachable spell. */
+  private spentRunSaidThisSpell = false;
   private readonly spellLatch = createChangeLatch();
   private nextRequestId = 0;
   private readonly inFlight = new Map<number, ReturnType<typeof setTimeout>>();
@@ -273,6 +275,13 @@ class ConnectivityStore {
       // Counted, said once on the line that closes the spell: an answer that proves nothing about
       // the stack that failed is expected here, and one line each would be the noise.
       this.answersFromOtherStack++;
+      // BUT IT IS THE REASON TO ASK THE FAILED STACK AGAIN. The probe run the verdict started is
+      // bounded and may be spent, and the requests that would otherwise lift the verdict - the
+      // outbox's writes - wait on this very verdict (`isOffline`): without this, a plugin outage
+      // longer than one run left the app offline while every read answered, until an `online`
+      // event. An event, not a clock: SINGLE-FLIGHT, so a run in progress is joined and this adds
+      // nothing while one runs.
+      void this.probeUntilReachable(PROBE_DELAYS_AFTER_FAILURE_MS, 'an answer on the other stack');
       return;
     }
     const extra = this.deadlinesWhileUnreachable;
@@ -316,6 +325,7 @@ class ConnectivityStore {
     );
     this.unreachableStack = stack ?? null;
     this.answersFromOtherStack = 0;
+    this.spentRunSaidThisSpell = false;
     this.serverReachable = false;
     this.unreachableSpell++;
     this.deadlinesWhileUnreachable = 0;
@@ -369,9 +379,12 @@ class ConnectivityStore {
           return;
         }
       }
-      console.warn(
-        `[CONNECTIVITY] ${delaysMs.length} probe(s) after ${reason} got no answer - waiting for the next online event or any successful request`
-      );
+      // Said at warn ONCE per spell: the runs an answer on the other stack re-arms (above) would
+      // otherwise repeat the same accusation for as long as the failed stack stays down.
+      const line = `[CONNECTIVITY] ${delaysMs.length} probe(s) after ${reason} got no answer - waiting for the next online event or any successful request${this.unreachableStack ? ` on the ${this.unreachableStack} stack` : ''}`;
+      if (this.spentRunSaidThisSpell) console.debug(line);
+      else console.warn(line);
+      this.spentRunSaidThisSpell = true;
     } finally {
       this.probing = false;
     }
@@ -509,7 +522,7 @@ class ConnectivityStore {
             }
           }
         } else if (error instanceof TransportFailureError) {
-          this.notifyServerUnreachable(transportFailureEvidence(error), error.stack);
+          this.notifyServerUnreachable(transportFailureEvidence(error), error.networkStack);
         }
         this.recomputeSlow();
       },
@@ -584,6 +597,7 @@ class ConnectivityStore {
     this.deadlinesWhileUnreachable = 0;
     this.unreachableStack = null;
     this.answersFromOtherStack = 0;
+    this.spentRunSaidThisSpell = false;
     this.spellLatch.reset();
   }
 }

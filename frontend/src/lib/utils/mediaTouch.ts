@@ -87,14 +87,17 @@ let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
  * The per-object windows a touch answer names (`{ refreshed, windows }`): ms, or `null` for an
- * object no sweep takes. An answer without them (an older server, an unreadable body) yields none,
- * and the ledger then holds each copy to the constant window - the safe direction, said once.
+ * object no sweep takes. An answer without them (an older server, an unreadable body) yields `null`,
+ * and the ledger then holds each copy to the constant window. When it names them, an id it leaves
+ * out (or names unreadably) is one it holds nothing for (`recordServerConfirmed`) - the safe
+ * direction either way.
  */
-async function readWindows(res: Response): Promise<Record<string, number | null>> {
+async function readWindows(res: Response): Promise<Record<string, number | null> | null> {
   try {
     const body = (await res.json()) as { windows?: unknown };
+    // An older server: the field is absent, which is not "it holds none of them".
+    if (typeof body.windows !== 'object' || body.windows === null) return null;
     const out: Record<string, number | null> = {};
-    if (typeof body.windows !== 'object' || body.windows === null) return out;
     for (const [id, value] of Object.entries(body.windows)) {
       if (value === null || (typeof value === 'number' && Number.isFinite(value) && value >= 0)) {
         out[id] = value;
@@ -105,7 +108,7 @@ async function readWindows(res: Response): Promise<Record<string, number | null>
     appendLog(
       `[MEDIA_TOUCH] the answer named no windows (${String(e)}); the constant window holds`
     );
-    return {};
+    return null;
   }
 }
 

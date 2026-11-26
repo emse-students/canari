@@ -575,6 +575,38 @@ describe('two HTTP stacks, one verdict (Android log of 2026-11-25)', () => {
     expect(connectivity.isOffline).toBe(false);
   });
 
+  it('an answer on the other stack re-asks the failed one once its run is spent, so it never stays offline', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    let pluginUp = false;
+    const probe = vi.fn(async (stack?: 'webview' | 'plugin') => {
+      if (stack === 'plugin' && !pluginUp) return false;
+      answerOn(stack ?? 'webview');
+      return true;
+    });
+    connectivity.setReachabilityProbe(probe);
+    connectivity.trackRequest().failed(new TransportFailureError('refused', undefined, 'plugin'));
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(probe).toHaveBeenCalledTimes(4);
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    // Still down: a read re-arms one run, spent again, said at debug this time.
+    answerOn('webview');
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(probe).toHaveBeenCalledTimes(8);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(debug).toHaveBeenCalledWith(expect.stringContaining('on the plugin stack'));
+    expect(connectivity.isOffline).toBe(true);
+
+    // The plugin is back: the next read re-asks it, and its own answer lifts the verdict.
+    pluginUp = true;
+    answerOn('webview');
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(probe).toHaveBeenLastCalledWith('plugin');
+    expect(connectivity.isOffline).toBe(false);
+  });
+
   it('an answer with no stack (the web build, one stack) lifts as it always did', () => {
     connectivity.trackRequest().failed(new TransportFailureError('refused'));
     connectivity.trackRequest().answered();

@@ -111,7 +111,9 @@ it was stamped with (`idleRetentionMs`, else the default), the time left to a ch
 (reading does not move those), or `null` when no sweep ever takes it (`MediaService.holdWindows`). The ledger
 records it beside `confirmedAt` (`holdWindowMs`, header `x-canari-window`) and `isHeldByServer` compares
 against it. The 30-day constant remains only for a record with no answer: a copy a download confirmed
-(a download names no window) or a server that predates the field. `mediaCacheCap.test.ts` pins the order, that
+(a download names no window) or a server that predates the field. An id a server that names windows LEAVES OUT
+(unknown, purged: it holds nothing for it) has its confirmation withdrawn, so the copy is a sole copy the cap
+never takes (`recordServerConfirmed`; review of #4171). `mediaCacheCap.test.ts` pins the order, that
 a sole copy stays and the answered window against the constant; `mediaCacheLedger.test.ts` the same through a
 fake Cache Storage, a legacy copy included; `media.service.touch.spec.ts` the answers.
 

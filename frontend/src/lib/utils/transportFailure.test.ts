@@ -154,11 +154,14 @@ describe('the stack is recorded where the routing knows it', () => {
     const pluginFailure = await conformPluginFetch(vi.fn().mockRejectedValue(REQWEST))(
       'https://x/a'
     ).catch((e: unknown) => e);
-    expect((pluginFailure as TransportFailureError).stack).toBe('plugin');
+    expect((pluginFailure as TransportFailureError).networkStack).toBe('plugin');
     const webviewFailure = await conformNativeFetch(
       vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))
     )('https://x/a').catch((e: unknown) => e);
-    expect((webviewFailure as TransportFailureError).stack).toBe('webview');
+    expect((webviewFailure as TransportFailureError).networkStack).toBe('webview');
+    // The tag never takes the place of the error's own trace.
+    expect((pluginFailure as TransportFailureError).stack).toContain('TransportFailureError');
+    expect(new TransportFailureError('x').stack).toContain('TransportFailureError');
 
     const viaPlugin = await conformPluginFetch(vi.fn().mockResolvedValue(new Response('{}')))(
       'https://x/a'

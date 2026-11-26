@@ -172,25 +172,45 @@ export async function recordCipherUsed(key: string, now = Date.now()): Promise<v
 /**
  * The server acknowledged a touch for these objects (`mediaTouch.ts`): it holds them, so their
  * copies are evictable for the window it named for each (`windows`: ms, or `null` for an object no
- * sweep takes), or for `SERVER_HOLD_WINDOW_MS` when it named none (an older server). An object with
- * no record is skipped: it is not in the cache, or is reconciled before the next enforcement.
+ * sweep takes), or for `SERVER_HOLD_WINDOW_MS` when it named none (`windows` `null`: an older
+ * server). An object with no record is skipped: it is not in the cache, or is reconciled before the
+ * next enforcement.
+ *
+ * AN ID A SERVER THAT NAMES WINDOWS LEAVES OUT IS ONE IT HOLDS NOTHING FOR (unknown, purged): its copy
+ * may be the only one left, so it is NOT confirmed - its confirmation is withdrawn, which makes it a
+ * sole copy the cap never evicts (charter principle 2). An older server cannot say so, and every id
+ * it acknowledged is confirmed as before.
  */
 export async function recordServerConfirmed(
   baseUrl: string,
   mediaIds: readonly string[],
-  windows: Readonly<Record<string, number | null>> = {},
+  windows: Readonly<Record<string, number | null>> | null = null,
   now = Date.now()
 ): Promise<void> {
   if (typeof caches === 'undefined') return;
   const records = await ledger();
+  let notHeld = 0;
   for (const mediaId of mediaIds) {
     const key = absoluteKey(cipherCacheKey(baseUrl, mediaId));
     const record = records.get(key);
     if (!record) continue;
-    record.confirmedAt = now;
-    if (Object.hasOwn(windows, mediaId)) record.holdWindowMs = windows[mediaId];
-    else delete record.holdWindowMs;
+    if (windows === null) {
+      record.confirmedAt = now;
+      delete record.holdWindowMs;
+    } else if (Object.hasOwn(windows, mediaId)) {
+      record.confirmedAt = now;
+      record.holdWindowMs = windows[mediaId];
+    } else {
+      notHeld++;
+      record.confirmedAt = 0;
+      delete record.holdWindowMs;
+    }
     await persist(key, record);
+  }
+  if (notHeld > 0) {
+    appendLog(
+      `[MEDIA_CAP] ${notHeld} cached cop(ies) the server no longer holds - kept as sole copies, never evicted`
+    );
   }
 }
 

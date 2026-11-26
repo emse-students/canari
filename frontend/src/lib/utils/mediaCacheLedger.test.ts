@@ -90,7 +90,7 @@ describe('the media cache ledger and its cap', () => {
     expect(record.headers.get('x-canari-confirmed')).toBe('0');
 
     // The server's acknowledged touch confirms it; only then may the cap take it.
-    await recordServerConfirmed(BASE, ['legacy'], {}, Date.now());
+    await recordServerConfirmed(BASE, ['legacy'], null, Date.now());
     await enforceMediaCacheCap(Date.now());
     expect(buckets.get(CIPHER_CACHE_NAME)!.size).toBe(0);
   });
@@ -117,6 +117,22 @@ describe('the media cache ledger and its cap', () => {
     );
     await enforceMediaCacheCap(Date.now());
     expect(buckets.get(CIPHER_CACHE_NAME)!.size).toBe(0);
+  });
+
+  it('withdraws the confirmation of an id a server that names windows leaves out: a sole copy, kept', async () => {
+    const buckets = installCaches();
+    writeMediaCacheCap(250 * MB);
+    const key = cipherCacheKey(BASE, 'purged');
+    buckets.set(CIPHER_CACHE_NAME, new Map([[abs(key), weighing(300 * MB)]]));
+    await enforceMediaCacheCap(Date.now());
+    await recordServerConfirmed(BASE, ['purged'], null, Date.now());
+    // The server now answers windows, and names none for this object: it holds nothing for it.
+    await recordServerConfirmed(BASE, ['purged'], { other: null }, Date.now());
+    expect([...buckets.get(LEDGER_CACHE_NAME)!.values()][0].headers.get('x-canari-confirmed')).toBe(
+      '0'
+    );
+    await enforceMediaCacheCap(Date.now());
+    expect(buckets.get(CIPHER_CACHE_NAME)!.size).toBe(1);
   });
 
   it('does nothing when the member chose unlimited', async () => {

@@ -33,7 +33,7 @@
     {value}
     {oninput}
     placeholder={m.posts_search_placeholder()}
-    class="[&_input]:pr-10 [&_input]:pl-10 [&_input::-webkit-search-cancel-button]:appearance-none"
+    class="ui-search-own-clear [&_input]:pr-10 [&_input]:pl-10"
   />
   <!-- ONE BUTTON FOR TWO WIDTHS: from `md` up it clears a query, below `md` it closes the field
        (and drops the query - a hidden field still filtering the feed has no visible cause). -->

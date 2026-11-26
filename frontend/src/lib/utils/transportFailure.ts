@@ -31,13 +31,15 @@ import { RequestDeadlineError } from '$lib/utils/requestDeadline';
  */
 export class TransportFailureError extends TypeError {
   /**
-   * @param stack The HTTP stack that failed, recorded at the throw ({@link NetworkStack}); absent
+   * @param networkStack The HTTP stack that failed, recorded at the throw ({@link NetworkStack}); absent
    *   for a failure raised where no routing exists (an XHR upload, the web build's one stack).
+   *   NOT `stack`: that is the Error's own trace, which a field of that name would overwrite on
+   *   every failure and every subclass (`DeliveryUnreachableError`, `NotFromApiError`, ...).
    */
   constructor(
     readonly cause: unknown,
     message = `request got no answer: ${String(cause)}`,
-    readonly stack?: NetworkStack
+    readonly networkStack?: NetworkStack
   ) {
     super(message);
     this.name = 'TransportFailureError';
