@@ -14,6 +14,317 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.8.2] - 2026-11-26
+
+### Fixed - a conversation opens at its end without being yanked up and slid back, and the arrow and a stale day pill no longer stay
+
+The entry's widen of older rows was glided as if it were an arrival, and wrote the scroll position a second time; only an arrival glides now, and a glide's end re-measures the pane ([chat](docs/wiki/frontend/modules/chat.md#an-open-lands-once-a-change-above-the-reader-never-glides-2026-11-25)).
+
+### Added - "Créer un groupe" on a named, internal form's responses fills the new-discussion panel with everyone who answered
+
+The server refuses an anonymous or a public form, and a respondent whose account is gone is counted on screen, never dropped silently ([forms](docs/wiki/frontend/modules/forms.md#a-group-made-from-a-forms-respondents-owner-2026-11-19)).
+
+### Fixed - going live again after a reload or a crash no longer waits for the server's 60 s sweep
+
+A start now ends the same account's own open live in the same transaction, from the database, instead
+of answering `409 LIVE_ALREADY_OPEN` until the absence sweep did ([lives](docs/wiki/services/lives.md)).
+
+### Fixed - a salon declared stale no longer splits the history load of another salon
+
+The stale counter that decides whether a second load joins the one in flight is per salon, so opening a salon while a neighbour is invalidated asks for one page, not two ([community-open-budget](docs/wiki/frontend/community-open-budget.md)).
+
+### Fixed - a file picked in the Android app is no longer queued with zero bytes
+
+The Android file chooser hands the page a copy read to its end, never trusting the size a provider states (a log export saved in Downloads was stated as 0 bytes); the log save checks the size it leaves recorded; the composer reads a picked file's bytes at the pick and refuses one it cannot read, said on the banner; an attachment queued with no bytes now fails at once with a line in the thread instead of retrying ([chat](docs/wiki/frontend/modules/chat.md#a-picked-file-is-read-at-the-pick-p1-of-181-2026-11-26)).
+
+### Fixed - the organiser is told when a partner accepts to co-organise an event still waiting for validation
+
+The acceptance on a PENDING event announced nothing; it now tells the event's parties under its own notice type (floor 1.8.2), without claiming the event needs approval again ([social-service](docs/wiki/services/social-service.md)).
+
+### Fixed - on Android, two members writing in the same millisecond are two notifications, not one
+
+The announced-message key and the shade's own line match now carry the sender, as iOS's ledger has since #3968; a trigger that does not know the sender still matches the one that does ([ios-notification-ownership](docs/wiki/frontend/ios-notification-ownership.md)).
+
+### Changed - a fall of a pinned DM inside a glide now carries the glide's buffered passes, to name what drops it on the iPhone when an image arrives
+
+Nothing is written per pass: the follow passes and the scroll moves after them wait in memory and print at INFO only with the fall line, from numbers read at layout-clean points; no behaviour changes ([chat](docs/wiki/frontend/modules/chat.md#the-trace-of-the-passes-inside-a-glide-2026-11-25)).
+
+### Fixed - an image arriving at a pinned DM no longer drops the pane on the iPhone
+
+The new-message effect pinned the end a second time inside the arrival's glide, read the glide's
+overflow and wrote past the end; the engine's clamp then read as a fall. Every pin of the pane now
+takes the glide off and writes the layout end (`pinThreadToEnd`)
+([chat](docs/wiki/frontend/modules/chat.md#the-cause-a-second-writer-pinned-inside-the-glide-2026-11-25)).
+
+### Fixed - an inline reply from the Android shade keeps the message it answered
+
+Replying from a notification re-posted it with "Vous" and the reply alone; the conversation now keeps its earlier lines with the reply appended, bounded like every post ([social-service](docs/wiki/services/social-service.md)).
+
+### Fixed - the Android release build is less likely to hit Maven Central's rate limit
+
+The Gradle cache a release restored was filled by a debug-only compile, so it lacked what only a release links and the build hit Maven Central's `429` anyway. CI now runs the real release chain (minus rust), online then `--offline`, and the cache key moves so it is saved afresh; the next release's log is the proof ([cicd](docs/wiki/cicd.md#the-android-release-build-resolves-from-a-cache-ci-completes-and-proves-offline-2026-11-25)).
+
+### Fixed - a deferred App Store submission is now completed by the daily store check
+
+The `1.8.1` stable deferred on a held version slot and nothing ever retried, so the App Store had no `1.8.1` while Play did. The `stores` job of `scheduled.yml` now submits the latest stable through `submit.mjs --catch-up` once the slot is free, skipping stale stables and never touching a version Apple is reviewing ([App Store README](tools/app-store/README.md#a-deferred-submission-completes-itself---catch-up-2026-11-25)).
+
+### Fixed - deleting two associations that co-organise each other's events no longer deadlocks
+
+`remove` now locks the association and every association its events' co-organisation reaches, in id
+order, before it deletes anything, so two such deletes queue instead of crossing their cascades
+([profiles-and-access](docs/wiki/profiles-and-access.md)).
+
+### Fixed - a gallery outage no longer makes every avatar be asked for again on each remount
+
+A face the avatar source answered 5xx for is remembered per user for the life of the outage (one warn per outage, not per face) and ends on an event - any avatar answered, the link or app coming back, a navigation, a reader change - never on a clock ([core-service](docs/wiki/services/core-service.md#the-avatar-proxy)).
+
+### Fixed - a push catch-up that yields to the app in front no longer posts a fallback banner (Android)
+
+The catch-up answered "nothing" when the foreground took the MLS state over, which read as a refusal: a worker was enqueued and a generic banner posted while the app was open. It now answers the yield ([mobile](docs/wiki/frontend/mobile.md#background-mls-decrypt-ladder)).
+
+### Fixed - the fifteen open CodeQL warnings are fixed in the code, not dismissed
+
+Twelve were a test stub of `ResizeObserver` with no constructor parameter; the others re-checked a flag the compiler had narrowed to `false` (`ChannelService` boot reads), a dead initial assignment (`pinSessionRefusal`) and a returnless call's result (`focusOnMount.test`). None was a runtime bug.
+
+### Fixed - a tap on an agenda, moderation or notifications push from a closed app lands on its page
+
+The link arrived before SvelteKit's first navigation had settled and its `goto` threw; every app link now waits for the router, which the root layout declares ready in its first `afterNavigate` ([mobile](docs/wiki/frontend/mobile.md#how-a-deep-link-actually-reaches-the-app--two-paths-only-one-of-them-gated)).
+
+### Fixed - a text restored during an edit is no longer lost, the @mention list closes on a conversation switch, and a conversation that leaves the list drops its draft
+
+The restored text joins the edit's saved draft, the picker is dismissed when the composer changes conversation, and drafts follow their conversation out of the list ([chat](docs/wiki/frontend/modules/chat.md#each-conversation-keeps-its-own-draft-2026-10-27)).
+
+### Changed - ecosystem-shape compares the vendored Meta in-app browser gate in Sky, MiGallery and Portail-etu
+
+The gate's detector, server half, interstitial and fixtures are held byte-identical to `libs/leave-in-app-browser/` in the three GitHub siblings, and a test keeps the table honest ([leaving-in-app-browsers](docs/wiki/frontend/leaving-in-app-browsers.md#6-the-siblings---sky-migallery-portail-etu-le-cercle)).
+
+### Fixed - "Modifier" right after a send showed the banner with an empty field
+
+The composer's clear after a send wrote the field's own text, which, landing after the parent's clear of a SvelteMap-backed draft, stayed as a local override and swallowed the next text the parent loaded (the edited message). The clear now only empties the DOM; the parent's text is the one writer ([chat](docs/wiki/frontend/modules/chat.md)).
+
+### Fixed - the `ChatArea.entryWindow` unit test no longer fails when a loaded runner freezes its worker
+
+The file takes the same load-bound test deadline as the other starved-worker victims; the asserted counts are unchanged ([test-suite-reform](docs/wiki/test-suite-reform.md)).
+
+### Fixed - an open edit draft no longer reads as "changed" when a form's stale-open question is asked or answered
+
+The two stale-open stamps leave the draft fingerprint, and migration 185 re-bases the drafts they had
+moved ([forms](docs/wiki/frontend/modules/forms.md#the-memory-is-two-columns-and-the-sweeps-claim-is-its-only-write)).
+
+### Added - a "Réserver ma place" button keeps a seat of a capped form for 10 minutes
+
+A signed-in person filling a long form no longer loses the last seat to a faster submitter: the hold counts
+against everybody else, the submit spends it, and an expired hold frees its seat on its own
+([forms](docs/wiki/frontend/modules/forms.md#a-capped-form-may-hold-a-seat-for-10-minutes-behind-reserver-ma-place-owner-2026-11-17-migration-186)).
+
+### Changed - a sibling site opens signed in through its MiConnect sign-in, and from a link in a message
+
+A handoff refused because MiConnect must first show the person its terms or an Alumni page now opens the site's own MiConnect sign-in, returning to the page asked for, instead of the site signed out; a link to MiGallery's allowlisted pages tapped in a message or a post is handed off too, after the Safe Browsing gate ([sessions](docs/wiki/sessions.md#the-sign-in-handoff-to-the-miconnect-sites-2026-11-08)).
+
+### Fixed - two harness markers minted in one process can no longer collide
+
+The marker's random suffix collided on a same-millisecond pair about once in 46656 and failed the harness self-test gate of an unrelated pull request; the suffix is now a per-process counter from a random start, so uniqueness within a process is guaranteed rather than probable ([marker](tools/cross-client-harness/marker.mjs)).
+
+### Fixed - the history rule an admin saves stays on the card, and a rename or role change heard during a listing is no longer overwritten by its older answer
+
+The `workspace.updated` frame now forwards `historyVisibility`, and the listing ledger is keyed per (row, field) so a demoted administrator does not get their controls back from an older listing ([chat](docs/wiki/frontend/modules/chat.md#a-live-fact-heard-during-a-listing-is-newer-than-its-answer-2026-10-26)).
+
+### Fixed - the in-app log says when a session's last lines may be missing
+
+The on-screen marker is cleared only once the leave-screen write has settled, so a write that never settled is said at the next boot, neutrally, with the time the app left the screen ([mobile](docs/wiki/frontend/mobile.md#the-in-app-log)).
+
+### Removed - the per-file iOS backup exclusion passes, redundant since the directories are flagged at every launch
+
+The iPhone reading of `1.7.3-alpha.5` proved the directory flag holds (6/6 directories, a full backup holding no file of ours), so `native_cache::exclude_from_backup`, `CanariExcludeNativeCacheFilesFromBackup`, the NSE's `excludeFromBackup` and the share manifest's per-file call are gone ([mobile](docs/wiki/frontend/mobile.md#the-native-caches-are-sealed-at-rest-and-kept-out-of-backups-2026-10-22)).
+
+### Changed - a page opened in Messenger, Facebook, Instagram or Threads now sends the visitor out
+
+Canari and MiConnect answer a Meta in-app browser with one blocking page that leaves for Safari or the default browser (or the app on Android) where the platform allows, and gives the manual way out otherwise; it replaces the former in-app banner ([leaving-in-app-browsers](docs/wiki/frontend/leaving-in-app-browsers.md)).
+
+### Fixed - a link preview title no longer shows `&rsquo;` and its kin
+
+The preview decoder knew five entities; it now decodes the full HTML5 set and numeric references once, in title, description and site name ([chat-delivery](docs/wiki/services/chat-delivery.md)). Previews are cached server-side for a short TTL only, so stale escaped titles expire on their own.
+
+### Fixed - a login that did not complete is logged once, at its level
+
+It was printed twice, once plain and once as a warning or error; the cancelled-sheet label is [filed](docs/wiki/backlog.d/p3-a-cancelled-biometric-sheet-is-logged-as-an-empty-keystore.md).
+
+### Added - the media cache has a cap: 500 MB by default, 250 MB, 1 GB or unlimited in Settings, least recently used first and never a copy the server may no longer hold
+
+The cached ciphertext grew without bound. A copy leaves only when the server confirmed holding it within 30 days; any other may be the only one left and stays, even above the cap ([media-service](docs/wiki/services/media-service.md#the-cached-ciphertext-has-a-cap-500-mb-by-default-lru-never-a-sole-copy-182)).
+
+### Added - "@tous" (alias "@everyone") calls every member of a group, and of a salon when a moderator writes it
+
+It is a mention like any other: picked from the list it calls everyone, typed by hand it is text. Members at "Mentions" are notified and members at "Aucune" never are. In a salon the server vouches for the call only from a moderator ([chat-delivery](docs/wiki/services/chat-delivery.md#tous---a-call-to-every-member-and-who-may-make-it-decided-2026-11-26)).
+
+### Changed - "Mes notes" sits in the conversation list by its last activity instead of above it
+
+Like any conversation it is above older ones and below newer ones; a device that holds none yet shows the entry at the end of the list ([chat](docs/wiki/frontend/modules/chat.md#mes-notes---the-conversation-with-oneself-2026-11-22)).
+
+### Fixed - the held "Mes notes" conversation is listed again
+
+Since 1.8.2-alpha.3 a device holding its Notes conversation showed no Notes entry at all: the list compared the row's key with the conversation's own name, which a Notes conversation leaves empty ([chat](docs/wiki/frontend/modules/chat.md#mes-notes---the-conversation-with-oneself-2026-11-22)).
+
+### Fixed - MiConnect no longer asks an Alumni sign-in twice
+
+"I have a School account" after an Alumni sign-in links that identity after the CAS without a second Alumnforce sign-in (a page naming both accounts when the names differ), and the link step returns to the application instead of Settings. Every path, before and after: [sign-in paths](docs/wiki/infrastructure/miconnect-sign-in-paths.md).
+
+### Added - MiConnect signs in the Rootz association's MDE network console
+
+A new provider `miconnect-reseau` and application `reseau`, open to the group `acces-reseau` alone, code grant with PKCE and no refresh ([authentik](docs/wiki/infrastructure/authentik.md#the-reseau-console-of-the-mde-network-owner-2026-11-25)).
+
+### Fixed - a MiGallery album card is sharp: its large banner draws the 1200x630 cover, not the 400px square stretched
+
+The hero banner was upscaling the square tile cover about three times; it now draws the wide cover the preview already carried, and a private album keeps the square only ([chat-delivery](docs/wiki/services/chat-delivery.md#who-carries-the-migallery-key-and-who-does-not)).
+
+### Changed - the Minesweeper and its replay are full-screen pages, not modals
+
+`/games/play` and `/games/replay/<id>` are routes: no portal, focus trap or history overlay around a
+576-cell board, Back returns to the page the player came from, and "Jouer" and the replay buttons are
+links ([minesweeper](docs/wiki/frontend/modules/minesweeper.md#the-screen-is-the-board-2026-10-07)).
+
+### Added - three levels and a hint bulb in an unranked Minesweeper game
+
+A "Libre" game offers Debutant, Intermediaire and Expert - the ranked board at three generation difficulties, never three sizes - and a bulb that lights the number(s) justifying the next certain move - never the move - a misplaced flag, or the mines-left counter when only the total decides; ranked is unchanged
+([levels](docs/wiki/frontend/modules/minesweeper.md#three-levels-in-an-unranked-game-owner-2026-11-25), [bulb](docs/wiki/frontend/modules/minesweeper.md#the-bulb-a-hint-in-an-unranked-game-owner-2026-11-25)).
+
+### Changed - the unranked levels differ by generation, not by size
+
+Debutant, Intermediaire and Expert all play the ranked board and differ by the reasoning score its
+generator climbs to (0, 30, 60); ranked is untouched
+([levels](docs/wiki/frontend/modules/minesweeper.md#three-levels-in-an-unranked-game-owner-2026-11-25)).
+
+### Changed - one mode pastille and a sheet of four replace the Classe / Libre toggle and the level chip
+
+A newcomer now lands in Libre on Debutant instead of the ranked board; a tap on the pastille opens the four
+modes with a line each, and the mode stays locked once the first cell is dug
+([mode sheet](docs/wiki/frontend/modules/minesweeper.md#the-mode-sheet-owner-2026-11-26)).
+
+### Added - a pattern catalogue as the Minesweeper tutorial's annex, with the reduction of a number
+
+`/games/tutorial/patterns` lists every named pattern of the reference catalogue (1-1+, 1-2, 1-2C, the holes,
+the triangles, 1>2<1, the T pattern, the dependency chain, combinations...) on playable boards, with the
+reduction of a number by its flags (1-1R, 1-2R, 1-2-1R); the grids are open, their unimportant cells dotted and
+their mines count unknown, and every board is proved by enumeration
+([catalogue](docs/wiki/frontend/modules/minesweeper.md#the-pattern-catalogue-the-tutorials-annex-owner-2026-11-26)).
+
+### Changed - the Minesweeper tutorial teaches no pattern, and the catalogue follows the reference's own diagrams
+
+The tutorial keeps the gestures and the rules (reveal, flag, automatic flags, chord, counter); every pattern is in
+`/games/tutorial/patterns`, now built entry by entry from the diagrams and the steps of the minesweeper.online
+catalogue, in its order and its families, with its full boards for mine counting and combinations; each board is
+still proved by enumeration
+([catalogue](docs/wiki/frontend/modules/minesweeper.md#the-pattern-catalogue-the-tutorials-annex-owner-2026-11-26)).
+
+### Fixed - the Minesweeper tutorial's 1-3-1 and 2-2-2 corner lessons no longer let a board edge skip the pattern
+
+They now sit in an open corner where no number settles its cells alone and the corner number is the only way to
+decide the corner cell, which a test enforces; the 2-2-2 teaches that its outermost corner is safe and the two
+cells at the ends of the arms are mines
+([tutorial](docs/wiki/frontend/modules/minesweeper.md#the-tutorial-owner-2026-11-25)).
+
+### Added - a Minesweeper tutorial with playable mini-grids and an "Indice" button
+
+`/games/tutorial` teaches opening, flagging, the automatic flags, the chord, the mines counter and the 1-1,
+1-2-1, 1-2-2-1, and corner 1-3-1 and 2-2-2 patterns on small grids that run on the real engine; the hint
+button rings the number it reads and outlines red (certain mine), yellow (a group, with its mine count) or
+green (safe), and every lesson and highlight is proved by enumeration rather than read
+([tutorial](docs/wiki/frontend/modules/minesweeper.md#the-tutorial-owner-2026-11-25)).
+
+### Added - the MLS cross-version gate carries a state through the build a rollback lands on
+
+`mls-forward-compat.sh` now has today's code write a state holding the app's ledgers, the newest stable open it, read a frame and save it, and today reopen it: each field must come back unchanged or dropped whole, never corrupted ([cicd](docs/wiki/cicd.md#what-it-refuses-and-why-it-is-not-a-semver-rule)).
+
+### Fixed - Android no longer suggests replies to a generic "Nouveau message" line
+
+When the newest line of a conversation notification is a placeholder, the system's generated replies and contextual actions are turned off; "Répondre" and "Marquer comme lu" stay ([mobile](docs/wiki/frontend/mobile.md#a-push-the-network-refused-is-held-and-replayed-2026-11-25)).
+
+### Fixed - an offline chat socket and a media that dropped mid-download are no longer errors, and the bubble redraws when the link returns
+
+The native socket plugin now rejects a failed TCP connect as a typed object the page reads by its field, a media body that fails after the head answered is typed as unreachable, and a bubble holding that failure downloads again on the connectivity store's reconnect event ([offline-and-weak-network](docs/wiki/frontend/offline-and-weak-network.md)).
+
+### Fixed - a post linking an event of another association says why it is refused
+
+The server refused it with a bare 400 the composer could not word; it now answers the stable code `POST_EVENT_NOT_OF_AUTHOR_ASSOCIATION`, the composer explains it in French and English, its picker lists only what the author may link, and an event the author co-organises is accepted ([associations](docs/wiki/frontend/modules/associations.md#which-agenda-event-a-post-may-link-2026-11-26)).
+
+### Fixed - a prekey count that got no answer no longer mints fifty key packages
+
+A request with no answer, a refusal or an answer without a count is a typed `PrekeyCountUnreadableError`; the round mints no one-time package and still refreshes the fallback ([key-package-pool](docs/wiki/protocols/key-package-pool.md#a-count-nobody-gave-is-not-a-zero-2026-11-25)).
+
+### Fixed - a message push the network refused becomes its real text once the network is back (Android)
+
+A push whose decrypt could not reach the server was treated as a refusal: a worker that only sweeps the database, a log line blaming the decryption, and a generic "Nouveau message" line nothing ever upgraded. The failure (and a held MLS state lock) is now its own outcome, the frame is held and replayed on network return without blocking WorkManager's threads, and the real line replaces the generic one at its place ([mobile](docs/wiki/frontend/mobile.md#a-push-the-network-refused-is-held-and-replayed-2026-11-25)).
+
+### Fixed - the quick-reply drain no longer says replies wait when none was announced
+
+Only the native side's event says a reply waits before a session exists, and one return to the front drains once ([mobile](docs/wiki/frontend/mobile.md)).
+
+### Fixed - the "read" trill no longer plays when the conversation is not on screen
+
+It asked whether the conversation was selected, which stays true after the reader leaves the chat page; it now asks the same on-screen predicate as the arrival tone ([chat](docs/wiki/frontend/modules/chat.md#a-selection-is-not-a-screen-2026-10-10)).
+
+### Fixed - a member registration that got no answer is a warning, not an error
+
+`registerMember` narrates a transport failure, or a page that is not our API's (a portal's, any status), at WARN by its class, and keeps ERROR for a defect ([chat-delivery](docs/wiki/services/chat-delivery.md)).
+
+### Changed - the 1.8.1 stable's Android build was rescued by a rerun of the failed job
+
+The build hit a Maven Central `429 Too Many Requests` once; the failed job was rerun and passed, with every gate run and none skipped (not an admin bypass). The dependency on a third-party rate limit at build time is [reduced](docs/wiki/cicd.md#the-android-release-build-resolves-from-a-cache-ci-completes-and-proves-offline-2026-11-25).
+
+### Changed - a retired replica's error lines are printed before the deploy removes it
+
+`retire` used to delete the only copy of what a replica logged during its drain, so the two `502`s of one release could not be traced to a hop; the lines are now printed first, and the rolling test shows them when a POST fails ([cicd](docs/wiki/cicd.md)).
+
+### Changed - one money formatter, and the shop's amount keypad takes the physical keyboard
+
+`formatAmount` now delegates to `formatAmountCents`, the admin purchase and form price lines use it
+instead of `toFixed(2)`, and the "Autre montant" keypad takes digits, `,`/`.` and Backspace once
+focused, each picker listening on its own element ([shop](docs/wiki/cotisations.md)).
+
+### Fixed - the web server no longer imports a package its image does not ship
+
+The `v1.8.2-alpha.5` dev deploy was refused: the in-app browser gate reached `@tauri-apps/plugin-os` through the store URLs, and the new server replica could not start (the old one kept serving; production was never touched). The store URLs moved to a module with no dependency, and the production build now fails when the server imports any package ([architecture](docs/wiki/frontend/architecture.md#the-server-half-imports-no-package-2026-11-26)).
+
+### Fixed - "Synchronisation en attente" no longer appears with the app open
+
+The Android background sweep counted every deferral to the open app as a failed attempt and asked to open the app after three; it now asks only after three real failures in a row ([mobile](docs/wiki/frontend/mobile.md#the-pending-db-sweep-raises-its-notice-on-real-failures-only-2026-11-26)).
+
+### Fixed - the thread's last-visible measure no longer loses the newest row behind a system line
+
+A system row (call, device notice) had no `msg-` id, and the binary search read it as "below", so a DM ending after one reported its newest row out of view (the entry line, the unread pill's anchor). Every row now has one box and the search skips a boxless one and names it ([chat](docs/wiki/frontend/modules/chat.md#reading-the-add_msg-selected-flag-against-chat_view)).
+
+### Fixed - the strip under the Android tab bar no longer stays a conversation's grey
+
+The ground painted under the WebView was posted once per keyboard rise and never reset; it is now re-read from the bottom edge whenever that surface changes, and posted only when it differs ([keyboard-and-send-motion](docs/wiki/frontend/keyboard-and-send-motion.md)).
+
+### Added - the post search filters by person and by association
+
+Two filters under the search field, alone or with the words; they only narrow what the reader may already see ([posts](docs/wiki/frontend/modules/posts.md#the-search-stops-where-the-feed-stops-2026-10-04)).
+
+### Fixed - the scroll-to-bottom arrow carries its number after a catch-up into a scrolled-up thread
+
+The open window marked the catch-up read as it landed, so the arrow counted 0; it now counts against the marks held when the reader left the end of the thread ([chat](docs/wiki/frontend/modules/chat.md#the-scroll-to-bottom-badge-counts-only-what-lies-below-the-viewport-2026-11-01)).
+
+### Added - an integration case for a sweeper-settled tier the buyer no longer rises to
+
+The Lydia reconciliation spec now runs the real tier settlement (the association's cotisation mode, a
+held tag, two tiers): a checkout of the cheaper tier settled by the sweep while the dearer one is held
+is recorded `paid_not_granted` and swaps no tag ([cotisations](docs/wiki/cotisations.md)).
+
+### Fixed - P1: the v23 rebuild of the local message table could lose a device's whole history; it now proves itself in one transaction, never drops the old table, and the lost rows are asked back from peers
+
+`1.8.1` dropped `messages` and renamed its copy on two pooled connections, and every caller of the failed open then started its own; the open is single-flight now, the swap is one guarded transaction, a replaced table is set aside until proved, and audit generation 2 re-asks every group ([local-store-rebuild](docs/wiki/frontend/local-store-rebuild.md)).
+
+### Fixed - a community history answer no longer relays v1 seeds every receiver refuses
+
+An answering device drops its held v1 sessions from the seeds it sends, and a salon's v1 rows that
+can never be read are said once per salon at info instead of a warn on every load
+([legacy-compatibility](docs/wiki/legacy-compatibility.md#no-date-yet---the-graine-v1-reader-a-salon-row-with-no-signature-under-a-session-with-no-endorsement)).
+
+### Changed - a voice note plays toward -16 LUFS and is raised by at most +12 dB, its own law instead of the video's -14 and +6
+
+A whisper is lifted twice as far as a video may be, and the cap and the peak clamp keep it from becoming noise; the loudness is still measured at the recording ([sounds](docs/wiki/frontend/sounds.md#a-voice-note-is-a-recording-not-a-call-owner-2026-11-20)).
+
 ## [1.8.1] - 2026-11-25
 
 ### Fixed - a seed whose storing failed is no longer lost, nor counted as a network loss
