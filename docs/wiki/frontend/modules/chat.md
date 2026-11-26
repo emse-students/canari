@@ -3003,6 +3003,34 @@ read at the pick"), `outbox.test.ts`, `fileDownload.test.ts` and the gallery plu
 tests; the native copy is verified by compiling only until the reading below. The reading owed on the bench phone is
 [a backlog entry](../../backlog.d/reading-picked-file-sent-from-the-gallery-and-a-cloud-item.md).
 
+### What the picked file's copy tells the page (2026-11-26)
+
+Follow-ups of #4154, from its review and the alpha.8 sittings.
+
+- **A provider stating no size is not a warning.** Google Photos cloud items state none; the copy is
+  read to its end, so nothing is lost, and every such pick logged a WARN. It is one debug line now,
+  with the bytes read.
+- **A pick over the ceiling is said as too large.** The page only ever receives an EMPTY file for a
+  refused pick, which cannot tell "over 200 MB" from "unreadable", so the native side dispatches
+  `canari-pick-copy` (`phase: refused, reason: too-large, name, limitMb`) on the WebView and the
+  page (`pickCopyState.svelte.ts`) remembers it by file name; the pick's refusal then says
+  `chat_media_pick_too_large`. A pick whose provider STATES more than the ceiling is refused before
+  a byte is copied. Nothing is guessed from the empty file.
+- **The copy's progress is drawn.** The chooser answers only after every copy is done, so a large pick
+  showed nothing: the same event carries `start` and each whole percent of `progress` (only when a
+  size is stated; a function of the bytes read, no timer) and `end`, and the composer draws one line
+  (`chat_media_reading`, `chat_media_reading_percent`).
+- **A video over 200 MB is still copied, deliberately.** The provider's stated size cannot be proved
+  (it was 0 for the Downloads logs), so the stream is the only truth; the copy is sequential disk I/O,
+  the encoder then reads it by ranges, and the progress line is what the member was missing. A copy
+  that runs out of disk is refused as unreadable, said in the log.
+- **One fact, one line for a save's recorded size.** Kotlin, Rust and the page each logged the
+  mismatch at error; the page (`fileDownload.ts`) is the layer that knows the member's save and is
+  the only one that accuses. Kotlin and Rust say it at debug.
+
+Pinned by `pickCopyState.svelte.test.ts` and `useMessaging.mediaEnqueue.svelte.test.ts`; the native
+half by compiling, then [a reading](../../backlog.d/reading-the-picked-file-copy-progress-and-too-large.md).
+
 ### A 2xx a captive portal answered is no answer (2026-10-25)
 
 Under a captive portal every request is answered `200 text/html` without reaching the server. The

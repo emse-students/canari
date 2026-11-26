@@ -150,6 +150,7 @@ import {
 } from '$lib/utils/chat/messageWrittenError';
 import { beginOutboxEnqueue } from '$lib/utils/chat/outboxActivity.svelte';
 import { ownPickedFile, PickedFileUnreadableError } from '$lib/utils/chat/ownPickedFile';
+import { pickCopy } from '$lib/utils/chat/pickCopyState.svelte';
 import { unregisterDeviceNotices } from '$lib/utils/chat/deviceNoticeWiring';
 import { resetJoinRequests } from '$lib/utils/chat/joinRequests.svelte';
 import { resetAnswerDecisionsSaid } from '$lib/utils/graine/frameHandler';
@@ -4140,6 +4141,17 @@ export function useMessaging() {
         file = await ownPickedFile(picked);
       } catch (e) {
         if (!(e instanceof PickedFileUnreadableError)) throw e;
+        // A SIZE REFUSAL IS SAID AS ONE: the Android copy handed over an empty file because the
+        // pick was over its ceiling, and told the page by name (`pickCopyState`) - "could not be
+        // read" would send the member to a file that is perfectly readable.
+        const limitMb = e.reason === 'empty' ? pickCopy.takeRefusal(picked.name) : null;
+        if (limitMb !== null) {
+          ctx.log(
+            `[MEDIA] refused a picked ${picked.type || 'typeless'} file: over the ${limitMb} Mo the phone's copy takes`
+          );
+          ctx.setSendError(m.chat_media_pick_too_large({ limit: limitMb }));
+          continue;
+        }
         console.error(
           `[MEDIA] refused a picked ${picked.type || 'typeless'} file at the pick (${e.reason}, reported ${e.reportedSize} bytes): ${String(e.cause ?? e.message)}`
         );

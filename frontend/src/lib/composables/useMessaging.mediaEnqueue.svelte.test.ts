@@ -431,6 +431,19 @@ describe('a picked file is read at the pick, and one with no byte is never queue
     errorSpy.mockRestore();
   });
 
+  it('a pick the Android copy refused for its SIZE is said as too large, not as unreadable', async () => {
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    // Imported AFTER freshMessaging: the registry was reset, so this is the module the code reads.
+    const { pickCopy } = await import('$lib/utils/chat/pickCopyState.svelte');
+    pickCopy.apply({ phase: 'refused', reason: 'too-large', name: 'BIG.pdf', limitMb: 200 });
+    await messaging.handleFilesSelected([view(0, async () => new ArrayBuffer(0), 'BIG.pdf')], ctx);
+    expect(messaging.pendingMediaFilesFor(CONVO)).toEqual([]);
+    expect(ctx.setSendError).toHaveBeenCalledWith(m.chat_media_pick_too_large({ limit: 200 }));
+    expect(ctx.setSendError).not.toHaveBeenCalledWith(m.chat_media_unreadable());
+    expect(enqueueMock).not.toHaveBeenCalled();
+  });
+
   it('a pick whose read THROWS is refused the same way, and the others of the pick are staged', async () => {
     const messaging = await freshMessaging();
     const ctx = makeContext();

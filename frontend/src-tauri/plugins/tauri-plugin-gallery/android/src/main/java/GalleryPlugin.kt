@@ -228,13 +228,9 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
                 // length from this column, so a document recorded shorter than it is reads back
                 // short (or empty) when it is picked again - in Canari's own composer included.
                 val recordedBytes = recordedSize(uri)
-                if (recordedBytes == null) {
-                    Log.w(TAG, "writeDocument: $written bytes written, stream closed - the provider states no size")
-                } else if (recordedBytes != written) {
-                    Log.e(TAG, "writeDocument: $written bytes written but the provider records $recordedBytes")
-                } else {
-                    Log.d(TAG, "writeDocument: $written bytes written, stream closed, provider records $recordedBytes")
-                }
+                // ONE FACT, ONE ACCUSING LINE: this is the origin and says it at debug; the page is the
+                // layer that knows what the member saved and accuses once (`fileDownload.ts`).
+                Log.d(TAG, "writeDocument: $written bytes written, stream closed, provider records $recordedBytes")
                 val answer = JSObject().put("written", written)
                 if (recordedBytes != null) answer.put("recorded", recordedBytes)
                 invoke.resolve(answer)
