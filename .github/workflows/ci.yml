@@ -880,6 +880,9 @@ jobs:
 
       - name: Build the production frontend and assert what it carries
         if: github.event_name == 'push' || needs.changes.outputs.run-frontend-build == 'true'
+        # A ceiling on a hang, never a verdict: the server start ends on its ready line or its exit,
+        # and this job has no timeout of its own (GitHub's default is six hours).
+        timeout-minutes: 15
         env:
           BUILD_SHA: ${{ github.sha }}
         run: bash .github/scripts/checks.sh frontend-build "$BUILD_SHA"

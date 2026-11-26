@@ -46,8 +46,10 @@ const LISTENING = /^Listening on (http:\/\/\S+)/;
  * above it, run under `node` (the image's runtime - bun would auto-install a missing package and
  * hide the defect), and must print its ready line and answer the healthcheck page with 200.
  *
- * It ends on events only: the ready line, or the process exiting first. A hang is bounded by the CI
- * job's own timeout, not by a clock here.
+ * It ends on events only: the ready line, or the process exiting first. A server that does neither
+ * (adapter-node rewording its ready line would be one) is stopped by the build step's
+ * `timeout-minutes` in `ci.yml`, the only bound, for a run in which nothing happens at all: the
+ * `test-frontend` job has none of its own, so GitHub's default would hold it for six hours.
  *
  * @param {string} buildDir the adapter-node `build/` directory
  * @param {string} [nodeBin] the node executable
@@ -58,7 +60,8 @@ export async function ssrStartProblems(buildDir, nodeBin = 'node') {
   const app = join(root, 'app');
   cpSync(buildDir, app, { recursive: true });
   // NODE_PATH or NODE_OPTIONS from the caller could resolve a package the image does not have.
-  const env = { ...process.env, PORT: '0', HOST: '127.0.0.1' };
+  // NODE_ENV is the image's (`ENV NODE_ENV=production`), so the server runs the branch it runs there.
+  const env = { ...process.env, NODE_ENV: 'production', PORT: '0', HOST: '127.0.0.1' };
   delete env.NODE_PATH;
   delete env.NODE_OPTIONS;
   const child = spawn(nodeBin, ['index.js'], { cwd: app, env, stdio: ['ignore', 'pipe', 'pipe'] });

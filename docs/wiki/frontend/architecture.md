@@ -51,7 +51,8 @@ for package specifiers flagged dozens of them, plus prose in string literals): t
 a temporary directory with no `node_modules` above it, started with `node index.js` (bun would
 auto-install a missing package and hide the defect), and must print adapter-node's `Listening on`
 line and answer `/login` - the image's own healthcheck - with 200. It ends on events (the ready line,
-or the process exiting first), never on a clock. It runs with the production build (`checks.sh
+or the process exiting first), never on a clock; the CI step's `timeout-minutes` is only a ceiling on a
+server that does neither, since `test-frontend` has no timeout of its own. It runs with the production build (`checks.sh
 frontend-build`, on node 24 like the image), so `main`'s CI is red on such a commit and the release
 preflight (`CI passed` on the commit) refuses to cut it ([cicd](../cicd.md)). On `origin/main` at
 `v1.8.2-alpha.5` it fails with the very `ERR_MODULE_NOT_FOUND` of the deploy.
