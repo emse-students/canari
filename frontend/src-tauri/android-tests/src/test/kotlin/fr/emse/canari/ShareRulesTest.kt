@@ -36,6 +36,21 @@ class ShareRulesTest {
     }
 
     @Test
+    fun aPickedVideoHasNoCeilingBecauseItsEncoderReadsItByRanges() {
+        // A camera clip over 200 MB was always sendable from the composer: a ceiling here would
+        // hand it over empty and the page would call it unreadable.
+        assertEquals(null, ShareRules.pickCeiling("video/mp4"))
+        assertEquals(null, ShareRules.pickCeiling("video/quicktime"))
+    }
+
+    @Test
+    fun anyOtherPickKeepsTheShareCeiling() {
+        assertEquals(ShareRules.MAX_FILE_BYTES, ShareRules.pickCeiling("application/pdf"))
+        assertEquals(ShareRules.MAX_FILE_BYTES, ShareRules.pickCeiling("image/jpeg"))
+        assertEquals(ShareRules.MAX_FILE_BYTES, ShareRules.pickCeiling("application/octet-stream"))
+    }
+
+    @Test
     fun ourOwnFileProviderIsRefused() {
         assertTrue(ShareRules.isOwnAuthority("fr.emse.canari.fileprovider", pkg))
         assertTrue(ShareRules.isOwnAuthority("fr.emse.canari", pkg))

@@ -2968,8 +2968,11 @@ trusted to a provider's statement, so the bytes are taken by reading the stream 
   stream is read to its END into `cache/picked_inbox/<pick>/<index>/<name>`, exactly as
   `IncomingShare.kt` copies a share, and the page gets this app's FileProvider URI for the copy,
   whose stated size is its real length. Refused like a share (not `content://`, our own authority, a
-  grant the member gave Canari, over `ShareRules.MAX_FILE_BYTES`) or unreadable, a pick is handed
-  over EMPTY under its name, so the page refuses it at the pick and says so. A stated size that
+  grant the member gave Canari, a non-video over `ShareRules.pickCeiling`) or unreadable, a pick is
+  handed over EMPTY under its name, so the page refuses it at the pick and says so. **A video has no
+  ceiling there** (review of #4154): its encoder reads the source by ranges and stages its own output,
+  so the composer always took a camera clip over 200 MB; only the disk bounds its copy. The hunk in
+  wry is asserted by `wry-main-pipe-patch.test.mjs`, which a rebase dropping it fails. A stated size that
   differs from the bytes read is an ERROR line (`pick N copied: ..., but its provider states S`). The
   copies are swept by the next process (`PickedFiles.sweepOnce`), never under a page that may still
   read one (a video's encoder runs after the pick).

@@ -23,6 +23,18 @@ object ShareRules {
     const val MAX_TOTAL_BYTES = 300L * 1024 * 1024
 
     /**
+     * Per-file ceiling for a pick of the WebView's file chooser (`PickedFiles`), or null for none.
+     *
+     * A VIDEO HAS NONE: the composer never reads a picked video whole - its encoder reads the source
+     * by ranges and stages its own output, held to the server's ceiling by its byte budget - so a
+     * camera clip of any length was always sendable from the composer, and a ceiling here would
+     * refuse it as unreadable. What bounds its copy is the disk: a copy that runs out of room fails
+     * and the pick is refused, said. Every other type keeps [MAX_FILE_BYTES]: the page reads it whole
+     * at the pick, and the server's own ceiling is below it.
+     */
+    fun pickCeiling(mime: String): Long? = if (mime.startsWith("video/")) null else MAX_FILE_BYTES
+
+    /**
      * How many bytes the next file may take, given what the share has already kept: the smaller of
      * the per-file ceiling and what is left of the total. Zero or less means it is refused unread.
      */

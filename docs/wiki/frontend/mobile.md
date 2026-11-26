@@ -2558,7 +2558,8 @@ being a SIGABRT from the looper callback, so read the frames below `cb_handler` 
 `handle_message` means a real regression.
 
 `.github/scripts/tests/wry-main-pipe-patch.test.mjs` fails a rebase that drops any hunk (in
-`main_pipe.rs` and in `binding.rs`'s looper callback), proves each check against the upstream code it
+`main_pipe.rs`, in `binding.rs`'s looper callback, and the file chooser's `PickedFiles` hunk in
+`kotlin/RustWebChromeClient.kt`), proves each check against the upstream code it
 replaces, and asserts the `=0.57.1` pin and a lockfile entry with no registry `source`. The device
 reading is owed:
 [device-verification](../device-verification.md#wmp-the-wry-main-pipe-after-an-activity-destroy---owed-on-android).

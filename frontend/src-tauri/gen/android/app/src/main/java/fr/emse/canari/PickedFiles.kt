@@ -28,9 +28,10 @@ import java.util.concurrent.Executors
  * the copy's real length.
  *
  * A pick that cannot be copied (not `content://`, one of our own providers, a grant the member gave
- * Canari, unreadable, over `ShareRules.MAX_FILE_BYTES`) is handed over as an EMPTY file of its name:
- * the page's pick-time read (`ownPickedFile.ts`) refuses an empty file with the member-facing
- * "could not be read" banner, so the refusal is SAID, and never queued.
+ * Canari, unreadable, a non-video over `ShareRules.pickCeiling`) is handed over as an EMPTY file of
+ * its name: the page's pick-time read (`ownPickedFile.ts`) refuses an empty file with the
+ * member-facing "could not be read" banner, so the refusal is SAID, and never queued. A video has no
+ * ceiling here: its encoder reads it by ranges, and the composer always took a clip of any length.
  *
  * The copies live in `cache/picked_inbox/<pick id>/<index>/<name>` and are deleted with the next process
  * (`sweepOnce`, from `MainActivity.onCreate`, before any page can hold one): within a process the
@@ -38,7 +39,7 @@ import java.util.concurrent.Executors
  * under it.
  */
 object PickedFiles {
-    /** A pick over `ShareRules.MAX_FILE_BYTES`: typed, so the line names it without a message. */
+    /** A pick over `ShareRules.pickCeiling`: typed, so the line names it without a message. */
     private class PickTooLarge : Exception()
 
     private const val TAG = "PickedFiles"
@@ -107,6 +108,7 @@ object PickedFiles {
             target.writeBytes(ByteArray(0))
             return target
         }
+        val ceiling = ShareRules.pickCeiling(mime)
         var total = 0L
         try {
             resolver.openInputStream(uri).use { input ->
@@ -117,13 +119,13 @@ object PickedFiles {
                         val read = input.read(buffer)
                         if (read < 0) break
                         total += read
-                        if (total > ShareRules.MAX_FILE_BYTES) throw PickTooLarge()
+                        if (ceiling != null && total > ceiling) throw PickTooLarge()
                         output.write(buffer, 0, read)
                     }
                 }
             }
         } catch (e: Exception) {
-            val why = if (e is PickTooLarge) "over ${ShareRules.MAX_FILE_BYTES / 1024 / 1024} MB" else e.javaClass.simpleName
+            val why = if (e is PickTooLarge) "$mime over ${(ceiling ?: 0L) / 1024 / 1024} MB" else e.javaClass.simpleName
             Log.w(TAG, "pick $index not copied ($why) - handed over empty, the page refuses it")
             target.writeBytes(ByteArray(0))
             return target
