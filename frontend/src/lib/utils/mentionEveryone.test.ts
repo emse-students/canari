@@ -1,37 +1,53 @@
 /**
- * `@tous` (owner, 2026-11-25): its recognition, its bubble chip and its picker row. The decision it
- * feeds is asserted against the shared contract in `conversationLevel.contract.test.ts`.
+ * `@tous` (owner, 2026-11-25; aligned 2026-11-26, "comme les autres mentions"): a mention like any
+ * other - the picked row writes `@[everyone]`, the word typed by hand is text. Its recognition, its
+ * bubble chip and its picker row. The decision it feeds is asserted against the shared contract in
+ * `conversationLevel.contract.test.ts`.
  */
 import { describe, expect, it } from 'vitest';
-import { mentionsEveryone } from './mentions';
+import { MENTION_EVERYONE_TOKEN, mentionsEveryone } from './mentions';
 import { formatMentionsForPreview, splitTextWithMentions } from './mentions.parse';
+import { countMentionTokens } from './mentions/mentionEditor';
 import {
   MENTION_EVERYONE_ROW_ID,
   withEveryoneRow,
 } from '$lib/composables/useMentionAutocomplete.svelte';
+import { m } from '$lib/paraglide/messages';
 
 describe('mentionsEveryone', () => {
-  it.each(['@tous', '@everyone', 'rdv @Tous!', '(@EVERYONE)', 'a\n@tous'])('calls: %s', (t) => {
-    expect(mentionsEveryone(t)).toBe(true);
-  });
-  it.each(['tous', 'mail@tous.fr', '@toustes', '@tous-les', 'x/@tous', '@@tous'])(
-    'does not call: %s',
+  it.each(['@[everyone]', 'rdv @[everyone]!', '@[EVERYONE]', 'a\n@[everyone] b'])(
+    'calls: %s',
     (t) => {
-      expect(mentionsEveryone(t)).toBe(false);
+      expect(mentionsEveryone(t)).toBe(true);
     }
   );
+  // Typed by hand, like a member's name typed by hand: text, nobody is called.
+  it.each(['@tous', 'merci @tous', '@everyone', 'tous', '@[everyon]'])('does not call: %s', (t) => {
+    expect(mentionsEveryone(t)).toBe(false);
+  });
 });
 
 describe('splitTextWithMentions', () => {
-  it('cuts the call out as its own part, kept as typed', () => {
-    expect(splitTextWithMentions('salut @Tous, rdv')).toEqual([
+  it("cuts the token out as its own part, drawn in the reader's word", () => {
+    expect(splitTextWithMentions(`salut ${MENTION_EVERYONE_TOKEN}, rdv`)).toEqual([
       { type: 'text', value: 'salut ' },
-      { type: 'everyone', value: '@Tous' },
+      { type: 'everyone', value: `@${m.mention_everyone_word()}` },
       { type: 'text', value: ', rdv' },
     ]);
   });
-  it('previews it unchanged', () => {
-    expect(formatMentionsForPreview('@tous rdv')).toBe('@tous rdv');
+  it('leaves the word typed by hand as text', () => {
+    expect(splitTextWithMentions('merci @tous')).toEqual([{ type: 'text', value: 'merci @tous' }]);
+  });
+  it('previews the token as the word, never the raw token', () => {
+    expect(formatMentionsForPreview(`${MENTION_EVERYONE_TOKEN} rdv`)).toBe(
+      `@${m.mention_everyone_word()} rdv`
+    );
+  });
+});
+
+describe('countMentionTokens', () => {
+  it('counts a picked @tous as a chip, like a member', () => {
+    expect(countMentionTokens(`${MENTION_EVERYONE_TOKEN} @[${'a'.repeat(64)}] @tous`)).toBe(2);
   });
 });
 

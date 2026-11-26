@@ -41,10 +41,12 @@ describe('@tous', () => {
   });
 
   it('counts as a mention of the reader only where it is honoured', () => {
-    expect(mentionsUser('@tous rdv 18h', me, 'honoured')).toBe(true);
-    expect(mentionsUser('@everyone rdv 18h', me, 'honoured')).toBe(true);
-    expect(mentionsUser('@tous rdv 18h', me, 'ignored')).toBe(false);
+    expect(mentionsUser('@[everyone] rdv 18h', me, 'honoured')).toBe(true);
+    expect(mentionsUser('@[everyone] rdv 18h', me, 'ignored')).toBe(false);
+    // Typed by hand, the word is text - like a name typed by hand (owner, 2026-11-26).
+    expect(mentionsUser('@tous rdv 18h', me, 'honoured')).toBe(false);
+    expect(mentionsUser('@everyone rdv 18h', me, 'honoured')).toBe(false);
     // A personal mention is never ignored, whatever the call to everyone.
-    expect(mentionsUser(`@[${me}] @tous`, me, 'ignored')).toBe(true);
+    expect(mentionsUser(`@[${me}] @[everyone]`, me, 'ignored')).toBe(true);
   });
 });

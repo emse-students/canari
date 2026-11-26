@@ -24,13 +24,14 @@ object NotificationLevelGate {
     private val MENTION_TOKEN = Regex("@\\[([0-9a-fA-F]{64})\\]")
 
     /**
-     * `@tous`, or its alias `@everyone`, as a whole word in any case: a call to every member, the
-     * reader included. The pattern of the client's `MENTION_EVERYONE_PATTERN` (`utils/mentions.ts`),
-     * pinned by `libs/contracts/mention-decision.cases.json`. Read on THIS path only, the MLS one,
-     * where every member may call everyone; a salon's call is vouched for by the server and arrives
-     * as `mentioned` (`handleChannelMessage`).
+     * `@[everyone]`, the token a `@tous` PICKED from the list writes: a call to every member, the
+     * reader included. Like a member's mention, the word typed by hand is text and calls nobody
+     * (owner, 2026-11-26). The client's `MENTION_EVERYONE_TOKEN` (`utils/mentions.ts`), pinned by
+     * `libs/contracts/mention-decision.cases.json`. Read on THIS path only, the MLS one, where every
+     * member may call everyone; a salon's call is vouched for by the server and arrives as
+     * `mentioned` (`handleChannelMessage`).
      */
-    private val EVERYONE_CALL = Regex("(?<![A-Za-z0-9_@./])@(?:tous|everyone)(?![A-Za-z0-9_-])", RegexOption.IGNORE_CASE)
+    const val EVERYONE_TOKEN = "@[everyone]"
 
     /** What [mentionedUserIds] holds for a call to every member - never a user id (64 hex). */
     const val EVERYONE = "everyone"
@@ -47,7 +48,7 @@ object NotificationLevelGate {
     /** Every user id the plaintext mentions, lower-cased, plus [EVERYONE] when it calls everyone. */
     fun mentionedUserIds(text: String): Set<String> {
         val ids = MENTION_TOKEN.findAll(text).map { it.groupValues[1].lowercase() }.toMutableSet()
-        if (EVERYONE_CALL.containsMatchIn(text)) ids.add(EVERYONE)
+        if (text.contains(EVERYONE_TOKEN, ignoreCase = true)) ids.add(EVERYONE)
         return ids
     }
 

@@ -6,9 +6,9 @@ target: 1.8.2
 
 **What to read, per phone** (the phone's account at "Mentions" in the conversation, the app backgrounded; the sender on another device):
 
-1. **A group.** A plain member writes `@tous rdv 18h`: the phone rings with the mention sound (Android: the mentions channel; iOS: time-sensitive, mention trill). Then `@everyone`: the same. Then `merci a tous` (no `@`): nothing.
+1. **A group.** A plain member PICKS the `@tous` row and sends `@tous rdv 18h`: the phone rings with the mention sound (Android: the mentions channel; iOS: time-sensitive, mention trill), and the banner reads "@tous" (never `@[everyone]`). Then `merci @tous` TYPED by hand, not picked: nothing, as for a name typed by hand.
 2. **A salon, sender is a moderator.** The composer offers the `@tous` row; the message rings the phone as a mention; the bubble draws `@tous` as a chip.
-3. **A salon, sender is a plain member.** The composer does NOT offer the row; typed by hand, the message is sent and does NOT ring a phone at "Mentions"; the server log carries `[MENTION_EVERYONE] not vouched`.
+3. **A salon, sender is a plain member.** The composer does NOT offer the row; typed by hand, the word is text and rings nobody.
 4. **"Aucune".** Set the conversation (group, then salon) to "Aucune": a moderator's `@tous` rings nothing.
 
 **What closes it**: items 1 to 4 pass on the Mi 9T AND the iPhone 12. A failure names the surface that did not obey (the composer offer, the server's vouching, `NotificationLevelGate`, the extension's `levelDecision`, the client's `everyoneMentionOf`).

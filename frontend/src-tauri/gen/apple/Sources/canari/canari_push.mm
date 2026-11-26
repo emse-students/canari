@@ -3796,7 +3796,9 @@ static NSString *CanariRenderMentions(NSString *text, NSString *_Nullable myUser
     return text;
   }
   NSRegularExpression *regex =
-      [NSRegularExpression regularExpressionWithPattern:@"@\\[([0-9a-fA-F]{64})\\]" options:0 error:nil];
+      [NSRegularExpression regularExpressionWithPattern:@"@\\[([0-9a-fA-F]{64}|everyone)\\]"
+                                                options:NSRegularExpressionCaseInsensitive
+                                                  error:nil];
   if (regex == nil) {
     return text;
   }
@@ -3810,7 +3812,10 @@ static NSString *CanariRenderMentions(NSString *text, NSString *_Nullable myUser
     NSString *mentioned = [[text substringWithRange:[match rangeAtIndex:1]] lowercaseString];
     BOOL isMe = me.length > 0 && [mentioned isEqualToString:me];
     [out appendString:@"@"];
-    if (isMe) {
+    if ([mentioned isEqualToString:@"everyone"]) {
+      // A picked `@tous` (`@[everyone]`): the call's word, never a name.
+      [out appendString:CanariLocalized(@"notif.mention.everyone")];
+    } else if (isMe) {
       [out appendString:CanariLocalized(@"notif.mention.you")];
     } else {
       // Read only when a token names somebody else.
@@ -3836,20 +3841,13 @@ static NSString *CanariRenderMentions(NSString *text, NSString *_Nullable myUser
                                              range:NSMakeRange(0, out.length)];
 }
 
-// Whether a decrypted MLS body calls every member: `@tous`, or its alias `@everyone`, as a whole word
-// in any case. The pattern of the client's `MENTION_EVERYONE_PATTERN`, Android's
-// `NotificationLevelGate` and the extension's `everyoneCallPattern`, pinned for all of them by
-// `libs/contracts/mention-decision.cases.json`.
+// Whether a decrypted MLS body calls every member: it holds `@[everyone]`, the token a `@tous`
+// PICKED from the list writes. Like a member's mention, the word typed by hand is text and calls
+// nobody (owner, 2026-11-26). The client's `MENTION_EVERYONE_TOKEN`, Android's
+// `NotificationLevelGate.EVERYONE_TOKEN` and the extension's `everyoneToken`, pinned for all of them
+// by `libs/contracts/mention-decision.cases.json`.
 static BOOL CanariCallsEveryone(NSString *body) {
-  static NSRegularExpression *re;
-  static dispatch_once_t once;
-  dispatch_once(&once, ^{
-    re = [NSRegularExpression
-        regularExpressionWithPattern:@"(?<![A-Za-z0-9_@./])@(?:tous|everyone)(?![A-Za-z0-9_-])"
-                             options:NSRegularExpressionCaseInsensitive
-                               error:nil];
-  });
-  return re != nil && [re firstMatchInString:body options:0 range:NSMakeRange(0, body.length)] != nil;
+  return [body rangeOfString:@"@[everyone]" options:NSCaseInsensitiveSearch].location != NSNotFound;
 }
 
 // `mentionedByServer` is the channel path's answer to "does this @ me": a channel message carries a
@@ -3918,7 +3916,7 @@ static void CanariShowMessageNotification(NSString *senderName, NSString *groupN
     mentionsMe = [body rangeOfString:needle options:NSCaseInsensitiveSearch].location != NSNotFound;
   }
   // A call to every member (`@tous` / `@everyone`) names this reader too: on the MLS path every
-  // member may make one. Same pattern as the extension's `everyoneCallPattern`. Read from the
+  // member may make one. Same token as the extension's `everyoneToken`. Read from the
   // DECRYPTED text only, never `body`: an unreadable message's `body` is the fallback line, which
   // carries the sender's name - a name spelled `@tous` would otherwise call everyone.
   NSString *plaintext = decrypted.text;

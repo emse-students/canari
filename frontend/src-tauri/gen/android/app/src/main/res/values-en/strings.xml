@@ -38,6 +38,7 @@
 
     <string name="notif_mention_you">you</string>
     <string name="notif_mention_someone">someone</string>
+    <string name="notif_mention_everyone">everyone</string>
     <string name="notif_wake_unavailable">A message could not be loaded. Open Canari to read it.</string>
 
     <string name="notif_reaction_body">reacted %1$s to your message</string>

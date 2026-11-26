@@ -50,13 +50,17 @@ class NotificationLevelGateTest {
     }
 
     @Test
-    fun `a call to everyone mentions me at mentions, even with my id unknown`() {
-        val ids = NotificationLevelGate.mentionedUserIds("rdv 18h @Tous!")
+    fun `a picked call to everyone mentions me at mentions, even with my id unknown`() {
+        val ids = NotificationLevelGate.mentionedUserIds("rdv 18h @[everyone]!")
         assertEquals(setOf(NotificationLevelGate.EVERYONE), ids)
         assertEquals(Decision.Alert(true), NotificationLevelGate.decide("mentions", ids, me))
         assertEquals(Decision.Alert(true), NotificationLevelGate.decide("mentions", ids, null))
-        assertEquals(Decision.Alert(true), NotificationLevelGate.decide(null, NotificationLevelGate.mentionedUserIds("@everyone"), me))
-        assertEquals(emptySet<String>(), NotificationLevelGate.mentionedUserIds("mail@tous.fr @toustes"))
+        assertEquals(Decision.Alert(true), NotificationLevelGate.decide(null, NotificationLevelGate.mentionedUserIds("@[EVERYONE]"), me))
+    }
+
+    @Test
+    fun `the word typed by hand is text, like a name typed by hand`() {
+        assertEquals(emptySet<String>(), NotificationLevelGate.mentionedUserIds("merci @tous @everyone"))
     }
 
     /**

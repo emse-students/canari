@@ -538,18 +538,20 @@ describe('Mention tokens in a native banner', () => {
     expect(objc).toContain('@[ @"unreadable", @"no-names", @"no-sender-id", @"no-account" ]');
   });
 
-  it('names the two words in all four iOS tables and both Android ones', () => {
+  it('names the three words in all four iOS tables and both Android ones', () => {
     for (const bundle of BUNDLES) {
       for (const lang of ['fr', 'en']) {
         const table = parseLproj(bundle, lang, 'Localizable.strings');
         expect(table.has('notif.mention.you'), `${bundle}/${lang}`).toBe(true);
         expect(table.has('notif.mention.someone'), `${bundle}/${lang}`).toBe(true);
+        expect(table.has('notif.mention.everyone'), `${bundle}/${lang}`).toBe(true);
         expect(table.has('notif.social.mention.title'), `${bundle}/${lang}`).toBe(true);
       }
     }
     for (const table of [fr, en]) {
       expect(table.has('notif_mention_you')).toBe(true);
       expect(table.has('notif_mention_someone')).toBe(true);
+      expect(table.has('notif_mention_everyone')).toBe(true);
       expect(table.has('notif_social_mention_title')).toBe(true);
     }
   });

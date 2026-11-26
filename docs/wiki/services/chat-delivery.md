@@ -3439,7 +3439,7 @@ hand the server a social graph the encryption exists to hide. So:
 |---|---|---|
 | `all` | visible frame, as before | draws it |
 | `none` | the frame is sent `silent` - delivered (it is MLS state), never drawn, exactly like the `messages` category switch | nothing to decide |
-| `mentions` | visible frame carrying `notifLevel=mentions`; on APNs the alert is `interruption-level: passive` with NO sound | decrypts, then draws only if the WHOLE plaintext holds `@[<own user id>]` or a `@tous` ([below](#tous---a-call-to-every-member-and-who-may-make-it-decided-2026-11-26)) |
+| `mentions` | visible frame carrying `notifLevel=mentions`; on APNs the alert is `interruption-level: passive` with NO sound | decrypts, then draws only if the WHOLE plaintext holds `@[<own user id>]` or `@[everyone]`, a picked `@tous` ([below](#tous---a-call-to-every-member-and-who-may-make-it-decided-2026-11-26)) |
 
 A DM or group REACTION (`sendPushToUser`, `reaction: 'true'`) is refused at `mentions` and `none`: a
 reaction is never a mention, and the server knows the group. The level is read only for a group id
@@ -3521,24 +3521,30 @@ Asked by the owner on 2026-11-25 (groups AND salons; in a salon admins and moder
 as a mention, so "Mentions" members are notified and "Aucune" members never are), and pulled into
 `1.8.2` on 2026-11-26.
 
-**The wire form is the WORD, not a token.** `@tous`, or its alias `@everyone`, as a whole word in
-any case: not preceded by a letter, digit, `_`, `@`, `.` or `/` (`mail@tous.fr` is no call), not
-followed by a letter, digit, `_` or `-`. ONE pattern, `MENTION_EVERYONE_PATTERN`
-(`frontend/src/lib/utils/mentions.ts`), spelled again by Android's `NotificationLevelGate` and the
-iOS extension's `mentionedUserIds(in:)`, and pinned for all three by
-`libs/contracts/mention-decision.cases.json`. Plain text rather than a reserved `@[everyone]` token
-because every renderer that predates it - an older app, a native banner, a reply quote, the
-notification centre - then shows what was typed rather than a raw token, and there is nothing to
-migrate. The composer's picker offers it as a row (`withEveryoneRow`, Paraglide
-`mention_everyone_word` / `mention_everyone_hint`) and inserts the reader's word; the sent bubble
-draws it as a chip (`MessageInlineText`, `splitTextWithMentions` part `everyone`). Typing it by hand
-is the same message.
+**It is a mention like any other, so it rings only when PICKED** (owner, 2026-11-26: *"Comme les
+autres mentions"*). A member is mentioned only by picking them from the list, which writes the
+`@[<id>]` token and draws a chip; a name typed out by hand stays text and rings nobody - nothing
+resolves a typed name into a token (`useMentionAutocomplete.select` is the only writer of one).
+`@tous` follows the same rule: picking its row writes the token `@[everyone]`
+(`MENTION_EVERYONE_TOKEN`, `frontend/src/lib/utils/mentions.ts`), drawn as a chip in the editor and
+the bubble; the word `@tous` or `@everyone` typed by hand is text. That also keeps the French
+shorthand "merci @tous" (`@` for "a") from waking a whole group. The id `everyone` is no account id
+(those are 64 hex), so it can never name a member. The token is read by Android's
+`NotificationLevelGate.EVERYONE_TOKEN`, the iOS extension's `everyoneToken` and the in-app iOS path's
+`CanariCallsEveryone` (on the decrypted text only, never the fallback line), and pinned for all three
+by `libs/contracts/mention-decision.cases.json`. Every banner renderer draws it in the reader's
+language (`notif_mention_everyone` / `notif.mention.everyone`: "tous" / "everyone"), as the client
+does (`splitTextWithMentions` part `everyone`, Paraglide `mention_everyone_word`). The picker offers
+the row (`withEveryoneRow`, `mention_everyone_hint`).
+
+**What an older app shows.** An app predating the token draws it raw, `@[everyone]`, and rings
+nobody for it - the same as it never rang for the typed word. It is text, never a wrong ring.
 
 **Where the right to use it is enforced - and why that differs between the two venues.**
 
 | Venue | Who may | Who enforces it | How a receiver knows |
 |---|---|---|---|
-| Private conversation (MLS group or DM) | every member - everyone in a group is equal | nobody needs to: there is no role to check | the device reads the decrypted text: `@tous` counts as a mention of the reader (`mentionsUser(..., 'honoured')`, `NotificationLevelGate.EVERYONE`, `everyoneMention`) |
+| Private conversation (MLS group or DM) | every member - everyone in a group is equal | nobody needs to: there is no role to check | the device reads the decrypted text: a picked `@tous` (`@[everyone]`) counts as a mention of the reader (`mentionsUser(..., 'honoured')`, `NotificationLevelGate.EVERYONE`, `everyoneMention`) |
 | Community salon | holders of the moderation grant (`channel.moderate`: admins and moderators by default) | **the server**, `ChannelService.sendMessage` (`vouchedEveryoneMention`) | the server says so: the row's `metadata.mentionsEveryone`, the live frame's `mentionsEveryone`, and the push's per-recipient `mentioned` |
 
 A private conversation needs no authority, so a device decides from the plaintext alone, exactly as
@@ -3549,10 +3555,10 @@ already decides the `mentions` push from them. So the sender's client DECLARES t
 VOUCHES for it only when the sender holds the moderation grant. A vouched call is written on the
 row, rings every member at `mentions` (never one at `none`) and is told to every device as
 `mentioned=true`; an unvouched one is logged (`[MENTION_EVERYONE] not vouched`) and stays text -
-the message is never refused, because a member writing "merci @tous" has still written a message.
+the message is never refused, because a member calling everyone has still written a message.
 The native salon paths never read the text for it (they were already TOLD `mentioned`), and the
 client's socket path honours a salon's `@tous` only on a vouched row (`everyoneMentionOf`). So
-neither a modified client nor a ciphertext that merely contains the word can ring a salon: the only
+neither a modified client nor a ciphertext that merely contains the token can ring a salon: the only
 thing that rings it is the server's word, given from the server's own roster. Nothing about the
 receivers has to trust the sender, and no device needs the community roster.
 

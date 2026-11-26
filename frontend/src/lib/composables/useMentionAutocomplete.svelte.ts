@@ -2,7 +2,7 @@ import { tick } from 'svelte';
 import { SvelteSet } from 'svelte/reactivity';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { coreUrl } from '$lib/utils/apiUrl';
-import { formatMentionToken } from '$lib/utils/mentions';
+import { formatMentionToken, MENTION_EVERYONE_TOKEN } from '$lib/utils/mentions';
 import { m } from '$lib/paraglide/messages';
 import { currentUserId } from '$lib/stores/userState.svelte';
 import { filterUserSuggestions } from '$lib/utils/users/suggestionFilter';
@@ -27,8 +27,7 @@ export type MentionUser = { id: string; displayName: string | null };
 
 /**
  * The picker row that calls every member (`@tous`). Its id is no account id (those are 64 hex), so
- * it can never collide with a member, and `select` inserts the WORD rather than a `@[id]` token -
- * see `MENTION_EVERYONE_PATTERN` (`utils/mentions.ts`).
+ * it can never collide with a member, and `select` inserts `MENTION_EVERYONE_TOKEN` (`utils/mentions.ts`).
  */
 export const MENTION_EVERYONE_ROW_ID = '@everyone';
 
@@ -581,7 +580,7 @@ export function useMentionAutocomplete(opts: {
     if (!everyone && user.displayName?.trim()) {
       seedUserDisplayName(user.id, user.displayName.trim());
     }
-    const token = everyone ? `@${m.mention_everyone_word()}` : formatMentionToken(user.id);
+    const token = everyone ? MENTION_EVERYONE_TOKEN : formatMentionToken(user.id);
     Log.d('mention', everyone ? 'the call to everyone inserted' : 'a member mention inserted');
     const text = opts.getText();
     const before = text.slice(0, start);

@@ -4,12 +4,16 @@ import {
   normalizeMentionUserId,
 } from '$lib/utils/mentions';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
+import { m } from '$lib/paraglide/messages';
 
 export type TextMentionPart =
   | { type: 'text'; value: string }
   | { type: 'mention'; userId: string; label: string }
   | { type: 'hashtag'; value: string }
-  /** A call to every member (`@tous` / `@everyone`), kept as typed: `value` holds the `@`. */
+  /**
+   * A call to every member: the `@[everyone]` token a picked `@tous` writes, drawn in the reader's
+   * language. `value` is that label, `@` included ("@tous" / "@everyone").
+   */
   | { type: 'everyone'; value: string };
 
 const MENTION_TOKEN_RE = new RegExp(
@@ -45,7 +49,7 @@ export function splitTextWithMentions(text: string): TextMentionPart[] {
     } else if (hashtag) {
       parts.push({ type: 'hashtag', value: hashtag });
     } else if (everyone) {
-      parts.push({ type: 'everyone', value: everyone });
+      parts.push({ type: 'everyone', value: `@${m.mention_everyone_word()}` });
     } else {
       parts.push({ type: 'text', value: token });
     }

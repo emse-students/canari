@@ -37,8 +37,9 @@
   {#if part.type === 'mention'}
     <MessageMentionChip userId={part.userId} {onOwnBubble} />
   {:else if part.type === 'everyone'}
-    <!-- A CALL TO EVERY MEMBER, drawn like a mention but pointing at nobody: the word as typed, in
-         the mention's weight and colour (the bubble's own on the sender's accent fill). -->
+    <!-- A CALL TO EVERY MEMBER (a picked `@[everyone]`), drawn like a mention but pointing at
+         nobody: the reader's word for it, in the mention's weight and colour (the bubble's own on
+         the sender's accent fill). -->
     <span
       data-mention-everyone
       class="{onOwnBubble ? '' : 'text-accent-text'} align-baseline text-[0.9em] font-semibold"

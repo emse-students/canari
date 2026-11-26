@@ -2619,7 +2619,8 @@ class NotificationService: UNNotificationServiceExtension {
     nameBook: (() -> [String: Any]?)? = nil
   ) -> String {
     guard text.contains("@["),
-      let regex = try? NSRegularExpression(pattern: "@\\[([0-9a-fA-F]{64})\\]")
+      let regex = try? NSRegularExpression(
+        pattern: "@\\[([0-9a-fA-F]{64}|everyone)\\]", options: [.caseInsensitive])
     else { return text }
     let me = myUserId?.lowercased()
     let ns = text as NSString
@@ -2631,7 +2632,10 @@ class NotificationService: UNNotificationServiceExtension {
     for match in regex.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
       out += ns.substring(with: NSRange(location: cursor, length: match.range.location - cursor))
       let id = ns.substring(with: match.range(at: 1)).lowercased()
-      if me != nil && id == me {
+      if id == everyoneMention {
+        // A picked `@tous` (`@[everyone]`): the call's word, never a name.
+        out += "@" + localized("notif.mention.everyone", locale: locale)
+      } else if me != nil && id == me {
         out += "@" + localized("notif.mention.you", locale: locale)
       } else {
         if let name = book()?[id] as? String, !name.isEmpty {
@@ -3468,10 +3472,11 @@ class NotificationService: UNNotificationServiceExtension {
   /// What `mentionedUserIds(in:)` holds for a call to every member - never a user id (64 hex).
   static let everyoneMention = "everyone"
 
-  /// `@tous`, or its alias `@everyone`, as a whole word in any case. The pattern of the client's
-  /// `MENTION_EVERYONE_PATTERN` and Android's `NotificationLevelGate`, pinned for all three by
-  /// `libs/contracts/mention-decision.cases.json`.
-  static let everyoneCallPattern = "(?<![A-Za-z0-9_@./])@(?:tous|everyone)(?![A-Za-z0-9_-])"
+  /// `@[everyone]`, the token a `@tous` PICKED from the list writes. Like a member's mention, the
+  /// word typed by hand is text and calls nobody (owner, 2026-11-26). The client's
+  /// `MENTION_EVERYONE_TOKEN` and Android's `NotificationLevelGate.EVERYONE_TOKEN`, pinned for all
+  /// three by `libs/contracts/mention-decision.cases.json`.
+  static let everyoneToken = "@[everyone]"
 
   /// The user ids a plaintext mentions: the `@[<64 hex>]` token every client writes, lower-cased,
   /// plus `everyoneMention` when it calls every member.
@@ -3482,9 +3487,7 @@ class NotificationService: UNNotificationServiceExtension {
     for match in re.matches(in: text, range: range) {
       if let r = Range(match.range(at: 1), in: text) { ids.insert(text[r].lowercased()) }
     }
-    if let call = try? NSRegularExpression(pattern: everyoneCallPattern, options: [.caseInsensitive]),
-      call.firstMatch(in: text, range: range) != nil
-    {
+    if text.range(of: everyoneToken, options: .caseInsensitive) != nil {
       ids.insert(everyoneMention)
     }
     return ids
