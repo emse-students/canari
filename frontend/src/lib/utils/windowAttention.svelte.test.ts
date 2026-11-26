@@ -62,6 +62,7 @@ function receiptBench(exempt = false) {
         visible: true,
         foreground: true,
         attentive: signal.attentive,
+        nativeMobile: false,
       });
       if (newest === 0 || verdict !== 'reading') return;
       if (marks.at(-1) !== newest) marks.push(newest);
@@ -138,13 +139,39 @@ describe('the listeners', () => {
 
 describe('windowReadVerdict', () => {
   it.each([
-    [{ focused: false, visible: true, foreground: true, attentive: true }, 'away'],
-    [{ focused: true, visible: false, foreground: true, attentive: true }, 'away'],
-    [{ focused: true, visible: true, foreground: false, attentive: true }, 'away'],
-    [{ focused: true, visible: true, foreground: true, attentive: false }, 'idle'],
-    [{ focused: true, visible: true, foreground: true, attentive: true }, 'reading'],
+    [
+      { focused: false, visible: true, foreground: true, attentive: true, nativeMobile: false },
+      'away',
+    ],
+    [
+      { focused: true, visible: false, foreground: true, attentive: true, nativeMobile: false },
+      'away',
+    ],
+    [
+      { focused: true, visible: true, foreground: false, attentive: true, nativeMobile: false },
+      'away',
+    ],
+    [
+      { focused: true, visible: true, foreground: true, attentive: false, nativeMobile: false },
+      'idle',
+    ],
+    [
+      { focused: true, visible: true, foreground: true, attentive: true, nativeMobile: false },
+      'reading',
+    ],
   ] as const)('%o -> %s', (w, verdict) => {
     expect(windowReadVerdict(w)).toBe(verdict);
+  });
+
+  // iPhone 12, 1.8.2: the WKWebView answers `hasFocus()` false until the first touch, so a
+  // conversation landed from a banner tap was neither read nor had its banners taken down.
+  it('on a phone an unfocused document still reads: the shell foreground alone decides', () => {
+    const phone = { visible: true, attentive: true, nativeMobile: true } as const;
+    expect(windowReadVerdict({ ...phone, focused: false, foreground: true })).toBe('reading');
+    expect(windowReadVerdict({ ...phone, focused: false, visible: false, foreground: true })).toBe(
+      'reading'
+    );
+    expect(windowReadVerdict({ ...phone, focused: true, foreground: false })).toBe('away');
   });
 });
 

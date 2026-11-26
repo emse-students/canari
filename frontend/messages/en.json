@@ -1747,6 +1747,7 @@
   "admin_cercle_webhook_retries_exhausted": "Automatic retries exhausted - needs a human",
   "admin_cercle_webhook_unknown_member": "Unknown account ({id})",
   "admin_cercle_webhook_retry_delivered": "Delivered. The member's balance is credited.",
+  "admin_cercle_webhook_retry_parked": "Accepted. The member has not signed in to Le Cercle yet: the top-up is kept there and credited at their first sign-in.",
   "admin_cercle_webhook_retry_failed": "The delivery failed again.",
   "admin_cercle_delivery_delete_confirm": "Permanently delete this failed {amount} € delivery? Only do this if the top-up was handled another way.",
   "admin_status_unknown_error": "Unknown error",
