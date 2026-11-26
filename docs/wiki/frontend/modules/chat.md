@@ -3905,7 +3905,7 @@ conversation, ~0.1-0.3 s by the per-operation cost above), so this catch-up goes
 ~5 s. **What remains is per frame and not batched here**: a reaction stores itself and a peer's read
 mark saves the conversation row before its handler returns (~4.2 s of this drain); batching them is
 the next step ([backlog](../../backlog.d/per-frame-store-writes-of-a-catch-up-batched.md)); the
-reading on the Mi 9T PASSED on `1.8.1-alpha.2` (2026-11-25: 136 frames drained in 2245 ms with the pane at the end; scrolled up, 67 frames in 1985 ms, `scrollTop` unchanged, banner gone with the drain). The unread pill showed no count after it: [backlog](../../backlog.d/p3-the-scroll-to-bottom-arrow-shows-no-unread-count-after-a-catch-up.md).
+reading on the Mi 9T PASSED on `1.8.1-alpha.2` (2026-11-25: 136 frames drained in 2245 ms with the pane at the end; scrolled up, 67 frames in 1985 ms, `scrollTop` unchanged, banner gone with the drain). The unread pill showed no count after it: [backlog](../../backlog.d/reading-owed-the-scroll-to-bottom-arrow-counts-a-catch-up.md).
 
 #### An open lands once: a change above the reader never glides (2026-11-25)
 
@@ -6036,6 +6036,15 @@ before they await the store delete: a listing answered during that await used to
 conversation back. `ChatBackgroundService.svelte`'s handlers are held to these entrances by a source
 guard in the same test file.
 
+**Fields, since 2026-11-25.** The same ledger is keyed per (row, field): `fieldHeard` /
+`fieldHeardSince`. A rename, a write verdict or policy (`channel.updated`, a role change, a refused
+post), a role change (`workspace.role.changed`) and a cover or history change (`workspace.updated`)
+record the field at the tick they were heard, and `upsertChannelRow` / `upsertWorkspaceFromDto`,
+called by the listing with the tick it asked at, leave that field alone - the older answer cannot give
+a demoted administrator their controls back. The history rule of a `workspace.updated` frame is
+forwarded from `channelEventHandler.ts` through `deps.ts`, so the admin card keeps what was saved
+instead of resetting to the old rule.
+
 A listing then:
 
 1. **Does not draw back** a community or salon learned `gone` after its request
@@ -7774,6 +7783,19 @@ Two consequences of the drafts outliving the page (review of #2614, 2026-10-27):
   left the edited message's text as the draft, with no banner, for Send to post twice. Test:
   `ChatArea.editUnmount.svelte.test.ts`; `MainChatPage.draft.test.ts` pins that the page's text is
   derived and its late writers gated - and created BEFORE the await or callback they outlive.
+- **Loose ends closed 2026-11-25.** (a) A text restored while an edit is open (`holdRestoredText`,
+  `editSession.svelte.ts`) joins the edit's SAVED draft, found by the conversation's draft key
+  (`ChatArea`'s `draftKey`), instead of the composer that holds the edited message: `cancel`,
+  `confirm` and `reset` give it back, and `confirm` never saves it into the edited message.
+  `MainChatPage.restoreText` is the one entrance for the four restores. (b) **The salon ledger detour
+  stays on purpose**: a salon text resumed after the member left goes back to the ledger
+  (`recordUnsentSalonText`), which is persisted, while drafts are memory only; revisit only when
+  drafts outlive the page. (c) The @mention picker closes when the composer's conversation changes
+  (`MentionComposerInput`'s `mentionScope` -> `dismiss()`, whose generation bump drops a late search
+  answer). (d) A conversation that leaves the list (left, deleted, removed) drops its draft
+  (`forgetDraftsOfLeft`, driven by an effect on the list's keys in `ChatBackgroundService`, which
+  outlives the chat page). Tests: `editSession.svelte.test.ts`, `useMessaging.draft.svelte.test.ts`,
+  `useMentionAutocomplete.svelte.test.ts`.
 - **Two keys, one risk.** Drafts are keyed by `convs.selectedContact`, which for a DM is the map key
   (its display name), while the edit's reset follows `conversation.id`. A DM whose map key changes
   under an open conversation (a name resolved late, a rename) strands the draft under the old key:
@@ -7783,6 +7805,8 @@ Two consequences of the drafts outliving the page (review of #2614, 2026-10-27):
 ### The scroll-to-bottom badge counts only what lies below the viewport (2026-11-01)
 
 The owner saw a yellow "1" on the floating arrow while scrolled up in a conversation with nothing new. The badge was `countUnreadForUser` over the WHOLE thread: any foreign row not covered by the read mark - above the viewport, in view, or held back by `serverMarkCeiling` or an unfocused window - raised it. Reactions, edits and pins are not rows and never counted. It is now `countUnreadBelow` (`readState.ts`): the unread rows after `lastVisibleMessageId`, measured by `ChatArea.measureScroll` next to `isNearBottom`; an unmeasured position counts nothing. `readState.test.ts`.
+
+**The count is taken against the marks held when the reader LEFT THE LIVE END (2026-11-25).** The open window marks every arrival read (the read-mark effect has no scroll position), so against the live marks a catch-up into a scrolled-up thread counted 0 and the arrow carried no number (Mi 9T, `1.8.1-alpha.2`). `ChatArea` freezes the reader's counting marks (`pillBaseline`) on the first run away from the end and drops them on the way back or on another conversation; `pillCountingPoint` (`readState.ts`) takes the lower of baseline and live. Reading owed: [backlog](../../backlog.d/reading-owed-the-scroll-to-bottom-arrow-counts-a-catch-up.md).
 
 The position (`utils/chat/visibleRow.ts`) is the last row above the scroller's bottom MINUS its padding (the floating composer's height), found by binary search over the display-ordered `messageRows`; it is re-measured when the thread or conversation changes, not only on scroll, a vanished anchor resolves to the nearest surviving row (logged once), and nothing is counted while pinned to the live end.
 

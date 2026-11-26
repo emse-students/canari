@@ -49,6 +49,9 @@ const byLabel = (label: string) =>
   document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
 const linkByLabel = (label: string) =>
   document.querySelector<HTMLAnchorElement>(`a[aria-label="${label}"]`);
+const pill = () =>
+  document.querySelector<HTMLButtonElement>('button[aria-label^="Mode de la partie"]')!;
+const sheetRows = () => [...document.querySelectorAll<HTMLElement>('[data-mode]')];
 const byText = (text: string) =>
   [...document.querySelectorAll<HTMLButtonElement>('button')].find(
     (b) => b.textContent?.trim() === text
@@ -91,26 +94,70 @@ describe('MinesweeperModal - full-screen chrome', () => {
     expect(byLabel('Fermer')).toBeNull();
   });
 
-  it('plays unranked on request: remembered, and the first dig asks for no challenge', async () => {
+  it('starts a newcomer in Libre . Debutant: no challenge on the first dig, and the mode is then locked', async () => {
     await open();
-    const toggle = byText('Classé')!;
-    expect(toggle.getAttribute('aria-pressed')).toBe('false');
-    toggle.click();
-    flushSync();
-    expect(localStorage.getItem('canari.minesweeper.unranked')).toBe('1');
-    expect(byText('Libre')!.getAttribute('aria-pressed')).toBe('true');
+    expect(pill().textContent).toContain('Débutant');
+    expect(localStorage.getItem('canari.minesweeper.unranked')).toBeNull();
     document.querySelector<HTMLButtonElement>('[data-cell="0"]')!.click();
     for (let i = 0; i < 6; i++) {
       await flushMacrotask();
       flushSync();
     }
     expect(startChallenge).not.toHaveBeenCalled();
-    // A started game keeps its mode.
-    expect(byText('Libre')!.disabled).toBe(true);
+    // A started game keeps its mode: the pastille only reminds, and opens nothing.
+    expect(pill().disabled).toBe(true);
+    pill().click();
+    flushSync();
+    expect(sheetRows()).toHaveLength(0);
   });
 
-  it('asks for a challenge when ranked, which is the default', async () => {
+  it('lists the four modes in a sheet, and a pick is remembered: ranked asks for its challenge', async () => {
     await open();
+    pill().click();
+    flushSync();
+    expect(sheetRows().map((r) => r.dataset.mode)).toEqual([
+      'ranked',
+      'beginner',
+      'intermediate',
+      'expert',
+    ]);
+    // The current mode is the checked one, and every mode says what it is.
+    expect(sheetRows().find((r) => r.getAttribute('aria-checked') === 'true')?.dataset.mode).toBe(
+      'beginner'
+    );
+    expect(document.body.textContent).toContain("Chrono et classement. Pas d'indice.");
+    sheetRows()
+      .find((r) => r.dataset.mode === 'ranked')!
+      .click();
+    flushSync();
+    expect(localStorage.getItem('canari.minesweeper.unranked')).toBe('0');
+    expect(pill().textContent).toContain('Classé');
+    document.querySelector<HTMLButtonElement>('[data-cell="0"]')!.click();
+    await vi.waitFor(() => expect(startChallenge).toHaveBeenCalledOnce());
+  });
+
+  it('remembers an unranked level picked in the sheet, and links the tutorial', async () => {
+    await open();
+    pill().click();
+    flushSync();
+    sheetRows()
+      .find((r) => r.dataset.mode === 'intermediate')!
+      .click();
+    flushSync();
+    expect(localStorage.getItem('canari.minesweeper.level')).toBe('intermediate');
+    expect(localStorage.getItem('canari.minesweeper.unranked')).toBe('1');
+    expect(pill().textContent).toContain('Intermédiaire');
+    pill().click();
+    flushSync();
+    expect(
+      document.querySelector<HTMLAnchorElement>('a[href*="/games/tutorial"]')?.textContent
+    ).toContain('tutoriel');
+  });
+
+  it('asks for a challenge when the player chose ranked, and only then', async () => {
+    localStorage.setItem('canari.minesweeper.unranked', '0');
+    await open();
+    expect(pill().textContent).toContain('Classé');
     document.querySelector<HTMLButtonElement>('[data-cell="0"]')!.click();
     await vi.waitFor(() => expect(startChallenge).toHaveBeenCalledOnce());
   });

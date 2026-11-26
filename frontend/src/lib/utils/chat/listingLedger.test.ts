@@ -48,3 +48,16 @@ describe('listingLedger', () => {
     expect(ledger.learnedSince(communityLedgerKey('channel_x'), askedAt)).toBe('gone');
   });
 });
+
+describe('the per-field record', () => {
+  it('a field heard after the request is heard since; before it, or another field, is not', () => {
+    const ledger = createListingLedger();
+    ledger.fieldHeard('ws1', 'viewerCanManage');
+    const askedAt = ledger.tick;
+    expect(ledger.fieldHeardSince('ws1', 'viewerCanManage', askedAt)).toBe(false);
+    ledger.fieldHeard('ws1', 'imageMediaId');
+    expect(ledger.fieldHeardSince('ws1', 'imageMediaId', askedAt)).toBe(true);
+    expect(ledger.fieldHeardSince('ws1', 'viewerCanManage', askedAt)).toBe(false);
+    expect(ledger.fieldHeardSince('ws2', 'imageMediaId', askedAt)).toBe(false);
+  });
+});

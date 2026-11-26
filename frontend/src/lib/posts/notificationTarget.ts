@@ -103,6 +103,8 @@ export function notificationHref(
     case 'event_updated':
     case 'event_deleted':
     case 'event_pending':
+    // A partner accepted an event still waiting for validation: the organiser sees it on the agenda.
+    case 'event_coorganiser_accepted':
       return '/calendar';
     // The same type reaches the organiser, the partners AND the validators; the validators' row
     // (meta.audience, written with the push's 'proposed' action) opens the validation queue like
@@ -240,6 +242,7 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'event_deleted',
   'event_pending',
   'event_pending_coorganiser',
+  'event_coorganiser_accepted',
   'profile_correction_applied',
   'profile_correction_refused',
   'live_cut',

@@ -78,6 +78,64 @@ describe('AmountPicker', () => {
     expect(value).toBe(1250000);
   });
 
+  const openKeypadOf = (root: ParentNode) => {
+    const other = [...root.querySelectorAll('button')].find(
+      (b) => !/\d/.test(b.textContent ?? '')
+    )!;
+    other.click();
+    flushSync();
+  };
+  const keypads = () => [...document.querySelectorAll<HTMLElement>('[role="group"][tabindex]')];
+  const typeOn = (el: HTMLElement, key: string) => {
+    el.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+    flushSync();
+  };
+
+  it('the keypad takes the physical keyboard, focused as it opens', () => {
+    render();
+    openKeypadOf(document.body);
+    const [pad] = keypads();
+    expect(document.activeElement).toBe(pad);
+    for (const k of ['1', '2', '.', '5']) typeOn(pad, k);
+    expect(value).toBe(1250);
+    typeOn(pad, 'Backspace');
+    expect(value).toBe(1200);
+  });
+
+  it('two open pickers on one page: a key typed in one never reaches the other', () => {
+    render();
+    const first = cmp!;
+    let secondValue: number | undefined;
+    const second = mount(AmountPicker, {
+      target: document.body,
+      props: {
+        minCents: 100,
+        currency: 'eur',
+        get valueCents() {
+          return secondValue;
+        },
+        set valueCents(v: number | undefined) {
+          secondValue = v;
+        },
+      },
+    });
+    flushSync();
+    for (const other of [...document.querySelectorAll('button')].filter(
+      (b) => !/\d/.test(b.textContent ?? '')
+    )) {
+      other.click();
+    }
+    flushSync();
+    const pads = keypads();
+    expect(pads).toHaveLength(2);
+    typeOn(pads[0], '4');
+    typeOn(pads[0], '2');
+    expect(value).toBe(4200);
+    expect(secondValue).toBeUndefined();
+    unmount(second);
+    cmp = first;
+  });
+
   it('an amount under the minimum is no amount and says why', () => {
     render(100);
     const other = [...document.querySelectorAll('button')].find(

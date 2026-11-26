@@ -207,6 +207,7 @@ import { PurchaseRecordService } from '../users/purchase-record.service';
 import { receivedStatus } from '../users/entities/purchase-record.entity';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
 import { toManagerView, toSubmitterView, type OwnAnswerView } from './submission.projection';
+import { respondentGroupRefusal, respondentIds } from './form-respondents';
 import {
   askedFields,
   askedGuestFields,
@@ -7001,6 +7002,49 @@ export class FormsService {
         ),
       };
     });
+  }
+
+  /**
+   * The accounts that answered a NAMED, INTERNAL form, for a group made of them (owner, 2026-11-19;
+   * `form-respondents.ts`). The caller has already asserted the form manager - whoever reads the
+   * named answers. An anonymous or public form is refused here, whatever the client drew, and an
+   * account the `users` table no longer holds is COUNTED in `departed`, never listed.
+   */
+  async respondentsForGroup(formId: string): Promise<{
+    respondents: { id: string; firstName: string | null; lastName: string | null }[];
+    departed: number;
+  }> {
+    const form = await this.formRepo.findOne({ where: { id: formId } });
+    if (!form) throw new NotFoundException('Form not found');
+    const refusal = respondentGroupRefusal(form);
+    if (refusal) {
+      this.logger.log(`[FORMS] respondents of form ${formId.slice(0, 8)} refused: ${refusal}`);
+      throw new ConflictException({
+        code: refusal,
+        message: 'The respondents of this form cannot be grouped.',
+      });
+    }
+    const ids = respondentIds(
+      await this.submissionRepo.find({
+        select: { userId: true, paymentStatus: true },
+        where: { formId },
+        order: { createdAt: 'ASC' },
+      })
+    );
+    const found: { id: string; firstName: string | null; lastName: string | null }[] =
+      ids.length === 0
+        ? []
+        : await this.submissionRepo.manager.query(
+            `SELECT id, "firstName", "lastName" FROM users WHERE id = ANY($1)`,
+            [ids]
+          );
+    const byId = new Map(found.map((row) => [row.id, row]));
+    const respondents = ids.flatMap((id) => (byId.has(id) ? [byId.get(id)!] : []));
+    const departed = ids.length - respondents.length;
+    this.logger.debug(
+      `[FORMS] respondents of form ${formId.slice(0, 8)}: ${respondents.length} listed, ${departed} departed`
+    );
+    return { respondents, departed };
   }
 
   /**

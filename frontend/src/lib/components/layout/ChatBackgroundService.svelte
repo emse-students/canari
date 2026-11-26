@@ -119,7 +119,7 @@
   } from '$lib/utils/graine/departureCommitter';
   import { forgetRevokedLeafAnswers } from '$lib/utils/graine/rosterReconcile';
   import { forgetAllKeyGroupConvergence } from '$lib/utils/graine/keyGroupConvergence';
-  import { isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
+  import { isReadingConversationNow, readToneOwed } from '$lib/utils/chat/arrivalRuntime';
   import type { ConversationContext } from '$lib/composables/useConversations.svelte';
   import {
     writeFieldsOf,
@@ -225,6 +225,18 @@
 
   // The PIN lock sits under the call's rung: while it is up, a call is the banner it covers.
   $effect(() => callView.setLocked(showPinModal));
+
+  // A CONVERSATION THAT LEAVES THE LIST TAKES ITS DRAFT WITH IT (left, deleted, removed from): the
+  // entry used to stay until sign-out, and a conversation joined again showed the old text. Here and
+  // not in the chat page, because the page unmounts on a route change while removals keep arriving.
+  let listedKeys: ReadonlySet<string> = new Set();
+  $effect(() => {
+    const now = new Set(globalConvs.conversations.keys());
+    untrack(() => {
+      globalMessaging.forgetDraftsOfLeft(listedKeys, now);
+      listedKeys = now;
+    });
+  });
 
   // A CONVERSATION THAT ENDED TAKES ITS NOTIFICATIONS WITH IT. Opening the app clears no banner any
   // more (owner, 2026-11-21), so a conversation deleted, left, excluded from, or whose salon or
@@ -1484,21 +1496,7 @@
         // view reads to decide whether to offer a composer at all, so this is the whole difference
         // between learning of a new rule now and learning of it on the next full load.
         if (event.name || typeof event.viewerCanWrite === 'boolean') {
-          globalChannels.channelWorkspaces = globalChannels.channelWorkspaces.map((ws) => ({
-            ...ws,
-            channels: ws.channels.map((ch) =>
-              ch.id === channelConversationId
-                ? {
-                    ...ch,
-                    ...(event.name ? { name: event.name } : {}),
-                    ...(typeof event.viewerCanWrite === 'boolean'
-                      ? { canWrite: event.viewerCanWrite }
-                      : {}),
-                    ...(event.writePolicy ? { writePolicy: event.writePolicy } : {}),
-                  }
-                : ch
-            ),
-          }));
+          globalChannels.handleChannelUpdated(event);
           appendLog(
             `[CHANNEL] #${event.name ?? event.channelId} updated - canWrite=${String(event.viewerCanWrite ?? 'unchanged')} writePolicy=${event.writePolicy ?? 'unchanged'}`
           );
@@ -1538,6 +1536,7 @@
         workspaceId: string;
         imageMediaId?: string;
         channelsReordered?: boolean;
+        historyVisibility?: string;
       }) => {
         globalChannels.handleWorkspaceUpdated(event);
         if (event.channelsReordered) {
@@ -1586,11 +1585,17 @@
         });
       },
       onReadStateAdvanced: (e: { conversationKey: string; senderId: string; at: number }) => {
-        // Sound only when another user reads MY message, in the open conversation on the visible tab
-        // (never for my own cross-device reads).
-        if (e.senderId === globalSession.userId) return;
-        if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-        if (e.conversationKey !== globalConvs.selectedContact) return;
+        // Sound only when another user reads MY message in a conversation the reader can see on
+        // screen now (`readToneOwed`), never for my own cross-device reads.
+        if (
+          !readToneOwed(
+            e.senderId,
+            globalSession.userId,
+            e.conversationKey,
+            globalConvs.selectedContact
+          )
+        )
+          return;
         globalNotifs.playReadTone();
       },
       onInboundReaction: (reaction: InboundReaction) =>

@@ -530,6 +530,11 @@ class NotificationService: UNNotificationServiceExtension {
         Self.localized("notif.event.pending_coorganiser.title", locale: locale),
         Self.localizedFormat("notif.event.pending_coorganiser.body", arg, locale: locale)
       )
+    case "event_coorganiser_accepted":
+      composed = (
+        Self.localized("notif.event.coorganiser_accepted.title", locale: locale),
+        Self.localizedFormat("notif.event.coorganiser_accepted.body", arg, locale: locale)
+      )
     default:
       NseLog.log.notice("[CanariNSE] unknown contentKey=\(key, privacy: .public) - keeping the server's own wording")
       composed = nil

@@ -92,4 +92,23 @@ describe('the composer draft', () => {
     expect(info.mock.calls.flat().join(' ')).not.toContain('from the account leaving');
     info.mockRestore();
   });
+
+  it('is dropped when its conversation leaves the list, and only then', async () => {
+    const messaging = await freshMessaging();
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    messaging.setDraft('left', 'text of a salon the member left');
+    messaging.setDraft('kept', 'text of a conversation still listed');
+    messaging.setDraft('not-drawn-yet', 'text typed before the list drew it');
+
+    const dropped = messaging.forgetDraftsOfLeft(
+      new Set(['left', 'kept']),
+      new Set(['kept', 'other'])
+    );
+
+    expect(dropped).toBe(1);
+    expect(messaging.draftFor('left')).toBe('');
+    expect(messaging.draftFor('kept')).toBe('text of a conversation still listed');
+    expect(messaging.draftFor('not-drawn-yet')).toBe('text typed before the list drew it');
+    info.mockRestore();
+  });
 });

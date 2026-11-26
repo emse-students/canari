@@ -10,6 +10,7 @@ import {
   isUnreadForUser,
   mergeReadWatermark,
   mergeReadWatermarks,
+  pillCountingPoint,
   readMarkTarget,
   serverMarkCeiling,
   readWatermarkFrameData,
@@ -800,5 +801,45 @@ describe('where a DM "Lu" marker sits (dmReadAnchorId)', () => {
   it('reads the server-clock mark too', () => {
     const rows = [dated('a', 1000, 1100, ME), dated('b', 2000, 2100, ME)];
     expect(dmReadAnchorId(rows, undefined, ME, { [PEER]: 2100 })).toBe('b');
+  });
+});
+
+describe('pillCountingPoint - the arrow counts what arrived since the reader went up (Mi 9T, 2026-11-25)', () => {
+  const dated = (id: string, at: number) => msg(id, at, PEER, { serverTimestamp: at });
+  const thread = [
+    dated('a', 1000),
+    dated('b', 2000),
+    dated('c', 3000),
+    dated('d', 4000),
+    dated('e', 5000),
+  ];
+  const anchor = (id: string) => ({ id, index: thread.findIndex((m) => m.id === id) });
+  const baseline = { conversationId: 'c1', stamped: 0, server: 2500 };
+
+  it('counts a catch-up that the open window already marked read, against the departure marks', () => {
+    // Live marks have advanced over the whole catch-up (c, d, e); the baseline was taken at b.
+    const live = { stamped: 0, server: 5000 };
+    const point = pillCountingPoint(live, baseline, 'c1');
+    expect(point.server).toBe(2500);
+    expect(countUnreadBelow(thread, anchor('b'), point.stamped, point.server)).toBe(3);
+    // Counted against the live marks, as before the fix: nothing, an arrow with no number.
+    expect(countUnreadBelow(thread, anchor('b'), live.stamped, live.server)).toBe(0);
+  });
+
+  it('never counts rows the reader had read before going up', () => {
+    const point = pillCountingPoint({ stamped: 0, server: 5000 }, baseline, 'c1');
+    // Viewing a: b was read at the departure (server 2500 covers a and b), only c, d, e arrived.
+    expect(countUnreadBelow(thread, anchor('a'), point.stamped, point.server)).toBe(3);
+  });
+
+  it('uses the live marks when no baseline is held, or one from another conversation', () => {
+    const live = { stamped: 0, server: 5000 };
+    expect(pillCountingPoint(live, null, 'c1')).toEqual(live);
+    expect(pillCountingPoint(live, baseline, 'c2')).toEqual(live);
+  });
+
+  it('never rises above the live marks', () => {
+    const point = pillCountingPoint({ stamped: 0, server: 1000 }, baseline, 'c1');
+    expect(point.server).toBe(1000);
   });
 });

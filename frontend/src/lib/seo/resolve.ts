@@ -156,6 +156,7 @@ const PAGE_TITLES: Record<string, () => string> = {
   '/games': () => m.games_page_title(),
   '/games/play': () => m.minesweeper_title(),
   '/games/tutorial': () => m.minesweeper_tutorial_title(),
+  '/games/tutorial/patterns': () => m.minesweeper_patterns_title(),
   '/institutions': () => m.inst_heading(),
   '/institutions/new': () => m.inst_new_create_btn(),
   '/lists': () => m.list_heading(),

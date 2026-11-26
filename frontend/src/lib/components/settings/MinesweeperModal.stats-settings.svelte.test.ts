@@ -211,6 +211,8 @@ describe('the timed move log of a ranked game', () => {
   const first = 16 * CHALLENGE.width + 9;
 
   it('stamps every move from the first dig, and submits the winning move as the game length', async () => {
+    // A newcomer plays unranked; this game is the ranked one, chosen as a player chooses it.
+    localStorage.setItem('canari.minesweeper.unranked', '0');
     vi.mocked(startMinesweeperChallenge).mockResolvedValueOnce({
       challengeId: 'c-1',
       seed,

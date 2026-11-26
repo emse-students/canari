@@ -7935,6 +7935,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_event_pending_coorganiser_title),
                 res.getString(R.string.notif_event_pending_coorganiser_body, arg)
             )
+            "event_coorganiser_accepted" -> Pair(
+                res.getString(R.string.notif_event_coorganiser_accepted_title),
+                res.getString(R.string.notif_event_coorganiser_accepted_body, arg)
+            )
             else -> {
                 Log.w(TAG, "unknown contentKey=$key - using the server's own wording")
                 null

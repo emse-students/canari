@@ -728,7 +728,7 @@ presence were true, but the record says `sent` one write later (`expected undefi
 most frequent victim) - `takeRecordSent` now waits for the state;
 (b) every `vi.waitFor` ran on its 1 s default and every case on the 5 s test deadline, both tighter than
 a starved worker. `src/test/loadBound.ts` gives `waitForEvent` (20 s ceiling) and `useLoadBounds()`
-(30 s test deadline), used by `outbox.reelResume` and, since 2026-11-24, `ChatArea.scrollAnchor` and `PostCard.commentSync` (below) - the other files keep the 1 s default, and a
+(30 s test deadline), used by `outbox.reelResume` and, since 2026-11-24, `ChatArea.scrollAnchor` and `PostCard.commentSync` (below), and since 2026-11-26 `ChatArea.entryWindow` (its first case, a synchronous mount that awaits nothing, was the victim of a frozen worker: section 8's class, reproduced by no run of the file alone) - the other files keep the 1 s default, and a
 per-file timeout elsewhere is still refused (the first reading above). A ceiling is only how long a test
 accepts being told an event never comes - nothing asserts a duration, and a real hang still fails.
 The one case that fakes timers uses `waitForEventNoClock`, since `vi.waitFor` advances a faked clock by

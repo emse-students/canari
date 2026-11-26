@@ -5,6 +5,7 @@
   import { Log } from '$lib/utils/Log';
   import {
     QUICK_AMOUNTS_CENTS,
+    amountKeyFromKeyboard,
     applyAmountKey,
     bufferToCents,
     centsToBuffer,
@@ -64,6 +65,25 @@
     buffer = valueCents !== undefined ? centsToBuffer(valueCents) : '';
   }
 
+  /**
+   * A physical key typed while THIS keypad has focus. Bound to the keypad's own element, never the
+   * window, so a page holding two pickers (an association page and a membership card) feeds only
+   * the one the member is in.
+   */
+  function onKeypadKey(event: KeyboardEvent) {
+    const key = amountKeyFromKeyboard(event);
+    if (key === null) return;
+    event.preventDefault();
+    Log.d('AmountPicker: key typed on the keyboard', { key });
+    press(key);
+  }
+
+  let keypad = $state<HTMLElement | null>(null);
+  // The focus goes to the keypad as it opens, so typing needs no click first.
+  $effect(() => {
+    keypad?.focus({ preventScroll: true });
+  });
+
   function press(key: AmountKey) {
     buffer = applyAmountKey(buffer, key);
     const cents = bufferToCents(buffer);
@@ -119,10 +139,15 @@
   </div>
 
   {#if keypadOpen}
+    <!-- A focusable group: its own `onkeydown` maps the physical keys, see `onKeypadKey`. -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
     <div
-      class="mx-auto grid w-full max-w-xs grid-cols-3 gap-2"
+      class="mx-auto grid w-full max-w-xs grid-cols-3 gap-2 outline-none"
       role="group"
       aria-label={m.shop_amount_keypad()}
+      tabindex="0"
+      onkeydown={onKeypadKey}
+      bind:this={keypad}
     >
       {#each KEYS as key (key)}
         <button
