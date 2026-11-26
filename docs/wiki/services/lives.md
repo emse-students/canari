@@ -959,8 +959,12 @@ Decided 2026-10-18 on review (nothing limited it before). Four bounds, each a ty
   compared with the live's age read from the database clock (`index < 15 + floor(age / 1 s)`), so
   one segment a second on average, whatever retries do, with a burst that covers a reconnect's
   backlog. `429 LIVE_SEGMENT_TOO_FAST`. The specs move `startedAt` by SQL; no wall clock is asserted.
-- **Lives per account**: one OPEN at a time (the partial unique index, `409 LIVE_ALREADY_OPEN`), and
-  6 STARTED in a rolling hour (`429 LIVE_START_RATE`), counted in `live_starts` because a live's own
+- **Lives per account**: one OPEN at a time (the partial unique index), and **a start by the account
+  ENDS its own open live in the same transaction** (reason `broadcaster`, replay verdict frozen as
+  `end` does, purged after the commit; decided 2026-11-25, charter 2: the essential is never lost -
+  a crash or a reload no longer locks the member out for the 60 s sweep). The old uploader's next
+  segment is answered as for any ended live. Two starts racing leave one open live and a typed
+  `409 LIVE_ALREADY_OPEN` for the loser. 6 STARTED in a rolling hour (`429 LIVE_START_RATE`), counted in `live_starts` because a live's own
   row is deleted at its end. The sweep deletes the rows older than the hour.
 - **At the edge**: nginx's `lives_ingest` zone, 2 r/s burst 20 per client address on `PUT` only, and
   `client_max_body_size 5m` ([nginx](../infrastructure/nginx.md)).
