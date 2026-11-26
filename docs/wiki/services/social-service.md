@@ -1010,7 +1010,7 @@ for the conversation, i.e. a fresh process whose banner an earlier one left.
   conversation the user put away - and its watermark is still recorded. A swipe of it
   forgets it, so the next peer message alerts with only that message. A banner whose remaining
   lines are all own answers counts as empty wherever lines are weighed (round 13). A delivery of r0
-  next to "Vous: r2" removes the banner instead of leaving the answer alone.
+  next to "Vous: r2" removes the banner instead of leaving the answer alone. A late delivery on a banner that shows an answer keeps the history the answer was drawn under (the covered lines above "Vous" stay; only an unread line or the hold keeps the banner up), so "Vous" never falls back to standing over nothing.
 
   What is truly left:
   - A held banner stays until an event about its conversation happens (a read anywhere, a

@@ -857,6 +857,38 @@ class ReadElsewhereMarksTest {
         assertTrue(marks.bannerOf("g1") { null }!!.messages.none { it == r0 })
     }
 
+    // 2026-11-26 (review of the history fix): a LATE delivery of another reply keeps the history an
+    // answer was drawn under. [m1, r0 failed], r2 answered (m1 covered, r0 keeps the banner), then
+    // r0 delivered: "Vous: r2" must not fall back to "Vous" over nothing - held, it shows m1 above
+    // the answer; not held, nothing is unread and it goes; with a newer unread m3, m1 stays above.
+    @Test
+    fun `a late delivery keeps the history an answer was drawn under`() {
+        val r0 = Msg(null, null, pendingReply = true, replyId = "r0")
+        val m3 = Msg(sentAt = 2_900L, serverAt = 3_000L)
+        val repost: (Banner<Msg>, List<Msg>) -> Banner<Msg>? = { b, kept -> b.copy(messages = kept) }
+        fun answered(): ReadElsewhereMarks<Msg> = marks().also { marks ->
+            marks.remember("g1", Banner(1001, "messages", listOf(m1, r0)))
+            assertEquals(
+                Delivery.REPOSTED,
+                marks.answerReply("g1", "r2", watermarkM2, 1001, shade = { null }, holds = notHeld, ownLine = { answer }, repost = repost, cancel = { fail("r0 keeps it") }, maxLines = MAX_LINES),
+            )
+            assertEquals(listOf(m1, r0, answer), marks.bannerOf("g1") { null }?.messages)
+        }
+
+        val held = answered()
+        assertEquals(Delivery.KEPT_UNTIL_READ, held.replyDelivered("g1", "r0", shade = { null }, cancel = { fail("held") }, holds = { true }, repost = repost))
+        assertEquals(listOf(m1, answer), held.bannerOf("g1") { null }?.messages)
+
+        val cancelled = mutableListOf<Int>()
+        assertEquals(Delivery.CANCELLED, answered().replyDelivered("g1", "r0", shade = { null }, cancel = { cancelled += it }, holds = notHeld, repost = noRepost))
+        assertEquals(listOf(1001), cancelled)
+
+        val newer = answered()
+        newer.remember("g1", Banner(1001, "messages", listOf(m1, r0, answer, m3)))
+        assertEquals(Delivery.REPOSTED, newer.replyDelivered("g1", "r0", shade = { null }, cancel = { fail("m3 is unread") }, holds = notHeld, repost = repost))
+        assertEquals(listOf(m1, answer, m3), newer.bannerOf("g1") { null }?.messages)
+    }
+
     // The S-a shape on the held path of `replyDelivered` itself: [r0 pending, "Vous: r2"] held,
     // r0 delivered - only the user's own answer is left, the banner is held, and the re-post that
     // ends the hold shows the answer, never r0.

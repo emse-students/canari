@@ -337,12 +337,13 @@ class ReadElsewhereMarks<M>(
      * the outbox lock). A LATE DELIVERY IS NOT A READ: only
      * the line carrying that id goes. Every peer line stays, to be weighed by a later read as usual,
      * and so does every other pending reply still queued - nothing unseen is ever dropped (principle
-     * 2). The banner is cancelled when no line is left, else [repost] rebuilds it with the lines that
-     * stay and returns what it posted (null: it could not, and the banner is left as it was). All in
+     * 2). The banner is cancelled when nothing UNREAD is left (an own answer alone counts as empty),
+     * else [repost] rebuilds it with the lines that stay and returns what it posted (null: it could not, and the banner is left as it was). All in
      * one critical section with the record. (A quick reply whose handler still runs learned of the
      * delivery earlier, at the send, through [AwaitedReplies].) A peer line the conversation's mark
      * ALREADY covers - a read that came while the reply was queued - goes with it: it was read, and a
-     * re-post must not show it again. With no line left, a banner the
+     * re-post must not show it again - unless an answer ("Vous") stays, which keeps the history it
+     * was answered under, as [answerReply] drew it. With nothing unread left, a banner the
      * platform [holds] - answered inline again since the pending re-post - is updated WITHOUT the
      * delivered line and kept ([Delivery.KEPT_UNTIL_READ]): that later answer's own [answerReply]
      * sets what it shows.
@@ -360,11 +361,20 @@ class ReadElsewhereMarks<M>(
         if (at < 0) return@synchronized Delivery.NONE
         // A peer line a read ALREADY covers is not shown again (round-16 review): [m1, r0], a read
         // covering m1, then r0 delivered - m1 was read, and the banner has nothing left to say.
-        val kept = banner.messages.filterIndexed { i, msg ->
-            val line = lineOf(msg)
-            i != at && (line.own || line.pendingReply || !coversLocked(conversationId, line.sentAt, line.serverAt))
+        // EXCEPT ABOVE AN ANSWER (2026-11-26): a banner showing "Vous" keeps the history it was
+        // answered under ([answerReply]) - [m1, r0, "Vous: r2"], r0 delivered, must not fall back to
+        // "Vous" over nothing. The covered lines never keep it up: only an unread one does.
+        val rest = banner.messages.filterIndexed { i, _ -> i != at }
+        val answered = rest.any { lineOf(it).own }
+        val kept = rest.filter {
+            val line = lineOf(it)
+            answered || line.own || line.pendingReply || !coversLocked(conversationId, line.sentAt, line.serverAt)
         }
-        if (onlyOwnLocked(kept)) {
+        val unread = kept.any {
+            val line = lineOf(it)
+            !line.own && (line.pendingReply || !coversLocked(conversationId, line.sentAt, line.serverAt))
+        }
+        if (!unread) {
             return@synchronized if (cancelUnlessHeldLocked(conversationId, banner, kept, holds, repost, cancel)) {
                 Delivery.CANCELLED
             } else {
@@ -595,12 +605,6 @@ class ReadElsewhereMarks<M>(
         }
         cancel(notifId)
     }
-
-    /**
-     * Whether [lines] hold nothing but this account's own answers ([Line.own]) - a banner left with
-     * those alone says nothing new and counts as empty wherever lines that stay are weighed.
-     */
-    private fun onlyOwnLocked(lines: List<M>): Boolean = lines.all { lineOf(it).own }
 
     private fun bannerOfLocked(conversationId: String, shade: () -> Banner<M>?): Banner<M>? =
         posted[conversationId] ?: if (allWithdrawn || conversationId in withdrawn) null else shade()
