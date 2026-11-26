@@ -5081,7 +5081,7 @@ The Mi 9T by sideload (versionCode `100700203`) and the iPhone 12 from TestFligh
 
 ## The readings of 2026-11-20, S19 (`1.7.2-alpha.4`): the last sitting before the stable
 
-`1.7.2-alpha.4` differs from `alpha.3` by the libxml2 CVE-2026-86144 image fix (#3915) and version numbers. **PASS, all rows:** the dev web loads, its console holding only the known Cloudflare CSP inline-script error ([entry](backlog.d/p3-dev-logs-a-csp-inline-script-error-on-every-page-load.md)); the Mi 9T (`100700204`) sends and receives in the foreground and receives a killed-app push; the iPhone 12 (`100700204`) the same; the Mi's photo push reads "📷 Photo".
+`1.7.2-alpha.4` differs from `alpha.3` by the libxml2 CVE-2026-86144 image fix (#3915) and version numbers. **PASS, all rows:** the dev web loads, its console holding only the known Cloudflare CSP inline-script error ([entry](backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks)); the Mi 9T (`100700204`) sends and receives in the foreground and receives a killed-app push; the iPhone 12 (`100700204`) the same; the Mi's photo push reads "📷 Photo".
 
 ## The production reading of 2026-11-20, the `1.7.2` stable deploy
 

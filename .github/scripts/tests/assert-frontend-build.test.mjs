@@ -97,6 +97,12 @@ ok(
     checks
   )
 );
+ok(
+  'checks.sh frontend-build then boots the server it built (boot-frontend-ssr.mjs)',
+  /assert-frontend-build\.mjs frontend "\$sha"[\s\S]{0,300}bun \.github\/scripts\/boot-frontend-ssr\.mjs frontend\/build/.test(
+    checks
+  )
+);
 
 console.log(failures ? `[frontend-build] ${failures} FAILURE(S)` : '[frontend-build] clean');
 process.exit(failures ? 1 : 0);
