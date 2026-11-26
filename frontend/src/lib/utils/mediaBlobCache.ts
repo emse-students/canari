@@ -28,8 +28,6 @@ import {
   recordCipherWritten,
 } from './mediaCacheLedger';
 
-export { CIPHER_CACHE_NAME };
-
 const decryptedPool = new BlobUrlPool();
 const rawPool = new BlobUrlPool();
 const inflightDecrypted = new Map<string, SharedLoad>();
