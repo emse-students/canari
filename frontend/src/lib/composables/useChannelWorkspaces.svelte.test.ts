@@ -2462,3 +2462,92 @@ describe('useChannelWorkspaces - the key-group version a load hands each pass', 
     expect(declined?.[3]).toMatchObject({ version: null });
   });
 });
+
+/**
+ * A FIELD HEARD LIVE WHILE A LISTING IS IN FLIGHT IS NEWER THAN THE LISTING'S ROW (2026-11-25).
+ *
+ * The existence ledger dates a whole row; a rename, a role change or a cover/history change heard
+ * in the window was overwritten by the older answer until the next listing - a demoted administrator
+ * kept their controls for one listing. Each case drives an explicit order (asked, heard, answered)
+ * with the listing held on a promise; no clock decides anything.
+ */
+describe('useChannelWorkspaces - a field heard while a listing is in flight', () => {
+  const ws = makeWorkspaceDto('ws1', 'Com', 'com');
+  const adminWs = { ...ws, viewerCanManage: true } as WorkspaceDto;
+
+  async function primed() {
+    listUserWorkspaces.mockReset();
+    listChannels.mockReset();
+    listUserWorkspaces.mockResolvedValueOnce([adminWs]);
+    listChannels.mockResolvedValueOnce([makeChannelDto('ch1', 'general')]);
+    const api = useChannelWorkspaces();
+    const ctx = makeContext();
+    await api.loadChannelWorkspacesFromBackend(ctx);
+    return { api, ctx };
+  }
+
+  async function listing(
+    api: ReturnType<typeof useChannelWorkspaces>,
+    ctx: ChannelWorkspaceContext
+  ) {
+    let release: (value: WorkspaceDto[]) => void = () => {};
+    listUserWorkspaces.mockImplementationOnce(
+      () => new Promise<WorkspaceDto[]>((resolve) => (release = resolve))
+    );
+    const loading = api.loadChannelWorkspacesFromBackend(ctx);
+    await tick();
+    return { loading, release: (answer: WorkspaceDto[]) => release(answer) };
+  }
+
+  it('a demoted administrator does not get their controls back from the older answer', async () => {
+    const { api, ctx } = await primed();
+    expect(api.channelWorkspaces[0].viewerCanManage).toBe(true);
+    listChannels.mockResolvedValueOnce([makeChannelDto('ch1', 'general')]);
+    const { loading, release } = await listing(api, ctx);
+    api.handleWorkspaceRoleChanged({
+      workspaceId: 'ws1',
+      roleName: 'member',
+      canManage: false,
+      permissions: [],
+    });
+    release([adminWs]);
+    await loading;
+    expect(api.channelWorkspaces[0].viewerCanManage).toBe(false);
+  });
+
+  it('a rename heard in the window survives the older name, and a later listing takes the server back', async () => {
+    const { api, ctx } = await primed();
+    listChannels.mockResolvedValueOnce([makeChannelDto('ch1', 'general')]);
+    const { loading, release } = await listing(api, ctx);
+    api.handleChannelUpdated({ channelId: 'ch1', name: 'annonces' });
+    release([adminWs]);
+    await loading;
+    expect(api.channelWorkspaces[0].channels[0].name).toBe('annonces');
+
+    // The next listing was asked AFTER the rename: its answer is the truth again.
+    listUserWorkspaces.mockResolvedValueOnce([adminWs]);
+    listChannels.mockResolvedValueOnce([makeChannelDto('ch1', 'renamed-elsewhere')]);
+    await api.loadChannelWorkspacesFromBackend(ctx);
+    expect(api.channelWorkspaces[0].channels[0].name).toBe('renamed-elsewhere');
+  });
+
+  it('a history rule heard in the window survives the older answer', async () => {
+    const { api, ctx } = await primed();
+    listChannels.mockResolvedValueOnce([makeChannelDto('ch1', 'general')]);
+    const { loading, release } = await listing(api, ctx);
+    api.handleWorkspaceUpdated({ workspaceId: 'ws1', historyVisibility: 'shared' });
+    release([{ ...adminWs, historyVisibility: 'joined' } as WorkspaceDto]);
+    await loading;
+    expect(api.channelWorkspaces[0].historyVisibility).toBe('shared');
+  });
+
+  it('negative control: a field NOT heard is taken from the listing', async () => {
+    const { api, ctx } = await primed();
+    listChannels.mockResolvedValueOnce([makeChannelDto('ch1', 'general')]);
+    const { loading, release } = await listing(api, ctx);
+    api.handleChannelUpdated({ channelId: 'ch1', name: 'annonces' });
+    release([{ ...adminWs, viewerCanManage: false } as WorkspaceDto]);
+    await loading;
+    expect(api.channelWorkspaces[0].viewerCanManage).toBe(false);
+  });
+});
