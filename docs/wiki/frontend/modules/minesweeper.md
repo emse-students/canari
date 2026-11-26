@@ -237,24 +237,23 @@ few are not consistent even with their own neighbours (one H3 number cannot be r
 entry keeps the reference's geometry and closes the crop's edges, and the numbers at a closed edge are recomputed from
 the board** - the board the test proves is a real one. Three entries are not the reference's drawing:
 the **introduction to reduction** (ours: the reference goes straight to the three reductions), and the **two
-corner patterns**, whose boards are the open ones proved before (the reference's own pictures cannot hold the
-numbers of their own explanation), turned to the reference's orientation (the 3 with a 1 on its left and a 1 below,
-the corner above and to its right). The two last entries are full boards with a mines counter (**mine counting**,
+corner patterns**, whose boards are SEARCHED (see below: the reference's own pictures cannot hold the numbers of their own explanation). The two last entries are full boards with a mines counter (**mine counting**,
 **combinations**), as the reference draws them, and need it: the numbers alone force less.
 
 **A catalogue entry is a WINDOW and says so with `partial: true`**: its picture holds more than the pattern asks, so
 its goal is what the PATTERN concludes (the test holds it to be forced), not everything the neighbouring numbers
 force. A tutorial lesson is exact: its goal IS everything forced.
 
-**The corner patterns are OPEN, and a test holds them to it** (owner, 2026-11-26: *"la presence de bords permet de
-contourner ce raisonnement"*). A first version drew the corner in a 4x4 grid whose edges made the ends of the arms
-trivial: a 2 that sees only two hidden cells marks both, so the pattern was never needed. The lessons now sit in a
-6x5 board whose right column is still hidden and touched by no number, and `lessons.test.ts` requires, for a
-lesson that declares a `corner: { number, cell }`: **(1) no number of the picture settles its own neighbours** (a
-0, or as many mines as hidden neighbours); **(2) the corner cell AND each end of the arms (`corner.also`) are forced WITH the corner number and unknown
-WITHOUT it** (owner, 2026-11-26: the first 2-2-2 left the ends to the neighbouring numbers, so only the corner needed the rule and it could be guessed; the board now comes from a search where the corner 2 alone decides all three), the mines counter included - the far column is what keeps the counter from standing in for the
-reasoning (a closed 5x5 board always gave the answer without the corner number). The boards come from an
-exhaustive solver over the small boards, the symmetric ones (1-3-1 reads 1-1-1-[3]-1-1-1, 2-2-2 is flanked by 1s).
+**The corner patterns are OPEN and SEARCHED, and a test holds them to it** (owner, 2026-11-26, three times: *"la
+presence de bords permet de contourner ce raisonnement"*, then *"le 2-2-2 est encore devinable sans comprendre la
+regle"*, then *"un 1-2 au bord impose une bombe"*). A board wall makes the arms trivial (a 2 that sees only two
+hidden cells marks both; a 1-2 against an edge places a mine), and neighbouring numbers can settle the ends so that
+only the corner is left to guess. The boards are therefore a 7x6 window FULLY SURROUNDED by hidden cells - no
+number touches a wall - found by a search over the border mines (`corner.number`, `corner.cell`, `corner.also` the
+two ends of the arms), and `lessons.test.ts` requires: **(1) no number of the picture settles its own neighbours**
+(a 0, or as many mines as hidden neighbours); **(2) the corner cell AND each end of the arms are forced WITH the
+corner number and unknown WITHOUT it**: the corner number alone decides all three, so neither a guess nor another
+number can stand in for the reasoning. The window is open (the counter reads "?").
 **What each pattern forces in an open corner** (cells: X and Y at the ends of the arms, A B and D E the two pairs
 shared with the corner number, C the outermost corner): 1-3-1 forces C a mine and X, Y safe; 2-2-2 forces C safe
 and X, Y mines, and both leave one mine in each pair for the other numbers to place. Neither needs the counter.

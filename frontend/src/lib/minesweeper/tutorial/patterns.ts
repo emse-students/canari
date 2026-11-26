@@ -15,8 +15,8 @@ import { group, mine, safe, type Lesson } from './lessons';
  * the board: the reference's own are those of the board beyond the crop. Every board is PROVED by
  * `lessons.test.ts` like a tutorial lesson - what it asks to open is safe, what it asks to flag is a mine, and every
  * highlight is true in every arrangement the numbers allow. Two entries are ours: the introduction to reduction,
- * and the two corner patterns, which the reference draws as pictures with numbers its own picture cannot hold -
- * their boards are the open ones proved earlier, turned to the reference's orientation.
+ * and the two corner patterns, whose boards are SEARCHED: surrounded by hidden cells so no wall helps, and with
+ * the corner number alone deciding the corner and both ends of the arms.
  *
  * `partial`: the picture is a window, so it holds more than the pattern asks - the goal is what the pattern
  * concludes, which the test holds to be forced, not everything the neighbouring numbers force.
@@ -874,57 +874,41 @@ export const PATTERNS: readonly Lesson[] = [
     section: SECTION.complex,
     title: () => m.minesweeper_pattern_corner_one_three_one_title(),
     body: () => m.minesweeper_pattern_corner_one_three_one_body(),
-    rows: ['#..##.', '1113#.', '0001..', '0001..', '0001##'],
+    rows: ['...#.#.', '.1113#.', '#1001..', '.1001..', '.1111#.', '..#....'],
     open: true,
     corner: {
-      number: [3, 1],
-      cell: [4, 0],
+      number: [4, 1],
+      cell: [5, 0],
       also: [
-        [4, 4],
-        [0, 0],
+        [2, 0],
+        [5, 3],
       ],
     },
     goal: {
       reveal: [
-        [4, 3],
-        [4, 2],
-        [1, 0],
         [2, 0],
+        [5, 3],
       ],
-      flag: [
-        [4, 4],
-        [4, 1],
-        [0, 0],
-        [3, 0],
-        [4, 0],
-      ],
+      flag: [[5, 0]],
     },
     hints: [
       {
-        numbers: [[3, 1]],
-        marks: [group(3, [4, 0, 1, 3], [2, 0, 2, 1])],
+        numbers: [[4, 1]],
+        marks: [group(3, [3, 0, 3, 1], [5, 1, 1, 2])],
         text: () => m.minesweeper_pattern_corner_one_three_one_hint_1(),
       },
       {
         numbers: [
-          [3, 2],
-          [2, 1],
+          [3, 1],
+          [4, 2],
         ],
-        marks: [group(1, [4, 1, 1, 3]), group(1, [1, 0, 3, 1])],
+        marks: [group(1, [2, 0, 3, 1]), group(1, [5, 1, 1, 3])],
         text: () => m.minesweeper_pattern_corner_one_three_one_hint_2(),
       },
       {
-        numbers: [[3, 1]],
-        marks: [mine([4, 0, 1, 1]), safe([4, 3, 1, 1], [1, 0, 1, 1])],
+        numbers: [[4, 1]],
+        marks: [mine([5, 0, 1, 1]), safe([2, 0, 1, 1], [5, 3, 1, 1])],
         text: () => m.minesweeper_pattern_corner_one_three_one_hint_3(),
-      },
-      {
-        numbers: [],
-        marks: [
-          mine([4, 4, 1, 1], [4, 1, 1, 1], [0, 0, 1, 1], [3, 0, 1, 1], [4, 0, 1, 1]),
-          safe([4, 2, 1, 2], [1, 0, 2, 1]),
-        ],
-        text: () => m.minesweeper_pattern_corner_one_three_one_hint_4(),
       },
     ],
   },
@@ -933,65 +917,49 @@ export const PATTERNS: readonly Lesson[] = [
     section: SECTION.complex,
     title: () => m.minesweeper_pattern_corner_two_two_two_title(),
     body: () => m.minesweeper_pattern_corner_two_two_two_body(),
-    rows: ['.##...', '1222..', '0002#.', '0002#.', '0001..'],
+    rows: ['..##...', '.2222#.', '#1002..', '.1002#.', '.1112#.', '..#....'],
     open: true,
     corner: {
-      number: [3, 1],
-      cell: [4, 0],
+      number: [4, 1],
+      cell: [5, 0],
       also: [
-        [1, 0],
-        [4, 3],
+        [2, 0],
+        [5, 3],
       ],
     },
     goal: {
-      reveal: [
-        [0, 0],
-        [3, 0],
-        [4, 0],
-        [4, 1],
-        [4, 4],
-      ],
+      reveal: [[5, 0]],
       flag: [
-        [1, 0],
         [2, 0],
-        [4, 2],
-        [4, 3],
+        [5, 3],
       ],
     },
     hints: [
       {
         numbers: [
-          [2, 1],
-          [3, 2],
+          [3, 1],
+          [4, 2],
         ],
-        marks: [group(2, [1, 0, 3, 1]), group(2, [4, 1, 1, 3])],
+        marks: [group(2, [2, 0, 3, 1]), group(2, [5, 1, 1, 3])],
         text: () => m.minesweeper_pattern_corner_two_two_two_hint_1(),
       },
       {
-        numbers: [[3, 1]],
-        marks: [group(2, [2, 0, 3, 1], [4, 1, 1, 2])],
+        numbers: [[4, 1]],
+        marks: [group(2, [3, 0, 3, 1], [5, 1, 1, 2])],
         text: () => m.minesweeper_pattern_corner_two_two_two_hint_2(),
       },
       {
         numbers: [
-          [2, 1],
-          [3, 2],
+          [3, 1],
+          [4, 2],
         ],
-        marks: [group(undefined, [2, 0, 2, 1]), group(undefined, [4, 1, 1, 2])],
+        marks: [group(undefined, [3, 0, 2, 1]), group(undefined, [5, 1, 1, 2])],
         text: () => m.minesweeper_pattern_corner_two_two_two_hint_3(),
       },
       {
-        numbers: [[3, 1]],
-        marks: [safe([4, 0, 1, 1]), mine([1, 0, 1, 1], [4, 3, 1, 1])],
+        numbers: [[4, 1]],
+        marks: [safe([5, 0, 1, 1]), mine([2, 0, 1, 1], [5, 3, 1, 1])],
         text: () => m.minesweeper_pattern_corner_two_two_two_hint_4(),
-      },
-      {
-        numbers: [],
-        marks: [
-          mine([1, 0, 2, 1], [4, 2, 1, 2]),
-          safe([0, 0, 1, 1], [3, 0, 2, 1], [4, 1, 1, 1], [4, 4, 1, 1]),
-        ],
-        text: () => m.minesweeper_pattern_corner_two_two_two_hint_5(),
       },
     ],
   },
