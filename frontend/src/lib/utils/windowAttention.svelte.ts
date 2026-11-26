@@ -145,13 +145,23 @@ export const windowAttention: AttentionSignal = createAttentionSignal({
  * `idle` - in front with nobody at it: nothing, and the withheld mark is reported;
  * `reading` - the mark moves. Pure: `MainChatPage` hands in its reactive state, so reading
  * `attentive` there is what re-runs the effect at the first gesture.
+ *
+ * ON NATIVE MOBILE THE SHELL'S FOREGROUND IS THE ONLY "IN FRONT" FACT (`nativeMobile`), as in
+ * `arrivalContextNow`: the document's focus and visibility answer nothing there. Android's WebView
+ * reports both true in the background; the iPhone's WKWebView reports `hasFocus()` FALSE until the
+ * first touch of the process, and after a resume until the next one (iPhone 12, `1.8.2`,
+ * 2026-11-26: a conversation landed from a banner tap was neither marked read nor had its other
+ * banners taken down until a touch anywhere in the page). Asked there, focus withheld every read
+ * of a conversation opened without a touch.
  */
 export function windowReadVerdict(w: {
   focused: boolean;
   visible: boolean;
   foreground: boolean;
   attentive: boolean;
+  nativeMobile: boolean;
 }): 'away' | 'idle' | 'reading' {
-  if (!w.focused || !w.visible || !w.foreground) return 'away';
+  if (!w.foreground) return 'away';
+  if (!w.nativeMobile && (!w.focused || !w.visible)) return 'away';
   return w.attentive ? 'reading' : 'idle';
 }
