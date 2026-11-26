@@ -2988,6 +2988,8 @@ site, which credential applied depended on which field of the payload the client
 
 #### Link preview is a user-controlled server-side fetch (SSRF)
 
+Text fields (title, description, site name) pass through `decodeHtmlEntity` once: the full HTML5 named set plus numeric references (the `html-entities` library), unknown entities left as written, never decoded twice. The card renders them as text. The 6 h preview cache holds decoded payloads, so an older escaped title expires on its own.
+
 `/api/mls/link-preview` takes a URL from a chat message and fetches it from inside the cluster, so
 `utils/url-guard.ts` is what stands between a pasted link and the internal network. Two barriers,
 because one is not enough:
