@@ -51,6 +51,7 @@ import FormsManagerList from './FormsManagerList.svelte';
 import { m } from '$lib/paraglide/messages';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 import type { Form } from '$lib/forms/api';
+import { formatAmount } from '$lib/forms/fillAnswers';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { dismissToast, toastStore } from '$lib/stores/toast.svelte';
 
@@ -148,7 +149,7 @@ describe('FormsManagerList - the row', () => {
       form({ basePrice: 2800, allowCashPayment: true }),
       form({ id: 'f2', title: 'Free' }),
     ]);
-    expect(target.querySelector('#form-f1')!.textContent).toContain('28.00');
+    expect(target.querySelector('#form-f1')!.textContent).toContain(formatAmount(2800));
     expect(target.querySelector('#form-f1')!.textContent).toContain(m.asso_forms_cash_accepted());
     expect(target.querySelector('#form-f2')!.textContent).toContain(m.asso_forms_price_free());
   });
