@@ -290,7 +290,7 @@ other events: the live stream coming back, and the end of the community listing.
 to ask for the same 116 kB page again and supersede the first request. That happened 2-3 times per
 open on this build, and also on `main` when the tap was fast (one main run in three).
 - The fix: a load in flight is now JOINED, unless the copy was declared stale after its request
-  left (`salonStaleDeclarations` in `useConversations`). One request per open now.
+  left (`staleDeclarationsOf` in `useConversations`: the every-salon declarations plus this salon's own, since 2026-11-25 - a neighbour's declaration no longer splits a load). One request per open now.
 
 **What review closed (2026-10-15).**
 - **The F3 window.** A salon's rows, and a restored conversation, can be opened before the listing

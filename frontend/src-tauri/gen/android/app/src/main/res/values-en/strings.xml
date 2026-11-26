@@ -185,4 +185,6 @@
     <string name="notif_event_pending_body">“%1$s” needs approval again: its dates changed</string>
     <string name="notif_event_pending_coorganiser_title">Event needs approval again</string>
     <string name="notif_event_pending_coorganiser_body">“%1$s” needs approval again: an association accepted to co-organise</string>
+    <string name="notif_event_coorganiser_accepted_title">Co-organisation accepted</string>
+    <string name="notif_event_coorganiser_accepted_body">An association accepted to co-organise “%1$s”</string>
 </resources>

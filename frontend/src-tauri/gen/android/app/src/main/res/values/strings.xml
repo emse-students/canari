@@ -227,4 +227,6 @@
     <string name="notif_event_pending_body">« %1$s » doit être revalidé : ses dates ont changé</string>
     <string name="notif_event_pending_coorganiser_title">Événement à revalider</string>
     <string name="notif_event_pending_coorganiser_body">« %1$s » doit être revalidé : une association a accepté de co-organiser</string>
+    <string name="notif_event_coorganiser_accepted_title">Co-organisation acceptée</string>
+    <string name="notif_event_coorganiser_accepted_body">Une association a accepté de co-organiser « %1$s »</string>
 </resources>

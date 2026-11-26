@@ -506,6 +506,40 @@ export function countUnreadBelow(
   return countUnreadForUser(msgs.slice(index + 1), watermark, serverWatermark);
 }
 
+/** The reader's two counting marks (see {@link countingReadPoint}), frozen at one instant. */
+export interface PillBaseline {
+  /** The conversation the marks were taken in: a baseline is never carried into another one. */
+  conversationId: string;
+  stamped: number;
+  server: number;
+}
+
+/**
+ * THE POINT THE SCROLL-TO-BOTTOM PILL COUNTS FROM - the marks the reader held WHEN THEY LEFT THE LIVE END.
+ *
+ * An open conversation in front marks everything it holds as read (`MainChatPage`'s read-mark
+ * effect carries no scroll position), so a reader scrolled up - or a thread restored scrolled up,
+ * then caught up - had every arrival covered by the mark the instant it landed, and the pill drew
+ * an arrow with NO number (Mi 9T, `1.8.1-alpha.2`, 2026-11-25: a 65-message catch-up). The pill's
+ * question is "what arrived below me since I went up", not "what does the server still hold unread",
+ * so it counts against the marks as they stood at the departure, never against the live ones.
+ *
+ * `null` while the reader is at the live end (no baseline is held there) or has no frozen point yet:
+ * the caller then counts against the live marks, as before. A baseline never rises above the live
+ * marks and never counts as ahead of them - marks only advance, so the minimum is the baseline.
+ */
+export function pillCountingPoint(
+  live: { stamped: number; server: number },
+  baseline: PillBaseline | null,
+  conversationId: string
+): { stamped: number; server: number } {
+  if (!baseline || baseline.conversationId !== conversationId) return live;
+  return {
+    stamped: Math.min(live.stamped, baseline.stamped),
+    server: Math.min(live.server, baseline.server),
+  };
+}
+
 /**
  * The watermark that marking `msgs` read would produce: the latest instant among the messages this
  * user could have read, never below what they already hold.

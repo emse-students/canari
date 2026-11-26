@@ -1,8 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LoudnessMeter, type MediaLoudness } from '$lib/video/loudnessMeter';
 import {
-  LOUDNESS_TARGET_LUFS,
-  MAX_BOOST_DB,
+  VOICE_NOTE_LOUDNESS_LAW,
   PEAK_CEILING_DBFS,
   loudnessGainDb,
 } from '$lib/video/loudnessPlayback';
@@ -209,13 +208,13 @@ describe('the tap context follows the microphone rate', () => {
  * was silent and no speech source stood near the phone, so the loudness figures were not read). A
  * 1 kHz and a 14 kHz tone - the second one stands for the high band a 12 kHz cutoff must keep - are
  * measured the way a recording is (`RecordingLoudness`, fed in the 128-frame quanta of the worklet),
- * then brought through the one playback law (`loudnessGainDb`).
+ * then brought through the voice-note playback law (`VOICE_NOTE_LOUDNESS_LAW`, owner 2026-11-22:
+ * -16 LUFS, a raise of at most +12 dB).
  *
- * WHAT THESE CASES FOUND: the law brings a note to -14 LUFS (the video target) with at most +6 dB,
- * so the row's "-18 +/- 2 LUFS" is met by a note measured near -24 LUFS (a typical speech level) and
- * NOT by a quiet one: tones at -30 dBFS are measured -34 LUFS and play at -28. The row's number is
- * not a property of the law; the quiet case below pins what the law really does, and the level of
- * the "-18" claim is left to the owner (a speech target of -16 to -18 is the lever the entry names).
+ * WHAT THESE CASES FOUND, under the video law that played a note before (-14 LUFS, +6 dB): a note
+ * measured near -24 LUFS (a typical speech level) met the row's "-18 +/- 2", a quiet one did not -
+ * tones at -30 dBFS (-34 LUFS) played at -28. The voice law lifts that quiet note twice as far and
+ * stops there: the cap, not the target, decides how far a whisper is raised.
  */
 describe('a voice note through the playback law, from a synthetic 48 kHz buffer', () => {
   /** 1 kHz and 14 kHz tones, each at `perToneDbfs`, as one mono plane. */
@@ -245,7 +244,7 @@ describe('a voice note through the playback law, from a synthetic 48 kHz buffer'
   /** The note as the player plays it: measured, then raised or lowered by the law. */
   function played(perToneDbfs: number) {
     const loudness = measured(twoTones(perToneDbfs));
-    const gainDb = loudnessGainDb(loudness);
+    const gainDb = loudnessGainDb(loudness, VOICE_NOTE_LOUDNESS_LAW);
     return {
       loudness,
       gainDb,
@@ -254,27 +253,27 @@ describe('a voice note through the playback law, from a synthetic 48 kHz buffer'
     };
   }
 
-  it('a note at a typical speech level plays at -18 +/- 2 LUFS with its peak under -1 dBFS', () => {
+  it('a note at a typical speech level plays at -16 LUFS with its peak under -1 dBFS', () => {
     const note = played(-20);
     expect(note.loudness.integratedLufs).toBeCloseTo(-24, 0);
-    expect(Math.abs(note.lufs - -18)).toBeLessThanOrEqual(2);
+    expect(note.lufs).toBeCloseTo(VOICE_NOTE_LOUDNESS_LAW.targetLufs, 1);
     expect(note.peakDbfs).toBeLessThanOrEqual(PEAK_CEILING_DBFS);
   });
 
   it('a louder note is brought down to the target, never past the peak ceiling', () => {
     const note = played(-12);
-    expect(note.lufs).toBeCloseTo(LOUDNESS_TARGET_LUFS, 1);
+    expect(note.lufs).toBeCloseTo(VOICE_NOTE_LOUDNESS_LAW.targetLufs, 1);
     expect(note.peakDbfs).toBeLessThanOrEqual(PEAK_CEILING_DBFS);
     const hot = played(-6);
     expect(hot.gainDb).toBeLessThan(0);
-    expect(hot.lufs).toBeCloseTo(LOUDNESS_TARGET_LUFS, 1);
+    expect(hot.lufs).toBeCloseTo(VOICE_NOTE_LOUDNESS_LAW.targetLufs, 1);
   });
 
-  it('a quiet note (-30 dBFS tones) is raised by the +6 dB cap and no more: it stays far under -18', () => {
+  it('a quiet note (-30 dBFS tones) is raised by the +12 dB cap and no more: it stays under the target', () => {
     const note = played(-30);
     expect(note.loudness.integratedLufs).toBeCloseTo(-34, 0);
-    expect(note.gainDb).toBe(MAX_BOOST_DB);
-    expect(note.lufs).toBeCloseTo(-28, 0);
+    expect(note.gainDb).toBe(VOICE_NOTE_LOUDNESS_LAW.maxBoostDb);
+    expect(note.lufs).toBeCloseTo(-22, 0);
     expect(note.peakDbfs).toBeLessThanOrEqual(PEAK_CEILING_DBFS);
   });
 

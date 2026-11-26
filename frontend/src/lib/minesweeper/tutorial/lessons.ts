@@ -2,7 +2,9 @@ import { m } from '$lib/paraglide/messages';
 import type { MinesweeperBoard } from '../game';
 
 /**
- * THE TUTORIAL'S LESSONS (owner, 2026-11-25: *"une section tutoriel qui explique le fonctionnement du
+ * THE TUTORIAL'S LESSONS: the gestures and the rules, and no pattern (owner, 2026-11-26: *"les patterns
+ * specifiques ne devraient pas etre enseignes direct, mais plutot rester dans l'onglet patterns"* - they are
+ * the annex's, `patterns.ts`). (owner, 2026-11-25: *"une section tutoriel qui explique le fonctionnement du
  * demineur avec des mini-grilles"*, with a hint button that SHOWS the reasoning). A lesson is a picture
  * ({@link boardFromLayout}), a goal, and the steps of its explanation. The pictures are TEXT, and
  * `lessons.test.ts` proves each one against EVERY arrangement of mines the visible numbers AND the mines
@@ -14,7 +16,7 @@ import type { MinesweeperBoard } from '../game';
 export type Coord = readonly [number, number];
 
 /** A rectangle of cells: `[x, y, width, height]`. */
-type Rect = readonly [number, number, number, number];
+export type Rect = readonly [number, number, number, number];
 
 /** What a lesson asks: cells to open (all safe) and cells to flag (all mines). */
 export interface LessonGoal {
@@ -48,16 +50,38 @@ export interface HintMark {
 interface HintStep {
   numbers: readonly Coord[];
   marks: readonly HintMark[];
+  /**
+   * REDUCTION (owner, 2026-11-26): numbers drawn with what is left of them once the flags they touch are
+   * taken off - `2 -> 1` for a 2 beside one flag. The test holds `value` to the board: the number minus
+   * its flagged neighbours, so a label cannot teach a wrong subtraction.
+   */
+  reduced?: readonly { cell: Coord; value: number }[];
   text: () => string;
 }
 
 export interface Lesson {
   id: string;
+  /** The group a catalogue entry belongs to (the annex lists patterns by family); absent in the tutorial. */
+  section?: () => string;
   title: () => string;
   body: () => string;
   /** The picture, see `layout.ts`. */
   rows: readonly string[];
   goal: LessonGoal;
+  /**
+   * AN OPEN GRID (owner, 2026-11-26: *"une continuite avec des cases non importantes, un nombre inconnu de
+   * mines et des pointilles qui continuent la grille"*): the picture is a window on a larger board. The
+   * hidden cells no number touches are drawn dotted and cannot be played, the mines counter reads "?",
+   * and the proof leaves the counter out - so a pattern is taught on what the numbers say, never on a
+   * total the picture happens to carry.
+   */
+  open?: boolean;
+  /**
+   * A CATALOGUE window holds more than the pattern asks (the reference's pictures are crops of larger boards):
+   * the goal is what the PATTERN concludes, the test holds it to be forced, and the numbers around the pattern
+   * may force more than the goal asks. A tutorial lesson is exact: its goal IS everything forced.
+   */
+  partial?: boolean;
   /**
    * Marks shown from the start, before any hint: a lesson that teaches a GESTURE (open a cell) shows
    * where. Such a lesson has no deduction to verify, only a safe target.
@@ -66,16 +90,19 @@ export interface Lesson {
   /**
    * For a CORNER pattern: the number whose reasoning the lesson teaches, and the cell it decides. The test
    * holds the picture to it (owner, 2026-11-26): no number may settle its own neighbours (a 0, or as many
-   * mines as hidden neighbours - a board edge makes that easy), and that cell must be forced WITH the
-   * number and NOT without it, so the pattern cannot be bypassed.
+   * mines as hidden neighbours - a board edge makes that easy), and that cell - AND each of `also`, the ends of the arms - must be forced WITH
+   * the number and NOT without it, so the pattern cannot be bypassed and no guess of the corner is enough.
    */
-  corner?: { number: Coord; cell: Coord };
+  corner?: { number: Coord; cell: Coord; also: readonly Coord[] };
   hints: readonly HintStep[];
 }
 
-const mine = (...rects: Rect[]): HintMark => ({ kind: 'mine', rects });
-const safe = (...rects: Rect[]): HintMark => ({ kind: 'safe', rects });
-const group = (count: number | undefined, ...rects: Rect[]): HintMark => ({
+/** A mark of certain mines, drawn as one red outline per rectangle. */
+export const mine = (...rects: Rect[]): HintMark => ({ kind: 'mine', rects });
+/** A mark of certain safe cells, in green. */
+export const safe = (...rects: Rect[]): HintMark => ({ kind: 'safe', rects });
+/** A group of cells holding `count` mines (exact), or an unspecified number when `count` is undefined. */
+export const group = (count: number | undefined, ...rects: Rect[]): HintMark => ({
   kind: 'group',
   rects,
   count,
@@ -217,230 +244,6 @@ export const LESSONS: readonly Lesson[] = [
         numbers: [],
         marks: [safe([1, 0, 1, 1], [1, 2, 1, 1], [2, 0, 2, 3])],
         text: () => m.minesweeper_tutorial_lesson_counter_hint_3(),
-      },
-    ],
-  },
-  {
-    id: 'one_one',
-    title: () => m.minesweeper_tutorial_lesson_one_one_title(),
-    body: () => m.minesweeper_tutorial_lesson_one_one_body(),
-    rows: ['1111', '#..#'],
-    goal: {
-      reveal: [
-        [1, 1],
-        [2, 1],
-      ],
-      flag: [
-        [0, 1],
-        [3, 1],
-      ],
-    },
-    hints: [
-      {
-        numbers: [[0, 0]],
-        marks: [group(1, [0, 1, 2, 1])],
-        text: () => m.minesweeper_tutorial_lesson_one_one_hint_1(),
-      },
-      {
-        numbers: [[1, 0]],
-        marks: [group(1, [0, 1, 2, 1]), safe([2, 1, 1, 1])],
-        text: () => m.minesweeper_tutorial_lesson_one_one_hint_2(),
-      },
-      {
-        numbers: [[3, 0]],
-        marks: [safe([2, 1, 1, 1]), mine([3, 1, 1, 1])],
-        text: () => m.minesweeper_tutorial_lesson_one_one_hint_3(),
-      },
-      {
-        numbers: [[2, 0]],
-        marks: [mine([0, 1, 1, 1], [3, 1, 1, 1]), safe([1, 1, 2, 1])],
-        text: () => m.minesweeper_tutorial_lesson_one_one_hint_4(),
-      },
-    ],
-  },
-  {
-    id: 'one_two_one',
-    title: () => m.minesweeper_tutorial_lesson_one_two_one_title(),
-    body: () => m.minesweeper_tutorial_lesson_one_two_one_body(),
-    rows: ['121', '#.#'],
-    goal: {
-      reveal: [[1, 1]],
-      flag: [
-        [0, 1],
-        [2, 1],
-      ],
-    },
-    hints: [
-      {
-        numbers: [[1, 0]],
-        marks: [group(2, [0, 1, 3, 1])],
-        text: () => m.minesweeper_tutorial_lesson_one_two_one_hint_1(),
-      },
-      {
-        numbers: [[0, 0]],
-        marks: [group(1, [0, 1, 2, 1])],
-        text: () => m.minesweeper_tutorial_lesson_one_two_one_hint_2(),
-      },
-      {
-        numbers: [[2, 0]],
-        marks: [group(1, [1, 1, 2, 1])],
-        text: () => m.minesweeper_tutorial_lesson_one_two_one_hint_3(),
-      },
-      {
-        numbers: [[1, 0]],
-        marks: [mine([0, 1, 1, 1], [2, 1, 1, 1]), safe([1, 1, 1, 1])],
-        text: () => m.minesweeper_tutorial_lesson_one_two_one_hint_4(),
-      },
-    ],
-  },
-  {
-    id: 'one_two_two_one',
-    title: () => m.minesweeper_tutorial_lesson_one_two_two_one_title(),
-    body: () => m.minesweeper_tutorial_lesson_one_two_two_one_body(),
-    rows: ['1221', '.##.'],
-    goal: {
-      reveal: [
-        [0, 1],
-        [3, 1],
-      ],
-      flag: [
-        [1, 1],
-        [2, 1],
-      ],
-    },
-    hints: [
-      {
-        numbers: [
-          [0, 0],
-          [3, 0],
-        ],
-        marks: [group(1, [0, 1, 2, 1]), group(1, [2, 1, 2, 1])],
-        text: () => m.minesweeper_tutorial_lesson_one_two_two_one_hint_1(),
-      },
-      {
-        numbers: [[1, 0]],
-        marks: [group(1, [0, 1, 2, 1]), mine([2, 1, 1, 1])],
-        text: () => m.minesweeper_tutorial_lesson_one_two_two_one_hint_2(),
-      },
-      {
-        numbers: [[2, 0]],
-        marks: [group(1, [2, 1, 2, 1]), mine([1, 1, 1, 1])],
-        text: () => m.minesweeper_tutorial_lesson_one_two_two_one_hint_3(),
-      },
-      {
-        numbers: [],
-        marks: [mine([1, 1, 2, 1]), safe([0, 1, 1, 1], [3, 1, 1, 1])],
-        text: () => m.minesweeper_tutorial_lesson_one_two_two_one_hint_4(),
-      },
-    ],
-  },
-  {
-    id: 'angle_one_three_one',
-    title: () => m.minesweeper_tutorial_lesson_angle_one_three_one_title(),
-    body: () => m.minesweeper_tutorial_lesson_angle_one_three_one_body(),
-    // OPEN: the column on the right is still hidden and no number touches it, so neither a board edge
-    // nor the mines counter can stand in for the corner reasoning (`lessons.test.ts` proves it).
-    rows: ['0001##', '0001..', '0001..', '1113#.', '#..##.'],
-    goal: {
-      reveal: [
-        [4, 1],
-        [4, 2],
-        [1, 4],
-        [2, 4],
-      ],
-      flag: [
-        [4, 0],
-        [4, 3],
-        [0, 4],
-        [3, 4],
-        [4, 4],
-      ],
-    },
-    corner: { number: [3, 3], cell: [4, 4] },
-    hints: [
-      {
-        numbers: [[3, 3]],
-        marks: [group(3, [4, 2, 1, 3], [2, 4, 2, 1])],
-        text: () => m.minesweeper_tutorial_lesson_angle_one_three_one_hint_1(),
-      },
-      {
-        numbers: [
-          [3, 2],
-          [2, 3],
-        ],
-        marks: [group(1, [4, 1, 1, 3]), group(1, [1, 4, 3, 1])],
-        text: () => m.minesweeper_tutorial_lesson_angle_one_three_one_hint_2(),
-      },
-      {
-        numbers: [[3, 3]],
-        marks: [mine([4, 4, 1, 1]), safe([4, 1, 1, 1], [1, 4, 1, 1])],
-        text: () => m.minesweeper_tutorial_lesson_angle_one_three_one_hint_3(),
-      },
-      {
-        numbers: [],
-        marks: [
-          mine([4, 0, 1, 1], [4, 3, 1, 1], [0, 4, 1, 1], [3, 4, 1, 1], [4, 4, 1, 1]),
-          safe([4, 1, 1, 2], [1, 4, 2, 1]),
-        ],
-        text: () => m.minesweeper_tutorial_lesson_angle_one_three_one_hint_4(),
-      },
-    ],
-  },
-  {
-    id: 'angle_two_two_two',
-    title: () => m.minesweeper_tutorial_lesson_angle_two_two_two_title(),
-    body: () => m.minesweeper_tutorial_lesson_angle_two_two_two_body(),
-    rows: ['0001.#', '0001#.', '0002..', '1122#.', '.#.#..'],
-    goal: {
-      reveal: [
-        [4, 0],
-        [4, 2],
-        [0, 4],
-        [2, 4],
-        [4, 4],
-      ],
-      flag: [
-        [4, 1],
-        [4, 3],
-        [1, 4],
-        [3, 4],
-      ],
-    },
-    corner: { number: [3, 3], cell: [4, 4] },
-    hints: [
-      {
-        numbers: [
-          [3, 2],
-          [2, 3],
-        ],
-        marks: [group(2, [4, 1, 1, 3]), group(2, [1, 4, 3, 1])],
-        text: () => m.minesweeper_tutorial_lesson_angle_two_two_two_hint_1(),
-      },
-      {
-        numbers: [[3, 3]],
-        marks: [group(2, [4, 2, 1, 3], [2, 4, 2, 1])],
-        text: () => m.minesweeper_tutorial_lesson_angle_two_two_two_hint_2(),
-      },
-      {
-        numbers: [
-          [3, 2],
-          [2, 3],
-        ],
-        marks: [group(undefined, [4, 2, 1, 2]), group(undefined, [2, 4, 2, 1])],
-        text: () => m.minesweeper_tutorial_lesson_angle_two_two_two_hint_3(),
-      },
-      {
-        numbers: [[3, 3]],
-        marks: [safe([4, 4, 1, 1]), mine([4, 1, 1, 1], [1, 4, 1, 1])],
-        text: () => m.minesweeper_tutorial_lesson_angle_two_two_two_hint_4(),
-      },
-      {
-        numbers: [],
-        marks: [
-          mine([4, 1, 1, 1], [4, 3, 1, 1], [1, 4, 1, 1], [3, 4, 1, 1]),
-          safe([4, 0, 1, 1], [4, 2, 1, 1], [0, 4, 1, 1], [2, 4, 1, 1], [4, 4, 1, 1]),
-        ],
-        text: () => m.minesweeper_tutorial_lesson_angle_two_two_two_hint_5(),
       },
     ],
   },

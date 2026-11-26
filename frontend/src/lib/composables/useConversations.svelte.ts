@@ -313,8 +313,11 @@ export function useConversations() {
    */
   let skeletonSalon: string | null = null;
   /**
-   * How many times a salon copy was declared stale ({@link invalidateChannelHistoryCache}, any
-   * salon). A load in flight is JOINED by a second non-forced load of the same salon only when its
+   * How many times a salon copy was declared stale ({@link invalidateChannelHistoryCache}): the
+   * declarations made for EVERY salon (a stream transition) plus the ones made for this salon alone
+   * ({@link staleDeclarationsOf}) - another salon's declaration says nothing about this one's page
+   * (it used to count, and a salon opened while a neighbour was invalidated fetched its page again
+   * for nothing, S17 2026-11-20). A load in flight is JOINED by a second non-forced load of the same salon only when its
    * request has not left yet, or left after the last such declaration - then its page already
    * answers whatever made the copy stale (a stream gap, a seed that arrived), and a second request
    * would only download and decode the same 200 rows again and supersede the first.
@@ -323,7 +326,12 @@ export function useConversations() {
    * stream comes back and the community listing ends, fetched its 116 kB page two or three times;
    * the extra copies cost ~3 s before the first message at 1x.
    */
-  let salonStaleDeclarations = 0;
+  let staleEverywhere = 0;
+  const staleBySalon = new SvelteMap<string, number>();
+  /** The declarations that concern `channelConversationId`'s copy: every-salon ones plus its own. */
+  function staleDeclarationsOf(channelConversationId: string): number {
+    return staleEverywhere + (staleBySalon.get(channelConversationId) ?? 0);
+  }
   /** The load of each salon still in flight: its request's declaration count (`null`: not sent). */
   const salonLoadsInFlight = new SvelteMap<
     string,
@@ -350,9 +358,13 @@ export function useConversations() {
   }
 
   function invalidateChannelHistoryCache(channelConversationId?: string) {
-    salonStaleDeclarations++;
-    if (channelConversationId) channelHistoryLoadedAt.delete(channelConversationId);
-    else channelHistoryLoadedAt.clear();
+    if (channelConversationId) {
+      staleBySalon.set(channelConversationId, (staleBySalon.get(channelConversationId) ?? 0) + 1);
+      channelHistoryLoadedAt.delete(channelConversationId);
+    } else {
+      staleEverywhere++;
+      channelHistoryLoadedAt.clear();
+    }
   }
 
   /**
@@ -868,12 +880,12 @@ export function useConversations() {
     if (!force && cached && cached.userId === ctx.userId) return;
 
     // A LOAD OF THIS SALON STILL IN FLIGHT ANSWERS THIS ONE when nothing was declared stale after its
-    // request left (see `salonStaleDeclarations`): joined, not repeated.
+    // request left (see `staleDeclarationsOf`): joined, not repeated.
     const running = salonLoadsInFlight.get(channelConversationId);
     if (
       !force &&
       running &&
-      (running.sentAt === null || running.sentAt === salonStaleDeclarations)
+      (running.sentAt === null || running.sentAt === staleDeclarationsOf(channelConversationId))
     ) {
       ctx.log(
         `[CHANNEL] history load of ${channelConversationId.slice(0, 16)} joins the one in flight (${running.sentAt === null ? 'not sent yet' : 'sent after the last stale mark'})`
@@ -944,7 +956,7 @@ export function useConversations() {
       // events only carry what moved while this device was connected, so a load is the one moment
       // the whole picture can be taken. Their failure costs the "Lu par" row and nothing else - the
       // page still loads, and the next load asks again.
-      inFlight.sentAt = salonStaleDeclarations;
+      inFlight.sentAt = staleDeclarationsOf(channelConversationId);
       // SETTLED INTO A VALUE, so the request may fail while the stored page is still being read
       // without an unhandled rejection; its failure is rethrown below, where it always was.
       const pageRequest = Promise.all([

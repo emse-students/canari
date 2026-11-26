@@ -12,6 +12,7 @@ import { flushSync, mount, unmount } from 'svelte';
 import ChatArea from './ChatArea.svelte';
 import { OLDER_TRIGGER_PX } from '$lib/utils/chat/renderWindow';
 import type { ChatMessage, Conversation } from '$lib/types';
+import { useLoadBounds } from '../../../test/loadBound';
 
 /** Sender heads ask for a name and an avatar over HTTP; neither is what the entry window is about. */
 vi.mock('$lib/utils/users/displayName', async (importOriginal) => ({
@@ -22,6 +23,17 @@ vi.mock('$lib/utils/userAvatarCache', () => ({
   resolveUserAvatarDisplay: async () => ({ kind: 'none' as const }),
   releaseUserAvatarDisplay: () => {},
 }));
+
+/**
+ * THE FIRST CASE ("never mounts more than the 20-row entry frame") FAILED IN A FULL SWEEP AND PASSED
+ * ALONE (2026-10-27), and it is the case a frozen worker lands on: it is the first mount of the whole
+ * ChatArea graph in the worker, it awaits nothing, and nothing in it depends on timing. Vitest checks
+ * the wall clock when a test returns, so a worker starved by CPU oversubscription fails whichever case
+ * it was in - the first one here (docs/wiki/test-suite-reform.md, the section on tests that fail under
+ * load). The lever is the file's deadline, as for `ChatArea.scrollAnchor`; the asserted counts are
+ * unchanged and a genuine hang still fails, later.
+ */
+useLoadBounds();
 
 const PANE_PX = 700;
 const ROW_SELECTOR = '[id^="msg-"]';

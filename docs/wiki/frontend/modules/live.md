@@ -1085,9 +1085,9 @@ the member's. On air, a `410` from the uploader ends the screen with no end call
 "Votre live a été interrompu par la modération"), `server` otherwise (the sentence no
 longer mentions moderation); a cut read on return from the background (`fetchLive` answering `410`
 `cut`) and one answering the End are the same cause; any other stopping refusal ends it as failed and calls `/end`; the screen unmounting or
-`pagehide` ends what is on air best-effort; a killed app is the server's absence rule. A start refused
-`LIVE_ALREADY_OPEN` (a previous screen killed) is not resumed: the member is told it closes within the
-minute.
+`pagehide` ends what is on air best-effort; a killed app is the server's absence rule. A start now ENDS the account's own
+open live on the server (2026-11-25), so a previous screen killed never blocks it; `LIVE_ALREADY_OPEN` only
+means two starts raced, and is not resumed.
 
 **What the server does not give, so the client does not show it:** who watches - only how many
 ([the viewer count](#the-viewer-count-2026-10-21), since 2026-10-21). The reason of a `410` is in the body (`endReason`) since WP-L8, and the

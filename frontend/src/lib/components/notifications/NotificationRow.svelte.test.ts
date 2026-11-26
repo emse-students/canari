@@ -792,6 +792,7 @@ const EVERY_TYPE_THE_SERVER_EMITS = [
   'event_deleted',
   'event_pending',
   'event_pending_coorganiser',
+  'event_coorganiser_accepted',
   'profile_correction_applied',
   'profile_correction_refused',
 ];
@@ -838,6 +839,25 @@ describe('NotificationRow for an event returned to the queue by an acceptance', 
     });
     expect(validator.textContent).toContain(m.notif_event_pending_coorganiser_validators_text());
     expect(validator.textContent).not.toContain(m.notif_event_pending_coorganiser_text());
+  });
+});
+
+describe('NotificationRow for an acceptance on an event still waiting for validation', () => {
+  it('says who joined, never that the event needs approval again', () => {
+    const row = renderRow({
+      id: 'n-acc',
+      type: 'event_coorganiser_accepted',
+      postId: 'asso-1',
+      actorId: 'u1',
+      actorName: 'Marie',
+      text: 'Gala',
+      read: false,
+      createdAt: new Date().toISOString(),
+      meta: { eventId: 'e1' },
+    });
+    expect(row.textContent).toContain(m.notif_event_coorganiser_accepted_text());
+    expect(row.textContent).toContain('Gala');
+    expect(row.textContent).not.toContain(m.notif_event_pending_coorganiser_text());
   });
 });
 

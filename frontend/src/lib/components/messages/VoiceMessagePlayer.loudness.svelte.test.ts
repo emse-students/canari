@@ -1,8 +1,9 @@
 // @vitest-environment happy-dom
 /**
  * A VOICE NOTE PLAYS NEAR ONE LOUDNESS (owner, 2026-11-12), through the video's ONE route
- * (`loudnessPlayback.ts`, the real singleton here - nothing of it is mocked): a measured note is
- * routed through Web Audio at the law's gain, and a note sent before the measurement existed is
+ * (`loudnessPlayback.ts`, the real singleton here - nothing of it is mocked) under its OWN law
+ * (-16 LUFS, +12 dB at most, owner 2026-11-22): a measured note is routed through Web Audio at the
+ * law's gain, and a note sent before the measurement existed is
  * never routed at all. Only the engine's `AudioContext` is a fake, the one thing happy-dom lacks -
  * the playback arbiter is the real one too, since the output's lifetime rests on its pauses.
  */
@@ -140,14 +141,15 @@ it('routes a LOUD measured note through Web Audio and lowers it to the target', 
   // A decrypted blob is routed on WebKit too - happy-dom's engine reads as WebKit.
   expect(contexts[0].sources).toEqual([audio]);
   expect(contexts[0].gains).toHaveLength(1);
-  // -14 LUFS target, -6 measured: -8 dB.
-  expect(contexts[0].gains[0].gain.value).toBeCloseTo(dbToGain(-8), 6);
+  // The voice-note law's -16 LUFS target (not the video's -14), -6 measured: -10 dB.
+  expect(contexts[0].gains[0].gain.value).toBeCloseTo(dbToGain(-10), 6);
 });
 
-it('raises a QUIET measured note by at most the boost cap', async () => {
-  const { tapPlay } = mountVoice({ integratedLufs: -26, samplePeakDbfs: -10 });
+it('raises a QUIET measured note by at most the voice-note boost cap, +12 dB', async () => {
+  // 14 dB would reach the target; the cap stops at 12 (the video law's cap is +6).
+  const { tapPlay } = mountVoice({ integratedLufs: -30, samplePeakDbfs: -20 });
   await tapPlay();
-  expect(contexts[0].gains[0].gain.value).toBeCloseTo(dbToGain(6), 6);
+  expect(contexts[0].gains[0].gain.value).toBeCloseTo(dbToGain(12), 6);
 });
 
 it('resumes the context INSIDE the play tap, before play() is asked', async () => {

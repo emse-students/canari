@@ -177,6 +177,7 @@
     'event_deleted',
     'event_pending',
     'event_pending_coorganiser',
+    'event_coorganiser_accepted',
   ] as const;
   const isEventNotif = $derived((EVENT_TYPES as readonly string[]).includes(notif.type));
   /**
@@ -695,7 +696,9 @@
                     ? notif.meta?.audience === 'validators'
                       ? m.notif_event_pending_coorganiser_validators_text()
                       : m.notif_event_pending_coorganiser_text()
-                    : m.notif_event_deleted_text()}
+                    : notif.type === 'event_coorganiser_accepted'
+                      ? m.notif_event_coorganiser_accepted_text()
+                      : m.notif_event_deleted_text()}
         <span class="italic"><EmojiText text={eventTitle} /></span>{#if eventReason}&#32;&#8212; <EmojiText
             text={eventReason}
           />{/if}

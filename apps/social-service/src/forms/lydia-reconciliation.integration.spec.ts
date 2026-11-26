@@ -29,6 +29,10 @@ import { PurchaseRecordService } from '../users/purchase-record.service';
 import { FormsService } from './forms.service';
 import { ProductCheckout } from '../associations/entities/product-checkout.entity';
 import { AssociationProduct } from '../associations/entities/association-product.entity';
+import { Association } from '../associations/entities/association.entity';
+import { UserTag } from '../users/entities/user-tag.entity';
+import { UserTagService } from '../users/user-tag.service';
+import { deriveCotisationTag } from '../associations/cotisation-tag.util';
 import { ProductsService } from '../associations/products.service';
 import { LydiaReconciliationService } from './lydia-reconciliation.service';
 import { LYDIA_REFUSALS_FINAL, type LydiaRefusalsFinal } from '../common/core-payment-error';
@@ -93,7 +97,7 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
     const built = new DataSource({
       type: 'postgres',
       url: URL,
-      entities: [...entities, AssociationProduct],
+      entities: [...entities, AssociationProduct, Association, UserTag],
       synchronize: true,
       ...options,
     });
@@ -102,7 +106,7 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
     ds = new DataSource({
       type: 'postgres',
       url: URL,
-      entities: [...entities, AssociationProduct, ProductCheckout],
+      entities: [...entities, AssociationProduct, ProductCheckout, Association, UserTag],
       synchronize: false,
       ...options,
     });
@@ -117,10 +121,11 @@ maybe('the Lydia reconciliation sweep, against PostgreSQL', () => {
       `${readFileSync(join(__dirname, '../migrations/112_product_checkouts_held_tier.sql'), 'utf8')}
 RESET lock_timeout;`
     );
-    // The two columns of `associations` the sweep's key test reads, and nothing else of it.
+    // `associations` is the entity's own table (built above): the sweep's key test reads its Lydia
+    // columns, and the tier settlement reads its slug and cotisation mode.
+    // The one column of `spaces` the association's derived `isBdeAssociation` reads.
     await ds.query(
-      `CREATE TABLE associations (id uuid PRIMARY KEY, "lydiaAccountId" varchar(255),
-         "lydiaBusinessKeyCiphertext" text, "lydiaOnboardingComplete" boolean NOT NULL DEFAULT false)`
+      `CREATE TABLE spaces (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), "bdeAssociationId" uuid)`
     );
     // The bridge's table (lydia-account-bridge.ts): the key test reads every Business held.
     await ds.query(
@@ -128,7 +133,8 @@ RESET lock_timeout;`
 RESET lock_timeout;`
     );
     await ds.query(
-      `INSERT INTO associations VALUES ($1, $2, 'sealed'), ('00000000-0000-4000-8000-0000000000c9', $3, NULL)`,
+      `INSERT INTO associations (id, name, slug, "createdBy", "lydiaAccountId", "lydiaBusinessKeyCiphertext")
+       VALUES ($1, 'BDE', 'bde', 'it', $2, 'sealed'), ('00000000-0000-4000-8000-0000000000c9', 'Other', 'other', 'it', $3, NULL)`,
       [ASSO, VENDOR_WITH_KEY, VENDOR_WITHOUT_KEY]
     );
 
@@ -163,6 +169,7 @@ RESET lock_timeout;`
       refusalsFinal: LYDIA_REFUSALS_FINAL,
       checkoutRepo: ds.getRepository(ProductCheckout),
       purchaseRecordService,
+      userTagService: new UserTagService(ds.getRepository(UserTag)),
       httpService: {
         post: (url: string) => {
           if (!url.endsWith('payments/cancel-request')) {
@@ -690,6 +697,63 @@ RESET lock_timeout;`
         'error',
         /^\[SHOP\] checkout [0-9a-f]{6,8}: product [0-9a-f]{6,8} no longer exists - payment recorded paid_not_granted, nothing delivered; a refund is owed$/
       );
+    });
+
+    // LAST of the describe: its checkout takes a number of the shared counter, and the cases above
+    // name their request ids by it.
+    it('a tier the buyer no longer rises to when the sweep settles it is recorded paid_not_granted, and no tag is swapped', async () => {
+      // The association sells two tiers; the buyer opened a checkout of the CHEAP one while holding
+      // nothing (so it froze nothing), then took the DEARER one by another road before the sweep
+      // settled the cheap payment: the money was taken for a tier that is no longer a rise.
+      try {
+        await ds.query(`UPDATE associations SET "cotisationMode" = 'lifetime' WHERE id = $1`, [
+          ASSO,
+        ]);
+        const tier = (name: string, variantKey: string, amountCents: number) =>
+          ds.getRepository(AssociationProduct).save(
+            ds.getRepository(AssociationProduct).create({
+              associationId: ASSO,
+              name,
+              type: 'membership',
+              variantKey,
+              amountCents,
+              grantedTagName: deriveCotisationTag('bde', 'lifetime', new Date(), variantKey)
+                .tagName,
+            })
+          );
+        const cheap = await tier('Cheap', 'cheap', 500);
+        await tier('Dear', 'dear', 1500);
+        const row = await attempt({ productId: cheap.id, amountCents: 500, productName: 'Cheap' });
+        await ds.getRepository(UserTag).save(
+          ds.getRepository(UserTag).create({
+            userId: row.userId,
+            tagName: deriveCotisationTag('bde', 'lifetime', new Date(), 'dear').tagName,
+            issuingAssocId: ASSO,
+            grantedBy: 'cash-desk',
+          })
+        );
+
+        await sweep.sweepProductCheckouts();
+
+        expect(await statusOf(row.id)).toBe('paid');
+        const [record] = await ds.query(`SELECT status FROM purchase_records WHERE "userId" = $1`, [
+          row.userId,
+        ]);
+        expect(record.status).toBe('paid_not_granted');
+        const tags = (await ds.query(`SELECT "tagName" FROM user_tags WHERE "userId" = $1`, [
+          row.userId,
+        ])) as { tagName: string }[];
+        expect(tags.map((t) => t.tagName)).toEqual(['cotisant:bde-dear']);
+        takeLogged(
+          'error',
+          /^\[SHOP\] checkout [0-9a-f]{6,8}: paid tier is held-changed at settlement \(product=[0-9a-f]{6,8} user=buyer-\d+x* held=\[dear\] opened-over=none\) - payment recorded, tier NOT granted; a refund is owed$/
+        );
+      } finally {
+        // The shared estate of the other cases: no tier, no tag, no cotisation mode left behind.
+        await ds.query(`UPDATE associations SET "cotisationMode" = NULL WHERE id = $1`, [ASSO]);
+        await ds.query(`DELETE FROM association_products WHERE "associationId" = $1`, [ASSO]);
+        await ds.query(`DELETE FROM user_tags WHERE "issuingAssocId" = $1`, [ASSO]);
+      }
     });
   });
 });
