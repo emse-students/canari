@@ -799,7 +799,7 @@ describe('SQLite v22 -> v23 on a pool of connections, opened concurrently', () =
     expect(count(probe, retainedName('messages'))).toBe(8);
     // The next open settles: nothing is "missing", so nothing is restored.
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    await settleRetainedTables(db);
+    await settleRetainedTables(db, async () => undefined);
     expect(count(probe, 'messages')).toBe(8);
     expect(error).not.toHaveBeenCalled();
     // The copy and its trigger are gone together: a later delete does not fail on a missing table.
@@ -810,19 +810,78 @@ describe('SQLite v22 -> v23 on a pool of connections, opened concurrently', () =
     expect(count(probe, 'messages')).toBe(7);
   });
 
-  it('a script that fails inside its own transaction ends the pool, so nothing stays open on it', async () => {
-    const closed = vi.fn(async () => undefined);
+  it('a script that fails inside its own transaction recycles the pool, so nothing stays open on it', async () => {
+    const recycle = vi.fn(async () => undefined);
     const db = {
       select: async () => [],
       execute: async () => {
         throw new Error('disk I/O error');
       },
-      close: closed,
     };
-    await expect(executeOwnTransaction(db, 'BEGIN IMMEDIATE; SELECT 1')).rejects.toThrow(
+    await expect(executeOwnTransaction(db, 'BEGIN IMMEDIATE; SELECT 1', recycle)).rejects.toThrow(
       'disk I/O error'
     );
-    expect(closed).toHaveBeenCalledTimes(1);
+    expect(recycle).toHaveBeenCalledTimes(1);
+  });
+
+  it('a release that fails keeps the copy and the open goes on through a recycled pool', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { db, probe } = await v22Pool(10);
+    const steps = messageRekeySteps({
+      keyed: false,
+      staging: false,
+      columns: [
+        'id',
+        'conversation_id',
+        'timestamp',
+        'iv',
+        'cipher_text',
+        'order_at',
+        'order_pending',
+        'rev',
+      ],
+      indexes: [],
+    });
+    for (const statement of steps.copy) probe.exec(statement);
+    await db.execute(steps.swap!);
+    // The next open's release fails ONCE the way a full disk does, after its own `BEGIN`.
+    let failRelease = true;
+    const closes: unknown[] = [];
+    const handle = {
+      select: (sql: string, params?: unknown[]) => db.select(sql, params),
+      execute: async (sql: string, params?: unknown[]) => {
+        if (failRelease && sql.includes(`DROP TABLE main.${retainedName('messages')}`)) {
+          failRelease = false;
+          throw new Error('database or disk is full');
+        }
+        return db.execute(sql, params);
+      },
+      close: async (path?: string) => {
+        closes.push(path);
+        return true;
+      },
+    };
+    let loads = 0;
+    vi.doMock('@tauri-apps/plugin-sql', () => ({
+      default: {
+        load: async () => {
+          loads++;
+          return handle;
+        },
+      },
+    }));
+    const store = new SqliteStorage(`pool-${n++}`);
+    await store.init();
+    // The pool was recycled (closed BY PATH, never every pool, and loaded again), the copy KEPT and
+    // said, and the open went on to the end: the store answers.
+    expect(closes).toEqual([`sqlite:canari_pool-${n - 1}.db`]);
+    expect(loads).toBe(2);
+    expect(count(probe, retainedName('messages'))).toBe(10);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('KEPT for the next open'));
+    expect(store.isOpen).toBe(true);
+    expect(count(probe, 'messages')).toBe(10);
   });
 
   it('A COPY THAT IS NOT WHOLE IN THE NEW TABLE IS RESTORED FROM AT THE NEXT OPEN, THEN RELEASED', async () => {

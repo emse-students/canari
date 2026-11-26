@@ -504,7 +504,7 @@ const MESSAGES_REKEY_GUARD = 'messages_rekey_guard';
  * failure leaves the transaction open, uncommitted, on one pooled connection - nothing committed, so
  * nothing lost - until the failed open's retry calls `Database.load`, whose new pool replaces the old
  * one (read in the plugin's source, not measured), or the app restarts. THE CALLER THEREFORE RUNS IT
- * THROUGH `executeOwnTransaction` (`sqliteRetained.ts`), which closes the pool on any failure, so no
+ * THROUGH `executeOwnTransaction` (`sqliteRetained.ts`), which recycles the pool on any failure, so no
  * transaction stays open on a connection the session keeps using.
  */
 export function messageRekeySteps(state: MessageRekeyState): {

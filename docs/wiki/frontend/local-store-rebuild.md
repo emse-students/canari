@@ -93,10 +93,15 @@ moment it runs.** No timer, no retry.
   `ALTER TABLE` leaves it open), and sqlx does not check a pooled connection for a transaction raw SQL
   opened. Nothing is committed, so nothing is lost. **Closed in 1.8.3:** both scripts that hold their
   own `BEGIN` (the swap and the release) run through `executeOwnTransaction` (`sqliteRetained.ts`),
-  which CLOSES THE POOL on any failure - a closed connection rolls its open transaction back, and the
-  failed open's retry loads a fresh pool - so no transaction outlives the failure on a connection the
-  session keeps writing through. Pinned by "a script that fails inside its own transaction ends the
-  pool"; not measured against a real I/O failure (none can be provoked on a device).
+  which RECYCLES THE POOL on any failure (`SqliteStorage.recyclePool`: closes this file's pool - a
+  closed connection rolls its open transaction back - and loads a fresh one under the same handle), so
+  no transaction outlives the failure on a connection the session keeps writing through. **Recycled,
+  never left closed** (review of #4166): a release that fails is KEPT by `settleRetainedTables`, which
+  lets the open go on - a pool closed and not replaced would fail every statement after it, and the
+  copy being still there, every open after it. The close names the path: the plugin's bare `close()`
+  closes every pool it holds. Pinned by "a script that fails inside its own transaction recycles the
+  pool" and "a release that fails keeps the copy and the open goes on through a recycled pool"; not
+  measured against a real I/O failure (none can be provoked on a device).
 
 ## The essential is never lost: a migration sets a table aside, it never drops it (decided 2026-11-26)
 
