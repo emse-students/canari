@@ -32,6 +32,7 @@ import {
   noteConnection,
   resetConnectionRecord,
   groupsOwingAudit,
+  HISTORY_AUDIT_GENERATION,
   noteGroupsAudited,
   resetAuditRecord,
   type HistoryProbeSender,
@@ -824,6 +825,21 @@ describe('connectionSweepDecision', () => {
     resetConnectionRecord(USER, 'device-2');
   });
 
+  it('SWEEPS when the store is not the one the last connection saw - a record is about one store', () => {
+    noteConnection(USER, DEVICE, NOW - DAY, 'store-1');
+    expect(connectionSweepDecision(USER, DEVICE, NOW, 'store-1').sweep).toBe(false);
+    const lost = connectionSweepDecision(USER, DEVICE, NOW, 'store-2');
+    expect(lost.sweep).toBe(true);
+    expect(lost.reason).toContain('its rows may be gone');
+    expect(connectionSweepDecision(USER, DEVICE, NOW, null).sweep).toBe(true);
+  });
+
+  it('a record from before the store was named (a bare number) is honoured by no named store', () => {
+    localStorage.setItem(`history_last_connected:${USER}:${DEVICE}`, String(NOW - DAY));
+    expect(connectionSweepDecision(USER, DEVICE, NOW).sweep).toBe(false);
+    expect(connectionSweepDecision(USER, DEVICE, NOW, 'store-1').sweep).toBe(true);
+  });
+
   it('keeps one record per user, so re-logging as somebody else sweeps', () => {
     noteConnection(USER, DEVICE, NOW - DAY);
     expect(connectionSweepDecision('user-b', DEVICE, NOW).sweep).toBe(true);
@@ -892,6 +908,28 @@ describe('the one-shot audit', () => {
       JSON.stringify({ generation: 0, groupIds: LOCAL })
     );
     expect(groupsOwingAudit(USER, DEVICE, LOCAL)).toEqual(LOCAL);
+  });
+
+  it('GENERATION 2: every group a 1.8.1 device audited under generation 1 is owed once more', () => {
+    // The heal for the v23 rebuild that lost a message table: the generation-1 record survived it.
+    expect(HISTORY_AUDIT_GENERATION).toBe(2);
+    localStorage.setItem(
+      `history_audit:${USER}:${DEVICE}`,
+      JSON.stringify({ generation: 1, groupIds: LOCAL })
+    );
+    expect(groupsOwingAudit(USER, DEVICE, LOCAL, () => false, 'store-1')).toEqual(LOCAL);
+  });
+
+  it('a record written against another store is no record - every group is owed again', () => {
+    noteGroupsAudited(USER, DEVICE, LOCAL, 'store-1');
+    expect(groupsOwingAudit(USER, DEVICE, LOCAL, () => false, 'store-1')).toEqual([]);
+    expect(groupsOwingAudit(USER, DEVICE, LOCAL, () => false, 'store-2')).toEqual(LOCAL);
+    // A record of another store is replaced, not added to.
+    noteGroupsAudited(USER, DEVICE, ['g-1'], 'store-2');
+    expect(groupsOwingAudit(USER, DEVICE, LOCAL, () => false, 'store-2')).toEqual(['g-2', 'g-3']);
+    // A creation, which knows no store, adds to the record held and keeps its store.
+    noteGroupsAudited(USER, DEVICE, ['g-2']);
+    expect(groupsOwingAudit(USER, DEVICE, LOCAL, () => false, 'store-2')).toEqual(['g-3']);
   });
 
   it('owes it for everything when the record is unreadable, never silently skips', () => {

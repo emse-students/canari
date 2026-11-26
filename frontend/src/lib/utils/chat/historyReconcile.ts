@@ -297,12 +297,23 @@ const SERVER_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 
 const lastConnectedKey = ACCOUNT_KEY.lastConnected;
 
-function readLastConnected(userId: string, deviceId: string): number | null {
+/**
+ * What a device remembers of its last connection: WHEN, and against WHICH message store
+ * (`IStorage.messageStoreIncarnation`). `store` is `undefined` for a record written before the store
+ * was named (a bare number), which no named store honours.
+ */
+type ConnectionRecord = { at: number; store: string | null | undefined };
+
+function readLastConnected(userId: string, deviceId: string): ConnectionRecord | null {
   try {
     const raw = localStorage.getItem(lastConnectedKey(userId, deviceId));
     if (!raw) return null;
-    const at = Number(raw);
-    return Number.isFinite(at) ? at : null;
+    const legacy = Number(raw);
+    if (Number.isFinite(legacy)) return { at: legacy, store: undefined };
+    const parsed = JSON.parse(raw) as Partial<{ at: unknown; store: unknown }>;
+    const at = Number(parsed?.at);
+    if (!Number.isFinite(at)) return null;
+    return { at, store: typeof parsed.store === 'string' ? parsed.store : null };
   } catch {
     // Unreadable storage is not "connected recently" - fall through to sweeping, which is the
     // answer that cannot lose a message.
@@ -339,14 +350,34 @@ function readLastConnected(userId: string, deviceId: string): number | null {
 export function connectionSweepDecision(
   userId: string,
   deviceId: string,
-  now: number = Date.now()
+  now: number = Date.now(),
+  /**
+   * The incarnation of the message store this connection reads (`IStorage.messageStoreIncarnation`),
+   * `null` when the store cannot name one. THE RECORD ANSWERS "WHEN DID I LAST ASK", NEVER "IS MY
+   * STORE WHOLE": a record written against another store - a table lost and made again - is not
+   * evidence about this one (2026-11-25, `docs/wiki/frontend/local-store-rebuild.md`). Left out only
+   * by tests of the clock alone.
+   */
+  store?: string | null
 ): { sweep: boolean; reason: string } {
   const last = readLastConnected(userId, deviceId);
   if (last === null) {
     return { sweep: true, reason: 'no record of an earlier connection - new or restored store' };
   }
+  if (store !== undefined) {
+    if (store === null) {
+      return { sweep: true, reason: 'the local message store cannot name its incarnation' };
+    }
+    if (last.store !== store) {
+      return {
+        sweep: true,
+        reason:
+          'the local message store is not the one the last connection saw - its rows may be gone',
+      };
+    }
+  }
 
-  const awayMs = now - last;
+  const awayMs = now - last.at;
   if (awayMs < 0) {
     // The record is in the future: the device clock moved backwards, so the age is unusable. Sweep,
     // for the same reason unreadable storage sweeps.
@@ -366,9 +397,16 @@ export function connectionSweepDecision(
  * Written on every connection whether or not it swept: the question is how long the device was
  * away, not when it last repaired itself.
  */
-export function noteConnection(userId: string, deviceId: string, now: number = Date.now()): void {
+export function noteConnection(
+  userId: string,
+  deviceId: string,
+  now: number = Date.now(),
+  /** The incarnation of the store this connection read - see {@link connectionSweepDecision}. */
+  store: string | null = null
+): void {
   try {
-    localStorage.setItem(lastConnectedKey(userId, deviceId), String(now));
+    const record: ConnectionRecord = { at: now, store };
+    localStorage.setItem(lastConnectedKey(userId, deviceId), JSON.stringify(record));
   } catch {
     // A device that cannot write this sweeps on every connection - the old behaviour, and the safe
     // one. Logged by the caller, which holds the session's log.
@@ -400,15 +438,32 @@ export function resetConnectionRecord(userId: string, deviceId: string): void {
  * So the audit is not a repair and not a schedule - it is a one-time reason to COMPARE, on devices
  * that have no reason of their own. Generation 1 is the amnesty for everything that predates the
  * deferred-ask fix.
+ *
+ * GENERATION 2 (2026-11-26) is the heal for the v23 rebuild of 1.8.1, which lost the whole message
+ * table of some Android and desktop devices on their first open (`docs/wiki/frontend/local-store-rebuild.md`).
+ * Their connection and audit records survived the table, so they swept nothing and audited nothing,
+ * and their peers - who still hold every row - were never asked. One probe per group, once, fleet-wide:
+ * the incarnation now carried by both records (`IStorage.messageStoreIncarnation`) is what makes the
+ * NEXT table loss raise its own sweep without a bump.
  */
-const HISTORY_AUDIT_GENERATION = 1;
+export const HISTORY_AUDIT_GENERATION = 2;
 
 const auditKey = ACCOUNT_KEY.historyAudit;
 
 /** What a device remembers of the audit: which round it ran, and which groups it really asked. */
-type AuditRecord = { generation: number; groupIds: string[] };
+type AuditRecord = { generation: number; groupIds: string[]; store?: string | null };
 
-function readAuditRecord(userId: string, deviceId: string): AuditRecord | null {
+/**
+ * `store`: the incarnation of the message store asking (`IStorage.messageStoreIncarnation`); a record
+ * written against another one is no record - "this group was audited" was a fact about rows that are
+ * not this store's (2026-11-25, `docs/wiki/frontend/local-store-rebuild.md`). `undefined` reads the
+ * record whatever store wrote it.
+ */
+function readAuditRecord(
+  userId: string,
+  deviceId: string,
+  store?: string | null
+): AuditRecord | null {
   try {
     const raw = localStorage.getItem(auditKey(userId, deviceId));
     if (!raw) return null;
@@ -416,9 +471,12 @@ function readAuditRecord(userId: string, deviceId: string): AuditRecord | null {
     // A record from an EARLIER generation is not a weaker record, it is a record of a different
     // question - discarding it is what makes a bump mean "ask everyone again".
     if (parsed?.generation !== HISTORY_AUDIT_GENERATION) return null;
+    const written = typeof parsed.store === 'string' ? parsed.store : null;
+    if (store !== undefined && written !== store) return null;
     return {
       generation: parsed.generation,
       groupIds: Array.isArray(parsed.groupIds) ? parsed.groupIds : [],
+      store: written,
     };
   } catch {
     // Unreadable or malformed storage owes the audit, for the same reason unreadable storage sweeps:
@@ -453,9 +511,11 @@ export function groupsOwingAudit(
   userId: string,
   deviceId: string,
   localGroupIds: Iterable<string>,
-  cannotBeAudited: (groupId: string) => boolean = () => false
+  cannotBeAudited: (groupId: string) => boolean = () => false,
+  /** The asking store's incarnation - see {@link readAuditRecord}. */
+  store?: string | null
 ): string[] {
-  const done = new Set(readAuditRecord(userId, deviceId)?.groupIds ?? []);
+  const done = new Set(readAuditRecord(userId, deviceId, store)?.groupIds ?? []);
   return [...localGroupIds].filter((id) => !done.has(id) && !cannotBeAudited(id));
 }
 
@@ -473,14 +533,25 @@ export function groupsOwingAudit(
 export function noteGroupsAudited(
   userId: string,
   deviceId: string,
-  groupIds: Iterable<string>
+  groupIds: Iterable<string>,
+  /**
+   * The incarnation of the store the asks were made for - see {@link readAuditRecord}. A record of
+   * another store is replaced, not added to. `undefined` (a creation, which knows no store) adds to
+   * the record held and keeps the store it names.
+   */
+  store?: string | null
 ): void {
   const asked = [...groupIds];
   if (asked.length === 0) return;
   try {
-    const done = new Set(readAuditRecord(userId, deviceId)?.groupIds ?? []);
+    const held = readAuditRecord(userId, deviceId, store);
+    const done = new Set(held?.groupIds ?? []);
     for (const id of asked) done.add(id);
-    const record: AuditRecord = { generation: HISTORY_AUDIT_GENERATION, groupIds: [...done] };
+    const record: AuditRecord = {
+      generation: HISTORY_AUDIT_GENERATION,
+      groupIds: [...done],
+      store: store !== undefined ? store : (held?.store ?? null),
+    };
     localStorage.setItem(auditKey(userId, deviceId), JSON.stringify(record));
   } catch {
     // A device that cannot write this re-audits on every connection - wasteful, never wrong, and it

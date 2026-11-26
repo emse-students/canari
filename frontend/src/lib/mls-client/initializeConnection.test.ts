@@ -37,6 +37,15 @@ vi.mock('$lib/utils/chat/groupActions', async (importOriginal) => ({
 // RESOLVES TO THE ASKED GROUP IDS, like the real one: the caller feeds them straight to
 // `noteGroupsAudited`, so a mock resolving `undefined` claims a pass asked nothing AND breaks the
 // discharge - which is exactly what it did until the audit gave the return value a meaning.
+// The store the history records are bound to (`IStorage.messageStoreIncarnation`): one store, the
+// same for every connection of a case, unless a case says otherwise.
+const { incarnationMock } = vi.hoisted(() => ({
+  incarnationMock: vi.fn().mockResolvedValue('store-1' as string | null),
+}));
+vi.mock('$lib/db', () => ({
+  getStorage: async () => ({ messageStoreIncarnation: incarnationMock }),
+}));
+
 const { reconcileAllGroupsMock } = vi.hoisted(() => ({
   reconcileAllGroupsMock: vi.fn().mockResolvedValue([] as string[]),
 }));
@@ -546,7 +555,7 @@ describe('initializeConnection - the history pass leaves a group being created o
   });
 
   it('audit mode: the group being created is not owed by this pass', async () => {
-    noteConnection('u-c', 'dev-c');
+    noteConnection('u-c', 'dev-c', Date.now(), 'store-1');
     const release = markGroupInCreation('g-creating');
     try {
       const log = await connect(creatingMls());
@@ -555,5 +564,40 @@ describe('initializeConnection - the history pass leaves a group being created o
       release();
     }
     expect(reconcileAllGroupsMock.mock.calls[0][1]).toEqual(['g-old']);
+  });
+
+  /**
+   * THE RECORDS ARE ABOUT ONE STORE. 2026-11-25: a v23 rebuild lost a device's whole message table,
+   * and its connection and audit records - written against the table that was lost - said "nothing
+   * to ask", so nothing was. A store made anew carries a new incarnation, and a record of another
+   * one is no evidence about it.
+   */
+  it('a store that is not the one the records were written against sweeps every group, then settles', async () => {
+    reconcileAllGroupsMock.mockResolvedValueOnce(['g-old', 'g-creating']);
+    incarnationMock.mockResolvedValue('store-1');
+    await connect(creatingMls());
+    reconcileAllGroupsMock.mockClear();
+
+    // Same store: nothing owed.
+    let log = await connect(creatingMls());
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('every group already audited'));
+    expect(reconcileAllGroupsMock).not.toHaveBeenCalled();
+
+    // The table was lost and made again: a new incarnation, and every group is asked.
+    incarnationMock.mockResolvedValue('store-2');
+    log = await connect(creatingMls());
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining('not the one the last connection saw')
+    );
+    expect(reconcileAllGroupsMock.mock.calls[0][1]).toEqual(['g-old', 'g-creating']);
+    incarnationMock.mockResolvedValue('store-1');
+  });
+
+  it('a store that cannot name its incarnation is read as a new one', async () => {
+    noteConnection('u-c', 'dev-c', Date.now(), 'store-1');
+    incarnationMock.mockRejectedValueOnce(new Error('store closed'));
+    const log = await connect(creatingMls());
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('cannot name its incarnation'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('sweeping every group'));
   });
 });

@@ -15,6 +15,8 @@
  *    has, so dropping a column can never again break the migration that mentions it.
  */
 
+import { retainedName, retainTableStatements } from './sqliteRetained';
+
 /** Current schema version. A freshly created database is stamped with this and skips all migrations. */
 export const SCHEMA_VERSION = 23;
 
@@ -437,51 +439,111 @@ export interface MessageRekeyState {
   staging: boolean;
   /** The columns `messages` has now, from `PRAGMA table_info(messages)`. */
   columns: readonly string[];
+  /** The names of the indexes `messages` has now (`sqlite_master`, `sql IS NOT NULL`). */
+  indexes: readonly string[];
 }
+
+/**
+ * The v23 rebuild stopped rather than drop a table it could not prove was copied - the file is left
+ * as it was, and the next open resumes from it. Typed at the throw, so no caller reads its message.
+ */
+export class MessageRekeyRefusedError extends Error {
+  constructor(detail: string) {
+    super(`messages rekey: ${detail}`);
+    this.name = 'MessageRekeyRefusedError';
+  }
+}
+
+/** The per-connection table the swap's guards write into; its CHECK is what refuses. */
+const MESSAGES_REKEY_GUARD = 'messages_rekey_guard';
 
 /**
  * THE v22 -> v23 REBUILD, AS STATEMENTS DECIDED FROM DURABLE STATE - NEVER FROM A CLOCK OR A FLAG
  * THE APP KEEPS. SQLite cannot change a primary key in place, so `messages` is rebuilt: a staging
- * table with the composite key, every row copied into it, the old table dropped, the staging table
- * renamed, the indexes made again.
+ * table with the composite key, every row copied into it, the old table SET ASIDE (never dropped:
+ * `sqliteRetained.ts` releases it once the file proves every row is in the new table), the staging
+ * table renamed, the indexes made again.
  *
- * NOT ONE `BEGIN`/`COMMIT`, BECAUSE THE PLUGIN CANNOT GIVE ONE: it pools its connections, and a
- * `BEGIN` and its `COMMIT` may reach two of them (`sqliteBatch.ts`, measured on device). So each step
- * is ONE statement - atomic on its own - and the whole is RESUMABLE: the file always says which step
- * is owed.
+ * THE COPY IS RESUMABLE, THE SWAP IS ONE TRANSACTION THAT PROVES ITSELF.
  *
  * - `keyed` and no staging: done, nothing owed (a fresh file, or a rebuild that finished).
  * - no staging: the rebuild has not begun - the staging table is created, then everything below.
- * - staging: a rebuild began. Whatever `messages` is now - the old table (killed before or after the
- *   copy), or the empty keyed table `init`'s own `CREATE TABLE IF NOT EXISTS` made after a kill
- *   between the drop and the rename - its rows are copied in AGAIN with `INSERT OR IGNORE`, which
- *   finds the rows already copied under their key and adds the others. So a second run converges.
+ * - staging: a rebuild began. Whatever `messages` is now - the old table, or the empty keyed table
+ *   `init`'s own `CREATE TABLE IF NOT EXISTS` made after 1.8.1 stopped between its drop and its
+ *   rename - its rows are copied in AGAIN with `INSERT OR IGNORE`, which finds the rows already
+ *   copied under their key and adds the others. So a second run converges.
  *
- * The caller runs the copy, PROVES with {@link MESSAGES_REKEY_MISSING_COUNT} that the staging table
- * holds every row of `messages`, and only then runs `drop` (the drop, the rename, the indexes): the
- * destructive step is gated on knowing nothing would be lost.
+ * `swap` is ONE `execute` - one pooled connection, its statements prepared one after the other
+ * (sqlx's `VirtualStatement`, like `sqlite3_exec`) - and inside it ONE `BEGIN IMMEDIATE`
+ * transaction. 1.8.1 ran the drop and the rename as two `execute`s, and that LOST A USER'S WHOLE
+ * HISTORY (2026-11-25, `docs/wiki/frontend/local-store-rebuild.md`), for two reasons this shape
+ * removes:
+ *
+ * - THE POOL'S OTHER CONNECTIONS CACHE THE SCHEMA. The rename landed on a connection that had not
+ *   run a statement since the drop, whose cached schema still held `messages`, and SQLite checks a
+ *   rename's target name at PARSE time against that cache, so it refused "there is already another
+ *   table or index with this name: messages" - with the old table gone and the rows only in staging.
+ *   One connection, whose first statement in the transaction reads the file, parses the renames
+ *   against the real file.
+ * - A PROOF READ BEFORE A DROP IS NOT A PROOF AT THE DROP. The guards run INSIDE the transaction, which
+ *   holds the file's write lock, so nothing - another init of this process, another process - can
+ *   change either table between them and the swap. The first proves both tables are there (it reads
+ *   only `sqlite_master`, so it parses whatever the file holds) and that no earlier copy is still set
+ *   aside under the name this one takes; the second proves every row of `messages` is in staging.
+ *   Either one false is a `CHECK` violation under `OR ROLLBACK`, which ENDS the transaction before
+ *   anything moves: the file is left exactly as it was and the pooled connection
+ *   carries no open transaction, and the error reaches the caller.
+ *
+ * The guards make every statement after them stand on a proven precondition, so the only failure left
+ * inside the transaction is the file itself (I/O, a full disk). SQLite does NOT promise to roll that
+ * back on its own, and sqlx never checks a pooled connection for a transaction raw SQL opened: such a
+ * failure leaves the transaction open, uncommitted, on one pooled connection - nothing committed, so
+ * nothing lost - until the failed open's retry calls `Database.load`, whose new pool replaces the old
+ * one (read in the plugin's source, not measured), or the app restarts.
  */
 export function messageRekeySteps(state: MessageRekeyState): {
   copy: string[];
-  drop: string[];
+  swap: string | null;
 } {
-  if (state.keyed && !state.staging) return { copy: [], drop: [] };
+  if (state.keyed && !state.staging) return { copy: [], swap: null };
   const carried = MESSAGE_REKEY_COLUMNS.filter((c) => state.columns.includes(c)).join(', ');
   return {
     copy: [
       ...(state.staging ? [] : [messagesTableStatement(MESSAGES_REKEY_STAGING)]),
       `INSERT OR IGNORE INTO ${MESSAGES_REKEY_STAGING} (${carried}) SELECT ${carried} FROM messages`,
     ],
-    drop: [
-      'DROP TABLE messages',
-      `ALTER TABLE ${MESSAGES_REKEY_STAGING} RENAME TO messages`,
-      MESSAGE_CONVERSATION_INDEX_STATEMENT,
-      MESSAGE_ID_INDEX_STATEMENT,
-      MESSAGE_ORDER_INDEX_STATEMENT,
-      MESSAGE_ORDER_PENDING_INDEX_STATEMENT,
-      MESSAGE_ORDER_MISSING_INDEX_STATEMENT,
-    ],
+    swap: messagesRekeySwapStatement(state.indexes),
   };
+}
+
+/**
+ * The swap of {@link messageRekeySteps}: one `execute`, one transaction, guarded inside it. The old
+ * table is SET ASIDE, never dropped (`sqliteRetained.ts`): the rebuild's own settlement releases it
+ * once the file proves every one of its rows is in the new table.
+ */
+function messagesRekeySwapStatement(indexes: readonly string[]): string {
+  return [
+    `CREATE TEMP TABLE IF NOT EXISTS ${MESSAGES_REKEY_GUARD} (proven INTEGER NOT NULL CHECK (proven = 1))`,
+    'BEGIN IMMEDIATE',
+    // Both tables are in the file and no earlier copy is still set aside, read from `sqlite_master`
+    // so it parses whatever the file holds.
+    `INSERT OR ROLLBACK INTO temp.${MESSAGES_REKEY_GUARD} (proven) SELECT (SELECT COUNT(*) FROM main.sqlite_master ` +
+      `WHERE type = 'table' AND name IN ('messages', '${MESSAGES_REKEY_STAGING}')) = 2 AND NOT EXISTS ` +
+      `(SELECT 1 FROM main.sqlite_master WHERE name = '${retainedName('messages')}')`,
+    // Every row of `messages` is in staging - read under the write lock the swap runs under.
+    `INSERT OR ROLLBACK INTO temp.${MESSAGES_REKEY_GUARD} (proven) SELECT NOT EXISTS (SELECT 1 FROM main.messages m ` +
+      `WHERE NOT EXISTS (SELECT 1 FROM main.${MESSAGES_REKEY_STAGING} s ` +
+      'WHERE s.conversation_id = m.conversation_id AND s.id IS m.id))',
+    ...retainTableStatements('messages', indexes),
+    `ALTER TABLE main.${MESSAGES_REKEY_STAGING} RENAME TO messages`,
+    MESSAGE_CONVERSATION_INDEX_STATEMENT,
+    MESSAGE_ID_INDEX_STATEMENT,
+    MESSAGE_ORDER_INDEX_STATEMENT,
+    MESSAGE_ORDER_PENDING_INDEX_STATEMENT,
+    MESSAGE_ORDER_MISSING_INDEX_STATEMENT,
+    `DELETE FROM temp.${MESSAGES_REKEY_GUARD}`,
+    'COMMIT',
+  ].join(';\n');
 }
 
 /** The `conversation_id` index every read of one conversation's rows walks. */
