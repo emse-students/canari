@@ -836,20 +836,21 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
 
 // ─── JNI: Background Worker & Welcome/Send ────────────────────────────────
 
+/// Prunes `mls_pending.db` for `MlsBackgroundWorker` - the sweep reads nothing but that file, so
+/// the worker hands it the directory alone (as iOS's `canari_native_cleanup_pending_db` does).
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "C" fn Java_fr_emse_canari_MlsBackgroundWorker_nativeProcessBackgroundTasks(
     mut env: jni::JNIEnv,
     _class: jni::objects::JClass,
     files_dir: jni::objects::JString,
-    _state_bytes: jni::objects::JByteArray,
-    _device_key_b64: jni::objects::JString,
-    _user_id: jni::objects::JString,
-    _device_id: jni::objects::JString,
 ) -> jni::sys::jboolean {
     let files_dir_str: String = match env.get_string(&files_dir) {
         Ok(s) => s.into(),
-        Err(_) => return 0,
+        Err(e) => {
+            log::error!("Background Worker: files dir unreadable from JNI: {e}");
+            return 0;
+        }
     };
 
     match mobile::background::cleanup_pending_db(std::path::Path::new(&files_dir_str)) {

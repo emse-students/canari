@@ -4436,6 +4436,9 @@ An undelivered quick reply is kept in `outbox_pending.ndjson` only, and `store_o
 
 - **WorkManager** (`OutboxRetryWorker`): exponential backoff retry for unsent outbox messages
 - **BootReceiver** (`CanariBootReceiver`): re-registers FCM token + drains outbox on boot
+- **WorkManager** (`MlsBackgroundWorker`): sweeps `mls_pending.db` after a refused push frame or a
+  `process_queue` push; it raises "Synchronisation en attente" only on three consecutive REAL
+  failures - [below](#the-pending-db-sweep-raises-its-notice-on-real-failures-only-2026-11-26)
 - **Foreground guard**: retry is deferred when the TS outbox flusher is active. A quick reply typed
   while the guard holds never reaches the mirror: it is handed to the page
   ([above](#one-notification-delegate-and-a-tap-that-waits-for-the-page-2026-11-01), "Android takes
@@ -4651,6 +4654,54 @@ triggers. Two consequences for anyone reading a residual count:
   Work Package: nothing was lost, and the trigger set (a send, a reconnect, a foreground, a boot) is
   what a real user generates constantly. Worth re-measuring only if a residue is ever seen to survive
   one of those events.
+
+#### The pending-DB sweep raises its notice on real failures only (2026-11-26)
+
+**The owner saw "Canari - Synchronisation en attente / Ouvrez l'app pour recevoir vos messages
+chiffrés" often, right under a correctly decrypted message.** `MlsBackgroundWorker` posted it (and set
+`mls_bg_failed`) once WorkManager's `runAttemptCount` reached 3 - the same trap the outbox worker
+fell into on 2026-10-01 ([above](#background-execution)). That column counts every `Result.retry()`,
+and the worker retried on runs that had failed at nothing: the app in front (deferred to the
+foreground engine) and `MlsStateLock` not taken within 15 s (a push decrypting). With the minimum
+backoff, three of those take about seventy seconds, so an open app - or one just opened by the tap on
+the message - drew the notice. The count was checked FIRST, so the fourth run gave up without even
+trying.
+
+**Neither deferral guarded anything the work reads, so both are gone rather than reclassified.** The
+worker's only job is `background.rs` `cleanup_pending_db`, an age-based prune of
+`mls_pending.db`: it never fetches, decrypts or re-posts a frame (step 6 of the
+[ladder](#background-mls-decrypt-ladder)), and the JNI took `mls.bin`'s bytes, the push context and
+the user and device ids only to ignore them. It now takes the directory alone - the shape of iOS's
+`canari_native_cleanup_pending_db` - and runs with the app in front, beside the foreground engine
+that writes the same database through SQLite's own locking (WAL, 5 s busy timeout on both pools). No
+message rides on the sweep, so running it in front, or not at all until the next enqueue, loses
+nothing.
+
+**A failure is typed where it happens, and only a streak of them speaks** (`push/SweepFailureLedger.kt`):
+
+- an outcome is `Swept` or `Failed(cause)` - the native sweep answered false, the native library is
+  not loaded, or it threw. `cleanup_pending_db` used to swallow both DELETEs' errors (`let _ =`), so
+  "answered false" could not see the failure it exists for; they now propagate. A database without
+  the table yet (no app start on this install) is read from `sqlite_master` and is a success with
+  nothing to prune, never a failed DELETE.
+- the streak of consecutive `Failed` runs is `mls_bg_consecutive_failures` in `canari_worker_prefs`,
+  durable across work requests; a `Swept` run and `resetFailureFlag` (`MainActivity.onResume`) zero
+  it. Below 3 a failure is a `Result.retry()` logged at error; the third raises the notice, sets
+  `mls_bg_failed` and ends with `Result.failure()`; a request already queued that fails after the
+  give-up stops without a second notice.
+
+**What `mls_bg_failed` held back.** `CanariFirebaseMessagingService.enqueueWorkerIfHealthy` reads it
+and enqueues nothing while it is set, until the next `onResume`. Since the false give-up usually
+happened with the app already in front, the flag stayed set for the rest of that session and through
+the next background stretch. What it blocked was the sweep only - no message delivery, no decrypt -
+so its user-facing effect was the false notice alone, plus pruned rows accumulating until the app
+was next opened.
+
+Tests: `SweepFailureLedgerTest` (runs that did not fail raise nothing, three real failures raise one
+notice on the third, a success resets the streak, a late request raises no second notice) and the
+two `cleanup_pending_db` tests in `background.rs` (no table is a success; exhausted and expired rows
+are pruned, the rest kept). The phone reading is
+[owed](../backlog.d/reading-owed-the-sync-notice-is-not-raised-by-a-deferral.md).
 
 ### Outbox mirror
 
