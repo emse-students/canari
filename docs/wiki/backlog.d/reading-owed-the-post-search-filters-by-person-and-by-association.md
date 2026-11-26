@@ -16,3 +16,5 @@ real PostgreSQL (the unit spec asserts the SQL text only).
 **The reading, on a phone** on the first pre-release carrying it: search with a person alone, an association
 alone, each with a word, and both together; remove each chip. **Passes when** every result is a post the
 reader sees in the feed, a person never lists an association's post, and the chips clear the filter.
+
+**Read on the Mi 9T, 1.8.2-alpha.7 (2026-11-26):** the association filter PASSES (chip, narrowing, clear). DEFECT (P3, cosmetic): in the search field the magnifier icon and the clear button sit at the wrong height, floating below the field over the picker list. The person filter is still unread.

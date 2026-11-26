@@ -2601,7 +2601,7 @@ offered there).
   the button inherits it and must say the count it refused, never truncate (not built, nothing to refuse).
 - **Respondents who left** (no `users` row) are skipped and COUNTED: a toast names how many. Fewer than two other
   people is refused in a toast (one person is a direct conversation).
-- **Read on a phone:** [reading entry](../../backlog.d/reading-owed-a-group-made-from-a-form-s-respondents.md).
+- **Read on the Mi 9T (1.8.2-alpha.7, 2026-11-26):** the panel opens with the other respondents chosen and the group is made with every member admitted.
 
 ## Note on form management
 

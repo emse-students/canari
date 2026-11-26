@@ -12,3 +12,5 @@ target: 1.8.2
 4. **"Aucune".** Set the conversation (group, then salon) to "Aucune": a moderator's `@tous` rings nothing.
 
 **What closes it**: items 1 to 4 pass on the Mi 9T AND the iPhone 12. A failure names the surface that did not obey (the composer offer, the server's vouching, `NotificationLevelGate`, the extension's `levelDecision`, the client's `everyoneMentionOf`).
+
+**Read on the Mi 9T, 1.8.2-alpha.7 (2026-11-26):** item 1 PASSES (a group: the picked `@tous` rang the phone with the mention sound, the banner read "@tous"; typed by hand it rang nothing). Items 2 to 4 (salon cases, "Aucune") and the whole iPhone 12 half are still owed.

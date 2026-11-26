@@ -19,3 +19,5 @@ WorkManager's `runAttemptCount`. No test runs WorkManager, the shade or the JNI 
    result: real message lines only, no "Synchronisation en attente".
 3. **App opened from the message.** Tap a message notification to open the app, receive two more
    messages, leave it open two minutes: no "Synchronisation en attente".
+
+**Read on the Mi 9T, 1.8.2-alpha.7 (2026-11-26):** across background and foreground cycles no false "Synchronisation en attente" appeared. Still owed: the sweep path with a frame the MLS layer refuses (item 1's undecryptable DM), which the bench did not produce.
