@@ -44,6 +44,7 @@ import {
 import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
 import { assertCotisationModeClearable } from './members-only-gate';
+import { lockAssociationsReachedByCoorganisation } from './association-delete-lock';
 import { isUUID } from 'class-validator';
 import { In, IsNull, Not, Repository, type EntityManager, type SelectQueryBuilder } from 'typeorm';
 import { randomBytes, hkdfSync } from 'crypto';
@@ -1647,8 +1648,11 @@ export class AssociationsService {
       // co-organisation decision's `KEY SHARE`, which waited on them (`40P01`). `FOR UPDATE`, not
       // `FOR NO KEY UPDATE`: only the former conflicts with `KEY SHARE`. The account erasure takes
       // its associations first too (`ERASURE_ASSOCIATION_LOCK_SQL`), so the two never cross.
-      await manager.query(`SELECT 1 FROM associations WHERE id = $1 FOR UPDATE`, [id]);
-      this.logger.debug(`[ASSO] DELETE ${id}: association locked`);
+      // AND every association its events' co-organisation reaches, in id order, in the same
+      // statement: two deletes of associations that co-organise each other's events crossed their
+      // cascades (`40P01`) when each held only its own row (`association-delete-lock.ts`).
+      const held = await lockAssociationsReachedByCoorganisation(manager, id);
+      this.logger.debug(`[ASSO] DELETE ${id}: ${held} association(s) locked in id order`);
       await this.assertMayReleaseDependents(manager, id, isGlobalAdmin);
       // Its Lydia cashier rows go with it (ON DELETE CASCADE), and with them every membership: a
       // Tresorier, a Vendeur or a Responsable's other number still live would keep its rights at
