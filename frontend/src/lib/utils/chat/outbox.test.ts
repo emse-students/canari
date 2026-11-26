@@ -59,6 +59,9 @@ import {
   enqueueOutboxMessage,
   isOutboxEntryQueued,
   OutboxEnqueueError,
+  OutboxAttachmentEmptyError,
+  LocalAttachmentError,
+  isLocalAttachmentFailure,
   registerOutbox,
   unregisterOutbox,
   type OutboxController,
@@ -4100,30 +4103,56 @@ describe('outbox uploads - a queued attachment shows its real progress and can b
       expect(storage._map.has('n3')).toBe(true);
     });
 
-    it('an attachment that holds no bytes while owing an upload is a local failure, typed', async () => {
+    /**
+     * P1 of 1.8.1: a picked photo queued with ZERO bytes climbed the ladder - "transient failure
+     * (attempt 1..6)", then backing off - until the member withdrew it. No byte can ever be
+     * uploaded, so it is classified at the throw (`OutboxAttachmentEmptyError`, NOT the counted
+     * `LocalAttachmentError`) and failed for good at its FIRST meeting, with its line in the thread.
+     */
+    it('an attachment that holds no bytes while owing an upload fails for good at once, typed - never retried', async () => {
       const uploadMedia = vi.fn().mockResolvedValue(REF);
       const base = mediaEntry('n4');
       const storage = makeStorage([
         { ...base, media: { ...base.media!, fileBytes: new Uint8Array(0) } },
       ]);
       const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['n4'])]]);
+      const addMessageToChat = vi.fn().mockResolvedValue(undefined);
+      const mlsService = makeMls();
       const outbox = createOutbox(
         makeDeps({
-          mlsService: makeMls(),
+          mlsService,
           storage,
           conversations,
           uploadMedia,
+          addMessageToChat,
           isGroupHealthy: () => true,
         })
       );
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      for (let i = 0; i < MAX_UNEXPECTED_ATTEMPTS; i++) {
-        for (const row of storage._map.values()) row.nextAttemptAt = 0;
-        await outbox.flush();
-      }
+      await outbox.flush();
+      // ONE flush settles it: the row is gone, the bubble says failed, the thread says why.
+      expect(storage._map.has('n4')).toBe(false);
+      expect(conversations.get('g1')!.messages[0].status).toBe('error');
+      expect(addMessageToChat).toHaveBeenCalledWith(
+        'system',
+        expect.any(String),
+        'g1',
+        expect.objectContaining({ isSystem: true })
+      );
+      expect(errorSpy.mock.calls.some((c) => String(c[0]).includes('holds NO BYTES'))).toBe(true);
+      // Nothing is retried: a second flush finds nothing to do.
+      await outbox.flush();
       expect(uploadMedia).not.toHaveBeenCalled();
-      expect(uploadViewOf('n4')?.phase).toBe('error');
+      expect(mlsService.sendMessage).not.toHaveBeenCalled();
+      expect(addMessageToChat).toHaveBeenCalledTimes(1);
       errorSpy.mockRestore();
+    });
+
+    it('the empty-attachment failure is its own type, not the counted local one', () => {
+      const e = new OutboxAttachmentEmptyError(305207);
+      expect(e).not.toBeInstanceOf(LocalAttachmentError);
+      expect(isLocalAttachmentFailure(e)).toBe(false);
+      expect(e.declaredSize).toBe(305207);
     });
 
     it('a cancel landing between the snapshot and the payload read is consumed, not leaked', async () => {

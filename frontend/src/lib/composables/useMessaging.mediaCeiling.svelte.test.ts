@@ -37,6 +37,13 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
 // registry per case, and the first import of this graph costs seconds - inside a case that reads as
 // a hang and trips the 5 s default. Vitest keeps the TRANSFORM across a reset, so every later import
 // is cheap; only the first one is not.
+// The pick's read (`ownPickedFile`, pinned by its own test and by `mediaEnqueue`) hands the file back
+// as it is: this suite's files are never allocated, and what it pins is the ceiling alone.
+vi.mock('$lib/utils/chat/ownPickedFile', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/chat/ownPickedFile')>()),
+  ownPickedFile: async (file: File) => file,
+}));
+
 await import('./useMessaging.svelte');
 
 type MessagingContext = import('./useMessaging.svelte').MessagingContext;
@@ -53,8 +60,8 @@ const SERVER_MAX_BYTES = 50 * 1024 * 1024;
 const OVERHEAD = segmentedCiphertextLength(SERVER_MAX_BYTES) - SERVER_MAX_BYTES;
 
 /**
- * A file this test never allocates. `prepareMediaFiles` reads `size`, `type` and `name` and nothing
- * else for a non-image, so fifty megabytes of zeroes would only slow the suite down.
+ * A file this test never allocates. With the pick's read mocked above, `prepareMediaFiles` reads
+ * `size`, `type` and `name` and nothing else for a non-image, so fifty megabytes of zeroes would only slow the suite down.
  */
 const fileOf = (size: number): File =>
   ({ size, name: 'clip.bin', type: 'application/octet-stream' }) as unknown as File;

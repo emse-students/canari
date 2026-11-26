@@ -62,6 +62,18 @@ function without(source, name) {
   return body === null ? source : source.replace(body, '');
 }
 
+/** The text of one Kotlin `fun <name>`, from its signature to the next `fun` at the same indent. */
+function ktFunBody(source, name) {
+  const lines = source.split('\n');
+  const start = lines.findIndex((l) => new RegExp(`\\bfun ${name}\\b`).test(l));
+  if (start === -1) return null;
+  const indent = lines[start].match(/^\s*/)[0];
+  const end = lines.findIndex(
+    (l, i) => i > start && new RegExp(`^${indent}(private |override )?fun `).test(l)
+  );
+  return lines.slice(start, end === -1 ? undefined : end).join('\n');
+}
+
 const PREDICATES = [
   {
     file: 'main_pipe.rs',
@@ -185,8 +197,38 @@ const PREDICATES = [
   }
 }`,
   },
-];
+  {
+    // Not a main-pipe fix, but the same risk: a Kotlin hunk Android-only, compiled and never run in
+    // CI. Dropped by a rebase, the WebView reads a pick's STATED length again and a provider stating
+    // 0 hands the composer an empty file (P1 of 1.8.1,
+    // docs/wiki/frontend/modules/chat.md#a-picked-file-is-read-at-the-pick-p1-of-181-2026-11-26).
+    file: 'kotlin/RustWebChromeClient.kt',
+    what: 'the file chooser hands the page PickedFiles copies, never the picker URIs',
+    holds: (s) => {
+      const body = ktFunBody(s, 'showFilePicker');
+      return (
+        body !== null &&
+        /PickedFiles\.deliver\(activity, res, filePathCallback\)/.test(body) &&
+        !/filePathCallback\.onReceiveValue\(res\)/.test(body)
+      );
+    },
+    upstream: `  private fun showFilePicker(
+    filePathCallback: ValueCallback<Array<Uri?>?>,
+    fileChooserParams: FileChooserParams
+  ) {
+    try {
+      activity.launchActivityForResult(intent) { result ->
+        val res: Array<Uri?>?
+        filePathCallback.onReceiveValue(res)
+      }
+    } catch (e: ActivityNotFoundException) {
+      filePathCallback.onReceiveValue(null)
+    }
+  }
 
+  private fun getValidTypes(currentTypes: Array<String>): Array<String> {`,
+  },
+];
 const sources = {};
 for (const file of new Set(PREDICATES.map((p) => p.file))) {
   try {

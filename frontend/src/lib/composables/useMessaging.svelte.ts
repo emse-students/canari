@@ -149,6 +149,7 @@ import {
   MessageWrittenError,
 } from '$lib/utils/chat/messageWrittenError';
 import { beginOutboxEnqueue } from '$lib/utils/chat/outboxActivity.svelte';
+import { ownPickedFile, PickedFileUnreadableError } from '$lib/utils/chat/ownPickedFile';
 import { unregisterDeviceNotices } from '$lib/utils/chat/deviceNoticeWiring';
 import { resetJoinRequests } from '$lib/utils/chat/joinRequests.svelte';
 import { resetAnswerDecisionsSaid } from '$lib/utils/graine/frameHandler';
@@ -3801,6 +3802,16 @@ export function useMessaging() {
             const endInflight = beginOutboxEnqueue(messageId);
             try {
               const fileBytes = new Uint8Array(await entry.file.arrayBuffer());
+              // PROVED NON-EMPTY BEFORE ANYTHING IS WRITTEN: a media entry with no byte can never
+              // upload, and once queued it is a message the member sees stuck (P1, 1.8.1). Every
+              // staged file was read at the pick (`ownPickedFile`), so reaching this is a path that
+              // staged without it - refused here, typed, and never re-staged by the catch below.
+              if (fileBytes.length === 0) {
+                console.error(
+                  `[MEDIA] ${messageId.slice(0, 8)}… a staged ${entry.file.type || 'typeless'} file read EMPTY at the send - not queued (staged without its bytes read at the pick)`
+                );
+                throw new PickedFileUnreadableError('empty', entry.file.size);
+              }
               const outboxEntry: OutboxEntry = {
                 id: messageId,
                 conversationId: convo.id,
@@ -3954,11 +3965,16 @@ export function useMessaging() {
         // than assumed: `refusalStatus` answers null for the queue's own failures, and the generic
         // line stands.
         const status = refusalStatus(error);
-        const mediaRefusal =
-          describeApiRefusal(status, m.chat_media_action_send()) ??
-          (isEnqueueQuotaFailure(error)
-            ? m.chat_media_send_error_storage_full()
-            : m.chat_media_send_error_generic());
+        // A FILE WITH NO BYTE IS NEVER GIVEN BACK: re-staged, the next Send would refuse it again.
+        const emptyFile = error instanceof PickedFileUnreadableError;
+        const mediaRefusal = emptyFile
+          ? m.chat_media_unreadable()
+          : (describeApiRefusal(status, m.chat_media_action_send()) ??
+            (isEnqueueQuotaFailure(error)
+              ? m.chat_media_send_error_storage_full()
+              : m.chat_media_send_error_generic()));
+        // The file that threw is the first one not sent: the loop stops at it.
+        const restageable = fileEntries.slice(sentMediaMessageCount + (emptyFile ? 1 : 0));
         const unsent = fileEntries.length - sentMediaMessageCount;
         // The staging is per conversation, but the refusal is said on the banner of the conversation
         // ON SCREEN: an unsent file goes back only where the member still is, so the banner and the
@@ -3978,8 +3994,8 @@ export function useMessaging() {
             `[MEDIA] ${sentFrom.slice(0, 8)}… ${unsent} file(s) sent from elsewhere NOT queued (status=${status ?? 'none'}): ${String(error)}`
           );
         } else if (ctx.selectedNow() === sentFrom) {
-          if (unsent > 0) restageInOrder(sentFrom, fileEntries.slice(sentMediaMessageCount));
-          mediaRestaged = unsent > 0;
+          if (restageable.length > 0) restageInOrder(sentFrom, restageable);
+          mediaRestaged = restageable.length > 0;
           // THE FIRST FILE WAS NOT SENT: the reply it carried goes back with it, so the retry is
           // still an answer.
           if (sentMediaMessageCount === 0 && currentReplyingTo) {
@@ -3988,7 +4004,7 @@ export function useMessaging() {
           }
           ctx.setSendError(mediaRefusal);
           ctx.log(
-            `[MEDIA] send failed (status=${status ?? 'none'}), ${unsent} file(s) re-staged: ${String(error)}`
+            `[MEDIA] send failed (status=${status ?? 'none'}), ${restageable.length} file(s) re-staged${emptyFile ? ', 1 empty file dropped' : ''}: ${String(error)}`
           );
         } else {
           // THE MEMBER MOVED ON. The refusal can only be said on the banner of the conversation now
@@ -4083,28 +4099,61 @@ export function useMessaging() {
     // It is one request per origin per page, awaited here because this function is already async and
     // a picker that has not yet been answered has nothing to refuse.
     const limits = await mediaService.uploadLimits();
-    for (const file of files) {
+    /**
+     * Refuses `file` when it is over the ceiling, saying so; `true` when refused. Asked of the
+     * REPORTED size first (a huge file is not read only to be refused), and again of the bytes read
+     * when they differ from what the picker reported.
+     */
+    const refusedAsTooLarge = (file: File): boolean => {
+      if (limits === null || !refusedBeforePreparation(file, limits)) return false;
+      const size = (file.size / 1024 / 1024).toFixed(1);
+      // TOLD the configured ceiling, COMPARED against it minus the AES-GCM tag - see
+      // `uploadLimits`. Announcing the compared number would say "49 Mo" of a 50 MB server.
+      const mediaMaxSizeMb = Math.round(limits.maxBytes / 1024 / 1024);
+      ctx.setSendError(m.chat_media_too_large({ size, limit: mediaMaxSizeMb }));
+      // The LOG is dev-facing and stays English, and it names the file the banner cannot: the
+      // banner tells the user one file was too big, this says WHICH, so a report of "it refused my
+      // picture" is answerable without asking them to reproduce it.
+      ctx.log(
+        `[MEDIA] refused a ${file.type || 'typeless'} file - ${size} Mo over the ${mediaMaxSizeMb} Mo limit`
+      );
+      return true;
+    };
+    for (const picked of files) {
       // A VIDEO IS RE-ENCODED ON THE DEVICE FIRST (decision C3), so its PICKED size says nothing
       // about what is uploaded: a 200 MB camera clip leaves as ~30 MB. The ceiling is the encoder's
-      // budget instead, and a video that cannot fit it is refused there, by its own fault.
-      if (file.type.startsWith('video/')) {
-        const prepared = await prepareChatVideo(file, limits?.maxPlaintextBytes, ctx);
+      // budget instead, and a video that cannot fit it is refused there, by its own fault. Its
+      // source is read whole by the encoder NOW, at the pick, and what is staged is the encoder's
+      // own output - so a video already owns its bytes before it is staged.
+      if (picked.type.startsWith('video/')) {
+        const prepared = await prepareChatVideo(picked, limits?.maxPlaintextBytes, ctx);
         if (prepared) readyFiles.push(prepared);
         continue;
       }
-      if (limits !== null && refusedBeforePreparation(file, limits)) {
-        const size = (file.size / 1024 / 1024).toFixed(1);
-        // TOLD the configured ceiling, COMPARED against it minus the AES-GCM tag - see
-        // `uploadLimits`. Announcing the compared number would say "49 Mo" of a 50 MB server.
-        const mediaMaxSizeMb = Math.round(limits.maxBytes / 1024 / 1024);
-        ctx.setSendError(m.chat_media_too_large({ size, limit: mediaMaxSizeMb }));
-        // The LOG is dev-facing and stays English, and it names the file the banner cannot: the
-        // banner tells the user one file was too big, this says WHICH, so a report of "it refused my
-        // picture" is answerable without asking them to reproduce it.
-        ctx.log(
-          `[MEDIA] refused a ${file.type || 'typeless'} file - ${size} Mo over the ${mediaMaxSizeMb} Mo limit`
+      if (refusedAsTooLarge(picked)) continue;
+      // THE BYTES ARE READ NOW, AT THE PICK, AND ONLY THOSE ARE STAGED (`ownPickedFile.ts`): an
+      // Android picker's `File` is a view of another app's `content://` URI, and read at the Send
+      // tap it came back EMPTY and was queued with zero bytes (P1, 1.8.1). A file with no readable
+      // byte is refused here, said, and never staged - so it can never be queued.
+      let file: File;
+      try {
+        file = await ownPickedFile(picked);
+      } catch (e) {
+        if (!(e instanceof PickedFileUnreadableError)) throw e;
+        console.error(
+          `[MEDIA] refused a picked ${picked.type || 'typeless'} file at the pick (${e.reason}, reported ${e.reportedSize} bytes): ${String(e.cause ?? e.message)}`
         );
+        ctx.log(
+          `[MEDIA] refused a picked ${picked.type || 'typeless'} file: ${e.reason}, reported ${e.reportedSize} bytes`
+        );
+        ctx.setSendError(m.chat_media_unreadable());
         continue;
+      }
+      if (file.size !== picked.size) {
+        // The picker's reported length was wrong (a provider that states none says 0): the bytes
+        // read are what is sent, and the line says the two differed.
+        ctx.log(`[MEDIA] a picked file reported ${picked.size} bytes and read ${file.size}`);
+        if (refusedAsTooLarge(file)) continue;
       }
       let entry: import('$lib/media').PendingMediaFile = { file };
       // Never re-encode GIFs: canvas compression renders a single frame and would drop the

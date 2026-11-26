@@ -95,11 +95,12 @@ async function writeIntoDocument(bytes: Uint8Array, target: string): Promise<voi
     throw err;
   }
   let written: number;
+  let recorded: number | undefined;
   try {
-    ({ written } = await invoke<{ written: number }>(galleryCommand('writeStagedDocument'), {
-      session,
-      uri: target,
-    }));
+    ({ written, recorded } = await invoke<{ written: number; recorded?: number }>(
+      galleryCommand('writeStagedDocument'),
+      { session, uri: target }
+    ));
   } catch (err) {
     // The command removes the staged copy on every path it runs; a rejection before it ran
     // (IPC, permission) would leave the copy behind, so discard it here - a no-op otherwise.
@@ -107,7 +108,22 @@ async function writeIntoDocument(bytes: Uint8Array, target: string): Promise<voi
     await discardStaged();
     throw err;
   }
-  console.debug(`[download] the provider's stream took ${written} bytes and closed`);
+  // WHAT A PICKER WILL READ BACK: an Android picker's `File` takes its length from the size the
+  // provider states, so a document recorded short of what was written is one that, picked again -
+  // in Canari's own composer too - reads short or empty (P1 of 1.8.1). Said, never silent.
+  if (recorded === undefined) {
+    console.warn(
+      `[download] the provider took ${written} bytes and states no size for the document`
+    );
+  } else if (recorded !== written) {
+    console.error(
+      `[download] the provider took ${written} bytes but records ${recorded} - the document will read back short when picked`
+    );
+  } else {
+    console.debug(
+      `[download] the provider's stream took ${written} bytes, closed, and records them`
+    );
+  }
 }
 
 /** The Tauri path: pick a destination, write the bytes there. */

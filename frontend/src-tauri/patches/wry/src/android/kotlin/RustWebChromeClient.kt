@@ -431,7 +431,11 @@ class RustWebChromeClient(private val activity: WryActivity, private val webView
             resultIntent
           )
         }
-        filePathCallback.onReceiveValue(res)
+        // CANARI PATCH: the page gets a COPY of each pick, read to its end, never the picker's
+        // URI - the WebView reads only the length a provider STATES, and a provider stating 0
+        // handed the composer an empty file (P1 of 1.8.1). `PickedFiles` is the app's own class
+        // (same package): docs/wiki/frontend/modules/chat.md#a-picked-file-is-read-at-the-pick-p1-of-181-2026-11-26.
+        PickedFiles.deliver(activity, res, filePathCallback)
       }
     } catch (e: ActivityNotFoundException) {
       filePathCallback.onReceiveValue(null)

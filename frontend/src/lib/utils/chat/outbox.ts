@@ -321,13 +321,31 @@ function isSendAnswer(e: unknown): boolean {
 }
 
 /**
- * The queued attachment cannot be read on THIS device: its row failed to load, or it holds no bytes
- * while still owing an upload. Typed, so the outbox never decides "local" from a message.
+ * The queued attachment cannot be read on THIS device: its row failed to load, or a raw take holds no
+ * bytes to prepare. Typed, so the outbox never decides "local" from a message. An ordinary
+ * attachment with no bytes is {@link OutboxAttachmentEmptyError}, permanent rather than counted.
  */
 export class LocalAttachmentError extends Error {
   constructor(why: string, cause?: unknown) {
     super(why, { cause });
     this.name = 'LocalAttachmentError';
+  }
+}
+
+/**
+ * A queued attachment that still owes its upload HOLDS NO BYTE: there is nothing to send, and no
+ * retry, reload or network can give it any - the file was read empty before it was queued (an
+ * Android picker's `content://` view read at the Send tap, P1 of 1.8.1; see `ownPickedFile.ts`).
+ *
+ * PERMANENT, CLASSIFIED AT THE THROW. It is deliberately NOT a {@link LocalAttachmentError}: that
+ * type is COUNTED as a maybe-passing local failure (a decode the renderer refused) and climbed the
+ * ladder for eight attempts, which is how a member saw a picked photo retry six times before they
+ * withdrew it. This one fails the entry for good at its first meeting, with a line in the thread.
+ */
+export class OutboxAttachmentEmptyError extends Error {
+  constructor(readonly declaredSize: number) {
+    super(`the queued attachment holds no bytes to upload (declared ${declaredSize})`);
+    this.name = 'OutboxAttachmentEmptyError';
   }
 }
 
@@ -2523,6 +2541,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       | 'too-large'
       | 'refused'
       | 'unpreparable'
+      | 'empty-attachment'
       | 'removed'
       | 'expired'
       | 'take-lost'
@@ -2590,6 +2609,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         cause === 'too-large' ||
         cause === 'refused' ||
         cause === 'unpreparable' ||
+        cause === 'empty-attachment' ||
         cause === 'expired' ||
         cause === 'take-lost' ||
         cause === 'over-budget' ||
@@ -2609,9 +2629,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
                   ? m.outbox_reel_over_budget()
                   : cause === 'over-daily-limit'
                     ? m.upload_over_daily_limit()
-                    : cause === 'unpreparable' && notice
-                      ? notice
-                      : m.outbox_upload_refused();
+                    : cause === 'empty-attachment'
+                      ? m.outbox_attachment_empty()
+                      : cause === 'unpreparable' && notice
+                        ? notice
+                        : m.outbox_upload_refused();
         await deps
           .addMessageToChat?.('system', line, entry.conversationId, { isSystem: true })
           .catch((e: unknown) =>
@@ -3369,7 +3391,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           uploadPhase = true;
           if (!deps.uploadMedia) throw new Error('uploadMedia callback not provided');
           if (!media.fileBytes || media.fileBytes.length === 0) {
-            throw new LocalAttachmentError('the queued attachment holds no bytes to upload');
+            throw new OutboxAttachmentEmptyError(media.size);
           }
           // CHECK AND CLAIM WITH NO AWAIT BETWEEN THEM (the running-task check at the top is many
           // awaits back): two passes of one lane must never start two transfers of one file.
@@ -3660,6 +3682,16 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // for good, with the preparer's own sentence in the thread.
     if (e instanceof OutboxPrepareRefusedError) {
       return failPermanently(entry, terminalId, 'unpreparable', e.notice);
+    }
+    // AN ATTACHMENT WITH NO BYTE CANNOT BE SENT, BY ANYONE, EVER: failed for good at its first
+    // meeting, with its line in the thread - never the ladder, which retried one six times (P1,
+    // 1.8.1). It accuses: an entry is never queued without its bytes, so reaching this is an
+    // enqueue path that skipped the proof (`ownPickedFile`).
+    if (e instanceof OutboxAttachmentEmptyError) {
+      const line = `[OUTBOX] ${entry.id.slice(0, 8)}… media entry in ${terminalId.slice(0, 8)}… holds NO BYTES (declared ${e.declaredSize}) - it was queued without its file; failed for good`;
+      console.error(line);
+      log(line);
+      return failPermanently(entry, terminalId, 'empty-attachment');
     }
     if (refusal) {
       const detail = `${entry.kind} entry${entry.media ? ` (${entry.media.size} bytes)` : ''}`;

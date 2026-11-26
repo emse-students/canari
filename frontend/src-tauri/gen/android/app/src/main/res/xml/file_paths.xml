@@ -8,4 +8,7 @@
   <!-- One file at a time shared OUT of Canari (tauri-plugin-gallery, share_staged): this directory
        alone, never the cache around it, which holds decrypted media being staged. -->
   <cache-path name="share_out" path="share_out/" />
+  <!-- The copies of what the WebView's file chooser picked (PickedFiles.kt): this directory alone,
+       so the page reads each pick through a URI whose stated size is the copy's real length. -->
+  <cache-path name="picked_inbox" path="picked_inbox/" />
 </paths>

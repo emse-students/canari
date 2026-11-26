@@ -2919,6 +2919,90 @@ cause `too-large`. No banner and no eviction: the group is unchanged. Only 413 i
 5xx still backs off. The cause of the 413 (the edge limit) is NOT fixed by this: see the P1 in
 [backlog](../../backlog.md). Pinned by `outbox.test.ts`.
 
+### A picked file is read at the pick (P1 of 1.8.1, 2026-11-26)
+
+**The defect.** On Android, every attachment a member picked IN the app was queued with zero bytes
+(`[OUTBOX] ... payload read in 53 ms (0 file bytes)`), then failed `the queued attachment holds no
+bytes to upload` six times on the ladder until they withdrew it - five picks over three days - while
+the same member's share-sheet sends of the same day went out (`305207 file bytes`).
+
+**The cause, from the code.** The Android composer's pickers are `<input type="file">`
+(`attachSources.ts`: only the iOS app goes native), so the `File` the WebView hands back is a VIEW
+of another app's `content://` URI (wry's `RustWebChromeClient.onShowFileChooser` returns the
+picker's URIs as they are), not bytes. `prepareMediaFiles` (`useMessaging.svelte.ts`) never read it
+for a non-video - the compressor's decode of an empty view fails and `keepOriginal('decode-failed')`
+stages the view itself - and the bytes were read ONCE, at the Send tap
+(`new Uint8Array(await entry.file.arrayBuffer())` in `handleSendChat`), after the picker's round
+trip through the background. That read RESOLVED with zero bytes instead of throwing (had it thrown,
+the send's catch would have re-staged the file and no entry would exist), so the entry was written
+with `fileBytes` empty and nothing between the pick and the upload could tell. A view reads back
+empty when its provider states no length or streams nothing, or when its grant has lapsed. The
+share sheet never met this: `IncomingShare.kt` copies the stream into the app's cache at once
+([sharing](../sharing.md)), and the iOS app's pickers read every pick whole into memory
+(`nativeAttachPicker.ts`, `take_picked_file`).
+
+**The file was a Canari log export** (owner, 2026-11-26: `[APPLOG] exporting 22967 lines`, then the
+in-app pick 11 s later). **Bench reading (Mi 9T, Android 16, 2026-11-26)**, a probe `<input
+type=file>` in the app's WebView reading each pick at the pick and 10 s later:
+
+| Pick | On disk | Provider states | `File.size` | Bytes read |
+| --- | --- | --- | --- | --- |
+| local screenshot (Photos) | 519 226 | - | 519 226 | 519 226 |
+| Google Photos cloud item (system picker) | - | - | 4 276 039 | 4 276 039 |
+| log export of 1.8.2-alpha.4, saved in "Mi 9T > Download", picked at once | 2 129 645 | 2 129 645 (MediaStore `_size`, within 3 s of the save) | 2 129 645 | 2 129 645 |
+| log export of 1.8.2-alpha.7, saved in "Telechargements", picked at once | 2 141 102 | 2 141 102 | 2 141 102 | 2 141 102 |
+| `canari-log-1.2.7-alpha.2-...-1210.txt`, saved before #3028, listed "0 octet(s)" in "Telechargements" | 269 916 | **0** | **0** | **0** |
+| `canari-log-1.2.9-alpha.4-...-1312.txt`, same | 2 147 637 | **0** | **0** | **0** |
+
+So **the WebView's `File` takes its length from what the provider STATES and reads exactly that
+many bytes**: a provider stating 0 hands the composer an empty file whatever the disk holds - the
+member's symptom, byte for byte. Today's save path (`write_staged_document`, #3028) leaves the
+provider stating the real size on this phone, in both roots; the member's phone (not identified)
+evidently did not, or he picked an export an older build had saved. Either way the read cannot be
+trusted to a provider's statement, so the bytes are taken by reading the stream to its end.
+
+**The fix.**
+
+- **The Android file chooser hands the page a COPY** (`PickedFiles.kt`, called from wry's
+  `RustWebChromeClient.showFilePicker`, patched in `patches/wry` and its generated copy): each picked
+  stream is read to its END into `cache/picked_inbox/<pick>/<index>/<name>`, exactly as
+  `IncomingShare.kt` copies a share, and the page gets this app's FileProvider URI for the copy,
+  whose stated size is its real length. Refused like a share (not `content://`, our own authority, a
+  grant the member gave Canari, a non-video over `ShareRules.pickCeiling`) or unreadable, a pick is
+  handed over EMPTY under its name, so the page refuses it at the pick and says so. **A video has no
+  ceiling there** (review of #4154): its encoder reads the source by ranges and stages its own output,
+  so the composer always took a camera clip over 200 MB; only the disk bounds its copy. The hunk in
+  wry is asserted by `wry-main-pipe-patch.test.mjs`, which a rebase dropping it fails. A stated size that
+  differs from the bytes read is an ERROR line (`pick N copied: ..., but its provider states S`). The
+  copies are swept by the next process (`PickedFiles.sweepOnce`), never under a page that may still
+  read one (a video's encoder runs after the pick).
+- **A save says what the provider records** (`write_staged_document`): the stream is flushed and
+  closed, then `OpenableColumns.SIZE` is read back; a recorded size short of what was written is an
+  ERROR, natively, in Rust and in the page (`[download] the provider took N bytes but records R`),
+  and a provider stating none is a warning.
+- **The bytes are read at the pick** (`ownPickedFile.ts`): every non-video is read whole once and
+  replaced by a `File` backed by those bytes, so what is compressed, staged, queued and uploaded is
+  what was read, and nothing downstream depends on another app's grant. A video already was: the
+  encoder reads its source at the pick and stages its own output.
+- **A pick with no readable byte is refused AT THE PICK** - `PickedFileUnreadableError`, typed
+  `empty` or `unreadable` at the throw - with `chat_media_unreadable` on the composer's banner and a
+  `[MEDIA] refused a picked ...` line; it is never staged, so it can never be queued. The ceiling is
+  asked of the reported size before the read and again of the size read when the two differ.
+- **The send proves it before writing anything**: a staged file that reads empty at the tap is the
+  same typed error, nothing is written, the file is NOT given back (a second Send would refuse it
+  again), and the banner says so.
+- **The outbox fails an empty attachment for good at its first meeting.** It was a
+  `LocalAttachmentError`, COUNTED toward `MAX_UNEXPECTED_ATTEMPTS` and retried on the ladder; it is
+  now `OutboxAttachmentEmptyError`, classified at the throw, settled by `failPermanently(...,
+  'empty-attachment')`: bubble to `error`, entry deleted, `outbox_attachment_empty` in the thread,
+  metric cause `empty-attachment`, and an accusing line - reaching it means an enqueue path skipped
+  the proof. A raw chat-reel take with no bytes keeps its counted `LocalAttachmentError`.
+
+Pinned by `ownPickedFile.test.ts`, `useMessaging.mediaEnqueue.svelte.test.ts` ("a picked file is
+read at the pick"), `outbox.test.ts`, `fileDownload.test.ts` and the gallery plugin's `commands.rs`
+tests; the native copy is verified by compiling only until the reading below. The reading owed on the bench phone is
+[a backlog entry](../../backlog.d/reading-picked-file-sent-from-the-gallery-and-a-cloud-item.md).
+
 ### A 2xx a captive portal answered is no answer (2026-10-25)
 
 Under a captive portal every request is answered `200 text/html` without reaching the server. The

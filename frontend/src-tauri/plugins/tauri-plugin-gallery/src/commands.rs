@@ -296,6 +296,11 @@ pub(crate) async fn share_staged<R: Runtime>(
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct DocumentWritten {
     pub written: u64,
+    /// The size the document's provider states once the stream is closed (`OpenableColumns.SIZE`);
+    /// absent when it states none. A picker's `File` takes its length from it, so a value short of
+    /// `written` is a document that reads back short when it is picked again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recorded: Option<u64>,
 }
 
 /// A destination the Android save dialog handed back: a `content://` document URI, nothing else.
@@ -345,10 +350,20 @@ pub(crate) async fn write_staged_document<R: Runtime>(
         Err(crate::Error::AndroidOnly)
     };
     match &outcome {
-        Ok(w) => log::debug!(
-            "[gallery] write_staged_document {session}: {} bytes written",
-            w.written
-        ),
+        Ok(w) => match w.recorded {
+            Some(recorded_len) if recorded_len != w.written => log::error!(
+                "[gallery] write_staged_document {session}: {} bytes written but the provider records {recorded_len}",
+                w.written
+            ),
+            Some(recorded_len) => log::debug!(
+                "[gallery] write_staged_document {session}: {} bytes written, the provider records {recorded_len}",
+                w.written
+            ),
+            None => log::warn!(
+                "[gallery] write_staged_document {session}: {} bytes written, the provider states no size",
+                w.written
+            ),
+        },
         Err(e) => log::error!("[gallery] write_staged_document {session} failed: {e}"),
     }
     remove_staged(&staged);
@@ -516,6 +531,21 @@ mod tests {
         assert_eq!(sent[0]["avatar"]["hasPhoto"], true);
         assert_eq!(sent[1]["avatar"]["hasPhoto"], false);
         assert!(sent[2].get("avatar").is_none());
+    }
+
+    #[test]
+    fn a_document_write_carries_the_size_its_provider_records_when_it_states_one() {
+        // The Kotlin side puts `recorded` only when the provider answers `OpenableColumns.SIZE`.
+        let stated: super::DocumentWritten =
+            serde_json::from_str(r#"{"written":4,"recorded":0}"#).unwrap();
+        assert_eq!((stated.written, stated.recorded), (4, Some(0)));
+        let silent: super::DocumentWritten = serde_json::from_str(r#"{"written":4}"#).unwrap();
+        assert_eq!(silent.recorded, None);
+        // And the page gets no `recorded` key for a provider that states none.
+        assert!(serde_json::to_value(&silent)
+            .unwrap()
+            .get("recorded")
+            .is_none());
     }
 
     use super::{

@@ -468,6 +468,13 @@ matches it - without one, a second save became `X.mp3 (1)` and lost its type. Tw
   Not read: an iOS save into iCloud Drive or a third-party provider, where the dialog plugin exports
   an EMPTY placeholder (`UIDocumentPickerViewController(url:in: .exportToService)`) before the
   write.
+  **Read 2026-11-26 (Mi 9T, 1.8.2 pre-releases), the P1 of 1.8.1:** a log saved today into either root
+  is stated at its full size (2 129 645 and 2 141 102 bytes, disk = MediaStore = the pick), but the
+  pre-#3028 logs the Downloads root still states as 0 are picked as an EMPTY file by the WebView,
+  which reads exactly the stated length - so an export was attached with zero bytes. The write now
+  flushes, closes, then reads `OpenableColumns.SIZE` back and returns it (`recorded`): a short record
+  is an ERROR natively, in Rust and in the page. The pick no longer trusts a stated size at all
+  (`PickedFiles.kt`, [chat](modules/chat.md#a-picked-file-is-read-at-the-pick-p1-of-181-2026-11-26)).
 - **Never ask for a directory.** Android's storage access framework offers a *document* picker;
   `dialog.open({ directory: true })` has no equivalent there. `save()` is the portable shape.
 - **`fs:default` is READ-ONLY.** It grants reading the app-specific directories and creating them,
@@ -2551,7 +2558,8 @@ being a SIGABRT from the looper callback, so read the frames below `cb_handler` 
 `handle_message` means a real regression.
 
 `.github/scripts/tests/wry-main-pipe-patch.test.mjs` fails a rebase that drops any hunk (in
-`main_pipe.rs` and in `binding.rs`'s looper callback), proves each check against the upstream code it
+`main_pipe.rs`, in `binding.rs`'s looper callback, and the file chooser's `PickedFiles` hunk in
+`kotlin/RustWebChromeClient.kt`), proves each check against the upstream code it
 replaces, and asserts the `=0.57.1` pin and a lockfile entry with no registry `source`. The device
 reading is owed:
 [device-verification](../device-verification.md#wmp-the-wry-main-pipe-after-an-activity-destroy---owed-on-android).

@@ -83,6 +83,8 @@ export type MlsMetricEvent =
         | 'refused'
         /** A queued chat-reel take its preparer refused for good (RC-5). */
         | 'unpreparable'
+        /** A queued attachment that holds no byte: queued without its file (P1 of 1.8.1). */
+        | 'empty-attachment'
         /** A chat-reel send still queued past its expiry hint (RC-13): it would arrive already gone. */
         | 'expired'
         /** A chat-reel send whose take row is gone: its file is no longer on this device (RC-13). */

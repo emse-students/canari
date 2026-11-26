@@ -384,6 +384,78 @@ describe('an attachment the queue cannot take', () => {
   });
 });
 
+/**
+ * P1 of 1.8.1: every in-app pick on one Android phone was queued with ZERO bytes - the picker's
+ * `File` is a view of another app's `content://` URI, read only at the Send tap - while the share
+ * sheet, which copies its files at once, sent the same day. The bytes are read AT THE PICK now
+ * (`ownPickedFile`), a file with none is refused there and said, and the send proves the bytes are
+ * there before anything is written.
+ */
+describe('a picked file is read at the pick, and one with no byte is never queued', () => {
+  /** A picker's view: reports `reported` bytes, reads back what `read` answers, call after call. */
+  const view = (reported: number, read: () => Promise<ArrayBuffer>, name = 'IMG.pdf') => {
+    const file = new File([new Uint8Array(reported)], name, { type: 'application/pdf' });
+    Object.defineProperty(file, 'arrayBuffer', { value: read });
+    return file;
+  };
+
+  it('the staged file owns the bytes read at the pick: a view that reads empty at the Send no longer matters', async () => {
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    let reads = 0;
+    const picked = view(4, async () => {
+      reads += 1;
+      return reads === 1 ? new Uint8Array([1, 2, 3, 4]).buffer : new ArrayBuffer(0);
+    });
+    await messaging.handleFilesSelected([picked], ctx);
+    const staged = messaging.pendingMediaFilesFor(CONVO);
+    expect(staged).toHaveLength(1);
+    expect(staged[0].file).not.toBe(picked);
+    await messaging.handleSendChat(ctx, '');
+    expect(reads).toBe(1);
+    const entry = queued().find((e) => e.kind === 'media')!;
+    expect(Array.from(entry.media!.fileBytes!)).toEqual([1, 2, 3, 4]);
+  });
+
+  it('a pick that reads EMPTY is refused at the pick, said, and never staged nor queued', async () => {
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await messaging.handleFilesSelected([view(305207, async () => new ArrayBuffer(0))], ctx);
+    expect(messaging.pendingMediaFilesFor(CONVO)).toEqual([]);
+    expect(ctx.setSendError).toHaveBeenCalledWith(m.chat_media_unreadable());
+    expect(logLines(ctx).some((l) => l.includes('refused a picked') && l.includes('empty'))).toBe(
+      true
+    );
+    expect(enqueueMock).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it('a pick whose read THROWS is refused the same way, and the others of the pick are staged', async () => {
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const denied = view(10, () => Promise.reject(new DOMException('lapsed', 'NotReadableError')));
+    await messaging.handleFilesSelected([denied, pdf('ok.pdf')], ctx);
+    const staged = messaging.pendingMediaFilesFor(CONVO);
+    expect(staged.map((p) => p.file.name)).toEqual(['ok.pdf']);
+    expect(ctx.setSendError).toHaveBeenCalledWith(m.chat_media_unreadable());
+    errorSpy.mockRestore();
+  });
+
+  it('a staged file that reads EMPTY at the send writes nothing, is NOT given back, and is said', async () => {
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await messaging.handleSendChat(ctx, '', { files: [entryOf(async () => new ArrayBuffer(0))] });
+    expect(ctx.conversations.get(CONVO)!.messages).toHaveLength(0);
+    expect(enqueueMock).not.toHaveBeenCalled();
+    expect(messaging.pendingMediaFilesFor(CONVO)).toEqual([]);
+    expect(ctx.setSendError).toHaveBeenCalledWith(m.chat_media_unreadable());
+    errorSpy.mockRestore();
+  });
+});
+
 describe('the staging belongs to ONE conversation and ONE account', () => {
   it('a sign-out DURING the preparation stages nothing (a shared file never reaches the next account)', async () => {
     const messaging = await freshMessaging();

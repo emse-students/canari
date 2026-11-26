@@ -482,7 +482,7 @@ const REVIEWED_GROUPS: [string, string[]][] = [
   ],
   [
     "the gallery plugin's staging: a session is a `crypto.randomUUID()` (`valid_session` refuses anything else), a staged path is the cache dir + prefix + session, and a saved name is `reelFileName` / `replayFileName` (never an attachment's name, which `share_staged` does not log)",
-    ['10x commands.rs|session', '3x commands.rs|name', '2x commands.rs|path.display()'],
+    ['12x commands.rs|session', '3x commands.rs|name', '2x commands.rs|path.display()'],
   ],
   [
     'a flag of the restore plugin (whether the key asks for cloud backup)',
