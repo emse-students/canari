@@ -726,3 +726,16 @@ a stable, which is refused unless dev served that alpha. First applied to migrat
 **For the owner:** confirm this order, or amend it (for example, require the owner's own merge of the
 line for a backfill of user data) ([cicd](cicd.md#a-migration-the-owner-must-approve-is-held-2026-11-01),
 [decisions](decisions/owner-decisions-of-2026-11-03-evening.md)).
+
+## Le Cercle: how a balance moves between two accounts of one person (parked 2026-11-26)
+
+The Alumni merge transfers a duplicate's Le Cercle account onto the real one (owner, 2026-11-26,
+[D53](profiles-and-access.md#the-alumni-merge-extended-d52-d58-planned-for-183)). When the real
+account has NO Le Cercle account, the duplicate's is renamed to it and the books are untouched. When
+BOTH exist, a balance and a membership must move, and the ledger has no line for it (`purchase`,
+`topup`, `undo`, `cashout`). Not reversible once lines are booked, so parked rather than taken.
+**For the owner:** (1, recommended) a `transfer` line pair (out of the duplicate, into the target,
+each naming the other), a schema migration in Le Cercle; (2) a `cashout` on the duplicate and a
+`topup` on the target, no schema change, but the books show money paid in that nobody paid; (3) refuse,
+and a cercleux moves it by hand. Until answered, that case answers `409` and changes nothing
+([the entry](backlog.d/alumni-merge-le-cercle-transfers-then-erases-the-duplicate.md)).
