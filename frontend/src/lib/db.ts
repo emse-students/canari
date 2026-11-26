@@ -53,19 +53,31 @@ const openStores = new Map<string, Promise<IStorage>>();
 export async function getStorage(userId: string): Promise<IStorage> {
   const cached = openStores.get(userId);
   if (cached) {
+    // A JOINER SHARES THE OPEN'S OUTCOME, FAILURE INCLUDED. It used to read a rejected open as "no
+    // store yet" and start its own - so every caller that had joined a failed open started one, all
+    // at once: on 2026-11-25 five of them ran the v23 rebuild side by side and dropped the table one
+    // of them had just filled, a user's whole history (`docs/wiki/frontend/local-store-rebuild.md`).
+    // A failed open is the caller's answer; the NEXT call, made after it, opens again.
+    const store = await cached;
     // A CACHE THAT CANNOT SEE A CLOSE HANDS BACK A DEAD HANDLE. `close()` is reachable from the
     // revoked-device wipe, which closes the store and expects the next caller to get a working one.
     // Asking the store itself is the only answer that cannot drift from what actually happened.
-    const store = await cached.catch(() => null);
-    if (store?.isOpen) return store;
-    openStores.delete(userId);
+    if (store.isOpen) return store;
+    // Only the caller that finds THIS closed handle still cached forgets it; the others join
+    // whatever open replaced it.
+    if (openStores.get(userId) === cached) openStores.delete(userId);
+    return getStorage(userId);
   }
 
   const opening = openStore(userId);
   openStores.set(userId, opening);
   // A FAILED OPEN MUST NOT BE REMEMBERED AS ONE. Leaving the rejected promise in the map would
-  // turn a transient failure into a permanent one for the rest of the session.
-  opening.catch(() => openStores.delete(userId));
+  // turn a transient failure into a permanent one for the rest of the session. Forgotten only if it
+  // is still the one cached, and logged: every caller that joined it is about to fail with it.
+  opening.catch((e: unknown) => {
+    console.error(`[DB] the local store did not open - its joiners fail with it: ${String(e)}`);
+    if (openStores.get(userId) === opening) openStores.delete(userId);
+  });
   return opening;
 }
 

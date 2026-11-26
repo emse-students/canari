@@ -1,4 +1,5 @@
 import type { IMlsService } from './IMlsService';
+import { getStorage } from '$lib/db';
 import { GatewayOpenAbandonedError } from './gatewaySocketOpen';
 import { republishBaseIfStale } from '$lib/utils/chat/staleBase';
 import { isStrandedSeat } from '$lib/utils/chat/welcomeOwed';
@@ -511,14 +512,22 @@ export async function syncConnectionAfterWsOpen(
   // succeeds records it audited, one that fails leaves it owed (`groupsInCreation.ts`,
   // `dischargeCreatedGroupAudit`).
   const groupsNow = [...mlsService.getLocalGroups()].filter((id) => !isGroupInCreation(id));
-  const { sweep, reason } = connectionSweepDecision(userId, deviceId);
+  // WHICH STORE the records below were written against (`IStorage.messageStoreIncarnation`): both
+  // answer "have I already asked", and a store whose rows were lost inherited them and asked nobody
+  // (2026-11-25, `docs/wiki/frontend/local-store-rebuild.md`). A store that cannot say is a new one.
+  const store = await readMessageStoreIncarnation(userId, log);
+  const { sweep, reason } = connectionSweepDecision(userId, deviceId, Date.now(), store);
 
   // TWO INDEPENDENT REASONS TO COMPARE, and only one of them is about this connection. The sweep
   // asks "could the server have dropped something for me"; the audit asks "was this group damaged
   // before anything on this device was able to notice". A device that answers no to the first can
   // still owe the second, and it owes it exactly once per group - see `groupsOwingAudit`.
-  const owing = groupsOwingAudit(userId, deviceId, groupsNow, (groupId) =>
-    mlsService.isDistributionGroup(groupId)
+  const owing = groupsOwingAudit(
+    userId,
+    deviceId,
+    groupsNow,
+    (groupId) => mlsService.isDistributionGroup(groupId),
+    store
   );
   const targets = sweep ? groupsNow : owing;
 
@@ -531,12 +540,29 @@ export async function syncConnectionAfterWsOpen(
     const askedGroups = await reconcileAllGroups(mlsService, targets, log);
     // DISCHARGED ON THE ASK ITSELF. `reconcileAllGroups` returns the groups a probe really left for,
     // which is shorter than `targets` by whatever was deferred - and those come back next time.
-    noteGroupsAudited(userId, deviceId, askedGroups);
+    noteGroupsAudited(userId, deviceId, askedGroups, store);
   } else {
     log(`[HISTORY_RECONCILE] no sweep - ${reason}; every group already audited`);
   }
-  noteConnection(userId, deviceId);
+  noteConnection(userId, deviceId, Date.now(), store);
   return verdicts;
+}
+
+/**
+ * The incarnation of `userId`'s message store, or `null` when the store cannot be opened or read -
+ * which the decision reads as a new store, the answer that cannot leave a lost row unasked. Said at
+ * warn: a connection that cannot read its own store is not the ordinary case.
+ */
+async function readMessageStoreIncarnation(
+  userId: string,
+  log: (msg: string) => void
+): Promise<string | null> {
+  try {
+    return await (await getStorage(userId)).messageStoreIncarnation();
+  } catch (e) {
+    log(`[HISTORY_RECONCILE] WARN the message store cannot name its incarnation: ${String(e)}`);
+    return null;
+  }
 }
 
 /**

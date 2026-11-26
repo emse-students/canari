@@ -97,6 +97,7 @@ import {
   MESSAGE_ID_INDEX_STATEMENT,
   MESSAGES_REKEY_MISSING_COUNT,
   MESSAGES_REKEY_STAGING,
+  MessageRekeyRefusedError,
   messageRekeySteps,
   messagesKeyedByConversation,
   messagesTableStatement,
@@ -111,6 +112,14 @@ import {
   outboxServerErrorsStatement,
   outboxUnavailableAnswersStatement,
 } from './sqliteMigrations';
+import { settleRetainedTables } from './sqliteRetained';
+import {
+  newStoreIncarnation,
+  STORE_INCARNATION_KEEP_STATEMENT,
+  STORE_INCARNATION_MINT_STATEMENT,
+  STORE_INCARNATION_READ_STATEMENT,
+  STORE_META_TABLE_STATEMENT,
+} from './storeIncarnation';
 import { announceConversationStored } from './conversationStored';
 import {
   compareStoredOrder,
@@ -208,6 +217,18 @@ function base64ToUint8(val: unknown): Uint8Array {
 }
 
 /**
+ * The schema run in flight per database path, so two `init()`s of the same file never interleave.
+ *
+ * `getStorage` shares one open per user, but it is not the only way two runs can meet: a cached open
+ * that `closeCachedStore` forgets while it is still running, then a new `getStorage`, starts a second
+ * one beside it. And a schema run is not a read: the v23 rebuild drops and renames tables, and two of
+ * them interleaved on 2026-11-25 dropped a table the other had just filled
+ * (`docs/wiki/frontend/local-store-rebuild.md`). So the file's schema has ONE executor per process,
+ * decided here, where the statements are - not by every caller remembering to share.
+ */
+const schemaRuns = new Map<string, Promise<void>>();
+
+/**
  * IStorage implementation backed by the Tauri SQL plugin (SQLite).
  * Used on Tauri desktop and mobile builds.  Binary fields (iv, salt, cipherText) are stored
  * as base64-encoded TEXT columns rather than BLOBs to work around a Tauri SQL serialisation
@@ -248,7 +269,31 @@ export class SqliteStorage implements IStorage {
     await this.blobs.close();
   }
 
+  /**
+   * Opens the file and brings its schema to {@link SCHEMA_VERSION} - ONE AT A TIME PER FILE in this
+   * process, whoever asks ({@link schemaRuns}).
+   */
   async init(): Promise<void> {
+    const before = schemaRuns.get(this.dbPath);
+    if (before) {
+      console.warn(
+        `[SQLite] a second schema run on ${this.dbPath} was asked while one is in flight - it waits for that one to settle`
+      );
+    }
+    const run = (before ?? Promise.resolve()).then(
+      () => this.openAndMigrate(),
+      () => this.openAndMigrate()
+    );
+    schemaRuns.set(this.dbPath, run);
+    try {
+      await run;
+    } finally {
+      if (schemaRuns.get(this.dbPath) === run) schemaRuns.delete(this.dbPath);
+    }
+  }
+
+  /** The body of {@link init}; never called but through it. */
+  private async openAndMigrate(): Promise<void> {
     const Database = (await import('@tauri-apps/plugin-sql')).default;
     this.db = await Database.load(this.dbPath);
 
@@ -272,6 +317,11 @@ export class SqliteStorage implements IStorage {
     // decrypt them -> messages permanently invisible on the recipient side (observed symptom:
     // "Echec replay historique ... database is locked").
     await this.db.execute('PRAGMA busy_timeout=5000');
+
+    // FIRST, before anything reads or writes a table: a copy a migration set aside and could not yet
+    // release - a kill, or a defect its proof caught - is restored from and released here
+    // (`sqliteRetained.ts`, charter principle 2). One read of `sqlite_master` when there is none.
+    await settleRetainedTables(this.db);
 
     // Schema: conversations carry their lifecycle state (active|pending|removed).
     // Older databases (with an `is_ready` column) are migrated in v4 below.
@@ -306,6 +356,25 @@ export class SqliteStorage implements IStorage {
     // Keyed by `(conversation_id, id)` since v23 (`messagesTableStatement`): an older file keeps
     // its single-column key until the v23 rebuild below.
     await this.db.execute(messagesTableStatement('messages'));
+
+    // THE TABLE'S INCARNATION (`IStorage.messageStoreIncarnation`): minted when `messages` did not
+    // exist before the statement above - a new file, or a table something removed - and kept for as
+    // long as the table lives. A file older than this field gets one too, once.
+    await this.db.execute(STORE_META_TABLE_STATEMENT);
+    const messagesWereThere = preExistingTables.includes('messages');
+    const rebuildUnderWay = preExistingTables.includes(MESSAGES_REKEY_STAGING);
+    if (!messagesWereThere && !fresh && !rebuildUnderWay) {
+      // Not a new file and no rebuild to resume from: the rows this file held are GONE. Said at
+      // error - it is the one place a table loss is visible - and the new incarnation is what makes
+      // the next connection ask the peers for them.
+      console.error(
+        '[SQLite] the messages table was ABSENT from a file that is not new - its rows are gone; a new incarnation makes the next connection compare every group'
+      );
+    }
+    await this.db.execute(
+      messagesWereThere ? STORE_INCARNATION_KEEP_STATEMENT : STORE_INCARNATION_MINT_STATEMENT,
+      [newStoreIncarnation()]
+    );
 
     await this.db.execute(MESSAGE_CONVERSATION_INDEX_STATEMENT);
     // The page read's index (`idx_messages_conv_order`, on `order_at`) and the pending rows' index are
@@ -727,13 +796,17 @@ export class SqliteStorage implements IStorage {
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name = $1",
       [MESSAGES_REKEY_STAGING]
     );
+    const indexes: any[] = await this.db.select(
+      "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'messages' AND sql IS NOT NULL"
+    );
     const state = {
       keyed: messagesKeyedByConversation(info),
       staging: staged.length > 0,
       columns: info.map((c) => String(c.name)),
+      indexes: indexes.map((r) => String(r.name)),
     };
     const steps = messageRekeySteps(state);
-    if (steps.copy.length === 0) return;
+    if (steps.swap === null) return;
     const before: any[] = await this.db.select('SELECT COUNT(*) AS n FROM messages');
     console.info(
       `[SQLite] Migration v22->v23: keying ${Number(before[0]?.n ?? 0)} message row(s) by their conversation${state.staging ? ' (resuming a rebuild a kill interrupted)' : ''}`
@@ -743,15 +816,27 @@ export class SqliteStorage implements IStorage {
     const unproven = Number(missing[0]?.n ?? 0);
     if (unproven !== 0) {
       console.error(
-        `[SQLite] Migration v22->v23: ${unproven} message row(s) are not in the staging table after the copy - the old table is KEPT`
+        `[SQLite] Migration v22->v23: REFUSED - ${unproven} message row(s) are not in the staging table after the copy; the old table is KEPT`
       );
-      throw new Error(`messages rekey: ${unproven} row(s) not copied - old table kept`);
+      throw new MessageRekeyRefusedError(`${unproven} row(s) not copied - old table kept`);
     }
-    for (const statement of steps.drop) await this.db.execute(statement);
+    // The swap re-proves both facts INSIDE its own transaction (`messageRekeySteps`): the count
+    // above explains a refusal, the guards in the swap are what make the drop safe.
+    try {
+      await this.db.execute(steps.swap);
+    } catch (e) {
+      console.error(
+        `[SQLite] Migration v22->v23: the swap REFUSED or failed and rolled back - both tables are left as they were for the next open: ${String(e)}`
+      );
+      throw new MessageRekeyRefusedError(`swap refused: ${String(e)}`);
+    }
     const after: any[] = await this.db.select('SELECT COUNT(*) AS n FROM messages');
     console.info(
       `[SQLite] Migration v22->v23: ${Number(after[0]?.n ?? 0)} message row(s) now keyed by (conversation, id)`
     );
+    // The old table was set aside, not dropped: proved against the new one, restored from if it is
+    // not whole, and released only then (`sqliteRetained.ts`).
+    await settleRetainedTables(this.db);
   }
 
   // -- Conversations -------------------------------------------------------
@@ -1522,6 +1607,12 @@ export class SqliteStorage implements IStorage {
       if ((removed?.rowsAffected ?? 0) > 0) report.resealed++;
     }
     return report;
+  }
+
+  /** See {@link IStorage.messageStoreIncarnation}. */
+  async messageStoreIncarnation(): Promise<string | null> {
+    const rows: Array<{ value: string }> = await this.db.select(STORE_INCARNATION_READ_STATEMENT);
+    return rows[0]?.value ?? null;
   }
 
   /** Rows held for `conversationId`, counted on `idx_messages_conv` - nothing is decrypted. */

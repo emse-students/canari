@@ -2565,6 +2565,15 @@ Two properties it is held to, both learnt above:
   during it, and costs exactly one probe, once, ever - cheaper than a second durable record of when
   each group was joined.
 
+**Generation 2 (2026-11-26) is the heal for the v23 rebuild of `1.8.1`**, which lost the whole
+message table of some Tauri devices on their first open: their connection and audit records survived
+the table, so they swept nothing, audited nothing, and asked none of the peers who still hold every
+row. One probe per group, once, fleet-wide. **And the records now name the store they were written
+against** (`IStorage.messageStoreIncarnation`): a message table made anew has a new incarnation, and a
+record of another one is no evidence about it - the next table loss raises its own sweep without a
+bump. The decision, the cost and what a peer must hold:
+[local-store-rebuild](../frontend/local-store-rebuild.md#the-history-records-did-not-know-the-table-was-gone-decided-2026-11-26).
+
 What the audit does NOT do: it is not a guarantee. A group whose every peer is offline at each
 connection stays owed, and is asked once per connection - one probe, for the one group that genuinely
 needs it, which is the same honest limit the connection edge already has.

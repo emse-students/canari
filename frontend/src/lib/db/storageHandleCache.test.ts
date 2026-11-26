@@ -92,6 +92,23 @@ describe('getStorage shares one open handle per user', () => {
     expect(opens).toBe(2);
   });
 
+  it('callers that joined a failed open fail WITH it - none of them starts an open of its own', async () => {
+    // 2026-11-25: every caller that had joined a failed open read it as "nothing cached" and started
+    // its own, all at once - five schema runs side by side, and one dropped the table another had
+    // just filled (`docs/wiki/frontend/local-store-rebuild.md`).
+    const { getStorage } = await import('../db');
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    failNextOpen = true;
+    const joiners = Array.from({ length: 5 }, () => getStorage('alice'));
+    const settled = await Promise.allSettled(joiners);
+
+    expect(settled.map((s) => s.status)).toEqual(Array(5).fill('rejected'));
+    expect(opens).toBe(1);
+    expect(error.mock.calls.filter((c) => String(c[0]).includes('did not open'))).toHaveLength(1);
+    error.mockRestore();
+  });
+
   it('does not remember a failed open as one', async () => {
     const { getStorage } = await import('../db');
 
