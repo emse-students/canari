@@ -17,7 +17,7 @@ a ranking, a suggestion or a notification that makes a reader's information hard
 whatever it does for engagement. That is why Campus and Associations are strictly chronological
 with nothing inserted, why Pour toi leads with the fresh posts of the people a reader follows before
 any suggestion, and why the post search gains filters by person and by association
-([backlog.d](backlog.d/post-search-filters-by-person-and-by-association.md); the global search was
+([backlog.d](backlog.d/reading-owed-the-post-search-filters-by-person-and-by-association.md); the global search was
 dropped by the owner on 2026-11-19 in its favour). Also in
 [design-reference](frontend/design-reference.md#0-the-product-principle-above-every-choice-owner-2026-11-10).
 
