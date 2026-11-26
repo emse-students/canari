@@ -119,7 +119,7 @@
   } from '$lib/utils/graine/departureCommitter';
   import { forgetRevokedLeafAnswers } from '$lib/utils/graine/rosterReconcile';
   import { forgetAllKeyGroupConvergence } from '$lib/utils/graine/keyGroupConvergence';
-  import { isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
+  import { isReadingConversationNow, readToneOwed } from '$lib/utils/chat/arrivalRuntime';
   import type { ConversationContext } from '$lib/composables/useConversations.svelte';
   import {
     writeFieldsOf,
@@ -1585,11 +1585,17 @@
         });
       },
       onReadStateAdvanced: (e: { conversationKey: string; senderId: string; at: number }) => {
-        // Sound only when another user reads MY message, in the open conversation on the visible tab
-        // (never for my own cross-device reads).
-        if (e.senderId === globalSession.userId) return;
-        if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-        if (e.conversationKey !== globalConvs.selectedContact) return;
+        // Sound only when another user reads MY message in a conversation the reader can see on
+        // screen now (`readToneOwed`), never for my own cross-device reads.
+        if (
+          !readToneOwed(
+            e.senderId,
+            globalSession.userId,
+            e.conversationKey,
+            globalConvs.selectedContact
+          )
+        )
+          return;
         globalNotifs.playReadTone();
       },
       onInboundReaction: (reaction: InboundReaction) =>

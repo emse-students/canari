@@ -8,6 +8,7 @@
 </script>
 
 <script lang="ts">
+  import { readToneOwed } from '$lib/utils/chat/arrivalRuntime';
   import { inviteLinkName } from '$lib/mls/groupInviteName';
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
   import type { InboundReaction } from '$lib/utils/chat/reactionNotification';
@@ -533,11 +534,10 @@
         convs.sendError = msg;
       },
       onReadStateAdvanced: (e: { conversationKey: string; senderId: string; at: number }) => {
-        // Sound only when someone else reads MY message, in the currently open conversation
-        // on the visible tab (never for my own cross-device reads).
-        if (e.senderId === session.userId) return;
-        if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-        if (e.conversationKey !== convs.selectedContact) return;
+        // Sound only when another user reads MY message in a conversation the reader can see on
+        // screen now (`readToneOwed`), never for my own cross-device reads.
+        if (!readToneOwed(e.senderId, session.userId, e.conversationKey, convs.selectedContact))
+          return;
         notifs.playReadTone();
       },
       onInboundReaction: (reaction: InboundReaction) =>
