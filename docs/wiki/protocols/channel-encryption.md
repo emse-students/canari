@@ -4016,7 +4016,9 @@ through `storeIncomingSeed`. The webview mirroring a held session (`store_graine
 through the push filter either.
 
 **WARN, not ERROR, on purpose.** The key group's durable log still replays v1 frames that honest
-clients distributed before the floor moved, and an honest answerer relays every v1 session it holds.
+clients distributed before the floor moved, and an honest answerer before `1.8.2` relays every v1
+session it holds (one at `1.8.2` relays none: `seedsTheAskerMayRead` drops them before anything else,
+2026-11-25, [legacy-compatibility](../legacy-compatibility.md#no-date-yet---the-graine-v1-reader-a-salon-row-with-no-signature-under-a-session-with-no-endorsement)).
 So one refusal accuses nobody. The `createdAt` it prints is the sender's own claim and decides
 nothing. It is there so a reader can tell an old replay from a fresh mint.
 

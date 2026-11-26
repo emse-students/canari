@@ -564,10 +564,9 @@ Android leaves - from there, steps 3 to 6 above are the same code.
    directory, where every path above lives, since its container root refuses the flag
    ([mobile](mobile.md#the-app-group-a-store-directory-never-the-root-172))
    ([mobile](mobile.md#nothing-local-travels-to-another-phone-2026-11-20)); a waiting share holds what the member shared - the manifest
-   carries the shared TEXT in the clear. So each manifest is excluded from backups per file, after
-   every write (a rename is a new inode, and the flag does not travel): the extension's
-   `writePending` and the app's `write_pending` (`native_cache::exclude_from_backup`, the native
-   caches' helper, [mobile](mobile.md#the-native-caches-are-sealed-at-rest-and-kept-out-of-backups-2026-10-22)).
+   carries the shared TEXT in the clear. The manifest sits under the flagged store, so neither writer
+   (the extension's `writePending`, the app's `write_pending`) flags it per file any more (deleted in
+   1.8.2, [mobile](mobile.md#the-native-caches-are-sealed-at-rest-and-kept-out-of-backups-2026-10-22)).
    The extension also excludes the WHOLE `<AppGroup>/shared_inbox/` directory on every capture - it
    holds share copies and nothing else, unlike the App Group store.
    **At rest, a waiting share is LOCKED WITH THE DEVICE (2026-10-27).** The extension writes its

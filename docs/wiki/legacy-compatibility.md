@@ -1653,7 +1653,12 @@ The v1 WRITER is already gone (G2-5): `sealWithGraine` lives only in the test fi
 **Removal condition, in two steps (user, 2026-09-28):**
 - DONE (floor `1.0.3`, 2026-10-11): a v1 seed that ARRIVES is refused, since a modified client
   could otherwise keep minting v1 sessions to forge an author. An unsigned row under a session not
-  held is `GraineV1SessionNotHeldError` and asks nobody;
+  held is `GraineV1SessionNotHeldError` and asks nobody. **Since 2026-11-25 nothing relays one
+  either:** `seedsTheAskerMayRead` (`utils/graine/frameHandler.ts`), the chokepoint of both answer
+  paths, drops every held session with no `v2` block before the roster, the cap and the floors, so
+  a history answer carries v2 seeds only and a store of v1 rows only still answers "I hold nothing";
+  and a history page's v1 rows not held are said ONCE PER SALON at info (`UnreadableRowTally`),
+  a decided state, not a warn on every load. A live unsigned row still accuses at ERROR;
 - the v1 READER goes when no v1 row is left:
   `SELECT count(*) FROM channel_messages WHERE "signature" IS NULL AND "senderSessionId" IS NOT NULL`
   on production answers 0. Rows age out of the 365-day window, so that is at most a year after the

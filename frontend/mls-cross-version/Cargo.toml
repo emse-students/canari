@@ -17,3 +17,10 @@ edition = "2021"
 
 [dependencies]
 mls-core = { path = "../mls-core" }
+
+# THE COMMANDS ONLY TODAY'S `mls-core` CAN COMPILE (2026-11-25): writing the fields the old tag
+# predates (`app_ledgers`, `admission`) and reading them back. `mls-forward-compat.sh` builds
+# today's binary with this feature and the old one without it, so the one source still compiles
+# against both libraries and the old binary simply has no such command.
+[features]
+today = []

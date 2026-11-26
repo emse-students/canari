@@ -14,6 +14,7 @@ import {
   MediaNotFoundError,
   MediaPurgedError,
   MediaUnreachableError,
+  readMediaBody,
   resolveMediaCredential,
 } from './mediaErrors';
 import { noteMediaCacheHit } from './mediaTouch';
@@ -447,7 +448,7 @@ function loadRawBlobUrl(mediaId: string, baseUrl: string, signal?: AbortSignal):
     'foreground',
     async (loadSignal, onStart) => {
       const res = await fetchMediaObject(mediaId, baseUrl, loadSignal, onStart);
-      return pooledBlob(await res.blob());
+      return pooledBlob(await readMediaBody(() => res.blob(), loadSignal));
     }
   );
 }
