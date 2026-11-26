@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import android.provider.OpenableColumns
 import android.provider.Settings
 import android.util.Log
 import app.tauri.PermissionState
@@ -217,14 +218,44 @@ class GalleryPlugin(private val activity: Activity) : Plugin(activity) {
                 val resolver = activity.contentResolver
                 val out = resolver.openOutputStream(uri, "wt")
                     ?: throw IllegalStateException("the provider gave no output stream")
-                val written = out.use { stream -> source.inputStream().use { it.copyTo(stream) } }
-                Log.d(TAG, "writeDocument: $written bytes written, stream closed")
-                invoke.resolve(JSObject().put("written", written))
+                val written = out.use { stream ->
+                    val copied = source.inputStream().use { it.copyTo(stream) }
+                    // Flushed BEFORE the close, so the provider's close listener measures every byte.
+                    stream.flush()
+                    copied
+                }
+                // WHAT THE PROVIDER NOW STATES, asked after the close: a picker's `File` takes its
+                // length from this column, so a document recorded shorter than it is reads back
+                // short (or empty) when it is picked again - in Canari's own composer included.
+                val recordedBytes = recordedSize(uri)
+                if (recordedBytes == null) {
+                    Log.w(TAG, "writeDocument: $written bytes written, stream closed - the provider states no size")
+                } else if (recordedBytes != written) {
+                    Log.e(TAG, "writeDocument: $written bytes written but the provider records $recordedBytes")
+                } else {
+                    Log.d(TAG, "writeDocument: $written bytes written, stream closed, provider records $recordedBytes")
+                }
+                val answer = JSObject().put("written", written)
+                if (recordedBytes != null) answer.put("recorded", recordedBytes)
+                invoke.resolve(answer)
             } catch (e: Exception) {
                 Log.e(TAG, "writeDocument failed: ${e.javaClass.simpleName}")
                 invoke.reject("writeDocument failed: ${e.message}")
             }
         }
+    }
+
+    /**
+     * The size the provider of `uri` states (`OpenableColumns.SIZE`), or null when it states none or
+     * the query fails (logged): what a reader that trusts the provider - a picker - will take.
+     */
+    private fun recordedSize(uri: Uri): Long? = try {
+        activity.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { c ->
+            if (c.moveToFirst() && !c.isNull(0)) c.getLong(0) else null
+        }
+    } catch (e: Exception) {
+        Log.w(TAG, "writeDocument: the provider's size could not be read: ${e.javaClass.simpleName}")
+        null
     }
 
     /** Opens the chooser on `send`; resolved once it is shown, whatever the member then picks. */

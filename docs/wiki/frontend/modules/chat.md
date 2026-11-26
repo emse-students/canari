@@ -2941,14 +2941,42 @@ share sheet never met this: `IncomingShare.kt` copies the stream into the app's 
 ([sharing](../sharing.md)), and the iOS app's pickers read every pick whole into memory
 (`nativeAttachPicker.ts`, `take_picked_file`).
 
-**Bench reading (Mi 9T, 1.8.2 dev build, 2026-11-26).** A probe input in the app's WebView, read at
-the pick and again 10 s later, read every byte for a local screenshot (519 226) and for a Google
-Photos cloud item through the system picker (4 276 039): this phone's providers state a length and
-grant the read, so the member's provider (not identified from the log) is not reproduced here. The
-fix does not depend on which provider: it removes the window and refuses an empty read.
+**The file was a Canari log export** (owner, 2026-11-26: `[APPLOG] exporting 22967 lines`, then the
+in-app pick 11 s later). **Bench reading (Mi 9T, Android 16, 2026-11-26)**, a probe `<input
+type=file>` in the app's WebView reading each pick at the pick and 10 s later:
+
+| Pick | On disk | Provider states | `File.size` | Bytes read |
+| --- | --- | --- | --- | --- |
+| local screenshot (Photos) | 519 226 | - | 519 226 | 519 226 |
+| Google Photos cloud item (system picker) | - | - | 4 276 039 | 4 276 039 |
+| log export of 1.8.2-alpha.4, saved in "Mi 9T > Download", picked at once | 2 129 645 | 2 129 645 (MediaStore `_size`, within 3 s of the save) | 2 129 645 | 2 129 645 |
+| log export of 1.8.2-alpha.7, saved in "Telechargements", picked at once | 2 141 102 | 2 141 102 | 2 141 102 | 2 141 102 |
+| `canari-log-1.2.7-alpha.2-...-1210.txt`, saved before #3028, listed "0 octet(s)" in "Telechargements" | 269 916 | **0** | **0** | **0** |
+| `canari-log-1.2.9-alpha.4-...-1312.txt`, same | 2 147 637 | **0** | **0** | **0** |
+
+So **the WebView's `File` takes its length from what the provider STATES and reads exactly that
+many bytes**: a provider stating 0 hands the composer an empty file whatever the disk holds - the
+member's symptom, byte for byte. Today's save path (`write_staged_document`, #3028) leaves the
+provider stating the real size on this phone, in both roots; the member's phone (not identified)
+evidently did not, or he picked an export an older build had saved. Either way the read cannot be
+trusted to a provider's statement, so the bytes are taken by reading the stream to its end.
 
 **The fix.**
 
+- **The Android file chooser hands the page a COPY** (`PickedFiles.kt`, called from wry's
+  `RustWebChromeClient.showFilePicker`, patched in `patches/wry` and its generated copy): each picked
+  stream is read to its END into `cache/picked_inbox/<pick>/<index>/<name>`, exactly as
+  `IncomingShare.kt` copies a share, and the page gets this app's FileProvider URI for the copy,
+  whose stated size is its real length. Refused like a share (not `content://`, our own authority, a
+  grant the member gave Canari, over `ShareRules.MAX_FILE_BYTES`) or unreadable, a pick is handed
+  over EMPTY under its name, so the page refuses it at the pick and says so. A stated size that
+  differs from the bytes read is an ERROR line (`pick N copied: ..., but its provider states S`). The
+  copies are swept by the next process (`PickedFiles.sweepOnce`), never under a page that may still
+  read one (a video's encoder runs after the pick).
+- **A save says what the provider records** (`write_staged_document`): the stream is flushed and
+  closed, then `OpenableColumns.SIZE` is read back; a recorded size short of what was written is an
+  ERROR, natively, in Rust and in the page (`[download] the provider took N bytes but records R`),
+  and a provider stating none is a warning.
 - **The bytes are read at the pick** (`ownPickedFile.ts`): every non-video is read whole once and
   replaced by a `File` backed by those bytes, so what is compressed, staged, queued and uploaded is
   what was read, and nothing downstream depends on another app's grant. A video already was: the
@@ -2968,7 +2996,8 @@ fix does not depend on which provider: it removes the window and refuses an empt
   the proof. A raw chat-reel take with no bytes keeps its counted `LocalAttachmentError`.
 
 Pinned by `ownPickedFile.test.ts`, `useMessaging.mediaEnqueue.svelte.test.ts` ("a picked file is
-read at the pick") and `outbox.test.ts`. The reading owed on the bench phone is
+read at the pick"), `outbox.test.ts`, `fileDownload.test.ts` and the gallery plugin's `commands.rs`
+tests; the native copy is verified by compiling only until the reading below. The reading owed on the bench phone is
 [a backlog entry](../../backlog.d/reading-picked-file-sent-from-the-gallery-and-a-cloud-item.md).
 
 ### A 2xx a captive portal answered is no answer (2026-10-25)

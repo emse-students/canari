@@ -80,7 +80,7 @@ describe('saveObjectUrlAs', () => {
     pretendTauri(new Uint8Array([1, 2, 3, 4]));
     const uri = 'content://com.android.providers.downloads.documents/document/msf%3A121';
     save.mockResolvedValue(uri);
-    invoke.mockResolvedValue({ written: 4 });
+    invoke.mockResolvedValue({ written: 4, recorded: 4 });
 
     await expect(saveObjectUrlAs('blob:x', 'canari-log.txt')).resolves.toBe(true);
 
@@ -89,6 +89,34 @@ describe('saveObjectUrlAs', () => {
     const [session, staged] = stageBlob.mock.calls[0] as [string, Blob];
     expect(staged.size).toBe(4);
     expect(invoke).toHaveBeenCalledWith('plugin:gallery|write_staged_document', { session, uri });
+  });
+
+  it('says it with an ERROR when the provider records fewer bytes than were written', async () => {
+    // A document recorded short reads back short - or empty - when it is picked again, in
+    // Canari's own composer too (P1 of 1.8.1: a log export picked in-app read 0 bytes).
+    pretendTauri(new Uint8Array([1, 2, 3, 4]));
+    save.mockResolvedValue('content://com.android.providers.downloads.documents/document/msf%3A9');
+    invoke.mockResolvedValue({ written: 4, recorded: 0 });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(saveObjectUrlAs('blob:x', 'canari-log.txt')).resolves.toBe(true);
+
+    expect(
+      errorSpy.mock.calls.some((c) => String(c[0]).includes('took 4 bytes but records 0'))
+    ).toBe(true);
+    errorSpy.mockRestore();
+  });
+
+  it('says so when the provider states no size for the document', async () => {
+    pretendTauri(new Uint8Array([1, 2]));
+    save.mockResolvedValue('content://com.android.providers.downloads.documents/document/msf%3A9');
+    invoke.mockResolvedValue({ written: 2 });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await expect(saveObjectUrlAs('blob:x', 'canari-log.txt')).resolves.toBe(true);
+
+    expect(warnSpy.mock.calls.some((c) => String(c[0]).includes('states no size'))).toBe(true);
+    warnSpy.mockRestore();
   });
 
   it('discards the staged copy and rejects when staging fails', async () => {
