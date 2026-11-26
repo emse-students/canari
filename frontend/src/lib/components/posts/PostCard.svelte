@@ -116,6 +116,11 @@
     scheduled?: boolean;
     /** After an edit was saved: the strip re-reads the post's schedule (moved, or published now). */
     onEdited?: (post: PostEntity) => void;
+    /**
+     * Show the post's whole text, with no "Voir plus" - the post's own page (owner inventory,
+     * 2026-11-26: it still clamped at 8 lines). A feed keeps the fold.
+     */
+    fullContent?: boolean;
   }
 
   let {
@@ -129,6 +134,7 @@
     focusNonce = 0,
     scheduled: scheduledProp = false,
     onEdited,
+    fullContent = false,
   }: Props = $props();
 
   // Local mutable copy - updated directly after interactions to avoid a full list reload.
@@ -840,6 +846,7 @@
           <PostContent
             post={localPost}
             {authToken}
+            {fullContent}
             likerId={currentUserId.trim() || undefined}
             attachedForms={attachedFormsView}
           />

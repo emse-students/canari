@@ -25,7 +25,7 @@
   /**
    * THE BUBBLE OF A POST OR A CANAREEL SENT INTO A CONVERSATION OR A CHANNEL (owner, 2026-11-09:
    * "comme Instagram"): the author's avatar and name, the post's first picture - or, for a video,
-   * its ThumbHash and the glass play disc - the caption on three lines at most. A reel is the tall
+   * its ThumbHash and the glass play disc - the caption on four lines at most (`line-clamp-4`). A reel is the tall
    * 9:16 card of Instagram's reel share, and its tap opens the reels viewer; any other post opens
    * its page.
    *

@@ -122,6 +122,7 @@
       {post}
       currentUserId={userId}
       {authToken}
+      fullContent
       commentsOpen={focusCommentId !== undefined}
       {focusCommentId}
       focusNonce={navigations}

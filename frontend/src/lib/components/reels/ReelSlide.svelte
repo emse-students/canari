@@ -414,15 +414,16 @@
           <span class="truncate text-sm font-bold">{authorName}</span>
         </span>
       {/if}
-      <!-- The same age, from the same helper, as the post header's: the viewer has no header. And
+      <!-- The same date (`publishedAt`, never the row's `createdAt`), from the same helper, as the post
+           header's: the viewer has no header. And
            the same "Republie par X" beside it, which gives way BEFORE the name: the wrapper is
            `contents`, so the time, the dot and the icon are items of this row that never shrink,
            and the republishers are an item of basis 0 - they take only the room the name and the
            time leave, and truncate to nothing first. The name shrinks only when it alone and the
            time overflow the row. -->
       <span class="contents text-xs font-medium" data-reel-time-line>
-        <span class="shrink-0 opacity-70" title={exactDate(post.createdAt)}
-          >{timeAgo(post.createdAt)}</span
+        <span class="shrink-0 opacity-70" title={exactDate(post.publishedAt)}
+          >{timeAgo(post.publishedAt)}</span
         >
         {#if post.studentsOnly}
           <StudentsOnlyChip onMedia />

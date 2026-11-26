@@ -200,3 +200,39 @@ describe('PostContent duplicate media', () => {
     expect(cells(target)).toHaveLength(2);
   });
 });
+
+const downloadDecryptedFile = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock('$lib/utils/fileDownload', async (orig) => ({
+  ...(await orig<typeof import('$lib/utils/fileDownload')>()),
+  downloadDecryptedFile,
+}));
+
+describe("PostContent gallery's viewer", () => {
+  function openFirst(target: HTMLElement) {
+    cells(target)[0].querySelector<HTMLButtonElement>('[data-post-media-open]')!.click();
+    flushSync();
+  }
+
+  it('offers no download until the opened media is decrypted, then saves THAT file', () => {
+    downloadDecryptedFile.mockClear();
+    const target = render(images(3));
+    openFirst(target);
+    expect(document.querySelector('[data-lightbox-download]')).toBeNull();
+
+    document.querySelector<HTMLButtonElement>('[data-lightbox] [data-post-media-loaded]')!.click();
+    flushSync();
+    document.querySelector<HTMLButtonElement>('[data-lightbox-download]')!.click();
+    expect(downloadDecryptedFile).toHaveBeenCalledWith('blob:loaded', 'image');
+  });
+
+  it("never offers the previous media's file after a swipe to the next", () => {
+    const target = render(images(3));
+    openFirst(target);
+    document.querySelector<HTMLButtonElement>('[data-lightbox] [data-post-media-loaded]')!.click();
+    flushSync();
+    expect(document.querySelector('[data-lightbox-download]')).not.toBeNull();
+    document.querySelector<HTMLButtonElement>('[data-lightbox-next]')!.click();
+    flushSync();
+    expect(document.querySelector('[data-lightbox-download]')).toBeNull();
+  });
+});

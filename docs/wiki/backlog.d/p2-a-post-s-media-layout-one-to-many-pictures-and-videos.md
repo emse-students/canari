@@ -2,6 +2,15 @@
 
 target: 1.9.0
 
+**Owner, 2026-11-26 - THE UNIFICATION, the reason being "Globalement, je veux une app homogene"** ([decisions](../decisions/owner-decisions-of-2026-11-26.md), items 1, 2, 3 and 5): the same thing looks and behaves the same everywhere. To build, in `1.9.0`:
+
+- **ONE viewer for every post: CanaReels (`ReelViewer`)**, whatever is tapped - a photo, a video, the "+N". `MediaLightbox` is no longer used for a post.
+- **ONE control set** in full screen: a thin draggable scrubber, tap = play or pause, long press = pause, the time shown while dragging. The conversation viewer takes it too, and keeps its own shell ([video-player](../frontend/modules/video-player.md): it is not folded into the reel pager).
+- **Stop at the edge**: no wrap past the last or the first media; a "3/9" counter and dots showing the position. Open: dots clickable or display only (recommended: display only plus swipe).
+- **Remove the duplicate paths** the inventory found: `MediaLightbox` for posts; the `lightbox` and `conversation` `VideoPlayer` variants converging on one; `BlurredBackdrop` against `ReelBackdrop` (one backdrop); `PostHeader` against the `ReelSlide` author line (one author-and-date line); `PostActions` against `ReelActionRail` (one placement of share).
+
+Shipped ahead of it in `1.8.3` (not part of this entry): the post page's full text, the moderation preview's single-post reel, the comment picture's titled viewer, the grid viewer's Download, one date (`publishedAt`), post audio in the voice-note player.
+
 _2026-11-22: moved to 1.8.0 when 1.7.3 shipped._
 
 _2026-11-20: moved to 1.7.3 when 1.7.2 shipped._
