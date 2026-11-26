@@ -14,3 +14,5 @@ target: 1.8.2
 **What closes it**: items 1 to 4 pass on the Mi 9T AND the iPhone 12. A failure names the surface that did not obey (the composer offer, the server's vouching, `NotificationLevelGate`, the extension's `levelDecision`, the client's `everyoneMentionOf`).
 
 **Read on the Mi 9T, 1.8.2-alpha.7 (2026-11-26):** item 1 PASSES (a group: the picked `@tous` rang the phone with the mention sound, the banner read "@tous"; typed by hand it rang nothing). Items 2 to 4 (salon cases, "Aucune") and the whole iPhone 12 half are still owed.
+
+**Read on the iPhone 12, `1.8.2-alpha.7` ([sitting](../device-verification.md#the-readings-of-2026-11-26-182-alpha7-iphone-12-tous-the-read-tone-the-seat-hold-a-group-from-respondents-a-dms-open)): item 1 PASSES.** The group, the phone at "Mentions" and backgrounded: the picked `@tous` raised a time-sensitive "Mentioned you" row; the same word typed by hand and a plain message left the passive row. **A deviation to decide:** the banner and the chip read `@everyone`, not `@tous`. Left on the iPhone: items 2 to 4 (the salon, "Aucune").
