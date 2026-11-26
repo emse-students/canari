@@ -869,6 +869,15 @@ jobs:
       # The release does NOT reuse this build: each estate bakes its own VITE_* origins in at build
       # time (`build.yml`), which this one has none of.
       # `frontend-build` is `BUILD_WEB=1 bun run build`, then `assert-frontend-build.mjs` on it.
+      # The assertion STARTS the built server under node with no node_modules, as
+      # `Dockerfile.frontend-ssr` (`node:24-alpine`) runs it, so the job runs the image's node major
+      # (v1.8.2-alpha.5: a server importing a package built green and could not start).
+      - name: Setup Node.js (the SSR image's runtime)
+        if: github.event_name == 'push' || needs.changes.outputs.run-frontend-build == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
       - name: Build the production frontend and assert what it carries
         if: github.event_name == 'push' || needs.changes.outputs.run-frontend-build == 'true'
         env:
