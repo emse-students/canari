@@ -2919,6 +2919,58 @@ cause `too-large`. No banner and no eviction: the group is unchanged. Only 413 i
 5xx still backs off. The cause of the 413 (the edge limit) is NOT fixed by this: see the P1 in
 [backlog](../../backlog.md). Pinned by `outbox.test.ts`.
 
+### A picked file is read at the pick (P1 of 1.8.1, 2026-11-26)
+
+**The defect.** On Android, every attachment a member picked IN the app was queued with zero bytes
+(`[OUTBOX] ... payload read in 53 ms (0 file bytes)`), then failed `the queued attachment holds no
+bytes to upload` six times on the ladder until they withdrew it - five picks over three days - while
+the same member's share-sheet sends of the same day went out (`305207 file bytes`).
+
+**The cause, from the code.** The Android composer's pickers are `<input type="file">`
+(`attachSources.ts`: only the iOS app goes native), so the `File` the WebView hands back is a VIEW
+of another app's `content://` URI (wry's `RustWebChromeClient.onShowFileChooser` returns the
+picker's URIs as they are), not bytes. `prepareMediaFiles` (`useMessaging.svelte.ts`) never read it
+for a non-video - the compressor's decode of an empty view fails and `keepOriginal('decode-failed')`
+stages the view itself - and the bytes were read ONCE, at the Send tap
+(`new Uint8Array(await entry.file.arrayBuffer())` in `handleSendChat`), after the picker's round
+trip through the background. That read RESOLVED with zero bytes instead of throwing (had it thrown,
+the send's catch would have re-staged the file and no entry would exist), so the entry was written
+with `fileBytes` empty and nothing between the pick and the upload could tell. A view reads back
+empty when its provider states no length or streams nothing, or when its grant has lapsed. The
+share sheet never met this: `IncomingShare.kt` copies the stream into the app's cache at once
+([sharing](../sharing.md)), and the iOS app's pickers read every pick whole into memory
+(`nativeAttachPicker.ts`, `take_picked_file`).
+
+**Bench reading (Mi 9T, 1.8.2 dev build, 2026-11-26).** A probe input in the app's WebView, read at
+the pick and again 10 s later, read every byte for a local screenshot (519 226) and for a Google
+Photos cloud item through the system picker (4 276 039): this phone's providers state a length and
+grant the read, so the member's provider (not identified from the log) is not reproduced here. The
+fix does not depend on which provider: it removes the window and refuses an empty read.
+
+**The fix.**
+
+- **The bytes are read at the pick** (`ownPickedFile.ts`): every non-video is read whole once and
+  replaced by a `File` backed by those bytes, so what is compressed, staged, queued and uploaded is
+  what was read, and nothing downstream depends on another app's grant. A video already was: the
+  encoder reads its source at the pick and stages its own output.
+- **A pick with no readable byte is refused AT THE PICK** - `PickedFileUnreadableError`, typed
+  `empty` or `unreadable` at the throw - with `chat_media_unreadable` on the composer's banner and a
+  `[MEDIA] refused a picked ...` line; it is never staged, so it can never be queued. The ceiling is
+  asked of the reported size before the read and again of the size read when the two differ.
+- **The send proves it before writing anything**: a staged file that reads empty at the tap is the
+  same typed error, nothing is written, the file is NOT given back (a second Send would refuse it
+  again), and the banner says so.
+- **The outbox fails an empty attachment for good at its first meeting.** It was a
+  `LocalAttachmentError`, COUNTED toward `MAX_UNEXPECTED_ATTEMPTS` and retried on the ladder; it is
+  now `OutboxAttachmentEmptyError`, classified at the throw, settled by `failPermanently(...,
+  'empty-attachment')`: bubble to `error`, entry deleted, `outbox_attachment_empty` in the thread,
+  metric cause `empty-attachment`, and an accusing line - reaching it means an enqueue path skipped
+  the proof. A raw chat-reel take with no bytes keeps its counted `LocalAttachmentError`.
+
+Pinned by `ownPickedFile.test.ts`, `useMessaging.mediaEnqueue.svelte.test.ts` ("a picked file is
+read at the pick") and `outbox.test.ts`. The reading owed on the bench phone is
+[a backlog entry](../../backlog.d/reading-picked-file-sent-from-the-gallery-and-a-cloud-item.md).
+
 ### A 2xx a captive portal answered is no answer (2026-10-25)
 
 Under a captive portal every request is answered `200 text/html` without reaching the server. The
