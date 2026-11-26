@@ -33,6 +33,7 @@
   import { trimComposerText } from '$lib/utils/markdown/composerText';
   import { m } from '$lib/paraglide/messages';
   import { linkableEventPickerOptions } from '$lib/utils/time';
+  import { linkableEventsForAuthor } from '$lib/posts/postEventLink';
   import PollSection from './PollSection.svelte';
   import PostComposerBar from './PostComposerBar.svelte';
   import StudentsOnlySwitch from './StudentsOnlySwitch.svelte';
@@ -174,7 +175,14 @@
   let linkableCalendarEvents = $state<AssociationCalendarEvent[]>([]);
   let loadingLinkableEvents = $state(false);
   const linkableEventOptions = $derived(
-    linkableEventPickerOptions(linkableCalendarEvents, loadingLinkableEvents)
+    linkableEventPickerOptions(
+      linkableEventsForAuthor(
+        linkableCalendarEvents,
+        post.associationId ?? null,
+        post.linkedCalendarEventId
+      ),
+      loadingLinkableEvents
+    )
   );
   // --- "Entre étudiants" (owner, 2026-11-04, decision 5: changed after publication, both ways) ---
   let studentsOnly = $state(untrack(() => post.studentsOnly === true));
@@ -416,7 +424,9 @@
       }
       // Accused, not debug-logged: this is the one failure an editor reports (see CreatePostForm).
       console.error('[POST_EDITOR] save failed', err);
-      errorMessage = publishFailureMessage(err, m.post_edit_save_error());
+      errorMessage = publishFailureMessage(err, m.post_edit_save_error(), {
+        associationName: post.association?.name,
+      });
     } finally {
       videoPreparation.finish();
       saving = false;

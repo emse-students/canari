@@ -30,6 +30,7 @@ import { m } from '$lib/paraglide/messages';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { POST_ATTACHMENTS_MAX, POST_ATTACHMENTS_TOO_MANY } from '$lib/posts/attachmentCap';
 import { STUDENTS_ONLY_NOT_OFFERED } from '$lib/posts/studentsOnly';
+import { POST_EVENT_NOT_OF_AUTHOR_ASSOCIATION } from '$lib/posts/postEventLink';
 import { FORM_NOT_OF_ENTITY, FORM_NOT_ON_ANONYMOUS_POST } from '$lib/posts/editableForms';
 import {
   INSTITUTION_REACH_INVALID,
@@ -72,9 +73,15 @@ export type PublishStage =
  *   than optional, for the same reason {@link localizedMessage} requires one: "could not publish",
  *   "could not comment" and "action not allowed" are three different screens and no default is
  *   right on all three.
+ * @param context What the screen knows that the refusal does not carry: the name of the
+ *   association the post is written as, which the event-link refusal's sentence names.
  * @returns A sentence in the reader's language, never dev prose.
  */
-export function publishFailureMessage(error: unknown, fallback: string): string {
+export function publishFailureMessage(
+  error: unknown,
+  fallback: string,
+  context: { associationName?: string } = {}
+): string {
   // Moderation first: it is reached through a transport that WORKED, and its message is dev prose,
   // so neither branch below would answer it correctly.
   if (error instanceof MutedError) return m.post_action_not_allowed();
@@ -105,6 +112,13 @@ export function publishFailureMessage(error: unknown, fallback: string): string 
       case INSTITUTION_REACH_OUTSIDE_AUDIENCE:
         return m.post_reach_outside_audience();
     }
+  }
+  // The event the post links is not its association's, nor co-organised by it (2026-11-26): the
+  // pickers offer only what the author may link, so this is a list read before the author changed.
+  if (error instanceof ApiRefusalError && error.code === POST_EVENT_NOT_OF_AUTHOR_ASSOCIATION) {
+    return m.post_event_not_of_author_association({
+      association: context.associationName?.trim() || m.post_event_author_association_fallback(),
+    });
   }
   // The attached form refused (2026-11-14): the pickers offer only what the identity may attach, so
   // reaching these means a list read before a change - each still names what to fix.

@@ -1073,6 +1073,8 @@
   "asso_select_group_institutions": "Institutions",
   "asso_select_group_archived": "Archived",
   "post_create_link_event_label": "Link to a validated event (optional)",
+  "post_event_author_association_fallback": "the chosen association",
+  "post_event_not_of_author_association": "This event belongs to another association: you can only link it to a post of {association} or of an association that co-organises it. Pick another event, or remove this one.",
   "post_create_no_event_label": "- No event -",
   "post_create_validated_events_hint": "Only validated calendar events appear here.",
   "post_create_draft_restored_label": "Draft restored",

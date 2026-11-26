@@ -1105,6 +1105,8 @@
   "asso_select_group_institutions": "Institutions",
   "asso_select_group_archived": "Archivées",
   "post_create_link_event_label": "Lier à un événement validé (optionnel)",
+  "post_event_author_association_fallback": "l'association choisie",
+  "post_event_not_of_author_association": "Cet événement appartient à une autre association : tu ne peux le lier qu'à un post de {association} ou d'une association qui le co-organise. Choisis un autre événement, ou retire celui-ci.",
   "post_create_no_event_label": "- Aucun événement -",
   "post_create_validated_events_hint": "Seuls les événements validés de l'agenda apparaissent ici.",
   "post_create_draft_restored_label": "Brouillon restauré",
