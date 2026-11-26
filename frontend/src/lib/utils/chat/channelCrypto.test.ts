@@ -341,6 +341,7 @@ describe('UnreadableRowTally', () => {
     const { GraineSessionUnavailableError, GraineV1SessionNotHeldError } =
       await import('$lib/utils/graine/channelSeal');
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const tally = new UnreadableRowTally(CHANNEL);
 
@@ -367,12 +368,14 @@ describe('UnreadableRowTally', () => {
 
     expect(noteMissingSeed).toHaveBeenCalledTimes(1);
     expect(noteMissingSeed.mock.calls[0][1]).toBe('sess-v2');
-    // Not a fault: an honest pre-floor row is exactly this. A warn, one line for the class.
+    // Not a fault: an honest pre-floor row is exactly this. A DECIDED, permanent state - said at
+    // info, naming the decision, never at warn.
     expect(error).not.toHaveBeenCalled();
-    const said = warn.mock.calls.map((c) => String(c[0]));
-    expect(said.some((l) => l.includes('5 message(s)') && l.includes('v1 session not held'))).toBe(
-      true
-    );
+    expect(warn.mock.calls.map((c) => String(c[0])).some((l) => l.includes('v1'))).toBe(false);
+    const said = info.mock.calls.map((c) => String(c[0]));
+    expect(
+      said.some((l) => l.includes('5 message(s)') && l.includes('a v1 seed is no longer accepted'))
+    ).toBe(true);
     // The ROWS the history load reads to show the older-messages notice, per class.
     const { V1_SESSION_NOT_HELD } = await import('$lib/utils/chat/channelCrypto');
     expect(tally.rowsOf(V1_SESSION_NOT_HELD)).toEqual([
@@ -384,6 +387,39 @@ describe('UnreadableRowTally', () => {
     ]);
     expect(tally.rowsOf('missing seed')).toEqual(['row-v2']);
     expect(tally.rowsOf('author mismatch')).toEqual([]);
+  });
+
+  it('says the v1 rows of a salon ONCE per salon, whatever pages carry them - a decided state', async () => {
+    const { reportUnreadableChannelMessage, UnreadableRowTally } =
+      await import('$lib/utils/chat/channelCrypto');
+    const { GraineV1SessionNotHeldError } = await import('$lib/utils/graine/channelSeal');
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    // Two different pages of the same salon (different row sets), then a second salon.
+    for (const [channel, rows] of [
+      [CHANNEL, ['row-0', 'row-1']],
+      [CHANNEL, ['row-2', 'row-3', 'row-4']],
+      ['chan-other', ['row-9']],
+    ] as const) {
+      const tally = new UnreadableRowTally(channel);
+      for (const row of rows) {
+        reportUnreadableChannelMessage(
+          channel,
+          row,
+          'bob',
+          undefined,
+          new GraineV1SessionNotHeldError('sess-v1', RAW),
+          tally
+        );
+      }
+      tally.report();
+    }
+
+    const v1Lines = info.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('v1 seed'));
+    expect(v1Lines).toHaveLength(2);
+    expect(v1Lines[0]).toContain('2 message(s)');
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it('says nothing for a page that read whole', async () => {

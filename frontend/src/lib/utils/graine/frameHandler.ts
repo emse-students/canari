@@ -935,8 +935,21 @@ async function seedsTheAskerMayRead(
   what: string,
   cap = Number.POSITIVE_INFINITY
 ): Promise<AskersShare | null | Undecided> {
-  const inScope = withinFrameScope(frame, found);
-  const outOfScope = found.length - inScope.length;
+  // A V1 SESSION NEVER TRAVELS (2026-11-25): every receiver refuses an arriving v1 seed since the
+  // floor 1.0.3 (section 21.7, decided 2026-09-28), so relaying one was a refusal line on every new
+  // device and bytes for nobody. It is dropped FIRST, before the roster, the cap and the floors, so
+  // it counts as neither in nor out of scope: a store of v1 rows only still answers "I hold
+  // nothing" - there is nothing here any receiver may take.
+  const v2Only = found.filter((session) => session.v2 !== undefined);
+  const v1Dropped = found.length - v2Only.length;
+  if (v1Dropped > 0) {
+    console.debug(
+      `[GRAINE] answering ${frame.sender} (${what}) in community ${frame.workspaceId.slice(0, 8)} ` +
+        `without ${v1Dropped} held v1 session(s): no receiver accepts a v1 seed since 1.0.3`
+    );
+  }
+  const inScope = withinFrameScope(frame, v2Only);
+  const outOfScope = v2Only.length - inScope.length;
   // NEWEST FIRST, then the cap: the store's read has no order, and a cap on an arbitrary slice could
   // keep only sessions that predate a `joined` asker's arrival - an empty, truncated answer, the same
   // at every ask. The newest sessions are the ones a recent arrival may read.
@@ -1328,9 +1341,10 @@ async function absorbSeedBundle(
   );
 
   if (refusedV1.length > 0) {
-    // ONE line per bundle: an honest answerer relays every v1 session it holds, so a joiner's
-    // history bundle can carry dozens. Those rows stay unreadable here and are not asked for again
-    // (`GraineV1SessionNotHeldError`).
+    // ONE line per bundle. An answerer before 1.8.2 relayed every v1 session it held, so a joiner's
+    // history bundle could carry dozens; one at this build relays none (`seedsTheAskerMayRead`), so
+    // the line now names an older answerer. Those rows stay unreadable here and are not asked for
+    // again (`GraineV1SessionNotHeldError`).
     console.warn(
       `[GRAINE] REFUSED ${refusedV1.length} v1 seed(s) relayed by ${frame.sender} in community ${frame.workspaceId.slice(0, 8)} - a v1 seed is no longer accepted (${refusedV1.slice(0, 3).join(', ')}${refusedV1.length > 3 ? ', ...' : ''})`
     );

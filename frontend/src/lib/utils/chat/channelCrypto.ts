@@ -227,11 +227,27 @@ export class UnreadableRowTally {
 
   /**
    * Logs the page's unreadable rows, one line per class, and nothing for a page that read whole: a
-   * warn for a row this device cannot read yet, an ERROR for a row it REFUSED.
+   * warn for a row this device cannot read yet, an ERROR for a row it REFUSED, and an info ONCE PER
+   * SALON for its v1 rows not held, which nothing will ever open.
    */
   report(): void {
     const channel = rawChannelId(this.channelId).slice(0, 8);
     for (const [causeClass, { rows, causes, fault }] of this.byClass) {
+      // A V1 ROW NOT HELD IS A DECIDED, PERMANENT STATE (channel-encryption section 21.7, 2026-09-28):
+      // an arriving v1 seed is refused since the floor 1.0.3, so nothing will ever open it here and
+      // nothing is asked. It is said ONCE PER SALON, at info, naming the decision - every new page of
+      // the same salon used to warn again, for a fact nobody can act on.
+      if (causeClass === V1_SESSION_NOT_HELD) {
+        const fact = `${this.channelId}|${causeClass}`;
+        if (unreadableSaid.has(fact)) continue;
+        unreadableSaid.add(fact);
+        console.info(
+          `[CHANNEL] ${rows.length} message(s) of ${channel} predate the v2 writer and stay unreadable on this ` +
+            `device - their v1 session is not held, and a v1 seed is no longer accepted (decided 2026-09-28); ` +
+            `said once per salon (rows ${rows.slice(0, 3).join(', ')}${rows.length > 3 ? ', ...' : ''})`
+        );
+        continue;
+      }
       // A refusal ACCUSES and is never latched; an honest unreadable class is said once per id set.
       if (!fault) {
         const fact = `${this.channelId}|${causeClass}|${[...rows].sort().join(',')}`;

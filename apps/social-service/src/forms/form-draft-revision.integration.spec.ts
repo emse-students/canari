@@ -52,6 +52,7 @@ maybe('form revisions against PostgreSQL (migration 146)', () => {
     await q(`CREATE TABLE forms (id uuid PRIMARY KEY, title text, "imageUrl" text,
       "associationId" uuid, "cotisationVariantKey" text, "ownerId" text,
       "grantsCotisation" boolean NOT NULL DEFAULT false,
+      "staleAskedAt" timestamptz NULL, "staleKeptAt" timestamptz NULL,
       "updatedAt" timestamptz NOT NULL DEFAULT now())`);
     await q(`INSERT INTO forms (id, title) VALUES ($1, 'Gala'), ($2, 'Gala'), ($3, 'Gala')`, [
       FORM,
@@ -168,6 +169,11 @@ maybe('form revisions against PostgreSQL (migration 146)', () => {
     expect(await changed()).toBe(false);
     // The cover image is not the revision's: uploading one is no change.
     await q(`UPDATE forms SET "imageUrl" = 'x', "updatedAt" = now() WHERE id = $1`, [THIRD]);
+    expect(await changed()).toBe(false);
+    // The stale-open stamps are not the revision's either: the job and "Garder ouvert" write them.
+    await q(`UPDATE forms SET "staleAskedAt" = now(), "staleKeptAt" = now() WHERE id = $1`, [
+      THIRD,
+    ]);
     expect(await changed()).toBe(false);
     // An older build edits the form directly: changed, and a later save of the revision does not
     // move its base onto the new content.
@@ -312,6 +318,38 @@ maybe('form revisions against PostgreSQL (migration 146)', () => {
     await ds.transaction((m) => followRetagInRevisions(m, TO, [], [], 'k', 'to-new'));
     expect(await key(MOVED)).toBe('to-new');
     expect(await key(TO_NONE)).toBe('k');
+  });
+
+  it('migration 185 re-bases a draft opened under the old rule, and only one the stamps explain', async () => {
+    const STAMPED = '00000000-0000-4000-8000-0000000d0185';
+    const EDITED = '00000000-0000-4000-8000-0000000e0185';
+    await q(`INSERT INTO forms (id, title) VALUES ($1, 'Stamped'), ($2, 'Edited')`, [
+      STAMPED,
+      EDITED,
+    ]);
+    // The OLD rule: the fingerprint hashing the stamps, taken while both were NULL.
+    const old = `md5((to_jsonb(f) - ARRAY['id', 'ownerId', 'clientCreateId', 'createdAt', 'updatedAt', 'deletedAt', 'closedAt', 'status', 'imageUrl', 'imageMediaId'])::text)`;
+    for (const id of [STAMPED, EDITED]) {
+      await q(
+        `INSERT INTO form_drafts ("formId", revision, document, "baseFingerprint")
+           SELECT f.id, 1, '{}'::jsonb, ${old} FROM forms f WHERE f.id = $1`,
+        [id]
+      );
+    }
+    // A stamp lands under the open draft (the bug), and on the other form the CONTENT changes too.
+    await q(`UPDATE forms SET "staleAskedAt" = now() WHERE id IN ($1, $2)`, [STAMPED, EDITED]);
+    await q(`UPDATE forms SET title = 'Retitled' WHERE id = $1`, [EDITED]);
+    // The bug as it stood: the draft, based under the old rule, reads changed.
+    expect(await ds.transaction((m) => formChangedSinceRevision(m, STAMPED))).toBe(true);
+    const migration = readFileSync(
+      join(process.cwd(), 'src', 'migrations', '185_form_fingerprint_stale_stamps.sql'),
+      'utf8'
+    );
+    await q(migration);
+    await q(migration);
+    expect(await ds.transaction((m) => formChangedSinceRevision(m, STAMPED))).toBe(false);
+    // Its content really changed: still reported, the migration did not paper over it.
+    expect(await ds.transaction((m) => formChangedSinceRevision(m, EDITED))).toBe(true);
   });
 
   it('goes with its form', async () => {

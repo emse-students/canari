@@ -82,20 +82,32 @@ describe('the native builder remembers what it has already announced', () => {
   });
 
   it('identifies a message by the sender instant, never by text two renderers disagree on', () => {
-    expect(source).toContain('private fun alertedKey(notifKey: String, sentAt: Long): String');
+    expect(source).toContain(
+      'private fun alertedKey(notifKey: String, senderId: String, sentAt: Long): String'
+    );
     expect(source).not.toContain('body.hashCode()');
   });
 
-  it('matches the shade on the instant alone, for the same reason', () => {
+  it('matches the shade on the sender and the instant, never on text, and by the same predicate as the set', () => {
+    expect(source).toContain('val alreadyPosted = sentAt > 0 && style.messages.any {');
     expect(source).toContain(
-      'val alreadyPosted = sentAt > 0 && style.messages.any { it.timestamp == stamp }'
+      'it.timestamp == stamp && AlertedMessage.sameSender(it.extras.getString(LINE_SENDER_ID).orEmpty(), senderId)'
     );
+    expect(source).toContain('.any { AlertedMessage.matches(it, key) }');
+    // The line keeps its sender through every re-injection, like its two stamps.
+    expect(source).toContain('newMessage.extras.putString(LINE_SENDER_ID, senderId)');
+  });
+
+  it('hands the sender down from every trigger: push, frame, salon push and reaction', () => {
+    expect(source).toContain('senderId = senderId,');
+    expect(source).toContain('senderId   = attribution.authorId.orEmpty(),');
+    expect(source).toContain('senderId = actorId,');
   });
 
   it('asks the record only where a sender stamp exists, never guessing for a reaction or a salon', () => {
     // Both of those reach the builder with `sentAt = 0` - a reaction has no message instant of its
     // own to offer, and the channel push payload carries no timestamp field at all.
-    expect(source).toContain('if (sentAt > 0) alertedKey(notifKey, sentAt) else null');
+    expect(source).toContain('if (sentAt > 0) alertedKey(notifKey, senderId, sentAt) else null');
   });
 
   it('records AFTER the post, so a builder that threw leaves nothing suppressing the retry', () => {

@@ -75,6 +75,26 @@ export async function resolveMediaCredential<T>(resolve: () => Promise<T>): Prom
   }
 }
 
+/**
+ * Reads the body of a media response that already answered, typing a failure of the READ as
+ * {@link MediaUnreachableError}. The head came back (the server answered), then the link dropped
+ * while the bytes streamed: `fetch` rejects the body read with a bare `TypeError` ("Load failed"
+ * on WebKit), which `mediaFailureCause` filed as `other` - an error with a stack for an outage
+ * (a 45 MB file, iPhone 12, 2026-11-18). A body read has no other failure than the stream, so the
+ * type is decided here at the throw; the caller's own abort goes up unchanged.
+ *
+ * @param read   The body read, e.g. `() => res.blob()`.
+ * @param signal The holder's abort signal, to tell an abandoned load from a lost link.
+ */
+export async function readMediaBody<T>(read: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  try {
+    return await read();
+  } catch (err) {
+    if (signal?.aborted) throw err;
+    throw new MediaUnreachableError(err);
+  }
+}
+
 /** The media service answered 404: no object by that id - deleted, or never uploaded. Permanent. */
 export class MediaNotFoundError extends Error {
   constructor() {

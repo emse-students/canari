@@ -13,6 +13,7 @@ import { Client } from 'pg';
 import { DataSource } from 'typeorm';
 import { Form } from './entities/form.entity';
 import { Submission } from './entities/submission.entity';
+import { FormSeatHold } from './entities/form-seat-hold.entity';
 import { retireForms } from './retire-forms';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
@@ -35,7 +36,7 @@ maybe('retireForms against PostgreSQL', () => {
     ds = new DataSource({
       type: 'postgres',
       url: URL,
-      entities: [Form, Submission],
+      entities: [Form, Submission, FormSeatHold],
       synchronize: false,
       extra: { options: `-c search_path=${schema},public` },
     });

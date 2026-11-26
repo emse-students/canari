@@ -1,6 +1,6 @@
 ## P3 - Id validators are sized by hand, not from the rule that mints the id (audit of 2026-10-28)
 
-target: 1.10.0
+target: 1.9.0
 
 - Audited after the revoked-leaves 400 ([durable-rules](../durable-rules.md#a-validators-bound-is-derived-from-the-generator-of-the-value-and-its-spec-uses-a-value-of-real-length)):
   every other `sanitizeQueryValue` field in chat-delivery fits its generator today (UUIDs, 64-hex
@@ -14,3 +14,5 @@ target: 1.10.0
   validator, rather than four regexes that agree by accident.
 
 **Plan (batch 15, 2026-11-12) - a count first, then one contract.** (1) A read-only count of user ids outside `^[a-zA-Z0-9_-]{1,64}$` on each estate (a column of `users`; the ids are not printed). (2) If 0: a `libs/contracts/user-id.json` like `device-id.json`, asserted by the mint rule (`core-service/src/users/user-id.ts`) and by every user-id validator's spec, and the device-id pattern derived from it. If not 0: the ids outside it are the decision, before any rule is tightened - the mint rule deliberately lets an older plain ASCII id keep signing in. No agent needed for (2).
+
+_2026-11-25 (batch 10): not built, moved to 1.9.0. Step (1) is a read-only count on each production database, which a worker has no access to; step (2) depends on its answer._

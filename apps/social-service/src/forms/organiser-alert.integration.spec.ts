@@ -29,6 +29,7 @@ import { PostNotification } from '../posts/entities/post-notification.entity';
 import { PostNotificationsService } from '../posts/post-notifications.service';
 import { Form } from './entities/form.entity';
 import { Submission } from './entities/submission.entity';
+import { FormSeatHold } from './entities/form-seat-hold.entity';
 import { FormsService } from './forms.service';
 import { FormOrganiserAlertService } from './organiser-alert.service';
 import { createNotificationPreferenceTable } from '../posts/post-notifications.it-schema';
@@ -61,7 +62,7 @@ maybe('the organiser alert against PostgreSQL (migration 102)', () => {
     ds = new DataSource({
       type: 'postgres',
       url: URL,
-      entities: [AssociationMember, Form, Submission, PostNotification],
+      entities: [AssociationMember, Form, Submission, FormSeatHold, PostNotification],
       synchronize: false,
       extra: { options: `-c search_path=${schema},public` },
     });

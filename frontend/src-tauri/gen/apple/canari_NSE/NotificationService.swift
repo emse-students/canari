@@ -1842,22 +1842,6 @@ class NotificationService: UNNotificationServiceExtension {
     return epoch >= 0 ? .local : .absent
   }
 
-  /// Keeps one native cache file out of iCloud and computer backups. Per FILE, and re-applied
-  /// after every write: an atomic write is a new inode renamed over the old one, and the flag does
-  /// not survive it. The directory is the app's to exclude: since 1.7.2 its launch pass flags the
-  /// App Group root (`backup_exclusion.rs`), which makes this redundant until the iPhone reading
-  /// retires it. Twin: `CanariExcludeNativeCacheFilesFromBackup`.
-  private static func excludeFromBackup(_ url: URL) {
-    var target = url
-    var values = URLResourceValues()
-    values.isExcludedFromBackup = true
-    do {
-      try target.setResourceValues(values)
-    } catch {
-      NseLog.log.error("[CanariNSE] backupExclusion: ERROR \(url.lastPathComponent, privacy: .public) not excluded: \(errorReason(error), privacy: .public)")
-    }
-  }
-
   /// Writes a decrypted message entry to `fcm_message_cache.ndjson` in the host app's
   /// App Group container, bounded to `maxFcmCacheEntries`. The app drains it into its own
   /// `app_data_dir` copy on the next activation, and `take_fcm_cache` pre-injects
@@ -1935,7 +1919,6 @@ class NotificationService: UNNotificationServiceExtension {
       // file created with the default class cannot be written at all.
       try Data(body.utf8).write(
         to: fileUrl, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
-      Self.excludeFromBackup(fileUrl)
       NseLog.log.notice("[CanariNSE] writeFcmCache: messageId=\(result.messageId.prefix(8), privacy: .public) groupId=\(groupId.prefix(8), privacy: .public)")
     } catch {
       NseLog.log.notice("[CanariNSE] writeFcmCache: failed: \(errorReason(error), privacy: .public)")

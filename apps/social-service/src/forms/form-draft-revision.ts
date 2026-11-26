@@ -54,10 +54,12 @@ export const RECENT_SAVE_IDS = 32;
 
 /**
  * The form's own content as one md5: every column of `forms` but its ids, its dates, its status and
- * its cover image (uploaded on its own route, never part of a revision). `to_jsonb` of a row prints
- * its keys in one canonical order, and a column added later is covered without touching this.
+ * its cover image (uploaded on its own route, never part of a revision), and the two stale-open stamps
+ * (`staleAskedAt`, `staleKeptAt`: written by the job and by "Garder ouvert", never by an edit; migration
+ * 185). `to_jsonb` of a row prints its keys in one canonical order, and a column added later is covered
+ * without touching this.
  */
-export const FORM_FINGERPRINT_SQL = `md5((to_jsonb(f) - ARRAY['id', 'ownerId', 'clientCreateId', 'createdAt', 'updatedAt', 'deletedAt', 'closedAt', 'status', 'imageUrl', 'imageMediaId'])::text)`;
+export const FORM_FINGERPRINT_SQL = `md5((to_jsonb(f) - ARRAY['id', 'ownerId', 'clientCreateId', 'createdAt', 'updatedAt', 'deletedAt', 'closedAt', 'status', 'imageUrl', 'imageMediaId', 'staleAskedAt', 'staleKeptAt'])::text)`;
 
 type Querier = Pick<EntityManager, 'query'>;
 

@@ -78,6 +78,12 @@ enum Error {
     InvalidHeaderValue(#[from] tokio_tungstenite::tungstenite::http::header::InvalidHeaderValue),
     #[error(transparent)]
     InvalidHeaderName(#[from] tokio_tungstenite::tungstenite::http::header::InvalidHeaderName),
+    /// CANARI PATCH: the TCP connect failed (no address for the host, no route, refused, timed out)
+    /// BEFORE any server could answer the handshake. Serialised as `{ kind: "connect", message }`
+    /// so the page tells "nobody answered" from "a server answered and refused" by a field, never
+    /// by reading a sentence. A handshake refused with an HTTP status stays `Websocket`.
+    #[error("{0}")]
+    Connect(std::io::Error),
 }
 
 impl Serialize for Error {
@@ -85,7 +91,16 @@ impl Serialize for Error {
     where
         S: Serializer,
     {
-        serializer.serialize_str(self.to_string().as_str())
+        match self {
+            Error::Connect(e) => {
+                use serde::ser::SerializeMap;
+                let mut map = serializer.serialize_map(Some(2))?;
+                map.serialize_entry("kind", "connect")?;
+                map.serialize_entry("message", &e.to_string())?;
+                map.end()
+            }
+            _ => serializer.serialize_str(self.to_string().as_str()),
+        }
     }
 }
 
@@ -207,7 +222,7 @@ async fn connect<R: Runtime>(
     let (host, port) = request_host_port(&request)?;
     let stream = tcp_connect(host, port)
         .await
-        .map_err(tokio_tungstenite::tungstenite::Error::Io)?;
+        .map_err(Error::Connect)?;
     #[cfg(any(
         feature = "rustls-tls",
         feature = "rustls-tls-native-roots",
@@ -397,5 +412,29 @@ impl Builder {
                 Ok(())
             })
             .build()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// CANARI PATCH: a failed TCP connect reaches the page as a typed object, every other error
+    /// stays the plain sentence it always was.
+    #[test]
+    fn connect_failure_serialises_as_a_typed_object() {
+        let err = Error::Connect(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "no address to connect to",
+        ));
+        let value = serde_json::to_value(&err).unwrap();
+        assert_eq!(value["kind"], "connect");
+        assert_eq!(value["message"], "no address to connect to");
+    }
+
+    #[test]
+    fn other_errors_stay_a_string() {
+        let value = serde_json::to_value(Error::ConnectionNotFound(7)).unwrap();
+        assert!(value.is_string());
     }
 }
