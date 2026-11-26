@@ -1,3 +1,4 @@
+import { searchQueryString, type PostSearchCriteria } from './postSearchFilters';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { ApiRefusalError, refusalFromResponse } from '$lib/utils/apiRefusalError';
 import { responseOrigin } from '$lib/utils/apiJson';
@@ -621,14 +622,15 @@ function wireFeed(options: ListPostsOptions): string | undefined {
   return options.feed;
 }
 
+/**
+ * The post search: the words, and/or a person and an association (owner, 2026-11-19). The server
+ * narrows what the reader may already see; a filter never widens it.
+ */
 export async function searchPosts(
-  q: string,
+  criteria: PostSearchCriteria,
   opts: { limit?: number; offset?: number } = {}
 ): Promise<PostEntity[]> {
-  const p = new URLSearchParams({ q });
-  if (opts.limit != null) p.set('limit', String(opts.limit));
-  if (opts.offset != null) p.set('offset', String(opts.offset));
-  return readPosts<PostEntity[]>(`/api/posts/search?${p}`);
+  return readPosts<PostEntity[]>(`/api/posts/search?${searchQueryString(criteria, opts)}`);
 }
 
 /**

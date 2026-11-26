@@ -48,7 +48,7 @@ Recorded so that no question answered here is asked again. The owner took them i
 22. **The encryption guide was read by the owner.** It stays frank about what the server sees, and says nothing of seals. It is linked from Settings only ([entry](../backlog.d/the-mls-and-graine-guide-owes-the-user-s-read-and-one-mls-client-in-a.md)).
 23. **A grant reaches an institution of another campus**, as today.
 24. **The "association enrolment with conditions and documents" item is dropped:** Lydia Pro collects the documents.
-25. **The global search is dropped.** The post search gains filters by person and by association in `1.8.0` ([entry](../backlog.d/post-search-filters-by-person-and-by-association.md)).
+25. **The global search is dropped.** The post search gains filters by person and by association in `1.8.0` ([entry](../backlog.d/reading-owed-the-post-search-filters-by-person-and-by-association.md)).
 26. **Several media in a post show as a carousel with a counter**, in `1.7.2` ([entry](../backlog.d/p2-a-post-s-media-layout-one-to-many-pictures-and-videos.md)).
 27. **"Créer un groupe" from a form's respondents** (a user's request), in `1.8.0`. It applies to internal, non-anonymous forms, and the button goes to whoever reads the answers ([entry](../frontend/modules/forms.md#a-group-made-from-a-forms-respondents-owner-2026-11-19)).
 28. **No Lydia re-enrolment:** *"On oublie tout ça."* Les Rootz have no Lydia account ([entry](../backlog.d/the-lydia-enrolment-and-cashier-chantier-decided-by-the-user-on-2026-1.md)).
