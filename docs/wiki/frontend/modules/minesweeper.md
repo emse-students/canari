@@ -34,10 +34,9 @@ rename of a file that carries raw controls cannot pass it. Everything else float
 | --- | --- | --- |
 | Close, mines left, timer, restart | top left | the close is the only way out on iOS, which has no back gesture |
 | Leaderboard | top right, trophy icon only | closes the game and goes to the Games page (`/games`), THE one leaderboard since 2026-11-13; the game has no sheet of its own |
-| Ranked / unranked | bottom, beside the mode | **"Libre" = no challenge is requested at the first dig**, so nothing is submitted; stored in `canari.minesweeper.unranked`; locked once the first cell is dug, since a game's ranking is decided when its board is generated |
+| Game mode (ranked, or unranked at a level) | bottom, the pastille after dig / flag; a tap opens [the mode sheet](#the-mode-sheet-owner-2026-11-26) | **ONE choice of four** (owner, 2026-11-26): Classe, or Libre at Debutant / Intermediaire / Expert. **"Libre" = no challenge is requested at the first dig**, so nothing is submitted; stored in `canari.minesweeper.unranked` and `canari.minesweeper.level`; **locked once the first cell is dug** (the pastille then only reminds, without its chevron), since a game's ranking is decided when its board is generated |
 | Mode (dig / flag) | bottom centre, thumb reach | what a SHORT press does; a long press does the other. Same stored setting as the old "flags first" |
-| Level (Debutant / Intermediaire / Expert: a generation target, never a size) | bottom, after the mode, until the first dig | **unranked games only** ([below](#three-levels-in-an-unranked-game-owner-2026-11-25)) |
-| Hint (bulb) | bottom, after the mode, once dug | **unranked games only** ([below](#the-bulb-a-hint-in-an-unranked-game-owner-2026-11-25)) |
+| Hint (bulb) | bottom, after the pastille; dimmed until the first dig, which gives it a board to read | **unranked games only** ([below](#the-bulb-a-hint-in-an-unranked-game-owner-2026-11-25)) |
 
 **No zoom buttons.** Pinch, wheel (proportional to the delta, so a trackpad pinch is smooth), and a
 double-tap. The double-tap zooms in on the tapped point and out to the fit; it only counts when the first
@@ -99,11 +98,9 @@ is never submitted, so its target is the client's alone. A higher target costs m
 thread (bounded by the existing swap and node budgets; the worker stays the
 [backlog entry](../../backlog.d/p3-minesweeper-generation-off-the-main-thread.md)).
 
-**The picker** (`levels.ts`, `LEVEL_SPECS`) is a chip that cycles Debutant -> Intermediaire -> Expert, in Libre
-only and only until the first dig - then the bulb takes its place, since the bulb has nothing to read before
-that dig and three chips is what the row holds on a phone. While the first dig is being prepared it is
-disabled, like the ranked / Libre toggle. **The grid is the same at every level, so choosing one redraws
-nothing.** A ranked start that fails and falls back to a casual game plays Expert's target.
+**The levels are three of the four modes of [the mode sheet](#the-mode-sheet-owner-2026-11-26)** (`levels.ts`:
+`PLAY_MODES`, `LEVEL_SPECS`). **The grid is the same at every level, so choosing one redraws nothing.** A ranked
+start that fails and falls back to a casual game plays Expert's target.
 
 **Stored per device** (`canari.minesweeper.level`, validated on read; a value that is not a level is logged and
 ignored). With none stored, a player who already chose ranked or Libre on this device (`canari.minesweeper.unranked`
@@ -115,53 +112,117 @@ has just made and turn their Debutant into Expert (review of #4091; pinned acros
 
 **Pinned:** `levels.test.ts` (every level on the ranked size and generator, Expert on the ranked target, targets
 rising; three fixed seeds per level, each board naming its own target and guess-free, the mean score rising
-from Debutant to Expert; the cycle; the default and a bad stored value), `game.test.ts` (an explicit ranked
-target equals the default, cell for cell; target 0 stops before any swap),
-`MinesweeperModal.levels.svelte.test.ts` (no picker ranked; the cycle redraws nothing and is stored; each
-level generates with its own target; the picker gone after the first dig; a ranked game asks for its
-challenge as before and generates with the ranked target whatever Libre last used). **Owed:** the phone
+from Debutant to Expert; the four modes and their order; a newcomer unranked, a stored choice kept; the level
+default and a bad stored value), `game.test.ts` (an explicit ranked target equals the default, cell for cell;
+target 0 stops before any swap), `MinesweeperModal.levels.svelte.test.ts` (a newcomer in Libre on Debutant;
+a level pick redraws nothing and is stored; the mode locked after the first dig; each level generates with its
+own target; a ranked game asks for its challenge as before and generates with the ranked target whatever Libre
+last used). **Owed:** the phone
 reading ([reading](../../backlog.d/reading-owed-the-minesweeper-hint.md)), and the first-dig time of Expert on
 a phone, unchanged from ranked.
+
+## The mode sheet (owner, 2026-11-26)
+
+*"change le bouton de mode libre/classe ... propose moi des designs"* - four designs were proposed (a pastille
+opening a sheet, a start screen on the grid, a four-segment bar, two stages) and the owner picked **the pastille
+that opens a sheet**. The Classe / Libre toggle and the level chip that cycled without showing what it cycled
+through were two controls for what is ONE choice, and a newcomer landed on the ranked board, the barrier to entry.
+
+**The pastille** (the bottom bar, after dig / flag) wears the current mode: the trophy and "Classe", or a plant
+that grows with the level (Debutant, Intermediaire, Expert) and its name, with a chevron while it can be opened.
+**A tap opens the sheet** (`MinesweeperModeSheet.svelte`): a radio group of the four modes, each with a line on
+what it is, the current one checked, a way to the tutorial, and Escape, the scrim or "Fermer" to leave. A pick is
+stored (`canari.minesweeper.unranked`, and the level when it is a level) and the sheet closes. The names and lines
+are `modeLabels.ts`, the list and the stored choices `levels.ts`.
+
+**A newcomer plays Libre on Debutant** (owner, 2026-11-25: *"Libre + Debutant tant qu'aucune victoire"*): with no
+stored choice `loadMinesweeperUnranked()` answers unranked, and ranked is one pick away - no hard lock. Nothing is
+written until the player picks. **A player who always played ranked without ever touching the old toggle has no
+stored choice either, so their first game after this change is Libre; one pick in the sheet brings back Classe
+and is kept.**
+
+**Locked after the first dig, as before**: the pastille is disabled once the board exists or while the first dig
+waits for its challenge (the mode is being decided), and the sheet cannot be opened then. The bulb sits beside it
+from the start in Libre, dimmed until there is a board to read.
+
+**Pinned:** `MinesweeperModeSheet.svelte.test.ts` (the four modes in order, the current one checked, a pick
+reaches the caller, the three ways out, the tutorial link), `MinesweeperModal.chrome.svelte.test.ts` (a newcomer in
+Libre on Debutant and the mode locked after the first dig, the sheet and a remembered pick, a ranked pick asks for
+its challenge), `MinesweeperModal.levels.svelte.test.ts`, `MinesweeperModal.hint.svelte.test.ts` (the pastille is
+locked while the challenge is awaited). **Owed:** the phone reading
+([reading](../../backlog.d/reading-owed-the-minesweeper-hint.md), items 7 and 13).
 
 ## The tutorial (owner, 2026-11-25)
 
 *"une section tutoriel qui explique le fonctionnement du demineur avec des mini-grilles ... les regles, les
 mecaniques de base, miner, poser un drapeau, mais aussi une partie plus avancee qui explique le chording, et
-les patterns les plus courants (1-2-1, 1-2-2-1 etc.)"*, and *"un bouton d'indications (entourer en jaune des
-groupes de cases ...) fais quelque chose de vraiment explicatif, mais en montrant"* (owner). `/games/tutorial`
-is an ordinary page (it keeps the shell), reached from the Games page and from the game's settings sheet.
+les patterns les plus courants (1-2-1, 1-2-2-1 etc.)"*, and *"un bouton d'indications ... fais quelque chose de
+vraiment explicatif, mais en montrant"* (owner). `/games/tutorial` is an ordinary page (it keeps the shell),
+reached from the Games page and from the game's settings sheet.
 
 **It is the real game in small.** A lesson's grid is a PICTURE in text (`tutorial/layout.ts`: `#` hidden mine,
 `.` hidden safe, `F` a flag that is a premise, `0`-`8` a revealed number); `boardFromLayout` builds the engine's
 own `MinesweeperBoard` with its mines placed, so the mini-grid plays on `revealCell`, `toggleFlag` and the chord
 and draws with the game's own `MinesweeperCell` - what the tutorial teaches is what the game does. **A digit that
-lies about its neighbours throws**, so a wrong picture cannot reach a player.
+lies about its neighbours throws**, so a wrong picture cannot reach a player. Each grid shows **the mines counter**
+as the game's HUD does (the mines minus the flags), so the lessons can teach it.
 
-| Lesson | Teaches | Picture |
+| # | Lesson | Teaches | Picture |
+| --- | --- | --- | --- |
+| 1 | Reveal | open a cell, what a number and a 0 mean (a gesture: the target is outlined in green from the start) | 5x4, hidden |
+| 2 | Flag | a 1 with one hidden neighbour; Drapeau mode, right-click; the counter drops by one per flag and is **not** a proof | 3x3 |
+| 3 | Automatic flags | a number whose mines left equal its hidden neighbours: **one tap flags them all** (the engine's chord does this before it opens) | 3x3 |
+| 4 | Chording | a number with all its flags opens the rest in one tap (the flags are the premise) | 3x3 |
+| 5 | The mines counter | a column of three 1s: the middle cell is the mine; **the counter then reads 0, so every other hidden cell is safe, the ones no number touches included** | 4x3 |
+| 6 | 1-1 | two neighbouring 1s share cells: the extra one is safe | 4x2 against the edge |
+| 7 | 1-2-1 | the middle is safe, both sides are mines | 3x2 |
+| 8 | 1-2-2-1 | the two middle cells are mines, the ends are safe | 4x2 |
+| 9 | 1-3-1 at an OPEN corner | a 3 seeing five cells between two 1s: **the outermost corner cell is always a mine**, and the two cells at the ends of the arms are safe | 6x5, the right column hidden |
+| 10 | 2-2-2 at an OPEN corner | three 2s: **the outermost corner cell is always safe**, the two cells at the ends of the arms are mines, one mine in each pair | 6x5, the right column hidden |
+
+**The highlights say what they are** (owner, 2026-11-26: *"surligne en rouge pour bombe sure, jaune pour groupe
+de bombes (avec un seul rectangle qui englobe plusieurs cases) et vert pour safe"*). A step of the "Indice"
+button rings the NUMBER(S) it reads (`highlight: 'read'` on `MinesweeperCell`, a dark ring, so it is never taken
+for the yellow) and draws its marks as **one outline per rectangle over the grid, never a ring per cell**
+(`MinesweeperMiniGrid.svelte`, placed in cells with `calc` on the shared `--ms-cell`, no measuring):
+
+| Colour | Means | Badge |
 | --- | --- | --- |
-| Reveal | open a cell, what a number and a 0 mean (a gesture: the target is lit from the start) | 5x4, hidden |
-| Flag | a 1 with one hidden neighbour; Drapeau mode, right-click | 3x3 |
-| Chording | a number with all its flags opens the rest in one tap (the flags are the premise) | 3x3 |
-| 1-1 | two neighbouring 1s share cells: the extra one is safe | 4x2 against the edge |
-| 1-2-1 | the middle is safe, both sides are mines | 3x2 |
-| 1-2-2-1 | the two middle cells are mines, the ends are safe | 4x2 |
+| red | a mine that is certain | none |
+| yellow | a group of cells holding mines | the exact number of mines, when the numbers fix it |
+| green | a cell that is certain to be safe | none |
 
-**The "Indice" button** walks the lesson's authored steps (`HintStep`): each rings the NUMBER(S) the reasoning
-reads (`highlight: 'hint'`, the bulb's own ring) and tints the hidden cells they speak about (`highlight:
-'group'`, a softer ring with no glow, added to `MinesweeperCell`), and the sentence under the grid says what to
-conclude. It cycles step 1, 2, 3, then hides. It is authored, not computed: a step explains a pattern, and the
-order a person reads it in is a teaching choice (the in-game bulb, `hint.ts`, computes the next certain move on
-a real board instead).
+A mark whose cells are not a rectangle (the five cells a corner number sees) is several rectangles with one
+colour and ONE badge. A legend of the three colours shows with the hint. The step texts are authored, not
+computed: a step explains a pattern, and the order a person reads it in is a teaching choice (the in-game bulb,
+`hint.ts`, computes the next certain move on a real board instead).
 
-**Every lesson is PROVED** (`tutorial/lessons.test.ts`), not read: the test enumerates every arrangement of the
-hidden cells that the visible numbers allow and requires that **the cells a lesson asks to open are safe in all
-of them, the cells it asks to flag are mines in all of them, and that nothing the numbers force is left
-unasked** - the goal IS what the picture forces. A hint step must read a revealed number and speak about cells
-that number touches. `lessonDone` also refuses a lucky flag beside the right ones: the point is the deduction.
+**Every lesson AND every highlight is PROVED** (`tutorial/lessons.test.ts`), not read. The test enumerates every
+arrangement of the hidden cells that the visible numbers allow, **with the mines counter's total**, and requires:
+the cells a lesson asks to open are safe in all of them, the cells it asks to flag are mines in all of them, and
+nothing the numbers force is left unasked - the goal IS what the picture forces. **A lesson that does not teach
+the counter must not need it** (same answer with and without); the counter lesson must (the numbers alone force
+strictly less). A red mark is a mine in every arrangement, a green mark is safe in every arrangement, a yellow
+mark holds exactly the mines its badge says and is outlined because a lit number touches it, and no mark hides an
+open cell. `lessonDone` also refuses a lucky flag beside the right ones: the point is the deduction.
+
+**The corner lessons are OPEN, and a test holds them to it** (owner, 2026-11-26: *"la presence de bords permet de
+contourner ce raisonnement"*). A first version drew the corner in a 4x4 grid whose edges made the ends of the arms
+trivial: a 2 that sees only two hidden cells marks both, so the pattern was never needed. The lessons now sit in a
+6x5 board whose right column is still hidden and touched by no number, and `lessons.test.ts` requires, for a
+lesson that declares a `corner: { number, cell }`: **(1) no number of the picture settles its own neighbours** (a
+0, or as many mines as hidden neighbours); **(2) the corner cell is forced WITH the corner number and unknown
+WITHOUT it**, the mines counter included - the far column is what keeps the counter from standing in for the
+reasoning (a closed 5x5 board always gave the answer without the corner number). The boards come from an
+exhaustive solver over the small boards, the symmetric ones (1-3-1 reads 1-1-1-[3]-1-1-1, 2-2-2 is flanked by 1s).
+**What each pattern forces in an open corner** (cells: X and Y at the ends of the arms, A B and D E the two pairs
+shared with the corner number, C the outermost corner): 1-3-1 forces C a mine and X, Y safe; 2-2-2 forces C safe
+and X, Y mines, and both leave one mine in each pair for the other numbers to place. Neither needs the counter.
 
 **Pinned:** `layout.test.ts`, `lessons.test.ts`, `MinesweeperMiniGrid.svelte.test.ts` (tap, flag, right-click, a
-chord in either mode, a mine ends the lesson, solved ONCE, what a hint lights), `routes/games/tutorial/page.svelte.test.ts`
-(the lessons chain to a closing screen that leads to a game, the hint cycle, restart, Back to `/games`).
+chord in either mode, the automatic flags, the counter, a mine ends the lesson, solved ONCE, one outline per
+rectangle and its colour and badge), `routes/games/tutorial/page.svelte.test.ts` (the lessons chain to a closing
+screen that leads to a game, the hint cycle with its legend, restart, Back to `/games`).
 **Owed:** the phone reading ([reading](../../backlog.d/reading-owed-the-minesweeper-hint.md), items 11 and 12).
 
 ## The bulb: a hint in an unranked game (owner, 2026-11-25)
