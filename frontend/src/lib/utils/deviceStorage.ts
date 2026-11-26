@@ -14,7 +14,11 @@
 
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { invoke } from '@tauri-apps/api/core';
-import { CIPHER_CACHE_NAME } from './mediaBlobCache';
+import {
+  CIPHER_CACHE_NAME,
+  LEDGER_CACHE_NAME,
+  dropMediaCacheLedgerMemory,
+} from './mediaCacheLedger';
 import { CACHE_NAME as ASSOCIATION_LOGO_CACHE_NAME } from './associationLogoCache';
 
 /**
@@ -71,7 +75,9 @@ async function measureCacheStorageBytes(): Promise<number> {
 /** Deletes every media/logo Cache Storage bucket. Never touches messages or `mls.bin`. */
 export async function clearMediaCache(): Promise<void> {
   if (typeof caches === 'undefined') return;
-  await Promise.all(MEDIA_CACHE_NAMES.map((name) => caches.delete(name)));
+  await Promise.all([...MEDIA_CACHE_NAMES, LEDGER_CACHE_NAME].map((name) => caches.delete(name)));
+  // The ledger described what was just deleted: the page's copy of it goes too.
+  dropMediaCacheLedgerMemory();
 }
 
 /**

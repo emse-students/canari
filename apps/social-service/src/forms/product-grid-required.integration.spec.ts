@@ -22,6 +22,7 @@ import { Client } from 'pg';
 import { DataSource } from 'typeorm';
 import { Form } from './entities/form.entity';
 import { Submission } from './entities/submission.entity';
+import { FormSeatHold } from './entities/form-seat-hold.entity';
 import { FormReminder } from './entities/form-reminder.entity';
 import { OpeningReminder } from '../openings/entities/opening-reminder.entity';
 import { FormRespondent } from './entities/form-respondent.entity';
@@ -33,6 +34,10 @@ const maybe = URL ? describe : describe.skip;
 
 const MIGRATIONS = join(__dirname, '..', 'migrations');
 const MIGRATION_164 = readFileSync(join(MIGRATIONS, '164_product_grid_required_off.sql'), 'utf8');
+const MIGRATION_185 = readFileSync(
+  join(MIGRATIONS, '185_form_fingerprint_stale_stamps.sql'),
+  'utf8'
+);
 
 /**
  * The ROLLBACK statement of 164's header: its comment lines indented under `-- ROLLBACK:`, the
@@ -90,7 +95,15 @@ maybe('migration 164 against PostgreSQL: every stored grid turned optional', () 
     ds = new DataSource({
       type: 'postgres',
       url: URL,
-      entities: [Form, Submission, FormReminder, OpeningReminder, FormRespondent, PurchaseRecord],
+      entities: [
+        Form,
+        Submission,
+        FormSeatHold,
+        FormReminder,
+        OpeningReminder,
+        FormRespondent,
+        PurchaseRecord,
+      ],
       synchronize: true,
       extra: { options: `-c search_path=${schema},public` },
     });
@@ -135,9 +148,17 @@ maybe('migration 164 against PostgreSQL: every stored grid turned optional', () 
     await writeFormDraft(ds.manager, ids['draft-behind'], 0, { title: 'typed' }, null);
     await q(`UPDATE forms SET title = 'written since' WHERE id = $1`, [ids['draft-behind']]);
 
+    // Migration 164 ran when the fingerprint still hashed the stale-open stamps: the revisions it
+    // meets are based under THAT rule (`writeFormDraft` writes the current one), and 185 follows it.
+    await q(
+      `UPDATE form_drafts d SET "baseFingerprint" = md5((to_jsonb(f) - ARRAY['id', 'ownerId', 'clientCreateId', 'createdAt', 'updatedAt', 'deletedAt', 'closedAt', 'status', 'imageUrl', 'imageMediaId'])::text)
+         FROM forms f WHERE f.id = d."formId" AND d."formId" <> $1`,
+      [ids['draft-behind']]
+    );
     await q(MIGRATION_164);
     // Idempotent for CD: the second run writes nothing and fails nothing.
     await q(MIGRATION_164);
+    await q(MIGRATION_185);
     await q('RESET lock_timeout');
   });
 

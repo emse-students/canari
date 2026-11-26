@@ -34,6 +34,7 @@ import { UserTagService } from '../users/user-tag.service';
 import { PostNotification } from '../posts/entities/post-notification.entity';
 import { Form } from '../forms/entities/form.entity';
 import { Submission } from '../forms/entities/submission.entity';
+import { FormSeatHold } from '../forms/entities/form-seat-hold.entity';
 import { lockFormSeats } from '../forms/seat-hold';
 import { onlineCollectsThrough, promoteFromWaitlist } from '../forms/waitlist';
 import { SECRET_BOX_ENV } from '../common/secret-box';
@@ -105,6 +106,7 @@ maybe('Lydia readiness: one writer, the UPDATE decides (PostgreSQL)', () => {
       // The forms and their answers: a holder collecting again promotes its frozen waiting lists.
       Form,
       Submission,
+      FormSeatHold,
     ];
     const others = new DataSource(options(true, entities));
     await others.initialize();

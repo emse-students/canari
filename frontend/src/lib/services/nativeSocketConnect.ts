@@ -15,12 +15,24 @@
  * welcome request). It stops the loss from going on; only a fast connect prevents it.
  */
 
+import { TransportFailureError } from '../utils/transportFailure';
+
 /** Same deadline as the browser socket in `WebMlsService`. */
 export const NATIVE_CONNECT_TIMEOUT_MS = 15_000;
 
 /** The part of the plugin's socket this needs. */
 interface ClosableSocket {
   disconnect(): Promise<void>;
+}
+
+/**
+ * True when the plugin rejected with its typed connect-phase failure (`{ kind: 'connect' }`, the
+ * patched `tauri-plugin-websocket`): the TCP connect failed before any server could answer. Decided
+ * by the FIELD the plugin sets, never by its sentence. A handshake a server refused arrives as a
+ * plain string and is an answer, so it is not matched here.
+ */
+function isNativeConnectPhaseFailure(e: unknown): boolean {
+  return typeof e === 'object' && e !== null && (e as { kind?: unknown }).kind === 'connect';
 }
 
 /**
@@ -59,7 +71,16 @@ export function connectNativeSocket<S extends ClosableSocket>(
       (e: unknown) => {
         if (!abandoned) {
           clearTimeout(timer);
-          reject(e);
+          // No server answered: typed here, where the plugin said so, so the caller's log reads a
+          // transport failure by type and an offline reconnect rung is not an error.
+          reject(
+            isNativeConnectPhaseFailure(e)
+              ? new TransportFailureError(
+                  e,
+                  `native socket connect got no answer: ${(e as { message?: unknown }).message}`
+                )
+              : e
+          );
           return;
         }
         console.warn('[WS] abandoned native connect failed afterwards:', e);

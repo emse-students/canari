@@ -4184,7 +4184,7 @@ updated in place, which keeps the class it was added with. Firebase's own Keycha
   describe, they have nothing left to type; a backup older than 1.7.2 still carries both.
 - **The device reading passed on `1.7.3-alpha.5` (iPhone 12, 2026-11-22):** `6/6` at three cold launches
   and a `backup2` with no file in the app, the App Group or either extension domain; the per-file passes
-  it releases are deleted by [this entry](../backlog.d/reading-owed-ios-local-data-out-of-backups.md).
+  it released are deleted (1.8.2).
 
 ### The native caches are sealed at rest, and kept out of backups (2026-10-22)
 
@@ -4231,17 +4231,13 @@ only its own: [auth](modules/auth.md#the-seed-mirror-labels-each-entry-with-its-
   WebKit's stores and the App Group's `store/` included ([below](#nothing-local-travels-to-another-phone-2026-11-20)),
   which reverses this bullet's older "never on a directory" (a restored `mls.bin` opened under a
   PIN-derived key; with the at-rest key hardware-held and `ThisDeviceOnly` it no longer opens, and a
-  copied install would clone the MLS device anyway). The per-file pass below predates it and is now
-  redundant: it is deleted once the iPhone reading proves the directory flag holds. The flag is per
-  file, and an atomic write is a new inode that does not carry it, so EVERY writer re-applies it
-  after its write:
-  - Rust `with_graine_mirror_inner` (`native_cache::exclude_from_backup`, through the Objective-C
-    runtime because `libapp.a` is linked into the NSE too);
-  - `CanariAppendFcmCacheEntry`, `CanariDrainAppGroupFcmCache` and `CanariMirrorPushStateToAppGroup`
-    (`CanariExcludeNativeCacheFilesFromBackup`);
-  - the NSE's `writeFcmCache` (`excludeFromBackup`).
-
-  A pass at bootstrap and on each activation covers a file an older build wrote.
+  copied install would clone the MLS device anyway). **The per-file passes that predated it are
+  deleted (1.8.2)**, the iPhone reading having proved the directory flag holds: an atomic write is a
+  new inode, but it lands under a flagged parent and needs nothing re-applied. No writer flags a file
+  any more (Rust `with_graine_mirror_inner`, the announced and key-group ledgers, the Objective-C
+  cache writers and the NSE's `writeFcmCache`); `nativeCacheSeal.test.ts` fails on a return of one.
+  The directory flag's one writer is the launch pass (`backup_exclusion.rs`), plus the share
+  extension's `storeDir`, which flags the store it creates.
 - **Desktop has no reader**, so it writes no mirror and deletes one an older build left.
 - **A third sealed file: the push key-group join ledger** (`key_group_push_joins.json`, Android
   only, [channel-encryption](../protocols/channel-encryption.md) section 26). It names key groups,

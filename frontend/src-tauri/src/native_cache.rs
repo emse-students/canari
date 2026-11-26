@@ -399,28 +399,6 @@ pub(crate) fn migrate_legacy_files(data_dir: &std::path::Path, key: &CacheKey) {
     }
 }
 
-/// Keeps one native cache file out of iCloud and computer backups (iOS); nothing anywhere else -
-/// Android excludes its whole data domain in `data_extraction_rules.xml`, desktop writes no cache.
-///
-/// Per FILE and after EVERY write: the writers replace the file by an atomic rename, a new inode,
-/// and the flag does not travel with the name. Since 1.7.2 the DIRECTORIES holding these files are
-/// excluded whole at every launch (`backup_exclusion`), which makes this per-file pass redundant;
-/// it is kept until the iPhone reading proves the directory flag holds, then deleted (mobile wiki,
-/// "Nothing local travels to another phone"). A failure is logged and changes nothing
-/// else: the file is sealed whichever way, so a backup of it carries ciphertext under a key that
-/// does not travel.
-pub(crate) fn exclude_from_backup(path: &std::path::Path) {
-    #[cfg(target_os = "ios")]
-    if let Err(e) = ios_exclude_from_backup(path) {
-        log::error!(
-            "[NATIVE_CACHE] {} not excluded from backups: {e}",
-            path.file_name().unwrap_or_default().to_string_lossy()
-        );
-    }
-    #[cfg(not(target_os = "ios"))]
-    let _ = path;
-}
-
 /// Runs `body` with `[NSURL fileURLWithPath:path]` and the `NSURLIsExcludedFromBackupKey` constant,
 /// inside an autorelease pool - the one copy of the boilerplate [`ios_exclude_from_backup`] and
 /// [`ios_is_excluded_from_backup`] share. Through the Objective-C runtime like

@@ -28,6 +28,7 @@ import { Client } from 'pg';
 import { DataSource } from 'typeorm';
 import { Form } from './entities/form.entity';
 import { Submission } from './entities/submission.entity';
+import { FormSeatHold } from './entities/form-seat-hold.entity';
 import { FormReminder } from './entities/form-reminder.entity';
 import { OpeningReminder } from '../openings/entities/opening-reminder.entity';
 import { FormRespondent } from './entities/form-respondent.entity';
@@ -67,6 +68,8 @@ const ERIN = 'e'.repeat(64);
 const DRAFTED = '00000000-0000-4000-8000-0000000000d1';
 /** The service's own draft fingerprint: the migration must re-base onto exactly this. */
 const FINGERPRINT = FORM_FINGERPRINT_SQL;
+/** The fingerprint's rule when migration 183 was written: the stale-open stamps still hashed. */
+const FINGERPRINT_BEFORE_185 = `md5((to_jsonb(f) - ARRAY['id', 'ownerId', 'clientCreateId', 'createdAt', 'updatedAt', 'deletedAt', 'closedAt', 'status', 'imageUrl', 'imageMediaId'])::text)`;
 
 const ITEMS = [{ id: 'q-name', label: 'Nom', type: 'short_text', required: true }];
 const ANSWERS = { 'q-name': 'x' };
@@ -107,6 +110,7 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
       entities: [
         Form,
         Submission,
+        FormSeatHold,
         FormReminder,
         OpeningReminder,
         FormRespondent,
@@ -145,7 +149,7 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
     ]);
     await ds.query(
       `INSERT INTO form_drafts ("formId", revision, document, "baseFingerprint")
-         SELECT f.id, 1, '{}'::jsonb, ${FINGERPRINT} FROM forms f WHERE f.id = $1`,
+         SELECT f.id, 1, '{}'::jsonb, ${FINGERPRINT_BEFORE_185} FROM forms f WHERE f.id = $1`,
       [DRAFTED]
     );
     const migration = readFileSync(
@@ -154,6 +158,10 @@ maybe('the waiting list of a limited form, against PostgreSQL (migration 183)', 
     );
     await ds.query(migration);
     await ds.query(migration);
+    // ...then migration 185, which takes the two stale-open stamps out of the fingerprint.
+    await ds.query(
+      readFileSync(join(__dirname, '../migrations/185_form_fingerprint_stale_stamps.sql'), 'utf8')
+    );
     await ds.query('RESET lock_timeout');
 
     const push = {

@@ -179,10 +179,13 @@ export class PostsController {
     // The viewer is carried here for the same reason `listPosts` carries it: every row is stamped
     // with `canManage`, and a search result renders the same card as a feed row.
     const limit = postPageLimit(query.limit, 20);
-    return this.service.searchPosts(query.q ?? '', limit, query.offset ?? 0, {
-      viewerUserId: xUserId,
-      isAdmin: xGlobalAdmin === 'true',
-    });
+    return this.service.searchPosts(
+      query.q ?? '',
+      limit,
+      query.offset ?? 0,
+      { viewerUserId: xUserId, isAdmin: xGlobalAdmin === 'true' },
+      { authorId: query.authorId, associationId: query.associationId }
+    );
   }
 
   /**

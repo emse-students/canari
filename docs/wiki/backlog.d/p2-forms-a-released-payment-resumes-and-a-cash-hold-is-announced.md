@@ -1,8 +1,10 @@
 ## P2 - a released form payment resumes on the same answer, and a cash hold is announced before it expires (owner, 2026-11-21)
 
-target: 1.8.2
+target: 1.8.3
 
 _2026-11-25: moved to 1.8.2 when 1.8.1 shipped._
+
+_2026-11-25: moved on to 1.8.3. Both owed items need what a worker cannot give: the readings need a dev pre-release, a Lydia sandbox card and a phone; the issue-unknown follow-up changes core-service AND this service AND the schema (a column naming the order_ref before the call) and its grammar is settled against Lydia's sandbox, which a build here cannot reach._
 
 **Why.** Production, 2026-11-21 (read-only): of 120 answers that involved a payment, 24 were
 cancelled or expired (20%, on three forms), with no way for the member to pay the same answer again;

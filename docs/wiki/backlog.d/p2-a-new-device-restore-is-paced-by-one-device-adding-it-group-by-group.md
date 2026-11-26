@@ -26,6 +26,25 @@ pass committing into every group the device asks for, instead of one welcome req
 drain during a restore (the state is O(groups), and writing it per Welcome is O(groups^2) over a
 restore). (3) The profile lookups coalesced across the restore.
 
+**Read 2026-11-25, nothing built - each lever needs the dev measurement first** (a worker's pass,
+from the code, not from a log):
+
+- (2) is not a cadence knob. The persister already coalesces (one checkpoint in flight, ONE queued
+  and shared by every caller, `mlsStatePersister.ts`), so 360 checkpoints means the Welcomes arrive
+  slower than one checkpoint lasts. Each applied Welcome asks `persistNow` and its ack is WITHHELD
+  until a covering checkpoint lands (`DrainAckHold`), and each conversation's history replay
+  commits its markers only after a checkpoint (`withMlsBulkIngest`). Deferring checkpoints "while
+  Welcomes are owed" therefore delays every Welcome's ack and every replay's markers; it is sound
+  only with that ordering argued again, and its gain is unknown until the log separates the Welcome
+  checkpoints from the replay ones.
+- (3) has two possible causes the 2026-11-24 log does not separate: the profile coalescer's window
+  is ONE event-loop turn (`stores/user.ts`, `enqueueProfileFetch`) and its cache lives 30 s, so 266
+  calls over a 140 s restore are either one-turn windows of one or two ids (tiles mounting as each
+  Welcome lands) or the same ids re-asked after the TTL. The first wants a window bound to the
+  restore's own lifecycle, the second a longer-lived answer; the dev log's ids per call decide.
+- (1) changes the answering device's Add lane (`serveWelcomeRequest`, one group at a time) and the
+  KeyPackage claims of the new device - the riskiest of the three, and the largest gain.
+
 **The reading that closes it:** the same restore (a new browser on an account of 150+ conversations)
 on dev, logged: Welcomes for all groups within 30 s of sign-in, checkpoint time under 10 % of the
 restore, and fewer `users/batch` calls than conversations.

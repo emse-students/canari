@@ -184,6 +184,9 @@ describe('FormsService - closing and reopening a form', () => {
 
     it('is not part of the unpublished revision: the fingerprint excludes closedAt', () => {
       expect(FORM_FINGERPRINT_SQL).toContain("'closedAt'");
+      // ...and so do the two stale-open stamps, written by the job and by "Garder ouvert".
+      expect(FORM_FINGERPRINT_SQL).toContain("'staleAskedAt'");
+      expect(FORM_FINGERPRINT_SQL).toContain("'staleKeptAt'");
     });
   });
 

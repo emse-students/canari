@@ -188,6 +188,17 @@ beforeAll(async () => {
   };
 });
 
+/**
+ * The v2 half of a session this device HOLDS and answers with. An answer never relays a v1 session
+ * (no receiver accepts one since 1.0.3), so every held fixture an answer must carry is v2; the bytes
+ * only travel, never verified on the answering side.
+ */
+const HELD_V2 = {
+  minterDeviceId: 'dev-c',
+  signingPublicKeyB64: toBase64(new Uint8Array(32).fill(7)),
+  endorsementB64: toBase64(new Uint8Array(64).fill(9)),
+};
+
 /** carol's endorsed v2 fields for any salon and session - what a relayed bundle seed must carry. */
 async function v2SeedFor(channelId: string, sessionId: string, firstIndex: number) {
   const descriptor = encodeGraineEndorsementV2({
@@ -809,6 +820,7 @@ describe('a seed request arriving on the distribution group (WP-33)', () => {
       sessionId,
       senderId: 'alice',
       seedB64: toBase64(SEED),
+      v2: HELD_V2,
       firstIndex,
       createdAt: 5,
       sentCount: 3,
@@ -1641,6 +1653,7 @@ describe('a history request from a joiner (WP-34)', () => {
       sessionId: 's-1',
       senderId: 'alice',
       seedB64: toBase64(SEED),
+      v2: HELD_V2,
       firstIndex: 0,
       createdAt: 1,
     },
@@ -1650,10 +1663,49 @@ describe('a history request from a joiner (WP-34)', () => {
       sessionId: 's-2',
       senderId: 'bob',
       seedB64: toBase64(SEED),
+      v2: HELD_V2,
       firstIndex: 5,
       createdAt: 2,
     },
   ];
+
+  /** A pre-1.0.3 salon session: no v2 half. Still readable where held, refused wherever it arrives. */
+  const v1Session = (sessionId: string): StoredGraineSession => ({
+    workspaceId: 'ws-1',
+    channelId: 'chan-1',
+    sessionId,
+    senderId: 'carol',
+    seedB64: toBase64(SEED),
+    firstIndex: 0,
+    createdAt: 3,
+  });
+
+  it('relays no v1 session: an answer from a store of v1 and v2 sessions carries the v2 seeds only', async () => {
+    const sendMessage = wireWithSessions([...community, v1Session('s-v1a'), v1Session('s-v1b')]);
+    registerCommunityHistoryVisibility('ws-1', 'shared');
+
+    await handleDistributionFrame(historyFrame());
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const bundle = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle;
+    expect(bundle?.seeds?.map((s) => s.sessionId)).toEqual(['s-1', 's-2']);
+    expect(bundle?.seeds?.every((s) => s.version === 2)).toBe(true);
+    expect(bundle?.holdsNothing).toBeFalsy();
+  });
+
+  it('still answers "I hold nothing" from a store of v1 rows only - the rows counted on both sides', async () => {
+    const v1Only = [v1Session('s-v1a'), v1Session('s-v1b')];
+    // Every row opened: the count the claim is made from equals the rows read, v1 rows included.
+    const sendMessage = wireWithSessions(v1Only, v1Only.length);
+    registerCommunityHistoryVisibility('ws-1', 'shared');
+
+    await handleDistributionFrame(historyFrame());
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const bundle = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineBundle;
+    expect(bundle?.seeds ?? []).toHaveLength(0);
+    expect(bundle?.holdsNothing).toBe(true);
+  });
 
   it('sends every seed of the community in ONE bundle when the rule is shared', async () => {
     const sendMessage = wireWithSessions(community);
@@ -2798,6 +2850,7 @@ describe('the past goes only to an admission this device can verify (section 25)
       sessionId: 's-1',
       senderId: 'alice',
       seedB64: toBase64(SEED),
+      v2: HELD_V2,
       firstIndex: 0,
       createdAt: 1,
     },
@@ -3529,6 +3582,7 @@ describe('the salon scope of an answer', () => {
     sessionId,
     senderId: 'carol',
     seedB64: toBase64(SEED),
+    v2: HELD_V2,
     firstIndex: 0,
     createdAt: 1,
   });
@@ -4174,6 +4228,7 @@ describe('what settles a widened history ask', () => {
         sessionId: 's-held',
         senderId: 'carol',
         seedB64: toBase64(SEED),
+        v2: HELD_V2,
         firstIndex: 0,
         createdAt: 1,
       },

@@ -63,6 +63,11 @@ import {
   servedInstitutionReach,
   type InstitutionReachSpace,
 } from '../spaces/institution-reach';
+import {
+  hasPostSearchCriteria,
+  postSearchFilterSql,
+  type PostSearchFilters,
+} from './post-search-filters';
 import { promoCutoffFor } from '../common/promo-visibility';
 import { blockedAuthorSql, blockedUserIdsFor } from '../common/blocked-user-ids';
 import { SUGGESTED_POSTS_MAX, suggestedPostIds } from './suggested-posts';
@@ -1734,15 +1739,24 @@ export class PostsService {
     return map;
   }
 
-  /** Full-text search across post markdown and association names. Excludes future-scheduled posts. */
+  /**
+   * Full-text search across post markdown and association names. Excludes future-scheduled posts.
+   *
+   * THE TWO FILTERS (owner, 2026-11-19, `post-search-filters.ts`): a person and an association,
+   * alone or with the words. A filter only NARROWS: every audience rule below runs unchanged, so a
+   * filter never returns a post the viewer could not read in the feed. A person's posts are their
+   * PERSONAL, non-anonymous ones - an association's post names the association, never the officer
+   * who typed it, and an anonymous one must not be reachable through its author.
+   */
   async searchPosts(
     q: string,
     limit = 20,
     offset = 0,
-    viewer?: { viewerUserId?: string; isAdmin?: boolean }
+    viewer?: { viewerUserId?: string; isAdmin?: boolean },
+    filters: PostSearchFilters = {}
   ): Promise<any[]> {
     const term = q.trim();
-    if (!term) return [];
+    if (!hasPostSearchCriteria(term, filters)) return [];
     const isAdmin = viewer?.isAdmin === true;
 
     // A SEARCH RESULT RENDERS THE SAME CARD AS A FEED ROW, so it owes the same three exclusions.
@@ -1756,7 +1770,8 @@ export class PostsService {
     // (`promo-visibility.ts`), so this is consistency with the feed rather than a leak closed.
     const promoCutoff = await promoCutoffFor(this.postRepo.manager, viewer?.viewerUserId, isAdmin);
     const blockedIds = await blockedUserIdsFor(this.postRepo.manager, viewer?.viewerUserId);
-    const params: unknown[] = [limit, offset, `%${term}%`];
+    const params: unknown[] = [limit, offset];
+    const filterSql = postSearchFilterSql(term, filters, (value) => params.push(value));
     const promoSql = promoCutoff
       ? `AND posts."publishedAt" >= $${params.push(promoCutoff)}::timestamptz`
       : '';
@@ -1767,7 +1782,8 @@ export class PostsService {
       `SELECT ${this.postSelectBody(bp)}
        FROM posts
        LEFT JOIN associations assoc ON assoc.id = posts."associationId"
-       WHERE (posts.markdown ILIKE $3 OR assoc.name ILIKE $3)
+       WHERE TRUE
+         ${filterSql}
          AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= NOW())
          ${promoSql}
          ${this.hiddenFilterSql(isAdmin)}

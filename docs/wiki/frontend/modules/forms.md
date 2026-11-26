@@ -4122,6 +4122,13 @@ that writes its bell rows, so two replicas or a re-run cannot ask a form twice a
 loses no question) and the read both the card and the bell row's gate
 use (`staleOpenAskedSql`, so they clear together).
 
+**Neither stamp is part of a draft's fingerprint** (migration 185, 2026-11-25). `FORM_FINGERPRINT_SQL`
+excludes both: the job and "Garder ouvert" write them, never an edit, and while they were hashed a stamp
+landing under an open edit draft made it read "the form changed since" (409 `FORM_CHANGED_SINCE_REVISION`)
+with no content changed. The migration is data only: a draft whose base is the OLD-rule fingerprint, with
+each stamp either as it is or as NULL (the four combinations), takes the new one; a draft whose content
+really moved stays reported. `form-draft-revision.integration.spec.ts` proves both.
+
 - **Asked once.** A form with `staleAskedAt` set is never asked again by the passing of time.
 - **"Keep open" silences it until a new answer arrives** (decided: "for good" would silence a form that
   later dies, a timer would re-ask what was just answered). It is re-armed ONLY by an answer on or after
@@ -4175,3 +4182,47 @@ case, the release on a failed notice, "keep open" and the card's read; runs in C
 integration file), the bell gate in `bell-target-rows.integration.spec.ts`, `forms.service.close.spec.ts`
 (the two routes), `closingSuggestion.test.ts`, `FormSaveBar.svelte.test.ts` and `page.draft.svelte.test.ts`
 (the offer, once, either answer), `FormStaleOpenCard.svelte.test.ts`, `FormsManagerList.svelte.test.ts`.
+
+## A capped form may hold a seat for 10 minutes behind "Reserver ma place" (owner, 2026-11-17, migration 186)
+
+A seat of a capped form is counted at submit, under the form's lock, so a person filling a long form could
+lose the last seat to a faster submitter. A signed-in person may now ASK for the seat first.
+
+**The mechanism.** `form_seat_holds` (migration 186): one row per account and form (`formId`, `userId`,
+`heldAt`), schema only. Charter principle 1 (your messages are yours) and the anonymity promise decide its
+shape: a hold is an INTENTION of one signed-in person, so it exists on a named form only (an anonymous form
+refuses it `SEAT_HOLD_NOT_AVAILABLE`, as does an uncapped one), and a guest of a public form submits as before.
+
+- **Counted, not swept.** `countSeatsTaken` (`seat-hold.ts`) = the rows `seatHoldingWhere` names + the live holds
+  (`heldAt` younger than `SEAT_HOLD_SECONDS`, 10 minutes) of everybody but the caller. It is the ONE count the
+  capacity checks of a submit, a resume, a switch to cash, a hold and a promotion read, so a hold that expires
+  frees its seat with no sweep. A person's hold never counts against themselves; the page's `formFull` and the
+  public count read it the same way (`countActiveSubmissions`), and a waiting list never makes the form full to
+  a person holding a live hold (`isFormFull`): the seat they see free IS their hold, which every promotion
+  counts as taken, so the answers behind them wait for another one. A late payment (`markPaid`) does NOT count holds:
+  a hold is an intention, the money is already received.
+- **One per person and form, a second press is the same hold.** `POST forms/:id/seat-hold` answers
+  `{ secondsLeft }` from the database clock and keeps the clock of a live hold (an upsert whose conflict
+  branch restarts only a lapsed one). `DELETE forms/:id/seat-hold` gives it back (idempotent).
+- **Under the form lock, after the waiting list.** The hold takes the seat lock, lets the first in line take every
+  free place (`promoteFromWaitlist`, as a submit does), refuses `FORM_FULL` when none is left, and refuses a
+  person who already answers a one-answer form (`ALREADY_ANSWERED`).
+- **The submit spends it**: in the transaction that stores the answer, after the capacity check, the caller's
+  hold row is deleted (a refusal rolls the delete back). A lapsed hold whose seat was taken meanwhile finds the
+  form full, like anyone.
+- **The sweep only tidies and promotes.** `expireLapsedSeatHolds` (5-minute tick of `forms-reminder.scheduler.ts`,
+  its own `try`) deletes the dead rows one form at a time under the seat lock and promotes the waiting list into
+  the places they freed in the same transaction (`hold-expiry`; a release by the person is `hold-release`).
+  It is not load-bearing for capacity.
+- **The page** (`seatHold.ts`, `routes/forms/[id]/+page.svelte`): "Réserver ma place" is offered to a signed-in
+  person on an open capped named form with a seat free (`seatHoldOffered`; the server re-checks each rule), then a
+  countdown card with "Libérer ma place", then the expired state ("la place a peut-être été prise", "Réserver à
+  nouveau"). The countdown runs on `performance.now()` from the seconds the server answered, never from a wall
+  clock. `check` carries `seatHold: { secondsLeft } | null`.
+- **Erasure**: `form_seat_holds.userId` is deleted with the account (`account-erasure.ts`).
+
+**Tests.** `seat-hold.integration.spec.ts` (PostgreSQL; CI's `test-social-integration`): migration 186 twice and
+the cascade, a second press, the holder against everybody else, the submit spending it, expiry with no sweep and
+the sweep, a lapsed hold restarting, the release, two presses for the last seat, the sweep promoting the first in
+line, the refusals, the erasure statement; the mocked service specs answer the hold count 0; `seatHold.test.ts`
+for the offer rule and the countdown. The reading on a phone is a backlog entry.
