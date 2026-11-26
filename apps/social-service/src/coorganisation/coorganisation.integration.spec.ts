@@ -21,6 +21,7 @@ import { Client } from 'pg';
 import { DataSource } from 'typeorm';
 import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { AssociationsService } from '../associations/associations.service';
+import { lockAssociationsReachedByCoorganisation } from '../associations/association-delete-lock';
 import { Association } from '../associations/entities/association.entity';
 import {
   AssociationMember,
@@ -1195,6 +1196,128 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       }
     }, 30_000);
 
+    describe("two associations that co-organise each other's events are deleted at the same moment", () => {
+      const P = '00000000-0000-4000-8000-0000000c0b01';
+      const Q = '00000000-0000-4000-8000-0000000c0b02';
+      const EP = E(40);
+      const EQ = E(41);
+
+      /** P and Q, each owning one event co-organised (accepted) by the other. */
+      const arrange = async () => {
+        for (const [id, slug] of [
+          [P, 'cross-p'],
+          [Q, 'cross-q'],
+        ]) {
+          await q(
+            `INSERT INTO associations (id, name, slug, "createdBy") VALUES ($1, $2, $2, 'it')`,
+            [id, slug]
+          );
+        }
+        for (const [event, owner, other] of [
+          [EP, P, Q],
+          [EQ, Q, P],
+        ]) {
+          await q(
+            `INSERT INTO association_calendar_events (id, "associationId", title, "startsAt", "createdBy", status)
+               VALUES ($1, $2, 'Crossed', '2026-07-12T18:00:00Z', 'org', 'validated')`,
+            [event, owner]
+          );
+          await q(
+            `INSERT INTO association_calendar_event_co_owners (event_id, association_id) VALUES ($1, $2)`,
+            [event, other]
+          );
+        }
+      };
+
+      const session = async () => {
+        const c = new Client({
+          connectionString: URL,
+          options: `-c search_path=${schema},public`,
+          application_name: schema,
+        });
+        await c.connect();
+        await c.query('BEGIN');
+        return c;
+      };
+      /** A raw client as the `EntityManager` the lock helper takes: rows, not a result object. */
+      const asManager = (c: Client) => ({
+        query: async (sql: string, params?: unknown[]) => (await c.query(sql, params)).rows,
+      });
+      /** The delete's statements after its lock: the events first, then the association row. */
+      const deleteEvents = (c: Client, id: string) =>
+        c.query('DELETE FROM association_calendar_events WHERE "associationId" = $1', [id]);
+      const deleteAssociation = (c: Client, id: string) =>
+        c.query('DELETE FROM associations WHERE id = $1', [id]);
+      const cleanup = () =>
+        q(`DELETE FROM associations WHERE id = ANY($1::uuid[])`, [[P, Q]]).then(() =>
+          q(`DELETE FROM association_calendar_events WHERE id = ANY($1::uuid[])`, [[EP, EQ]])
+        );
+
+      it('WITNESS: each locking only its own row, the two cascades cross and one delete dies of 40P01', async () => {
+        await arrange();
+        const a = await session();
+        const b = await session();
+        try {
+          await a.query('SELECT 1 FROM associations WHERE id = $1 FOR UPDATE', [P]);
+          await b.query('SELECT 1 FROM associations WHERE id = $1 FOR UPDATE', [Q]);
+          await deleteEvents(a, P);
+          await deleteEvents(b, Q);
+          // The victim of the deadlock is whichever session's timer fires first, and its rollback is
+          // what lets the other go on: each rolls back on ANY error.
+          const run = (c: Client, id: string) =>
+            deleteAssociation(c, id).then(
+              () => 'deleted' as const,
+              async (e: { code?: string }) => {
+                await c.query('ROLLBACK');
+                return e.code;
+              }
+            );
+          const first = run(a, P);
+          await lockWaiter(first);
+          const second = run(b, Q);
+          expect((await Promise.all([first, second])).sort()).toEqual(['40P01', 'deleted']);
+        } finally {
+          await a.query('ROLLBACK').catch(() => undefined);
+          await b.query('ROLLBACK').catch(() => undefined);
+          await a.end();
+          await b.end();
+          await cleanup();
+        }
+      }, 30_000);
+
+      it('with the reached associations locked in id order the second delete queues and both complete', async () => {
+        await arrange();
+        const a = await session();
+        const b = await session();
+        try {
+          expect(await lockAssociationsReachedByCoorganisation(asManager(a), P)).toBe(2);
+          const queued = lockAssociationsReachedByCoorganisation(asManager(b), Q).then(
+            (n) => n,
+            (e: { code?: string }) => e.code
+          );
+          // The second delete waits on the FIRST's lock of Q, holding nothing: no cycle can form.
+          await lockWaiter(queued);
+          await deleteEvents(a, P);
+          await deleteAssociation(a, P);
+          await a.query('COMMIT');
+          // P is gone: the second finds only itself, and completes.
+          expect(await queued).toBe(1);
+          await deleteEvents(b, Q);
+          await deleteAssociation(b, Q);
+          await b.query('COMMIT');
+          expect(
+            await q(`SELECT 1 FROM associations WHERE id = ANY($1::uuid[])`, [[P, Q]])
+          ).toEqual([]);
+        } finally {
+          await a.query('ROLLBACK').catch(() => undefined);
+          await b.query('ROLLBACK').catch(() => undefined);
+          await a.end();
+          await b.end();
+          await cleanup();
+        }
+      }, 30_000);
+    });
+
     it('a failing k-th proposal rolls the WHOLE edit back: fields, form detach, ended partner, earlier proposals', async () => {
       const Y = E(26);
       const Z = E(27);
@@ -1268,7 +1391,7 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
 
   describe('an acceptance on a validated event returns it to pending (WP-Q2, P13 interim, F7)', () => {
     const V = E(30); // validated: the acceptance reopens it
-    const PEND = E(31); // already pending: nothing to reopen, nothing to announce
+    const PEND = E(31); // already pending: nothing to reopen, the parties are told who joined
     const REJ = E(32); // rejected: stays rejected
     const MOVED = E(33); // validated, partner accepted, then the DATE moves
 
@@ -1360,13 +1483,19 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
       );
     });
 
-    it('an event already PENDING is not touched and announces nothing', async () => {
+    it('an event already PENDING is not reopened, and its parties are told who joined (WP-COORG-ACCEPT-NOTICE)', async () => {
       const proposalId = await ask(PEND);
       told.length = 0;
       await proposals.accept(proposalId, 'coPub', false);
       expect(await coOwnersOf(PEND)).toEqual([A3]);
       expect((await stamp(PEND)).status).toBe('pending');
-      expect(told.filter((t) => t.type.startsWith('event_'))).toEqual([]);
+      // The organiser's editor and the partner's other editor; the acceptor is dropped; no
+      // validator notice and no reopening sentence, since nothing returned to the queue.
+      const eventNotices = told.filter((t) => t.type.startsWith('event_'));
+      expect(eventNotices.map((t) => [t.type, t.recipientIds, t.text])).toEqual([
+        ['event_coorganiser_accepted', ['coEd', 'org'], 'Reopen 31'],
+      ]);
+      expect(eventNotices[0].meta).toEqual({ eventId: PEND });
     });
 
     it('a REJECTED event stays rejected', async () => {

@@ -41,3 +41,23 @@ describe('FormsController - the results summary', () => {
     expect(service.assertFormManager).toHaveBeenCalledWith('f1', 'm1', true);
   });
 });
+
+/** The respondents route has the SAME reader as the answers it is drawn from. */
+describe('FormsController - the respondents of a form', () => {
+  it('refuses a member who does not manage the form, and reads no respondent', async () => {
+    const service: any = {
+      assertFormManager: jest.fn(() => Promise.reject(new ForbiddenException())),
+      respondentsForGroup: jest.fn(),
+    };
+    const controller = new FormsController(
+      service,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any
+    );
+    await expect(controller.getRespondents('f1', 'stranger')).rejects.toThrow(ForbiddenException);
+    expect(service.respondentsForGroup).not.toHaveBeenCalled();
+  });
+});

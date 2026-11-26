@@ -132,6 +132,7 @@ export const PUSH_BUDGET: Readonly<
   event_deleted: FREE,
   event_pending: FREE,
   event_pending_coorganiser: FREE,
+  event_coorganiser_accepted: FREE,
   profile_correction_applied: FREE,
   profile_correction_refused: FREE,
   repost_personal_requested: FREE,

@@ -46,6 +46,7 @@ interface EventRow {
   id: string;
   associationId: string;
   title: string;
+  status: string;
 }
 
 /**
@@ -388,7 +389,19 @@ export class CoorganisationService implements OnModuleInit, ProposalKindHandler,
         RETURNING id`,
       [ev.id]
     );
-    if (demoted.length === 0) return () => Promise.resolve();
+    if (demoted.length === 0) {
+      // Not validated, so nothing went back to the queue and the reopening's notice is not owed. A
+      // PENDING event still changed under its organiser's feet (a new party holds a right on it), and
+      // before WP-COORG-ACCEPT-NOTICE nobody was told: say who joined, after the commit. A rejected
+      // event is the organiser's closed matter - logged, not announced.
+      if (ev.status === 'pending') {
+        return () => this.associations.announceCoorganiserAccepted(ev, actorId);
+      }
+      this.logger.debug(
+        `[COORG] ${ev.id.slice(0, 8)} is ${ev.status}: the acceptance of ${proposal.toAssociationId.slice(0, 8)} is not announced`
+      );
+      return () => Promise.resolve();
+    }
     this.logger.log(
       `[COORG] ${ev.id.slice(0, 8)} was validated: back to pending, a partner (${proposal.toAssociationId.slice(0, 8)}) joined it`
     );
@@ -456,7 +469,7 @@ export class CoorganisationService implements OnModuleInit, ProposalKindHandler,
 
   private async loadEvent(eventId: string, manager?: EntityManager): Promise<EventRow | null> {
     const rows: EventRow[] = await (manager ?? this.coOwnerRepo.manager).query(
-      `SELECT id, "associationId", title FROM association_calendar_events WHERE id = $1`,
+      `SELECT id, "associationId", title, status FROM association_calendar_events WHERE id = $1`,
       [eventId]
     );
     return rows[0] ?? null;

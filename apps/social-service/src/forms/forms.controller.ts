@@ -560,6 +560,22 @@ export class FormsController {
   }
 
   /**
+   * The accounts that answered a named, internal form, to fill a new group's member picker. The same
+   * rule as the answers themselves - `assertFormManager` - and refused `409` on an anonymous or a
+   * public form (`form-respondents.ts`).
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get(':id/respondents')
+  async getRespondents(
+    @Param('id') id: string,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    await this.service.assertFormManager(id, xUserId, ga === 'true');
+    return this.service.respondentsForGroup(id);
+  }
+
+  /**
    * The per-question results summary (G-RESULTS): counts, grid totals and scale means, aggregated in
    * SQL. THE SAME RULE AS THE RESPONSES LIST - `assertFormManager`, nobody else, not a respondent.
    */

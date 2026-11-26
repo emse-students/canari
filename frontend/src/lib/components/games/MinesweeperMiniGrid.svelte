@@ -48,6 +48,28 @@
   /** The mines counter, as the game's HUD draws it: the mines minus the flags, which is not a proof. */
   let remaining = $state(untrack(() => remainingMines(board)));
 
+  /**
+   * THE CELLS THE PICTURE ONLY SUGGESTS, in an open grid: hidden, and no revealed number touches them. Read
+   * once from the picture (opening a cell later does not make one of them part of the pattern).
+   */
+  const far = untrack(() =>
+    board.cells.map((cell, i) => {
+      if (!lesson.open || cell.state === 'revealed') return false;
+      const x = i % board.width;
+      const y = Math.floor(i / board.width);
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx;
+          const ny = y + dy;
+          const inside = nx >= 0 && nx < board.width && ny >= 0 && ny < board.height;
+          if ((dx || dy) && inside && board.cells[ny * board.width + nx].state === 'revealed')
+            return false;
+        }
+      }
+      return true;
+    })
+  );
+
   /** The numbers the shown explanation reads, ringed (`read`). */
   const reading = $derived.by(() => {
     const lit: Array<'read' | null> = board.cells.map(() => null);
@@ -77,6 +99,15 @@
     );
   });
 
+  /**
+   * REDUCTION (owner, 2026-11-26): a number shown with what is left of it once the flags it touches are
+   * taken off, as a small `-> n` pill on the number. The test holds each value to the board.
+   */
+  const reductions = $derived.by(() => {
+    const step = hintStep === null ? null : lesson.hints[hintStep];
+    return step?.reduced ?? [];
+  });
+
   /** Colours of an outline, by what it says. */
   const OUTLINE: Record<MarkKind, string> = {
     mine: 'border-red-err bg-red-err/15',
@@ -101,7 +132,7 @@
   }
 
   function act(index: number, flag: boolean) {
-    if (finished) return;
+    if (finished || far[index]) return;
     const x = index % board.width;
     const y = Math.floor(index / board.width);
     // A number is chorded by a tap whatever the mode: flagging a revealed cell is meaningless.
@@ -130,12 +161,14 @@
 <div class="flex flex-col items-center gap-3">
   <span
     role="img"
-    aria-label={m.minesweeper_tutorial_counter({ n: String(remaining) })}
+    aria-label={lesson.open
+      ? m.minesweeper_tutorial_counter_unknown()
+      : m.minesweeper_tutorial_counter({ n: String(remaining) })}
     class="text-text-main flex items-center gap-1.5 text-sm font-bold"
     data-testid="tutorial-counter"
   >
     <Bomb size={16} class="text-cn-dark" />
-    {remaining}
+    {lesson.open ? '?' : remaining}
   </span>
 
   <!-- The two layers share the cell size, so an outline is placed in cells with `calc`, no measuring. -->
@@ -149,7 +182,12 @@
       oncontextmenu={handleContextMenu}
     >
       {#each views.views as cell, i (i)}
-        <MinesweeperCell {cell} index={i} pending={false} highlight={reading[i]} />
+        <MinesweeperCell
+          {cell}
+          index={i}
+          pending={false}
+          highlight={reading[i] ?? (far[i] ? 'far' : null)}
+        />
       {/each}
     </div>
 
@@ -171,6 +209,17 @@
             </span>
           {/if}
         </div>
+      {/each}
+      {#each reductions as r (`${r.cell[0]}-${r.cell[1]}`)}
+        <span
+          data-reduced={r.value}
+          class="bg-cn-dark text-cn-surface absolute z-10 rounded-full px-1.5 text-xs font-bold"
+          style="left: calc({r
+            .cell[0]} * (var(--ms-cell) + 1px) + var(--ms-cell) - 1.1rem); top: calc({r
+            .cell[1]} * (var(--ms-cell) + 1px) - 0.55rem);"
+        >
+          → {r.value}
+        </span>
       {/each}
     </div>
   </div>

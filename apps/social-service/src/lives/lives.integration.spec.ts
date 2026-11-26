@@ -651,7 +651,8 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       await start();
       expect(usage.count.mock.calls).toEqual([['lives']]);
       usage.count.mockClear();
-      expect((await refusal(start())).code).toBe('LIVE_ALREADY_OPEN');
+      // A refused start (the title is checked before anything is written) counts nothing.
+      expect((await refusal(lives.start(ALICE, { key: 'short' }))).code).toBe('LIVE_KEY_INVALID');
       expect(usage.count).not.toHaveBeenCalled();
     });
 
@@ -680,14 +681,40 @@ maybe('lives against PostgreSQL (migrations 091, 094, 097, 098, 099, 110, 139)',
       });
     });
 
-    it('holds ONE open live per broadcaster in the database, and frees it at the end', async () => {
+    it('holds ONE open live per broadcaster in the database, and a new start ends the previous one at once', async () => {
       const first = await start();
-      expect(await refusal(start())).toEqual({
-        status: HttpStatus.CONFLICT,
-        code: 'LIVE_ALREADY_OPEN',
-      });
-      await lives.end(ALICE, first.id);
+      await lives.ingest(ALICE, first.id, 0, segment(0));
+      // A page reloaded or a phone crashed mid-live: the same account starts again with no wait.
+      const second = await start();
+      expect(second.id).not.toBe(first.id);
+      const open = (await ds.query(
+        `SELECT id FROM lives WHERE "broadcasterId" = $1 AND "endedAt" IS NULL`,
+        [ALICE]
+      )) as { id: string }[];
+      expect(open).toEqual([{ id: second.id }]);
+      // The old live is ended by its broadcaster and purged like any end: its uploader is told so.
+      expect(
+        (await refusal(lives.ingest(ALICE, first.id, 1, segment(1)))).status
+      ).toBeGreaterThanOrEqual(400);
+      await lives.end(ALICE, second.id);
       await expect(start()).resolves.toBeDefined();
+    });
+
+    it('two starts of one account at the same moment leave ONE open live and a typed 409 for the loser', async () => {
+      await start();
+      const settle = (p: Promise<unknown>) =>
+        p.then(
+          () => 'started',
+          (e: { getResponse?: () => { code?: string } }) => e.getResponse?.().code
+        );
+      const outcomes = await Promise.all([start(), start()].map(settle));
+      const open = (await ds.query(
+        `SELECT id FROM lives WHERE "broadcasterId" = $1 AND "endedAt" IS NULL`,
+        [ALICE]
+      )) as unknown[];
+      expect(open).toHaveLength(1);
+      expect(outcomes.filter((o) => o === 'started').length).toBeGreaterThanOrEqual(1);
+      for (const o of outcomes) expect(['started', 'LIVE_ALREADY_OPEN']).toContain(o);
     });
 
     it('REFUSES A REMOVED VIEWER the key, the manifest and the listing - and only that viewer', async () => {

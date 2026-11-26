@@ -44,6 +44,7 @@ import {
 import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
 import { assertCotisationModeClearable } from './members-only-gate';
+import { lockAssociationsReachedByCoorganisation } from './association-delete-lock';
 import { isUUID } from 'class-validator';
 import { In, IsNull, Not, Repository, type EntityManager, type SelectQueryBuilder } from 'typeorm';
 import { randomBytes, hkdfSync } from 'crypto';
@@ -1647,8 +1648,11 @@ export class AssociationsService {
       // co-organisation decision's `KEY SHARE`, which waited on them (`40P01`). `FOR UPDATE`, not
       // `FOR NO KEY UPDATE`: only the former conflicts with `KEY SHARE`. The account erasure takes
       // its associations first too (`ERASURE_ASSOCIATION_LOCK_SQL`), so the two never cross.
-      await manager.query(`SELECT 1 FROM associations WHERE id = $1 FOR UPDATE`, [id]);
-      this.logger.debug(`[ASSO] DELETE ${id}: association locked`);
+      // AND every association its events' co-organisation reaches, in id order, in the same
+      // statement: two deletes of associations that co-organise each other's events crossed their
+      // cascades (`40P01`) when each held only its own row (`association-delete-lock.ts`).
+      const held = await lockAssociationsReachedByCoorganisation(manager, id);
+      this.logger.debug(`[ASSO] DELETE ${id}: ${held} association(s) locked in id order`);
       await this.assertMayReleaseDependents(manager, id, isGlobalAdmin);
       // Its Lydia cashier rows go with it (ON DELETE CASCADE), and with them every membership: a
       // Tresorier, a Vendeur or a Responsable's other number still live would keep its rights at
@@ -4457,6 +4461,37 @@ ${rejectionReason}`
     } catch (err) {
       this.logger.warn(
         `[EVENT_REOPENED] ${sanitizeLog(ev.id.slice(0, 8))} (${reason}): the parties were not told`,
+        err instanceof Error ? err.stack : String(err)
+      );
+    }
+  }
+
+  /**
+   * A partner ACCEPTED to co-organise an event that was already PENDING (WP-COORG-ACCEPT-NOTICE):
+   * nothing returned to the queue, so the validators are told nothing new - only the event's parties
+   * (the `PROPOSE_EVENT` holders of the organiser and of each accepted partner, the acceptor's
+   * included) learn who joined. NEVER REJECTS, like `announceEventReopened`: it runs after a commit
+   * that must stay a success.
+   */
+  async announceCoorganiserAccepted(ev: ReopenedEvent, actorId: string): Promise<void> {
+    try {
+      const partyIds = await this.eventPartyIds(ev);
+      const written = await this.notifications.createNotifications({
+        recipientIds: [...partyIds],
+        type: 'event_coorganiser_accepted',
+        postId: ev.associationId,
+        actorId,
+        text: ev.title,
+        // `eventId`: what the bell re-asks at every read (`BELL_ROW_GATE`, `eventPartySql`).
+        meta: { eventId: ev.id },
+        pushData: { associationId: ev.associationId, action: 'pending' },
+      });
+      this.logger.log(
+        `[COORG_ACCEPTED] ${sanitizeLog(ev.id.slice(0, 8))}: ${written} party notice(s) written (accepted by ${sanitizeLog(actorId.slice(0, 8))})`
+      );
+    } catch (err) {
+      this.logger.warn(
+        `[COORG_ACCEPTED] ${sanitizeLog(ev.id.slice(0, 8))}: the parties were not told`,
         err instanceof Error ? err.stack : String(err)
       );
     }

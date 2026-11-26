@@ -67,6 +67,12 @@ export const FORM_STALE_OPEN_MIN_CLIENT_VERSION = '1.8.0';
  */
 export const FORM_WAITLIST_MIN_CLIENT_VERSION = '1.8.0';
 
+/**
+ * The first build that draws the notice of a co-organisation accepted on an event still waiting for
+ * validation (`event_coorganiser_accepted`, WP-COORG-ACCEPT-NOTICE): the bell row and the push key.
+ */
+export const COORGANISER_ACCEPTED_MIN_CLIENT_VERSION = '1.8.2';
+
 /** The first build that draws a campus trend as a suggestion rather than as a person (2026-11-10). */
 export const CAMPUS_TREND_MIN_CLIENT_VERSION = '1.6.10';
 
@@ -142,6 +148,7 @@ export const NOTIFICATION_TYPE_MIN_CLIENT = {
   // The question put to a form left open (owner, 2026-11-21): the first build that draws it. A bell
   // row only, no push, so no push key.
   form_stale_open: FORM_STALE_OPEN_MIN_CLIENT_VERSION,
+  event_coorganiser_accepted: COORGANISER_ACCEPTED_MIN_CLIENT_VERSION,
   // The one notice of the waiting list, a promotion (owner, 2026-11-23): the first build that draws it.
   form_waitlist_promoted: FORM_WAITLIST_MIN_CLIENT_VERSION,
   // The same promotion on a paid online form, whose place is held for the payment (`payment_due`).
@@ -209,6 +216,7 @@ export const PUSH_KEY_MIN_CLIENT: Readonly<Record<PushContentKey, string | null>
   delegation_receiver_not_ready: '1.6.3',
   delegation_resumed: '1.6.3',
   event_pending_coorganiser: '1.6.3',
+  event_coorganiser_accepted: COORGANISER_ACCEPTED_MIN_CLIENT_VERSION,
   social_friend_reaction: '1.6.9',
   social_friend_comment: '1.6.9',
   social_live_mention: '1.6.9',
