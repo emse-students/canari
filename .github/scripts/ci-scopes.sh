@@ -228,8 +228,10 @@ fi
 # dependency set (`package.json`, `bun.lock`, `patches/`), the build configuration
 # (`kit.config`, `vite.config`, so the adapters too) and the image that serves the
 # output. An `adapter-node` bump broke the main-only build AFTER its pull request had
-# passed every gate here, because nothing ran the build before the merge.
-if has '^frontend/package.json' || has '^frontend/bun.lock' || has '^frontend/patches/' ||              has '^frontend/kit.config' || has '^frontend/vite.config' ||              has '^infrastructure/local/Dockerfile.frontend$'; then
+# passed every gate here, because nothing ran the build before the merge. The SSR image
+# (`Dockerfile.frontend-ssr`, which runs the server the build's assertion starts) and the
+# assertion itself are inputs too (2026-11-26): a change to the gate must run the gate.
+if has '^frontend/package.json' || has '^frontend/bun.lock' || has '^frontend/patches/' ||              has '^frontend/kit.config' || has '^frontend/vite.config' ||              has '^infrastructure/local/Dockerfile.frontend$' || has '^infrastructure/local/Dockerfile.frontend-ssr$' ||    has '^\.github/scripts/assert-frontend-build\.mjs$'; then
   echo "frontend_build=true"
 else
   echo "frontend_build=false"

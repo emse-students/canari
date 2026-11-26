@@ -264,8 +264,9 @@ what the bypass skipped. **THE `push` RUN ALSO BUILDS THE PRODUCTION FRONTEND, O
 the suite lints, type-checks and tests but built nothing, so the build-id defects of #1476 and #1498
 (a bundle naming no commit, two ids in one output) showed only at a release tag. The
 `test-frontend` job runs `BUILD_WEB=1 bun run build` on `push` only - pull requests skip it for cost -
-then `.github/scripts/assert-frontend-build.mjs` checks the stamp names THIS commit and that the wasm
-and protobuf module are in; `assert-frontend-build.test.mjs` pins each refusal and that `ci.yml`
+then `.github/scripts/assert-frontend-build.mjs` checks the stamp names THIS commit, that the wasm
+and protobuf module are in, and that the built server STARTS under node with no `node_modules`, as the SSR image runs it
+([architecture](frontend/architecture.md#the-server-half-imports-no-package-2026-11-26)); `assert-frontend-build.test.mjs` pins each refusal and that `ci.yml`
 calls it. The release does not reuse the artefact: each estate bakes its own `VITE_*` origins in
 (`build.yml`), which `main`'s build has none of. **Nothing here deploys**, so a red run on `main` is a statement about the
 repository and never about production, which is still serving the last release.
