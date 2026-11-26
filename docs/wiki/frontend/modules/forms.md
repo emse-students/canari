@@ -4226,3 +4226,32 @@ the cascade, a second press, the holder against everybody else, the submit spend
 the sweep, a lapsed hold restarting, the release, two presses for the last seat, the sweep promoting the first in
 line, the refusals, the erasure statement; the mocked service specs answer the hold count 0; `seatHold.test.ts`
 for the offer rule and the countdown. The reading on a phone is a backlog entry.
+
+## "Tester l'envoi" in the preview (owner, 2026-11-17; built 2026-11-26)
+
+**Why.** An organiser who wanted to try a form moved its opening to "now", and everyone who had pressed
+the bell was told it was open ([engagement](../../engagement.md), L30). The preview shut the send button, so
+the only way to try the send was to open the form. Charter: principle 1 (the bell is the reader's, a
+test must never ring it) and principle 3 (no notification for the organiser's convenience).
+
+**What it is.** In a PREVIEW (`isPreview`: a draft, or the unpublished revision of a published form) a
+secondary "Tester l'envoi" button sits beside the shut send button. It runs `answerHoldsNothingBack` in
+`routes/forms/[id]/+page.svelte` - the very function the real send now calls first (required questions,
+the order across the grids, an anonymous form's declared fields) - then says, in the sticky bar,
+"Test reussi ... Rien n'a ete enregistre ... personne n'a ete prevenu", with the total the answer would be
+charged. The report disappears the moment the answer changes (it is keyed on the answer as the send
+would carry it). The form is NOT opened and nothing is sent: `submitForm` is never called.
+
+**Decision (reversible, lead): no marker row, no migration.** The entry proposed a `submissions` column
+marking a TEST row, which every reader of the table (seats, exports, the list, the organiser alerts, the
+payment callbacks, the refund sweep, the reconciliation) would have to skip: one missed reader counts a
+test as a real answer. And the preview of a DRAFT or of unpublished edits would need the server to judge
+the REVISION, which the submit path reads from the published row only. The same observable promise - no
+seat, no export, no alert, no notification, nobody told - is kept by sending nothing at all, so no
+reader can miss it. What it does not test: the rules only the server knows (capacity, audience, a closed
+combination) and a sandbox payment. If the owner later wants a sandbox payment tried from the preview, the
+marker design above is still the way, and its audit must enumerate every reader of `submissions` first.
+
+**Tests.** `routes/forms/[id]/page.preview.svelte.test.ts` (offered in a preview only; a complete answer
+passes and sends nothing; a required question left empty is refused as the send refuses it).
+The reading on a phone is a backlog entry.

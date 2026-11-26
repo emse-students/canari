@@ -699,6 +699,12 @@
     return form ? price.total : 0;
   }
 
+  /** The answer as the send would carry it: what a test of the send was run on. */
+  const answerKey = $derived(JSON.stringify(visibleAnswers(visibleItems, selections)));
+  /** The preview's last accepted test; shown only while the answer is still the one it judged. */
+  let testSendReport = $state<{ key: string; total: number } | null>(null);
+  const shownTestReport = $derived(testSendReport?.key === answerKey ? testSendReport : null);
+
   /** What a question's card says after a refused send: why, while it is still unanswered. */
   function questionError(item: { id: string }): string | null {
     if (!missingAnswer || missingAnswer.itemId !== item.id) return null;
@@ -928,6 +934,62 @@
     });
   });
 
+  /**
+   * Judges the answer as the send does - a required question, the order across the grids, what an
+   * anonymous form asks to be declared - and says the first problem where the reader is looking
+   * (the question's own card, brought into view). ONE judgement for the real send and the preview's
+   * "Tester l'envoi", so a test can never pass what a send refuses. True when nothing holds the
+   * answer back.
+   */
+  async function answerHoldsNothingBack(): Promise<boolean> {
+    const missing = firstMissingAnswer(visibleItems, selections, gridSwitch);
+    missingAnswer = missing;
+    if (missing?.itemId === null) {
+      // An empty ORDER is the form's, no card's: said once, announced, and brought into view.
+      Log.d('FormView', 'submit held: the order across the grids is empty');
+      error = '';
+      await revealOrderMissing();
+      return false;
+    }
+    if (missing) {
+      // Said on the question's own card, which is brought into view: the bar is far from it.
+      error = '';
+      Log.d('FormView', `submit held: required question ${missing.itemId} (${missing.kind})`);
+      document
+        .getElementById(`q-${missing.itemId}`)
+        ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      return false;
+    }
+    // What an anonymous form asks to be declared, said on its own fields, brought into view.
+    const declaredMissing = firstDeclaredProblem(askedDeclared, declared);
+    if (declaredMissing) {
+      declaredChecked = true;
+      error = '';
+      Log.d('FormView', `submit held: declared ${declaredMissing} missing or invalid`);
+      document
+        .getElementById('declared-identity')
+        ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * The preview's "Tester l'envoi" (owner, 2026-11-17): the send's own judgement on the answer as it
+   * stands, and the total it would charge. Nothing is sent, stored or announced.
+   */
+  async function testSend() {
+    if (!form || !preview) return;
+    Log.d('FormView', 'test send in the preview');
+    error = '';
+    if (!(await answerHoldsNothingBack())) {
+      testSendReport = null;
+      return;
+    }
+    testSendReport = { key: answerKey, total: calculateTotal() };
+    Log.d('FormView', `test send accepted: total ${testSendReport.total}`);
+  }
+
   async function handleSubmit(payerEmail?: string) {
     if (!form || submitting) return;
     if (preview) {
@@ -957,35 +1019,7 @@
       return;
     }
 
-    const missing = firstMissingAnswer(visibleItems, selections, gridSwitch);
-    missingAnswer = missing;
-    if (missing?.itemId === null) {
-      // An empty ORDER is the form's, no card's: said once, announced, and brought into view.
-      Log.d('FormView', 'submit held: the order across the grids is empty');
-      error = '';
-      await revealOrderMissing();
-      return;
-    }
-    if (missing) {
-      // Said on the question's own card, which is brought into view: the bar is far from it.
-      error = '';
-      Log.d('FormView', `submit held: required question ${missing.itemId} (${missing.kind})`);
-      document
-        .getElementById(`q-${missing.itemId}`)
-        ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      return;
-    }
-    // What an anonymous form asks to be declared, said on its own fields, brought into view.
-    const declaredMissing = firstDeclaredProblem(askedDeclared, declared);
-    if (declaredMissing) {
-      declaredChecked = true;
-      error = '';
-      Log.d('FormView', `submit held: declared ${declaredMissing} missing or invalid`);
-      document
-        .getElementById('declared-identity')
-        ?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      return;
-    }
+    if (!(await answerHoldsNothingBack())) return;
     if (editing) {
       // A change neither prices nor pays: the payment steps below are not reached.
       await saveEdit();
@@ -1511,6 +1545,17 @@
 
 <!-- The send button, one markup for the plain bar and the order bar of a form with priced grids. -->
 {#snippet payButton()}
+  {#if preview}
+    <Button
+      variant="secondary"
+      class="shrink-0"
+      disabled={submitting}
+      data-testid="form-test-send"
+      onclick={() => void testSend()}
+    >
+      {m.form_test_send_button()}
+    </Button>
+  {/if}
   <Button
     variant="primary"
     class="shrink-0"
@@ -2119,6 +2164,19 @@
       ? 'sticky bottom-0 z-50 md:pb-5'
       : ''}"
   >
+    {#if preview && shownTestReport}
+      <p
+        class="border-cn-border/60 bg-cn-surface text-text-main mb-2 rounded-2xl border px-4 py-3 text-sm shadow-lg"
+        data-testid="form-test-send-report"
+        role="status"
+      >
+        {shownTestReport.total > 0
+          ? m.form_test_send_ok_paid({
+              amount: formatCurrency(shownTestReport.total, form.currency),
+            })
+          : m.form_test_send_ok_free()}
+      </p>
+    {/if}
     <!-- AN ORDER IS TOTALLED WHERE IT IS PAID, from the first item (owner's mockup, 2026-11-06): a
          form with a priced grid keeps the bar stuck from the start, with the order's recap. -->
     {#if hasProductGrid && !readOnly && !priceUnavailable && !editing}
