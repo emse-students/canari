@@ -4925,6 +4925,41 @@ export class ProductsService {
    * need in order to decide between retrying, settling it by hand, and dropping the row.
    */
   async listWebhookFailures(associationId: string): Promise<FailedDelivery[]> {
+    return this.listDeliveriesInState(associationId, 'failed');
+  }
+
+  /**
+   * The association's PARKED deliveries: top-ups Le Cercle accepted (202) for a member who has never
+   * signed in there, and holds until their first sign-in. Nothing on this side moves them on, so they
+   * are listed for the admin to SEE (with their age, `lastAttemptAt` being the moment of the park),
+   * never retried, and never swept by the GC (`purgeDeliveredWebhooks`).
+   */
+  async listParkedDeliveries(associationId: string): Promise<FailedDelivery[]> {
+    return this.listDeliveriesInState(associationId, 'parked');
+  }
+
+  /**
+   * How many deliveries are parked, and how many of them since before `olderThan` - the daily
+   * report's reading (`CercleDeliveryScheduler.reportLongParked`). Counts only: no member is named.
+   */
+  async countParkedDeliveries(olderThan: Date): Promise<{ parked: number; old: number }> {
+    const parked = await this.deliveryRepo
+      .createQueryBuilder('d')
+      .where("d.status = 'parked'")
+      .getCount();
+    const old = await this.deliveryRepo
+      .createQueryBuilder('d')
+      .where("d.status = 'parked'")
+      .andWhere('COALESCE(d.lastAttemptAt, d.createdAt) < :olderThan', { olderThan })
+      .getCount();
+    return { parked, old };
+  }
+
+  /** One association's deliveries in `status`, newest first, with each member's name. */
+  private async listDeliveriesInState(
+    associationId: string,
+    status: 'failed' | 'parked'
+  ): Promise<FailedDelivery[]> {
     const products = await this.productRepo.find({
       where: { associationId },
       select: { id: true, name: true },
@@ -4935,7 +4970,7 @@ export class ProductsService {
     const deliveries = await this.deliveryRepo
       .createQueryBuilder('d')
       .where('d.productId IN (:...ids)', { ids: [...productNames.keys()] })
-      .andWhere("d.status = 'failed'")
+      .andWhere('d.status = :status', { status })
       .orderBy('d.createdAt', 'DESC')
       .getMany();
 

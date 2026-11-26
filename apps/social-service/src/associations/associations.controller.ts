@@ -1990,6 +1990,17 @@ export class AssociationsController {
     return this.productsService.listWebhookFailures(id);
   }
 
+  /**
+   * Lists the PARKED Cercle deliveries: accepted by Le Cercle for a member who has not signed in
+   * there yet, credited at their first sign-in. Shown, never retried. Requires MANAGE_PRODUCTS flag.
+   */
+  @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.MANAGE_PRODUCTS)
+  @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
+  @Get(':id/webhook-parked')
+  listParkedDeliveries(@Param('id') id: string) {
+    return this.productsService.listParkedDeliveries(id);
+  }
+
   // ── Partnerships ──────────────────────────────────────────────────────────
   // `partnerships/all` is declared before `:id/partnerships` for the same reason `products/all`
   // precedes `:id/products` above.

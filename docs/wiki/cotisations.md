@@ -1213,8 +1213,17 @@ product's `webhookUrl`:
   "A top-up for a member not yet here"). Canari records the row as **`parked`**, a state of its
   own rather than `delivered`: the money is not yet on the balance, and a reading of "what reached
   the Cercle" must be able to tell the two apart. It is terminal here - `nextAttemptAt` null, never
-  retried, not in the `/admin/cercle` failure list, swept by the weekly GC like `delivered`. A `404`
+  retried, not in the `/admin/cercle` failure list. A `404`
   stays a failure: it now means a route or host that is not the receiver.
+- **A parked top-up is SEEN, not swept (2026-11-27, review of #4177).** Nothing on this side moves
+  a `parked` row on - Le Cercle never says when the credit lands - so a member who never signs in
+  there would leave paid money waiting where nobody looks. So `/admin/cercle` lists the parked rows
+  in their own section (`GET /associations/:id/webhook-parked`), each with its age since the park
+  (`lastAttemptAt`), amber past `LONG_PARKED_DAYS` (7); the weekly GC never deletes them; and
+  `CercleDeliveryScheduler.reportLongParked` prints one line daily at 03:25, counts only
+  (`[CERCLE_PARKED] parked=N older_than_7d=M`): `log` at zero, `warn` while any has waited longer,
+  `error` when it cannot count. The seven days are a reading threshold, not a timeout: nothing is
+  retried or moved when they elapse.
   **Deploy order does not matter**: an old Canari reads the `202` as a 2xx (delivered), and an old
   Le Cercle keeps answering `404`, which this client still retries.
 
@@ -1239,8 +1248,8 @@ visible one. Consequences worth knowing:
 - A **manual** retry is exactly ONE attempt: re-running the 3-attempt ladder sleeps 5s then 15s with
   a 10s timeout each, so the admin's request could hang for the better part of a minute and time out
   at the proxy. It also resets `autoRetryCount`, since pressing it means something was fixed.
-- The weekly GC (`purgeDeliveredWebhooks`) only deletes `delivered` and `parked` rows older than 30 days, so a
-  failure is never swept out from under the ladder.
+- The weekly GC (`purgeDeliveredWebhooks`) only deletes `delivered` rows older than 30 days, so a
+  failure is never swept out from under the ladder, nor a parked top-up out of the admin's sight.
 
 `listWebhookFailures` returns a `FailedDelivery` DTO, not the entity: the row carries two uuids and
 neither tells an admin whose top-up is stuck, so the member's name and the product's are joined in.

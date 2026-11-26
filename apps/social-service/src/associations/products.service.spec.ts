@@ -199,6 +199,8 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
     // What `createQueryBuilder(...).getMany()` should answer. Chainable, because the service builds
     // its query fluently.
     let queryBuilderRows: any[] = [];
+    // What successive `getCount()` calls answer, in order (the parked report's two counts).
+    let queryBuilderCounts: number[] = [];
     const deliveryRepo = {
       create: jest.fn((x: any) => ({
         attemptCount: 0,
@@ -220,11 +222,15 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
           qb[method] = jest.fn(() => qb);
         }
         qb.getMany = jest.fn(() => Promise.resolve(queryBuilderRows));
+        qb.getCount = jest.fn(() => Promise.resolve(queryBuilderCounts.shift() ?? 0));
 
         return qb;
       }),
       __setRows: (rows: any[]) => {
         queryBuilderRows = rows;
+      },
+      __setCounts: (counts: number[]) => {
+        queryBuilderCounts = counts;
       },
     };
     const assoRepo = {
@@ -2532,6 +2538,39 @@ describe('ProductsService cotisation gating/pricing and Cercle re-gating', () =>
       // able to tell them apart - so no placeholder name is invented here.
       expect(listed.firstName).toBeNull();
       expect(listed.userId).toBe('user1');
+    });
+
+    /** The `andWhere` arguments of every query built on the delivery repo, flattened. */
+    function whereArgs(deliveryRepo: any): unknown[] {
+      return deliveryRepo.createQueryBuilder.mock.results.flatMap((r: any) => [
+        ...r.value.where.mock.calls.flat(),
+        ...r.value.andWhere.mock.calls.flat(),
+      ]);
+    }
+
+    it('lists the failures by their status, and the parked deliveries by theirs', async () => {
+      const { service, productRepo, deliveryRepo, manager } = makeService();
+      productRepo.find.mockResolvedValue([{ id: 'prod1', name: 'Recharge Cercle' }]);
+      deliveryRepo.__setRows([failedRow({ status: 'parked', nextAttemptAt: null })]);
+      manager.query.mockResolvedValue([{ id: 'user1', firstName: 'Camille', lastName: 'Durand' }]);
+
+      const [parked] = await service.listParkedDeliveries('asso1');
+
+      expect(parked.status).toBe('parked');
+      expect(parked.firstName).toBe('Camille');
+      expect(whereArgs(deliveryRepo)).toContainEqual({ status: 'parked' });
+
+      await service.listWebhookFailures('asso1');
+      expect(whereArgs(deliveryRepo)).toContainEqual({ status: 'failed' });
+    });
+
+    it('counts the parked deliveries, and those parked since before the cutoff', async () => {
+      const { service, deliveryRepo } = makeService();
+      deliveryRepo.__setCounts([5, 2]);
+      const olderThan = new Date('2026-11-20T03:25:00Z');
+
+      expect(await service.countParkedDeliveries(olderThan)).toEqual({ parked: 5, old: 2 });
+      expect(whereArgs(deliveryRepo)).toContainEqual({ olderThan });
     });
   });
 
