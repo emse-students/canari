@@ -2916,6 +2916,29 @@ out into a throwaway worktree, builds `frontend/mls-cross-version` - one driver 
 conversation through files: the old side opens the group and admits today by Welcome, today mints a
 frame the old side must read, and the old side mints one today must read.
 
+**A fourth leg carries a STATE across (2026-11-25).** For a state blob the reader is normally the writer,
+but not on a rollback: the rule for a broken production is a rollback to the last good release, which
+then opens states this commit wrote, holding fields it may predate. They are all `#[serde(default)]`
+(`app_ledgers` of KILL-2, `admission`, `member_sightings`, `graine_runs`), and "an older build ignores
+them on read and drops them on its next write" was a reading of serde, not a measurement. So the gate
+builds a THIRD binary, at the newest stable tag (`newest_stable`, read from the checkout's tags), and
+holds a second conversation with it: today's state is seeded with the app's three ledgers and an
+`open` admission policy (driver commands built only with `--features today`, so the one source still
+compiles against older tags), the rollback build opens it, reads a frame and writes it back, and today
+reopens it. What must come back is decided from a fact, the rollback tag's own `PersistedState`: a
+field it declares comes back exactly as seeded, a field it predates comes back empty (dropped, not
+corrupted - for the ledgers, the case `stateLedgerMigration.ts` reads as "migrate",
+[mls-desync-prevention](protocols/mls-desync-prevention.md#the-ledgers-that-describe-the-state-travel-inside-it-kill-2-2026-10-26));
+the epoch is unchanged and the ratchet still speaks both ways. A failure names its half: the old load
+or the old save (the driver's own message), or the new reload.
+
+**Measured the day it was built:** against `v1.8.1` (the newest stable) the ledgers and the policy were
+carried unchanged; against `v1.6.12`, the newest stable predating `app_ledgers`, the ledgers came back
+`{}` and the group, its epoch and its ratchet whole - the drop the KILL-2 design assumed, now observed.
+`FIXTURE_VERSION` (`v0.14.14`) is not the state leg's old side, and cannot be: it refuses today's state
+outright (`load_or_create` -> `OpenMls(SerializationError)`, the openmls storage moved since), a
+rollback cut crossed long ago, like the one-way byte-string step of WP-ANR-1 (`byte_compat.rs`).
+
 Its own job in `ci.yml` runs it, and `ci-passed` needs that job, so a break blocks the merge. **The
 filter that starts it is the load-bearing part**: a Dependabot bump of this family touches no source
 file at all, only `frontend/mls-wasm/Cargo.lock` and `frontend/src-tauri/Cargo.lock`, so a path filter
@@ -2923,6 +2946,8 @@ naming `mls-core/**` would have skipped every pull request it was written to jud
 have been green for the reason that nothing was asked. `.github/scripts/tests/mls-forward-compat.test.sh`
 feeds that filter the file list a real bump produces and requires it to fire. What the gate does NOT
 cover: one group, one epoch, one application frame each way - a change breaking only a removal, an
+external join or a PSK would pass it.
+
 The live list is `Dependency ceiling` in `ci.yml`, which reads `.github/scripts/lib/ceiling.sh`: the table above is the whole of it.
 
 A refusal is **never** routed to a human queue. It is posted as a comment on the pull request naming
