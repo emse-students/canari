@@ -1165,7 +1165,8 @@ duplicate's account by that subject alone, since nothing else tells two rows of 
   erasable). **What never moves: a privilege.** A role (`admin`, `mitviste`, `cercleux`) belongs to
   the account it was granted to; it is not carried onto the target when the target already has an
   account, and the site logs that it dropped one. Canari's own duplicate account stays as D48 says:
-  erased (its holdings named at the confirmation), not transferred.
+  erased (its holdings named at the confirmation), not transferred - confirmed by the owner on
+  2026-11-26 ([decisions](decisions/owner-decisions-of-2026-11-26-alumni.md), item 8).
 - **D53 - How each site transfers** (the allowlist is these tables and nothing else; every other
   table is untouched, a test per site enumerates the schema and fails on a table that names a user
   and is in neither list):
@@ -1180,17 +1181,22 @@ duplicate's account by that subject alone, since nothing else tells two rows of 
     promo copied from the duplicate; the target's next sign-in overwrites them as every sign-in
     does), then favourites (`INSERT OR IGNORE`), photo-access grants on both sides (a grant to
     oneself dropped), per-user album grants, `locale` when the target has none, and the face link
-    with ALL its face rows when the target has none - the consent row keeps its date, terms version
-    and `source`, because it is the same person's consent; when both have a face link the target's
+    with ALL its face rows when the target has none - the owner's decision of 2026-11-26
+    ([decisions](decisions/owner-decisions-of-2026-11-26-alumni.md), item 9): the enrolment and its
+    consent move TOGETHER, the consent row keeping its date, terms version and `source`, because it
+    is the same person's consent; when both have a face link the target's
     stays and the duplicate's is erased. Then `deleteUserAccount(duplicate)`, which finds no face
     link left to journal when it moved: `transferred`.
   - **Le Cercle**: no row -> `absent`. The target has no row -> the duplicate's row is RENAMED to the
     target's subject, exactly as a legacy account is reclaimed (`ON UPDATE CASCADE` carries the
     ledger, sessions and bartender rows; `till_requests` is updated by hand, it has no foreign key):
-    `transferred`, the books untouched. The target has a row -> the balance and the membership must
-    move between two accounts, which the ledger has no line for: **an owner question** (below); until
-    it is answered this case answers `409 ALUMNI_MERGE_BOTH_ACCOUNTS_HOLD`, changes nothing, and is
-    reported (D54).
+    `transferred`, the books untouched. The target has a row -> the balance and the membership move
+    through a PAIR of `transfer` ledger lines, one out of the duplicate and one into the target, each
+    naming the other (the owner's decision of 2026-11-26,
+    [decisions](decisions/owner-decisions-of-2026-11-26-alumni.md), item 7) - a new ledger type, so a
+    Le Cercle schema migration; the duplicate is then closed by `deleteOwnAccount`, its balance
+    already zero: `merged`. **Until that migration ships**, and only until then, this case answers
+    `409 ALUMNI_MERGE_BOTH_ACCOUNTS_HOLD`, changes nothing, and is reported (D54).
   - **Portail-etu**: no package - it keeps no account (read 2026-11-26).
 - **D54 - The completion follows the merge, and the sites follow the completion** (lead, item 5).
   - **The push.** MiConnect journals the merge as an Event `custom_alumni_merge` (D57 makes it
@@ -1291,9 +1297,10 @@ duplicate's account by that subject alone, since nothing else tells two rows of 
   reconciler (warning), a site job pending over 24 h or blocked (daily report, error), a homonym pair
   with nothing to tell apart (warning): each names the merge id and the site, never a name.
 
-**The owner question this design leaves open** ([parked](open-questions.md#le-cercle-how-a-balance-moves-between-two-accounts-of-one-person-parked-2026-11-26)): Le Cercle when BOTH accounts exist
-(the ledger has no transfer line; recommended: a `transfer` line pair in the ledger, a schema
-migration on Le Cercle's side, over a `cashout`+`topup` pair that would book money nobody paid).
+**The three questions this design raised were answered by the owner on 2026-11-26**, each with the
+recommended option ([decisions](decisions/owner-decisions-of-2026-11-26-alumni.md), items 7-9): Le
+Cercle's `transfer` line pair (D53), Canari's own duplicate erased as D48 says (D52), the MiGallery
+face enrolment transferred with its consent (D53).
 
 ## The access plan - who sees what (decided with the user, 2026-10-04)
 

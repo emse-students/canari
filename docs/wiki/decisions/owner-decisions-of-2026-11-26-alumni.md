@@ -2,7 +2,8 @@
 
 Recorded so no question answered here is asked again. Items 1-4 are the owner's, recorded as he gave
 them; items 5-6 are the lead's, taken under the absence rule (reversible) from what the owner said
-and saw the same evening. The design they apply is D52-D58 in
+and saw the same evening; items 7-9 are the owner's answers, the same evening, to the three
+questions the design raised. The design they apply is D52-D58 in
 [profiles-and-access](../profiles-and-access.md#the-alumni-merge-extended-d52-d58-planned-for-183).
 
 1. **When a duplicate is merged, its local account on Sky, MiGallery, Portail-etu and Le Cercle (if
@@ -31,3 +32,15 @@ and saw the same evening. The design they apply is D52-D58 in
    reversible). Charter principle 7, *simple, léger, agréable* ([principes](../../principes.md)), and
    the owner's directive of one homogeneous app: every picker obeys ONE rule, applied by the server
    that answers them all. Where: D56.
+7. **Le Cercle, when both accounts exist: a pair of `transfer` ledger lines** (owner, 2026-11-26,
+   the recommended option). The balance and the membership move from the duplicate to the real
+   account through one line out of the duplicate and one into the target, each naming the other - a
+   new ledger type, so a Le Cercle schema migration - rather than a `cashout` and a `topup` that
+   would book money nobody paid. Until that migration ships, that case answers `409` and changes
+   nothing. Where: D53, [the entry](../backlog.d/alumni-merge-le-cercle-transfers-then-erases-the-duplicate.md).
+8. **Canari's own duplicate account stays as D48 says: erased, not transferred** (owner, 2026-11-26,
+   confirmed). The confirmation names what it holds before the admin confirms. Where: D52.
+9. **A duplicate's MiGallery face enrolment is transferred to the real account** (owner, 2026-11-26,
+   the recommended option), with its consent, when the real account has no face link of its own;
+   when both have one, the real account's stays. Where: D53,
+   [the entry](../backlog.d/alumni-merge-migallery-transfers-then-erases-the-duplicate.md).

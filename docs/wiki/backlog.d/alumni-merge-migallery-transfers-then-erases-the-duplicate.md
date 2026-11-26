@@ -15,7 +15,11 @@ grants, `locale`, and the face link with every face table when the target has no
 kept as it is); then `deleteUserAccount(dup)`; `finishLocalErasure` after the commit as for any
 deletion. `role` never carried (logged). Answers `{ outcome }`.
 
-The tests that prove it: the face link and its rows move and nothing is journalled to Immich for it;
+The tests that prove it: the face enrolment and its consent move TOGETHER (the owner's decision of
+2026-11-26, [item 9](../decisions/owner-decisions-of-2026-11-26-alumni.md)) - after the transfer the
+target holds the face link, every face row AND the consent row with its original date, terms version
+and `source`, the duplicate holds none of them, and no face row exists without its consent; nothing
+is journalled to Immich for the moved link;
 both with a face link -> the target's kept, the duplicate's erased and journalled; grants re-pointed
 on both sides; a replay is `absent`; the last-admin guard cannot be reached (a duplicate is never an
 admin target, asserted); the schema walk over every table naming `id_user`/`user_id`; the token's
