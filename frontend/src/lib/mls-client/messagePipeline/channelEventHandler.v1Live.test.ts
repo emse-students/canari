@@ -6,8 +6,9 @@ import type { IStorage } from '$lib/db/types';
  *
  * Since `minClientVersion` reached the v2 writer every admitted client signs what it sends, so a
  * FRESH unsigned row is a modified client minting v1 or a server stripping a signature: the live path
- * says it at ERROR. The same row read from a history page is an honest pre-floor row and stays a
- * warn (`channelCrypto.test.ts`). Neither asks a peer for the v1 seed this device would refuse.
+ * says it at ERROR. The same row read from a history page is an honest pre-floor row, a decided and
+ * permanent state said once per salon at info (`channelCrypto.test.ts`). Neither asks a peer for the
+ * v1 seed this device would refuse.
  *
  * The real `openChannelMessage` and `reportUnreadableChannelMessage` run here, so the class is the
  * one the seal throws and the level is the one the reporter picks - nothing is stubbed between them.
